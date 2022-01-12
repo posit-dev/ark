@@ -6,14 +6,35 @@
  */
 
 mod connection_file;
+mod kernel;
 
 use crate::connection_file::ConnectionFile;
+use crate::kernel::Kernel;
+
+fn start_kernel(connection_file: ConnectionFile) {
+    let kernel = Kernel::create(connection_file);
+    match kernel {
+        Ok(k) => {
+            match k.connect() {
+                Ok(()) => {
+                    // TODO: Just let it run
+                }
+                Err(err) => {
+                    panic!("Couldn't connect to front end: {:?}", err);
+                }
+            }
+        }
+        Err(err) => {
+            panic!("Couldn't create kernel: {:?}", err);
+        }
+    }
+}
 
 fn parse_file(connection_file: &String) {
     match ConnectionFile::from_file(connection_file) {
         Ok(connection) => {
-            // TODO: start kernel
-            println!("Connection data: {:?}", connection)
+            println!("Connection data: {:?}", connection);
+            start_kernel(connection);
         }
         Err(error) => {
             panic!("Couldn't read {}: {:?}", connection_file, error);
@@ -22,8 +43,6 @@ fn parse_file(connection_file: &String) {
 }
 
 fn main() {
-    println!("Amalthea: An R kernel for Myriac and Jupyter.");
-
     // Get an iterator over all the command-line arguments
     let mut argv = std::env::args();
 
