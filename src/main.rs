@@ -5,24 +5,20 @@
  *
  */
 
-use serde::Deserialize;
+mod connection_file;
 
-#[derive(Deserialize)]
-struct ControlFile {
-    // ZeroMQ ports
-    control_port: u16,
-    shell_port: u16,
-    stdin_port: u16,
-    iopub_port: u16,
-    hb_port: u16,
+use crate::connection_file::ConnectionFile;
 
-    // TODO: enum? "tcp"
-    transport: String,
-    // TODO: enum? "hmac-sha256"
-    signature_scheme: String,
-
-    ip: String,
-    key: String
+fn parse_file(connection_file: &String) {
+    match ConnectionFile::from_file(connection_file) {
+        Ok(connection) => {
+            // TODO: start kernel
+            println!("Connection data: {:?}", connection)
+        }
+        Err(error) => {
+            panic!("Couldn't read {}: {:?}", connection_file, error);
+        }
+    }
 }
 
 fn main() {
@@ -38,18 +34,21 @@ fn main() {
     match argv.next() {
         Some(arg) => {
             match arg.as_str() {
-                "--control_file" => {
-                    // TODO: handle missing control file
-                    println!("Loading control file {}", argv.next().unwrap())
-                },
+                "--connection_file" => {
+                    if let Some(file) = argv.next() {
+                        println!("Loading connection file {}", file);
+                        parse_file(&file);
+                    } else {
+                        eprintln!("A connection file must be specified with the --connection_file argument.");
+                    }
+                }
                 other => {
                     eprintln!("Argument '{}' unknown", other);
                 }
             }
         }
         None => {
-            println!("Usage: amalthea --control_file /path/to/file");
+            println!("Usage: amalthea --connection_file /path/to/file");
         }
-    } 
+    }
 }
-
