@@ -42,6 +42,9 @@ fn main() {
                         eprintln!("A connection file must be specified with the --connection_file argument.");
                     }
                 }
+                "--version" => {
+                    println!("Amalthea {}", env!("CARGO_PKG_VERSION"));
+                }
                 other => {
                     eprintln!("Argument '{}' unknown", other);
                 }

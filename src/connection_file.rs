@@ -11,7 +11,7 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 pub struct ConnectionFile {
     // ZeroMQ ports
     control_port: u16,
