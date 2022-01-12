@@ -5,6 +5,26 @@
  *
  */
 
+use serde::Deserialize;
+
+#[derive(Deserialize)]
+struct ControlFile {
+    // ZeroMQ ports
+    control_port: u16,
+    shell_port: u16,
+    stdin_port: u16,
+    iopub_port: u16,
+    hb_port: u16,
+
+    // TODO: enum? "tcp"
+    transport: String,
+    // TODO: enum? "hmac-sha256"
+    signature_scheme: String,
+
+    ip: String,
+    key: String
+}
+
 fn main() {
     println!("Amalthea: An R kernel for Myriac and Jupyter.");
 
