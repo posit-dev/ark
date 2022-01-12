@@ -14,19 +14,19 @@ use std::path::Path;
 #[derive(Deserialize, Debug)]
 pub struct ConnectionFile {
     // ZeroMQ ports
-    control_port: u16,
-    shell_port: u16,
-    stdin_port: u16,
-    iopub_port: u16,
-    hb_port: u16,
+    pub control_port: u16,
+    pub shell_port: u16,
+    pub stdin_port: u16,
+    pub iopub_port: u16,
+    pub hb_port: u16,
 
     // TODO: enum? "tcp"
-    transport: String,
+    pub transport: String,
     // TODO: enum? "hmac-sha256"
-    signature_scheme: String,
+    pub signature_scheme: String,
 
-    ip: String,
-    key: String,
+    pub ip: String,
+    pub key: String,
 }
 
 impl ConnectionFile {
