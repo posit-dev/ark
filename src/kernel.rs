@@ -12,9 +12,6 @@ pub struct Kernel {
     connection: ConnectionFile,
 
     heartbeat: zmq::Socket,
-
-    /// The ZeroMQ connection context
-    context: zmq::Context,
 }
 
 impl Kernel {
@@ -25,16 +22,24 @@ impl Kernel {
         Ok(Self {
             connection: file,
             heartbeat: heartbeat,
-            context: ctx,
         })
     }
 
     /// Connect the Kernel to the front end.
     pub fn connect(&self) -> Result<(), zmq::Error> {
-        self.heartbeat.connect(&String::from(format!(
-            "{}:{}",
-            self.connection.ip, self.connection.hb_port
-        )))?;
+        self.heartbeat
+            .connect(&self.endpoint(self.connection.hb_port))?;
         Ok(())
+    }
+
+    /// Given a port, return a URI-like string that can be used to connect to
+    /// the port, given the other parameters in the connection file.
+    ///
+    /// Example: `32` => `"tcp://127.0.0.1:32"`
+    fn endpoint(&self, port: u16) -> String {
+        format!(
+            "{}://{}:{}",
+            self.connection.transport, self.connection.ip, port
+        )
     }
 }
