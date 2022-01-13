@@ -15,16 +15,14 @@ use crate::kernel::Kernel;
 fn start_kernel(connection_file: ConnectionFile) {
     let kernel = Kernel::create(connection_file);
     match kernel {
-        Ok(k) => {
-            match k.connect() {
-                Ok(()) => {
-                    // TODO: Just let it run
-                }
-                Err(err) => {
-                    panic!("Couldn't connect to front end: {:?}", err);
-                }
+        Ok(k) => match k.connect() {
+            Ok(()) => {
+                std::thread::sleep(std::time::Duration::from_millis(500));
             }
-        }
+            Err(err) => {
+                panic!("Couldn't connect to front end: {:?}", err);
+            }
+        },
         Err(err) => {
             panic!("Couldn't create kernel: {:?}", err);
         }
