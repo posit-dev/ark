@@ -11,6 +11,7 @@ mod kernel;
 
 use crate::connection_file::ConnectionFile;
 use crate::kernel::Kernel;
+use log::{debug, error, info};
 
 fn start_kernel(connection_file: ConnectionFile) {
     let kernel = Kernel::create(connection_file);
@@ -20,11 +21,11 @@ fn start_kernel(connection_file: ConnectionFile) {
                 std::thread::sleep(std::time::Duration::from_millis(500));
             }
             Err(err) => {
-                panic!("Couldn't connect to front end: {:?}", err);
+                error!("Couldn't connect to front end: {:?}", err);
             }
         },
         Err(err) => {
-            panic!("Couldn't create kernel: {:?}", err);
+            error!("Couldn't create kernel: {:?}", err);
         }
     }
 }
@@ -32,16 +33,27 @@ fn start_kernel(connection_file: ConnectionFile) {
 fn parse_file(connection_file: &String) {
     match ConnectionFile::from_file(connection_file) {
         Ok(connection) => {
-            println!("Connection data: {:?}", connection);
+            info!(
+                "Loaded connection information from front end in {}",
+                connection_file
+            );
+            debug!("Connection data: {:?}", connection);
             start_kernel(connection);
         }
         Err(error) => {
-            panic!("Couldn't read {}: {:?}", connection_file, error);
+            error!(
+                "Couldn't read connection file {}: {:?}",
+                connection_file, error
+            );
         }
     }
 }
 
 fn main() {
+    // Initialize logging system; the env_logger lets you configure loggign with
+    // the RUST_LOG env var
+    env_logger::init();
+
     // Get an iterator over all the command-line arguments
     let mut argv = std::env::args();
 
@@ -54,7 +66,6 @@ fn main() {
             match arg.as_str() {
                 "--connection_file" => {
                     if let Some(file) = argv.next() {
-                        println!("Loading connection file {}", file);
                         parse_file(&file);
                     } else {
                         eprintln!("A connection file must be specified with the --connection_file argument.");

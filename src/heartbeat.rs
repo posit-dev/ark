@@ -5,6 +5,7 @@
  *
  */
 
+use log::{debug, trace, warn};
 use std::thread;
 
 pub struct Heartbeat {
@@ -20,25 +21,31 @@ impl Heartbeat {
     pub fn connect(&self, endpoint: String) -> Result<(), zmq::Error> {
         let socket = self.ctx.socket(zmq::REQ)?;
         socket.bind(&endpoint)?;
+        trace!("Binding to heartbeat socket at {}", endpoint);
         thread::spawn(move || Self::listen(&socket));
         Ok(())
     }
 
     fn listen(socket: &zmq::Socket) {
         loop {
-            println!("listening for heartbeats");
+            debug!("Listening for heartbeats");
             let mut msg = zmq::Message::new();
             if let Err(err) = socket.recv(&mut msg, 0) {
-                // TODO: log error receiving heartbeat
-                // TODO: maybe sleep a little to avoid error spam, we
-                // wouldn't want this loop to get tight
-                println!("error receiving heartbeat: {}", err);
+                warn!("Error receiving heartbeat: {}", err);
+
+                // Wait 1s before trying to receive another heartbeat. This
+                // keeps us from flooding the logs when recv() isn't working.
+                std::thread::sleep(std::time::Duration::from_secs(1));
                 continue;
+            } else {
+                debug!("Heartbeat message: {:?}", msg);
             }
 
-            // echo the message right back!
+            // Echo the message right back!
             if let Err(err) = socket.send(msg, 0) {
-                println!("error replying to heartbeat: {}", err);
+                warn!("Error replying to heartbeat: {}", err);
+            } else {
+                debug!("Heartbeat message replied");
             }
         }
     }
