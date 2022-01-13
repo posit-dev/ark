@@ -6,6 +6,7 @@
  */
 
 mod connection_file;
+mod heartbeat;
 mod kernel;
 
 use crate::connection_file::ConnectionFile;
