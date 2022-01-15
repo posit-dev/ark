@@ -8,10 +8,13 @@
 mod connection_file;
 mod heartbeat;
 mod kernel;
+mod kernel_dirs;
+mod kernel_spec;
 
 use crate::connection_file::ConnectionFile;
 use crate::kernel::Kernel;
 use log::{debug, error, info};
+use std::env;
 
 fn start_kernel(connection_file: ConnectionFile) {
     let kernel = Kernel::create(connection_file);
@@ -26,6 +29,28 @@ fn start_kernel(connection_file: ConnectionFile) {
         },
         Err(err) => {
             error!("Couldn't create kernel: {:?}", err);
+        }
+    }
+}
+
+fn install_kernel_spec() {
+    match env::current_exe() {
+        Ok(exe_path) => {
+            let spec = kernel_spec::KernelSpec {
+                argv: vec![
+                    String::from(exe_path.to_string_lossy()),
+                    String::from("--connection_file"),
+                    String::from("{connection_file}"),
+                ],
+                language: String::from("R"),
+                display_name: String::from("R [Amalthea]"),
+            };
+            if let Err(err) = spec.install(String::from("amalthea")) {
+                eprintln!("Failed to install Jupyter kernelspec. {}", err);
+            }
+        }
+        Err(err) => {
+            eprintln!("Failed to determine path to Amalthea. {}", err);
         }
     }
 }
@@ -73,6 +98,9 @@ fn main() {
                 }
                 "--version" => {
                     println!("Amalthea {}", env!("CARGO_PKG_VERSION"));
+                }
+                "--install" => {
+                    install_kernel_spec();
                 }
                 other => {
                     eprintln!("Argument '{}' unknown", other);
