@@ -47,6 +47,8 @@ fn install_kernel_spec() {
             };
             if let Err(err) = spec.install(String::from("amalthea")) {
                 eprintln!("Failed to install Jupyter kernelspec. {}", err);
+            } else {
+                println!("Successfully installed Jupyter kernelspec.")
             }
         }
         Err(err) => {
