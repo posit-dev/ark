@@ -72,6 +72,7 @@ impl error::Error for InstallError {
 }
 
 impl KernelSpec {
+    /// Install a kernel spec to disk.
     pub fn install(&self, folder: String) -> Result<(), InstallError> {
         if let Some(kernel_dir) = kernel_dirs::jupyter_kernel_path() {
             return self.install_to(kernel_dir.join(folder));
@@ -89,6 +90,7 @@ impl KernelSpec {
         // Serialize the kernel spec to JSON
         match serde_json::to_string_pretty(self) {
             Ok(contents) => {
+                // Install kernelspec to destination
                 trace!("Installing kernelspec JSON to {:?}: {}", dest, contents);
                 match File::create(dest) {
                     Ok(mut f) => {
