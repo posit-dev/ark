@@ -5,14 +5,13 @@
  *
  */
 
-use std::path::Path;
+use std::env;
 use std::path::PathBuf;
-use std::{env, fs};
 
 /// Returns the path where Jupyter kernels should be/are installed.
 pub fn jupyter_kernel_path() -> Option<PathBuf> {
     if let Some(path) = jupyter_dir() {
-        path.join("kernels")
+        return Some(path.join("kernels"));
     }
     None
 }
@@ -44,7 +43,11 @@ fn jupyter_xdg_dir() -> Option<PathBuf> {
     // On MacOS, XDG_DATA_DIR is ~/Library/Application Support, but Jupyter
     // looks in ~/Library/Jupyter.
     if let Some(path) = dirs::data_dir() {
-        path.parent().join("Jupyter")
+        if let Some(parent) = path.parent() {
+            return Some(parent.join("Jupyter"));
+        } else {
+            return None;
+        }
     }
     None
 }
