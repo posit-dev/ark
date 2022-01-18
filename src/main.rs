@@ -6,12 +6,11 @@
  */
 
 mod connection_file;
-mod header;
-mod heartbeat;
 mod kernel;
 mod kernel_dirs;
 mod kernel_spec;
-mod message;
+mod socket;
+mod wire;
 
 use crate::connection_file::ConnectionFile;
 use crate::kernel::Kernel;
