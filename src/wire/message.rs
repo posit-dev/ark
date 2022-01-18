@@ -5,12 +5,12 @@
  *
  */
 
-use crate::header::JupyterHeader;
+use crate::wire::header::JupyterHeader;
 use serde::Serialize;
 
 /// Represents a Jupyter message
 #[derive(Serialize)]
-pub struct JupyterMessage {
+pub struct JupyterMessage<T> {
     /// The header for this message
     pub header: JupyterHeader,
 
@@ -21,7 +21,7 @@ pub struct JupyterMessage {
     pub metadata: (),
 
     /// The body (payload) of the message
-    pub content: (),
+    pub content: T,
 
     /// Additional binary data
     pub buffers: (),

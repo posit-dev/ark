@@ -6,7 +6,7 @@
  */
 
 use crate::connection_file::ConnectionFile;
-use crate::heartbeat::Heartbeat;
+use crate::socket::heartbeat::Heartbeat;
 
 pub struct Kernel {
     /// The connection metadata
