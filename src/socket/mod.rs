@@ -6,3 +6,4 @@
  */
 
 pub mod heartbeat;
+pub mod shell;
