@@ -8,18 +8,11 @@
 use log::{debug, trace, warn};
 use std::thread;
 
-pub struct Heartbeat {
-    /// The underlying ZeroMQ context
-    ctx: zmq::Context,
-}
+pub struct Heartbeat {}
 
 impl Heartbeat {
-    pub fn create(ctx: zmq::Context) -> Result<Heartbeat, zmq::Error> {
-        Ok(Self { ctx: ctx })
-    }
-
-    pub fn connect(&self, endpoint: String) -> Result<(), zmq::Error> {
-        let socket = self.ctx.socket(zmq::REQ)?;
+    pub fn connect(&self, ctx: &zmq::Context, endpoint: String) -> Result<(), zmq::Error> {
+        let socket = ctx.socket(zmq::REQ)?;
         socket.bind(&endpoint)?;
         trace!("Binding to heartbeat socket at {}", endpoint);
         thread::spawn(move || Self::listen(&socket));

@@ -7,28 +7,32 @@
 
 use crate::connection_file::ConnectionFile;
 use crate::socket::heartbeat::Heartbeat;
+use crate::socket::shell::Shell;
 
 pub struct Kernel {
     /// The connection metadata
     connection: ConnectionFile,
     heartbeat: Heartbeat,
+    shell: Shell,
 }
 
 impl Kernel {
     /// Create a new Kernel, given a connection file from a front end.
     pub fn create(file: ConnectionFile) -> Result<Kernel, zmq::Error> {
-        let ctx = zmq::Context::new();
-        let heartbeat = Heartbeat::create(ctx)?;
         Ok(Self {
             connection: file,
-            heartbeat: heartbeat,
+            heartbeat: Heartbeat {},
+            shell: Shell {},
         })
     }
 
     /// Connect the Kernel to the front end.
     pub fn connect(&self) -> Result<(), zmq::Error> {
+        let ctx = zmq::Context::new();
         self.heartbeat
-            .connect(self.endpoint(self.connection.hb_port))?;
+            .connect(&ctx, self.endpoint(self.connection.hb_port))?;
+        self.shell
+            .connect(&ctx, self.endpoint(self.connection.shell_port))?;
         Ok(())
     }
 
