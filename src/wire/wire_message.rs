@@ -1,5 +1,5 @@
 /*
- * message.rs
+ * wire_message.rs
  *
  * Copyright (C) 2022 by RStudio, PBC
  *
@@ -8,7 +8,8 @@
 use crate::wire::header::JupyterHeader;
 use generic_array::GenericArray;
 use hmac::Hmac;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use serde_json::value::Value;
 use sha2::Sha256;
 use std::fmt;
 
@@ -17,8 +18,8 @@ use std::fmt;
 const MSG_DELIM: &[u8] = b"<IDS|MSG>";
 
 /// Represents a Jupyter message
-#[derive(Serialize)]
-pub struct JupyterMessage<T> {
+#[derive(Serialize, Deserialize)]
+pub struct WireMessage {
     /// The header for this message
     pub header: JupyterHeader,
 
@@ -26,13 +27,13 @@ pub struct JupyterMessage<T> {
     pub parent_header: JupyterHeader,
 
     /// Additional metadata, if any
-    pub metadata: (),
+    pub metadata: Value,
 
     /// The body (payload) of the message
-    pub content: T,
+    pub content: Value,
 
     /// Additional binary data
-    pub buffers: (),
+    pub buffers: Value,
 }
 
 #[derive(Debug)]
@@ -69,59 +70,61 @@ impl fmt::Display for MessageError {
     }
 }
 
-impl<T> JupyterMessage<T> {
+impl WireMessage {
     /// Parse a Jupyter message from an array of buffers (from a ZeroMQ message)
     pub fn from_buffers(
         bufs: Vec<Vec<u8>>,
         hmac_key: Option<Hmac<Sha256>>,
-    ) -> Result<JupyterMessage<T>, MessageError> {
+    ) -> Result<WireMessage, MessageError> {
         let mut iter = bufs.iter();
 
         // Find the position of the <IDS|MSG> delimiter in the message, which
         // separates the socket identities (IDS) from the body of the message.
-        if let Some(pos) = iter.position(|buf| &buf[..] == MSG_DELIM) {
-            return JupyterMessage::from_msg_bufs(bufs[pos + 1..].to_vec(), hmac_key);
-        }
-
-        // No delimiter found.
-        return Err(MessageError::MissingDelimiter);
-    }
-
-    fn from_msg_bufs(
-        mut bufs: Vec<Vec<u8>>,
-        hmac_key: Option<Hmac<Sha256>>,
-    ) -> Result<JupyterMessage<T>, MessageError> {
-        if let Err(err) = JupyterMessage::validate_hmac(bufs, hmac_key) {
+        let pos = match iter.position(|buf| &buf[..] == MSG_DELIM) {
+            Some(p) => p,
+            None => return Err(MessageError::MissingDelimiter),
+        };
+        if let Err(err) = WireMessage::validate_hmac(bufs, hmac_key) {
             return Err(err);
         }
+
         Err(MessageError::MissingDelimiter)
     }
 
     fn validate_hmac(
-        bufs: Vec<Vec<u8>>,
+        mut bufs: Vec<Vec<u8>>,
         hmac_key: Option<Hmac<Sha256>>,
     ) -> Result<(), MessageError> {
         use hmac::Mac;
-        if let Some(key) = hmac_key {
-            // TODO: don't unwrap, and this is not actually the hmac
-            let data = bufs.pop().unwrap();
 
-            // Decode the hexadecimal representation of the signature
-            let decoded = match hex::decode(data) {
-                Ok(decoded_bytes) => decoded_bytes,
-                Err(error) => return Err(MessageError::InvalidHmac(data, error)),
-            };
+        // If we don't have a key at all, no need to validate. It is acceptable
+        // (per Jupyter spec) to have an empty connection key, which indicates
+        // that no HMAC signatures are to be validated.
+        let key = match hmac_key {
+            Some(k) => k,
+            None => return Ok(()),
+        };
 
-            // Compute the real signature according to our own key
-            let mut hmac_validator = key.clone();
-            for buf in bufs {
-                hmac_validator.update(&buf);
-            }
-            // Verify the signature
-            if let Err(err) = hmac_validator.verify(GenericArray::from_slice(&decoded)) {
-                return Err(MessageError::BadSignature(decoded, err));
-            }
+        // TODO: don't unwrap, and this is not actually the hmac
+        let data = bufs.pop().unwrap();
+
+        // Decode the hexadecimal representation of the signature
+        let decoded = match hex::decode(&data) {
+            Ok(decoded_bytes) => decoded_bytes,
+            Err(error) => return Err(MessageError::InvalidHmac(data, error)),
+        };
+
+        // Compute the real signature according to our own key
+        let mut hmac_validator = key.clone();
+        for buf in bufs {
+            hmac_validator.update(&buf);
         }
+        // Verify the signature
+        if let Err(err) = hmac_validator.verify(GenericArray::from_slice(&decoded)) {
+            return Err(MessageError::BadSignature(decoded, err));
+        }
+
+        // If we got this far, the signature is valid
         Ok(())
     }
 }
