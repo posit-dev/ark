@@ -7,6 +7,7 @@
 
 pub mod header;
 pub mod help_link;
+pub mod jupyter_message;
 pub mod kernel_info_reply;
 pub mod language_info;
-pub mod message;
+pub mod wire_message;
