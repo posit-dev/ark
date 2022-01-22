@@ -5,6 +5,7 @@
  *
  */
 
+use crate::wire::wire_message::WireMessage;
 use log::{debug, trace, warn};
 use std::thread;
 
@@ -23,11 +24,7 @@ impl Shell {
         // TODO: we basically want to loop here on receiving a message
         loop {
             debug!("Listening for shell messages");
-            let mut msg = zmq::Message::new();
-            if let Err(err) = socket.recv(&mut msg, 0) {
-                warn!("Error receiving socket message on shell: {}", err);
-            } else {
-            }
+            let msg = WireMessage::read_from_socket(zmq, None);
         }
     }
 }

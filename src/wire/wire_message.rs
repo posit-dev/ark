@@ -17,7 +17,7 @@ use std::fmt;
 /// body payload (MSG).
 const MSG_DELIM: &[u8] = b"<IDS|MSG>";
 
-/// Represents a Jupyter message
+/// Represents an untyped Jupyter message delivered over the wire. A WireMessage can be converted to a JupyterMessage by
 #[derive(Serialize, Deserialize)]
 pub struct WireMessage {
     /// The header for this message
@@ -38,7 +38,9 @@ pub struct WireMessage {
 
 #[derive(Debug)]
 pub enum MessageError {
+    SocketRead(zmq::Error),
     MissingDelimiter,
+    InsufficientParts(usize, usize),
     InvalidHmac(Vec<u8>, hex::FromHexError),
     BadSignature(Vec<u8>, hmac::digest::MacError),
 }
@@ -46,10 +48,20 @@ pub enum MessageError {
 impl fmt::Display for MessageError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
+            MessageError::SocketRead(err) => {
+                write!(f, "Could not read ZeroMQ message from socket: {}", err)
+            }
             MessageError::MissingDelimiter => {
                 write!(
                     f,
                     "ZeroMQ message did not include expected <IDS|MSG> delimiter"
+                )
+            }
+            MessageError::InsufficientParts(found, expected) => {
+                write!(
+                    f,
+                    "ZeroMQ message did not contain sufficient parts (found {}, expected {})",
+                    found, expected
                 )
             }
             MessageError::InvalidHmac(data, err) => {
@@ -71,6 +83,15 @@ impl fmt::Display for MessageError {
 }
 
 impl WireMessage {
+    pub fn read_from_socket(
+        socket: &zmq::Socket,
+        hmac_key: Option<Hmac<Sha256>>,
+    ) -> Result<WireMessage, MessageError> {
+        match socket.recv_multipart(0) {
+            Ok(bufs) => Self::from_buffers(bufs, hmac_key),
+            Err(err) => Err(MessageError::SocketRead(err)),
+        }
+    }
     /// Parse a Jupyter message from an array of buffers (from a ZeroMQ message)
     pub fn from_buffers(
         bufs: Vec<Vec<u8>>,
@@ -79,12 +100,23 @@ impl WireMessage {
         let mut iter = bufs.iter();
 
         // Find the position of the <IDS|MSG> delimiter in the message, which
-        // separates the socket identities (IDS) from the body of the message.
+        // separates the socket identities (IDS) from the body of the message
+        // (MSG).
         let pos = match iter.position(|buf| &buf[..] == MSG_DELIM) {
             Some(p) => p,
             None => return Err(MessageError::MissingDelimiter),
         };
-        if let Err(err) = WireMessage::validate_hmac(bufs, hmac_key) {
+
+        // Form a collection of the remaining parts.
+        let parts: Vec<_> = bufs.drain(pos + 2..).collect();
+
+        // We expect to have at least 5 parts left (the HMAC + 4 message frames)
+        if parts.len() < 4 {
+            return Err(MessageError::InsufficientParts(parts.len(), 4));
+        }
+
+        // Consume and validate the HMAC signature.
+        if let Err(err) = WireMessage::validate_hmac(parts, hmac_key) {
             return Err(err);
         }
 
@@ -105,7 +137,8 @@ impl WireMessage {
             None => return Ok(()),
         };
 
-        // TODO: don't unwrap, and this is not actually the hmac
+        // Pop the hmac from the top. It's safe to unwrap this since the caller
+        // guarantees the size of the vector.
         let data = bufs.pop().unwrap();
 
         // Decode the hexadecimal representation of the signature
