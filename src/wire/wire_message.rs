@@ -31,9 +31,6 @@ pub struct WireMessage {
 
     /// The body (payload) of the message
     pub content: Value,
-
-    /// Additional binary data
-    pub buffers: Value,
 }
 
 #[derive(Debug)]
@@ -43,6 +40,9 @@ pub enum MessageError {
     InsufficientParts(usize, usize),
     InvalidHmac(Vec<u8>, hex::FromHexError),
     BadSignature(Vec<u8>, hmac::digest::MacError),
+    Utf8Error(String, Vec<u8>, std::str::Utf8Error),
+    JsonParseError(String, String, serde_json::Error),
+    InvalidPart(String, serde_json::Value, serde_json::Error),
 }
 
 impl fmt::Display for MessageError {
@@ -76,6 +76,27 @@ impl fmt::Display for MessageError {
                     f,
                     "ZeroMQ message HMAC signature {:?} is incorrect: {}",
                     sig, err
+                )
+            }
+            MessageError::Utf8Error(part, data, err) => {
+                write!(
+                    f,
+                    "Message part '{}' was not valid UTF-8: {} (raw: {:?})",
+                    part, err, data
+                )
+            }
+            MessageError::JsonParseError(part, str, err) => {
+                write!(
+                    f,
+                    "Message part '{}' is invalid JSON: {} (raw: {})",
+                    part, err, str
+                )
+            }
+            MessageError::InvalidPart(part, json, err) => {
+                write!(
+                    f,
+                    "Message part '{}' does not match schema: {} (raw: {})",
+                    part, err, json
                 )
             }
         }
@@ -116,13 +137,43 @@ impl WireMessage {
         }
 
         // Consume and validate the HMAC signature.
-        if let Err(err) = WireMessage::validate_hmac(parts, hmac_key) {
-            return Err(err);
-        }
+        WireMessage::validate_hmac(parts, hmac_key)?;
 
-        Err(MessageError::MissingDelimiter)
+        // Parse the message header
+        let header_val = WireMessage::parse_buffer(String::from("header"), bufs[0])?;
+        let header: JupyterHeader = match serde_json::from_value(header_val) {
+            Ok(h) => h,
+            Err(err) => {
+                return Err(MessageError::InvalidPart(
+                    String::from("header"),
+                    header_val,
+                    err,
+                ))
+            }
+        };
+
+        // Parse the parent header
+        let parent_val = WireMessage::parse_buffer(String::from("parent header"), bufs[1])?;
+        let parent: JupyterHeader = match serde_json::from_value(parent_val) {
+            Ok(h) => h,
+            Err(err) => {
+                return Err(MessageError::InvalidPart(
+                    String::from("parent header"),
+                    parent_val,
+                    err,
+                ))
+            }
+        };
+
+        Ok(Self {
+            header: header,
+            parent_header: parent,
+            metadata: WireMessage::parse_buffer(String::from("metadata"), bufs[2])?,
+            content: WireMessage::parse_buffer(String::from("content"), bufs[3])?,
+        });
     }
 
+    /// Validates the message's HMAC signature
     fn validate_hmac(
         mut bufs: Vec<Vec<u8>>,
         hmac_key: Option<Hmac<Sha256>>,
@@ -157,7 +208,23 @@ impl WireMessage {
             return Err(MessageError::BadSignature(decoded, err));
         }
 
-        // If we got this far, the signature is valid
+        // Signature is valid
         Ok(())
+    }
+
+    fn parse_buffer(desc: String, buf: Vec<u8>) -> Result<serde_json::Value, MessageError> {
+        // Convert the raw byte sequence from the ZeroMQ message into UTF-8
+        let str = match std::str::from_utf8(&buf) {
+            Ok(s) => s,
+            Err(err) => return Err(MessageError::Utf8Error(desc, buf, err)),
+        };
+
+        // Parse the UTF-8 string as JSON
+        let val: serde_json::Value = match serde_json::from_str(str) {
+            Ok(v) => v,
+            Err(err) => return Err(MessageError::JsonParseError(desc, String::from(str), err)),
+        };
+
+        Ok(val)
     }
 }
