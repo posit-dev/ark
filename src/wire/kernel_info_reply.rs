@@ -6,6 +6,7 @@
  */
 
 use crate::wire::help_link::HelpLink;
+use crate::wire::jupyter_message::MessageType;
 use crate::wire::language_info::LanguageInfo;
 use serde::Serialize;
 
@@ -29,4 +30,10 @@ pub struct KernelInfoReply {
 
     /// A list of help links
     help_links: Vec<HelpLink>,
+}
+
+impl MessageType for KernelInfoReply {
+    fn message_type() -> String {
+        String::from("kernel_info_reply")
+    }
 }

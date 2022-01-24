@@ -23,6 +23,12 @@ pub struct JupyterMessage<T> {
     pub content: T,
 }
 
+/// Trait used to extract the wire message type from a Jupyter message
+pub trait MessageType {
+    fn message_type() -> String;
+}
+
+/// List of all known/implemented messages
 pub enum Message {
     KernelInfoRequest,
     KernelInfoReply(JupyterMessage<KernelInfoReply>),
