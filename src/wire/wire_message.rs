@@ -129,7 +129,7 @@ impl WireMessage {
     }
     /// Parse a Jupyter message from an array of buffers (from a ZeroMQ message)
     pub fn from_buffers(
-        bufs: Vec<Vec<u8>>,
+        mut bufs: Vec<Vec<u8>>,
         hmac_key: Option<Hmac<Sha256>>,
     ) -> Result<WireMessage, MessageError> {
         let mut iter = bufs.iter();
@@ -154,8 +154,8 @@ impl WireMessage {
         WireMessage::validate_hmac(parts, hmac_key)?;
 
         // Parse the message header
-        let header_val = WireMessage::parse_buffer(String::from("header"), bufs[0])?;
-        let header: JupyterHeader = match serde_json::from_value(header_val) {
+        let header_val = WireMessage::parse_buffer(String::from("header"), &bufs[0])?;
+        let header: JupyterHeader = match serde_json::from_value(header_val.clone()) {
             Ok(h) => h,
             Err(err) => {
                 return Err(MessageError::InvalidPart(
@@ -167,8 +167,8 @@ impl WireMessage {
         };
 
         // Parse the parent header
-        let parent_val = WireMessage::parse_buffer(String::from("parent header"), bufs[1])?;
-        let parent: JupyterHeader = match serde_json::from_value(parent_val) {
+        let parent_val = WireMessage::parse_buffer(String::from("parent header"), &bufs[1])?;
+        let parent: JupyterHeader = match serde_json::from_value(parent_val.clone()) {
             Ok(h) => h,
             Err(err) => {
                 return Err(MessageError::InvalidPart(
@@ -182,8 +182,8 @@ impl WireMessage {
         Ok(Self {
             header: header,
             parent_header: parent,
-            metadata: WireMessage::parse_buffer(String::from("metadata"), bufs[2])?,
-            content: WireMessage::parse_buffer(String::from("content"), bufs[3])?,
+            metadata: WireMessage::parse_buffer(String::from("metadata"), &bufs[2])?,
+            content: WireMessage::parse_buffer(String::from("content"), &bufs[3])?,
         })
     }
 
@@ -226,11 +226,11 @@ impl WireMessage {
         Ok(())
     }
 
-    fn parse_buffer(desc: String, buf: Vec<u8>) -> Result<serde_json::Value, MessageError> {
+    fn parse_buffer(desc: String, buf: &[u8]) -> Result<serde_json::Value, MessageError> {
         // Convert the raw byte sequence from the ZeroMQ message into UTF-8
         let str = match std::str::from_utf8(&buf) {
             Ok(s) => s,
-            Err(err) => return Err(MessageError::Utf8Error(desc, buf, err)),
+            Err(err) => return Err(MessageError::Utf8Error(desc, buf.to_vec(), err)),
         };
 
         // Parse the UTF-8 string as JSON
