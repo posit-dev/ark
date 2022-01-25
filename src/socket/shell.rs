@@ -52,5 +52,7 @@ impl Shell {
         }
     }
 
-    fn handle_info_request(req: JupyterMessage<KernelInfoRequest>) {}
+    fn handle_info_request(req: JupyterMessage<KernelInfoRequest>) {
+        debug!("Received shell information request: {:?}", req);
+    }
 }
