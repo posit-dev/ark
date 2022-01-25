@@ -5,10 +5,10 @@
  *
  */
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Represents the header of a Jupyter message
-#[derive(Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct LanguageInfo {
     /// The name of the programming language the kernel implements
     pub name: String,

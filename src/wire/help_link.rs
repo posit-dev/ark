@@ -5,10 +5,10 @@
  *
  */
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Represents a help link in a Jupyter message
-#[derive(Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct HelpLink {
     /// The text to display for the link
     pub text: String,

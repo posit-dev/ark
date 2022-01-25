@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Represents the header of a Jupyter message
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JupyterHeader {
     /// The message identifier; must be unique per message
     pub msg_id: String,
