@@ -7,11 +7,13 @@
 
 use crate::wire::header::JupyterHeader;
 use crate::wire::kernel_info_reply::KernelInfoReply;
+use crate::wire::kernel_info_request::KernelInfoRequest;
 use crate::wire::wire_message::WireMessage;
 use serde::de::DeserializeOwned;
 use std::fmt;
 
 /// Represents a Jupyter message
+#[derive(Debug)]
 pub struct JupyterMessage<T> {
     /// The header for this message
     pub header: JupyterHeader,
@@ -29,8 +31,9 @@ pub trait MessageType {
 }
 
 /// List of all known/implemented messages
+#[derive(Debug)]
 pub enum Message {
-    KernelInfoRequest,
+    KernelInfoRequest(JupyterMessage<KernelInfoRequest>),
     KernelInfoReply(JupyterMessage<KernelInfoReply>),
 }
 

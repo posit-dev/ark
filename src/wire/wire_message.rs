@@ -6,8 +6,14 @@
  */
 
 use crate::wire::header::JupyterHeader;
+use crate::wire::jupyter_message::JupyterMessage;
+use crate::wire::jupyter_message::Message;
+use crate::wire::jupyter_message::MessageType;
+use crate::wire::kernel_info_reply::KernelInfoReply;
+use crate::wire::kernel_info_request::KernelInfoRequest;
 use generic_array::GenericArray;
 use hmac::Hmac;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::value::Value;
 use sha2::Sha256;
@@ -17,7 +23,7 @@ use std::fmt;
 /// body payload (MSG).
 const MSG_DELIM: &[u8] = b"<IDS|MSG>";
 
-/// Represents an untyped Jupyter message delivered over the wire. A WireMessage can be converted to a JupyterMessage by
+/// Represents an untyped Jupyter message delivered over the wire.
 #[derive(Serialize, Deserialize)]
 pub struct WireMessage {
     /// The header for this message
@@ -43,6 +49,8 @@ pub enum MessageError {
     Utf8Error(String, Vec<u8>, std::str::Utf8Error),
     JsonParseError(String, String, serde_json::Error),
     InvalidPart(String, serde_json::Value, serde_json::Error),
+    InvalidMessage(String, serde_json::Value, serde_json::Error),
+    UnknownType(String),
 }
 
 impl fmt::Display for MessageError {
@@ -98,6 +106,12 @@ impl fmt::Display for MessageError {
                     "Message part '{}' does not match schema: {} (raw: {})",
                     part, err, json
                 )
+            }
+            MessageError::InvalidMessage(kind, json, err) => {
+                write!(f, "Invalid '{}' message: {} (raw: {})", kind, err, json)
+            }
+            MessageError::UnknownType(kind) => {
+                write!(f, "Unknown message type '{}'", kind)
             }
         }
     }
@@ -170,7 +184,7 @@ impl WireMessage {
             parent_header: parent,
             metadata: WireMessage::parse_buffer(String::from("metadata"), bufs[2])?,
             content: WireMessage::parse_buffer(String::from("content"), bufs[3])?,
-        });
+        })
     }
 
     /// Validates the message's HMAC signature
@@ -226,5 +240,39 @@ impl WireMessage {
         };
 
         Ok(val)
+    }
+
+    /// Converts this wire message to a Jupyter message by examining the message
+    /// type and attempting to coerce the content into the appropriate
+    /// structure.
+    pub fn to_jupyter_message(&self) -> Result<Message, MessageError> {
+        let kind = self.header.msg_type.clone();
+        if kind == KernelInfoRequest::message_type() {
+            return Ok(Message::KernelInfoRequest(self.to_message_type()?));
+        } else if kind == KernelInfoReply::message_type() {
+            return Ok(Message::KernelInfoReply(self.to_message_type()?));
+        }
+        return Err(MessageError::UnknownType(kind));
+    }
+
+    fn to_message_type<T>(&self) -> Result<JupyterMessage<T>, MessageError>
+    where
+        T: MessageType + DeserializeOwned,
+    {
+        let content = match serde_json::from_value(self.content.clone()) {
+            Ok(val) => val,
+            Err(err) => {
+                return Err(MessageError::InvalidMessage(
+                    T::message_type(),
+                    self.content.clone(),
+                    err,
+                ))
+            }
+        };
+        Ok(JupyterMessage {
+            header: self.header.clone(),
+            parent_header: self.parent_header.clone(),
+            content: content,
+        })
     }
 }

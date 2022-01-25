@@ -8,10 +8,10 @@
 use crate::wire::help_link::HelpLink;
 use crate::wire::jupyter_message::MessageType;
 use crate::wire::language_info::LanguageInfo;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Represents a reply to a kernel_info_request
-#[derive(Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct KernelInfoReply {
     /// The execution status ("ok" or "error")
     status: String,
