@@ -16,13 +16,18 @@ use crate::connection_file::ConnectionFile;
 use crate::kernel::Kernel;
 use log::{debug, error, info};
 use std::env;
+use std::io::stdin;
 
 fn start_kernel(connection_file: ConnectionFile) {
     let kernel = Kernel::create(connection_file);
     match kernel {
         Ok(k) => match k.connect() {
             Ok(()) => {
-                std::thread::sleep(std::time::Duration::from_millis(500));
+                let mut s = String::new();
+                println!("Kernel activated, press Ctrl+C to end ");
+                if let Err(err) = stdin().read_line(&mut s) {
+                    error!("Could not read from stdin: {}", err);
+                }
             }
             Err(err) => {
                 error!("Couldn't connect to front end: {:?}", err);

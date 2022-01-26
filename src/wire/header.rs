@@ -14,7 +14,7 @@ pub struct JupyterHeader {
     pub msg_id: String,
 
     /// Session ID; must be unique per session
-    pub session_id: String,
+    pub session: String,
 
     /// Username; must be unique per user
     pub username: String,
