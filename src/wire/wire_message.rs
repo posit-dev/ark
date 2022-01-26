@@ -12,6 +12,7 @@ use generic_array::GenericArray;
 use hmac::Hmac;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use serde_json::value::Value;
 use sha2::Sha256;
 use std::fmt;
@@ -26,7 +27,7 @@ pub struct WireMessage {
     /// The header for this message
     pub header: JupyterHeader,
 
-    /// The header of the message from which this message originated
+    /// The header of the message from which this message originated, if any
     pub parent_header: Option<JupyterHeader>,
 
     /// Additional metadata, if any
@@ -47,6 +48,7 @@ pub enum MessageError {
     JsonParseError(String, String, serde_json::Error),
     InvalidPart(String, serde_json::Value, serde_json::Error),
     InvalidMessage(String, serde_json::Value, serde_json::Error),
+    CannotSerialize(serde_json::Error),
     UnknownType(String),
 }
 
@@ -109,6 +111,9 @@ impl fmt::Display for MessageError {
             }
             MessageError::UnknownType(kind) => {
                 write!(f, "Unknown message type '{}'", kind)
+            }
+            MessageError::CannotSerialize(err) => {
+                write!(f, "Cannot serialize message: {}", err)
             }
         }
     }
@@ -254,6 +259,22 @@ impl WireMessage {
         };
 
         Ok(val)
+    }
+
+    pub fn from_jupyter_message<T>(msg: JupyterMessage<T>) -> Result<Self, MessageError>
+    where
+        T: MessageType + Serialize,
+    {
+        let content = match serde_json::to_value(msg.content) {
+            Ok(val) => val,
+            Err(err) => return Err(MessageError::CannotSerialize(err)),
+        };
+        Ok(Self {
+            header: msg.header,
+            parent_header: msg.parent_header,
+            metadata: json!({}),
+            content: content,
+        })
     }
 
     /// Converts this wire message to a Jupyter message of type T
