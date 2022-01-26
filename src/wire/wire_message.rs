@@ -30,7 +30,7 @@ pub struct WireMessage {
     pub header: JupyterHeader,
 
     /// The header of the message from which this message originated
-    pub parent_header: JupyterHeader,
+    pub parent_header: Option<JupyterHeader>,
 
     /// Additional metadata, if any
     pub metadata: Value,
@@ -166,16 +166,28 @@ impl WireMessage {
             }
         };
 
-        // Parse the parent header
-        let parent_val = WireMessage::parse_buffer(String::from("parent header"), &parts[2])?;
-        let parent: JupyterHeader = match serde_json::from_value(parent_val.clone()) {
-            Ok(h) => h,
-            Err(err) => {
-                return Err(MessageError::InvalidPart(
-                    String::from("parent header"),
-                    parent_val,
-                    err,
-                ))
+        // Parse the parent header.
+        let parent: Option<JupyterHeader> = match parts[2].len() {
+            0 | 1 | 2 => {
+                // If there is no meaningful content in the parent header
+                // buffer, we have no parent message, which is OK per the wire
+                // protocol.
+                None
+            }
+            _ => {
+                // If we do have content, ensure it parses as a header.
+                let parent_val =
+                    WireMessage::parse_buffer(String::from("parent header"), &parts[2])?;
+                match serde_json::from_value(parent_val.clone()) {
+                    Ok(h) => Some(h),
+                    Err(err) => {
+                        return Err(MessageError::InvalidPart(
+                            String::from("parent header"),
+                            parent_val,
+                            err,
+                        ))
+                    }
+                }
             }
         };
 

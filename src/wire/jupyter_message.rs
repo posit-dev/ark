@@ -15,8 +15,9 @@ pub struct JupyterMessage<T> {
     /// The header for this message
     pub header: JupyterHeader,
 
-    /// The header of the message from which this message originated
-    pub parent_header: JupyterHeader,
+    /// The header of the message from which this message originated. Optional;
+    /// not all messages have an originator.
+    pub parent_header: Option<JupyterHeader>,
 
     /// The body (payload) of the message
     pub content: T,
