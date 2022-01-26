@@ -7,10 +7,7 @@
 
 use crate::wire::header::JupyterHeader;
 use crate::wire::jupyter_message::JupyterMessage;
-use crate::wire::jupyter_message::Message;
 use crate::wire::jupyter_message::MessageType;
-use crate::wire::kernel_info_reply::KernelInfoReply;
-use crate::wire::kernel_info_request::KernelInfoRequest;
 use generic_array::GenericArray;
 use hmac::Hmac;
 use serde::de::DeserializeOwned;
@@ -259,20 +256,8 @@ impl WireMessage {
         Ok(val)
     }
 
-    /// Converts this wire message to a Jupyter message by examining the message
-    /// type and attempting to coerce the content into the appropriate
-    /// structure.
-    pub fn to_jupyter_message(&self) -> Result<Message, MessageError> {
-        let kind = self.header.msg_type.clone();
-        if kind == KernelInfoRequest::message_type() {
-            return Ok(Message::KernelInfoRequest(self.to_message_type()?));
-        } else if kind == KernelInfoReply::message_type() {
-            return Ok(Message::KernelInfoReply(self.to_message_type()?));
-        }
-        return Err(MessageError::UnknownType(kind));
-    }
-
-    fn to_message_type<T>(&self) -> Result<JupyterMessage<T>, MessageError>
+    /// Converts this wire message to a Jupyter message of type T
+    pub fn to_message_type<T>(&self) -> Result<JupyterMessage<T>, MessageError>
     where
         T: MessageType + DeserializeOwned,
     {

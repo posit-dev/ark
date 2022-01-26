@@ -34,7 +34,7 @@ impl Shell {
                     continue;
                 }
             };
-            let parsed = match msg.to_jupyter_message() {
+            let parsed = match Message::to_jupyter_message(msg) {
                 Ok(msg) => msg,
                 Err(err) => {
                     warn!("Invalid message arrived on shell socket. {}", err);
