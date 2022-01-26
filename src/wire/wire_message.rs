@@ -143,7 +143,7 @@ impl WireMessage {
         };
 
         // Form a collection of the remaining parts.
-        let parts: Vec<_> = bufs.drain(pos + 2..).collect();
+        let parts: Vec<_> = bufs.drain(pos + 1..).collect();
 
         // We expect to have at least 5 parts left (the HMAC + 4 message frames)
         if parts.len() < 4 {
@@ -151,10 +151,10 @@ impl WireMessage {
         }
 
         // Consume and validate the HMAC signature.
-        WireMessage::validate_hmac(parts, hmac_key)?;
+        WireMessage::validate_hmac(&parts, hmac_key)?;
 
         // Parse the message header
-        let header_val = WireMessage::parse_buffer(String::from("header"), &bufs[0])?;
+        let header_val = WireMessage::parse_buffer(String::from("header"), &parts[1])?;
         let header: JupyterHeader = match serde_json::from_value(header_val.clone()) {
             Ok(h) => h,
             Err(err) => {
@@ -167,7 +167,7 @@ impl WireMessage {
         };
 
         // Parse the parent header
-        let parent_val = WireMessage::parse_buffer(String::from("parent header"), &bufs[1])?;
+        let parent_val = WireMessage::parse_buffer(String::from("parent header"), &parts[2])?;
         let parent: JupyterHeader = match serde_json::from_value(parent_val.clone()) {
             Ok(h) => h,
             Err(err) => {
@@ -182,17 +182,20 @@ impl WireMessage {
         Ok(Self {
             header: header,
             parent_header: parent,
-            metadata: WireMessage::parse_buffer(String::from("metadata"), &bufs[2])?,
-            content: WireMessage::parse_buffer(String::from("content"), &bufs[3])?,
+            metadata: WireMessage::parse_buffer(String::from("metadata"), &parts[2])?,
+            content: WireMessage::parse_buffer(String::from("content"), &parts[3])?,
         })
     }
 
     /// Validates the message's HMAC signature
     fn validate_hmac(
-        mut bufs: Vec<Vec<u8>>,
+        bufs: &Vec<Vec<u8>>,
         hmac_key: Option<Hmac<Sha256>>,
     ) -> Result<(), MessageError> {
         use hmac::Mac;
+
+        // The hmac signature is the first value
+        let data = &bufs[0];
 
         // If we don't have a key at all, no need to validate. It is acceptable
         // (per Jupyter spec) to have an empty connection key, which indicates
@@ -202,19 +205,21 @@ impl WireMessage {
             None => return Ok(()),
         };
 
-        // Pop the hmac from the top. It's safe to unwrap this since the caller
-        // guarantees the size of the vector.
-        let data = bufs.pop().unwrap();
-
         // Decode the hexadecimal representation of the signature
         let decoded = match hex::decode(&data) {
             Ok(decoded_bytes) => decoded_bytes,
-            Err(error) => return Err(MessageError::InvalidHmac(data, error)),
+            Err(error) => return Err(MessageError::InvalidHmac(data.to_vec(), error)),
         };
 
         // Compute the real signature according to our own key
         let mut hmac_validator = key.clone();
+        let mut key = true;
         for buf in bufs {
+            // Skip the key itself when computing checksum
+            if key {
+                key = false;
+                continue;
+            }
             hmac_validator.update(&buf);
         }
         // Verify the signature

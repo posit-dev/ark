@@ -12,7 +12,7 @@ pub struct Heartbeat {}
 
 impl Heartbeat {
     pub fn connect(&self, ctx: &zmq::Context, endpoint: String) -> Result<(), zmq::Error> {
-        let socket = ctx.socket(zmq::REQ)?;
+        let socket = ctx.socket(zmq::REP)?;
         socket.bind(&endpoint)?;
         trace!("Binding to heartbeat socket at {}", endpoint);
         thread::spawn(move || Self::listen(&socket));
