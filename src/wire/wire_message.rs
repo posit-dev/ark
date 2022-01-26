@@ -49,6 +49,7 @@ pub enum MessageError {
     InvalidPart(String, serde_json::Value, serde_json::Error),
     InvalidMessage(String, serde_json::Value, serde_json::Error),
     CannotSerialize(serde_json::Error),
+    CannotSend(zmq::Error),
     UnknownType(String),
 }
 
@@ -114,6 +115,9 @@ impl fmt::Display for MessageError {
             }
             MessageError::CannotSerialize(err) => {
                 write!(f, "Cannot serialize message: {}", err)
+            }
+            MessageError::CannotSend(err) => {
+                write!(f, "Cannot send message: {}", err)
             }
         }
     }
@@ -259,6 +263,63 @@ impl WireMessage {
         };
 
         Ok(val)
+    }
+
+    pub fn send(
+        &self,
+        socket: zmq::Socket,
+        hmac_key: Option<Hmac<Sha256>>,
+    ) -> Result<(), MessageError> {
+        // Serialize JSON values into byte parts in preparation for transmission
+        let mut parts: Vec<Vec<u8>> = match self.to_raw_parts() {
+            Ok(v) => v,
+            Err(err) => return Err(MessageError::CannotSerialize(err)),
+        };
+
+        // Compute HMAC signature
+        let hmac = match hmac_key {
+            Some(key) => {
+                use hmac::Mac;
+                let mut sig = key.clone();
+                for part in &parts {
+                    sig.update(&part);
+                }
+                hex::encode(sig.finalize().into_bytes().as_slice())
+            }
+            None => String::new(),
+        };
+
+        // Create vector to store message to be delivered
+        let mut msg: Vec<Vec<u8>> = Vec::new();
+
+        // TODO: Add ZeroMQ socket identities here!
+
+        // Add <IDS|MSG> delimiter
+        msg.push(MSG_DELIM.to_vec());
+
+        // Add HMAC signature
+        msg.push(hmac.as_bytes().to_vec());
+
+        // Add all the message parts
+        msg.append(&mut parts);
+
+        // Deliver the message!
+        if let Err(err) = socket.send_multipart(&parts, 0) {
+            return Err(MessageError::CannotSend(err));
+        }
+
+        // Successful delivery
+        Ok(())
+    }
+
+    /// Returns a vector containing the raw parts of the message
+    fn to_raw_parts(&self) -> Result<Vec<Vec<u8>>, serde_json::Error> {
+        let mut parts: Vec<Vec<u8>> = Vec::new();
+        parts.push(serde_json::to_vec(&self.header)?);
+        parts.push(serde_json::to_vec(&self.parent_header)?);
+        parts.push(serde_json::to_vec(&self.metadata)?);
+        parts.push(serde_json::to_vec(&self.content)?);
+        Ok(parts)
     }
 
     pub fn from_jupyter_message<T>(msg: JupyterMessage<T>) -> Result<Self, MessageError>
