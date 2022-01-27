@@ -10,6 +10,9 @@ use crate::wire::kernel_info_reply::KernelInfoReply;
 use crate::wire::kernel_info_request::KernelInfoRequest;
 use crate::wire::wire_message::MessageError;
 use crate::wire::wire_message::WireMessage;
+use hmac::Hmac;
+use serde::Serialize;
+use sha2::Sha256;
 
 /// Represents a Jupyter message
 #[derive(Debug)]
@@ -50,4 +53,17 @@ impl Message {
         }
         return Err(MessageError::UnknownType(kind));
     }
+}
+
+impl<T> JupyterMessage<T>
+where
+    T: Serialize + MessageType,
+{
+    pub fn send(self, socket: zmq::Socket, hmac: Option<Hmac<Sha256>>) -> Result<(), MessageError> {
+        let msg = WireMessage::from_jupyter_message(self)?;
+        msg.send(socket, hmac)?;
+        Ok(())
+    }
+
+    pub fn create_reply(&self) -> Result<JupyterMessage<R>, MessageError> {}
 }
