@@ -5,7 +5,9 @@
  *
  */
 
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 /// Represents the header of a Jupyter message
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,4 +29,18 @@ pub struct JupyterHeader {
 
     /// Message protocol version
     pub version: String,
+}
+
+impl JupyterHeader {
+    /// Creates a new Jupyter message header
+    pub fn create(msg_type: String, session: String, username: String) -> Self {
+        Self {
+            msg_id: Uuid::new_v4().to_string(),
+            session: session,
+            username: username,
+            msg_type: msg_type,
+            date: Utc::now().to_rfc3339(),
+            version: String::from("5.0"),
+        }
+    }
 }
