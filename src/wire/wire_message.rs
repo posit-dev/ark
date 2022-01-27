@@ -267,7 +267,7 @@ impl WireMessage {
 
     pub fn send(
         &self,
-        socket: zmq::Socket,
+        socket: &zmq::Socket,
         hmac_key: Option<Hmac<Sha256>>,
     ) -> Result<(), MessageError> {
         // Serialize JSON values into byte parts in preparation for transmission

@@ -14,22 +14,22 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Serialize, Deserialize)]
 pub struct KernelInfoReply {
     /// The execution status ("ok" or "error")
-    status: String,
+    pub status: String,
 
     /// Version of messaging protocol
-    protocol_version: String,
+    pub protocol_version: String,
 
     /// Information about the language the kernel supports
-    language_info: LanguageInfo,
+    pub language_info: LanguageInfo,
 
     /// A startup banner
-    banner: String,
+    pub banner: String,
 
     /// Whether debugging is supported
-    debugger: bool,
+    pub debugger: bool,
 
     /// A list of help links
-    help_links: Vec<HelpLink>,
+    pub help_links: Vec<HelpLink>,
 }
 
 impl MessageType for KernelInfoReply {
