@@ -11,6 +11,7 @@ use crate::wire::kernel_info_request::KernelInfoRequest;
 use crate::wire::wire_message::MessageError;
 use crate::wire::wire_message::WireMessage;
 use hmac::Hmac;
+use log::trace;
 use serde::Serialize;
 use sha2::Sha256;
 
@@ -57,7 +58,7 @@ impl Message {
 
 impl<T> JupyterMessage<T>
 where
-    T: Serialize + MessageType,
+    T: Serialize + MessageType + std::fmt::Debug,
 {
     pub fn create(
         from: T,
@@ -77,6 +78,7 @@ where
         socket: &zmq::Socket,
         hmac: Option<Hmac<Sha256>>,
     ) -> Result<(), MessageError> {
+        trace!("Sending Jupyter message to front end: {:?}", self);
         let msg = WireMessage::from_jupyter_message(self)?;
         msg.send(socket, hmac)?;
         Ok(())
@@ -85,7 +87,7 @@ where
     pub fn create_reply<R: MessageType + Serialize>(&self, content: R) -> JupyterMessage<R> {
         JupyterMessage::<R> {
             header: JupyterHeader::create(
-                T::message_type(),
+                R::message_type(),
                 self.header.session.clone(),
                 self.header.username.clone(),
             ),
