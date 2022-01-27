@@ -59,11 +59,38 @@ impl<T> JupyterMessage<T>
 where
     T: Serialize + MessageType,
 {
-    pub fn send(self, socket: zmq::Socket, hmac: Option<Hmac<Sha256>>) -> Result<(), MessageError> {
+    pub fn create(
+        from: T,
+        parent: Option<JupyterHeader>,
+        username: String,
+        session: String,
+    ) -> Self {
+        Self {
+            header: JupyterHeader::create(T::message_type(), session, username),
+            parent_header: parent,
+            content: from,
+        }
+    }
+
+    pub fn send(
+        self,
+        socket: &zmq::Socket,
+        hmac: Option<Hmac<Sha256>>,
+    ) -> Result<(), MessageError> {
         let msg = WireMessage::from_jupyter_message(self)?;
         msg.send(socket, hmac)?;
         Ok(())
     }
 
-    pub fn create_reply(&self) -> Result<JupyterMessage<R>, MessageError> {}
+    pub fn create_reply<R: MessageType + Serialize>(&self, content: R) -> JupyterMessage<R> {
+        JupyterMessage::<R> {
+            header: JupyterHeader::create(
+                T::message_type(),
+                self.header.session.clone(),
+                self.header.username.clone(),
+            ),
+            parent_header: Some(self.header.clone()),
+            content: content,
+        }
+    }
 }

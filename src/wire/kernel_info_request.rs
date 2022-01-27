@@ -6,10 +6,10 @@
  */
 
 use crate::wire::jupyter_message::MessageType;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// Represents request from the front end to the kernel to get information
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct KernelInfoRequest {}
 
 impl MessageType for KernelInfoRequest {

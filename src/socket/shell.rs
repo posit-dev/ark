@@ -9,6 +9,7 @@ use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
 use crate::wire::kernel_info_reply::KernelInfoReply;
 use crate::wire::kernel_info_request::KernelInfoRequest;
+use crate::wire::language_info::LanguageInfo;
 use crate::wire::wire_message::WireMessage;
 use log::{debug, trace, warn};
 use std::thread;
@@ -41,18 +42,40 @@ impl Shell {
                     continue;
                 }
             };
-            Shell::process_message(parsed);
+            Shell::process_message(parsed, socket);
         }
     }
 
-    fn process_message(msg: Message) {
+    fn process_message(msg: Message, socket: &zmq::Socket) {
         match msg {
-            Message::KernelInfoRequest(req) => Shell::handle_info_request(req),
+            Message::KernelInfoRequest(req) => Shell::handle_info_request(req, socket),
             _ => warn!("Unexpected message arrived on shell socket: {:?}", msg),
         }
     }
 
-    fn handle_info_request(req: JupyterMessage<KernelInfoRequest>) {
+    fn handle_info_request(req: JupyterMessage<KernelInfoRequest>, socket: &zmq::Socket) {
         debug!("Received shell information request: {:?}", req);
+        let info = LanguageInfo {
+            name: String::from("Echo"),
+            version: String::from("1.0"),
+            file_extension: String::from(".ech"),
+            mimetype: String::from("text/echo"),
+            pygments_lexer: String::new(),
+            codemirror_mode: String::new(),
+            nbconvert_exporter: String::new(),
+        };
+        let reply = KernelInfoReply {
+            status: String::from("ok"),
+            banner: format!("Amalthea {}", env!("CARGO_PKG_VERSION")),
+            debugger: false,
+            protocol_version: String::from("5.0"),
+            help_links: Vec::new(),
+            language_info: info,
+        };
+
+        let msg = req.create_reply(reply);
+        if let Err(err) = msg.send(socket, None) {
+            warn!("Could not send kernel info reply: {}", err)
+        }
     }
 }
