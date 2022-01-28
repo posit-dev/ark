@@ -20,6 +20,9 @@ use sha2::Sha256;
 /// Represents a Jupyter message
 #[derive(Debug)]
 pub struct JupyterMessage<T> {
+    /// The ZeroMQ identities (for ROUTER sockets)
+    pub zmq_identities: Vec<Vec<u8>>,
+
     /// The header for this message
     pub header: JupyterHeader,
 
@@ -75,6 +78,7 @@ where
         session: String,
     ) -> Self {
         Self {
+            zmq_identities: Vec::new(),
             header: JupyterHeader::create(T::message_type(), session, username),
             parent_header: parent,
             content: from,
@@ -94,6 +98,7 @@ where
 
     pub fn create_reply<R: MessageType + Serialize>(&self, content: R) -> JupyterMessage<R> {
         JupyterMessage::<R> {
+            zmq_identities: self.zmq_identities.clone(),
             header: JupyterHeader::create(
                 R::message_type(),
                 self.header.session.clone(),

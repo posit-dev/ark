@@ -10,6 +10,7 @@ use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::MessageType;
 use generic_array::GenericArray;
 use hmac::Hmac;
+use log::trace;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -21,9 +22,15 @@ use std::fmt;
 /// body payload (MSG).
 const MSG_DELIM: &[u8] = b"<IDS|MSG>";
 
-/// Represents an untyped Jupyter message delivered over the wire.
+/// Represents an untyped Jupyter message delivered over the wire. A WireMessage
+/// can represent any kind of Jupyter message; typically its header will be
+/// examined and it will be converted into a typed JupyterMessage.
 #[derive(Serialize, Deserialize)]
 pub struct WireMessage {
+    /// The ZeroMQ identities. These store the peer identity for messages
+    /// delivered request-reply style over ROUTER sockets (like the shell)
+    pub zmq_identities: Vec<Vec<u8>>,
+
     /// The header for this message
     pub header: JupyterHeader,
 
@@ -148,8 +155,9 @@ impl WireMessage {
             None => return Err(MessageError::MissingDelimiter),
         };
 
-        // Form a collection of the remaining parts.
+        // Form a collection of the remaining parts, and remove the delimiter.
         let parts: Vec<_> = bufs.drain(pos + 1..).collect();
+        bufs.pop();
 
         // We expect to have at least 5 parts left (the HMAC + 4 message frames)
         if parts.len() < 4 {
@@ -198,6 +206,7 @@ impl WireMessage {
         };
 
         Ok(Self {
+            zmq_identities: bufs,
             header: header,
             parent_header: parent,
             metadata: WireMessage::parse_buffer(String::from("metadata"), &parts[3])?,
@@ -289,10 +298,8 @@ impl WireMessage {
             None => String::new(),
         };
 
-        // Create vector to store message to be delivered
-        let mut msg: Vec<Vec<u8>> = Vec::new();
-
-        // TODO: Add ZeroMQ socket identities here!
+        // Create vector to store message to be delivered; start with the socket identities, if any
+        let mut msg: Vec<Vec<u8>> = self.zmq_identities.clone();
 
         // Add <IDS|MSG> delimiter
         msg.push(MSG_DELIM.to_vec());
@@ -331,6 +338,7 @@ impl WireMessage {
             Err(err) => return Err(MessageError::CannotSerialize(err)),
         };
         Ok(Self {
+            zmq_identities: msg.zmq_identities.clone(),
             header: msg.header,
             parent_header: msg.parent_header,
             metadata: json!({}),
@@ -354,6 +362,7 @@ impl WireMessage {
             }
         };
         Ok(JupyterMessage {
+            zmq_identities: self.zmq_identities.clone(),
             header: self.header.clone(),
             parent_header: self.parent_header.clone(),
             content: content,
