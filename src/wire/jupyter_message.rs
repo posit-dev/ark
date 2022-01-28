@@ -5,6 +5,8 @@
  *
  */
 
+use crate::wire::execute_reply::ExecuteReply;
+use crate::wire::execute_request::ExecuteRequest;
 use crate::wire::header::JupyterHeader;
 use crate::wire::is_complete_reply::IsCompleteReply;
 use crate::wire::is_complete_request::IsCompleteRequest;
@@ -46,6 +48,8 @@ pub enum Message {
     KernelInfoReply(JupyterMessage<KernelInfoReply>),
     IsCompleteReply(JupyterMessage<IsCompleteReply>),
     IsCompleteRequest(JupyterMessage<IsCompleteRequest>),
+    ExecuteRequest(JupyterMessage<ExecuteRequest>),
+    ExecuteReply(JupyterMessage<ExecuteReply>),
 }
 
 impl Message {
@@ -62,6 +66,10 @@ impl Message {
             return Ok(Message::IsCompleteRequest(msg.to_message_type()?));
         } else if kind == IsCompleteReply::message_type() {
             return Ok(Message::IsCompleteReply(msg.to_message_type()?));
+        } else if kind == ExecuteRequest::message_type() {
+            return Ok(Message::ExecuteRequest(msg.to_message_type()?));
+        } else if kind == ExecuteReply::message_type() {
+            return Ok(Message::ExecuteReply(msg.to_message_type()?));
         }
         return Err(MessageError::UnknownType(kind));
     }
