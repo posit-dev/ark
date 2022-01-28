@@ -304,7 +304,7 @@ impl WireMessage {
         msg.append(&mut parts);
 
         // Deliver the message!
-        if let Err(err) = socket.send_multipart(&parts, 0) {
+        if let Err(err) = socket.send_multipart(&msg, 0) {
             return Err(MessageError::CannotSend(err));
         }
 
