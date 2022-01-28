@@ -4,6 +4,8 @@
 
 Experimental kernel for Jupyter and Myriac, written in Rust. 
 
+![image](https://user-images.githubusercontent.com/470418/151626974-52ac0047-0e98-494d-ad00-c0d293df696f.png)
+
 During the prototyping phase, this kernel will implement a trivial echo-based language. Later, it will be factored into a [Rust Crate](https://doc.rust-lang.org/book/ch07-01-packages-and-crates.html) library that has no language implementation at all, but provides the shared Jupyter functionality necessary to build Rust-based kernels for other languages. This crate will then be used as the basis for Python and R kernels. 
 
 ### Why not Xeus?
