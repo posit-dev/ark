@@ -16,16 +16,16 @@ Building in pure Rust dramatically simplifies the development environment and le
 
 ### Features
 
-[x] Jupyter protocol implementation via ZeroMQ
-[x] Type-safe Rust structures/enums for (subset of) Jupyter messages
-[x] Heartbeats
-[x] Shell socket (only)
-[x] Kernel info reply/request
+- [x] Jupyter protocol implementation via ZeroMQ
+- [x] Type-safe Rust structures/enums for (subset of) Jupyter messages
+- [x] Heartbeats
+- [x] Shell socket (only)
+- [x] Kernel info reply/request
 
 ### Up Next
 
-[ ] HMAC signatures on messages
-[ ] Simple "execution"
+- [ ] HMAC signatures on messages
+- [ ] Simple "execution"
 
 ### What's with the name?
 
