@@ -12,14 +12,29 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Serialize, Deserialize)]
 pub struct IsCompleteReply {
     /// The status of the code: one of Complete, Incomplete, Invalid, or Unknown
-    /// (TODO: make this an enum)
-    pub status: String,
+    pub status: IsComplete,
 
     /// Characters to use for indenting the next line (if incomplete)
     pub indent: String,
 }
 
-impl MessageType for IsCompleteRequest {
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IsComplete {
+    /// The submitted code is complete as written.
+    Complete,
+
+    /// The submitted code is not complete.
+    Incomplete,
+
+    /// The submitted code is invalid syntax.
+    Invalid,
+
+    /// The state of the code could not be determined.
+    Unknown,
+}
+
+impl MessageType for IsCompleteReply {
     fn message_type() -> String {
         String::from("is_complete_reply")
     }

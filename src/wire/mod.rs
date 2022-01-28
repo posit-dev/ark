@@ -7,6 +7,8 @@
 
 pub mod header;
 pub mod help_link;
+pub mod is_complete_reply;
+pub mod is_complete_request;
 pub mod jupyter_message;
 pub mod kernel_info_reply;
 pub mod kernel_info_request;

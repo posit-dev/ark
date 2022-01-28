@@ -200,8 +200,8 @@ impl WireMessage {
         Ok(Self {
             header: header,
             parent_header: parent,
-            metadata: WireMessage::parse_buffer(String::from("metadata"), &parts[2])?,
-            content: WireMessage::parse_buffer(String::from("content"), &parts[3])?,
+            metadata: WireMessage::parse_buffer(String::from("metadata"), &parts[3])?,
+            content: WireMessage::parse_buffer(String::from("content"), &parts[4])?,
         })
     }
 

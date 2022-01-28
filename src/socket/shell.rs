@@ -5,6 +5,9 @@
  *
  */
 
+use crate::wire::is_complete_reply::IsComplete;
+use crate::wire::is_complete_reply::IsCompleteReply;
+use crate::wire::is_complete_request::IsCompleteRequest;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
 use crate::wire::kernel_info_reply::KernelInfoReply;
@@ -49,7 +52,21 @@ impl Shell {
     fn process_message(msg: Message, socket: &zmq::Socket) {
         match msg {
             Message::KernelInfoRequest(req) => Shell::handle_info_request(req, socket),
+            Message::IsCompleteRequest(req) => Shell::handle_is_complete_request(req, socket),
             _ => warn!("Unexpected message arrived on shell socket: {:?}", msg),
+        }
+    }
+
+    fn handle_is_complete_request(req: JupyterMessage<IsCompleteRequest>, socket: &zmq::Socket) {
+        debug!("Received request to test code for completeness: {:?}", req);
+        // In this echo example, the code is always complete!
+        let reply = IsCompleteReply {
+            status: IsComplete::Complete,
+            indent: String::from(""),
+        };
+        let msg = req.create_reply(reply);
+        if let Err(err) = msg.send(socket, None) {
+            warn!("Could not send complete reply: {}", err)
         }
     }
 
