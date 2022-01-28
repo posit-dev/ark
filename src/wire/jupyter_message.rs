@@ -6,6 +6,8 @@
  */
 
 use crate::wire::header::JupyterHeader;
+use crate::wire::is_complete_reply::IsCompleteReply;
+use crate::wire::is_complete_request::IsCompleteRequest;
 use crate::wire::kernel_info_reply::KernelInfoReply;
 use crate::wire::kernel_info_request::KernelInfoRequest;
 use crate::wire::wire_message::MessageError;
@@ -39,6 +41,8 @@ pub trait MessageType {
 pub enum Message {
     KernelInfoRequest(JupyterMessage<KernelInfoRequest>),
     KernelInfoReply(JupyterMessage<KernelInfoReply>),
+    IsCompleteReply(JupyterMessage<IsCompleteReply>),
+    IsCompleteRequest(JupyterMessage<IsCompleteRequest>),
 }
 
 impl Message {
@@ -51,6 +55,10 @@ impl Message {
             return Ok(Message::KernelInfoRequest(msg.to_message_type()?));
         } else if kind == KernelInfoReply::message_type() {
             return Ok(Message::KernelInfoReply(msg.to_message_type()?));
+        } else if kind == IsCompleteRequest::message_type() {
+            return Ok(Message::IsCompleteRequest(msg.to_message_type()?));
+        } else if kind == IsCompleteReply::message_type() {
+            return Ok(Message::IsCompleteReply(msg.to_message_type()?));
         }
         return Err(MessageError::UnknownType(kind));
     }
