@@ -5,6 +5,8 @@
  *
  */
 
+use crate::wire::execute_reply::ExecuteReply;
+use crate::wire::execute_request::ExecuteRequest;
 use crate::wire::is_complete_reply::IsComplete;
 use crate::wire::is_complete_reply::IsCompleteReply;
 use crate::wire::is_complete_request::IsCompleteRequest;
@@ -54,7 +56,21 @@ impl Shell {
         match msg {
             Message::KernelInfoRequest(req) => Shell::handle_info_request(req, socket),
             Message::IsCompleteRequest(req) => Shell::handle_is_complete_request(req, socket),
+            Message::ExecuteRequest(req) => Shell::handle_execute_request(req, socket),
             _ => warn!("Unexpected message arrived on shell socket: {:?}", msg),
+        }
+    }
+
+    fn handle_execute_request(req: JupyterMessage<ExecuteRequest>, socket: &zmq::Socket) {
+        debug!("Received execution request {:?}", req);
+        let reply = ExecuteReply {
+            status: Status::Ok,
+            execution_count: 0, // TODO: Increment counter
+            user_expressions: serde_json::Value::Null,
+        };
+        let msg = req.create_reply(reply);
+        if let Err(err) = msg.send(socket, None) {
+            warn!("Could not send complete reply: {}", err)
         }
     }
 
