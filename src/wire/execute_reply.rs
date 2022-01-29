@@ -20,7 +20,7 @@ pub struct ExecuteReply {
     pub execution_count: u32,
 
     /// Results for user expressions
-    user_expressions: Value,
+    pub user_expressions: Value,
 }
 
 impl MessageType for ExecuteReply {
