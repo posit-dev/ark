@@ -16,7 +16,7 @@ use crate::wire::wire_message::MessageError;
 use crate::wire::wire_message::WireMessage;
 use hmac::Hmac;
 use log::trace;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 
 /// Represents a Jupyter message
@@ -50,6 +50,14 @@ pub enum Message {
     IsCompleteRequest(JupyterMessage<IsCompleteRequest>),
     ExecuteRequest(JupyterMessage<ExecuteRequest>),
     ExecuteReply(JupyterMessage<ExecuteReply>),
+}
+
+/// Represents status returned from kernel inside messages.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Status {
+    Ok,
+    Error,
 }
 
 impl Message {

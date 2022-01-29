@@ -6,6 +6,7 @@
  */
 
 use crate::wire::jupyter_message::MessageType;
+use crate::wire::jupyter_message::Status;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -13,7 +14,7 @@ use serde_json::Value;
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ExecuteReply {
     /// The status of the request
-    pub status: String,
+    pub status: Status,
 
     /// Monotonically increasing execution counter
     pub execution_count: u32,
