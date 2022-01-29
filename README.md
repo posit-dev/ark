@@ -18,16 +18,21 @@ Building in pure Rust dramatically simplifies the development environment and le
 
 ### Features
 
-- [x] Jupyter protocol implementation via ZeroMQ
-- [x] Type-safe Rust structures/enums for (subset of) Jupyter messages
-- [x] Heartbeats
-- [x] Shell socket (only)
-- [x] Kernel info reply/request
+- [X] Jupyter protocol implementation via ZeroMQ
+- [X] Type-safe Rust structures/enums for (subset of) Jupyter messages
+- [X] Heartbeats
+- [X] Shell socket (only)
+- [X] Replies to kernel info request
+- [X] Replies to execution request
 
 ### Up Next
 
-- [ ] HMAC signatures on messages
-- [ ] Simple "execution"
+- [ ] Execution counter -- needs state inside shell, requires some research on lifetimes since currently messages are all processed statelessly
+- [ ] Errors forwarded to client/front end
+- [ ] Handle completion requests/replies
+- [ ] One-shot message replies
+- [ ] HMAC signatures on messages (currently ignored)
+- [ ] Simple "execution" that echoes input
 
 ### What's with the name?
 
