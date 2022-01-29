@@ -10,6 +10,7 @@ use crate::wire::is_complete_reply::IsCompleteReply;
 use crate::wire::is_complete_request::IsCompleteRequest;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
+use crate::wire::jupyter_message::Status;
 use crate::wire::kernel_info_reply::KernelInfoReply;
 use crate::wire::kernel_info_request::KernelInfoRequest;
 use crate::wire::language_info::LanguageInfo;
@@ -82,7 +83,7 @@ impl Shell {
             nbconvert_exporter: String::new(),
         };
         let reply = KernelInfoReply {
-            status: String::from("ok"),
+            status: Status::Ok,
             banner: format!("Amalthea {}", env!("CARGO_PKG_VERSION")),
             debugger: false,
             protocol_version: String::from("5.0"),

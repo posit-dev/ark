@@ -7,6 +7,7 @@
 
 use crate::wire::help_link::HelpLink;
 use crate::wire::jupyter_message::MessageType;
+use crate::wire::jupyter_message::Status;
 use crate::wire::language_info::LanguageInfo;
 use serde::{Deserialize, Serialize};
 
@@ -14,7 +15,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Serialize, Deserialize)]
 pub struct KernelInfoReply {
     /// The execution status ("ok" or "error")
-    pub status: String,
+    pub status: Status,
 
     /// Version of messaging protocol
     pub protocol_version: String,
