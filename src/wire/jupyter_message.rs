@@ -120,6 +120,16 @@ where
         Ok(())
     }
 
+    pub fn send_reply<R: MessageType + Serialize + std::fmt::Debug>(
+        &self,
+        content: R,
+        socket: &zmq::Socket,
+        hmac: Option<Hmac<Sha256>>,
+    ) -> Result<(), MessageError> {
+        let msg = self.create_reply(content);
+        msg.send(socket, hmac)
+    }
+
     pub fn create_reply<R: MessageType + Serialize>(&self, content: R) -> JupyterMessage<R> {
         JupyterMessage::<R> {
             zmq_identities: self.zmq_identities.clone(),
