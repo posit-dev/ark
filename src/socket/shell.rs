@@ -5,6 +5,8 @@
  *
  */
 
+use crate::wire::complete_reply::CompleteReply;
+use crate::wire::complete_request::CompleteRequest;
 use crate::wire::execute_reply::ExecuteReply;
 use crate::wire::execute_request::ExecuteRequest;
 use crate::wire::is_complete_reply::IsComplete;
@@ -60,6 +62,7 @@ impl Shell {
             Message::ExecuteRequest(req) => {
                 Shell::handle_execute_request(req, socket, execution_count)
             }
+            Message::CompleteRequest(req) => Shell::handle_complete_request(req, socket),
             _ => warn!("Unexpected message arrived on shell socket: {:?}", msg),
         }
     }
@@ -115,6 +118,21 @@ impl Shell {
             language_info: info,
         };
 
+        let msg = req.create_reply(reply);
+        if let Err(err) = msg.send(socket, None) {
+            warn!("Could not send kernel info reply: {}", err)
+        }
+    }
+
+    fn handle_complete_request(req: JupyterMessage<CompleteRequest>, socket: &zmq::Socket) {
+        debug!("Received request to complete code: {:?}", req);
+        let reply = CompleteReply {
+            matches: Vec::new(),
+            status: Status::Ok,
+            cursor_start: 0,
+            cursor_end: 0,
+            metadata: serde_json::Value::Null,
+        };
         let msg = req.create_reply(reply);
         if let Err(err) = msg.send(socket, None) {
             warn!("Could not send kernel info reply: {}", err)
