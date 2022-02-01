@@ -5,6 +5,7 @@
  *
  */
 
+use crate::error::Error;
 use crate::wire::complete_reply::CompleteReply;
 use crate::wire::complete_request::CompleteRequest;
 use crate::wire::execute_reply::ExecuteReply;
@@ -14,7 +15,6 @@ use crate::wire::is_complete_reply::IsCompleteReply;
 use crate::wire::is_complete_request::IsCompleteRequest;
 use crate::wire::kernel_info_reply::KernelInfoReply;
 use crate::wire::kernel_info_request::KernelInfoRequest;
-use crate::wire::wire_message::MessageError;
 use crate::wire::wire_message::WireMessage;
 use hmac::Hmac;
 use log::trace;
@@ -73,7 +73,7 @@ impl Message {
     /// Converts from a wire message to a Jupyter message by examining the message
     /// type and attempting to coerce the content into the appropriate
     /// structure.
-    pub fn to_jupyter_message(msg: WireMessage) -> Result<Message, MessageError> {
+    pub fn to_jupyter_message(msg: WireMessage) -> Result<Message, Error> {
         let kind = msg.header.msg_type.clone();
         if kind == KernelInfoRequest::message_type() {
             return Ok(Message::KernelInfoRequest(msg.to_message_type()?));
@@ -92,7 +92,7 @@ impl Message {
         } else if kind == CompleteReply::message_type() {
             return Ok(Message::CompleteReply(msg.to_message_type()?));
         }
-        return Err(MessageError::UnknownType(kind));
+        return Err(Error::UnknownMessageType(kind));
     }
 }
 
@@ -114,11 +114,7 @@ where
         }
     }
 
-    pub fn send(
-        self,
-        socket: &zmq::Socket,
-        hmac: Option<Hmac<Sha256>>,
-    ) -> Result<(), MessageError> {
+    pub fn send(self, socket: &zmq::Socket, hmac: Option<Hmac<Sha256>>) -> Result<(), Error> {
         trace!("Sending Jupyter message to front end: {:?}", self);
         let msg = WireMessage::from_jupyter_message(self)?;
         msg.send(socket, hmac)?;
@@ -130,7 +126,7 @@ where
         content: R,
         socket: &zmq::Socket,
         hmac: Option<Hmac<Sha256>>,
-    ) -> Result<(), MessageError> {
+    ) -> Result<(), Error> {
         let msg = self.create_reply(content);
         msg.send(socket, hmac)
     }
