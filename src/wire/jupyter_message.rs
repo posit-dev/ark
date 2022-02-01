@@ -6,6 +6,7 @@
  */
 
 use crate::error::Error;
+use crate::socket::signed_socket::SignedSocket;
 use crate::wire::complete_reply::CompleteReply;
 use crate::wire::complete_request::CompleteRequest;
 use crate::wire::execute_reply::ExecuteReply;
@@ -16,10 +17,8 @@ use crate::wire::is_complete_request::IsCompleteRequest;
 use crate::wire::kernel_info_reply::KernelInfoReply;
 use crate::wire::kernel_info_request::KernelInfoRequest;
 use crate::wire::wire_message::WireMessage;
-use hmac::Hmac;
 use log::trace;
 use serde::{Deserialize, Serialize};
-use sha2::Sha256;
 
 /// Represents a Jupyter message
 #[derive(Debug)]
@@ -114,21 +113,20 @@ where
         }
     }
 
-    pub fn send(self, socket: &zmq::Socket, hmac: Option<Hmac<Sha256>>) -> Result<(), Error> {
+    pub fn send(self, socket: &SignedSocket) -> Result<(), Error> {
         trace!("Sending Jupyter message to front end: {:?}", self);
         let msg = WireMessage::from_jupyter_message(self)?;
-        msg.send(socket, hmac)?;
+        msg.send(socket)?;
         Ok(())
     }
 
     pub fn send_reply<R: ProtocolMessage>(
         &self,
         content: R,
-        socket: &zmq::Socket,
-        hmac: Option<Hmac<Sha256>>,
+        socket: &SignedSocket,
     ) -> Result<(), Error> {
         let msg = self.create_reply(content);
-        msg.send(socket, hmac)
+        msg.send(socket)
     }
 
     pub fn create_reply<R: ProtocolMessage>(&self, content: R) -> JupyterMessage<R> {
