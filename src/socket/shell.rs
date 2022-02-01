@@ -79,8 +79,7 @@ impl Shell {
             execution_count: *execution_count,
             user_expressions: serde_json::Value::Null,
         };
-        let msg = req.create_reply(reply);
-        if let Err(err) = msg.send(socket, None) {
+        if let Err(err) = req.send_reply(reply, socket, None) {
             warn!("Could not send complete reply: {}", err)
         }
     }
@@ -92,8 +91,7 @@ impl Shell {
             status: IsComplete::Complete,
             indent: String::from(""),
         };
-        let msg = req.create_reply(reply);
-        if let Err(err) = msg.send(socket, None) {
+        if let Err(err) = req.send_reply(reply, socket, None) {
             warn!("Could not send complete reply: {}", err)
         }
     }
@@ -118,8 +116,7 @@ impl Shell {
             language_info: info,
         };
 
-        let msg = req.create_reply(reply);
-        if let Err(err) = msg.send(socket, None) {
+        if let Err(err) = req.send_reply(reply, socket, None) {
             warn!("Could not send kernel info reply: {}", err)
         }
     }
@@ -133,8 +130,7 @@ impl Shell {
             cursor_end: 0,
             metadata: serde_json::Value::Null,
         };
-        let msg = req.create_reply(reply);
-        if let Err(err) = msg.send(socket, None) {
+        if let Err(err) = req.send_reply(reply, socket, None) {
             warn!("Could not send kernel info reply: {}", err)
         }
     }
