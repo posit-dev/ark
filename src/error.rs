@@ -26,6 +26,7 @@ pub enum Error {
     JsonSerializeSpecFailed(serde_json::Error),
     CreateSpecFailed(std::io::Error),
     WriteSpecFailed(std::io::Error),
+    HmacKeyInvalid(String, crypto_common::InvalidLength),
 }
 
 impl fmt::Display for Error {
@@ -108,6 +109,15 @@ impl fmt::Display for Error {
             }
             Error::WriteSpecFailed(err) => {
                 write!(f, "Could not write kernel spec file: {}", err)
+            }
+            Error::HmacKeyInvalid(str, err) => {
+                write!(
+                    f,
+                    "The HMAC supplied signing key '{}' ({} bytes) cannot be used: {}",
+                    str,
+                    str.len(),
+                    err
+                )
             }
         }
     }
