@@ -6,6 +6,7 @@
  */
 
 mod connection_file;
+mod error;
 mod kernel;
 mod kernel_dirs;
 mod kernel_spec;

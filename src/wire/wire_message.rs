@@ -5,6 +5,7 @@
  *
  */
 
+use crate::error::Error;
 use crate::wire::header::JupyterHeader;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::MessageType;
@@ -17,7 +18,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use serde_json::value::Value;
 use sha2::Sha256;
-use std::fmt;
 
 /// This delimiter separates the ZeroMQ socket identities (IDS) from the message
 /// body payload (MSG).
@@ -45,107 +45,21 @@ pub struct WireMessage {
     pub content: Value,
 }
 
-#[derive(Debug)]
-pub enum MessageError {
-    SocketRead(zmq::Error),
-    MissingDelimiter,
-    InsufficientParts(usize, usize),
-    InvalidHmac(Vec<u8>, hex::FromHexError),
-    BadSignature(Vec<u8>, hmac::digest::MacError),
-    Utf8Error(String, Vec<u8>, std::str::Utf8Error),
-    JsonParseError(String, String, serde_json::Error),
-    InvalidPart(String, serde_json::Value, serde_json::Error),
-    InvalidMessage(String, serde_json::Value, serde_json::Error),
-    CannotSerialize(serde_json::Error),
-    CannotSend(zmq::Error),
-    UnknownType(String),
-}
-
-impl fmt::Display for MessageError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            MessageError::SocketRead(err) => {
-                write!(f, "Could not read ZeroMQ message from socket: {}", err)
-            }
-            MessageError::MissingDelimiter => {
-                write!(
-                    f,
-                    "ZeroMQ message did not include expected <IDS|MSG> delimiter"
-                )
-            }
-            MessageError::InsufficientParts(found, expected) => {
-                write!(
-                    f,
-                    "ZeroMQ message did not contain sufficient parts (found {}, expected {})",
-                    found, expected
-                )
-            }
-            MessageError::InvalidHmac(data, err) => {
-                write!(
-                    f,
-                    "ZeroMQ message HMAC signature {:?} is not a valid hexadecimal value: {}",
-                    data, err
-                )
-            }
-            MessageError::BadSignature(sig, err) => {
-                write!(
-                    f,
-                    "ZeroMQ message HMAC signature {:?} is incorrect: {}",
-                    sig, err
-                )
-            }
-            MessageError::Utf8Error(part, data, err) => {
-                write!(
-                    f,
-                    "Message part '{}' was not valid UTF-8: {} (raw: {:?})",
-                    part, err, data
-                )
-            }
-            MessageError::JsonParseError(part, str, err) => {
-                write!(
-                    f,
-                    "Message part '{}' is invalid JSON: {} (raw: {})",
-                    part, err, str
-                )
-            }
-            MessageError::InvalidPart(part, json, err) => {
-                write!(
-                    f,
-                    "Message part '{}' does not match schema: {} (raw: {})",
-                    part, err, json
-                )
-            }
-            MessageError::InvalidMessage(kind, json, err) => {
-                write!(f, "Invalid '{}' message: {} (raw: {})", kind, err, json)
-            }
-            MessageError::UnknownType(kind) => {
-                write!(f, "Unknown message type '{}'", kind)
-            }
-            MessageError::CannotSerialize(err) => {
-                write!(f, "Cannot serialize message: {}", err)
-            }
-            MessageError::CannotSend(err) => {
-                write!(f, "Cannot send message: {}", err)
-            }
-        }
-    }
-}
-
 impl WireMessage {
     pub fn read_from_socket(
         socket: &zmq::Socket,
         hmac_key: Option<Hmac<Sha256>>,
-    ) -> Result<WireMessage, MessageError> {
+    ) -> Result<WireMessage, Error> {
         match socket.recv_multipart(0) {
             Ok(bufs) => Self::from_buffers(bufs, hmac_key),
-            Err(err) => Err(MessageError::SocketRead(err)),
+            Err(err) => Err(Error::SocketRead(err)),
         }
     }
     /// Parse a Jupyter message from an array of buffers (from a ZeroMQ message)
     pub fn from_buffers(
         mut bufs: Vec<Vec<u8>>,
         hmac_key: Option<Hmac<Sha256>>,
-    ) -> Result<WireMessage, MessageError> {
+    ) -> Result<WireMessage, Error> {
         let mut iter = bufs.iter();
 
         // Find the position of the <IDS|MSG> delimiter in the message, which
@@ -153,7 +67,7 @@ impl WireMessage {
         // (MSG).
         let pos = match iter.position(|buf| &buf[..] == MSG_DELIM) {
             Some(p) => p,
-            None => return Err(MessageError::MissingDelimiter),
+            None => return Err(Error::MissingDelimiter),
         };
 
         // Form a collection of the remaining parts, and remove the delimiter.
@@ -162,7 +76,7 @@ impl WireMessage {
 
         // We expect to have at least 5 parts left (the HMAC + 4 message frames)
         if parts.len() < 4 {
-            return Err(MessageError::InsufficientParts(parts.len(), 4));
+            return Err(Error::InsufficientParts(parts.len(), 4));
         }
 
         // Consume and validate the HMAC signature.
@@ -172,13 +86,7 @@ impl WireMessage {
         let header_val = WireMessage::parse_buffer(String::from("header"), &parts[1])?;
         let header: JupyterHeader = match serde_json::from_value(header_val.clone()) {
             Ok(h) => h,
-            Err(err) => {
-                return Err(MessageError::InvalidPart(
-                    String::from("header"),
-                    header_val,
-                    err,
-                ))
-            }
+            Err(err) => return Err(Error::InvalidPart(String::from("header"), header_val, err)),
         };
 
         // Parse the parent header.
@@ -196,7 +104,7 @@ impl WireMessage {
                 match serde_json::from_value(parent_val.clone()) {
                     Ok(h) => Some(h),
                     Err(err) => {
-                        return Err(MessageError::InvalidPart(
+                        return Err(Error::InvalidPart(
                             String::from("parent header"),
                             parent_val,
                             err,
@@ -216,10 +124,7 @@ impl WireMessage {
     }
 
     /// Validates the message's HMAC signature
-    fn validate_hmac(
-        bufs: &Vec<Vec<u8>>,
-        hmac_key: Option<Hmac<Sha256>>,
-    ) -> Result<(), MessageError> {
+    fn validate_hmac(bufs: &Vec<Vec<u8>>, hmac_key: Option<Hmac<Sha256>>) -> Result<(), Error> {
         use hmac::Mac;
 
         // The hmac signature is the first value
@@ -236,7 +141,7 @@ impl WireMessage {
         // Decode the hexadecimal representation of the signature
         let decoded = match hex::decode(&data) {
             Ok(decoded_bytes) => decoded_bytes,
-            Err(error) => return Err(MessageError::InvalidHmac(data.to_vec(), error)),
+            Err(error) => return Err(Error::InvalidHmac(data.to_vec(), error)),
         };
 
         // Compute the real signature according to our own key
@@ -252,38 +157,34 @@ impl WireMessage {
         }
         // Verify the signature
         if let Err(err) = hmac_validator.verify(GenericArray::from_slice(&decoded)) {
-            return Err(MessageError::BadSignature(decoded, err));
+            return Err(Error::BadSignature(decoded, err));
         }
 
         // Signature is valid
         Ok(())
     }
 
-    fn parse_buffer(desc: String, buf: &[u8]) -> Result<serde_json::Value, MessageError> {
+    fn parse_buffer(desc: String, buf: &[u8]) -> Result<serde_json::Value, Error> {
         // Convert the raw byte sequence from the ZeroMQ message into UTF-8
         let str = match std::str::from_utf8(&buf) {
             Ok(s) => s,
-            Err(err) => return Err(MessageError::Utf8Error(desc, buf.to_vec(), err)),
+            Err(err) => return Err(Error::Utf8Error(desc, buf.to_vec(), err)),
         };
 
         // Parse the UTF-8 string as JSON
         let val: serde_json::Value = match serde_json::from_str(str) {
             Ok(v) => v,
-            Err(err) => return Err(MessageError::JsonParseError(desc, String::from(str), err)),
+            Err(err) => return Err(Error::JsonParseError(desc, String::from(str), err)),
         };
 
         Ok(val)
     }
 
-    pub fn send(
-        &self,
-        socket: &zmq::Socket,
-        hmac_key: Option<Hmac<Sha256>>,
-    ) -> Result<(), MessageError> {
+    pub fn send(&self, socket: &zmq::Socket, hmac_key: Option<Hmac<Sha256>>) -> Result<(), Error> {
         // Serialize JSON values into byte parts in preparation for transmission
         let mut parts: Vec<Vec<u8>> = match self.to_raw_parts() {
             Ok(v) => v,
-            Err(err) => return Err(MessageError::CannotSerialize(err)),
+            Err(err) => return Err(Error::CannotSerialize(err)),
         };
 
         // Compute HMAC signature
@@ -313,7 +214,7 @@ impl WireMessage {
 
         // Deliver the message!
         if let Err(err) = socket.send_multipart(&msg, 0) {
-            return Err(MessageError::CannotSend(err));
+            return Err(Error::CannotSend(err));
         }
 
         // Successful delivery
@@ -330,13 +231,13 @@ impl WireMessage {
         Ok(parts)
     }
 
-    pub fn from_jupyter_message<T>(msg: JupyterMessage<T>) -> Result<Self, MessageError>
+    pub fn from_jupyter_message<T>(msg: JupyterMessage<T>) -> Result<Self, Error>
     where
         T: ProtocolMessage,
     {
         let content = match serde_json::to_value(msg.content) {
             Ok(val) => val,
-            Err(err) => return Err(MessageError::CannotSerialize(err)),
+            Err(err) => return Err(Error::CannotSerialize(err)),
         };
         Ok(Self {
             zmq_identities: msg.zmq_identities.clone(),
@@ -348,14 +249,14 @@ impl WireMessage {
     }
 
     /// Converts this wire message to a Jupyter message of type T
-    pub fn to_message_type<T>(&self) -> Result<JupyterMessage<T>, MessageError>
+    pub fn to_message_type<T>(&self) -> Result<JupyterMessage<T>, Error>
     where
         T: MessageType + DeserializeOwned,
     {
         let content = match serde_json::from_value(self.content.clone()) {
             Ok(val) => val,
             Err(err) => {
-                return Err(MessageError::InvalidMessage(
+                return Err(Error::InvalidMessage(
                     T::message_type(),
                     self.content.clone(),
                     err,
