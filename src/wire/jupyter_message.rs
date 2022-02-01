@@ -43,6 +43,11 @@ pub trait MessageType {
     fn message_type() -> String;
 }
 
+/// Convenience trait for grouping traits that must be present on all Jupyter
+/// protocol messages
+pub trait ProtocolMessage: MessageType + Serialize + std::fmt::Debug {}
+impl<T> ProtocolMessage for T where T: MessageType + Serialize + std::fmt::Debug {}
+
 /// List of all known/implemented messages
 #[derive(Debug)]
 pub enum Message {
@@ -93,7 +98,7 @@ impl Message {
 
 impl<T> JupyterMessage<T>
 where
-    T: Serialize + MessageType + std::fmt::Debug,
+    T: ProtocolMessage,
 {
     pub fn create(
         from: T,
@@ -120,7 +125,7 @@ where
         Ok(())
     }
 
-    pub fn send_reply<R: MessageType + Serialize + std::fmt::Debug>(
+    pub fn send_reply<R: ProtocolMessage>(
         &self,
         content: R,
         socket: &zmq::Socket,
@@ -130,7 +135,7 @@ where
         msg.send(socket, hmac)
     }
 
-    pub fn create_reply<R: MessageType + Serialize>(&self, content: R) -> JupyterMessage<R> {
+    pub fn create_reply<R: ProtocolMessage>(&self, content: R) -> JupyterMessage<R> {
         JupyterMessage::<R> {
             zmq_identities: self.zmq_identities.clone(),
             header: JupyterHeader::create(
