@@ -27,11 +27,12 @@ impl Shell {
         let socket = ctx.socket(zmq::ROUTER)?;
         socket.bind(&endpoint)?;
         trace!("Binding to shell socket at {}", endpoint);
-        thread::spawn(move || Self::listen(&socket));
+        thread::spawn(move || Shell::listen(&socket));
         Ok(())
     }
 
     fn listen(socket: &zmq::Socket) {
+        let mut execution_count: u32 = 0;
         loop {
             debug!("Listening for shell messages");
             let msg = match WireMessage::read_from_socket(socket, None) {
@@ -48,24 +49,31 @@ impl Shell {
                     continue;
                 }
             };
-            Shell::process_message(parsed, socket);
+            Shell::process_message(parsed, socket, &mut execution_count);
         }
     }
 
-    fn process_message(msg: Message, socket: &zmq::Socket) {
+    fn process_message(msg: Message, socket: &zmq::Socket, execution_count: &mut u32) {
         match msg {
             Message::KernelInfoRequest(req) => Shell::handle_info_request(req, socket),
             Message::IsCompleteRequest(req) => Shell::handle_is_complete_request(req, socket),
-            Message::ExecuteRequest(req) => Shell::handle_execute_request(req, socket),
+            Message::ExecuteRequest(req) => {
+                Shell::handle_execute_request(req, socket, execution_count)
+            }
             _ => warn!("Unexpected message arrived on shell socket: {:?}", msg),
         }
     }
 
-    fn handle_execute_request(req: JupyterMessage<ExecuteRequest>, socket: &zmq::Socket) {
+    fn handle_execute_request(
+        req: JupyterMessage<ExecuteRequest>,
+        socket: &zmq::Socket,
+        execution_count: &mut u32,
+    ) {
+        *execution_count = *execution_count + 1;
         debug!("Received execution request {:?}", req);
         let reply = ExecuteReply {
             status: Status::Ok,
-            execution_count: 0, // TODO: Increment counter
+            execution_count: *execution_count,
             user_expressions: serde_json::Value::Null,
         };
         let msg = req.create_reply(reply);
