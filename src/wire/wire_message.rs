@@ -6,6 +6,7 @@
  */
 
 use crate::error::Error;
+use crate::socket::signed_socket::SignedSocket;
 use crate::wire::header::JupyterHeader;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::MessageType;
@@ -46,19 +47,16 @@ pub struct WireMessage {
 }
 
 impl WireMessage {
-    pub fn read_from_socket(
-        socket: &zmq::Socket,
-        hmac_key: Option<Hmac<Sha256>>,
-    ) -> Result<WireMessage, Error> {
-        match socket.recv_multipart(0) {
-            Ok(bufs) => Self::from_buffers(bufs, hmac_key),
+    pub fn read_from_socket(socket: &SignedSocket) -> Result<WireMessage, Error> {
+        match socket.socket.recv_multipart(0) {
+            Ok(bufs) => Self::from_buffers(bufs, &socket.hmac),
             Err(err) => Err(Error::SocketRead(err)),
         }
     }
     /// Parse a Jupyter message from an array of buffers (from a ZeroMQ message)
     pub fn from_buffers(
         mut bufs: Vec<Vec<u8>>,
-        hmac_key: Option<Hmac<Sha256>>,
+        hmac_key: &Option<Hmac<Sha256>>,
     ) -> Result<WireMessage, Error> {
         let mut iter = bufs.iter();
 
@@ -124,7 +122,7 @@ impl WireMessage {
     }
 
     /// Validates the message's HMAC signature
-    fn validate_hmac(bufs: &Vec<Vec<u8>>, hmac_key: Option<Hmac<Sha256>>) -> Result<(), Error> {
+    fn validate_hmac(bufs: &Vec<Vec<u8>>, hmac_key: &Option<Hmac<Sha256>>) -> Result<(), Error> {
         use hmac::Mac;
 
         // The hmac signature is the first value
@@ -180,7 +178,7 @@ impl WireMessage {
         Ok(val)
     }
 
-    pub fn send(&self, socket: &zmq::Socket, hmac_key: Option<Hmac<Sha256>>) -> Result<(), Error> {
+    pub fn send(&self, socket: &SignedSocket) -> Result<(), Error> {
         // Serialize JSON values into byte parts in preparation for transmission
         let mut parts: Vec<Vec<u8>> = match self.to_raw_parts() {
             Ok(v) => v,
@@ -188,7 +186,7 @@ impl WireMessage {
         };
 
         // Compute HMAC signature
-        let hmac = match hmac_key {
+        let hmac = match &socket.hmac {
             Some(key) => {
                 use hmac::Mac;
                 let mut sig = key.clone();
@@ -213,7 +211,7 @@ impl WireMessage {
         msg.append(&mut parts);
 
         // Deliver the message!
-        if let Err(err) = socket.send_multipart(&msg, 0) {
+        if let Err(err) = socket.socket.send_multipart(&msg, 0) {
             return Err(Error::CannotSend(err));
         }
 

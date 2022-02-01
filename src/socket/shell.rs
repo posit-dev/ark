@@ -5,6 +5,7 @@
  *
  */
 
+use crate::socket::signed_socket::SignedSocket;
 use crate::wire::complete_reply::CompleteReply;
 use crate::wire::complete_request::CompleteRequest;
 use crate::wire::execute_reply::ExecuteReply;
@@ -19,25 +20,37 @@ use crate::wire::kernel_info_reply::KernelInfoReply;
 use crate::wire::kernel_info_request::KernelInfoRequest;
 use crate::wire::language_info::LanguageInfo;
 use crate::wire::wire_message::WireMessage;
+use hmac::Hmac;
 use log::{debug, trace, warn};
+use sha2::Sha256;
 use std::thread;
 
 pub struct Shell {}
 
 impl Shell {
-    pub fn connect(&self, ctx: &zmq::Context, endpoint: String) -> Result<(), zmq::Error> {
+    pub fn connect(
+        &self,
+        ctx: &zmq::Context,
+        hmac: Option<Hmac<Sha256>>,
+        endpoint: String,
+    ) -> Result<(), zmq::Error> {
         let socket = ctx.socket(zmq::ROUTER)?;
         socket.bind(&endpoint)?;
         trace!("Binding to shell socket at {}", endpoint);
-        thread::spawn(move || Shell::listen(&socket));
+        thread::spawn(move || {
+            Shell::listen(SignedSocket {
+                socket: socket,
+                hmac: hmac,
+            })
+        });
         Ok(())
     }
 
-    fn listen(socket: &zmq::Socket) {
+    fn listen(socket: SignedSocket) {
         let mut execution_count: u32 = 0;
         loop {
             debug!("Listening for shell messages");
-            let msg = match WireMessage::read_from_socket(socket, None) {
+            let msg = match WireMessage::read_from_socket(&socket) {
                 Ok(msg) => msg,
                 Err(err) => {
                     warn!("Error reading shell message. {}", err);
@@ -51,11 +64,11 @@ impl Shell {
                     continue;
                 }
             };
-            Shell::process_message(parsed, socket, &mut execution_count);
+            Shell::process_message(parsed, &socket, &mut execution_count);
         }
     }
 
-    fn process_message(msg: Message, socket: &zmq::Socket, execution_count: &mut u32) {
+    fn process_message(msg: Message, socket: &SignedSocket, execution_count: &mut u32) {
         match msg {
             Message::KernelInfoRequest(req) => Shell::handle_info_request(req, socket),
             Message::IsCompleteRequest(req) => Shell::handle_is_complete_request(req, socket),
@@ -69,7 +82,7 @@ impl Shell {
 
     fn handle_execute_request(
         req: JupyterMessage<ExecuteRequest>,
-        socket: &zmq::Socket,
+        socket: &SignedSocket,
         execution_count: &mut u32,
     ) {
         *execution_count = *execution_count + 1;
@@ -79,24 +92,24 @@ impl Shell {
             execution_count: *execution_count,
             user_expressions: serde_json::Value::Null,
         };
-        if let Err(err) = req.send_reply(reply, socket, None) {
+        if let Err(err) = req.send_reply(reply, socket) {
             warn!("Could not send complete reply: {}", err)
         }
     }
 
-    fn handle_is_complete_request(req: JupyterMessage<IsCompleteRequest>, socket: &zmq::Socket) {
+    fn handle_is_complete_request(req: JupyterMessage<IsCompleteRequest>, socket: &SignedSocket) {
         debug!("Received request to test code for completeness: {:?}", req);
         // In this echo example, the code is always complete!
         let reply = IsCompleteReply {
             status: IsComplete::Complete,
             indent: String::from(""),
         };
-        if let Err(err) = req.send_reply(reply, socket, None) {
+        if let Err(err) = req.send_reply(reply, socket) {
             warn!("Could not send complete reply: {}", err)
         }
     }
 
-    fn handle_info_request(req: JupyterMessage<KernelInfoRequest>, socket: &zmq::Socket) {
+    fn handle_info_request(req: JupyterMessage<KernelInfoRequest>, socket: &SignedSocket) {
         debug!("Received shell information request: {:?}", req);
         let info = LanguageInfo {
             name: String::from("Echo"),
@@ -116,12 +129,12 @@ impl Shell {
             language_info: info,
         };
 
-        if let Err(err) = req.send_reply(reply, socket, None) {
+        if let Err(err) = req.send_reply(reply, socket) {
             warn!("Could not send kernel info reply: {}", err)
         }
     }
 
-    fn handle_complete_request(req: JupyterMessage<CompleteRequest>, socket: &zmq::Socket) {
+    fn handle_complete_request(req: JupyterMessage<CompleteRequest>, socket: &SignedSocket) {
         debug!("Received request to complete code: {:?}", req);
         let reply = CompleteReply {
             matches: Vec::new(),
@@ -130,7 +143,7 @@ impl Shell {
             cursor_end: 0,
             metadata: serde_json::Value::Null,
         };
-        if let Err(err) = req.send_reply(reply, socket, None) {
+        if let Err(err) = req.send_reply(reply, socket) {
             warn!("Could not send kernel info reply: {}", err)
         }
     }
