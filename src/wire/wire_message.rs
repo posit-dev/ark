@@ -8,6 +8,7 @@
 use crate::wire::header::JupyterHeader;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::MessageType;
+use crate::wire::jupyter_message::ProtocolMessage;
 use generic_array::GenericArray;
 use hmac::Hmac;
 use log::trace;
@@ -331,7 +332,7 @@ impl WireMessage {
 
     pub fn from_jupyter_message<T>(msg: JupyterMessage<T>) -> Result<Self, MessageError>
     where
-        T: MessageType + Serialize,
+        T: ProtocolMessage,
     {
         let content = match serde_json::to_value(msg.content) {
             Ok(val) => val,
