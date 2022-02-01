@@ -16,3 +16,4 @@ serde_json = "1.0.59"
 sha2 = "0.10.1"
 uuid = { version = "0.8.2", features = ["v4"] }
 zmq = "0.9.2"
+crypto-common = "0.1.1"

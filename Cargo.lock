@@ -16,6 +16,7 @@ name = "amalthea"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "crypto-common",
  "dirs",
  "env_logger",
  "generic-array",
