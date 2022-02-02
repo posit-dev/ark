@@ -5,8 +5,7 @@
  *
  */
 
-use crate::error::Error;
-use hmac::{Hmac, Mac};
+use hmac::Hmac;
 use sha2::Sha256;
 
 /// Represents a socket that sends and receives messages that are optionally
