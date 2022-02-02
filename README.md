@@ -22,17 +22,20 @@ Building in pure Rust dramatically simplifies the development environment and le
 - [X] Type-safe Rust structures/enums for (subset of) Jupyter messages
 - [X] Heartbeats
 - [X] Shell socket (only)
-- [X] Replies to kernel info request
-- [X] Replies to execution request
+- [X] Replies to kernel info request (returns echo language)
+- [X] Replies to execution request (says okay, doesn't do anything)
+- [X] HMAC signature validation on messages
+- [X] Execution counter
+- [X] Handle completion requests/replies (currently returns nothing)
 
 ### Up Next
 
-- [ ] Execution counter -- needs state inside shell, requires some research on lifetimes since currently messages are all processed statelessly
+- [ ] Simple "execution" that echoes input (requires channels)
 - [ ] Errors forwarded to client/front end
-- [ ] Handle completion requests/replies
-- [ ] One-shot message replies
-- [ ] HMAC signatures on messages (currently ignored)
-- [ ] Simple "execution" that echoes input
+- [ ] Add iopub socket
+- [ ] Standard output & standard error forwarding
+- [ ] Refactor Echo language out into stubs to be implemented by other languages
+- [ ] Produce a crate instead of a binary with an entry point
 
 ### What's with the name?
 
