@@ -5,8 +5,7 @@
  *
  */
 
-use hmac::Hmac;
-use sha2::Sha256;
+use crate::session::Session;
 
 /// Represents a socket that sends and receives messages that are optionally
 /// signed with a SHA-256 HMAC.
@@ -14,6 +13,7 @@ pub struct SignedSocket {
     /// A ZeroMQ socket over which signed messages are to be sent/received
     pub socket: zmq::Socket,
 
-    /// The HMAC SHA-256 key, or None if the connection is to be unauthenticated
-    pub hmac: Option<Hmac<Sha256>>,
+    /// The Jupyter session information associated with the socket, including
+    /// the session ID and HMAC signing key
+    pub session: Session,
 }

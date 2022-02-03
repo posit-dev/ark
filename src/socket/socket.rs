@@ -6,12 +6,11 @@
  */
 
 use crate::error::Error;
+use crate::session::Session;
 use crate::socket::signed_socket::SignedSocket;
 use crate::wire::jupyter_message::Message;
 use crate::wire::wire_message::WireMessage;
-use hmac::Hmac;
 use log::{debug, trace, warn};
-use sha2::Sha256;
 use std::rc::Rc;
 use std::thread;
 
@@ -25,7 +24,7 @@ pub trait Socket {
 pub fn connect<T: Socket>(
     ctx: &zmq::Context,
     endpoint: String,
-    hmac: Option<Hmac<Sha256>>,
+    session: Session,
 ) -> Result<(), Error> {
     let socket = match ctx.socket(T::kind()) {
         Ok(s) => s,
@@ -38,7 +37,7 @@ pub fn connect<T: Socket>(
     thread::spawn(move || {
         let signed = Rc::new(SignedSocket {
             socket: socket,
-            hmac: hmac,
+            session: session,
         });
         let mut listener = T::create(signed.clone());
         listen(&mut listener, signed.clone());

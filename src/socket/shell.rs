@@ -21,6 +21,8 @@ use crate::wire::jupyter_message::Status;
 use crate::wire::kernel_info_reply::KernelInfoReply;
 use crate::wire::kernel_info_request::KernelInfoRequest;
 use crate::wire::language_info::LanguageInfo;
+use crate::wire::status::ExecutionState;
+use crate::wire::status::KernelStatus;
 use log::{debug, trace, warn};
 use std::rc::Rc;
 

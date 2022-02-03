@@ -49,7 +49,7 @@ pub struct WireMessage {
 impl WireMessage {
     pub fn read_from_socket(socket: &SignedSocket) -> Result<WireMessage, Error> {
         match socket.socket.recv_multipart(0) {
-            Ok(bufs) => Self::from_buffers(bufs, &socket.hmac),
+            Ok(bufs) => Self::from_buffers(bufs, &socket.session.hmac),
             Err(err) => Err(Error::SocketRead(err)),
         }
     }
@@ -187,7 +187,7 @@ impl WireMessage {
         };
 
         // Compute HMAC signature
-        let hmac = match &socket.hmac {
+        let hmac = match &socket.session.hmac {
             Some(key) => {
                 use hmac::Mac;
                 let mut sig = key.clone();
