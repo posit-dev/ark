@@ -53,6 +53,7 @@ impl WireMessage {
             Err(err) => Err(Error::SocketRead(err)),
         }
     }
+
     /// Parse a Jupyter message from an array of buffers (from a ZeroMQ message)
     pub fn from_buffers(
         mut bufs: Vec<Vec<u8>>,
