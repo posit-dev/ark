@@ -8,9 +8,11 @@
 use crate::error::Error;
 use crate::socket::signed_socket::SignedSocket;
 use crate::socket::socket::Socket;
+use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
 use crate::wire::status::ExecutionState;
 use crate::wire::status::KernelStatus;
+use log::warn;
 use std::rc::Rc;
 
 pub struct IOPub {
@@ -27,6 +29,16 @@ impl Socket for IOPub {
     }
 
     fn create(socket: Rc<SignedSocket>) -> Self {
+        if let Err(err) = JupyterMessage::<KernelStatus>::create(
+            KernelStatus {
+                execution_state: ExecutionState::Starting,
+            },
+            &socket.session,
+        )
+        .send(socket.as_ref())
+        {
+            warn!("Could not emit kernel's startup status. {}", err)
+        }
         Self { socket: socket }
     }
 

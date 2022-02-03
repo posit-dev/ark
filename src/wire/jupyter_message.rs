@@ -6,6 +6,7 @@
  */
 
 use crate::error::Error;
+use crate::session::Session;
 use crate::socket::signed_socket::SignedSocket;
 use crate::wire::complete_reply::CompleteReply;
 use crate::wire::complete_request::CompleteRequest;
@@ -110,6 +111,19 @@ where
         let msg = WireMessage::from_jupyter_message(self)?;
         msg.send(socket)?;
         Ok(())
+    }
+
+    pub fn create(content: T, session: &Session) -> JupyterMessage<T> {
+        JupyterMessage::<T> {
+            zmq_identities: Vec::new(),
+            header: JupyterHeader::create(
+                T::message_type(),
+                session.session_id.clone(),
+                session.username.clone(),
+            ),
+            parent_header: None,
+            content: content,
+        }
     }
 
     pub fn send_reply<R: ProtocolMessage>(
