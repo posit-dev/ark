@@ -40,7 +40,9 @@ pub fn connect<T: Socket>(
             session: session,
         });
         let mut listener = T::create(signed.clone());
-        listen(&mut listener, signed.clone());
+        if T::kind() == zmq::ROUTER {
+            listen(&mut listener, signed.clone());
+        }
     });
     Ok(())
 }
