@@ -31,7 +31,7 @@ pub struct Shell {
 
 impl Socket for Shell {
     fn name() -> String {
-        String::from("shell")
+        String::from("Shell")
     }
 
     fn kind() -> zmq::SocketType {
