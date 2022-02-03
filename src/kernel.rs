@@ -7,18 +7,18 @@
 
 use crate::connection_file::ConnectionFile;
 use crate::error::Error;
+use crate::session::Session;
 use crate::socket::heartbeat::Heartbeat;
+use crate::socket::iopub::IOPub;
 use crate::socket::shell::Shell;
 use crate::socket::socket::connect;
-use hmac::{Hmac, Mac};
-use sha2::Sha256;
 
 pub struct Kernel {
     /// The connection metadata
     connection: ConnectionFile,
 
-    /// The HMAC signing key, if any
-    hmac: Option<Hmac<Sha256>>,
+    /// The session connection information
+    session: Session,
 
     heartbeat: Heartbeat,
 }
@@ -26,20 +26,11 @@ pub struct Kernel {
 impl Kernel {
     /// Create a new Kernel, given a connection file from a front end.
     pub fn create(file: ConnectionFile) -> Result<Kernel, Error> {
-        let key = match file.key.len() {
-            0 => None,
-            _ => {
-                let result = match Hmac::<Sha256>::new_from_slice(file.key.as_bytes()) {
-                    Ok(hmac) => hmac,
-                    Err(err) => return Err(Error::HmacKeyInvalid(file.key, err)),
-                };
-                Some(result)
-            }
-        };
+        let key = file.key.clone();
         Ok(Self {
             connection: file,
+            session: Session::create(key)?,
             heartbeat: Heartbeat {},
-            hmac: key,
         })
     }
 
@@ -51,7 +42,12 @@ impl Kernel {
         connect::<Shell>(
             &ctx,
             self.endpoint(self.connection.shell_port),
-            self.hmac.clone(),
+            self.session.clone(),
+        )?;
+        connect::<IOPub>(
+            &ctx,
+            self.endpoint(self.connection.iopub_port),
+            self.session.clone(),
         )?;
         Ok(())
     }
