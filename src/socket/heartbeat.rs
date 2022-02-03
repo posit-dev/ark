@@ -5,16 +5,26 @@
  *
  */
 
+use crate::error::Error;
 use log::{debug, trace, warn};
 use std::thread;
 
 pub struct Heartbeat {}
 
 impl Heartbeat {
-    pub fn connect(&self, ctx: &zmq::Context, endpoint: String) -> Result<(), zmq::Error> {
-        let socket = ctx.socket(zmq::REP)?;
-        socket.bind(&endpoint)?;
+    pub fn connect(&self, ctx: &zmq::Context, endpoint: String) -> Result<(), Error> {
+        let socket = match ctx.socket(zmq::REP) {
+            Ok(s) => s,
+            Err(err) => return Err(Error::CreateSocketFailed(String::from("heartbeat"), err)),
+        };
         trace!("Binding to heartbeat socket at {}", endpoint);
+        if let Err(err) = socket.bind(&endpoint) {
+            return Err(Error::SocketBindError(
+                String::from("heartbeat"),
+                endpoint,
+                err,
+            ));
+        }
         thread::spawn(move || Self::listen(&socket));
         Ok(())
     }

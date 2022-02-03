@@ -27,6 +27,9 @@ pub enum Error {
     CreateSpecFailed(std::io::Error),
     WriteSpecFailed(std::io::Error),
     HmacKeyInvalid(String, crypto_common::InvalidLength),
+    CreateSocketFailed(String, zmq::Error),
+    SocketBindError(String, String, zmq::Error),
+    UnsupportedMessage(String),
 }
 
 impl fmt::Display for Error {
@@ -118,6 +121,19 @@ impl fmt::Display for Error {
                     str.len(),
                     err
                 )
+            }
+            Error::CreateSocketFailed(str, err) => {
+                write!(f, "Could not create ZeroMQ socket '{}': {}", str, err)
+            }
+            Error::SocketBindError(name, endpoint, err) => {
+                write!(
+                    f,
+                    "Could not bind to ZeroMQ socket '{}' at '{}': {}",
+                    name, endpoint, err
+                )
+            }
+            Error::UnsupportedMessage(socket) => {
+                write!(f, "Unsupported message received on '{}' socket.", socket)
             }
         }
     }

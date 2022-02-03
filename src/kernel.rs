@@ -9,6 +9,7 @@ use crate::connection_file::ConnectionFile;
 use crate::error::Error;
 use crate::socket::heartbeat::Heartbeat;
 use crate::socket::shell::Shell;
+use crate::socket::socket::connect;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
@@ -20,7 +21,6 @@ pub struct Kernel {
     hmac: Option<Hmac<Sha256>>,
 
     heartbeat: Heartbeat,
-    shell: Shell,
 }
 
 impl Kernel {
@@ -40,19 +40,18 @@ impl Kernel {
             connection: file,
             heartbeat: Heartbeat {},
             hmac: key,
-            shell: Shell {},
         })
     }
 
     /// Connect the Kernel to the front end.
-    pub fn connect(&self) -> Result<(), zmq::Error> {
+    pub fn connect(&self) -> Result<(), Error> {
         let ctx = zmq::Context::new();
         self.heartbeat
             .connect(&ctx, self.endpoint(self.connection.hb_port))?;
-        self.shell.connect(
+        connect::<Shell>(
             &ctx,
-            self.hmac.clone(),
             self.endpoint(self.connection.shell_port),
+            self.hmac.clone(),
         )?;
         Ok(())
     }
