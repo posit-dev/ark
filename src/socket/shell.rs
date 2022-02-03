@@ -22,9 +22,10 @@ use crate::wire::kernel_info_reply::KernelInfoReply;
 use crate::wire::kernel_info_request::KernelInfoRequest;
 use crate::wire::language_info::LanguageInfo;
 use log::{debug, trace, warn};
+use std::rc::Rc;
 
 pub struct Shell {
-    socket: SignedSocket,
+    socket: Rc<SignedSocket>,
     execution_count: u32,
 }
 
@@ -37,14 +38,14 @@ impl Socket for Shell {
         zmq::ROUTER
     }
 
-    fn create(socket: SignedSocket) -> Self {
+    fn create(socket: Rc<SignedSocket>) -> Self {
         Self {
             execution_count: 0,
             socket: socket,
         }
     }
 
-    fn process_message(&self, msg: Message) -> Result<(), Error> {
+    fn process_message(&mut self, msg: Message) -> Result<(), Error> {
         match msg {
             Message::KernelInfoRequest(req) => Ok(self.handle_info_request(req)),
             Message::IsCompleteRequest(req) => Ok(self.handle_is_complete_request(req)),

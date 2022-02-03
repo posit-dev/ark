@@ -12,13 +12,14 @@ use crate::wire::wire_message::WireMessage;
 use hmac::Hmac;
 use log::{debug, trace, warn};
 use sha2::Sha256;
+use std::rc::Rc;
 use std::thread;
 
 pub trait Socket {
-    fn create(socket: SignedSocket) -> Self;
+    fn create(socket: Rc<SignedSocket>) -> Self;
     fn kind() -> zmq::SocketType;
     fn name() -> String;
-    fn process_message(&self, message: Message) -> Result<(), Error>;
+    fn process_message(&mut self, message: Message) -> Result<(), Error>;
 }
 
 pub fn connect<T: Socket>(
@@ -35,20 +36,20 @@ pub fn connect<T: Socket>(
         return Err(Error::SocketBindError(T::name(), endpoint, err));
     }
     thread::spawn(move || {
-        let signed = SignedSocket {
+        let signed = Rc::new(SignedSocket {
             socket: socket,
             hmac: hmac,
-        };
-        let listener = T::create(signed);
-        listen(listener, &signed);
+        });
+        let mut listener = T::create(signed.clone());
+        listen(&mut listener, signed.clone());
     });
     Ok(())
 }
 
-fn listen<T: Socket>(listener: T, socket: &SignedSocket) {
+fn listen<T: Socket>(listener: &mut T, socket: Rc<SignedSocket>) {
     loop {
         debug!("Listening for messages on {} socket...", T::name());
-        let msg = match WireMessage::read_from_socket(socket) {
+        let msg = match WireMessage::read_from_socket(socket.as_ref()) {
             Ok(msg) => msg,
             Err(err) => {
                 warn!("Error reading {} message. {}", T::name(), err);
