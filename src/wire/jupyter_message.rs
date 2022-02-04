@@ -42,6 +42,15 @@ pub struct JupyterMessage<T> {
 /// Trait used to extract the wire message type from a Jupyter message
 pub trait MessageType {
     fn message_type() -> String;
+    fn socket_type() -> SocketType;
+}
+
+pub enum SocketType {
+    Shell,
+    Heartbeat,
+    IOPub,
+    Stdin,
+    Control,
 }
 
 /// Convenience trait for grouping traits that must be present on all Jupyter

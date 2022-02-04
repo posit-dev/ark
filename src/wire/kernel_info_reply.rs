@@ -7,6 +7,7 @@
 
 use crate::wire::help_link::HelpLink;
 use crate::wire::jupyter_message::MessageType;
+use crate::wire::jupyter_message::SocketType;
 use crate::wire::jupyter_message::Status;
 use crate::wire::language_info::LanguageInfo;
 use serde::{Deserialize, Serialize};
@@ -36,5 +37,8 @@ pub struct KernelInfoReply {
 impl MessageType for KernelInfoReply {
     fn message_type() -> String {
         String::from("kernel_info_reply")
+    }
+    fn socket_type() -> SocketType {
+        SocketType::Shell
     }
 }

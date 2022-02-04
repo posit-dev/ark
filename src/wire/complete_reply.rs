@@ -6,6 +6,7 @@
  */
 
 use crate::wire::jupyter_message::MessageType;
+use crate::wire::jupyter_message::SocketType;
 use crate::wire::jupyter_message::Status;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -32,5 +33,8 @@ pub struct CompleteReply {
 impl MessageType for CompleteReply {
     fn message_type() -> String {
         String::from("complete_reply")
+    }
+    fn socket_type() -> SocketType {
+        SocketType::Shell
     }
 }
