@@ -14,9 +14,13 @@ use crate::wire::status::ExecutionState;
 use crate::wire::status::KernelStatus;
 use log::warn;
 use std::rc::Rc;
+use std::sync::mpsc::Receiver;
 
 pub struct IOPub {
     socket: Rc<SignedSocket>,
+    state_receiver: Receiver<ExecutionState>,
+    state: ExecutionState,
+    busy_depth: u32,
 }
 
 impl Socket for IOPub {
@@ -27,26 +31,67 @@ impl Socket for IOPub {
     fn kind() -> zmq::SocketType {
         zmq::PUB
     }
+}
 
-    fn create(socket: Rc<SignedSocket>) -> Self {
-        if let Err(err) = JupyterMessage::<KernelStatus>::create(
-            KernelStatus {
-                execution_state: ExecutionState::Starting,
-            },
-            &socket.session,
-        )
-        .send(socket.as_ref())
-        {
-            warn!("Could not emit kernel's startup status. {}", err)
+impl IOPub {
+    pub fn new(socket: Rc<SignedSocket>, receiver: Receiver<ExecutionState>) -> Self {
+        Self {
+            socket: socket,
+            state_receiver: receiver,
+            state: ExecutionState::Starting,
+            busy_depth: 0,
         }
-        Self { socket: socket }
     }
 
-    fn process_message(&mut self, msg: Message) -> Result<(), Error> {
-        // The IOPub socket is PUB/SUB, so it publishes messages, and doesn't
-        // expect to receive any.
-        match msg {
-            _ => Err(Error::UnsupportedMessage(Self::name())),
+    fn listen(&mut self) {
+        // Begin by emitting the starting state
+        self.emit_state(ExecutionState::Starting);
+        loop {
+            let state = match self.state_receiver.recv() {
+                Ok(s) => s,
+                Err(err) => {
+                    warn!("Failed to receive kernel execution status: {}", err);
+
+                    // Wait 5s before trying to receive another state update
+                    // (avoid log flood if something is wrong with channel)
+                    std::thread::sleep(std::time::Duration::from_secs(5));
+                    continue;
+                }
+            };
+            match state {
+                ExecutionState::Idle => match self.state {
+                    ExecutionState::Busy => {
+                        if self.busy_depth > 0 {
+                            self.busy_depth = self.busy_depth - 1;
+                        } else {
+                            self.emit_state(state);
+                        }
+                    }
+                },
+                ExecutionState::Busy => match self.state {
+                    ExecutionState::Busy => {
+                        self.busy_depth = self.busy_depth + 1;
+                    }
+                    ExecutionState::Idle => {
+                        self.emit_state(state);
+                    }
+                },
+            }
+        }
+    }
+
+    fn emit_state(&mut self, state: ExecutionState) -> Result<(), Error> {
+        self.state = state;
+        if let Err(err) = JupyterMessage::<KernelStatus>::create(
+            KernelStatus {
+                execution_state: self.state,
+            },
+            None,
+            &self.socket.session,
+        )
+        .send(self.socket.as_ref())
+        {
+            warn!("Could not emit kernel's startup status. {}", err)
         }
     }
 }

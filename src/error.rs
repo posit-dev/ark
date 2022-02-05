@@ -6,6 +6,7 @@
  */
 
 use std::fmt;
+use std::sync::mpsc::SendError;
 
 #[derive(Debug)]
 pub enum Error {
@@ -30,6 +31,7 @@ pub enum Error {
     CreateSocketFailed(String, zmq::Error),
     SocketBindError(String, String, zmq::Error),
     UnsupportedMessage(String),
+    SendError(String),
 }
 
 impl fmt::Display for Error {
@@ -136,5 +138,11 @@ impl fmt::Display for Error {
                 write!(f, "Unsupported message received on '{}' socket.", socket)
             }
         }
+    }
+}
+
+impl<T: std::fmt::Debug> From<SendError<T>> for Error {
+    fn from(err: SendError<T>) -> Self {
+        Self::SendError(format!("Could not send {:?} to channel.", err.0))
     }
 }
