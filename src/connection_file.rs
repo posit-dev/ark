@@ -38,4 +38,12 @@ impl ConnectionFile {
 
         Ok(control)
     }
+
+    /// Given a port, return a URI-like string that can be used to connect to
+    /// the port, given the other parameters in the connection file.
+    ///
+    /// Example: `32` => `"tcp://127.0.0.1:32"`
+    pub fn endpoint(&self, port: u16) -> String {
+        format!("{}://{}:{}", self.transport, self.ip, port)
+    }
 }

@@ -25,9 +25,13 @@ use crate::wire::status::ExecutionState;
 use crate::wire::status::KernelStatus;
 use log::{debug, trace, warn};
 use std::rc::Rc;
+use std::sync::mpsc::Sender;
+use std::sync::Arc;
+use std::sync::Mutex;
 
 pub struct Shell {
     socket: Rc<SignedSocket>,
+    state_sender: Sender<ExecutionState>,
     execution_count: u32,
 }
 
@@ -39,26 +43,39 @@ impl Socket for Shell {
     fn kind() -> zmq::SocketType {
         zmq::ROUTER
     }
+}
 
-    fn create(socket: Rc<SignedSocket>) -> Self {
+impl Shell {
+    pub fn new(socket: Rc<SignedSocket>, state_sender: Sender<ExecutionState>) -> Self {
         Self {
             execution_count: 0,
             socket: socket,
+            state_sender: state_sender,
         }
     }
 
     fn process_message(&mut self, msg: Message) -> Result<(), Error> {
-        match msg {
+        // note! we should emit the busy /idle status BEFORE we process messages!
+        // then we can include the header
+        if let Err(err) = self.state_sender.send(ExecutionState::Busy) {
+            warn!("Failed to change kernel status to busy: {}", err)
+        }
+
+        let result = match msg {
             Message::KernelInfoRequest(req) => Ok(self.handle_info_request(req)),
             Message::IsCompleteRequest(req) => Ok(self.handle_is_complete_request(req)),
             Message::ExecuteRequest(req) => Ok(self.handle_execute_request(req)),
             Message::CompleteRequest(req) => Ok(self.handle_complete_request(req)),
             _ => Err(Error::UnsupportedMessage(Self::name())),
-        }
-    }
-}
+        };
 
-impl Shell {
+        if let Err(err) = self.state_sender.send(ExecutionState::Idle) {
+            warn!("Failed to restore kernel status to idle: {}", err)
+        }
+
+        result
+    }
+
     fn handle_execute_request(&mut self, req: JupyterMessage<ExecuteRequest>) {
         self.execution_count = self.execution_count + 1;
         debug!("Received execution request {:?}", req);

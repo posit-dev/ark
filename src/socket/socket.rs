@@ -15,17 +15,15 @@ use std::rc::Rc;
 use std::thread;
 
 pub trait Socket {
-    fn create(socket: Rc<SignedSocket>) -> Self;
     fn kind() -> zmq::SocketType;
     fn name() -> String;
-    fn process_message(&mut self, message: Message) -> Result<(), Error>;
 }
 
 pub fn connect<T: Socket>(
     ctx: &zmq::Context,
     endpoint: String,
     session: Session,
-) -> Result<(), Error> {
+) -> Result<SignedSocket, Error> {
     let socket = match ctx.socket(T::kind()) {
         Ok(s) => s,
         Err(err) => return Err(Error::CreateSocketFailed(T::name(), err)),
@@ -34,17 +32,10 @@ pub fn connect<T: Socket>(
     if let Err(err) = socket.bind(&endpoint) {
         return Err(Error::SocketBindError(T::name(), endpoint, err));
     }
-    thread::spawn(move || {
-        let signed = Rc::new(SignedSocket {
-            socket: socket,
-            session: session,
-        });
-        let mut listener = T::create(signed.clone());
-        if T::kind() == zmq::ROUTER {
-            listen(&mut listener, signed.clone());
-        }
-    });
-    Ok(())
+    Ok(SignedSocket {
+        socket: socket,
+        session: session,
+    })
 }
 
 fn listen<T: Socket>(listener: &mut T, socket: Rc<SignedSocket>) {
@@ -64,8 +55,10 @@ fn listen<T: Socket>(listener: &mut T, socket: Rc<SignedSocket>) {
                 continue;
             }
         };
+        /*
         if let Err(err) = listener.process_message(parsed) {
             warn!("Could not process message on {} socket: {}", T::name(), err)
         }
+        */
     }
 }

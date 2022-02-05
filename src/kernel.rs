@@ -12,6 +12,9 @@ use crate::socket::heartbeat::Heartbeat;
 use crate::socket::iopub::IOPub;
 use crate::socket::shell::Shell;
 use crate::socket::socket::connect;
+use crate::wire::status::ExecutionState;
+use std::rc::Rc;
+use std::sync::mpsc::channel;
 
 pub struct Kernel {
     /// The connection metadata
@@ -20,6 +23,7 @@ pub struct Kernel {
     /// The session connection information
     session: Session,
 
+    /// The heartbeat socket
     heartbeat: Heartbeat,
 }
 
@@ -27,6 +31,32 @@ impl Kernel {
     /// Create a new Kernel, given a connection file from a front end.
     pub fn create(file: ConnectionFile) -> Result<Kernel, Error> {
         let key = file.key.clone();
+
+        let ctx = zmq::Context::new();
+
+        let heartbeat = Heartbeat {};
+        heartbeat.connect(&ctx, file.endpoint(file.hb_port))?;
+
+        let session = Session::create(key)?;
+
+        // Create the sockets
+        let shell_socket = Rc::new(connect::<Shell>(
+            &ctx,
+            file.endpoint(file.shell_port),
+            session.clone(),
+        )?);
+        let iopub_socket = Rc::new(connect::<IOPub>(
+            &ctx,
+            file.endpoint(file.iopub_port),
+            session.clone(),
+        )?);
+
+        // This channel delivers execution status from other threads to the iopub thread
+        let (status_sender, status_receiver) = channel::<ExecutionState>();
+
+        let iopub = IOPub::new(iopub_socket, status_receiver);
+        let shell = Shell::new(shell_socket, status_sender.clone());
+
         Ok(Self {
             connection: file,
             session: Session::create(key)?,
@@ -34,32 +64,5 @@ impl Kernel {
         })
     }
 
-    /// Connect the Kernel to the front end.
-    pub fn connect(&self) -> Result<(), Error> {
-        let ctx = zmq::Context::new();
-        self.heartbeat
-            .connect(&ctx, self.endpoint(self.connection.hb_port))?;
-        connect::<Shell>(
-            &ctx,
-            self.endpoint(self.connection.shell_port),
-            self.session.clone(),
-        )?;
-        connect::<IOPub>(
-            &ctx,
-            self.endpoint(self.connection.iopub_port),
-            self.session.clone(),
-        )?;
-        Ok(())
-    }
-
-    /// Given a port, return a URI-like string that can be used to connect to
-    /// the port, given the other parameters in the connection file.
-    ///
-    /// Example: `32` => `"tcp://127.0.0.1:32"`
-    fn endpoint(&self, port: u16) -> String {
-        format!(
-            "{}://{}:{}",
-            self.connection.transport, self.connection.ip, port
-        )
-    }
+    pub fn connect() -> Result<(), Error> {}
 }

@@ -84,9 +84,7 @@ impl Message {
     /// Converts from a wire message to a Jupyter message by examining the message
     /// type and attempting to coerce the content into the appropriate
     /// structure.
-    ///
-    /// Note that
-    pub fn to_jupyter_message(msg: WireMessage) -> Result<Message, Error> {
+    pub fn to_jupyter_message(msg: WireMessage) -> Result<Self, Error> {
         let kind = msg.header.msg_type.clone();
         if kind == KernelInfoRequest::message_type() {
             return Ok(Message::KernelInfoRequest(msg.to_message_type()?));
@@ -122,7 +120,11 @@ where
         Ok(())
     }
 
-    pub fn create(content: T, session: &Session) -> JupyterMessage<T> {
+    pub fn create(
+        content: T,
+        parent: Option<JupyterHeader>,
+        session: &Session,
+    ) -> JupyterMessage<T> {
         JupyterMessage::<T> {
             zmq_identities: Vec::new(),
             header: JupyterHeader::create(
@@ -130,7 +132,7 @@ where
                 session.session_id.clone(),
                 session.username.clone(),
             ),
-            parent_header: None,
+            parent_header: parent,
             content: content,
         }
     }
