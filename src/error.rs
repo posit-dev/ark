@@ -137,6 +137,9 @@ impl fmt::Display for Error {
             Error::UnsupportedMessage(socket) => {
                 write!(f, "Unsupported message received on '{}' socket.", socket)
             }
+            Error::SendError(msg) => {
+                write!(f, "{}", msg)
+            }
         }
     }
 }

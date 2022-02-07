@@ -21,7 +21,7 @@ use std::env;
 use std::io::stdin;
 
 fn start_kernel(connection_file: ConnectionFile) {
-    let kernel = Kernel::create(connection_file);
+    let kernel = Kernel::new(connection_file);
     match kernel {
         Ok(k) => match k.connect() {
             Ok(()) => {

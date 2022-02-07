@@ -26,8 +26,6 @@ use crate::wire::status::KernelStatus;
 use log::{debug, trace, warn};
 use std::rc::Rc;
 use std::sync::mpsc::Sender;
-use std::sync::Arc;
-use std::sync::Mutex;
 
 pub struct Shell {
     socket: Rc<SignedSocket>,
@@ -51,6 +49,21 @@ impl Shell {
             execution_count: 0,
             socket: socket,
             state_sender: state_sender,
+        }
+    }
+
+    pub fn listen(&mut self) {
+        loop {
+            let message = match Message::read_from_socket(self.socket.clone()) {
+                Ok(m) => m,
+                Err(err) => {
+                    warn!("Could not read message from shell socket: {}", err);
+                    continue;
+                }
+            };
+            if let Err(err) = self.process_message(message) {
+                warn!("Could not process shell message: {}", err);
+            }
         }
     }
 

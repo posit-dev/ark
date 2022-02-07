@@ -8,11 +8,7 @@
 use crate::error::Error;
 use crate::session::Session;
 use crate::socket::signed_socket::SignedSocket;
-use crate::wire::jupyter_message::Message;
-use crate::wire::wire_message::WireMessage;
-use log::{debug, trace, warn};
-use std::rc::Rc;
-use std::thread;
+use log::trace;
 
 pub trait Socket {
     fn kind() -> zmq::SocketType;
@@ -36,29 +32,4 @@ pub fn connect<T: Socket>(
         socket: socket,
         session: session,
     })
-}
-
-fn listen<T: Socket>(listener: &mut T, socket: Rc<SignedSocket>) {
-    loop {
-        debug!("Listening for messages on {} socket...", T::name());
-        let msg = match WireMessage::read_from_socket(socket.as_ref()) {
-            Ok(msg) => msg,
-            Err(err) => {
-                warn!("Error reading {} message. {}", T::name(), err);
-                continue;
-            }
-        };
-        let parsed = match Message::to_jupyter_message(msg) {
-            Ok(msg) => msg,
-            Err(err) => {
-                warn!("Invalid message arrived on {} socket. {}", T::name(), err);
-                continue;
-            }
-        };
-        /*
-        if let Err(err) = listener.process_message(parsed) {
-            warn!("Could not process message on {} socket: {}", T::name(), err)
-        }
-        */
-    }
 }
