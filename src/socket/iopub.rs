@@ -9,7 +9,6 @@ use crate::error::Error;
 use crate::socket::signed_socket::SignedSocket;
 use crate::socket::socket::Socket;
 use crate::wire::jupyter_message::JupyterMessage;
-use crate::wire::jupyter_message::Message;
 use crate::wire::status::ExecutionState;
 use crate::wire::status::KernelStatus;
 use log::warn;
@@ -43,7 +42,7 @@ impl IOPub {
         }
     }
 
-    fn listen(&mut self) {
+    pub fn listen(&mut self) {
         // Begin by emitting the starting state
         self.emit_state(ExecutionState::Starting);
         loop {
@@ -67,20 +66,32 @@ impl IOPub {
                             self.emit_state(state);
                         }
                     }
+                    ExecutionState::Starting => {
+                        self.emit_state(state);
+                    }
+                    ExecutionState::Idle => {
+                        // Do nothing
+                    }
                 },
                 ExecutionState::Busy => match self.state {
                     ExecutionState::Busy => {
                         self.busy_depth = self.busy_depth + 1;
                     }
-                    ExecutionState::Idle => {
+                    ExecutionState::Idle | ExecutionState::Starting => {
                         self.emit_state(state);
                     }
                 },
+                _ => {
+                    warn!(
+                        "Invalid kernel state transition from {:?} to {:?}",
+                        self.state, state
+                    )
+                }
             }
         }
     }
 
-    fn emit_state(&mut self, state: ExecutionState) -> Result<(), Error> {
+    fn emit_state(&mut self, state: ExecutionState) {
         self.state = state;
         if let Err(err) = JupyterMessage::<KernelStatus>::create(
             KernelStatus {

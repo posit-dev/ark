@@ -21,6 +21,7 @@ use crate::wire::status::KernelStatus;
 use crate::wire::wire_message::WireMessage;
 use log::trace;
 use serde::{Deserialize, Serialize};
+use std::rc::Rc;
 
 /// Represents a Jupyter message
 #[derive(Debug)]
@@ -106,6 +107,11 @@ impl Message {
             return Ok(Message::Status(msg.to_message_type()?));
         }
         return Err(Error::UnknownMessageType(kind));
+    }
+
+    pub fn read_from_socket(socket: Rc<SignedSocket>) -> Result<Self, Error> {
+        let msg = WireMessage::read_from_socket(socket.as_ref())?;
+        Message::to_jupyter_message(msg)
     }
 }
 
