@@ -109,8 +109,8 @@ impl Message {
         return Err(Error::UnknownMessageType(kind));
     }
 
-    pub fn read_from_socket(socket: Rc<SignedSocket>) -> Result<Self, Error> {
-        let msg = WireMessage::read_from_socket(socket.as_ref())?;
+    pub fn read_from_socket(socket: &SignedSocket) -> Result<Self, Error> {
+        let msg = WireMessage::read_from_socket(socket)?;
         Message::to_jupyter_message(msg)
     }
 }
@@ -152,17 +152,17 @@ where
         msg.send(socket)
     }
 
-    fn create_reply<R: ProtocolMessage>(
+    pub fn create_reply<R: ProtocolMessage>(
         &self,
         content: R,
-        socket: &SignedSocket,
+        session: &Session,
     ) -> JupyterMessage<R> {
         JupyterMessage::<R> {
             zmq_identities: self.zmq_identities.clone(),
             header: JupyterHeader::create(
                 R::message_type(),
-                socket.session.session_id.clone(),
-                socket.session.username.clone(),
+                session.session_id.clone(),
+                session.username.clone(),
             ),
             parent_header: Some(self.header.clone()),
             content: content,

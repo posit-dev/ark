@@ -13,7 +13,6 @@ use crate::wire::jupyter_message::MessageType;
 use crate::wire::jupyter_message::ProtocolMessage;
 use generic_array::GenericArray;
 use hmac::Hmac;
-use log::trace;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
