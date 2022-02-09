@@ -8,6 +8,7 @@
 use crate::error::Error;
 use crate::socket::signed_socket::SignedSocket;
 use crate::socket::socket::Socket;
+use crate::socket::socket_channel::SocketChannel;
 use crate::wire::complete_reply::CompleteReply;
 use crate::wire::complete_request::CompleteRequest;
 use crate::wire::execute_reply::ExecuteReply;
@@ -28,8 +29,10 @@ use std::rc::Rc;
 use std::sync::mpsc::Sender;
 
 pub struct Shell {
-    socket: Rc<SignedSocket>,
+    socket: SocketChannel,
+    session: Session,
     state_sender: Sender<ExecutionState>,
+    shell_sender: Sender<WireMessage>,
     execution_count: u32,
 }
 
@@ -44,17 +47,23 @@ impl Socket for Shell {
 }
 
 impl Shell {
-    pub fn new(socket: Rc<SignedSocket>, state_sender: Sender<ExecutionState>) -> Self {
+    pub fn new(
+        session: Session,
+        socket: SocketChannel,
+        state_sender: Sender<ExecutionState>,
+    ) -> Self {
         Self {
             execution_count: 0,
             socket: socket,
+            session: session,
+            shell_sender: socket.new_sender(),
             state_sender: state_sender,
         }
     }
 
     pub fn listen(&mut self) {
         loop {
-            let message = match Message::read_from_socket(self.socket.clone()) {
+            let message = match self.socket.read_message() {
                 Ok(m) => m,
                 Err(err) => {
                     warn!("Could not read message from shell socket: {}", err);
@@ -92,12 +101,14 @@ impl Shell {
     fn handle_execute_request(&mut self, req: JupyterMessage<ExecuteRequest>) {
         self.execution_count = self.execution_count + 1;
         debug!("Received execution request {:?}", req);
-        let reply = ExecuteReply {
-            status: Status::Ok,
-            execution_count: self.execution_count,
-            user_expressions: serde_json::Value::Null,
-        };
-        if let Err(err) = req.send_reply(reply, &self.socket) {
+        if let Err(err) = self.shell_sender.send(req.create_reply(
+            ExecuteReply {
+                status: Status::Ok,
+                execution_count: self.execution_count,
+                user_expressions: serde_json::Value::Null,
+            },
+            &self.session,
+        )) {
             warn!("Could not send complete reply: {}", err)
         }
     }
