@@ -143,13 +143,13 @@ where
         }
     }
 
-    pub fn send_reply<R: ProtocolMessage>(
+    pub fn reply_msg<R: ProtocolMessage>(
         &self,
         content: R,
-        socket: &SignedSocket,
-    ) -> Result<(), Error> {
-        let msg = self.create_reply(content, socket);
-        msg.send(socket)
+        session: &Session,
+    ) -> Result<WireMessage, Error> {
+        let reply = self.create_reply(content, session);
+        WireMessage::from_jupyter_message(reply)
     }
 
     pub fn create_reply<R: ProtocolMessage>(

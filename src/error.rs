@@ -5,6 +5,7 @@
  *
  */
 
+use crate::wire::wire_message::WireMessage;
 use std::fmt;
 use std::sync::mpsc::SendError;
 
@@ -32,6 +33,7 @@ pub enum Error {
     SocketBindError(String, String, zmq::Error),
     UnsupportedMessage(String),
     SendError(String),
+    WireSendError(WireMessage),
 }
 
 impl fmt::Display for Error {
@@ -139,6 +141,9 @@ impl fmt::Display for Error {
             }
             Error::SendError(msg) => {
                 write!(f, "{}", msg)
+            }
+            Error::WireSendError(msg) => {
+                write!(f, "Couldn't send message to channel: {:?}", msg)
             }
         }
     }
