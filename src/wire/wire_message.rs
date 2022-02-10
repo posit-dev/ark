@@ -26,7 +26,7 @@ const MSG_DELIM: &[u8] = b"<IDS|MSG>";
 /// Represents an untyped Jupyter message delivered over the wire. A WireMessage
 /// can represent any kind of Jupyter message; typically its header will be
 /// examined and it will be converted into a typed JupyterMessage.
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct WireMessage {
     /// The ZeroMQ identities. These store the peer identity for messages
     /// delivered request-reply style over ROUTER sockets (like the shell)

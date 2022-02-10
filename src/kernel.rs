@@ -12,6 +12,7 @@ use crate::socket::heartbeat::Heartbeat;
 use crate::socket::iopub::IOPub;
 use crate::socket::shell::Shell;
 use crate::socket::socket::connect;
+use crate::socket::socket_channel::SocketChannel;
 use crate::wire::status::ExecutionState;
 use std::rc::Rc;
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -40,7 +41,9 @@ impl Kernel {
         // This channel delivers execution status from other threads to the iopub thread
         let (status_sender, status_receiver) = channel::<ExecutionState>();
 
-        let shell_endpoint = self.connection.endpoint(self.connection.shell_port);
+        let shell_socket = Arc::new(connect::<Shell>(&ctx, self.connection.endpoint(self.connection.shell_port), self.session.clone())?);
+        let shell_channel = SocketChannel::new();
+        let shell_endpoint = ;
         let session = self.session.clone();
         let shell_ctx = ctx.clone();
         thread::spawn(move || {
