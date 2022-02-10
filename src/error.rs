@@ -33,7 +33,7 @@ pub enum Error {
     SocketBindError(String, String, zmq::Error),
     UnsupportedMessage(String),
     SendError(String),
-    WireSendError(WireMessage),
+    WireSendError(SendError<WireMessage>),
 }
 
 impl fmt::Display for Error {
@@ -142,8 +142,8 @@ impl fmt::Display for Error {
             Error::SendError(msg) => {
                 write!(f, "{}", msg)
             }
-            Error::WireSendError(msg) => {
-                write!(f, "Couldn't send message to channel: {:?}", msg)
+            Error::WireSendError(err) => {
+                write!(f, "Couldn't send message to channel: {}", err)
             }
         }
     }

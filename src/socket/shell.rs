@@ -6,7 +6,6 @@
  */
 
 use crate::error::Error;
-use crate::session::Session;
 use crate::socket::socket::Socket;
 use crate::socket::socket_channel::SocketChannel;
 use crate::wire::complete_reply::CompleteReply;
@@ -29,7 +28,6 @@ use std::sync::mpsc::Sender;
 
 pub struct Shell {
     socket: SocketChannel,
-    session: Session,
     state_sender: Sender<ExecutionState>,
     shell_sender: Sender<WireMessage>,
     execution_count: u32,
@@ -46,16 +44,12 @@ impl Socket for Shell {
 }
 
 impl Shell {
-    pub fn new(
-        session: Session,
-        socket: SocketChannel,
-        state_sender: Sender<ExecutionState>,
-    ) -> Self {
+    pub fn new(socket: SocketChannel, state_sender: Sender<ExecutionState>) -> Self {
+        let shell_sender = socket.new_sender();
         Self {
             execution_count: 0,
             socket: socket,
-            session: session,
-            shell_sender: socket.new_sender(),
+            shell_sender: shell_sender,
             state_sender: state_sender,
         }
     }
@@ -101,7 +95,7 @@ impl Shell {
 
     fn send_shell_message(&self, message: WireMessage) -> Result<(), Error> {
         if let Err(err) = self.shell_sender.send(message) {
-            Err(Error::WireSendError(message))
+            Err(Error::WireSendError(err))
         } else {
             Ok(())
         }
@@ -110,13 +104,13 @@ impl Shell {
     fn handle_execute_request(&mut self, req: JupyterMessage<ExecuteRequest>) -> Result<(), Error> {
         self.execution_count = self.execution_count + 1;
         debug!("Received execution request {:?}", req);
-        self.shell_sender.send(req.reply_msg(
+        self.send_shell_message(req.reply_msg(
             ExecuteReply {
                 status: Status::Ok,
                 execution_count: self.execution_count,
                 user_expressions: serde_json::Value::Null,
             },
-            &self.session,
+            &self.socket.session,
         )?)
     }
 
@@ -131,7 +125,7 @@ impl Shell {
                 status: IsComplete::Complete,
                 indent: String::from(""),
             },
-            &self.session,
+            &self.socket.session,
         )?)
     }
 
@@ -155,7 +149,7 @@ impl Shell {
                 help_links: Vec::new(),
                 language_info: info,
             },
-            &self.session,
+            &self.socket.session,
         )?)
     }
 
@@ -169,7 +163,7 @@ impl Shell {
                 cursor_end: 0,
                 metadata: serde_json::Value::Null,
             },
-            &self.session,
+            &self.socket.session,
         )?)
     }
 }

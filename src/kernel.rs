@@ -41,14 +41,12 @@ impl Kernel {
         // This channel delivers execution status from other threads to the iopub thread
         let (status_sender, status_receiver) = channel::<ExecutionState>();
 
-        let shell_socket = Arc::new(connect::<Shell>(&ctx, self.connection.endpoint(self.connection.shell_port), self.session.clone())?);
-        let shell_channel = SocketChannel::new();
-        let shell_endpoint = ;
-        let session = self.session.clone();
-        let shell_ctx = ctx.clone();
-        thread::spawn(move || {
-            Self::shell_thread(shell_ctx, shell_endpoint, status_sender, session)
-        });
+        let shell_channel = SocketChannel::new::<Shell>(
+            &ctx,
+            self.connection.endpoint(self.connection.shell_port),
+            self.session.clone(),
+        )?;
+        thread::spawn(move || Self::shell_thread(shell_channel, status_sender));
 
         let iopub_endpoint = self.connection.endpoint(self.connection.iopub_port);
         let session = self.session.clone();
@@ -65,13 +63,10 @@ impl Kernel {
     }
 
     fn shell_thread(
-        ctx: zmq::Context,
-        endpoint: String,
+        channel: SocketChannel,
         status_sender: Sender<ExecutionState>,
-        session: Session,
     ) -> Result<(), Error> {
-        let shell_socket = Rc::new(connect::<Shell>(&ctx, endpoint, session.clone())?);
-        let mut shell = Shell::new(shell_socket, status_sender.clone());
+        let mut shell = Shell::new(channel, status_sender.clone());
         shell.listen();
         Ok(())
     }
