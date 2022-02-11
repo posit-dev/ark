@@ -10,4 +10,3 @@ pub mod iopub;
 pub mod shell;
 pub mod signed_socket;
 pub mod socket;
-pub mod socket_channel;
