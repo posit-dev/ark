@@ -143,6 +143,15 @@ where
         }
     }
 
+    pub fn send_reply<R: ProtocolMessage>(
+        &self,
+        content: R,
+        socket: &SignedSocket,
+    ) -> Result<(), Error> {
+        let reply = self.reply_msg(content, &socket.session)?;
+        reply.send(&socket)
+    }
+
     pub fn reply_msg<R: ProtocolMessage>(
         &self,
         content: R,

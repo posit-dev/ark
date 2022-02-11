@@ -47,10 +47,8 @@ pub struct WireMessage {
 
 impl WireMessage {
     pub fn read_from_socket(socket: &SignedSocket) -> Result<WireMessage, Error> {
-        match socket.socket.recv_multipart(0) {
-            Ok(bufs) => Self::from_buffers(bufs, &socket.session.hmac),
-            Err(err) => Err(Error::SocketRead(err)),
-        }
+        let bufs = socket.recv_multipart()?;
+        Self::from_buffers(bufs, &socket.session.hmac)
     }
 
     /// Parse a Jupyter message from an array of buffers (from a ZeroMQ message)
@@ -211,9 +209,7 @@ impl WireMessage {
         msg.append(&mut parts);
 
         // Deliver the message!
-        if let Err(err) = socket.socket.send_multipart(&msg, 0) {
-            return Err(Error::CannotSend(err));
-        }
+        socket.send_multipart(&msg)?;
 
         // Successful delivery
         Ok(())

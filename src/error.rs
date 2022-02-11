@@ -35,7 +35,7 @@ pub enum Error {
     SendError(String),
     WireSendError(SendError<WireMessage>),
     ZmqError(String, zmq::Error),
-    CannotLockSocket(String),
+    CannotLockSocket(String, String),
 }
 
 impl fmt::Display for Error {
@@ -150,18 +150,13 @@ impl fmt::Display for Error {
             Error::ZmqError(name, err) => {
                 write!(f, "ZeroMQ protocol error on {} socket: {}", name, err)
             }
-            Error::CannotLockSocket(name) => {
-                write!(f, "Cannot lock ZeroMQ socket '{}'", name)
+            Error::CannotLockSocket(name, op) => {
+                write!(f, "Cannot lock ZeroMQ socket '{}' for {}", name, op)
             }
         }
     }
 }
 
-impl From<zmq::Error> for Error {
-    fn from(err: zmq::Error) -> Self {
-        Self::ZmqError(err)
-    }
-}
 impl<T: std::fmt::Debug> From<SendError<T>> for Error {
     fn from(err: SendError<T>) -> Self {
         Self::SendError(format!("Could not send {:?} to channel.", err.0))

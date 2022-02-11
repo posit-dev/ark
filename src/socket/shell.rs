@@ -6,8 +6,8 @@
  */
 
 use crate::error::Error;
+use crate::socket::signed_socket::SignedSocket;
 use crate::socket::socket::Socket;
-use crate::socket::socket_channel::SocketChannel;
 use crate::wire::complete_reply::CompleteReply;
 use crate::wire::complete_request::CompleteRequest;
 use crate::wire::execute_reply::ExecuteReply;
@@ -22,14 +22,12 @@ use crate::wire::kernel_info_reply::KernelInfoReply;
 use crate::wire::kernel_info_request::KernelInfoRequest;
 use crate::wire::language_info::LanguageInfo;
 use crate::wire::status::ExecutionState;
-use crate::wire::wire_message::WireMessage;
 use log::{debug, trace, warn};
 use std::sync::mpsc::Sender;
 
 pub struct Shell {
-    socket: SocketChannel,
+    socket: SignedSocket,
     state_sender: Sender<ExecutionState>,
-    shell_sender: Sender<WireMessage>,
     execution_count: u32,
 }
 
@@ -44,19 +42,18 @@ impl Socket for Shell {
 }
 
 impl Shell {
-    pub fn new(socket: SocketChannel, state_sender: Sender<ExecutionState>) -> Self {
-        let shell_sender = socket.new_sender();
+    pub fn new(socket: SignedSocket, state_sender: Sender<ExecutionState>) -> Self {
         Self {
             execution_count: 0,
             socket: socket,
-            shell_sender: shell_sender,
             state_sender: state_sender,
         }
     }
 
     pub fn listen(&mut self) {
         loop {
-            let message = match self.socket.read_message() {
+            trace!("Waiting for shell messages");
+            let message = match Message::read_from_socket(&self.socket) {
                 Ok(m) => m,
                 Err(err) => {
                     warn!("Could not read message from shell socket: {}", err);
@@ -84,7 +81,7 @@ impl Shell {
             _ => Err(Error::UnsupportedMessage(Self::name())),
         };
 
-        // TODO: if result is err we should emit a error
+        // TODO: if result is err we should emit a error to the client?
 
         if let Err(err) = self.state_sender.send(ExecutionState::Idle) {
             warn!("Failed to restore kernel status to idle: {}", err)
@@ -93,25 +90,17 @@ impl Shell {
         result
     }
 
-    fn send_shell_message(&self, message: WireMessage) -> Result<(), Error> {
-        if let Err(err) = self.shell_sender.send(message) {
-            Err(Error::WireSendError(err))
-        } else {
-            Ok(())
-        }
-    }
-
     fn handle_execute_request(&mut self, req: JupyterMessage<ExecuteRequest>) -> Result<(), Error> {
         self.execution_count = self.execution_count + 1;
         debug!("Received execution request {:?}", req);
-        self.send_shell_message(req.reply_msg(
+        req.send_reply(
             ExecuteReply {
                 status: Status::Ok,
                 execution_count: self.execution_count,
                 user_expressions: serde_json::Value::Null,
             },
-            &self.socket.session,
-        )?)
+            &self.socket,
+        )
     }
 
     fn handle_is_complete_request(
@@ -120,13 +109,13 @@ impl Shell {
     ) -> Result<(), Error> {
         debug!("Received request to test code for completeness: {:?}", req);
         // In this echo example, the code is always complete!
-        self.send_shell_message(req.reply_msg(
+        req.send_reply(
             IsCompleteReply {
                 status: IsComplete::Complete,
                 indent: String::from(""),
             },
-            &self.socket.session,
-        )?)
+            &self.socket,
+        )
     }
 
     fn handle_info_request(&self, req: JupyterMessage<KernelInfoRequest>) -> Result<(), Error> {
@@ -140,7 +129,7 @@ impl Shell {
             codemirror_mode: String::new(),
             nbconvert_exporter: String::new(),
         };
-        self.send_shell_message(req.reply_msg(
+        req.send_reply(
             KernelInfoReply {
                 status: Status::Ok,
                 banner: format!("Amalthea {}", env!("CARGO_PKG_VERSION")),
@@ -149,13 +138,13 @@ impl Shell {
                 help_links: Vec::new(),
                 language_info: info,
             },
-            &self.socket.session,
-        )?)
+            &self.socket,
+        )
     }
 
     fn handle_complete_request(&self, req: JupyterMessage<CompleteRequest>) -> Result<(), Error> {
         debug!("Received request to complete code: {:?}", req);
-        self.send_shell_message(req.reply_msg(
+        req.send_reply(
             CompleteReply {
                 matches: Vec::new(),
                 status: Status::Ok,
@@ -163,7 +152,7 @@ impl Shell {
                 cursor_end: 0,
                 metadata: serde_json::Value::Null,
             },
-            &self.socket.session,
-        )?)
+            &self.socket,
+        )
     }
 }

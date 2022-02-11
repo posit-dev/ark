@@ -11,10 +11,8 @@ use crate::session::Session;
 use crate::socket::heartbeat::Heartbeat;
 use crate::socket::iopub::IOPub;
 use crate::socket::shell::Shell;
-use crate::socket::socket::connect;
-use crate::socket::socket_channel::SocketChannel;
+use crate::socket::signed_socket::SignedSocket;
 use crate::wire::status::ExecutionState;
-use std::rc::Rc;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
 
@@ -41,55 +39,55 @@ impl Kernel {
         // This channel delivers execution status from other threads to the iopub thread
         let (status_sender, status_receiver) = channel::<ExecutionState>();
 
-        let shell_channel = SocketChannel::new::<Shell>(
-            &ctx,
-            self.connection.endpoint(self.connection.shell_port),
+        let shell_socket = SignedSocket::new(
             self.session.clone(),
+            ctx.clone(),
+            String::from("Shell"),
+            zmq::ROUTER,
+            self.connection.endpoint(self.connection.shell_port),
         )?;
-        thread::spawn(move || Self::shell_thread(shell_channel, status_sender));
+        thread::spawn(move || Self::shell_thread(shell_socket, status_sender));
 
-        let iopub_endpoint = self.connection.endpoint(self.connection.iopub_port);
-        let session = self.session.clone();
-        let iopub_ctx = ctx.clone();
-        thread::spawn(move || {
-            Self::iopub_thread(iopub_ctx, iopub_endpoint, status_receiver, session)
-        });
+        let iopub_socket = SignedSocket::new(
+            self.session.clone(),
+            ctx.clone(),
+            String::from("IOPub"),
+            zmq::PUB,
+            self.connection.endpoint(self.connection.iopub_port),
+        )?;
+        thread::spawn(move || Self::iopub_thread(iopub_socket, status_receiver));
 
-        let heartbeat_endpoint = self.connection.endpoint(self.connection.hb_port);
-        let session = self.session.clone();
-        let hb_ctx = ctx.clone();
-        thread::spawn(move || Self::heartbeat_thread(hb_ctx, heartbeat_endpoint, session));
+        let heartbeat_socket = SignedSocket::new(
+            self.session.clone(),
+            ctx.clone(),
+            String::from("Heartbeat"),
+            zmq::REQ,
+            self.connection.endpoint(self.connection.hb_port),
+        )?;
+        thread::spawn(move || Self::heartbeat_thread(heartbeat_socket));
         Ok(())
     }
 
     fn shell_thread(
-        channel: SocketChannel,
+        socket: SignedSocket,
         status_sender: Sender<ExecutionState>,
     ) -> Result<(), Error> {
-        let mut shell = Shell::new(channel, status_sender.clone());
+        let mut shell = Shell::new(socket, status_sender.clone());
         shell.listen();
         Ok(())
     }
 
     fn iopub_thread(
-        ctx: zmq::Context,
-        endpoint: String,
+        socket: SignedSocket,
         status_receiver: Receiver<ExecutionState>,
-        session: Session,
     ) -> Result<(), Error> {
-        let iopub_socket = Rc::new(connect::<IOPub>(&ctx, endpoint, session.clone())?);
-        let mut iopub = IOPub::new(iopub_socket, status_receiver);
+        let mut iopub = IOPub::new(socket, status_receiver);
         iopub.listen();
         Ok(())
     }
 
-    fn heartbeat_thread(
-        ctx: zmq::Context,
-        endpoint: String,
-        session: Session,
-    ) -> Result<(), Error> {
-        let heartbeat_socket = Rc::new(connect::<Heartbeat>(&ctx, endpoint, session.clone())?);
-        let mut heartbeat = Heartbeat::new(heartbeat_socket);
+    fn heartbeat_thread(socket: SignedSocket) -> Result<(), Error> {
+        let mut heartbeat = Heartbeat::new(socket);
         heartbeat.listen();
         Ok(())
     }
