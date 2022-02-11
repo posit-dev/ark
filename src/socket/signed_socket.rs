@@ -46,17 +46,62 @@ impl SignedSocket {
         })
     }
 
-    pub fn recv_multipart(&self) -> Result<Vec<Vec<u8>>, Error> {
+    pub fn recv(&self, msg: &mut zmq::Message) -> Result<(), Error> {
         match self.socket.lock() {
-            Ok(socket) => match socket.recv_multipart(0) {
-                Ok(data) => Ok(data),
-                Err(err) => Err(Error::ZmqError(self.name, err)),
-            },
-            Err(err) => Err(Error::CannotLockSocket(self.name)),
+            Ok(socket) => {
+                if let Err(err) = socket.recv(msg, 0) {
+                    Err(Error::ZmqError(self.name.clone(), err))
+                } else {
+                    Ok(())
+                }
+            }
+            Err(_) => Err(Error::CannotLockSocket(
+                self.name.clone(),
+                String::from("message send"),
+            )),
         }
     }
 
-    pub fn send_multipart(&self, data: Vec<Vec<u8>>) -> Result<(), Error>
+    pub fn recv_multipart(&self) -> Result<Vec<Vec<u8>>, Error> {
+        trace!("Waiting for lock on {}", self.name);
+        match self.socket.lock() {
+            Ok(socket) => {
+                trace!("locked {}", self.name);
+                match socket.recv_multipart(0) {
+                    Ok(data) => Ok(data),
+                    Err(err) => Err(Error::ZmqError(self.name.clone(), err)),
+                }
+            }
+            Err(_) => Err(Error::CannotLockSocket(
+                self.name.clone(),
+                String::from("multipart receive"),
+            )),
+        }
+    }
 
-    pub fn send(&self) -> Result<(), Error> {}
+    pub fn send(&self, msg: zmq::Message) -> Result<(), Error> {
+        match self.socket.lock() {
+            Ok(socket) => match socket.send(msg, 0) {
+                Ok(data) => Ok(data),
+                Err(err) => Err(Error::ZmqError(self.name.clone(), err)),
+            },
+            Err(_) => Err(Error::CannotLockSocket(
+                self.name.clone(),
+                String::from("message send"),
+            )),
+        }
+    }
+
+    pub fn send_multipart(&self, data: &Vec<Vec<u8>>) -> Result<(), Error> {
+        match self.socket.lock() {
+            Ok(socket) => match socket.send_multipart(data, 0) {
+                Ok(data) => Ok(data),
+                Err(err) => Err(Error::ZmqError(self.name.clone(), err)),
+            },
+            Err(_) => Err(Error::CannotLockSocket(
+                self.name.clone(),
+                String::from("multipart send"),
+            )),
+        }
+    }
 }

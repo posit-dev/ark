@@ -5,18 +5,16 @@
  *
  */
 
-use crate::error::Error;
 use crate::socket::signed_socket::SignedSocket;
 use crate::socket::socket::Socket;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::status::ExecutionState;
 use crate::wire::status::KernelStatus;
 use log::warn;
-use std::rc::Rc;
 use std::sync::mpsc::Receiver;
 
 pub struct IOPub {
-    socket: Rc<SignedSocket>,
+    socket: SignedSocket,
     state_receiver: Receiver<ExecutionState>,
     state: ExecutionState,
     busy_depth: u32,
@@ -33,7 +31,7 @@ impl Socket for IOPub {
 }
 
 impl IOPub {
-    pub fn new(socket: Rc<SignedSocket>, receiver: Receiver<ExecutionState>) -> Self {
+    pub fn new(socket: SignedSocket, receiver: Receiver<ExecutionState>) -> Self {
         Self {
             socket: socket,
             state_receiver: receiver,
@@ -100,7 +98,7 @@ impl IOPub {
             None,
             &self.socket.session,
         )
-        .send(self.socket.as_ref())
+        .send(&self.socket)
         {
             warn!("Could not emit kernel's startup status. {}", err)
         }
