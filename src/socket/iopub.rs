@@ -91,6 +91,8 @@ impl IOPub {
 
     fn emit_state(&mut self, state: ExecutionState) {
         self.state = state;
+        // TODO the parent header could be the message that sent the kernel into
+        // the busy/idle state. do clients care?
         if let Err(err) = JupyterMessage::<KernelStatus>::create(
             KernelStatus {
                 execution_state: self.state,

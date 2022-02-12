@@ -63,15 +63,11 @@ impl SignedSocket {
     }
 
     pub fn recv_multipart(&self) -> Result<Vec<Vec<u8>>, Error> {
-        trace!("Waiting for lock on {}", self.name);
         match self.socket.lock() {
-            Ok(socket) => {
-                trace!("locked {}", self.name);
-                match socket.recv_multipart(0) {
-                    Ok(data) => Ok(data),
-                    Err(err) => Err(Error::ZmqError(self.name.clone(), err)),
-                }
-            }
+            Ok(socket) => match socket.recv_multipart(0) {
+                Ok(data) => Ok(data),
+                Err(err) => Err(Error::ZmqError(self.name.clone(), err)),
+            },
             Err(_) => Err(Error::CannotLockSocket(
                 self.name.clone(),
                 String::from("multipart receive"),
