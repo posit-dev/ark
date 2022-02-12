@@ -10,6 +10,7 @@ mod error;
 mod kernel;
 mod kernel_dirs;
 mod kernel_spec;
+mod language;
 mod session;
 mod socket;
 mod wire;
