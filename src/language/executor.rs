@@ -17,7 +17,7 @@ use log::warn;
 use serde_json::json;
 use std::sync::mpsc::{Receiver, Sender};
 
-struct Executor {
+pub struct Executor {
     iopub: SignedSocket,
     sender: Sender<Message>,
     receiver: Receiver<Message>,
@@ -34,7 +34,7 @@ impl Executor {
         }
     }
 
-    pub fn listen(&self) -> Result<(), Error> {
+    pub fn listen(&self) {
         loop {
             let msg = match self.receiver.recv() {
                 Ok(s) => s,
@@ -44,7 +44,9 @@ impl Executor {
                     continue;
                 }
             };
-            self.process_message(msg);
+            if let Err(err) = self.process_message(msg) {
+                warn!("Could not process execution message: {}", err)
+            }
         }
     }
 
@@ -52,8 +54,7 @@ impl Executor {
         match msg {
             Message::ExecuteRequest(msg) => self.handle_execute_request(msg),
             _ => Err(Error::UnsupportedMessage(String::from("Executor"))),
-        };
-        Ok(())
+        }
     }
 
     pub fn handle_execute_request(&self, msg: JupyterMessage<ExecuteRequest>) -> Result<(), Error> {
@@ -65,7 +66,7 @@ impl Executor {
                 metadata: serde_json::Value::Null,
             },
             &self.iopub,
-        );
+        )?;
 
         // create reply -- note use of create instead of reply since we need to
         // drop zmq identities
@@ -78,8 +79,12 @@ impl Executor {
             Some(msg.header),
             &self.iopub.session,
         ));
-        self.sender.send(reply);
-        // TODO error handling
-        Ok(())
+        if let Err(_) = self.sender.send(reply) {
+            Err(Error::SendError(String::from(
+                "Could not return execution to shell",
+            )))
+        } else {
+            Ok(())
+        }
     }
 }

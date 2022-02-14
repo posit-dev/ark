@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 
 /// Represents a socket that sends and receives messages that are optionally
 /// signed with a SHA-256 HMAC.
+#[derive(Clone)]
 pub struct SignedSocket {
     /// A ZeroMQ socket over which signed messages are to be sent/received
     pub socket: Arc<Mutex<zmq::Socket>>,
