@@ -7,11 +7,13 @@
 
 use crate::connection_file::ConnectionFile;
 use crate::error::Error;
+use crate::language::executor::Executor;
 use crate::session::Session;
 use crate::socket::heartbeat::Heartbeat;
 use crate::socket::iopub::IOPub;
 use crate::socket::shell::Shell;
 use crate::socket::signed_socket::SignedSocket;
+use crate::wire::jupyter_message::Message;
 use crate::wire::status::ExecutionState;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
@@ -39,6 +41,12 @@ impl Kernel {
         // This channel delivers execution status from other threads to the iopub thread
         let (status_sender, status_receiver) = channel::<ExecutionState>();
 
+        // These pair of channels are used for execution requests, used to
+        // coordinate execution between the shell thread and the language
+        // execution thread
+        let (exec_req_send, exec_req_recv) = channel::<Message>();
+        let (exec_rep_send, exec_rep_recv) = channel::<Message>();
+
         let shell_socket = SignedSocket::new(
             self.session.clone(),
             ctx.clone(),
@@ -55,6 +63,8 @@ impl Kernel {
             zmq::PUB,
             self.connection.endpoint(self.connection.iopub_port),
         )?;
+        let exec_socket = iopub_socket.clone();
+        thread::spawn(move || Self::execution_thread(exec_socket, exec_rep_send, exec_req_recv));
         thread::spawn(move || Self::iopub_thread(iopub_socket, status_receiver));
 
         let heartbeat_socket = SignedSocket::new(
@@ -65,6 +75,7 @@ impl Kernel {
             self.connection.endpoint(self.connection.hb_port),
         )?;
         thread::spawn(move || Self::heartbeat_thread(heartbeat_socket));
+
         Ok(())
     }
 
@@ -89,6 +100,16 @@ impl Kernel {
     fn heartbeat_thread(socket: SignedSocket) -> Result<(), Error> {
         let mut heartbeat = Heartbeat::new(socket);
         heartbeat.listen();
+        Ok(())
+    }
+
+    fn execution_thread(
+        iopub: SignedSocket,
+        sender: Sender<Message>,
+        receiver: Receiver<Message>,
+    ) -> Result<(), Error> {
+        let executor = Executor::new(iopub, sender, receiver);
+        executor.listen();
         Ok(())
     }
 }

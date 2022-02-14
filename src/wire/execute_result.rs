@@ -14,13 +14,13 @@ use serde_json::Value;
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ExecuteResult {
     /// The data giving the result of the execution
-    data: Value,
+    pub data: Value,
 
     /// A monotonically increasing execution counter
-    execution_count: u32,
+    pub execution_count: u32,
 
     /// Optional additional metadata
-    metadata: Value,
+    pub metadata: Value,
 }
 
 impl MessageType for ExecuteResult {
