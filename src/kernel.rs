@@ -17,9 +17,13 @@ use crate::wire::jupyter_message::Message;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
 
+/// A Kernel represents a unique Jupyter kernel session and is the host for all
+/// execution and messaging threads.
 pub struct Kernel {
-    /// The connection metadata
+    /// The connection metadata.
     connection: ConnectionFile,
+
+    /// The unique session information for this kernel session.
     session: Session,
 }
 
@@ -34,6 +38,7 @@ impl Kernel {
         })
     }
 
+    /// Connects the Kernel to the front end.
     pub fn connect(&self) -> Result<(), Error> {
         let ctx = zmq::Context::new();
 
@@ -47,6 +52,8 @@ impl Kernel {
         let (exec_req_send, exec_req_recv) = channel::<Message>();
         let (exec_rep_send, exec_rep_recv) = channel::<Message>();
 
+        // Create the Shell ROUTER/DEALER socket and start a thread to listen
+        // for client messages.
         let shell_socket = Socket::new(
             self.session.clone(),
             ctx.clone(),
@@ -58,6 +65,9 @@ impl Kernel {
             Self::shell_thread(shell_socket, iopub_sender, exec_req_send, exec_rep_recv)
         });
 
+        // Create the IOPub PUB/SUB socket and start a thread to broadcast to
+        // the client. IOPub only broadcasts messages, so it listens to other
+        // threads on a Receiver<Message> instead of to the client.
         let iopub_socket = Socket::new(
             self.session.clone(),
             ctx.clone(),
@@ -66,21 +76,27 @@ impl Kernel {
             self.connection.endpoint(self.connection.iopub_port),
         )?;
         let exec_socket = iopub_socket.clone();
-        thread::spawn(move || Self::execution_thread(exec_socket, exec_rep_send, exec_req_recv));
         thread::spawn(move || Self::iopub_thread(iopub_socket, iopub_receiver));
 
+        // Create the heartbeat socket and start a thread to listen for
+        // heartbeat messages.
         let heartbeat_socket = Socket::new(
             self.session.clone(),
             ctx.clone(),
             String::from("Heartbeat"),
-            zmq::REQ,
+            zmq::REP,
             self.connection.endpoint(self.connection.hb_port),
         )?;
         thread::spawn(move || Self::heartbeat_thread(heartbeat_socket));
 
+        // Create the execution thread. This is the thread on which actual
+        // language execution happens.
+        thread::spawn(move || Self::execution_thread(exec_socket, exec_rep_send, exec_req_recv));
+
         Ok(())
     }
 
+    /// Starts the shell thread.
     fn shell_thread(
         socket: Socket,
         iopub_sender: Sender<Message>,
@@ -92,18 +108,21 @@ impl Kernel {
         Ok(())
     }
 
+    /// Starts the IOPub thread.
     fn iopub_thread(socket: Socket, receiver: Receiver<Message>) -> Result<(), Error> {
         let iopub = IOPub::new(socket, receiver);
         iopub.listen();
         Ok(())
     }
 
+    /// Starts the heartbeat thread.
     fn heartbeat_thread(socket: Socket) -> Result<(), Error> {
         let mut heartbeat = Heartbeat::new(socket);
         heartbeat.listen();
         Ok(())
     }
 
+    /// Starts the language execution thread.
     fn execution_thread(
         iopub: Socket,
         sender: Sender<Message>,

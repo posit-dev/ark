@@ -46,6 +46,7 @@ pub struct WireMessage {
 }
 
 impl WireMessage {
+    /// Read a WireMessage from a ZeroMQ socket.
     pub fn read_from_socket(socket: &Socket) -> Result<WireMessage, Error> {
         let bufs = socket.recv_multipart()?;
         Self::from_buffers(bufs, &socket.session.hmac)
@@ -160,6 +161,8 @@ impl WireMessage {
         Ok(())
     }
 
+    /// Parse raw buffer data from a single part of a multipart ZeroMQ message
+    /// into a JSON value.
     fn parse_buffer(desc: String, buf: &[u8]) -> Result<serde_json::Value, Error> {
         // Convert the raw byte sequence from the ZeroMQ message into UTF-8
         let str = match std::str::from_utf8(&buf) {
@@ -176,6 +179,7 @@ impl WireMessage {
         Ok(val)
     }
 
+    /// Send this message to the given ZeroMQ socket.
     pub fn send(&self, socket: &Socket) -> Result<(), Error> {
         // Serialize JSON values into byte parts in preparation for transmission
         let mut parts: Vec<Vec<u8>> = match self.to_raw_parts() {
@@ -225,6 +229,10 @@ impl WireMessage {
         Ok(parts)
     }
 
+    /// Convert a typed JupyterMessage into a WireMessage, preserving ZeroMQ
+    /// socket identities.
+    ///
+    /// TODO: follow Rust conventions for From<T>
     pub fn from_jupyter_message<T>(msg: JupyterMessage<T>) -> Result<Self, Error>
     where
         T: ProtocolMessage,
@@ -242,7 +250,10 @@ impl WireMessage {
         })
     }
 
-    /// Converts this wire message to a Jupyter message of type T
+    /// Converts this wire message to a Jupyter message of type T, preserving
+    /// ZeroMQ socket identities.
+    ///
+    /// TODO: follow Rust conventions for To<T>
     pub fn to_message_type<T>(&self) -> Result<JupyterMessage<T>, Error>
     where
         T: MessageType + DeserializeOwned,
