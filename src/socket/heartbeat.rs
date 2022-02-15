@@ -29,14 +29,14 @@ impl Heartbeat {
                 std::thread::sleep(std::time::Duration::from_secs(1));
                 continue;
             } else {
-                debug!("Heartbeat message: {:?}", msg);
+                trace!("Heartbeat message: {:?}", msg);
             }
 
             // Echo the message right back!
             if let Err(err) = self.socket.send(msg) {
                 warn!("Error replying to heartbeat: {}", err);
             } else {
-                debug!("Heartbeat message replied");
+                trace!("Heartbeat message replied");
             }
         }
     }

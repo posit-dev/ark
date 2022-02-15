@@ -7,7 +7,6 @@
 
 use crate::error::Error;
 use crate::socket::signed_socket::SignedSocket;
-use crate::socket::socket::Socket;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
 use crate::wire::jupyter_message::ProtocolMessage;
@@ -19,16 +18,6 @@ use std::sync::mpsc::Receiver;
 pub struct IOPub {
     socket: SignedSocket,
     receiver: Receiver<Message>,
-}
-
-impl Socket for IOPub {
-    fn name() -> String {
-        String::from("IOPub")
-    }
-
-    fn kind() -> zmq::SocketType {
-        zmq::PUB
-    }
 }
 
 impl IOPub {

@@ -7,7 +7,6 @@
 
 use crate::error::Error;
 use crate::socket::signed_socket::SignedSocket;
-use crate::socket::socket::Socket;
 use crate::wire::complete_reply::CompleteReply;
 use crate::wire::complete_request::CompleteRequest;
 use crate::wire::execute_reply::ExecuteReply;
@@ -32,16 +31,6 @@ pub struct Shell {
     iopub_sender: Sender<Message>,
     request_sender: Sender<Message>,
     reply_receiver: Receiver<Message>,
-}
-
-impl Socket for Shell {
-    fn name() -> String {
-        String::from("Shell")
-    }
-
-    fn kind() -> zmq::SocketType {
-        zmq::ROUTER
-    }
 }
 
 impl Shell {
@@ -92,7 +81,7 @@ impl Shell {
             Message::CompleteRequest(req) => {
                 self.handle_request(req, |r| self.handle_complete_request(r))
             }
-            _ => Err(Error::UnsupportedMessage(Self::name())),
+            _ => Err(Error::UnsupportedMessage(String::from("shell"))),
         };
 
         // TODO: if result is err we should emit a error to the client?
@@ -149,7 +138,7 @@ impl Shell {
                         return Err(Error::SendError(format!("{}", err)));
                     }
                 }
-                _ => return Err(Error::UnsupportedMessage(Self::name())),
+                _ => return Err(Error::UnsupportedMessage(String::from("shell"))),
             },
             Err(err) => return Err(Error::ReceiveError(format!("{}", err))),
         };
