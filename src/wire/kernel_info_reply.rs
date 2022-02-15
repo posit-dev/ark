@@ -13,7 +13,7 @@ use crate::wire::language_info::LanguageInfo;
 use serde::{Deserialize, Serialize};
 
 /// Represents a reply to a kernel_info_request
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct KernelInfoReply {
     /// The execution status ("ok" or "error")
     pub status: Status,

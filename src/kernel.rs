@@ -38,10 +38,11 @@ impl Kernel {
     pub fn connect(&self) -> Result<(), Error> {
         let ctx = zmq::Context::new();
 
-        // This channel delivers execution status from other threads to the iopub thread
-        let (status_sender, status_receiver) = channel::<ExecutionState>();
+        // This channel delivers execution status and other iopub messages from
+        // other threads to the iopub thread
+        let (iopub_sender, iopub_receiver) = channel::<Message>();
 
-        // These pair of channels are used for execution requests, used to
+        // These pair of channels are used for execution requests, which
         // coordinate execution between the shell thread and the language
         // execution thread
         let (exec_req_send, exec_req_recv) = channel::<Message>();
@@ -55,7 +56,7 @@ impl Kernel {
             self.connection.endpoint(self.connection.shell_port),
         )?;
         thread::spawn(move || {
-            Self::shell_thread(shell_socket, status_sender, exec_req_send, exec_rep_recv)
+            Self::shell_thread(shell_socket, iopub_sender, exec_req_send, exec_rep_recv)
         });
 
         let iopub_socket = SignedSocket::new(
@@ -67,7 +68,7 @@ impl Kernel {
         )?;
         let exec_socket = iopub_socket.clone();
         thread::spawn(move || Self::execution_thread(exec_socket, exec_rep_send, exec_req_recv));
-        thread::spawn(move || Self::iopub_thread(iopub_socket, status_receiver));
+        thread::spawn(move || Self::iopub_thread(iopub_socket, iopub_receiver));
 
         let heartbeat_socket = SignedSocket::new(
             self.session.clone(),
@@ -83,25 +84,17 @@ impl Kernel {
 
     fn shell_thread(
         socket: SignedSocket,
-        status_sender: Sender<ExecutionState>,
+        iopub_sender: Sender<Message>,
         request_sender: Sender<Message>,
         reply_receiver: Receiver<Message>,
     ) -> Result<(), Error> {
-        let mut shell = Shell::new(
-            socket,
-            status_sender.clone(),
-            request_sender,
-            reply_receiver,
-        );
+        let mut shell = Shell::new(socket, iopub_sender.clone(), request_sender, reply_receiver);
         shell.listen();
         Ok(())
     }
 
-    fn iopub_thread(
-        socket: SignedSocket,
-        status_receiver: Receiver<ExecutionState>,
-    ) -> Result<(), Error> {
-        let mut iopub = IOPub::new(socket, status_receiver);
+    fn iopub_thread(socket: SignedSocket, receiver: Receiver<Message>) -> Result<(), Error> {
+        let iopub = IOPub::new(socket, receiver);
         iopub.listen();
         Ok(())
     }
@@ -117,7 +110,7 @@ impl Kernel {
         sender: Sender<Message>,
         receiver: Receiver<Message>,
     ) -> Result<(), Error> {
-        let executor = Executor::new(iopub, sender, receiver);
+        let mut executor = Executor::new(iopub, sender, receiver);
         executor.listen();
         Ok(())
     }

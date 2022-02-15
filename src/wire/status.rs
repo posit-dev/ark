@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 /// Represents a message the front end to communicate kernel status. These
 /// messages are sent before/after handling every request.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct KernelStatus {
     /// The kernel's current status
     pub execution_state: ExecutionState,

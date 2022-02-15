@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 /// Represents a request from the front end to test a code fragment to for
 /// completeness.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct IsCompleteRequest {
     pub code: String,
 }

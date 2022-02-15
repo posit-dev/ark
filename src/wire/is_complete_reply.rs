@@ -10,7 +10,7 @@ use crate::wire::jupyter_message::SocketType;
 use serde::{Deserialize, Serialize};
 
 /// Represents a reply to an is_complete_request.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct IsCompleteReply {
     /// The status of the code: one of Complete, Incomplete, Invalid, or Unknown
     pub status: IsComplete,
@@ -19,7 +19,7 @@ pub struct IsCompleteReply {
     pub indent: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "snake_case")]
 pub enum IsComplete {
     /// The submitted code is complete as written.
