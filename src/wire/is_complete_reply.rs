@@ -6,7 +6,6 @@
  */
 
 use crate::wire::jupyter_message::MessageType;
-use crate::wire::jupyter_message::SocketType;
 use serde::{Deserialize, Serialize};
 
 /// Represents a reply to an is_complete_request.
@@ -38,8 +37,5 @@ pub enum IsComplete {
 impl MessageType for IsCompleteReply {
     fn message_type() -> String {
         String::from("is_complete_reply")
-    }
-    fn socket_type() -> SocketType {
-        SocketType::Shell
     }
 }

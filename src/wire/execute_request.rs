@@ -6,7 +6,6 @@
  */
 
 use crate::wire::jupyter_message::MessageType;
-use crate::wire::jupyter_message::SocketType;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -37,8 +36,5 @@ pub struct ExecuteRequest {
 impl MessageType for ExecuteRequest {
     fn message_type() -> String {
         String::from("execute_request")
-    }
-    fn socket_type() -> SocketType {
-        SocketType::Shell
     }
 }

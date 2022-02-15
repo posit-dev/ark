@@ -6,7 +6,6 @@
  */
 
 use crate::wire::jupyter_message::MessageType;
-use crate::wire::jupyter_message::SocketType;
 use serde::{Deserialize, Serialize};
 
 /// Represents a message the front end to communicate kernel status. These
@@ -20,9 +19,6 @@ pub struct KernelStatus {
 impl MessageType for KernelStatus {
     fn message_type() -> String {
         String::from("status")
-    }
-    fn socket_type() -> SocketType {
-        SocketType::IOPub
     }
 }
 

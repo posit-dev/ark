@@ -6,7 +6,6 @@
  */
 
 use crate::wire::jupyter_message::MessageType;
-use crate::wire::jupyter_message::SocketType;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -26,8 +25,5 @@ pub struct ExecuteResult {
 impl MessageType for ExecuteResult {
     fn message_type() -> String {
         String::from("execute_result")
-    }
-    fn socket_type() -> SocketType {
-        SocketType::IOPub
     }
 }
