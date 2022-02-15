@@ -6,7 +6,6 @@
  */
 
 use crate::wire::jupyter_message::MessageType;
-use crate::wire::jupyter_message::SocketType;
 use serde::{Deserialize, Serialize};
 
 /// Represents a request from the front end to test a code fragment to for
@@ -19,8 +18,5 @@ pub struct IsCompleteRequest {
 impl MessageType for IsCompleteRequest {
     fn message_type() -> String {
         String::from("is_complete_request")
-    }
-    fn socket_type() -> SocketType {
-        SocketType::Shell
     }
 }
