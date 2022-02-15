@@ -7,6 +7,7 @@
 
 use crate::wire::wire_message::WireMessage;
 use std::fmt;
+use std::sync::mpsc::RecvError;
 use std::sync::mpsc::SendError;
 
 #[derive(Debug)]
@@ -33,6 +34,7 @@ pub enum Error {
     SocketBindError(String, String, zmq::Error),
     UnsupportedMessage(String),
     SendError(String),
+    ReceiveError(String),
     WireSendError(SendError<WireMessage>),
     ZmqError(String, zmq::Error),
     CannotLockSocket(String, String),
@@ -141,8 +143,11 @@ impl fmt::Display for Error {
             Error::UnsupportedMessage(socket) => {
                 write!(f, "Unsupported message received on '{}' socket.", socket)
             }
-            Error::SendError(msg) => {
-                write!(f, "{}", msg)
+            Error::SendError(err) => {
+                write!(f, "{}", err)
+            }
+            Error::ReceiveError(err) => {
+                write!(f, "{}", err)
             }
             Error::WireSendError(err) => {
                 write!(f, "Couldn't send message to channel: {}", err)
