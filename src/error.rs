@@ -5,14 +5,11 @@
  *
  */
 
-use crate::wire::wire_message::WireMessage;
 use std::fmt;
-use std::sync::mpsc::RecvError;
 use std::sync::mpsc::SendError;
 
 #[derive(Debug)]
 pub enum Error {
-    SocketRead(zmq::Error),
     MissingDelimiter,
     InsufficientParts(usize, usize),
     InvalidHmac(Vec<u8>, hex::FromHexError),
@@ -22,7 +19,6 @@ pub enum Error {
     InvalidPart(String, serde_json::Value, serde_json::Error),
     InvalidMessage(String, serde_json::Value, serde_json::Error),
     CannotSerialize(serde_json::Error),
-    CannotSend(zmq::Error),
     UnknownMessageType(String),
     NoInstallDir,
     CreateDirFailed(std::io::Error),
@@ -35,7 +31,6 @@ pub enum Error {
     UnsupportedMessage(String),
     SendError(String),
     ReceiveError(String),
-    WireSendError(SendError<WireMessage>),
     ZmqError(String, zmq::Error),
     CannotLockSocket(String, String),
 }
@@ -43,9 +38,6 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Error::SocketRead(err) => {
-                write!(f, "Could not read ZeroMQ message from socket: {}", err)
-            }
             Error::MissingDelimiter => {
                 write!(
                     f,
@@ -103,9 +95,6 @@ impl fmt::Display for Error {
             Error::CannotSerialize(err) => {
                 write!(f, "Cannot serialize message: {}", err)
             }
-            Error::CannotSend(err) => {
-                write!(f, "Cannot send message: {}", err)
-            }
             Error::NoInstallDir => {
                 write!(f, "No Jupyter installation directory found.")
             }
@@ -148,9 +137,6 @@ impl fmt::Display for Error {
             }
             Error::ReceiveError(err) => {
                 write!(f, "{}", err)
-            }
-            Error::WireSendError(err) => {
-                write!(f, "Couldn't send message to channel: {}", err)
             }
             Error::ZmqError(name, err) => {
                 write!(f, "ZeroMQ protocol error on {} socket: {}", name, err)
