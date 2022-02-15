@@ -12,19 +12,24 @@ use std::sync::{Arc, Mutex};
 
 /// Represents a socket that sends and receives messages that are optionally
 /// signed with a SHA-256 HMAC.
+///
+/// Internally, it wraps an ZeroMQ socket with a mutex, so Socket objects can be
+/// shared in a threadsafe way.
 #[derive(Clone)]
 pub struct Socket {
-    /// A ZeroMQ socket over which signed messages are to be sent/received
-    pub socket: Arc<Mutex<zmq::Socket>>,
-
     /// The Jupyter session information associated with the socket, including
     /// the session ID and HMAC signing key
     pub session: Session,
 
+    /// A ZeroMQ socket over which signed messages are to be sent/received
+    socket: Arc<Mutex<zmq::Socket>>,
+
+    /// The name of the socket; used to give context to debugging/trace messages
     name: String,
 }
 
 impl Socket {
+    /// Create a new Socket instance from a kernel session and a ZeroMQ context.
     pub fn new(
         session: Session,
         ctx: zmq::Context,
@@ -32,14 +37,19 @@ impl Socket {
         kind: zmq::SocketType,
         endpoint: String,
     ) -> Result<Self, Error> {
+        // Create the underlying ZeroMQ socket
         let socket = match ctx.socket(kind) {
             Ok(s) => s,
             Err(err) => return Err(Error::CreateSocketFailed(name, err)),
         };
+
+        // Bind the socket to the requested endpoint
         trace!("Binding to ZeroMQ '{}' socket at {}", name, endpoint);
         if let Err(err) = socket.bind(&endpoint) {
             return Err(Error::SocketBindError(name, endpoint, err));
         }
+
+        // Create a new mutex and return
         Ok(Self {
             socket: Arc::new(Mutex::new(socket)),
             session: session,
@@ -47,6 +57,10 @@ impl Socket {
         })
     }
 
+    /// Receive a message from the socket.
+    ///
+    /// **Note**: This will block until the socket is available, and block again
+    /// until a message is delivered on the socket.
     pub fn recv(&self, msg: &mut zmq::Message) -> Result<(), Error> {
         match self.socket.lock() {
             Ok(socket) => {
@@ -63,6 +77,10 @@ impl Socket {
         }
     }
 
+    /// Receive a multi-part message from the socket.
+    ///
+    /// **Note**: This will block until the socket is available, and block again
+    /// until a message is delivered on the socket.
     pub fn recv_multipart(&self) -> Result<Vec<Vec<u8>>, Error> {
         match self.socket.lock() {
             Ok(socket) => match socket.recv_multipart(0) {
@@ -76,6 +94,9 @@ impl Socket {
         }
     }
 
+    /// Send a message on the socket.
+    ///
+    /// **Note**: This will block until the socket is available.
     pub fn send(&self, msg: zmq::Message) -> Result<(), Error> {
         match self.socket.lock() {
             Ok(socket) => match socket.send(msg, 0) {
@@ -89,6 +110,9 @@ impl Socket {
         }
     }
 
+    /// Send a multi-part message on the socket.
+    ///
+    /// **Note**: This will block until the socket is available.
     pub fn send_multipart(&self, data: &Vec<Vec<u8>>) -> Result<(), Error> {
         match self.socket.lock() {
             Ok(socket) => match socket.send_multipart(data, 0) {

@@ -109,6 +109,7 @@ impl<T> JupyterMessage<T>
 where
     T: ProtocolMessage,
 {
+    /// Sends this Jupyter message to the designated ZeroMQ socket.
     pub fn send(self, socket: &Socket) -> Result<(), Error> {
         trace!("Sending Jupyter message to front end: {:?}", self);
         let msg = WireMessage::from_jupyter_message(self)?;
@@ -116,6 +117,8 @@ where
         Ok(())
     }
 
+    /// Create a new Jupyter message, optionally as a child (reply) to an
+    /// existing message.
     pub fn create(
         content: T,
         parent: Option<JupyterHeader>,
@@ -133,12 +136,15 @@ where
         }
     }
 
+    /// Sends a reply to the message; convenience method combining creating the
+    /// reply and sending it.
     pub fn send_reply<R: ProtocolMessage>(&self, content: R, socket: &Socket) -> Result<(), Error> {
         let reply = self.reply_msg(content, &socket.session)?;
         reply.send(&socket)
     }
 
-    pub fn reply_msg<R: ProtocolMessage>(
+    /// Create a raw reply message to this message.
+    fn reply_msg<R: ProtocolMessage>(
         &self,
         content: R,
         session: &Session,
@@ -147,11 +153,15 @@ where
         WireMessage::from_jupyter_message(reply)
     }
 
+    /// Create a reply to this message with the given content.
     pub fn create_reply<R: ProtocolMessage>(
         &self,
         content: R,
         session: &Session,
     ) -> JupyterMessage<R> {
+        // Note that the message we are creating needs to use the kernel session
+        // (given as an argument), not the client session (which we could
+        // otherwise copy from the message itself)
         JupyterMessage::<R> {
             zmq_identities: self.zmq_identities.clone(),
             header: JupyterHeader::create(

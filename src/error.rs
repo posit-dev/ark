@@ -8,6 +8,7 @@
 use std::fmt;
 use std::sync::mpsc::SendError;
 
+/// Type representing all errors that can occur inside the Amalthea implementation.
 #[derive(Debug)]
 pub enum Error {
     MissingDelimiter,

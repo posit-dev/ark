@@ -11,21 +11,36 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
 
+/// The contents of the Connection File as listed in the Jupyter specfication;
+/// directly parsed from JSON.
 #[derive(Deserialize, Debug)]
 pub struct ConnectionFile {
-    // ZeroMQ ports
+    /// ZeroMQ port: Control channel (kernel interrupts)
     pub control_port: u16,
+
+    /// ZeroMQ port: Shell channel (execution, completion)
     pub shell_port: u16,
+
+    /// ZeroMQ port: Standard input channel (prompts)
     pub stdin_port: u16,
+
+    /// ZeroMQ port: IOPub channel (broadcasts input/output)
     pub iopub_port: u16,
+
+    /// ZeroMQ port: Heartbeat messages (echo)
     pub hb_port: u16,
 
-    // TODO: enum? "tcp"
+    /// The transport type to use for ZeroMQ; generally "tcp"
     pub transport: String,
-    // TODO: enum? "hmac-sha256"
+
+    /// The signature scheme to use for messages; generally "hmac-sha256"
     pub signature_scheme: String,
 
+    /// The IP address to bind to
     pub ip: String,
+
+    /// The HMAC-256 signing key, or an empty string for an unauthenticated
+    /// connection
     pub key: String,
 }
 
