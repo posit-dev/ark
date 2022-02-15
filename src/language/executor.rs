@@ -6,7 +6,7 @@
  */
 
 use crate::error::Error;
-use crate::socket::signed_socket::SignedSocket;
+use crate::socket::socket::Socket;
 use crate::wire::execute_reply::ExecuteReply;
 use crate::wire::execute_request::ExecuteRequest;
 use crate::wire::execute_result::ExecuteResult;
@@ -18,7 +18,7 @@ use serde_json::json;
 use std::sync::mpsc::{Receiver, Sender};
 
 pub struct Executor {
-    iopub: SignedSocket,
+    iopub: Socket,
     sender: Sender<Message>,
     receiver: Receiver<Message>,
     execution_count: u32,
@@ -26,7 +26,7 @@ pub struct Executor {
 
 impl Executor {
     // TODO: iopub should be just a messgae sender, not the whole socket
-    pub fn new(iopub: SignedSocket, sender: Sender<Message>, receiver: Receiver<Message>) -> Self {
+    pub fn new(iopub: Socket, sender: Sender<Message>, receiver: Receiver<Message>) -> Self {
         Self {
             iopub: iopub,
             sender: sender,

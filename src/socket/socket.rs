@@ -1,5 +1,5 @@
 /*
- * signed_socket.rs
+ * socket.rs
  *
  * Copyright (C) 2022 by RStudio, PBC
  *
@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 /// Represents a socket that sends and receives messages that are optionally
 /// signed with a SHA-256 HMAC.
 #[derive(Clone)]
-pub struct SignedSocket {
+pub struct Socket {
     /// A ZeroMQ socket over which signed messages are to be sent/received
     pub socket: Arc<Mutex<zmq::Socket>>,
 
@@ -24,7 +24,7 @@ pub struct SignedSocket {
     name: String,
 }
 
-impl SignedSocket {
+impl Socket {
     pub fn new(
         session: Session,
         ctx: zmq::Context,

@@ -7,7 +7,7 @@
 
 use crate::error::Error;
 use crate::session::Session;
-use crate::socket::signed_socket::SignedSocket;
+use crate::socket::socket::Socket;
 use crate::wire::complete_reply::CompleteReply;
 use crate::wire::complete_request::CompleteRequest;
 use crate::wire::execute_reply::ExecuteReply;
@@ -99,7 +99,7 @@ impl Message {
         return Err(Error::UnknownMessageType(kind));
     }
 
-    pub fn read_from_socket(socket: &SignedSocket) -> Result<Self, Error> {
+    pub fn read_from_socket(socket: &Socket) -> Result<Self, Error> {
         let msg = WireMessage::read_from_socket(socket)?;
         Message::to_jupyter_message(msg)
     }
@@ -109,7 +109,7 @@ impl<T> JupyterMessage<T>
 where
     T: ProtocolMessage,
 {
-    pub fn send(self, socket: &SignedSocket) -> Result<(), Error> {
+    pub fn send(self, socket: &Socket) -> Result<(), Error> {
         trace!("Sending Jupyter message to front end: {:?}", self);
         let msg = WireMessage::from_jupyter_message(self)?;
         msg.send(socket)?;
@@ -133,11 +133,7 @@ where
         }
     }
 
-    pub fn send_reply<R: ProtocolMessage>(
-        &self,
-        content: R,
-        socket: &SignedSocket,
-    ) -> Result<(), Error> {
+    pub fn send_reply<R: ProtocolMessage>(&self, content: R, socket: &Socket) -> Result<(), Error> {
         let reply = self.reply_msg(content, &socket.session)?;
         reply.send(&socket)
     }

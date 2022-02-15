@@ -6,7 +6,7 @@
  */
 
 use crate::error::Error;
-use crate::socket::signed_socket::SignedSocket;
+use crate::socket::socket::Socket;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
 use crate::wire::jupyter_message::ProtocolMessage;
@@ -16,12 +16,12 @@ use log::warn;
 use std::sync::mpsc::Receiver;
 
 pub struct IOPub {
-    socket: SignedSocket,
+    socket: Socket,
     receiver: Receiver<Message>,
 }
 
 impl IOPub {
-    pub fn new(socket: SignedSocket, receiver: Receiver<Message>) -> Self {
+    pub fn new(socket: Socket, receiver: Receiver<Message>) -> Self {
         Self {
             socket: socket,
             receiver: receiver,

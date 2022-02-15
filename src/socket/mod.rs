@@ -8,4 +8,4 @@
 pub mod heartbeat;
 pub mod iopub;
 pub mod shell;
-pub mod signed_socket;
+pub mod socket;

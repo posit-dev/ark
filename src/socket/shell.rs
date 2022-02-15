@@ -6,7 +6,7 @@
  */
 
 use crate::error::Error;
-use crate::socket::signed_socket::SignedSocket;
+use crate::socket::socket::Socket;
 use crate::wire::complete_reply::CompleteReply;
 use crate::wire::complete_request::CompleteRequest;
 use crate::wire::execute_reply::ExecuteReply;
@@ -27,7 +27,7 @@ use log::{debug, trace, warn};
 use std::sync::mpsc::{Receiver, Sender};
 
 pub struct Shell {
-    socket: SignedSocket,
+    socket: Socket,
     iopub_sender: Sender<Message>,
     request_sender: Sender<Message>,
     reply_receiver: Receiver<Message>,
@@ -35,7 +35,7 @@ pub struct Shell {
 
 impl Shell {
     pub fn new(
-        socket: SignedSocket,
+        socket: Socket,
         iopub_sender: Sender<Message>,
         sender: Sender<Message>,
         receiver: Receiver<Message>,
