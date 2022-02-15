@@ -21,7 +21,6 @@ use crate::wire::status::KernelStatus;
 use crate::wire::wire_message::WireMessage;
 use log::trace;
 use serde::{Deserialize, Serialize};
-use std::rc::Rc;
 
 /// Represents a Jupyter message
 #[derive(Debug, Clone)]

@@ -14,7 +14,6 @@ use crate::socket::iopub::IOPub;
 use crate::socket::shell::Shell;
 use crate::socket::signed_socket::SignedSocket;
 use crate::wire::jupyter_message::Message;
-use crate::wire::status::ExecutionState;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
 
