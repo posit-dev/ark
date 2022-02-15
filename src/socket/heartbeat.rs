@@ -5,15 +5,15 @@
  *
  */
 
-use crate::socket::signed_socket::SignedSocket;
+use crate::socket::socket::Socket;
 use log::{debug, trace, warn};
 
 pub struct Heartbeat {
-    socket: SignedSocket,
+    socket: Socket,
 }
 
 impl Heartbeat {
-    pub fn new(socket: SignedSocket) -> Self {
+    pub fn new(socket: Socket) -> Self {
         Self { socket: socket }
     }
 

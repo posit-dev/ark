@@ -12,7 +12,7 @@ use crate::session::Session;
 use crate::socket::heartbeat::Heartbeat;
 use crate::socket::iopub::IOPub;
 use crate::socket::shell::Shell;
-use crate::socket::signed_socket::SignedSocket;
+use crate::socket::socket::Socket;
 use crate::wire::jupyter_message::Message;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
@@ -47,7 +47,7 @@ impl Kernel {
         let (exec_req_send, exec_req_recv) = channel::<Message>();
         let (exec_rep_send, exec_rep_recv) = channel::<Message>();
 
-        let shell_socket = SignedSocket::new(
+        let shell_socket = Socket::new(
             self.session.clone(),
             ctx.clone(),
             String::from("Shell"),
@@ -58,7 +58,7 @@ impl Kernel {
             Self::shell_thread(shell_socket, iopub_sender, exec_req_send, exec_rep_recv)
         });
 
-        let iopub_socket = SignedSocket::new(
+        let iopub_socket = Socket::new(
             self.session.clone(),
             ctx.clone(),
             String::from("IOPub"),
@@ -69,7 +69,7 @@ impl Kernel {
         thread::spawn(move || Self::execution_thread(exec_socket, exec_rep_send, exec_req_recv));
         thread::spawn(move || Self::iopub_thread(iopub_socket, iopub_receiver));
 
-        let heartbeat_socket = SignedSocket::new(
+        let heartbeat_socket = Socket::new(
             self.session.clone(),
             ctx.clone(),
             String::from("Heartbeat"),
@@ -82,7 +82,7 @@ impl Kernel {
     }
 
     fn shell_thread(
-        socket: SignedSocket,
+        socket: Socket,
         iopub_sender: Sender<Message>,
         request_sender: Sender<Message>,
         reply_receiver: Receiver<Message>,
@@ -92,20 +92,20 @@ impl Kernel {
         Ok(())
     }
 
-    fn iopub_thread(socket: SignedSocket, receiver: Receiver<Message>) -> Result<(), Error> {
+    fn iopub_thread(socket: Socket, receiver: Receiver<Message>) -> Result<(), Error> {
         let iopub = IOPub::new(socket, receiver);
         iopub.listen();
         Ok(())
     }
 
-    fn heartbeat_thread(socket: SignedSocket) -> Result<(), Error> {
+    fn heartbeat_thread(socket: Socket) -> Result<(), Error> {
         let mut heartbeat = Heartbeat::new(socket);
         heartbeat.listen();
         Ok(())
     }
 
     fn execution_thread(
-        iopub: SignedSocket,
+        iopub: Socket,
         sender: Sender<Message>,
         receiver: Receiver<Message>,
     ) -> Result<(), Error> {

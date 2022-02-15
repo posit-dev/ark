@@ -6,7 +6,7 @@
  */
 
 use crate::error::Error;
-use crate::socket::signed_socket::SignedSocket;
+use crate::socket::socket::Socket;
 use crate::wire::header::JupyterHeader;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::MessageType;
@@ -46,7 +46,7 @@ pub struct WireMessage {
 }
 
 impl WireMessage {
-    pub fn read_from_socket(socket: &SignedSocket) -> Result<WireMessage, Error> {
+    pub fn read_from_socket(socket: &Socket) -> Result<WireMessage, Error> {
         let bufs = socket.recv_multipart()?;
         Self::from_buffers(bufs, &socket.session.hmac)
     }
@@ -176,7 +176,7 @@ impl WireMessage {
         Ok(val)
     }
 
-    pub fn send(&self, socket: &SignedSocket) -> Result<(), Error> {
+    pub fn send(&self, socket: &Socket) -> Result<(), Error> {
         // Serialize JSON values into byte parts in preparation for transmission
         let mut parts: Vec<Vec<u8>> = match self.to_raw_parts() {
             Ok(v) => v,
