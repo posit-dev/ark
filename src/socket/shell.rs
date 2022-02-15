@@ -23,11 +23,13 @@ use crate::wire::kernel_info_request::KernelInfoRequest;
 use crate::wire::language_info::LanguageInfo;
 use crate::wire::status::ExecutionState;
 use log::{debug, trace, warn};
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{Receiver, Sender};
 
 pub struct Shell {
     socket: SignedSocket,
     state_sender: Sender<ExecutionState>,
+    request_sender: Sender<Message>,
+    reply_receiver: Receiver<Message>,
     execution_count: u32,
 }
 
@@ -42,11 +44,18 @@ impl Socket for Shell {
 }
 
 impl Shell {
-    pub fn new(socket: SignedSocket, state_sender: Sender<ExecutionState>) -> Self {
+    pub fn new(
+        socket: SignedSocket,
+        state_sender: Sender<ExecutionState>,
+        sender: Sender<Message>,
+        receiver: Receiver<Message>,
+    ) -> Self {
         Self {
             execution_count: 0,
             socket: socket,
             state_sender: state_sender,
+            request_sender: sender,
+            reply_receiver: receiver,
         }
     }
 
@@ -93,6 +102,24 @@ impl Shell {
     fn handle_execute_request(&mut self, req: JupyterMessage<ExecuteRequest>) -> Result<(), Error> {
         self.execution_count = self.execution_count + 1;
         debug!("Received execution request {:?}", req);
+        if let Err(err) = self
+            .request_sender
+            .send(Message::ExecuteRequest(req.clone()))
+        {
+            return Err(Error::SendError(format!("{}", err)));
+        }
+        match self.reply_receiver.recv() {
+            Ok(msg) => match msg {
+                Message::ExecuteReply(rep) => {
+                    if let Err(err) = rep.send(&self.socket) {
+                        return Err(Error::SendError(format!("{}", err)));
+                    }
+                }
+                _ => return Err(Error::UnsupportedMessage(Self::name())),
+            },
+            Err(err) => return Err(Error::ReceiveError(format!("{}", err))),
+        };
+        // TODO - error returns above should still send a reply
         req.send_reply(
             ExecuteReply {
                 status: Status::Ok,

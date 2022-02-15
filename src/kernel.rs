@@ -54,7 +54,9 @@ impl Kernel {
             zmq::ROUTER,
             self.connection.endpoint(self.connection.shell_port),
         )?;
-        thread::spawn(move || Self::shell_thread(shell_socket, status_sender));
+        thread::spawn(move || {
+            Self::shell_thread(shell_socket, status_sender, exec_req_send, exec_rep_recv)
+        });
 
         let iopub_socket = SignedSocket::new(
             self.session.clone(),
@@ -82,8 +84,15 @@ impl Kernel {
     fn shell_thread(
         socket: SignedSocket,
         status_sender: Sender<ExecutionState>,
+        request_sender: Sender<Message>,
+        reply_receiver: Receiver<Message>,
     ) -> Result<(), Error> {
-        let mut shell = Shell::new(socket, status_sender.clone());
+        let mut shell = Shell::new(
+            socket,
+            status_sender.clone(),
+            request_sender,
+            reply_receiver,
+        );
         shell.listen();
         Ok(())
     }

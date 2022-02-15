@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use std::rc::Rc;
 
 /// Represents a Jupyter message
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct JupyterMessage<T> {
     /// The ZeroMQ identities (for ROUTER sockets)
     pub zmq_identities: Vec<Vec<u8>>,
