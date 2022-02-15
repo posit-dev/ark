@@ -30,7 +30,6 @@ pub struct Shell {
     state_sender: Sender<ExecutionState>,
     request_sender: Sender<Message>,
     reply_receiver: Receiver<Message>,
-    execution_count: u32,
 }
 
 impl Socket for Shell {
@@ -51,7 +50,6 @@ impl Shell {
         receiver: Receiver<Message>,
     ) -> Self {
         Self {
-            execution_count: 0,
             socket: socket,
             state_sender: state_sender,
             request_sender: sender,
@@ -100,7 +98,6 @@ impl Shell {
     }
 
     fn handle_execute_request(&mut self, req: JupyterMessage<ExecuteRequest>) -> Result<(), Error> {
-        self.execution_count = self.execution_count + 1;
         debug!("Received execution request {:?}", req);
         if let Err(err) = self
             .request_sender
@@ -108,9 +105,11 @@ impl Shell {
         {
             return Err(Error::SendError(format!("{}", err)));
         }
+        let execution_count: u32;
         match self.reply_receiver.recv() {
             Ok(msg) => match msg {
                 Message::ExecuteReply(rep) => {
+                    execution_count = rep.content.execution_count;
                     if let Err(err) = rep.send(&self.socket) {
                         return Err(Error::SendError(format!("{}", err)));
                     }
@@ -119,11 +118,10 @@ impl Shell {
             },
             Err(err) => return Err(Error::ReceiveError(format!("{}", err))),
         };
-        // TODO - error returns above should still send a reply
         req.send_reply(
             ExecuteReply {
                 status: Status::Ok,
-                execution_count: self.execution_count,
+                execution_count: execution_count,
                 user_expressions: serde_json::Value::Null,
             },
             &self.socket,

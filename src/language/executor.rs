@@ -34,7 +34,7 @@ impl Executor {
         }
     }
 
-    pub fn listen(&self) {
+    pub fn listen(&mut self) {
         loop {
             let msg = match self.receiver.recv() {
                 Ok(s) => s,
@@ -50,14 +50,18 @@ impl Executor {
         }
     }
 
-    pub fn process_message(&self, msg: Message) -> Result<(), Error> {
+    pub fn process_message(&mut self, msg: Message) -> Result<(), Error> {
         match msg {
             Message::ExecuteRequest(msg) => self.handle_execute_request(msg),
             _ => Err(Error::UnsupportedMessage(String::from("Executor"))),
         }
     }
 
-    pub fn handle_execute_request(&self, msg: JupyterMessage<ExecuteRequest>) -> Result<(), Error> {
+    pub fn handle_execute_request(
+        &mut self,
+        msg: JupyterMessage<ExecuteRequest>,
+    ) -> Result<(), Error> {
+        self.execution_count = self.execution_count + 1;
         let data = json!({"text/plain": msg.content.code });
         msg.send_reply(
             ExecuteResult {
@@ -68,15 +72,12 @@ impl Executor {
             &self.iopub,
         )?;
 
-        // create reply -- note use of create instead of reply since we need to
-        // drop zmq identities
-        let reply = Message::ExecuteReply(JupyterMessage::create(
+        let reply = Message::ExecuteReply(msg.create_reply(
             ExecuteReply {
                 status: Status::Ok,
                 execution_count: self.execution_count,
                 user_expressions: serde_json::Value::Null,
             },
-            Some(msg.header),
             &self.iopub.session,
         ));
         if let Err(_) = self.sender.send(reply) {
