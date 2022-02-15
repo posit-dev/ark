@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Represents a help link in a Jupyter message
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct HelpLink {
     /// The text to display for the link
     pub text: String,

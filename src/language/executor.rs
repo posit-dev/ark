@@ -25,6 +25,7 @@ pub struct Executor {
 }
 
 impl Executor {
+    // TODO: iopub should be just a messgae sender, not the whole socket
     pub fn new(iopub: SignedSocket, sender: Sender<Message>, receiver: Receiver<Message>) -> Self {
         Self {
             iopub: iopub,

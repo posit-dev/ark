@@ -17,17 +17,19 @@ use crate::wire::is_complete_reply::IsCompleteReply;
 use crate::wire::is_complete_request::IsCompleteRequest;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
+use crate::wire::jupyter_message::ProtocolMessage;
 use crate::wire::jupyter_message::Status;
 use crate::wire::kernel_info_reply::KernelInfoReply;
 use crate::wire::kernel_info_request::KernelInfoRequest;
 use crate::wire::language_info::LanguageInfo;
 use crate::wire::status::ExecutionState;
+use crate::wire::status::KernelStatus;
 use log::{debug, trace, warn};
 use std::sync::mpsc::{Receiver, Sender};
 
 pub struct Shell {
     socket: SignedSocket,
-    state_sender: Sender<ExecutionState>,
+    iopub_sender: Sender<Message>,
     request_sender: Sender<Message>,
     reply_receiver: Receiver<Message>,
 }
@@ -45,13 +47,13 @@ impl Socket for Shell {
 impl Shell {
     pub fn new(
         socket: SignedSocket,
-        state_sender: Sender<ExecutionState>,
+        iopub_sender: Sender<Message>,
         sender: Sender<Message>,
         receiver: Receiver<Message>,
     ) -> Self {
         Self {
             socket: socket,
-            state_sender: state_sender,
+            iopub_sender: iopub_sender,
             request_sender: sender,
             reply_receiver: receiver,
         }
@@ -76,28 +78,61 @@ impl Shell {
     fn process_message(&mut self, msg: Message) -> Result<(), Error> {
         // note! we should emit the busy /idle status BEFORE we process messages!
         // then we can include the header
-        if let Err(err) = self.state_sender.send(ExecutionState::Busy) {
-            warn!("Failed to change kernel status to busy: {}", err)
-        }
 
         let result = match msg {
-            Message::KernelInfoRequest(req) => self.handle_info_request(req),
-            Message::IsCompleteRequest(req) => self.handle_is_complete_request(req),
-            Message::ExecuteRequest(req) => self.handle_execute_request(req),
-            Message::CompleteRequest(req) => self.handle_complete_request(req),
+            Message::KernelInfoRequest(req) => {
+                self.handle_request(req, |r| self.handle_info_request(r))
+            }
+            Message::IsCompleteRequest(req) => {
+                self.handle_request(req, |r| self.handle_is_complete_request(r))
+            }
+            Message::ExecuteRequest(req) => {
+                self.handle_request(req, |r| self.handle_execute_request(r))
+            }
+            Message::CompleteRequest(req) => {
+                self.handle_request(req, |r| self.handle_complete_request(r))
+            }
             _ => Err(Error::UnsupportedMessage(Self::name())),
         };
 
         // TODO: if result is err we should emit a error to the client?
 
-        if let Err(err) = self.state_sender.send(ExecutionState::Idle) {
-            warn!("Failed to restore kernel status to idle: {}", err)
-        }
-
         result
     }
 
-    fn handle_execute_request(&mut self, req: JupyterMessage<ExecuteRequest>) -> Result<(), Error> {
+    fn handle_request<T: ProtocolMessage, H: Fn(JupyterMessage<T>) -> Result<(), Error>>(
+        &self,
+        req: JupyterMessage<T>,
+        handler: H,
+    ) -> Result<(), Error> {
+        if let Err(err) = self.send_state(req.clone(), ExecutionState::Busy) {
+            warn!("Failed to change kernel status to busy: {}", err)
+        }
+        handler(req.clone())?;
+        if let Err(err) = self.send_state(req, ExecutionState::Idle) {
+            warn!("Failed to restore kernel status to idle: {}", err)
+        }
+        Ok(())
+    }
+
+    fn send_state<T: ProtocolMessage>(
+        &self,
+        parent: JupyterMessage<T>,
+        state: ExecutionState,
+    ) -> Result<(), Error> {
+        let reply = parent.create_reply(
+            KernelStatus {
+                execution_state: state,
+            },
+            &self.socket.session,
+        );
+        if let Err(err) = self.iopub_sender.send(Message::Status(reply)) {
+            return Err(Error::SendError(format!("{}", err)));
+        }
+        Ok(())
+    }
+
+    fn handle_execute_request(&self, req: JupyterMessage<ExecuteRequest>) -> Result<(), Error> {
         debug!("Received execution request {:?}", req);
         if let Err(err) = self
             .request_sender

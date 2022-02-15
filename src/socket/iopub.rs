@@ -5,9 +5,12 @@
  *
  */
 
+use crate::error::Error;
 use crate::socket::signed_socket::SignedSocket;
 use crate::socket::socket::Socket;
 use crate::wire::jupyter_message::JupyterMessage;
+use crate::wire::jupyter_message::Message;
+use crate::wire::jupyter_message::ProtocolMessage;
 use crate::wire::status::ExecutionState;
 use crate::wire::status::KernelStatus;
 use log::warn;
@@ -15,9 +18,7 @@ use std::sync::mpsc::Receiver;
 
 pub struct IOPub {
     socket: SignedSocket,
-    state_receiver: Receiver<ExecutionState>,
-    state: ExecutionState,
-    busy_depth: u32,
+    receiver: Receiver<Message>,
 }
 
 impl Socket for IOPub {
@@ -31,71 +32,45 @@ impl Socket for IOPub {
 }
 
 impl IOPub {
-    pub fn new(socket: SignedSocket, receiver: Receiver<ExecutionState>) -> Self {
+    pub fn new(socket: SignedSocket, receiver: Receiver<Message>) -> Self {
         Self {
             socket: socket,
-            state_receiver: receiver,
-            state: ExecutionState::Starting,
-            busy_depth: 0,
+            receiver: receiver,
         }
     }
 
-    pub fn listen(&mut self) {
+    pub fn listen(&self) {
         // Begin by emitting the starting state
         self.emit_state(ExecutionState::Starting);
         loop {
-            let state = match self.state_receiver.recv() {
-                Ok(s) => s,
+            let message = match self.receiver.recv() {
+                Ok(m) => m,
                 Err(err) => {
-                    warn!("Failed to receive kernel execution status: {}", err);
-
-                    // Wait 5s before trying to receive another state update
-                    // (avoid log flood if something is wrong with channel)
-                    std::thread::sleep(std::time::Duration::from_secs(5));
+                    warn!("Failed to receive iopub message: {}", err);
                     continue;
                 }
             };
-            match state {
-                ExecutionState::Idle => match self.state {
-                    ExecutionState::Busy => {
-                        if self.busy_depth > 0 {
-                            self.busy_depth = self.busy_depth - 1;
-                        } else {
-                            self.emit_state(state);
-                        }
-                    }
-                    ExecutionState::Starting => {
-                        self.emit_state(state);
-                    }
-                    ExecutionState::Idle => {
-                        // Do nothing
-                    }
-                },
-                ExecutionState::Busy => match self.state {
-                    ExecutionState::Busy => {
-                        self.busy_depth = self.busy_depth + 1;
-                    }
-                    ExecutionState::Idle | ExecutionState::Starting => {
-                        self.emit_state(state);
-                    }
-                },
-                _ => {
-                    warn!(
-                        "Invalid kernel state transition from {:?} to {:?}",
-                        self.state, state
-                    )
-                }
+            if let Err(err) = self.process_message(message) {
+                warn!("Error delivering iopub message: {}", err)
             }
         }
     }
 
-    fn emit_state(&mut self, state: ExecutionState) {
-        self.state = state;
-        // TODO the parent header could be the message that sent the kernel into
-        // the busy/idle state. do clients care?
+    fn process_message(&self, message: Message) -> Result<(), Error> {
+        match message {
+            Message::Status(msg) => self.send_message(msg),
+            _ => Err(Error::UnsupportedMessage(String::from("iopub"))),
+        }
+    }
+
+    fn send_message<T: ProtocolMessage>(&self, message: JupyterMessage<T>) -> Result<(), Error> {
+        message.send(&self.socket)
+    }
+
+    fn emit_state(&self, state: ExecutionState) {
         if let Err(err) = JupyterMessage::<KernelStatus>::create(
             KernelStatus {
-                execution_state: self.state,
+                execution_state: state,
             },
             None,
             &self.socket.session,

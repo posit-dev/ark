@@ -56,8 +56,8 @@ pub enum SocketType {
 
 /// Convenience trait for grouping traits that must be present on all Jupyter
 /// protocol messages
-pub trait ProtocolMessage: MessageType + Serialize + std::fmt::Debug {}
-impl<T> ProtocolMessage for T where T: MessageType + Serialize + std::fmt::Debug {}
+pub trait ProtocolMessage: MessageType + Serialize + std::fmt::Debug + Clone {}
+impl<T> ProtocolMessage for T where T: MessageType + Serialize + std::fmt::Debug + Clone {}
 
 /// List of all known/implemented messages
 #[derive(Debug)]
@@ -74,7 +74,7 @@ pub enum Message {
 }
 
 /// Represents status returned from kernel inside messages.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "snake_case")]
 pub enum Status {
     Ok,
