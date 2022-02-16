@@ -61,8 +61,9 @@ impl Kernel {
             zmq::ROUTER,
             self.connection.endpoint(self.connection.shell_port),
         )?;
+        let shell_sender = iopub_sender.clone();
         thread::spawn(move || {
-            Self::shell_thread(shell_socket, iopub_sender, exec_req_send, exec_rep_recv)
+            Self::shell_thread(shell_socket, shell_sender, exec_req_send, exec_rep_recv)
         });
 
         // Create the IOPub PUB/SUB socket and start a thread to broadcast to
@@ -75,7 +76,6 @@ impl Kernel {
             zmq::PUB,
             self.connection.endpoint(self.connection.iopub_port),
         )?;
-        let exec_socket = iopub_socket.clone();
         thread::spawn(move || Self::iopub_thread(iopub_socket, iopub_receiver));
 
         // Create the heartbeat socket and start a thread to listen for
@@ -91,7 +91,10 @@ impl Kernel {
 
         // Create the execution thread. This is the thread on which actual
         // language execution happens.
-        thread::spawn(move || Self::execution_thread(exec_socket, exec_rep_send, exec_req_recv));
+        let session = self.session.clone();
+        thread::spawn(move || {
+            Self::execution_thread(session, iopub_sender, exec_rep_send, exec_req_recv)
+        });
 
         Ok(())
     }
@@ -124,11 +127,12 @@ impl Kernel {
 
     /// Starts the language execution thread.
     fn execution_thread(
-        iopub: Socket,
+        session: Session,
+        iopub_sender: Sender<Message>,
         sender: Sender<Message>,
         receiver: Receiver<Message>,
     ) -> Result<(), Error> {
-        let mut executor = Executor::new(iopub, sender, receiver);
+        let mut executor = Executor::new(session, iopub_sender, sender, receiver);
         executor.listen();
         Ok(())
     }

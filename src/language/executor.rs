@@ -6,7 +6,7 @@
  */
 
 use crate::error::Error;
-use crate::socket::socket::Socket;
+use crate::session::Session;
 use crate::wire::execute_reply::ExecuteReply;
 use crate::wire::execute_request::ExecuteRequest;
 use crate::wire::execute_result::ExecuteResult;
@@ -19,23 +19,39 @@ use std::sync::mpsc::{Receiver, Sender};
 
 /// Wrapper for the language execution socket.
 pub struct Executor {
-    iopub: Socket,
+    /// Sends messages to the iopub channel
+    iopub_sender: Sender<Message>,
+
+    /// Sends messages (replies) to the Shell channel
     sender: Sender<Message>,
+
+    /// Receives messages from the Shell channel
     receiver: Receiver<Message>,
+
+    /// Session metadata for the execution thread
+    session: Session,
+
+    /// A monotonically increasing execution counter
     execution_count: u32,
 }
 
 impl Executor {
-    // TODO: iopub should be just a messgae sender, not the whole socket
-    pub fn new(iopub: Socket, sender: Sender<Message>, receiver: Receiver<Message>) -> Self {
+    pub fn new(
+        session: Session,
+        iopub: Sender<Message>,
+        sender: Sender<Message>,
+        receiver: Receiver<Message>,
+    ) -> Self {
         Self {
-            iopub: iopub,
+            iopub_sender: iopub,
             sender: sender,
             receiver: receiver,
             execution_count: 0,
+            session: session,
         }
     }
 
+    /// Main execution loop for the execution thread
     pub fn listen(&mut self) {
         loop {
             let msg = match self.receiver.recv() {
@@ -52,6 +68,7 @@ impl Executor {
         }
     }
 
+    /// Process a message from the shell thread
     pub fn process_message(&mut self, msg: Message) -> Result<(), Error> {
         match msg {
             Message::ExecuteRequest(msg) => self.handle_execute_request(msg),
@@ -59,32 +76,44 @@ impl Executor {
         }
     }
 
+    /// Handle an execution request from the front end
     pub fn handle_execute_request(
         &mut self,
         msg: JupyterMessage<ExecuteRequest>,
     ) -> Result<(), Error> {
         self.execution_count = self.execution_count + 1;
-        let data = json!({"text/plain": msg.content.code });
-        msg.send_reply(
-            ExecuteResult {
-                execution_count: self.execution_count,
-                data: data,
-                metadata: serde_json::Value::Null,
-            },
-            &self.iopub,
-        )?;
 
+        // For this toy echo language, generate a result that's just the input
+        // echoed back.
+        let data = json!({"text/plain": msg.content.code });
+        if let Err(err) = self
+            .iopub_sender
+            .send(Message::ExecuteResult(JupyterMessage::create(
+                ExecuteResult {
+                    execution_count: self.execution_count,
+                    data: data,
+                    metadata: serde_json::Value::Null,
+                },
+                Some(msg.header.clone()),
+                &self.session,
+            )))
+        {
+            return Err(Error::SendError(format!("{}", err)));
+        }
+
+        // Let the shell thread know that we've successfully executed the code.
         let reply = Message::ExecuteReply(msg.create_reply(
             ExecuteReply {
                 status: Status::Ok,
                 execution_count: self.execution_count,
                 user_expressions: serde_json::Value::Null,
             },
-            &self.iopub.session,
+            &self.session,
         ));
-        if let Err(_) = self.sender.send(reply) {
-            Err(Error::SendError(String::from(
-                "Could not return execution to shell",
+        if let Err(err) = self.sender.send(reply) {
+            Err(Error::SendError(format!(
+                "Could not return execution to shell: {}",
+                err
             )))
         } else {
             Ok(())
