@@ -260,8 +260,6 @@ impl<T: ProtocolMessage> TryFrom<JupyterMessage<T>> for WireMessage {
 
     /// Convert a typed JupyterMessage into a WireMessage, preserving ZeroMQ
     /// socket identities.
-    ///
-    /// TODO: follow Rust conventions for From<T>
     fn try_from(msg: JupyterMessage<T>) -> Result<Self, Error>
     where
         T: ProtocolMessage,

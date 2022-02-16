@@ -9,7 +9,6 @@ use crate::error::Error;
 use crate::socket::socket::Socket;
 use crate::wire::complete_reply::CompleteReply;
 use crate::wire::complete_request::CompleteRequest;
-use crate::wire::execute_reply::ExecuteReply;
 use crate::wire::execute_request::ExecuteRequest;
 use crate::wire::is_complete_reply::IsComplete;
 use crate::wire::is_complete_reply::IsCompleteReply;
@@ -163,17 +162,17 @@ impl Shell {
             return Err(Error::SendError(format!("{}", err)));
         }
 
-        // We don't track the execution count on this thread; this will be
-        // filled in when the execution thread handles the request
-        let execution_count: u32;
-
         // Wait for the execution thread to process the message; this blocks
         // until we receive a response, so this is where we'll hang out until
         // the code is done executing.
         match self.reply_receiver.recv() {
             Ok(msg) => match msg {
                 Message::ExecuteReply(rep) => {
-                    execution_count = rep.content.execution_count;
+                    if let Err(err) = rep.send(&self.socket) {
+                        return Err(Error::SendError(format!("{}", err)));
+                    }
+                }
+                Message::ExecuteReplyException(rep) => {
                     if let Err(err) = rep.send(&self.socket) {
                         return Err(Error::SendError(format!("{}", err)));
                     }
@@ -182,18 +181,7 @@ impl Shell {
             },
             Err(err) => return Err(Error::ReceiveError(format!("{}", err))),
         };
-
-        // Let the client know we're done.
-        //
-        // TODO - Status should not be OK if there was an error.
-        req.send_reply(
-            ExecuteReply {
-                status: Status::Ok,
-                execution_count: execution_count,
-                user_expressions: serde_json::Value::Null,
-            },
-            &self.socket,
-        )
+        Ok(())
     }
 
     /// Handle a request to test code for completion.
