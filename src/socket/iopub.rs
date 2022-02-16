@@ -48,6 +48,7 @@ impl IOPub {
     fn process_message(&self, message: Message) -> Result<(), Error> {
         match message {
             Message::Status(msg) => self.send_message(msg),
+            Message::ExecuteResult(msg) => self.send_message(msg),
             _ => Err(Error::UnsupportedMessage(message, String::from("iopub"))),
         }
     }
