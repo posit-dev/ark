@@ -16,23 +16,22 @@ Unfortunately this project cuts across architectural boundaries in ways that mak
 
 Building in pure Rust dramatically simplifies the development environment and lets us standardize on idiomatic Rust tools like `serde_json`. It also shortens the distance to compiling for WASM, a door we'd like to leave open for investigation into browser-only versions of Myriac (a la vscode.dev).
 
-### Features
+### Implemented Features
 
 - [X] Jupyter protocol implementation via ZeroMQ
 - [X] Type-safe Rust structures/enums for (subset of) Jupyter messages
 - [X] Heartbeats
-- [X] Shell socket (only)
+- [X] Shell, iopub, and control sockets
 - [X] Replies to kernel info request (returns echo language)
-- [X] Replies to execution request (says okay, doesn't do anything)
 - [X] HMAC signature validation on messages
 - [X] Execution counter
-- [X] Handle completion requests/replies (currently returns nothing)
+- [X] Handle completion requests/replies
+- [X] Simple "execution" that echoes input
 
 ### Up Next
 
-- [ ] Simple "execution" that echoes input (requires channels)
 - [ ] Errors forwarded to client/front end
-- [ ] Add iopub socket
+- [ ] display_data message: plots, data
 - [ ] Standard output & standard error forwarding
 - [ ] Refactor Echo language out into stubs to be implemented by other languages
 - [ ] Produce a crate instead of a binary with an entry point
@@ -40,6 +39,19 @@ Building in pure Rust dramatically simplifies the development environment and le
 ### What's with the name?
 
 This is a Jupyter kernel; Amalthea is [one of Jupiter's moons](https://en.wikipedia.org/wiki/Amalthea_(moon)).
+
+### Installation/Usage
+
+Assuming you have a working Rust toolchain, first build the sources, then install the kernelspec. From the repository root:
+
+```bash
+$ cargo build
+$ ./target/debug/amalthea -- install
+```
+
+This installs a JSON file to the Jupyter kernel registry. After it completes, the Amalthea kernel will be available on all Jupyter frontends on your system (Notebook, Lab, Myriac, etc.).
+
+Set the environment variable `RUST_LOG=trace` to get detailed diagnostic output if desired; more fine-grained control is available as documented in [env_logger](https://docs.rs/env_logger/0.9.0/env_logger/#enabling-logging).
 
 ## Related
 
