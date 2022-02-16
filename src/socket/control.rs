@@ -7,9 +7,7 @@
 
 use crate::error::Error;
 use crate::socket::socket::Socket;
-use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
-use crate::wire::shutdown_request::ShutdownRequest;
 use log::{trace, warn};
 
 pub struct Control {
@@ -34,23 +32,13 @@ impl Control {
                 }
             };
 
-            // Handle the message
-            if let Err(err) = self.process_message(message) {
-                warn!("Could not process control message: {}", err);
+            match message {
+                Message::ShutdownRequest(_) => break,
+                _ => warn!(
+                    "{}",
+                    Error::UnsupportedMessage(message, String::from("Control"))
+                ),
             }
         }
-    }
-
-    /// Process a Jupyter message on the control socket.
-    fn process_message(&self, msg: Message) -> Result<(), Error> {
-        match msg {
-            Message::ShutdownRequest(msg) => self.handle_shutdown(msg),
-            _ => Err(Error::UnsupportedMessage(msg, String::from("Control"))),
-        }
-    }
-
-    fn handle_shutdown(&self, msg: JupyterMessage<ShutdownRequest>) -> Result<(), Error> {
-        warn!("Kernel shutdown not implemented: {:?}", msg);
-        Ok(())
     }
 }
