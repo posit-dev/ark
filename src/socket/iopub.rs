@@ -39,7 +39,6 @@ impl IOPub {
                     continue;
                 }
             };
-            trace!("Recv iopub: {:?}", message);
             if let Err(err) = self.process_message(message) {
                 warn!("Error delivering iopub message: {}", err)
             }

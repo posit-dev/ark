@@ -108,7 +108,9 @@ impl Kernel {
             zmq::ROUTER,
             self.connection.endpoint(self.connection.control_port),
         )?;
-        thread::spawn(move || Self::control_thread(control_socket));
+
+        // TODO: thread/join thread?
+        Self::control_thread(control_socket);
         Ok(())
     }
 
