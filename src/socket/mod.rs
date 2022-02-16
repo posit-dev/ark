@@ -5,6 +5,7 @@
  *
  */
 
+pub mod control;
 pub mod heartbeat;
 pub mod iopub;
 pub mod shell;

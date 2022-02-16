@@ -18,6 +18,7 @@ use crate::wire::is_complete_reply::IsCompleteReply;
 use crate::wire::is_complete_request::IsCompleteRequest;
 use crate::wire::kernel_info_reply::KernelInfoReply;
 use crate::wire::kernel_info_request::KernelInfoRequest;
+use crate::wire::shutdown_request::ShutdownRequest;
 use crate::wire::status::KernelStatus;
 use crate::wire::wire_message::WireMessage;
 use log::trace;
@@ -53,15 +54,16 @@ impl<T> ProtocolMessage for T where T: MessageType + Serialize + std::fmt::Debug
 /// List of all known/implemented messages
 #[derive(Debug)]
 pub enum Message {
-    KernelInfoRequest(JupyterMessage<KernelInfoRequest>),
-    KernelInfoReply(JupyterMessage<KernelInfoReply>),
+    CompleteReply(JupyterMessage<CompleteReply>),
+    CompleteRequest(JupyterMessage<CompleteRequest>),
+    ExecuteReply(JupyterMessage<ExecuteReply>),
+    ExecuteRequest(JupyterMessage<ExecuteRequest>),
+    ExecuteResult(JupyterMessage<ExecuteResult>),
     IsCompleteReply(JupyterMessage<IsCompleteReply>),
     IsCompleteRequest(JupyterMessage<IsCompleteRequest>),
-    ExecuteRequest(JupyterMessage<ExecuteRequest>),
-    ExecuteReply(JupyterMessage<ExecuteReply>),
-    ExecuteResult(JupyterMessage<ExecuteResult>),
-    CompleteRequest(JupyterMessage<CompleteRequest>),
-    CompleteReply(JupyterMessage<CompleteReply>),
+    KernelInfoReply(JupyterMessage<KernelInfoReply>),
+    KernelInfoRequest(JupyterMessage<KernelInfoRequest>),
+    ShutdownRequest(JupyterMessage<ShutdownRequest>),
     Status(JupyterMessage<KernelStatus>),
 }
 
@@ -99,6 +101,8 @@ impl TryFrom<WireMessage> for Message {
             return Ok(Message::CompleteRequest(JupyterMessage::try_from(msg)?));
         } else if kind == CompleteReply::message_type() {
             return Ok(Message::CompleteReply(JupyterMessage::try_from(msg)?));
+        } else if kind == ShutdownRequest::message_type() {
+            return Ok(Message::ShutdownRequest(JupyterMessage::try_from(msg)?));
         } else if kind == KernelStatus::message_type() {
             return Ok(Message::Status(JupyterMessage::try_from(msg)?));
         }
