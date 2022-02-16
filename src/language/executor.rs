@@ -55,7 +55,7 @@ impl Executor {
     pub fn process_message(&mut self, msg: Message) -> Result<(), Error> {
         match msg {
             Message::ExecuteRequest(msg) => self.handle_execute_request(msg),
-            _ => Err(Error::UnsupportedMessage(String::from("Executor"))),
+            _ => Err(Error::UnsupportedMessage(msg, String::from("Executor"))),
         }
     }
 

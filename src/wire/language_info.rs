@@ -7,7 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Represents the header of a Jupyter message
+/// Represents information about the langauge that the kernel implements
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct LanguageInfo {
     /// The name of the programming language the kernel implements
