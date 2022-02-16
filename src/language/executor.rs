@@ -13,7 +13,9 @@ use crate::wire::execute_result::ExecuteResult;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
 use crate::wire::jupyter_message::Status;
-use log::warn;
+use crate::wire::status::ExecutionState;
+use crate::wire::status::KernelStatus;
+use log::{trace, warn};
 use serde_json::json;
 use std::sync::mpsc::{Receiver, Sender};
 
@@ -53,6 +55,22 @@ impl Executor {
 
     /// Main execution loop for the execution thread
     pub fn listen(&mut self) {
+        // Let the front end know that we're ready for business
+        trace!("Listening for execution requests");
+        if let Err(err) = self
+            .iopub_sender
+            .send(Message::Status(JupyterMessage::create(
+                KernelStatus {
+                    execution_state: ExecutionState::Idle,
+                },
+                None,
+                &self.session,
+            )))
+        {
+            warn!("Could not update kernel execution status: {}", err);
+        }
+
+        // Process each message received from the shell channel
         loop {
             let msg = match self.receiver.recv() {
                 Ok(s) => s,

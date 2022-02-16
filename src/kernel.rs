@@ -9,11 +9,13 @@ use crate::connection_file::ConnectionFile;
 use crate::error::Error;
 use crate::language::executor::Executor;
 use crate::session::Session;
+use crate::socket::control::Control;
 use crate::socket::heartbeat::Heartbeat;
 use crate::socket::iopub::IOPub;
 use crate::socket::shell::Shell;
 use crate::socket::socket::Socket;
 use crate::wire::jupyter_message::Message;
+use log::trace;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
 
@@ -92,11 +94,28 @@ impl Kernel {
         // Create the execution thread. This is the thread on which actual
         // language execution happens.
         let session = self.session.clone();
+        trace!("Spawning execution thread...");
         thread::spawn(move || {
+            trace!("...thread spawned");
             Self::execution_thread(session, iopub_sender, exec_rep_send, exec_req_recv)
         });
 
+        // Create the Control ROUTER/DEALER socket
+        let control_socket = Socket::new(
+            self.session.clone(),
+            ctx.clone(),
+            String::from("Control"),
+            zmq::ROUTER,
+            self.connection.endpoint(self.connection.control_port),
+        )?;
+        thread::spawn(move || Self::control_thread(control_socket));
         Ok(())
+    }
+
+    /// Starts the control thread
+    fn control_thread(socket: Socket) {
+        let control = Control::new(socket);
+        control.listen();
     }
 
     /// Starts the shell thread.

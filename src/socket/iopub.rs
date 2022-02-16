@@ -12,7 +12,7 @@ use crate::wire::jupyter_message::Message;
 use crate::wire::jupyter_message::ProtocolMessage;
 use crate::wire::status::ExecutionState;
 use crate::wire::status::KernelStatus;
-use log::warn;
+use log::{trace, warn};
 use std::sync::mpsc::Receiver;
 
 pub struct IOPub {
@@ -39,6 +39,7 @@ impl IOPub {
                     continue;
                 }
             };
+            trace!("Recv iopub: {:?}", message);
             if let Err(err) = self.process_message(message) {
                 warn!("Error delivering iopub message: {}", err)
             }
@@ -58,6 +59,7 @@ impl IOPub {
     }
 
     fn emit_state(&self, state: ExecutionState) {
+        trace!("started emitting state");
         if let Err(err) = JupyterMessage::<KernelStatus>::create(
             KernelStatus {
                 execution_state: state,
@@ -69,5 +71,6 @@ impl IOPub {
         {
             warn!("Could not emit kernel's startup status. {}", err)
         }
+        trace!("finished emitting state!");
     }
 }
