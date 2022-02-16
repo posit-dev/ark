@@ -71,37 +71,41 @@ pub enum Status {
     Error,
 }
 
-impl Message {
+impl TryFrom<WireMessage> for Message {
+    type Error = crate::error::Error;
+
     /// Converts from a wire message to a Jupyter message by examining the message
     /// type and attempting to coerce the content into the appropriate
     /// structure.
-    pub fn to_jupyter_message(msg: WireMessage) -> Result<Self, Error> {
+    fn try_from(msg: WireMessage) -> Result<Self, Error> {
         let kind = msg.header.msg_type.clone();
         if kind == KernelInfoRequest::message_type() {
-            return Ok(Message::KernelInfoRequest(msg.to_message_type()?));
+            return Ok(Message::KernelInfoRequest(JupyterMessage::try_from(msg)?));
         } else if kind == KernelInfoReply::message_type() {
-            return Ok(Message::KernelInfoReply(msg.to_message_type()?));
+            return Ok(Message::KernelInfoReply(JupyterMessage::try_from(msg)?));
         } else if kind == IsCompleteRequest::message_type() {
-            return Ok(Message::IsCompleteRequest(msg.to_message_type()?));
+            return Ok(Message::IsCompleteRequest(JupyterMessage::try_from(msg)?));
         } else if kind == IsCompleteReply::message_type() {
-            return Ok(Message::IsCompleteReply(msg.to_message_type()?));
+            return Ok(Message::IsCompleteReply(JupyterMessage::try_from(msg)?));
         } else if kind == ExecuteRequest::message_type() {
-            return Ok(Message::ExecuteRequest(msg.to_message_type()?));
+            return Ok(Message::ExecuteRequest(JupyterMessage::try_from(msg)?));
         } else if kind == ExecuteReply::message_type() {
-            return Ok(Message::ExecuteReply(msg.to_message_type()?));
+            return Ok(Message::ExecuteReply(JupyterMessage::try_from(msg)?));
         } else if kind == CompleteRequest::message_type() {
-            return Ok(Message::CompleteRequest(msg.to_message_type()?));
+            return Ok(Message::CompleteRequest(JupyterMessage::try_from(msg)?));
         } else if kind == CompleteReply::message_type() {
-            return Ok(Message::CompleteReply(msg.to_message_type()?));
+            return Ok(Message::CompleteReply(JupyterMessage::try_from(msg)?));
         } else if kind == KernelStatus::message_type() {
-            return Ok(Message::Status(msg.to_message_type()?));
+            return Ok(Message::Status(JupyterMessage::try_from(msg)?));
         }
         return Err(Error::UnknownMessageType(kind));
     }
+}
 
+impl Message {
     pub fn read_from_socket(socket: &Socket) -> Result<Self, Error> {
         let msg = WireMessage::read_from_socket(socket)?;
-        Message::to_jupyter_message(msg)
+        Message::try_from(msg)
     }
 }
 
@@ -112,7 +116,7 @@ where
     /// Sends this Jupyter message to the designated ZeroMQ socket.
     pub fn send(self, socket: &Socket) -> Result<(), Error> {
         trace!("Sending Jupyter message to front end: {:?}", self);
-        let msg = WireMessage::from_jupyter_message(self)?;
+        let msg = WireMessage::try_from(self)?;
         msg.send(socket)?;
         Ok(())
     }
@@ -150,7 +154,7 @@ where
         session: &Session,
     ) -> Result<WireMessage, Error> {
         let reply = self.create_reply(content, session);
-        WireMessage::from_jupyter_message(reply)
+        WireMessage::try_from(reply)
     }
 
     /// Create a reply to this message with the given content.

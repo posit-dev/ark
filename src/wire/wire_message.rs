@@ -9,7 +9,6 @@ use crate::error::Error;
 use crate::socket::socket::Socket;
 use crate::wire::header::JupyterHeader;
 use crate::wire::jupyter_message::JupyterMessage;
-use crate::wire::jupyter_message::MessageType;
 use crate::wire::jupyter_message::ProtocolMessage;
 use generic_array::GenericArray;
 use hmac::Hmac;
@@ -228,12 +227,42 @@ impl WireMessage {
         parts.push(serde_json::to_vec(&self.content)?);
         Ok(parts)
     }
+}
+
+// Conversion: WireMessage (untyped) -> JupyterMessage (untyped); used on
+// messages we receive over the wire to parse into the correct type.
+impl<T: ProtocolMessage + DeserializeOwned> TryFrom<WireMessage> for JupyterMessage<T> {
+    type Error = crate::error::Error;
+    fn try_from(msg: WireMessage) -> Result<JupyterMessage<T>, Error> {
+        let content = match serde_json::from_value(msg.content.clone()) {
+            Ok(val) => val,
+            Err(err) => {
+                return Err(Error::InvalidMessage(
+                    T::message_type(),
+                    msg.content.clone(),
+                    err,
+                ))
+            }
+        };
+        Ok(JupyterMessage {
+            zmq_identities: msg.zmq_identities.clone(),
+            header: msg.header.clone(),
+            parent_header: msg.parent_header.clone(),
+            content: content,
+        })
+    }
+}
+
+// Conversion: JupyterMessage (typed) -> WireMessage (untyped); used prior to
+// sending messages to get them ready for dispatch.
+impl<T: ProtocolMessage> TryFrom<JupyterMessage<T>> for WireMessage {
+    type Error = crate::error::Error;
 
     /// Convert a typed JupyterMessage into a WireMessage, preserving ZeroMQ
     /// socket identities.
     ///
     /// TODO: follow Rust conventions for From<T>
-    pub fn from_jupyter_message<T>(msg: JupyterMessage<T>) -> Result<Self, Error>
+    fn try_from(msg: JupyterMessage<T>) -> Result<Self, Error>
     where
         T: ProtocolMessage,
     {
@@ -246,32 +275,6 @@ impl WireMessage {
             header: msg.header,
             parent_header: msg.parent_header,
             metadata: json!({}),
-            content: content,
-        })
-    }
-
-    /// Converts this wire message to a Jupyter message of type T, preserving
-    /// ZeroMQ socket identities.
-    ///
-    /// TODO: follow Rust conventions for To<T>
-    pub fn to_message_type<T>(&self) -> Result<JupyterMessage<T>, Error>
-    where
-        T: MessageType + DeserializeOwned,
-    {
-        let content = match serde_json::from_value(self.content.clone()) {
-            Ok(val) => val,
-            Err(err) => {
-                return Err(Error::InvalidMessage(
-                    T::message_type(),
-                    self.content.clone(),
-                    err,
-                ))
-            }
-        };
-        Ok(JupyterMessage {
-            zmq_identities: self.zmq_identities.clone(),
-            header: self.header.clone(),
-            parent_header: self.parent_header.clone(),
             content: content,
         })
     }

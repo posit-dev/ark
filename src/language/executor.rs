@@ -17,6 +17,7 @@ use log::warn;
 use serde_json::json;
 use std::sync::mpsc::{Receiver, Sender};
 
+/// Wrapper for the language execution socket.
 pub struct Executor {
     iopub: Socket,
     sender: Sender<Message>,
