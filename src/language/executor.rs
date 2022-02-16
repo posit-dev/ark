@@ -7,7 +7,9 @@
 
 use crate::error::Error;
 use crate::session::Session;
+use crate::wire::exception::Exception;
 use crate::wire::execute_reply::ExecuteReply;
+use crate::wire::execute_reply_exception::ExecuteReplyException;
 use crate::wire::execute_request::ExecuteRequest;
 use crate::wire::execute_result::ExecuteResult;
 use crate::wire::jupyter_message::JupyterMessage;
@@ -94,13 +96,7 @@ impl Executor {
         }
     }
 
-    /// Handle an execution request from the front end
-    pub fn handle_execute_request(
-        &mut self,
-        msg: JupyterMessage<ExecuteRequest>,
-    ) -> Result<(), Error> {
-        self.execution_count = self.execution_count + 1;
-
+    fn execute_code(&self, msg: JupyterMessage<ExecuteRequest>) -> Result<Message, Error> {
         // For this toy echo language, generate a result that's just the input
         // echoed back.
         let data = json!({"text/plain": msg.content.code });
@@ -120,14 +116,53 @@ impl Executor {
         }
 
         // Let the shell thread know that we've successfully executed the code.
-        let reply = Message::ExecuteReply(msg.create_reply(
+        Ok(Message::ExecuteReply(msg.create_reply(
             ExecuteReply {
                 status: Status::Ok,
                 execution_count: self.execution_count,
                 user_expressions: serde_json::Value::Null,
             },
             &self.session,
-        ));
+        )))
+    }
+
+    fn generate_error(&self, msg: JupyterMessage<ExecuteRequest>) -> Result<Message, Error> {
+        let exception = Exception {
+            status: Status::Error,
+            ename: String::from("Generic Error"),
+            evalue: String::from("Some kind of error occurred. No idea which."),
+            traceback: vec![
+                String::from("Frame1"),
+                String::from("Frame2"),
+                String::from("Frame3"),
+            ],
+        };
+        Ok(Message::ExecuteReplyException(msg.create_reply(
+            ExecuteReplyException {
+                execution_count: self.execution_count,
+                exception: exception,
+            },
+            &self.session,
+        )))
+    }
+
+    /// Handle an execution request from the front end
+    pub fn handle_execute_request(
+        &mut self,
+        msg: JupyterMessage<ExecuteRequest>,
+    ) -> Result<(), Error> {
+        // If the request is to be stored in history, it should increment the
+        // execution counter.
+        if msg.content.store_history {
+            self.execution_count = self.execution_count + 1;
+        }
+
+        // Generate the appropriate reply; "err" will generate a synthetic error
+        let reply = match msg.content.code.as_str() {
+            "err" => self.generate_error(msg)?,
+            _ => self.execute_code(msg)?,
+        };
+
         if let Err(err) = self.sender.send(reply) {
             Err(Error::SendError(format!(
                 "Could not return execution to shell: {}",

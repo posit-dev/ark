@@ -11,6 +11,7 @@ use crate::socket::socket::Socket;
 use crate::wire::complete_reply::CompleteReply;
 use crate::wire::complete_request::CompleteRequest;
 use crate::wire::execute_reply::ExecuteReply;
+use crate::wire::execute_reply_exception::ExecuteReplyException;
 use crate::wire::execute_request::ExecuteRequest;
 use crate::wire::execute_result::ExecuteResult;
 use crate::wire::header::JupyterHeader;
@@ -57,6 +58,7 @@ pub enum Message {
     CompleteReply(JupyterMessage<CompleteReply>),
     CompleteRequest(JupyterMessage<CompleteRequest>),
     ExecuteReply(JupyterMessage<ExecuteReply>),
+    ExecuteReplyException(JupyterMessage<ExecuteReplyException>),
     ExecuteRequest(JupyterMessage<ExecuteRequest>),
     ExecuteResult(JupyterMessage<ExecuteResult>),
     IsCompleteReply(JupyterMessage<IsCompleteReply>),
@@ -81,6 +83,9 @@ impl TryFrom<WireMessage> for Message {
     /// Converts from a wire message to a Jupyter message by examining the message
     /// type and attempting to coerce the content into the appropriate
     /// structure.
+    ///
+    /// Note that not all message types are supported here; this handles only
+    /// messages that are received from the front end.
     fn try_from(msg: WireMessage) -> Result<Self, Error> {
         let kind = msg.header.msg_type.clone();
         if kind == KernelInfoRequest::message_type() {
