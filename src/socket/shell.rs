@@ -99,7 +99,7 @@ impl Shell {
             Message::CompleteRequest(req) => {
                 self.handle_request(req, |r| self.handle_complete_request(r))
             }
-            _ => Err(Error::UnsupportedMessage(String::from("shell"))),
+            _ => Err(Error::UnsupportedMessage(msg, String::from("shell"))),
         };
 
         // TODO: if result is err we should emit a error to the client?
@@ -178,7 +178,7 @@ impl Shell {
                         return Err(Error::SendError(format!("{}", err)));
                     }
                 }
-                _ => return Err(Error::UnsupportedMessage(String::from("shell"))),
+                _ => return Err(Error::UnsupportedMessage(msg, String::from("shell"))),
             },
             Err(err) => return Err(Error::ReceiveError(format!("{}", err))),
         };

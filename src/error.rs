@@ -5,6 +5,7 @@
  *
  */
 
+use crate::wire::jupyter_message::Message;
 use std::fmt;
 use std::sync::mpsc::SendError;
 
@@ -29,7 +30,7 @@ pub enum Error {
     HmacKeyInvalid(String, crypto_common::InvalidLength),
     CreateSocketFailed(String, zmq::Error),
     SocketBindError(String, String, zmq::Error),
-    UnsupportedMessage(String),
+    UnsupportedMessage(Message, String),
     SendError(String),
     ReceiveError(String),
     ZmqError(String, zmq::Error),
@@ -130,8 +131,8 @@ impl fmt::Display for Error {
                     name, endpoint, err
                 )
             }
-            Error::UnsupportedMessage(socket) => {
-                write!(f, "Unsupported message received on '{}' socket.", socket)
+            Error::UnsupportedMessage(msg, socket) => {
+                write!(f, "Unsupported message received on '{}': {:?}", socket, msg)
             }
             Error::SendError(err) => {
                 write!(f, "{}", err)
