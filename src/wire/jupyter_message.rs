@@ -8,6 +8,8 @@
 use crate::error::Error;
 use crate::session::Session;
 use crate::socket::socket::Socket;
+use crate::wire::comm_info_reply::CommInfoReply;
+use crate::wire::comm_info_request::CommInfoRequest;
 use crate::wire::complete_reply::CompleteReply;
 use crate::wire::complete_request::CompleteRequest;
 use crate::wire::execute_error::ExecuteError;
@@ -69,6 +71,8 @@ pub enum Message {
     KernelInfoRequest(JupyterMessage<KernelInfoRequest>),
     ShutdownRequest(JupyterMessage<ShutdownRequest>),
     Status(JupyterMessage<KernelStatus>),
+    CommInfoReply(JupyterMessage<CommInfoReply>),
+    CommInfoRequest(JupyterMessage<CommInfoRequest>),
 }
 
 /// Represents status returned from kernel inside messages.
@@ -112,6 +116,10 @@ impl TryFrom<WireMessage> for Message {
             return Ok(Message::ShutdownRequest(JupyterMessage::try_from(msg)?));
         } else if kind == KernelStatus::message_type() {
             return Ok(Message::Status(JupyterMessage::try_from(msg)?));
+        } else if kind == CommInfoRequest::message_type() {
+            return Ok(Message::CommInfoRequest(JupyterMessage::try_from(msg)?));
+        } else if kind == CommInfoReply::message_type() {
+            return Ok(Message::CommInfoReply(JupyterMessage::try_from(msg)?));
         }
         return Err(Error::UnknownMessageType(kind));
     }

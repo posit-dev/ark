@@ -7,6 +7,8 @@
 
 use crate::error::Error;
 use crate::socket::socket::Socket;
+use crate::wire::comm_info_reply::CommInfoReply;
+use crate::wire::comm_info_request::CommInfoRequest;
 use crate::wire::complete_reply::CompleteReply;
 use crate::wire::complete_request::CompleteRequest;
 use crate::wire::execute_request::ExecuteRequest;
@@ -97,6 +99,9 @@ impl Shell {
             }
             Message::CompleteRequest(req) => {
                 self.handle_request(req, |r| self.handle_complete_request(r))
+            }
+            Message::CommInfoRequest(req) => {
+                self.handle_request(req, |r| self.handle_comm_info_request(r))
             }
             _ => Err(Error::UnsupportedMessage(msg, String::from("shell"))),
         };
@@ -236,6 +241,19 @@ impl Shell {
                 cursor_start: 0,
                 cursor_end: 0,
                 metadata: serde_json::Value::Null,
+            },
+            &self.socket,
+        )
+    }
+
+    /// Handle a request for open comms
+    fn handle_comm_info_request(&self, req: JupyterMessage<CommInfoRequest>) -> Result<(), Error> {
+        debug!("Received request for open comms: {:?}", req);
+        // No comms in this toy implementation.
+        req.send_reply(
+            CommInfoReply {
+                status: Status::Ok,
+                comms: serde_json::Value::Null,
             },
             &self.socket,
         )
