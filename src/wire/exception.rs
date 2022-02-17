@@ -5,15 +5,11 @@
  *
  */
 
-use crate::wire::jupyter_message::Status;
 use serde::{Deserialize, Serialize};
 
 /// Represents a runtime exception on a ROUTER/DEALER socket
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Exception {
-    /// The status; always Error
-    pub status: Status,
-
     /// The name of the exception
     pub ename: String,
 
