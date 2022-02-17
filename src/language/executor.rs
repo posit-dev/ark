@@ -9,6 +9,7 @@ use crate::error::Error;
 use crate::session::Session;
 use crate::wire::exception::Exception;
 use crate::wire::execute_error::ExecuteError;
+use crate::wire::execute_input::ExecuteInput;
 use crate::wire::execute_reply::ExecuteReply;
 use crate::wire::execute_reply_exception::ExecuteReplyException;
 use crate::wire::execute_request::ExecuteRequest;
@@ -169,6 +170,27 @@ impl Executor {
         // execution counter.
         if msg.content.store_history {
             self.execution_count = self.execution_count + 1;
+        }
+
+        // If the code is not to be executed silently, re-broadcast the
+        // execution to all frontends
+        if !msg.content.silent {
+            if let Err(err) = self
+                .iopub_sender
+                .send(Message::ExecuteInput(JupyterMessage::create(
+                    ExecuteInput {
+                        code: msg.content.code.clone(),
+                        execution_count: self.execution_count,
+                    },
+                    None,
+                    &self.session,
+                )))
+            {
+                warn!(
+                    "Could not broadcast execution input to all front ends: {}",
+                    err
+                );
+            }
         }
 
         // Generate the appropriate reply; "err" will generate a synthetic error

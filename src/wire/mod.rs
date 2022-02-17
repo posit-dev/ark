@@ -11,6 +11,7 @@ pub mod complete_reply;
 pub mod complete_request;
 pub mod exception;
 pub mod execute_error;
+pub mod execute_input;
 pub mod execute_reply;
 pub mod execute_reply_exception;
 pub mod execute_request;
