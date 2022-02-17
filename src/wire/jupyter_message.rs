@@ -13,6 +13,7 @@ use crate::wire::comm_info_request::CommInfoRequest;
 use crate::wire::complete_reply::CompleteReply;
 use crate::wire::complete_request::CompleteRequest;
 use crate::wire::execute_error::ExecuteError;
+use crate::wire::execute_input::ExecuteInput;
 use crate::wire::execute_reply::ExecuteReply;
 use crate::wire::execute_reply_exception::ExecuteReplyException;
 use crate::wire::execute_request::ExecuteRequest;
@@ -65,6 +66,7 @@ pub enum Message {
     ExecuteRequest(JupyterMessage<ExecuteRequest>),
     ExecuteResult(JupyterMessage<ExecuteResult>),
     ExecuteError(JupyterMessage<ExecuteError>),
+    ExecuteInput(JupyterMessage<ExecuteInput>),
     IsCompleteReply(JupyterMessage<IsCompleteReply>),
     IsCompleteRequest(JupyterMessage<IsCompleteRequest>),
     KernelInfoReply(JupyterMessage<KernelInfoReply>),
@@ -108,6 +110,8 @@ impl TryFrom<WireMessage> for Message {
             return Ok(Message::ExecuteReply(JupyterMessage::try_from(msg)?));
         } else if kind == ExecuteResult::message_type() {
             return Ok(Message::ExecuteResult(JupyterMessage::try_from(msg)?));
+        } else if kind == ExecuteInput::message_type() {
+            return Ok(Message::ExecuteInput(JupyterMessage::try_from(msg)?));
         } else if kind == CompleteRequest::message_type() {
             return Ok(Message::CompleteRequest(JupyterMessage::try_from(msg)?));
         } else if kind == CompleteReply::message_type() {
