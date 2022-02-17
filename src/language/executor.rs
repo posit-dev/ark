@@ -8,6 +8,7 @@
 use crate::error::Error;
 use crate::session::Session;
 use crate::wire::exception::Exception;
+use crate::wire::execute_error::ExecuteError;
 use crate::wire::execute_reply::ExecuteReply;
 use crate::wire::execute_reply_exception::ExecuteReplyException;
 use crate::wire::execute_request::ExecuteRequest;
@@ -128,7 +129,6 @@ impl Executor {
 
     fn generate_error(&self, msg: JupyterMessage<ExecuteRequest>) -> Result<Message, Error> {
         let exception = Exception {
-            status: Status::Error,
             ename: String::from("Generic Error"),
             evalue: String::from("Some kind of error occurred. No idea which."),
             traceback: vec![
@@ -137,8 +137,22 @@ impl Executor {
                 String::from("Frame3"),
             ],
         };
+        if let Err(err) = self
+            .iopub_sender
+            .send(Message::ExecuteError(JupyterMessage::create(
+                ExecuteError {
+                    exception: exception.clone(),
+                },
+                Some(msg.header.clone()),
+                &self.session,
+            )))
+        {
+            return Err(Error::SendError(format!("{}", err)));
+        }
+
         Ok(Message::ExecuteReplyException(msg.create_reply(
             ExecuteReplyException {
+                status: Status::Error,
                 execution_count: self.execution_count,
                 exception: exception,
             },

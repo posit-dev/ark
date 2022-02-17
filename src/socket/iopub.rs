@@ -49,6 +49,7 @@ impl IOPub {
         match message {
             Message::Status(msg) => self.send_message(msg),
             Message::ExecuteResult(msg) => self.send_message(msg),
+            Message::ExecuteError(msg) => self.send_message(msg),
             _ => Err(Error::UnsupportedMessage(message, String::from("iopub"))),
         }
     }

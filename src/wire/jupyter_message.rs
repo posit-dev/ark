@@ -10,6 +10,7 @@ use crate::session::Session;
 use crate::socket::socket::Socket;
 use crate::wire::complete_reply::CompleteReply;
 use crate::wire::complete_request::CompleteRequest;
+use crate::wire::execute_error::ExecuteError;
 use crate::wire::execute_reply::ExecuteReply;
 use crate::wire::execute_reply_exception::ExecuteReplyException;
 use crate::wire::execute_request::ExecuteRequest;
@@ -61,6 +62,7 @@ pub enum Message {
     ExecuteReplyException(JupyterMessage<ExecuteReplyException>),
     ExecuteRequest(JupyterMessage<ExecuteRequest>),
     ExecuteResult(JupyterMessage<ExecuteResult>),
+    ExecuteError(JupyterMessage<ExecuteError>),
     IsCompleteReply(JupyterMessage<IsCompleteReply>),
     IsCompleteRequest(JupyterMessage<IsCompleteRequest>),
     KernelInfoReply(JupyterMessage<KernelInfoReply>),
