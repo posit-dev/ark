@@ -6,11 +6,11 @@
  */
 
 pub mod connection_file;
-mod error;
+pub mod error;
 pub mod kernel;
 mod kernel_dirs;
 pub mod kernel_spec;
-mod language;
+pub mod language;
 mod session;
 mod socket;
-mod wire;
+pub mod wire;
