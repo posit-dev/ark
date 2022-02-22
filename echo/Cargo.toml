@@ -5,5 +5,5 @@ edition = "2021"
 
 [dependencies]
 amalthea = { path = "../amalthea" }
-
-
+log = "0.4.14"
+env_logger = "0.9.0"

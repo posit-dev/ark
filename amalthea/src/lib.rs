@@ -5,13 +5,12 @@
  *
  */
 
-mod connection_file;
+pub mod connection_file;
 mod error;
-mod kernel;
+pub mod kernel;
 mod kernel_dirs;
-mod kernel_spec;
+pub mod kernel_spec;
 mod language;
 mod session;
 mod socket;
 mod wire;
-

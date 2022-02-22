@@ -5,18 +5,9 @@
  *
  */
 
-mod connection_file;
-mod error;
-mod kernel;
-mod kernel_dirs;
-mod kernel_spec;
-mod language;
-mod session;
-mod socket;
-mod wire;
-
-use crate::connection_file::ConnectionFile;
-use crate::kernel::Kernel;
+use amalthea::connection_file::ConnectionFile;
+use amalthea::kernel::Kernel;
+use amalthea::kernel_spec::KernelSpec;
 use log::{debug, error, info};
 use std::env;
 use std::io::stdin;
@@ -45,7 +36,7 @@ fn start_kernel(connection_file: ConnectionFile) {
 fn install_kernel_spec() {
     match env::current_exe() {
         Ok(exe_path) => {
-            let spec = kernel_spec::KernelSpec {
+            let spec = KernelSpec {
                 argv: vec![
                     String::from(exe_path.to_string_lossy()),
                     String::from("--connection_file"),
