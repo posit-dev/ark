@@ -136,6 +136,8 @@ name = "echo"
 version = "0.1.0"
 dependencies = [
  "amalthea",
+ "env_logger",
+ "log",
 ]
 
 [[package]]
