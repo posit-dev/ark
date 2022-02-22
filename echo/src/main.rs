@@ -5,6 +5,8 @@
  *
  */
 
+mod shell;
+
 use amalthea::connection_file::ConnectionFile;
 use amalthea::kernel::Kernel;
 use amalthea::kernel_spec::KernelSpec;

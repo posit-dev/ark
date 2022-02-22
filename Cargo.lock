@@ -138,6 +138,7 @@ dependencies = [
  "amalthea",
  "env_logger",
  "log",
+ "serde_json",
 ]
 
 [[package]]
