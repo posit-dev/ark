@@ -12,6 +12,8 @@ use crate::wire::comm_info_reply::CommInfoReply;
 use crate::wire::comm_info_request::CommInfoRequest;
 use crate::wire::complete_reply::CompleteReply;
 use crate::wire::complete_request::CompleteRequest;
+use crate::wire::error_reply::ErrorReply;
+use crate::wire::exception::Exception;
 use crate::wire::execute_error::ExecuteError;
 use crate::wire::execute_input::ExecuteInput;
 use crate::wire::execute_reply::ExecuteReply;
@@ -202,6 +204,31 @@ where
             ),
             parent_header: Some(self.header.clone()),
             content: content,
+        }
+    }
+
+    /// Creates an error reply to this message; used on ROUTER/DEALER sockets to
+    /// indicate that an error occurred while processing a Request message.
+    ///
+    /// Error replies are special cases; they use the message type of a
+    /// successful reply, but their content is an Exception instead.
+    pub fn error_reply<R: ProtocolMessage>(
+        &self,
+        exception: Exception,
+        session: &Session,
+    ) -> JupyterMessage<ErrorReply> {
+        JupyterMessage::<ErrorReply> {
+            zmq_identities: self.zmq_identities.clone(),
+            header: JupyterHeader::create(
+                R::message_type(),
+                session.session_id.clone(),
+                session.username.clone(),
+            ),
+            parent_header: Some(self.header.clone()),
+            content: ErrorReply {
+                status: Status::Error,
+                exception: exception,
+            },
         }
     }
 }
