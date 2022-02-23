@@ -13,18 +13,13 @@ use crate::wire::comm_info_request::CommInfoRequest;
 use crate::wire::complete_reply::CompleteReply;
 use crate::wire::complete_request::CompleteRequest;
 use crate::wire::execute_request::ExecuteRequest;
-use crate::wire::is_complete_reply::IsComplete;
 use crate::wire::is_complete_reply::IsCompleteReply;
 use crate::wire::is_complete_request::IsCompleteRequest;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
 use crate::wire::jupyter_message::ProtocolMessage;
-use crate::wire::jupyter_message::Status;
-use crate::wire::kernel_info_reply::KernelInfoReply;
 use crate::wire::kernel_info_request::KernelInfoRequest;
-use crate::wire::language_info::LanguageInfo;
 use crate::wire::status::ExecutionState;
-use crate::wire::status::KernelStatus;
 use log::{debug, trace, warn};
 use std::sync::mpsc::{Receiver, Sender};
 
@@ -83,9 +78,11 @@ impl<'a> Shell<'a> {
                 }
             };
 
-            // Handle the message
+            // Handle the message; any failures while handling the messages are
+            // delivered to the client instead of reported up the stack, so the
+            // only errors likely here are "can't deliver to client"
             if let Err(err) = self.process_message(message) {
-                warn!("Could not process shell message: {}", err);
+                warn!("Could not handle shell message: {}", err);
             }
         }
     }
@@ -111,8 +108,6 @@ impl<'a> Shell<'a> {
             }
             _ => Err(Error::UnsupportedMessage(msg, String::from("shell"))),
         };
-
-        // TODO: if result is err we should emit a error to the client?
 
         result
     }

@@ -8,6 +8,7 @@
 use crate::connection_file::ConnectionFile;
 use crate::error::Error;
 use crate::language::executor::Executor;
+use crate::language::shell_handler::ShellHandler;
 use crate::session::Session;
 use crate::socket::control::Control;
 use crate::socket::heartbeat::Heartbeat;
@@ -17,6 +18,7 @@ use crate::socket::socket::Socket;
 use crate::wire::jupyter_message::Message;
 use log::trace;
 use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::Arc;
 use std::thread;
 
 /// A Kernel represents a unique Jupyter kernel session and is the host for all
@@ -40,8 +42,8 @@ impl Kernel {
         })
     }
 
-    /// Connects the Kernel to the front end.
-    pub fn connect(&self) -> Result<(), Error> {
+    /// Connects the Kernel to the front end
+    pub fn connect(&self, shell_handler: Arc<dyn ShellHandler>) -> Result<(), Error> {
         let ctx = zmq::Context::new();
 
         // This channel delivers execution status and other iopub messages from
@@ -65,7 +67,13 @@ impl Kernel {
         )?;
         let shell_sender = iopub_sender.clone();
         thread::spawn(move || {
-            Self::shell_thread(shell_socket, shell_sender, exec_req_send, exec_rep_recv)
+            Self::shell_thread(
+                shell_socket,
+                shell_sender,
+                exec_req_send,
+                exec_rep_recv,
+                shell_handler,
+            )
         });
 
         // Create the IOPub PUB/SUB socket and start a thread to broadcast to
@@ -126,8 +134,15 @@ impl Kernel {
         iopub_sender: Sender<Message>,
         request_sender: Sender<Message>,
         reply_receiver: Receiver<Message>,
+        shell_handler: Arc<dyn ShellHandler>,
     ) -> Result<(), Error> {
-        let mut shell = Shell::new(socket, iopub_sender.clone(), request_sender, reply_receiver);
+        let mut shell = Shell::new(
+            socket,
+            iopub_sender.clone(),
+            request_sender,
+            reply_receiver,
+            shell_handler,
+        );
         shell.listen();
         Ok(())
     }
