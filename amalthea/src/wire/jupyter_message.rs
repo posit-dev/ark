@@ -176,6 +176,16 @@ where
         reply.send(&socket)
     }
 
+    /// Sends an error reply to the message.
+    pub fn send_error<R: ProtocolMessage>(
+        &self,
+        exception: Exception,
+        socket: &Socket,
+    ) -> Result<(), Error> {
+        let reply = self.error_reply::<R>(exception, &socket.session);
+        reply.send(&socket)
+    }
+
     /// Create a raw reply message to this message.
     fn reply_msg<R: ProtocolMessage>(
         &self,
