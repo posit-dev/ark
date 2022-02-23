@@ -6,6 +6,7 @@
  */
 
 use crate::error::Error;
+use crate::language::shell_handler::ShellHandler;
 use crate::socket::socket::Socket;
 use crate::wire::comm_info_reply::CommInfoReply;
 use crate::wire::comm_info_request::CommInfoRequest;
@@ -29,7 +30,7 @@ use std::sync::mpsc::{Receiver, Sender};
 
 /// Wrapper for the Shell socket; receives requests for execution, etc. from the
 /// front end and handles them or dispatches them to the execution thread.
-pub struct Shell {
+pub struct Shell<'a> {
     /// The ZeroMQ Shell socket
     socket: Socket,
 
@@ -41,9 +42,12 @@ pub struct Shell {
 
     /// Recieves replies from the execution thread
     reply_receiver: Receiver<Message>,
+
+    /// Language-provided shell handler object
+    handler: Box<dyn ShellHandler + 'a>,
 }
 
-impl Shell {
+impl<'a> Shell<'a> {
     /// Create a new Shell socket.
     ///
     /// * `socket` - The underlying ZeroMQ Shell socket
@@ -55,12 +59,14 @@ impl Shell {
         iopub_sender: Sender<Message>,
         sender: Sender<Message>,
         receiver: Receiver<Message>,
+        handler: Box<dyn ShellHandler + 'a>,
     ) -> Self {
         Self {
             socket: socket,
             iopub_sender: iopub_sender,
             request_sender: sender,
             reply_receiver: receiver,
+            handler: handler,
         }
     }
 
@@ -158,35 +164,10 @@ impl Shell {
     /// thread and forwards the response
     fn handle_execute_request(&self, req: JupyterMessage<ExecuteRequest>) -> Result<(), Error> {
         debug!("Received execution request {:?}", req);
-
-        // Send request to execution thread
-        if let Err(err) = self
-            .request_sender
-            .send(Message::ExecuteRequest(req.clone()))
-        {
-            return Err(Error::SendError(format!("{}", err)));
+        match self.handler.handle_execute_request(req.content) {
+            Ok(reply) => req.send_reply(reply, &self.socket),
+            Err(err) => req.send_reply(err, &self.socket),
         }
-
-        // Wait for the execution thread to process the message; this blocks
-        // until we receive a response, so this is where we'll hang out until
-        // the code is done executing.
-        match self.reply_receiver.recv() {
-            Ok(msg) => match msg {
-                Message::ExecuteReply(rep) => {
-                    if let Err(err) = rep.send(&self.socket) {
-                        return Err(Error::SendError(format!("{}", err)));
-                    }
-                }
-                Message::ExecuteReplyException(rep) => {
-                    if let Err(err) = rep.send(&self.socket) {
-                        return Err(Error::SendError(format!("{}", err)));
-                    }
-                }
-                _ => return Err(Error::UnsupportedMessage(msg, String::from("shell"))),
-            },
-            Err(err) => return Err(Error::ReceiveError(format!("{}", err))),
-        };
-        Ok(())
     }
 
     /// Handle a request to test code for completion.
@@ -195,67 +176,36 @@ impl Shell {
         req: JupyterMessage<IsCompleteRequest>,
     ) -> Result<(), Error> {
         debug!("Received request to test code for completeness: {:?}", req);
-        // In this echo example, the code is always complete!
-        req.send_reply(
-            IsCompleteReply {
-                status: IsComplete::Complete,
-                indent: String::from(""),
-            },
-            &self.socket,
-        )
+        match self.handler.handle_is_complete_request(req.content) {
+            Ok(reply) => req.send_reply(reply, &self.socket),
+            Err(err) => req.send_error::<IsCompleteReply>(err, &self.socket),
+        }
     }
 
     /// Handle a request for kernel information.
     fn handle_info_request(&self, req: JupyterMessage<KernelInfoRequest>) -> Result<(), Error> {
         debug!("Received shell information request: {:?}", req);
-        let info = LanguageInfo {
-            name: String::from("Echo"),
-            version: String::from("1.0"),
-            file_extension: String::from(".ech"),
-            mimetype: String::from("text/echo"),
-            pygments_lexer: String::new(),
-            codemirror_mode: String::new(),
-            nbconvert_exporter: String::new(),
-        };
-        req.send_reply(
-            KernelInfoReply {
-                status: Status::Ok,
-                banner: format!("Amalthea {}", env!("CARGO_PKG_VERSION")),
-                debugger: false,
-                protocol_version: String::from("5.0"),
-                help_links: Vec::new(),
-                language_info: info,
-            },
-            &self.socket,
-        )
+        match self.handler.handle_info_request(req.content) {
+            Ok(reply) => req.send_reply(reply, &self.socket),
+            Err(err) => req.send_error::<KernelInfoReply>(err, &self.socket),
+        }
     }
 
     /// Handle a request for code completion.
     fn handle_complete_request(&self, req: JupyterMessage<CompleteRequest>) -> Result<(), Error> {
         debug!("Received request to complete code: {:?}", req);
-        // No matches in this toy implementation.
-        req.send_reply(
-            CompleteReply {
-                matches: Vec::new(),
-                status: Status::Ok,
-                cursor_start: 0,
-                cursor_end: 0,
-                metadata: serde_json::Value::Null,
-            },
-            &self.socket,
-        )
+        match self.handler.handle_complete_request(req.content) {
+            Ok(reply) => req.send_reply(reply, &self.socket),
+            Err(err) => req.send_error::<CompleteReply>(err, &self.socket),
+        }
     }
 
     /// Handle a request for open comms
     fn handle_comm_info_request(&self, req: JupyterMessage<CommInfoRequest>) -> Result<(), Error> {
         debug!("Received request for open comms: {:?}", req);
-        // No comms in this toy implementation.
-        req.send_reply(
-            CommInfoReply {
-                status: Status::Ok,
-                comms: serde_json::Value::Null,
-            },
-            &self.socket,
-        )
+        match self.handler.handle_comm_info_request(req.content) {
+            Ok(reply) => req.send_reply(reply, &self.socket),
+            Err(err) => req.send_error::<CommInfoReply>(err, &self.socket),
+        }
     }
 }

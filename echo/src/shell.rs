@@ -5,13 +5,14 @@
  *
  */
 
-use amalthea::error::Error;
 use amalthea::language::shell_handler::ShellHandler;
 use amalthea::wire::comm_info_reply::CommInfoReply;
 use amalthea::wire::comm_info_request::CommInfoRequest;
 use amalthea::wire::complete_reply::CompleteReply;
 use amalthea::wire::complete_request::CompleteRequest;
+use amalthea::wire::exception::Exception;
 use amalthea::wire::execute_reply::ExecuteReply;
+use amalthea::wire::execute_reply_exception::ExecuteReplyException;
 use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::is_complete_reply::IsComplete;
 use amalthea::wire::is_complete_reply::IsCompleteReply;
@@ -34,7 +35,7 @@ impl Shell {
 }
 
 impl ShellHandler for Shell {
-    fn handle_info_request(&self, req: KernelInfoRequest) -> Result<KernelInfoReply, Error> {
+    fn handle_info_request(&self, req: KernelInfoRequest) -> Result<KernelInfoReply, Exception> {
         let info = LanguageInfo {
             name: String::from("Echo"),
             version: String::from("1.0"),
@@ -54,7 +55,7 @@ impl ShellHandler for Shell {
         })
     }
 
-    fn handle_complete_request(&self, req: CompleteRequest) -> Result<CompleteReply, Error> {
+    fn handle_complete_request(&self, req: CompleteRequest) -> Result<CompleteReply, Exception> {
         // No matches in this toy implementation.
         Ok(CompleteReply {
             matches: Vec::new(),
@@ -66,7 +67,7 @@ impl ShellHandler for Shell {
     }
 
     /// Handle a request for open comms
-    fn handle_comm_info_request(&self, req: CommInfoRequest) -> Result<CommInfoReply, Error> {
+    fn handle_comm_info_request(&self, req: CommInfoRequest) -> Result<CommInfoReply, Exception> {
         // No comms in this toy implementation.
         Ok(CommInfoReply {
             status: Status::Ok,
@@ -75,7 +76,10 @@ impl ShellHandler for Shell {
     }
 
     /// Handle a request to test code for completion.
-    fn handle_is_complete_request(&self, req: IsCompleteRequest) -> Result<IsCompleteReply, Error> {
+    fn handle_is_complete_request(
+        &self,
+        req: IsCompleteRequest,
+    ) -> Result<IsCompleteReply, Exception> {
         // In this echo example, the code is always complete!
         Ok(IsCompleteReply {
             status: IsComplete::Complete,
@@ -85,7 +89,10 @@ impl ShellHandler for Shell {
 
     /// Handles an ExecuteRequest; dispatches the request to the execution
     /// thread and forwards the response
-    fn handle_execute_request(&self, req: ExecuteRequest) -> Result<ExecuteReply, Error> {
+    fn handle_execute_request(
+        &self,
+        req: ExecuteRequest,
+    ) -> Result<ExecuteReply, ExecuteReplyException> {
         // Send request to execution thread
         if let Err(err) = self
             .request_sender
