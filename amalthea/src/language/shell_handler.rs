@@ -18,7 +18,7 @@ use crate::wire::is_complete_request::IsCompleteRequest;
 use crate::wire::kernel_info_reply::KernelInfoReply;
 use crate::wire::kernel_info_request::KernelInfoRequest;
 
-pub trait ShellHandler {
+pub trait ShellHandler: Send {
     /// Handles a request for information about the kernel.
     ///
     /// Docs: https://jupyter-client.readthedocs.io/en/stable/messaging.html#kernel-info

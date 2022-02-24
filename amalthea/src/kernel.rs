@@ -18,7 +18,7 @@ use crate::socket::socket::Socket;
 use crate::wire::jupyter_message::Message;
 use log::trace;
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 /// A Kernel represents a unique Jupyter kernel session and is the host for all
@@ -43,7 +43,7 @@ impl Kernel {
     }
 
     /// Connects the Kernel to the front end
-    pub fn connect(&self, shell_handler: Arc<dyn ShellHandler>) -> Result<(), Error> {
+    pub fn connect(&self, shell_handler: Arc<Mutex<dyn ShellHandler>>) -> Result<(), Error> {
         let ctx = zmq::Context::new();
 
         // This channel delivers execution status and other iopub messages from
@@ -134,7 +134,7 @@ impl Kernel {
         iopub_sender: Sender<Message>,
         request_sender: Sender<Message>,
         reply_receiver: Receiver<Message>,
-        shell_handler: Arc<dyn ShellHandler>,
+        shell_handler: Arc<Mutex<dyn ShellHandler>>,
     ) -> Result<(), Error> {
         let mut shell = Shell::new(
             socket,
