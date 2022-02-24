@@ -18,14 +18,17 @@ use crate::wire::is_complete_request::IsCompleteRequest;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
 use crate::wire::jupyter_message::ProtocolMessage;
+use crate::wire::kernel_info_reply::KernelInfoReply;
 use crate::wire::kernel_info_request::KernelInfoRequest;
 use crate::wire::status::ExecutionState;
+use crate::wire::status::KernelStatus;
 use log::{debug, trace, warn};
 use std::sync::mpsc::{Receiver, Sender};
+use std::sync::{Arc, Mutex};
 
 /// Wrapper for the Shell socket; receives requests for execution, etc. from the
 /// front end and handles them or dispatches them to the execution thread.
-pub struct Shell<'a> {
+pub struct Shell {
     /// The ZeroMQ Shell socket
     socket: Socket,
 
@@ -39,10 +42,10 @@ pub struct Shell<'a> {
     reply_receiver: Receiver<Message>,
 
     /// Language-provided shell handler object
-    handler: Box<dyn ShellHandler + 'a>,
+    handler: Arc<Mutex<dyn ShellHandler>>,
 }
 
-impl<'a> Shell<'a> {
+impl Shell {
     /// Create a new Shell socket.
     ///
     /// * `socket` - The underlying ZeroMQ Shell socket
@@ -54,7 +57,7 @@ impl<'a> Shell<'a> {
         iopub_sender: Sender<Message>,
         sender: Sender<Message>,
         receiver: Receiver<Message>,
-        handler: Box<dyn ShellHandler + 'a>,
+        handler: Arc<Mutex<dyn ShellHandler>>,
     ) -> Self {
         Self {
             socket: socket,
@@ -92,19 +95,19 @@ impl<'a> Shell<'a> {
     fn process_message(&mut self, msg: Message) -> Result<(), Error> {
         let result = match msg {
             Message::KernelInfoRequest(req) => {
-                self.handle_request(req, |r| self.handle_info_request(r))
+                self.handle_request(req, |h, r| self.handle_info_request(h, r))
             }
             Message::IsCompleteRequest(req) => {
-                self.handle_request(req, |r| self.handle_is_complete_request(r))
+                self.handle_request(req, |h, r| self.handle_is_complete_request(h, r))
             }
             Message::ExecuteRequest(req) => {
-                self.handle_request(req, |r| self.handle_execute_request(r))
+                self.handle_request(req, |h, r| self.handle_execute_request(h, r))
             }
             Message::CompleteRequest(req) => {
-                self.handle_request(req, |r| self.handle_complete_request(r))
+                self.handle_request(req, |h, r| self.handle_complete_request(h, r))
             }
             Message::CommInfoRequest(req) => {
-                self.handle_request(req, |r| self.handle_comm_info_request(r))
+                self.handle_request(req, |h, r| self.handle_comm_info_request(h, r))
             }
             _ => Err(Error::UnsupportedMessage(msg, String::from("shell"))),
         };
@@ -115,18 +118,26 @@ impl<'a> Shell<'a> {
     /// Wrapper for all request handlers; emits busy, invokes the handler, then
     /// emits idle. Most frontends expect all shell messages to be wrapped in
     /// this pair of statuses.
-    fn handle_request<T: ProtocolMessage, H: Fn(JupyterMessage<T>) -> Result<(), Error>>(
+    fn handle_request<
+        T: ProtocolMessage,
+        H: Fn(&dyn ShellHandler, JupyterMessage<T>) -> Result<(), Error>,
+    >(
         &self,
         req: JupyterMessage<T>,
         handler: H,
     ) -> Result<(), Error> {
+        use std::ops::Deref;
+
         // Enter the kernel-busy state in preparation for handling the message.
         if let Err(err) = self.send_state(req.clone(), ExecutionState::Busy) {
             warn!("Failed to change kernel status to busy: {}", err)
         }
 
+        // Lock the shell handler object on this thread
+        let shell_handler = self.handler.lock().unwrap();
+
         // Handle the message!
-        let result = handler(req.clone());
+        let result = handler(shell_handler.deref(), req.clone());
 
         // Return to idle -- we always do this, even if the message generated an
         // error, since many front ends won't submit additional messages until
@@ -157,9 +168,13 @@ impl<'a> Shell<'a> {
 
     /// Handles an ExecuteRequest; dispatches the request to the execution
     /// thread and forwards the response
-    fn handle_execute_request(&self, req: JupyterMessage<ExecuteRequest>) -> Result<(), Error> {
+    fn handle_execute_request(
+        &self,
+        handler: &dyn ShellHandler,
+        req: JupyterMessage<ExecuteRequest>,
+    ) -> Result<(), Error> {
         debug!("Received execution request {:?}", req);
-        match self.handler.handle_execute_request(req.content) {
+        match handler.handle_execute_request(req.content) {
             Ok(reply) => req.send_reply(reply, &self.socket),
             Err(err) => req.send_reply(err, &self.socket),
         }
@@ -168,37 +183,50 @@ impl<'a> Shell<'a> {
     /// Handle a request to test code for completion.
     fn handle_is_complete_request(
         &self,
+        handler: &dyn ShellHandler,
         req: JupyterMessage<IsCompleteRequest>,
     ) -> Result<(), Error> {
         debug!("Received request to test code for completeness: {:?}", req);
-        match self.handler.handle_is_complete_request(req.content) {
+        match handler.handle_is_complete_request(req.content) {
             Ok(reply) => req.send_reply(reply, &self.socket),
             Err(err) => req.send_error::<IsCompleteReply>(err, &self.socket),
         }
     }
 
     /// Handle a request for kernel information.
-    fn handle_info_request(&self, req: JupyterMessage<KernelInfoRequest>) -> Result<(), Error> {
+    fn handle_info_request(
+        &self,
+        handler: &dyn ShellHandler,
+        req: JupyterMessage<KernelInfoRequest>,
+    ) -> Result<(), Error> {
         debug!("Received shell information request: {:?}", req);
-        match self.handler.handle_info_request(req.content) {
+        match handler.handle_info_request(req.content) {
             Ok(reply) => req.send_reply(reply, &self.socket),
             Err(err) => req.send_error::<KernelInfoReply>(err, &self.socket),
         }
     }
 
     /// Handle a request for code completion.
-    fn handle_complete_request(&self, req: JupyterMessage<CompleteRequest>) -> Result<(), Error> {
+    fn handle_complete_request(
+        &self,
+        handler: &dyn ShellHandler,
+        req: JupyterMessage<CompleteRequest>,
+    ) -> Result<(), Error> {
         debug!("Received request to complete code: {:?}", req);
-        match self.handler.handle_complete_request(req.content) {
+        match handler.handle_complete_request(req.content) {
             Ok(reply) => req.send_reply(reply, &self.socket),
             Err(err) => req.send_error::<CompleteReply>(err, &self.socket),
         }
     }
 
     /// Handle a request for open comms
-    fn handle_comm_info_request(&self, req: JupyterMessage<CommInfoRequest>) -> Result<(), Error> {
+    fn handle_comm_info_request(
+        &self,
+        handler: &dyn ShellHandler,
+        req: JupyterMessage<CommInfoRequest>,
+    ) -> Result<(), Error> {
         debug!("Received request for open comms: {:?}", req);
-        match self.handler.handle_comm_info_request(req.content) {
+        match handler.handle_comm_info_request(req.content) {
             Ok(reply) => req.send_reply(reply, &self.socket),
             Err(err) => req.send_error::<CommInfoReply>(err, &self.socket),
         }
