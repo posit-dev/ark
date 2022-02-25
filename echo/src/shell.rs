@@ -18,6 +18,8 @@ use amalthea::wire::execute_reply::ExecuteReply;
 use amalthea::wire::execute_reply_exception::ExecuteReplyException;
 use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::execute_result::ExecuteResult;
+use amalthea::wire::inspect_reply::InspectReply;
+use amalthea::wire::inspect_request::InspectRequest;
 use amalthea::wire::is_complete_reply::IsComplete;
 use amalthea::wire::is_complete_reply::IsCompleteReply;
 use amalthea::wire::is_complete_request::IsCompleteRequest;
@@ -96,8 +98,7 @@ impl ShellHandler for Shell {
         })
     }
 
-    /// Handles an ExecuteRequest; dispatches the request to the execution
-    /// thread and forwards the response
+    /// Handles an ExecuteRequest; "executes" the code by echoing it.
     fn handle_execute_request(
         &mut self,
         req: &ExecuteRequest,
@@ -168,6 +169,25 @@ impl ShellHandler for Shell {
             status: Status::Ok,
             execution_count: self.execution_count,
             user_expressions: serde_json::Value::Null,
+        })
+    }
+
+    /// Handles an introspection request
+    fn handle_inspect_request(&self, req: &InspectRequest) -> Result<InspectReply, Exception> {
+        let data = match req.code.as_str() {
+            "err" => {
+                json!({"text/plain": "This generates an error!"})
+            }
+            "teapot" => {
+                json!({"text/plain": "This is clearly a teapot."})
+            }
+            _ => serde_json::Value::Null,
+        };
+        Ok(InspectReply {
+            status: Status::Ok,
+            found: data == serde_json::Value::Null,
+            data: data,
+            metadata: serde_json::Value::Null,
         })
     }
 }

@@ -13,6 +13,8 @@ use crate::wire::exception::Exception;
 use crate::wire::execute_reply::ExecuteReply;
 use crate::wire::execute_reply_exception::ExecuteReplyException;
 use crate::wire::execute_request::ExecuteRequest;
+use crate::wire::inspect_reply::InspectReply;
+use crate::wire::inspect_request::InspectRequest;
 use crate::wire::is_complete_reply::IsCompleteReply;
 use crate::wire::is_complete_request::IsCompleteRequest;
 use crate::wire::kernel_info_reply::KernelInfoReply;
@@ -49,4 +51,9 @@ pub trait ShellHandler: Send {
     ///
     /// Docs: https://jupyter-client.readthedocs.io/en/stable/messaging.html#comm-info
     fn handle_comm_info_request(&self, req: &CommInfoRequest) -> Result<CommInfoReply, Exception>;
+
+    /// Handles a request to inspect a fragment of code.
+    ///
+    /// Docs: https://jupyter-client.readthedocs.io/en/stable/messaging.html#introspection
+    fn handle_inspect_request(&self, req: &InspectRequest) -> Result<InspectReply, Exception>;
 }
