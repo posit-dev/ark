@@ -36,7 +36,7 @@ pub trait ShellHandler: Send {
     ///
     /// Docs: https://jupyter-client.readthedocs.io/en/stable/messaging.html#execute
     fn handle_execute_request(
-        &self,
+        &mut self,
         req: ExecuteRequest,
     ) -> Result<ExecuteReply, ExecuteReplyException>;
 

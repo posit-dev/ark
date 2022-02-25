@@ -7,6 +7,7 @@
 
 use crate::error::Error;
 use crate::language::shell_handler::ShellHandler;
+use crate::socket::iopub::IOPubMessage;
 use crate::socket::socket::Socket;
 use crate::wire::comm_info_reply::CommInfoReply;
 use crate::wire::comm_info_request::CommInfoRequest;
@@ -23,7 +24,7 @@ use crate::wire::kernel_info_request::KernelInfoRequest;
 use crate::wire::status::ExecutionState;
 use crate::wire::status::KernelStatus;
 use log::{debug, trace, warn};
-use std::sync::mpsc::{Receiver, Sender};
+use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
 /// Wrapper for the Shell socket; receives requests for execution, etc. from the
@@ -32,14 +33,8 @@ pub struct Shell {
     /// The ZeroMQ Shell socket
     socket: Socket,
 
-    /// Sends Jupyter messages to the IOPub socket (owned by another thread)
-    iopub_sender: Sender<Message>,
-
-    /// Sends Jupyter messages to the execution thread
-    request_sender: Sender<Message>,
-
-    /// Recieves replies from the execution thread
-    reply_receiver: Receiver<Message>,
+    /// Sends messages to the IOPub socket (owned by another thread)
+    iopub_sender: Sender<IOPubMessage>,
 
     /// Language-provided shell handler object
     handler: Arc<Mutex<dyn ShellHandler>>,
@@ -50,20 +45,15 @@ impl Shell {
     ///
     /// * `socket` - The underlying ZeroMQ Shell socket
     /// * `iopub_sender` - A channel that delivers messages to the IOPub socket
-    /// * `sender` - A channel that delivers messages to the execution thread
-    /// * `receiver` - A channel that receives messages from the execution thread
+    /// * `handler` - The language's shell channel handler
     pub fn new(
         socket: Socket,
-        iopub_sender: Sender<Message>,
-        sender: Sender<Message>,
-        receiver: Receiver<Message>,
+        iopub_sender: Sender<IOPubMessage>,
         handler: Arc<Mutex<dyn ShellHandler>>,
     ) -> Self {
         Self {
             socket: socket,
             iopub_sender: iopub_sender,
-            request_sender: sender,
-            reply_receiver: receiver,
             handler: handler,
         }
     }
@@ -120,13 +110,13 @@ impl Shell {
     /// this pair of statuses.
     fn handle_request<
         T: ProtocolMessage,
-        H: Fn(&dyn ShellHandler, JupyterMessage<T>) -> Result<(), Error>,
+        H: Fn(&mut dyn ShellHandler, JupyterMessage<T>) -> Result<(), Error>,
     >(
         &self,
         req: JupyterMessage<T>,
         handler: H,
     ) -> Result<(), Error> {
-        use std::ops::Deref;
+        use std::ops::DerefMut;
 
         // Enter the kernel-busy state in preparation for handling the message.
         if let Err(err) = self.send_state(req.clone(), ExecutionState::Busy) {
@@ -134,10 +124,10 @@ impl Shell {
         }
 
         // Lock the shell handler object on this thread
-        let shell_handler = self.handler.lock().unwrap();
+        let mut shell_handler = self.handler.lock().unwrap();
 
         // Handle the message!
-        let result = handler(shell_handler.deref(), req.clone());
+        let result = handler(shell_handler.deref_mut(), req.clone());
 
         // Return to idle -- we always do this, even if the message generated an
         // error, since many front ends won't submit additional messages until
@@ -154,13 +144,13 @@ impl Shell {
         parent: JupyterMessage<T>,
         state: ExecutionState,
     ) -> Result<(), Error> {
-        let reply = parent.create_reply(
-            KernelStatus {
-                execution_state: state,
-            },
-            &self.socket.session,
-        );
-        if let Err(err) = self.iopub_sender.send(Message::Status(reply)) {
+        let reply = KernelStatus {
+            execution_state: state,
+        };
+        if let Err(err) = self
+            .iopub_sender
+            .send(IOPubMessage::Status(parent.header, reply))
+        {
             return Err(Error::SendError(format!("{}", err)));
         }
         Ok(())
@@ -170,11 +160,11 @@ impl Shell {
     /// thread and forwards the response
     fn handle_execute_request(
         &self,
-        handler: &dyn ShellHandler,
+        handler: &mut dyn ShellHandler,
         req: JupyterMessage<ExecuteRequest>,
     ) -> Result<(), Error> {
         debug!("Received execution request {:?}", req);
-        match handler.handle_execute_request(req.content) {
+        match handler.handle_execute_request(content) {
             Ok(reply) => req.send_reply(reply, &self.socket),
             Err(err) => req.send_reply(err, &self.socket),
         }
