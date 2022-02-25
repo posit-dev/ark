@@ -55,8 +55,8 @@ fn install_kernel_spec() {
                     String::from("--connection_file"),
                     String::from("{connection_file}"),
                 ],
-                language: String::from("R"),
-                display_name: String::from("R [Amalthea]"),
+                language: String::from("Echo"),
+                display_name: String::from("Amalthea Echo"),
             };
             if let Err(err) = spec.install(String::from("amalthea")) {
                 eprintln!("Failed to install Jupyter kernelspec. {}", err);
