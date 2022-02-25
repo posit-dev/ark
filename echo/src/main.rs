@@ -7,17 +7,28 @@
 
 mod shell;
 
+use crate::shell::Shell;
 use amalthea::connection_file::ConnectionFile;
 use amalthea::kernel::Kernel;
 use amalthea::kernel_spec::KernelSpec;
+use amalthea::socket::iopub::IOPubMessage;
 use log::{debug, error, info};
 use std::env;
 use std::io::stdin;
+use std::sync::mpsc::channel;
+use std::sync::{Arc, Mutex};
 
 fn start_kernel(connection_file: ConnectionFile) {
+    // This channel delivers execution status and other iopub messages from
+    // other threads to the iopub thread
+    let (iopub_sender, iopub_receiver) = channel::<IOPubMessage>();
+
+    let shell_sender = iopub_sender.clone();
+    let shell = Arc::new(Mutex::new(Shell::new(shell_sender)));
+
     let kernel = Kernel::new(connection_file);
     match kernel {
-        Ok(k) => match k.connect() {
+        Ok(k) => match k.connect(shell, iopub_sender, iopub_receiver) {
             Ok(()) => {
                 let mut s = String::new();
                 println!("Kernel activated, press Ctrl+C to end ");

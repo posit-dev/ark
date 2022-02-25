@@ -44,7 +44,7 @@ impl Shell {
 }
 
 impl ShellHandler for Shell {
-    fn handle_info_request(&self, req: &KernelInfoRequest) -> Result<KernelInfoReply, Exception> {
+    fn handle_info_request(&self, _req: &KernelInfoRequest) -> Result<KernelInfoReply, Exception> {
         let info = LanguageInfo {
             name: String::from("Echo"),
             version: String::from("1.0"),
@@ -64,7 +64,7 @@ impl ShellHandler for Shell {
         })
     }
 
-    fn handle_complete_request(&self, req: &CompleteRequest) -> Result<CompleteReply, Exception> {
+    fn handle_complete_request(&self, _req: &CompleteRequest) -> Result<CompleteReply, Exception> {
         // No matches in this toy implementation.
         Ok(CompleteReply {
             matches: Vec::new(),
@@ -76,7 +76,7 @@ impl ShellHandler for Shell {
     }
 
     /// Handle a request for open comms
-    fn handle_comm_info_request(&self, req: &CommInfoRequest) -> Result<CommInfoReply, Exception> {
+    fn handle_comm_info_request(&self, _req: &CommInfoRequest) -> Result<CommInfoReply, Exception> {
         // No comms in this toy implementation.
         Ok(CommInfoReply {
             status: Status::Ok,
@@ -87,7 +87,7 @@ impl ShellHandler for Shell {
     /// Handle a request to test code for completion.
     fn handle_is_complete_request(
         &self,
-        req: &IsCompleteRequest,
+        _req: &IsCompleteRequest,
     ) -> Result<IsCompleteReply, Exception> {
         // In this echo example, the code is always complete!
         Ok(IsCompleteReply {
