@@ -164,7 +164,7 @@ impl Shell {
         req: JupyterMessage<ExecuteRequest>,
     ) -> Result<(), Error> {
         debug!("Received execution request {:?}", req);
-        match handler.handle_execute_request(content) {
+        match handler.handle_execute_request(&req.content) {
             Ok(reply) => req.send_reply(reply, &self.socket),
             Err(err) => req.send_reply(err, &self.socket),
         }
@@ -177,7 +177,7 @@ impl Shell {
         req: JupyterMessage<IsCompleteRequest>,
     ) -> Result<(), Error> {
         debug!("Received request to test code for completeness: {:?}", req);
-        match handler.handle_is_complete_request(req.content) {
+        match handler.handle_is_complete_request(&req.content) {
             Ok(reply) => req.send_reply(reply, &self.socket),
             Err(err) => req.send_error::<IsCompleteReply>(err, &self.socket),
         }
@@ -190,7 +190,7 @@ impl Shell {
         req: JupyterMessage<KernelInfoRequest>,
     ) -> Result<(), Error> {
         debug!("Received shell information request: {:?}", req);
-        match handler.handle_info_request(req.content) {
+        match handler.handle_info_request(&req.content) {
             Ok(reply) => req.send_reply(reply, &self.socket),
             Err(err) => req.send_error::<KernelInfoReply>(err, &self.socket),
         }
@@ -203,7 +203,7 @@ impl Shell {
         req: JupyterMessage<CompleteRequest>,
     ) -> Result<(), Error> {
         debug!("Received request to complete code: {:?}", req);
-        match handler.handle_complete_request(req.content) {
+        match handler.handle_complete_request(&req.content) {
             Ok(reply) => req.send_reply(reply, &self.socket),
             Err(err) => req.send_error::<CompleteReply>(err, &self.socket),
         }
@@ -216,7 +216,7 @@ impl Shell {
         req: JupyterMessage<CommInfoRequest>,
     ) -> Result<(), Error> {
         debug!("Received request for open comms: {:?}", req);
-        match handler.handle_comm_info_request(req.content) {
+        match handler.handle_comm_info_request(&req.content) {
             Ok(reply) => req.send_reply(reply, &self.socket),
             Err(err) => req.send_error::<CommInfoReply>(err, &self.socket),
         }
