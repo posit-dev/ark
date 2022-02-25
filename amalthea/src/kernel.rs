@@ -15,8 +15,7 @@ use crate::socket::iopub::IOPub;
 use crate::socket::iopub::IOPubMessage;
 use crate::socket::shell::Shell;
 use crate::socket::socket::Socket;
-use crate::wire::jupyter_message::Message;
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -42,12 +41,13 @@ impl Kernel {
     }
 
     /// Connects the Kernel to the front end
-    pub fn connect(&self, shell_handler: Arc<Mutex<dyn ShellHandler>>) -> Result<(), Error> {
+    pub fn connect(
+        &self,
+        shell_handler: Arc<Mutex<dyn ShellHandler>>,
+        iopub_sender: Sender<IOPubMessage>,
+        iopub_receiver: Receiver<IOPubMessage>,
+    ) -> Result<(), Error> {
         let ctx = zmq::Context::new();
-
-        // This channel delivers execution status and other iopub messages from
-        // other threads to the iopub thread
-        let (iopub_sender, iopub_receiver) = channel::<IOPubMessage>();
 
         // Create the Shell ROUTER/DEALER socket and start a thread to listen
         // for client messages.
@@ -58,7 +58,6 @@ impl Kernel {
             zmq::ROUTER,
             self.connection.endpoint(self.connection.shell_port),
         )?;
-        let shell_sender = iopub_sender.clone();
         thread::spawn(move || Self::shell_thread(shell_socket, iopub_sender, shell_handler));
 
         // Create the IOPub PUB/SUB socket and start a thread to broadcast to
