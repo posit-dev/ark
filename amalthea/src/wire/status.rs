@@ -22,7 +22,7 @@ impl MessageType for KernelStatus {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Copy, Clone)]
+#[derive(Debug, Serialize, Deserialize, Copy, Clone, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionState {
     /// The kernel is currently processing a request or executing code.
