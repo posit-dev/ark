@@ -14,6 +14,8 @@ use crate::wire::comm_info_request::CommInfoRequest;
 use crate::wire::complete_reply::CompleteReply;
 use crate::wire::complete_request::CompleteRequest;
 use crate::wire::execute_request::ExecuteRequest;
+use crate::wire::inspect_reply::InspectReply;
+use crate::wire::inspect_request::InspectRequest;
 use crate::wire::is_complete_reply::IsCompleteReply;
 use crate::wire::is_complete_request::IsCompleteRequest;
 use crate::wire::jupyter_message::JupyterMessage;
@@ -98,6 +100,9 @@ impl Shell {
             }
             Message::CommInfoRequest(req) => {
                 self.handle_request(req, |h, r| self.handle_comm_info_request(h, r))
+            }
+            Message::InspectRequest(req) => {
+                self.handle_request(req, |h, r| self.handle_inspect_request(h, r))
             }
             _ => Err(Error::UnsupportedMessage(msg, String::from("shell"))),
         };
@@ -219,6 +224,19 @@ impl Shell {
         match handler.handle_comm_info_request(&req.content) {
             Ok(reply) => req.send_reply(reply, &self.socket),
             Err(err) => req.send_error::<CommInfoReply>(err, &self.socket),
+        }
+    }
+
+    /// Handle a request for code inspection
+    fn handle_inspect_request(
+        &self,
+        handler: &dyn ShellHandler,
+        req: JupyterMessage<InspectRequest>,
+    ) -> Result<(), Error> {
+        debug!("Received request to introspect complete code: {:?}", req);
+        match handler.handle_inspect_request(&req.content) {
+            Ok(reply) => req.send_reply(reply, &self.socket),
+            Err(err) => req.send_error::<InspectReply>(err, &self.socket),
         }
     }
 }

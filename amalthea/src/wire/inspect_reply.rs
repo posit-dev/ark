@@ -14,16 +14,16 @@ use serde_json::Value;
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct InspectReply {
     /// The status of the request (usually Ok)
-    status: Status,
+    pub status: Status,
 
     /// True if an object was found
-    found: bool,
+    pub found: bool,
 
     /// MIME bundle giving information about the object
-    data: Value,
+    pub data: Value,
 
     /// Additional metadata
-    metadata: Value,
+    pub metadata: Value,
 }
 
 impl MessageType for InspectReply {
