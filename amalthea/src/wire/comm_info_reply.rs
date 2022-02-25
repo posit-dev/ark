@@ -9,7 +9,7 @@ use crate::wire::jupyter_message::MessageType;
 use crate::wire::jupyter_message::Status;
 use serde::{Deserialize, Serialize};
 
-/// Represents a request from the front end to show open comms
+/// Represents a reply from the kernel listing open comms
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CommInfoReply {
     /// The status of the request (usually "ok")
