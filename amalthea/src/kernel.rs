@@ -7,16 +7,15 @@
 
 use crate::connection_file::ConnectionFile;
 use crate::error::Error;
-use crate::language::executor::Executor;
 use crate::language::shell_handler::ShellHandler;
 use crate::session::Session;
 use crate::socket::control::Control;
 use crate::socket::heartbeat::Heartbeat;
 use crate::socket::iopub::IOPub;
+use crate::socket::iopub::IOPubMessage;
 use crate::socket::shell::Shell;
 use crate::socket::socket::Socket;
 use crate::wire::jupyter_message::Message;
-use log::trace;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -48,13 +47,7 @@ impl Kernel {
 
         // This channel delivers execution status and other iopub messages from
         // other threads to the iopub thread
-        let (iopub_sender, iopub_receiver) = channel::<Message>();
-
-        // These pair of channels are used for execution requests, which
-        // coordinate execution between the shell thread and the language
-        // execution thread
-        let (exec_req_send, exec_req_recv) = channel::<Message>();
-        let (exec_rep_send, exec_rep_recv) = channel::<Message>();
+        let (iopub_sender, iopub_receiver) = channel::<IOPubMessage>();
 
         // Create the Shell ROUTER/DEALER socket and start a thread to listen
         // for client messages.
@@ -66,15 +59,7 @@ impl Kernel {
             self.connection.endpoint(self.connection.shell_port),
         )?;
         let shell_sender = iopub_sender.clone();
-        thread::spawn(move || {
-            Self::shell_thread(
-                shell_socket,
-                shell_sender,
-                exec_req_send,
-                exec_rep_recv,
-                shell_handler,
-            )
-        });
+        thread::spawn(move || Self::shell_thread(shell_socket, iopub_sender, shell_handler));
 
         // Create the IOPub PUB/SUB socket and start a thread to broadcast to
         // the client. IOPub only broadcasts messages, so it listens to other
@@ -99,15 +84,6 @@ impl Kernel {
         )?;
         thread::spawn(move || Self::heartbeat_thread(heartbeat_socket));
 
-        // Create the execution thread. This is the thread on which actual
-        // language execution happens.
-        let session = self.session.clone();
-        trace!("Spawning execution thread...");
-        thread::spawn(move || {
-            trace!("...thread spawned");
-            Self::execution_thread(session, iopub_sender, exec_rep_send, exec_req_recv)
-        });
-
         // Create the Control ROUTER/DEALER socket
         let control_socket = Socket::new(
             self.session.clone(),
@@ -131,25 +107,17 @@ impl Kernel {
     /// Starts the shell thread.
     fn shell_thread(
         socket: Socket,
-        iopub_sender: Sender<Message>,
-        request_sender: Sender<Message>,
-        reply_receiver: Receiver<Message>,
+        iopub_sender: Sender<IOPubMessage>,
         shell_handler: Arc<Mutex<dyn ShellHandler>>,
     ) -> Result<(), Error> {
-        let mut shell = Shell::new(
-            socket,
-            iopub_sender.clone(),
-            request_sender,
-            reply_receiver,
-            shell_handler,
-        );
+        let mut shell = Shell::new(socket, iopub_sender.clone(), shell_handler);
         shell.listen();
         Ok(())
     }
 
     /// Starts the IOPub thread.
-    fn iopub_thread(socket: Socket, receiver: Receiver<Message>) -> Result<(), Error> {
-        let iopub = IOPub::new(socket, receiver);
+    fn iopub_thread(socket: Socket, receiver: Receiver<IOPubMessage>) -> Result<(), Error> {
+        let mut iopub = IOPub::new(socket, receiver);
         iopub.listen();
         Ok(())
     }
@@ -158,18 +126,6 @@ impl Kernel {
     fn heartbeat_thread(socket: Socket) -> Result<(), Error> {
         let mut heartbeat = Heartbeat::new(socket);
         heartbeat.listen();
-        Ok(())
-    }
-
-    /// Starts the language execution thread.
-    fn execution_thread(
-        session: Session,
-        iopub_sender: Sender<Message>,
-        sender: Sender<Message>,
-        receiver: Receiver<Message>,
-    ) -> Result<(), Error> {
-        let mut executor = Executor::new(session, iopub_sender, sender, receiver);
-        executor.listen();
         Ok(())
     }
 }

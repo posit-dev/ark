@@ -46,7 +46,7 @@ impl IOPub {
         }
     }
 
-    pub fn listen(&self) {
+    pub fn listen(&mut self) {
         // Begin by emitting the starting state
         self.emit_state(ExecutionState::Starting);
         loop {
@@ -76,7 +76,7 @@ impl IOPub {
     }
 
     fn send_message<T: ProtocolMessage>(&self, content: T) -> Result<(), Error> {
-        let msg = JupyterMessage::<T>::create(content, self.context, &self.socket.session);
+        let msg = JupyterMessage::<T>::create(content, self.context.clone(), &self.socket.session);
         msg.send(&self.socket)
     }
 

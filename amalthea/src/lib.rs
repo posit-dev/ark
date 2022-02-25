@@ -12,5 +12,5 @@ mod kernel_dirs;
 pub mod kernel_spec;
 pub mod language;
 mod session;
-mod socket;
+pub mod socket;
 pub mod wire;

@@ -6,11 +6,13 @@
  */
 
 use amalthea::language::shell_handler::ShellHandler;
+use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::comm_info_reply::CommInfoReply;
 use amalthea::wire::comm_info_request::CommInfoRequest;
 use amalthea::wire::complete_reply::CompleteReply;
 use amalthea::wire::complete_request::CompleteRequest;
 use amalthea::wire::exception::Exception;
+use amalthea::wire::execute_error::ExecuteError;
 use amalthea::wire::execute_reply::ExecuteReply;
 use amalthea::wire::execute_reply_exception::ExecuteReplyException;
 use amalthea::wire::execute_request::ExecuteRequest;
@@ -18,12 +20,12 @@ use amalthea::wire::execute_result::ExecuteResult;
 use amalthea::wire::is_complete_reply::IsComplete;
 use amalthea::wire::is_complete_reply::IsCompleteReply;
 use amalthea::wire::is_complete_request::IsCompleteRequest;
-use amalthea::wire::jupyter_message::JupyterMessage;
 use amalthea::wire::jupyter_message::Message;
 use amalthea::wire::jupyter_message::Status;
 use amalthea::wire::kernel_info_reply::KernelInfoReply;
 use amalthea::wire::kernel_info_request::KernelInfoRequest;
 use amalthea::wire::language_info::LanguageInfo;
+use log::warn;
 use serde_json::json;
 use std::sync::mpsc::Sender;
 
@@ -94,25 +96,68 @@ impl ShellHandler for Shell {
     /// Handles an ExecuteRequest; dispatches the request to the execution
     /// thread and forwards the response
     fn handle_execute_request(
-        &self,
+        &mut self,
         req: ExecuteRequest,
     ) -> Result<ExecuteReply, ExecuteReplyException> {
+        // Increment counter if we are storing this execution in history
+        if req.store_history {
+            self.execution_count = self.execution_count + 1;
+        }
+
+        // If the code is not to be executed silently, re-broadcast the
+        // execution to all frontends
+        if !req.silent {
+            if let Err(err) = self.iopub.send(IOPubMessage::ExecuteInput(ExecuteInput {
+                code: req.code.clone(),
+                execution_count: self.execution_count,
+            })) {
+                warn!(
+                    "Could not broadcast execution input {} to all front ends: {}",
+                    self.execution_count, err
+                );
+            }
+        }
+
+        // Create an artificial error if the user requested one
+        if req.code == "err" {
+            let exception = Exception {
+                ename: String::from("Generic Error"),
+                evalue: String::from("Some kind of error occurred. No idea which."),
+                traceback: vec![
+                    String::from("Frame1"),
+                    String::from("Frame2"),
+                    String::from("Frame3"),
+                ],
+            };
+
+            if let Err(err) = self.iopub.send(IOPubMessage::ExecuteError(ExecuteError {
+                exception: exception.clone(),
+            })) {
+                warn!(
+                    "Could not publish error from computation {} on iopub: {}",
+                    self.execution_count, err
+                );
+            }
+
+            return Err(ExecuteReplyException {
+                status: Status::Error,
+                execution_count: self.execution_count,
+                exception: exception,
+            });
+        }
+
         // For this toy echo language, generate a result that's just the input
         // echoed back.
         let data = json!({"text/plain": req.code });
-        if let Err(err) = self
-            .iopub
-            .send(Message::ExecuteResult(JupyterMessage::create(
-                ExecuteResult {
-                    execution_count: self.execution_count,
-                    data: data,
-                    metadata: serde_json::Value::Null,
-                },
-                Some(msg.header.clone()),
-                &self.session,
-            )))
-        {
-            return Err(Error::SendError(format!("{}", err)));
+        if let Err(err) = self.iopub.send(IOPubMessage::ExecuteResult(ExecuteResult {
+            execution_count: self.execution_count,
+            data: data,
+            metadata: serde_json::Value::Null,
+        })) {
+            warn!(
+                "Could not publish result of computation {} on iopub: {}",
+                self.execution_count, err
+            );
         }
 
         // Let the shell thread know that we've successfully executed the code.
@@ -121,86 +166,5 @@ impl ShellHandler for Shell {
             execution_count: self.execution_count,
             user_expressions: serde_json::Value::Null,
         })
-    }
-
-    fn generate_error(&self, msg: JupyterMessage<ExecuteRequest>) -> Result<Message, Error> {
-        let exception = Exception {
-            ename: String::from("Generic Error"),
-            evalue: String::from("Some kind of error occurred. No idea which."),
-            traceback: vec![
-                String::from("Frame1"),
-                String::from("Frame2"),
-                String::from("Frame3"),
-            ],
-        };
-        if let Err(err) = self
-            .iopub_sender
-            .send(Message::ExecuteError(JupyterMessage::create(
-                ExecuteError {
-                    exception: exception.clone(),
-                },
-                Some(msg.header.clone()),
-                &self.session,
-            )))
-        {
-            return Err(Error::SendError(format!("{}", err)));
-        }
-
-        Ok(Message::ExecuteReplyException(msg.create_reply(
-            ExecuteReplyException {
-                status: Status::Error,
-                execution_count: self.execution_count,
-                exception: exception,
-            },
-            &self.session,
-        )))
-    }
-
-    /// Handle an execution request from the front end
-    pub fn handle_execute_request(
-        &mut self,
-        msg: JupyterMessage<ExecuteRequest>,
-    ) -> Result<(), Error> {
-        // If the request is to be stored in history, it should increment the
-        // execution counter.
-        if msg.content.store_history {
-            self.execution_count = self.execution_count + 1;
-        }
-
-        // If the code is not to be executed silently, re-broadcast the
-        // execution to all frontends
-        if !msg.content.silent {
-            if let Err(err) = self
-                .iopub_sender
-                .send(Message::ExecuteInput(JupyterMessage::create(
-                    ExecuteInput {
-                        code: msg.content.code.clone(),
-                        execution_count: self.execution_count,
-                    },
-                    None,
-                    &self.session,
-                )))
-            {
-                warn!(
-                    "Could not broadcast execution input to all front ends: {}",
-                    err
-                );
-            }
-        }
-
-        // Generate the appropriate reply; "err" will generate a synthetic error
-        let reply = match msg.content.code.as_str() {
-            "err" => self.generate_error(msg)?,
-            _ => self.execute_code(msg)?,
-        };
-
-        if let Err(err) = self.sender.send(reply) {
-            Err(Error::SendError(format!(
-                "Could not return execution to shell: {}",
-                err
-            )))
-        } else {
-            Ok(())
-        }
     }
 }
