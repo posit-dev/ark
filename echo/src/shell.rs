@@ -13,6 +13,7 @@ use amalthea::wire::complete_reply::CompleteReply;
 use amalthea::wire::complete_request::CompleteRequest;
 use amalthea::wire::exception::Exception;
 use amalthea::wire::execute_error::ExecuteError;
+use amalthea::wire::execute_input::ExecuteInput;
 use amalthea::wire::execute_reply::ExecuteReply;
 use amalthea::wire::execute_reply_exception::ExecuteReplyException;
 use amalthea::wire::execute_request::ExecuteRequest;
@@ -20,7 +21,6 @@ use amalthea::wire::execute_result::ExecuteResult;
 use amalthea::wire::is_complete_reply::IsComplete;
 use amalthea::wire::is_complete_reply::IsCompleteReply;
 use amalthea::wire::is_complete_request::IsCompleteRequest;
-use amalthea::wire::jupyter_message::Message;
 use amalthea::wire::jupyter_message::Status;
 use amalthea::wire::kernel_info_reply::KernelInfoReply;
 use amalthea::wire::kernel_info_request::KernelInfoRequest;
@@ -30,18 +30,21 @@ use serde_json::json;
 use std::sync::mpsc::Sender;
 
 pub struct Shell {
-    iopub: Sender<Message>,
+    iopub: Sender<IOPubMessage>,
     execution_count: u32,
 }
 
 impl Shell {
-    pub fn new(iopub: Sender<Message>) -> Self {
-        Self { iopub: iopub }
+    pub fn new(iopub: Sender<IOPubMessage>) -> Self {
+        Self {
+            iopub: iopub,
+            execution_count: 0,
+        }
     }
 }
 
 impl ShellHandler for Shell {
-    fn handle_info_request(&self, req: KernelInfoRequest) -> Result<KernelInfoReply, Exception> {
+    fn handle_info_request(&self, req: &KernelInfoRequest) -> Result<KernelInfoReply, Exception> {
         let info = LanguageInfo {
             name: String::from("Echo"),
             version: String::from("1.0"),
@@ -61,7 +64,7 @@ impl ShellHandler for Shell {
         })
     }
 
-    fn handle_complete_request(&self, req: CompleteRequest) -> Result<CompleteReply, Exception> {
+    fn handle_complete_request(&self, req: &CompleteRequest) -> Result<CompleteReply, Exception> {
         // No matches in this toy implementation.
         Ok(CompleteReply {
             matches: Vec::new(),
@@ -73,7 +76,7 @@ impl ShellHandler for Shell {
     }
 
     /// Handle a request for open comms
-    fn handle_comm_info_request(&self, req: CommInfoRequest) -> Result<CommInfoReply, Exception> {
+    fn handle_comm_info_request(&self, req: &CommInfoRequest) -> Result<CommInfoReply, Exception> {
         // No comms in this toy implementation.
         Ok(CommInfoReply {
             status: Status::Ok,
@@ -84,7 +87,7 @@ impl ShellHandler for Shell {
     /// Handle a request to test code for completion.
     fn handle_is_complete_request(
         &self,
-        req: IsCompleteRequest,
+        req: &IsCompleteRequest,
     ) -> Result<IsCompleteReply, Exception> {
         // In this echo example, the code is always complete!
         Ok(IsCompleteReply {
@@ -97,7 +100,7 @@ impl ShellHandler for Shell {
     /// thread and forwards the response
     fn handle_execute_request(
         &mut self,
-        req: ExecuteRequest,
+        req: &ExecuteRequest,
     ) -> Result<ExecuteReply, ExecuteReplyException> {
         // Increment counter if we are storing this execution in history
         if req.store_history {
