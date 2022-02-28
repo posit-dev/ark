@@ -152,7 +152,6 @@ where
 {
     /// Sends this Jupyter message to the designated ZeroMQ socket.
     pub fn send(self, socket: &Socket) -> Result<(), Error> {
-        trace!("Sending Jupyter message to front end: {:?}", self);
         let msg = WireMessage::try_from(self)?;
         msg.send(socket)?;
         Ok(())
