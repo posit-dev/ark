@@ -31,6 +31,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ark"
+version = "0.1.0"
+dependencies = [
+ "amalthea",
+ "env_logger",
+ "libc",
+ "log",
+ "serde_json",
+]
+
+[[package]]
 name = "atty"
 version = "0.2.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
