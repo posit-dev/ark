@@ -85,7 +85,7 @@ impl Shell {
     /// Process a message received from the front-end, optionally dispatching
     /// messages to the IOPub or execution threads
     fn process_message(&mut self, msg: Message) -> Result<(), Error> {
-        let result = match msg {
+        match msg {
             Message::KernelInfoRequest(req) => {
                 self.handle_request(req, |h, r| self.handle_info_request(h, r))
             }
@@ -105,9 +105,7 @@ impl Shell {
                 self.handle_request(req, |h, r| self.handle_inspect_request(h, r))
             }
             _ => Err(Error::UnsupportedMessage(msg, String::from("shell"))),
-        };
-
-        result
+        }
     }
 
     /// Wrapper for all request handlers; emits busy, invokes the handler, then
@@ -233,7 +231,7 @@ impl Shell {
         handler: &dyn ShellHandler,
         req: JupyterMessage<InspectRequest>,
     ) -> Result<(), Error> {
-        debug!("Received request to introspect complete code: {:?}", req);
+        debug!("Received request to introspect code: {:?}", req);
         match handler.handle_inspect_request(&req.content) {
             Ok(reply) => req.send_reply(reply, &self.socket),
             Err(err) => req.send_error::<InspectReply>(err, &self.socket),

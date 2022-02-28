@@ -12,6 +12,7 @@ use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::ProtocolMessage;
 use generic_array::GenericArray;
 use hmac::Hmac;
+use log::trace;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -180,6 +181,7 @@ impl WireMessage {
 
     /// Send this message to the given ZeroMQ socket.
     pub fn send(&self, socket: &Socket) -> Result<(), Error> {
+        trace!("Sending '{}' to front end", self.header.msg_type);
         // Serialize JSON values into byte parts in preparation for transmission
         let mut parts: Vec<Vec<u8>> = match self.to_raw_parts() {
             Ok(v) => v,

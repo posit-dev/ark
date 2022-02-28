@@ -185,7 +185,7 @@ impl ShellHandler for Shell {
         };
         Ok(InspectReply {
             status: Status::Ok,
-            found: data == serde_json::Value::Null,
+            found: data != serde_json::Value::Null,
             data: data,
             metadata: serde_json::Value::Null,
         })
