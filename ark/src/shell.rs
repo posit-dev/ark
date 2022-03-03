@@ -12,7 +12,6 @@ use amalthea::wire::comm_info_request::CommInfoRequest;
 use amalthea::wire::complete_reply::CompleteReply;
 use amalthea::wire::complete_request::CompleteRequest;
 use amalthea::wire::exception::Exception;
-use amalthea::wire::execute_error::ExecuteError;
 use amalthea::wire::execute_input::ExecuteInput;
 use amalthea::wire::execute_reply::ExecuteReply;
 use amalthea::wire::execute_reply_exception::ExecuteReplyException;
@@ -31,13 +30,67 @@ use log::warn;
 use serde_json::json;
 use std::sync::mpsc::Sender;
 
+use libc::{c_char, c_int, c_void};
+use log::{debug, error, info};
+use std::env;
+use std::ffi::CString;
+
 pub struct Shell {
     iopub: Sender<IOPubMessage>,
     execution_count: u32,
 }
 
+#[link(name = "R", kind = "dylib")]
+extern "C" {
+    // TODO: this is actually a vector of cstrings
+    fn Rf_initialize_R(ac: c_int, av: *const c_char) -> i32;
+
+    /// Global indicating whether R is running as the main program (affects
+    /// R_CStackStart)
+    static mut R_running_as_main_program: c_int;
+
+    /// Flag indicating whether this is an interactive session. R typically sets
+    /// this when attached to a tty.
+    static mut R_Interactive: c_int;
+
+    /// Pointer to file receiving console input
+    static mut R_Consolefile: *const c_void;
+
+    /// Pointer to file receiving output
+    static mut R_Outputfile: *const c_void;
+
+    // TODO: type of buffer isn't necessary c_char
+    static mut ptr_R_ReadConsole:
+        unsafe extern "C" fn(*const c_char, *const c_char, i32, i32) -> i32;
+}
+
+#[no_mangle]
+pub extern "C" fn r_read_console(
+    _prompt: *const c_char,
+    _buf: *const c_char,
+    _buflen: i32,
+    _hist: i32,
+) -> i32 {
+    0
+}
+
 impl Shell {
     pub fn new(iopub: Sender<IOPubMessage>) -> Self {
+        let args = CString::new("").unwrap();
+
+        // TODO: Discover R locations and populate R_HOME, a prerequisite to
+        // initializing R.
+        //
+        // Maybe add a command line option to specify the path to R_HOME directly?
+        unsafe {
+            R_running_as_main_program = 1;
+            R_Interactive = 1;
+            R_Consolefile = std::ptr::null();
+            R_Outputfile = std::ptr::null();
+            ptr_R_ReadConsole = r_read_console;
+            Rf_initialize_R(0, args.as_ptr());
+        }
+
         Self {
             iopub: iopub,
             execution_count: 0,
