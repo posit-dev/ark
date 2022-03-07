@@ -13,11 +13,9 @@ use amalthea::wire::comm_info_request::CommInfoRequest;
 use amalthea::wire::complete_reply::CompleteReply;
 use amalthea::wire::complete_request::CompleteRequest;
 use amalthea::wire::exception::Exception;
-use amalthea::wire::execute_input::ExecuteInput;
 use amalthea::wire::execute_reply::ExecuteReply;
 use amalthea::wire::execute_reply_exception::ExecuteReplyException;
 use amalthea::wire::execute_request::ExecuteRequest;
-use amalthea::wire::execute_result::ExecuteResult;
 use amalthea::wire::inspect_reply::InspectReply;
 use amalthea::wire::inspect_request::InspectRequest;
 use amalthea::wire::is_complete_reply::IsComplete;
@@ -29,28 +27,31 @@ use amalthea::wire::kernel_info_request::KernelInfoRequest;
 use amalthea::wire::language_info::LanguageInfo;
 use log::warn;
 use serde_json::json;
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
 
 use std::env;
 
 pub struct Shell {
     iopub: Sender<IOPubMessage>,
+    req_sender: Sender<ExecuteRequest>,
     execution_count: u32,
 }
 
 impl Shell {
     pub fn new(iopub: Sender<IOPubMessage>) -> Self {
         let iopub_sender = iopub.clone();
-        thread::spawn(move || Self::execution_thread(iopub_sender));
+        let (req_sender, req_receiver) = channel::<ExecuteRequest>();
+        thread::spawn(move || Self::execution_thread(iopub_sender, req_receiver));
         Self {
             iopub: iopub,
             execution_count: 0,
+            req_sender: req_sender,
         }
     }
 
-    pub fn execution_thread(sender: Sender<IOPubMessage>) {
-        RKernel::start(sender);
+    pub fn execution_thread(sender: Sender<IOPubMessage>, receiver: Receiver<ExecuteRequest>) {
+        RKernel::start(sender, receiver);
     }
 }
 
@@ -112,37 +113,11 @@ impl ShellHandler for Shell {
         &mut self,
         req: &ExecuteRequest,
     ) -> Result<ExecuteReply, ExecuteReplyException> {
-        // Increment counter if we are storing this execution in history
-        if req.store_history {
-            self.execution_count = self.execution_count + 1;
-        }
-
-        // If the code is not to be executed silently, re-broadcast the
-        // execution to all frontends
-        if !req.silent {
-            if let Err(err) = self.iopub.send(IOPubMessage::ExecuteInput(ExecuteInput {
-                code: req.code.clone(),
-                execution_count: self.execution_count,
-            })) {
-                warn!(
-                    "Could not broadcast execution input {} to all front ends: {}",
-                    self.execution_count, err
-                );
-            }
-        }
-
-        // For this toy echo language, generate a result that's just the input
-        // echoed back.
-        let data = json!({"text/plain": req.code });
-        if let Err(err) = self.iopub.send(IOPubMessage::ExecuteResult(ExecuteResult {
-            execution_count: self.execution_count,
-            data: data,
-            metadata: serde_json::Value::Null,
-        })) {
+        if let Err(err) = self.req_sender.send(req.clone()) {
             warn!(
-                "Could not publish result of computation {} on iopub: {}",
-                self.execution_count, err
-            );
+                "Could not deliver execution request to execution thread: {}",
+                err
+            )
         }
 
         // Let the shell thread know that we've successfully executed the code.
