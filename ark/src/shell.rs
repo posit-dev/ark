@@ -51,6 +51,7 @@ impl Shell {
     }
 
     pub fn execution_thread(sender: Sender<IOPubMessage>, receiver: Receiver<ExecuteRequest>) {
+        // Start kernel (does not return)
         RKernel::start(sender, receiver);
     }
 }
