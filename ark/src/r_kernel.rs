@@ -51,6 +51,13 @@ pub struct RKernel {
 static mut KERNEL: Option<Mutex<RKernel>> = None;
 static INIT: Once = Once::new();
 
+/// Invoked by R to read console input from the user.
+///
+/// * `prompt` - The prompt shown to the user
+/// * `buf`    - Pointer to buffer to receive the user's input (type `CONSOLE_BUFFER_CHAR`)
+/// * `buflen` - Size of the buffer to receiver user's input
+/// * `hist`   - Whether to add the input to the history (1) or not (0)
+///
 #[no_mangle]
 pub extern "C" fn r_read_console(
     prompt: *mut c_char,
@@ -58,16 +65,13 @@ pub extern "C" fn r_read_console(
     _buflen: i32,
     _hist: i32,
 ) -> i32 {
-    unsafe {
-        // TODO: this hides a half dozen failure cases
-        let kernel = KERNEL.as_ref().unwrap().lock().unwrap();
-        let r_prompt = CString::from_raw(prompt);
-        trace!(
-            "R read console with prompt: {} ({})",
-            r_prompt.to_str().unwrap(),
-            kernel.execution_count
-        );
-    }
+    let r_prompt = unsafe { CString::from_raw(prompt) };
+    let mutex = unsafe { KERNEL.as_ref().unwrap() };
+
+    let kernel = mutex.lock().unwrap();
+    kernel.read_console(r_prompt.into_string().unwrap());
+
+    // Currently no input to read
     0
 }
 
@@ -112,8 +116,8 @@ impl RKernel {
             match receiver.recv() {
                 Ok(req) => {
                     // TODO: maybe this could be a with_kernel closure or something
-                    let kernel = unsafe { KERNEL.as_ref().unwrap() };
-                    let mut kernel = kernel.lock().unwrap();
+                    let mutex = unsafe { KERNEL.as_ref().unwrap() };
+                    let mut kernel = mutex.lock().unwrap();
                     kernel.execute_request(req)
                 }
                 Err(err) => warn!("Could not receive execution request from kernel: {}", err),
@@ -154,5 +158,9 @@ impl RKernel {
                 self.execution_count, err
             );
         }
+    }
+
+    pub fn read_console(&self, prompt: String) {
+        debug!("Read console from R with prompt: {}", prompt)
     }
 }
