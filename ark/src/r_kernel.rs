@@ -95,6 +95,7 @@ impl RKernel {
     pub fn start(iopub: Sender<IOPubMessage>, receiver: Receiver<ExecuteRequest>) {
         use std::borrow::BorrowMut;
 
+        // Initialize kernel (ensure we only do this once!)
         INIT.call_once(|| unsafe {
             let kernel = Self {
                 iopub: iopub,
@@ -186,6 +187,17 @@ impl RKernel {
     }
 
     pub fn write_console(&self, content: String, otype: i32) {
-        debug!("Write console {} from R: {}", otype, content)
+        debug!("Write console {} from R: {}", otype, content);
+        let data = json!({"text/plain": content });
+        if let Err(err) = self.iopub.send(IOPubMessage::ExecuteResult(ExecuteResult {
+            execution_count: self.execution_count,
+            data: data,
+            metadata: serde_json::Value::Null,
+        })) {
+            warn!(
+                "Could not publish result of statement {} on iopub: {}",
+                self.execution_count, err
+            );
+        }
     }
 }
