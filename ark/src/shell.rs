@@ -33,7 +33,6 @@ use std::thread;
 use std::env;
 
 pub struct Shell {
-    iopub: Sender<IOPubMessage>,
     req_sender: Sender<ExecuteRequest>,
     execution_count: u32,
 }
@@ -44,7 +43,6 @@ impl Shell {
         let (req_sender, req_receiver) = channel::<ExecuteRequest>();
         thread::spawn(move || Self::execution_thread(iopub_sender, req_receiver));
         Self {
-            iopub: iopub,
             execution_count: 0,
             req_sender: req_sender,
         }

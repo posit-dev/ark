@@ -57,7 +57,7 @@ fn install_kernel_spec() {
                     String::from("--connection_file"),
                     String::from("{connection_file}"),
                 ],
-                language: String::from("Echo"),
+                language: String::from("R"),
                 display_name: String::from("Amalthea R Kernel (ARK)"),
             };
             if let Err(err) = spec.install(String::from("ark")) {
