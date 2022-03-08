@@ -11,8 +11,10 @@ use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::execute_result::ExecuteResult;
 use libc::{c_char, c_int, c_void};
 use log::{debug, error, info, trace, warn};
+use serde_json::json;
 use std::ffi::CString;
 use std::sync::mpsc::{Receiver, Sender};
+use std::sync::{Mutex, Once};
 use std::thread;
 
 #[link(name = "R", kind = "dylib")]
@@ -42,8 +44,12 @@ extern "C" {
 }
 
 pub struct RKernel {
-    execution_count: u32,
+    pub execution_count: u32,
+    iopub: Sender<IOPubMessage>,
 }
+
+static mut KERNEL: Option<Mutex<RKernel>> = None;
+static INIT: Once = Once::new();
 
 #[no_mangle]
 pub extern "C" fn r_read_console(
@@ -53,16 +59,32 @@ pub extern "C" fn r_read_console(
     _hist: i32,
 ) -> i32 {
     unsafe {
+        // TODO: this hides a half dozen failure cases
+        let kernel = KERNEL.as_ref().unwrap().lock().unwrap();
         let r_prompt = CString::from_raw(prompt);
-        trace!("R read console with prompt: {}", r_prompt.to_str().unwrap());
+        trace!(
+            "R read console with prompt: {} ({})",
+            r_prompt.to_str().unwrap(),
+            kernel.execution_count
+        );
     }
     0
 }
 
 impl RKernel {
-    pub fn start(sender: Sender<IOPubMessage>, receiver: Receiver<ExecuteRequest>) {
+    pub fn start(iopub: Sender<IOPubMessage>, receiver: Receiver<ExecuteRequest>) {
+        use std::borrow::BorrowMut;
+
+        INIT.call_once(|| unsafe {
+            let kernel = Self {
+                iopub: iopub,
+                execution_count: 0,
+            };
+            *KERNEL.borrow_mut() = Some(Mutex::new(kernel));
+        });
+
         // Start thread to listen to execution requests
-        thread::spawn(move || Self::listen(sender, receiver));
+        thread::spawn(move || Self::listen(receiver));
 
         // TODO: Discover R locations and populate R_HOME, a prerequisite to
         // initializing R.
@@ -80,21 +102,26 @@ impl RKernel {
             Rf_initialize_R(args.len() as i32, &args);
 
             // Does not return
+            trace!("Entering R main loop");
             Rf_mainloop();
         }
     }
 
-    pub fn listen(sender: Sender<IOPubMessage>, receiver: Receiver<ExecuteRequest>) {
+    pub fn listen(receiver: Receiver<ExecuteRequest>) {
         loop {
-            // TODO: should lock executor?
             match receiver.recv() {
-                Ok(req) => Self::execute_request(sender, req),
+                Ok(req) => {
+                    // TODO: maybe this could be a with_kernel closure or something
+                    let kernel = unsafe { KERNEL.as_ref().unwrap() };
+                    let mut kernel = kernel.lock().unwrap();
+                    kernel.execute_request(req)
+                }
                 Err(err) => warn!("Could not receive execution request from kernel: {}", err),
             }
         }
     }
 
-    pub fn execute_request(sender: Sender<IOPubMessage>, req: ExecuteRequest) {
+    pub fn execute_request(&mut self, req: ExecuteRequest) {
         // Increment counter if we are storing this execution in history
         if req.store_history {
             self.execution_count = self.execution_count + 1;
