@@ -41,6 +41,11 @@ extern "C" {
 
     // TODO: type of buffer isn't necessary c_char
     static mut ptr_R_ReadConsole: unsafe extern "C" fn(*mut c_char, *mut c_char, i32, i32) -> i32;
+
+    /// Pointer to console write function
+    static mut ptr_R_WriteConsole: *const c_void;
+
+    static mut ptr_R_WriteConsoleEx: unsafe extern "C" fn(*mut c_char, i32, i32);
 }
 
 pub struct RKernel {
@@ -67,12 +72,23 @@ pub extern "C" fn r_read_console(
 ) -> i32 {
     let r_prompt = unsafe { CString::from_raw(prompt) };
     let mutex = unsafe { KERNEL.as_ref().unwrap() };
-
     let kernel = mutex.lock().unwrap();
     kernel.read_console(r_prompt.into_string().unwrap());
 
     // Currently no input to read
     0
+}
+
+#[no_mangle]
+pub extern "C" fn r_write_console(
+    buf: *mut c_char,
+    _buflen: i32,
+    otype: i32
+) {
+    let content = unsafe { CString::from_raw(buf) };
+    let mutex = unsafe { KERNEL.as_ref().unwrap() };
+    let kernel = mutex.lock().unwrap();
+    kernel.write_console(content.into_string().unwrap(), otype);
 }
 
 impl RKernel {
@@ -102,6 +118,11 @@ impl RKernel {
             R_Interactive = 1;
             R_Consolefile = std::ptr::null();
             R_Outputfile = std::ptr::null();
+
+            // This must be set to NULL so that WriteConsoleEx is called
+            ptr_R_WriteConsole = std::ptr::null();
+            ptr_R_WriteConsoleEx = r_write_console;
+            
             ptr_R_ReadConsole = r_read_console;
             Rf_initialize_R(args.len() as i32, &args);
 
@@ -162,5 +183,9 @@ impl RKernel {
 
     pub fn read_console(&self, prompt: String) {
         debug!("Read console from R with prompt: {}", prompt)
+    }
+
+    pub fn write_console(&self, content: String, otype: i32) {
+        debug!("Write console {} from R: {}", otype, content)
     }
 }
