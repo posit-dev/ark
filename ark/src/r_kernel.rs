@@ -114,7 +114,7 @@ impl RKernel {
         unsafe {
             let arg1 = CString::new("ark").unwrap();
             let arg2 = CString::new("--interactive").unwrap();
-            let args = Box::new(vec![arg1.as_ptr(), arg2.as_ptr()]);
+            let mut args = vec![arg1.as_ptr(), arg2.as_ptr()];
             R_running_as_main_program = 1;
             R_Interactive = 1;
             R_Consolefile = std::ptr::null();
@@ -125,7 +125,7 @@ impl RKernel {
             ptr_R_WriteConsoleEx = r_write_console;
             
             ptr_R_ReadConsole = r_read_console;
-            Rf_initialize_R(args.len() as i32, Box::into_raw(args) as *mut c_void);
+            Rf_initialize_R(args.len() as i32, args.as_mut_ptr() as *mut c_void);
 
             // Does not return
             trace!("Entering R main loop");
