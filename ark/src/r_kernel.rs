@@ -9,13 +9,14 @@ use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::execute_input::ExecuteInput;
 use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::execute_result::ExecuteResult;
-use libc::{c_char, c_int, c_void};
+use libc::{c_char, c_int, c_void, strcpy };
 use log::{debug, error, info, trace, warn};
 use serde_json::json;
 use std::ffi::{CString, CStr};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Mutex, Once};
 use std::thread;
+use std::sync::mpsc::channel;
 
 #[link(name = "R", kind = "dylib")]
 extern "C" {
@@ -43,17 +44,18 @@ extern "C" {
     static mut R_SignalHandlers: c_int;
 
     // TODO: type of buffer isn't necessary c_char
-    static mut ptr_R_ReadConsole: unsafe extern "C" fn(*mut c_char, *mut c_char, i32, i32) -> i32;
+    static mut ptr_R_ReadConsole: unsafe extern "C" fn(*mut c_char, *mut c_char, c_int, c_int) -> c_int;
 
     /// Pointer to console write function
     static mut ptr_R_WriteConsole: *const c_void;
 
-    static mut ptr_R_WriteConsoleEx: unsafe extern "C" fn(*mut c_char, i32, i32);
+    static mut ptr_R_WriteConsoleEx: unsafe extern "C" fn(*mut c_char, c_int, c_int);
 }
 
 pub struct RKernel {
     pub execution_count: u32,
     iopub: Sender<IOPubMessage>,
+    console: Sender<String>
 }
 
 static mut KERNEL: Option<Mutex<RKernel>> = None;
@@ -71,17 +73,31 @@ static INIT: Once = Once::new();
 #[no_mangle]
 pub extern "C" fn r_read_console(
     prompt: *mut c_char,
-    _buf: *mut c_char,
-    _buflen: i32,
-    _hist: i32,
+    buf: *mut c_char,
+    buflen: c_int,
+    _hist: c_int,
 ) -> i32 {
     let r_prompt = unsafe { CStr::from_ptr(prompt) };
-    let mutex = unsafe { KERNEL.as_ref().unwrap() };
-    let kernel = mutex.lock().unwrap();
-    kernel.read_console(r_prompt.to_str().unwrap());
+    debug!("R prompt: {}", r_prompt.to_str().unwrap());
+    // TODO: if R prompt is +, we need to tell the user their input is incomplete
+    let mutex = unsafe { CONSOLE_RECV.as_ref().unwrap() };
+    let recv = mutex.lock().unwrap();
+    let mut input = recv.recv().unwrap();
+    trace!("Sending input to R: '{}'", input);
+    input.push_str("\n");
+    if input.len() < buflen.try_into().unwrap() {
+        let src = CString::new(input).unwrap();
+        unsafe {
+            libc::strcpy(buf, src.as_ptr());
+        }
+    } else {
+        // Input doesn't fit in buffer
+        // TODO: need to allow next call to read the buffer 
+        return 1;
+    }
 
     // Currently no input to read
-    0
+    1
 }
 
 #[no_mangle]
@@ -102,9 +118,14 @@ impl RKernel {
 
         // Initialize kernel (ensure we only do this once!)
         INIT.call_once(|| unsafe {
+            let (console_send, console_recv) = channel::<String>();
+            let console = console_send.clone();
+            *CONSOLE_SEND.borrow_mut() = Some(Mutex::new(console_send));
+            *CONSOLE_RECV.borrow_mut() = Some(Mutex::new(console_recv));
             let kernel = Self {
                 iopub: iopub,
                 execution_count: 0,
+                console: console
             };
             *KERNEL.borrow_mut() = Some(Mutex::new(kernel));
         });
@@ -137,6 +158,7 @@ impl RKernel {
             // Does not return
             trace!("Entering R main loop");
             Rf_mainloop();
+            trace!("Exiting R main loop");
         }
     }
 
@@ -174,23 +196,7 @@ impl RKernel {
             }
         }
 
-        // For this toy echo language, generate a result that's just the input
-        // echoed back.
-        let data = json!({"text/plain": req.code });
-        if let Err(err) = self.iopub.send(IOPubMessage::ExecuteResult(ExecuteResult {
-            execution_count: self.execution_count,
-            data: data,
-            metadata: serde_json::Value::Null,
-        })) {
-            warn!(
-                "Could not publish result of computation {} on iopub: {}",
-                self.execution_count, err
-            );
-        }
-    }
-
-    pub fn read_console(&self, prompt: &str) {
-        debug!("Read console from R with prompt: {}", prompt)
+        self.console.send(req.code).unwrap();
     }
 
     pub fn write_console(&self, content: &str, otype: i32) {
