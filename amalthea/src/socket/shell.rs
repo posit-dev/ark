@@ -168,7 +168,12 @@ impl Shell {
     ) -> Result<(), Error> {
         debug!("Received execution request {:?}", req);
         match handler.handle_execute_request(&req.content) {
-            Ok(reply) => req.send_reply(reply, &self.socket),
+            Ok(reply) => { 
+                trace!("got execution reply: {:?}", reply);
+                let r = req.send_reply(reply, &self.socket);
+                trace!("execution reply sent");
+                r
+            },
             Err(err) => req.send_reply(err, &self.socket),
         }
     }
