@@ -69,7 +69,7 @@ impl ShellHandler for Shell {
             status: Status::Ok,
             banner: format!("Ark {}", env!("CARGO_PKG_VERSION")),
             debugger: false,
-            protocol_version: String::from("5.0"),
+            protocol_version: String::from("5.3"),
             help_links: Vec::new(),
             language_info: info,
         })

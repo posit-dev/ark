@@ -40,7 +40,7 @@ impl JupyterHeader {
             username: username,
             msg_type: msg_type,
             date: Utc::now().to_rfc3339(),
-            version: String::from("5.0"),
+            version: String::from("5.3"),
         }
     }
 }
