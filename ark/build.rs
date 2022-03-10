@@ -5,8 +5,6 @@
  *
  */
 
-use std::process::exit;
-
 fn main() {
     // TODO: needs to look for R instead of guessing
     // TODO: only for #[cfg(target_os = "macos")]

@@ -5,7 +5,6 @@
  *
  */
 
-use crate::r_kernel::RKernel;
 use amalthea::language::shell_handler::ShellHandler;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::comm_info_reply::CommInfoReply;
@@ -50,7 +49,7 @@ impl Shell {
 
     pub fn execution_thread(sender: Sender<IOPubMessage>, receiver: Receiver<ExecuteRequest>) {
         // Start kernel (does not return)
-        RKernel::start(sender, receiver);
+        crate::r_interface::start_r(sender, receiver);
     }
 }
 
