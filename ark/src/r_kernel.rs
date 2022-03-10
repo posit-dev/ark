@@ -12,7 +12,7 @@ use amalthea::wire::execute_result::ExecuteResult;
 use libc::{c_char, c_int, c_void};
 use log::{debug, error, info, trace, warn};
 use serde_json::json;
-use std::ffi::CString;
+use std::ffi::{CString, CStr};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Mutex, Once};
 use std::thread;
@@ -39,6 +39,9 @@ extern "C" {
     /// Pointer to file receiving output
     static mut R_Outputfile: *const c_void;
 
+    /// Signal handlers for R
+    static mut R_SignalHandlers: c_int;
+
     // TODO: type of buffer isn't necessary c_char
     static mut ptr_R_ReadConsole: unsafe extern "C" fn(*mut c_char, *mut c_char, i32, i32) -> i32;
 
@@ -54,6 +57,8 @@ pub struct RKernel {
 }
 
 static mut KERNEL: Option<Mutex<RKernel>> = None;
+static mut CONSOLE_SEND: Option<Mutex<Sender<String>>> = None;
+static mut CONSOLE_RECV: Option<Mutex<Receiver<String>>> = None;
 static INIT: Once = Once::new();
 
 /// Invoked by R to read console input from the user.
@@ -70,10 +75,10 @@ pub extern "C" fn r_read_console(
     _buflen: i32,
     _hist: i32,
 ) -> i32 {
-    let r_prompt = unsafe { CString::from_raw(prompt) };
+    let r_prompt = unsafe { CStr::from_ptr(prompt) };
     let mutex = unsafe { KERNEL.as_ref().unwrap() };
     let kernel = mutex.lock().unwrap();
-    kernel.read_console(r_prompt.into_string().unwrap());
+    kernel.read_console(r_prompt.to_str().unwrap());
 
     // Currently no input to read
     0
@@ -85,10 +90,10 @@ pub extern "C" fn r_write_console(
     _buflen: i32,
     otype: i32
 ) {
-    let content = unsafe { CString::from_raw(buf) };
+    let content = unsafe { CStr::from_ptr(buf) };
     let mutex = unsafe { KERNEL.as_ref().unwrap() };
     let kernel = mutex.lock().unwrap();
-    kernel.write_console(content.into_string().unwrap(), otype);
+    kernel.write_console(content.to_str().unwrap(), otype);
 }
 
 impl RKernel {
@@ -116,16 +121,18 @@ impl RKernel {
             let arg2 = CString::new("--interactive").unwrap();
             let mut args = vec![arg1.as_ptr(), arg2.as_ptr()];
             R_running_as_main_program = 1;
+            R_SignalHandlers = 0;
+            Rf_initialize_R(args.len() as i32, args.as_mut_ptr() as *mut c_void);
+
+            // Mark R session as interactive
             R_Interactive = 1;
+
+            // Redirect console
             R_Consolefile = std::ptr::null();
             R_Outputfile = std::ptr::null();
-
-            // This must be set to NULL so that WriteConsoleEx is called
             ptr_R_WriteConsole = std::ptr::null();
             ptr_R_WriteConsoleEx = r_write_console;
-            
             ptr_R_ReadConsole = r_read_console;
-            Rf_initialize_R(args.len() as i32, args.as_mut_ptr() as *mut c_void);
 
             // Does not return
             trace!("Entering R main loop");
@@ -182,11 +189,11 @@ impl RKernel {
         }
     }
 
-    pub fn read_console(&self, prompt: String) {
+    pub fn read_console(&self, prompt: &str) {
         debug!("Read console from R with prompt: {}", prompt)
     }
 
-    pub fn write_console(&self, content: String, otype: i32) {
+    pub fn write_console(&self, content: &str, otype: i32) {
         debug!("Write console {} from R: {}", otype, content);
         let data = json!({"text/plain": content });
         if let Err(err) = self.iopub.send(IOPubMessage::ExecuteResult(ExecuteResult {
