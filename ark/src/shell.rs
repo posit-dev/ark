@@ -25,7 +25,7 @@ use amalthea::wire::jupyter_message::Status;
 use amalthea::wire::kernel_info_reply::KernelInfoReply;
 use amalthea::wire::kernel_info_request::KernelInfoRequest;
 use amalthea::wire::language_info::LanguageInfo;
-use log::warn;
+use log::{trace, warn};
 use serde_json::json;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
@@ -120,6 +120,7 @@ impl ShellHandler for Shell {
         }
 
         // Let the shell thread know that we've successfully executed the code.
+        trace!("execution finished: {}", req.code);
         Ok(ExecuteReply {
             status: Status::Ok,
             execution_count: self.execution_count,

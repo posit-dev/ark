@@ -25,6 +25,6 @@ pub struct ExecuteReply {
 
 impl MessageType for ExecuteReply {
     fn message_type() -> String {
-        String::from("execute_request")
+        String::from("execute_reply")
     }
 }

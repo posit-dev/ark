@@ -55,11 +55,13 @@ extern "C" {
 pub struct RKernel {
     pub execution_count: u32,
     iopub: Sender<IOPubMessage>,
-    console: Sender<String>
+    console: Sender<String>,
+    prompt: Receiver<String>,
+    output: String
 }
 
 static mut KERNEL: Option<Mutex<RKernel>> = None;
-static mut CONSOLE_SEND: Option<Mutex<Sender<String>>> = None;
+static mut RPROMPT_SEND: Option<Mutex<Sender<String>>> = None;
 static mut CONSOLE_RECV: Option<Mutex<Receiver<String>>> = None;
 static INIT: Once = Once::new();
 
@@ -79,7 +81,12 @@ pub extern "C" fn r_read_console(
 ) -> i32 {
     let r_prompt = unsafe { CStr::from_ptr(prompt) };
     debug!("R prompt: {}", r_prompt.to_str().unwrap());
+    
     // TODO: if R prompt is +, we need to tell the user their input is incomplete
+    let mutex = unsafe { RPROMPT_SEND.as_ref().unwrap() };
+    let sender = mutex.lock().unwrap();
+    sender.send(r_prompt.to_string_lossy().into_owned()).unwrap();
+
     let mutex = unsafe { CONSOLE_RECV.as_ref().unwrap() };
     let recv = mutex.lock().unwrap();
     let mut input = recv.recv().unwrap();
@@ -96,7 +103,7 @@ pub extern "C" fn r_read_console(
         return 1;
     }
 
-    // Currently no input to read
+    // Nonzero return values indicate the end of input and cause R to exit
     1
 }
 
@@ -108,7 +115,7 @@ pub extern "C" fn r_write_console(
 ) {
     let content = unsafe { CStr::from_ptr(buf) };
     let mutex = unsafe { KERNEL.as_ref().unwrap() };
-    let kernel = mutex.lock().unwrap();
+    let mut kernel = mutex.lock().unwrap();
     kernel.write_console(content.to_str().unwrap(), otype);
 }
 
@@ -116,16 +123,20 @@ impl RKernel {
     pub fn start(iopub: Sender<IOPubMessage>, receiver: Receiver<ExecuteRequest>) {
         use std::borrow::BorrowMut;
 
+        let (console_send, console_recv) = channel::<String>();
+        let (rprompt_send, rprompt_recv) = channel::<String>();
+        let console = console_send.clone();
+
         // Initialize kernel (ensure we only do this once!)
         INIT.call_once(|| unsafe {
-            let (console_send, console_recv) = channel::<String>();
-            let console = console_send.clone();
-            *CONSOLE_SEND.borrow_mut() = Some(Mutex::new(console_send));
             *CONSOLE_RECV.borrow_mut() = Some(Mutex::new(console_recv));
+            *RPROMPT_SEND.borrow_mut() = Some(Mutex::new(rprompt_send));
             let kernel = Self {
                 iopub: iopub,
                 execution_count: 0,
-                console: console
+                console: console,
+                prompt: rprompt_recv,
+                output: String::new()
             };
             *KERNEL.borrow_mut() = Some(Mutex::new(kernel));
         });
@@ -177,6 +188,9 @@ impl RKernel {
     }
 
     pub fn execute_request(&mut self, req: ExecuteRequest) {
+
+        self.output = String::new();
+
         // Increment counter if we are storing this execution in history
         if req.store_history {
             self.execution_count = self.execution_count + 1;
@@ -197,11 +211,10 @@ impl RKernel {
         }
 
         self.console.send(req.code).unwrap();
-    }
+        let prompt = self.prompt.recv().unwrap();
+        trace!("Completed execute request {} with R prompt: {} ... {}", self.execution_count, prompt, self.output);
 
-    pub fn write_console(&self, content: &str, otype: i32) {
-        debug!("Write console {} from R: {}", otype, content);
-        let data = json!({"text/plain": content });
+        let data = json!({"text/plain": self.output });
         if let Err(err) = self.iopub.send(IOPubMessage::ExecuteResult(ExecuteResult {
             execution_count: self.execution_count,
             data: data,
@@ -212,5 +225,10 @@ impl RKernel {
                 self.execution_count, err
             );
         }
+    }
+
+    pub fn write_console(&mut self, content: &str, otype: i32) {
+        debug!("Write console {} from R: {}", otype, content);
+        self.output.push_str(content);
     }
 }
