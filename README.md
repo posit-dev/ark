@@ -2,11 +2,15 @@
 
 ## About
 
-Experimental kernel for Jupyter and Myriac, written in Rust. 
+Experimental kernel framework for Jupyter and Myriac, written in Rust. 
 
 ![image](https://user-images.githubusercontent.com/470418/151626974-52ac0047-0e98-494d-ad00-c0d293df696f.png)
 
-During the prototyping phase, this kernel will implement a trivial echo-based language. Later, it will be factored into a [Rust Crate](https://doc.rust-lang.org/book/ch07-01-packages-and-crates.html) library that has no language implementation at all, but provides the shared Jupyter functionality necessary to build Rust-based kernels for other languages. This crate will then be used as the basis for Python and R kernels. 
+This repository contains three individual projects, which are evolving together:
+
+- **Amalthea**, a Rust framework for building Jupyter and Myriac kernels.
+- **ARK**, the Amalthea R Kernel. ARK is a native kernel for R built on the Amalthea framework that interacts with the R interpreter in the same way RStudio does (it's a real front end). 
+- **echo**, a toy kernel for a fictional language that can be used to experiment with the kernel framework without the nuisance of getting language bindings working.
 
 ### Why not Xeus?
 
@@ -16,42 +20,33 @@ Unfortunately this project cuts across architectural boundaries in ways that mak
 
 Building in pure Rust dramatically simplifies the development environment and lets us standardize on idiomatic Rust tools like `serde_json`. It also shortens the distance to compiling for WASM, a door we'd like to leave open for investigation into browser-only versions of Myriac (a la vscode.dev).
 
-### Implemented Features
-
-- [X] Jupyter protocol implementation via ZeroMQ
-- [X] Type-safe Rust structures/enums for (subset of) Jupyter messages
-- [X] Heartbeats
-- [X] Shell, iopub, and control sockets
-- [X] Replies to kernel info request (returns echo language)
-- [X] HMAC signature validation on messages
-- [X] Execution counter
-- [X] Handle completion requests/replies
-- [X] Simple "execution" that echoes input
-
-### Up Next
-
-- [ ] Errors forwarded to client/front end
-- [ ] display_data message: plots, data
-- [ ] Standard output & standard error forwarding
-- [ ] Refactor Echo language out into stubs to be implemented by other languages
-- [ ] Produce a crate instead of a binary with an entry point
-
 ### What's with the name?
 
-This is a Jupyter kernel; Amalthea is [one of Jupiter's moons](https://en.wikipedia.org/wiki/Amalthea_(moon)).
+This is a Jupyter kernel framework; Amalthea is [one of Jupiter's moons](https://en.wikipedia.org/wiki/Amalthea_(moon)).
 
-### Installation/Usage
+### Amalthea R Kernel Installation/Usage
 
-Assuming you have a working Rust toolchain, first build the sources, then install the kernelspec. From the repository root:
+Assuming you have a working Rust toolchain, first build the sources. All three projects (`amalthea`, `ark`, and `echo`) are part of the same Rust workspace, so they will all build with a single command.
 
 ```bash
 $ cargo build
-$ ./target/debug/amalthea -- install
+```
+Next, install the kernelspec. From the repository root:
+
+```bash
+$ ./target/debug/ark -- install
 ```
 
-This installs a JSON file to the Jupyter kernel registry. After it completes, the Amalthea kernel will be available on all Jupyter frontends on your system (Notebook, Lab, Myriac, etc.).
+This installs a JSON file to the Jupyter kernel registry. After it completes, the Amalthea R kernel (ARK) will be available on all Jupyter frontends on your system (Notebook, Lab, Myriac, etc.).
 
-Set the environment variable `RUST_LOG=trace` to get detailed diagnostic output if desired; more fine-grained control is available as documented in [env_logger](https://docs.rs/env_logger/0.9.0/env_logger/#enabling-logging).
+Currently, the R kernel requires you to specify `R_HOME` in an environment variable. Here's a set of commands that will get you a heavily instrumented Jupyter experience:
+
+```bash
+$ export R_HOME=/Library/Frameworks/R.framework/Resources
+$ export RUST_LOG=trace
+$ jupyter lab --debug
+```
+More fine-grained control of logging is available as documented in [env_logger](https://docs.rs/env_logger/0.9.0/env_logger/#enabling-logging).
 
 ## Related
 
