@@ -13,6 +13,7 @@ use log::{debug, trace, warn};
 use serde_json::json;
 use std::sync::mpsc::Sender;
 
+/// Represents the Rust state of the R kernel
 pub struct RKernel {
     pub execution_count: u32,
     iopub: Sender<IOPubMessage>,
@@ -21,6 +22,7 @@ pub struct RKernel {
 }
 
 impl RKernel {
+    /// Create a new R kernel instance
     pub fn new(iopub: Sender<IOPubMessage>, console: Sender<String>) -> Self {
         Self {
             iopub: iopub,
@@ -30,6 +32,7 @@ impl RKernel {
         }
     }
 
+    /// Service an execution request from the front end
     pub fn execute_request(&mut self, req: ExecuteRequest) {
         self.output = String::new();
 
@@ -52,10 +55,12 @@ impl RKernel {
             }
         }
 
+        // Send the code to the R console to be evaluated
         self.console.send(req.code).unwrap();
     }
 
-    pub fn complete_request(&self) {
+    /// Finishes the active execution request
+    pub fn finish_request(&self) {
         let data = json!({"text/plain": self.output });
         trace!("Sending kernel output: {}", self.output);
         if let Err(err) = self.iopub.send(IOPubMessage::ExecuteResult(ExecuteResult {
@@ -70,8 +75,10 @@ impl RKernel {
         }
     }
 
+    /// Called from R when console data is written
     pub fn write_console(&mut self, content: &str, otype: i32) {
         debug!("Write console {} from R: {}", otype, content);
+        // Accumulate output internally until R is finished executing
         self.output.push_str(content);
     }
 }
