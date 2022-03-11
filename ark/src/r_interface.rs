@@ -51,9 +51,20 @@ extern "C" {
     static mut ptr_R_WriteConsoleEx: unsafe extern "C" fn(*mut c_char, c_int, c_int);
 }
 
+// --- Globals ---
+// These values must be global in order for them to be accessible from R
+// callbacks, which do not have a facility for passing or returning context.
+
+/// The global R kernel state
 static mut KERNEL: Option<Mutex<RKernel>> = None;
+
+/// A channel that sends prompts from R to the kernel
 static mut RPROMPT_SEND: Option<Mutex<Sender<String>>> = None;
+
+/// A channel that receives console input from the kernel and sends it to R
 static mut CONSOLE_RECV: Option<Mutex<Receiver<String>>> = None;
+
+/// Ensures that the kernel is only ever initialized once
 static INIT: Once = Once::new();
 
 /// Invoked by R to read console input from the user.
@@ -118,12 +129,12 @@ pub fn start_r(iopub: Sender<IOPubMessage>, receiver: Receiver<ExecuteRequest>) 
     INIT.call_once(|| unsafe {
         *CONSOLE_RECV.borrow_mut() = Some(Mutex::new(console_recv));
         *RPROMPT_SEND.borrow_mut() = Some(Mutex::new(rprompt_send));
-        let kernel = RKernel::new(iopub, console, rprompt_recv);
+        let kernel = RKernel::new(iopub, console);
         *KERNEL.borrow_mut() = Some(Mutex::new(kernel));
     });
 
     // Start thread to listen to execution requests
-    thread::spawn(move || listen(receiver));
+    thread::spawn(move || listen(receiver, rprompt_recv));
 
     // TODO: Discover R locations and populate R_HOME, a prerequisite to
     // initializing R.
@@ -154,14 +165,30 @@ pub fn start_r(iopub: Sender<IOPubMessage>, receiver: Receiver<ExecuteRequest>) 
     }
 }
 
-pub fn listen(receiver: Receiver<ExecuteRequest>) {
+pub fn listen(exec_recv: Receiver<ExecuteRequest>, prompt_recv: Receiver<String>) {
+    trace!("Waiting for R's initial input prompt...");
+    let prompt = prompt_recv.recv().unwrap();
+    trace!(
+        "Got initial R prompt '{}', ready for execution requests",
+        prompt
+    );
+
     loop {
-        match receiver.recv() {
+        match exec_recv.recv() {
             Ok(req) => {
                 // TODO: maybe this could be a with_kernel closure or something
                 let mutex = unsafe { KERNEL.as_ref().unwrap() };
-                let mut kernel = mutex.lock().unwrap();
-                kernel.execute_request(req)
+                {
+                    let mut kernel = mutex.lock().unwrap();
+                    kernel.execute_request(req)
+                }
+                trace!("Waiting for R prompt signaling completion of execution...");
+                let prompt = prompt_recv.recv().unwrap();
+                trace!("Got R prompt '{}', completing execution request", prompt);
+                {
+                    let kernel = mutex.lock().unwrap();
+                    kernel.complete_request();
+                }
             }
             Err(err) => warn!("Could not receive execution request from kernel: {}", err),
         }

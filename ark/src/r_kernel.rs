@@ -11,27 +11,21 @@ use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::execute_result::ExecuteResult;
 use log::{debug, trace, warn};
 use serde_json::json;
-use std::sync::mpsc::{Receiver, Sender};
+use std::sync::mpsc::Sender;
 
 pub struct RKernel {
     pub execution_count: u32,
     iopub: Sender<IOPubMessage>,
     console: Sender<String>,
-    prompt: Receiver<String>,
     output: String,
 }
 
 impl RKernel {
-    pub fn new(
-        iopub: Sender<IOPubMessage>,
-        console: Sender<String>,
-        prompt: Receiver<String>,
-    ) -> Self {
+    pub fn new(iopub: Sender<IOPubMessage>, console: Sender<String>) -> Self {
         Self {
             iopub: iopub,
             execution_count: 0,
             console: console,
-            prompt: prompt,
             output: String::new(),
         }
     }
@@ -59,15 +53,11 @@ impl RKernel {
         }
 
         self.console.send(req.code).unwrap();
-        let prompt = self.prompt.recv().unwrap();
-        trace!(
-            "Completed execute request {} with R prompt: {} ... {}",
-            self.execution_count,
-            prompt,
-            self.output
-        );
+    }
 
+    pub fn complete_request(&self) {
         let data = json!({"text/plain": self.output });
+        trace!("Sending kernel output: {}", self.output);
         if let Err(err) = self.iopub.send(IOPubMessage::ExecuteResult(ExecuteResult {
             execution_count: self.execution_count,
             data: data,
