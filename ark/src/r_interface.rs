@@ -48,6 +48,7 @@ extern "C" {
     /// Pointer to console write function
     static mut ptr_R_WriteConsole: *const c_void;
 
+    /// Pointer to extended console write function
     static mut ptr_R_WriteConsoleEx: unsafe extern "C" fn(*mut c_char, c_int, c_int);
 }
 
@@ -166,6 +167,8 @@ pub fn start_r(iopub: Sender<IOPubMessage>, receiver: Receiver<ExecuteRequest>) 
 }
 
 pub fn listen(exec_recv: Receiver<ExecuteRequest>, prompt_recv: Receiver<String>) {
+    // Before accepting execution requests from the front end, wait for R to
+    // prompt us for input.
     trace!("Waiting for R's initial input prompt...");
     let prompt = prompt_recv.recv().unwrap();
     trace!(
@@ -174,20 +177,26 @@ pub fn listen(exec_recv: Receiver<ExecuteRequest>, prompt_recv: Receiver<String>
     );
 
     loop {
+        // Wait for an execution request from the front end.
         match exec_recv.recv() {
             Ok(req) => {
-                // TODO: maybe this could be a with_kernel closure or something
+                // Service the execution request.
                 let mutex = unsafe { KERNEL.as_ref().unwrap() };
                 {
                     let mut kernel = mutex.lock().unwrap();
                     kernel.execute_request(req)
                 }
+
+                // Wait for R to prompt us again. This signals that the
+                // execution is finished and R is ready for input again.
                 trace!("Waiting for R prompt signaling completion of execution...");
                 let prompt = prompt_recv.recv().unwrap();
-                trace!("Got R prompt '{}', completing execution request", prompt);
+                trace!("Got R prompt '{}', finishing execution request", prompt);
+
+                // Tell the kernel to complete the execution request.
                 {
                     let kernel = mutex.lock().unwrap();
-                    kernel.complete_request();
+                    kernel.finish_request();
                 }
             }
             Err(err) => warn!("Could not receive execution request from kernel: {}", err),
