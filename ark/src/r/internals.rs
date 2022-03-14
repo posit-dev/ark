@@ -7,7 +7,7 @@
 
 use libc::{c_char, c_int, c_void};
 
-enum SexpType {
+pub enum SexpType {
     /// nil = NULL
     NILSXP = 0,
     /// symbols
@@ -64,11 +64,13 @@ enum SexpType {
     FUNSXP = 99,
 }
 
-type SEXP = *const c_void;
+pub type SEXP = *const c_void;
 
 #[link(name = "R", kind = "dylib")]
 extern "C" {
     pub fn Rf_install(str: *const c_char) -> SEXP;
 
     pub fn Rf_getAttrib(obj: SEXP, attrib: SEXP) -> SEXP;
+
+    pub fn Rf_length(obj: SEXP) -> c_int;
 }
