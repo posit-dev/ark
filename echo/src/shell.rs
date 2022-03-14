@@ -73,7 +73,7 @@ impl ShellHandler for Shell {
             status: Status::Ok,
             cursor_start: 0,
             cursor_end: 0,
-            metadata: serde_json::Value::Null,
+            metadata: json!({}),
         })
     }
 
@@ -156,7 +156,7 @@ impl ShellHandler for Shell {
         if let Err(err) = self.iopub.send(IOPubMessage::ExecuteResult(ExecuteResult {
             execution_count: self.execution_count,
             data: data,
-            metadata: serde_json::Value::Null,
+            metadata: json!({}),
         })) {
             warn!(
                 "Could not publish result of computation {} on iopub: {}",
@@ -187,7 +187,7 @@ impl ShellHandler for Shell {
             status: Status::Ok,
             found: data != serde_json::Value::Null,
             data: data,
-            metadata: serde_json::Value::Null,
+            metadata: json!({}),
         })
     }
 }
