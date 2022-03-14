@@ -1,3 +1,10 @@
+/*
+ * globals.rs
+ *
+ * Copyright (C) 2022 by RStudio, PBC
+ *
+ */
+
 use libc::{c_char, c_int, c_void};
 
 #[link(name = "R", kind = "dylib")]
