@@ -81,7 +81,7 @@ impl ShellHandler for Shell {
             status: Status::Ok,
             cursor_start: 0,
             cursor_end: 0,
-            metadata: serde_json::Value::Null,
+            metadata: json!({}),
         })
     }
 
@@ -142,7 +142,7 @@ impl ShellHandler for Shell {
             status: Status::Ok,
             found: data != serde_json::Value::Null,
             data: data,
-            metadata: serde_json::Value::Null,
+            metadata: json!({}),
         })
     }
 }

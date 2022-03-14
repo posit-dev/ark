@@ -66,7 +66,7 @@ impl RKernel {
         if let Err(err) = self.iopub.send(IOPubMessage::ExecuteResult(ExecuteResult {
             execution_count: self.execution_count,
             data: data,
-            metadata: serde_json::Value::Null,
+            metadata: json!({}),
         })) {
             warn!(
                 "Could not publish result of statement {} on iopub: {}",
