@@ -5,6 +5,7 @@
  *
  */
 
+use crate::r;
 use crate::r_kernel::RKernel;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::execute_request::ExecuteRequest;
@@ -15,42 +16,6 @@ use std::sync::mpsc::channel;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Mutex, Once};
 use std::thread;
-
-#[link(name = "R", kind = "dylib")]
-extern "C" {
-    /// Initialize R
-    fn Rf_initialize_R(ac: c_int, av: *mut c_void) -> i32;
-
-    /// Run the R main execution loop (does not return)
-    fn Rf_mainloop();
-
-    /// Global indicating whether R is running as the main program (affects
-    /// R_CStackStart)
-    static mut R_running_as_main_program: c_int;
-
-    /// Flag indicating whether this is an interactive session. R typically sets
-    /// this when attached to a tty.
-    static mut R_Interactive: c_int;
-
-    /// Pointer to file receiving console input
-    static mut R_Consolefile: *const c_void;
-
-    /// Pointer to file receiving output
-    static mut R_Outputfile: *const c_void;
-
-    /// Signal handlers for R
-    static mut R_SignalHandlers: c_int;
-
-    // TODO: type of buffer isn't necessary c_char
-    static mut ptr_R_ReadConsole:
-        unsafe extern "C" fn(*mut c_char, *mut c_char, c_int, c_int) -> c_int;
-
-    /// Pointer to console write function
-    static mut ptr_R_WriteConsole: *const c_void;
-
-    /// Pointer to extended console write function
-    static mut ptr_R_WriteConsoleEx: unsafe extern "C" fn(*mut c_char, c_int, c_int);
-}
 
 // --- Globals ---
 // These values must be global in order for them to be accessible from R
@@ -145,23 +110,23 @@ pub fn start_r(iopub: Sender<IOPubMessage>, receiver: Receiver<ExecuteRequest>) 
         let arg1 = CString::new("ark").unwrap();
         let arg2 = CString::new("--interactive").unwrap();
         let mut args = vec![arg1.as_ptr(), arg2.as_ptr()];
-        R_running_as_main_program = 1;
-        R_SignalHandlers = 0;
-        Rf_initialize_R(args.len() as i32, args.as_mut_ptr() as *mut c_void);
+        r::globals::R_running_as_main_program = 1;
+        r::globals::R_SignalHandlers = 0;
+        r::functions::Rf_initialize_R(args.len() as i32, args.as_mut_ptr() as *mut c_void);
 
         // Mark R session as interactive
-        R_Interactive = 1;
+        r::globals::R_Interactive = 1;
 
         // Redirect console
-        R_Consolefile = std::ptr::null();
-        R_Outputfile = std::ptr::null();
-        ptr_R_WriteConsole = std::ptr::null();
-        ptr_R_WriteConsoleEx = r_write_console;
-        ptr_R_ReadConsole = r_read_console;
+        r::globals::R_Consolefile = std::ptr::null();
+        r::globals::R_Outputfile = std::ptr::null();
+        r::globals::ptr_R_WriteConsole = std::ptr::null();
+        r::globals::ptr_R_WriteConsoleEx = r_write_console;
+        r::globals::ptr_R_ReadConsole = r_read_console;
 
         // Does not return
         trace!("Entering R main loop");
-        Rf_mainloop();
+        r::functions::Rf_mainloop();
         trace!("Exiting R main loop");
     }
 }

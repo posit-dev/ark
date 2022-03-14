@@ -16,8 +16,9 @@ use std::io::stdin;
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
 
-mod r_kernel;
+mod r;
 mod r_interface;
+mod r_kernel;
 mod shell;
 
 fn start_kernel(connection_file: ConnectionFile) {
