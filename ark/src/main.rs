@@ -21,6 +21,10 @@ mod r_interface;
 mod r_kernel;
 mod shell;
 
+extern crate num;
+#[macro_use]
+extern crate num_derive;
+
 fn start_kernel(connection_file: ConnectionFile) {
     // This channel delivers execution status and other iopub messages from
     // other threads to the iopub thread
