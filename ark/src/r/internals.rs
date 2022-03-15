@@ -7,6 +7,8 @@
 
 use libc::{c_char, c_int, c_void};
 
+/// Types of S-expressions
+#[derive(FromPrimitive, PartialEq)]
 pub enum SexpType {
     /// nil = NULL
     NILSXP = 0,
@@ -64,13 +66,42 @@ pub enum SexpType {
     FUNSXP = 99,
 }
 
+/// Character encoding types
+#[derive(FromPrimitive, PartialEq)]
+pub enum CeType {
+    /// Native (system) encoding
+    CE_NATIVE = 0,
+    /// UTF-8 encoding
+    CE_UTF8 = 1,
+    /// Latin1 encoding
+    CE_LATIN1 = 2,
+    /// Raw (bytes) encoding
+    CE_BYTES = 3,
+    /// Symbol encoding
+    CE_SYMBOL = 5,
+    /// Other
+    CE_ANY = 99,
+}
+
 pub type SEXP = *const c_void;
 
 #[link(name = "R", kind = "dylib")]
 extern "C" {
+    /// Install a string as an S-expression
     pub fn Rf_install(str: *const c_char) -> SEXP;
 
+    /// Get an attribute of an S-expression
     pub fn Rf_getAttrib(obj: SEXP, attrib: SEXP) -> SEXP;
 
+    /// Get the length of an S-expression
     pub fn Rf_length(obj: SEXP) -> c_int;
+
+    /// Translate an S-expression to a null-terminated C string
+    pub fn Rf_translateChar(obj: SEXP) -> *mut c_char;
+
+    /// Translate an S-expression to a null-terminated C string (UTF-8)
+    pub fn Rf_translateCharUTF8(obj: SEXP) -> *mut c_char;
+
+    /// Get the type of an S-expression holding character data
+    pub fn Rf_getCharCE(obj: SEXP) -> c_int;
 }

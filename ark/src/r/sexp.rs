@@ -6,6 +6,7 @@
  */
 
 use crate::r;
+use libc::c_char;
 use std::convert::From;
 use std::ffi::CString;
 
@@ -25,10 +26,56 @@ impl Sexp {
         // TODO: should return a TYPEOF
     }
 
+    pub fn translate(&self, utf8: bool) -> String {
+        if utf8 {
+            if self.char_ce() == r::internals::CeType::CE_UTF8 {
+                // TODO
+                String::new()
+            } else {
+                let cstr = CString::from_raw(r::internals::Rf_translateCharUTF8(self.sexp));
+                cstr.into_string().unwrap()
+            }
+        } else {
+            if self.char_ce() == r::internals::CeType::CE_NATIVE {
+                // TODO
+                String::new()
+            } else {
+                let cstr = CString::from_raw(r::internals::Rf_translateChar(self.sexp));
+                cstr.into_string().unwrap()
+            }
+        }
+    }
+
+    /// The S-expression's character encoding type
+    pub fn char_ce(&self) -> r::internals::CeType {
+        let kind = r::internals::Rf_getCharCE(self.sexp);
+        match num::FromPrimitive::from_i32(kind) {
+            Some(ce) => ce,
+            None => r::internals::CeType::CE_ANY,
+        }
+    }
+
     /// The S-expression's primary class (from its `class` attribute)
     pub fn class(&self) -> String {
-        let class = CString::new("class").unwrap();
-        let class_sexp = r::internals::Rf_install(class.as_ptr());
+        self.attrib_string(String::from("class"))
+    }
+
+    /// Return the string value of an attribute
+    pub fn attrib_string(&self, attr: String) -> String {
+        // Prepare string for consumption in R
+        let attr = CString::new(attr).unwrap();
+        let attr_sexp = r::internals::Rf_install(attr.as_ptr());
+
+        // Extract attribute string
+        let result_sexp = r::internals::Rf_getAttrib(self.sexp, attr_sexp);
+        String::from(Sexp::from(result_sexp))
+    }
+
+    // --- Private ---
+
+    /// Returns a pointer to the raw character data in the S-expression.
+    fn char(&self) -> *mut c_char {
+        // TODO: should return a CHAR
     }
 }
 
@@ -41,14 +88,11 @@ impl From<r::internals::SEXP> for Sexp {
 impl From<Sexp> for String {
     fn from(sexp: Sexp) -> Self {
         match sexp.kind() {
-            CHARSXP => {
-                // translate
-                String::new()
-            }
-            STRSXP => {
-                // translate
-                String::new()
-            }
+            CHARSXP => sexp.translate(true),
+            STRSXP => match sexp.length() {
+                0 => String::new(),
+                _ => {}
+            },
             _ => {
                 // translate
                 String::new()
