@@ -7,6 +7,7 @@
 
 use crate::r;
 use libc::c_char;
+use log::warn;
 use std::convert::From;
 use std::ffi::CString;
 
@@ -23,9 +24,20 @@ impl Sexp {
 
     /// The internal (R) type of the S-expression
     pub fn kind(&self) -> r::internals::SexpType {
-        // TODO: should return a TYPEOF
+        match self.sexp.as_ref() {
+            Some(s) => match num::FromPrimitive::from_u32(s.kind()) {
+                Some(kind) => kind,
+                None => {
+                    warn!("Unknown SEXP type {}!", s.kind());
+                    r::internals::SexpType::NILSXP
+                }
+            },
+            None => r::internals::SexpType::NILSXP,
+        }
     }
 
+    /// Translate the S-expression to a character string. Generally avoid in
+    /// favor of `String::from(sexp)`, which handles more types gracefully.
     pub fn translate(&self, utf8: bool) -> String {
         if utf8 {
             if self.char_ce() == r::internals::CeType::CE_UTF8 {
@@ -55,8 +67,20 @@ impl Sexp {
         }
     }
 
-    pub fn string_elt(&self) -> Self {
-        // TODO
+    /// Whether or not this S-expression is an alternative representation
+    /// (ALTREP)
+    pub fn altrep(&self) -> bool {
+        match self.sexp.as_ref() {
+            Some(s) => s.alt() == 1,
+            None => false,
+        }
+    }
+
+    pub fn string_elt(&self, offset: i32) -> Self {
+        if self.altrep() {
+            // TODO: needs to do the equivalent of ALTSTRING_ELT
+            warn!("Attempt to extract string from ALTREP currently unsupported");
+        }
     }
 
     /// Coerce the S-expression to a character type

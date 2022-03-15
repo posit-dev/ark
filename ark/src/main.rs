@@ -24,6 +24,8 @@ mod shell;
 extern crate num;
 #[macro_use]
 extern crate num_derive;
+#[macro_use]
+extern crate c2rust_bitfields;
 
 fn start_kernel(connection_file: ConnectionFile) {
     // This channel delivers execution status and other iopub messages from
