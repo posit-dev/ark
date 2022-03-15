@@ -104,4 +104,7 @@ extern "C" {
 
     /// Get the type of an S-expression holding character data
     pub fn Rf_getCharCE(obj: SEXP) -> c_int;
+
+    /// Coerce a S-expression to a character type
+    pub fn Rf_asChar(obj: SEXP) -> SEXP;
 }
