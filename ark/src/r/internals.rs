@@ -83,7 +83,29 @@ pub enum CeType {
     CE_ANY = 99,
 }
 
-pub type SEXP = *const c_void;
+pub type SEXP = *const SexpInfo;
+
+#[repr(C, align(1))]
+pub struct Sexp {
+    sexpinfo: SexpInfo,
+    attrib: *const c_void,
+    gengc_next_node: *const c_void,
+    gengc_prev_node: *const c_void,
+}
+
+#[repr(C, align(1))]
+#[derive(BitfieldStruct)]
+pub struct SexpInfo {
+    #[bitfield(name = "kind", ty = "libc::c_uint", bits = "0..=4")]
+    #[bitfield(name = "scalar", ty = "libc::c_uint", bits = "5..=5")]
+    #[bitfield(name = "obj", ty = "libc::c_uint", bits = "6..=6")]
+    #[bitfield(name = "alt", ty = "libc::c_uint", bits = "7..=7")]
+    #[bitfield(name = "gp", ty = "libc::c_uint", bits = "9..=24")]
+    #[bitfield(name = "mark", ty = "libc::c_uint", bits = "25..=25")]
+    #[bitfield(name = "debug", ty = "libc::c_uint", bits = "26..=26")]
+    // Other internal fields omitted
+    data: [u8; 64],
+}
 
 #[link(name = "R", kind = "dylib")]
 extern "C" {
