@@ -55,6 +55,15 @@ impl Sexp {
         }
     }
 
+    pub fn string_elt(&self) -> Self {
+        // TODO
+    }
+
+    /// Coerce the S-expression to a character type
+    pub fn as_char(&self) -> Self {
+        Sexp::from(r::internals::Rf_asChar(self.sexp))
+    }
+
     /// The S-expression's primary class (from its `class` attribute)
     pub fn class(&self) -> String {
         self.attrib_string(String::from("class"))
@@ -91,7 +100,7 @@ impl From<Sexp> for String {
             CHARSXP => sexp.translate(true),
             STRSXP => match sexp.length() {
                 0 => String::new(),
-                _ => {}
+                _ => sexp.string_elt().translate(true),
             },
             _ => {
                 // translate
