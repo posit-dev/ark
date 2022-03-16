@@ -5,11 +5,10 @@
  *
  */
 
-use crate::r;
 use crate::r_kernel::RKernel;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::execute_request::ExecuteRequest;
-use libc::{c_char, c_int, c_void, strcpy};
+use libc::{c_char, c_int, strcpy};
 use log::{debug, trace, warn};
 use std::ffi::{CStr, CString};
 use std::sync::mpsc::channel;
@@ -42,8 +41,8 @@ static INIT: Once = Once::new();
 ///
 #[no_mangle]
 pub extern "C" fn r_read_console(
-    prompt: *mut c_char,
-    buf: *mut c_char,
+    prompt: *const c_char,
+    buf: *mut u8,
     buflen: c_int,
     _hist: c_int,
 ) -> i32 {
@@ -64,7 +63,7 @@ pub extern "C" fn r_read_console(
     if input.len() < buflen.try_into().unwrap() {
         let src = CString::new(input).unwrap();
         unsafe {
-            libc::strcpy(buf, src.as_ptr());
+            libc::strcpy(buf as *mut i8, src.as_ptr());
         }
     } else {
         // Input doesn't fit in buffer
@@ -77,7 +76,7 @@ pub extern "C" fn r_read_console(
 }
 
 #[no_mangle]
-pub extern "C" fn r_write_console(buf: *mut c_char, _buflen: i32, otype: i32) {
+pub extern "C" fn r_write_console(buf: *const c_char, _buflen: i32, otype: i32) {
     let content = unsafe { CStr::from_ptr(buf) };
     let mutex = unsafe { KERNEL.as_ref().unwrap() };
     let mut kernel = mutex.lock().unwrap();
@@ -110,23 +109,23 @@ pub fn start_r(iopub: Sender<IOPubMessage>, receiver: Receiver<ExecuteRequest>) 
         let arg1 = CString::new("ark").unwrap();
         let arg2 = CString::new("--interactive").unwrap();
         let mut args = vec![arg1.as_ptr(), arg2.as_ptr()];
-        r::globals::R_running_as_main_program = 1;
-        r::globals::R_SignalHandlers = 0;
-        r::functions::Rf_initialize_R(args.len() as i32, args.as_mut_ptr() as *mut c_void);
+        libR_sys::R_running_as_main_program = 1;
+        libR_sys::R_SignalHandlers = 0;
+        libR_sys::Rf_initialize_R(args.len() as i32, args.as_mut_ptr() as *mut *mut c_char);
 
         // Mark R session as interactive
-        r::globals::R_Interactive = 1;
+        libR_sys::R_Interactive = 1;
 
         // Redirect console
-        r::globals::R_Consolefile = std::ptr::null();
-        r::globals::R_Outputfile = std::ptr::null();
-        r::globals::ptr_R_WriteConsole = std::ptr::null();
-        r::globals::ptr_R_WriteConsoleEx = r_write_console;
-        r::globals::ptr_R_ReadConsole = r_read_console;
+        libR_sys::R_Consolefile = std::ptr::null_mut();
+        libR_sys::R_Outputfile = std::ptr::null_mut();
+        libR_sys::ptr_R_WriteConsole = None;
+        libR_sys::ptr_R_WriteConsoleEx = Some(r_write_console);
+        libR_sys::ptr_R_ReadConsole = Some(r_read_console);
 
         // Does not return
         trace!("Entering R main loop");
-        r::functions::Rf_mainloop();
+        libR_sys::Rf_mainloop();
         trace!("Exiting R main loop");
     }
 }
