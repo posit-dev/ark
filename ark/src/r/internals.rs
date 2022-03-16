@@ -129,4 +129,9 @@ extern "C" {
 
     /// Coerce a S-expression to a character type
     pub fn Rf_asChar(obj: SEXP) -> SEXP;
+
+    /// Extract string from an S-expression
+    pub fn STRING_ELT(obj: SEXP, offset: c_int) -> SEXP;
+
+    pub fn TYPEOF(obj: SEXP) -> c_int;
 }
