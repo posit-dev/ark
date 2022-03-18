@@ -9,6 +9,7 @@ use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::execute_input::ExecuteInput;
 use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::execute_result::ExecuteResult;
+use extendr_api::prelude::*;
 use log::{debug, trace, warn};
 use serde_json::json;
 use std::sync::mpsc::Sender;
@@ -61,11 +62,26 @@ impl RKernel {
 
     /// Finishes the active execution request
     pub fn finish_request(&self) {
-        let data = json!({"text/plain": self.output });
+        let output = self.output.clone();
+
+        // Look up computation result
+        let mut data = serde_json::Map::new();
+        data.insert("text/plain".to_string(), json!(output));
+        let last = R!(.Last.value).unwrap();
+        if last.is_frame() {
+            data.insert(
+                "text/html".to_string(),
+                json!(format!(
+                    "<table><caption>A data table: {}</table></caption></table>",
+                    last.len()
+                )),
+            );
+        }
+
         trace!("Sending kernel output: {}", self.output);
         if let Err(err) = self.iopub.send(IOPubMessage::ExecuteResult(ExecuteResult {
             execution_count: self.execution_count,
-            data: data,
+            data: serde_json::Value::Object(data),
             metadata: json!({}),
         })) {
             warn!(
