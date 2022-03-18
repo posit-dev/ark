@@ -8,6 +8,7 @@
 use crate::r_kernel::RKernel;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::execute_request::ExecuteRequest;
+use extendr_api::prelude::*;
 use libc::{c_char, c_int, strcpy};
 use log::{debug, trace, warn};
 use std::ffi::{CStr, CString};
