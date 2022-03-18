@@ -69,11 +69,19 @@ impl RKernel {
         data.insert("text/plain".to_string(), json!(output));
         let last = R!(.Last.value).unwrap();
         if last.is_frame() {
+            let names = last.names().unwrap();
+            let mut th = String::from("<tr>");
+            for i in names {
+                let h = format!("<th>{}</th>", i);
+                th.push_str(h.as_str());
+            }
+            th.push_str("</tr>");
             data.insert(
                 "text/html".to_string(),
                 json!(format!(
-                    "<table><caption>A data table: {}</table></caption></table>",
-                    last.len()
+                    "<table><caption>A data table: {}</caption>{}</table>",
+                    last.len(),
+                    th
                 )),
             );
         }
