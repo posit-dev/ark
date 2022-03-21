@@ -60,6 +60,38 @@ impl RKernel {
         self.console.send(req.code).unwrap();
     }
 
+    /// Converts a data frame to HTML
+    pub fn to_html(frame: &Robj) -> String {
+        let names = frame.names().unwrap();
+        let mut th = String::from("<tr>");
+        for i in names {
+            let h = format!("<th>{}</th>", i);
+            th.push_str(h.as_str());
+        }
+        th.push_str("</tr>");
+        let mut body = String::new();
+        for i in 1..5 {
+            body.push_str("<tr>");
+            for j in 1..(frame.len() + 1) {
+                trace!("formatting value at {}, {}", i, j);
+                if let Ok(col) = frame.index(i) {
+                    if let Ok(val) = col.index(j) {
+                        if let Ok(s) = call!("toString", val) {
+                            body.push_str(
+                                format!("<td>{}</td>", String::from_robj(&s).unwrap()).as_str(),
+                            )
+                        }
+                    }
+                }
+            }
+            body.push_str("</tr>");
+        }
+        format!(
+            "<table><thead>{}</thead><tbody>{}</tbody></table>",
+            th, body
+        )
+    }
+
     /// Finishes the active execution request
     pub fn finish_request(&self) {
         let output = self.output.clone();
@@ -67,23 +99,10 @@ impl RKernel {
         // Look up computation result
         let mut data = serde_json::Map::new();
         data.insert("text/plain".to_string(), json!(output));
+        trace!("Formatting value");
         let last = R!(.Last.value).unwrap();
         if last.is_frame() {
-            let names = last.names().unwrap();
-            let mut th = String::from("<tr>");
-            for i in names {
-                let h = format!("<th>{}</th>", i);
-                th.push_str(h.as_str());
-            }
-            th.push_str("</tr>");
-            data.insert(
-                "text/html".to_string(),
-                json!(format!(
-                    "<table><caption>A data table: {}</caption>{}</table>",
-                    last.len(),
-                    th
-                )),
-            );
+            data.insert("text/html".to_string(), json!(RKernel::to_html(&last)));
         }
 
         trace!("Sending kernel output: {}", self.output);
