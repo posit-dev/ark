@@ -1,5 +1,5 @@
 {
-  "name": "ark",
+	"name": "ark",
 	"displayName": "ark",
 	"description": "",
 	"version": "0.0.1",
@@ -10,7 +10,7 @@
 		"Other"
 	],
 	"activationEvents": [
-        "onCommand:ark.helloWorld"
+		"onLanguage:R"
 	],
 	"main": "./out/extension.js",
 	"contributes": {
