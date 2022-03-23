@@ -16,6 +16,7 @@ use std::io::stdin;
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
 
+mod lsp;
 mod r_interface;
 mod r_kernel;
 mod shell;
