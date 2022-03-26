@@ -31,7 +31,7 @@ fn start_kernel(connection_file: ConnectionFile) {
     let shell = Arc::new(Mutex::new(Shell::new(shell_sender)));
 
     // Start the LSP backend
-    lsp::backend::start_lsp();
+    lsp::backend::start_lsp(9276);
 
     let kernel = Kernel::new(connection_file);
     match kernel {
