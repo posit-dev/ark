@@ -122,13 +122,15 @@ impl LanguageServer for Backend {
 }
 
 #[tokio::main]
-pub async fn start_lsp() {
+pub async fn start_lsp(port: u16) {
     #[cfg(feature = "runtime-agnostic")]
     use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
     env_logger::init();
 
-    let listener = TcpListener::bind("127.0.0.1:9257").await.unwrap();
+    let listener = TcpListener::bind(format!("127.0.0.1:{}", port))
+        .await
+        .unwrap();
     let (stream, _) = listener.accept().await.unwrap();
     let (read, write) = tokio::io::split(stream);
     #[cfg(feature = "runtime-agnostic")]
