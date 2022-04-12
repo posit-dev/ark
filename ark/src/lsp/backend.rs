@@ -126,8 +126,6 @@ pub async fn start_lsp(port: u16) {
     #[cfg(feature = "runtime-agnostic")]
     use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
-    env_logger::init();
-
     let listener = TcpListener::bind(format!("127.0.0.1:{}", port))
         .await
         .unwrap();

@@ -15,6 +15,7 @@ use std::env;
 use std::io::stdin;
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
+use std::thread;
 
 mod lsp;
 mod r_interface;
@@ -31,7 +32,7 @@ fn start_kernel(connection_file: ConnectionFile) {
     let shell = Arc::new(Mutex::new(Shell::new(shell_sender)));
 
     // Start the LSP backend
-    lsp::backend::start_lsp(9276);
+    thread::spawn(move || lsp::backend::start_lsp(9276));
 
     let kernel = Kernel::new(connection_file);
     match kernel {
