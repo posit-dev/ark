@@ -1,7 +1,7 @@
 {
 	"name": "ark",
 	"displayName": "ark",
-	"description": "",
+	"description": "Language Features for the Amalthea R Kernel",
 	"version": "0.0.1",
 	"engines": {
 		"vscode": "^1.65.0"
@@ -10,7 +10,7 @@
 		"Other"
 	],
 	"activationEvents": [
-		"onLanguage:R"
+		"onLanguage:r"
 	],
 	"main": "./out/extension.js",
 	"contributes": {
