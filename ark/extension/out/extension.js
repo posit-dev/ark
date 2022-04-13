@@ -12,8 +12,11 @@ function activate(context) {
     context.subscriptions.push(disposable);
     let serverOptions = () => {
         // TODO: port needs to be configurable or discoverable
-        return (0, node_1.createClientSocketTransport)(9276).then(transport => {
+        console.log('Creating client socket transport');
+        return (0, node_1.createClientSocketTransport)(9277).then(transport => {
+            console.log('Waiting to connect to language server');
             return transport.onConnected().then((protocol) => {
+                console.log('Connected, returning protocol transports');
                 return {
                     reader: protocol[0],
                     writer: protocol[1]
@@ -24,6 +27,7 @@ function activate(context) {
     let clientOptions = {
         documentSelector: [{ scheme: 'file', language: 'R' }],
     };
+    console.log('Creating language client');
     client = new node_1.LanguageClient('ark', 'ARK Language Server', serverOptions, clientOptions);
     client.start();
 }

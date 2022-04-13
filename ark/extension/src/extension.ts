@@ -22,8 +22,11 @@ export function activate(context: vscode.ExtensionContext) {
 
 	let serverOptions = () => {
 		// TODO: port needs to be configurable or discoverable
-		return createClientSocketTransport(9276).then(transport => {
+		console.log('Creating client socket transport');
+		return createClientSocketTransport(9277).then(transport => {
+			console.log('Waiting to connect to language server');
 			return transport.onConnected().then((protocol) => {
+				console.log('Connected, returning protocol transports');
 				return {
 					reader: protocol[0],
 					writer: protocol[1]
@@ -36,6 +39,7 @@ export function activate(context: vscode.ExtensionContext) {
 		documentSelector: [{ scheme: 'file', language: 'R' }],
 	};
 
+	console.log('Creating language client');
 	client = new LanguageClient('ark', 'ARK Language Server', serverOptions, clientOptions);
 
 	client.start();
