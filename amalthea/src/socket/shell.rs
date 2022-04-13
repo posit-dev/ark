@@ -11,6 +11,9 @@ use crate::socket::iopub::IOPubMessage;
 use crate::socket::socket::Socket;
 use crate::wire::comm_info_reply::CommInfoReply;
 use crate::wire::comm_info_request::CommInfoRequest;
+use crate::wire::comm_info_request::CommInfoRequest;
+use crate::wire::comm_msg::CommMsg;
+use crate::wire::comm_open::CommOpen;
 use crate::wire::complete_reply::CompleteReply;
 use crate::wire::complete_request::CompleteRequest;
 use crate::wire::execute_request::ExecuteRequest;
@@ -101,6 +104,8 @@ impl Shell {
             Message::CommInfoRequest(req) => {
                 self.handle_request(req, |h, r| self.handle_comm_info_request(h, r))
             }
+            Message::CommOpen(req) => self.handle_request(req, |h, r| self.handle_comm_open(h, r)),
+            Message::CommMsg(req) => self.handle_request(req, |h, r| self.handle_comm_msg(h, r)),
             Message::InspectRequest(req) => {
                 self.handle_request(req, |h, r| self.handle_inspect_request(h, r))
             }
@@ -168,12 +173,12 @@ impl Shell {
     ) -> Result<(), Error> {
         debug!("Received execution request {:?}", req);
         match handler.handle_execute_request(&req.content) {
-            Ok(reply) => { 
+            Ok(reply) => {
                 trace!("got execution reply: {:?}", reply);
                 let r = req.send_reply(reply, &self.socket);
                 trace!("execution reply sent");
                 r
-            },
+            }
             Err(err) => req.send_reply(err, &self.socket),
         }
     }
@@ -227,6 +232,32 @@ impl Shell {
         match handler.handle_comm_info_request(&req.content) {
             Ok(reply) => req.send_reply(reply, &self.socket),
             Err(err) => req.send_error::<CommInfoReply>(err, &self.socket),
+        }
+    }
+
+    /// Handle a request to open a comm
+    fn handle_comm_open(
+        &self,
+        handler: &dyn ShellHandler,
+        req: JupyterMessage<CommOpen>,
+    ) -> Result<(), Error> {
+        debug!("Received request to open comm: {:?}", req);
+        match handler.handle_comm_open(&req.content) {
+            Ok(reply) => req.send_reply(reply, &self.socket),
+            Err(err) => req.send_error::<CommOpen>(err, &self.socket),
+        }
+    }
+
+    /// Handle a request to send a comm message
+    fn handle_comm_msg(
+        &self,
+        handler: &dyn ShellHandler,
+        req: JupyterMessage<CommMsg>,
+    ) -> Result<(), Error> {
+        debug!("Received request to send a message on a comm: {:?}", req);
+        match handler.handle_comm_msg(&req.content) {
+            Ok(reply) => req.send_reply(reply, &self.socket),
+            Err(err) => req.send_error::<CommMsg>(err, &self.socket),
         }
     }
 

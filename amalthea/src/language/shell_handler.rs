@@ -56,4 +56,6 @@ pub trait ShellHandler: Send {
     ///
     /// Docs: https://jupyter-client.readthedocs.io/en/stable/messaging.html#introspection
     fn handle_inspect_request(&self, req: &InspectRequest) -> Result<InspectReply, Exception>;
+
+    // TODO: Need to handle comm open and comm msg
 }
