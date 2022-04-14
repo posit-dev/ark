@@ -5,6 +5,7 @@
  *
  */
 
+use crate::lsp;
 use amalthea::language::shell_handler::ShellHandler;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::comm_info_reply::CommInfoReply;
@@ -148,8 +149,12 @@ impl ShellHandler for Shell {
         })
     }
 
-    fn handle_comm_open(&self, _req: &CommOpen) -> Result<(), Exception> {
-        // NYI
+    fn handle_comm_open(&self, req: &CommOpen) -> Result<(), Exception> {
+        if req.comm_id.eq(lsp::comm::LSP_COMM_ID) {
+            // TODO: Extract client port from comm data (cast to StartLsp)
+            // Start the LSP backend
+            thread::spawn(move || lsp::backend::start_lsp(9277));
+        }
         Ok(())
     }
 
