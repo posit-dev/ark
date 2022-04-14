@@ -147,4 +147,14 @@ impl ShellHandler for Shell {
             metadata: json!({}),
         })
     }
+
+    fn handle_comm_open(&self, _req: &CommOpen) -> Result<(), Exception> {
+        // NYI
+        Ok(())
+    }
+
+    fn handle_comm_msg(&self, _req: &CommMsg) -> Result<(), Exception> {
+        // NYI
+        Ok(())
+    }
 }

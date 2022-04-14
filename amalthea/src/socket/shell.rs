@@ -11,7 +11,6 @@ use crate::socket::iopub::IOPubMessage;
 use crate::socket::socket::Socket;
 use crate::wire::comm_info_reply::CommInfoReply;
 use crate::wire::comm_info_request::CommInfoRequest;
-use crate::wire::comm_info_request::CommInfoRequest;
 use crate::wire::comm_msg::CommMsg;
 use crate::wire::comm_open::CommOpen;
 use crate::wire::complete_reply::CompleteReply;
@@ -242,9 +241,10 @@ impl Shell {
         req: JupyterMessage<CommOpen>,
     ) -> Result<(), Error> {
         debug!("Received request to open comm: {:?}", req);
-        match handler.handle_comm_open(&req.content) {
-            Ok(reply) => req.send_reply(reply, &self.socket),
-            Err(err) => req.send_error::<CommOpen>(err, &self.socket),
+        if let Err(err) = handler.handle_comm_open(&req.content) {
+            req.send_error::<CommMsg>(err, &self.socket)
+        } else {
+            Ok(())
         }
     }
 
@@ -256,7 +256,7 @@ impl Shell {
     ) -> Result<(), Error> {
         debug!("Received request to send a message on a comm: {:?}", req);
         match handler.handle_comm_msg(&req.content) {
-            Ok(reply) => req.send_reply(reply, &self.socket),
+            Ok(reply) => Ok(reply),
             Err(err) => req.send_error::<CommMsg>(err, &self.socket),
         }
     }
