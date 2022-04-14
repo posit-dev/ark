@@ -32,7 +32,6 @@ use crate::wire::kernel_info_request::KernelInfoRequest;
 use crate::wire::shutdown_request::ShutdownRequest;
 use crate::wire::status::KernelStatus;
 use crate::wire::wire_message::WireMessage;
-use log::trace;
 use serde::{Deserialize, Serialize};
 
 /// Represents a Jupyter message

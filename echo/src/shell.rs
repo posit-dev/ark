@@ -9,6 +9,8 @@ use amalthea::language::shell_handler::ShellHandler;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::comm_info_reply::CommInfoReply;
 use amalthea::wire::comm_info_request::CommInfoRequest;
+use amalthea::wire::comm_msg::CommMsg;
+use amalthea::wire::comm_open::CommOpen;
 use amalthea::wire::complete_reply::CompleteReply;
 use amalthea::wire::complete_request::CompleteRequest;
 use amalthea::wire::exception::Exception;
@@ -189,5 +191,14 @@ impl ShellHandler for Shell {
             data: data,
             metadata: json!({}),
         })
+    }
+    fn handle_comm_open(&self, _req: &CommOpen) -> Result<(), Exception> {
+        // NYI
+        Ok(())
+    }
+
+    fn handle_comm_msg(&self, _req: &CommMsg) -> Result<(), Exception> {
+        // NYI
+        Ok(())
     }
 }

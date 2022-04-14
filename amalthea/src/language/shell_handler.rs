@@ -7,6 +7,8 @@
 
 use crate::wire::comm_info_reply::CommInfoReply;
 use crate::wire::comm_info_request::CommInfoRequest;
+use crate::wire::comm_msg::CommMsg;
+use crate::wire::comm_open::CommOpen;
 use crate::wire::complete_reply::CompleteReply;
 use crate::wire::complete_request::CompleteRequest;
 use crate::wire::exception::Exception;
@@ -57,5 +59,13 @@ pub trait ShellHandler: Send {
     /// Docs: https://jupyter-client.readthedocs.io/en/stable/messaging.html#introspection
     fn handle_inspect_request(&self, req: &InspectRequest) -> Result<InspectReply, Exception>;
 
-    // TODO: Need to handle comm open and comm msg
+    /// Handles a request to send a message to a comm.
+    ///
+    /// Docs: https://jupyter-client.readthedocs.io/en/stable/messaging.html#comm-messages
+    fn handle_comm_msg(&self, msg: &CommMsg) -> Result<(), Exception>;
+
+    /// Handles a request to open a comm.
+    ///
+    /// https://jupyter-client.readthedocs.io/en/stable/messaging.html#opening-a-comm
+    fn handle_comm_open(&self, msg: &CommOpen) -> Result<(), Exception>;
 }
