@@ -11,9 +11,9 @@ use serde::{Deserialize, Serialize};
 /// Represents a request to open a custom comm
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CommOpen {
-    comm_id: String,
-    target_name: String,
-    data: serde_json::Value,
+    pub comm_id: String,
+    pub target_name: String,
+    pub data: serde_json::Value,
 }
 
 impl MessageType for CommOpen {
