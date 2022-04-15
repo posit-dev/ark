@@ -11,7 +11,7 @@ function activate(context) {
     });
     context.subscriptions.push(disposable);
     // Locate the Myriac Console extension, which supplies the other side of the language server.
-    let ext = vscode.extensions.getExtension("myriac-console");
+    let ext = vscode.extensions.getExtension("RStudio.myriac-console");
     if (!ext) {
         vscode.window.showErrorMessage("Could not find Myriac Console extension; please install it.\n\n" +
             "R language server will not be available.");
