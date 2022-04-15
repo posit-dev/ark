@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 /// Represents a message on a custom comm channel.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CommMsg {
-    comm_id: String,
-    data: serde_json::Value,
+    pub comm_id: String,
+    pub data: serde_json::Value,
 }
 
 impl MessageType for CommMsg {

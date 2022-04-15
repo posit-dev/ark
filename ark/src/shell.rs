@@ -27,7 +27,7 @@ use amalthea::wire::jupyter_message::Status;
 use amalthea::wire::kernel_info_reply::KernelInfoReply;
 use amalthea::wire::kernel_info_request::KernelInfoRequest;
 use amalthea::wire::language_info::LanguageInfo;
-use log::{trace, warn};
+use log::{debug, trace, warn};
 use serde_json::json;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
@@ -53,6 +53,10 @@ impl Shell {
     pub fn execution_thread(sender: Sender<IOPubMessage>, receiver: Receiver<ExecuteRequest>) {
         // Start kernel (does not return)
         crate::r_interface::start_r(sender, receiver);
+    }
+
+    fn start_lsp(msg: lsp::comm::StartLsp) {
+        thread::spawn(move || lsp::backend::start_lsp(msg.client_address));
     }
 }
 
@@ -149,11 +153,23 @@ impl ShellHandler for Shell {
         })
     }
 
+    /// Handles a request to open a new comm channel
     fn handle_comm_open(&self, req: &CommOpen) -> Result<(), Exception> {
         if req.comm_id.eq(lsp::comm::LSP_COMM_ID) {
-            // TODO: Extract client port from comm data (cast to StartLsp)
-            // Start the LSP backend
-            thread::spawn(move || lsp::backend::start_lsp(9277));
+            // TODO: If LSP is already started, don't start another one
+            let data = serde_json::from_value::<lsp::comm::StartLsp>(req.data.clone());
+            match data {
+                Ok(msg) => {
+                    debug!(
+                        "Received request to start LSP and connect to client at {}",
+                        msg.client_address
+                    );
+                    Shell::start_lsp(msg);
+                }
+                Err(err) => {
+                    warn!("Unexpected data for LSP comm: {:?} ({})", req.data, err);
+                }
+            }
         }
         Ok(())
     }
