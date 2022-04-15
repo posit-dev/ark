@@ -94,11 +94,12 @@ impl ShellHandler for Shell {
 
     /// Handle a request for open comms
     fn handle_comm_info_request(&self, _req: &CommInfoRequest) -> Result<CommInfoReply, Exception> {
-        // No comms in this toy implementation.
-        // TODO: should list the comms!
+        let comms = json!({
+            lsp::comm::LSP_COMM_ID: "Language Server Protocol"
+        });
         Ok(CommInfoReply {
             status: Status::Ok,
-            comms: serde_json::Value::Null,
+            comms: comms,
         })
     }
 

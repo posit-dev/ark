@@ -15,8 +15,7 @@ pub struct CommInfoReply {
     /// The status of the request (usually "ok")
     pub status: Status,
 
-    /// Dictionary of comms, indexed by UUID (TODO: this should be more strongly
-    /// typed)
+    /// Dictionary of comms, indexed by UUID
     pub comms: serde_json::Value,
 }
 
