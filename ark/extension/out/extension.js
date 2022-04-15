@@ -10,19 +10,43 @@ function activate(context) {
         vscode.window.showInformationMessage('Hello World from ark!');
     });
     context.subscriptions.push(disposable);
+    // Locate the Myriac Console extension, which supplies the other side of the language server.
+    let ext = vscode.extensions.getExtension("myriac-console");
+    if (!ext) {
+        vscode.window.showErrorMessage("Could not find Myriac Console extension; please install it.\n\n" +
+            "R language server will not be available.");
+        return null;
+    }
     let serverOptions = () => {
-        // TODO: port needs to be configurable or discoverable
-        console.log('Creating client socket transport');
-        return (0, node_1.createClientSocketTransport)(9277).then(transport => {
-            console.log('Waiting to connect to language server');
-            return transport.onConnected().then((protocol) => {
-                console.log('Connected, returning protocol transports');
+        // Find an open port for the language server to listen on.
+        var portfinder = require('portfinder');
+        console.info('Finding open port for R language server...');
+        let stream = portfinder.getPortPromise()
+            .then(async (port) => {
+            let address = `127.0.0.1:${port}`;
+            try {
+                // Create our own socket transport
+                const transport = await (0, node_1.createClientSocketTransport)(port);
+                // Ask Myriac to start the language server
+                console.log(`Requesting Myriac Console extension to start R language server at ${address}...`);
+                ext?.exports.startLsp("R", address);
+                // Wait for the language server to connect to us
+                console.log(`Waiting to connect to language server at ${address}...`);
+                const protocol = await transport.onConnected();
+                console.log(`Connected to language server at ${address}, returning protocol transports`);
                 return {
                     reader: protocol[0],
                     writer: protocol[1]
                 };
-            });
+            }
+            catch (err) {
+                vscode.window.showErrorMessage("Could not connect to language server: \n\n" + err);
+            }
+        })
+            .catch((err) => {
+            vscode.window.showErrorMessage("Could not find open port for language server: \n\n" + err);
         });
+        return stream;
     };
     let clientOptions = {
         documentSelector: [{ scheme: 'file', language: 'R' }],
@@ -32,6 +56,7 @@ function activate(context) {
     client.start();
 }
 exports.activate = activate;
+;
 function deactivate() { }
 exports.deactivate = deactivate;
 //# sourceMappingURL=extension.js.map
