@@ -95,6 +95,7 @@ impl ShellHandler for Shell {
     /// Handle a request for open comms
     fn handle_comm_info_request(&self, _req: &CommInfoRequest) -> Result<CommInfoReply, Exception> {
         // No comms in this toy implementation.
+        // TODO: should list the comms!
         Ok(CommInfoReply {
             status: Status::Ok,
             comms: serde_json::Value::Null,
@@ -170,6 +171,8 @@ impl ShellHandler for Shell {
                     warn!("Unexpected data for LSP comm: {:?} ({})", req.data, err);
                 }
             }
+        } else {
+            warn!("Request to open unknown comm: {:?}", req.data);
         }
         Ok(())
     }
