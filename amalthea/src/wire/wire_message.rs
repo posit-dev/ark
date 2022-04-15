@@ -231,7 +231,7 @@ impl WireMessage {
     }
 }
 
-// Conversion: WireMessage (untyped) -> JupyterMessage (untyped); used on
+// Conversion: WireMessage (untyped) -> JupyterMessage (typed); used on
 // messages we receive over the wire to parse into the correct type.
 impl<T: ProtocolMessage + DeserializeOwned> TryFrom<WireMessage> for JupyterMessage<T> {
     type Error = crate::error::Error;
