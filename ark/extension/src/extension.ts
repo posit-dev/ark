@@ -42,6 +42,7 @@ export function activate(context: vscode.ExtensionContext) {
 					// Ask Myriac to start the language server
 					console.log(`Requesting Myriac Console extension to start R language server at ${address}...`);
 					ext?.exports.startLsp("R", address);
+					// TODO: Need to handle errors arising from LSP startup.
 
 					// Wait for the language server to connect to us
 					console.log(`Waiting to connect to language server at ${address}...`);
