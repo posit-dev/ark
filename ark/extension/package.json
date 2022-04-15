@@ -45,5 +45,9 @@
 	"dependencies": {
 		"portfinder": "^1.0.28",
 		"vscode-languageclient": "^7.0.0"
+	},
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/rstudio/amalthea"
 	}
 }
