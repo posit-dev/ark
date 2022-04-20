@@ -19,7 +19,24 @@
 				"command": "ark.helloWorld",
 				"title": "Hello World"
 			}
-		]
+		],
+		"configuration": {
+			"type": "object",
+			"title": "R Language Server (ARK)",
+			"properties": {
+				"ark.trace.server": {
+					"scope": "window",
+					"type": "string",
+					"enum": [
+						"off",
+						"messages",
+						"verbose"
+					],
+					"default": "off",
+					"description": "Traces the communication between VS Code and the language server."
+				}
+			}
+		}
 	},
 	"scripts": {
 		"vscode:prepublish": "npm run compile",
