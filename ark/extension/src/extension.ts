@@ -64,6 +64,7 @@ export function activate(context: vscode.ExtensionContext) {
 
 	let clientOptions: LanguageClientOptions = {
 		documentSelector: [{ scheme: 'file', language: 'R' }],
+		traceOutputChannel: vscode.window.createOutputChannel('ARK Language Server - Trace')
 	};
 
 	console.log('Creating language client');
