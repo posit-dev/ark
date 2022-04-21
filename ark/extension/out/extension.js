@@ -50,16 +50,29 @@ function activate(context) {
         return stream;
     };
     // TODO: Only create the output channel if the ark.trace.server option is set.
+    let trace = vscode.window.createOutputChannel('ARK Language Server (Trace)');
     let clientOptions = {
-        documentSelector: [{ scheme: 'file', language: 'R' }],
-        traceOutputChannel: vscode.window.createOutputChannel('ARK Language Server - Trace')
+        documentSelector: [{ scheme: 'file', language: 'r' }],
+        synchronize: { fileEvents: vscode.workspace.createFileSystemWatcher('**/*.R') },
+        traceOutputChannel: trace
     };
     console.log('Creating language client');
     client = new node_1.LanguageClient('ark', 'ARK Language Server', serverOptions, clientOptions);
+    client.onDidChangeState(event => {
+        trace.appendLine(`Language client state changed ${event.oldState} => ${event.newState}`);
+    });
+    client.onReady().then(() => {
+        trace.appendLine("Language client is ready");
+    });
     context.subscriptions.push(client.start());
 }
 exports.activate = activate;
 ;
-function deactivate() { }
+function deactivate() {
+    if (!client) {
+        return undefined;
+    }
+    return client.stop();
+}
 exports.deactivate = deactivate;
 //# sourceMappingURL=extension.js.map
