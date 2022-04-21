@@ -5,6 +5,7 @@
  *
  */
 
+use extendr_api::prelude::*;
 use serde_json::Value;
 use tokio::net::TcpStream;
 use tower_lsp::jsonrpc::Result;
@@ -30,7 +31,7 @@ impl LanguageServer for Backend {
                 )),
                 completion_provider: Some(CompletionOptions {
                     resolve_provider: Some(false),
-                    trigger_characters: Some(vec![".".to_string(), "$".to_string()]),
+                    trigger_characters: Some(vec!["$".to_string()]),
                     work_done_progress_options: Default::default(),
                     all_commit_characters: None,
                     ..Default::default()
@@ -122,9 +123,16 @@ impl LanguageServer for Backend {
     }
 
     async fn completion(&self, p: CompletionParams) -> Result<Option<CompletionResponse>> {
-        self.client
-            .log_message(MessageType::INFO, format!("Completion requested: {:?}", p))
-            .await;
+        if let Some(ctx) = p.context {
+            if let Some(ch) = ctx.trigger_character {
+                if ch == "$" {
+                    return Ok(Some(CompletionResponse::Array(vec![
+                        CompletionItem::new_simple("Col1".to_string(), "Some detail".to_string()),
+                        CompletionItem::new_simple("Col2".to_string(), "More detail".to_string()),
+                    ])));
+                }
+            }
+        }
         Ok(Some(CompletionResponse::Array(vec![
             CompletionItem::new_simple("Hello".to_string(), "Some detail".to_string()),
             CompletionItem::new_simple("Bye".to_string(), "More detail".to_string()),
