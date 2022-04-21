@@ -35,6 +35,7 @@ impl LanguageServer for Backend {
                     all_commit_characters: None,
                     ..Default::default()
                 }),
+                hover_provider: Some(HoverProviderCapability::from(true)),
                 execute_command_provider: Some(ExecuteCommandOptions {
                     commands: vec!["dummy.do_something".to_string()],
                     work_done_progress_options: Default::default(),
@@ -128,6 +129,18 @@ impl LanguageServer for Backend {
             CompletionItem::new_simple("Hello".to_string(), "Some detail".to_string()),
             CompletionItem::new_simple("Bye".to_string(), "More detail".to_string()),
         ])))
+    }
+
+    async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
+        self.client
+            .log_message(MessageType::INFO, format!("Hover requested: {:?}", params))
+            .await;
+        Ok(Some(Hover {
+            contents: HoverContents::Scalar(MarkedString::from_markdown(String::from(
+                "Hello world!",
+            ))),
+            range: None,
+        }))
     }
 }
 
