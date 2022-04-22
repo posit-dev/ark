@@ -1,4 +1,4 @@
 ## ARK
 
-ARK: the Amalteha R Kernel.
+ARK: the Amalthea R Kernel.
 
