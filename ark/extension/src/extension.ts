@@ -28,6 +28,27 @@ export function activate(context: vscode.ExtensionContext) {
 		return null;
 	}
 
+	// Ensure that the extension is active, so that it can receive the request
+	// to start the language server.
+	if (ext.isActive) {
+		console.log("Myriac Console extension is active, starting language server");
+		activateLsp(ext, context);
+	} else {
+		console.log("Activating Myriac Console extension...");
+		ext.activate().then(() => {
+			console.log("Myriac Console extension activated, starting language server");
+			activateLsp(ext!, context);
+		});
+	}
+}
+
+/**
+ * Activate the language server.
+ * 
+ * @param context The extension context
+ */
+function activateLsp(ext: vscode.Extension<any>, context: vscode.ExtensionContext) {
+
 	let serverOptions = () => {
 		// Find an open port for the language server to listen on.
 		var portfinder = require('portfinder');
@@ -63,7 +84,7 @@ export function activate(context: vscode.ExtensionContext) {
 	};
 
 	// TODO: Only create the output channel if the ark.trace.server option is set.
-	let trace = vscode.window.createOutputChannel('ARK Language Server (Trace)')
+	let trace = vscode.window.createOutputChannel('ARK Language Server (Trace)');
 	let clientOptions: LanguageClientOptions = {
 		documentSelector: [{ scheme: 'file', language: 'r' }],
 		synchronize: { fileEvents: vscode.workspace.createFileSystemWatcher('**/*.R') },

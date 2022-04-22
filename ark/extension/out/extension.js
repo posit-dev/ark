@@ -17,6 +17,27 @@ function activate(context) {
             "R language server will not be available.");
         return null;
     }
+    // Ensure that the extension is active, so that it can receive the request
+    // to start the language server.
+    if (ext.isActive) {
+        console.log("Myriac Console extension is active, starting language server");
+        activateLsp(ext, context);
+    }
+    else {
+        console.log("Activating Myriac Console extension...");
+        ext.activate().then(() => {
+            console.log("Myriac Console extension activated, starting language server");
+            activateLsp(ext, context);
+        });
+    }
+}
+exports.activate = activate;
+/**
+ * Activate the language server.
+ *
+ * @param context The extension context
+ */
+function activateLsp(ext, context) {
     let serverOptions = () => {
         // Find an open port for the language server to listen on.
         var portfinder = require('portfinder');
@@ -66,7 +87,6 @@ function activate(context) {
     });
     context.subscriptions.push(client.start());
 }
-exports.activate = activate;
 ;
 function deactivate() {
     if (!client) {
