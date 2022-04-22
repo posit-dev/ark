@@ -35,7 +35,7 @@ $ cargo build
 Next, install the kernelspec. From the repository root:
 
 ```bash
-$ ./target/debug/ark -- install
+$ ./target/debug/ark --install
 ```
 
 This installs a JSON file to the Jupyter kernel registry. After it completes, the Amalthea R kernel (ARK) will be available on all Jupyter frontends on your system (Notebook, Lab, Myriac, etc.).
