@@ -3,6 +3,7 @@
 	"displayName": "ark",
 	"description": "Language Features for the Amalthea R Kernel",
 	"version": "0.0.1",
+	"publisher": "RStudio",
 	"engines": {
 		"vscode": "^1.65.0"
 	},
