@@ -18,13 +18,13 @@ use std::sync::mpsc::Sender;
 pub struct RKernel {
     pub execution_count: u32,
     iopub: Sender<IOPubMessage>,
-    console: Sender<String>,
+    console: Sender<Option<String>>,
     output: String,
 }
 
 impl RKernel {
     /// Create a new R kernel instance
-    pub fn new(iopub: Sender<IOPubMessage>, console: Sender<String>) -> Self {
+    pub fn new(iopub: Sender<IOPubMessage>, console: Sender<Option<String>>) -> Self {
         Self {
             iopub: iopub,
             execution_count: 0,
@@ -57,7 +57,7 @@ impl RKernel {
         }
 
         // Send the code to the R console to be evaluated
-        self.console.send(req.code).unwrap();
+        self.console.send(Some(req.code)).unwrap();
     }
 
     /// Converts a data frame to HTML

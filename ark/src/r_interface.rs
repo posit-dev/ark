@@ -27,8 +27,9 @@ static mut KERNEL: Option<Mutex<RKernel>> = None;
 /// A channel that sends prompts from R to the kernel
 static mut RPROMPT_SEND: Option<Mutex<Sender<String>>> = None;
 
-/// A channel that receives console input from the kernel and sends it to R
-static mut CONSOLE_RECV: Option<Mutex<Receiver<String>>> = None;
+/// A channel that receives console input from the kernel and sends it to R;
+/// sending empty input (None) tells R to shut down
+static mut CONSOLE_RECV: Option<Mutex<Receiver<Option<String>>>> = None;
 
 /// Ensures that the kernel is only ever initialized once
 static INIT: Once = Once::new();
@@ -58,20 +59,23 @@ pub extern "C" fn r_read_console(
 
     let mutex = unsafe { CONSOLE_RECV.as_ref().unwrap() };
     let recv = mutex.lock().unwrap();
-    let mut input = recv.recv().unwrap();
-    trace!("Sending input to R: '{}'", input);
-    input.push_str("\n");
-    if input.len() < buflen.try_into().unwrap() {
-        let src = CString::new(input).unwrap();
-        unsafe {
-            libc::strcpy(buf as *mut i8, src.as_ptr());
+    if let Some(mut input) = recv.recv().unwrap() {
+        trace!("Sending input to R: '{}'", input);
+        input.push_str("\n");
+        if input.len() < buflen.try_into().unwrap() {
+            let src = CString::new(input).unwrap();
+            unsafe {
+                libc::strcpy(buf as *mut i8, src.as_ptr());
+            }
+        } else {
+            // Input doesn't fit in buffer
+            // TODO: need to allow next call to read the buffer
+            return 1;
         }
     } else {
-        // Input doesn't fit in buffer
-        // TODO: need to allow next call to read the buffer
-        return 1;
+        trace!("Exiting R from console reader");
+        return 0;
     }
-
     // Nonzero return values indicate the end of input and cause R to exit
     1
 }
@@ -87,7 +91,7 @@ pub extern "C" fn r_write_console(buf: *const c_char, _buflen: i32, otype: i32) 
 pub fn start_r(iopub: Sender<IOPubMessage>, receiver: Receiver<ExecuteRequest>) {
     use std::borrow::BorrowMut;
 
-    let (console_send, console_recv) = channel::<String>();
+    let (console_send, console_recv) = channel::<Option<String>>();
     let (rprompt_send, rprompt_recv) = channel::<String>();
     let console = console_send.clone();
 
