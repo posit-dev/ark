@@ -40,8 +40,10 @@ impl RKernel {
             RRequest::ExecuteCode(req) => {
                 self.handle_execute_request(&req);
             }
-            RRequest::Shutdown(restart) => {
-                self.console.send(None);
+            RRequest::Shutdown(_) => {
+                if let Err(err) = self.console.send(None) {
+                    warn!("Error sending shutdown message to console: {}", err);
+                }
             }
         }
     }

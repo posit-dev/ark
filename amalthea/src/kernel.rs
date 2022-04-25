@@ -58,7 +58,8 @@ impl Kernel {
             zmq::ROUTER,
             self.connection.endpoint(self.connection.shell_port),
         )?;
-        thread::spawn(move || Self::shell_thread(shell_socket, iopub_sender, shell_handler));
+        let shell_clone = shell_handler.clone();
+        thread::spawn(move || Self::shell_thread(shell_socket, iopub_sender, shell_clone));
 
         // Create the IOPub PUB/SUB socket and start a thread to broadcast to
         // the client. IOPub only broadcasts messages, so it listens to other
@@ -93,13 +94,13 @@ impl Kernel {
         )?;
 
         // TODO: thread/join thread?
-        Self::control_thread(control_socket);
+        Self::control_thread(control_socket, shell_handler);
         Ok(())
     }
 
     /// Starts the control thread
-    fn control_thread(socket: Socket) {
-        let control = Control::new(socket);
+    fn control_thread(socket: Socket, handler: Arc<Mutex<dyn ShellHandler>>) {
+        let control = Control::new(socket, handler);
         control.listen();
     }
 
