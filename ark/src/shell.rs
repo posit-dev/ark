@@ -188,6 +188,12 @@ impl ShellHandler for Shell {
 
     fn handle_shutdown_request(&self, msg: &ShutdownRequest) -> Result<ShutdownReply, Exception> {
         debug!("Received shutdown request: {:?}", msg);
+        if let Err(err) = self.req_sender.send(RRequest::Shutdown(msg.restart)) {
+            warn!(
+                "Could not deliver shutdown request to execution thread: {}",
+                err
+            )
+        }
         Ok(ShutdownReply {
             restart: msg.restart,
         })
