@@ -5,6 +5,7 @@
  *
  */
 
+use crate::r_request::RRequest;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::execute_input::ExecuteInput;
 use amalthea::wire::execute_request::ExecuteRequest;
@@ -34,7 +35,18 @@ impl RKernel {
     }
 
     /// Service an execution request from the front end
-    pub fn execute_request(&mut self, req: ExecuteRequest) {
+    pub fn fulfill_request(&mut self, req: RRequest) {
+        match req {
+            RRequest::ExecuteCode(req) => {
+                self.handle_execute_request(&req);
+            }
+            RRequest::Shutdown(restart) => {
+                self.console.send(None);
+            }
+        }
+    }
+
+    pub fn handle_execute_request(&mut self, req: &ExecuteRequest) {
         self.output = String::new();
 
         // Increment counter if we are storing this execution in history
@@ -57,7 +69,7 @@ impl RKernel {
         }
 
         // Send the code to the R console to be evaluated
-        self.console.send(Some(req.code)).unwrap();
+        self.console.send(Some(req.code.clone())).unwrap();
     }
 
     /// Converts a data frame to HTML
