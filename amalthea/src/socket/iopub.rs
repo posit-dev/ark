@@ -15,6 +15,7 @@ use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::ProtocolMessage;
 use crate::wire::status::ExecutionState;
 use crate::wire::status::KernelStatus;
+use crate::wire::stream::StreamOutput;
 use log::{trace, warn};
 use std::sync::mpsc::Receiver;
 
@@ -38,6 +39,7 @@ pub enum IOPubMessage {
     ExecuteResult(ExecuteResult),
     ExecuteError(ExecuteError),
     ExecuteInput(ExecuteInput),
+    Stream(StreamOutput),
 }
 
 impl IOPub {
@@ -91,6 +93,7 @@ impl IOPub {
             IOPubMessage::ExecuteResult(msg) => self.send_message(msg),
             IOPubMessage::ExecuteError(msg) => self.send_message(msg),
             IOPubMessage::ExecuteInput(msg) => self.send_message(msg),
+            IOPubMessage::Stream(msg) => self.send_message(msg),
         }
     }
 
