@@ -44,7 +44,10 @@ impl Control {
 
                     // Lock the shell handler object on this thread
                     let shell_handler = self.handler.lock().unwrap();
-                    shell_handler.handle_shutdown_request(&req.content);
+                    if let Err(ex) = shell_handler.handle_shutdown_request(&req.content) {
+                        warn!("Failed to handle shutdown request: {:?}", ex);
+                        // TODO: if this fails, maybe we need to force a process shutdown?
+                    }
                     break;
                 }
                 _ => warn!(
