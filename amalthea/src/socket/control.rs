@@ -8,7 +8,7 @@
 use crate::error::Error;
 use crate::socket::socket::Socket;
 use crate::wire::jupyter_message::Message;
-use log::{trace, warn};
+use log::{info, trace, warn};
 
 pub struct Control {
     socket: Socket,
@@ -33,7 +33,10 @@ impl Control {
             };
 
             match message {
-                Message::ShutdownRequest(_) => break,
+                Message::ShutdownRequest(req) => {
+                    info!("Received shutdown request, shutting down kernel: {:?}", req);
+                    break;
+                }
                 _ => warn!(
                     "{}",
                     Error::UnsupportedMessage(message, String::from("Control"))

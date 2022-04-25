@@ -29,6 +29,7 @@ pub mod jupyter_message;
 pub mod kernel_info_reply;
 pub mod kernel_info_request;
 pub mod language_info;
+pub mod shutdown_reply;
 pub mod shutdown_request;
 pub mod status;
 pub mod wire_message;
