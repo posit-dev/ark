@@ -49,6 +49,16 @@ pub extern "C" fn r_read_console(
 ) -> i32 {
     let r_prompt = unsafe { CStr::from_ptr(prompt) };
     debug!("R prompt: {}", r_prompt.to_str().unwrap());
+
+    // If the prompt begins with "Save workspace", respond with (n)
+    if r_prompt.to_str().unwrap().starts_with("Save workspace") {
+        let n = CString::new("n\n").unwrap();
+        unsafe {
+            libc::strcpy(buf as *mut i8, n.as_ptr());
+        }
+        return 1;
+    }
+
     // TODO: if R prompt is +, we need to tell the user their input is incomplete
     let mutex = unsafe { RPROMPT_SEND.as_ref().unwrap() };
     let sender = mutex.lock().unwrap();
