@@ -8,7 +8,7 @@
 use crate::r_kernel::RKernel;
 use crate::r_request::RRequest;
 use amalthea::socket::iopub::IOPubMessage;
-use libc::{c_char, c_int, strcpy};
+use libc::{c_char, c_int};
 use log::{debug, trace, warn};
 use std::ffi::{CStr, CString};
 use std::sync::mpsc::channel;

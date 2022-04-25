@@ -5,7 +5,6 @@
  *
  */
 
-use extendr_api::prelude::*;
 use serde_json::Value;
 use tokio::net::TcpStream;
 use tower_lsp::jsonrpc::Result;
