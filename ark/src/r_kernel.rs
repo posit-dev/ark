@@ -10,6 +10,8 @@ use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::execute_input::ExecuteInput;
 use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::execute_result::ExecuteResult;
+use amalthea::wire::stream::Stream;
+use amalthea::wire::stream::StreamOutput;
 use extendr_api::prelude::*;
 use log::{debug, trace, warn};
 use serde_json::json;
@@ -21,6 +23,7 @@ pub struct RKernel {
     iopub: Sender<IOPubMessage>,
     console: Sender<Option<String>>,
     output: String,
+    initializing: bool,
 }
 
 impl RKernel {
@@ -31,11 +34,15 @@ impl RKernel {
             execution_count: 0,
             console: console,
             output: String::new(),
+            initializing: true,
         }
     }
 
     /// Service an execution request from the front end
     pub fn fulfill_request(&mut self, req: RRequest) {
+        // Clear init flag now that we're in request processing mode
+        self.initializing = false;
+
         match req {
             RRequest::ExecuteCode(req) => {
                 self.handle_execute_request(&req);
@@ -135,7 +142,18 @@ impl RKernel {
     /// Called from R when console data is written
     pub fn write_console(&mut self, content: &str, otype: i32) {
         debug!("Write console {} from R: {}", otype, content);
-        // Accumulate output internally until R is finished executing
-        self.output.push_str(content);
+        if self.initializing {
+            // During initialization, output is unbufferred
+            self.iopub
+                .send(IOPubMessage::Stream(StreamOutput {
+                    stream: Stream::Stdout,
+                    text: content.to_string(),
+                }))
+                .unwrap();
+        } else {
+            // Afterwards (during normal REPL), accumulate output internally
+            // until R is finished executing
+            self.output.push_str(content);
+        }
     }
 }

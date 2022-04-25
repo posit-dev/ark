@@ -32,4 +32,5 @@ pub mod language_info;
 pub mod shutdown_reply;
 pub mod shutdown_request;
 pub mod status;
+pub mod stream;
 pub mod wire_message;
