@@ -21,6 +21,8 @@ use crate::wire::is_complete_reply::IsCompleteReply;
 use crate::wire::is_complete_request::IsCompleteRequest;
 use crate::wire::kernel_info_reply::KernelInfoReply;
 use crate::wire::kernel_info_request::KernelInfoRequest;
+use crate::wire::shutdown_reply::ShutdownReply;
+use crate::wire::shutdown_request::ShutdownRequest;
 
 pub trait ShellHandler: Send {
     /// Handles a request for information about the kernel.
@@ -68,4 +70,9 @@ pub trait ShellHandler: Send {
     ///
     /// https://jupyter-client.readthedocs.io/en/stable/messaging.html#opening-a-comm
     fn handle_comm_open(&self, msg: &CommOpen) -> Result<(), Exception>;
+
+    /// Handles a request to shut down the kernel. This message is forwarded from the Control socket.
+    ///
+    /// https://jupyter-client.readthedocs.io/en/stable/messaging.html#kernel-shutdown
+    fn handle_shutdown_request(&self, msg: &ShutdownRequest) -> Result<ShutdownReply, Exception>;
 }

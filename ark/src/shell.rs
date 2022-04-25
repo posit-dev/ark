@@ -27,6 +27,8 @@ use amalthea::wire::jupyter_message::Status;
 use amalthea::wire::kernel_info_reply::KernelInfoReply;
 use amalthea::wire::kernel_info_request::KernelInfoRequest;
 use amalthea::wire::language_info::LanguageInfo;
+use amalthea::wire::shutdown_reply::ShutdownReply;
+use amalthea::wire::shutdown_request::ShutdownRequest;
 use log::{debug, trace, warn};
 use serde_json::json;
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -181,5 +183,12 @@ impl ShellHandler for Shell {
     fn handle_comm_msg(&self, _req: &CommMsg) -> Result<(), Exception> {
         // NYI
         Ok(())
+    }
+
+    fn handle_shutdown_request(&self, msg: &ShutdownRequest) -> Result<ShutdownReply, Exception> {
+        debug!("Received shutdown request: {:?}", msg);
+        Ok(ShutdownReply {
+            restart: msg.restart,
+        })
     }
 }
