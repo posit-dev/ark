@@ -19,6 +19,7 @@ use std::sync::{Arc, Mutex};
 mod lsp;
 mod r_interface;
 mod r_kernel;
+mod r_request;
 mod shell;
 
 fn start_kernel(connection_file: ConnectionFile) {

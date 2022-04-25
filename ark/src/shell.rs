@@ -6,6 +6,7 @@
  */
 
 use crate::lsp;
+use crate::r_request::RRequest;
 use amalthea::language::shell_handler::ShellHandler;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::comm_info_reply::CommInfoReply;
@@ -37,14 +38,14 @@ use std::thread;
 use std::env;
 
 pub struct Shell {
-    req_sender: Sender<ExecuteRequest>,
+    req_sender: Sender<RRequest>,
     execution_count: u32,
 }
 
 impl Shell {
     pub fn new(iopub: Sender<IOPubMessage>) -> Self {
         let iopub_sender = iopub.clone();
-        let (req_sender, req_receiver) = channel::<ExecuteRequest>();
+        let (req_sender, req_receiver) = channel::<RRequest>();
         thread::spawn(move || Self::execution_thread(iopub_sender, req_receiver));
         Self {
             execution_count: 0,
@@ -52,7 +53,7 @@ impl Shell {
         }
     }
 
-    pub fn execution_thread(sender: Sender<IOPubMessage>, receiver: Receiver<ExecuteRequest>) {
+    pub fn execution_thread(sender: Sender<IOPubMessage>, receiver: Receiver<RRequest>) {
         // Start kernel (does not return)
         crate::r_interface::start_r(sender, receiver);
     }
@@ -122,7 +123,7 @@ impl ShellHandler for Shell {
         &mut self,
         req: &ExecuteRequest,
     ) -> Result<ExecuteReply, ExecuteReplyException> {
-        if let Err(err) = self.req_sender.send(req.clone()) {
+        if let Err(err) = self.req_sender.send(RRequest::ExecuteCode(req.clone())) {
             warn!(
                 "Could not deliver execution request to execution thread: {}",
                 err

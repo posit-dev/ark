@@ -6,6 +6,7 @@
  */
 
 use crate::r_kernel::RKernel;
+use crate::r_request::RRequest;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::execute_request::ExecuteRequest;
 use extendr_api::prelude::*;
@@ -88,7 +89,7 @@ pub extern "C" fn r_write_console(buf: *const c_char, _buflen: i32, otype: i32) 
     kernel.write_console(content.to_str().unwrap(), otype);
 }
 
-pub fn start_r(iopub: Sender<IOPubMessage>, receiver: Receiver<ExecuteRequest>) {
+pub fn start_r(iopub: Sender<IOPubMessage>, receiver: Receiver<RRequest>) {
     use std::borrow::BorrowMut;
 
     let (console_send, console_recv) = channel::<Option<String>>();
@@ -135,7 +136,7 @@ pub fn start_r(iopub: Sender<IOPubMessage>, receiver: Receiver<ExecuteRequest>) 
     }
 }
 
-pub fn listen(exec_recv: Receiver<ExecuteRequest>, prompt_recv: Receiver<String>) {
+pub fn listen(exec_recv: Receiver<RRequest>, prompt_recv: Receiver<String>) {
     // Before accepting execution requests from the front end, wait for R to
     // prompt us for input.
     trace!("Waiting for R's initial input prompt...");
@@ -153,7 +154,7 @@ pub fn listen(exec_recv: Receiver<ExecuteRequest>, prompt_recv: Receiver<String>
                 let mutex = unsafe { KERNEL.as_ref().unwrap() };
                 {
                     let mut kernel = mutex.lock().unwrap();
-                    kernel.execute_request(req)
+                    kernel.fulfill_request(req)
                 }
 
                 // Wait for R to prompt us again. This signals that the
