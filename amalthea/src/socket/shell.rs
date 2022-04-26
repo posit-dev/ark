@@ -205,7 +205,7 @@ impl Shell {
     /// Handle a request for kernel information.
     fn handle_info_request(
         &self,
-        handler: &dyn ShellHandler,
+        handler: &mut dyn ShellHandler,
         req: JupyterMessage<KernelInfoRequest>,
     ) -> Result<(), Error> {
         debug!("Received shell information request: {:?}", req);

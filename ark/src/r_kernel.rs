@@ -10,8 +10,6 @@ use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::execute_input::ExecuteInput;
 use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::execute_result::ExecuteResult;
-use amalthea::wire::stream::Stream;
-use amalthea::wire::stream::StreamOutput;
 use extendr_api::prelude::*;
 use log::{debug, trace, warn};
 use serde_json::json;
@@ -22,27 +20,55 @@ pub struct RKernel {
     pub execution_count: u32,
     iopub: SyncSender<IOPubMessage>,
     console: Sender<Option<String>>,
+    initializer: Sender<RKernelInfo>,
     output: String,
+    banner: String,
     initializing: bool,
+}
+
+pub struct RKernelInfo {
+    pub version: String,
+    pub banner: String,
 }
 
 impl RKernel {
     /// Create a new R kernel instance
-    pub fn new(iopub: SyncSender<IOPubMessage>, console: Sender<Option<String>>) -> Self {
+    pub fn new(
+        iopub: SyncSender<IOPubMessage>,
+        console: Sender<Option<String>>,
+        initializer: Sender<RKernelInfo>,
+    ) -> Self {
         Self {
             iopub: iopub,
             execution_count: 0,
             console: console,
             output: String::new(),
+            banner: String::new(),
             initializing: true,
+            initializer: initializer,
+        }
+    }
+
+    pub fn complete_intialization(&mut self) {
+        // Clear init flag now that we're in request processing mode
+        if self.initializing {
+            let ver = R!(R.version.string).unwrap();
+            let ver_str = ver.as_str().unwrap().to_string();
+            let kernel_info = RKernelInfo {
+                version: ver_str.clone(),
+                banner: self.banner.clone(),
+            };
+            debug!("Sending kernel info: {}", ver_str);
+            self.initializer.send(kernel_info).unwrap();
+            debug!("Kernel info sent.");
+            self.initializing = false;
+        } else {
+            warn!("Initialization already complete!");
         }
     }
 
     /// Service an execution request from the front end
     pub fn fulfill_request(&mut self, req: RRequest) {
-        // Clear init flag now that we're in request processing mode
-        self.initializing = false;
-
         match req {
             RRequest::ExecuteCode(req) => {
                 self.handle_execute_request(&req);
@@ -143,13 +169,8 @@ impl RKernel {
     pub fn write_console(&mut self, content: &str, otype: i32) {
         debug!("Write console {} from R: {}", otype, content);
         if self.initializing {
-            // During initialization, output is unbufferred
-            self.iopub
-                .send(IOPubMessage::Stream(StreamOutput {
-                    stream: Stream::Stdout,
-                    text: content.to_string(),
-                }))
-                .unwrap();
+            // During init, consider all output to be part of the startup banner
+            self.banner.push_str(content);
         } else {
             // Afterwards (during normal REPL), accumulate output internally
             // until R is finished executing

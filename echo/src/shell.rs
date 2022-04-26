@@ -53,7 +53,7 @@ impl Shell {
 #[async_trait]
 impl ShellHandler for Shell {
     async fn handle_info_request(
-        &self,
+        &mut self,
         _req: &KernelInfoRequest,
     ) -> Result<KernelInfoReply, Exception> {
         let info = LanguageInfo {
