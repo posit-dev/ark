@@ -26,6 +26,7 @@ pub struct RKernel {
     initializing: bool,
 }
 
+/// Represents kernel metadata (available after the kernel has fully started)
 pub struct RKernelInfo {
     pub version: String,
     pub banner: String,
@@ -49,8 +50,8 @@ impl RKernel {
         }
     }
 
+    /// Completes the kernel's initialization
     pub fn complete_intialization(&mut self) {
-        // Clear init flag now that we're in request processing mode
         if self.initializing {
             let ver = R!(R.version.string).unwrap();
             let ver_str = ver.as_str().unwrap().to_string();
@@ -60,7 +61,6 @@ impl RKernel {
             };
             debug!("Sending kernel info: {}", ver_str);
             self.initializer.send(kernel_info).unwrap();
-            debug!("Kernel info sent.");
             self.initializing = false;
         } else {
             warn!("Initialization already complete!");
