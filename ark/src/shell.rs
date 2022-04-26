@@ -70,9 +70,13 @@ impl ShellHandler for Shell {
         &self,
         _req: &KernelInfoRequest,
     ) -> Result<KernelInfoReply, Exception> {
+        // Read version info string from R
+        use extendr_api::prelude::*;
+        let ver = R!(R.version.string).unwrap();
+
         let info = LanguageInfo {
             name: String::from("R"),
-            version: String::from("4.0"), // TODO: Read the R version here
+            version: ver.as_str().unwrap().to_string(),
             file_extension: String::from(".R"),
             mimetype: String::from("text/r"),
             pygments_lexer: String::new(),
@@ -81,7 +85,11 @@ impl ShellHandler for Shell {
         };
         Ok(KernelInfoReply {
             status: Status::Ok,
-            banner: format!("Ark {}", env!("CARGO_PKG_VERSION")),
+            banner: format!(
+                "Ark {} / {}",
+                env!("CARGO_PKG_VERSION"),
+                ver.as_str().unwrap()
+            ),
             debugger: false,
             protocol_version: String::from("5.3"),
             help_links: Vec::new(),
