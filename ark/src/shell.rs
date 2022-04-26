@@ -30,22 +30,23 @@ use amalthea::wire::kernel_info_request::KernelInfoRequest;
 use amalthea::wire::language_info::LanguageInfo;
 use amalthea::wire::shutdown_reply::ShutdownReply;
 use amalthea::wire::shutdown_request::ShutdownRequest;
+use async_trait::async_trait;
 use log::{debug, trace, warn};
 use serde_json::json;
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::thread;
 
 use std::env;
 
 pub struct Shell {
-    req_sender: Sender<RRequest>,
+    req_sender: SyncSender<RRequest>,
     execution_count: u32,
 }
 
 impl Shell {
-    pub fn new(iopub: Sender<IOPubMessage>) -> Self {
+    pub fn new(iopub: SyncSender<IOPubMessage>) -> Self {
         let iopub_sender = iopub.clone();
-        let (req_sender, req_receiver) = channel::<RRequest>();
+        let (req_sender, req_receiver) = sync_channel::<RRequest>(1);
         thread::spawn(move || Self::execution_thread(iopub_sender, req_receiver));
         Self {
             execution_count: 0,
@@ -53,7 +54,7 @@ impl Shell {
         }
     }
 
-    pub fn execution_thread(sender: Sender<IOPubMessage>, receiver: Receiver<RRequest>) {
+    pub fn execution_thread(sender: SyncSender<IOPubMessage>, receiver: Receiver<RRequest>) {
         // Start kernel (does not return)
         crate::r_interface::start_r(sender, receiver);
     }
@@ -63,8 +64,12 @@ impl Shell {
     }
 }
 
+#[async_trait]
 impl ShellHandler for Shell {
-    fn handle_info_request(&self, _req: &KernelInfoRequest) -> Result<KernelInfoReply, Exception> {
+    async fn handle_info_request(
+        &self,
+        _req: &KernelInfoRequest,
+    ) -> Result<KernelInfoReply, Exception> {
         let info = LanguageInfo {
             name: String::from("R"),
             version: String::from("4.0"), // TODO: Read the R version here
@@ -84,7 +89,10 @@ impl ShellHandler for Shell {
         })
     }
 
-    fn handle_complete_request(&self, _req: &CompleteRequest) -> Result<CompleteReply, Exception> {
+    async fn handle_complete_request(
+        &self,
+        _req: &CompleteRequest,
+    ) -> Result<CompleteReply, Exception> {
         // No matches in this toy implementation.
         Ok(CompleteReply {
             matches: Vec::new(),
@@ -96,7 +104,10 @@ impl ShellHandler for Shell {
     }
 
     /// Handle a request for open comms
-    fn handle_comm_info_request(&self, _req: &CommInfoRequest) -> Result<CommInfoReply, Exception> {
+    async fn handle_comm_info_request(
+        &self,
+        _req: &CommInfoRequest,
+    ) -> Result<CommInfoReply, Exception> {
         let comms = json!({
             lsp::comm::LSP_COMM_ID: "Language Server Protocol"
         });
@@ -107,7 +118,7 @@ impl ShellHandler for Shell {
     }
 
     /// Handle a request to test code for completion.
-    fn handle_is_complete_request(
+    async fn handle_is_complete_request(
         &self,
         _req: &IsCompleteRequest,
     ) -> Result<IsCompleteReply, Exception> {
@@ -119,7 +130,7 @@ impl ShellHandler for Shell {
     }
 
     /// Handles an ExecuteRequest; "executes" the code by echoing it.
-    fn handle_execute_request(
+    async fn handle_execute_request(
         &mut self,
         req: &ExecuteRequest,
     ) -> Result<ExecuteReply, ExecuteReplyException> {
@@ -140,7 +151,10 @@ impl ShellHandler for Shell {
     }
 
     /// Handles an introspection request
-    fn handle_inspect_request(&self, req: &InspectRequest) -> Result<InspectReply, Exception> {
+    async fn handle_inspect_request(
+        &self,
+        req: &InspectRequest,
+    ) -> Result<InspectReply, Exception> {
         let data = match req.code.as_str() {
             "err" => {
                 json!({"text/plain": "This generates an error!"})
@@ -159,7 +173,7 @@ impl ShellHandler for Shell {
     }
 
     /// Handles a request to open a new comm channel
-    fn handle_comm_open(&self, req: &CommOpen) -> Result<(), Exception> {
+    async fn handle_comm_open(&self, req: &CommOpen) -> Result<(), Exception> {
         if req.comm_id.eq(lsp::comm::LSP_COMM_ID) {
             // TODO: If LSP is already started, don't start another one
             let data = serde_json::from_value::<lsp::comm::StartLsp>(req.data.clone());
@@ -181,12 +195,15 @@ impl ShellHandler for Shell {
         Ok(())
     }
 
-    fn handle_comm_msg(&self, _req: &CommMsg) -> Result<(), Exception> {
+    async fn handle_comm_msg(&self, _req: &CommMsg) -> Result<(), Exception> {
         // NYI
         Ok(())
     }
 
-    fn handle_shutdown_request(&self, msg: &ShutdownRequest) -> Result<ShutdownReply, Exception> {
+    async fn handle_shutdown_request(
+        &self,
+        msg: &ShutdownRequest,
+    ) -> Result<ShutdownReply, Exception> {
         debug!("Received shutdown request: {:?}", msg);
         if let Err(err) = self.req_sender.send(RRequest::Shutdown(msg.restart)) {
             warn!(

@@ -13,7 +13,7 @@ use amalthea::socket::iopub::IOPubMessage;
 use log::{debug, error, info};
 use std::env;
 use std::io::stdin;
-use std::sync::mpsc::channel;
+use std::sync::mpsc::sync_channel;
 use std::sync::{Arc, Mutex};
 
 mod lsp;
@@ -26,7 +26,7 @@ fn start_kernel(connection_file: ConnectionFile) {
     // This channel delivers execution status and other iopub messages from
     // other threads to the iopub thread
 
-    let (iopub_sender, iopub_receiver) = channel::<IOPubMessage>();
+    let (iopub_sender, iopub_receiver) = sync_channel::<IOPubMessage>(10);
 
     let shell_sender = iopub_sender.clone();
     let shell = Arc::new(Mutex::new(Shell::new(shell_sender)));

@@ -9,6 +9,7 @@ use crate::error::Error;
 use crate::language::shell_handler::ShellHandler;
 use crate::socket::socket::Socket;
 use crate::wire::jupyter_message::Message;
+use futures::executor::block_on;
 use log::{info, trace, warn};
 use std::sync::{Arc, Mutex};
 
@@ -44,7 +45,7 @@ impl Control {
 
                     // Lock the shell handler object on this thread
                     let shell_handler = self.handler.lock().unwrap();
-                    if let Err(ex) = shell_handler.handle_shutdown_request(&req.content) {
+                    if let Err(ex) = block_on(shell_handler.handle_shutdown_request(&req.content)) {
                         warn!("Failed to handle shutdown request: {:?}", ex);
                         // TODO: if this fails, maybe we need to force a process shutdown?
                     }

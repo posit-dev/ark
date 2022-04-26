@@ -15,12 +15,12 @@ use amalthea::wire::stream::StreamOutput;
 use extendr_api::prelude::*;
 use log::{debug, trace, warn};
 use serde_json::json;
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{Sender, SyncSender};
 
 /// Represents the Rust state of the R kernel
 pub struct RKernel {
     pub execution_count: u32,
-    iopub: Sender<IOPubMessage>,
+    iopub: SyncSender<IOPubMessage>,
     console: Sender<Option<String>>,
     output: String,
     initializing: bool,
@@ -28,7 +28,7 @@ pub struct RKernel {
 
 impl RKernel {
     /// Create a new R kernel instance
-    pub fn new(iopub: Sender<IOPubMessage>, console: Sender<Option<String>>) -> Self {
+    pub fn new(iopub: SyncSender<IOPubMessage>, console: Sender<Option<String>>) -> Self {
         Self {
             iopub: iopub,
             execution_count: 0,

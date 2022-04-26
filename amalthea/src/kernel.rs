@@ -15,7 +15,7 @@ use crate::socket::iopub::IOPub;
 use crate::socket::iopub::IOPubMessage;
 use crate::socket::shell::Shell;
 use crate::socket::socket::Socket;
-use std::sync::mpsc::{Receiver, Sender};
+use std::sync::mpsc::{Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -44,7 +44,7 @@ impl Kernel {
     pub fn connect(
         &self,
         shell_handler: Arc<Mutex<dyn ShellHandler>>,
-        iopub_sender: Sender<IOPubMessage>,
+        iopub_sender: SyncSender<IOPubMessage>,
         iopub_receiver: Receiver<IOPubMessage>,
     ) -> Result<(), Error> {
         let ctx = zmq::Context::new();
@@ -107,7 +107,7 @@ impl Kernel {
     /// Starts the shell thread.
     fn shell_thread(
         socket: Socket,
-        iopub_sender: Sender<IOPubMessage>,
+        iopub_sender: SyncSender<IOPubMessage>,
         shell_handler: Arc<Mutex<dyn ShellHandler>>,
     ) -> Result<(), Error> {
         let mut shell = Shell::new(socket, iopub_sender.clone(), shell_handler);

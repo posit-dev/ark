@@ -27,8 +27,9 @@ use crate::wire::kernel_info_reply::KernelInfoReply;
 use crate::wire::kernel_info_request::KernelInfoRequest;
 use crate::wire::status::ExecutionState;
 use crate::wire::status::KernelStatus;
+use futures::executor::block_on;
 use log::{debug, trace, warn};
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::SyncSender;
 use std::sync::{Arc, Mutex};
 
 /// Wrapper for the Shell socket; receives requests for execution, etc. from the
@@ -38,7 +39,7 @@ pub struct Shell {
     socket: Socket,
 
     /// Sends messages to the IOPub socket (owned by another thread)
-    iopub_sender: Sender<IOPubMessage>,
+    iopub_sender: SyncSender<IOPubMessage>,
 
     /// Language-provided shell handler object
     handler: Arc<Mutex<dyn ShellHandler>>,
@@ -52,7 +53,7 @@ impl Shell {
     /// * `handler` - The language's shell channel handler
     pub fn new(
         socket: Socket,
-        iopub_sender: Sender<IOPubMessage>,
+        iopub_sender: SyncSender<IOPubMessage>,
         handler: Arc<Mutex<dyn ShellHandler>>,
     ) -> Self {
         Self {
@@ -134,6 +135,12 @@ impl Shell {
         let mut shell_handler = self.handler.lock().unwrap();
 
         // Handle the message!
+        //
+        // TODO: The `handler` is currently a synchronous function, but it
+        // always wraps an async function. Since the only reason we block this
+        // is so we can mark the kernel as no longer busy when we're done, it'd
+        // be better to take an async fn `handler` here just mark kernel as idle
+        // when it finishes.
         let result = handler(shell_handler.deref_mut(), req.clone());
 
         // Return to idle -- we always do this, even if the message generated an
@@ -171,7 +178,7 @@ impl Shell {
         req: JupyterMessage<ExecuteRequest>,
     ) -> Result<(), Error> {
         debug!("Received execution request {:?}", req);
-        match handler.handle_execute_request(&req.content) {
+        match block_on(handler.handle_execute_request(&req.content)) {
             Ok(reply) => {
                 trace!("got execution reply: {:?}", reply);
                 let r = req.send_reply(reply, &self.socket);
@@ -189,7 +196,7 @@ impl Shell {
         req: JupyterMessage<IsCompleteRequest>,
     ) -> Result<(), Error> {
         debug!("Received request to test code for completeness: {:?}", req);
-        match handler.handle_is_complete_request(&req.content) {
+        match block_on(handler.handle_is_complete_request(&req.content)) {
             Ok(reply) => req.send_reply(reply, &self.socket),
             Err(err) => req.send_error::<IsCompleteReply>(err, &self.socket),
         }
@@ -202,7 +209,7 @@ impl Shell {
         req: JupyterMessage<KernelInfoRequest>,
     ) -> Result<(), Error> {
         debug!("Received shell information request: {:?}", req);
-        match handler.handle_info_request(&req.content) {
+        match block_on(handler.handle_info_request(&req.content)) {
             Ok(reply) => req.send_reply(reply, &self.socket),
             Err(err) => req.send_error::<KernelInfoReply>(err, &self.socket),
         }
@@ -215,7 +222,7 @@ impl Shell {
         req: JupyterMessage<CompleteRequest>,
     ) -> Result<(), Error> {
         debug!("Received request to complete code: {:?}", req);
-        match handler.handle_complete_request(&req.content) {
+        match block_on(handler.handle_complete_request(&req.content)) {
             Ok(reply) => req.send_reply(reply, &self.socket),
             Err(err) => req.send_error::<CompleteReply>(err, &self.socket),
         }
@@ -228,7 +235,7 @@ impl Shell {
         req: JupyterMessage<CommInfoRequest>,
     ) -> Result<(), Error> {
         debug!("Received request for open comms: {:?}", req);
-        match handler.handle_comm_info_request(&req.content) {
+        match block_on(handler.handle_comm_info_request(&req.content)) {
             Ok(reply) => req.send_reply(reply, &self.socket),
             Err(err) => req.send_error::<CommInfoReply>(err, &self.socket),
         }
@@ -241,7 +248,7 @@ impl Shell {
         req: JupyterMessage<CommOpen>,
     ) -> Result<(), Error> {
         debug!("Received request to open comm: {:?}", req);
-        if let Err(err) = handler.handle_comm_open(&req.content) {
+        if let Err(err) = block_on(handler.handle_comm_open(&req.content)) {
             req.send_error::<CommMsg>(err, &self.socket)
         } else {
             Ok(())
@@ -255,7 +262,7 @@ impl Shell {
         req: JupyterMessage<CommMsg>,
     ) -> Result<(), Error> {
         debug!("Received request to send a message on a comm: {:?}", req);
-        match handler.handle_comm_msg(&req.content) {
+        match block_on(handler.handle_comm_msg(&req.content)) {
             Ok(reply) => Ok(reply),
             Err(err) => req.send_error::<CommMsg>(err, &self.socket),
         }
@@ -268,7 +275,7 @@ impl Shell {
         req: JupyterMessage<InspectRequest>,
     ) -> Result<(), Error> {
         debug!("Received request to introspect code: {:?}", req);
-        match handler.handle_inspect_request(&req.content) {
+        match block_on(handler.handle_inspect_request(&req.content)) {
             Ok(reply) => req.send_reply(reply, &self.socket),
             Err(err) => req.send_error::<InspectReply>(err, &self.socket),
         }
