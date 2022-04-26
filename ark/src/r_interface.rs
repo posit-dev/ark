@@ -5,7 +5,7 @@
  *
  */
 
-use crate::r_kernel::RKernel;
+use crate::r_kernel::{RKernel, RKernelInfo};
 use crate::r_request::RRequest;
 use amalthea::socket::iopub::IOPubMessage;
 use libc::{c_char, c_int};
@@ -13,7 +13,7 @@ use log::{debug, trace, warn};
 use std::ffi::{CStr, CString};
 use std::sync::mpsc::channel;
 use std::sync::mpsc::{Receiver, Sender, SyncSender};
-use std::sync::{Mutex, Once};
+use std::sync::{Arc, Mutex, Once};
 use std::thread;
 
 // --- Globals ---
@@ -21,7 +21,7 @@ use std::thread;
 // callbacks, which do not have a facility for passing or returning context.
 
 /// The global R kernel state
-static mut KERNEL: Option<Mutex<RKernel>> = None;
+pub static mut KERNEL: Option<Arc<Mutex<RKernel>>> = None;
 
 /// A channel that sends prompts from R to the kernel
 static mut RPROMPT_SEND: Option<Mutex<Sender<String>>> = None;
@@ -97,7 +97,11 @@ pub extern "C" fn r_write_console(buf: *const c_char, _buflen: i32, otype: i32) 
     kernel.write_console(content.to_str().unwrap(), otype);
 }
 
-pub fn start_r(iopub: SyncSender<IOPubMessage>, receiver: Receiver<RRequest>) {
+pub fn start_r(
+    iopub: SyncSender<IOPubMessage>,
+    receiver: Receiver<RRequest>,
+    initializer: Sender<RKernelInfo>,
+) {
     use std::borrow::BorrowMut;
 
     let (console_send, console_recv) = channel::<Option<String>>();
@@ -108,8 +112,8 @@ pub fn start_r(iopub: SyncSender<IOPubMessage>, receiver: Receiver<RRequest>) {
     INIT.call_once(|| unsafe {
         *CONSOLE_RECV.borrow_mut() = Some(Mutex::new(console_recv));
         *RPROMPT_SEND.borrow_mut() = Some(Mutex::new(rprompt_send));
-        let kernel = RKernel::new(iopub, console);
-        *KERNEL.borrow_mut() = Some(Mutex::new(kernel));
+        let kernel = RKernel::new(iopub, console, initializer);
+        *KERNEL.borrow_mut() = Some(Arc::new(Mutex::new(kernel)));
     });
 
     // Start thread to listen to execution requests
@@ -153,6 +157,13 @@ pub fn listen(exec_recv: Receiver<RRequest>, prompt_recv: Receiver<String>) {
         "Got initial R prompt '{}', ready for execution requests",
         prompt
     );
+
+    // Mark kernel as initialized as soon as we get the first input prompt from R
+    let mutex = unsafe { KERNEL.as_ref().unwrap() };
+    {
+        let mut kernel = mutex.lock().unwrap();
+        kernel.complete_intialization();
+    }
 
     loop {
         // Wait for an execution request from the front end.

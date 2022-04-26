@@ -32,7 +32,7 @@ pub trait ShellHandler: Send {
     ///
     /// Docs: https://jupyter-client.readthedocs.io/en/stable/messaging.html#kernel-info
     async fn handle_info_request(
-        &self,
+        &mut self,
         req: &KernelInfoRequest,
     ) -> Result<KernelInfoReply, Exception>;
 

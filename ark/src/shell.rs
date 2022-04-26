@@ -6,6 +6,7 @@
  */
 
 use crate::lsp;
+use crate::r_kernel::RKernelInfo;
 use crate::r_request::RRequest;
 use amalthea::language::shell_handler::ShellHandler;
 use amalthea::socket::iopub::IOPubMessage;
@@ -33,30 +34,38 @@ use amalthea::wire::shutdown_request::ShutdownRequest;
 use async_trait::async_trait;
 use log::{debug, trace, warn};
 use serde_json::json;
-use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
+use std::sync::mpsc::{channel, sync_channel, Receiver, Sender, SyncSender};
+use std::sync::{Arc, Mutex};
 use std::thread;
-
-use std::env;
 
 pub struct Shell {
     req_sender: SyncSender<RRequest>,
     execution_count: u32,
+    init_receiver: Arc<Mutex<Receiver<RKernelInfo>>>,
+    kernel_info: Option<RKernelInfo>,
 }
 
 impl Shell {
     pub fn new(iopub: SyncSender<IOPubMessage>) -> Self {
         let iopub_sender = iopub.clone();
         let (req_sender, req_receiver) = sync_channel::<RRequest>(1);
-        thread::spawn(move || Self::execution_thread(iopub_sender, req_receiver));
+        let (init_sender, init_receiver) = channel::<RKernelInfo>();
+        thread::spawn(move || Self::execution_thread(iopub_sender, req_receiver, init_sender));
         Self {
             execution_count: 0,
             req_sender: req_sender,
+            init_receiver: Arc::new(Mutex::new(init_receiver)),
+            kernel_info: None,
         }
     }
 
-    pub fn execution_thread(sender: SyncSender<IOPubMessage>, receiver: Receiver<RRequest>) {
+    pub fn execution_thread(
+        sender: SyncSender<IOPubMessage>,
+        receiver: Receiver<RRequest>,
+        initializer: Sender<RKernelInfo>,
+    ) {
         // Start kernel (does not return)
-        crate::r_interface::start_r(sender, receiver);
+        crate::r_interface::start_r(sender, receiver, initializer);
     }
 
     fn start_lsp(msg: lsp::comm::StartLsp) {
@@ -67,16 +76,21 @@ impl Shell {
 #[async_trait]
 impl ShellHandler for Shell {
     async fn handle_info_request(
-        &self,
+        &mut self,
         _req: &KernelInfoRequest,
     ) -> Result<KernelInfoReply, Exception> {
-        // Read version info string from R
-        use extendr_api::prelude::*;
-        let ver = R!(R.version.string).unwrap();
+        // Wait for kernel initialization if it hasn't completed
+        if self.kernel_info.is_none() {
+            trace!("Got kernel info request; waiting for R to complete initialization");
+            self.kernel_info = Some(self.init_receiver.lock().unwrap().recv().unwrap());
+        } else {
+            trace!("R already started, using existing kernel information")
+        }
+        let kernel_info = self.kernel_info.as_ref().unwrap();
 
         let info = LanguageInfo {
             name: String::from("R"),
-            version: ver.as_str().unwrap().to_string(),
+            version: kernel_info.version.clone(),
             file_extension: String::from(".R"),
             mimetype: String::from("text/r"),
             pygments_lexer: String::new(),
@@ -85,11 +99,7 @@ impl ShellHandler for Shell {
         };
         Ok(KernelInfoReply {
             status: Status::Ok,
-            banner: format!(
-                "Ark {} / {}",
-                env!("CARGO_PKG_VERSION"),
-                ver.as_str().unwrap()
-            ),
+            banner: kernel_info.banner.clone(),
             debugger: false,
             protocol_version: String::from("5.3"),
             help_links: Vec::new(),
