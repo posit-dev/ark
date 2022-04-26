@@ -12,7 +12,7 @@ use libc::{c_char, c_int};
 use log::{debug, trace, warn};
 use std::ffi::{CStr, CString};
 use std::sync::mpsc::channel;
-use std::sync::mpsc::{Receiver, Sender};
+use std::sync::mpsc::{Receiver, Sender, SyncSender};
 use std::sync::{Mutex, Once};
 use std::thread;
 
@@ -97,7 +97,7 @@ pub extern "C" fn r_write_console(buf: *const c_char, _buflen: i32, otype: i32) 
     kernel.write_console(content.to_str().unwrap(), otype);
 }
 
-pub fn start_r(iopub: Sender<IOPubMessage>, receiver: Receiver<RRequest>) {
+pub fn start_r(iopub: SyncSender<IOPubMessage>, receiver: Receiver<RRequest>) {
     use std::borrow::BorrowMut;
 
     let (console_send, console_recv) = channel::<Option<String>>();

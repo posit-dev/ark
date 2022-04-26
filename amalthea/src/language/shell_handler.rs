@@ -24,16 +24,22 @@ use crate::wire::kernel_info_request::KernelInfoRequest;
 use crate::wire::shutdown_reply::ShutdownReply;
 use crate::wire::shutdown_request::ShutdownRequest;
 
+use async_trait::async_trait;
+
+#[async_trait]
 pub trait ShellHandler: Send {
     /// Handles a request for information about the kernel.
     ///
     /// Docs: https://jupyter-client.readthedocs.io/en/stable/messaging.html#kernel-info
-    fn handle_info_request(&self, req: &KernelInfoRequest) -> Result<KernelInfoReply, Exception>;
+    async fn handle_info_request(
+        &self,
+        req: &KernelInfoRequest,
+    ) -> Result<KernelInfoReply, Exception>;
 
     /// Handles a request to test a fragment of code to see whether it is a complete expression.
     ///
     /// Docs: https://jupyter-client.readthedocs.io/en/stable/messaging.html#code-completeness
-    fn handle_is_complete_request(
+    async fn handle_is_complete_request(
         &self,
         req: &IsCompleteRequest,
     ) -> Result<IsCompleteReply, Exception>;
@@ -41,7 +47,7 @@ pub trait ShellHandler: Send {
     /// Handles a request to execute code.
     ///
     /// Docs: https://jupyter-client.readthedocs.io/en/stable/messaging.html#execute
-    fn handle_execute_request(
+    async fn handle_execute_request(
         &mut self,
         req: &ExecuteRequest,
     ) -> Result<ExecuteReply, ExecuteReplyException>;
@@ -49,30 +55,40 @@ pub trait ShellHandler: Send {
     /// Handles a request to provide completions for the given code fragment.
     ///
     /// Docs: https://jupyter-client.readthedocs.io/en/stable/messaging.html#completion
-    fn handle_complete_request(&self, req: &CompleteRequest) -> Result<CompleteReply, Exception>;
+    async fn handle_complete_request(
+        &self,
+        req: &CompleteRequest,
+    ) -> Result<CompleteReply, Exception>;
 
     /// Handles a request to return info on open comms.
     ///
     /// Docs: https://jupyter-client.readthedocs.io/en/stable/messaging.html#comm-info
-    fn handle_comm_info_request(&self, req: &CommInfoRequest) -> Result<CommInfoReply, Exception>;
+    async fn handle_comm_info_request(
+        &self,
+        req: &CommInfoRequest,
+    ) -> Result<CommInfoReply, Exception>;
 
     /// Handles a request to inspect a fragment of code.
     ///
     /// Docs: https://jupyter-client.readthedocs.io/en/stable/messaging.html#introspection
-    fn handle_inspect_request(&self, req: &InspectRequest) -> Result<InspectReply, Exception>;
+    async fn handle_inspect_request(&self, req: &InspectRequest)
+        -> Result<InspectReply, Exception>;
 
     /// Handles a request to send a message to a comm.
     ///
     /// Docs: https://jupyter-client.readthedocs.io/en/stable/messaging.html#comm-messages
-    fn handle_comm_msg(&self, msg: &CommMsg) -> Result<(), Exception>;
+    async fn handle_comm_msg(&self, msg: &CommMsg) -> Result<(), Exception>;
 
     /// Handles a request to open a comm.
     ///
     /// https://jupyter-client.readthedocs.io/en/stable/messaging.html#opening-a-comm
-    fn handle_comm_open(&self, msg: &CommOpen) -> Result<(), Exception>;
+    async fn handle_comm_open(&self, msg: &CommOpen) -> Result<(), Exception>;
 
     /// Handles a request to shut down the kernel. This message is forwarded from the Control socket.
     ///
     /// https://jupyter-client.readthedocs.io/en/stable/messaging.html#kernel-shutdown
-    fn handle_shutdown_request(&self, msg: &ShutdownRequest) -> Result<ShutdownReply, Exception>;
+    async fn handle_shutdown_request(
+        &self,
+        msg: &ShutdownRequest,
+    ) -> Result<ShutdownReply, Exception>;
 }
