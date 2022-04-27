@@ -40,7 +40,6 @@ use std::thread;
 
 pub struct Shell {
     req_sender: SyncSender<RRequest>,
-    execution_count: u32,
     init_receiver: Arc<Mutex<Receiver<RKernelInfo>>>,
     kernel_info: Option<RKernelInfo>,
 }
@@ -52,7 +51,6 @@ impl Shell {
         let (init_sender, init_receiver) = channel::<RKernelInfo>();
         thread::spawn(move || Self::execution_thread(iopub_sender, req_receiver, init_sender));
         Self {
-            execution_count: 0,
             req_sender: req_sender,
             init_receiver: Arc::new(Mutex::new(init_receiver)),
             kernel_info: None,
@@ -154,12 +152,17 @@ impl ShellHandler for Shell {
         })
     }
 
-    /// Handles an ExecuteRequest; "executes" the code by echoing it.
+    /// Handles an ExecuteRequest by sending the code to the R execution thread
+    /// for processing.
     async fn handle_execute_request(
         &mut self,
         req: &ExecuteRequest,
     ) -> Result<ExecuteReply, ExecuteReplyException> {
-        if let Err(err) = self.req_sender.send(RRequest::ExecuteCode(req.clone())) {
+        let (sender, receiver) = channel::<ExecuteReply>();
+        if let Err(err) = self
+            .req_sender
+            .send(RRequest::ExecuteCode(req.clone(), sender))
+        {
             warn!(
                 "Could not deliver execution request to execution thread: {}",
                 err
@@ -168,11 +171,7 @@ impl ShellHandler for Shell {
 
         // Let the shell thread know that we've successfully executed the code.
         trace!("execution finished: {}", req.code);
-        Ok(ExecuteReply {
-            status: Status::Ok,
-            execution_count: self.execution_count,
-            user_expressions: serde_json::Value::Null,
-        })
+        Ok(receiver.recv().unwrap())
     }
 
     /// Handles an introspection request

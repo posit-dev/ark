@@ -8,8 +8,10 @@
 use crate::r_request::RRequest;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::execute_input::ExecuteInput;
+use amalthea::wire::execute_reply::ExecuteReply;
 use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::execute_result::ExecuteResult;
+use amalthea::wire::jupyter_message::Status;
 use extendr_api::prelude::*;
 use log::{debug, trace, warn};
 use serde_json::json;
@@ -22,6 +24,7 @@ pub struct RKernel {
     console: Sender<Option<String>>,
     initializer: Sender<RKernelInfo>,
     output: String,
+    reply_sender: Option<Sender<ExecuteReply>>,
     banner: String,
     initializing: bool,
 }
@@ -47,6 +50,7 @@ impl RKernel {
             banner: String::new(),
             initializing: true,
             initializer: initializer,
+            reply_sender: None,
         }
     }
 
@@ -70,8 +74,8 @@ impl RKernel {
     /// Service an execution request from the front end
     pub fn fulfill_request(&mut self, req: RRequest) {
         match req {
-            RRequest::ExecuteCode(req) => {
-                self.handle_execute_request(&req);
+            RRequest::ExecuteCode(req, sender) => {
+                self.handle_execute_request(&req, sender);
             }
             RRequest::Shutdown(_) => {
                 if let Err(err) = self.console.send(None) {
@@ -81,8 +85,9 @@ impl RKernel {
         }
     }
 
-    pub fn handle_execute_request(&mut self, req: &ExecuteRequest) {
+    pub fn handle_execute_request(&mut self, req: &ExecuteRequest, sender: Sender<ExecuteReply>) {
         self.output = String::new();
+        self.reply_sender = Some(sender);
 
         // Increment counter if we are storing this execution in history
         if req.store_history {
@@ -162,6 +167,17 @@ impl RKernel {
                 "Could not publish result of statement {} on iopub: {}",
                 self.execution_count, err
             );
+        }
+
+        // Send the reply to the front end
+        if let Some(sender) = &self.reply_sender {
+            sender
+                .send(ExecuteReply {
+                    status: Status::Ok,
+                    execution_count: self.execution_count,
+                    user_expressions: json!({}),
+                })
+                .unwrap();
         }
     }
 
