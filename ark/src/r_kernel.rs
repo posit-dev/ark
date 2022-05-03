@@ -27,6 +27,7 @@ pub struct RKernel {
     console: Sender<Option<String>>,
     initializer: Sender<RKernelInfo>,
     output: String,
+    error: String,
     response_sender: Option<Sender<ExecuteResponse>>,
     banner: String,
     initializing: bool,
@@ -50,6 +51,7 @@ impl RKernel {
             execution_count: 0,
             console: console,
             output: String::new(),
+            error: String::new(),
             banner: String::new(),
             initializing: true,
             initializer: initializer,
@@ -94,7 +96,9 @@ impl RKernel {
         req: &ExecuteRequest,
         sender: Sender<ExecuteResponse>,
     ) {
+        // Clear output and error accumulators from previous execution
         self.output = String::new();
+        self.error = String::new();
         self.response_sender = Some(sender);
 
         // Increment counter if we are storing this execution in history
@@ -176,6 +180,32 @@ impl RKernel {
 
     /// Finishes the active execution request
     pub fn finish_request(&self) {
+        if self.error.is_empty() {
+            self.emit_output();
+        } else {
+            self.emit_error();
+        }
+    }
+
+    fn emit_error(&self) {
+        let error = self.error.clone();
+        // Send the reply to the front end
+        if let Some(sender) = &self.response_sender {
+            sender
+                .send(ExecuteResponse::ReplyException(ExecuteReplyException {
+                    status: Status::Error,
+                    execution_count: self.execution_count,
+                    exception: Exception {
+                        ename: "CodeExecution".to_string(),
+                        evalue: error,
+                        traceback: vec![],
+                    },
+                }))
+                .unwrap();
+        }
+    }
+
+    fn emit_output(&self) {
         let output = self.output.clone();
 
         // Look up computation result
@@ -211,7 +241,10 @@ impl RKernel {
         }
     }
 
-    /// Called from R when console data is written
+    /// Called from R when console data is written.
+    ///
+    /// TODO: This accumulates rather than streams the output; we should provide
+    /// output streams so users can observe output as it is generated.
     pub fn write_console(&mut self, content: &str, otype: i32) {
         debug!("Write console {} from R: {}", otype, content);
         if self.initializing {
@@ -220,7 +253,14 @@ impl RKernel {
         } else {
             // Afterwards (during normal REPL), accumulate output internally
             // until R is finished executing
-            self.output.push_str(content);
+            if otype == 1 {
+                // For now, treat error output as though it's an error.
+                //
+                // TODO: We should install an error handler instead so we can
+                self.error.push_str(content);
+            } else {
+                self.output.push_str(content);
+            }
         }
     }
 }
