@@ -5,15 +5,27 @@
  *
  */
 
+use dashmap::DashMap;
+use ropey::Rope;
 use serde_json::Value;
 use tokio::net::TcpStream;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
+macro_rules! trace {
+
+    ($self:expr, $($rest:expr),*) => {
+        let message = format!($($rest, )*);
+        $self.client.log_message(MessageType::INFO, message).await
+    };
+
+}
+
 #[derive(Debug)]
 struct Backend {
     client: Client,
+    documents: DashMap<String, Rope>,
 }
 
 #[tower_lsp::async_trait]
@@ -52,41 +64,29 @@ impl LanguageServer for Backend {
         })
     }
 
-    async fn initialized(&self, p: InitializedParams) {
-        self.client
-            .log_message(
-                MessageType::INFO,
-                format!("Initialized LSP with parameters: {:?}", p),
-            )
-            .await;
+    async fn initialized(&self, params: InitializedParams) {
+        trace!(self, "initialized({:?})", params);
     }
 
     async fn shutdown(&self) -> Result<()> {
+        trace!(self, "shutdown()");
         Ok(())
     }
 
-    async fn did_change_workspace_folders(&self, _: DidChangeWorkspaceFoldersParams) {
-        self.client
-            .log_message(MessageType::INFO, "workspace folders changed!")
-            .await;
+    async fn did_change_workspace_folders(&self, params: DidChangeWorkspaceFoldersParams) {
+        trace!(self, "did_change_workspace_folders({:?})", params);
     }
 
-    async fn did_change_configuration(&self, _: DidChangeConfigurationParams) {
-        self.client
-            .log_message(MessageType::INFO, "configuration changed!")
-            .await;
+    async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
+        trace!(self, "did_change_configuration({:?})", params);
     }
 
-    async fn did_change_watched_files(&self, _: DidChangeWatchedFilesParams) {
-        self.client
-            .log_message(MessageType::INFO, "watched files have changed!")
-            .await;
+    async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
+        trace!(self, "did_change_watched_files({:?})", params);
     }
 
-    async fn execute_command(&self, _: ExecuteCommandParams) -> Result<Option<Value>> {
-        self.client
-            .log_message(MessageType::INFO, "command executed!")
-            .await;
+    async fn execute_command(&self, params: ExecuteCommandParams) -> Result<Option<Value>> {
+        trace!(self, "execute_command({:?})", params);
 
         match self.client.apply_edit(WorkspaceEdit::default()).await {
             Ok(res) if res.applied => self.client.log_message(MessageType::INFO, "applied").await,
@@ -97,51 +97,82 @@ impl LanguageServer for Backend {
         Ok(None)
     }
 
-    async fn did_open(&self, _: DidOpenTextDocumentParams) {
-        self.client
-            .log_message(MessageType::INFO, "file opened!")
-            .await;
+    async fn did_open(&self, params: DidOpenTextDocumentParams) {
+        trace!(self, "did_open({:?}", params);
+
+        // create document reference
+        let uri = params.text_document.uri;
+        let text = params.text_document.text;
+        self.documents.insert(uri.to_string(), Rope::from(text));
+
+        // TODO: create AST
     }
 
-    async fn did_change(&self, _: DidChangeTextDocumentParams) {
-        self.client
-            .log_message(MessageType::INFO, "file changed!")
-            .await;
-    }
+    async fn did_change(&self, params: DidChangeTextDocumentParams) {
+        trace!(self, "did_change({:?})", params);
 
-    async fn did_save(&self, _: DidSaveTextDocumentParams) {
-        self.client
-            .log_message(MessageType::INFO, "file saved!")
-            .await;
-    }
+        // get reference to document
+        let uri = params.text_document.uri.to_string();
+        let mut doc = self.documents.get_mut(&uri).unwrap_or_else(|| {
+            panic!("unknown document '{}'", uri);
+        });
 
-    async fn did_close(&self, _: DidCloseTextDocumentParams) {
-        self.client
-            .log_message(MessageType::INFO, "file closed!")
-            .await;
-    }
+        // update the document
+        for change in params.content_changes.iter() {
 
-    async fn completion(&self, p: CompletionParams) -> Result<Option<CompletionResponse>> {
-        if let Some(ctx) = p.context {
-            if let Some(ch) = ctx.trigger_character {
-                if ch == "$" {
-                    return Ok(Some(CompletionResponse::Array(vec![
-                        CompletionItem::new_simple("Col1".to_string(), "Some detail".to_string()),
-                        CompletionItem::new_simple("Col2".to_string(), "More detail".to_string()),
-                    ])));
-                }
-            }
+            let range = match change.range {
+                Some(r) => r,
+                None => continue,
+            };
+
+            let lhs = doc.line_to_char(range.start.line as usize) + range.start.character as usize;
+            let rhs = doc.line_to_char(range.end.line as usize) + range.end.character as usize;
+
+            doc.remove(lhs..rhs);
+            doc.insert(lhs, change.text.as_str());
+            trace!(self, "document updated: {:?}", change);
+            trace!(self, "document contents: {}", doc.to_string());
+
         }
-        Ok(Some(CompletionResponse::Array(vec![
-            CompletionItem::new_simple("Hello".to_string(), "Some detail".to_string()),
-            CompletionItem::new_simple("Bye".to_string(), "More detail".to_string()),
-        ])))
+
+    }
+
+    async fn did_save(&self, params: DidSaveTextDocumentParams) {
+        trace!(self, "did_save({:?}", params);
+    }
+
+    async fn did_close(&self, params: DidCloseTextDocumentParams) {
+        trace!(self, "did_close({:?}", params);
+    }
+
+    async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
+
+        // find the document associated with this URI
+        let uri = params.text_document_position.text_document.uri;
+        let doc = match self.documents.get_mut(uri.as_str()) {
+            Some(doc) => doc,
+            None => {
+                trace!(self, "unknown document {}", uri);
+                return Ok(None);
+            }
+        };
+
+        // build completion results, using this document
+        // TODO: placeholder to convince ourselves document
+        // updates are happening as they should
+        let contents = doc.to_string();
+        let lines = contents.split('\n').map(|line| {
+            CompletionItem::new_simple(line.to_string(), "Detail".to_string())
+        });
+
+        let result = lines.collect();
+        trace!(self, "Completion response: {:?}", result);
+        return Ok(Some(CompletionResponse::Array(result)));
+
     }
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
-        self.client
-            .log_message(MessageType::INFO, format!("Hover requested: {:?}", params))
-            .await;
+        trace!(self, "hover({:?})", params);
         Ok(Some(Hover {
             contents: HoverContents::Scalar(MarkedString::from_markdown(String::from(
                 "Hello world!",
@@ -173,6 +204,10 @@ pub async fn start_lsp(address: String) {
     #[cfg(feature = "runtime-agnostic")]
     let (read, write) = (read.compat(), write.compat_write());
 
-    let (service, socket) = LspService::new(|client| Backend { client });
+    let (service, socket) = LspService::new(|client| Backend {
+        client: client,
+        documents: DashMap::new()
+    });
+
     Server::new(read, write, socket).serve(service).await;
 }
