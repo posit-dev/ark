@@ -42,7 +42,7 @@ fn start_kernel(connection_file: ConnectionFile) {
                 }
             }
             Err(err) => {
-                error!("Couldn't connect to front end: {:?}", err);
+                    error!("Couldn't connect to front end: {:?}", err);
             }
         },
         Err(err) => {
