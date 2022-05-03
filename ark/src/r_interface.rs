@@ -173,19 +173,25 @@ pub fn listen(exec_recv: Receiver<RRequest>, prompt_recv: Receiver<String>) {
                 let mutex = unsafe { KERNEL.as_ref().unwrap() };
                 {
                     let mut kernel = mutex.lock().unwrap();
-                    kernel.fulfill_request(req)
+                    kernel.fulfill_request(&req)
                 }
 
                 // Wait for R to prompt us again. This signals that the
                 // execution is finished and R is ready for input again.
                 trace!("Waiting for R prompt signaling completion of execution...");
                 let prompt = prompt_recv.recv().unwrap();
-                trace!("Got R prompt '{}', finishing execution request", prompt);
 
                 // Tell the kernel to complete the execution request.
                 {
                     let kernel = mutex.lock().unwrap();
-                    kernel.finish_request();
+                    // if the prompt is '+', we need to tell the kernel to emit an error
+                    if prompt.starts_with("+") {
+                        trace!("Got R prompt '{}', marking request incomplete", prompt);
+                        kernel.report_incomplete_request(&req);
+                    } else {
+                        trace!("Got R prompt '{}', finishing execution request", prompt);
+                        kernel.finish_request()
+                    }
                 }
             }
             Err(err) => warn!("Could not receive execution request from kernel: {}", err),

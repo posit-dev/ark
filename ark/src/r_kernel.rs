@@ -7,9 +7,12 @@
 
 use crate::r_request::RRequest;
 use amalthea::socket::iopub::IOPubMessage;
+use amalthea::wire::exception::Exception;
 use amalthea::wire::execute_input::ExecuteInput;
 use amalthea::wire::execute_reply::ExecuteReply;
+use amalthea::wire::execute_reply_exception::ExecuteReplyException;
 use amalthea::wire::execute_request::ExecuteRequest;
+use amalthea::wire::execute_response::ExecuteResponse;
 use amalthea::wire::execute_result::ExecuteResult;
 use amalthea::wire::jupyter_message::Status;
 use extendr_api::prelude::*;
@@ -24,7 +27,7 @@ pub struct RKernel {
     console: Sender<Option<String>>,
     initializer: Sender<RKernelInfo>,
     output: String,
-    reply_sender: Option<Sender<ExecuteReply>>,
+    response_sender: Option<Sender<ExecuteResponse>>,
     banner: String,
     initializing: bool,
 }
@@ -50,7 +53,7 @@ impl RKernel {
             banner: String::new(),
             initializing: true,
             initializer: initializer,
-            reply_sender: None,
+            response_sender: None,
         }
     }
 
@@ -72,10 +75,11 @@ impl RKernel {
     }
 
     /// Service an execution request from the front end
-    pub fn fulfill_request(&mut self, req: RRequest) {
+    pub fn fulfill_request(&mut self, req: &RRequest) {
         match req {
             RRequest::ExecuteCode(req, sender) => {
-                self.handle_execute_request(&req, sender);
+                let sender = sender.clone();
+                self.handle_execute_request(req, sender);
             }
             RRequest::Shutdown(_) => {
                 if let Err(err) = self.console.send(None) {
@@ -85,9 +89,13 @@ impl RKernel {
         }
     }
 
-    pub fn handle_execute_request(&mut self, req: &ExecuteRequest, sender: Sender<ExecuteReply>) {
+    pub fn handle_execute_request(
+        &mut self,
+        req: &ExecuteRequest,
+        sender: Sender<ExecuteResponse>,
+    ) {
         self.output = String::new();
-        self.reply_sender = Some(sender);
+        self.response_sender = Some(sender);
 
         // Increment counter if we are storing this execution in history
         if req.store_history {
@@ -144,6 +152,28 @@ impl RKernel {
         )
     }
 
+    /// Report an incomplete request to the front end
+    pub fn report_incomplete_request(&self, req: &RRequest) {
+        let code = match req {
+            RRequest::ExecuteCode(req, _) => req.code.clone(),
+            _ => String::new(),
+        };
+        if let Some(sender) = self.response_sender.as_ref() {
+            let reply = ExecuteReplyException {
+                status: Status::Error,
+                execution_count: self.execution_count,
+                exception: Exception {
+                    ename: "IncompleteInput".to_string(),
+                    evalue: format!("Code fragment is not complete: {}", code),
+                    traceback: vec![],
+                },
+            };
+            if let Err(err) = sender.send(ExecuteResponse::ReplyException(reply)) {
+                warn!("Error sending incomplete reply: {}", err);
+            }
+        }
+    }
+
     /// Finishes the active execution request
     pub fn finish_request(&self) {
         let output = self.output.clone();
@@ -170,13 +200,13 @@ impl RKernel {
         }
 
         // Send the reply to the front end
-        if let Some(sender) = &self.reply_sender {
+        if let Some(sender) = &self.response_sender {
             sender
-                .send(ExecuteReply {
+                .send(ExecuteResponse::Reply(ExecuteReply {
                     status: Status::Ok,
                     execution_count: self.execution_count,
                     user_expressions: json!({}),
-                })
+                }))
                 .unwrap();
         }
     }

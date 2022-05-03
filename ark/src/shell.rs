@@ -20,6 +20,7 @@ use amalthea::wire::exception::Exception;
 use amalthea::wire::execute_reply::ExecuteReply;
 use amalthea::wire::execute_reply_exception::ExecuteReplyException;
 use amalthea::wire::execute_request::ExecuteRequest;
+use amalthea::wire::execute_response::ExecuteResponse;
 use amalthea::wire::inspect_reply::InspectReply;
 use amalthea::wire::inspect_request::InspectRequest;
 use amalthea::wire::is_complete_reply::IsComplete;
@@ -158,7 +159,7 @@ impl ShellHandler for Shell {
         &mut self,
         req: &ExecuteRequest,
     ) -> Result<ExecuteReply, ExecuteReplyException> {
-        let (sender, receiver) = channel::<ExecuteReply>();
+        let (sender, receiver) = channel::<ExecuteResponse>();
         if let Err(err) = self
             .req_sender
             .send(RRequest::ExecuteCode(req.clone(), sender))
@@ -169,9 +170,13 @@ impl ShellHandler for Shell {
             )
         }
 
-        // Let the shell thread know that we've successfully executed the code.
+        // Let the shell thread know that we've executed the code.
         trace!("execution finished: {}", req.code);
-        Ok(receiver.recv().unwrap())
+        let result = receiver.recv().unwrap();
+        match result {
+            ExecuteResponse::Reply(reply) => Ok(reply),
+            ExecuteResponse::ReplyException(err) => Err(err),
+        }
     }
 
     /// Handles an introspection request
