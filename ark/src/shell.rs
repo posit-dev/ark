@@ -115,7 +115,7 @@ impl ShellHandler for Shell {
 
     async fn handle_complete_request(
         &self,
-        _req: &CompleteRequest,
+        req: &CompleteRequest,
     ) -> Result<CompleteReply, Exception> {
         // No matches in this toy implementation.
         Ok(CompleteReply {
@@ -144,13 +144,24 @@ impl ShellHandler for Shell {
     /// Handle a request to test code for completion.
     async fn handle_is_complete_request(
         &self,
-        _req: &IsCompleteRequest,
+        req: &IsCompleteRequest,
     ) -> Result<IsCompleteReply, Exception> {
-        // In this echo example, the code is always complete!
-        Ok(IsCompleteReply {
-            status: IsComplete::Complete,
-            indent: String::from(""),
-        })
+        use extendr_api::prelude::*;
+        let code = req.code.clone();
+        if let Err(err) = call!("parse", text = code) {
+            debug!("Parse error: {:?}", err);
+            // TODO: We should distinguish between incomplete code and invalid code.
+            Ok(IsCompleteReply {
+                status: IsComplete::Incomplete,
+                indent: String::from("+"),
+            })
+        } else {
+            // Code parses
+            Ok(IsCompleteReply {
+                status: IsComplete::Complete,
+                indent: String::from(""),
+            })
+        }
     }
 
     /// Handles an ExecuteRequest by sending the code to the R execution thread
