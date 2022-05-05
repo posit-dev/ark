@@ -18,6 +18,7 @@ serde_json = "1.0.59"
 tokio = { version = "1.17.0", features = ["full"] }
 tower-lsp = "0.16.0"
 tree-sitter-r = "0.19.5"
+nix = { version = "0.24.1", features = ["signal"] }
 
 [profile.dev]
 rpath = true
