@@ -13,12 +13,40 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
+use tree_sitter::{Parser, TreeCursor, Node};
+
 macro_rules! trace {
 
-    ($self:expr, $($rest:expr),*) => {
+    ($self:expr, $($rest:expr),*) => {{
         let message = format!($($rest, )*);
         $self.client.log_message(MessageType::INFO, message).await
-    };
+    }};
+
+}
+
+fn walk<F>(cursor: &mut TreeCursor, mut f: F)
+where
+    F: FnMut(Node)
+{
+    walk_impl(cursor, &mut f);
+}
+
+fn walk_impl<F>(cursor: &mut TreeCursor, f: &mut F)
+where
+    F: FnMut(Node),
+{
+    f(cursor.node());
+
+    if cursor.goto_first_child() {
+
+        walk_impl(cursor, f);
+        while cursor.goto_next_sibling() {
+            walk_impl(cursor, f);
+        }
+
+        cursor.goto_parent();
+
+    }
 
 }
 
@@ -31,6 +59,7 @@ struct Backend {
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
     async fn initialize(&self, _: InitializeParams) -> Result<InitializeResult> {
+
         Ok(InitializeResult {
             server_info: Some(ServerInfo {
                 name: "Amalthea R Kernel (ARK)".to_string(),
@@ -105,7 +134,6 @@ impl LanguageServer for Backend {
         let text = params.text_document.text;
         self.documents.insert(uri.to_string(), Rope::from(text));
 
-        // TODO: create AST
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
@@ -152,22 +180,40 @@ impl LanguageServer for Backend {
         let doc = match self.documents.get_mut(uri.as_str()) {
             Some(doc) => doc,
             None => {
-                trace!(self, "unknown document {}", uri);
                 return Ok(None);
             }
         };
 
-        // build completion results, using this document
-        // TODO: placeholder to convince ourselves document
-        // updates are happening as they should
-        let contents = doc.to_string();
-        let lines = contents.split('\n').map(|line| {
-            CompletionItem::new_simple(line.to_string(), "Detail".to_string())
-        });
+        // build AST from document
+        // TODO: can we incrementally update AST as edits come in?
+        // Or should we defer building the AST until completions are requested?
+        let mut parser = Parser::new();
+        parser.set_language(tree_sitter_r::language()).expect("failed to create parser");
 
-        let result = lines.collect();
-        trace!(self, "Completion response: {:?}", result);
-        return Ok(Some(CompletionResponse::Array(result)));
+        let contents = doc.to_string();
+        let ast = parser.parse(&contents, None).expect("failed to parse code");
+
+        let mut completions : Vec<CompletionItem> = Vec::new();
+        {
+            let mut cursor = ast.walk();
+            walk(&mut cursor, |node| {
+
+                // check for assignments
+                if node.kind() == "left_assignment" {
+                    let lhs = node.child(0).unwrap();
+                    if lhs.kind() == "identifier" {
+                        let variable = lhs.utf8_text(contents.as_bytes());
+                        if let Ok(variable) = variable {
+                            let detail = format!("Defined on row {}", node.range().start_point.row + 1);
+                            completions.push(CompletionItem::new_simple(variable.to_string(), detail));
+                        }
+                    }
+                }
+
+            });
+        }
+
+        return Ok(Some(CompletionResponse::Array(completions)));
 
     }
 
