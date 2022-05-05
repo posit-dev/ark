@@ -48,8 +48,10 @@ impl ControlHandler for Control {
 
     async fn handle_interrupt_request(&self) -> Result<InterruptReply, Exception> {
         debug!("Received interrupt request");
-        signal::killpg(Pid::this(), Signal::SIGINT).unwrap();
+        signal::kill(Pid::this(), Signal::SIGINT).unwrap();
         // TODO: Windows.
+        // TODO: Needs to send a SIGINT to the whole process group so that
+        // processes started by R will also be interrupted.
         Ok(InterruptReply { status: Status::Ok })
     }
 }
