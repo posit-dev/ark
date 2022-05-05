@@ -51,6 +51,18 @@ impl Control {
                     }
                     break;
                 }
+                Message::InterruptRequest(req) => {
+                    info!(
+                        "Received interrupt request, asking kernel to stop: {:?}",
+                        req
+                    );
+
+                    let shell_handler = self.handler.lock().unwrap();
+                    if let Err(ex) = block_on(shell_handler.handle_interrupt_request()) {
+                        warn!("Failed to handle interrupt request: {:?}", ex);
+                    }
+                    // TODO: What happens if the interrupt isn't handled?
+                }
                 _ => warn!(
                     "{}",
                     Error::UnsupportedMessage(message, String::from("Control"))
