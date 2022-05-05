@@ -22,7 +22,6 @@ use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::execute_result::ExecuteResult;
 use amalthea::wire::inspect_reply::InspectReply;
 use amalthea::wire::inspect_request::InspectRequest;
-use amalthea::wire::interrupt_reply::InterruptReply;
 use amalthea::wire::is_complete_reply::IsComplete;
 use amalthea::wire::is_complete_reply::IsCompleteReply;
 use amalthea::wire::is_complete_request::IsCompleteRequest;
@@ -30,8 +29,6 @@ use amalthea::wire::jupyter_message::Status;
 use amalthea::wire::kernel_info_reply::KernelInfoReply;
 use amalthea::wire::kernel_info_request::KernelInfoRequest;
 use amalthea::wire::language_info::LanguageInfo;
-use amalthea::wire::shutdown_reply::ShutdownReply;
-use amalthea::wire::shutdown_request::ShutdownRequest;
 use async_trait::async_trait;
 use log::warn;
 use serde_json::json;
@@ -218,20 +215,5 @@ impl ShellHandler for Shell {
     async fn handle_comm_msg(&self, _req: &CommMsg) -> Result<(), Exception> {
         // NYI
         Ok(())
-    }
-
-    async fn handle_shutdown_request(
-        &self,
-        msg: &ShutdownRequest,
-    ) -> Result<ShutdownReply, Exception> {
-        // NYI
-        Ok(ShutdownReply {
-            restart: msg.restart,
-        })
-    }
-
-    async fn handle_interrupt_request(&self) -> Result<InterruptReply, Exception> {
-        // NYI
-        Ok(InterruptReply { status: Status::Ok })
     }
 }

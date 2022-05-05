@@ -7,6 +7,7 @@
 
 use crate::connection_file::ConnectionFile;
 use crate::error::Error;
+use crate::language::control_handler::ControlHandler;
 use crate::language::shell_handler::ShellHandler;
 use crate::session::Session;
 use crate::socket::control::Control;
@@ -44,6 +45,7 @@ impl Kernel {
     pub fn connect(
         &self,
         shell_handler: Arc<Mutex<dyn ShellHandler>>,
+        control_handler: Arc<Mutex<dyn ControlHandler>>,
         iopub_sender: SyncSender<IOPubMessage>,
         iopub_receiver: Receiver<IOPubMessage>,
     ) -> Result<(), Error> {
@@ -94,12 +96,12 @@ impl Kernel {
         )?;
 
         // TODO: thread/join thread?
-        Self::control_thread(control_socket, shell_handler);
+        Self::control_thread(control_socket, control_handler);
         Ok(())
     }
 
     /// Starts the control thread
-    fn control_thread(socket: Socket, handler: Arc<Mutex<dyn ShellHandler>>) {
+    fn control_thread(socket: Socket, handler: Arc<Mutex<dyn ControlHandler>>) {
         let control = Control::new(socket, handler);
         control.listen();
     }
