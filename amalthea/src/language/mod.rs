@@ -5,4 +5,5 @@
  *
  */
 
+pub mod control_handler;
 pub mod shell_handler;

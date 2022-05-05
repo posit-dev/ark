@@ -5,8 +5,10 @@
  *
  */
 
+mod control;
 mod shell;
 
+use crate::control::Control;
 use crate::shell::Shell;
 use amalthea::connection_file::ConnectionFile;
 use amalthea::kernel::Kernel;
@@ -25,10 +27,11 @@ fn start_kernel(connection_file: ConnectionFile) {
 
     let shell_sender = iopub_sender.clone();
     let shell = Arc::new(Mutex::new(Shell::new(shell_sender)));
+    let control = Arc::new(Mutex::new(Control {}));
 
     let kernel = Kernel::new(connection_file);
     match kernel {
-        Ok(k) => match k.connect(shell, iopub_sender, iopub_receiver) {
+        Ok(k) => match k.connect(shell, control, iopub_sender, iopub_receiver) {
             Ok(()) => {
                 let mut s = String::new();
                 println!("Kernel activated, press Ctrl+C to end ");

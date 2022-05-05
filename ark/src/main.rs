@@ -5,6 +5,7 @@
  *
  */
 
+use crate::control::Control;
 use crate::shell::Shell;
 use amalthea::connection_file::ConnectionFile;
 use amalthea::kernel::Kernel;
@@ -16,6 +17,7 @@ use std::io::stdin;
 use std::sync::mpsc::sync_channel;
 use std::sync::{Arc, Mutex};
 
+mod control;
 mod lsp;
 mod r_interface;
 mod r_kernel;
@@ -29,11 +31,14 @@ fn start_kernel(connection_file: ConnectionFile) {
     let (iopub_sender, iopub_receiver) = sync_channel::<IOPubMessage>(10);
 
     let shell_sender = iopub_sender.clone();
-    let shell = Arc::new(Mutex::new(Shell::new(shell_sender)));
+
+    let shell = Shell::new(shell_sender);
+    let control = Arc::new(Mutex::new(Control::new(shell.request_sender())));
+    let shell = Arc::new(Mutex::new(shell));
 
     let kernel = Kernel::new(connection_file);
     match kernel {
-        Ok(k) => match k.connect(shell, iopub_sender, iopub_receiver) {
+        Ok(k) => match k.connect(shell, control, iopub_sender, iopub_receiver) {
             Ok(()) => {
                 let mut s = String::new();
                 println!("R Kernel exiting.");
@@ -42,7 +47,7 @@ fn start_kernel(connection_file: ConnectionFile) {
                 }
             }
             Err(err) => {
-                    error!("Couldn't connect to front end: {:?}", err);
+                error!("Couldn't connect to front end: {:?}", err);
             }
         },
         Err(err) => {

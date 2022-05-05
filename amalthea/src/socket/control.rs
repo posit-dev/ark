@@ -6,7 +6,7 @@
  */
 
 use crate::error::Error;
-use crate::language::shell_handler::ShellHandler;
+use crate::language::control_handler::ControlHandler;
 use crate::socket::socket::Socket;
 use crate::wire::jupyter_message::Message;
 use futures::executor::block_on;
@@ -15,11 +15,11 @@ use std::sync::{Arc, Mutex};
 
 pub struct Control {
     socket: Socket,
-    handler: Arc<Mutex<dyn ShellHandler>>,
+    handler: Arc<Mutex<dyn ControlHandler>>,
 }
 
 impl Control {
-    pub fn new(socket: Socket, handler: Arc<Mutex<dyn ShellHandler>>) -> Self {
+    pub fn new(socket: Socket, handler: Arc<Mutex<dyn ControlHandler>>) -> Self {
         Self {
             socket: socket,
             handler: handler,
@@ -57,8 +57,8 @@ impl Control {
                         req
                     );
 
-                    let shell_handler = self.handler.lock().unwrap();
-                    if let Err(ex) = block_on(shell_handler.handle_interrupt_request()) {
+                    let control_handler = self.handler.lock().unwrap();
+                    if let Err(ex) = block_on(control_handler.handle_interrupt_request()) {
                         warn!("Failed to handle interrupt request: {:?}", ex);
                     }
                     // TODO: What happens if the interrupt isn't handled?

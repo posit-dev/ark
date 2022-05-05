@@ -23,7 +23,6 @@ use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::execute_response::ExecuteResponse;
 use amalthea::wire::inspect_reply::InspectReply;
 use amalthea::wire::inspect_request::InspectRequest;
-use amalthea::wire::interrupt_reply::InterruptReply;
 use amalthea::wire::is_complete_reply::IsComplete;
 use amalthea::wire::is_complete_reply::IsCompleteReply;
 use amalthea::wire::is_complete_request::IsCompleteRequest;
@@ -31,12 +30,8 @@ use amalthea::wire::jupyter_message::Status;
 use amalthea::wire::kernel_info_reply::KernelInfoReply;
 use amalthea::wire::kernel_info_request::KernelInfoRequest;
 use amalthea::wire::language_info::LanguageInfo;
-use amalthea::wire::shutdown_reply::ShutdownReply;
-use amalthea::wire::shutdown_request::ShutdownRequest;
 use async_trait::async_trait;
 use log::{debug, trace, warn};
-use nix::sys::signal::{self, Signal};
-use nix::unistd::Pid;
 use serde_json::json;
 use std::sync::mpsc::{channel, sync_channel, Receiver, Sender, SyncSender};
 use std::sync::{Arc, Mutex};
@@ -49,6 +44,7 @@ pub struct Shell {
 }
 
 impl Shell {
+    /// Creates a new instance of the shell message handler.
     pub fn new(iopub: SyncSender<IOPubMessage>) -> Self {
         let iopub_sender = iopub.clone();
         let (req_sender, req_receiver) = sync_channel::<RRequest>(1);
@@ -61,6 +57,7 @@ impl Shell {
         }
     }
 
+    /// Starts the R execution thread (does not return)
     pub fn execution_thread(
         sender: SyncSender<IOPubMessage>,
         receiver: Receiver<RRequest>,
@@ -70,6 +67,13 @@ impl Shell {
         crate::r_interface::start_r(sender, receiver, initializer);
     }
 
+    /// Returns a sender channel for the R execution thread; used outside the
+    /// shell handler
+    pub fn request_sender(&self) -> SyncSender<RRequest> {
+        self.req_sender.clone()
+    }
+
+    /// Starts the Language Server Protocol server thread
     fn start_lsp(msg: lsp::comm::StartLsp) {
         thread::spawn(move || lsp::backend::start_lsp(msg.client_address));
     }
@@ -242,28 +246,5 @@ impl ShellHandler for Shell {
     async fn handle_comm_msg(&self, _req: &CommMsg) -> Result<(), Exception> {
         // NYI
         Ok(())
-    }
-
-    async fn handle_shutdown_request(
-        &self,
-        msg: &ShutdownRequest,
-    ) -> Result<ShutdownReply, Exception> {
-        debug!("Received shutdown request: {:?}", msg);
-        if let Err(err) = self.req_sender.send(RRequest::Shutdown(msg.restart)) {
-            warn!(
-                "Could not deliver shutdown request to execution thread: {}",
-                err
-            )
-        }
-        Ok(ShutdownReply {
-            restart: msg.restart,
-        })
-    }
-
-    async fn handle_interrupt_request(&self) -> Result<InterruptReply, Exception> {
-        debug!("Received interrupt request");
-        signal::killpg(Pid::this(), Signal::SIGINT).unwrap();
-        // TODO: Windows.
-        Ok(InterruptReply { status: Status::Ok })
     }
 }
