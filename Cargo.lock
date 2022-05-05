@@ -50,6 +50,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tower-lsp",
+ "tree-sitter",
  "tree-sitter-r",
 ]
 
