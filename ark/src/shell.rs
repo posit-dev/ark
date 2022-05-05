@@ -35,6 +35,8 @@ use amalthea::wire::shutdown_reply::ShutdownReply;
 use amalthea::wire::shutdown_request::ShutdownRequest;
 use async_trait::async_trait;
 use log::{debug, trace, warn};
+use nix::sys::signal::{self, Signal};
+use nix::unistd::Pid;
 use serde_json::json;
 use std::sync::mpsc::{channel, sync_channel, Receiver, Sender, SyncSender};
 use std::sync::{Arc, Mutex};
@@ -259,7 +261,9 @@ impl ShellHandler for Shell {
     }
 
     async fn handle_interrupt_request(&self) -> Result<InterruptReply, Exception> {
-        // NYI
+        debug!("Received interrupt request");
+        signal::killpg(Pid::this(), Signal::SIGINT).unwrap();
+        // TODO: Windows.
         Ok(InterruptReply { status: Status::Ok })
     }
 }
