@@ -22,6 +22,7 @@ use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::execute_result::ExecuteResult;
 use amalthea::wire::inspect_reply::InspectReply;
 use amalthea::wire::inspect_request::InspectRequest;
+use amalthea::wire::interrupt_reply::InterruptReply;
 use amalthea::wire::is_complete_reply::IsComplete;
 use amalthea::wire::is_complete_reply::IsCompleteReply;
 use amalthea::wire::is_complete_request::IsCompleteRequest;
@@ -227,5 +228,10 @@ impl ShellHandler for Shell {
         Ok(ShutdownReply {
             restart: msg.restart,
         })
+    }
+
+    async fn handle_interrupt_request(&self) -> Result<InterruptReply, Exception> {
+        // NYI
+        Ok(InterruptReply { status: Status::Ok })
     }
 }

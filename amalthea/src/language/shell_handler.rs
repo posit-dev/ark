@@ -17,6 +17,7 @@ use crate::wire::execute_reply_exception::ExecuteReplyException;
 use crate::wire::execute_request::ExecuteRequest;
 use crate::wire::inspect_reply::InspectReply;
 use crate::wire::inspect_request::InspectRequest;
+use crate::wire::interrupt_reply::InterruptReply;
 use crate::wire::is_complete_reply::IsCompleteReply;
 use crate::wire::is_complete_request::IsCompleteRequest;
 use crate::wire::kernel_info_reply::KernelInfoReply;
@@ -84,11 +85,18 @@ pub trait ShellHandler: Send {
     /// https://jupyter-client.readthedocs.io/en/stable/messaging.html#opening-a-comm
     async fn handle_comm_open(&self, msg: &CommOpen) -> Result<(), Exception>;
 
-    /// Handles a request to shut down the kernel. This message is forwarded from the Control socket.
+    /// Handles a request to shut down the kernel. This message is forwarded
+    /// from the Control socket.
     ///
     /// https://jupyter-client.readthedocs.io/en/stable/messaging.html#kernel-shutdown
     async fn handle_shutdown_request(
         &self,
         msg: &ShutdownRequest,
     ) -> Result<ShutdownReply, Exception>;
+
+    /// Handles a request to interrupt the kernel. This message is forwarded
+    /// from the Control socket.
+    ///
+    /// https://jupyter-client.readthedocs.io/en/stable/messaging.html#kernel-interrupt
+    async fn handle_interrupt_request(&self) -> Result<InterruptReply, Exception>;
 }

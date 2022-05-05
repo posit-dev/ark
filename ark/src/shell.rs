@@ -23,6 +23,7 @@ use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::execute_response::ExecuteResponse;
 use amalthea::wire::inspect_reply::InspectReply;
 use amalthea::wire::inspect_request::InspectRequest;
+use amalthea::wire::interrupt_reply::InterruptReply;
 use amalthea::wire::is_complete_reply::IsComplete;
 use amalthea::wire::is_complete_reply::IsCompleteReply;
 use amalthea::wire::is_complete_request::IsCompleteRequest;
@@ -83,9 +84,10 @@ impl ShellHandler for Shell {
         //
         // 1. The kernel info response must include the startup banner, which is
         //    not emitted until R is done starting up.
-        // 2. Jupyter requires the kernel info response to be sent before it
-        //    treats the kernel as ready for use, so blocking here ensures that
-        //    it doesn't try to execute code before R is ready.
+        // 2. Jupyter front ends typically wait for the kernel info response to
+        //    be sent before they signal that the kernel as ready for use, so
+        //    blocking here ensures that it doesn't try to execute code before R is
+        //    ready.
         if self.kernel_info.is_none() {
             trace!("Got kernel info request; waiting for R to complete initialization");
             self.kernel_info = Some(self.init_receiver.lock().unwrap().recv().unwrap());
@@ -115,7 +117,7 @@ impl ShellHandler for Shell {
 
     async fn handle_complete_request(
         &self,
-        req: &CompleteRequest,
+        _req: &CompleteRequest,
     ) -> Result<CompleteReply, Exception> {
         // No matches in this toy implementation.
         Ok(CompleteReply {
@@ -182,7 +184,7 @@ impl ShellHandler for Shell {
         }
 
         // Let the shell thread know that we've executed the code.
-        trace!("execution finished: {}", req.code);
+        trace!("Code sent to R: {}", req.code);
         let result = receiver.recv().unwrap();
         match result {
             ExecuteResponse::Reply(reply) => Ok(reply),
@@ -254,5 +256,10 @@ impl ShellHandler for Shell {
         Ok(ShutdownReply {
             restart: msg.restart,
         })
+    }
+
+    async fn handle_interrupt_request(&self) -> Result<InterruptReply, Exception> {
+        // NYI
+        Ok(InterruptReply { status: Status::Ok })
     }
 }
