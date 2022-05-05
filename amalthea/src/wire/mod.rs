@@ -24,6 +24,8 @@ pub mod header;
 pub mod help_link;
 pub mod inspect_reply;
 pub mod inspect_request;
+pub mod interrupt_reply;
+pub mod interrupt_request;
 pub mod is_complete_reply;
 pub mod is_complete_request;
 pub mod jupyter_message;
