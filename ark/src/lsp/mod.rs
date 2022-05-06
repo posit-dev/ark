@@ -7,3 +7,5 @@
 
 pub mod backend;
 pub mod comm;
+pub mod document;
+pub mod macros;
