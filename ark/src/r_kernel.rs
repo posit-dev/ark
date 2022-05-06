@@ -187,6 +187,11 @@ impl RKernel {
         }
     }
 
+    /// Requests input from the front end
+    pub fn request_input(&self, _prompt: &str) {
+        // TODO: This needs to deliver an `input_request` to the front end
+    }
+
     fn emit_error(&self) {
         let error = self.error.clone();
         // Send the reply to the front end
