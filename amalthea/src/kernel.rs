@@ -97,7 +97,8 @@ impl Kernel {
             zmq::DEALER,
             self.connection.endpoint(self.connection.stdin_port),
         )?;
-        thread::spawn(move || Self::stdin_thread(stdin_socket));
+        let shell_clone = shell_handler.clone();
+        thread::spawn(move || Self::stdin_thread(stdin_socket, shell_clone));
 
         // Create the Control ROUTER/DEALER socket
         let control_socket = Socket::new(
@@ -145,8 +146,11 @@ impl Kernel {
         Ok(())
     }
 
-    fn stdin_thread(socket: Socket) -> Result<(), Error> {
-        let stdin = Stdin::new(socket);
+    fn stdin_thread(
+        socket: Socket,
+        shell_handler: Arc<Mutex<dyn ShellHandler>>,
+    ) -> Result<(), Error> {
+        let stdin = Stdin::new(socket, shell_handler);
         stdin.listen();
         Ok(())
     }
