@@ -22,6 +22,8 @@ pub mod execute_response;
 pub mod execute_result;
 pub mod header;
 pub mod help_link;
+pub mod input_reply;
+pub mod input_request;
 pub mod inspect_reply;
 pub mod inspect_request;
 pub mod interrupt_reply;
