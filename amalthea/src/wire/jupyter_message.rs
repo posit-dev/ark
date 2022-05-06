@@ -23,6 +23,8 @@ use crate::wire::execute_reply_exception::ExecuteReplyException;
 use crate::wire::execute_request::ExecuteRequest;
 use crate::wire::execute_result::ExecuteResult;
 use crate::wire::header::JupyterHeader;
+use crate::wire::input_reply::InputReply;
+use crate::wire::input_request::InputRequest;
 use crate::wire::inspect_reply::InspectReply;
 use crate::wire::inspect_request::InspectRequest;
 use crate::wire::interrupt_reply::InterruptReply;
@@ -74,6 +76,8 @@ pub enum Message {
     ExecuteResult(JupyterMessage<ExecuteResult>),
     ExecuteError(JupyterMessage<ExecuteError>),
     ExecuteInput(JupyterMessage<ExecuteInput>),
+    InputReply(JupyterMessage<InputReply>),
+    InputRequest(JupyterMessage<InputRequest>),
     InspectReply(JupyterMessage<InspectReply>),
     InspectRequest(JupyterMessage<InspectRequest>),
     InterruptReply(JupyterMessage<InterruptReply>),
@@ -149,6 +153,10 @@ impl TryFrom<WireMessage> for Message {
             return Ok(Message::InterruptRequest(JupyterMessage::try_from(msg)?));
         } else if kind == InterruptReply::message_type() {
             return Ok(Message::InterruptReply(JupyterMessage::try_from(msg)?));
+        } else if kind == InputReply::message_type() {
+            return Ok(Message::InputReply(JupyterMessage::try_from(msg)?));
+        } else if kind == InputRequest::message_type() {
+            return Ok(Message::InputRequest(JupyterMessage::try_from(msg)?));
         }
         return Err(Error::UnknownMessageType(kind));
     }
