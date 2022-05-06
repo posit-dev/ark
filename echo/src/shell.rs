@@ -20,6 +20,7 @@ use amalthea::wire::execute_reply::ExecuteReply;
 use amalthea::wire::execute_reply_exception::ExecuteReplyException;
 use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::execute_result::ExecuteResult;
+use amalthea::wire::input_reply::InputReply;
 use amalthea::wire::inspect_reply::InspectReply;
 use amalthea::wire::inspect_request::InspectRequest;
 use amalthea::wire::is_complete_reply::IsComplete;
@@ -213,6 +214,11 @@ impl ShellHandler for Shell {
     }
 
     async fn handle_comm_msg(&self, _req: &CommMsg) -> Result<(), Exception> {
+        // NYI
+        Ok(())
+    }
+
+    async fn handle_input_reply(&self, _msg: &InputReply) -> Result<(), Exception> {
         // NYI
         Ok(())
     }

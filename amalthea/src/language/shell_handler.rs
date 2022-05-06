@@ -15,6 +15,7 @@ use crate::wire::exception::Exception;
 use crate::wire::execute_reply::ExecuteReply;
 use crate::wire::execute_reply_exception::ExecuteReplyException;
 use crate::wire::execute_request::ExecuteRequest;
+use crate::wire::input_reply::InputReply;
 use crate::wire::inspect_reply::InspectReply;
 use crate::wire::inspect_request::InspectRequest;
 use crate::wire::is_complete_reply::IsCompleteReply;
@@ -34,7 +35,8 @@ pub trait ShellHandler: Send {
         req: &KernelInfoRequest,
     ) -> Result<KernelInfoReply, Exception>;
 
-    /// Handles a request to test a fragment of code to see whether it is a complete expression.
+    /// Handles a request to test a fragment of code to see whether it is a
+    /// complete expression.
     ///
     /// Docs: https://jupyter-client.readthedocs.io/en/stable/messaging.html#code-completeness
     async fn handle_is_complete_request(
@@ -81,4 +83,9 @@ pub trait ShellHandler: Send {
     ///
     /// https://jupyter-client.readthedocs.io/en/stable/messaging.html#opening-a-comm
     async fn handle_comm_open(&self, msg: &CommOpen) -> Result<(), Exception>;
+
+    /// Handles a reply to a request for input from the front end (from stdin socket)
+    ///
+    /// https://jupyter-client.readthedocs.io/en/stable/messaging.html#messages-on-the-stdin-router-dealer-channel
+    async fn handle_input_reply(&self, msg: &InputReply) -> Result<(), Exception>;
 }
