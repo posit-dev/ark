@@ -5,15 +5,14 @@
  *
  */
 
+use crate::lsp::document::Document;
+use crate::lsp::macros::unwrap;
 use dashmap::DashMap;
-use ropey::Rope;
 use serde_json::Value;
 use tokio::net::TcpStream;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
-
-use tree_sitter::{Parser, TreeCursor, Node};
 
 macro_rules! trace {
 
@@ -24,36 +23,10 @@ macro_rules! trace {
 
 }
 
-fn walk<F>(cursor: &mut TreeCursor, mut f: F)
-where
-    F: FnMut(Node)
-{
-    walk_impl(cursor, &mut f);
-}
-
-fn walk_impl<F>(cursor: &mut TreeCursor, f: &mut F)
-where
-    F: FnMut(Node),
-{
-    f(cursor.node());
-
-    if cursor.goto_first_child() {
-
-        walk_impl(cursor, f);
-        while cursor.goto_next_sibling() {
-            walk_impl(cursor, f);
-        }
-
-        cursor.goto_parent();
-
-    }
-
-}
-
 #[derive(Debug)]
 struct Backend {
     client: Client,
-    documents: DashMap<String, Rope>,
+    documents: DashMap<Url, Document>,
 }
 
 #[tower_lsp::async_trait]
@@ -129,10 +102,10 @@ impl LanguageServer for Backend {
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         trace!(self, "did_open({:?}", params);
 
-        // create document reference
-        let uri = params.text_document.uri;
-        let text = params.text_document.text;
-        self.documents.insert(uri.to_string(), Rope::from(text));
+        self.documents.insert(
+            params.text_document.uri,
+            Document::new(params.text_document.text)
+        );
 
     }
 
@@ -140,27 +113,15 @@ impl LanguageServer for Backend {
         trace!(self, "did_change({:?})", params);
 
         // get reference to document
-        let uri = params.text_document.uri.to_string();
-        let mut doc = self.documents.get_mut(&uri).unwrap_or_else(|| {
-            panic!("unknown document '{}'", uri);
+        let uri = &params.text_document.uri;
+        let mut doc = unwrap!(self.documents.get_mut(uri), {
+            trace!(self, "unexpected document uri '{}'", uri);
+            return;
         });
 
         // update the document
         for change in params.content_changes.iter() {
-
-            let range = match change.range {
-                Some(r) => r,
-                None => continue,
-            };
-
-            let lhs = doc.line_to_char(range.start.line as usize) + range.start.character as usize;
-            let rhs = doc.line_to_char(range.end.line as usize) + range.end.character as usize;
-
-            doc.remove(lhs..rhs);
-            doc.insert(lhs, change.text.as_str());
-            trace!(self, "document updated: {:?}", change);
-            trace!(self, "document contents: {}", doc.to_string());
-
+            doc.update(change);
         }
 
     }
@@ -174,44 +135,21 @@ impl LanguageServer for Backend {
     }
 
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
+        trace!(self, "completion({:?})", params);
 
-        // find the document associated with this URI
-        let uri = params.text_document_position.text_document.uri;
-        let doc = match self.documents.get_mut(uri.as_str()) {
-            Some(doc) => doc,
-            None => {
-                return Ok(None);
-            }
-        };
+        // get reference to document
+        let uri = &params.text_document_position.text_document.uri;
+        let mut doc = unwrap!(self.documents.get_mut(uri), {
+            trace!(self, "unexpected document uri '{}'", uri);
+            return Ok(None);
+        });
 
-        // build AST from document
-        // TODO: can we incrementally update AST as edits come in?
-        // Or should we defer building the AST until completions are requested?
-        let mut parser = Parser::new();
-        parser.set_language(tree_sitter_r::language()).expect("failed to create parser");
+        let mut completions : Vec<CompletionItem> = vec!();
 
-        let contents = doc.to_string();
-        let ast = parser.parse(&contents, None).expect("failed to parse code");
+        // add context-relevant completions
+        doc.append_completions(&params, &mut completions);
 
-        let mut completions : Vec<CompletionItem> = Vec::new();
-        {
-            let mut cursor = ast.walk();
-            walk(&mut cursor, |node| {
-
-                // check for assignments
-                if node.kind() == "left_assignment" {
-                    let lhs = node.child(0).unwrap();
-                    if lhs.kind() == "identifier" {
-                        let variable = lhs.utf8_text(contents.as_bytes());
-                        if let Ok(variable) = variable {
-                            let detail = format!("Defined on row {}", node.range().start_point.row + 1);
-                            completions.push(CompletionItem::new_simple(variable.to_string(), detail));
-                        }
-                    }
-                }
-
-            });
-        }
+        // TODO: add completions from R to the completion list
 
         return Ok(Some(CompletionResponse::Array(completions)));
 
