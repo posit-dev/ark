@@ -20,7 +20,7 @@ impl Heartbeat {
     }
 
     /// Listen for heartbeats; does not return
-    pub fn listen(&mut self) {
+    pub fn listen(&self) {
         loop {
             debug!("Listening for heartbeats");
             let mut msg = zmq::Message::new();
