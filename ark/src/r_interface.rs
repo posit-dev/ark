@@ -160,9 +160,9 @@ fn handle_execute_request(req: &RRequest, prompt_recv: &Receiver<String>) {
 
     // Wait for R to prompt us again. This signals that the
     // execution is finished and R is ready for input again.
-    let default_prompt = R!(getOption("prompt")).unwrap().as_str().unwrap();
+    let default_prompt = R!(getOption("prompt")).unwrap().as_str();
     trace!(
-        "Waiting for R prompt signaling completion of execution (expected: '{}')",
+        "Waiting for R prompt signaling completion of execution (expected: '{:?}')",
         default_prompt
     );
     let prompt = prompt_recv.recv().unwrap();
@@ -175,14 +175,23 @@ fn handle_execute_request(req: &RRequest, prompt_recv: &Receiver<String>) {
             // if the prompt is '+', we need to tell the kernel to emit an error
             trace!("Got R prompt '{}', marking request incomplete", prompt);
             kernel.report_incomplete_request(&req);
-        } else if prompt != default_prompt {
-            // if the prompt isn't the default, then it's likely a prompt from
-            // R's `readline()` or similar; request input from the user.
-            kernel.request_input(&prompt);
         } else {
-            // for all other prompts, we can assume the request is complete
-            trace!("Got R prompt '{}', finishing execution request", prompt);
-            kernel.finish_request()
+            if let Some(default) = default_prompt {
+                if prompt != default {
+                    // if the prompt isn't the default, then it's likely a prompt from
+                    // R's `readline()` or similar; request input from the user.
+                    trace!("Got R prompt '{}', asking user for input", prompt);
+                    kernel.request_input(&prompt);
+                } else {
+                    // Default prompt, finishing request
+                    trace!("Got R prompt '{}', completing execution", prompt);
+                    kernel.finish_request()
+                }
+            } else {
+                // for all other prompts, we can assume the request is complete
+                trace!("Got R prompt '{}', finishing execution request", prompt);
+                kernel.finish_request()
+            }
         }
     }
 }
