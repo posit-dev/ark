@@ -10,3 +10,4 @@ pub mod heartbeat;
 pub mod iopub;
 pub mod shell;
 pub mod socket;
+pub mod stdin;

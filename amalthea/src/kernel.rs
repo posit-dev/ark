@@ -16,6 +16,7 @@ use crate::socket::iopub::IOPub;
 use crate::socket::iopub::IOPubMessage;
 use crate::socket::shell::Shell;
 use crate::socket::socket::Socket;
+use crate::socket::stdin::Stdin;
 use std::sync::mpsc::{Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -86,6 +87,18 @@ impl Kernel {
         )?;
         thread::spawn(move || Self::heartbeat_thread(heartbeat_socket));
 
+        // Create the stdin socket and start a thread to listen for stdin
+        // messages. These are used by the kernel to request input from the
+        // user, and so flow in the opposite direction to the other sockets.
+        let stdin_socket = Socket::new(
+            self.session.clone(),
+            ctx.clone(),
+            String::from("Stdin"),
+            zmq::DEALER,
+            self.connection.endpoint(self.connection.stdin_port),
+        )?;
+        thread::spawn(move || Self::stdin_thread(stdin_socket));
+
         // Create the Control ROUTER/DEALER socket
         let control_socket = Socket::new(
             self.session.clone(),
@@ -95,7 +108,8 @@ impl Kernel {
             self.connection.endpoint(self.connection.control_port),
         )?;
 
-        // TODO: thread/join thread?
+        // TODO: thread/join thread? Exiting this thread will cause the whole
+        // kernel to exit.
         Self::control_thread(control_socket, control_handler);
         Ok(())
     }
@@ -126,8 +140,14 @@ impl Kernel {
 
     /// Starts the heartbeat thread.
     fn heartbeat_thread(socket: Socket) -> Result<(), Error> {
-        let mut heartbeat = Heartbeat::new(socket);
+        let heartbeat = Heartbeat::new(socket);
         heartbeat.listen();
+        Ok(())
+    }
+
+    fn stdin_thread(socket: Socket) -> Result<(), Error> {
+        let stdin = Stdin::new(socket);
+        stdin.listen();
         Ok(())
     }
 }
