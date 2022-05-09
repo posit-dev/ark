@@ -192,8 +192,17 @@ impl RKernel {
     }
 
     /// Requests input from the front end
-    pub fn request_input(&self, _prompt: &str) {
-        // TODO: This needs to deliver an `input_request` to the front end
+    pub fn request_input(&self, prompt: &str) {
+        if let Some(requestor) = &self.input_requestor {
+            requestor
+                .send(InputRequest {
+                    prompt: prompt.to_string(),
+                    password: false,
+                })
+                .unwrap();
+        } else {
+            warn!("Unable to request input: no input requestor set!");
+        }
     }
 
     fn emit_error(&self) {
