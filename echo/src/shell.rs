@@ -21,6 +21,7 @@ use amalthea::wire::execute_reply_exception::ExecuteReplyException;
 use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::execute_result::ExecuteResult;
 use amalthea::wire::input_reply::InputReply;
+use amalthea::wire::input_request::InputRequest;
 use amalthea::wire::inspect_reply::InspectReply;
 use amalthea::wire::inspect_request::InspectRequest;
 use amalthea::wire::is_complete_reply::IsComplete;
@@ -37,6 +38,7 @@ use std::sync::mpsc::SyncSender;
 
 pub struct Shell {
     iopub: SyncSender<IOPubMessage>,
+    input_sender: Option<SyncSender<InputRequest>>,
     execution_count: u32,
 }
 
@@ -45,6 +47,7 @@ impl Shell {
         Self {
             iopub: iopub,
             execution_count: 0,
+            input_sender: None,
         }
     }
 }
@@ -221,5 +224,9 @@ impl ShellHandler for Shell {
     async fn handle_input_reply(&self, _msg: &InputReply) -> Result<(), Exception> {
         // NYI
         Ok(())
+    }
+
+    fn establish_input_handler(&mut self, handler: SyncSender<InputRequest>) {
+        self.input_sender = Some(handler);
     }
 }
