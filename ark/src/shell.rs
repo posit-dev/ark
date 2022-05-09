@@ -22,6 +22,7 @@ use amalthea::wire::execute_reply_exception::ExecuteReplyException;
 use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::execute_response::ExecuteResponse;
 use amalthea::wire::input_reply::InputReply;
+use amalthea::wire::input_request::InputRequest;
 use amalthea::wire::inspect_reply::InspectReply;
 use amalthea::wire::inspect_request::InspectRequest;
 use amalthea::wire::is_complete_reply::IsComplete;
@@ -40,6 +41,7 @@ use std::thread;
 
 pub struct Shell {
     req_sender: SyncSender<RRequest>,
+    input_sender: Option<SyncSender<InputRequest>>,
     init_receiver: Arc<Mutex<Receiver<RKernelInfo>>>,
     kernel_info: Option<RKernelInfo>,
 }
@@ -54,6 +56,7 @@ impl Shell {
         Self {
             req_sender: req_sender,
             init_receiver: Arc::new(Mutex::new(init_receiver)),
+            input_sender: None,
             kernel_info: None,
         }
     }
@@ -252,5 +255,9 @@ impl ShellHandler for Shell {
     async fn handle_input_reply(&self, _msg: &InputReply) -> Result<(), Exception> {
         // NYI
         Ok(())
+    }
+
+    fn establish_input_handler(&mut self, handler: SyncSender<InputRequest>) {
+        self.input_sender = Some(handler);
     }
 }

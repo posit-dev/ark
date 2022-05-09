@@ -16,12 +16,15 @@ use crate::wire::execute_reply::ExecuteReply;
 use crate::wire::execute_reply_exception::ExecuteReplyException;
 use crate::wire::execute_request::ExecuteRequest;
 use crate::wire::input_reply::InputReply;
+use crate::wire::input_request::InputRequest;
 use crate::wire::inspect_reply::InspectReply;
 use crate::wire::inspect_request::InspectRequest;
 use crate::wire::is_complete_reply::IsCompleteReply;
 use crate::wire::is_complete_request::IsCompleteRequest;
 use crate::wire::kernel_info_reply::KernelInfoReply;
 use crate::wire::kernel_info_request::KernelInfoRequest;
+
+use std::sync::mpsc::SyncSender;
 
 use async_trait::async_trait;
 
@@ -88,4 +91,12 @@ pub trait ShellHandler: Send {
     ///
     /// https://jupyter-client.readthedocs.io/en/stable/messaging.html#messages-on-the-stdin-router-dealer-channel
     async fn handle_input_reply(&self, msg: &InputReply) -> Result<(), Exception>;
+
+    /// Establishes an input handler for the front end (from stdin socket); when
+    /// input is needed, the language runtime can request it by sending an
+    /// InputRequest to this channel. The front end will prompt the user for
+    /// input and deliver it via the `handle_input_reply` method.
+    ///
+    /// https://jupyter-client.readthedocs.io/en/stable/messaging.html#messages-on-the-stdin-router-dealer-channel
+    fn establish_input_handler(&mut self, handler: SyncSender<InputRequest>);
 }
