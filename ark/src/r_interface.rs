@@ -160,7 +160,10 @@ fn handle_execute_request(req: &RRequest, prompt_recv: &Receiver<String>) {
 
     // Wait for R to prompt us again. This signals that the
     // execution is finished and R is ready for input again.
-    let default_prompt = R!(getOption("prompt")).unwrap().as_str();
+    let mut default_prompt = None;
+    if let Ok(prompt) = R!(getOption("prompt")) {
+        default_prompt = prompt.as_str();
+    }
     trace!(
         "Waiting for R prompt signaling completion of execution (expected: '{:?}')",
         default_prompt
