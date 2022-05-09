@@ -194,6 +194,7 @@ impl RKernel {
     /// Requests input from the front end
     pub fn request_input(&self, prompt: &str) {
         if let Some(requestor) = &self.input_requestor {
+            trace!("Requesting input from front end for prompt: {}", prompt);
             requestor
                 .send(InputRequest {
                     prompt: prompt.to_string(),
@@ -282,6 +283,8 @@ impl RKernel {
         }
     }
 
+    /// Establishes the input handler for the kernel to request input from the
+    /// user
     pub fn establish_input_handler(&mut self, sender: SyncSender<InputRequest>) {
         self.input_requestor = Some(sender);
     }
