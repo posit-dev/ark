@@ -41,7 +41,6 @@ use std::thread;
 
 pub struct Shell {
     req_sender: SyncSender<RRequest>,
-    input_sender: Option<SyncSender<InputRequest>>,
     init_receiver: Arc<Mutex<Receiver<RKernelInfo>>>,
     kernel_info: Option<RKernelInfo>,
 }
@@ -56,7 +55,6 @@ impl Shell {
         Self {
             req_sender: req_sender,
             init_receiver: Arc::new(Mutex::new(init_receiver)),
-            input_sender: None,
             kernel_info: None,
         }
     }
@@ -258,6 +256,8 @@ impl ShellHandler for Shell {
     }
 
     fn establish_input_handler(&mut self, handler: SyncSender<InputRequest>) {
-        self.input_sender = Some(handler);
+        self.req_sender
+            .send(RRequest::EstablishInputChannel(handler))
+            .unwrap();
     }
 }

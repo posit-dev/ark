@@ -14,6 +14,7 @@ use amalthea::wire::execute_reply_exception::ExecuteReplyException;
 use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::execute_response::ExecuteResponse;
 use amalthea::wire::execute_result::ExecuteResult;
+use amalthea::wire::input_request::InputRequest;
 use amalthea::wire::jupyter_message::Status;
 use extendr_api::prelude::*;
 use log::{debug, trace, warn};
@@ -29,6 +30,7 @@ pub struct RKernel {
     output: String,
     error: String,
     response_sender: Option<Sender<ExecuteResponse>>,
+    input_requestor: Option<SyncSender<InputRequest>>,
     banner: String,
     initializing: bool,
 }
@@ -56,6 +58,7 @@ impl RKernel {
             initializing: true,
             initializer: initializer,
             response_sender: None,
+            input_requestor: None,
         }
     }
 
@@ -88,6 +91,7 @@ impl RKernel {
                     warn!("Error sending shutdown message to console: {}", err);
                 }
             }
+            RRequest::EstablishInputChannel(sender) => self.establish_input_handler(sender.clone()),
         }
     }
 
@@ -267,5 +271,9 @@ impl RKernel {
                 self.output.push_str(content);
             }
         }
+    }
+
+    pub fn establish_input_handler(&mut self, sender: SyncSender<InputRequest>) {
+        self.input_requestor = Some(sender);
     }
 }
