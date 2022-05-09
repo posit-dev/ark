@@ -148,15 +148,24 @@ pub fn start_r(
     }
 }
 
-fn handle_execute_request(req: &RRequest, prompt_recv: &Receiver<String>) {
-    use extendr_api::prelude::*;
-
-    // Service the execution request.
+fn handle_r_request(req: &RRequest, prompt_recv: &Receiver<String>) {
+    // Service the request.
     let mutex = unsafe { KERNEL.as_ref().unwrap() };
     {
         let mut kernel = mutex.lock().unwrap();
         kernel.fulfill_request(&req)
     }
+
+    // If this is an execution request, complete it by waiting for R to prompt
+    // us before we process another request
+    if let RRequest::ExecuteCode(_, _) = req {
+        complete_execute_request(req, prompt_recv);
+    }
+}
+
+fn complete_execute_request(req: &RRequest, prompt_recv: &Receiver<String>) {
+    use extendr_api::prelude::*;
+    let mutex = unsafe { KERNEL.as_ref().unwrap() };
 
     // Wait for R to prompt us again. This signals that the
     // execution is finished and R is ready for input again.
@@ -219,7 +228,7 @@ pub fn listen(exec_recv: Receiver<RRequest>, prompt_recv: Receiver<String>) {
     loop {
         // Wait for an execution request from the front end.
         match exec_recv.recv() {
-            Ok(req) => handle_execute_request(&req, &prompt_recv),
+            Ok(req) => handle_r_request(&req, &prompt_recv),
             Err(err) => warn!("Could not receive execution request from kernel: {}", err),
         }
     }
