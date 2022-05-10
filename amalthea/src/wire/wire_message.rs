@@ -181,7 +181,11 @@ impl WireMessage {
 
     /// Send this message to the given ZeroMQ socket.
     pub fn send(&self, socket: &Socket) -> Result<(), Error> {
-        trace!("Sending '{}' to front end", self.header.msg_type);
+        trace!(
+            "Sending '{}' to front end via {} socket",
+            self.header.msg_type,
+            socket.name
+        );
         // Serialize JSON values into byte parts in preparation for transmission
         let mut parts: Vec<Vec<u8>> = match self.to_raw_parts() {
             Ok(v) => v,
