@@ -94,7 +94,7 @@ impl Kernel {
             self.session.clone(),
             ctx.clone(),
             String::from("Stdin"),
-            zmq::DEALER,
+            zmq::ROUTER,
             self.connection.endpoint(self.connection.stdin_port),
         )?;
         let shell_clone = shell_handler.clone();
