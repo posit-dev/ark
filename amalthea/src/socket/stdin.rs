@@ -51,8 +51,10 @@ impl Stdin {
     pub fn listen_backend(handler: Arc<Mutex<dyn ShellHandler>>, socket: Socket) {
         // Create the communication channel for the shell handler and inject it
         let (sender, receiver) = sync_channel::<InputRequest>(1);
-        let mut shell_handler = handler.lock().unwrap();
-        shell_handler.establish_input_handler(sender);
+        {
+            let mut shell_handler = handler.lock().unwrap();
+            shell_handler.establish_input_handler(sender);
+        }
 
         // Listen for input requests from the back end
         loop {
