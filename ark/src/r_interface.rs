@@ -169,19 +169,21 @@ fn complete_execute_request(req: &RRequest, prompt_recv: &Receiver<String>) {
 
     // Wait for R to prompt us again. This signals that the
     // execution is finished and R is ready for input again.
-    let mut default_prompt = None;
-    if let Ok(prompt) = R!(getOption("prompt")) {
-        default_prompt = prompt.as_str();
-    }
-    trace!(
-        "Waiting for R prompt signaling completion of execution (expected: '{:?}')",
-        default_prompt
-    );
+    trace!("Waiting for R prompt signaling completion of execution...");
     let prompt = prompt_recv.recv().unwrap();
 
     // Tell the kernel to complete the execution request.
     {
         let kernel = mutex.lock().unwrap();
+
+        // Figure out what the ordinary prompt looks like.
+        let default_prompt = match R!(getOption("prompt")) {
+            Ok(prompt) => prompt.as_str(),
+            Err(err) => {
+                warn!("Failed to get R prompt: {}", err);
+                None
+            }
+        };
 
         if prompt.starts_with("+") {
             // if the prompt is '+', we need to tell the kernel to emit an error
