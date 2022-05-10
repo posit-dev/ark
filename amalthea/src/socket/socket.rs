@@ -21,11 +21,12 @@ pub struct Socket {
     /// the session ID and HMAC signing key
     pub session: Session,
 
+    /// The name of the socket; used only to give context to debugging/trace
+    /// messages
+    pub name: String,
+
     /// A ZeroMQ socket over which signed messages are to be sent/received
     socket: Arc<Mutex<zmq::Socket>>,
-
-    /// The name of the socket; used to give context to debugging/trace messages
-    name: String,
 }
 
 impl Socket {
