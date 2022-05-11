@@ -196,6 +196,7 @@ fn complete_execute_request(req: &RRequest, prompt_recv: &Receiver<String>) {
                     // R's `readline()` or similar; request input from the user.
                     trace!("Got R prompt '{}', asking user for input", prompt);
                     kernel.request_input(&prompt);
+                    trace!("Input requested, waiting for reply...");
                 } else {
                     // Default prompt, finishing request
                     trace!("Got R prompt '{}', completing execution", prompt);
