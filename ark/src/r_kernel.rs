@@ -204,6 +204,17 @@ impl RKernel {
         } else {
             warn!("Unable to request input: no input requestor set!");
         }
+
+        // Send an execute reply to the front end
+        if let Some(sender) = &self.response_sender {
+            sender
+                .send(ExecuteResponse::Reply(ExecuteReply {
+                    status: Status::Ok,
+                    execution_count: self.execution_count,
+                    user_expressions: json!({}),
+                }))
+                .unwrap();
+        }
     }
 
     fn emit_error(&self) {
