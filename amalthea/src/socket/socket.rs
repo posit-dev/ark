@@ -44,17 +44,31 @@ impl Socket {
             Err(err) => return Err(Error::CreateSocketFailed(name, err)),
         };
 
-        // Bind the socket to the requested endpoint
-        trace!("Binding to ZeroMQ '{}' socket at {}", name, endpoint);
-        if let Err(err) = socket.bind(&endpoint) {
-            return Err(Error::SocketBindError(name, endpoint, err));
+        // One side of a socket must `bind()` to its endpoint, and the other
+        // side must `connect()` to the same endpoint. The `bind()` side
+        // will be the server, and the `connect()` side will be the client.
+        match kind {
+            zmq::SocketType::ROUTER | zmq::SocketType::PUB | zmq::SocketType::REP => {
+                trace!("Binding to ZeroMQ '{}' socket at {}", name, endpoint);
+                if let Err(err) = socket.bind(&endpoint) {
+                    return Err(Error::SocketBindError(name, endpoint, err));
+                }
+            }
+            zmq::SocketType::DEALER | zmq::SocketType::SUB | zmq::SocketType::REQ => {
+                // Bind the socket to the requested endpoint
+                trace!("Connecting to ZeroMQ '{}' socket at {}", name, endpoint);
+                if let Err(err) = socket.connect(&endpoint) {
+                    return Err(Error::SocketConnectError(name, endpoint, err));
+                }
+            }
+            _ => return Err(Error::UnsupportedSocketType(kind)),
         }
 
         // Create a new mutex and return
         Ok(Self {
             socket: Arc::new(Mutex::new(socket)),
-            session: session,
-            name: name,
+            session,
+            name,
         })
     }
 
