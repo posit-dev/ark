@@ -115,6 +115,11 @@ impl Frontend {
         Message::read_from_socket(&self.shell_socket).unwrap()
     }
 
+    /// Receives a message from the IOPub socket
+    pub fn receive_iopub(&self) -> Message {
+        Message::read_from_socket(&self.iopub_socket).unwrap()
+    }
+
     pub fn get_connection_file(&self) -> ConnectionFile {
         ConnectionFile {
             control_port: self.control_port,
