@@ -16,10 +16,15 @@ pub struct Frontend {
     session: Session,
     receiver: Receiver<Message>,
     key: String,
+    control_port: u16,
     control_socket: Socket,
+    shell_port: u16,
     shell_socket: Socket,
+    iopub_port: u16,
     iopub_socket: Socket,
+    stdin_port: u16,
     stdin_socket: Socket,
+    heartbeat_port: u16,
     heartbeat_socket: Socket,
 }
 
@@ -39,71 +44,81 @@ impl Frontend {
 
         let ctx = zmq::Context::new();
 
+        let control_port = portpicker::pick_unused_port().unwrap();
         let control = Socket::new(
             session.clone(),
             ctx.clone(),
             String::from("Control"),
             zmq::DEALER,
-            String::from("tcp://127.0.0.1:8080/"),
+            format!("tcp://127.0.0.1:{}/", control_port),
         )
         .unwrap();
         let control_socket = control.clone();
         let control_sender = sender.clone();
         thread::spawn(move || Self::message_proxy_thread(control_socket, control_sender));
 
+        let shell_port = portpicker::pick_unused_port().unwrap();
         let shell = Socket::new(
             session.clone(),
             ctx.clone(),
             String::from("Shell"),
             zmq::DEALER,
-            String::from("tcp://127.0.0.1:8081/"),
+            format!("tcp://127.0.0.1:{}/", shell_port),
         )
         .unwrap();
         let shell_socket = shell.clone();
         let shell_sender = sender.clone();
         thread::spawn(move || Self::message_proxy_thread(shell_socket, shell_sender));
 
+        let iopub_port = portpicker::pick_unused_port().unwrap();
         let iopub = Socket::new(
             session.clone(),
             ctx.clone(),
             String::from("IOPub"),
             zmq::PUB,
-            String::from("tcp://127.0.0.1:8082/"),
+            format!("tcp://127.0.0.1:{}/", iopub_port),
         )
         .unwrap();
         let iopub_socket = iopub.clone();
         let iopub_sender = sender.clone();
         thread::spawn(move || Self::message_proxy_thread(iopub_socket, iopub_sender));
 
+        let stdin_port = portpicker::pick_unused_port().unwrap();
         let stdin = Socket::new(
             session.clone(),
             ctx.clone(),
             String::from("Stdin"),
             zmq::DEALER,
-            String::from("tcp://127.0.0.1:8083/"),
+            format!("tcp://127.0.0.1:{}/", stdin_port),
         )
         .unwrap();
         let stdin_socket = stdin.clone();
         let stdin_sender = sender.clone();
         thread::spawn(move || Self::message_proxy_thread(stdin_socket, stdin_sender));
 
+        let heartbeat_port = portpicker::pick_unused_port().unwrap();
         let heartbeat = Socket::new(
             session.clone(),
             ctx.clone(),
             String::from("Heartbeat"),
             zmq::REQ,
-            String::from("tcp://127.0.0.1:8084/"),
+            format!("tcp://127.0.0.1:{}/", heartbeat_port),
         )
         .unwrap();
 
         Self {
-            session: session,
-            receiver: receiver,
-            key: key,
+            session,
+            receiver,
+            key,
+            control_port,
             control_socket: control,
+            shell_port,
             shell_socket: shell,
+            iopub_port,
             iopub_socket: iopub,
+            stdin_port,
             stdin_socket: stdin,
+            heartbeat_port,
             heartbeat_socket: heartbeat,
         }
     }
@@ -121,11 +136,11 @@ impl Frontend {
 
     pub fn get_connection_file(&self) -> ConnectionFile {
         ConnectionFile {
-            control_port: 8080,
-            shell_port: 8081,
-            stdin_port: 8082,
-            iopub_port: 8083,
-            hb_port: 8084,
+            control_port: self.control_port,
+            shell_port: self.shell_port,
+            stdin_port: self.stdin_port,
+            iopub_port: self.iopub_port,
+            hb_port: self.heartbeat_port,
             transport: String::from("tcp"),
             signature_scheme: String::from("hmac-sha256"),
             ip: String::from("127.0.0.1"),
