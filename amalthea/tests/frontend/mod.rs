@@ -8,13 +8,19 @@
 use amalthea::connection_file::ConnectionFile;
 use amalthea::session::Session;
 use amalthea::socket::socket::Socket;
-use amalthea::wire::jupyter_message::Message;
+use amalthea::wire::jupyter_message::{JupyterMessage, Message, ProtocolMessage};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
 
 pub struct Frontend {
     session: Session,
+    receiver: Receiver<Message>,
     key: String,
+    control_socket: Socket,
+    shell_socket: Socket,
+    iopub_socket: Socket,
+    stdin_socket: Socket,
+    heartbeat_socket: Socket,
 }
 
 impl Frontend {
@@ -41,8 +47,9 @@ impl Frontend {
             String::from("tcp://127.0.0.1:8080/"),
         )
         .unwrap();
+        let control_socket = control.clone();
         let control_sender = sender.clone();
-        thread::spawn(move || Self::message_proxy_thread(control, control_sender));
+        thread::spawn(move || Self::message_proxy_thread(control_socket, control_sender));
 
         let shell = Socket::new(
             session.clone(),
@@ -52,8 +59,9 @@ impl Frontend {
             String::from("tcp://127.0.0.1:8081/"),
         )
         .unwrap();
+        let shell_socket = shell.clone();
         let shell_sender = sender.clone();
-        thread::spawn(move || Self::message_proxy_thread(shell, shell_sender));
+        thread::spawn(move || Self::message_proxy_thread(shell_socket, shell_sender));
 
         let iopub = Socket::new(
             session.clone(),
@@ -63,8 +71,9 @@ impl Frontend {
             String::from("tcp://127.0.0.1:8082/"),
         )
         .unwrap();
+        let iopub_socket = iopub.clone();
         let iopub_sender = sender.clone();
-        thread::spawn(move || Self::message_proxy_thread(iopub, iopub_sender));
+        thread::spawn(move || Self::message_proxy_thread(iopub_socket, iopub_sender));
 
         let stdin = Socket::new(
             session.clone(),
@@ -74,8 +83,9 @@ impl Frontend {
             String::from("tcp://127.0.0.1:8083/"),
         )
         .unwrap();
+        let stdin_socket = stdin.clone();
         let stdin_sender = sender.clone();
-        thread::spawn(move || Self::message_proxy_thread(stdin, stdin_sender));
+        thread::spawn(move || Self::message_proxy_thread(stdin_socket, stdin_sender));
 
         let heartbeat = Socket::new(
             session.clone(),
@@ -88,8 +98,25 @@ impl Frontend {
 
         Self {
             session: session,
+            receiver: receiver,
             key: key,
+            control_socket: control,
+            shell_socket: shell,
+            iopub_socket: iopub,
+            stdin_socket: stdin,
+            heartbeat_socket: heartbeat,
         }
+    }
+
+    /// Receives and returns the next message from the kernel (from any socket)
+    pub fn receive(&self) -> Message {
+        self.receiver.recv().unwrap()
+    }
+
+    /// Sends a message on the Shell socket
+    pub fn send_shell<T: ProtocolMessage>(&self, msg: T) {
+        let message = JupyterMessage::create(msg, None, &self.session);
+        message.send(&self.shell_socket).unwrap();
     }
 
     pub fn get_connection_file(&self) -> ConnectionFile {
