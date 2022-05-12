@@ -7,10 +7,13 @@
 
 use amalthea::kernel::Kernel;
 use amalthea::socket::iopub::IOPubMessage;
-use amalthea::wire::jupyter_message::Message;
+use amalthea::wire::execute_reply::ExecuteReply;
+use amalthea::wire::execute_request::ExecuteRequest;
+use amalthea::wire::jupyter_message::{Message, Status};
 use amalthea::wire::kernel_info_request::KernelInfoRequest;
 use env_logger;
 use log::info;
+use serde_json;
 use std::sync::mpsc::sync_channel;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -51,9 +54,9 @@ fn test_kernel() {
             .unwrap();
     });
 
-    // Ask the kernel for the kernel info
+    // Ask the kernel for the kernel info. This should return an object with the
+    // language "Test" defined in our shell handler.
     frontend.send_shell(KernelInfoRequest {});
-
     let reply = frontend.receive_shell();
     match reply {
         Message::KernelInfoReply(reply) => {
@@ -64,4 +67,31 @@ fn test_kernel() {
             panic!("Unexpected message received: {:?}", reply);
         }
     }
+
+    // Ask the kernel to execute some code
+    frontend.send_shell(ExecuteRequest {
+        code: "42".to_string(),
+        silent: false,
+        store_history: true,
+        user_expressions: serde_json::Value::Null,
+        allow_stdin: false,
+        stop_on_error: false,
+    });
+
+    // The kernel should send an execute reply message indicating that the execute succeeded
+    let reply = frontend.receive_shell();
+    match reply {
+        Message::ExecuteReply(reply) => {
+            assert_eq!(reply.content.status, Status::Ok);
+        }
+        _ => {
+            panic!("Unexpected execute reply received: {:?}", reply);
+        }
+    }
+
+    // The IOPub channel should receive four messages, in this order:
+    // 1. A message indicating that the kernel has entered the busy state
+    // 2. A message re-broadcasting the input
+    // 3. A message with the result of the execution
+    // 3. A message indicating that the kernel has exited the busy state
 }
