@@ -237,9 +237,9 @@ impl WireMessage {
 
 // Conversion: WireMessage (untyped) -> JupyterMessage (typed); used on
 // messages we receive over the wire to parse into the correct type.
-impl<T: ProtocolMessage + DeserializeOwned> TryFrom<WireMessage> for JupyterMessage<T> {
+impl<T: ProtocolMessage + DeserializeOwned> TryFrom<&WireMessage> for JupyterMessage<T> {
     type Error = crate::error::Error;
-    fn try_from(msg: WireMessage) -> Result<JupyterMessage<T>, Error> {
+    fn try_from(msg: &WireMessage) -> Result<JupyterMessage<T>, Error> {
         let content = match serde_json::from_value(msg.content.clone()) {
             Ok(val) => val,
             Err(err) => {
@@ -261,23 +261,23 @@ impl<T: ProtocolMessage + DeserializeOwned> TryFrom<WireMessage> for JupyterMess
 
 // Conversion: JupyterMessage (typed) -> WireMessage (untyped); used prior to
 // sending messages to get them ready for dispatch.
-impl<T: ProtocolMessage> TryFrom<JupyterMessage<T>> for WireMessage {
+impl<T: ProtocolMessage> TryFrom<&JupyterMessage<T>> for WireMessage {
     type Error = crate::error::Error;
 
     /// Convert a typed JupyterMessage into a WireMessage, preserving ZeroMQ
     /// socket identities.
-    fn try_from(msg: JupyterMessage<T>) -> Result<Self, Error>
+    fn try_from(msg: &JupyterMessage<T>) -> Result<Self, Error>
     where
         T: ProtocolMessage,
     {
-        let content = match serde_json::to_value(msg.content) {
+        let content = match serde_json::to_value(msg.content.clone()) {
             Ok(val) => val,
             Err(err) => return Err(Error::CannotSerialize(err)),
         };
         Ok(Self {
             zmq_identities: msg.zmq_identities.clone(),
-            header: msg.header,
-            parent_header: msg.parent_header,
+            header: msg.header.clone(),
+            parent_header: msg.parent_header.clone(),
             metadata: json!({}),
             content: content,
         })
