@@ -88,7 +88,7 @@ impl WireMessage {
 
         // Parse the parent header.
         let parent: Option<JupyterHeader> = match parts[2].len() {
-            0 | 1 | 2 => {
+            0 | 1 | 2 | 4 => {
                 // If there is no meaningful content in the parent header
                 // buffer, we have no parent message, which is OK per the wire
                 // protocol.
