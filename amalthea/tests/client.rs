@@ -7,6 +7,8 @@
 
 use amalthea::kernel::Kernel;
 use amalthea::socket::iopub::IOPubMessage;
+use amalthea::wire::jupyter_message::{JupyterMessage, Message};
+use amalthea::wire::kernel_info_request::KernelInfoRequest;
 use log::{debug, error, info};
 use std::io::stdin;
 use std::sync::mpsc::sync_channel;
@@ -27,22 +29,23 @@ fn test_kernel() {
     let control = Arc::new(Mutex::new(control::Control {}));
     let frontend = frontend::Frontend::new();
 
-    let kernel = Kernel::new(frontend.get_connection_file());
-    match kernel {
-        Ok(k) => match k.connect(shell, control, iopub_sender, iopub_receiver) {
-            Ok(()) => {
-                let mut s = String::new();
-                println!("Kernel activated, press Ctrl+C to end ");
-                if let Err(err) = stdin().read_line(&mut s) {
-                    error!("Could not read from stdin: {}", err);
-                }
-            }
-            Err(err) => {
-                error!("Couldn't connect to front end: {:?}", err);
-            }
-        },
-        Err(err) => {
-            error!("Couldn't create kernel: {:?}", err);
+    // Create and connect the kernel to the front end
+    let kernel = Kernel::new(frontend.get_connection_file()).unwrap();
+    kernel
+        .connect(shell, control, iopub_sender, iopub_receiver)
+        .unwrap();
+
+    // Ask the kernel for the kernel info
+    frontend.send_shell(KernelInfoRequest {});
+
+    let reply = frontend.receive();
+    match reply {
+        Message::KernelInfoReply(reply) => {
+            info!("Kernel info: {:?}", reply);
+            assert_eq!(reply.content.language_info.name, "Test");
+        }
+        _ => {
+            panic!("Unexpected message received: {:?}", reply);
         }
     }
 }
