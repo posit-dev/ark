@@ -8,14 +8,13 @@
 use amalthea::connection_file::ConnectionFile;
 use amalthea::session::Session;
 use amalthea::socket::socket::Socket;
+use amalthea::wire::jupyter_message::Message;
+use std::sync::mpsc::{channel, Receiver, Sender};
+use std::thread;
 
 pub struct Frontend {
     session: Session,
-    control_socket: Socket,
-    shell_socket: Socket,
-    iopub_socket: Socket,
-    stdin_socket: Socket,
-    heartbeat_socket: Socket,
+    key: String,
 }
 
 impl Frontend {
@@ -27,7 +26,10 @@ impl Frontend {
         let key = hex::encode(key_bytes);
 
         // Create a new kernel session from the key
-        let session = Session::create(key).unwrap();
+        let session = Session::create(key.clone()).unwrap();
+
+        // Create an MPSC channel for receiving kernel messages.
+        let (sender, receiver) = channel::<Message>();
 
         let ctx = zmq::Context::new();
 
@@ -39,6 +41,8 @@ impl Frontend {
             String::from("tcp://127.0.0.1:8080/"),
         )
         .unwrap();
+        let control_sender = sender.clone();
+        thread::spawn(move || Self::message_proxy_thread(control, control_sender));
 
         let shell = Socket::new(
             session.clone(),
@@ -48,6 +52,8 @@ impl Frontend {
             String::from("tcp://127.0.0.1:8081/"),
         )
         .unwrap();
+        let shell_sender = sender.clone();
+        thread::spawn(move || Self::message_proxy_thread(shell, shell_sender));
 
         let iopub = Socket::new(
             session.clone(),
@@ -57,6 +63,8 @@ impl Frontend {
             String::from("tcp://127.0.0.1:8082/"),
         )
         .unwrap();
+        let iopub_sender = sender.clone();
+        thread::spawn(move || Self::message_proxy_thread(iopub, iopub_sender));
 
         let stdin = Socket::new(
             session.clone(),
@@ -66,6 +74,8 @@ impl Frontend {
             String::from("tcp://127.0.0.1:8083/"),
         )
         .unwrap();
+        let stdin_sender = sender.clone();
+        thread::spawn(move || Self::message_proxy_thread(stdin, stdin_sender));
 
         let heartbeat = Socket::new(
             session.clone(),
@@ -78,11 +88,7 @@ impl Frontend {
 
         Self {
             session: session,
-            control_socket: control,
-            shell_socket: shell,
-            iopub_socket: iopub,
-            stdin_socket: stdin,
-            heartbeat_socket: heartbeat,
+            key: key,
         }
     }
 
@@ -96,7 +102,21 @@ impl Frontend {
             transport: String::from("tcp"),
             signature_scheme: String::from("hmac-sha256"),
             ip: String::from("127.0.0.1"),
-            key: String::from(""), // TODO: generate this!
+            key: self.key.clone(),
+        }
+    }
+
+    /// Runs on a thread to accept messages from a ZeroMQ socket connected to
+    /// the kernel and funnel them into an MPSC channel.
+    fn message_proxy_thread(socket: Socket, sender: Sender<Message>) {
+        loop {
+            let message = match Message::read_from_socket(&socket) {
+                Ok(m) => m,
+                Err(err) => {
+                    panic!("Could not read message from socket proxy: {}", err);
+                }
+            };
+            sender.send(message).unwrap();
         }
     }
 }
