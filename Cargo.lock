@@ -25,6 +25,7 @@ dependencies = [
  "hex",
  "hmac",
  "log",
+ "portpicker",
  "rand",
  "serde",
  "serde_json",
@@ -673,6 +674,15 @@ name = "pkg-config"
 version = "0.3.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "58893f751c9b0412871a09abd62ecd2a00298c6c83befa223ef98c52aef40cbe"
+
+[[package]]
+name = "portpicker"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "be97d76faf1bfab666e1375477b23fde79eccf0276e9b63b92a39d676a889ba9"
+dependencies = [
+ "rand",
+]
 
 [[package]]
 name = "ppv-lite86"
