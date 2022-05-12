@@ -11,6 +11,7 @@ use amalthea::wire::execute_reply::ExecuteReply;
 use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::jupyter_message::{Message, Status};
 use amalthea::wire::kernel_info_request::KernelInfoRequest;
+use amalthea::wire::status::ExecutionState;
 use env_logger;
 use log::info;
 use serde_json;
@@ -94,4 +95,15 @@ fn test_kernel() {
     // 2. A message re-broadcasting the input
     // 3. A message with the result of the execution
     // 3. A message indicating that the kernel has exited the busy state
+
+    // The first message should be an execution state message
+    let iopub_1 = frontend.receive_iopub();
+    match iopub_1 {
+        Message::Status(status) => {
+            assert_eq!(status.content.execution_state, ExecutionState::Busy);
+        }
+        _ => {
+            panic!("Unexpected message received: {:?}", iopub_1);
+        }
+    }
 }
