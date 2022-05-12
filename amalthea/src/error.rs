@@ -30,6 +30,8 @@ pub enum Error {
     HmacKeyInvalid(String, crypto_common::InvalidLength),
     CreateSocketFailed(String, zmq::Error),
     SocketBindError(String, String, zmq::Error),
+    SocketConnectError(String, String, zmq::Error),
+    UnsupportedSocketType(zmq::SocketType),
     UnsupportedMessage(Message, String),
     SendError(String),
     ReceiveError(String),
@@ -129,6 +131,20 @@ impl fmt::Display for Error {
                     f,
                     "Could not bind to ZeroMQ socket '{}' at '{}': {}",
                     name, endpoint, err
+                )
+            }
+            Error::SocketConnectError(name, endpoint, err) => {
+                write!(
+                    f,
+                    "Could not connect to ZeroMQ socket '{}' at '{}': {}",
+                    name, endpoint, err
+                )
+            }
+            Error::UnsupportedSocketType(socket_type) => {
+                write!(
+                    f,
+                    "Attempt to create unsupported ZeroMQ socket type: {:?}",
+                    socket_type
                 )
             }
             Error::UnsupportedMessage(msg, socket) => {
