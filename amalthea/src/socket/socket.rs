@@ -64,6 +64,15 @@ impl Socket {
             _ => return Err(Error::UnsupportedSocketType(kind)),
         }
 
+        // Currently, all SUB sockets subscribe to all topics; in theory
+        // frontends could subscribe selectively, but in practice all known
+        // Jupyter frontends subscribe to all topics.
+        if kind == zmq::SocketType::SUB {
+            if let Err(err) = socket.set_subscribe(b"") {
+                return Err(Error::SocketConnectError(name, endpoint, err));
+            }
+        }
+
         // Create a new mutex and return
         Ok(Self {
             socket: Arc::new(Mutex::new(socket)),
