@@ -50,7 +50,7 @@ impl Frontend {
             ctx.clone(),
             String::from("Control"),
             zmq::DEALER,
-            format!("tcp://127.0.0.1:{}/", control_port),
+            format!("tcp://127.0.0.1:{}", control_port),
         )
         .unwrap();
         let control_socket = control.clone();
@@ -63,7 +63,7 @@ impl Frontend {
             ctx.clone(),
             String::from("Shell"),
             zmq::DEALER,
-            format!("tcp://127.0.0.1:{}/", shell_port),
+            format!("tcp://127.0.0.1:{}", shell_port),
         )
         .unwrap();
         let shell_socket = shell.clone();
@@ -76,7 +76,7 @@ impl Frontend {
             ctx.clone(),
             String::from("IOPub"),
             zmq::PUB,
-            format!("tcp://127.0.0.1:{}/", iopub_port),
+            format!("tcp://127.0.0.1:{}", iopub_port),
         )
         .unwrap();
         let iopub_socket = iopub.clone();
@@ -89,7 +89,7 @@ impl Frontend {
             ctx.clone(),
             String::from("Stdin"),
             zmq::DEALER,
-            format!("tcp://127.0.0.1:{}/", stdin_port),
+            format!("tcp://127.0.0.1:{}", stdin_port),
         )
         .unwrap();
         let stdin_socket = stdin.clone();
@@ -102,7 +102,7 @@ impl Frontend {
             ctx.clone(),
             String::from("Heartbeat"),
             zmq::REQ,
-            format!("tcp://127.0.0.1:{}/", heartbeat_port),
+            format!("tcp://127.0.0.1:{}", heartbeat_port),
         )
         .unwrap();
 
