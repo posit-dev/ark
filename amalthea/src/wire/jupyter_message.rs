@@ -102,7 +102,42 @@ pub enum Status {
     Error,
 }
 
-impl TryFrom<WireMessage> for Message {
+/// Conversion from a `Message` to a `WireMessage`; used to send messages over a
+/// socket
+impl TryFrom<&Message> for WireMessage {
+    type Error = crate::error::Error;
+
+    fn try_from(msg: &Message) -> Result<Self, Error> {
+        match msg {
+            Message::CompleteReply(msg) => WireMessage::try_from(msg),
+            Message::CompleteRequest(msg) => WireMessage::try_from(msg),
+            Message::ExecuteReply(msg) => WireMessage::try_from(msg),
+            Message::ExecuteReplyException(msg) => WireMessage::try_from(msg),
+            Message::ExecuteRequest(msg) => WireMessage::try_from(msg),
+            Message::ExecuteResult(msg) => WireMessage::try_from(msg),
+            Message::ExecuteError(msg) => WireMessage::try_from(msg),
+            Message::ExecuteInput(msg) => WireMessage::try_from(msg),
+            Message::InputReply(msg) => WireMessage::try_from(msg),
+            Message::InputRequest(msg) => WireMessage::try_from(msg),
+            Message::InspectReply(msg) => WireMessage::try_from(msg),
+            Message::InspectRequest(msg) => WireMessage::try_from(msg),
+            Message::InterruptReply(msg) => WireMessage::try_from(msg),
+            Message::InterruptRequest(msg) => WireMessage::try_from(msg),
+            Message::IsCompleteReply(msg) => WireMessage::try_from(msg),
+            Message::IsCompleteRequest(msg) => WireMessage::try_from(msg),
+            Message::KernelInfoReply(msg) => WireMessage::try_from(msg),
+            Message::KernelInfoRequest(msg) => WireMessage::try_from(msg),
+            Message::ShutdownRequest(msg) => WireMessage::try_from(msg),
+            Message::Status(msg) => WireMessage::try_from(msg),
+            Message::CommInfoReply(msg) => WireMessage::try_from(msg),
+            Message::CommInfoRequest(msg) => WireMessage::try_from(msg),
+            Message::CommOpen(msg) => WireMessage::try_from(msg),
+            Message::CommMsg(msg) => WireMessage::try_from(msg),
+        }
+    }
+}
+
+impl TryFrom<&WireMessage> for Message {
     type Error = crate::error::Error;
 
     /// Converts from a wire message to a Jupyter message by examining the message
@@ -111,7 +146,7 @@ impl TryFrom<WireMessage> for Message {
     ///
     /// Note that not all message types are supported here; this handles only
     /// messages that are received from the front end.
-    fn try_from(msg: WireMessage) -> Result<Self, Error> {
+    fn try_from(msg: &WireMessage) -> Result<Self, Error> {
         let kind = msg.header.msg_type.clone();
         if kind == KernelInfoRequest::message_type() {
             return Ok(Message::KernelInfoRequest(JupyterMessage::try_from(msg)?));
@@ -165,7 +200,13 @@ impl TryFrom<WireMessage> for Message {
 impl Message {
     pub fn read_from_socket(socket: &Socket) -> Result<Self, Error> {
         let msg = WireMessage::read_from_socket(socket)?;
-        Message::try_from(msg)
+        Message::try_from(&msg)
+    }
+
+    pub fn send(&self, socket: &Socket) -> Result<(), Error> {
+        let msg = WireMessage::try_from(self)?;
+        msg.send(socket)?;
+        Ok(())
     }
 }
 
@@ -175,7 +216,7 @@ where
 {
     /// Sends this Jupyter message to the designated ZeroMQ socket.
     pub fn send(self, socket: &Socket) -> Result<(), Error> {
-        let msg = WireMessage::try_from(self)?;
+        let msg = WireMessage::try_from(&self)?;
         msg.send(socket)?;
         Ok(())
     }
@@ -223,7 +264,7 @@ where
         session: &Session,
     ) -> Result<WireMessage, Error> {
         let reply = self.create_reply(content, session);
-        WireMessage::try_from(reply)
+        WireMessage::try_from(&reply)
     }
 
     /// Create a reply to this message with the given content.
