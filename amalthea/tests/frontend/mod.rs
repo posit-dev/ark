@@ -104,6 +104,12 @@ impl Frontend {
         }
     }
 
+    /// Completes initialization of the front end (usually done after the kernel
+    /// is ready and connected)
+    pub fn complete_intialization(&self) {
+        self.iopub_socket.subscribe().unwrap();
+    }
+
     /// Sends a message on the Shell socket
     pub fn send_shell<T: ProtocolMessage>(&self, msg: T) {
         let message = JupyterMessage::create(msg, None, &self.session);
