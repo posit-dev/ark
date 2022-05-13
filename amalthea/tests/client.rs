@@ -99,18 +99,24 @@ fn test_kernel() {
     // Complete client initialization
     frontend.complete_intialization();
 
-    // The IOPub channel should receive four messages, in this order:
+    // The IOPub channel should receive six messages, in this order:
     // 1. A message indicating that the kernel has entered the busy state
-    // 2. A message re-broadcasting the input
-    // 3. A message with the result of the execution
-    // 3. A message indicating that the kernel has exited the busy state
+    //    (for the kernel_info_request)
+    // 2. A message indicating that the kernel has entered the idle state
+    //    (for the kernel_info_request)
+    // 3. A message indicating that the kernel has entered the busy state
+    //    (for the execute_request)
+    // 4. A message re-broadcasting the input
+    // 5. A message with the result of the execution
+    // 6. A message indicating that the kernel has exited the busy state
+    //    (for the execute_request)
 
-    // The first message should be an execution state message
-    info!("Waiting for IOPub execution information messsage 1 of 4: Status");
+    info!("Waiting for IOPub execution information messsage 1 of 6: Status");
     let iopub_1 = frontend.receive_iopub();
     match iopub_1 {
         Message::Status(status) => {
             info!("Got kernel status: {:?}", status);
+            // TODO: validate parent header
             assert_eq!(status.content.execution_state, ExecutionState::Busy);
         }
         _ => {
@@ -121,16 +127,76 @@ fn test_kernel() {
         }
     }
 
-    info!("Waiting for IOPub execution information messsage 2 of 4: Input Broadcast");
+    info!("Waiting for IOPub execution information messsage 2 of 6: Status");
     let iopub_2 = frontend.receive_iopub();
     match iopub_2 {
+        Message::Status(status) => {
+            info!("Got kernel status: {:?}", status);
+            // TODO: validate parent header
+            assert_eq!(status.content.execution_state, ExecutionState::Idle);
+        }
+        _ => {
+            panic!(
+                "Unexpected message received (expected status): {:?}",
+                iopub_2
+            );
+        }
+    }
+    info!("Waiting for IOPub execution information messsage 3 of 6: Status");
+    let iopub_3 = frontend.receive_iopub();
+    match iopub_3 {
+        Message::Status(status) => {
+            info!("Got kernel status: {:?}", status);
+            assert_eq!(status.content.execution_state, ExecutionState::Busy);
+        }
+        _ => {
+            panic!(
+                "Unexpected message received (expected status): {:?}",
+                iopub_3
+            );
+        }
+    }
+
+    info!("Waiting for IOPub execution information messsage 4 of 6: Input Broadcast");
+    let iopub_4 = frontend.receive_iopub();
+    match iopub_4 {
         Message::ExecuteInput(input) => {
+            info!("Got input rebroadcast: {:?}", input);
             assert_eq!(input.content.code, "42");
         }
         _ => {
             panic!(
                 "Unexpected message received (expected input rebroadcast): {:?}",
-                iopub_2
+                iopub_4
+            );
+        }
+    }
+
+    info!("Waiting for IOPub execution information messsage 5 of 6: Execution Result");
+    let iopub_5 = frontend.receive_iopub();
+    match iopub_5 {
+        Message::ExecuteResult(result) => {
+            info!("Got execution result: {:?}", result);
+        }
+        _ => {
+            panic!(
+                "Unexpected message received (expected execution result): {:?}",
+                iopub_5
+            );
+        }
+    }
+
+    info!("Waiting for IOPub execution information messsage 6 of 6: Status");
+    let iopub_6 = frontend.receive_iopub();
+    match iopub_6 {
+        Message::Status(status) => {
+            info!("Got kernel status: {:?}", status);
+            assert_eq!(status.content.execution_state, ExecutionState::Idle);
+        }
+        _ => {
+            panic!(
+                "Unexpected message received (expected status): {:?}",
+                iopub_6
             );
         }
     }
