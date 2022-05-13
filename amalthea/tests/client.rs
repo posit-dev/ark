@@ -96,6 +96,9 @@ fn test_kernel() {
         }
     }
 
+    // Complete client initialization
+    frontend.complete_intialization();
+
     // The IOPub channel should receive four messages, in this order:
     // 1. A message indicating that the kernel has entered the busy state
     // 2. A message re-broadcasting the input
