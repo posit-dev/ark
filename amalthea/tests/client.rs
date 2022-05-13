@@ -57,11 +57,14 @@ fn test_kernel() {
 
     // Ask the kernel for the kernel info. This should return an object with the
     // language "Test" defined in our shell handler.
+    info!("Requesting kernel information");
     frontend.send_shell(KernelInfoRequest {});
+
+    info!("Waiting for kernel info reply");
     let reply = frontend.receive_shell();
     match reply {
         Message::KernelInfoReply(reply) => {
-            info!("Kernel info: {:?}", reply);
+            info!("Kernel info received: {:?}", reply);
             assert_eq!(reply.content.language_info.name, "Test");
         }
         _ => {
@@ -70,6 +73,7 @@ fn test_kernel() {
     }
 
     // Ask the kernel to execute some code
+    info!("Requesting execution of code '42'");
     frontend.send_shell(ExecuteRequest {
         code: "42".to_string(),
         silent: false,
@@ -80,9 +84,11 @@ fn test_kernel() {
     });
 
     // The kernel should send an execute reply message indicating that the execute succeeded
+    info!("Waiting for execute reply");
     let reply = frontend.receive_shell();
     match reply {
         Message::ExecuteReply(reply) => {
+            info!("Received execute reply: {:?}", reply);
             assert_eq!(reply.content.status, Status::Ok);
         }
         _ => {
@@ -97,13 +103,32 @@ fn test_kernel() {
     // 3. A message indicating that the kernel has exited the busy state
 
     // The first message should be an execution state message
+    info!("Waiting for IOPub execution information messsage 1 of 4: Status");
     let iopub_1 = frontend.receive_iopub();
     match iopub_1 {
         Message::Status(status) => {
+            info!("Got kernel status: {:?}", status);
             assert_eq!(status.content.execution_state, ExecutionState::Busy);
         }
         _ => {
-            panic!("Unexpected message received: {:?}", iopub_1);
+            panic!(
+                "Unexpected message received (expected status): {:?}",
+                iopub_1
+            );
+        }
+    }
+
+    info!("Waiting for IOPub execution information messsage 2 of 4: Input Broadcast");
+    let iopub_2 = frontend.receive_iopub();
+    match iopub_2 {
+        Message::ExecuteInput(input) => {
+            assert_eq!(input.content.code, "42");
+        }
+        _ => {
+            panic!(
+                "Unexpected message received (expected input rebroadcast): {:?}",
+                iopub_2
+            );
         }
     }
 }
