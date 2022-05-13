@@ -42,12 +42,27 @@ pub struct Shell {
     execution_count: u32,
 }
 
+/// Stub implementation of the shell handler for test harness
 impl Shell {
     pub fn new(iopub: SyncSender<IOPubMessage>) -> Self {
         Self {
             iopub: iopub,
             execution_count: 0,
             input_sender: None,
+        }
+    }
+
+    // Simluates an input request
+    fn prompt_for_input(&self) {
+        if let Some(sender) = &self.input_sender {
+            if let Err(err) = sender.send(InputRequest {
+                prompt: String::from("Amalthea Echo> "),
+                password: false,
+            }) {
+                warn!("Could not prompt for input: {}", err);
+            }
+        } else {
+            panic!("No input handler established!");
         }
     }
 }
@@ -139,6 +154,8 @@ impl ShellHandler for Shell {
             }
         }
 
+        // Keyword: "err"
+        //
         // Create an artificial error if the user requested one
         if req.code == "err" {
             let exception = Exception {
@@ -165,6 +182,13 @@ impl ShellHandler for Shell {
                 execution_count: self.execution_count,
                 exception: exception,
             });
+        }
+
+        // Keyword: "prompt"
+        //
+        // Create an artificial prompt for input
+        if req.code == "prompt" {
+            self.prompt_for_input();
         }
 
         // For this toy echo language, generate a result that's just the input
