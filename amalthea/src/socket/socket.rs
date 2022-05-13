@@ -64,15 +64,6 @@ impl Socket {
             _ => return Err(Error::UnsupportedSocketType(kind)),
         }
 
-        // Currently, all SUB sockets subscribe to all topics; in theory
-        // frontends could subscribe selectively, but in practice all known
-        // Jupyter frontends subscribe to all topics.
-        if kind == zmq::SocketType::SUB {
-            if let Err(err) = socket.set_subscribe(b"") {
-                return Err(Error::SocketConnectError(name, endpoint, err));
-            }
-        }
-
         // Create a new mutex and return
         Ok(Self {
             socket: Arc::new(Mutex::new(socket)),
@@ -146,6 +137,26 @@ impl Socket {
             Err(_) => Err(Error::CannotLockSocket(
                 self.name.clone(),
                 String::from("multipart send"),
+            )),
+        }
+    }
+
+    /// Subscribes a SUB socket to all the published messages from a PUB socket.
+    ///
+    /// Note that this needs to be called *after* the socket connection is
+    /// established on both ends.
+    pub fn subscribe(&self) -> Result<(), Error> {
+        // Currently, all SUB sockets subscribe to all topics; in theory
+        // frontends could subscribe selectively, but in practice all known
+        // Jupyter frontends subscribe to all topics.
+        match self.socket.lock() {
+            Ok(socket) => match socket.set_subscribe(b"") {
+                Ok(_) => Ok(()),
+                Err(err) => Err(Error::ZmqError(self.name.clone(), err)),
+            },
+            Err(_) => Err(Error::CannotLockSocket(
+                self.name.clone(),
+                String::from("SUB socket subscribe"),
             )),
         }
     }
