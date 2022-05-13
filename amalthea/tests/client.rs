@@ -7,8 +7,8 @@
 
 use amalthea::kernel::Kernel;
 use amalthea::socket::iopub::IOPubMessage;
-use amalthea::wire::execute_reply::ExecuteReply;
 use amalthea::wire::execute_request::ExecuteRequest;
+use amalthea::wire::input_reply::InputReply;
 use amalthea::wire::jupyter_message::{Message, Status};
 use amalthea::wire::kernel_info_request::KernelInfoRequest;
 use amalthea::wire::status::ExecutionState;
@@ -205,4 +205,36 @@ fn test_kernel() {
             );
         }
     }
+
+    info!("Sending request to generate an input prompt");
+    frontend.send_shell(ExecuteRequest {
+        code: "prompt".to_string(),
+        silent: false,
+        store_history: true,
+        user_expressions: serde_json::Value::Null,
+        allow_stdin: true,
+        stop_on_error: false,
+    });
+
+    info!("Waiting for kernel to send an input request");
+    let request = frontend.receive_stdin();
+    match request {
+        Message::InputRequest(request) => {
+            info!("Got input request: {:?}", request);
+            assert_eq!(request.content.prompt, "Amalthea Echo> ");
+        }
+        _ => {
+            panic!(
+                "Unexpected message received (expected input request): {:?}",
+                request
+            );
+        }
+    }
+
+    info!("Sending input to the kernel");
+    frontend.send_stdin(InputReply {
+        value: "42".to_string(),
+    });
+
+    // TODO: Consume the IOPub messages generated during the input request flow
 }

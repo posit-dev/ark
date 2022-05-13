@@ -116,6 +116,12 @@ impl Frontend {
         message.send(&self.shell_socket).unwrap();
     }
 
+    /// Sends a message on the Stdin socket
+    pub fn send_stdin<T: ProtocolMessage>(&self, msg: T) {
+        let message = JupyterMessage::create(msg, None, &self.session);
+        message.send(&self.stdin_socket).unwrap();
+    }
+
     /// Receives a message from the Shell socket
     pub fn receive_shell(&self) -> Message {
         Message::read_from_socket(&self.shell_socket).unwrap()
@@ -124,6 +130,11 @@ impl Frontend {
     /// Receives a message from the IOPub socket
     pub fn receive_iopub(&self) -> Message {
         Message::read_from_socket(&self.iopub_socket).unwrap()
+    }
+
+    /// Receives a message from the Stdin socket
+    pub fn receive_stdin(&self) -> Message {
+        Message::read_from_socket(&self.stdin_socket).unwrap()
     }
 
     pub fn get_connection_file(&self) -> ConnectionFile {
