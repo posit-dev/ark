@@ -55,6 +55,12 @@ fn test_kernel() {
             .unwrap();
     });
 
+    // Give the kernel a little time to start up
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    // Complete client initialization
+    frontend.complete_intialization();
+
     // Ask the kernel for the kernel info. This should return an object with the
     // language "Test" defined in our shell handler.
     info!("Requesting kernel information");
@@ -90,14 +96,12 @@ fn test_kernel() {
         Message::ExecuteReply(reply) => {
             info!("Received execute reply: {:?}", reply);
             assert_eq!(reply.content.status, Status::Ok);
+            assert_eq!(reply.content.execution_count, 1);
         }
         _ => {
             panic!("Unexpected execute reply received: {:?}", reply);
         }
     }
-
-    // Complete client initialization
-    frontend.complete_intialization();
 
     // The IOPub channel should receive six messages, in this order:
     // 1. A message indicating that the kernel has entered the busy state
@@ -142,6 +146,7 @@ fn test_kernel() {
             );
         }
     }
+
     info!("Waiting for IOPub execution information messsage 3 of 6: Status");
     let iopub_3 = frontend.receive_iopub();
     match iopub_3 {
