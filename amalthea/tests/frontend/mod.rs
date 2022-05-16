@@ -137,6 +137,8 @@ impl Frontend {
         Message::read_from_socket(&self.stdin_socket).unwrap()
     }
 
+    /// Gets a connection file for the Amalthea kernel that will connect it to
+    /// this synthetic front end.
     pub fn get_connection_file(&self) -> ConnectionFile {
         ConnectionFile {
             control_port: self.control_port,
