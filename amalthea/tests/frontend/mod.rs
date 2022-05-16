@@ -33,6 +33,10 @@ impl Frontend {
         let key_bytes = rand::thread_rng().gen::<[u8; 16]>();
         let key = hex::encode(key_bytes);
 
+        // Create a random socket identity for the shell and stdin sockets. Per
+        // the Jupyter specification, these must share a ZeroMQ identity.
+        let shell_id = rand::thread_rng().gen::<[u8; 16]>();
+
         // Create a new kernel session from the key
         let session = Session::create(key.clone()).unwrap();
 
@@ -44,6 +48,7 @@ impl Frontend {
             ctx.clone(),
             String::from("Control"),
             zmq::DEALER,
+            None,
             format!("tcp://127.0.0.1:{}", control_port),
         )
         .unwrap();
@@ -54,6 +59,7 @@ impl Frontend {
             ctx.clone(),
             String::from("Shell"),
             zmq::DEALER,
+            Some(&shell_id),
             format!("tcp://127.0.0.1:{}", shell_port),
         )
         .unwrap();
@@ -64,6 +70,7 @@ impl Frontend {
             ctx.clone(),
             String::from("IOPub"),
             zmq::SUB,
+            None,
             format!("tcp://127.0.0.1:{}", iopub_port),
         )
         .unwrap();
@@ -74,6 +81,7 @@ impl Frontend {
             ctx.clone(),
             String::from("Stdin"),
             zmq::DEALER,
+            Some(&shell_id),
             format!("tcp://127.0.0.1:{}", stdin_port),
         )
         .unwrap();
@@ -84,6 +92,7 @@ impl Frontend {
             ctx.clone(),
             String::from("Heartbeat"),
             zmq::REQ,
+            None,
             format!("tcp://127.0.0.1:{}", heartbeat_port),
         )
         .unwrap();

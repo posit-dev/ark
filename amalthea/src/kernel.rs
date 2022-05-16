@@ -59,6 +59,7 @@ impl Kernel {
             ctx.clone(),
             String::from("Shell"),
             zmq::ROUTER,
+            None,
             self.connection.endpoint(self.connection.shell_port),
         )?;
         let shell_clone = shell_handler.clone();
@@ -72,6 +73,7 @@ impl Kernel {
             ctx.clone(),
             String::from("IOPub"),
             zmq::PUB,
+            None,
             self.connection.endpoint(self.connection.iopub_port),
         )?;
         thread::spawn(move || Self::iopub_thread(iopub_socket, iopub_receiver));
@@ -83,6 +85,7 @@ impl Kernel {
             ctx.clone(),
             String::from("Heartbeat"),
             zmq::REP,
+            None,
             self.connection.endpoint(self.connection.hb_port),
         )?;
         thread::spawn(move || Self::heartbeat_thread(heartbeat_socket));
@@ -95,6 +98,7 @@ impl Kernel {
             ctx.clone(),
             String::from("Stdin"),
             zmq::ROUTER,
+            None,
             self.connection.endpoint(self.connection.stdin_port),
         )?;
         let shell_clone = shell_handler.clone();
@@ -106,6 +110,7 @@ impl Kernel {
             ctx.clone(),
             String::from("Control"),
             zmq::ROUTER,
+            None,
             self.connection.endpoint(self.connection.control_port),
         )?;
 
