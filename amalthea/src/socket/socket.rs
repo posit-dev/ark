@@ -64,6 +64,18 @@ impl Socket {
             _ => return Err(Error::UnsupportedSocketType(kind)),
         }
 
+        // If this is a debug build, set `ZMQ_ROUTER_MANDATORY` on all `ROUTER`
+        // sockets, so that we get errors instead of silent message drops for
+        // unroutable messages.
+        #[cfg(debug_assertions)]
+        {
+            if kind == zmq::ROUTER {
+                if let Err(err) = socket.set_router_mandatory(true) {
+                    return Err(Error::SocketBindError(name, endpoint, err));
+                }
+            }
+        }
+
         // Create a new mutex and return
         Ok(Self {
             socket: Arc::new(Mutex::new(socket)),
