@@ -36,6 +36,7 @@ impl Socket {
         ctx: zmq::Context,
         name: String,
         kind: zmq::SocketType,
+        identity: Option<&[u8]>,
         endpoint: String,
     ) -> Result<Self, Error> {
         // Create the underlying ZeroMQ socket
@@ -43,6 +44,13 @@ impl Socket {
             Ok(s) => s,
             Err(err) => return Err(Error::CreateSocketFailed(name, err)),
         };
+
+        // Set the socket's identity, if supplied
+        if let Some(identity) = identity {
+            if let Err(err) = socket.set_identity(identity) {
+                return Err(Error::CreateSocketFailed(name, err));
+            }
+        }
 
         // One side of a socket must `bind()` to its endpoint, and the other
         // side must `connect()` to the same endpoint. The `bind()` side
