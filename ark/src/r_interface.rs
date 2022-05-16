@@ -197,6 +197,10 @@ fn complete_execute_request(req: &RRequest, prompt_recv: &Receiver<String>) {
                     trace!("Got R prompt '{}', asking user for input", prompt);
                     if let RRequest::ExecuteCode(_, originator, _) = req {
                         kernel.request_input(originator, &prompt);
+                    } else {
+                        warn!("No originator for input request, omitting");
+                        let originator: Vec<u8> = Vec::new();
+                        kernel.request_input(&originator, &prompt);
                     }
                     trace!("Input requested, waiting for reply...");
                 } else {
