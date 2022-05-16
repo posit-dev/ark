@@ -20,6 +20,15 @@ pub struct InputRequest {
     pub password: bool,
 }
 
+/// An input request originating from a Shell handler
+pub struct ShellInputRequest {
+    /// The identity of the Shell that sent the request
+    pub originator: Vec<u8>,
+
+    /// The input request itself
+    pub request: InputRequest,
+}
+
 impl MessageType for InputRequest {
     fn message_type() -> String {
         String::from("input_request")

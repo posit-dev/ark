@@ -7,7 +7,7 @@
 
 use crate::language::shell_handler::ShellHandler;
 use crate::socket::socket::Socket;
-use crate::wire::input_request::InputRequest;
+use crate::wire::input_request::ShellInputRequest;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
 use futures::executor::block_on;
@@ -50,7 +50,7 @@ impl Stdin {
 
     pub fn listen_backend(handler: Arc<Mutex<dyn ShellHandler>>, socket: Socket) {
         // Create the communication channel for the shell handler and inject it
-        let (sender, receiver) = sync_channel::<InputRequest>(1);
+        let (sender, receiver) = sync_channel::<ShellInputRequest>(1);
         {
             let mut shell_handler = handler.lock().unwrap();
             shell_handler.establish_input_handler(sender);
@@ -62,7 +62,8 @@ impl Stdin {
             let req = receiver.recv().unwrap();
 
             // Deliver the message to the front end
-            let msg = JupyterMessage::create(req, None, &socket.session);
+            let msg =
+                JupyterMessage::create_with_identity(req.originator, req.request, &socket.session);
             if let Err(err) = msg.send(&socket) {
                 warn!("Failed to send message to front end: {}", err);
             }

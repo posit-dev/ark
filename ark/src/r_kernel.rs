@@ -15,6 +15,7 @@ use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::execute_response::ExecuteResponse;
 use amalthea::wire::execute_result::ExecuteResult;
 use amalthea::wire::input_request::InputRequest;
+use amalthea::wire::input_request::ShellInputRequest;
 use amalthea::wire::jupyter_message::Status;
 use extendr_api::prelude::*;
 use log::{debug, trace, warn};
@@ -30,7 +31,7 @@ pub struct RKernel {
     output: String,
     error: String,
     response_sender: Option<Sender<ExecuteResponse>>,
-    input_requestor: Option<SyncSender<InputRequest>>,
+    input_requestor: Option<SyncSender<ShellInputRequest>>,
     banner: String,
     initializing: bool,
 }
@@ -82,7 +83,7 @@ impl RKernel {
     /// Service an execution request from the front end
     pub fn fulfill_request(&mut self, req: &RRequest) {
         match req {
-            RRequest::ExecuteCode(req, sender) => {
+            RRequest::ExecuteCode(req, _, sender) => {
                 let sender = sender.clone();
                 self.handle_execute_request(req, sender);
             }
@@ -95,6 +96,7 @@ impl RKernel {
         }
     }
 
+    /// Handle an execute request from the front end
     pub fn handle_execute_request(
         &mut self,
         req: &ExecuteRequest,
@@ -163,7 +165,7 @@ impl RKernel {
     /// Report an incomplete request to the front end
     pub fn report_incomplete_request(&self, req: &RRequest) {
         let code = match req {
-            RRequest::ExecuteCode(req, _) => req.code.clone(),
+            RRequest::ExecuteCode(req, _, _) => req.code.clone(),
             _ => String::new(),
         };
         if let Some(sender) = self.response_sender.as_ref() {
@@ -192,13 +194,16 @@ impl RKernel {
     }
 
     /// Requests input from the front end
-    pub fn request_input(&self, prompt: &str) {
+    pub fn request_input(&self, originator: &Vec<u8>, prompt: &str) {
         if let Some(requestor) = &self.input_requestor {
             trace!("Requesting input from front end for prompt: {}", prompt);
             requestor
-                .send(InputRequest {
-                    prompt: prompt.to_string(),
-                    password: false,
+                .send(ShellInputRequest {
+                    originator: originator.clone(),
+                    request: InputRequest {
+                        prompt: prompt.to_string(),
+                        password: false,
+                    },
                 })
                 .unwrap();
         } else {
@@ -296,7 +301,7 @@ impl RKernel {
 
     /// Establishes the input handler for the kernel to request input from the
     /// user
-    pub fn establish_input_handler(&mut self, sender: SyncSender<InputRequest>) {
+    pub fn establish_input_handler(&mut self, sender: SyncSender<ShellInputRequest>) {
         self.input_requestor = Some(sender);
     }
 }

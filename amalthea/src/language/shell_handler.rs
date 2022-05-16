@@ -16,7 +16,7 @@ use crate::wire::execute_reply::ExecuteReply;
 use crate::wire::execute_reply_exception::ExecuteReplyException;
 use crate::wire::execute_request::ExecuteRequest;
 use crate::wire::input_reply::InputReply;
-use crate::wire::input_request::InputRequest;
+use crate::wire::input_request::ShellInputRequest;
 use crate::wire::inspect_reply::InspectReply;
 use crate::wire::inspect_request::InspectRequest;
 use crate::wire::is_complete_reply::IsCompleteReply;
@@ -49,9 +49,13 @@ pub trait ShellHandler: Send {
 
     /// Handles a request to execute code.
     ///
+    /// The `originator` is an opaque byte array identifying the peer that sent
+    /// the request; it is needed to perform an input request during execution.
+    ///
     /// Docs: https://jupyter-client.readthedocs.io/en/stable/messaging.html#execute
     async fn handle_execute_request(
         &mut self,
+        originator: &Vec<u8>,
         req: &ExecuteRequest,
     ) -> Result<ExecuteReply, ExecuteReplyException>;
 
@@ -98,5 +102,5 @@ pub trait ShellHandler: Send {
     /// input and deliver it via the `handle_input_reply` method.
     ///
     /// https://jupyter-client.readthedocs.io/en/stable/messaging.html#messages-on-the-stdin-router-dealer-channel
-    fn establish_input_handler(&mut self, handler: SyncSender<InputRequest>);
+    fn establish_input_handler(&mut self, handler: SyncSender<ShellInputRequest>);
 }
