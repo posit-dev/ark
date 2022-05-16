@@ -22,7 +22,7 @@ use amalthea::wire::execute_reply_exception::ExecuteReplyException;
 use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::execute_response::ExecuteResponse;
 use amalthea::wire::input_reply::InputReply;
-use amalthea::wire::input_request::InputRequest;
+use amalthea::wire::input_request::ShellInputRequest;
 use amalthea::wire::inspect_reply::InspectReply;
 use amalthea::wire::inspect_request::InspectRequest;
 use amalthea::wire::is_complete_reply::IsComplete;
@@ -178,13 +178,15 @@ impl ShellHandler for Shell {
     /// for processing.
     async fn handle_execute_request(
         &mut self,
+        originator: &Vec<u8>,
         req: &ExecuteRequest,
     ) -> Result<ExecuteReply, ExecuteReplyException> {
         let (sender, receiver) = channel::<ExecuteResponse>();
-        if let Err(err) = self
-            .req_sender
-            .send(RRequest::ExecuteCode(req.clone(), sender))
-        {
+        if let Err(err) = self.req_sender.send(RRequest::ExecuteCode(
+            req.clone(),
+            originator.clone(),
+            sender,
+        )) {
             warn!(
                 "Could not deliver execution request to execution thread: {}",
                 err
@@ -255,7 +257,7 @@ impl ShellHandler for Shell {
         Ok(())
     }
 
-    fn establish_input_handler(&mut self, handler: SyncSender<InputRequest>) {
+    fn establish_input_handler(&mut self, handler: SyncSender<ShellInputRequest>) {
         self.req_sender
             .send(RRequest::EstablishInputChannel(handler))
             .unwrap();

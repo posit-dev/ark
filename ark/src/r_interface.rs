@@ -158,7 +158,7 @@ fn handle_r_request(req: &RRequest, prompt_recv: &Receiver<String>) {
 
     // If this is an execution request, complete it by waiting for R to prompt
     // us before we process another request
-    if let RRequest::ExecuteCode(_, _) = req {
+    if let RRequest::ExecuteCode(_, _, _) = req {
         complete_execute_request(req, prompt_recv);
     }
 }
@@ -195,7 +195,9 @@ fn complete_execute_request(req: &RRequest, prompt_recv: &Receiver<String>) {
                     // if the prompt isn't the default, then it's likely a prompt from
                     // R's `readline()` or similar; request input from the user.
                     trace!("Got R prompt '{}', asking user for input", prompt);
-                    kernel.request_input(&prompt);
+                    if let RRequest::ExecuteCode(_, originator, _) = req {
+                        kernel.request_input(originator, &prompt);
+                    }
                     trace!("Input requested, waiting for reply...");
                 } else {
                     // Default prompt, finishing request

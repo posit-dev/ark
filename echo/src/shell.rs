@@ -21,7 +21,7 @@ use amalthea::wire::execute_reply_exception::ExecuteReplyException;
 use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::execute_result::ExecuteResult;
 use amalthea::wire::input_reply::InputReply;
-use amalthea::wire::input_request::InputRequest;
+use amalthea::wire::input_request::ShellInputRequest;
 use amalthea::wire::inspect_reply::InspectReply;
 use amalthea::wire::inspect_request::InspectRequest;
 use amalthea::wire::is_complete_reply::IsComplete;
@@ -38,7 +38,7 @@ use std::sync::mpsc::SyncSender;
 
 pub struct Shell {
     iopub: SyncSender<IOPubMessage>,
-    input_sender: Option<SyncSender<InputRequest>>,
+    input_sender: Option<SyncSender<ShellInputRequest>>,
     execution_count: u32,
 }
 
@@ -118,6 +118,7 @@ impl ShellHandler for Shell {
     /// Handles an ExecuteRequest; "executes" the code by echoing it.
     async fn handle_execute_request(
         &mut self,
+        _originator: &Vec<u8>,
         req: &ExecuteRequest,
     ) -> Result<ExecuteReply, ExecuteReplyException> {
         // Increment counter if we are storing this execution in history
@@ -226,7 +227,7 @@ impl ShellHandler for Shell {
         Ok(())
     }
 
-    fn establish_input_handler(&mut self, handler: SyncSender<InputRequest>) {
+    fn establish_input_handler(&mut self, handler: SyncSender<ShellInputRequest>) {
         self.input_sender = Some(handler);
     }
 }

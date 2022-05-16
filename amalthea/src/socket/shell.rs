@@ -178,7 +178,8 @@ impl Shell {
         req: JupyterMessage<ExecuteRequest>,
     ) -> Result<(), Error> {
         debug!("Received execution request {:?}", req);
-        match block_on(handler.handle_execute_request(&req.content)) {
+        let originator = req.zmq_identities[0].clone();
+        match block_on(handler.handle_execute_request(&originator, &req.content)) {
             Ok(reply) => {
                 trace!("got execution reply: {:?}", reply);
                 let r = req.send_reply(reply, &self.socket);

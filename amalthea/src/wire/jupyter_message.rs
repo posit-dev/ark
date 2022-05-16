@@ -240,6 +240,24 @@ where
         }
     }
 
+    /// Create a new Jupyter message with a specific ZeroMQ identity.
+    pub fn create_with_identity(
+        identity: Vec<u8>,
+        content: T,
+        session: &Session,
+    ) -> JupyterMessage<T> {
+        JupyterMessage::<T> {
+            zmq_identities: vec![identity],
+            header: JupyterHeader::create(
+                T::message_type(),
+                session.session_id.clone(),
+                session.username.clone(),
+            ),
+            parent_header: None,
+            content: content,
+        }
+    }
+
     /// Sends a reply to the message; convenience method combining creating the
     /// reply and sending it.
     pub fn send_reply<R: ProtocolMessage>(&self, content: R, socket: &Socket) -> Result<(), Error> {
