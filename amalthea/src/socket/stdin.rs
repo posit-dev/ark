@@ -11,10 +11,9 @@ use crate::wire::input_request::ShellInputRequest;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
 use futures::executor::block_on;
-use log::{trace, warn};
+use log::warn;
 use std::sync::mpsc::sync_channel;
 use std::sync::{Arc, Mutex};
-use std::thread;
 
 pub struct Stdin {
     /// The ZeroMQ stdin socket
@@ -36,23 +35,14 @@ impl Stdin {
         }
     }
 
-    /// Listens for messages on the stdin socket. This goes two ways: we listen
-    /// for input requests from the back end and input replies on the front end.
+    /// Listens for messages on the stdin socket. This follows a simple loop:
+    ///
+    /// 1. Wait for
     pub fn listen(&self) {
-        // Create the thread to listen for input requests from the back end.
-        let handler = self.handler.clone();
-        let socket = self.socket.clone();
-        thread::spawn(move || Self::listen_backend(handler, socket));
-
-        // Listen for input replies from the front end
-        self.listen_frontend();
-    }
-
-    pub fn listen_backend(handler: Arc<Mutex<dyn ShellHandler>>, socket: Socket) {
         // Create the communication channel for the shell handler and inject it
         let (sender, receiver) = sync_channel::<ShellInputRequest>(1);
         {
-            let mut shell_handler = handler.lock().unwrap();
+            let mut shell_handler = self.handler.lock().unwrap();
             shell_handler.establish_input_handler(sender);
         }
 
@@ -62,18 +52,22 @@ impl Stdin {
             let req = receiver.recv().unwrap();
 
             // Deliver the message to the front end
-            let msg =
-                JupyterMessage::create_with_identity(req.originator, req.request, &socket.session);
-            if let Err(err) = msg.send(&socket) {
+            let msg = JupyterMessage::create_with_identity(
+                req.originator,
+                req.request,
+                &self.socket.session,
+            );
+            if let Err(err) = msg.send(&self.socket) {
                 warn!("Failed to send message to front end: {}", err);
             }
-        }
-    }
 
-    pub fn listen_frontend(&self) {
-        loop {
-            trace!("Waiting for stdin messages");
-            // Attempt to read the next message from the ZeroMQ socket
+            // Attempt to read the front end's reply message from the ZeroMQ socket.
+            //
+            // TODO: This will block until the front end sends an input request,
+            // which could be a while and perhaps never if the user cancels the
+            // operation, never provides input, etc. We should probably have a
+            // timeout here, or some way to cancel the read if another input
+            // request arrives.
             let message = match Message::read_from_socket(&self.socket) {
                 Ok(m) => m,
                 Err(err) => {
