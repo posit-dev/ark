@@ -236,5 +236,18 @@ fn test_kernel() {
         value: "42".to_string(),
     });
 
-    // TODO: Consume the IOPub messages generated during the input request flow
+    // Consume the IOPub messages that the kernel sends back
+    frontend.receive_iopub(); // Status: Busy
+    frontend.receive_iopub(); // ExecuteInput (re-broadcast of 'Prompt')
+    frontend.receive_iopub(); // ExecuteResult
+    frontend.receive_iopub(); // Status: Idle
+
+    // Test the heartbeat
+    info!("Sending heartbeat to the kernel");
+    let msg = zmq::Message::from("Heartbeat");
+    frontend.send_heartbeat(msg);
+
+    info!("Waiting for heartbeat reply");
+    let reply = frontend.receive_heartbeat();
+    assert_eq!(reply, zmq::Message::from("Heartbeat"));
 }
