@@ -119,31 +119,43 @@ impl Frontend {
         self.iopub_socket.subscribe().unwrap();
     }
 
-    /// Sends a message on the Shell socket
+    /// Sends a Jupyter message on the Shell socket
     pub fn send_shell<T: ProtocolMessage>(&self, msg: T) {
         let message = JupyterMessage::create(msg, None, &self.session);
         message.send(&self.shell_socket).unwrap();
     }
 
-    /// Sends a message on the Stdin socket
+    /// Sends a Jupyter message on the Stdin socket
     pub fn send_stdin<T: ProtocolMessage>(&self, msg: T) {
         let message = JupyterMessage::create(msg, None, &self.session);
         message.send(&self.stdin_socket).unwrap();
     }
 
-    /// Receives a message from the Shell socket
+    /// Receives a Jupyter message from the Shell socket
     pub fn receive_shell(&self) -> Message {
         Message::read_from_socket(&self.shell_socket).unwrap()
     }
 
-    /// Receives a message from the IOPub socket
+    /// Receives a Jupyter message from the IOPub socket
     pub fn receive_iopub(&self) -> Message {
         Message::read_from_socket(&self.iopub_socket).unwrap()
     }
 
-    /// Receives a message from the Stdin socket
+    /// Receives a Jupyter message from the Stdin socket
     pub fn receive_stdin(&self) -> Message {
         Message::read_from_socket(&self.stdin_socket).unwrap()
+    }
+
+    /// Receives a (raw) message from the heartbeat socket
+    pub fn receive_heartbeat(&self) -> zmq::Message {
+        let mut msg = zmq::Message::new();
+        self.heartbeat_socket.recv(&mut msg).unwrap();
+        msg
+    }
+
+    /// Sends a (raw) message to the heartbeat socket
+    pub fn send_heartbeat(&self, msg: zmq::Message) {
+        self.heartbeat_socket.send(msg).unwrap();
     }
 
     /// Gets a connection file for the Amalthea kernel that will connect it to
