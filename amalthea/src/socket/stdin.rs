@@ -11,7 +11,7 @@ use crate::wire::input_request::ShellInputRequest;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
 use futures::executor::block_on;
-use log::warn;
+use log::{trace, warn};
 use std::sync::mpsc::sync_channel;
 use std::sync::{Arc, Mutex};
 
@@ -60,6 +60,7 @@ impl Stdin {
             if let Err(err) = msg.send(&self.socket) {
                 warn!("Failed to send message to front end: {}", err);
             }
+            trace!("Sent input request to front end, waiting for input reply...");
 
             // Attempt to read the front end's reply message from the ZeroMQ socket.
             //
@@ -84,6 +85,7 @@ impl Stdin {
                     continue;
                 }
             };
+            trace!("Received input reply from front end: {:?}", reply);
 
             // Send the reply to the shell handler
             let handler = self.handler.lock().unwrap();

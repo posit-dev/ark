@@ -181,9 +181,8 @@ impl Shell {
         let originator = req.zmq_identities[0].clone();
         match block_on(handler.handle_execute_request(&originator, &req.content)) {
             Ok(reply) => {
-                trace!("got execution reply: {:?}", reply);
+                trace!("Got execution reply, delivering to front end: {:?}", reply);
                 let r = req.send_reply(reply, &self.socket);
-                trace!("execution reply sent");
                 r
             }
             Err(err) => req.send_reply(err, &self.socket),
