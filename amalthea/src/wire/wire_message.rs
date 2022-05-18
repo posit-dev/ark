@@ -52,6 +52,11 @@ impl WireMessage {
         Self::from_buffers(bufs, &socket.session.hmac)
     }
 
+    /// Return the Jupyter type of the message.
+    pub fn message_type(&self) -> String {
+        self.header.msg_type.clone()
+    }
+
     /// Parse a Jupyter message from an array of buffers (from a ZeroMQ message)
     pub fn from_buffers(
         mut bufs: Vec<Vec<u8>>,
