@@ -7,11 +7,14 @@
 
 use amalthea::kernel::Kernel;
 use amalthea::socket::iopub::IOPubMessage;
+use amalthea::wire::execute_input::ExecuteInput;
 use amalthea::wire::execute_request::ExecuteRequest;
+use amalthea::wire::execute_result::ExecuteResult;
 use amalthea::wire::input_reply::InputReply;
-use amalthea::wire::jupyter_message::{Message, Status};
+use amalthea::wire::jupyter_message::{Message, MessageType, Status};
 use amalthea::wire::kernel_info_request::KernelInfoRequest;
-use amalthea::wire::status::ExecutionState;
+use amalthea::wire::status::{ExecutionState, KernelStatus};
+use amalthea::wire::wire_message::WireMessage;
 use env_logger;
 use log::info;
 use serde_json;
@@ -236,11 +239,36 @@ fn test_kernel() {
         value: "42".to_string(),
     });
 
-    // Consume the IOPub messages that the kernel sends back
-    frontend.receive_iopub(); // Status: Busy
-    frontend.receive_iopub(); // ExecuteInput (re-broadcast of 'Prompt')
-    frontend.receive_iopub(); // ExecuteResult
-    frontend.receive_iopub(); // Status: Idle
+    // Consume the IOPub messages that the kernel sends back during the
+    // processing of the above `prompt` execution request
+    assert_eq!(
+        // Status: Busy
+        WireMessage::try_from(&frontend.receive_iopub())
+            .unwrap()
+            .message_type(),
+        KernelStatus::message_type()
+    );
+    assert_eq!(
+        // ExecuteInput (re-broadcast of 'Prompt')
+        WireMessage::try_from(&frontend.receive_iopub())
+            .unwrap()
+            .message_type(),
+        ExecuteInput::message_type()
+    );
+    assert_eq!(
+        // ExecuteResult
+        WireMessage::try_from(&frontend.receive_iopub())
+            .unwrap()
+            .message_type(),
+        ExecuteResult::message_type()
+    );
+    assert_eq!(
+        // Status: Idle
+        WireMessage::try_from(&frontend.receive_iopub())
+            .unwrap()
+            .message_type(),
+        KernelStatus::message_type()
+    );
 
     // Test the heartbeat
     info!("Sending heartbeat to the kernel");
