@@ -9,7 +9,7 @@ use ropey::Rope;
 use tower_lsp::lsp_types::{TextDocumentContentChangeEvent, CompletionParams, CompletionItem};
 use tree_sitter::{Parser, Point};
 
-use crate::lsp::{cursor::TreeCursorExt, logger::{log_push}};
+use crate::lsp::{cursor::TreeCursorExt, logger::{log_push}, macros::unwrap};
 
 
 #[derive(Debug)]
@@ -63,22 +63,19 @@ impl Document {
         // give us a character offset; however, tree-sitter expects a byte offset
         // when moving a cursor. we'll need to convert the completion position
         // to a byte-oriented position when attempting to place the cursor
-        let mut cursor = ast.walk();
-
         let point = Point {
             row: params.text_document_position.position.line as usize,
             column: params.text_document_position.position.character as usize,
         };
 
-        log_push!("Moving cursor to point: {:?}", point);
-        cursor.goto_point(point);
-        log_push!("Cursor landed on node: {:?}", cursor.node());
+        let root = ast.root_node();
 
-        log_push!("Searching for parent nodes.");
-        cursor.find_parent(|node| {
-            log_push!("Parent node: {:?}", node);
-            return false;
+        log_push!("Moving cursor to point: {:?}", point);
+        let node = unwrap!(root.descendant_for_point_range(point, point), {
+            log_push!("No node associated with point {:?}", point);
+            return;
         });
+        log_push!("Cursor landed on node: {:?}", node);
 
         // walk(&mut cursor, |node| {
 

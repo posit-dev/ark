@@ -20,9 +20,12 @@ impl Logger {
     }
 
     pub(crate) async fn flush(&mut self, backend: &Backend) {
+        
         for message in &self.messages {
             backend.client.log_message(MessageType::INFO, message).await;
         }
+
+        self.messages.clear();
     }
 
 }
