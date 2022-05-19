@@ -7,9 +7,9 @@
 
 use ropey::Rope;
 use tower_lsp::lsp_types::{TextDocumentContentChangeEvent, CompletionParams, CompletionItem};
-use tree_sitter::{Parser, TreeCursor, Node, Point};
+use tree_sitter::{Parser, Point};
 
-use crate::lsp::{cursor::TreeCursorExt, backend::Backend, logger::LOGGER};
+use crate::lsp::{cursor::TreeCursorExt, logger::{log_push}};
 
 
 #[derive(Debug)]
@@ -43,7 +43,7 @@ impl Document {
 
     }
 
-    pub fn append_completions(&mut self, params: &CompletionParams, completions: &mut Vec<CompletionItem>) {
+    pub fn append_completions(&mut self, params: &CompletionParams, _completions: &mut Vec<CompletionItem>) {
 
         // TODO: can we incrementally update AST as edits come in?
         // Or should we defer building the AST until completions are requested?
@@ -65,18 +65,19 @@ impl Document {
         // to a byte-oriented position when attempting to place the cursor
         let mut cursor = ast.walk();
 
-        cursor.go_to_point(Point {
+        let point = Point {
             row: params.text_document_position.position.line as usize,
             column: params.text_document_position.position.character as usize,
-        });
+        };
 
-        let message = format!("Node at point: {:?}", cursor.node());
-        unsafe { LOGGER.append(message.as_str()) };
+        log_push!("Moving cursor to point: {:?}", point);
+        cursor.goto_point(point);
+        log_push!("Cursor landed on node: {:?}", cursor.node());
 
+        log_push!("Searching for parent nodes.");
         cursor.find_parent(|node| {
-            let message = format!("Node: {:?}", node);
-            unsafe { LOGGER.append(message.as_str()) };
-            return true;
+            log_push!("Parent node: {:?}", node);
+            return false;
         });
 
         // walk(&mut cursor, |node| {
