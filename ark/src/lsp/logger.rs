@@ -28,3 +28,22 @@ impl Logger {
 }
 
 pub(crate) static mut LOGGER : Logger = Logger { messages: vec![] };
+
+macro_rules! log_push {
+
+    ($($rest:expr),*) => {{
+        let message = format!($($rest, )*);
+        unsafe { crate::lsp::logger::LOGGER.append(message.as_str()) };
+    }};
+
+}
+pub(crate) use log_push;
+
+macro_rules! log_flush {
+
+    ($backend:expr) => {{
+        unsafe { crate::lsp::logger::LOGGER.flush($backend).await };
+    }};
+
+}
+pub(crate) use log_flush;

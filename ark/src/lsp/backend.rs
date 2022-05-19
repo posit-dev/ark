@@ -6,7 +6,7 @@
  */
 
 use crate::lsp::document::Document;
-use crate::lsp::logger::LOGGER;
+use crate::lsp::logger::{log_flush};
 use crate::lsp::macros::{unwrap, backend_trace};
 use dashmap::DashMap;
 use serde_json::Value;
@@ -140,8 +140,7 @@ impl LanguageServer for Backend {
 
         // add context-relevant completions
         doc.append_completions(&params, &mut completions);
-
-        unsafe { LOGGER.flush(self).await; }
+        log_flush!(self);
 
         return Ok(Some(CompletionResponse::Array(completions)));
 
