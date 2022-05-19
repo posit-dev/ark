@@ -9,31 +9,8 @@ use ropey::Rope;
 use tower_lsp::lsp_types::{TextDocumentContentChangeEvent, CompletionParams, CompletionItem};
 use tree_sitter::{Parser, TreeCursor, Node, Point};
 
-fn walk<F>(cursor: &mut TreeCursor, mut f: F)
-where
-    F: FnMut(Node)
-{
-    walk_impl(cursor, &mut f);
-}
+use crate::lsp::{cursor::TreeCursorExt, backend::Backend, logger::LOGGER};
 
-fn walk_impl<F>(cursor: &mut TreeCursor, f: &mut F)
-where
-    F: FnMut(Node),
-{
-    f(cursor.node());
-
-    if cursor.goto_first_child() {
-
-        walk_impl(cursor, f);
-        while cursor.goto_next_sibling() {
-            walk_impl(cursor, f);
-        }
-
-        cursor.goto_parent();
-
-    }
-
-}
 
 #[derive(Debug)]
 pub(crate) struct Document {
@@ -87,30 +64,38 @@ impl Document {
         // when moving a cursor. we'll need to convert the completion position
         // to a byte-oriented position when attempting to place the cursor
         let mut cursor = ast.walk();
-        let status = cursor.goto_first_child_for_point(Point {
+
+        cursor.go_to_point(Point {
             row: params.text_document_position.position.line as usize,
-            column: params.text_document_position.position.character as usize
+            column: params.text_document_position.position.character as usize,
         });
 
-        if status == None {
-            return;
-        }
+        let message = format!("Node at point: {:?}", cursor.node());
+        unsafe { LOGGER.append(message.as_str()) };
 
-        walk(&mut cursor, |node| {
-
-            // check for assignments
-            if node.kind() == "left_assignment" && node.child_count() > 0 {
-                let lhs = node.child(0).unwrap();
-                if lhs.kind() == "identifier" {
-                    let variable = lhs.utf8_text(contents.as_bytes());
-                    if let Ok(variable) = variable {
-                        let detail = format!("Defined on row {}", node.range().start_point.row + 1);
-                        completions.push(CompletionItem::new_simple(variable.to_string(), detail));
-                    }
-                }
-            }
-
+        cursor.find_parent(|node| {
+            let message = format!("Node: {:?}", node);
+            unsafe { LOGGER.append(message.as_str()) };
+            return true;
         });
+
+        // walk(&mut cursor, |node| {
+
+        //     // check for assignments
+        //     if node.kind() == "left_assignment" && node.child_count() > 0 {
+        //         let lhs = node.child(0).unwrap();
+        //         if lhs.kind() == "identifier" {
+        //             let variable = lhs.utf8_text(contents.as_bytes());
+        //             if let Ok(variable) = variable {
+        //                 let detail = format!("Defined on row {}", node.range().start_point.row + 1);
+        //                 completions.push(CompletionItem::new_simple(variable.to_string(), detail));
+        //             }
+        //         }
+        //     }
+
+        //     return true;
+
+        // });
 
     }
 

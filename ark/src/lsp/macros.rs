@@ -30,3 +30,13 @@ macro_rules! unwrap {
 
 }
 pub(crate) use unwrap;
+
+macro_rules! backend_trace {
+
+    ($self:expr, $($rest:expr),*) => {{
+        let message = format!($($rest, )*);
+        $self.client.log_message(tower_lsp::lsp_types::MessageType::INFO, message).await
+    }};
+
+}
+pub(crate) use backend_trace;
