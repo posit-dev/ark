@@ -6,7 +6,8 @@
  */
 
 use crate::lsp::document::Document;
-use crate::lsp::macros::unwrap;
+use crate::lsp::logger::LOGGER;
+use crate::lsp::macros::{unwrap, backend_trace};
 use dashmap::DashMap;
 use serde_json::Value;
 use tokio::net::TcpStream;
@@ -14,19 +15,10 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
-macro_rules! trace {
-
-    ($self:expr, $($rest:expr),*) => {{
-        let message = format!($($rest, )*);
-        $self.client.log_message(MessageType::INFO, message).await
-    }};
-
-}
-
 #[derive(Debug)]
-struct Backend {
-    client: Client,
-    documents: DashMap<Url, Document>,
+pub(crate) struct Backend {
+    pub client: Client,
+    pub documents: DashMap<Url, Document>,
 }
 
 #[tower_lsp::async_trait]
@@ -67,28 +59,28 @@ impl LanguageServer for Backend {
     }
 
     async fn initialized(&self, params: InitializedParams) {
-        trace!(self, "initialized({:?})", params);
+        backend_trace!(self, "initialized({:?})", params);
     }
 
     async fn shutdown(&self) -> Result<()> {
-        trace!(self, "shutdown()");
+        backend_trace!(self, "shutdown()");
         Ok(())
     }
 
     async fn did_change_workspace_folders(&self, params: DidChangeWorkspaceFoldersParams) {
-        trace!(self, "did_change_workspace_folders({:?})", params);
+        backend_trace!(self, "did_change_workspace_folders({:?})", params);
     }
 
     async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
-        trace!(self, "did_change_configuration({:?})", params);
+        backend_trace!(self, "did_change_configuration({:?})", params);
     }
 
     async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
-        trace!(self, "did_change_watched_files({:?})", params);
+        backend_trace!(self, "did_change_watched_files({:?})", params);
     }
 
     async fn execute_command(&self, params: ExecuteCommandParams) -> Result<Option<Value>> {
-        trace!(self, "execute_command({:?})", params);
+        backend_trace!(self, "execute_command({:?})", params);
 
         match self.client.apply_edit(WorkspaceEdit::default()).await {
             Ok(res) if res.applied => self.client.log_message(MessageType::INFO, "applied").await,
@@ -100,7 +92,7 @@ impl LanguageServer for Backend {
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
-        trace!(self, "did_open({:?}", params);
+        backend_trace!(self, "did_open({:?}", params);
 
         self.documents.insert(
             params.text_document.uri,
@@ -110,12 +102,12 @@ impl LanguageServer for Backend {
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
-        trace!(self, "did_change({:?})", params);
+        backend_trace!(self, "did_change({:?})", params);
 
         // get reference to document
         let uri = &params.text_document.uri;
         let mut doc = unwrap!(self.documents.get_mut(uri), {
-            trace!(self, "unexpected document uri '{}'", uri);
+            backend_trace!(self, "unexpected document uri '{}'", uri);
             return;
         });
 
@@ -127,20 +119,20 @@ impl LanguageServer for Backend {
     }
 
     async fn did_save(&self, params: DidSaveTextDocumentParams) {
-        trace!(self, "did_save({:?}", params);
+        backend_trace!(self, "did_save({:?}", params);
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
-        trace!(self, "did_close({:?}", params);
+        backend_trace!(self, "did_close({:?}", params);
     }
 
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
-        trace!(self, "completion({:?})", params);
+        backend_trace!(self, "completion({:?})", params);
 
         // get reference to document
         let uri = &params.text_document_position.text_document.uri;
         let mut doc = unwrap!(self.documents.get_mut(uri), {
-            trace!(self, "unexpected document uri '{}'", uri);
+            backend_trace!(self, "unexpected document uri '{}'", uri);
             return Ok(None);
         });
 
@@ -149,14 +141,14 @@ impl LanguageServer for Backend {
         // add context-relevant completions
         doc.append_completions(&params, &mut completions);
 
-        // TODO: add completions from R to the completion list
+        unsafe { LOGGER.flush(self).await; }
 
         return Ok(Some(CompletionResponse::Array(completions)));
 
     }
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
-        trace!(self, "hover({:?})", params);
+        backend_trace!(self, "hover({:?})", params);
         Ok(Some(Hover {
             contents: HoverContents::Scalar(MarkedString::from_markdown(String::from(
                 "Hello world!",
