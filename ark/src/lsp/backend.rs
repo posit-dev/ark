@@ -1,10 +1,11 @@
-/*
- * backend.rs
- *
- * Copyright (C) 2022 by RStudio, PBC
- *
- */
+// 
+// backend.rs
+// 
+// Copyright (C) 2022 by RStudio, PBC
+// 
+// 
 
+use crate::lsp::completions::append_document_completions;
 use crate::lsp::document::Document;
 use crate::lsp::logger::{log_flush};
 use crate::lsp::macros::{unwrap, backend_trace};
@@ -60,23 +61,28 @@ impl LanguageServer for Backend {
 
     async fn initialized(&self, params: InitializedParams) {
         backend_trace!(self, "initialized({:?})", params);
+        log_flush!(self);
     }
 
     async fn shutdown(&self) -> Result<()> {
         backend_trace!(self, "shutdown()");
+        log_flush!(self);
         Ok(())
     }
 
     async fn did_change_workspace_folders(&self, params: DidChangeWorkspaceFoldersParams) {
         backend_trace!(self, "did_change_workspace_folders({:?})", params);
+        log_flush!(self);
     }
 
     async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
         backend_trace!(self, "did_change_configuration({:?})", params);
+        log_flush!(self);
     }
 
     async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
         backend_trace!(self, "did_change_watched_files({:?})", params);
+        log_flush!(self);
     }
 
     async fn execute_command(&self, params: ExecuteCommandParams) -> Result<Option<Value>> {
@@ -88,6 +94,7 @@ impl LanguageServer for Backend {
             Err(err) => self.client.log_message(MessageType::ERROR, err).await,
         }
 
+        log_flush!(self);
         Ok(None)
     }
 
@@ -96,9 +103,10 @@ impl LanguageServer for Backend {
 
         self.documents.insert(
             params.text_document.uri,
-            Document::new(params.text_document.text)
+            Document::new(params.text_document.text.as_str()),
         );
 
+        log_flush!(self);
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
@@ -116,14 +124,17 @@ impl LanguageServer for Backend {
             doc.update(change);
         }
 
+        log_flush!(self);
     }
 
     async fn did_save(&self, params: DidSaveTextDocumentParams) {
         backend_trace!(self, "did_save({:?}", params);
+        log_flush!(self);
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         backend_trace!(self, "did_close({:?}", params);
+        log_flush!(self);
     }
 
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
@@ -131,23 +142,24 @@ impl LanguageServer for Backend {
 
         // get reference to document
         let uri = &params.text_document_position.text_document.uri;
-        let mut doc = unwrap!(self.documents.get_mut(uri), {
-            backend_trace!(self, "unexpected document uri '{}'", uri);
+        let mut document = unwrap!(self.documents.get_mut(uri), {
+            backend_trace!(self, "completion(): No document associated with URI {}", uri);
             return Ok(None);
         });
 
         let mut completions : Vec<CompletionItem> = vec!();
 
         // add context-relevant completions
-        doc.append_completions(&params, &mut completions);
-        log_flush!(self);
+        append_document_completions(document.value_mut(), &params, &mut completions);
 
+        log_flush!(self);
         return Ok(Some(CompletionResponse::Array(completions)));
 
     }
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
         backend_trace!(self, "hover({:?})", params);
+        log_flush!(self);
         Ok(Some(Hover {
             contents: HoverContents::Scalar(MarkedString::from_markdown(String::from(
                 "Hello world!",

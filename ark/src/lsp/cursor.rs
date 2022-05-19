@@ -9,16 +9,63 @@ use tree_sitter::{Node, Point, TreeCursor};
 
 use crate::lsp::{point::PointExt};
 
+fn _recurse_impl<Callback: FnMut(Node) -> bool>(this: &mut TreeCursor, callback: &mut Callback) {
+
+    if !callback(this.node()) {
+        return;
+    }
+
+    if this.goto_first_child() {
+
+        _find_impl(this, callback);
+        while this.goto_next_sibling() {
+            _find_impl(this, callback);
+        }
+        this.goto_parent();
+
+    }
+
+}
+
+fn _find_impl<Callback: FnMut(Node) -> bool>(this: &mut TreeCursor, callback: &mut Callback) -> bool {
+
+    if !callback(this.node()) {
+        return false;
+    }
+
+    if this.goto_first_child() {
+
+        if !_find_impl(this, callback) {
+            return false;
+        }
+
+        while this.goto_next_sibling() {
+
+            if !_find_impl(this, callback) {
+                return false;
+            }
+
+        }
+
+        this.goto_parent();
+
+    }
+
+    return true;
+
+}
+
 // Extension trait for the TreeSitter cursor object.
 pub(crate) trait TreeCursorExt {
 
     // Recurse through all nodes in an AST, invoking a callback as those nodes
-    // are visited. The callback should return 'false' if recursion needs to be
-    // stopped early.
+    // are visited. The callback can return 'false' to indicate that we shouldn't
+    // recurse through the children of a particular node.
     fn recurse<Callback: FnMut(Node) -> bool>(&mut self, callback: Callback);
 
-    // Internal method used for recursion.
-    fn _recurse_impl<Callback: FnMut(Node) -> bool>(&mut self, callback: &mut Callback) -> bool;
+    // Find a node in an AST. The first node for which the callback returns 'true'
+    // will be returned.
+    fn find<Callback: FnMut(Node) -> bool>(&mut self, callback: Callback) -> bool;
 
     // Find the node closest to the requested point (if any). The node closest
     // to this point will be used.
@@ -32,42 +79,18 @@ pub(crate) trait TreeCursorExt {
 impl TreeCursorExt for TreeCursor<'_> {
 
     fn recurse<Callback: FnMut(Node) -> bool>(&mut self, mut callback: Callback) {
-        self._recurse_impl(&mut callback);
+        _recurse_impl(self, &mut callback)
     }
 
-    fn _recurse_impl<Callback: FnMut(Node) -> bool>(&mut self, callback: &mut Callback) -> bool {
-
-        if !callback(self.node()) {
-            return false;
-        }
-
-        if self.goto_first_child() {
-
-            if !self._recurse_impl(callback) {
-                return false;
-            }
-
-            while self.goto_next_sibling() {
-
-                if !self._recurse_impl(callback) {
-                    return false;
-                }
-
-            }
-
-            self.goto_parent();
-
-        }
-
-        return true;
-
+    fn find<Callback: FnMut(Node) -> bool>(&mut self, mut callback: Callback) -> bool {
+        _find_impl(self, &mut callback)
     }
 
     fn goto_point(&mut self, point: Point) {
 
         // TODO: logic here is not quite right
         self.recurse(|node| {
-            if node.start_position().is_before_or_equal(&point) {
+            if node.start_position().is_before_or_equal(point) {
                 return true;
             } else {
                 return false;
