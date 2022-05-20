@@ -65,9 +65,7 @@ impl PointExt for Point {
 
 #[cfg(test)]
 mod tests {
-    use tree_sitter::Point;
-
-    use crate::lsp::point::PointExt;
+    use super::*;
 
     #[test]
     fn test_point_comparison() {

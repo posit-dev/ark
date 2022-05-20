@@ -1,9 +1,9 @@
-/*
- * macros.rs
- *
- * Copyright (C) 2022 by RStudio, PBC
- *
- */
+// 
+// macros.rs
+// 
+// Copyright (C) 2022 by RStudio, PBC
+// 
+// 
 
 #![allow(unused_macros, unused_imports)]
 

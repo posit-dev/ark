@@ -6,10 +6,16 @@
 // 
 
 use ropey::Rope;
-use tower_lsp::lsp_types::{TextDocumentContentChangeEvent};
-use tree_sitter::{Parser, Point, Tree, InputEdit};
+use tower_lsp::lsp_types::TextDocumentContentChangeEvent;
+use tree_sitter::InputEdit;
+use tree_sitter::Parser;
+use tree_sitter::Point;
+use tree_sitter::Tree;
 
-use crate::lsp::{logger::log_push, macros::unwrap, position::PositionExt, rope::RopeExt, node::NodeExt};
+use crate::lsp::logger::log_push;
+use crate::lsp::macros::unwrap;
+use crate::lsp::traits::position::PositionExt;
+use crate::lsp::traits::rope::RopeExt;
 
 fn compute_point(point: Point, text: &str) -> Point {
  
