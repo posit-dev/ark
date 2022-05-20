@@ -8,27 +8,29 @@
 use tower_lsp::lsp_types::{CompletionParams, CompletionItem};
 use tree_sitter::{Point, Node};
 
-use crate::lsp::{macros::unwrap, document::Document, logger::log_push, position::PositionExt, cursor::TreeCursorExt, point::PointExt};
+use crate::lsp::{macros::unwrap, document::Document, logger::log_push, position::PositionExt, cursor::TreeCursorExt, point::PointExt, node::NodeExt};
 
 fn completion_from_identifier(node: &Node, source: &str) -> CompletionItem {
     let label = node.utf8_text(source.as_bytes()).expect("empty assignee");
     let detail = format!("Defined on line {}", node.start_position().row + 1);
     CompletionItem::new_simple(label.to_string(), detail)
-
 }
+
 fn append_defined_variables(node: &Node, source: &str, end: Option<Point>, completions: &mut Vec<CompletionItem>) {
 
+    // log_push!("{}", node.dump(source));
     let mut cursor = node.walk();
     cursor.recurse(|node| {
 
         // skip nodes that exist beyond the completion position
         if let Some(end) = end {
             if node.start_position().is_after(end) {
+                // log_push!("append_defined_variables(): Halting recursion after point {}.", end);
                 return false;
             }
         }
 
-        log_push!("append_defined_variables(): {:#?}", node);
+        // log_push!("append_defined_variables(): {:#?}", node);
         match node.kind() {
 
             "left_assignment" | "super_assignment" | "equals_assignment" => {
@@ -55,6 +57,7 @@ fn append_defined_variables(node: &Node, source: &str, end: Option<Point>, compl
 
                 // don't recurse into function definitions, as these create as new scope
                 // for variable definitions (and so such definitions are no longer visible)
+                // log_push!("append_defined_variables(): Halting recursion (found 'function_definition').");
                 return false;
 
             }
@@ -74,23 +77,23 @@ fn append_function_parameters(node: &Node, source: &str, completions: &mut Vec<C
     let mut cursor = node.walk();
     
     if !cursor.goto_first_child() {
-        log_push!("append_function_completions(): goto_first_child() failed");
+        // log_push!("append_function_completions(): goto_first_child() failed");
         return;
     }
 
     if !cursor.goto_next_sibling() {
-        log_push!("append_function_completions(): goto_next_sibling() failed");
+        // log_push!("append_function_completions(): goto_next_sibling() failed");
         return;
     }
 
     let kind = cursor.node().kind();
     if kind != "formal_parameters" {
-        log_push!("append_function_completions(): unexpected node kind {}", kind);
+        // log_push!("append_function_completions(): unexpected node kind {}", kind);
         return;
     }
 
     if !cursor.goto_first_child() {
-        log_push!("append_function_completions(): goto_first_child() failed");
+        // log_push!("append_function_completions(): goto_first_child() failed");
         return;
     }
 
@@ -111,17 +114,17 @@ fn append_function_parameters(node: &Node, source: &str, completions: &mut Vec<C
 pub(crate) fn append_document_completions(document: &mut Document, params: &CompletionParams, completions: &mut Vec<CompletionItem>) {
 
     let ast = unwrap!(&mut document.ast, {
-        log_push!("append_completions(): No AST available.");
+        // log_push!("append_completions(): No AST available.");
         return;
     });
 
     let point = params.text_document_position.position.as_point();
     let mut node = unwrap!(ast.root_node().descendant_for_point_range(point, point), {
-        log_push!("append_completions(): Couldn't find node for point {}", point);
+        // log_push!("append_completions(): Couldn't find node for point {}", point);
         return;
     });
 
-    log_push!("append_completions(): Found node {:?} at [{}, {}]", node, point.row, point.column);
+    // log_push!("append_completions(): Found node {:?} at [{}, {}]", node, point.row, point.column);
 
     let source = document.contents.to_string();
     let mut end = Some(point);
@@ -130,12 +133,14 @@ pub(crate) fn append_document_completions(document: &mut Document, params: &Comp
 
         // If this is a brace list, or the document root, recurse to find identifiers.
         if node.kind() == "brace_list" || node.parent() == None {
+            // log_push!("append_defined_variables(): Entering scope. ({:?})", node);
             append_defined_variables(&node, &source, end, completions);
             end = None;
         }
 
         // If this is a function definition, add parameter names.
         if node.kind() == "function_definition" {
+            // log_push!("append_defined_variables(): Adding function parameters. ({:?})", node);
             append_function_parameters(&node, &source, completions);
         }
 
