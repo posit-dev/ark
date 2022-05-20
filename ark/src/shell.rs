@@ -252,8 +252,33 @@ impl ShellHandler for Shell {
         Ok(())
     }
 
-    async fn handle_input_reply(&self, _msg: &InputReply) -> Result<(), Exception> {
-        // NYI
+    /// Handles a reply to an input_request; forwarded from the Stdin channel
+    async fn handle_input_reply(&self, msg: &InputReply) -> Result<(), Exception> {
+        // Send the input reply to R in the form of an ordinary execution request.
+        let req = ExecuteRequest {
+            code: msg.value.clone(),
+            silent: true,
+            store_history: false,
+            user_expressions: json!({}),
+            allow_stdin: false,
+            stop_on_error: false,
+        };
+        let originator = Vec::new();
+        let (sender, receiver) = channel::<ExecuteResponse>();
+        if let Err(err) = self.req_sender.send(RRequest::ExecuteCode(
+            req.clone(),
+            originator.clone(),
+            sender,
+        )) {
+            warn!("Could not deliver input reply to execution thread: {}", err)
+        }
+
+        // Let the shell thread know that we've executed the code.
+        trace!("Code sent to R: {}", req.code);
+        let result = receiver.recv().unwrap();
+        if let ExecuteResponse::ReplyException(err) = result {
+            warn!("Error in input reply: {:?}", err);
+        }
         Ok(())
     }
 
