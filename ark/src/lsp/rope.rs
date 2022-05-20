@@ -16,6 +16,8 @@ pub(crate) trait RopeExt {
 
 impl RopeExt for Rope {
 
+    // TODO: We likely need to translate column positions into byte positions,
+    // to properly handle multibyte unicode characters.
     fn point_to_byte(&self, point: Point) -> usize {
         self.line_to_byte(point.row) + point.column
     }

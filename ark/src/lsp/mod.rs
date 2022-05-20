@@ -13,6 +13,7 @@ pub mod cursor;
 pub mod document;
 pub mod logger;
 pub mod macros;
+pub mod node;
 pub mod point;
 pub mod position;
 pub mod rope;
