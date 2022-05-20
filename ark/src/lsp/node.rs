@@ -46,7 +46,7 @@ pub(crate) trait NodeExt {
 
 impl NodeExt for Node<'_> {
     fn dump(&self, source: &str) -> String {
-        let mut output = String::new();
+        let mut output = "\n".to_string();
         _dump_impl(&mut self.walk(), source, "", &mut output);
         return output;
     }
