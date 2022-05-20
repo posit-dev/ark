@@ -9,7 +9,7 @@ use ropey::Rope;
 use tower_lsp::lsp_types::{TextDocumentContentChangeEvent};
 use tree_sitter::{Parser, Point, Tree, InputEdit};
 
-use crate::lsp::{logger::log_push, macros::unwrap, position::PositionExt, rope::RopeExt};
+use crate::lsp::{logger::log_push, macros::unwrap, position::PositionExt, rope::RopeExt, node::NodeExt};
 
 fn compute_point(point: Point, text: &str) -> Point {
  
@@ -99,11 +99,7 @@ impl Document {
             start_position, old_end_position, new_end_position
         };
 
-        log_push!("Editing AST: {:#?}", edit);
         ast.edit(&edit);
-
-        // We've edited the AST; we can now re-parse the document.
-        self.ast = self.parser.parse(self.contents.to_string(), Some(&ast));
 
         // Now, apply edits to the underlying document.
         let lhs = self.contents.line_to_char(range.start.line as usize) + range.start.character as usize;
@@ -113,6 +109,8 @@ impl Document {
         self.contents.remove(lhs..rhs);
         self.contents.insert(lhs, change.text.as_str());
 
+        // We've edited the AST, and updated the document. We can now re-parse.
+        self.ast = self.parser.parse(self.contents.to_string(), Some(&ast));
 
     }
 

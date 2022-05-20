@@ -18,7 +18,7 @@ fn completion_from_identifier(node: &Node, source: &str) -> CompletionItem {
 
 fn append_defined_variables(node: &Node, source: &str, end: Option<Point>, completions: &mut Vec<CompletionItem>) {
 
-    // log_push!("{}", node.dump(source));
+    log_push!("append_defined_variables(): Dumping AST. {}", node.dump(source));
     let mut cursor = node.walk();
     cursor.recurse(|node| {
 
