@@ -7,7 +7,7 @@
 
 use tree_sitter::{Node, Point, TreeCursor};
 
-use crate::lsp::{point::PointExt};
+use crate::lsp::traits::point::PointExt;
 
 fn _recurse_impl<Callback: FnMut(Node) -> bool>(this: &mut TreeCursor, callback: &mut Callback) {
 

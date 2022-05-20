@@ -5,16 +5,17 @@
 // 
 // 
 
-use crate::lsp::completions::append_document_completions;
-use crate::lsp::document::Document;
-use crate::lsp::logger::{log_flush};
-use crate::lsp::macros::{unwrap, backend_trace};
 use dashmap::DashMap;
 use serde_json::Value;
 use tokio::net::TcpStream;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
+
+use crate::lsp::completions::append_document_completions;
+use crate::lsp::document::Document;
+use crate::lsp::logger::{log_flush};
+use crate::lsp::macros::{unwrap, backend_trace};
 
 #[derive(Debug)]
 pub(crate) struct Backend {

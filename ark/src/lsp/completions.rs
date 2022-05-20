@@ -5,10 +5,18 @@
 // 
 // 
 
-use tower_lsp::lsp_types::{CompletionParams, CompletionItem};
-use tree_sitter::{Point, Node};
+use tower_lsp::lsp_types::CompletionItem;
+use tower_lsp::lsp_types::CompletionParams;
+use tree_sitter::Node;
+use tree_sitter::Point;
 
-use crate::lsp::{macros::unwrap, document::Document, logger::log_push, position::PositionExt, cursor::TreeCursorExt, point::PointExt, node::NodeExt};
+use crate::lsp::document::Document;
+use crate::lsp::logger::log_push;
+use crate::lsp::macros::unwrap;
+use crate::lsp::traits::cursor::TreeCursorExt;
+use crate::lsp::traits::node::NodeExt;
+use crate::lsp::traits::point::PointExt;
+use crate::lsp::traits::position::PositionExt;
 
 fn completion_from_identifier(node: &Node, source: &str) -> CompletionItem {
     let label = node.utf8_text(source.as_bytes()).expect("empty assignee");

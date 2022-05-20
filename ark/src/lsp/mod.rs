@@ -5,16 +5,11 @@
 // 
 // 
 
-pub mod ast;
 pub mod backend;
 pub mod comm;
 pub mod completions;
-pub mod cursor;
 pub mod document;
 pub mod logger;
 pub mod macros;
-pub mod node;
-pub mod point;
-pub mod position;
-pub mod rope;
+pub mod traits;
 pub mod util;
