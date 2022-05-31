@@ -5,6 +5,8 @@
 // 
 // 
 
+use std::collections::HashSet;
+
 use tower_lsp::lsp_types::CompletionItem;
 use tower_lsp::lsp_types::CompletionParams;
 use tree_sitter::Node;
@@ -12,6 +14,7 @@ use tree_sitter::Point;
 
 use crate::lsp::document::Document;
 use crate::lsp::logger::log_push;
+use crate::lsp::macros::expect;
 use crate::lsp::macros::unwrap;
 use crate::lsp::traits::cursor::TreeCursorExt;
 use crate::lsp::traits::node::NodeExt;
@@ -24,21 +27,55 @@ fn completion_from_identifier(node: &Node, source: &str) -> CompletionItem {
     CompletionItem::new_simple(label.to_string(), detail)
 }
 
-fn append_defined_variables(node: &Node, source: &str, end: Option<Point>, completions: &mut Vec<CompletionItem>) {
+struct CompletionData {
+    source: String,
+    position: Point,
+    visited: HashSet<usize>,
+}
 
-    log_push!("append_defined_variables(): Dumping AST. {}", node.dump(source));
+fn call_uses_nse(node: &Node, data: &CompletionData) -> bool {
+
+    // get the callee
+    let lhs = unwrap!(node.child(0), {
+        return false;
+    });
+
+    // validate we have an identifier or a string
+    match lhs.kind() {
+        "identifier" | "string" => {},
+        _ => { return false; }
+    }
+
+    // check for a function whose evaluation occurs in a local scope
+    let value = expect!(lhs.utf8_text(data.source.as_bytes()), {
+        return false;
+    });
+
+    match value {
+        "expression" | "local" | "quote" | "enquote" | "substitute" | "with" | "within" => { return true; },
+        _ => { return false; }
+    }
+
+}
+
+fn append_defined_variables(node: &Node, data: &mut CompletionData, completions: &mut Vec<CompletionItem>) {
+
+    log_push!("append_defined_variables(): Dumping AST. {}", node.dump(data.source.as_str()));
     let mut cursor = node.walk();
     cursor.recurse(|node| {
 
         // skip nodes that exist beyond the completion position
-        if let Some(end) = end {
-            if node.start_position().is_after(end) {
-                // log_push!("append_defined_variables(): Halting recursion after point {}.", end);
-                return false;
-            }
+        if node.start_position().is_after(data.position) {
+            log_push!("append_defined_variables(): Halting recursion after point {}.", data.position);
+            return false;
         }
 
-        // log_push!("append_defined_variables(): {:#?}", node);
+        // skip nodes that were already visited
+        if data.visited.contains(&node.id()) {
+            return false;
+        }
+
+        log_push!("append_defined_variables(): {:#?}", node);
         match node.kind() {
 
             "left_assignment" | "super_assignment" | "equals_assignment" => {
@@ -46,7 +83,7 @@ fn append_defined_variables(node: &Node, source: &str, end: Option<Point>, compl
                 // TODO: Should we de-quote symbols and strings, or insert them as-is?
                 let assignee = node.child(0).unwrap();
                 if assignee.kind() == "identifier" || assignee.kind() == "string" {
-                    completions.push(completion_from_identifier(&assignee, &source));
+                    completions.push(completion_from_identifier(&assignee, &data.source));
                 }
 
                 // return true in case we have nested assignments
@@ -61,11 +98,18 @@ fn append_defined_variables(node: &Node, source: &str, end: Option<Point>, compl
 
             }
 
+            "call" => {
+
+                // don't recurse into calls for certain functions
+                return !call_uses_nse(&node, &data);
+
+            }
+
             "function_definition" => {
 
                 // don't recurse into function definitions, as these create as new scope
                 // for variable definitions (and so such definitions are no longer visible)
-                // log_push!("append_defined_variables(): Halting recursion (found 'function_definition').");
+                log_push!("append_defined_variables(): Halting recursion (found 'function_definition').");
                 return false;
 
             }
@@ -80,28 +124,28 @@ fn append_defined_variables(node: &Node, source: &str, end: Option<Point>, compl
 
 }
 
-fn append_function_parameters(node: &Node, source: &str, completions: &mut Vec<CompletionItem>) {
+fn append_function_parameters(node: &Node, data: &mut CompletionData, completions: &mut Vec<CompletionItem>) {
 
     let mut cursor = node.walk();
     
     if !cursor.goto_first_child() {
-        // log_push!("append_function_completions(): goto_first_child() failed");
+        log_push!("append_function_completions(): goto_first_child() failed");
         return;
     }
 
     if !cursor.goto_next_sibling() {
-        // log_push!("append_function_completions(): goto_next_sibling() failed");
+        log_push!("append_function_completions(): goto_next_sibling() failed");
         return;
     }
 
     let kind = cursor.node().kind();
     if kind != "formal_parameters" {
-        // log_push!("append_function_completions(): unexpected node kind {}", kind);
+        log_push!("append_function_completions(): unexpected node kind {}", kind);
         return;
     }
 
     if !cursor.goto_first_child() {
-        // log_push!("append_function_completions(): goto_first_child() failed");
+        log_push!("append_function_completions(): goto_first_child() failed");
         return;
     }
 
@@ -112,7 +156,7 @@ fn append_function_parameters(node: &Node, source: &str, completions: &mut Vec<C
     while cursor.goto_next_sibling() {
         let node = cursor.node();
         if node.kind() == "identifier" {
-            completions.push(completion_from_identifier(&node, &source));
+            completions.push(completion_from_identifier(&node, data.source.as_str()));
         }
     }
 
@@ -121,36 +165,43 @@ fn append_function_parameters(node: &Node, source: &str, completions: &mut Vec<C
 
 pub(crate) fn append_document_completions(document: &mut Document, params: &CompletionParams, completions: &mut Vec<CompletionItem>) {
 
+    // get reference to AST
     let ast = unwrap!(&mut document.ast, {
-        // log_push!("append_completions(): No AST available.");
+        log_push!("append_completions(): No AST available.");
         return;
     });
 
+    // try to find child for point
     let point = params.text_document_position.position.as_point();
     let mut node = unwrap!(ast.root_node().descendant_for_point_range(point, point), {
-        // log_push!("append_completions(): Couldn't find node for point {}", point);
+        log_push!("append_completions(): Couldn't find node for point {}", point);
         return;
     });
 
-    // log_push!("append_completions(): Found node {:?} at [{}, {}]", node, point.row, point.column);
+    // build completion data
+    let mut data = CompletionData {
+        source: document.contents.to_string(),
+        position: point,
+        visited: HashSet::new(),
+    };
 
-    let source = document.contents.to_string();
-    let mut end = Some(point);
-
+    log_push!("append_completions(): Found node {:?} at [{}, {}]", node, point.row, point.column);
     loop {
 
         // If this is a brace list, or the document root, recurse to find identifiers.
         if node.kind() == "brace_list" || node.parent() == None {
-            // log_push!("append_defined_variables(): Entering scope. ({:?})", node);
-            append_defined_variables(&node, &source, end, completions);
-            end = None;
+            log_push!("append_defined_variables(): Entering scope. ({:?})", node);
+            append_defined_variables(&node, &mut data, completions);
         }
 
         // If this is a function definition, add parameter names.
         if node.kind() == "function_definition" {
-            // log_push!("append_defined_variables(): Adding function parameters. ({:?})", node);
-            append_function_parameters(&node, &source, completions);
+            log_push!("append_defined_variables(): Adding function parameters. ({:?})", node);
+            append_function_parameters(&node, &mut data, completions);
         }
+
+        // Mark this node as visited.
+        data.visited.insert(node.id());
 
         // Keep going.
         node = match node.parent() {
@@ -159,23 +210,5 @@ pub(crate) fn append_document_completions(document: &mut Document, params: &Comp
         };
 
     }
-
-    // walk(&mut cursor, |node| {
-
-    //     // check for assignments
-    //     if node.kind() == "left_assignment" && node.child_count() > 0 {
-    //         let lhs = node.child(0).unwrap();
-    //         if lhs.kind() == "identifier" {
-    //             let variable = lhs.utf8_text(contents.as_bytes());
-    //             if let Ok(variable) = variable {
-    //                 let detail = format!("Defined on row {}", node.range().start_point.row + 1);
-    //                 completions.push(CompletionItem::new_simple(variable.to_string(), detail));
-    //             }
-    //         }
-    //     }
-
-    //     return true;
-
-    // });
 
 }
