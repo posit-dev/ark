@@ -12,7 +12,7 @@ macro_rules! expect {
     ($value:expr, $fail:expr) => {
         match $value {
             Ok(value) => value,
-            Err(error) => $fail,
+            Err(_error) => $fail,
         }
     }
 
