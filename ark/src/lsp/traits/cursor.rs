@@ -17,9 +17,9 @@ fn _recurse_impl<Callback: FnMut(Node) -> bool>(this: &mut TreeCursor, callback:
 
     if this.goto_first_child() {
 
-        _find_impl(this, callback);
+        _recurse_impl(this, callback);
         while this.goto_next_sibling() {
-            _find_impl(this, callback);
+            _recurse_impl(this, callback);
         }
         this.goto_parent();
 
