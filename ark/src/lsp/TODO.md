@@ -14,3 +14,7 @@ LSP TODO
 - [] Rather than testing `node.kind()`, can we check the `node.kind_id()`? Are we able to read these
      from the language's NODE_TYPES member? Does rust have some clever way of parsing a string of
      .json at compile time so we have an easy-to-use data structure to work with?
+
+- [] Evaluate the [notify](https://crates.io/crates/notify) crate, for filesystem event notifications.
+     We'll probably want to use this so we can index symbols within a project in a separate thread,
+     and use that service for e.g. symbol references. (Similar to the RStudio fuzzy finder.)

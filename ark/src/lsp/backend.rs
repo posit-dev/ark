@@ -5,27 +5,56 @@
 // 
 // 
 
+use std::sync::Arc;
+use std::sync::Mutex;
+
 use dashmap::DashMap;
 use serde_json::Value;
 use tokio::net::TcpStream;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
+use walkdir::WalkDir;
 
 use crate::lsp::completions::append_document_completions;
 use crate::lsp::document::Document;
+use crate::lsp::logger::log_push;
 use crate::lsp::logger::{log_flush};
-use crate::lsp::macros::{unwrap, backend_trace};
+use crate::lsp::macros::unwrap;
+use crate::lsp::macros::{backend_trace};
+
+#[derive(Debug)]
+pub(crate) struct Workspace {
+    pub folders: Vec<Url>,
+}
+
+impl Default for Workspace {
+
+    fn default() -> Self {
+        Self { folders: Default::default() }
+    }
+
+}
 
 #[derive(Debug)]
 pub(crate) struct Backend {
     pub client: Client,
     pub documents: DashMap<Url, Document>,
+    pub workspace: Arc<Mutex<Workspace>>,
 }
 
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
-    async fn initialize(&self, _: InitializeParams) -> Result<InitializeResult> {
+    async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
+        backend_trace!(self, "initialize({:#?})", params);
+
+        if let Ok(mut workspace) = self.workspace.lock() {
+            if let Some(workspace_folders) = params.workspace_folders {
+                for folder in workspace_folders.iter() {
+                    workspace.folders.push(folder.uri.clone());
+                }
+            }
+        }
 
         Ok(InitializeResult {
             server_info: Some(ServerInfo {
@@ -36,6 +65,8 @@ impl LanguageServer for Backend {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
                     TextDocumentSyncKind::INCREMENTAL,
                 )),
+                selection_range_provider: None,
+                hover_provider: Some(HoverProviderCapability::from(true)),
                 completion_provider: Some(CompletionOptions {
                     resolve_provider: Some(false),
                     trigger_characters: Some(vec!["$".to_string(), "@".to_string()]),
@@ -43,7 +74,11 @@ impl LanguageServer for Backend {
                     all_commit_characters: None,
                     ..Default::default()
                 }),
-                hover_provider: Some(HoverProviderCapability::from(true)),
+                signature_help_provider: None,
+                definition_provider: None,
+                type_definition_provider: None,
+                implementation_provider: None,
+                references_provider: None,
                 execute_command_provider: Some(ExecuteCommandOptions {
                     commands: vec!["dummy.do_something".to_string()],
                     work_done_progress_options: Default::default(),
@@ -116,7 +151,7 @@ impl LanguageServer for Backend {
         // get reference to document
         let uri = &params.text_document.uri;
         let mut doc = unwrap!(self.documents.get_mut(uri), {
-            backend_trace!(self, "unexpected document uri '{}'", uri);
+            backend_trace!(self, "did_change(): unexpected document uri '{}'", uri);
             return;
         });
 
@@ -168,6 +203,69 @@ impl LanguageServer for Backend {
             range: None,
         }))
     }
+
+    async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
+        backend_trace!(self, "references({:?})", params);
+
+        // TODO: Rather than searching files within the workspace on demand,
+        // use an index of symbols built via a separate service thread.
+        // Similar to the RStudio file monitor.
+
+        // TODO: Figure out what kind of symbol the user is currently referencing.
+        // Ideally, our 'Find References' implementation should be context-aware,
+        // so that we can tell that these values are different:
+        //
+        //    foo <- function(value) { ... }
+        //    data <- list(value = 42)
+        //    data$value
+        //
+        // In general, refactoring 'names' is challenging; we have a bit more hope
+        // with refactoring symbol names.
+        if let Ok(workspace) = self.workspace.lock() {
+            for folder in workspace.folders.iter() {
+                if let Ok(path) = folder.to_file_path() {
+                    let walker = WalkDir::new(path);
+                    for entry in walker.into_iter().filter_entry(|entry| {
+                        if let Some(name) = entry.file_name().to_str() {
+                            match name {
+                                ".git" | "node_modules" => {
+                                    return false;
+                                }
+
+                                _ => { return true; }
+                            }
+
+                        }
+                        return false;
+                    }) {
+                        if let Ok(entry) = entry {
+                            log_push!("references(): {:?}", entry);
+                            let path = entry.path();
+                            if path.ends_with(".r") || path.ends_with(".R") {
+                                log_push!("Found R script: {:?}", path);
+                            }
+                        }
+                    }
+                }
+
+            }
+        }
+
+        let mut result = Vec::new();
+
+        let range = Range::new(
+            Position::new(0, 0),
+            Position::new(5, 0),
+        );
+
+        result.push(Location {
+            range: range,
+            uri: params.text_document_position.text_document.uri,
+        });
+
+        log_flush!(self);
+        Ok(Some(result))
+    }
 }
 
 #[tokio::main]
@@ -194,7 +292,8 @@ pub async fn start_lsp(address: String) {
 
     let (service, socket) = LspService::new(|client| Backend {
         client: client,
-        documents: DashMap::new()
+        documents: DashMap::new(),
+        workspace: Arc::new(Mutex::new(Workspace::default())),
     });
 
     Server::new(read, write, socket).serve(service).await;
