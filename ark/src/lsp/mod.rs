@@ -11,5 +11,6 @@ pub mod completions;
 pub mod document;
 pub mod logger;
 pub mod macros;
+pub mod references;
 pub mod traits;
 pub mod util;

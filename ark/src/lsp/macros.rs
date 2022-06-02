@@ -5,24 +5,30 @@
 // 
 // 
 
-#![allow(unused_macros, unused_imports)]
-
-macro_rules! expect {
-
-    ($value:expr, $fail:expr) => {
-        match $value {
-            Ok(value) => value,
-            Err(_error) => $fail,
-        }
-    }
-
+pub trait IntoOption<T> {
+    fn into_option(self) -> Option<T>;
 }
-pub(crate) use expect;
+
+impl<T, E> IntoOption<T> for Result<T, E> {
+    fn into_option(self) -> Option<T> {
+        self.ok()
+    }
+}
+
+impl<T> IntoOption<T> for Option<T> {
+    fn into_option(self) -> Option<T> {
+        self
+    }
+}
+
+pub fn _into_option<T>(object: impl IntoOption<T>) -> Option<T> {
+    object.into_option()
+}
 
 macro_rules! unwrap {
 
-    ($value:expr, $fail:expr) => {
-        match $value {
+    ($value: expr, $fail: expr) => {
+        match crate::lsp::macros::_into_option($value) {
             Some(value) => value,
             None => $fail,
         }

@@ -14,7 +14,6 @@ use tree_sitter::Point;
 
 use crate::lsp::document::Document;
 use crate::lsp::logger::log_push;
-use crate::lsp::macros::expect;
 use crate::lsp::macros::unwrap;
 use crate::lsp::traits::cursor::TreeCursorExt;
 use crate::lsp::traits::node::NodeExt;
@@ -47,7 +46,7 @@ fn call_uses_nse(node: &Node, data: &CompletionData) -> bool {
     }
 
     // check for a function whose evaluation occurs in a local scope
-    let value = expect!(lhs.utf8_text(data.source.as_bytes()), {
+    let value = unwrap!(lhs.utf8_text(data.source.as_bytes()), {
         return false;
     });
 
@@ -166,7 +165,7 @@ fn append_function_parameters(node: &Node, data: &mut CompletionData, completion
 pub(crate) fn append_document_completions(document: &mut Document, params: &CompletionParams, completions: &mut Vec<CompletionItem>) {
 
     // get reference to AST
-    let ast = unwrap!(&mut document.ast, {
+    let ast = unwrap!(document.ast.as_ref(), {
         log_push!("append_completions(): No AST available.");
         return;
     });

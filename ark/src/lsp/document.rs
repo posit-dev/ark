@@ -86,7 +86,7 @@ impl Document {
         // contents, because edit computations need to be done using the current
         // state of the document (prior to the edit being applied) so that byte
         // offsets can be computed correctly.
-        let ast = unwrap!(&mut self.ast, {
+        let ast = unwrap!(self.ast.as_mut(), {
             log_push!("Document.update(): no AST available");
             return;
         });
