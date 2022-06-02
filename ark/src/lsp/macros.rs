@@ -5,41 +5,45 @@
 // 
 // 
 
-pub trait IntoOption<T> {
-    fn into_option(self) -> Option<T>;
+pub trait IntoResult<T, E> {
+    fn into_result(self) -> Result<T, E>;
 }
 
-impl<T, E> IntoOption<T> for Result<T, E> {
-    fn into_option(self) -> Option<T> {
-        self.ok()
-    }
+impl<T, E> IntoResult<T, E> for Result<T, E> {
+    fn into_result(self) -> Result<T, E> { self }
 }
 
-impl<T> IntoOption<T> for Option<T> {
-    fn into_option(self) -> Option<T> {
-        self
-    }
+impl<T> IntoResult<T, ()> for Option<T> {
+    fn into_result(self) -> Result<T, ()> { self.ok_or(()) }
 }
 
-pub fn _into_option<T>(object: impl IntoOption<T>) -> Option<T> {
-    object.into_option()
+#[doc(hidden)]
+pub fn _into_result<T, E>(object: impl IntoResult<T, E>) -> Result<T, E> {
+    object.into_result()
 }
 
 macro_rules! unwrap {
 
-    ($value: expr, $fail: expr) => {
-        match crate::lsp::macros::_into_option($value) {
-            Some(value) => value,
-            None => $fail,
+    ($value: expr, $id: ident $error: block) => {
+        match crate::lsp::macros::_into_result($value) {
+            Ok(value) => value,
+            Err($id) => $error,
         }
     };
+
+    ($value: expr, $error: block) => {
+        match crate::lsp::macros::_into_result($value) {
+            Ok(value) => value,
+            Err(_error) => $error,
+        }
+    }
 
 }
 pub(crate) use unwrap;
 
 macro_rules! backend_trace {
 
-    ($self:expr, $($rest:expr),*) => {{
+    ($self: expr, $($rest: expr),*) => {{
         let message = format!($($rest, )*);
         $self.client.log_message(tower_lsp::lsp_types::MessageType::INFO, message).await
     }};
