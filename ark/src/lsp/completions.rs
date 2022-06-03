@@ -59,13 +59,11 @@ fn call_uses_nse(node: &Node, data: &CompletionData) -> bool {
 
 fn append_defined_variables(node: &Node, data: &mut CompletionData, completions: &mut Vec<CompletionItem>) {
 
-    log_push!("append_defined_variables(): Dumping AST. {}", node.dump(data.source.as_str()));
     let mut cursor = node.walk();
     cursor.recurse(|node| {
 
         // skip nodes that exist beyond the completion position
         if node.start_position().is_after(data.position) {
-            log_push!("append_defined_variables(): Halting recursion after point {}.", data.position);
             return false;
         }
 
@@ -74,7 +72,6 @@ fn append_defined_variables(node: &Node, data: &mut CompletionData, completions:
             return false;
         }
 
-        log_push!("append_defined_variables(): {:#?}", node);
         match node.kind() {
 
             "left_assignment" | "super_assignment" | "equals_assignment" => {
@@ -108,7 +105,6 @@ fn append_defined_variables(node: &Node, data: &mut CompletionData, completions:
 
                 // don't recurse into function definitions, as these create as new scope
                 // for variable definitions (and so such definitions are no longer visible)
-                log_push!("append_defined_variables(): Halting recursion (found 'function_definition').");
                 return false;
 
             }
@@ -166,14 +162,12 @@ pub(crate) fn append_document_completions(document: &mut Document, params: &Comp
 
     // get reference to AST
     let ast = unwrap!(document.ast.as_ref(), {
-        log_push!("append_completions(): No AST available.");
         return;
     });
 
     // try to find child for point
     let point = params.text_document_position.position.as_point();
     let mut node = unwrap!(ast.root_node().descendant_for_point_range(point, point), {
-        log_push!("append_completions(): Couldn't find node for point {}", point);
         return;
     });
 
@@ -184,18 +178,15 @@ pub(crate) fn append_document_completions(document: &mut Document, params: &Comp
         visited: HashSet::new(),
     };
 
-    log_push!("append_completions(): Found node {:?} at [{}, {}]", node, point.row, point.column);
     loop {
 
         // If this is a brace list, or the document root, recurse to find identifiers.
         if node.kind() == "brace_list" || node.parent() == None {
-            log_push!("append_defined_variables(): Entering scope. ({:?})", node);
             append_defined_variables(&node, &mut data, completions);
         }
 
         // If this is a function definition, add parameter names.
         if node.kind() == "function_definition" {
-            log_push!("append_defined_variables(): Adding function parameters. ({:?})", node);
             append_function_parameters(&node, &mut data, completions);
         }
 

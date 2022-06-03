@@ -9,6 +9,7 @@ pub mod backend;
 pub mod comm;
 pub mod completions;
 pub mod document;
+pub mod indexer;
 pub mod logger;
 pub mod macros;
 pub mod references;

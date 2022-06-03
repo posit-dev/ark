@@ -7,10 +7,12 @@
 
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::time::Duration;
 
 use dashmap::DashMap;
 use serde_json::Value;
 use tokio::net::TcpStream;
+use tokio::runtime::Handle;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
@@ -18,10 +20,18 @@ use walkdir::WalkDir;
 
 use crate::lsp::completions::append_document_completions;
 use crate::lsp::document::Document;
+use crate::lsp::indexer::WorkspaceIndexer;
 use crate::lsp::logger::log_push;
-use crate::lsp::logger::{log_flush};
 use crate::lsp::macros::unwrap;
-use crate::lsp::macros::{backend_trace};
+
+macro_rules! backend_trace {
+
+    ($self: expr, $($rest: expr),*) => {{
+        let message = format!($($rest, )*);
+        $self.client.log_message(tower_lsp::lsp_types::MessageType::INFO, message).await
+    }};
+
+}
 
 #[derive(Debug)]
 pub(crate) struct Workspace {
@@ -40,6 +50,7 @@ impl Default for Workspace {
 pub(crate) struct Backend {
     pub client: Client,
     pub documents: DashMap<Url, Document>,
+    pub indexer: Arc<Mutex<WorkspaceIndexer>>,
     pub workspace: Arc<Mutex<Workspace>>,
 }
 
@@ -48,13 +59,40 @@ impl LanguageServer for Backend {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
         backend_trace!(self, "initialize({:#?})", params);
 
+        // initialize the set of known workspaces
+        let mut folders: Vec<String> = Vec::new();
         if let Ok(mut workspace) = self.workspace.lock() {
+
+            // initialize the workspace folders
             if let Some(workspace_folders) = params.workspace_folders {
                 for folder in workspace_folders.iter() {
                     workspace.folders.push(folder.uri.clone());
+                    if let Ok(path) = folder.uri.to_file_path() {
+                        if let Some(path) = path.to_str() {
+                            folders.push(path.to_string());
+                        }
+                    }
                 }
             }
+
         }
+
+        // initialize the indexer
+        if let Ok(mut indexer) = self.indexer.lock() {
+            indexer.start(folders);
+        }
+
+        // start a task to periodically flush logs
+        // TODO: let log_push! notify the task so that logs can be flushed immediately,
+        // instead of just polling
+        let runtime = Handle::current();
+        let client = self.client.clone();
+        runtime.spawn(async move {
+            loop {
+                std::thread::sleep(Duration::from_secs(1));
+                crate::lsp::logger::flush(&client).await;
+            }
+        });
 
         Ok(InitializeResult {
             server_info: Some(ServerInfo {
@@ -97,28 +135,23 @@ impl LanguageServer for Backend {
 
     async fn initialized(&self, params: InitializedParams) {
         backend_trace!(self, "initialized({:?})", params);
-        log_flush!(self);
     }
 
     async fn shutdown(&self) -> Result<()> {
         backend_trace!(self, "shutdown()");
-        log_flush!(self);
         Ok(())
     }
 
     async fn did_change_workspace_folders(&self, params: DidChangeWorkspaceFoldersParams) {
         backend_trace!(self, "did_change_workspace_folders({:?})", params);
-        log_flush!(self);
     }
 
     async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
         backend_trace!(self, "did_change_configuration({:?})", params);
-        log_flush!(self);
     }
 
     async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
         backend_trace!(self, "did_change_watched_files({:?})", params);
-        log_flush!(self);
     }
 
     async fn execute_command(&self, params: ExecuteCommandParams) -> Result<Option<Value>> {
@@ -130,7 +163,6 @@ impl LanguageServer for Backend {
             Err(err) => self.client.log_message(MessageType::ERROR, err).await,
         }
 
-        log_flush!(self);
         Ok(None)
     }
 
@@ -142,7 +174,6 @@ impl LanguageServer for Backend {
             Document::new(params.text_document.text.as_str()),
         );
 
-        log_flush!(self);
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
@@ -160,17 +191,14 @@ impl LanguageServer for Backend {
             doc.update(change);
         }
 
-        log_flush!(self);
     }
 
     async fn did_save(&self, params: DidSaveTextDocumentParams) {
         backend_trace!(self, "did_save({:?}", params);
-        log_flush!(self);
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         backend_trace!(self, "did_close({:?}", params);
-        log_flush!(self);
     }
 
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
@@ -188,14 +216,12 @@ impl LanguageServer for Backend {
         // add context-relevant completions
         append_document_completions(document.value_mut(), &params, &mut completions);
 
-        log_flush!(self);
         return Ok(Some(CompletionResponse::Array(completions)));
 
     }
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
         backend_trace!(self, "hover({:?})", params);
-        log_flush!(self);
         Ok(Some(Hover {
             contents: HoverContents::Scalar(MarkedString::from_markdown(String::from(
                 "Hello world!",
@@ -263,7 +289,6 @@ impl LanguageServer for Backend {
             uri: params.text_document_position.text_document.uri,
         });
 
-        log_flush!(self);
         Ok(Some(result))
     }
 }
@@ -293,6 +318,7 @@ pub async fn start_lsp(address: String) {
     let (service, socket) = LspService::new(|client| Backend {
         client: client,
         documents: DashMap::new(),
+        indexer: Arc::new(Mutex::new(WorkspaceIndexer::new())),
         workspace: Arc::new(Mutex::new(Workspace::default())),
     });
 
