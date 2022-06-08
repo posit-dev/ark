@@ -5,6 +5,7 @@
 // 
 // 
 
+use std::fs;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -16,13 +17,17 @@ use tokio::runtime::Handle;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
+use tree_sitter::Parser;
+use tree_sitter::Point;
 use walkdir::WalkDir;
 
 use crate::lsp::completions::append_document_completions;
 use crate::lsp::document::Document;
-use crate::lsp::indexer::WorkspaceIndexer;
 use crate::lsp::logger::log_push;
 use crate::lsp::macros::unwrap;
+use crate::lsp::traits::cursor::TreeCursorExt;
+use crate::lsp::traits::point::PointExt;
+use crate::lsp::traits::position::PositionExt;
 
 macro_rules! backend_trace {
 
@@ -50,7 +55,6 @@ impl Default for Workspace {
 pub(crate) struct Backend {
     pub client: Client,
     pub documents: DashMap<Url, Document>,
-    pub indexer: Arc<Mutex<WorkspaceIndexer>>,
     pub workspace: Arc<Mutex<Workspace>>,
 }
 
@@ -75,11 +79,6 @@ impl LanguageServer for Backend {
                 }
             }
 
-        }
-
-        // initialize the indexer
-        if let Ok(mut indexer) = self.indexer.lock() {
-            indexer.start(folders);
         }
 
         // start a task to periodically flush logs
@@ -116,7 +115,7 @@ impl LanguageServer for Backend {
                 definition_provider: None,
                 type_definition_provider: None,
                 implementation_provider: None,
-                references_provider: None,
+                references_provider: Some(OneOf::Left(true)),
                 execute_command_provider: Some(ExecuteCommandOptions {
                     commands: vec!["dummy.do_something".to_string()],
                     work_done_progress_options: Default::default(),
@@ -233,6 +232,49 @@ impl LanguageServer for Backend {
     async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
         backend_trace!(self, "references({:?})", params);
 
+        let mut locations : Vec<Location> = Vec::new();
+
+        // First, figure out what value the user is looking at. Parse the current
+        // document, and then get the node at the cursor position. We should have
+        // a reference to this document already, so try to look that up first.
+        let uri = &params.text_document_position.text_document.uri;
+        let doc = unwrap!(self.documents.get_mut(&uri), {
+            log_push!("references(): no document for URI {}", uri);
+            return Ok(None);
+        });
+
+        let ast = unwrap!(doc.ast.as_ref(), {
+            log_push!("references(): no AST for URI {}", uri);
+            return Ok(None);
+        });
+
+        // Figure out what node lies at the requested point.
+        let point = params.text_document_position.position.as_point();
+        let mut node = unwrap!(ast.root_node().descendant_for_point_range(point, point), {
+            log_push!("references(): couldn't find node associated with point {:?}", point);
+            return Ok(None)
+        });
+
+        // Check and see if we got an identifier. If we didn't, we might need to use
+        // some heuristics to look around. Unfortunately, it seems like if you double-click
+        // to select an identifier, and then use Right Click -> Find All References, the
+        // position received by the LSP maps to the _end_ of the selected range, which
+        // is technically not part of the associated identifier's range. In addition, we
+        // can't just subtract 1 from the position column since that would then fail to
+        // resolve the correct identifier when the cursor is located at the start of the
+        // identifier.
+        if node.kind() != "identifier" {
+            let point = Point::new(point.row, point.column - 1);
+            node = unwrap!(ast.root_node().descendant_for_point_range(point, point), {
+                log_push!("references(): couldn't find node associated with point {:?}", point);
+                return Ok(None)
+            });
+        }
+
+        let contents = doc.contents.to_string();
+        let needle = node.utf8_text(contents.as_bytes()).expect("node contents");
+        log_push!("references(): searching for {}", needle);
+
         // TODO: Rather than searching files within the workspace on demand,
         // use an index of symbols built via a separate service thread.
         // Similar to the RStudio file monitor.
@@ -254,6 +296,8 @@ impl LanguageServer for Backend {
                     for entry in walker.into_iter().filter_entry(|entry| {
                         if let Some(name) = entry.file_name().to_str() {
                             match name {
+
+                                // TODO: Can we ask the front-end for these?
                                 ".git" | "node_modules" => {
                                     return false;
                                 }
@@ -265,10 +309,54 @@ impl LanguageServer for Backend {
                         return false;
                     }) {
                         if let Ok(entry) = entry {
-                            log_push!("references(): {:?}", entry);
                             let path = entry.path();
-                            if path.ends_with(".r") || path.ends_with(".R") {
-                                log_push!("Found R script: {:?}", path);
+                            
+                            let ext = match path.extension() {
+                                Some(ext) => ext,
+                                None => { continue; }
+                            };
+
+                            if ext == "R" || ext == "r" {
+                                
+                                // TODO: We need to check our local document cache first, since it's
+                                // possible the document has not yet been saved to disk. However, we
+                                // should have already handled any incremental document changes so the
+                                // LSP's cache of the document contents will match what is actually
+                                // visible in the user's editor buffer.
+                                log_push!("references(): found R file {:?}", path);
+                                let contents = match fs::read_to_string(path) {
+                                    Ok(contents) => contents,
+                                    Err(error) => {
+                                        log_push!("Error reading path {:?}: {}", path, error);
+                                        continue;
+                                    }
+                                };
+
+                                // create a parser for this document
+                                let mut parser = Parser::new();
+                                parser.set_language(tree_sitter_r::language()).expect("failed to create parser");
+                                let ast = parser.parse(contents.as_bytes(), None).expect("failed to parse file");
+
+                                // recurse and find symbols of the matching name
+                                let mut cursor = ast.walk();
+                                cursor.recurse(|node| {
+
+                                    if node.kind() == "identifier" {
+                                        let text = node.utf8_text(contents.as_bytes()).expect("contents");
+                                        if text == needle {
+                                            log_push!("Found node: {:?}", node);
+                                            let location = Location::new(
+                                                Url::from_file_path(path).expect("valid path"),
+                                                Range::new(node.start_position().as_position(), node.end_position().as_position())
+                                            );
+                                            locations.push(location);
+                                        }
+                                    }
+
+                                    return true;
+
+                                })
+
                             }
                         }
                     }
@@ -277,19 +365,11 @@ impl LanguageServer for Backend {
             }
         }
 
-        let mut result = Vec::new();
-
-        let range = Range::new(
-            Position::new(0, 0),
-            Position::new(5, 0),
-        );
-
-        result.push(Location {
-            range: range,
-            uri: params.text_document_position.text_document.uri,
-        });
-
-        Ok(Some(result))
+        if locations.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(locations))
+        }
     }
 }
 
@@ -318,7 +398,6 @@ pub async fn start_lsp(address: String) {
     let (service, socket) = LspService::new(|client| Backend {
         client: client,
         documents: DashMap::new(),
-        indexer: Arc::new(Mutex::new(WorkspaceIndexer::new())),
         workspace: Arc::new(Mutex::new(Workspace::default())),
     });
 
