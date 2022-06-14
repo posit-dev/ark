@@ -124,23 +124,23 @@ fn append_function_parameters(node: &Node, data: &mut CompletionData, completion
     let mut cursor = node.walk();
     
     if !cursor.goto_first_child() {
-        log_push!("append_function_completions(): goto_first_child() failed");
+        log_push!("goto_first_child() failed");
         return;
     }
 
     if !cursor.goto_next_sibling() {
-        log_push!("append_function_completions(): goto_next_sibling() failed");
+        log_push!("goto_next_sibling() failed");
         return;
     }
 
     let kind = cursor.node().kind();
     if kind != "formal_parameters" {
-        log_push!("append_function_completions(): unexpected node kind {}", kind);
+        log_push!("unexpected node kind {}", kind);
         return;
     }
 
     if !cursor.goto_first_child() {
-        log_push!("append_function_completions(): goto_first_child() failed");
+        log_push!("goto_first_child() failed");
         return;
     }
 

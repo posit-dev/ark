@@ -19,16 +19,11 @@ use tokio::runtime::Handle;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
-use tree_sitter::Point;
-use walkdir::WalkDir;
 
 use crate::lsp::completions::append_document_completions;
 use crate::lsp::document::Document;
 use crate::lsp::logger::log_push;
 use crate::lsp::macros::unwrap;
-use crate::lsp::traits::cursor::TreeCursorExt;
-use crate::lsp::traits::point::PointExt;
-use crate::lsp::traits::position::PositionExt;
 
 macro_rules! backend_trace {
 
@@ -61,19 +56,21 @@ pub(crate) struct Backend {
 
 impl Backend {
 
-    fn with_document(&self, path: &Path, mut callback: impl FnMut(&Document)) -> bool {
-
+    pub(crate) fn with_document<T, F>(&self, path: &Path, mut callback: F) -> std::result::Result<T, ()>
+    where
+        T: Default,
+        F: FnMut(&Document) -> std::result::Result<T, ()>
+    {
         let mut fallback = || {
 
             let contents = unwrap!(std::fs::read_to_string(path), {
-                log_push!("with_document_fallback(): reading from {:?} failed", path);
-                return false;
+                log_push!("reading from {:?} failed", path);
+                return Err(());
             });
 
 
             let document = Document::new(contents.as_str());
-            callback(&document);
-            return true;
+            return callback(&document);
 
         };
 
@@ -81,18 +78,17 @@ impl Backend {
         // then use that; otherwise, try to read the document from the provided
         // path and use that instead.
         let uri = unwrap!(Url::from_file_path(path), {
-            log_push!("with_document_path(): couldn't construct uri from {:?}", path);
+            log_push!("couldn't construct uri from {:?}", path);
             return fallback();
         });
 
 
         let document = unwrap!(self.documents.get(&uri), {
-            log_push!("with_document_path(): no document for uri {:?}", uri);
+            log_push!("no document for uri {:?}", uri);
             return fallback();
         });
 
-        callback(document.value());
-        return true;
+        return callback(document.value());
 
     }
 
@@ -279,132 +275,11 @@ impl LanguageServer for Backend {
 
     async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
         backend_trace!(self, "references({:?})", params);
-
-        let mut locations : Vec<Location> = Vec::new();
-
-        // First, figure out what value the user is looking at. Parse the current
-        // document, and then get the node at the cursor position. We should have
-        // a reference to this document already, so try to look that up first.
-        let uri = params.text_document_position.text_document.uri;
-        let document = unwrap!(self.documents.get(&uri), {
-            log_push!("references(): no document for URI {}", uri);
-            return Ok(None);
-        });
-
-        let ast = unwrap!(document.ast.as_ref(), {
-            log_push!("references(): no AST for URI {}", uri);
-            return Ok(None);
-        });
-
-        // Figure out what node lies at the requested point.
-        let point = params.text_document_position.position.as_point();
-        let mut node = unwrap!(ast.root_node().descendant_for_point_range(point, point), {
-            log_push!("references(): couldn't find node associated with point {:?}", point);
-            return Ok(None)
-        });
-
-        // Check and see if we got an identifier. If we didn't, we might need to use
-        // some heuristics to look around. Unfortunately, it seems like if you double-click
-        // to select an identifier, and then use Right Click -> Find All References, the
-        // position received by the LSP maps to the _end_ of the selected range, which
-        // is technically not part of the associated identifier's range. In addition, we
-        // can't just subtract 1 from the position column since that would then fail to
-        // resolve the correct identifier when the cursor is located at the start of the
-        // identifier.
-        if node.kind() != "identifier" {
-            let point = Point::new(point.row, point.column - 1);
-            node = unwrap!(ast.root_node().descendant_for_point_range(point, point), {
-                log_push!("references(): couldn't find node associated with point {:?}", point);
-                return Ok(None)
-            });
-        }
-
-        let contents = document.contents.to_string();
-        let needle = node.utf8_text(contents.as_bytes()).expect("node contents");
-        log_push!("references(): searching for {}", needle);
-
-        // TODO: Rather than searching files within the workspace on demand,
-        // use an index of symbols built via a separate service thread.
-        // Similar to the RStudio file monitor.
-
-        // TODO: Figure out what kind of symbol the user is currently referencing.
-        // Ideally, our 'Find References' implementation should be context-aware,
-        // so that we can tell that these values are different:
-        //
-        //    foo <- function(value) { ... }
-        //    data <- list(value = 42)
-        //    data$value
-        //
-        // In general, refactoring 'names' is challenging; we have a bit more hope
-        // with refactoring symbol names.
-        if let Ok(workspace) = self.workspace.lock() {
-            for folder in workspace.folders.iter() {
-                if let Ok(path) = folder.to_file_path() {
-                    let walker = WalkDir::new(path);
-                    for entry in walker.into_iter().filter_entry(|entry| {
-                        if let Some(name) = entry.file_name().to_str() {
-                            match name {
-
-                                // TODO: Can we ask the front-end for these?
-                                ".git" | "node_modules" => {
-                                    return false;
-                                }
-
-                                _ => { return true; }
-                            }
-
-                        }
-                        return false;
-                    }) {
-                        if let Ok(entry) = entry {
-                            let path = entry.path();
-                            
-                            let ext = match path.extension() {
-                                Some(ext) => ext,
-                                None => { continue; }
-                            };
-
-                            if ext == "R" || ext == "r" {
-                                
-                                log_push!("references(): found R file {:?}", path);
-                                self.with_document(path, |document| {
-
-                                    // recurse and find symbols of the matching name
-                                    let ast = unwrap!(document.ast.as_ref(), {
-                                        log_push!("references(): no ast available");
-                                        return ();
-                                    });
-
-                                    let contents = document.contents.to_string();
-
-                                    let mut cursor = ast.walk();
-                                    cursor.recurse(|node| {
-
-                                        if node.kind() == "identifier" {
-                                            let text = node.utf8_text(contents.as_bytes()).expect("contents");
-                                            if text == needle {
-                                                log_push!("Found node: {:?}", node);
-                                                let location = Location::new(
-                                                    Url::from_file_path(path).expect("valid path"),
-                                                    Range::new(node.start_position().as_position(), node.end_position().as_position())
-                                                );
-                                                locations.push(location);
-                                            }
-                                        }
-
-                                        return true;
-
-                                    });
-
-                                });
-
-                            }
-                        }
-                    }
-                }
-
-            }
-        }
+        
+        let locations = match self.find_references(params) {
+            Ok(locations) => locations,
+            Err(_error) => { return Ok(None); }
+        };
 
         if locations.is_empty() {
             Ok(None)
