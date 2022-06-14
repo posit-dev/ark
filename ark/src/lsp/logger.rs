@@ -42,8 +42,9 @@ pub(crate) fn append(message: String) {
 macro_rules! log_push {
 
     ($($rest:expr),*) => {{
-        let message = format!($($rest, )*);
-        crate::lsp::logger::append(message);
+        let prefix = format!("{}:{}:{}:", file!(), line!(), column!());
+        let suffix = format!($($rest, )*);
+        crate::lsp::logger::append(format!("{} {}", prefix, suffix));
     }};
 
 }
