@@ -1,9 +1,11 @@
-/*
- * main.rs
- *
- * Copyright (C) 2022 by RStudio, PBC
- *
- */
+//
+// main.rs
+//
+// Copyright (C) 2022 by RStudio, PBC
+//
+//
+
+#![feature(backtrace)]
 
 use crate::control::Control;
 use crate::shell::Shell;
