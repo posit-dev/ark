@@ -5,7 +5,9 @@
 // 
 // 
 
-use std::fs;
+use std::backtrace::Backtrace;
+use std::io::Write;
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -17,7 +19,6 @@ use tokio::runtime::Handle;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
-use tree_sitter::Parser;
 use tree_sitter::Point;
 use walkdir::WalkDir;
 
@@ -58,9 +59,56 @@ pub(crate) struct Backend {
     pub workspace: Arc<Mutex<Workspace>>,
 }
 
+impl Backend {
+
+    fn with_document(&self, path: &Path, mut callback: impl FnMut(&Document)) -> bool {
+
+        let mut fallback = || {
+
+            let contents = unwrap!(std::fs::read_to_string(path), {
+                log_push!("with_document_fallback(): reading from {:?} failed", path);
+                return false;
+            });
+
+
+            let document = Document::new(contents.as_str());
+            callback(&document);
+            return true;
+
+        };
+
+        // If we have a cached copy of the document (because we're monitoring it)
+        // then use that; otherwise, try to read the document from the provided
+        // path and use that instead.
+        let uri = unwrap!(Url::from_file_path(path), {
+            log_push!("with_document_path(): couldn't construct uri from {:?}", path);
+            return fallback();
+        });
+
+
+        let document = unwrap!(self.documents.get(&uri), {
+            log_push!("with_document_path(): no document for uri {:?}", uri);
+            return fallback();
+        });
+
+        callback(document.value());
+        return true;
+
+    }
+
+}
+
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
+
+        // for debugging; remove later
+        std::panic::set_hook(Box::new(|data| {
+            let mut writer = std::fs::File::create("/tmp/ark.log").unwrap();
+            writeln!(&mut writer, "{:#?}", data).expect("oh no");
+            writeln!(&mut writer, "{}", Backtrace::force_capture()).expect("oh no");
+        }));
+
         backend_trace!(self, "initialize({:#?})", params);
 
         // initialize the set of known workspaces
@@ -237,13 +285,13 @@ impl LanguageServer for Backend {
         // First, figure out what value the user is looking at. Parse the current
         // document, and then get the node at the cursor position. We should have
         // a reference to this document already, so try to look that up first.
-        let uri = &params.text_document_position.text_document.uri;
-        let doc = unwrap!(self.documents.get_mut(&uri), {
+        let uri = params.text_document_position.text_document.uri;
+        let document = unwrap!(self.documents.get(&uri), {
             log_push!("references(): no document for URI {}", uri);
             return Ok(None);
         });
 
-        let ast = unwrap!(doc.ast.as_ref(), {
+        let ast = unwrap!(document.ast.as_ref(), {
             log_push!("references(): no AST for URI {}", uri);
             return Ok(None);
         });
@@ -271,7 +319,7 @@ impl LanguageServer for Backend {
             });
         }
 
-        let contents = doc.contents.to_string();
+        let contents = document.contents.to_string();
         let needle = node.utf8_text(contents.as_bytes()).expect("node contents");
         log_push!("references(): searching for {}", needle);
 
@@ -318,44 +366,37 @@ impl LanguageServer for Backend {
 
                             if ext == "R" || ext == "r" {
                                 
-                                // TODO: We need to check our local document cache first, since it's
-                                // possible the document has not yet been saved to disk. However, we
-                                // should have already handled any incremental document changes so the
-                                // LSP's cache of the document contents will match what is actually
-                                // visible in the user's editor buffer.
                                 log_push!("references(): found R file {:?}", path);
-                                let contents = match fs::read_to_string(path) {
-                                    Ok(contents) => contents,
-                                    Err(error) => {
-                                        log_push!("Error reading path {:?}: {}", path, error);
-                                        continue;
-                                    }
-                                };
+                                self.with_document(path, |document| {
 
-                                // create a parser for this document
-                                let mut parser = Parser::new();
-                                parser.set_language(tree_sitter_r::language()).expect("failed to create parser");
-                                let ast = parser.parse(contents.as_bytes(), None).expect("failed to parse file");
+                                    // recurse and find symbols of the matching name
+                                    let ast = unwrap!(document.ast.as_ref(), {
+                                        log_push!("references(): no ast available");
+                                        return ();
+                                    });
 
-                                // recurse and find symbols of the matching name
-                                let mut cursor = ast.walk();
-                                cursor.recurse(|node| {
+                                    let contents = document.contents.to_string();
 
-                                    if node.kind() == "identifier" {
-                                        let text = node.utf8_text(contents.as_bytes()).expect("contents");
-                                        if text == needle {
-                                            log_push!("Found node: {:?}", node);
-                                            let location = Location::new(
-                                                Url::from_file_path(path).expect("valid path"),
-                                                Range::new(node.start_position().as_position(), node.end_position().as_position())
-                                            );
-                                            locations.push(location);
+                                    let mut cursor = ast.walk();
+                                    cursor.recurse(|node| {
+
+                                        if node.kind() == "identifier" {
+                                            let text = node.utf8_text(contents.as_bytes()).expect("contents");
+                                            if text == needle {
+                                                log_push!("Found node: {:?}", node);
+                                                let location = Location::new(
+                                                    Url::from_file_path(path).expect("valid path"),
+                                                    Range::new(node.start_position().as_position(), node.end_position().as_position())
+                                                );
+                                                locations.push(location);
+                                            }
                                         }
-                                    }
 
-                                    return true;
+                                        return true;
 
-                                })
+                                    });
+
+                                });
 
                             }
                         }
