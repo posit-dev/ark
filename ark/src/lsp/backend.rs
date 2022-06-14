@@ -58,7 +58,6 @@ impl Backend {
 
     pub(crate) fn with_document<T, F>(&self, path: &Path, mut callback: F) -> std::result::Result<T, ()>
     where
-        T: Default,
         F: FnMut(&Document) -> std::result::Result<T, ()>
     {
         let mut fallback = || {
@@ -78,13 +77,13 @@ impl Backend {
         // then use that; otherwise, try to read the document from the provided
         // path and use that instead.
         let uri = unwrap!(Url::from_file_path(path), {
-            log_push!("couldn't construct uri from {:?}", path);
+            log_push!("couldn't construct uri from {:?}; using fallback", path);
             return fallback();
         });
 
 
         let document = unwrap!(self.documents.get(&uri), {
-            log_push!("no document for uri {:?}", uri);
+            log_push!("no document for uri {:?}; using fallback", uri);
             return fallback();
         });
 
