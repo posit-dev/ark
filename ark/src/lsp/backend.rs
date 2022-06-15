@@ -10,8 +10,12 @@ use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::mpsc::SyncSender;
+use std::sync::mpsc::channel;
 use std::time::Duration;
 
+use amalthea::wire::execute_request::ExecuteRequest;
+use amalthea::wire::execute_response::ExecuteResponse;
 use dashmap::DashMap;
 use serde_json::Value;
 use tokio::net::TcpStream;
@@ -24,6 +28,7 @@ use crate::lsp::completions::append_document_completions;
 use crate::lsp::document::Document;
 use crate::lsp::logger::log_push;
 use crate::lsp::macros::unwrap;
+use crate::r_request::RRequest;
 
 macro_rules! backend_trace {
 
@@ -52,6 +57,7 @@ pub(crate) struct Backend {
     pub client: Client,
     pub documents: DashMap<Url, Document>,
     pub workspace: Arc<Mutex<Workspace>>,
+    pub channel: SyncSender<RRequest>,
 }
 
 impl Backend {
@@ -258,6 +264,37 @@ impl LanguageServer for Backend {
         // add context-relevant completions
         append_document_completions(document.value_mut(), &params, &mut completions);
 
+        // test an R request
+        let request = ExecuteRequest {
+            code: "1 + 1".to_string(),
+            allow_stdin: false,
+            silent: true,
+            stop_on_error: false,
+            store_history: false,
+            user_expressions: serde_json::Value::Null,
+        };
+
+        let (tx, rx) = channel::<ExecuteResponse>();
+        let code = RRequest::ExecuteCode(request, Vec::new(), tx);
+        match self.channel.send(code) {
+            Ok(result) => result,
+            Err(error) => {
+                log_push!("error sending R request");
+            }
+        }
+
+        if let Ok(response) = rx.recv() {
+            match response {
+                ExecuteResponse::Reply(reply) => {
+                    log_push!("received reply: {:?}", reply);
+                }
+
+                ExecuteResponse::ReplyException(exception) => {
+                    log_push!("received exception: {:?}", exception);
+                }
+            }
+        }
+
         return Ok(Some(CompletionResponse::Array(completions)));
 
     }
@@ -289,7 +326,7 @@ impl LanguageServer for Backend {
 }
 
 #[tokio::main]
-pub async fn start_lsp(address: String) {
+pub async fn start_lsp(address: String, channel: SyncSender<RRequest>) {
     #[cfg(feature = "runtime-agnostic")]
     use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
@@ -314,6 +351,7 @@ pub async fn start_lsp(address: String) {
         client: client,
         documents: DashMap::new(),
         workspace: Arc::new(Mutex::new(Workspace::default())),
+        channel: channel,
     });
 
     Server::new(read, write, socket).serve(service).await;

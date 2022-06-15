@@ -215,7 +215,6 @@ impl Backend {
     
     fn find_references_in_document(&self, context: &Context, path: &Path, document: &Document, locations: &mut Vec<Location>) {
         
-        // recurse and find symbols of the matching name
         let ast = unwrap!(document.ast.as_ref(), {
             log_push!("no ast available");
             return;
@@ -232,7 +231,6 @@ impl Backend {
             
             return true;
             
-            
         });
         
     }
@@ -246,7 +244,7 @@ impl Backend {
         let uri = params.text_document_position.text_document.uri;
         let point = params.text_document_position.position.as_point();
         
-        // Figure out the identifier we're looking for.
+        // Figure out what we're looking for.
         let context = unwrap!(self.build_context(&uri, point), {
             log_push!("failed to find build context at point {}", point);
             return Err(());
@@ -261,7 +259,6 @@ impl Backend {
                 }
             }
         }
-        
         
         return Ok(locations);
         

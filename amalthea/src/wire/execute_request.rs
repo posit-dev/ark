@@ -21,8 +21,8 @@ pub struct ExecuteRequest {
     /// Whether the code should be stored in history
     pub store_history: bool,
 
-    /// Maping of user expressions to be evaluated after code is executed (TODO:
-    /// should not be a plain value)
+    /// Mapping of user expressions to be evaluated after code is executed.
+    /// (TODO: should not be a plain value)
     pub user_expressions: Value,
 
     /// Whether to allow the kernel to send stdin requests

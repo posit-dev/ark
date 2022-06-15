@@ -59,7 +59,7 @@ fn _find_impl<Callback: FnMut(Node) -> bool>(this: &mut TreeCursor, callback: &m
 pub(crate) trait TreeCursorExt {
 
     // Recurse through all nodes in an AST, invoking a callback as those nodes
-    // are visited. The callback can return 'false' to indicate that we shouldn't
+    // are visited. The callback can return `false` to indicate that we shouldn't
     // recurse through the children of a particular node.
     fn recurse<Callback: FnMut(Node) -> bool>(&mut self, callback: Callback);
 
