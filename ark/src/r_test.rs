@@ -5,17 +5,23 @@
 // 
 // 
 
+// Helper functions for ensuring R is runing before running tests
+// that rely on an R session being available.
 use std::ffi::CString;
 use std::process::Command;
 use std::sync::Once;
 
 use libR_sys::*;
+use log::trace;
 
 static INIT: Once = Once::new();
 
 pub fn start_r() {
 
     INIT.call_once(|| {
+
+        trace!("Initializing R.");
+
         // Compute R_HOME based on the version of R on the PATH
         let result = Command::new("R").arg("RHOME").output().expect("failed to run R");
         let home = String::from_utf8(result.stdout).expect("failed to read R RHOME output");
