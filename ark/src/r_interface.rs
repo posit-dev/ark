@@ -1,9 +1,9 @@
-/*
- * r_interface.rs
- *
- * Copyright (C) 2022 by RStudio, PBC
- *
- */
+// 
+// r_interface.rs
+// 
+// Copyright (C) 2022 by RStudio, PBC
+// 
+// 
 
 use crate::r_kernel::{RKernel, RKernelInfo};
 use crate::r_request::RRequest;

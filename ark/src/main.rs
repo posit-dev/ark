@@ -21,9 +21,11 @@ use std::sync::{Arc, Mutex};
 
 mod control;
 mod lsp;
+mod r_function;
 mod r_interface;
 mod r_kernel;
 mod r_request;
+mod r_test;
 mod shell;
 
 fn start_kernel(connection_file: ConnectionFile) {
