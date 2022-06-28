@@ -9,6 +9,23 @@ use std::os::raw::c_char;
 
 use extendr_api::*;
 use libR_sys::*;
+use lazy_static::lazy_static;
+use parking_lot::ReentrantMutex;
+
+lazy_static! {
+    static ref LOCK: ReentrantMutex<()> = ReentrantMutex::new(());
+}
+
+fn lock<T, Callback: FnMut() -> T>(callback: &mut Callback) -> T {
+    
+    let result = {
+        let _lock = LOCK.lock();
+        callback()
+    };
+
+    return result;
+
+}
 
 struct RProtect {
     count: i32,
@@ -22,8 +39,9 @@ impl RProtect {
         }
     }
 
-    pub fn add(&self, object: SEXP) -> SEXP {
-        unsafe { Rf_protect(object) };
+    pub fn add(&mut self, object: SEXP) -> SEXP {
+        lock(&mut || unsafe { Rf_protect(object) });
+        self.count += 1;
         object
     }
 
@@ -32,7 +50,7 @@ impl RProtect {
 impl Drop for RProtect {
 
     fn drop(&mut self) {
-        unsafe { Rf_unprotect(self.count) }
+        lock(&mut || unsafe { Rf_unprotect(self.count) });
     }
 
 }
@@ -76,7 +94,7 @@ impl RFunctionParam<Robj> for RFunction {
 impl RFunctionParam<i32> for RFunction {
 
     fn param(&mut self, name: &str, value: i32) -> &mut Self {
-        let value = unsafe { Rf_ScalarInteger(value) };
+        let value = lock(&mut || unsafe { Rf_ScalarInteger(value) });
         self.param(name, value)
     }
 
@@ -86,12 +104,12 @@ impl RFunctionParam<&str> for RFunction {
 
     fn param(&mut self, name: &str, value: &str) -> &mut Self {
         
-        let value = unsafe {
+        let value = lock(&mut || unsafe {
             let vector = self.protect.add(Rf_allocVector(STRSXP, 1));
             let element = Rf_mkCharLenCE(value.as_ptr() as *const i8, value.len() as i32, cetype_t_CE_UTF8);
             SET_STRING_ELT(vector, 0, element);
             vector
-        };
+        });
 
         self.param(name, value)
     }
@@ -135,7 +153,11 @@ impl RFunction {
 
     }
 
-    fn call(&self) -> SEXP { unsafe {
+    fn call(&mut self, protect: &mut RProtect) -> SEXP {
+        lock(&mut || self.call_impl(protect))
+    }
+
+    fn call_impl(&mut self, protect: &mut RProtect) -> SEXP { unsafe {
 
         // start building the call to be evaluated
         let lhs = if !self.package.is_empty() {
@@ -168,12 +190,14 @@ impl RFunction {
         let result = Rf_eval(call, R_BaseEnv);
 
         // and return it
+        protect.add(result);
         return result;
 
     } }
 
 }
 
+#[cfg(test)]
 mod tests {
     use log::trace;
 
@@ -187,10 +211,11 @@ mod tests {
         r_test::start_r();
 
         // try adding some numbers
+        let mut protect = RProtect::new();
         let result = RFunction::new("+")
             .add(Rf_ScalarInteger(2))
             .add(Rf_ScalarInteger(2))
-            .call();
+            .call(&mut protect);
 
         // check the result
         assert!(Rf_isInteger(result) != 0);
@@ -204,10 +229,11 @@ mod tests {
         r_test::start_r();
 
         // try sending some UTF-8 strings to and from R
+        let mut protect = RProtect::new();
         let result = RFunction::new("paste")
             .add("世界")
             .add("您好".to_string())
-            .call();
+            .call(&mut protect);
 
         assert!(Rf_isString(result) != 0);
 
@@ -222,11 +248,12 @@ mod tests {
 
         r_test::start_r();
 
+        let mut protect = RProtect::new();
         let result = RFunction::new("stats:::rnorm")
             .param("n", 1)
             .param("mean", 10)
             .param("sd", 0)
-            .call();
+            .call(&mut protect);
 
         assert!(Rf_isNumeric(result) != 0);
         assert!(Rf_asInteger(result) == 10);
