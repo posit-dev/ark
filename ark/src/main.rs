@@ -21,8 +21,10 @@ use std::sync::{Arc, Mutex};
 
 mod control;
 mod lsp;
-mod r_function;
+mod macros;
+mod r_exec;
 mod r_interface;
+mod r_lock;
 mod r_kernel;
 mod r_request;
 mod r_test;

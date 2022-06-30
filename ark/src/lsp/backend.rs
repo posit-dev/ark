@@ -24,10 +24,10 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
+use crate::macros::*;
 use crate::lsp::completions::append_document_completions;
 use crate::lsp::document::Document;
 use crate::lsp::logger::log_push;
-use crate::lsp::macros::unwrap;
 use crate::r_request::RRequest;
 
 macro_rules! backend_trace {
@@ -278,7 +278,7 @@ impl LanguageServer for Backend {
         let code = RRequest::ExecuteCode(request, Vec::new(), tx);
         match self.channel.send(code) {
             Ok(result) => result,
-            Err(error) => {
+            Err(_error) => {
                 log_push!("error sending R request");
             }
         }

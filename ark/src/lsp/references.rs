@@ -16,11 +16,11 @@ use tree_sitter::Point;
 use walkdir::DirEntry;
 use walkdir::WalkDir;
 
+use crate::lsp::traits::cursor::TreeCursorExt;
+use crate::macros::unwrap;
 use crate::lsp::backend::Backend;
 use crate::lsp::document::Document;
 use crate::lsp::logger::log_push;
-use crate::lsp::macros::unwrap;
-use crate::lsp::traits::cursor::TreeCursorExt;
 use crate::lsp::traits::point::PointExt;
 use crate::lsp::traits::position::PositionExt;
 

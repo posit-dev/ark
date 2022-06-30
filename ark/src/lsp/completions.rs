@@ -12,11 +12,10 @@ use tower_lsp::lsp_types::CompletionParams;
 use tree_sitter::Node;
 use tree_sitter::Point;
 
+use crate::macros::*;
 use crate::lsp::document::Document;
 use crate::lsp::logger::log_push;
-use crate::lsp::macros::unwrap;
 use crate::lsp::traits::cursor::TreeCursorExt;
-use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::point::PointExt;
 use crate::lsp::traits::position::PositionExt;
 

@@ -7,6 +7,7 @@
 
 // Helper functions for ensuring R is runing before running tests
 // that rely on an R session being available.
+
 use std::ffi::CString;
 use std::process::Command;
 use std::sync::Once;
