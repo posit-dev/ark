@@ -25,14 +25,14 @@ pub fn _into_result<T, E>(object: impl IntoResult<T, E>) -> Result<T, E> {
 macro_rules! unwrap {
 
     ($value: expr, $id: ident $error: block) => {
-        match crate::lsp::macros::_into_result($value) {
+        match crate::macros::_into_result($value) {
             Ok(value) => value,
             Err($id) => $error,
         }
     };
 
     ($value: expr, $error: block) => {
-        match crate::lsp::macros::_into_result($value) {
+        match crate::macros::_into_result($value) {
             Ok(value) => value,
             Err(_error) => $error,
         }
@@ -40,3 +40,12 @@ macro_rules! unwrap {
 
 }
 pub(crate) use unwrap;
+
+macro_rules! cstr {
+
+    ($value:literal) => {
+        concat!($value, '\0')
+    }
+
+}
+pub(crate) use cstr;

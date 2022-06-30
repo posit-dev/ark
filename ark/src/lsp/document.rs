@@ -12,8 +12,8 @@ use tree_sitter::Parser;
 use tree_sitter::Point;
 use tree_sitter::Tree;
 
+use crate::macros::unwrap;
 use crate::lsp::logger::log_push;
-use crate::lsp::macros::unwrap;
 use crate::lsp::traits::position::PositionExt;
 use crate::lsp::traits::rope::RopeExt;
 

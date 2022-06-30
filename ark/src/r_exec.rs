@@ -1,30 +1,30 @@
 // 
-// r_function.rs
+// r_exec.rs
 // 
 // Copyright (C) 2022 by RStudio, PBC
 // 
 // 
 
+use std::ffi::CString;
 use std::os::raw::c_char;
+use std::sync::Once;
 
 use extendr_api::*;
 use libR_sys::*;
-use lazy_static::lazy_static;
-use parking_lot::ReentrantMutex;
 
-lazy_static! {
-    static ref LOCK: ReentrantMutex<()> = ReentrantMutex::new(());
+use crate::r_lock::rlock;
+
+static INIT: Once = Once::new();
+static mut PRECIOUS_LIST: SEXP = std::ptr::null_mut();
+
+struct RObject {
+    value: SEXP,
 }
 
-fn lock<T, Callback: FnMut() -> T>(callback: &mut Callback) -> T {
-    
-    let result = {
-        let _lock = LOCK.lock();
-        callback()
-    };
-
-    return result;
-
+fn install<'a>(string: impl Into<&'a str>) -> SEXP {
+    let value = string.into();
+    let cstr = CString::new(value).expect("error constructing C string");
+    unsafe { Rf_install(cstr.as_ptr() as *const c_char) }
 }
 
 struct RProtect {
@@ -40,7 +40,7 @@ impl RProtect {
     }
 
     pub fn add(&mut self, object: SEXP) -> SEXP {
-        lock(&mut || unsafe { Rf_protect(object) });
+        rlock! { unsafe { Rf_protect(object) } };
         self.count += 1;
         object
     }
@@ -50,7 +50,7 @@ impl RProtect {
 impl Drop for RProtect {
 
     fn drop(&mut self) {
-        lock(&mut || unsafe { Rf_unprotect(self.count) });
+        rlock! { unsafe { Rf_unprotect(self.count) } };
     }
 
 }
@@ -67,11 +67,14 @@ struct RFunction {
     protect: RProtect,
 }
 
-trait RFunctionParam<T> {
+trait RFunctionExt<T> {
     fn param(&mut self, name: &str, value: T) -> &mut Self;
+    fn add(&mut self, value: T) -> &mut Self {
+        self.param("", value)
+    }
 }
 
-impl RFunctionParam<SEXP> for RFunction {
+impl RFunctionExt<SEXP> for RFunction {
 
     fn param(&mut self, name: &str, value: SEXP) -> &mut Self {
         self.arguments.push(RArgument {
@@ -83,7 +86,7 @@ impl RFunctionParam<SEXP> for RFunction {
 
 }
 
-impl RFunctionParam<Robj> for RFunction {
+impl RFunctionExt<Robj> for RFunction {
 
     fn param(&mut self, name: &str, value: Robj) -> &mut Self {
         unsafe { self.param(name, value.get()) }
@@ -91,45 +94,35 @@ impl RFunctionParam<Robj> for RFunction {
 
 }
 
-impl RFunctionParam<i32> for RFunction {
+impl RFunctionExt<i32> for RFunction {
 
     fn param(&mut self, name: &str, value: i32) -> &mut Self {
-        let value = lock(&mut || unsafe { Rf_ScalarInteger(value) });
+        let value = rlock! { unsafe { Rf_ScalarInteger(value) } };
         self.param(name, value)
     }
 
 }
 
-impl RFunctionParam<&str> for RFunction {
+impl RFunctionExt<&str> for RFunction {
 
     fn param(&mut self, name: &str, value: &str) -> &mut Self {
         
-        let value = lock(&mut || unsafe {
+        let value = rlock! { unsafe {
             let vector = self.protect.add(Rf_allocVector(STRSXP, 1));
             let element = Rf_mkCharLenCE(value.as_ptr() as *const i8, value.len() as i32, cetype_t_CE_UTF8);
             SET_STRING_ELT(vector, 0, element);
             vector
-        });
+        }};
 
         self.param(name, value)
     }
 
 }
 
-impl RFunctionParam<String> for RFunction {
+impl RFunctionExt<String> for RFunction {
 
     fn param(&mut self, name: &str, value: String) -> &mut Self {
         self.param(name, value.as_str())
-    }
-}
-
-trait RFunctionAdd<T> {
-    fn add(&mut self, value: T) -> &mut Self;
-}
-
-impl<T> RFunctionAdd<T> for RFunction where RFunction: RFunctionParam<T> {
-    fn add(&mut self, value: T) -> &mut Self {
-        self.param("", value)
     }
 }
 
@@ -154,7 +147,7 @@ impl RFunction {
     }
 
     fn call(&mut self, protect: &mut RProtect) -> SEXP {
-        lock(&mut || self.call_impl(protect))
+        rlock! { self.call_impl(protect) }
     }
 
     fn call_impl(&mut self, protect: &mut RProtect) -> SEXP { unsafe {
@@ -162,12 +155,12 @@ impl RFunction {
         // start building the call to be evaluated
         let lhs = if !self.package.is_empty() {
             self.protect.add(Rf_lang3(
-                Rf_install(":::".as_ptr() as *const c_char),
-                Rf_install(self.package.as_ptr() as *const c_char),
-                Rf_install(self.function.as_ptr() as *const c_char)
+                install(":::"),
+                install(&*self.package),
+                install(&*self.function)
             ))
         } else {
-            Rf_install(self.function.as_ptr() as *const c_char)
+            install(&*self.function)
         };
 
         // now, build the actual call to be evaluated
@@ -181,13 +174,23 @@ impl RFunction {
         for argument in self.arguments.iter() {
             SETCAR(slot, argument.value);
             if !argument.name.is_empty() {
-                SET_TAG(slot, Rf_install(argument.name.as_ptr() as *const c_char));
+                SET_TAG(slot, install(&*argument.name));
             }
             slot = CDR(slot);
         }
 
+        // now, wrap call in tryCatch
+        let call = Rf_lang3(install("tryCatch"), call, install("identity"));
+        SET_TAG(call, R_NilValue);
+        SET_TAG(CDDR(call), install("error"));
+
         // evaluate the call
         let result = Rf_eval(call, R_BaseEnv);
+
+        // TODO:
+        // - check for errors?
+        // - consider using a result type here?
+        // - should we allow the caller to decide how errors are handled?
 
         // and return it
         protect.add(result);
@@ -199,11 +202,10 @@ impl RFunction {
 
 #[cfg(test)]
 mod tests {
-    use log::trace;
-
-    use crate::r_test;
 
     use super::*;
+
+    use crate::r_test;
 
     #[test]
     fn test_basic_function() { unsafe {
@@ -257,6 +259,33 @@ mod tests {
 
         assert!(Rf_isNumeric(result) != 0);
         assert!(Rf_asInteger(result) == 10);
+
+    }}
+
+    #[test]
+    fn test_threads() { unsafe {
+
+        const N : i32 = 1000000;
+        r_test::start_r();
+
+        // Spawn a bunch of threads that try to interact with R.
+        let mut handles : Vec<_> = Vec::new();
+        for _i in 1..10 {
+            let handle = std::thread::spawn(|| {
+                for _j in 1..10 {
+                    let result = rlock! {
+                        let code = Rf_lang2(install("rnorm"), Rf_ScalarInteger(N));
+                        Rf_eval(code, R_GlobalEnv)
+                    };
+                    assert!(Rf_length(result) == N);
+                }
+            });
+            handles.push(handle);
+        }
+
+        for handle in handles {
+            handle.join().expect("oh no");
+        }
 
     }}
 
