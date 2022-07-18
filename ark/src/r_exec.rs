@@ -21,13 +21,16 @@ struct RObject {
     value: SEXP,
 }
 
-fn install<'a>(string: impl Into<&'a str>) -> SEXP {
+// NOTE: We provide an API for Rf_install() as rust's strings are not
+// nul-terminated by default, and so we need to do the work to ensure
+// the strings we pass to Rf_install() are nul-terminated C strings.
+pub(crate) fn install<'a>(string: impl Into<&'a str>) -> SEXP {
     let value = string.into();
     let cstr = CString::new(value).expect("error constructing C string");
     unsafe { Rf_install(cstr.as_ptr() as *const c_char) }
 }
 
-struct RProtect {
+pub(crate) struct RProtect {
     count: i32,
 }
 
@@ -60,14 +63,14 @@ struct RArgument {
     value: SEXP,
 }
 
-struct RFunction {
+pub(crate) struct RFunction {
     package: String,
     function: String,
     arguments: Vec<RArgument>,
     protect: RProtect,
 }
 
-trait RFunctionExt<T> {
+pub(crate) trait RFunctionExt<T> {
     fn param(&mut self, name: &str, value: T) -> &mut Self;
     fn add(&mut self, value: T) -> &mut Self {
         self.param("", value)
@@ -128,7 +131,7 @@ impl RFunctionExt<String> for RFunction {
 
 impl RFunction {
 
-    fn new(value: &str) -> Self {
+    pub fn new(value: &str) -> Self {
 
         let parts = value.split(":::").collect::<Vec<_>>();
         let (package, function) = if parts.len() == 2 {
@@ -146,7 +149,7 @@ impl RFunction {
 
     }
 
-    fn call(&mut self, protect: &mut RProtect) -> SEXP {
+    pub fn call(&mut self, protect: &mut RProtect) -> SEXP {
         rlock! { self.call_impl(protect) }
     }
 
@@ -180,20 +183,17 @@ impl RFunction {
         }
 
         // now, wrap call in tryCatch
-        let call = Rf_lang3(install("tryCatch"), call, install("identity"));
+        let call = self.protect.add(Rf_lang3(install("tryCatch"), call, install("identity")));
         SET_TAG(call, R_NilValue);
         SET_TAG(CDDR(call), install("error"));
 
         // evaluate the call
-        let result = Rf_eval(call, R_BaseEnv);
+        let result = protect.add(Rf_eval(call, R_BaseEnv));
 
         // TODO:
         // - check for errors?
         // - consider using a result type here?
         // - should we allow the caller to decide how errors are handled?
-
-        // and return it
-        protect.add(result);
         return result;
 
     } }
@@ -274,7 +274,8 @@ mod tests {
             let handle = std::thread::spawn(|| {
                 for _j in 1..10 {
                     let result = rlock! {
-                        let code = Rf_lang2(install("rnorm"), Rf_ScalarInteger(N));
+                        let mut protect = RProtect::new();
+                        let code = protect.add(Rf_lang2(install("rnorm"), Rf_ScalarInteger(N)));
                         Rf_eval(code, R_GlobalEnv)
                     };
                     assert!(Rf_length(result) == N);

@@ -24,6 +24,7 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
+use crate::lsp::completions::append_session_completions;
 use crate::macros::*;
 use crate::lsp::completions::append_document_completions;
 use crate::lsp::document::Document;
@@ -261,39 +262,11 @@ impl LanguageServer for Backend {
 
         let mut completions : Vec<CompletionItem> = vec!();
 
+        // add session completions
+        append_session_completions(document.value_mut(), &params, &mut completions);
+
         // add context-relevant completions
         append_document_completions(document.value_mut(), &params, &mut completions);
-
-        // test an R request
-        let request = ExecuteRequest {
-            code: "1 + 1".to_string(),
-            allow_stdin: false,
-            silent: true,
-            stop_on_error: false,
-            store_history: false,
-            user_expressions: serde_json::Value::Null,
-        };
-
-        let (tx, rx) = channel::<ExecuteResponse>();
-        let code = RRequest::ExecuteCode(request, Vec::new(), tx);
-        match self.channel.send(code) {
-            Ok(result) => result,
-            Err(_error) => {
-                log_push!("error sending R request");
-            }
-        }
-
-        if let Ok(response) = rx.recv() {
-            match response {
-                ExecuteResponse::Reply(reply) => {
-                    log_push!("received reply: {:?}", reply);
-                }
-
-                ExecuteResponse::ReplyException(exception) => {
-                    log_push!("received exception: {:?}", exception);
-                }
-            }
-        }
 
         return Ok(Some(CompletionResponse::Array(completions)));
 

@@ -6,18 +6,26 @@
 // 
 
 use std::collections::HashSet;
+use std::ffi::CStr;
 
+use libR_sys::*;
 use tower_lsp::lsp_types::CompletionItem;
 use tower_lsp::lsp_types::CompletionParams;
 use tree_sitter::Node;
 use tree_sitter::Point;
 
+use crate::lsp::traits::node::NodeExt;
 use crate::macros::*;
 use crate::lsp::document::Document;
 use crate::lsp::logger::log_push;
 use crate::lsp::traits::cursor::TreeCursorExt;
 use crate::lsp::traits::point::PointExt;
 use crate::lsp::traits::position::PositionExt;
+use crate::r_exec::RFunction;
+use crate::r_exec::RFunctionExt;
+use crate::r_exec::RProtect;
+use crate::r_exec::install;
+use crate::r_lock::rlock;
 
 fn completion_from_identifier(node: &Node, source: &str) -> CompletionItem {
     let label = node.utf8_text(source.as_bytes()).expect("empty assignee");
@@ -156,6 +164,127 @@ fn append_function_parameters(node: &Node, data: &mut CompletionData, completion
 
 }
 
+fn list_namespace_symbols(namespace: SEXP, exports_only: bool, protect: &mut RProtect) -> SEXP { unsafe {
+
+    if !exports_only {
+        return protect.add(R_lsInternal(namespace, 1));
+    }
+
+    let ns = Rf_findVarInFrame(namespace, install(".__NAMESPACE__."));
+    if ns == R_UnboundValue {
+        return R_NilValue;
+    }
+
+    let exports = Rf_findVarInFrame(ns, install("exports"));
+    if exports == R_UnboundValue {
+        return R_NilValue;
+    }
+
+    return protect.add(R_lsInternal(exports, 1));
+
+} }
+
+fn append_namespace_completions(package: &str, exports_only: bool, completions: &mut Vec<CompletionItem>) {
+
+    rlock! {
+
+        let mut protect = RProtect::new();
+
+        // Get the package namespace.
+        let namespace = RFunction::new("base:::getNamespace")
+            .add(package)
+            .call(&mut protect);
+
+        let symbols = list_namespace_symbols(namespace, exports_only, &mut protect);
+
+        // Iterate over the various strings.
+        if TYPEOF(symbols) as u32 == STRSXP {
+            for i in 1..Rf_length(symbols) {
+                let ptr = R_CHAR(STRING_ELT(symbols, i as isize));
+                let cstr = CStr::from_ptr(ptr);
+                let item = CompletionItem::new_simple(cstr.to_str().unwrap().to_string(), package.to_string());
+                completions.push(item);
+            }
+        }
+
+    }
+
+}
+
+pub(crate) fn append_session_completions(document: &mut Document, params: &CompletionParams, completions: &mut Vec<CompletionItem>) {
+
+    // get reference to AST
+    let ast = unwrap!(document.ast.as_ref(), {
+        return;
+    });
+
+    let source = document.contents.to_string();
+
+    // figure out the token / node at the cursor position. note that we use
+    // the previous token here as the cursor itself will be located just past
+    // the cursor / node providing the associated context
+    let point = params.text_document_position.position.as_point();
+    let point = Point::new(point.row, point.column - 1);
+    let mut node = unwrap!(ast.root_node().descendant_for_point_range(point, point), {
+        return;
+    });
+
+    // check to see if we're completing a symbol from a namespace,
+    // via code like:
+    //
+    //   package::sym
+    //   package:::sym
+    //
+    // note that we'll need to handle cases where the user hasn't
+    // yet started typing the symbol name, so that the cursor would
+    // be on the '::' or ':::' token.
+    //
+    // Note that treesitter collects the tokens into a tree of the form:
+    //
+    //    - stats::bar - namespace_get
+    //    - stats - identifier
+    //    - :: - ::
+    //    - bar - identifier
+    //
+    // But, if the tree is not yet complete, then treesitter gives us:
+    //
+    //    - stats - identifier
+    //    - :: - ERROR
+    //      - :: - ::
+    //
+    // So we have to do some extra work to get the package name in each case.
+    let source = document.contents.to_string();
+
+    // Handle the case with 'package::', with no identifier name yet following.
+    if node.kind() == "::" || node.kind() == ":::" {
+        let exports_only = node.kind() == "::";
+        if let Some(parent) = node.parent() {
+            if parent.kind() == "ERROR" {
+                if let Some(prev) = parent.prev_sibling() {
+                    if prev.kind() == "identifier" || prev.kind() == "string" {
+                        let package = prev.utf8_text(source.as_bytes()).unwrap();
+                        append_namespace_completions(package, exports_only, completions);
+                    }
+                }
+            }
+        }
+    }
+
+    // Handle the case with 'package::prefix', where the user has now
+    // started typing the prefix of the symbol they would like completions for.
+    if let Some(parent) = node.parent() {
+        if matches!(parent.kind(), "namespace_get" | "namespace_get_internal") {
+            if let Some(package_node) = parent.child(0) {
+                if let Some(colon_node) = parent.child(1) {
+                    let package = package_node.utf8_text(source.as_bytes()).unwrap();
+                    let exports_only = colon_node.kind() == "::";
+                    append_namespace_completions(package, exports_only, completions);
+                }
+            }
+        }
+    }
+
+}
 
 pub(crate) fn append_document_completions(document: &mut Document, params: &CompletionParams, completions: &mut Vec<CompletionItem>) {
 
