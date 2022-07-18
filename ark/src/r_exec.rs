@@ -40,7 +40,7 @@ impl RProtect {
     }
 
     pub fn add(&mut self, object: SEXP) -> SEXP {
-        rlock! { unsafe { Rf_protect(object) } };
+        rlock! { Rf_protect(object) };
         self.count += 1;
         object
     }
@@ -50,7 +50,7 @@ impl RProtect {
 impl Drop for RProtect {
 
     fn drop(&mut self) {
-        rlock! { unsafe { Rf_unprotect(self.count) } };
+        rlock! { Rf_unprotect(self.count) };
     }
 
 }
@@ -97,7 +97,7 @@ impl RFunctionExt<Robj> for RFunction {
 impl RFunctionExt<i32> for RFunction {
 
     fn param(&mut self, name: &str, value: i32) -> &mut Self {
-        let value = rlock! { unsafe { Rf_ScalarInteger(value) } };
+        let value = rlock! { Rf_ScalarInteger(value) };
         self.param(name, value)
     }
 
@@ -107,12 +107,12 @@ impl RFunctionExt<&str> for RFunction {
 
     fn param(&mut self, name: &str, value: &str) -> &mut Self {
         
-        let value = rlock! { unsafe {
+        let value = rlock! {
             let vector = self.protect.add(Rf_allocVector(STRSXP, 1));
             let element = Rf_mkCharLenCE(value.as_ptr() as *const i8, value.len() as i32, cetype_t_CE_UTF8);
             SET_STRING_ELT(vector, 0, element);
             vector
-        }};
+        };
 
         self.param(name, value)
     }

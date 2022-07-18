@@ -30,7 +30,7 @@ macro_rules! rlock {
 
     ($($expr:tt)*) => {{
         let _lock = crate::r_lock::LOCK.lock();
-        $($expr)*
+        unsafe { $($expr)* }
     }}
 
 }
