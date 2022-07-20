@@ -11,19 +11,13 @@ use std::ffi::CStr;
 use extendr_api::Robj;
 use extendr_api::Strings;
 use libR_sys::*;
-use serde_json::Value;
-use serde_json::json;
-use tower_lsp::lsp_types::Command;
 use tower_lsp::lsp_types::CompletionItem;
 use tower_lsp::lsp_types::CompletionItemKind;
 use tower_lsp::lsp_types::CompletionParams;
-use tower_lsp::lsp_types::CompletionTextEdit;
 use tower_lsp::lsp_types::Documentation;
 use tower_lsp::lsp_types::InsertTextFormat;
-use tower_lsp::lsp_types::InsertTextMode;
 use tower_lsp::lsp_types::MarkupContent;
 use tower_lsp::lsp_types::MarkupKind;
-use tower_lsp::lsp_types::TextEdit;
 use tree_sitter::Node;
 use tree_sitter::Point;
 
@@ -34,11 +28,11 @@ use crate::lsp::logger::dlog;
 use crate::lsp::traits::cursor::TreeCursorExt;
 use crate::lsp::traits::point::PointExt;
 use crate::lsp::traits::position::PositionExt;
-use crate::r::r_exec::RFunction;
-use crate::r::r_exec::RFunctionExt;
-use crate::r::r_exec::RProtect;
-use crate::r::r_exec::install;
-use crate::r::r_lock::rlock;
+use crate::r::lock::rlock;
+use crate::r::macros::install;
+use crate::r::exec::RFunction;
+use crate::r::exec::RFunctionExt;
+use crate::r::exec::RProtect;
 
 fn completion_from_identifier(node: &Node, source: &str) -> CompletionItem {
     let label = node.utf8_text(source.as_bytes()).expect("empty assignee");
@@ -332,6 +326,7 @@ fn append_namespace_completions(package: &str, exports_only: bool, completions: 
 
 } }
 
+#[allow(dead_code)]
 fn append_keyword_completions(completions: &mut Vec<CompletionItem>) {
 
     let keywords = vec![

@@ -1,5 +1,5 @@
 // 
-// r_exec.rs
+// exec.rs
 // 
 // Copyright (C) 2022 by RStudio, PBC
 // 
@@ -8,60 +8,9 @@
 use extendr_api::*;
 use libR_sys::*;
 
-use super::r_lock::rlock;
-
-// NOTE: We provide an API for Rf_install() as rust's strings are not
-// nul-terminated by default, and so we need to do the work to ensure
-// the strings we pass to Rf_install() are nul-terminated C strings.
-macro_rules! install {
-
-    ($id:literal) => {{
-        let value = concat!($id, "\0");
-        rlock! { Rf_install(value.as_ptr() as *const i8) }
-    }};
-
-    ($id:expr) => {{
-        let cstr = [$id, "\0"].concat();
-        rlock! { Rf_install(cstr.as_ptr() as *const i8) }
-    }};
-
-}
-pub(crate) use install;
-
-// Mainly for debugging.
-macro_rules! rlog {
-
-    ($x:expr) => {
-
-        rlock! {
-
-            // NOTE: We construct and evaluate the call by hand here
-            // just to avoid a potential infinite recursion if this
-            // macro were to be used within other R APIs we expose.
-            let mut protect = RProtect::new();
-
-            let callee = protect.add(Rf_lang3(
-                Rf_install("::\0".as_ptr() as *const i8),
-                Rf_mkString("base\0".as_ptr() as *const i8),
-                Rf_mkString("format\0".as_ptr() as *const i8),
-            ));
-
-            let call = protect.add(Rf_lang2(callee, $x));
-
-            let result = Rf_eval(call, R_GlobalEnv);
-
-            let robj = Robj::from_sexp(result);
-            if let Ok(strings) = Strings::try_from(robj) {
-                for string in strings.iter() {
-                    crate::lsp::logger::dlog!("{}", string);
-                }
-            }
-        }
-
-    }
-
-}
-pub(crate) use rlog;
+use crate::r::lock::rlock;
+use crate::r::macros::install;
+use crate::r::macros::rlog;
 
 pub(crate) struct RProtect {
     count: i32,
@@ -230,13 +179,14 @@ impl RFunction {
 #[cfg(test)]
 mod tests {
 
+    use crate::r::test::start_r;
+
     use super::*;
-    use super::super::r_test;
 
     #[test]
     fn test_basic_function() { unsafe {
 
-        r_test::start_r();
+        start_r();
 
         // try adding some numbers
         let mut protect = RProtect::new();
@@ -254,7 +204,7 @@ mod tests {
     #[test]
     fn test_utf8_strings() { unsafe {
 
-        r_test::start_r();
+        start_r();
 
         // try sending some UTF-8 strings to and from R
         let mut protect = RProtect::new();
@@ -274,7 +224,7 @@ mod tests {
     #[test]
     fn test_named_arguments() { unsafe {
 
-        r_test::start_r();
+        start_r();
 
         let mut protect = RProtect::new();
         let result = RFunction::new("stats", "rnorm")
@@ -292,7 +242,7 @@ mod tests {
     fn test_threads() { unsafe {
 
         const N : i32 = 1000000;
-        r_test::start_r();
+        start_r();
 
         // Spawn a bunch of threads that try to interact with R.
         let mut handles : Vec<_> = Vec::new();
@@ -311,7 +261,7 @@ mod tests {
         }
 
         for handle in handles {
-            handle.join().expect("oh no");
+            handle.join().unwrap();
         }
 
     }}
