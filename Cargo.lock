@@ -245,32 +245,33 @@ checksum = "d9435d864e017c3c6afeac1654189b06cdb491cf2ff73dbf0d73b0f292f42ff8"
 
 [[package]]
 name = "extendr-api"
-version = "0.2.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d6a193d23c6b68fe2d1291aef6c4c27c9166dedee58b6fc903bb3f9cca0b2ad"
+checksum = "68ddc930e3d31c8c1a694ae2046919d24488ee07822b8f585baa3dc4f733071d"
 dependencies = [
  "extendr-engine",
  "extendr-macros",
  "lazy_static",
  "libR-sys",
+ "paste",
 ]
 
 [[package]]
 name = "extendr-engine"
-version = "0.2.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b623d2b659d44da1c36c7dc587868ddaf63950822d5593584059addb45e713a"
+checksum = "5b1f8530ca57a3cf70225c59cfa127cc412b4c52f8a95d45b3f79b5c68349ef4"
 dependencies = [
  "libR-sys",
 ]
 
 [[package]]
 name = "extendr-macros"
-version = "0.2.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "82cf6bc220c330fe86003ab0f8e5230373a2f434f42dfe3c1a32532a96519493"
+checksum = "90d5d38a703fd5d0168f86abd4c2f6b9d3dbb2d4ae2f654221575b528221ea0c"
 dependencies = [
- "lazy_static",
+ "proc-macro2",
  "quote",
  "syn",
 ]
@@ -554,9 +555,9 @@ checksum = "830d08ce1d1d941e6b30645f1a0eb5643013d835ce3779a5fc208261dbe10f55"
 
 [[package]]
 name = "libR-sys"
-version = "0.2.2"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bdf45e5498eb0fcd981b603e79f4c99819f8fc30a314fe28a32b99921a47c908"
+checksum = "2a97fd689379c62156b5c9b7b368d118ef660ad8c220a2f3e4c655529ad52384"
 dependencies = [
  "winapi 0.3.9",
 ]
@@ -804,6 +805,12 @@ dependencies = [
  "smallvec",
  "windows-sys",
 ]
+
+[[package]]
+name = "paste"
+version = "1.0.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0c520e05135d6e763148b6426a837e239041653ba7becd2e538c076c738025fc"
 
 [[package]]
 name = "percent-encoding"

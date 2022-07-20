@@ -11,11 +11,8 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::mpsc::SyncSender;
-use std::sync::mpsc::channel;
 use std::time::Duration;
 
-use amalthea::wire::execute_request::ExecuteRequest;
-use amalthea::wire::execute_response::ExecuteResponse;
 use dashmap::DashMap;
 use serde_json::Value;
 use tokio::net::TcpStream;
@@ -28,8 +25,8 @@ use crate::lsp::completions::append_session_completions;
 use crate::macros::*;
 use crate::lsp::completions::append_document_completions;
 use crate::lsp::document::Document;
-use crate::lsp::logger::log_push;
-use crate::r_request::RRequest;
+use crate::lsp::logger::dlog;
+use crate::request::Request;
 
 macro_rules! backend_trace {
 
@@ -58,7 +55,7 @@ pub(crate) struct Backend {
     pub client: Client,
     pub documents: DashMap<Url, Document>,
     pub workspace: Arc<Mutex<Workspace>>,
-    pub channel: SyncSender<RRequest>,
+    pub channel: SyncSender<Request>,
 }
 
 impl Backend {
@@ -70,7 +67,7 @@ impl Backend {
         let mut fallback = || {
 
             let contents = unwrap!(std::fs::read_to_string(path), {
-                log_push!("reading from {:?} failed", path);
+                dlog!("reading from {:?} failed", path);
                 return Err(());
             });
 
@@ -84,13 +81,13 @@ impl Backend {
         // then use that; otherwise, try to read the document from the provided
         // path and use that instead.
         let uri = unwrap!(Url::from_file_path(path), {
-            log_push!("couldn't construct uri from {:?}; using fallback", path);
+            dlog!("couldn't construct uri from {:?}; using fallback", path);
             return fallback();
         });
 
 
         let document = unwrap!(self.documents.get(&uri), {
-            log_push!("no document for uri {:?}; using fallback", uri);
+            dlog!("no document for uri {:?}; using fallback", uri);
             return fallback();
         });
 
@@ -132,7 +129,7 @@ impl LanguageServer for Backend {
         }
 
         // start a task to periodically flush logs
-        // TODO: let log_push! notify the task so that logs can be flushed immediately,
+        // TODO: let dlog! notify the task so that logs can be flushed immediately,
         // instead of just polling
         let runtime = Handle::current();
         let client = self.client.clone();
@@ -156,7 +153,11 @@ impl LanguageServer for Backend {
                 hover_provider: Some(HoverProviderCapability::from(true)),
                 completion_provider: Some(CompletionOptions {
                     resolve_provider: Some(false),
-                    trigger_characters: Some(vec!["$".to_string(), "@".to_string()]),
+                    trigger_characters: Some(vec![
+                        "$".to_string(),
+                        "@".to_string(),
+                        ":".to_string(),
+                    ]),
                     work_done_progress_options: Default::default(),
                     all_commit_characters: None,
                     ..Default::default()
@@ -299,7 +300,7 @@ impl LanguageServer for Backend {
 }
 
 #[tokio::main]
-pub async fn start_lsp(address: String, channel: SyncSender<RRequest>) {
+pub async fn start_lsp(address: String, channel: SyncSender<Request>) {
     #[cfg(feature = "runtime-agnostic")]
     use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 

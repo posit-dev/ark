@@ -5,7 +5,6 @@
  *
  */
 
-use crate::r_request::RRequest;
 use amalthea::language::control_handler::ControlHandler;
 use amalthea::wire::exception::Exception;
 use amalthea::wire::interrupt_reply::InterruptReply;
@@ -18,12 +17,14 @@ use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
 use std::sync::mpsc::SyncSender;
 
+use crate::request::Request;
+
 pub struct Control {
-    req_sender: SyncSender<RRequest>,
+    req_sender: SyncSender<Request>,
 }
 
 impl Control {
-    pub fn new(sender: SyncSender<RRequest>) -> Self {
+    pub fn new(sender: SyncSender<Request>) -> Self {
         Self { req_sender: sender }
     }
 }
@@ -35,7 +36,7 @@ impl ControlHandler for Control {
         msg: &ShutdownRequest,
     ) -> Result<ShutdownReply, Exception> {
         debug!("Received shutdown request: {:?}", msg);
-        if let Err(err) = self.req_sender.send(RRequest::Shutdown(msg.restart)) {
+        if let Err(err) = self.req_sender.send(Request::Shutdown(msg.restart)) {
             warn!(
                 "Could not deliver shutdown request to execution thread: {}",
                 err

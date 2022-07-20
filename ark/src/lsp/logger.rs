@@ -39,7 +39,7 @@ pub(crate) fn append(message: String) {
     }
 }
 
-macro_rules! log_push {
+macro_rules! dlog {
 
     ($($rest:expr),*) => {{
         let prefix = format!("{}:{}:{}:", file!(), line!(), column!());
@@ -48,7 +48,7 @@ macro_rules! log_push {
     }};
 
 }
-pub(crate) use log_push;
+pub(crate) use dlog;
 
 lazy_static! {
     static ref LOGGER : Mutex<Logger> = Mutex::new(Logger::default());

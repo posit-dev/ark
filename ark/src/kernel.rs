@@ -1,11 +1,10 @@
-/*
- * r_kernel.rs
- *
- * Copyright (C) 2022 by RStudio, PBC
- *
- */
+// 
+// kernel.rs
+// 
+// Copyright (C) 2022 by RStudio, PBC
+// 
+// 
 
-use crate::r_request::RRequest;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::exception::Exception;
 use amalthea::wire::execute_input::ExecuteInput;
@@ -22,12 +21,14 @@ use log::{debug, trace, warn};
 use serde_json::json;
 use std::sync::mpsc::{Sender, SyncSender};
 
+use crate::request::Request;
+
 /// Represents the Rust state of the R kernel
-pub struct RKernel {
+pub struct Kernel {
     pub execution_count: u32,
     iopub: SyncSender<IOPubMessage>,
     console: Sender<Option<String>>,
-    initializer: Sender<RKernelInfo>,
+    initializer: Sender<KernelInfo>,
     output: String,
     error: String,
     response_sender: Option<Sender<ExecuteResponse>>,
@@ -37,17 +38,17 @@ pub struct RKernel {
 }
 
 /// Represents kernel metadata (available after the kernel has fully started)
-pub struct RKernelInfo {
+pub struct KernelInfo {
     pub version: String,
     pub banner: String,
 }
 
-impl RKernel {
+impl Kernel {
     /// Create a new R kernel instance
     pub fn new(
         iopub: SyncSender<IOPubMessage>,
         console: Sender<Option<String>>,
-        initializer: Sender<RKernelInfo>,
+        initializer: Sender<KernelInfo>,
     ) -> Self {
         Self {
             iopub: iopub,
@@ -68,7 +69,7 @@ impl RKernel {
         if self.initializing {
             let ver = R!(R.version.string).unwrap();
             let ver_str = ver.as_str().unwrap().to_string();
-            let kernel_info = RKernelInfo {
+            let kernel_info = KernelInfo {
                 version: ver_str.clone(),
                 banner: self.banner.clone(),
             };
@@ -81,18 +82,18 @@ impl RKernel {
     }
 
     /// Service an execution request from the front end
-    pub fn fulfill_request(&mut self, req: &RRequest) {
+    pub fn fulfill_request(&mut self, req: &Request) {
         match req {
-            RRequest::ExecuteCode(req, _, sender) => {
+            Request::ExecuteCode(req, _, sender) => {
                 let sender = sender.clone();
                 self.handle_execute_request(req, sender);
             }
-            RRequest::Shutdown(_) => {
+            Request::Shutdown(_) => {
                 if let Err(err) = self.console.send(None) {
                     warn!("Error sending shutdown message to console: {}", err);
                 }
             }
-            RRequest::EstablishInputChannel(sender) => self.establish_input_handler(sender.clone()),
+            Request::EstablishInputChannel(sender) => self.establish_input_handler(sender.clone()),
         }
     }
 
@@ -163,9 +164,9 @@ impl RKernel {
     }
 
     /// Report an incomplete request to the front end
-    pub fn report_incomplete_request(&self, req: &RRequest) {
+    pub fn report_incomplete_request(&self, req: &Request) {
         let code = match req {
-            RRequest::ExecuteCode(req, _, _) => req.code.clone(),
+            Request::ExecuteCode(req, _, _) => req.code.clone(),
             _ => String::new(),
         };
         if let Some(sender) = self.response_sender.as_ref() {
@@ -249,7 +250,7 @@ impl RKernel {
         trace!("Formatting value");
         let last = R!(.Last.value).unwrap();
         if last.is_frame() {
-            data.insert("text/html".to_string(), json!(RKernel::to_html(&last)));
+            data.insert("text/html".to_string(), json!(Kernel::to_html(&last)));
         }
 
         trace!("Sending kernel output: {}", self.output);
