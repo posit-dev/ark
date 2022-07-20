@@ -1,13 +1,13 @@
-/*
- * shell.rs
- *
- * Copyright (C) 2022 by RStudio, PBC
- *
- */
+// 
+// shell.rs
+// 
+// Copyright (C) 2022 by RStudio, PBC
+// 
+// 
 
+use crate::kernel::KernelInfo;
 use crate::lsp;
-use crate::r_kernel::RKernelInfo;
-use crate::r_request::RRequest;
+use crate::request::Request;
 use amalthea::language::shell_handler::ShellHandler;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::comm_info_reply::CommInfoReply;
@@ -40,17 +40,17 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 pub struct Shell {
-    req_sender: SyncSender<RRequest>,
-    init_receiver: Arc<Mutex<Receiver<RKernelInfo>>>,
-    kernel_info: Option<RKernelInfo>,
+    req_sender: SyncSender<Request>,
+    init_receiver: Arc<Mutex<Receiver<KernelInfo>>>,
+    kernel_info: Option<KernelInfo>,
 }
 
 impl Shell {
     /// Creates a new instance of the shell message handler.
     pub fn new(iopub: SyncSender<IOPubMessage>) -> Self {
         let iopub_sender = iopub.clone();
-        let (req_sender, req_receiver) = sync_channel::<RRequest>(1);
-        let (init_sender, init_receiver) = channel::<RKernelInfo>();
+        let (req_sender, req_receiver) = sync_channel::<Request>(1);
+        let (init_sender, init_receiver) = channel::<KernelInfo>();
         thread::spawn(move || Self::execution_thread(iopub_sender, req_receiver, init_sender));
         Self {
             req_sender: req_sender,
@@ -62,16 +62,16 @@ impl Shell {
     /// Starts the R execution thread (does not return)
     pub fn execution_thread(
         sender: SyncSender<IOPubMessage>,
-        receiver: Receiver<RRequest>,
-        initializer: Sender<RKernelInfo>,
+        receiver: Receiver<Request>,
+        initializer: Sender<KernelInfo>,
     ) {
         // Start kernel (does not return)
-        crate::r_interface::start_r(sender, receiver, initializer);
+        crate::interface::start_r(sender, receiver, initializer);
     }
 
     /// Returns a sender channel for the R execution thread; used outside the
     /// shell handler
-    pub fn request_sender(&self) -> SyncSender<RRequest> {
+    pub fn request_sender(&self) -> SyncSender<Request> {
         self.req_sender.clone()
     }
 
@@ -185,7 +185,7 @@ impl ShellHandler for Shell {
         req: &ExecuteRequest,
     ) -> Result<ExecuteReply, ExecuteReplyException> {
         let (sender, receiver) = channel::<ExecuteResponse>();
-        if let Err(err) = self.req_sender.send(RRequest::ExecuteCode(
+        if let Err(err) = self.req_sender.send(Request::ExecuteCode(
             req.clone(),
             originator.clone(),
             sender,
@@ -268,7 +268,7 @@ impl ShellHandler for Shell {
         };
         let originator = Vec::new();
         let (sender, receiver) = channel::<ExecuteResponse>();
-        if let Err(err) = self.req_sender.send(RRequest::ExecuteCode(
+        if let Err(err) = self.req_sender.send(Request::ExecuteCode(
             req.clone(),
             originator.clone(),
             sender,
@@ -287,7 +287,7 @@ impl ShellHandler for Shell {
 
     fn establish_input_handler(&mut self, handler: SyncSender<ShellInputRequest>) {
         self.req_sender
-            .send(RRequest::EstablishInputChannel(handler))
+            .send(Request::EstablishInputChannel(handler))
             .unwrap();
     }
 }

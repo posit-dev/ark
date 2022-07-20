@@ -5,30 +5,63 @@
 // 
 // 
 
-use std::ffi::CString;
-use std::os::raw::c_char;
-use std::sync::Once;
-
 use extendr_api::*;
 use libR_sys::*;
 
-use crate::r_lock::rlock;
-
-static INIT: Once = Once::new();
-static mut PRECIOUS_LIST: SEXP = std::ptr::null_mut();
-
-struct RObject {
-    value: SEXP,
-}
+use super::r_lock::rlock;
 
 // NOTE: We provide an API for Rf_install() as rust's strings are not
 // nul-terminated by default, and so we need to do the work to ensure
 // the strings we pass to Rf_install() are nul-terminated C strings.
-pub(crate) fn install<'a>(string: impl Into<&'a str>) -> SEXP {
-    let value = string.into();
-    let cstr = CString::new(value).expect("error constructing C string");
-    unsafe { Rf_install(cstr.as_ptr() as *const c_char) }
+macro_rules! install {
+
+    ($id:literal) => {{
+        let value = concat!($id, "\0");
+        rlock! { Rf_install(value.as_ptr() as *const i8) }
+    }};
+
+    ($id:expr) => {{
+        let cstr = [$id, "\0"].concat();
+        rlock! { Rf_install(cstr.as_ptr() as *const i8) }
+    }};
+
 }
+pub(crate) use install;
+
+// Mainly for debugging.
+macro_rules! rlog {
+
+    ($x:expr) => {
+
+        rlock! {
+
+            // NOTE: We construct and evaluate the call by hand here
+            // just to avoid a potential infinite recursion if this
+            // macro were to be used within other R APIs we expose.
+            let mut protect = RProtect::new();
+
+            let callee = protect.add(Rf_lang3(
+                Rf_install("::\0".as_ptr() as *const i8),
+                Rf_mkString("base\0".as_ptr() as *const i8),
+                Rf_mkString("format\0".as_ptr() as *const i8),
+            ));
+
+            let call = protect.add(Rf_lang2(callee, $x));
+
+            let result = Rf_eval(call, R_GlobalEnv);
+
+            let robj = Robj::from_sexp(result);
+            if let Ok(strings) = Strings::try_from(robj) {
+                for string in strings.iter() {
+                    crate::lsp::logger::dlog!("{}", string);
+                }
+            }
+        }
+
+    }
+
+}
+pub(crate) use rlog;
 
 pub(crate) struct RProtect {
     count: i32,
@@ -131,14 +164,7 @@ impl RFunctionExt<String> for RFunction {
 
 impl RFunction {
 
-    pub fn new(value: &str) -> Self {
-
-        let parts = value.split(":::").collect::<Vec<_>>();
-        let (package, function) = if parts.len() == 2 {
-            (parts[0], parts[1])
-        } else {
-            ("", value)
-        };
+    pub fn new(package: &str, function: &str) -> Self {
 
         RFunction {
             package: package.to_string(),
@@ -158,12 +184,12 @@ impl RFunction {
         // start building the call to be evaluated
         let lhs = if !self.package.is_empty() {
             self.protect.add(Rf_lang3(
-                install(":::"),
-                install(&*self.package),
-                install(&*self.function)
+                install!(":::"),
+                install!(&*self.package),
+                install!(&*self.function)
             ))
         } else {
-            install(&*self.function)
+            install!(&*self.function)
         };
 
         // now, build the actual call to be evaluated
@@ -177,15 +203,16 @@ impl RFunction {
         for argument in self.arguments.iter() {
             SETCAR(slot, argument.value);
             if !argument.name.is_empty() {
-                SET_TAG(slot, install(&*argument.name));
+                SET_TAG(slot, install!(&*argument.name));
             }
             slot = CDR(slot);
         }
 
         // now, wrap call in tryCatch
-        let call = self.protect.add(Rf_lang3(install("tryCatch"), call, install("identity")));
+        let call = self.protect.add(Rf_lang3(install!("tryCatch"), call, install!("identity")));
         SET_TAG(call, R_NilValue);
-        SET_TAG(CDDR(call), install("error"));
+        SET_TAG(CDDR(call), install!("error"));
+        rlog!(call);
 
         // evaluate the call
         let result = protect.add(Rf_eval(call, R_BaseEnv));
@@ -204,8 +231,7 @@ impl RFunction {
 mod tests {
 
     use super::*;
-
-    use crate::r_test;
+    use super::super::r_test;
 
     #[test]
     fn test_basic_function() { unsafe {
@@ -214,7 +240,7 @@ mod tests {
 
         // try adding some numbers
         let mut protect = RProtect::new();
-        let result = RFunction::new("+")
+        let result = RFunction::new("base", "+")
             .add(Rf_ScalarInteger(2))
             .add(Rf_ScalarInteger(2))
             .call(&mut protect);
@@ -232,7 +258,7 @@ mod tests {
 
         // try sending some UTF-8 strings to and from R
         let mut protect = RProtect::new();
-        let result = RFunction::new("paste")
+        let result = RFunction::new("base", "paste")
             .add("世界")
             .add("您好".to_string())
             .call(&mut protect);
@@ -251,7 +277,7 @@ mod tests {
         r_test::start_r();
 
         let mut protect = RProtect::new();
-        let result = RFunction::new("stats:::rnorm")
+        let result = RFunction::new("stats", "rnorm")
             .param("n", 1)
             .param("mean", 10)
             .param("sd", 0)
@@ -275,7 +301,7 @@ mod tests {
                 for _j in 1..10 {
                     let result = rlock! {
                         let mut protect = RProtect::new();
-                        let code = protect.add(Rf_lang2(install("rnorm"), Rf_ScalarInteger(N)));
+                        let code = protect.add(Rf_lang2(install!("rnorm"), Rf_ScalarInteger(N)));
                         Rf_eval(code, R_GlobalEnv)
                     };
                     assert!(Rf_length(result) == N);

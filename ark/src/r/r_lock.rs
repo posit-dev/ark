@@ -29,7 +29,7 @@ use parking_lot::ReentrantMutex;
 macro_rules! rlock {
 
     ($($expr:tt)*) => {{
-        let _lock = crate::r_lock::LOCK.lock();
+        let _lock = crate::r::r_lock::LOCK.lock();
         unsafe { $($expr)* }
     }}
 

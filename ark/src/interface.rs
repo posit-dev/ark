@@ -5,8 +5,6 @@
 // 
 // 
 
-use crate::r_kernel::{RKernel, RKernelInfo};
-use crate::r_request::RRequest;
 use amalthea::socket::iopub::IOPubMessage;
 use libc::{c_char, c_int};
 use log::{debug, trace, warn};
@@ -16,12 +14,16 @@ use std::sync::mpsc::{Receiver, Sender, SyncSender};
 use std::sync::{Arc, Mutex, Once};
 use std::thread;
 
+use crate::kernel::Kernel;
+use crate::kernel::KernelInfo;
+use crate::request::Request;
+
 // --- Globals ---
 // These values must be global in order for them to be accessible from R
 // callbacks, which do not have a facility for passing or returning context.
 
 /// The global R kernel state
-pub static mut KERNEL: Option<Arc<Mutex<RKernel>>> = None;
+pub static mut KERNEL: Option<Arc<Mutex<Kernel>>> = None;
 
 /// A channel that sends prompts from R to the kernel
 static mut RPROMPT_SEND: Option<Mutex<Sender<String>>> = None;
@@ -99,8 +101,8 @@ pub extern "C" fn r_write_console(buf: *const c_char, _buflen: i32, otype: i32) 
 
 pub fn start_r(
     iopub: SyncSender<IOPubMessage>,
-    receiver: Receiver<RRequest>,
-    initializer: Sender<RKernelInfo>,
+    receiver: Receiver<Request>,
+    initializer: Sender<KernelInfo>,
 ) {
     use std::borrow::BorrowMut;
 
@@ -112,7 +114,7 @@ pub fn start_r(
     INIT.call_once(|| unsafe {
         *CONSOLE_RECV.borrow_mut() = Some(Mutex::new(console_recv));
         *RPROMPT_SEND.borrow_mut() = Some(Mutex::new(rprompt_send));
-        let kernel = RKernel::new(iopub, console, initializer);
+        let kernel = Kernel::new(iopub, console, initializer);
         *KERNEL.borrow_mut() = Some(Arc::new(Mutex::new(kernel)));
     });
 
@@ -148,7 +150,7 @@ pub fn start_r(
     }
 }
 
-fn handle_r_request(req: &RRequest, prompt_recv: &Receiver<String>) {
+fn handle_r_request(req: &Request, prompt_recv: &Receiver<String>) {
     // Service the request.
     let mutex = unsafe { KERNEL.as_ref().unwrap() };
     {
@@ -158,12 +160,12 @@ fn handle_r_request(req: &RRequest, prompt_recv: &Receiver<String>) {
 
     // If this is an execution request, complete it by waiting for R to prompt
     // us before we process another request
-    if let RRequest::ExecuteCode(_, _, _) = req {
+    if let Request::ExecuteCode(_, _, _) = req {
         complete_execute_request(req, prompt_recv);
     }
 }
 
-fn complete_execute_request(req: &RRequest, prompt_recv: &Receiver<String>) {
+fn complete_execute_request(req: &Request, prompt_recv: &Receiver<String>) {
     use extendr_api::prelude::*;
     let mutex = unsafe { KERNEL.as_ref().unwrap() };
 
@@ -195,7 +197,7 @@ fn complete_execute_request(req: &RRequest, prompt_recv: &Receiver<String>) {
                     // if the prompt isn't the default, then it's likely a prompt from
                     // R's `readline()` or similar; request input from the user.
                     trace!("Got R prompt '{}', asking user for input", prompt);
-                    if let RRequest::ExecuteCode(_, originator, _) = req {
+                    if let Request::ExecuteCode(_, originator, _) = req {
                         kernel.request_input(originator, &prompt);
                     } else {
                         warn!("No originator for input request, omitting");
@@ -217,7 +219,7 @@ fn complete_execute_request(req: &RRequest, prompt_recv: &Receiver<String>) {
     }
 }
 
-pub fn listen(exec_recv: Receiver<RRequest>, prompt_recv: Receiver<String>) {
+pub fn listen(exec_recv: Receiver<Request>, prompt_recv: Receiver<String>) {
     // Before accepting execution requests from the front end, wait for R to
     // prompt us for input.
     trace!("Waiting for R's initial input prompt...");

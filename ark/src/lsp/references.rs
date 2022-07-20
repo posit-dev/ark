@@ -20,7 +20,7 @@ use crate::lsp::traits::cursor::TreeCursorExt;
 use crate::macros::unwrap;
 use crate::lsp::backend::Backend;
 use crate::lsp::document::Document;
-use crate::lsp::logger::log_push;
+use crate::lsp::logger::dlog;
 use crate::lsp::traits::point::PointExt;
 use crate::lsp::traits::position::PositionExt;
 
@@ -111,7 +111,7 @@ impl Backend {
         
         // Unwrap the URL.
         let path = unwrap!(uri.to_file_path(), {
-            log_push!("URL {} not associated with a local file path", uri);
+            dlog!("URL {} not associated with a local file path", uri);
             return Err(());
         });
         
@@ -119,12 +119,12 @@ impl Backend {
         let context = self.with_document(path.as_path(), |document| {
             
             let ast = unwrap!(document.ast.as_ref(), {
-                log_push!("no ast associated with document {}", path.display());
+                dlog!("no ast associated with document {}", path.display());
                 return Err(());
             });
             
             let mut node = unwrap!(ast.root_node().descendant_for_point_range(point, point), {
-                log_push!("couldn't find node associated with point {:?}", point);
+                dlog!("couldn't find node associated with point {:?}", point);
                 return Err(());
             });
             
@@ -139,14 +139,14 @@ impl Backend {
             if node.kind() != "identifier" {
                 let point = Point::new(point.row, point.column - 1);
                 node = unwrap!(ast.root_node().descendant_for_point_range(point, point), {
-                    log_push!("couldn't find node associated with point {:?}", point);
+                    dlog!("couldn't find node associated with point {:?}", point);
                     return Err(());
                 });
             }
             
             // double check that we found an identifier
             if node.kind() != "identifier" {
-                log_push!("couldn't find an identifier associated with point {:?}", point);
+                dlog!("couldn't find an identifier associated with point {:?}", point);
                 return Err(());
             }
             
@@ -155,12 +155,12 @@ impl Backend {
             let kind = match node.prev_sibling() {
                 
                 None => {
-                    log_push!("node {:?} has no previous sibling", node);
+                    dlog!("node {:?} has no previous sibling", node);
                     ReferenceKind::SymbolName
                 },
 
                 Some(sibling) => {
-                    log_push!("found sibling {:?} ({})", sibling, sibling.kind());
+                    dlog!("found sibling {:?} ({})", sibling, sibling.kind());
                     match sibling.kind() {
                         "$" => ReferenceKind::DollarName,
                         "@" => ReferenceKind::SlotName,
@@ -195,7 +195,7 @@ impl Backend {
             let ext = unwrap!(path.extension(), { continue; });
             if ext != "r" && ext != "R" { continue; }
             
-            log_push!("found R file {}", path.display());
+            dlog!("found R file {}", path.display());
             let result = self.with_document(path, |document| {
                 self.find_references_in_document(context, path, document, locations);
                 return Ok(());
@@ -204,7 +204,7 @@ impl Backend {
             match result {
                 Ok(result) => result,
                 Err(_error) => {
-                    log_push!("error retrieving document for path {}", path.display());
+                    dlog!("error retrieving document for path {}", path.display());
                     continue;
                 }
             }
@@ -216,7 +216,7 @@ impl Backend {
     fn find_references_in_document(&self, context: &Context, path: &Path, document: &Document, locations: &mut Vec<Location>) {
         
         let ast = unwrap!(document.ast.as_ref(), {
-            log_push!("no ast available");
+            dlog!("no ast available");
             return;
         });
         
@@ -246,7 +246,7 @@ impl Backend {
         
         // Figure out what we're looking for.
         let context = unwrap!(self.build_context(&uri, point), {
-            log_push!("failed to find build context at point {}", point);
+            dlog!("failed to find build context at point {}", point);
             return Err(());
         });
         
@@ -254,7 +254,7 @@ impl Backend {
         if let Ok(workspace) = self.workspace.lock() {
             for folder in workspace.folders.iter() {
                 if let Ok(path) = folder.to_file_path() {
-                    log_push!("searching references in folder {}", path.display());
+                    dlog!("searching references in folder {}", path.display());
                     self.find_references_in_folder(&context, &path, &mut locations);
                 }
             }

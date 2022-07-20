@@ -43,9 +43,15 @@ pub(crate) use unwrap;
 
 macro_rules! cstr {
 
-    ($value:literal) => {
-        concat!($value, '\0')
-    }
+    ($value:literal) => {{
+        let value = concat!($value, "\0");
+        value.as_ptr() as *const i8
+    }};
+
+    ($value:expr) => {{
+        let value = [$value, "\0"].concat();
+        value.as_ptr() as *const i8
+    }};
 
 }
 pub(crate) use cstr;

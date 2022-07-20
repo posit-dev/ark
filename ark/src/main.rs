@@ -20,14 +20,12 @@ use std::sync::mpsc::sync_channel;
 use std::sync::{Arc, Mutex};
 
 mod control;
+mod interface;
 mod lsp;
+mod kernel;
 mod macros;
-mod r_exec;
-mod r_interface;
-mod r_lock;
-mod r_kernel;
-mod r_request;
-mod r_test;
+mod r;
+mod request;
 mod shell;
 
 fn start_kernel(connection_file: ConnectionFile) {

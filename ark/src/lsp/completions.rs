@@ -8,24 +8,37 @@
 use std::collections::HashSet;
 use std::ffi::CStr;
 
+use extendr_api::Robj;
+use extendr_api::Strings;
 use libR_sys::*;
+use serde_json::Value;
+use serde_json::json;
+use tower_lsp::lsp_types::Command;
 use tower_lsp::lsp_types::CompletionItem;
+use tower_lsp::lsp_types::CompletionItemKind;
 use tower_lsp::lsp_types::CompletionParams;
+use tower_lsp::lsp_types::CompletionTextEdit;
+use tower_lsp::lsp_types::Documentation;
+use tower_lsp::lsp_types::InsertTextFormat;
+use tower_lsp::lsp_types::InsertTextMode;
+use tower_lsp::lsp_types::MarkupContent;
+use tower_lsp::lsp_types::MarkupKind;
+use tower_lsp::lsp_types::TextEdit;
 use tree_sitter::Node;
 use tree_sitter::Point;
 
 use crate::lsp::traits::node::NodeExt;
 use crate::macros::*;
 use crate::lsp::document::Document;
-use crate::lsp::logger::log_push;
+use crate::lsp::logger::dlog;
 use crate::lsp::traits::cursor::TreeCursorExt;
 use crate::lsp::traits::point::PointExt;
 use crate::lsp::traits::position::PositionExt;
-use crate::r_exec::RFunction;
-use crate::r_exec::RFunctionExt;
-use crate::r_exec::RProtect;
-use crate::r_exec::install;
-use crate::r_lock::rlock;
+use crate::r::r_exec::RFunction;
+use crate::r::r_exec::RFunctionExt;
+use crate::r::r_exec::RProtect;
+use crate::r::r_exec::install;
+use crate::r::r_lock::rlock;
 
 fn completion_from_identifier(node: &Node, source: &str) -> CompletionItem {
     let label = node.utf8_text(source.as_bytes()).expect("empty assignee");
@@ -131,23 +144,23 @@ fn append_function_parameters(node: &Node, data: &mut CompletionData, completion
     let mut cursor = node.walk();
     
     if !cursor.goto_first_child() {
-        log_push!("goto_first_child() failed");
+        dlog!("goto_first_child() failed");
         return;
     }
 
     if !cursor.goto_next_sibling() {
-        log_push!("goto_next_sibling() failed");
+        dlog!("goto_next_sibling() failed");
         return;
     }
 
     let kind = cursor.node().kind();
     if kind != "formal_parameters" {
-        log_push!("unexpected node kind {}", kind);
+        dlog!("unexpected node kind {}", kind);
         return;
     }
 
     if !cursor.goto_first_child() {
-        log_push!("goto_first_child() failed");
+        dlog!("goto_first_child() failed");
         return;
     }
 
@@ -170,12 +183,12 @@ fn list_namespace_symbols(namespace: SEXP, exports_only: bool, protect: &mut RPr
         return protect.add(R_lsInternal(namespace, 1));
     }
 
-    let ns = Rf_findVarInFrame(namespace, install(".__NAMESPACE__."));
+    let ns = Rf_findVarInFrame(namespace, install!(".__NAMESPACE__."));
     if ns == R_UnboundValue {
         return R_NilValue;
     }
 
-    let exports = Rf_findVarInFrame(ns, install("exports"));
+    let exports = Rf_findVarInFrame(ns, install!("exports"));
     if exports == R_UnboundValue {
         return R_NilValue;
     }
@@ -184,29 +197,153 @@ fn list_namespace_symbols(namespace: SEXP, exports_only: bool, protect: &mut RPr
 
 } }
 
-fn append_namespace_completions(package: &str, exports_only: bool, completions: &mut Vec<CompletionItem>) {
+fn append_parameter_completions(callee: &str, completions: &mut Vec<CompletionItem>) { rlock! {
 
-    rlock! {
+    dlog!("append_parameter_completions({:?})", callee);
 
-        let mut protect = RProtect::new();
+    // TODO: Given the callee, we should also try to find its definition within
+    // the document index of function definitions, since it may not be defined
+    // within the session.
+    let mut protect = RProtect::new();
+    let mut status: ParseStatus = 0;
 
-        // Get the package namespace.
-        let namespace = RFunction::new("base:::getNamespace")
-            .add(package)
-            .call(&mut protect);
+    // Parse the callee text. The text will be parsed as an R expression,
+    // which is a vector of calls to be evaluated.
+    let string_sexp = protect.add(Rf_allocVector(STRSXP, 1));
+    SET_STRING_ELT(string_sexp, 0, Rf_mkCharLenCE(callee.as_ptr() as *const i8, callee.len() as i32, cetype_t_CE_UTF8));
+    let parsed_sexp = protect.add(R_ParseVector(string_sexp, 1, &mut status, R_NilValue));
 
-        let symbols = list_namespace_symbols(namespace, exports_only, &mut protect);
+    if status != ParseStatus_PARSE_OK {
+        dlog!("Error parsing {} [status {}]", callee, status);
+        return;
+    }
 
-        // Iterate over the various strings.
-        if TYPEOF(symbols) as u32 == STRSXP {
-            for i in 1..Rf_length(symbols) {
-                let ptr = R_CHAR(STRING_ELT(symbols, i as isize));
-                let cstr = CStr::from_ptr(ptr);
-                let item = CompletionItem::new_simple(cstr.to_str().unwrap().to_string(), package.to_string());
-                completions.push(item);
-            }
+    // Evaluate the text.
+    let mut value = R_NilValue;
+    for i in 0..Rf_length(parsed_sexp) {
+        let expr = VECTOR_ELT(parsed_sexp, i as isize);
+        value = Rf_eval(expr, R_GlobalEnv);
+    }
+    
+    if Rf_isFunction(value) != 0 {
+
+        // For primitive functions, we use the 'args()' function to get
+        // a function with a compatible prototype.
+        if Rf_isPrimitive(value) != 0 {
+            value = RFunction::new("base", "args")
+                .add(value)
+                .call(&mut protect);
         }
 
+        // Now, we can use 'names(formals())' to get the names of
+        // the function's formal arguments.
+        let formals = RFunction::new("base", "formals")
+            .add(value)
+            .call(&mut protect);
+
+        let names = RFunction::new("base", "names")
+            .add(formals)
+            .call(&mut protect);
+
+        // Return the names of these formals.
+        let names = Robj::from_sexp(names);
+        let strings = Strings::try_from(names).unwrap();
+        for string in strings.iter() {
+            let mut item = CompletionItem::new_simple(string.to_string(), callee.to_string());
+            item.kind = Some(CompletionItemKind::FIELD);
+            item.insert_text_format = Some(InsertTextFormat::SNIPPET);
+            item.insert_text = Some(string.to_string() + " = ");
+
+            item.detail = Some("This is some detail.".to_string());
+            item.documentation = Some(Documentation::MarkupContent(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: "# This is a Markdown header.".to_string(),
+            }));
+
+            completions.push(item);
+        }
+
+    }
+
+} }
+
+fn append_namespace_completions(package: &str, exports_only: bool, completions: &mut Vec<CompletionItem>) { rlock! {
+
+    dlog!("append_namespace_completions({:?}, {})", package, exports_only);
+    let mut protect = RProtect::new();
+
+    // Get the package namespace.
+    let namespace = RFunction::new("base", "getNamespace")
+        .add(package)
+        .call(&mut protect);
+
+    let symbols = list_namespace_symbols(namespace, exports_only, &mut protect);
+
+    if TYPEOF(symbols) as u32 != STRSXP {
+        dlog!("Unexpected SEXPTYPE {}", TYPEOF(symbols));
+        return;
+    }
+
+    for i in 0..Rf_length(symbols) {
+
+        // Get a reference to the underlying C string.
+        let ptr = R_CHAR(STRING_ELT(symbols, i as isize));
+        let cstr = CStr::from_ptr(ptr);
+
+        // Start building the completion item data.
+        let label = cstr.to_str().unwrap();
+
+        // 'detail' is the label displayed in the 'title bar' of the
+        // associated Help popup. We'll display the associated function
+        // signature there.
+        let value = RFunction::new("base", "get")
+            .param("x", label)
+            .param("envir", namespace)
+            .call(&mut protect);
+        Rf_PrintValue(value);
+
+        let wrapper = RFunction::new("base", "args")
+            .add(value)
+            .call(&mut protect);
+
+        let formatted = RFunction::new("base", "format")
+            .add(wrapper)
+            .call(&mut protect);
+
+        let mut detail = String::new();
+        for i in 0..(Rf_length(formatted) - 1) {
+            let ptr = R_CHAR(STRING_ELT(symbols, i as isize));
+            let cstr = CStr::from_ptr(ptr);
+            detail.push_str(cstr.to_str().unwrap());
+        }
+
+        // Create the completion item.
+        let mut item = CompletionItem::new_simple(format!("{}()", label), detail);
+
+        // Use a 'snippet' for insertion, so that parentheses are
+        // automatically appended with the cursor moved in-between
+        // the provided parentheses.
+        item.kind = Some(CompletionItemKind::FUNCTION);
+        item.insert_text = Some(format!("{}($0)", label));
+        item.insert_text_format = Some(InsertTextFormat::SNIPPET);
+
+        completions.push(item);
+    }
+
+} }
+
+fn append_keyword_completions(completions: &mut Vec<CompletionItem>) {
+
+    let keywords = vec![
+        "NULL", "NA", "TRUE", "FALSE", "Inf", "NaN", "NA_integer_",
+        "NA_real_", "NA_character_", "NA_complex_", "function", "while",
+        "repeat", "for", "if", "in", "else", "next", "break", "return",
+    ];
+
+    for keyword in keywords {
+        let mut item = CompletionItem::new_simple(keyword.to_string(), "[keyword]".to_string());
+        item.kind = Some(CompletionItemKind::KEYWORD);
+        completions.push(item);
     }
 
 }
@@ -217,8 +354,6 @@ pub(crate) fn append_session_completions(document: &mut Document, params: &Compl
     let ast = unwrap!(document.ast.as_ref(), {
         return;
     });
-
-    let source = document.contents.to_string();
 
     // figure out the token / node at the cursor position. note that we use
     // the previous token here as the cursor itself will be located just past
@@ -253,15 +388,19 @@ pub(crate) fn append_session_completions(document: &mut Document, params: &Compl
     //      - :: - ::
     //
     // So we have to do some extra work to get the package name in each case.
+    dlog!("Completion from node: {:?}", node);
+
     let source = document.contents.to_string();
+    let dump = ast.root_node().dump(&source);
+    dlog!("AST: {}", dump);
 
     // Handle the case with 'package::', with no identifier name yet following.
-    if node.kind() == "::" || node.kind() == ":::" {
+    if matches!(node.kind(), "::" | ":::") {
         let exports_only = node.kind() == "::";
         if let Some(parent) = node.parent() {
             if parent.kind() == "ERROR" {
                 if let Some(prev) = parent.prev_sibling() {
-                    if prev.kind() == "identifier" || prev.kind() == "string" {
+                    if matches!(prev.kind(), "identifier" | "string") {
                         let package = prev.utf8_text(source.as_bytes()).unwrap();
                         append_namespace_completions(package, exports_only, completions);
                     }
@@ -270,18 +409,42 @@ pub(crate) fn append_session_completions(document: &mut Document, params: &Compl
         }
     }
 
-    // Handle the case with 'package::prefix', where the user has now
-    // started typing the prefix of the symbol they would like completions for.
-    if let Some(parent) = node.parent() {
-        if matches!(parent.kind(), "namespace_get" | "namespace_get_internal") {
-            if let Some(package_node) = parent.child(0) {
-                if let Some(colon_node) = parent.child(1) {
+    loop {
+
+        // If we landed on a 'call', then we should provide parameter completions
+        // for the associated callee if possible.
+        if node.kind() == "call" {
+            if let Some(child) = node.child(0) {
+                let text = child.utf8_text(source.as_bytes()).unwrap();
+                append_parameter_completions(&text, completions);
+                break;
+            };
+        }
+
+        // Handle the case with 'package::prefix', where the user has now
+        // started typing the prefix of the symbol they would like completions for.
+        if matches!(node.kind(), "namespace_get" | "namespace_get_internal") {
+            if let Some(package_node) = node.child(0) {
+                if let Some(colon_node) = node.child(1) {
                     let package = package_node.utf8_text(source.as_bytes()).unwrap();
                     let exports_only = colon_node.kind() == "::";
                     append_namespace_completions(package, exports_only, completions);
+                    break;
                 }
             }
         }
+
+        // If we reach a brace list, bail.
+        if node.kind() == "brace_list" {
+            break;
+        }
+
+        // Update the node.
+        node = match node.parent() {
+            Some(node) => node,
+            None => break
+        };
+
     }
 
 }

@@ -13,7 +13,7 @@ use tree_sitter::Point;
 use tree_sitter::Tree;
 
 use crate::macros::unwrap;
-use crate::lsp::logger::log_push;
+use crate::lsp::logger::dlog;
 use crate::lsp::traits::position::PositionExt;
 use crate::lsp::traits::rope::RopeExt;
 
@@ -87,7 +87,7 @@ impl Document {
         // state of the document (prior to the edit being applied) so that byte
         // offsets can be computed correctly.
         let ast = unwrap!(self.ast.as_mut(), {
-            log_push!("no AST available");
+            dlog!("no AST available");
             return;
         });
 
