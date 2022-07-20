@@ -1,5 +1,5 @@
 // 
-// r_lock.rs
+// lock.rs
 // 
 // Copyright (C) 2022 by RStudio, PBC
 // 
@@ -29,23 +29,12 @@ use parking_lot::ReentrantMutex;
 macro_rules! rlock {
 
     ($($expr:tt)*) => {{
-        let _lock = crate::r::r_lock::LOCK.lock();
+        let _lock = crate::r::lock::LOCK.lock();
         unsafe { $($expr)* }
     }}
 
 }
 pub(crate) use rlock;
-
-pub fn with_r_lock<T, Callback: FnMut() -> T>(callback: &mut Callback) -> T {
-    
-    let result = {
-        let _lock = LOCK.lock();
-        callback()
-    };
-
-    return result;
-
-}
 
 lazy_static! {
     pub static ref LOCK: ReentrantMutex<()> = ReentrantMutex::new(());

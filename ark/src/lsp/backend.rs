@@ -55,6 +55,7 @@ pub(crate) struct Backend {
     pub client: Client,
     pub documents: DashMap<Url, Document>,
     pub workspace: Arc<Mutex<Workspace>>,
+    #[allow(dead_code)]
     pub channel: SyncSender<Request>,
 }
 

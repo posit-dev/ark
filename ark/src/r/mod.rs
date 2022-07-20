@@ -5,6 +5,7 @@
 // 
 //
 
-pub mod r_exec;
-pub mod r_lock;
-pub mod r_test;
+pub mod exec;
+pub mod lock;
+pub mod macros;
+pub mod test;
