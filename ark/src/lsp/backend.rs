@@ -102,13 +102,6 @@ impl Backend {
 impl LanguageServer for Backend {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
 
-        // for debugging; remove later
-        std::panic::set_hook(Box::new(|data| {
-            let mut writer = std::fs::File::create("/tmp/ark.log").unwrap();
-            writeln!(&mut writer, "{:#?}", data).expect("oh no");
-            writeln!(&mut writer, "{}", Backtrace::force_capture()).expect("oh no");
-        }));
-
         backend_trace!(self, "initialize({:#?})", params);
 
         // initialize the set of known workspaces
@@ -270,7 +263,11 @@ impl LanguageServer for Backend {
         // add context-relevant completions
         append_document_completions(document.value_mut(), &params, &mut completions);
 
-        return Ok(Some(CompletionResponse::Array(completions)));
+        if !completions.is_empty() {
+            Ok(Some(CompletionResponse::Array(completions)))
+        } else {
+            Ok(None)
+        }
 
     }
 

@@ -18,6 +18,7 @@ use std::sync::Once;
 
 use libR_sys::*;
 
+use crate::macros::cargs;
 use crate::macros::cstr;
 
 static INIT: Once = Once::new();
@@ -41,12 +42,7 @@ pub fn start_r() {
         }
 
         // Build the argument list for Rf_initialize_R
-        let mut arguments = [
-            cstr!("R"),
-            cstr!("--slave"),
-            cstr!("--no-save"),
-            cstr!("--no-restore")
-        ];
+        let mut arguments = cargs!["R", "--slave", "--no-save", "--no-restore"];
 
         unsafe {
             Rf_initialize_R(arguments.len() as i32, arguments.as_mut_ptr() as *mut *mut i8);

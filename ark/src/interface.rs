@@ -1,14 +1,17 @@
-// 
+//
 // r_interface.rs
-// 
+//
 // Copyright (C) 2022 by RStudio, PBC
-// 
-// 
+//
+//
 
 use amalthea::socket::iopub::IOPubMessage;
+use libR_sys::*;
 use libc::{c_char, c_int};
 use log::{debug, trace, warn};
 use std::ffi::{CStr, CString};
+use std::path::Path;
+use std::process::Command;
 use std::sync::mpsc::channel;
 use std::sync::mpsc::{Receiver, Sender, SyncSender};
 use std::sync::{Arc, Mutex, Once};
@@ -16,6 +19,8 @@ use std::thread;
 
 use crate::kernel::Kernel;
 use crate::kernel::KernelInfo;
+use crate::macros::cargs;
+use crate::macros::cstr;
 use crate::request::Request;
 
 // --- Globals ---
@@ -121,31 +126,47 @@ pub fn start_r(
     // Start thread to listen to execution requests
     thread::spawn(move || listen(receiver, rprompt_recv));
 
-    // TODO: Discover R locations and populate R_HOME, a prerequisite to
-    // initializing R.
-    //
-    // Maybe add a command line option to specify the path to R_HOME directly?
+    // TODO: This is a band-aid, intended to make sure that 'ark' binds
+    // against the version of R it was actually compiled against. The real
+    // fix here is to ensure that 'ark' doesn't actually link against any
+    // specific version of libR, and inject the right version of R when
+    // 'ark' is launched via DYLD_INSERT_LIBRARIES (for macOS).
+    if cfg!(target_os = "macos") {
+        let command = format!("/usr/sbin/lsof -Fn -p {} | /usr/bin/grep /libR.dylib | /usr/bin/cut -c2-", std::process::id());
+        let output = Command::new("/bin/sh").arg("-c").arg(command).output();
+        if let Ok(output) = output {
+            let stdout = String::from_utf8(output.stdout).unwrap();
+            let libpath = Path::new(stdout.trim());
+            let home = libpath.parent().unwrap().parent().unwrap();
+            trace!("ark loaded {}; using R_HOME {}", libpath.to_string_lossy(), home.to_string_lossy());
+            std::env::set_var("R_HOME", home);
+        }
+    }
+
     unsafe {
-        let arg1 = CString::new("ark").unwrap();
-        let arg2 = CString::new("--interactive").unwrap();
-        let mut args = vec![arg1.as_ptr(), arg2.as_ptr()];
-        libR_sys::R_running_as_main_program = 1;
-        libR_sys::R_SignalHandlers = 0;
-        libR_sys::Rf_initialize_R(args.len() as i32, args.as_mut_ptr() as *mut *mut c_char);
+
+        let mut args = cargs!["ark", "--interactive"];
+        R_running_as_main_program = 1;
+        R_SignalHandlers = 0;
+        Rf_initialize_R(args.len() as i32, args.as_mut_ptr() as *mut *mut c_char);
+
+        // Log the value of R_HOME, so we can know if something hairy is afoot
+        let home = CString::from_raw(R_HomeDir());
+        trace!("R_HOME: {:?}", home);
 
         // Mark R session as interactive
-        libR_sys::R_Interactive = 1;
+        R_Interactive = 1;
 
         // Redirect console
-        libR_sys::R_Consolefile = std::ptr::null_mut();
-        libR_sys::R_Outputfile = std::ptr::null_mut();
-        libR_sys::ptr_R_WriteConsole = None;
-        libR_sys::ptr_R_WriteConsoleEx = Some(r_write_console);
-        libR_sys::ptr_R_ReadConsole = Some(r_read_console);
+        R_Consolefile = std::ptr::null_mut();
+        R_Outputfile = std::ptr::null_mut();
+        ptr_R_WriteConsole = None;
+        ptr_R_WriteConsoleEx = Some(r_write_console);
+        ptr_R_ReadConsole = Some(r_read_console);
 
         // Does not return
         trace!("Entering R main loop");
-        libR_sys::Rf_mainloop();
+        Rf_mainloop();
         trace!("Exiting R main loop");
     }
 }
