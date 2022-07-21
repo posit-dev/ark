@@ -131,7 +131,8 @@ pub fn start_r(
     // fix here is to ensure that 'ark' doesn't actually link against any
     // specific version of libR, and inject the right version of R when
     // 'ark' is launched via DYLD_INSERT_LIBRARIES (for macOS).
-    if cfg!(target_os = "macos") {
+    #[cfg(target_os = "macos")]
+    {
         let command = format!("/usr/sbin/lsof -Fn -p {} | /usr/bin/grep /libR.dylib | /usr/bin/cut -c2-", std::process::id());
         let output = Command::new("/bin/sh").arg("-c").arg(command).output();
         if let Ok(output) = output {
