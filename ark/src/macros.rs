@@ -55,3 +55,12 @@ macro_rules! cstr {
 
 }
 pub(crate) use cstr;
+
+macro_rules! cargs {
+
+    ($($expr:expr),*) => {
+        vec![$(cstr!($expr)),*]
+    };
+
+}
+pub(crate) use cargs;

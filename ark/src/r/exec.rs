@@ -79,6 +79,15 @@ impl RFunctionExt<Robj> for RFunction {
 
 }
 
+impl RFunctionExt<bool> for RFunction {
+
+    fn param(&mut self, name: &str, value: bool) -> &mut Self {
+        let value = rlock! { Rf_ScalarLogical(value as i32) };
+        self.param(name, value)
+    }
+
+}
+
 impl RFunctionExt<i32> for RFunction {
 
     fn param(&mut self, name: &str, value: i32) -> &mut Self {
@@ -182,12 +191,10 @@ impl RFunction {
         }
 
         // now, wrap call in tryCatch, so that errors don't longjmp
-        let call = self.protect.add(Rf_lang3(rsymbol!("tryCatch"), call, rsymbol!("identity")));
+        let try_catch = self.protect.add(Rf_lang3(rsymbol!("::"), rsymbol!("base"), rsymbol!("tryCatch")));
+        let call = self.protect.add(Rf_lang3(try_catch, call, rsymbol!("identity")));
         SET_TAG(call, R_NilValue);
         SET_TAG(CDDR(call), rsymbol!("error"));
-
-        // debug logging
-        rlog!(call);
 
         // evaluate the call
         let result = protect.add(Rf_eval(call, R_BaseEnv));
