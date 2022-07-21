@@ -9,8 +9,8 @@ use extendr_api::*;
 use libR_sys::*;
 
 use crate::r::lock::rlock;
-use crate::r::macros::install;
 use crate::r::macros::rlog;
+use crate::r::macros::rsymbol;
 
 pub(crate) struct RProtect {
     count: i32,
@@ -88,6 +88,15 @@ impl RFunctionExt<i32> for RFunction {
 
 }
 
+impl RFunctionExt<f64> for RFunction {
+
+    fn param(&mut self, name: &str, value: f64) -> &mut Self {
+        let value = rlock! { Rf_ScalarReal(value) };
+        self.param(name, value)
+    }
+
+}
+
 impl RFunctionExt<&str> for RFunction {
 
     fn param(&mut self, name: &str, value: &str) -> &mut Self {
@@ -111,6 +120,26 @@ impl RFunctionExt<String> for RFunction {
     }
 }
 
+impl From<&str> for RFunction {
+
+    fn from(string: &str) -> Self {
+        RFunction {
+            package: String::new(),
+            function: string.to_string(),
+            arguments: Vec::new(),
+            protect: RProtect::new(),
+        }
+    }
+}
+
+impl From<String> for RFunction {
+
+    fn from(string: String) -> Self {
+        RFunction::from(&*string)
+    }
+
+}
+
 impl RFunction {
 
     pub fn new(package: &str, function: &str) -> Self {
@@ -131,15 +160,10 @@ impl RFunction {
     fn call_impl(&mut self, protect: &mut RProtect) -> SEXP { unsafe {
 
         // start building the call to be evaluated
-        let lhs = if !self.package.is_empty() {
-            self.protect.add(Rf_lang3(
-                install!(":::"),
-                install!(&*self.package),
-                install!(&*self.function)
-            ))
-        } else {
-            install!(&*self.function)
-        };
+        let mut lhs = rsymbol!(self.function);
+        if !self.package.is_empty() {
+            lhs = self.protect.add(Rf_lang3(rsymbol!(":::"), rsymbol!(self.package), lhs));
+        }
 
         // now, build the actual call to be evaluated
         let size = (1 + self.arguments.len()) as R_xlen_t;
@@ -152,15 +176,17 @@ impl RFunction {
         for argument in self.arguments.iter() {
             SETCAR(slot, argument.value);
             if !argument.name.is_empty() {
-                SET_TAG(slot, install!(&*argument.name));
+                SET_TAG(slot, rsymbol!(argument.name));
             }
             slot = CDR(slot);
         }
 
-        // now, wrap call in tryCatch
-        let call = self.protect.add(Rf_lang3(install!("tryCatch"), call, install!("identity")));
+        // now, wrap call in tryCatch, so that errors don't longjmp
+        let call = self.protect.add(Rf_lang3(rsymbol!("tryCatch"), call, rsymbol!("identity")));
         SET_TAG(call, R_NilValue);
-        SET_TAG(CDDR(call), install!("error"));
+        SET_TAG(CDDR(call), rsymbol!("error"));
+
+        // debug logging
         rlog!(call);
 
         // evaluate the call
@@ -190,9 +216,9 @@ mod tests {
 
         // try adding some numbers
         let mut protect = RProtect::new();
-        let result = RFunction::new("base", "+")
-            .add(Rf_ScalarInteger(2))
-            .add(Rf_ScalarInteger(2))
+        let result = RFunction::from("+")
+            .add(2)
+            .add(2)
             .call(&mut protect);
 
         // check the result
@@ -228,7 +254,7 @@ mod tests {
 
         let mut protect = RProtect::new();
         let result = RFunction::new("stats", "rnorm")
-            .param("n", 1)
+            .add(1.0)
             .param("mean", 10)
             .param("sd", 0)
             .call(&mut protect);
@@ -251,7 +277,7 @@ mod tests {
                 for _j in 1..10 {
                     let result = rlock! {
                         let mut protect = RProtect::new();
-                        let code = protect.add(Rf_lang2(install!("rnorm"), Rf_ScalarInteger(N)));
+                        let code = protect.add(Rf_lang2(rsymbol!("rnorm"), Rf_ScalarInteger(N)));
                         Rf_eval(code, R_GlobalEnv)
                     };
                     assert!(Rf_length(result) == N);
