@@ -29,7 +29,8 @@ use crate::lsp::traits::cursor::TreeCursorExt;
 use crate::lsp::traits::point::PointExt;
 use crate::lsp::traits::position::PositionExt;
 use crate::r::lock::rlock;
-use crate::r::macros::install;
+use crate::r::macros::rstring;
+use crate::r::macros::rsymbol;
 use crate::r::exec::RFunction;
 use crate::r::exec::RFunctionExt;
 use crate::r::exec::RProtect;
@@ -171,27 +172,27 @@ fn append_function_parameters(node: &Node, data: &mut CompletionData, completion
 
 }
 
-fn list_namespace_symbols(namespace: SEXP, exports_only: bool, protect: &mut RProtect) -> SEXP { unsafe {
+unsafe fn list_namespace_exports(namespace: SEXP, protect: &mut RProtect) -> SEXP {
 
-    if !exports_only {
-        return protect.add(R_lsInternal(namespace, 1));
-    }
-
-    let ns = Rf_findVarInFrame(namespace, install!(".__NAMESPACE__."));
+    let ns = Rf_findVarInFrame(namespace, rsymbol!(".__NAMESPACE__."));
     if ns == R_UnboundValue {
         return R_NilValue;
     }
 
-    let exports = Rf_findVarInFrame(ns, install!("exports"));
+    let exports = Rf_findVarInFrame(ns, rsymbol!("exports"));
     if exports == R_UnboundValue {
         return R_NilValue;
     }
 
     return protect.add(R_lsInternal(exports, 1));
 
-} }
+}
 
-fn append_parameter_completions(callee: &str, completions: &mut Vec<CompletionItem>) { rlock! {
+unsafe fn list_namespace_symbols(namespace: SEXP, protect: &mut RProtect) -> SEXP {
+    return protect.add(R_lsInternal(namespace, 1));
+}
+
+unsafe fn append_parameter_completions(callee: &str, completions: &mut Vec<CompletionItem>) {
 
     dlog!("append_parameter_completions({:?})", callee);
 
@@ -203,8 +204,7 @@ fn append_parameter_completions(callee: &str, completions: &mut Vec<CompletionIt
 
     // Parse the callee text. The text will be parsed as an R expression,
     // which is a vector of calls to be evaluated.
-    let string_sexp = protect.add(Rf_allocVector(STRSXP, 1));
-    SET_STRING_ELT(string_sexp, 0, Rf_mkCharLenCE(callee.as_ptr() as *const i8, callee.len() as i32, cetype_t_CE_UTF8));
+    let string_sexp = protect.add(rstring!(callee));
     let parsed_sexp = protect.add(R_ParseVector(string_sexp, 1, &mut status, R_NilValue));
 
     if status != ParseStatus_PARSE_OK {
@@ -218,6 +218,10 @@ fn append_parameter_completions(callee: &str, completions: &mut Vec<CompletionIt
         let expr = VECTOR_ELT(parsed_sexp, i as isize);
         value = Rf_eval(expr, R_GlobalEnv);
     }
+
+    // Protect the final evaluation result here, as we'll
+    // need to introspect on its result.
+    value = protect.add(value);
     
     if Rf_isFunction(value) != 0 {
 
@@ -259,9 +263,9 @@ fn append_parameter_completions(callee: &str, completions: &mut Vec<CompletionIt
 
     }
 
-} }
+}
 
-fn append_namespace_completions(package: &str, exports_only: bool, completions: &mut Vec<CompletionItem>) { rlock! {
+unsafe fn append_namespace_completions(package: &str, exports_only: bool, completions: &mut Vec<CompletionItem>) {
 
     dlog!("append_namespace_completions({:?}, {})", package, exports_only);
     let mut protect = RProtect::new();
@@ -271,7 +275,11 @@ fn append_namespace_completions(package: &str, exports_only: bool, completions: 
         .add(package)
         .call(&mut protect);
 
-    let symbols = list_namespace_symbols(namespace, exports_only, &mut protect);
+    let symbols = if exports_only {
+        list_namespace_exports(namespace, &mut protect)
+    } else {
+        list_namespace_symbols(namespace, &mut protect)
+    };
 
     if TYPEOF(symbols) as u32 != STRSXP {
         dlog!("Unexpected SEXPTYPE {}", TYPEOF(symbols));
@@ -294,7 +302,6 @@ fn append_namespace_completions(package: &str, exports_only: bool, completions: 
             .param("x", label)
             .param("envir", namespace)
             .call(&mut protect);
-        Rf_PrintValue(value);
 
         let wrapper = RFunction::new("base", "args")
             .add(value)
@@ -324,7 +331,7 @@ fn append_namespace_completions(package: &str, exports_only: bool, completions: 
         completions.push(item);
     }
 
-} }
+}
 
 #[allow(dead_code)]
 fn append_keyword_completions(completions: &mut Vec<CompletionItem>) {
@@ -397,7 +404,7 @@ pub(crate) fn append_session_completions(document: &mut Document, params: &Compl
                 if let Some(prev) = parent.prev_sibling() {
                     if matches!(prev.kind(), "identifier" | "string") {
                         let package = prev.utf8_text(source.as_bytes()).unwrap();
-                        append_namespace_completions(package, exports_only, completions);
+                        rlock! { append_namespace_completions(package, exports_only, completions) }
                     }
                 }
             }
@@ -411,7 +418,7 @@ pub(crate) fn append_session_completions(document: &mut Document, params: &Compl
         if node.kind() == "call" {
             if let Some(child) = node.child(0) {
                 let text = child.utf8_text(source.as_bytes()).unwrap();
-                append_parameter_completions(&text, completions);
+                rlock! { append_parameter_completions(&text, completions) }
                 break;
             };
         }
@@ -423,7 +430,7 @@ pub(crate) fn append_session_completions(document: &mut Document, params: &Compl
                 if let Some(colon_node) = node.child(1) {
                     let package = package_node.utf8_text(source.as_bytes()).unwrap();
                     let exports_only = colon_node.kind() == "::";
-                    append_namespace_completions(package, exports_only, completions);
+                    rlock! { append_namespace_completions(package, exports_only, completions) }
                     break;
                 }
             }

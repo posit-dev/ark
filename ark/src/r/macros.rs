@@ -8,32 +8,30 @@
 // NOTE: We provide an API for Rf_install() as rust's strings are not
 // nul-terminated by default, and so we need to do the work to ensure
 // the strings we pass to Rf_install() are nul-terminated C strings.
-macro_rules! install {
+macro_rules! rsymbol {
 
     ($id:literal) => {{
         let value = concat!($id, "\0");
-        rlock! { Rf_install(value.as_ptr() as *const i8) }
+        Rf_install(value.as_ptr() as *const i8)
     }};
 
     ($id:expr) => {{
-        let cstr = [$id, "\0"].concat();
-        rlock! { Rf_install(cstr.as_ptr() as *const i8) }
+        let cstr = [&*$id, "\0"].concat();
+        Rf_install(cstr.as_ptr() as *const i8)
     }};
 
 }
-pub(crate) use install;
+pub(crate) use rsymbol;
 
 macro_rules! rstring {
 
-    ($id:literal) => {{
-        rlock! {
-            let mut protect = RProtect::new();
-            let value = $id;
-            let charsexp = protect.add(Rf_mkCharLenCE(value.as_ptr() as *const i8, value.len() as i32, cetype_t_CE_UTF8));
-            let strsxp = Rf_allocVector(STRSXP, 1);
-            SET_STRING_ELT(strsxp, 0, charsexp);
-            strsxp
-        }
+    ($id:expr) => {{
+        let mut protect = RProtect::new();
+        let value = &*$id;
+        let string_sexp = protect.add(Rf_allocVector(STRSXP, 1));
+        let char_sexp = Rf_mkCharLenCE(value.as_ptr() as *const i8, value.len() as i32, cetype_t_CE_UTF8);
+        SET_STRING_ELT(string_sexp, 0, char_sexp);
+        string_sexp
     }}
 
 }
@@ -44,29 +42,29 @@ macro_rules! rlog {
 
     ($x:expr) => {
 
-        rlock! {
+        let value = $x;
+        Rf_PrintValue(value);
 
-            // NOTE: We construct and evaluate the call by hand here
-            // just to avoid a potential infinite recursion if this
-            // macro were to be used within other R APIs we expose.
-            let mut protect = RProtect::new();
+        // NOTE: We construct and evaluate the call by hand here
+        // just to avoid a potential infinite recursion if this
+        // macro were to be used within other R APIs we expose.
+        let callee = Rf_protect(Rf_lang3(
+            crate::r::macros::rsymbol!("::"),
+            crate::r::macros::rstring!("base"),
+            crate::r::macros::rstring!("format"),
+        ));
 
-            let callee = protect.add(Rf_lang3(
-                crate::r::macros::install!("::"),
-                crate::r::macros::rstring!("base"),
-                crate::r::macros::rstring!("format"),
-            ));
+        let call = Rf_protect(Rf_lang2(callee, value));
+        let result = Rf_eval(call, R_GlobalEnv);
 
-            let call = protect.add(Rf_lang2(callee, $x));
-            let result = Rf_eval(call, R_GlobalEnv);
-
-            let robj = extendr_api::Robj::from_sexp(result);
-            if let Ok(strings) = extendr_api::Strings::try_from(robj) {
-                for string in strings.iter() {
-                    crate::lsp::logger::dlog!("{}", string);
-                }
+        let robj = extendr_api::Robj::from_sexp(result);
+        if let Ok(strings) = extendr_api::Strings::try_from(robj) {
+            for string in strings.iter() {
+                crate::lsp::logger::dlog!("{}", string);
             }
         }
+
+        Rf_unprotect(2);
 
     }
 
