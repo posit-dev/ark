@@ -27,6 +27,13 @@ This is a Jupyter kernel framework; Amalthea is [one of Jupiter's moons](https:/
 
 ### Amalthea R Kernel Installation/Usage
 
+Install Rust. If you don't already have it, use `rustup`, following the [installation instructions at rustup.rs](https://rustup.rs/). In brief:
+
+```bash
+$ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+$ source $HOME/.cargo/env
+```
+
 Assuming you have a working Rust toolchain, first build the sources. All three projects (`amalthea`, `ark`, and `echo`) are part of the same Rust workspace, so they will all build with a single command.
 
 ```bash
