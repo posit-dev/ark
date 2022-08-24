@@ -10,8 +10,6 @@ use libR_sys::*;
 use libc::{c_char, c_int};
 use log::{debug, trace, warn};
 use std::ffi::{CStr, CString};
-use std::path::Path;
-use std::process::Command;
 use std::sync::mpsc::channel;
 use std::sync::mpsc::{Receiver, Sender, SyncSender};
 use std::sync::{Arc, Mutex, Once};
@@ -50,7 +48,7 @@ static INIT: Once = Once::new();
 #[no_mangle]
 pub extern "C" fn r_read_console(
     prompt: *const c_char,
-    buf: *mut u8,
+    buf: *mut ::std::os::raw::c_char,
     buflen: c_int,
     _hist: c_int,
 ) -> i32 {
@@ -61,7 +59,7 @@ pub extern "C" fn r_read_console(
     if r_prompt.to_str().unwrap().starts_with("Save workspace") {
         let n = CString::new("n\n").unwrap();
         unsafe {
-            libc::strcpy(buf as *mut i8, n.as_ptr());
+            libc::strcpy(buf, n.as_ptr());
         }
         return 1;
     }
@@ -81,7 +79,7 @@ pub extern "C" fn r_read_console(
         if input.len() < buflen.try_into().unwrap() {
             let src = CString::new(input).unwrap();
             unsafe {
-                libc::strcpy(buf as *mut i8, src.as_ptr());
+                libc::strcpy(buf, src.as_ptr());
             }
         } else {
             // Input doesn't fit in buffer

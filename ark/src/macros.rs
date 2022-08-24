@@ -45,12 +45,12 @@ macro_rules! cstr {
 
     ($value:literal) => {{
         let value = concat!($value, "\0");
-        value.as_ptr() as *const i8
+        value.as_ptr()
     }};
 
     ($value:expr) => {{
         let value = [$value, "\0"].concat();
-        value.as_ptr() as *const i8
+        value.as_ptr()
     }};
 
 }

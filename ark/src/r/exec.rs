@@ -115,7 +115,7 @@ impl RFunctionExt<&str> for RFunction {
 
         let value = rlock! {
             let vector = self.protect.add(Rf_allocVector(STRSXP, 1));
-            let element = Rf_mkCharLenCE(value.as_ptr() as *const i8, value.len() as i32, cetype_t_CE_UTF8);
+            let element = Rf_mkCharLenCE(value.as_ptr(), value.len() as i32, cetype_t_CE_UTF8);
             SET_STRING_ELT(vector, 0, element);
             vector
         };
@@ -232,7 +232,7 @@ impl RFunction {
             let call = self.protect.add(Rf_lang2(callee, result));
             let message = R_tryEvalSilent(call, R_BaseEnv, &mut errc);
             if errc != 0 {
-                let cstr = CString::from_raw(R_CHAR(message) as *mut i8);
+                let cstr = CString::from_raw(R_CHAR(message) as *mut ::std::os::raw::c_char);
                 if let Ok(message) = cstr.to_str() {
                     dlog!("Error executing {}: {}", qualified_name, message);
                 } else {
