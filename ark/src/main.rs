@@ -60,6 +60,7 @@ fn start_kernel(connection_file: ConnectionFile) {
     }
 }
 
+// Installs the kernelspec JSON file into one of Jupyter's search paths.
 fn install_kernel_spec() {
     match env::current_exe() {
         Ok(exe_path) => {
@@ -103,6 +104,21 @@ fn parse_file(connection_file: &String) {
     }
 }
 
+fn print_usage() {
+    println!("Ark {}, the Amalthea R Kernel.", env!("CARGO_PKG_VERSION"));
+    println!(r#"
+Usage: ark [OPTIONS]
+
+Available options:
+
+--connection_file FILE   Start the kernel with the given JSON connection file
+                         (see the Jupyter kernel documentation for details)
+--version                Print the version of Ark
+--install                Install the kernel spec for Ark
+--help                   Print this help message
+"#);
+}
+
 fn main() {
     // Initialize logging system; the env_logger lets you configure loggign with
     // the RUST_LOG env var
@@ -131,14 +147,17 @@ fn main() {
                 "--install" => {
                     install_kernel_spec();
                 }
+                "--help" => {
+                    print_usage();
+                }
                 other => {
                     eprintln!("Argument '{}' unknown", other);
                 }
             }
         }
         None => {
-            println!("Ark {}, the Amalthea R Kernel.", env!("CARGO_PKG_VERSION"));
-            println!("Usage: ark --connection_file /path/to/file");
+            // No arguments, print usage and exit
+            print_usage();
         }
     }
 }
