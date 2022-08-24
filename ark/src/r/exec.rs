@@ -1,15 +1,18 @@
-// 
+//
 // exec.rs
-// 
+//
 // Copyright (C) 2022 by RStudio, PBC
-// 
-// 
+//
+//
+
+use std::ffi::CString;
 
 use extendr_api::*;
 use libR_sys::*;
 
+use crate::lsp::logger::dlog;
+use crate::macros::cstr;
 use crate::r::lock::rlock;
-use crate::r::macros::rlog;
 use crate::r::macros::rsymbol;
 
 pub(crate) struct RProtect {
@@ -109,7 +112,7 @@ impl RFunctionExt<f64> for RFunction {
 impl RFunctionExt<&str> for RFunction {
 
     fn param(&mut self, name: &str, value: &str) -> &mut Self {
-        
+
         let value = rlock! {
             let vector = self.protect.add(Rf_allocVector(STRSXP, 1));
             let element = Rf_mkCharLenCE(value.as_ptr() as *const i8, value.len() as i32, cetype_t_CE_UTF8);
@@ -162,6 +165,17 @@ impl RFunction {
 
     }
 
+    pub fn from(function: &str) -> Self {
+
+        RFunction {
+            package: "".to_string(),
+            function: function.to_string(),
+            arguments: Vec::new(),
+            protect: RProtect::new(),
+        }
+
+    }
+
     pub fn call(&mut self, protect: &mut RProtect) -> SEXP {
         rlock! { self.call_impl(protect) }
     }
@@ -197,7 +211,37 @@ impl RFunction {
         SET_TAG(CDDR(call), rsymbol!("error"));
 
         // evaluate the call
-        let result = protect.add(Rf_eval(call, R_BaseEnv));
+        let envir = if self.package.is_empty() { R_GlobalEnv } else { R_BaseEnv };
+        let result = protect.add(Rf_eval(call, envir));
+
+        if Rf_inherits(result, cstr!("error")) != 0 {
+
+            let callee = self.protect.add(Rf_lang3(
+                rsymbol!("::"),
+                rsymbol!("base"),
+                rsymbol!("conditionMessage"),
+            ));
+
+            let qualified_name = if self.package.is_empty() {
+                self.function.clone()
+            } else {
+                format!("{}::{}", self.package, self.function)
+            };
+
+            let mut errc = 0;
+            let call = self.protect.add(Rf_lang2(callee, result));
+            let message = R_tryEvalSilent(call, R_BaseEnv, &mut errc);
+            if errc != 0 {
+                let cstr = CString::from_raw(R_CHAR(message) as *mut i8);
+                if let Ok(message) = cstr.to_str() {
+                    dlog!("Error executing {}: {}", qualified_name, message);
+                } else {
+                    dlog!("Error executing {}: [unknown]", qualified_name);
+                }
+            } else {
+                dlog!("Error executing {}: [unknown]", qualified_name);
+            }
+        }
 
         // TODO:
         // - check for errors?

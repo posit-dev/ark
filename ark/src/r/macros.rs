@@ -26,6 +26,7 @@ pub(crate) use rsymbol;
 macro_rules! rstring {
 
     ($id:expr) => {{
+        use libR_sys::*;
         let mut protect = RProtect::new();
         let value = &*$id;
         let string_sexp = protect.add(Rf_allocVector(STRSXP, 1));
@@ -40,35 +41,34 @@ pub(crate) use rstring;
 // Mainly for debugging.
 macro_rules! rlog {
 
-    ($x:expr) => {
+    ($x:expr) => {{
 
-        let value = $x;
-        Rf_PrintValue(value);
+        use crate::r::macros::*;
+        use libR_sys::*;
 
-        // NOTE: We construct and evaluate the call by hand here
-        // just to avoid a potential infinite recursion if this
-        // macro were to be used within other R APIs we expose.
         let callee = Rf_protect(Rf_lang3(
-            crate::r::macros::rsymbol!("::"),
-            crate::r::macros::rstring!("base"),
-            crate::r::macros::rstring!("format"),
+            rsymbol!("::"),
+            rsymbol!("base"),
+            rsymbol!("format"),
         ));
 
-        let errc = 0;
-        let call = Rf_protect(Rf_lang2(callee, value));
-        let result = R_tryEvalSilent(call, R_GlobalEnv, &errc);
+        let mut errc = 0;
+        let call = Rf_protect(Rf_lang2(callee, $x));
+        let result = R_tryEvalSilent(call, R_GlobalEnv, &mut errc);
         if errc != 0 {
             let robj = extendr_api::Robj::from_sexp(result);
             if let Ok(strings) = extendr_api::Strings::try_from(robj) {
                 for string in strings.iter() {
-                    crate::lsp::logger::dlog!("{}", string);
+                    dlog!("{}", string);
                 }
             }
+        } else {
+            dlog!("Error logging value '{}'", stringify!($x));
         }
 
         Rf_unprotect(2);
 
-    }
+    }}
 
 }
 pub(crate) use rlog;
