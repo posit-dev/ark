@@ -1,9 +1,9 @@
-// 
+//
 // macros.rs
-// 
+//
 // Copyright (C) 2022 by RStudio, PBC
-// 
-// 
+//
+//
 
 pub trait IntoResult<T, E> {
     fn into_result(self) -> Result<T, E>;
@@ -44,13 +44,15 @@ pub(crate) use unwrap;
 macro_rules! cstr {
 
     ($value:literal) => {{
+        use std::os::raw::c_char;
         let value = concat!($value, "\0");
-        value.as_ptr()
+        value.as_ptr() as *mut c_char
     }};
 
     ($value:expr) => {{
+        use std::os::raw::c_char;
         let value = [$value, "\0"].concat();
-        value.as_ptr()
+        value.as_ptr() as *mut c_char
     }};
 
 }

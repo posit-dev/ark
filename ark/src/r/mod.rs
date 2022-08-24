@@ -13,6 +13,7 @@
 // recursive calls to 'rlock!' can still be safe if necessary.
 
 pub mod exec;
+pub mod extract;
 pub mod lock;
 pub mod macros;
 pub mod modules;
