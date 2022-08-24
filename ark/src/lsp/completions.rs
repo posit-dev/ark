@@ -28,6 +28,7 @@ use crate::lsp::logger::dlog;
 use crate::lsp::traits::cursor::TreeCursorExt;
 use crate::lsp::traits::point::PointExt;
 use crate::lsp::traits::position::PositionExt;
+use crate::r::exec::geterrmessage;
 use crate::r::lock::rlock;
 use crate::r::macros::rstring;
 use crate::r::macros::rsymbol;
@@ -79,6 +80,7 @@ unsafe fn completion_item_from_object(name: &str, mut object: SEXP, envir: SEXP)
         let mut errc = 0;
         object = R_tryEvalSilent(object, envir, &mut errc);
         if errc != 0 {
+            dlog!("Error creating completion item: {}", geterrmessage());
             return None;
         }
     }
@@ -113,13 +115,17 @@ unsafe fn completion_item_from_parameter(string: impl ToString, callee: impl ToS
     item.insert_text = Some(string.to_string() + " = ");
 
     // TODO: Include help based on the help documentation for the argument.
+    // It looks like raw HTML help is not supported, so we'll probably have to
+    // request the HTML help from R, and then convert that to Markdown with
+    // pandoc or something similar.
+    //
     // TODO: Could we build this from roxygen comments for functions definitions
     // existing only in-source?
 
     item.detail = Some("This is some detail.".to_string());
     item.documentation = Some(Documentation::MarkupContent(MarkupContent {
         kind: MarkupKind::Markdown,
-        value: "# This is a Markdown header.".to_string(),
+        value: "# This is some Markdown.".to_string(),
     }));
 
     return item;
