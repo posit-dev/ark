@@ -5,7 +5,6 @@
 //
 //
 
-#![feature(backtrace)]
 #![allow(unused_unsafe)]
 
 use crate::control::Control;
