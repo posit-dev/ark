@@ -5,8 +5,6 @@
 //
 //
 
-use std::backtrace::Backtrace;
-use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -22,11 +20,12 @@ use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
 use crate::lsp::completions::append_session_completions;
-use crate::lsp::indexer::index_document;
 use crate::macros::*;
 use crate::lsp::completions::append_document_completions;
 use crate::lsp::document::Document;
 use crate::lsp::logger::dlog;
+use crate::r;
+use crate::r::lock::rlock;
 use crate::request::Request;
 
 macro_rules! backend_trace {
@@ -134,6 +133,11 @@ impl LanguageServer for Backend {
                 crate::lsp::logger::flush(&client).await;
             }
         });
+
+        // initialize our support functions
+        rlock! {
+            r::modules::initialize();
+        }
 
         Ok(InitializeResult {
             server_info: Some(ServerInfo {

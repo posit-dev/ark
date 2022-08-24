@@ -6,7 +6,6 @@
 //
 
 use std::collections::HashSet;
-use std::ffi::CStr;
 
 use extendr_api::Robj;
 use extendr_api::Strings;
@@ -327,24 +326,13 @@ unsafe fn append_parameter_completions(document: &Document, callee: &str, comple
 
     if Rf_isFunction(value) != 0 {
 
-        // For primitive functions, we use the 'args()' function to get
-        // a function with a compatible prototype.
-        if Rf_isPrimitive(value) != 0 {
-            value = RFunction::new("base", "args")
-                .add(value)
-                .call(&mut protect);
-        }
-
-
-        // Now, we can use 'names(formals())' to get the names of
-        // the function's formal arguments.
-        let formals = RFunction::new("base", "formals")
+        let names = RFunction::from(".rs.formalNames")
             .add(value)
             .call(&mut protect);
 
-        let names = RFunction::new("base", "names")
-            .add(formals)
-            .call(&mut protect);
+        if Rf_inherits(names, cstr!("error")) != 0 {
+            return;
+        }
 
         // Return the names of these formals.
         let names = Robj::from_sexp(names);

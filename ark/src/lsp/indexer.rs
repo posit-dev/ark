@@ -6,11 +6,9 @@
 //
 
 use tree_sitter::Node;
-use tree_sitter::Tree;
 
 use crate::lsp::document::Document;
 use crate::lsp::logger::dlog;
-use crate::lsp::traits::node::NodeExt;
 use crate::macros::unwrap;
 
 #[derive(Debug)]
@@ -39,12 +37,10 @@ fn index_node_function_definition(source: &str, node: &Node, index: &mut Vec<Ind
     }
 
     // Check for symbol or string on LHS.
-    dlog!("Found left assignment.");
     let lhs = unwrap!(node.child(0), {
         return false;
     });
 
-    dlog!("LHS: {:?}", lhs);
     if !matches!(lhs.kind(), "identifier" | "string") {
         return false;
     }
@@ -54,7 +50,6 @@ fn index_node_function_definition(source: &str, node: &Node, index: &mut Vec<Ind
         return false;
     });
 
-    dlog!("RHS: {:?}", rhs);
     if !matches!(rhs.kind(), "function_definition") {
         return false;
     }
@@ -69,8 +64,6 @@ fn index_node_function_definition(source: &str, node: &Node, index: &mut Vec<Ind
     let params = unwrap!(rhs.child(1), {
         return false;
     });
-
-    dlog!("Params: {:?}", params);
 
     let mut cursor = params.walk();
     cursor.goto_first_child();
@@ -126,7 +119,6 @@ fn index_node_function_definition(source: &str, node: &Node, index: &mut Vec<Ind
     }
 
     index.push(IndexedSymbol::Function { name: name, arguments: arguments });
-    dlog!("{:?}", index);
     return true;
 
 }

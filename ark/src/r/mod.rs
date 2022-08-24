@@ -1,8 +1,8 @@
-// 
+//
 // mod.rs
-// 
+//
 // Copyright (C) 2022 by RStudio, PBC
-// 
+//
 //
 
 // NOTE: Routines here which need to interact with R are marked as unsafe,
@@ -15,4 +15,5 @@
 pub mod exec;
 pub mod lock;
 pub mod macros;
+pub mod modules;
 pub mod test;
