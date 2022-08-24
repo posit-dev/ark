@@ -45,7 +45,7 @@ pub fn start_r() {
         let mut arguments = cargs!["R", "--slave", "--no-save", "--no-restore"];
 
         unsafe {
-            Rf_initialize_R(arguments.len() as i32, arguments.as_mut_ptr() as *mut *mut i8);
+            Rf_initialize_R(arguments.len() as i32, arguments.as_mut_ptr() as *mut *mut ::std::os::raw::c_char);
             setup_Rmainloop();
         }
     });
