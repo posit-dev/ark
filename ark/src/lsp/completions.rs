@@ -55,7 +55,7 @@ fn completion_item_from_package(package: &str) -> CompletionItem {
 
 }
 
-unsafe fn completion_item_from_function(name: &str, object: SEXP, envir: SEXP) -> CompletionItem {
+unsafe fn completion_item_from_function(name: &str, _object: SEXP, _envir: SEXP) -> CompletionItem {
 
     let label = format!("{}()", name);
     let detail = "(Function)";
