@@ -33,9 +33,10 @@ pub fn jupyter_dir() -> Option<PathBuf> {
 fn jupyter_xdg_dir() -> Option<PathBuf> {
     // On Windows/Linux, the path is XDG_DATA_DIR/jupyter
     if let Some(path) = dirs::data_dir() {
-        path.join("jupyter")
+        Some(path.join("jupyter"))
+    } else {
+        None
     }
-    None
 }
 
 #[cfg(target_os = "macos")]
