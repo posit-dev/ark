@@ -1,9 +1,9 @@
-// 
+//
 // document.rs
-// 
+//
 // Copyright (C) 2022 by RStudio, PBC
-// 
-// 
+//
+//
 
 use ropey::Rope;
 use tower_lsp::lsp_types::TextDocumentContentChangeEvent;
@@ -18,7 +18,7 @@ use crate::lsp::traits::position::PositionExt;
 use crate::lsp::traits::rope::RopeExt;
 
 fn compute_point(point: Point, text: &str) -> Point {
- 
+
     // figure out where the newlines in this edit are
     let newline_indices : Vec<_> = text.match_indices('\n').collect();
     let num_newlines = newline_indices.len();
@@ -119,7 +119,6 @@ impl Document {
         self.ast = self.parser.parse(self.contents.to_string(), Some(&ast));
 
     }
-
 
 }
 

@@ -21,7 +21,8 @@ use tower_lsp::lsp_types::MarkupKind;
 use tree_sitter::Node;
 use tree_sitter::Point;
 
-use crate::lsp::traits::node::NodeExt;
+use crate::lsp::indexer::IndexedSymbol;
+use crate::lsp::indexer::index_document;
 use crate::macros::*;
 use crate::lsp::document::Document;
 use crate::lsp::logger::dlog;
@@ -29,7 +30,6 @@ use crate::lsp::traits::cursor::TreeCursorExt;
 use crate::lsp::traits::point::PointExt;
 use crate::lsp::traits::position::PositionExt;
 use crate::r::lock::rlock;
-use crate::r::macros::rlog;
 use crate::r::macros::rstring;
 use crate::r::macros::rsymbol;
 use crate::r::exec::RFunction;
@@ -73,20 +73,24 @@ unsafe fn completion_item_from_function(name: &str, object: SEXP, envir: SEXP) -
     return item;
 }
 
-unsafe fn completion_item_from_object(name: &str, mut object: SEXP, envir: SEXP) -> CompletionItem {
+unsafe fn completion_item_from_object(name: &str, mut object: SEXP, envir: SEXP) -> Option<CompletionItem> {
 
     // TODO: Can we figure out the object type without forcing promise evaluation?
     if TYPEOF(object) as u32 == PROMSXP {
-        object = Rf_eval(object, envir);
+        let mut errc = 0;
+        object = R_tryEvalSilent(object, envir, &mut errc);
+        if errc != 0 {
+            return None;
+        }
     }
 
     if Rf_isFunction(object) != 0 {
-        return completion_item_from_function(name, object, envir);
+        return Some(completion_item_from_function(name, object, envir));
     }
 
     let mut item = CompletionItem::new_simple(name.to_string(), "(Object)".to_string());
     item.kind = Some(CompletionItemKind::STRUCT);
-    return item;
+    return Some(item);
 
 }
 
@@ -98,7 +102,28 @@ unsafe fn completion_item_from_symbol(name: &str, envir: SEXP) -> Option<Complet
         return None;
     }
 
-    Some(completion_item_from_object(name, object, envir))
+    return completion_item_from_object(name, object, envir);
+
+}
+
+unsafe fn completion_item_from_parameter(string: impl ToString, callee: impl ToString) -> CompletionItem {
+
+    let mut item = CompletionItem::new_simple(string.to_string(), callee.to_string());
+    item.kind = Some(CompletionItemKind::FIELD);
+    item.insert_text_format = Some(InsertTextFormat::SNIPPET);
+    item.insert_text = Some(string.to_string() + " = ");
+
+    // TODO: Include help based on the help documentation for the argument.
+    // TODO: Could we build this from roxygen comments for functions definitions
+    // existing only in-source?
+
+    item.detail = Some("This is some detail.".to_string());
+    item.documentation = Some(Documentation::MarkupContent(MarkupContent {
+        kind: MarkupKind::Markdown,
+        value: "# This is a Markdown header.".to_string(),
+    }));
+
+    return item;
 
 }
 
@@ -247,9 +272,25 @@ unsafe fn list_namespace_symbols(namespace: SEXP, protect: &mut RProtect) -> SEX
     return protect.add(R_lsInternal(namespace, 1));
 }
 
-unsafe fn append_parameter_completions(callee: &str, completions: &mut Vec<CompletionItem>) {
+unsafe fn append_parameter_completions(document: &Document, callee: &str, completions: &mut Vec<CompletionItem>) {
 
     dlog!("append_parameter_completions({:?})", callee);
+
+    // Check for a function defined in this document that can provide parameters.
+    let index = index_document(document);
+    for symbol in index {
+        match symbol {
+            IndexedSymbol::Function { name, arguments } => {
+                if name == callee {
+                    for argument in arguments {
+                        let item = completion_item_from_parameter(argument, name.clone());
+                        completions.push(item);
+                    }
+                    return;
+                }
+            }
+        }
+    }
 
     // TODO: Given the callee, we should also try to find its definition within
     // the document index of function definitions, since it may not be defined
@@ -267,11 +308,17 @@ unsafe fn append_parameter_completions(callee: &str, completions: &mut Vec<Compl
         return;
     }
 
-    // Evaluate the text.
+    // Evaluate the text. We use evaluation here to make it easier to support
+    // the lookup of complex left-hand expressions.
     let mut value = R_NilValue;
     for i in 0..Rf_length(parsed_sexp) {
         let expr = VECTOR_ELT(parsed_sexp, i as isize);
-        value = Rf_eval(expr, R_GlobalEnv);
+        let mut errc : i32 = 0;
+        value = R_tryEvalSilent(expr, R_GlobalEnv, &mut errc);
+        if errc != 0 {
+            dbg!("Error evaluating {}", callee);
+            return;
+        }
     }
 
     // Protect the final evaluation result here, as we'll
@@ -303,17 +350,7 @@ unsafe fn append_parameter_completions(callee: &str, completions: &mut Vec<Compl
         let names = Robj::from_sexp(names);
         let strings = Strings::try_from(names).unwrap();
         for string in strings.iter() {
-            let mut item = CompletionItem::new_simple(string.to_string(), callee.to_string());
-            item.kind = Some(CompletionItemKind::FIELD);
-            item.insert_text_format = Some(InsertTextFormat::SNIPPET);
-            item.insert_text = Some(string.to_string() + " = ");
-
-            item.detail = Some("This is some detail.".to_string());
-            item.documentation = Some(Documentation::MarkupContent(MarkupContent {
-                kind: MarkupKind::Markdown,
-                value: "# This is a Markdown header.".to_string(),
-            }));
-
+            let item = completion_item_from_parameter(string, callee);
             completions.push(item);
         }
 
@@ -484,7 +521,7 @@ pub(crate) fn append_session_completions(document: &mut Document, params: &Compl
         if node.kind() == "call" {
             if let Some(child) = node.child(0) {
                 let text = child.utf8_text(source.as_bytes()).unwrap();
-                rlock! { append_parameter_completions(&text, completions) }
+                rlock! { append_parameter_completions(document, &text, completions) }
                 return;
             };
         }

@@ -1,9 +1,9 @@
-// 
+//
 // macros.rs
-// 
+//
 // Copyright (C) 2022 by RStudio, PBC
-// 
-// 
+//
+//
 
 // NOTE: We provide an API for Rf_install() as rust's strings are not
 // nul-terminated by default, and so we need to do the work to ensure
@@ -54,13 +54,15 @@ macro_rules! rlog {
             crate::r::macros::rstring!("format"),
         ));
 
+        let errc = 0;
         let call = Rf_protect(Rf_lang2(callee, value));
-        let result = Rf_eval(call, R_GlobalEnv);
-
-        let robj = extendr_api::Robj::from_sexp(result);
-        if let Ok(strings) = extendr_api::Strings::try_from(robj) {
-            for string in strings.iter() {
-                crate::lsp::logger::dlog!("{}", string);
+        let result = R_tryEvalSilent(call, R_GlobalEnv, &errc);
+        if errc != 0 {
+            let robj = extendr_api::Robj::from_sexp(result);
+            if let Ok(strings) = extendr_api::Strings::try_from(robj) {
+                for string in strings.iter() {
+                    crate::lsp::logger::dlog!("{}", string);
+                }
             }
         }
 
