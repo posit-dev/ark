@@ -30,7 +30,7 @@ macro_rules! rstring {
         let mut protect = RProtect::new();
         let value = &*$id;
         let string_sexp = protect.add(Rf_allocVector(STRSXP, 1));
-        let char_sexp = Rf_mkCharLenCE(value.as_ptr(), value.len() as i32, cetype_t_CE_UTF8);
+        let char_sexp = Rf_mkCharLenCE(value.as_ptr() as *mut ::std::os::raw::c_char, value.len() as i32, cetype_t_CE_UTF8);
         SET_STRING_ELT(string_sexp, 0, char_sexp);
         string_sexp
     }}
