@@ -1,9 +1,9 @@
-// 
+//
 // backend.rs
-// 
+//
 // Copyright (C) 2022 by RStudio, PBC
-// 
-// 
+//
+//
 
 use std::backtrace::Backtrace;
 use std::io::Write;
@@ -22,6 +22,7 @@ use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
 use crate::lsp::completions::append_session_completions;
+use crate::lsp::indexer::index_document;
 use crate::macros::*;
 use crate::lsp::completions::append_document_completions;
 use crate::lsp::document::Document;
@@ -283,7 +284,7 @@ impl LanguageServer for Backend {
 
     async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
         backend_trace!(self, "references({:?})", params);
-        
+
         let locations = match self.find_references(params) {
             Ok(locations) => locations,
             Err(_error) => { return Ok(None); }
