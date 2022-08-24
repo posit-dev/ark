@@ -6,6 +6,7 @@
 //
 
 use std::ffi::CString;
+use std::os::raw::c_char;
 
 use extendr_api::*;
 use libR_sys::*;
@@ -115,7 +116,7 @@ impl RFunctionExt<&str> for RFunction {
 
         let value = rlock! {
             let vector = self.protect.add(Rf_allocVector(STRSXP, 1));
-            let element = Rf_mkCharLenCE(value.as_ptr(), value.len() as i32, cetype_t_CE_UTF8);
+            let element = Rf_mkCharLenCE(value.as_ptr() as *mut c_char, value.len() as i32, cetype_t_CE_UTF8);
             SET_STRING_ELT(vector, 0, element);
             vector
         };
@@ -232,14 +233,14 @@ impl RFunction {
             let call = self.protect.add(Rf_lang2(callee, result));
             let message = R_tryEvalSilent(call, R_BaseEnv, &mut errc);
             if errc != 0 {
-                let cstr = CString::from_raw(R_CHAR(message) as *mut ::std::os::raw::c_char);
+                let cstr = CString::from_raw(R_CHAR(message) as *mut c_char);
                 if let Ok(message) = cstr.to_str() {
                     dlog!("Error executing {}: {}", qualified_name, message);
                 } else {
-                    dlog!("Error executing {}: [unknown]", qualified_name);
+                    dlog!("Error executing {}: {}", qualified_name, geterrmessage());
                 }
             } else {
-                dlog!("Error executing {}: [unknown]", qualified_name);
+                dlog!("Error executing {}: {}", qualified_name, geterrmessage());
             }
         }
 
@@ -250,6 +251,18 @@ impl RFunction {
         return result;
 
     } }
+
+}
+
+pub unsafe fn geterrmessage() -> String {
+
+    let buffer = R_curErrorBuf();
+    let cstr = CString::from_raw(buffer as *mut c_char);
+
+    match cstr.into_string() {
+        Ok(string) => return string,
+        Err(_) => return "".to_string(),
+    }
 
 }
 
