@@ -9,6 +9,7 @@
 
 use crate::control::Control;
 use crate::shell::Shell;
+use crate::version::detect_r;
 use amalthea::connection_file::ConnectionFile;
 use amalthea::kernel::Kernel;
 use amalthea::kernel_spec::KernelSpec;
@@ -27,6 +28,7 @@ mod macros;
 mod r;
 mod request;
 mod shell;
+mod version;
 
 fn start_kernel(connection_file: ConnectionFile) {
     // This channel delivers execution status and other iopub messages from
@@ -62,6 +64,18 @@ fn start_kernel(connection_file: ConnectionFile) {
 
 // Installs the kernelspec JSON file into one of Jupyter's search paths.
 fn install_kernel_spec() {
+    // Create the environment set for the kernel spec
+    let mut env = serde_json::Map::new();
+
+    // Detect the active version of R and set the R_HOME environment variable
+    // accordingly
+    let r_version = detect_r();
+    env.insert(
+        "R_HOME".to_string(),
+        serde_json::Value::String(r_version.r_home.clone()),
+    );
+
+    // Create the kernelspec
     match env::current_exe() {
         Ok(exe_path) => {
             let spec = KernelSpec {
@@ -72,11 +86,12 @@ fn install_kernel_spec() {
                 ],
                 language: String::from("R"),
                 display_name: String::from("Amalthea R Kernel (ARK)"),
+                env: env,
             };
             if let Err(err) = spec.install(String::from("ark")) {
                 eprintln!("Failed to install Ark's Jupyter kernelspec. {}", err);
             } else {
-                println!("Successfully installed Ark Jupyter kernelspec.")
+                println!("Successfully installed Ark Jupyter kernelspec for {}", r_version.r_home);
             }
         }
         Err(err) => {

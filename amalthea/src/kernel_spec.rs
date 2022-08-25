@@ -13,6 +13,7 @@ use std::fs;
 use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
+use serde_json::Value;
 
 /// From the Jupyter documentation for [Kernel Specs](https://jupyter-client.readthedocs.io/en/stable/kernels.html#kernel-specs).
 #[derive(Serialize)]
@@ -25,6 +26,9 @@ pub struct KernelSpec {
 
     // The kernel's language
     pub language: String,
+
+    // Environment variables to set for the kernel
+    pub env: serde_json::Map<String, Value>,
 }
 
 impl KernelSpec {
