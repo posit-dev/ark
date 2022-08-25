@@ -152,7 +152,7 @@ pub fn start_r(
         Rf_initialize_R(args.len() as i32, args.as_mut_ptr() as *mut *mut c_char);
 
         // Log the value of R_HOME, so we can know if something hairy is afoot
-        let home = CString::from_raw(R_HomeDir());
+        let home = CStr::from_ptr(R_HomeDir());
         trace!("R_HOME: {:?}", home);
 
         // Mark R session as interactive

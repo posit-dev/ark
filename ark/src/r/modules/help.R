@@ -5,21 +5,30 @@
 #
 #
 
-.rs.getHelpText <- function(package, topic) {
+# TODO: Cache these so we can avoid re-creating help eagerly.
+.rs.help.getHelpTextFromFile <- function(helpFile, package = "") {
 
-    # get the help files
-    # the parentheses below are included so we can dodge R's NSE handling
-    topic <- help((topic), (package), verbose = FALSE)
+    rd <- utils:::.getHelpFile(helpFile)
 
-    # get the .Rd documentation for this topic
-    rd <- utils:::.getHelpFile(topic)
+    output <- tempfile(pattern = "help-", fileext = ".txt")
+    tools::Rd2txt(rd, out = output, package = package)
 
-    # convert help to text
-    pattern <- sprintf("%s-%s-", package, topic)
-    output <- tools::Rd2txt(rd, out = tempfile(pattern = pattern), package = package)
-
-    # read the contents of that file
     contents <- readLines(output, warn = FALSE)
     paste(contents, collapse = "\n")
+
+}
+
+.rs.help.package <- function(package) {
+
+    # First, check for a help topic called '<package>-package'
+    topic <- sprintf("%s-package", package)
+    helpFiles <- help(topic = (topic), package = (package))
+    if (length(helpFiles)) {
+        return(.rs.help.getHelpTextFromFile(helpFiles[[1L]]))
+    }
+
+    # Otherwise, generate a simple piece of help based on the package's DESCRIPTION file
+    # TODO: NYI
+    ""
 
 }

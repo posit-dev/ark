@@ -5,7 +5,7 @@
 //
 //
 
-use std::ffi::CString;
+use std::ffi::CStr;
 use std::os::raw::c_char;
 
 use extendr_api::*;
@@ -233,7 +233,7 @@ impl RFunction {
             let call = self.protect.add(Rf_lang2(callee, result));
             let message = R_tryEvalSilent(call, R_BaseEnv, &mut errc);
             if errc != 0 {
-                let cstr = CString::from_raw(R_CHAR(message) as *mut c_char);
+                let cstr = CStr::from_ptr(R_CHAR(message) as *mut c_char);
                 if let Ok(message) = cstr.to_str() {
                     dlog!("Error executing {}: {}", qualified_name, message);
                 } else {
@@ -257,10 +257,10 @@ impl RFunction {
 pub unsafe fn geterrmessage() -> String {
 
     let buffer = R_curErrorBuf();
-    let cstr = CString::from_raw(buffer as *mut c_char);
+    let cstr = CStr::from_ptr(buffer);
 
-    match cstr.into_string() {
-        Ok(string) => return string,
+    match cstr.to_str() {
+        Ok(value) => return value.to_string(),
         Err(_) => return "".to_string(),
     }
 

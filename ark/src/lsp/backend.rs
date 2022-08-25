@@ -20,6 +20,7 @@ use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
 use crate::lsp::completions::append_session_completions;
+use crate::lsp::completions::can_provide_completions;
 use crate::macros::*;
 use crate::lsp::completions::append_document_completions;
 use crate::lsp::document::Document;
@@ -259,6 +260,11 @@ impl LanguageServer for Backend {
             backend_trace!(self, "completion(): No document associated with URI {}", uri);
             return Ok(None);
         });
+
+        // check whether we should be providing completions
+        if !can_provide_completions(document.value_mut(), &params) {
+            return Ok(None);
+        }
 
         let mut completions : Vec<CompletionItem> = vec!();
 
