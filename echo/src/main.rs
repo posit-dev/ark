@@ -60,6 +60,7 @@ fn install_kernel_spec() {
                 ],
                 language: String::from("Echo"),
                 display_name: String::from("Amalthea Echo"),
+                env: serde_json::Map::new()
             };
             if let Err(err) = spec.install(String::from("amalthea")) {
                 eprintln!("Failed to install Jupyter kernelspec. {}", err);

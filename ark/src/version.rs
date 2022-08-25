@@ -7,7 +7,7 @@
 
 use std::process::Command;
 
-struct RVersion {
+pub struct RVersion {
     // Major version of the R installation (TODO)
     // major: u32,
 
@@ -19,16 +19,24 @@ struct RVersion {
 
     // The full path on disk to the R installation -- that is, the value R_HOME
     // would have inside an R session: > R.home()
-    r_home: String,
+    pub r_home: String,
 }
 
-fn detect_r() -> Result<RVersion, Error> {
-    let output = Command::new("R").arg("RHOME").output()?;
+pub fn detect_r() -> RVersion {
+
+    let output = Command::new("R")
+        .arg("RHOME")
+        .output()
+        .expect("Failed to execute R to determine R_HOME");
+
     // Convert the output to a string
-    let output = String::from_utf8(output.stdout)?;
+    let output = String::from_utf8(output.stdout)
+        .expect("Failed to convert R_HOME output to string")
+        .trim()
+        .to_string();
 
     // Execute the R script to get the home path to R
-    Ok(RVersion{
+    RVersion{
         r_home: output
-    });
+    }
 }
