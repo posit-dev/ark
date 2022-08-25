@@ -6,6 +6,7 @@
 //
 
 use std::collections::HashSet;
+use std::ffi::CStr;
 
 use extendr_api::Robj;
 use extendr_api::Strings;
@@ -48,10 +49,25 @@ struct CompletionData {
     visited: HashSet<usize>,
 }
 
-fn completion_item_from_package(package: &str) -> CompletionItem {
+unsafe fn completion_item_from_package(package: &str) -> CompletionItem {
 
     let mut item = CompletionItem::new_simple(package.to_string(), "(Package)".to_string());
     item.kind = Some(CompletionItemKind::MODULE);
+
+    // generate package documentation
+    let mut protect = RProtect::new();
+    let documentation = RFunction::from(".rs.help.package")
+        .add(package)
+        .call(&mut protect);
+
+    if TYPEOF(documentation) as u32 == STRSXP {
+        let elt = STRING_ELT(documentation, 0);
+        let cstr = CStr::from_ptr(R_CHAR(elt));
+        if let Ok(documentation) = cstr.to_str() {
+            item.documentation = Some(Documentation::String(documentation.to_string()));
+        }
+    }
+
     return item;
 
 }
@@ -444,6 +460,40 @@ unsafe fn append_search_path_completions(completions: &mut Vec<CompletionItem>) 
         }
     }
 
+
+}
+
+pub(crate) fn can_provide_completions(document: &mut Document, params: &CompletionParams) -> bool {
+
+    // get reference to AST
+    let ast = unwrap!(document.ast.as_ref(), {
+        return false;
+    });
+
+    // get document source
+    let source = document.contents.to_string();
+
+    // figure out the token / node at the cursor position. note that we use
+    // the previous token here as the cursor itself will be located just past
+    // the cursor / node providing the associated context
+    let mut point = params.text_document_position.position.as_point();
+    if point.column > 1 { point.column -= 1; }
+
+    let node = unwrap!(ast.root_node().descendant_for_point_range(point, point), {
+        return false;
+    });
+
+    let value = node.utf8_text(source.as_bytes()).unwrap();
+
+    // completions will be triggered as the user types ':', which implies that
+    // a completion request could be sent before the user has finished typing
+    // '::' or ':::'. detect this particular case and don't provide completions
+    // in that context
+    if value == ":" {
+        return false;
+    }
+
+    return true;
 
 }
 
