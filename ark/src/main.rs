@@ -27,6 +27,7 @@ mod macros;
 mod r;
 mod request;
 mod shell;
+mod version;
 
 fn start_kernel(connection_file: ConnectionFile) {
     // This channel delivers execution status and other iopub messages from
@@ -62,6 +63,9 @@ fn start_kernel(connection_file: ConnectionFile) {
 
 // Installs the kernelspec JSON file into one of Jupyter's search paths.
 fn install_kernel_spec() {
+    let env = serde_json::Map::new();
+
+    // Create the kernelspec
     match env::current_exe() {
         Ok(exe_path) => {
             let spec = KernelSpec {
@@ -72,6 +76,7 @@ fn install_kernel_spec() {
                 ],
                 language: String::from("R"),
                 display_name: String::from("Amalthea R Kernel (ARK)"),
+                env: env,
             };
             if let Err(err) = spec.install(String::from("ark")) {
                 eprintln!("Failed to install Ark's Jupyter kernelspec. {}", err);
