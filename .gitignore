@@ -1,3 +1,4 @@
 /target
 tags
 *.tags
+.Rproj.user

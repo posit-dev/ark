@@ -268,6 +268,16 @@ impl LanguageServer for Backend {
 
         let mut completions : Vec<CompletionItem> = vec!();
 
+        // TODO: These probably shouldn't be separate methods, because we might get
+        // the same completion from multiple sources, e.g.
+        //
+        // - A completion for a function 'foo' defined in the current document,
+        // - A completion for a function 'foo' defined in the workspace,
+        // - A variable called 'foo' defined in the current R session.
+        //
+        // Really, what's relevant is which of the above should be considered
+        // 'visible' to the user.
+
         // add session completions
         append_session_completions(document.value_mut(), &params, &mut completions);
 

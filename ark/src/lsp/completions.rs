@@ -51,7 +51,11 @@ struct CompletionData {
 
 unsafe fn completion_item_from_package(package: &str) -> CompletionItem {
 
-    let mut item = CompletionItem::new_simple(package.to_string(), "(Package)".to_string());
+    let mut item = CompletionItem {
+        label: package.to_string(),
+        ..Default::default()
+    };
+
     item.kind = Some(CompletionItemKind::MODULE);
 
     // generate package documentation
@@ -60,12 +64,23 @@ unsafe fn completion_item_from_package(package: &str) -> CompletionItem {
         .add(package)
         .call(&mut protect);
 
-    if TYPEOF(documentation) as u32 == STRSXP {
-        let elt = STRING_ELT(documentation, 0);
-        let cstr = CStr::from_ptr(R_CHAR(elt));
-        if let Ok(documentation) = cstr.to_str() {
-            item.documentation = Some(Documentation::String(documentation.to_string()));
+    if TYPEOF(documentation) as u32 == VECSXP {
+
+        // TODO: Use safe extraction functions here
+        let doc_type = VECTOR_ELT(documentation, 0);
+        let doc_contents = VECTOR_ELT(documentation, 1);
+
+        if TYPEOF(doc_type) as u32 == STRSXP && TYPEOF(doc_contents) as u32 == STRSXP {
+
+            let doc_type = Robj::from_sexp(doc_type).as_str().unwrap();
+            let doc_contents = Robj::from_sexp(doc_contents).as_str().unwrap();
+
+            item.documentation = Some(Documentation::MarkupContent(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: doc_contents.to_string()
+            }));
         }
+
     }
 
     return item;
@@ -358,10 +373,11 @@ unsafe fn append_parameter_completions(document: &Document, callee: &str, comple
 
         // Return the names of these formals.
         let names = Robj::from_sexp(names);
-        let strings = Strings::try_from(names).unwrap();
-        for string in strings.iter() {
-            let item = completion_item_from_parameter(string, callee);
-            completions.push(item);
+        if let Ok(strings) = Strings::try_from(names) {
+            for string in strings.iter() {
+                let item = completion_item_from_parameter(string, callee);
+                completions.push(item);
+            }
         }
 
     }
