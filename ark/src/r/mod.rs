@@ -18,3 +18,4 @@ pub mod lock;
 pub mod macros;
 pub mod modules;
 pub mod test;
+pub mod traits;

@@ -1,9 +1,9 @@
-// 
+//
 // lock.rs
-// 
+//
 // Copyright (C) 2022 by RStudio, PBC
-// 
-// 
+//
+//
 
 // NOTE: All execution of R code should first attempt to acquire
 // this lock before execution. The Ark LSP's execution model allows
@@ -29,7 +29,7 @@ use parking_lot::ReentrantMutex;
 macro_rules! rlock {
 
     ($($expr:tt)*) => {{
-        let _guard = crate::r::lock::LOCK.lock();
+        let _guard = $crate::r::lock::LOCK.lock();
         unsafe { $($expr)* }
     }}
 

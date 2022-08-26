@@ -166,17 +166,6 @@ impl RFunction {
 
     }
 
-    pub fn from(function: &str) -> Self {
-
-        RFunction {
-            package: "".to_string(),
-            function: function.to_string(),
-            arguments: Vec::new(),
-            protect: RProtect::new(),
-        }
-
-    }
-
     pub fn call(&mut self, protect: &mut RProtect) -> SEXP {
         rlock! { self.call_impl(protect) }
     }
@@ -217,31 +206,13 @@ impl RFunction {
 
         if Rf_inherits(result, cstr!("error")) != 0 {
 
-            let callee = self.protect.add(Rf_lang3(
-                rsymbol!("::"),
-                rsymbol!("base"),
-                rsymbol!("conditionMessage"),
-            ));
-
             let qualified_name = if self.package.is_empty() {
                 self.function.clone()
             } else {
                 format!("{}::{}", self.package, self.function)
             };
 
-            let mut errc = 0;
-            let call = self.protect.add(Rf_lang2(callee, result));
-            let message = R_tryEvalSilent(call, R_BaseEnv, &mut errc);
-            if errc != 0 {
-                let cstr = CStr::from_ptr(R_CHAR(message) as *mut c_char);
-                if let Ok(message) = cstr.to_str() {
-                    dlog!("Error executing {}: {}", qualified_name, message);
-                } else {
-                    dlog!("Error executing {}: {}", qualified_name, geterrmessage());
-                }
-            } else {
-                dlog!("Error executing {}: {}", qualified_name, geterrmessage());
-            }
+            dlog!("Error executing {}: {}", qualified_name, geterrmessage());
         }
 
         // TODO:

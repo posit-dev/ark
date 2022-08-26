@@ -11,13 +11,15 @@
 macro_rules! rsymbol {
 
     ($id:literal) => {{
+        use std::os::raw::c_char;
         let value = concat!($id, "\0");
-        Rf_install(value.as_ptr() as *const ::std::os::raw::c_char)
+        Rf_install(value.as_ptr() as *const c_char)
     }};
 
     ($id:expr) => {{
+        use std::os::raw::c_char;
         let cstr = [&*$id, "\0"].concat();
-        Rf_install(cstr.as_ptr() as *const ::std::os::raw::c_char)
+        Rf_install(cstr.as_ptr() as *const c_char)
     }};
 
 }
@@ -26,11 +28,13 @@ pub(crate) use rsymbol;
 macro_rules! rstring {
 
     ($id:expr) => {{
+        use std::os::raw::c_char;
         use libR_sys::*;
+
         let mut protect = RProtect::new();
         let value = &*$id;
         let string_sexp = protect.add(Rf_allocVector(STRSXP, 1));
-        let char_sexp = Rf_mkCharLenCE(value.as_ptr() as *mut ::std::os::raw::c_char, value.len() as i32, cetype_t_CE_UTF8);
+        let char_sexp = Rf_mkCharLenCE(value.as_ptr() as *mut c_char, value.len() as i32, cetype_t_CE_UTF8);
         SET_STRING_ELT(string_sexp, 0, char_sexp);
         string_sexp
     }}
