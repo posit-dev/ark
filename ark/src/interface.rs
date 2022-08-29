@@ -151,6 +151,16 @@ pub fn start_r(
         R_SignalHandlers = 0;
         Rf_initialize_R(args.len() as i32, args.as_mut_ptr() as *mut *mut c_char);
 
+        // Disable stack checking; R doesn't know the starting point of the
+        // stack for threads other than the main thread. Consequently, it will 
+        // report a stack overflow if we don't disable it. This is a problem
+        // on all platforms, but is most obvious on aarch64 Linux due to how
+        // thread stacks are allocated on that platform.
+        // 
+        // See https://cran.r-project.org/doc/manuals/R-exts.html#Threading-issues
+        // for more information.
+        R_CStackLimit = usize::MAX;
+
         // Log the value of R_HOME, so we can know if something hairy is afoot
         let home = CStr::from_ptr(R_HomeDir());
         trace!("R_HOME: {:?}", home);
