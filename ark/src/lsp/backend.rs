@@ -5,6 +5,7 @@
 //
 //
 
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -283,6 +284,10 @@ impl LanguageServer for Backend {
 
         // add context-relevant completions
         append_document_completions(document.value_mut(), &params, &mut completions);
+
+        // remove duplicates
+        let mut uniques = HashSet::new();
+        completions.retain(|x| { uniques.insert(x.label.clone()) });
 
         if !completions.is_empty() {
             Ok(Some(CompletionResponse::Array(completions)))
