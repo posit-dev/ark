@@ -6,7 +6,6 @@
 //
 
 use std::collections::HashSet;
-use std::ffi::CStr;
 
 use extendr_api::Robj;
 use extendr_api::Strings;

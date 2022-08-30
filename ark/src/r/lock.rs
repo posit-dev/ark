@@ -10,18 +10,6 @@
 // arbitrary threads and tasks to communicate with the R session,
 // and we mediate that through a global execution lock which must be
 // held when interacting with R.
-//
-// One can either use the 'with_r_lock' function directly, e.g.
-//
-//     with_r_lock(&mut || { ... })
-//
-// Or, they can use the helper macro:
-//
-//     rlock! {
-//         ...
-//     }
-//
-// (which effectively expands into the above).
 
 use lazy_static::lazy_static;
 use parking_lot::ReentrantMutex;
