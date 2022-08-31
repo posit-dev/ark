@@ -22,6 +22,7 @@ use tree_sitter::Point;
 
 use crate::lsp::indexer::IndexedSymbol;
 use crate::lsp::indexer::index_document;
+use crate::lsp::traits::node::NodeExt;
 use crate::macros::*;
 use crate::lsp::document::Document;
 use crate::lsp::logger::dlog;
@@ -36,10 +37,30 @@ use crate::r::exec::RFunction;
 use crate::r::exec::RFunctionExt;
 use crate::r::exec::RProtect;
 
-fn completion_from_identifier(node: &Node, source: &str) -> CompletionItem {
+fn completion_item_from_identifier(node: &Node, source: &str) -> CompletionItem {
     let label = node.utf8_text(source.as_bytes()).expect("empty assignee");
     let detail = format!("Defined on line {}", node.start_position().row + 1);
-    CompletionItem::new_simple(label.to_string(), detail)
+    return CompletionItem::new_simple(label.to_string(), detail);
+}
+
+
+fn completion_item_from_assignment(node: &Node, source: &str) -> Option<CompletionItem> {
+
+    let lhs = unwrap!(node.child(0), { return None; });
+    let rhs = unwrap!(node.child(2), { return None; });
+
+    let label = lhs.utf8_text(source.as_bytes()).expect("empty assignee");
+    let detail = format!("Defined on line {}", lhs.start_position().row + 1);
+
+    let mut item = CompletionItem::new_simple(format!("{}()", label), detail);
+
+    if rhs.kind() == "function_definition" {
+        item.kind = Some(CompletionItemKind::FUNCTION);
+        item.insert_text_format = Some(InsertTextFormat::SNIPPET);
+        item.insert_text = Some(format!("{}($0)", label));
+    }
+
+    return Some(item);
 }
 
 struct CompletionData {
@@ -58,6 +79,13 @@ unsafe fn completion_item_from_package(package: &str) -> CompletionItem {
     item.kind = Some(CompletionItemKind::MODULE);
 
     // generate package documentation
+    //
+    // TODO: This is fairly slow so we disable this for now.
+    // It'd be nice if we could defer help generation until the time
+    // the user asks for it, but it seems like we need to provide it
+    // up-front. For that reason, we'll probably need to generate a
+    // cache of help documentation, or implement some sort of LSP-side
+    // filtering of completion results based on the current token.
     let mut protect = RProtect::new();
     let documentation = RFunction::from(".rs.help.package")
         .add(package)
@@ -86,7 +114,7 @@ unsafe fn completion_item_from_package(package: &str) -> CompletionItem {
 
 }
 
-unsafe fn completion_item_from_function(name: &str, _object: SEXP, _envir: SEXP) -> CompletionItem {
+unsafe fn completion_item_from_function(name: &str) -> CompletionItem {
 
     let label = format!("{}()", name);
     let detail = "(Function)";
@@ -116,7 +144,7 @@ unsafe fn completion_item_from_object(name: &str, mut object: SEXP, envir: SEXP)
     }
 
     if Rf_isFunction(object) != 0 {
-        return Some(completion_item_from_function(name, object, envir));
+        return Some(completion_item_from_function(name));
     }
 
     let mut item = CompletionItem::new_simple(name.to_string(), "(Object)".to_string());
@@ -206,10 +234,9 @@ fn append_defined_variables(node: &Node, data: &mut CompletionData, completions:
 
             "left_assignment" | "super_assignment" | "equals_assignment" => {
 
-                // TODO: Should we de-quote symbols and strings, or insert them as-is?
-                let assignee = node.child(0).unwrap();
-                if assignee.kind() == "identifier" || assignee.kind() == "string" {
-                    completions.push(completion_from_identifier(&assignee, &data.source));
+                // check for a valid completion
+                if let Some(completion) = completion_item_from_assignment(&node, &data.source) {
+                    completions.push(completion);
                 }
 
                 // return true in case we have nested assignments
@@ -281,7 +308,7 @@ fn append_function_parameters(node: &Node, data: &mut CompletionData, completion
     while cursor.goto_next_sibling() {
         let node = cursor.node();
         if node.kind() == "identifier" {
-            completions.push(completion_from_identifier(&node, data.source.as_str()));
+            completions.push(completion_item_from_identifier(&node, &data.source));
         }
     }
 
