@@ -1,3 +1,5 @@
+> NOTE: As of 8/31/2022, this repository is deprecated so we can develop Myriac sources in one place. Continued development on Amalthea here: [myriac/amalthea](https://github.com/rstudio/myriac/tree/main/amalthea)
+
 # Amalthea
 
 ## About
