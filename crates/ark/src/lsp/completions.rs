@@ -1,15 +1,36 @@
 //
 // completions.rs
 //
-// Copyright (C) 2022 by RStudio, PBC
+// Copyright (C) 2022 by Posit, PBC
 //
 //
 
 use std::collections::HashSet;
+use std::path::Path;
 
-use extendr_api::Robj;
-use extendr_api::Strings;
+use anyhow::Result;
+use anyhow::bail;
+use harp::eval::RParseEvalOptions;
+use harp::eval::r_parse_eval;
+use harp::exec::geterrmessage;
+use harp::exec::RFunction;
+use harp::exec::RFunctionExt;
+use harp::object::RObject;
+use harp::r_symbol;
+use harp::utils::r_envir_name;
+use harp::utils::r_formals;
+use lazy_static::lazy_static;
 use libR_sys::*;
+use log::*;
+use regex::Captures;
+use regex::Regex;
+use serde::Deserialize;
+use serde::Serialize;
+use stdext::*;
+use stdext::join::joined;
+use stdext::unwrap::IntoOption;
+use stdext::unwrap::IntoResult;
+use tower_lsp::lsp_types::Command;
 use tower_lsp::lsp_types::CompletionItem;
 use tower_lsp::lsp_types::CompletionItemKind;
 use tower_lsp::lsp_types::CompletionParams;
@@ -17,226 +38,426 @@ use tower_lsp::lsp_types::Documentation;
 use tower_lsp::lsp_types::InsertTextFormat;
 use tower_lsp::lsp_types::MarkupContent;
 use tower_lsp::lsp_types::MarkupKind;
+use tower_lsp::lsp_types::TextDocumentPositionParams;
 use tree_sitter::Node;
 use tree_sitter::Point;
+use yaml_rust::YamlLoader;
 
-use crate::lsp::indexer::IndexedSymbol;
-use crate::lsp::indexer::index_document;
-use crate::lsp::traits::node::NodeExt;
-use crate::macros::*;
-use crate::lsp::document::Document;
-use crate::lsp::logger::dlog;
+use crate::lsp::backend::Backend;
+use crate::lsp::documents::Document;
+use crate::lsp::help::RHtmlHelp;
+use crate::lsp::indexer;
+use crate::lsp::markdown::MarkdownConverter;
 use crate::lsp::traits::cursor::TreeCursorExt;
 use crate::lsp::traits::point::PointExt;
 use crate::lsp::traits::position::PositionExt;
-use crate::r::exec::geterrmessage;
-use crate::r::lock::rlock;
-use crate::r::macros::rstring;
-use crate::r::macros::rsymbol;
-use crate::r::exec::RFunction;
-use crate::r::exec::RFunctionExt;
-use crate::r::exec::RProtect;
+use crate::lsp::traits::string::StringExt;
+use crate::lsp::traits::tree::TreeExt;
 
-fn completion_item_from_identifier(node: &Node, source: &str) -> CompletionItem {
-    let label = node.utf8_text(source.as_bytes()).expect("empty assignee");
-    let detail = format!("Defined on line {}", node.start_position().row + 1);
-    return CompletionItem::new_simple(label.to_string(), detail);
+lazy_static! {
+    // NOTE: Regex::new() is quite slow to compile, so it's much better to keep
+    // a single singleton pattern and use that repeatedly for matches.
+    static ref RE_SYNTACTIC_IDENTIFIER : Regex =
+        Regex::new(r"^[\p{L}\p{Nl}.][\p{L}\p{Nl}\p{Mn}\p{Mc}\p{Nd}\p{Pc}.]*$").unwrap();
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub enum CompletionData {
+    DataVariable { name: String, owner: String },
+    Function { name: String, package: Option<String> },
+    Object { name: String },
+    Package { name: String },
+    Parameter { name: String, function: String },
+    RoxygenTag { tag: String },
+    ScopeParameter { name: String },
+    ScopeVariable { name: String },
+    Snippet { text: String },
+}
 
-fn completion_item_from_assignment(node: &Node, source: &str) -> Option<CompletionItem> {
+pub struct CompletionContext<'a> {
+    pub document: &'a Document,
+    pub node: Node<'a>,
+    pub source: String,
+    pub point: Point,
+}
 
-    let lhs = unwrap!(node.child(0), { return None; });
-    let rhs = unwrap!(node.child(2), { return None; });
+fn is_pipe_operator(node: &Node) -> bool {
+    matches!(node.kind(), "%>%" | "|>")
+}
 
-    let label = lhs.utf8_text(source.as_bytes()).expect("empty assignee");
+fn is_syntactic(name: &str) -> bool {
+    return RE_SYNTACTIC_IDENTIFIER.is_match(name);
+}
+
+fn quote_if_non_syntactic(name: &str) -> String {
+    if RE_SYNTACTIC_IDENTIFIER.is_match(name) {
+        name.to_string()
+    } else {
+        format!("`{}`", name.replace("`", "\\`"))
+    }
+}
+
+fn call_uses_nse(node: &Node, context: &CompletionContext) -> bool {
+
+    let result: Result<()> = local! {
+
+        let lhs = node.child(0).into_result()?;
+        matches!(lhs.kind(), "identifier" | "string").into_result()?;
+
+        let value = lhs.utf8_text(context.source.as_bytes())?;
+        matches!(value, "expression" | "local" | "quote" | "enquote" | "substitute" | "with" | "within").into_result()?;
+
+        Ok(())
+
+    };
+
+    result.is_ok()
+
+}
+
+unsafe fn resolve_package_completion_item(item: &mut CompletionItem, package: &str) -> Result<bool> {
+
+    let topic = join!(package, "-package");
+    let help = unwrap!(RHtmlHelp::new(topic.as_str(), Some(package))?, None => {
+        return Ok(false);
+    });
+
+    let markup = help.markdown()?;
+    let markup = MarkupContent {
+        kind: MarkupKind::Markdown,
+        value: markup.to_string(),
+    };
+
+    item.detail = None;
+    item.documentation = Some(Documentation::MarkupContent(markup));
+
+    Ok(true)
+}
+
+unsafe fn resolve_function_completion_item(item: &mut CompletionItem, name: &str, package: Option<&str>) -> Result<bool> {
+
+    let help = unwrap!(RHtmlHelp::new(name, package)?, None => {
+        return Ok(false);
+    });
+
+    let markup = help.markdown()?;
+
+    let markup = MarkupContent {
+        kind: MarkupKind::Markdown,
+        value: markup,
+    };
+
+    item.documentation = Some(Documentation::MarkupContent(markup));
+
+    Ok(true)
+
+}
+
+// TODO: Include package as well here?
+unsafe fn resolve_parameter_completion_item(item: &mut CompletionItem, name: &str, function: &str) -> Result<bool> {
+
+    // Get help for this function.
+    let help = unwrap!(RHtmlHelp::new(function, None)?, None => {
+        return Ok(false);
+    });
+
+    // Extract the relevant parameter help.
+    let help = unwrap!(help.parameter(name)?, None => {
+        return Ok(false);
+    });
+
+    // We found the relevant parameter; add its documentation.
+    let converter = MarkdownConverter::new(*help);
+    let description = converter.convert();
+
+    let markup = MarkupContent {
+        kind: MarkupKind::Markdown,
+        value: description.to_string(),
+    };
+
+    // Build the actual markup content.
+    // We found it; amend the documentation.
+    item.detail = Some(format!("{}()", function));
+    item.documentation = Some(Documentation::MarkupContent(markup));
+    Ok(true)
+
+}
+
+#[allow(unused_variables)]
+pub unsafe fn resolve_completion_item(item: &mut CompletionItem, data: &CompletionData) -> Result<bool> {
+
+    match data {
+        CompletionData::DataVariable { name, owner } => Ok(false),
+        CompletionData::Function { name, package } => resolve_function_completion_item(item, name, package.as_deref()),
+        CompletionData::Package { name } => resolve_package_completion_item(item, name),
+        CompletionData::Parameter { name, function } => resolve_parameter_completion_item(item, name, function),
+        CompletionData::Object { name } => Ok(false),
+        CompletionData::RoxygenTag { tag } => Ok(false),
+        CompletionData::ScopeVariable { name } => Ok(false),
+        CompletionData::ScopeParameter { name } => Ok(false),
+        CompletionData::Snippet { text } => Ok(false),
+    }
+
+}
+
+fn completion_item(label: impl AsRef<str>, data: CompletionData) -> Result<CompletionItem> {
+
+    Ok(CompletionItem {
+        label: label.as_ref().to_string(),
+        data: Some(serde_json::to_value(data)?),
+        ..Default::default()
+    })
+
+}
+
+fn completion_item_from_assignment(node: &Node, source: &str) -> Result<CompletionItem> {
+
+    let lhs = node.child_by_field_name("lhs").into_result()?;
+    let rhs = node.child_by_field_name("rhs").into_result()?;
+
+    let label = lhs.utf8_text(source.as_bytes())?;
+
+    // TODO: Resolve functions that exist in-document here.
+    let mut item = completion_item(label, CompletionData::ScopeVariable {
+        name: label.to_string()
+    })?;
+
     let detail = format!("Defined on line {}", lhs.start_position().row + 1);
+    item.detail = Some(detail);
+    item.kind = Some(CompletionItemKind::VARIABLE);
 
-    let mut item = CompletionItem::new_simple(format!("{}()", label), detail);
-
-    if rhs.kind() == "function_definition" {
+    if rhs.kind() == "function" {
         item.kind = Some(CompletionItemKind::FUNCTION);
         item.insert_text_format = Some(InsertTextFormat::SNIPPET);
         item.insert_text = Some(format!("{}($0)", label));
     }
 
-    return Some(item);
+    return Ok(item);
+
 }
 
-struct CompletionData {
-    source: String,
-    position: Point,
-    visited: HashSet<usize>,
-}
+unsafe fn completion_item_from_package(package: &str, append_colons: bool) -> Result<CompletionItem> {
 
-unsafe fn completion_item_from_package(package: &str) -> CompletionItem {
-
-    let mut item = CompletionItem {
-        label: package.to_string(),
-        ..Default::default()
-    };
+    let mut item = completion_item(package.to_string(), CompletionData::Package {
+        name: package.to_string(),
+    })?;
 
     item.kind = Some(CompletionItemKind::MODULE);
 
-    // generate package documentation
-    //
-    // TODO: This is fairly slow so we disable this for now.
-    // It'd be nice if we could defer help generation until the time
-    // the user asks for it, but it seems like we need to provide it
-    // up-front. For that reason, we'll probably need to generate a
-    // cache of help documentation, or implement some sort of LSP-side
-    // filtering of completion results based on the current token.
-    let mut protect = RProtect::new();
-    let documentation = RFunction::from(".rs.help.package")
-        .add(package)
-        .call(&mut protect);
-
-    if TYPEOF(documentation) as u32 == VECSXP {
-
-        // TODO: Use safe extraction functions here
-        let doc_type = VECTOR_ELT(documentation, 0);
-        let doc_contents = VECTOR_ELT(documentation, 1);
-
-        if TYPEOF(doc_type) as u32 == STRSXP && TYPEOF(doc_contents) as u32 == STRSXP {
-
-            let doc_type = Robj::from_sexp(doc_type).as_str().unwrap();
-            let doc_contents = Robj::from_sexp(doc_contents).as_str().unwrap();
-
-            item.documentation = Some(Documentation::MarkupContent(MarkupContent {
-                kind: MarkupKind::Markdown,
-                value: doc_contents.to_string()
-            }));
-        }
-
+    if append_colons {
+        item.insert_text_format = Some(InsertTextFormat::SNIPPET);
+        item.insert_text = Some(format!("{}::", package));
+        item.command = Some(Command {
+            title: "Trigger Suggest".to_string(),
+            command: "editor.action.triggerSuggest".to_string(),
+            ..Default::default()
+        });
     }
 
-    return item;
+    return Ok(item);
 
 }
 
-unsafe fn completion_item_from_function(name: &str) -> CompletionItem {
+pub fn completion_item_from_function<T: AsRef<str>>(name: &str, envir: Option<&str>, parameters: &[T]) -> Result<CompletionItem> {
 
-    let label = format!("{}()", name);
-    let detail = "(Function)";
-    let mut item = CompletionItem::new_simple(label.to_string(), detail.to_string());
+    let label = format!("{}", name);
+    let mut item = completion_item(label, CompletionData::Function {
+        name: name.to_string(),
+        package: envir.map(|s| s.to_string()),
+    })?;
 
     item.kind = Some(CompletionItemKind::FUNCTION);
 
+    let detail = format!("{}({})", name, joined(parameters, ", "));
+    item.detail = Some(detail);
+
     item.insert_text_format = Some(InsertTextFormat::SNIPPET);
-    item.insert_text = Some(format!("{}($0)", name));
+    item.insert_text = if is_syntactic(name) {
+        Some(format!("{}($0)", name))
+    } else {
+        Some(format!("`{}`($0)", name.replace("`", "\\`")))
+    };
 
-    // TODO: Include 'detail' based on the function signature?
-    // TODO: Include help documentation?
+    // provide parameter completions after completiong function
+    item.command = Some(Command {
+        title: "Trigger Suggest".to_string(),
+        command: "editor.action.triggerSuggest".to_string(),
+        ..Default::default()
+    });
 
-    return item;
+    return Ok(item);
 }
 
-unsafe fn completion_item_from_object(name: &str, mut object: SEXP, envir: SEXP) -> Option<CompletionItem> {
+unsafe fn completion_item_from_data_variable(name: &str, owner: &str, enquote: bool) -> Result<CompletionItem> {
+
+    let mut item = completion_item(name.to_string(), CompletionData::DataVariable {
+        name: name.to_string(),
+        owner: owner.to_string(),
+    })?;
+
+    if enquote {
+        item.insert_text = Some(format!("\"{}\"", name));
+    }
+
+    item.detail = Some(owner.to_string());
+    item.kind = Some(CompletionItemKind::VARIABLE);
+
+    Ok(item)
+
+}
+
+unsafe fn completion_item_from_object(name: &str, mut object: SEXP, envir: SEXP) -> Result<CompletionItem> {
 
     // TODO: Can we figure out the object type without forcing promise evaluation?
     if TYPEOF(object) as u32 == PROMSXP {
         let mut errc = 0;
         object = R_tryEvalSilent(object, envir, &mut errc);
         if errc != 0 {
-            dlog!("Error creating completion item: {}", geterrmessage());
-            return None;
+            bail!("Error creating completion item: {}", geterrmessage());
         }
     }
 
+    // TODO: For some functions (e.g. S4 generics?) the help file might be
+    // associated with a separate package. See 'stats4::AIC()' for one example.
+    //
+    // In other words, when creating a completion item for these functions,
+    // we should also figure out where we can receive the help from.
     if Rf_isFunction(object) != 0 {
-        return Some(completion_item_from_function(name));
+        let envir = r_envir_name(envir)?;
+        let formals = r_formals(object)?;
+        let arguments = formals.iter().map(|formal| formal.name.as_str()).collect::<Vec<_>>();
+        return completion_item_from_function(name, Some(envir.as_str()), &arguments);
     }
 
-    let mut item = CompletionItem::new_simple(name.to_string(), "(Object)".to_string());
+    let mut item = completion_item(name, CompletionData::Object {
+        name: name.to_string(),
+    })?;
+
+    item.detail = Some("(Object)".to_string());
     item.kind = Some(CompletionItemKind::STRUCT);
-    return Some(item);
+
+    Ok(item)
 
 }
 
-unsafe fn completion_item_from_symbol(name: &str, envir: SEXP) -> Option<CompletionItem> {
+unsafe fn completion_item_from_namespace(name: &str, namespace: SEXP) -> Result<CompletionItem> {
 
-    let symbol = rsymbol!(name);
+    let symbol = r_symbol!(name);
+
+    // First, look in the namespace itself.
+    let object = Rf_findVarInFrame(namespace, symbol);
+    if object != R_UnboundValue {
+        return completion_item_from_object(name, object, namespace);
+    }
+
+    // Otherwise, try the imports environment.
+    let imports = ENCLOS(namespace);
+    let object = Rf_findVarInFrame(imports, symbol);
+    if object != R_UnboundValue {
+        return completion_item_from_object(name, object, namespace);
+    }
+
+    bail!("Object '{}' not defined in namespace {:?}", name, r_envir_name(namespace)?);
+
+}
+
+unsafe fn completion_item_from_symbol(name: &str, envir: SEXP) -> Result<CompletionItem> {
+
+    let symbol = r_symbol!(name);
     let object = Rf_findVarInFrame(envir, symbol);
     if object == R_UnboundValue {
-        return None;
+        bail!("Object '{}' not defined in environment {:?}", name, envir);
     }
 
     return completion_item_from_object(name, object, envir);
 
 }
 
-unsafe fn completion_item_from_parameter(string: impl ToString, callee: impl ToString) -> CompletionItem {
+// This is used when providing completions for a parameter in a document
+// that is considered in-scope at the cursor position.
+fn completion_item_from_scope_parameter(parameter: &str, _context: &CompletionContext) -> Result<CompletionItem> {
 
-    let mut item = CompletionItem::new_simple(string.to_string(), callee.to_string());
+    let mut item = completion_item(parameter, CompletionData::ScopeParameter {
+        name: parameter.to_string(),
+    })?;
+
+    item.kind = Some(CompletionItemKind::VARIABLE);
+    Ok(item)
+
+}
+
+unsafe fn completion_item_from_parameter(parameter: &str, callee: &str) -> Result<CompletionItem> {
+
+    let label = quote_if_non_syntactic(parameter);
+    let mut item = completion_item(label, CompletionData::Parameter {
+        name: parameter.to_string(),
+        function: callee.to_string(),
+    })?;
+
+    // TODO: It'd be nice if we could be smarter about how '...' completions are handled,
+    // but evidently VSCode doesn't let us set an empty 'insert text' string here.
+    // Might be worth fixing upstream.
     item.kind = Some(CompletionItemKind::FIELD);
     item.insert_text_format = Some(InsertTextFormat::SNIPPET);
-    item.insert_text = Some(string.to_string() + " = ");
+    item.insert_text = if parameter == "..." {
+        Some("...".to_string())
+    } else {
+        Some(parameter.to_string() + " = ")
+    };
 
-    // TODO: Include help based on the help documentation for the argument.
-    // It looks like raw HTML help is not supported, so we'll probably have to
-    // request the HTML help from R, and then convert that to Markdown with
-    // pandoc or something similar.
-    //
-    // TODO: Could we build this from roxygen comments for functions definitions
-    // existing only in-source?
-
-    item.detail = Some("This is some detail.".to_string());
-    item.documentation = Some(Documentation::MarkupContent(MarkupContent {
-        kind: MarkupKind::Markdown,
-        value: "# This is some Markdown.".to_string(),
-    }));
-
-    return item;
+    Ok(item)
 
 }
 
-fn call_uses_nse(node: &Node, data: &CompletionData) -> bool {
+pub fn completion_context<'a>(document: &'a Document, position: &TextDocumentPositionParams) -> Result<CompletionContext<'a>> {
 
-    // get the callee
-    let lhs = unwrap!(node.child(0), {
-        return false;
-    });
+    // get reference to AST
+    let ast = &document.ast;
 
-    // validate we have an identifier or a string
-    match lhs.kind() {
-        "identifier" | "string" => {},
-        _ => { return false; }
+    // try to find node at completion position
+    let mut point = position.position.as_point();
+    if point.column > 1 {
+        point.column -= 1;
     }
 
-    // check for a function whose evaluation occurs in a local scope
-    let value = unwrap!(lhs.utf8_text(data.source.as_bytes()), {
-        return false;
-    });
+    // use the node to figure out the completion token
+    let node = ast.node_at_point(point)?;
+    let source = document.contents.to_string();
 
-    match value {
-        "expression" | "local" | "quote" | "enquote" | "substitute" | "with" | "within" => { return true; },
-        _ => { return false; }
-    }
+    // build completion context
+    Ok(CompletionContext { document, node, source, point })
 
 }
 
-fn append_defined_variables(node: &Node, data: &mut CompletionData, completions: &mut Vec<CompletionItem>) {
+fn append_defined_variables(node: &Node, context: &CompletionContext, completions: &mut Vec<CompletionItem>) {
+
+    let visited : HashSet<usize> = HashSet::new();
 
     let mut cursor = node.walk();
     cursor.recurse(|node| {
 
         // skip nodes that exist beyond the completion position
-        if node.start_position().is_after(data.position) {
+        if node.start_position().is_after(context.point) {
             return false;
         }
 
         // skip nodes that were already visited
-        if data.visited.contains(&node.id()) {
+        if visited.contains(&node.id()) {
             return false;
         }
 
         match node.kind() {
 
-            "left_assignment" | "super_assignment" | "equals_assignment" => {
+            "=" | "<-" | "<<-" => {
 
-                // check for a valid completion
-                if let Some(completion) = completion_item_from_assignment(&node, &data.source) {
-                    completions.push(completion);
+                // check that the left-hand side is an identifier or a string
+                if let Some(child) = node.child(0) {
+                    if matches!(child.kind(), "identifier" | "string") {
+                        match completion_item_from_assignment(&node, &context.source) {
+                            Ok(item) => completions.push(item),
+                            Err(error) => error!("{:?}", error),
+                        }
+                    }
                 }
 
                 // return true in case we have nested assignments
@@ -244,7 +465,7 @@ fn append_defined_variables(node: &Node, data: &mut CompletionData, completions:
 
             }
 
-            "right_assignment" | "super_right_assignment" => {
+            "->" | "->>" => {
 
                 // return true for nested assignments
                 return true;
@@ -254,11 +475,11 @@ fn append_defined_variables(node: &Node, data: &mut CompletionData, completions:
             "call" => {
 
                 // don't recurse into calls for certain functions
-                return !call_uses_nse(&node, &data);
+                return !call_uses_nse(&node, context);
 
             }
 
-            "function_definition" => {
+            "function" => {
 
                 // don't recurse into function definitions, as these create as new scope
                 // for variable definitions (and so such definitions are no longer visible)
@@ -276,182 +497,351 @@ fn append_defined_variables(node: &Node, data: &mut CompletionData, completions:
 
 }
 
-fn append_function_parameters(node: &Node, data: &mut CompletionData, completions: &mut Vec<CompletionItem>) {
+// TODO: Pick a name that makes it clear this is a function defined in the associated document.
+fn append_function_parameters(node: &Node, context: &CompletionContext, completions: &mut Vec<CompletionItem>) -> Result<()> {
 
-    let mut cursor = node.walk();
+    // get the parameters node
+    let parameters = node.child_by_field_name("parameters").into_result()?;
 
-    if !cursor.goto_first_child() {
-        dlog!("goto_first_child() failed");
-        return;
+    // iterate through the children, looking for parameters with known names
+    let mut cursor = parameters.walk();
+    for node in parameters.children(&mut cursor) {
+
+        if node.kind() != "parameter" {
+            continue;
+        }
+
+        let node = unwrap!(node.child_by_field_name("name"), None => {
+            continue;
+        });
+
+        if node.kind() != "identifier" {
+            continue;
+        }
+
+        let parameter = node.utf8_text(context.source.as_bytes()).into_result()?;
+        match completion_item_from_scope_parameter(parameter, context) {
+            Ok(item) => completions.push(item),
+            Err(error) => error!("{:?}", error),
+        }
+
     }
 
-    if !cursor.goto_next_sibling() {
-        dlog!("goto_next_sibling() failed");
-        return;
+    Ok(())
+
+}
+
+unsafe fn list_namespace_exports(namespace: SEXP) -> RObject {
+
+    let ns = Rf_findVarInFrame(namespace, r_symbol!(".__NAMESPACE__."));
+    if ns == R_UnboundValue {
+        return RObject::null();
     }
 
-    let kind = cursor.node().kind();
-    if kind != "formal_parameters" {
-        dlog!("unexpected node kind {}", kind);
-        return;
+    let exports = Rf_findVarInFrame(ns, r_symbol!("exports"));
+    if exports == R_UnboundValue {
+        return RObject::null();
     }
 
-    if !cursor.goto_first_child() {
-        dlog!("goto_first_child() failed");
-        return;
-    }
+    return RObject::new(R_lsInternal(exports, 1));
 
-    // The R tree-sitter grammar doesn't parse an R function's formals list into
-    // a tree; instead, it's just held as a sequence of tokens. that said, the
-    // only way an identifier could / should show up here is if it is indeed a
-    // function parameter, so just search direct children here for identifiers.
-    while cursor.goto_next_sibling() {
-        let node = cursor.node();
-        if node.kind() == "identifier" {
-            completions.push(completion_item_from_identifier(&node, &data.source));
+}
+
+unsafe fn list_namespace_symbols(namespace: SEXP) -> RObject {
+    return RObject::new(R_lsInternal(namespace, 1));
+}
+
+unsafe fn append_subset_completions(_context: &CompletionContext, callee: &str, enquote: bool, completions: &mut Vec<CompletionItem>) -> Result<()> {
+
+    info!("append_subset_completions({:?})", callee);
+
+    let value = r_parse_eval(callee, RParseEvalOptions {
+        forbid_function_calls: true,
+    })?;
+
+    let names = RFunction::new("base", "names")
+        .add(value)
+        .call()?
+        .to::<Vec<String>>()?;
+
+    for name in names {
+        match completion_item_from_data_variable(&name, callee, enquote) {
+            Ok(item) => completions.push(item),
+            Err(error) => error!("{:?}", error),
         }
     }
 
-}
-
-unsafe fn list_namespace_exports(namespace: SEXP, protect: &mut RProtect) -> SEXP {
-
-    let ns = Rf_findVarInFrame(namespace, rsymbol!(".__NAMESPACE__."));
-    if ns == R_UnboundValue {
-        return R_NilValue;
-    }
-
-    let exports = Rf_findVarInFrame(ns, rsymbol!("exports"));
-    if exports == R_UnboundValue {
-        return R_NilValue;
-    }
-
-    return protect.add(R_lsInternal(exports, 1));
+    Ok(())
 
 }
 
-unsafe fn list_namespace_symbols(namespace: SEXP, protect: &mut RProtect) -> SEXP {
-    return protect.add(R_lsInternal(namespace, 1));
-}
+unsafe fn append_call_library_completions(context: &CompletionContext, cursor: &Node, node: &Node, completions: &mut Vec<CompletionItem>) -> Result<bool> {
 
-unsafe fn append_parameter_completions(document: &Document, callee: &str, completions: &mut Vec<CompletionItem>) {
+    // Try to figure out the callee (if any).
+    let ok = local! {
 
-    dlog!("append_parameter_completions({:?})", callee);
+        info!("Cursor: {}", cursor.to_sexp());
+        info!("Node:   {}", node.to_sexp());
 
-    // Check for a function defined in this document that can provide parameters.
-    let index = index_document(document);
-    for symbol in index {
-        match symbol {
-            IndexedSymbol::Function { name, arguments } => {
-                if name == callee {
-                    for argument in arguments {
-                        let item = completion_item_from_parameter(argument, name.clone());
-                        completions.push(item);
-                    }
-                    return;
-                }
+        // Get the parent node.
+        let mut parent = cursor.parent()?;
+        if matches!(parent.kind(), "argument") {
+            parent = parent.parent()?;
+            if matches!(parent.kind(), "arguments") {
+                parent = parent.parent()?;
             }
         }
+
+        // Make sure it matches the call node.
+        info!("Parent: {}", parent.to_sexp());
+        (parent == *node).into_option()?;
+
+        // Get the callee.
+        let mut callee = node.child(0)?;
+        info!("Callee: {}", callee.to_sexp());
+
+        // Resolve the callee for namespaced calls.
+        if matches!(callee.kind(), "::" | ":::") {
+
+            // Check for callable lhs.
+            let lhs = callee.child_by_field_name("lhs")?;
+            if !matches!(lhs.kind(), "identifier" | "string") {
+                return None;
+            }
+
+            // Make sure it matches base.
+            let contents = unwrap!(lhs.utf8_text(context.source.as_bytes()), Err(_) => {
+                return None;
+            });
+
+            (contents == "base").into_option()?;
+
+            // Update the callee.
+            callee = callee.child_by_field_name("rhs")?;
+
+        }
+
+        // Make sure we have an identifier.
+        (callee.kind() == "identifier").into_option()?;
+
+        // Check for call to handled functions.
+        let callee = callee.utf8_text(context.source.as_bytes()).unwrap_or_default();
+        info!("Callee text: {}", callee);
+        if !matches!(callee, "library" | "require" | "requireNamespace") {
+            return None;
+        }
+
+        Some(true)
+
+    };
+
+    if ok.is_none() {
+        return Ok(false);
+    }
+
+    let packages = RFunction::new("base", ".packages")
+        .param("all.available", true)
+        .call()?
+        .to::<Vec<String>>()?;
+
+    for package in packages {
+        let item = completion_item_from_package(package.as_str(), false)?;
+        completions.push(item);
+    }
+
+    Ok(true)
+
+}
+
+unsafe fn append_call_completions(context: &CompletionContext, cursor: &Node, node: &Node, completions: &mut Vec<CompletionItem>) -> Result<()> {
+    let callee = node.child(0).into_result()?.utf8_text(context.source.as_bytes())?;
+    append_argument_completions(context, &callee, completions)
+}
+
+fn find_pipe_root(mut node: Node) -> Option<Node> {
+
+    let mut root = None;
+
+    loop {
+
+        if is_pipe_operator(&node) {
+            root = Some(node);
+        }
+
+        node = match node.parent() {
+            Some(node) => node,
+            None => return root,
+        }
+
+    }
+
+}
+
+unsafe fn append_pipe_completions(context: &CompletionContext, node: &Node, completions: &mut Vec<CompletionItem>) -> Result<()> {
+
+    // Try to figure out the code associated with the 'root' of the pipe expression.
+    let root = local! {
+
+        let root = find_pipe_root(*node)?;
+        is_pipe_operator(&root).into_option()?;
+
+        // Get the left-hand side of the pipe expression.
+        let mut lhs = root.child_by_field_name("lhs")?;
+        while is_pipe_operator(&lhs) {
+            lhs = lhs.child_by_field_name("lhs")?;
+        }
+
+        // Try to evaluate the left-hand side
+        let root = lhs.utf8_text(context.source.as_bytes()).ok()?;
+        Some(root)
+
+    };
+
+    let root = unwrap!(root, None => {
+        return Ok(());
+    });
+
+    let value = r_parse_eval(root, RParseEvalOptions {
+        forbid_function_calls: true
+    })?;
+
+    // Try to retrieve names from the resulting item
+    let names = RFunction::new("base", "names")
+        .add(value)
+        .call()?
+        .to::<Vec<String>>()?;
+
+    for name in names {
+        let item = completion_item_from_data_variable(&name, root, false)?;
+        completions.push(item);
+    }
+
+    Ok(())
+
+}
+
+
+unsafe fn append_argument_completions(_context: &CompletionContext, callee: &str, completions: &mut Vec<CompletionItem>) -> Result<()> {
+
+    info!("append_argument_completions({:?})", callee);
+
+    // Check for a function defined in the workspace that can provide parameters.
+    if let Some((_path, entry)) = indexer::find(callee) {
+
+        #[allow(unused)]
+        match entry.data {
+
+            indexer::IndexEntryData::Function { name, arguments } => {
+                for argument in arguments {
+                    match completion_item_from_parameter(argument.as_str(), name.as_str()) {
+                        Ok(item) => completions.push(item),
+                        Err(error) => error!("{:?}", error),
+                    }
+                }
+            },
+
+            indexer::IndexEntryData::Section { level, title } => {
+                // nothing to do
+            }
+
+        }
+
     }
 
     // TODO: Given the callee, we should also try to find its definition within
     // the document index of function definitions, since it may not be defined
     // within the session.
-    let mut protect = RProtect::new();
-    let mut status: ParseStatus = 0;
+    let value = r_parse_eval(callee, RParseEvalOptions {
+        forbid_function_calls: true,
+    })?;
 
-    // Parse the callee text. The text will be parsed as an R expression,
-    // which is a vector of calls to be evaluated.
-    let string_sexp = protect.add(rstring!(callee));
-    let parsed_sexp = protect.add(R_ParseVector(string_sexp, 1, &mut status, R_NilValue));
+    if Rf_isFunction(*value) != 0 {
 
-    if status != ParseStatus_PARSE_OK {
-        dlog!("Error parsing {} [status {}]", callee, status);
-        return;
-    }
-
-    // Evaluate the text. We use evaluation here to make it easier to support
-    // the lookup of complex left-hand expressions.
-    let mut value = R_NilValue;
-    for i in 0..Rf_length(parsed_sexp) {
-        let expr = VECTOR_ELT(parsed_sexp, i as isize);
-        let mut errc : i32 = 0;
-        value = R_tryEvalSilent(expr, R_GlobalEnv, &mut errc);
-        if errc != 0 {
-            dbg!("Error evaluating {}", callee);
-            return;
-        }
-    }
-
-    // Protect the final evaluation result here, as we'll
-    // need to introspect on its result.
-    value = protect.add(value);
-
-    if Rf_isFunction(value) != 0 {
-
-        let names = RFunction::from(".rs.formalNames")
-            .add(value)
-            .call(&mut protect);
-
-        if Rf_inherits(names, cstr!("error")) != 0 {
-            return;
-        }
+        let strings = RFunction::from(".rs.formalNames")
+            .add(*value)
+            .call()?
+            .to::<Vec<String>>()?;
 
         // Return the names of these formals.
-        let names = Robj::from_sexp(names);
-        if let Ok(strings) = Strings::try_from(names) {
-            for string in strings.iter() {
-                let item = completion_item_from_parameter(string, callee);
-                completions.push(item);
+        for string in strings.iter() {
+            match completion_item_from_parameter(string, callee) {
+                Ok(item) => completions.push(item),
+                Err(error) => error!("{:?}", error),
             }
         }
 
     }
 
+    Ok(())
+
 }
 
-unsafe fn append_namespace_completions(package: &str, exports_only: bool, completions: &mut Vec<CompletionItem>) {
+unsafe fn append_namespace_completions(_context: &CompletionContext, package: &str, exports_only: bool, completions: &mut Vec<CompletionItem>) -> Result<()> {
 
-    dlog!("append_namespace_completions({:?}, {})", package, exports_only);
-    let mut protect = RProtect::new();
+    info!("append_namespace_completions({:?}, {})", package, exports_only);
 
     // Get the package namespace.
     let namespace = RFunction::new("base", "getNamespace")
         .add(package)
-        .call(&mut protect);
+        .call()?;
 
     let symbols = if package == "base" {
-        list_namespace_symbols(namespace, &mut protect)
+        list_namespace_symbols(*namespace)
     } else if exports_only {
-        list_namespace_exports(namespace, &mut protect)
+        list_namespace_exports(*namespace)
     } else {
-        list_namespace_symbols(namespace, &mut protect)
+        list_namespace_symbols(*namespace)
     };
 
-    if TYPEOF(symbols) as u32 != STRSXP {
-        dlog!("Unexpected SEXPTYPE {}", TYPEOF(symbols));
-        return;
-    }
-
-    // Create completion items for each.
-    let object = Robj::from_sexp(symbols);
-    if let Ok(strings) = Strings::try_from(object) {
-        for string in strings.iter() {
-            if let Some(item) = completion_item_from_symbol(string, namespace) {
-                completions.push(item);
-            }
+    let strings = symbols.to::<Vec<String>>()?;
+    for string in strings.iter() {
+        match completion_item_from_namespace(string, *namespace) {
+            Ok(item) => completions.push(item),
+            Err(error) => error!("{:?}", error),
         }
     }
 
+    Ok(())
+
 }
 
-#[allow(dead_code)]
-fn append_keyword_completions(completions: &mut Vec<CompletionItem>) {
+fn append_keyword_completions(completions: &mut Vec<CompletionItem>) -> anyhow::Result<()> {
 
+    // add some built-in snippet completions for control flow
+    // NOTE: We don't use placeholder names for the final cursor locations below,
+    // as the editting experience is not great (e.g. trying to insert a '{' will
+    // cause the editor to just surround the snippet text with '{}'.
+    let snippets = vec![
+        ("function", "function(${1:arguments}) $0"),
+        ("while", "while (${1:condition}) $0"),
+        ("repeat", "repeat $0"),
+        ("for", "for (${1:variable} in ${2:vector}) $0"),
+        ("if", "if (${1:condition}) $0"),
+        ("return", "return(${0:value})"),
+    ];
+
+    for snippet in snippets {
+
+        let label = snippet.0.to_string();
+        let mut item = completion_item(label.to_string(), CompletionData::Snippet {
+            text: label.clone(),
+        })?;
+
+        item.detail = Some("[keyword]".to_string());
+        item.insert_text_format = Some(InsertTextFormat::SNIPPET);
+        item.insert_text = Some(snippet.1.to_string());
+
+        completions.push(item);
+    }
+
+    // provide other completion results
+    // NOTE: Some R keywords have definitions provided in the R
+    // base namespace, so we don't need to provide duplicate
+    // definitions for these here.
     let keywords = vec![
-    "NULL", "NA", "TRUE", "FALSE", "Inf", "NaN", "NA_integer_",
-    "NA_real_", "NA_character_", "NA_complex_", "function", "while",
-    "repeat", "for", "if", "in", "else", "next", "break", "return",
+        "NULL", "NA", "TRUE", "FALSE", "Inf", "NaN",
+        "NA_integer_", "NA_real_", "NA_character_", "NA_complex_",
+        "in", "else", "next", "break",
     ];
 
     for keyword in keywords {
@@ -460,9 +850,14 @@ fn append_keyword_completions(completions: &mut Vec<CompletionItem>) {
         completions.push(item);
     }
 
+    Ok(())
+
 }
 
-unsafe fn append_search_path_completions(completions: &mut Vec<CompletionItem>) {
+unsafe fn append_search_path_completions(_context: &CompletionContext, completions: &mut Vec<CompletionItem>) -> Result<()> {
+
+    // start with keywords
+    append_keyword_completions(completions)?;
 
     // Iterate through environments starting from the global environment.
     let mut envir = R_GlobalEnv;
@@ -473,12 +868,21 @@ unsafe fn append_search_path_completions(completions: &mut Vec<CompletionItem>) 
         let symbols = R_lsInternal(envir, 1);
 
         // Create completion items for each.
-        let object = Robj::from_sexp(symbols);
-        if let Ok(strings) = Strings::try_from(object) {
-            for string in strings.iter() {
-                if let Some(item) = completion_item_from_symbol(string, envir) {
-                    completions.push(item);
-                }
+        let mut strings = RObject::new(symbols).to::<Vec<String>>()?;
+
+        // If this is the base environment, we'll want to remove some
+        // completion items (mainly, control flow keywords which don't
+        // behave like "regular" functions.)
+        if envir == R_BaseEnv || envir == R_BaseNamespace {
+            strings.retain(|name| {
+                !matches!(name.as_str(), "if" | "else" | "for" | "in" | "while" | "repeat" | "break" | "next" | "return" | "function")
+            });
+        }
+
+        for string in strings.iter() {
+            match completion_item_from_symbol(string, envir) {
+                Ok(item) => completions.push(item),
+                Err(error) => error!("{:?}", error),
             }
         }
 
@@ -489,144 +893,189 @@ unsafe fn append_search_path_completions(completions: &mut Vec<CompletionItem>) 
 
     // Include installed packages as well.
     // TODO: This can be slow on NFS.
-    let mut protect = RProtect::new();
     let packages = RFunction::new("base", ".packages")
         .param("all.available", true)
-        .call(&mut protect);
+        .call()?;
 
-    let object = Robj::from_sexp(packages);
-    if let Ok(strings) = Strings::try_from(object) {
-        for string in strings.iter() {
-            let item = completion_item_from_package(string);
-            completions.push(item);
-        }
+    let strings = packages.to::<Vec<String>>()?;
+    for string in strings.iter() {
+        let item = completion_item_from_package(string, true)?;
+        completions.push(item);
     }
 
+    Ok(())
 
 }
 
-pub(crate) fn can_provide_completions(document: &mut Document, params: &CompletionParams) -> bool {
+unsafe fn append_roxygen_completions(_token: &str, completions: &mut Vec<CompletionItem>) -> Result<()> {
 
-    // get reference to AST
-    let ast = unwrap!(document.ast.as_ref(), {
-        return false;
-    });
+    // TODO: cache these?
+    // TODO: use an indexer to build the tag list?
+    let tags = RFunction::new("base", "system.file")
+        .param("package", "roxygen2")
+        .add("roxygen2-tags.yml")
+        .call()?
+        .to::<String>()?;
 
-    // get document source
-    let source = document.contents.to_string();
+    if tags.is_empty() {
+        return Ok(());
+    }
+
+    let tags = Path::new(&tags);
+    if !tags.exists() {
+        return Ok(());
+    }
+
+    let contents = std::fs::read_to_string(tags).unwrap();
+    let docs = YamlLoader::load_from_str(contents.as_str()).unwrap();
+    let doc = &docs[0];
+
+    let items = doc.as_vec().unwrap();
+    for entry in items.iter() {
+
+        let name = unwrap!(entry["name"].as_str(), None => {
+            continue;
+        });
+
+        let label = name.to_string();
+        let mut item = completion_item(label.clone(), CompletionData::RoxygenTag {
+            tag: label.clone(),
+        })?;
+
+        // TODO: What is the appropriate icon for us to use here?
+        let template = entry["template"].as_str();
+        if let Some(template) = template {
+            let text = format!("{}{}", name, template);
+            let pattern = Regex::new(r"\{([^}]+)\}").unwrap();
+
+            let mut count = 0;
+            let text = pattern.replace_all(&text, |caps: &Captures| {
+                count += 1;
+                let capture = caps.get(1).map_or("", |m| m.as_str());
+                format!("${{{}:{}}}", count, capture)
+            });
+
+            item.insert_text_format = Some(InsertTextFormat::SNIPPET);
+            item.insert_text = Some(text.to_string());
+        } else {
+            item.insert_text = Some(format!("@{}", label.as_str()));
+        }
+
+        item.detail = Some(format!("@{}{}", name, template.unwrap_or("")));
+        if let Some(description) = entry["description"].as_str() {
+            let markup = MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: description.to_string(),
+            };
+            item.documentation = Some(Documentation::MarkupContent(markup));
+        }
+
+        completions.push(item);
+
+    }
+
+    return Ok(());
+
+}
+
+pub fn can_provide_completions(document: &mut Document, params: &CompletionParams) -> Result<bool> {
 
     // figure out the token / node at the cursor position. note that we use
     // the previous token here as the cursor itself will be located just past
     // the cursor / node providing the associated context
     let mut point = params.text_document_position.position.as_point();
-    if point.column > 1 { point.column -= 1; }
+    if point.column > 1 {
+        point.column -= 1;
+    }
 
-    let node = unwrap!(ast.root_node().descendant_for_point_range(point, point), {
-        return false;
-    });
-
-    let value = node.utf8_text(source.as_bytes()).unwrap();
+    let node = document.ast.node_at_point(point)?;
+    let source = document.contents.to_string();
+    let value = node.utf8_text(source.as_bytes())?;
 
     // completions will be triggered as the user types ':', which implies that
     // a completion request could be sent before the user has finished typing
     // '::' or ':::'. detect this particular case and don't provide completions
     // in that context
     if value == ":" {
-        return false;
+        return Ok(false);
     }
 
-    return true;
+    return Ok(true);
 
 }
 
-pub(crate) fn append_session_completions(document: &mut Document, params: &CompletionParams, completions: &mut Vec<CompletionItem>) {
+pub unsafe fn append_session_completions(context: &CompletionContext, completions: &mut Vec<CompletionItem>) -> Result<()> {
 
-    dlog!("append_session_completions()");
+    info!("append_session_completions()");
 
     // get reference to AST
-    let ast = unwrap!(document.ast.as_ref(), {
-        return;
-    });
+    let ast = &context.document.ast;
+    let cursor = ast.node_at_point(context.point)?;
+    let mut node = cursor;
 
-    // get document source
-    let source = document.contents.to_string();
-
-    // figure out the token / node at the cursor position. note that we use
-    // the previous token here as the cursor itself will be located just past
-    // the cursor / node providing the associated context
-    let mut point = params.text_document_position.position.as_point();
-    if point.column > 1 { point.column -= 1; }
-
-    let mut node = unwrap!(ast.root_node().descendant_for_point_range(point, point), {
-        return;
-    });
-
-    // check to see if we're completing a symbol from a namespace,
-    // via code like:
+    // check for completion within a comment -- in such a case, we usually
+    // want to complete things like roxygen tags
     //
-    //   package::sym
-    //   package:::sym
-    //
-    // note that we'll need to handle cases where the user hasn't
-    // yet started typing the symbol name, so that the cursor would
-    // be on the '::' or ':::' token.
-    //
-    // Note that treesitter collects the tokens into a tree of the form:
-    //
-    //    - stats::bar - namespace_get
-    //    - stats - identifier
-    //    - :: - ::
-    //    - bar - identifier
-    //
-    // But, if the tree is not yet complete, then treesitter gives us:
-    //
-    //    - stats - identifier
-    //    - :: - ERROR
-    //      - :: - ::
-    //
-    // So we have to do some extra work to get the package name in each case.
-    if matches!(node.kind(), "::" | ":::") {
-        let exports_only = node.kind() == "::";
-        if let Some(parent) = node.parent() {
-            if parent.kind() == "ERROR" {
-                if let Some(prev) = parent.prev_sibling() {
-                    if matches!(prev.kind(), "identifier" | "string") {
-                        let package = prev.utf8_text(source.as_bytes()).unwrap();
-                        rlock! { append_namespace_completions(package, exports_only, completions) }
-                        return;
-                    }
-                }
-            }
+    // TODO: should some of this token processing happen in treesitter?
+    if node.kind() == "comment" {
+        let pattern = Regex::new(r"^.*\s").unwrap();
+        let contents = node.utf8_text(context.source.as_bytes()).unwrap();
+        let token = pattern.replace(contents, "");
+        if token.starts_with('@') {
+            return append_roxygen_completions(&token[1..], completions);
+        } else {
+            return Ok(());
         }
     }
 
+    let mut use_search_path = true;
+    let mut found_call_completions = false;
+
     loop {
+
+        // Check for 'subset' completions.
+        if matches!(node.kind(), "$" | "[" | "[[") {
+            let enquote = matches!(node.kind(), "[" | "[[");
+            if let Some(child) = node.child(0) {
+                let text = child.utf8_text(context.source.as_bytes())?;
+                append_subset_completions(context, &text, enquote, completions)?;
+            }
+        }
 
         // If we landed on a 'call', then we should provide parameter completions
         // for the associated callee if possible.
-        if node.kind() == "call" {
-            if let Some(child) = node.child(0) {
-                let text = child.utf8_text(source.as_bytes()).unwrap();
-                rlock! { append_parameter_completions(document, &text, completions) }
-                return;
-            };
+        if !found_call_completions && node.kind() == "call" {
+
+            found_call_completions = true;
+
+            // Check for library() completions.
+            match append_call_library_completions(context, &cursor, &node, completions) {
+                Ok(done) => if done { return Ok(()) },
+                Err(error) => error!("{}", error),
+            }
+
+            // Check for pipe completions.
+            append_pipe_completions(context, &node, completions)?;
+
+            // Check for generic call completions.
+            append_call_completions(context, &cursor, &node, completions)?;
+
         }
 
         // Handle the case with 'package::prefix', where the user has now
         // started typing the prefix of the symbol they would like completions for.
-        if matches!(node.kind(), "namespace_get" | "namespace_get_internal") {
-            if let Some(package_node) = node.child(0) {
-                if let Some(colon_node) = node.child(1) {
-                    let package = package_node.utf8_text(source.as_bytes()).unwrap();
-                    let exports_only = colon_node.kind() == "::";
-                    rlock! { append_namespace_completions(package, exports_only, completions) }
-                    return;
-                }
+        if matches!(node.kind(), "::" | ":::") {
+            let exports_only = node.kind() == "::";
+            if let Some(node) = node.child(0) {
+                let package = node.utf8_text(context.source.as_bytes())?;
+                append_namespace_completions(context, package, exports_only, completions)?;
+                use_search_path = false;
+                break;
             }
         }
 
         // If we reach a brace list, bail.
-        if node.kind() == "brace_list" {
+        if node.kind() == "{" {
             break;
         }
 
@@ -640,46 +1089,49 @@ pub(crate) fn append_session_completions(document: &mut Document, params: &Compl
 
     // If we got here, then it's appropriate to return completions
     // for any packages + symbols on the search path.
-    rlock! { append_search_path_completions(completions) };
+    if use_search_path {
+        append_search_path_completions(context, completions)?;
+    }
+
+    Ok(())
 
 }
 
-pub(crate) fn append_document_completions(document: &mut Document, params: &CompletionParams, completions: &mut Vec<CompletionItem>) {
-
-    dlog!("append_document_completions()");
+pub fn append_document_completions(context: &CompletionContext, completions: &mut Vec<CompletionItem>) -> Result<()> {
 
     // get reference to AST
-    let ast = unwrap!(document.ast.as_ref(), {
-        return;
-    });
+    let ast = &context.document.ast;
+    let mut node = ast.node_at_point(context.point)?;
 
-    // try to find child for point
-    let point = params.text_document_position.position.as_point();
-    let mut node = unwrap!(ast.root_node().descendant_for_point_range(point, point), {
-        return;
-    });
+    // skip comments
+    if node.kind() == "comment" {
+        trace!("cursor position lies within R comment; not providing document completions");
+        return Ok(());
+    }
 
-    // build completion data
-    let mut data = CompletionData {
-        source: document.contents.to_string(),
-        position: point,
-        visited: HashSet::new(),
-    };
+    // don't complete following subset-style operators
+    if matches!(node.kind(), "::" | ":::" | "$" | "[" | "[[") {
+        return Ok(());
+    }
 
+    let mut visited : HashSet<usize> = HashSet::new();
     loop {
 
         // If this is a brace list, or the document root, recurse to find identifiers.
-        if node.kind() == "brace_list" || node.parent() == None {
-            append_defined_variables(&node, &mut data, completions);
+        if node.kind() == "{" || node.parent() == None {
+            append_defined_variables(&node, context, completions);
         }
 
         // If this is a function definition, add parameter names.
-        if node.kind() == "function_definition" {
-            append_function_parameters(&node, &mut data, completions);
+        if node.kind() == "function" {
+            let result = append_function_parameters(&node, context, completions);
+            if let Err(error) = result {
+                error!("{:?}", error);
+            }
         }
 
         // Mark this node as visited.
-        data.visited.insert(node.id());
+        visited.insert(node.id());
 
         // Keep going.
         node = match node.parent() {
@@ -689,4 +1141,75 @@ pub(crate) fn append_document_completions(document: &mut Document, params: &Comp
 
     }
 
+    Ok(())
+
+}
+
+pub fn append_workspace_completions(backend: &Backend, context: &CompletionContext, completions: &mut Vec<CompletionItem>) -> Result<()> {
+
+    // TODO: Don't provide completions if token is empty in certain contexts
+    // (e.g. parameter completions or something like that)
+    if matches!(context.node.kind(), "::" | ":::") {
+        return Ok(());
+    }
+
+    if let Some(parent) = context.node.parent() {
+        if matches!(parent.kind(), "::" | ":::") {
+            return Ok(());
+        }
+    }
+
+    let token = if context.node.kind() == "identifier" {
+        context.node.utf8_text(context.source.as_bytes())?
+    } else {
+        ""
+    };
+
+    // get entries from the index
+    indexer::map(|path, symbol, entry| {
+
+        if !symbol.fuzzy_matches(token) {
+            return;
+        }
+
+        match &entry.data {
+
+            indexer::IndexEntryData::Function { name, arguments } => {
+
+                let mut completion = unwrap!(completion_item_from_function(name, None, arguments), Err(error) => {
+                    error!("{:?}", error);
+                    return;
+                });
+
+                // add some metadata about where the completion was found
+                let mut path = path.to_str().unwrap_or_default();
+                if let Ok(workspace) = backend.workspace.lock() {
+                    for folder in &workspace.folders {
+                        if let Ok(folder) = folder.to_file_path() {
+                            if let Some(folder) = folder.to_str() {
+                                if path.starts_with(folder) {
+                                    path = &path[folder.len() + 1..];
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                let value = format!("Defined in `{}` on line {}.", path, entry.range.start.line + 1);
+                let markup = MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value: value,
+                };
+
+                completion.documentation = Some(Documentation::MarkupContent(markup));
+                completions.push(completion);
+
+            }
+
+            indexer::IndexEntryData::Section { level: _, title: _ } => {}
+        }
+    });
+
+    Ok(())
 }

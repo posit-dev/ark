@@ -1,9 +1,9 @@
-// 
+//
 // kernel.rs
-// 
-// Copyright (C) 2022 by RStudio, PBC
-// 
-// 
+//
+// Copyright (C) 2022 by Posit, PBC
+//
+//
 
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::exception::Exception;
@@ -16,9 +16,17 @@ use amalthea::wire::execute_result::ExecuteResult;
 use amalthea::wire::input_request::InputRequest;
 use amalthea::wire::input_request::ShellInputRequest;
 use amalthea::wire::jupyter_message::Status;
-use extendr_api::prelude::*;
-use log::{debug, trace, warn};
+use anyhow::*;
+use harp::exec::RFunction;
+use harp::exec::RFunctionExt;
+use harp::object::RObject;
+use harp::r_symbol;
+use harp::utils::r_inherits;
+use libR_sys::*;
+use log::*;
 use serde_json::json;
+use std::result::Result::Err;
+use std::result::Result::Ok;
 use std::sync::mpsc::{Sender, SyncSender};
 
 use crate::request::Request;
@@ -67,13 +75,17 @@ impl Kernel {
     /// Completes the kernel's initialization
     pub fn complete_intialization(&mut self) {
         if self.initializing {
-            let ver = R!(R.version.string).unwrap();
-            let ver_str = ver.as_str().unwrap().to_string();
+            let version = unsafe {
+                let version = Rf_findVarInFrame(R_BaseNamespace, r_symbol!("R.version.string"));
+                RObject::new(version).to::<String>().unwrap()
+            };
+
             let kernel_info = KernelInfo {
-                version: ver_str.clone(),
+                version: version.clone(),
                 banner: self.banner.clone(),
             };
-            debug!("Sending kernel info: {}", ver_str);
+
+            debug!("Sending kernel info: {}", version);
             self.initializer.send(kernel_info).unwrap();
             self.initializing = false;
         } else {
@@ -132,35 +144,14 @@ impl Kernel {
     }
 
     /// Converts a data frame to HTML
-    pub fn to_html(frame: &Robj) -> String {
-        let names = frame.names().unwrap();
-        let mut th = String::from("<tr>");
-        for i in names {
-            let h = format!("<th>{}</th>", i);
-            th.push_str(h.as_str());
+    pub fn to_html(frame: SEXP) -> Result<String> {
+        unsafe {
+            let result = RFunction::from(".rs.format.toHtml")
+                .add(frame)
+                .call()?
+                .to::<String>()?;
+            Ok(result)
         }
-        th.push_str("</tr>");
-        let mut body = String::new();
-        for i in 1..5 {
-            body.push_str("<tr>");
-            for j in 1..(frame.len() + 1) {
-                trace!("formatting value at {}, {}", i, j);
-                if let Ok(col) = frame.index(i) {
-                    if let Ok(val) = col.index(j) {
-                        if let Ok(s) = call!("toString", val) {
-                            body.push_str(
-                                format!("<td>{}</td>", String::from_robj(&s).unwrap()).as_str(),
-                            )
-                        }
-                    }
-                }
-            }
-            body.push_str("</tr>");
-        }
-        format!(
-            "<table><thead>{}</thead><tbody>{}</tbody></table>",
-            th, body
-        )
     }
 
     /// Report an incomplete request to the front end
@@ -197,7 +188,7 @@ impl Kernel {
     /// Requests input from the front end
     pub fn request_input(&self, originator: &Vec<u8>, prompt: &str) {
         if let Some(requestor) = &self.input_requestor {
-            trace!("Requesting input from front end for prompt: {}", prompt);
+            trace!("Requesting input from front-end for prompt: {}", prompt);
             requestor
                 .send(ShellInputRequest {
                     originator: originator.clone(),
@@ -248,9 +239,18 @@ impl Kernel {
         let mut data = serde_json::Map::new();
         data.insert("text/plain".to_string(), json!(output));
         trace!("Formatting value");
-        let last = R!(.Last.value).unwrap();
-        if last.is_frame() {
-            data.insert("text/html".to_string(), json!(Kernel::to_html(&last)));
+
+        // Handle data.frame specially.
+        let value = unsafe { Rf_findVarInFrame(R_GlobalEnv, r_symbol!(".Last.value")) };
+        let is_data_frame = unsafe { r_inherits(value, "data.frame") };
+        if is_data_frame {
+            match Kernel::to_html(value) {
+                Ok(html) => data.insert("text/html".to_string(), json!(html)),
+                Err(error) => {
+                    error!("{:?}", error);
+                    None
+                }
+            };
         }
 
         trace!("Sending kernel output: {}", self.output);

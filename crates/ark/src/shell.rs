@@ -1,14 +1,12 @@
-// 
+//
 // shell.rs
-// 
-// Copyright (C) 2022 by RStudio, PBC
-// 
-// 
+//
+// Copyright (C) 2022 by Posit, PBC
+//
+//
 
-use crate::kernel::KernelInfo;
-use crate::lsp;
-use crate::request::Request;
 use amalthea::language::shell_handler::ShellHandler;
+use amalthea::language::lsp_handler::LspHandler;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::comm_info_reply::CommInfoReply;
 use amalthea::wire::comm_info_request::CommInfoRequest;
@@ -33,16 +31,25 @@ use amalthea::wire::kernel_info_reply::KernelInfoReply;
 use amalthea::wire::kernel_info_request::KernelInfoRequest;
 use amalthea::wire::language_info::LanguageInfo;
 use async_trait::async_trait;
-use log::{debug, trace, warn};
+use harp::object::RObject;
+use libR_sys::*;
+use log::*;
 use serde_json::json;
 use std::sync::mpsc::{channel, sync_channel, Receiver, Sender, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+use crate::kernel::KernelInfo;
+use crate::lsp;
+use crate::lsp::handler::Lsp;
+use crate::request::Request;
+
+
 pub struct Shell {
     req_sender: SyncSender<Request>,
     init_receiver: Arc<Mutex<Receiver<KernelInfo>>>,
     kernel_info: Option<KernelInfo>,
+    lsp: Lsp
 }
 
 impl Shell {
@@ -53,9 +60,10 @@ impl Shell {
         let (init_sender, init_receiver) = channel::<KernelInfo>();
         thread::spawn(move || Self::execution_thread(iopub_sender, req_receiver, init_sender));
         Self {
-            req_sender: req_sender,
+            req_sender: req_sender.clone(),
             init_receiver: Arc::new(Mutex::new(init_receiver)),
             kernel_info: None,
+            lsp: Lsp::new(req_sender)
         }
     }
 
@@ -76,11 +84,8 @@ impl Shell {
     }
 
     /// Starts the Language Server Protocol server thread
-    fn start_lsp(&self, msg: lsp::comm::StartLsp) {
-        let sender = self.request_sender();
-        thread::spawn(move || {
-            lsp::backend::start_lsp(msg.client_address, sender);
-        });
+    pub fn start_lsp(&self, client_address: String) {
+        self.lsp.start(client_address).unwrap();
     }
 }
 
@@ -155,26 +160,28 @@ impl ShellHandler for Shell {
     }
 
     /// Handle a request to test code for completion.
-    async fn handle_is_complete_request(
-        &self,
-        req: &IsCompleteRequest,
-    ) -> Result<IsCompleteReply, Exception> {
-        use extendr_api::prelude::*;
-        let code = req.code.clone();
-        if let Err(err) = call!("parse", text = code) {
-            debug!("Parse error: {:?}", err);
-            // TODO: We should distinguish between incomplete code and invalid code.
-            Ok(IsCompleteReply {
-                status: IsComplete::Incomplete,
-                indent: String::from("+"),
-            })
-        } else {
-            // Code parses
+    async fn handle_is_complete_request(&self, req: &IsCompleteRequest,) -> Result<IsCompleteReply, Exception> {
+
+        // Test if the code can be successfully parsed.
+        let mut ps : ParseStatus = 0;
+        unsafe {
+            let code = RObject::from(req.code.as_str());
+            R_ParseVector(*code, 1, &mut ps, R_NilValue);
+        }
+
+        // TODO: Handle incomplete parse, etc.
+        if ps == ParseStatus_PARSE_OK {
             Ok(IsCompleteReply {
                 status: IsComplete::Complete,
                 indent: String::from(""),
             })
+        } else {
+            Ok(IsCompleteReply {
+                status: IsComplete::Incomplete,
+                indent: String::from("+"),
+            })
         }
+
     }
 
     /// Handles an ExecuteRequest by sending the code to the R execution thread
@@ -238,7 +245,7 @@ impl ShellHandler for Shell {
                         "Received request to start LSP and connect to client at {}",
                         msg.client_address
                     );
-                    self.start_lsp(msg)
+                    self.start_lsp(msg.client_address);
                 }
                 Err(err) => {
                     warn!("Unexpected data for LSP comm: {:?} ({})", req.data, err);
@@ -277,7 +284,7 @@ impl ShellHandler for Shell {
         }
 
         // Let the shell thread know that we've executed the code.
-        trace!("Code sent to R: {}", req.code);
+        trace!("Input reply sent to R: {}", req.code);
         let result = receiver.recv().unwrap();
         if let ExecuteResponse::ReplyException(err) = result {
             warn!("Error in input reply: {:?}", err);

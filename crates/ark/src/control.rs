@@ -1,7 +1,7 @@
 /*
  * control.rs
  *
- * Copyright (C) 2022 by RStudio, PBC
+ * Copyright (C) 2022 by Posit, PBC
  *
  */
 
@@ -12,10 +12,11 @@ use amalthea::wire::jupyter_message::Status;
 use amalthea::wire::shutdown_reply::ShutdownReply;
 use amalthea::wire::shutdown_request::ShutdownRequest;
 use async_trait::async_trait;
-use log::{debug, warn};
+use log::*;
 use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
 use std::sync::mpsc::SyncSender;
+
 
 use crate::request::Request;
 

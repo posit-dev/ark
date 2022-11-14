@@ -1,6 +1,6 @@
-/*
- * util.rs
- *
- * Copyright (C) 2022 by RStudio, PBC
- *
- */
+//
+// util.rs
+//
+// Copyright (C) 2022 by Posit, PBC
+//
+//

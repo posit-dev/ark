@@ -1,7 +1,7 @@
 /*
  * main.rs
  *
- * Copyright (C) 2022 by RStudio, PBC
+ * Copyright (C) 2022 by Posit, PBC
  *
  */
 
@@ -31,12 +31,12 @@ fn start_kernel(connection_file: ConnectionFile) {
 
     let kernel = Kernel::new(connection_file);
     match kernel {
-        Ok(k) => match k.connect(shell, control, iopub_sender, iopub_receiver) {
+        Ok(k) => match k.connect(shell, control, None, iopub_sender, iopub_receiver) {
             Ok(()) => {
                 let mut s = String::new();
                 println!("Kernel activated, press Ctrl+C to end ");
                 if let Err(err) = stdin().read_line(&mut s) {
-                    error!("Could not read from stdin: {}", err);
+                    error!("Could not read from stdin: {:?}", err);
                 }
             }
             Err(err) => {
@@ -78,7 +78,7 @@ fn parse_file(connection_file: &String) {
     match ConnectionFile::from_file(connection_file) {
         Ok(connection) => {
             info!(
-                "Loaded connection information from front end in {}",
+                "Loaded connection information from front-end in {}",
                 connection_file
             );
             debug!("Connection data: {:?}", connection);
