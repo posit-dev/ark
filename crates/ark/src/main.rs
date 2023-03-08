@@ -18,6 +18,7 @@ use std::io::stdin;
 use std::sync::{Arc, Mutex};
 use stdext::unwrap;
 
+mod comm;
 mod control;
 mod environment;
 mod interface;
@@ -109,7 +110,7 @@ fn install_kernel_spec() {
 
     // Detect the active version of R and set the R_HOME environment variable
     // accordingly
-    let r_version = detect_r();
+    let r_version = detect_r().unwrap();
     env.insert(
         "R_HOME".to_string(),
         serde_json::Value::String(r_version.r_home.clone()),
@@ -140,9 +141,12 @@ fn install_kernel_spec() {
     println!(
         "Successfully installed Ark Jupyter kernelspec.
 
-    R:      {}
+    R ({}.{}.{}): {}
     Kernel: {}
     ",
+        r_version.major,
+        r_version.minor,
+        r_version.patch,
         r_version.r_home,
         dest.to_string_lossy()
     );
