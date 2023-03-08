@@ -18,7 +18,6 @@ use std::io::stdin;
 use std::sync::{Arc, Mutex};
 use stdext::unwrap;
 
-mod comm;
 mod control;
 mod environment;
 mod interface;
