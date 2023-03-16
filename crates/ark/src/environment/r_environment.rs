@@ -7,6 +7,7 @@
 use std::thread;
 
 use amalthea::comm::comm_channel::CommChannelMsg;
+use crossbeam::channel::select;
 use crossbeam::channel::unbounded;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
@@ -101,64 +102,96 @@ impl REnvironment {
         // Main message processing loop; we wait here for messages from the
         // front end and loop as long as the channel is open
         loop {
-            let msg = match channel_message_rx.recv() {
-                Ok(msg) => msg,
-                Err(e) => {
-                    // We failed to receive a message from the front end. This
-                    // is usually not a transient issue and indicates that the
-                    // channel is closed, so allowing the thread to exit is
-                    // appropriate. Retrying is likely to just lead to a busy
-                    // loop.
-                    error!(
-                        "Environment: Error receiving message from front end: {:?}",
-                        e
-                    );
 
-                    break;
+            select! {
+                recv(&prompt_signal_rx) -> msg => {
+                    if let Ok(()) = msg {
+                        self.update();
+                    }
                 },
-            };
-            debug!("Environment: Received message from front end: {:?}", msg);
 
-            // Break out of the loop if the front end has closed the channel
-            if msg == CommChannelMsg::Close {
-                debug!("Environment: Closing down after receiving comm_close from front end.");
+                recv(&self.channel_msg_rx) -> msg => {
+                    let msg = match msg {
+                        Ok(msg) => msg,
+                        Err(e) => {
+                            // We failed to receive a message from the front end. This
+                            // is usually not a transient issue and indicates that the
+                            // channel is closed, so allowing the thread to exit is
+                            // appropriate. Retrying is likely to just lead to a busy
+                            // loop.
+                            error!(
+                                "Environment: Error receiving message from front end: {:?}",
+                                e
+                            );
 
-                // Remember that the user initiated the close so that we can
-                // avoid sending a duplicate close message from the back end
-                user_initiated_close = true;
-                break;
-            }
+                            break;
+                        },
+                    };
+                    debug!("Environment: Received message from front end: {:?}", msg);
 
-            // Process ordinary data messages
-            if let CommChannelMsg::Data(data) = msg {
-                let message = match serde_json::from_value::<EnvironmentMessage>(data) {
-                    Ok(m) => m,
-                    Err(err) => {
-                        error!(
-                            "Environment: Received invalid message from front end. {}",
-                            err
-                        );
-                        continue;
-                    },
-                };
+                    // Break out of the loop if the front end has closed the channel
+                    if msg == CommChannelMsg::Close {
+                        debug!("Environment: Closing down after receiving comm_close from front end.");
 
-                // Match on the type of data received.
-                match message {
-                    // This is a request to refresh the environment list, so
-                    // perform a full environment scan and deliver to the
-                    // front end
-                    EnvironmentMessage::Refresh => {
-                        self.refresh();
-                    },
+                        // Remember that the user initiated the close so that we can
+                        // avoid sending a duplicate close message from the back end
+                        user_initiated_close = true;
+                        break;
+                    }
 
-                    _ => {
-                        error!(
-                            "Environment: Don't know how to handle message type '{:?}'",
-                            message
-                        );
-                    },
+                    // Process ordinary data messages
+                    if let CommChannelMsg::Data(data) = msg {
+                        let message = match serde_json::from_value::<EnvironmentMessage>(data) {
+                            Ok(m) => m,
+                            Err(err) => {
+                                error!(
+                                    "Environment: Received invalid message from front end. {}",
+                                    err
+                                );
+                                continue;
+                            },
+                        };
+
+                        // Match on the type of data received.
+                        match message {
+                            // This is a request to refresh the environment list, so
+                            // perform a full environment scan and deliver to the
+                            // front end
+                            EnvironmentMessage::Refresh => {
+                                self.refresh();
+                            },
+
+                            _ => {
+                                error!(
+                                    "Environment: Don't know how to handle message type '{:?}'",
+                                    message
+                                );
+                            },
+                        }
+                    }
                 }
             }
+
+            let mut sel = Select::new();
+
+            // Listen to the comm
+            sel.recv(&self.channel_msg_rx);
+
+            // Listen to R events
+            sel.recv(&prompt_signal_rx);
+
+            // Wait until a message is received (blocking call)
+            let oper = sel.select();
+
+            if oper.index() == 1 {
+                if let Ok(()) = oper.recv(&prompt_signal_rx) {
+                    self.update();
+                }
+
+                continue;
+            }
+
+
         }
 
         SIGNALS.console_prompt.remove(listen_id);
