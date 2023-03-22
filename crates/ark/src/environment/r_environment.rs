@@ -210,45 +210,16 @@ impl REnvironment {
             }
 
         }
-        let env_list = EnvironmentMessage::List(EnvironmentMessageList { variables });
-        self.send_message(env_list, request_id);
-    }
 
-    /**
-     * Clear the environment. Uses rm(envir = <env>, list = ls(<env>, all.names = TRUE))
-     */
-    fn clear(&mut self, request_id: Option<String>) {
-        unsafe {
-            let result =  with_r_lock(|| -> Result<(), anyhow::Error> {
-                let list = RFunction::new("base", "ls")
-                    .param("envir", *self.env)
-                    .param("all.names", Rf_ScalarLogical(1))
-                    .call()?;
+        // TODO: Avoid serializing the full list of variables if it exceeds a
+        // certain threshold
+        let env_size = variables.len();
+        let env_list = EnvironmentMessage::List(EnvironmentMessageList {
+            variables,
+            length: env_size,
+        });
 
-                RFunction::new("base", "rm")
-                    .param("list", list)
-                    .param("envir", *self.env)
-                    .call()?;
-
-                Ok(())
-            });
-
-            let msg = match result {
-                Ok(_) => EnvironmentMessage::Success,
-                Err(_) => {
-                    EnvironmentMessage::Error(EnvironmentMessageError {
-                        message: String::from("Failed to clear the environment")
-                    })
-                }
-            };
-
-            self.send_message(msg, request_id);
-        }
-    }
-
-    fn send_message(&mut self, message: EnvironmentMessage, request_id: Option<String>) {
-        let data = serde_json::to_value(message);
-
+        let data = serde_json::to_value(env_list);
         match data {
             Ok(data) => {
                 // If we were given a request ID, send the response as an RPC;
