@@ -243,10 +243,7 @@ impl REnvironment {
             };
 
             self.send_message(msg, request_id);
-
         }
-
-
     }
 
     fn send_message(&mut self, message: EnvironmentMessage, request_id: Option<String>) {
