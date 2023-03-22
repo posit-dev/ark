@@ -19,6 +19,7 @@ use harp::lock::with_r_lock;
 use harp::object::RObject;
 use harp::r_lock;
 use harp::utils::r_assert_type;
+use harp::vector::CharacterVector;
 use libR_sys::*;
 use log::debug;
 use log::error;
@@ -217,7 +218,51 @@ impl REnvironment {
             length: env_size,
         });
 
-        let data = serde_json::to_value(env_list);
+        self.send_message(env_list, request_id);
+    }
+
+    /**
+     * Clear the environment. Uses rm(envir = <env>, list = ls(<env>, all.names = TRUE))
+     */
+    fn clear(&mut self, request_id: Option<String>) {
+        unsafe {
+            let result =  with_r_lock(|| -> Result<(), anyhow::Error> {
+                let mut list = RFunction::new("base", "ls")
+                    .param("envir", *self.env)
+                    .param("all.names", Rf_ScalarLogical(1))
+                    .call()?;
+
+                if *self.env == R_GlobalEnv {
+                    list = RFunction::new("base", "setdiff")
+                        .add(list)
+                        .add(RObject::from(".Random.seed"))
+                        .call()?;
+                }
+
+                RFunction::new("base", "rm")
+                    .param("list", list)
+                    .param("envir", *self.env)
+                    .call()?;
+
+                Ok(())
+            });
+
+            let msg = match result {
+                Ok(_) => EnvironmentMessage::Success,
+                Err(_) => {
+                    EnvironmentMessage::Error(EnvironmentMessageError {
+                        message: String::from("Failed to clear the environment")
+                    })
+                }
+            };
+
+            self.send_message(msg, request_id);
+        }
+    }
+
+    fn send_message(&mut self, message: EnvironmentMessage, request_id: Option<String>) {
+        let data = serde_json::to_value(message);
+
         match data {
             Ok(data) => {
                 // If we were given a request ID, send the response as an RPC;
