@@ -27,6 +27,8 @@ use log::warn;
 use crate::environment::message::EnvironmentMessage;
 use crate::environment::message::EnvironmentMessageClear;
 use crate::environment::message::EnvironmentMessageDelete;
+use crate::environment::message::EnvironmentMessageDetails;
+use crate::environment::message::EnvironmentMessageInspect;
 use crate::environment::message::EnvironmentMessageList;
 use crate::environment::message::EnvironmentMessageUpdate;
 use crate::environment::variable::EnvironmentVariable;
@@ -163,6 +165,10 @@ impl REnvironment {
                                 self.delete(variables, Some(id));
                             },
 
+                            EnvironmentMessage::Inspect(EnvironmentMessageInspect{path}) => {
+                                self.inspect(path, Some(id));
+                            },
+
                             _ => {
                                 error!(
                                     "Environment: Don't know how to handle message type '{:?}'",
@@ -277,6 +283,20 @@ impl REnvironment {
 
         // and then update
         self.update(request_id);
+    }
+
+    fn inspect(&mut self, path: Vec<String>, request_id: Option<String>) {
+        let children = r_lock!{
+            EnvironmentVariable::inspect(RObject::new(*self.env), path.clone())
+        };
+        let length = children.len();
+        let msg = EnvironmentMessage::Details(EnvironmentMessageDetails {
+            path,
+            children,
+            length
+        });
+
+        self.send_message(msg, request_id);
     }
 
     fn send_message(&mut self, message: EnvironmentMessage, request_id: Option<String>) {
