@@ -256,13 +256,16 @@ impl Binding {
 }
 
 pub fn has_children(value: SEXP) -> bool {
-    match r_typeof(value) {
-        // TODO: consider if we'd want to be able to see the components of a POSIXlt
-        VECSXP  => !unsafe{ r_inherits(value, "POSIXlt") },
-        LISTSXP => true,
-        ENVSXP => true,
+    if unsafe {ATTRIB(value) != R_NilValue} {
+        true
+    } else {
+        match r_typeof(value) {
+            VECSXP  => !unsafe{ r_inherits(value, "POSIXlt") },
+            LISTSXP => true,
+            ENVSXP => true,
 
-        _       => false
+            _       => false
+        }
     }
 }
 
