@@ -51,9 +51,9 @@ pub static mut S4_OBJECT_MASK: libc::c_uint = 1 << 4;
 
 impl Sxpinfo {
 
-    pub fn interpret(frame: &SEXP) -> &Self {
+    pub fn interpret(x: &SEXP) -> &Self {
         unsafe {
-            (*frame as *mut Sxpinfo).as_ref().unwrap()
+            (*x as *mut Sxpinfo).as_ref().unwrap()
         }
     }
 
@@ -247,7 +247,6 @@ impl Binding {
 
     pub fn has_children(&self) -> bool {
         match self.kind {
-            // TODO: for now only lists have children
             BindingKind::Regular => has_children(self.value),
             BindingKind::Promise(true) => has_children(unsafe{PRVALUE(self.value)}),
 
@@ -261,11 +260,12 @@ impl Binding {
 }
 
 pub fn has_children(value: SEXP) -> bool {
-    if unsafe {ATTRIB(value) != R_NilValue} {
+    let info = Sxpinfo::interpret(&value);
+    if info.is_s4() {
         true
     } else {
         match r_typeof(value) {
-            VECSXP  => !unsafe{ r_inherits(value, "POSIXlt") },
+            VECSXP  => unsafe { XLENGTH(value) != 0 } ,
             LISTSXP => true,
             ENVSXP => true,
 
@@ -369,8 +369,57 @@ fn pairlist_size(mut pairlist: SEXP) -> Result<isize, crate::error::Error> {
         while pairlist != R_NilValue {
             r_assert_type(pairlist, &[LISTSXP])?;
 
-            pairlist = CDR(pairlist);
-            n = n + 1;
+        let mut n = 0;
+        let mut pairlist = value;
+        unsafe {
+            while pairlist != R_NilValue {
+                if r_typeof(pairlist) != LISTSXP {
+                    return BindingType::simple(String::from("pairlist [?]"));
+                }
+                pairlist = CDR(pairlist);
+                n = n + 1;
+            }
+        }
+
+        BindingType::simple(format!("pairlist [{}]", n))
+    } else if rtype == VECSXP {
+        unsafe {
+            if r_inherits(value, "data.frame") {
+                let dfclass = first_class(value).unwrap();
+
+                let dim = RFunction::new("base", "dim.data.frame")
+                    .add(value)
+                    .call()
+                    .unwrap();
+
+                let dim = IntegerVector::new(dim).unwrap();
+                let shape = dim.format(",", 0).1;
+
+                BindingType::simple(
+                    format!("{} [{}]", dfclass, shape)
+                )
+            } else {
+                match first_class(value) {
+                    None => BindingType::simple(format!("list [{}]", XLENGTH(value))),
+                    Some(class) => {
+                        BindingType::new(class, all_classes(value))
+                    }
+                }
+                // TODO: should type_info be different ?
+                // TODO: deal with record types, e.g. POSIXlt
+            }
+        }
+    } else if rtype == SYMSXP {
+        BindingType::simple(String::from("symbol"))
+    } else if rtype == CLOSXP {
+        BindingType::simple(String::from("function"))
+    } else if rtype == ENVSXP {
+        BindingType::simple(String::from("environment"))
+    } else {
+        let class = first_class(value);
+        match class {
+            Some(class) => BindingType::new(class, all_classes(value)),
+            None        => BindingType::simple(String::from("???"))
         }
     }
     Ok(n)
