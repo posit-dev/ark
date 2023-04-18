@@ -147,8 +147,8 @@ impl RObject {
         Sxpinfo::interpret(&self.sexp).is_s4()
     }
 
-    pub fn is_altrep(&self) -> bool {
-        Sxpinfo::interpret(&self.sexp).is_altrep()
+    pub fn is_object(&self) -> bool {
+        Sxpinfo::interpret(&self.sexp).is_object()
     }
 
 }
