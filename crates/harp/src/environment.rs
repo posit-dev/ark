@@ -316,13 +316,17 @@ impl Environment {
         EnvironmentIter::new(&self)
     }
 
-    pub fn is_empty(&self) -> bool {
-        self
-            .iter()
-            .filter(|b| !b.is_hidden())
-            .next()
-            .is_none()
+    pub fn exists(&self, name: impl Into<RSymbol>) -> bool {
+        unsafe {
+            R_existsVarInFrame(self.env.sexp, *name.into()) == Rboolean_TRUE
+        }
     }
+
+    pub fn find(&self, name: impl Into<RSymbol>) -> SEXP {
+        let name = name.into();
+        unsafe { Rf_findVarInFrame(self.env.sexp, *name) }
+    }
+
 }
 
 #[cfg(test)]
