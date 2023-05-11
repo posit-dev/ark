@@ -1,19 +1,14 @@
-// 
+//
 // shell.rs
-// 
-// Copyright (C) 2022 by RStudio, PBC
-// 
-// 
+//
+// Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+//
+//
 
-use crate::kernel::KernelInfo;
-use crate::lsp;
-use crate::request::Request;
+use amalthea::comm::comm_channel::Comm;
 use amalthea::language::shell_handler::ShellHandler;
+use amalthea::socket::comm::CommSocket;
 use amalthea::socket::iopub::IOPubMessage;
-use amalthea::wire::comm_info_reply::CommInfoReply;
-use amalthea::wire::comm_info_request::CommInfoRequest;
-use amalthea::wire::comm_msg::CommMsg;
-use amalthea::wire::comm_open::CommOpen;
 use amalthea::wire::complete_reply::CompleteReply;
 use amalthea::wire::complete_request::CompleteRequest;
 use amalthea::wire::exception::Exception;
@@ -33,54 +28,91 @@ use amalthea::wire::kernel_info_reply::KernelInfoReply;
 use amalthea::wire::kernel_info_request::KernelInfoRequest;
 use amalthea::wire::language_info::LanguageInfo;
 use async_trait::async_trait;
-use log::{debug, trace, warn};
+use bus::Bus;
+use bus::BusReader;
+use crossbeam::channel::unbounded;
+use crossbeam::channel::Receiver;
+use crossbeam::channel::Sender;
+use harp::exec::r_parse_vector;
+use harp::exec::ParseResult;
+use harp::object::RObject;
+use harp::r_lock;
+use libR_sys::*;
+use log::*;
 use serde_json::json;
-use std::sync::mpsc::{channel, sync_channel, Receiver, Sender, SyncSender};
-use std::sync::{Arc, Mutex};
-use std::thread;
+use stdext::spawn;
+
+use crate::environment::r_environment::REnvironment;
+use crate::kernel::KernelInfo;
+use crate::request::Request;
 
 pub struct Shell {
-    req_sender: SyncSender<Request>,
-    init_receiver: Arc<Mutex<Receiver<KernelInfo>>>,
+    shell_request_tx: Sender<Request>,
+    kernel_init_rx: BusReader<KernelInfo>,
     kernel_info: Option<KernelInfo>,
+}
+
+#[derive(Debug)]
+pub enum REvent {
+    Prompt,
 }
 
 impl Shell {
     /// Creates a new instance of the shell message handler.
-    pub fn new(iopub: SyncSender<IOPubMessage>) -> Self {
-        let iopub_sender = iopub.clone();
-        let (req_sender, req_receiver) = sync_channel::<Request>(1);
-        let (init_sender, init_receiver) = channel::<KernelInfo>();
-        thread::spawn(move || Self::execution_thread(iopub_sender, req_receiver, init_sender));
+    pub fn new(
+        iopub_tx: Sender<IOPubMessage>,
+        shell_request_tx: Sender<Request>,
+        shell_request_rx: Receiver<Request>,
+        kernel_init_tx: Bus<KernelInfo>,
+        kernel_init_rx: BusReader<KernelInfo>,
+    ) -> Self {
+        let iopub_tx = iopub_tx.clone();
+        spawn!("ark-r-main-thread", move || {
+            Self::execution_thread(iopub_tx, kernel_init_tx, shell_request_rx);
+        });
+
         Self {
-            req_sender: req_sender,
-            init_receiver: Arc::new(Mutex::new(init_receiver)),
+            shell_request_tx,
+            kernel_init_rx,
             kernel_info: None,
         }
     }
 
     /// Starts the R execution thread (does not return)
     pub fn execution_thread(
-        sender: SyncSender<IOPubMessage>,
-        receiver: Receiver<Request>,
-        initializer: Sender<KernelInfo>,
+        iopub_tx: Sender<IOPubMessage>,
+        kernel_init_tx: Bus<KernelInfo>,
+        shell_request_rx: Receiver<Request>,
     ) {
         // Start kernel (does not return)
-        crate::interface::start_r(sender, receiver, initializer);
+        crate::interface::start_r(iopub_tx, kernel_init_tx, shell_request_rx);
     }
 
     /// Returns a sender channel for the R execution thread; used outside the
     /// shell handler
-    pub fn request_sender(&self) -> SyncSender<Request> {
-        self.req_sender.clone()
+    pub fn request_tx(&self) -> Sender<Request> {
+        self.shell_request_tx.clone()
     }
 
-    /// Starts the Language Server Protocol server thread
-    fn start_lsp(&self, msg: lsp::comm::StartLsp) {
-        let sender = self.request_sender();
-        thread::spawn(move || {
-            lsp::backend::start_lsp(msg.client_address, sender);
-        });
+    /// SAFETY: Requires the R runtime lock.
+    unsafe fn handle_is_complete_request_impl(
+        &self,
+        req: &IsCompleteRequest,
+    ) -> Result<IsCompleteReply, Exception> {
+        match r_parse_vector(req.code.as_str()) {
+            Ok(ParseResult::Complete(_)) => Ok(IsCompleteReply {
+                status: IsComplete::Complete,
+                indent: String::from(""),
+            }),
+            Ok(ParseResult::Incomplete()) => Ok(IsCompleteReply {
+                status: IsComplete::Incomplete,
+                indent: String::from("+"),
+            }),
+            Err(_) => Ok(IsCompleteReply {
+                status: IsComplete::Invalid,
+                indent: String::from(""),
+            }),
+        }
     }
 }
 
@@ -101,7 +133,7 @@ impl ShellHandler for Shell {
         //    ready.
         if self.kernel_info.is_none() {
             trace!("Got kernel info request; waiting for R to complete initialization");
-            self.kernel_info = Some(self.init_receiver.lock().unwrap().recv().unwrap());
+            self.kernel_info = Some(self.kernel_init_rx.recv().unwrap());
         } else {
             trace!("R already started, using existing kernel information")
         }
@@ -140,40 +172,13 @@ impl ShellHandler for Shell {
         })
     }
 
-    /// Handle a request for open comms
-    async fn handle_comm_info_request(
-        &self,
-        _req: &CommInfoRequest,
-    ) -> Result<CommInfoReply, Exception> {
-        let comms = json!({
-            lsp::comm::LSP_COMM_ID: "Language Server Protocol"
-        });
-        Ok(CommInfoReply {
-            status: Status::Ok,
-            comms: comms,
-        })
-    }
-
     /// Handle a request to test code for completion.
     async fn handle_is_complete_request(
         &self,
         req: &IsCompleteRequest,
     ) -> Result<IsCompleteReply, Exception> {
-        use extendr_api::prelude::*;
-        let code = req.code.clone();
-        if let Err(err) = call!("parse", text = code) {
-            debug!("Parse error: {:?}", err);
-            // TODO: We should distinguish between incomplete code and invalid code.
-            Ok(IsCompleteReply {
-                status: IsComplete::Incomplete,
-                indent: String::from("+"),
-            })
-        } else {
-            // Code parses
-            Ok(IsCompleteReply {
-                status: IsComplete::Complete,
-                indent: String::from(""),
-            })
+        r_lock! {
+            self.handle_is_complete_request_impl(req)
         }
     }
 
@@ -184,8 +189,8 @@ impl ShellHandler for Shell {
         originator: &Vec<u8>,
         req: &ExecuteRequest,
     ) -> Result<ExecuteReply, ExecuteReplyException> {
-        let (sender, receiver) = channel::<ExecuteResponse>();
-        if let Err(err) = self.req_sender.send(Request::ExecuteCode(
+        let (sender, receiver) = unbounded::<ExecuteResponse>();
+        if let Err(err) = self.shell_request_tx.send(Request::ExecuteCode(
             req.clone(),
             originator.clone(),
             sender,
@@ -213,10 +218,10 @@ impl ShellHandler for Shell {
         let data = match req.code.as_str() {
             "err" => {
                 json!({"text/plain": "This generates an error!"})
-            }
+            },
             "teapot" => {
                 json!({"text/plain": "This is clearly a teapot."})
-            }
+            },
             _ => serde_json::Value::Null,
         };
         Ok(InspectReply {
@@ -228,35 +233,28 @@ impl ShellHandler for Shell {
     }
 
     /// Handles a request to open a new comm channel
-    async fn handle_comm_open(&self, req: &CommOpen) -> Result<(), Exception> {
-        if req.comm_id.eq(lsp::comm::LSP_COMM_ID) {
-            // TODO: If LSP is already started, don't start another one
-            let data = serde_json::from_value::<lsp::comm::StartLsp>(req.data.clone());
-            match data {
-                Ok(msg) => {
-                    debug!(
-                        "Received request to start LSP and connect to client at {}",
-                        msg.client_address
-                    );
-                    self.start_lsp(msg)
+    async fn handle_comm_open(
+        &self,
+        target: Comm,
+        comm: CommSocket,
+    ) -> Result<bool, Exception> {
+        match target {
+            Comm::Environment => {
+                r_lock! {
+                    let global_env = RObject::view(R_GlobalEnv);
+                    REnvironment::start(global_env, comm.clone());
+                    Ok(true)
                 }
-                Err(err) => {
-                    warn!("Unexpected data for LSP comm: {:?} ({})", req.data, err);
-                }
-            }
-        } else {
-            warn!("Request to open unknown comm: {:?}", req.data);
+            },
+            _ => Ok(false),
         }
-        Ok(())
-    }
-
-    async fn handle_comm_msg(&self, _req: &CommMsg) -> Result<(), Exception> {
-        // NYI
-        Ok(())
     }
 
     /// Handles a reply to an input_request; forwarded from the Stdin channel
-    async fn handle_input_reply(&self, msg: &InputReply) -> Result<(), Exception> {
+    async fn handle_input_reply(
+        &self,
+        msg: &InputReply,
+    ) -> Result<(), Exception> {
         // Send the input reply to R in the form of an ordinary execution request.
         let req = ExecuteRequest {
             code: msg.value.clone(),
@@ -267,8 +265,8 @@ impl ShellHandler for Shell {
             stop_on_error: false,
         };
         let originator = Vec::new();
-        let (sender, receiver) = channel::<ExecuteResponse>();
-        if let Err(err) = self.req_sender.send(Request::ExecuteCode(
+        let (sender, receiver) = unbounded::<ExecuteResponse>();
+        if let Err(err) = self.shell_request_tx.send(Request::ExecuteCode(
             req.clone(),
             originator.clone(),
             sender,
@@ -277,7 +275,7 @@ impl ShellHandler for Shell {
         }
 
         // Let the shell thread know that we've executed the code.
-        trace!("Code sent to R: {}", req.code);
+        trace!("Input reply sent to R: {}", req.code);
         let result = receiver.recv().unwrap();
         if let ExecuteResponse::ReplyException(err) = result {
             warn!("Error in input reply: {:?}", err);
@@ -285,8 +283,11 @@ impl ShellHandler for Shell {
         Ok(())
     }
 
-    fn establish_input_handler(&mut self, handler: SyncSender<ShellInputRequest>) {
-        self.req_sender
+    fn establish_input_handler(
+        &mut self,
+        handler: Sender<ShellInputRequest>,
+    ) {
+        self.shell_request_tx
             .send(Request::EstablishInputChannel(handler))
             .unwrap();
     }

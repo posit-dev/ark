@@ -1,14 +1,12 @@
 /*
  * shell_handler.rs
  *
- * Copyright (C) 2022 by RStudio, PBC
+ * Copyright (C) 2022 Posit Software, PBC. All rights reserved.
  *
  */
 
-use crate::wire::comm_info_reply::CommInfoReply;
-use crate::wire::comm_info_request::CommInfoRequest;
-use crate::wire::comm_msg::CommMsg;
-use crate::wire::comm_open::CommOpen;
+use crate::comm::comm_channel::Comm;
+use crate::socket::comm::CommSocket;
 use crate::wire::complete_reply::CompleteReply;
 use crate::wire::complete_request::CompleteRequest;
 use crate::wire::exception::Exception;
@@ -24,9 +22,8 @@ use crate::wire::is_complete_request::IsCompleteRequest;
 use crate::wire::kernel_info_reply::KernelInfoReply;
 use crate::wire::kernel_info_request::KernelInfoRequest;
 
-use std::sync::mpsc::SyncSender;
-
 use async_trait::async_trait;
+use crossbeam::channel::Sender;
 
 #[async_trait]
 pub trait ShellHandler: Send {
@@ -67,29 +64,21 @@ pub trait ShellHandler: Send {
         req: &CompleteRequest,
     ) -> Result<CompleteReply, Exception>;
 
-    /// Handles a request to return info on open comms.
-    ///
-    /// Docs: https://jupyter-client.readthedocs.io/en/stable/messaging.html#comm-info
-    async fn handle_comm_info_request(
-        &self,
-        req: &CommInfoRequest,
-    ) -> Result<CommInfoReply, Exception>;
-
     /// Handles a request to inspect a fragment of code.
     ///
     /// Docs: https://jupyter-client.readthedocs.io/en/stable/messaging.html#introspection
     async fn handle_inspect_request(&self, req: &InspectRequest)
         -> Result<InspectReply, Exception>;
 
-    /// Handles a request to send a message to a comm.
-    ///
-    /// Docs: https://jupyter-client.readthedocs.io/en/stable/messaging.html#comm-messages
-    async fn handle_comm_msg(&self, msg: &CommMsg) -> Result<(), Exception>;
-
     /// Handles a request to open a comm.
     ///
     /// https://jupyter-client.readthedocs.io/en/stable/messaging.html#opening-a-comm
-    async fn handle_comm_open(&self, msg: &CommOpen) -> Result<(), Exception>;
+    ///
+    /// Returns true if the handler handled the request (and opened the comm), false if it did not.
+    ///
+    /// * `target` - The target name of the comm, such as `positron.environment`
+    /// * `comm` - The comm channel to use to communicate with the front end
+    async fn handle_comm_open(&self, target: Comm, comm: CommSocket) -> Result<bool, Exception>;
 
     /// Handles a reply to a request for input from the front end (from stdin socket)
     ///
@@ -102,5 +91,5 @@ pub trait ShellHandler: Send {
     /// input and deliver it via the `handle_input_reply` method.
     ///
     /// https://jupyter-client.readthedocs.io/en/stable/messaging.html#messages-on-the-stdin-router-dealer-channel
-    fn establish_input_handler(&mut self, handler: SyncSender<ShellInputRequest>);
+    fn establish_input_handler(&mut self, handler: Sender<ShellInputRequest>);
 }

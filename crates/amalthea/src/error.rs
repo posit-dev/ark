@@ -1,7 +1,7 @@
 /*
  * error.rs
  *
- * Copyright (C) 2022 by RStudio, PBC
+ * Copyright (C) 2022 Posit Software, PBC. All rights reserved.
  *
  */
 
@@ -37,6 +37,10 @@ pub enum Error {
     ReceiveError(String),
     ZmqError(String, zmq::Error),
     CannotLockSocket(String, String),
+    SysError(String, nix::Error),
+    UnknownCommName(String),
+    UnknownCommId(String),
+    InvalidCommMessage(String, String, String),
 }
 
 impl fmt::Display for Error {
@@ -161,6 +165,18 @@ impl fmt::Display for Error {
             }
             Error::CannotLockSocket(name, op) => {
                 write!(f, "Cannot lock ZeroMQ socket '{}' for {}", name, op)
+            }
+            Error::SysError(context, err) => {
+                write!(f, "{} failed: system/libc error '{}'", context, err)
+            }
+            Error::UnknownCommName(target) => {
+                write!(f, "The comm target name '{}' is not recognized or not supported.", target)
+            }
+            Error::UnknownCommId(id) => {
+                write!(f, "The comm id '{}' does not exist.", id)
+            }
+            Error::InvalidCommMessage(id, msg, err) => {
+                write!(f, "Message '{}' sent to comm '{}' is invalid: {}", msg, id, err)
             }
         }
     }

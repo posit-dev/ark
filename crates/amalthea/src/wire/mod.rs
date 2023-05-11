@@ -1,10 +1,12 @@
 /*
  * mod.rs
  *
- * Copyright (C) 2022 by RStudio, PBC
+ * Copyright (C) 2022 Posit Software, PBC. All rights reserved.
  *
  */
 
+pub mod client_event;
+pub mod comm_close;
 pub mod comm_info_reply;
 pub mod comm_info_request;
 pub mod comm_msg;

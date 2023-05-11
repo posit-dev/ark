@@ -1,16 +1,14 @@
 /*
  * shell.rs
  *
- * Copyright (C) 2022 by RStudio, PBC
+ * Copyright (C) 2022 Posit Software, PBC. All rights reserved.
  *
  */
 
+use amalthea::comm::comm_channel::Comm;
 use amalthea::language::shell_handler::ShellHandler;
+use amalthea::socket::comm::CommSocket;
 use amalthea::socket::iopub::IOPubMessage;
-use amalthea::wire::comm_info_reply::CommInfoReply;
-use amalthea::wire::comm_info_request::CommInfoRequest;
-use amalthea::wire::comm_msg::CommMsg;
-use amalthea::wire::comm_open::CommOpen;
 use amalthea::wire::complete_reply::CompleteReply;
 use amalthea::wire::complete_request::CompleteRequest;
 use amalthea::wire::exception::Exception;
@@ -32,22 +30,22 @@ use amalthea::wire::kernel_info_reply::KernelInfoReply;
 use amalthea::wire::kernel_info_request::KernelInfoRequest;
 use amalthea::wire::language_info::LanguageInfo;
 use async_trait::async_trait;
+use crossbeam::channel::Sender;
 use log::warn;
 use serde_json::json;
-use std::sync::mpsc::SyncSender;
 
 pub struct Shell {
-    iopub: SyncSender<IOPubMessage>,
-    input_sender: Option<SyncSender<ShellInputRequest>>,
+    iopub: Sender<IOPubMessage>,
+    input_tx: Option<Sender<ShellInputRequest>>,
     execution_count: u32,
 }
 
 impl Shell {
-    pub fn new(iopub: SyncSender<IOPubMessage>) -> Self {
+    pub fn new(iopub: Sender<IOPubMessage>) -> Self {
         Self {
             iopub: iopub,
             execution_count: 0,
-            input_sender: None,
+            input_tx: None,
         }
     }
 }
@@ -88,18 +86,6 @@ impl ShellHandler for Shell {
             cursor_start: 0,
             cursor_end: 0,
             metadata: json!({}),
-        })
-    }
-
-    /// Handle a request for open comms
-    async fn handle_comm_info_request(
-        &self,
-        _req: &CommInfoRequest,
-    ) -> Result<CommInfoReply, Exception> {
-        // No comms in this toy implementation.
-        Ok(CommInfoReply {
-            status: Status::Ok,
-            comms: serde_json::Value::Null,
         })
     }
 
@@ -198,10 +184,10 @@ impl ShellHandler for Shell {
         let data = match req.code.as_str() {
             "err" => {
                 json!({"text/plain": "This generates an error!"})
-            }
+            },
             "teapot" => {
                 json!({"text/plain": "This is clearly a teapot."})
-            }
+            },
             _ => serde_json::Value::Null,
         };
         Ok(InspectReply {
@@ -212,14 +198,9 @@ impl ShellHandler for Shell {
         })
     }
 
-    async fn handle_comm_open(&self, _req: &CommOpen) -> Result<(), Exception> {
-        // NYI
-        Ok(())
-    }
-
-    async fn handle_comm_msg(&self, _req: &CommMsg) -> Result<(), Exception> {
-        // NYI
-        Ok(())
+    async fn handle_comm_open(&self, _target: Comm, _comm: CommSocket) -> Result<bool, Exception> {
+        // No comms in this toy implementation.
+        Ok(false)
     }
 
     async fn handle_input_reply(&self, _msg: &InputReply) -> Result<(), Exception> {
@@ -227,7 +208,7 @@ impl ShellHandler for Shell {
         Ok(())
     }
 
-    fn establish_input_handler(&mut self, handler: SyncSender<ShellInputRequest>) {
-        self.input_sender = Some(handler);
+    fn establish_input_handler(&mut self, handler: Sender<ShellInputRequest>) {
+        self.input_tx = Some(handler);
     }
 }

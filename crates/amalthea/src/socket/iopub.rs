@@ -1,12 +1,17 @@
 /*
  * iopub.rs
  *
- * Copyright (C) 2022 by RStudio, PBC
+ * Copyright (C) 2022 Posit Software, PBC. All rights reserved.
  *
  */
 
 use crate::error::Error;
+use crate::events::PositronEvent;
 use crate::socket::socket::Socket;
+use crate::wire::client_event::ClientEvent;
+use crate::wire::comm_close::CommClose;
+use crate::wire::comm_msg::CommMsg;
+use crate::wire::comm_open::CommOpen;
 use crate::wire::execute_error::ExecuteError;
 use crate::wire::execute_input::ExecuteInput;
 use crate::wire::execute_result::ExecuteResult;
@@ -16,8 +21,8 @@ use crate::wire::jupyter_message::ProtocolMessage;
 use crate::wire::status::ExecutionState;
 use crate::wire::status::KernelStatus;
 use crate::wire::stream::StreamOutput;
+use crossbeam::channel::Receiver;
 use log::{trace, warn};
-use std::sync::mpsc::Receiver;
 
 pub struct IOPub {
     /// The underlying IOPub socket
@@ -40,6 +45,11 @@ pub enum IOPubMessage {
     ExecuteError(ExecuteError),
     ExecuteInput(ExecuteInput),
     Stream(StreamOutput),
+    Event(PositronEvent),
+    CommOpen(CommOpen),
+    CommMsgReply(JupyterHeader, CommMsg),
+    CommMsgEvent(CommMsg),
+    CommClose(String),
 }
 
 impl IOPub {
@@ -67,7 +77,7 @@ impl IOPub {
                 Err(err) => {
                     warn!("Failed to receive iopub message: {}", err);
                     continue;
-                }
+                },
             };
             if let Err(err) = self.process_message(message) {
                 warn!("Error delivering iopub message: {}", err)
@@ -89,17 +99,45 @@ impl IOPub {
                     self.context = Some(context);
                 }
                 self.send_message(msg)
-            }
+            },
             IOPubMessage::ExecuteResult(msg) => self.send_message(msg),
             IOPubMessage::ExecuteError(msg) => self.send_message(msg),
             IOPubMessage::ExecuteInput(msg) => self.send_message(msg),
             IOPubMessage::Stream(msg) => self.send_message(msg),
+            IOPubMessage::CommOpen(msg) => self.send_message(msg),
+            IOPubMessage::CommMsgEvent(msg) => self.send_message(msg),
+            IOPubMessage::CommMsgReply(header, msg) => self.send_message_with_header(header, msg),
+            IOPubMessage::CommClose(comm_id) => self.send_message(CommClose { comm_id }),
+            IOPubMessage::Event(msg) => self.send_event(msg),
         }
     }
 
-    /// Send a message using the underlying socket with the given content.
+    /// Send a message using the underlying socket with the given content. The
+    /// parent message is assumed to be the current context.
     fn send_message<T: ProtocolMessage>(&self, content: T) -> Result<(), Error> {
         let msg = JupyterMessage::<T>::create(content, self.context.clone(), &self.socket.session);
+        msg.send(&self.socket)
+    }
+
+    /// Send a message using the underlying socket with the given content and
+    /// specific header. Used when the parent message is known by the message
+    /// sender, typically in comm message replies.
+    fn send_message_with_header<T: ProtocolMessage>(
+        &self,
+        header: JupyterHeader,
+        content: T,
+    ) -> Result<(), Error> {
+        let msg = JupyterMessage::<T>::create(content, Some(header), &self.socket.session);
+        msg.send(&self.socket)
+    }
+
+    /// Send an event
+    fn send_event(&self, event: PositronEvent) -> Result<(), Error> {
+        let msg = JupyterMessage::<ClientEvent>::create(
+            ClientEvent::from(event),
+            self.context.clone(),
+            &self.socket.session,
+        );
         msg.send(&self.socket)
     }
 

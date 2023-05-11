@@ -1,7 +1,7 @@
 /*
  * jupyter_message.rs
  *
- * Copyright (C) 2022 by RStudio, PBC
+ * Copyright (C) 2022 Posit Software, PBC. All rights reserved.
  *
  */
 
@@ -12,6 +12,7 @@ use crate::wire::comm_info_reply::CommInfoReply;
 use crate::wire::comm_info_request::CommInfoRequest;
 use crate::wire::comm_msg::CommMsg;
 use crate::wire::comm_open::CommOpen;
+use crate::wire::comm_close::CommClose;
 use crate::wire::complete_reply::CompleteReply;
 use crate::wire::complete_request::CompleteRequest;
 use crate::wire::error_reply::ErrorReply;
@@ -37,6 +38,8 @@ use crate::wire::shutdown_request::ShutdownRequest;
 use crate::wire::status::KernelStatus;
 use crate::wire::wire_message::WireMessage;
 use serde::{Deserialize, Serialize};
+
+use super::client_event::ClientEvent;
 
 /// Represents a Jupyter message
 #[derive(Debug, Clone)]
@@ -92,6 +95,8 @@ pub enum Message {
     CommInfoRequest(JupyterMessage<CommInfoRequest>),
     CommOpen(JupyterMessage<CommOpen>),
     CommMsg(JupyterMessage<CommMsg>),
+    CommClose(JupyterMessage<CommClose>),
+    ClientEvent(JupyterMessage<ClientEvent>),
 }
 
 /// Represents status returned from kernel inside messages.
@@ -133,6 +138,8 @@ impl TryFrom<&Message> for WireMessage {
             Message::CommInfoRequest(msg) => WireMessage::try_from(msg),
             Message::CommOpen(msg) => WireMessage::try_from(msg),
             Message::CommMsg(msg) => WireMessage::try_from(msg),
+            Message::CommClose(msg) => WireMessage::try_from(msg),
+            Message::ClientEvent(msg) => WireMessage::try_from(msg),
         }
     }
 }
@@ -184,6 +191,8 @@ impl TryFrom<&WireMessage> for Message {
             return Ok(Message::CommOpen(JupyterMessage::try_from(msg)?));
         } else if kind == CommMsg::message_type() {
             return Ok(Message::CommMsg(JupyterMessage::try_from(msg)?));
+        } else if kind == CommClose::message_type() {
+            return Ok(Message::CommClose(JupyterMessage::try_from(msg)?));
         } else if kind == InterruptRequest::message_type() {
             return Ok(Message::InterruptRequest(JupyterMessage::try_from(msg)?));
         } else if kind == InterruptReply::message_type() {

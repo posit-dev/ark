@@ -1,9 +1,9 @@
-// 
+//
 // point.rs
-// 
-// Copyright (C) 2022 by RStudio, PBC
-// 
-// 
+//
+// Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+//
+//
 
 use tower_lsp::lsp_types::Position;
 use tree_sitter::Point;
@@ -24,7 +24,7 @@ fn compare(lhs: Point, rhs: Point) -> i32 {
 
 }
 
-pub(crate) trait PointExt {
+pub trait PointExt {
 
     fn as_position(self) -> Position;
     fn is_before(self, other: Point) -> bool;

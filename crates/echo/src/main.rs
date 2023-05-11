@@ -1,7 +1,7 @@
 /*
  * main.rs
  *
- * Copyright (C) 2022 by RStudio, PBC
+ * Copyright (C) 2022 Posit Software, PBC. All rights reserved.
  *
  */
 
@@ -11,40 +11,36 @@ mod shell;
 use crate::control::Control;
 use crate::shell::Shell;
 use amalthea::connection_file::ConnectionFile;
-use amalthea::kernel::Kernel;
+use amalthea::kernel::{Kernel, StreamBehavior};
 use amalthea::kernel_spec::KernelSpec;
-use amalthea::socket::iopub::IOPubMessage;
 use log::{debug, error, info};
 use std::env;
 use std::io::stdin;
-use std::sync::mpsc::sync_channel;
 use std::sync::{Arc, Mutex};
 
 fn start_kernel(connection_file: ConnectionFile) {
-    // This channel delivers execution status and other iopub messages from
-    // other threads to the iopub thread
-    let (iopub_sender, iopub_receiver) = sync_channel::<IOPubMessage>(10);
+    let mut kernel = match Kernel::new("echo", connection_file) {
+        Ok(k) => k,
+        Err(e) => {
+            error!("Failed to create kernel: {}", e);
+            return;
+        }
+    };
 
-    let shell_sender = iopub_sender.clone();
-    let shell = Arc::new(Mutex::new(Shell::new(shell_sender)));
+    let shell_tx = kernel.create_iopub_tx();
+    let shell = Arc::new(Mutex::new(Shell::new(shell_tx)));
     let control = Arc::new(Mutex::new(Control {}));
 
-    let kernel = Kernel::new(connection_file);
-    match kernel {
-        Ok(k) => match k.connect(shell, control, iopub_sender, iopub_receiver) {
-            Ok(()) => {
-                let mut s = String::new();
-                println!("Kernel activated, press Ctrl+C to end ");
-                if let Err(err) = stdin().read_line(&mut s) {
-                    error!("Could not read from stdin: {}", err);
-                }
+    match kernel.connect(shell, control, None, StreamBehavior::None) {
+        Ok(()) => {
+            let mut s = String::new();
+            println!("Kernel activated, press Ctrl+C to end ");
+            if let Err(err) = stdin().read_line(&mut s) {
+                error!("Could not read from stdin: {:?}", err);
             }
-            Err(err) => {
-                error!("Couldn't connect to front end: {:?}", err);
-            }
-        },
+        }
         Err(err) => {
-            error!("Couldn't create kernel: {:?}", err);
+            error!("Couldn't connect to front end: {:?}", err);
         }
     }
 }
@@ -60,7 +56,7 @@ fn install_kernel_spec() {
                 ],
                 language: String::from("Echo"),
                 display_name: String::from("Amalthea Echo"),
-                env: serde_json::Map::new()
+                env: serde_json::Map::new(),
             };
             if let Err(err) = spec.install(String::from("amalthea")) {
                 eprintln!("Failed to install Jupyter kernelspec. {}", err);
@@ -78,7 +74,7 @@ fn parse_file(connection_file: &String) {
     match ConnectionFile::from_file(connection_file) {
         Ok(connection) => {
             info!(
-                "Loaded connection information from front end in {}",
+                "Loaded connection information from front-end in {}",
                 connection_file
             );
             debug!("Connection data: {:?}", connection);

@@ -1,16 +1,17 @@
 /*
  * mod.rs
  *
- * Copyright (C) 2022 by RStudio, PBC
+ * Copyright (C) 2022 Posit Software, PBC. All rights reserved.
  *
  */
 
+use std::thread;
+
+use amalthea::comm::comm_channel::Comm;
+use amalthea::comm::comm_channel::CommChannelMsg;
 use amalthea::language::shell_handler::ShellHandler;
+use amalthea::socket::comm::CommSocket;
 use amalthea::socket::iopub::IOPubMessage;
-use amalthea::wire::comm_info_reply::CommInfoReply;
-use amalthea::wire::comm_info_request::CommInfoRequest;
-use amalthea::wire::comm_msg::CommMsg;
-use amalthea::wire::comm_open::CommOpen;
 use amalthea::wire::complete_reply::CompleteReply;
 use amalthea::wire::complete_request::CompleteRequest;
 use amalthea::wire::exception::Exception;
@@ -33,29 +34,29 @@ use amalthea::wire::kernel_info_reply::KernelInfoReply;
 use amalthea::wire::kernel_info_request::KernelInfoRequest;
 use amalthea::wire::language_info::LanguageInfo;
 use async_trait::async_trait;
+use crossbeam::channel::Sender;
 use log::warn;
 use serde_json::json;
-use std::sync::mpsc::SyncSender;
 
 pub struct Shell {
-    iopub: SyncSender<IOPubMessage>,
-    input_sender: Option<SyncSender<ShellInputRequest>>,
+    iopub: Sender<IOPubMessage>,
+    input_tx: Option<Sender<ShellInputRequest>>,
     execution_count: u32,
 }
 
 /// Stub implementation of the shell handler for test harness
 impl Shell {
-    pub fn new(iopub: SyncSender<IOPubMessage>) -> Self {
+    pub fn new(iopub: Sender<IOPubMessage>) -> Self {
         Self {
             iopub: iopub,
             execution_count: 0,
-            input_sender: None,
+            input_tx: None,
         }
     }
 
     // Simluates an input request
     fn prompt_for_input(&self, originator: &Vec<u8>) {
-        if let Some(sender) = &self.input_sender {
+        if let Some(sender) = &self.input_tx {
             if let Err(err) = sender.send(ShellInputRequest {
                 originator: originator.clone(),
                 request: InputRequest {
@@ -107,18 +108,6 @@ impl ShellHandler for Shell {
             cursor_start: 0,
             cursor_end: 0,
             metadata: json!({}),
-        })
-    }
-
-    /// Handle a request for open comms
-    async fn handle_comm_info_request(
-        &self,
-        _req: &CommInfoRequest,
-    ) -> Result<CommInfoReply, Exception> {
-        // No comms in this toy implementation.
-        Ok(CommInfoReply {
-            status: Status::Ok,
-            comms: serde_json::Value::Null,
         })
     }
 
@@ -226,10 +215,10 @@ impl ShellHandler for Shell {
         let data = match req.code.as_str() {
             "err" => {
                 json!({"text/plain": "This generates an error!"})
-            }
+            },
             "teapot" => {
                 json!({"text/plain": "This is clearly a teapot."})
-            }
+            },
             _ => serde_json::Value::Null,
         };
         Ok(InspectReply {
@@ -240,14 +229,29 @@ impl ShellHandler for Shell {
         })
     }
 
-    async fn handle_comm_open(&self, _req: &CommOpen) -> Result<(), Exception> {
-        // NYI
-        Ok(())
-    }
-
-    async fn handle_comm_msg(&self, _req: &CommMsg) -> Result<(), Exception> {
-        // NYI
-        Ok(())
+    async fn handle_comm_open(&self, _req: Comm, comm: CommSocket) -> Result<bool, Exception> {
+        // Open a test comm channel; this test comm channel is used for every
+        // comm open request (regardless of the target name). It just echoes back any
+        // messages it receives.
+        thread::spawn(move || loop {
+            match comm.incoming_rx.recv().unwrap() {
+                CommChannelMsg::Data(val) => {
+                    // Echo back the data we received on the comm channel to the
+                    // sender.
+                    comm.outgoing_tx.send(CommChannelMsg::Data(val)).unwrap();
+                },
+                CommChannelMsg::Rpc(id, val) => {
+                    // Echo back the data we received on the comm channel to the
+                    // sender as the response to the RPC, using the same ID.
+                    comm.outgoing_tx.send(CommChannelMsg::Rpc(id, val)).unwrap();
+                },
+                CommChannelMsg::Close => {
+                    // Close the channel and exit the thread.
+                    break;
+                },
+            }
+        });
+        Ok(true)
     }
 
     async fn handle_input_reply(&self, _msg: &InputReply) -> Result<(), Exception> {
@@ -255,7 +259,7 @@ impl ShellHandler for Shell {
         Ok(())
     }
 
-    fn establish_input_handler(&mut self, handler: SyncSender<ShellInputRequest>) {
-        self.input_sender = Some(handler);
+    fn establish_input_handler(&mut self, handler: Sender<ShellInputRequest>) {
+        self.input_tx = Some(handler);
     }
 }
