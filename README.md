@@ -1,5 +1,3 @@
-> NOTE: As of 8/31/2022, this repository is deprecated so we can develop Myriac sources in one place. Continued development on Amalthea here: [myriac/amalthea](https://github.com/rstudio/myriac/tree/main/amalthea)
-
 # Amalthea
 
 ## About
@@ -59,36 +57,6 @@ You will usually want to tweak the **ark** environment for development; add this
 ```
 
 More fine-grained control of logging is available for `RUST_LOG` as documented in [env_logger](https://docs.rs/env_logger/0.9.0/env_logger/#enabling-logging).
-
-## Dev Workflow: VS Code LSP
-
-### Setup
-
-1. Build and install **ark** using the instructions above. Use Jupyter to verify that your kernel works!
-2. Build and install the [myriac-console extension](https://github.com/rstudio/myriac-console); use `vsce package` and then install the `.VSIX` file.
-3. Build and install the [ark extension](https://github.com/rstudio/amalthea/tree/main/ark/extension).
-4. Open the settings UI in VS Code and search for `ark`. Set `Ark > Trace: Server` to `verbose`. 
-
-### Development
-
-1. Open a new VS Code window.
-2. Run the "New Myriac Console" command and start the **ark** kernel. Eval some test expressions to validate that connectivity to R is working.
-3. Open a `.R` file. 
-
-This will cause the following things to happen:
-
-1. The **ark** extension will activate, since it is registered for `.R` files.
-2. It will locate the **myriac-console** extension and ask it to start an LSP for R. 
-3. The **myriac-console** extension will send a Jupyter message to the **ark** kernel, asking it to start its LSP.
-4. The **ark** kernel will start the LSP and connect to the language client provided by the **ark** extension.
-
-Once everything is running, check VS Code's _Output_ tab in the bottom panel. You will see the following entries:
-
-`Amalthea R Kernel` -- Debug output from the kernel. This will be pretty verbose presuming you've set `RUST_LOG` to `trace` as recommended above.
-
-`ARK Language Server` -- Output that was sent from the language server to the client.
-
-`ARK Language Server (Trace)` -- Assuming you've set the server to use verbose output, this is the most interesting log for LSP development; it will show a complete log of all client/server interactions.
 
 ## Related Projects
 
