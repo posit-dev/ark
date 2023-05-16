@@ -6,6 +6,11 @@
 //
 
 use harp::environment::BindingValue;
+use harp::utils::r_altrep_class;
+use harp::utils::r_is_matrix;
+use harp::utils::r_is_s4;
+use harp::utils::r_vec_shape;
+use harp::utils::r_vec_type;
 use harp::utils::pairlist_size;
 use harp::utils::r_altrep_class;
 use harp::utils::r_classes;
@@ -352,7 +357,7 @@ impl EnvironmentVariable {
             size: RObject::view(x).size(),
             has_children: has_children(x),
             is_truncated,
-            has_viewer: r_inherits(x, "data.frame")
+            has_viewer: r_inherits(x, "data.frame") || r_is_matrix(x)
         }
     }
 
