@@ -1,0 +1,54 @@
+name: "Amalthea Tests"
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+
+  linux:
+    name: Unit Tests on Linux
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Build Environment
+        run: |
+          # Remove R 4.3 from the build image, along with all downstream
+          # dependent packages (r-cran-*, etc.) via autoremove. Github Actions
+          # runner images supplied by Github have the very latest R, but
+          # libR-sys is not compatible with it yet.
+          #
+          # See https://github.com/extendr/libR-sys/pull/150 for more details.
+          sudo apt remove r-recommended r-base-core r-base r-base-dev
+          sudo apt-get --purge autoremove
+
+          # Remove the repositories from which R 4.3 is installed. Removing
+          # these will cause R installation in subsequent steps to use the
+          # regular Ubuntu Jammy repository, which has an older version of R
+          # (4.1 as of right now)
+          sudo add-apt-repository -r https://cloud.r-project.org/bin/linux/ubuntu
+          sudo add-apt-repository -r https://ppa.launchpadcontent.net/ubuntu-toolchain-r/test/ubuntu
+          sudo rm -rf /etc/sources.list.d/ubuntu-toolchain-r-ubuntu-test-jammy.list
+
+          # Install all the packages we need for CI
+          sudo apt-get update
+          sudo apt-get install -y build-essential r-recommended r-base-core r-base r-base-dev libsodium-dev
+
+      - name: Build
+        id: amalthea-build
+        run: |
+            cargo build --verbose
+
+      - name: Run Unit Tests
+        id: amalthea-test
+        run: |
+            cargo test --verbose
+
