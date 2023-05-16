@@ -347,6 +347,8 @@ impl EnvironmentVariable {
 
         let kind = Self::variable_kind(x);
 
+        let kind = Self::variable_kind(x);
+
         Self {
             access_key,
             display_name,
