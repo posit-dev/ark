@@ -17,6 +17,7 @@ This repository contains five individual projects, which are evolving together.
 ```mermaid
 flowchart TD
 a[Amalthea] <--Message Handlers--> ark(((Amalthea R Kernel - ark)))
+a <--ZeroMQ--> jf[Jupyter Front End]
 ark <--> lsp[Language Protocol Server]
 ark <--> h[harp R wrapper]
 ark <--> libr[libR-sys bindings]
@@ -33,7 +34,9 @@ For more information on the system's architecture, see the [Amalthea Architectur
 
 This is a Jupyter kernel framework; Amalthea is [one of Jupiter's moons](https://en.wikipedia.org/wiki/Amalthea_(moon)).
 
-### Amalthea R Kernel Installation/Usage
+### Amalthea R Kernel Usage
+
+#### Building
 
 Install Rust. If you don't already have it, use `rustup`, following the [installation instructions at rustup.rs](https://rustup.rs/). In brief:
 
@@ -42,12 +45,15 @@ $ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 $ source $HOME/.cargo/env
 ```
 
-Assuming you have a working Rust toolchain, first build the sources.
+Assuming you have a working Rust toolchain, you can just run `cargo build`:
 
 ```bash
 $ cargo build
 ```
-Next, install the kernelspec. From the repository root:
+
+#### Standalone
+
+To use ARK as a standalone kernel (outside Positron), install the kernelspec. From the repository root:
 
 ```bash
 $ ./target/debug/ark --install
@@ -64,39 +70,19 @@ You will usually want to tweak the **ark** environment for development; add this
   }
 ```
 
+where `R_HOME` is the location of your R installation. If you're unsure where this is, run `R RHOME`
+and it will be printed to the console.
+
 More fine-grained control of logging is available for `RUST_LOG` as documented in [env_logger](https://docs.rs/env_logger/0.9.0/env_logger/#enabling-logging).
 
-## Dev Workflow: VS Code LSP
+#### In Positron
 
-### Setup
-
-1. Build and install **ark** using the instructions above. Use Jupyter to verify that your kernel works!
-2. Build and install the [myriac-console extension](https://github.com/rstudio/myriac-console); use `vsce package` and then install the `.VSIX` file.
-3. Build and install the [ark extension](https://github.com/rstudio/amalthea/tree/main/ark/extension).
-4. Open the settings UI in VS Code and search for `ark`. Set `Ark > Trace: Server` to `verbose`.
-
-### Development
-
-1. Open a new VS Code window.
-2. Run the "New Myriac Console" command and start the **ark** kernel. Eval some test expressions to validate that connectivity to R is working.
-3. Open a `.R` file.
-
-This will cause the following things to happen:
-
-1. The **ark** extension will activate, since it is registered for `.R` files.
-2. It will locate the **myriac-console** extension and ask it to start an LSP for R.
-3. The **myriac-console** extension will send a Jupyter message to the **ark** kernel, asking it to start its LSP.
-4. The **ark** kernel will start the LSP and connect to the language client provided by the **ark** extension.
-
-Once everything is running, check VS Code's _Output_ tab in the bottom panel. You will see the following entries:
-
-`Amalthea R Kernel` -- Debug output from the kernel. This will be pretty verbose presuming you've set `RUST_LOG` to `trace` as recommended above.
-
-`ARK Language Server` -- Output that was sent from the language server to the client.
-
-`ARK Language Server (Trace)` -- Assuming you've set the server to use verbose output, this is the most interesting log for LSP development; it will show a complete log of all client/server interactions.
+By default, the Amalthea kernel is included in Positron's `positron-r` extension, as a submodule; it
+powers the R experience in Positron.
 
 ## Related Projects
+
+[Positron](https://github.com/rstudio/positron), a next-generation data science IDE
 
 [Xeus](https://github.com/jupyter-xeus/xeus), a C++ base/reference kernel implementation
 
