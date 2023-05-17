@@ -17,6 +17,7 @@ This repository contains five individual projects, which are evolving together.
 ```mermaid
 flowchart TD
 a[Amalthea] <--Message Handlers--> ark(((Amalthea R Kernel - ark)))
+a <--ZeroMQ--> jf[Jupyter Front End]
 ark <--> lsp[Language Protocol Server]
 ark <--> h[harp R wrapper]
 ark <--> libr[libR-sys bindings]
@@ -33,7 +34,9 @@ For more information on the system's architecture, see the [Amalthea Architectur
 
 This is a Jupyter kernel framework; Amalthea is [one of Jupiter's moons](https://en.wikipedia.org/wiki/Amalthea_(moon)).
 
-### Amalthea R Kernel Installation/Usage
+### Amalthea R Kernel Usage
+
+#### Building
 
 Install Rust. If you don't already have it, use `rustup`, following the [installation instructions at rustup.rs](https://rustup.rs/). In brief:
 
@@ -42,12 +45,15 @@ $ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 $ source $HOME/.cargo/env
 ```
 
-Assuming you have a working Rust toolchain, first build the sources.
+Assuming you have a working Rust toolchain, you can just run `cargo build`:
 
 ```bash
 $ cargo build
 ```
-Next, install the kernelspec. From the repository root:
+
+#### Standalone
+
+To use ARK as a standalone kernel (outside Positron), install the kernelspec. From the repository root:
 
 ```bash
 $ ./target/debug/ark --install
@@ -64,9 +70,19 @@ You will usually want to tweak the **ark** environment for development; add this
   }
 ```
 
+where `R_HOME` is the location of your R installation. If you're unsure where this is, run `R RHOME`
+and it will be printed to the console.
+
 More fine-grained control of logging is available for `RUST_LOG` as documented in [env_logger](https://docs.rs/env_logger/0.9.0/env_logger/#enabling-logging).
 
+#### In Positron
+
+By default, the Amalthea kernel is included in Positron's `positron-r` extension, as a submodule; it
+powers the R experience in Positron.
+
 ## Related Projects
+
+[Positron](https://github.com/rstudio/positron), a next-generation data science IDE
 
 [Xeus](https://github.com/jupyter-xeus/xeus), a C++ base/reference kernel implementation
 
