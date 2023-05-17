@@ -2,24 +2,32 @@
 
 ## About
 
-Experimental kernel framework for Jupyter and Myriac, written in Rust. 
+Experimental kernel framework and R kernel for Jupyter and Positron, written in Rust.
 
 ![image](https://user-images.githubusercontent.com/470418/151626974-52ac0047-0e98-494d-ad00-c0d293df696f.png)
 
-This repository contains four individual projects, which are evolving together:
+This repository contains five individual projects, which are evolving together.
 
 - **Amalthea**, a Rust framework for building Jupyter and Myriac kernels.
 - **ARK**, the Amalthea R Kernel. ARK is a native kernel for R built on the Amalthea framework that interacts with the R interpreter in the same way RStudio does (it's a real front end). It also implements the Language Server Protocol, using [tower-lsp](https://github.com/ebkalderon/tower-lsp).
-- **ARK Extension**, the VS Code extension that connects to ARK to 
-- **echo**, a toy kernel for a fictional language that can be used to experiment with the kernel framework without the nuisance of getting language bindings working.
+- **echo**, a toy kernel for a fictional language that can be used to experiment with the kernel framework without the nuisance of getting language bindings working. As the name implies, it is a language that just echoes its input back as output.
+- **harp**, safe Rust wrappers for R objects and interfaces.
+- **stdext**, extensions to Rust's standard library for utility use in the other four projects.
 
-### Why not Xeus?
+```mermaid
+flowchart TD
+a[Amalthea] <--Message Handlers--> ark(((Amalthea R Kernel - ark)))
+ark <--> lsp[Language Protocol Server]
+ark <--> h[harp R wrapper]
+ark <--> libr[libR-sys bindings]
+h <--> libr
+libr <--> r[R Shared Library]
+lsp <--> h
+lsp <--> libr
+lsp <--> tower[Tower-LSP]
+```
 
-The [Xeus](https://github.com/jupyter-xeus/xeus) project supplies all the nuts and bolts of Jupyter kernel communication, with the goal of letting kernel implementors focus only on the actual language bindings. 
-
-Unfortunately this project cuts across architectural boundaries in ways that make it hard to extend with Rust. For example, Xeus depends on an army of C/C++ libraries, some header-only, that provide its JSON and ZeroMQ functionality; consequently extending it with Rust requires either marshaling structured data across the language boundary (difficult and tedious) or using multiple, possibly incompatible, libraries that serve the same purpose in the same binary.
-
-Building in pure Rust dramatically simplifies the development environment and lets us standardize on idiomatic Rust tools like `serde_json`. It also shortens the distance to compiling for WASM, a door we'd like to leave open for investigation into browser-only versions of Myriac (a la vscode.dev).
+For more information on the system's architecture, see the [Amalthea Architecture](https://connect.rstudioservices.com/positron-wiki/amalthea-architecture.html) section of the Positron Wiki.
 
 ### What's with the name?
 
@@ -34,7 +42,7 @@ $ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 $ source $HOME/.cargo/env
 ```
 
-Assuming you have a working Rust toolchain, first build the sources. All three projects (`amalthea`, `ark`, and `echo`) are part of the same Rust workspace, so they will all build with a single command.
+Assuming you have a working Rust toolchain, first build the sources.
 
 ```bash
 $ cargo build
@@ -68,8 +76,8 @@ More fine-grained control of logging is available for `RUST_LOG` as documented i
 
 [Myriac Console](https://github.com/rstudio/myriac-console), an experimental Jupyter front end
 
-[tower-lsp](https://github.com/ebkalderon/tower-lsp), an LSP framework built on [Tower](https://github.com/tower-rs/tower), which is itself built on [tokio](https://tokio.rs/). 
+[tower-lsp](https://github.com/ebkalderon/tower-lsp), an LSP framework built on [Tower](https://github.com/tower-rs/tower), which is itself built on [tokio](https://tokio.rs/).
 
-[tower-lsp-boilerplate](https://github.com/IWANABETHATGUY/tower-lsp-boilerplate), an example LSP built with `tower-lsp` 
+[tower-lsp-boilerplate](https://github.com/IWANABETHATGUY/tower-lsp-boilerplate), an example LSP built with `tower-lsp`
 
 
