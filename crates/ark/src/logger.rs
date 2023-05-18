@@ -163,15 +163,18 @@ pub fn initialize(file: Option<&str>) {
 
         // Initialize the log level, using RUST_LOG.
         let level = std::env::var("RUST_LOG").unwrap_or("info".into());
-        match log::LevelFilter::from_str(level.as_str()) {
-            Ok(level) => log::set_max_level(level),
-            Err(error) => eprintln!("Error parsing RUST_LOG: {}", error),
-        }
+        match log::Level::from_str(level.as_str()) {
+            Ok(level) => {
+                log::set_max_level(level.to_level_filter());
 
-        // Set up the logger.
-        unsafe {
-            LOGGER.initialize(file);
-            log::set_logger(&LOGGER).unwrap();
+                // Set up the logger
+                unsafe {
+                    LOGGER.level = level;
+                    LOGGER.initialize(file);
+                    log::set_logger(&LOGGER).unwrap();
+                };
+            },
+            Err(error) => eprintln!("Error parsing RUST_LOG: {}", error),
         }
 
     });
