@@ -204,7 +204,7 @@ impl RDataViewer {
             };
             match viewer.execution_thread() {
                 Ok(_) => {},
-                Err(error) => log::error!("Error while viewing this object: {}", error)
+                Err(error) => log::error!("Error while viewing object '{}': {}", title, error)
             }
         });
     }
