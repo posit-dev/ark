@@ -70,7 +70,7 @@ pub struct DataSet {
 
 impl DataSet {
 
-    fn extract_columns(object: SEXP, name: Option<String>, row_count: usize, columns: &mut Vec<DataColumn>) -> Result<(), anyhow::Error> {
+    unsafe fn extract_columns(object: SEXP, name: Option<String>, row_count: usize, columns: &mut Vec<DataColumn>) -> Result<(), anyhow::Error> {
         if r_is_data_frame(object) {
             unsafe {
                 let names = Rf_getAttrib(object, R_NamesSymbol);
@@ -144,7 +144,7 @@ impl DataSet {
                 if r_is_simple_vector(object) {
                     harp::vector::format(object)
                 } else {
-                    let formatted = unsafe { RFunction::from("format").add(object).call()? };
+                    let formatted = RFunction::from("format").add(object).call()?;
                     r_assert_type(*formatted, &[STRSXP])?;
                     r_assert_length(*formatted, row_count)?;
                     harp::vector::format(*formatted)
