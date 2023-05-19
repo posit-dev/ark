@@ -85,8 +85,9 @@ impl DataSet {
                         Some(ref prefix) => format!("{}${}", prefix, names.get_unchecked(i).unwrap()),
                         None         => names.get_unchecked(i).unwrap()
                     };
-
-                    Self::extract_columns(VECTOR_ELT(object, i), Some(name), row_count, columns)?;
+                    // Protecting with `RObject` in case `object` happens to be an ALTLIST
+                    let column = RObject::from(VECTOR_ELT(object, i));
+                    Self::extract_columns(*column, Some(name), row_count, columns)?;
                 }
             }
 
