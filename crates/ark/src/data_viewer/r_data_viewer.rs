@@ -164,30 +164,29 @@ impl DataSet {
     }
 
     pub fn from_data_frame(id: String, title: String, object: RObject) -> Result<Self, anyhow::Error> {
-        let row_count = r_lock! {
-            if r_is_data_frame(*object) {
-                let row_names = Rf_getAttrib(*object, R_RowNamesSymbol);
-                Ok(XLENGTH(row_names) as usize)
-            } else if r_is_matrix(*object) {
-                let dim = Rf_getAttrib(*object, R_DimSymbol);
-                Ok(INTEGER_ELT(dim, 0) as usize)
-            } else {
-                bail!("data viewer only handles data frames and matrices")
-            }
-        }?;
-
-        let mut columns = vec![];
-        
         r_lock! {
-            Self::extract_columns(*object, None, row_count, &mut columns)
-        }?;
+            let row_count = {
+                if r_is_data_frame(*object) {
+                    let row_names = Rf_getAttrib(*object, R_RowNamesSymbol);
+                    XLENGTH(row_names) as usize
+                } else if r_is_matrix(*object) {
+                    let dim = Rf_getAttrib(*object, R_DimSymbol);
+                    INTEGER_ELT(dim, 0) as usize
+                } else {
+                    bail!("data viewer only handles data frames and matrices")
+                }
+            };
 
-        Ok(Self {
-            id,
-            title,
-            columns,
-            row_count
-        })
+            let mut columns = vec![];
+            Self::extract_columns(*object, None, row_count, &mut columns)?;
+
+            Ok(Self {
+                id: id.clone(),
+                title: title.clone(),
+                columns: columns,
+                row_count: row_count
+            })
+        }
     }
 
 }
