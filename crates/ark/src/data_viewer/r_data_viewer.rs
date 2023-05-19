@@ -197,10 +197,10 @@ impl RDataViewer {
                 String::from("positron.dataViewer"),
             );
             let viewer = Self {
-                id,
-                title,
-                data,
-                comm
+                id: id,
+                title: title.clone(),
+                data: data,
+                comm: comm
             };
             match viewer.execution_thread() {
                 Ok(_) => {},
