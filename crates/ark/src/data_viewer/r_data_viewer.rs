@@ -202,9 +202,8 @@ impl RDataViewer {
                 data: data,
                 comm: comm
             };
-            match viewer.execution_thread() {
-                Ok(_) => {},
-                Err(error) => log::error!("Error while viewing object '{}': {}", title, error)
+            if let Err(error) = viewer.execution_thread() {
+                log::error!("Error while viewing object '{}': {}", title, error);
             }
         });
     }
