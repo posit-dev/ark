@@ -11,6 +11,7 @@ use std::str::FromStr;
 use std::sync::Mutex;
 use std::sync::Once;
 use std::time::SystemTime;
+use stdext::unwrap;
 
 use chrono::DateTime;
 use chrono::Utc;
@@ -162,20 +163,23 @@ pub fn initialize(file: Option<&str>) {
     ONCE.call_once(|| {
 
         // Initialize the log level, using RUST_LOG.
-        let level = std::env::var("RUST_LOG").unwrap_or("info".into());
-        match log::Level::from_str(level.as_str()) {
-            Ok(level) => {
-                log::set_max_level(level.to_level_filter());
+        let level_envvar = std::env::var("RUST_LOG").unwrap_or("info".into());
+        let level = unwrap!(
+            log::Level::from_str(level_envvar.as_str()),
+            Err(error) => {
+                eprintln!("Error parsing RUST_LOG: {}", error);
+                return;
+            }
+        );
 
-                // Set up the logger
-                unsafe {
-                    LOGGER.level = level;
-                    LOGGER.initialize(file);
-                    log::set_logger(&LOGGER).unwrap();
-                };
-            },
-            Err(error) => eprintln!("Error parsing RUST_LOG: {}", error),
-        }
+        log::set_max_level(level.to_level_filter());
+
+        // Set up the logger
+        unsafe {
+            LOGGER.level = level;
+            LOGGER.initialize(file);
+            log::set_logger(&LOGGER).unwrap();
+        };
 
     });
 
