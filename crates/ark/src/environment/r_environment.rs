@@ -78,16 +78,14 @@ impl REnvironment {
         });
     }
 
-    pub fn execution_thread(
-        env: RObject,
-        channel_message_rx: Receiver<CommChannelMsg>,
-        frontend_msg_sender: Sender<CommChannelMsg>,
-    ) {
+    pub fn execution_thread(mut self) {
+        let (prompt_signal_tx, prompt_signal_rx) = unbounded::<()>();
+
         // Register a handler for console prompt events
         let listen_id = EVENTS.console_prompt.listen({
             move |_| {
                 log::info!("Got console prompt signal.");
-                Self::refresh(&env, frontend_msg_tx.clone());
+                prompt_signal_tx.send(()).unwrap();
             }
         });
 
