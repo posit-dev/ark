@@ -197,12 +197,14 @@ impl RDataViewer {
                 String::from("positron.dataViewer"),
             );
             let viewer = Self {
-                id,
-                title,
-                data,
-                comm
+                id: id,
+                title: title.clone(),
+                data: data,
+                comm: comm
             };
-            viewer.execution_thread()
+            if let Err(error) = viewer.execution_thread() {
+                log::error!("Error while viewing object '{}': {}", title, error);
+            }
         });
     }
 
