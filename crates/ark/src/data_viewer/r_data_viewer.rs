@@ -12,6 +12,7 @@ use anyhow::bail;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
+use harp::r_lock;
 use harp::utils::r_assert_length;
 use harp::utils::r_assert_type;
 use harp::utils::r_is_data_frame;
@@ -69,36 +70,37 @@ pub struct DataSet {
 
 impl DataSet {
 
-    fn extract_columns(object: RObject, name: Option<String>, row_count: usize, columns: &mut Vec<DataColumn>) -> Result<(), anyhow::Error> {
-        if r_is_data_frame(*object) {
+    unsafe fn extract_columns(object: SEXP, name: Option<String>, row_count: usize, columns: &mut Vec<DataColumn>) -> Result<(), anyhow::Error> {
+        if r_is_data_frame(object) {
             unsafe {
-                let names = Rf_getAttrib(*object, R_NamesSymbol);
+                let names = Rf_getAttrib(object, R_NamesSymbol);
                 if r_typeof(names) != STRSXP {
                     bail!("data frame without names");
                 }
                 let names = CharacterVector::new_unchecked(names);
 
-                let n_columns = XLENGTH(*object);
+                let n_columns = XLENGTH(object);
                 for i in 0..n_columns {
                     let name = match name {
                         Some(ref prefix) => format!("{}${}", prefix, names.get_unchecked(i).unwrap()),
                         None         => names.get_unchecked(i).unwrap()
                     };
-
-                    Self::extract_columns(RObject::view(VECTOR_ELT(*object, i)), Some(name), row_count, columns)?;
+                    // Protecting with `RObject` in case `object` happens to be an ALTLIST
+                    let column = RObject::from(VECTOR_ELT(object, i));
+                    Self::extract_columns(*column, Some(name), row_count, columns)?;
                 }
             }
 
-        } else if r_is_matrix(*object) {
+        } else if r_is_matrix(object) {
             unsafe {
-                let dim = Rf_getAttrib(*object, R_DimSymbol);
+                let dim = Rf_getAttrib(object, R_DimSymbol);
                 let n_columns = INTEGER_ELT(dim, 1);
                 let n_rows = INTEGER_ELT(dim, 0) as usize;
                 if n_rows != row_count {
                     bail!("matrix column with incompatible number of rows");
                 }
 
-                let colnames = RFunction::from("colnames").add(*object).call()?;
+                let colnames = RFunction::from("colnames").add(object).call()?;
 
                 if r_is_null(*colnames) {
                     for i in 0..n_columns {
@@ -108,12 +110,12 @@ impl DataSet {
                         };
 
                         let matrix_column = RFunction::from("[")
-                            .add(*object)
+                            .add(object)
                             .param("i", R_MissingArg)
                             .param("j", i + 1)
                             .call()?;
 
-                        Self::extract_columns(matrix_column, Some(name), row_count, columns)?;
+                        Self::extract_columns(*matrix_column, Some(name), row_count, columns)?;
                     }
                 } else {
                     let colnames = CharacterVector::new_unchecked(colnames);
@@ -126,62 +128,65 @@ impl DataSet {
                         };
 
                         let matrix_column = RFunction::from("[")
-                            .add(*object)
+                            .add(object)
                             .param("i", R_MissingArg)
                             .param("j", i + 1)
                             .call()?;
 
-                        Self::extract_columns(matrix_column, Some(name), row_count, columns)?;
+                        Self::extract_columns(*matrix_column, Some(name), row_count, columns)?;
                     }
                 }
             }
         } else {
-            let mut formatted = object;
-            r_assert_length(*formatted, row_count)?;
+            r_assert_length(object, row_count)?;
 
-            if !r_is_simple_vector(*formatted) {
-                formatted = unsafe { RFunction::from("format").add(*formatted).call()? };
-                r_assert_type(*formatted, &[STRSXP])?;
-                r_assert_length(*formatted, row_count)?;
-
-            }
-            let data = harp::vector::format(*formatted);
+            let data = {
+                if r_is_simple_vector(object) {
+                    harp::vector::format(object)
+                } else {
+                    let formatted = RFunction::from("format").add(object).call()?;
+                    r_assert_type(*formatted, &[STRSXP])?;
+                    r_assert_length(*formatted, row_count)?;
+                    harp::vector::format(*formatted)
+                }
+            };
 
             columns.push(DataColumn{
                 name: name.unwrap(),
 
                 // TODO: String here is a placeholder
                 column_type: String::from("String"),
-                data
+                data: data
             });
-
         }
 
         Ok(())
     }
 
     pub fn from_data_frame(id: String, title: String, object: RObject) -> Result<Self, anyhow::Error> {
-        let row_count = unsafe {
-            if r_is_data_frame(*object) {
-                let row_names = Rf_getAttrib(*object, R_RowNamesSymbol);
-                XLENGTH(row_names) as usize
-            } else if r_is_matrix(*object) {
-                let dim = Rf_getAttrib(*object, R_DimSymbol);
-                INTEGER_ELT(dim, 0) as usize
-            } else {
-                bail!("data viewer only handles data frames and matrices");
-            }
-        };
+        r_lock! {
+            let row_count = {
+                if r_is_data_frame(*object) {
+                    let row_names = Rf_getAttrib(*object, R_RowNamesSymbol);
+                    XLENGTH(row_names) as usize
+                } else if r_is_matrix(*object) {
+                    let dim = Rf_getAttrib(*object, R_DimSymbol);
+                    INTEGER_ELT(dim, 0) as usize
+                } else {
+                    bail!("data viewer only handles data frames and matrices")
+                }
+            };
 
-        let mut columns = vec![];
-        Self::extract_columns(object, None, row_count, &mut columns)?;
+            let mut columns = vec![];
+            Self::extract_columns(*object, None, row_count, &mut columns)?;
 
-        Ok(Self {
-            id,
-            title,
-            columns,
-            row_count
-        })
+            Ok(Self {
+                id: id.clone(),
+                title: title.clone(),
+                columns: columns,
+                row_count: row_count
+            })
+        }
     }
 
 }
