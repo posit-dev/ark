@@ -391,6 +391,12 @@ fn test_kernel() {
         comm_id: comm_id.to_string(),
     });
 
+    // Absorb the IOPub messages that the kernel sends back during the
+    // processing of the above `CommClose` request
+    info!("Receiving comm close IOPub messages from the kernel");
+    frontend.receive_iopub(); // Busy
+    frontend.receive_iopub(); // Idle
+
     // Test to see if the comm is still in the list of comms after closing it
     // (it should not be)
     info!("Requesting comm info from the kernel (to test closing)");
