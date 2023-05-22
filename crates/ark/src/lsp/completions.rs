@@ -401,6 +401,7 @@ unsafe fn completion_item_from_object(
     envir: SEXP,
 ) -> Result<CompletionItem> {
     // TODO: Can we figure out the object type without forcing promise evaluation?
+    // Davis: We should probably just "give up" on promises and report them with a `.detail` of "Promise".
     if TYPEOF(object) as u32 == PROMSXP {
         let mut errc = 0;
         object = R_tryEvalSilent(object, envir, &mut errc);
@@ -458,6 +459,26 @@ unsafe fn completion_item_from_namespace(
         name,
         r_envir_name(namespace)?
     );
+}
+
+unsafe fn completion_item_from_lazydata(
+    name: &str,
+    env: SEXP,
+    namespace: SEXP,
+) -> Result<CompletionItem> {
+    let symbol = r_symbol!(name);
+    let object = Rf_findVarInFrame(env, symbol);
+
+    if object == R_UnboundValue {
+        // Should be impossible, but we'll be extra safe
+        bail!(
+            "Object '{}' not defined in lazydata environment for namespace {:?}",
+            name,
+            r_envir_name(namespace)?
+        )
+    }
+
+    completion_item_from_object(name, object, namespace)
 }
 
 unsafe fn completion_item_from_symbol(
@@ -949,6 +970,38 @@ unsafe fn append_namespace_completions(
     let strings = symbols.to::<Vec<String>>()?;
     for string in strings.iter() {
         match completion_item_from_namespace(string, *namespace) {
+            Ok(item) => completions.push(item),
+            Err(error) => error!("{:?}", error),
+        }
+    }
+
+    if exports_only {
+        // `pkg:::object` doesn't return lazy objects, so we don't want
+        // to show lazydata completions if we are inside `:::`
+        append_namespace_lazydata_completions(*namespace, completions)?;
+    }
+
+    Ok(())
+}
+
+unsafe fn append_namespace_lazydata_completions(
+    namespace: SEXP,
+    completions: &mut Vec<CompletionItem>,
+) -> Result<()> {
+    let ns = Rf_findVarInFrame(namespace, r_symbol!(".__NAMESPACE__."));
+    if ns == R_UnboundValue {
+        return Ok(());
+    }
+
+    let env = Rf_findVarInFrame(ns, r_symbol!("lazydata"));
+    if env == R_UnboundValue {
+        return Ok(());
+    }
+
+    let names = RObject::to::<Vec<String>>(RObject::from(R_lsInternal(env, Rboolean_TRUE)))?;
+
+    for name in names.iter() {
+        match completion_item_from_lazydata(name, env, namespace) {
             Ok(item) => completions.push(item),
             Err(error) => error!("{:?}", error),
         }
