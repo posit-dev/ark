@@ -494,11 +494,21 @@ impl Shell {
         // Look for the comm in our open comms
         debug!("Received request to close comm: {:?}", req);
 
+        // Enter the kernel-busy state in preparation for handling the message.
+        if let Err(err) = self.send_state(req.clone(), ExecutionState::Busy) {
+            warn!("Failed to change kernel status to busy: {}", err)
+        }
+
         // Send a notification to the comm message listener thread notifying it that
         // the comm has been closed
         self.comm_manager_tx
-            .send(CommEvent::Closed(req.content.comm_id))
+            .send(CommEvent::Closed(req.content.comm_id.clone()))
             .unwrap();
+
+        // Return kernel to idle state
+        if let Err(err) = self.send_state(req, ExecutionState::Idle) {
+            warn!("Failed to restore kernel status to idle: {}", err)
+        }
 
         Ok(())
     }
