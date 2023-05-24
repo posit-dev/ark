@@ -21,6 +21,7 @@ use crate::wire::is_complete_reply::IsCompleteReply;
 use crate::wire::is_complete_request::IsCompleteRequest;
 use crate::wire::kernel_info_reply::KernelInfoReply;
 use crate::wire::kernel_info_request::KernelInfoRequest;
+use crate::wire::originator::Originator;
 
 use async_trait::async_trait;
 use crossbeam::channel::Sender;
@@ -52,7 +53,7 @@ pub trait ShellHandler: Send {
     /// Docs: https://jupyter-client.readthedocs.io/en/stable/messaging.html#execute
     async fn handle_execute_request(
         &mut self,
-        originator: &Vec<u8>,
+        originator: Option<Originator>,
         req: &ExecuteRequest,
     ) -> Result<ExecuteReply, ExecuteReplyException>;
 
