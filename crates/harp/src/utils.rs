@@ -20,6 +20,7 @@ use crate::error::Result;
 use crate::exec::RArgument;
 use crate::exec::RFunction;
 use crate::exec::RFunctionExt;
+use crate::exec::geterrmessage;
 use crate::object::RObject;
 use crate::protect::RProtect;
 use crate::r_symbol;
@@ -394,4 +395,34 @@ pub fn r_symbol_quote_invalid(name: &str) -> String {
     } else {
         format!("`{}`", name.replace("`", "\\`"))
     }
+}
+
+pub fn r_is_promise(x: SEXP) -> bool {
+    r_typeof(x) == PROMSXP
+}
+
+pub unsafe fn r_promise_is_forced(x: SEXP) -> bool  {
+    PRVALUE(x) != R_UnboundValue
+}
+
+pub unsafe fn r_promise_force(x: SEXP) -> Result<SEXP> {
+    // Expect that the promise protects its own result
+    r_try_eval_silent(x, R_EmptyEnv)
+}
+
+pub unsafe fn r_try_eval_silent(
+    x: SEXP,
+    env: SEXP
+) -> Result<SEXP> {
+    let mut errc = 0;
+
+    let x = R_tryEvalSilent(x, env, &mut errc);
+
+    if errc != 0 {
+        return Err(Error::TryEvalError { 
+            message: geterrmessage()
+         })
+    }
+
+    Ok(x)
 }

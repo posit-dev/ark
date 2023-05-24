@@ -15,14 +15,16 @@ use anyhow::bail;
 use anyhow::Result;
 use harp::eval::r_parse_eval;
 use harp::eval::RParseEvalOptions;
-use harp::exec::geterrmessage;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
 use harp::r_symbol;
 use harp::string::r_string_decode;
 use harp::utils::r_envir_name;
+use harp::utils::r_is_promise;
 use harp::utils::r_formals;
+use harp::utils::r_promise_force;
+use harp::utils::r_promise_is_forced;
 use harp::utils::r_symbol_quote_invalid;
 use harp::utils::r_symbol_valid;
 use harp::utils::r_typeof;
@@ -397,17 +399,11 @@ unsafe fn completion_item_from_data_variable(
 
 unsafe fn completion_item_from_object(
     name: &str,
-    mut object: SEXP,
+    object: SEXP,
     envir: SEXP,
 ) -> Result<CompletionItem> {
-    // TODO: Can we figure out the object type without forcing promise evaluation?
-    // Davis: We should probably just "give up" on promises and report them with a `.detail` of "Promise".
-    if TYPEOF(object) as u32 == PROMSXP {
-        let mut errc = 0;
-        object = R_tryEvalSilent(object, envir, &mut errc);
-        if errc != 0 {
-            bail!("Error creating completion item: {}", geterrmessage());
-        }
+    if r_is_promise(object) {
+        return completion_item_from_promise(name, object, envir)
     }
 
     // TODO: For some functions (e.g. S4 generics?) the help file might be
@@ -435,6 +431,30 @@ unsafe fn completion_item_from_object(
     Ok(item)
 }
 
+unsafe fn completion_item_from_promise(
+    name: &str,
+    object: SEXP,
+    envir: SEXP,
+) -> Result<CompletionItem> {
+    if r_promise_is_forced(object) {
+        // Promise has already been evaluated before.
+        // Generate completion item from underlying value.
+        let object = PRVALUE(object);
+        return completion_item_from_object(name, object, envir)
+    }
+
+    // Otherwise we never want to force promises, so we return a fairly
+    // generic completion item
+    let mut item = completion_item(name, CompletionData::Object {
+        name: name.to_string(),
+    })?;
+
+    item.detail = Some("Promise".to_string());
+    item.kind = Some(CompletionItemKind::STRUCT);
+
+    Ok(item)
+}
+
 unsafe fn completion_item_from_namespace(
     name: &str,
     namespace: SEXP,
@@ -442,23 +462,33 @@ unsafe fn completion_item_from_namespace(
     let symbol = r_symbol!(name);
 
     // First, look in the namespace itself.
-    let object = Rf_findVarInFrame(namespace, symbol);
-    if object != R_UnboundValue {
-        return completion_item_from_object(name, object, namespace);
+    let mut object = Rf_findVarInFrame(namespace, symbol);
+
+    if object == R_UnboundValue {
+        // Otherwise, try the imports environment.
+        let imports = ENCLOS(namespace);
+        object = Rf_findVarInFrame(imports, symbol);
     }
 
-    // Otherwise, try the imports environment.
-    let imports = ENCLOS(namespace);
-    let object = Rf_findVarInFrame(imports, symbol);
-    if object != R_UnboundValue {
-        return completion_item_from_object(name, object, namespace);
+    if object == R_UnboundValue {
+        // If still not found, something is wrong.
+        bail!(
+            "Object '{}' not defined in namespace {:?}",
+            name,
+            r_envir_name(namespace)?
+        )
     }
 
-    bail!(
-        "Object '{}' not defined in namespace {:?}",
-        name,
-        r_envir_name(namespace)?
-    );
+    // TODO: Can we do any better here? Can we avoid evaluation?
+    // Namespace completions are the one place we eagerly force unevaluated
+    // promises to be able to determine the object type. Particularly
+    // important for functions, where we also set a `CompletionItem::command()`
+    // to display function signature help after the completion.
+    if r_is_promise(object) && !r_promise_is_forced(object) {
+        object = r_promise_force(object)?;
+    }
+
+    completion_item_from_object(name, object, namespace)
 }
 
 unsafe fn completion_item_from_lazydata(
