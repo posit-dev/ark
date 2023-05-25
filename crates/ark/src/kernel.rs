@@ -21,6 +21,7 @@ use amalthea::wire::execute_result::ExecuteResult;
 use amalthea::wire::input_request::InputRequest;
 use amalthea::wire::input_request::ShellInputRequest;
 use amalthea::wire::jupyter_message::Status;
+use amalthea::wire::originator::Originator;
 use amalthea::wire::stream::Stream;
 use amalthea::wire::stream::StreamOutput;
 use anyhow::*;
@@ -264,12 +265,12 @@ impl Kernel {
     }
 
     /// Requests input from the front end
-    pub fn request_input(&self, originator: &Vec<u8>, prompt: &str) {
+    pub fn request_input(&self, originator: Option<Originator>, prompt: &str) {
         if let Some(requestor) = &self.input_request_tx {
             trace!("Requesting input from front-end for prompt: {}", prompt);
             requestor
                 .send(ShellInputRequest {
-                    originator: originator.clone(),
+                    originator,
                     request: InputRequest {
                         prompt: prompt.to_string(),
                         password: false,

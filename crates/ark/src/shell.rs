@@ -27,6 +27,7 @@ use amalthea::wire::jupyter_message::Status;
 use amalthea::wire::kernel_info_reply::KernelInfoReply;
 use amalthea::wire::kernel_info_request::KernelInfoRequest;
 use amalthea::wire::language_info::LanguageInfo;
+use amalthea::wire::originator::Originator;
 use async_trait::async_trait;
 use bus::Bus;
 use bus::BusReader;
@@ -186,13 +187,13 @@ impl ShellHandler for Shell {
     /// for processing.
     async fn handle_execute_request(
         &mut self,
-        originator: &Vec<u8>,
+        originator: Option<Originator>,
         req: &ExecuteRequest,
     ) -> Result<ExecuteReply, ExecuteReplyException> {
         let (sender, receiver) = unbounded::<ExecuteResponse>();
         if let Err(err) = self.shell_request_tx.send(Request::ExecuteCode(
             req.clone(),
-            originator.clone(),
+            originator,
             sender,
         )) {
             warn!(
@@ -264,11 +265,10 @@ impl ShellHandler for Shell {
             allow_stdin: false,
             stop_on_error: false,
         };
-        let originator = Vec::new();
         let (sender, receiver) = unbounded::<ExecuteResponse>();
         if let Err(err) = self.shell_request_tx.send(Request::ExecuteCode(
             req.clone(),
-            originator.clone(),
+            None,
             sender,
         )) {
             warn!("Could not deliver input reply to execution thread: {}", err)

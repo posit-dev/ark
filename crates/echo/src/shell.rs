@@ -29,6 +29,7 @@ use amalthea::wire::jupyter_message::Status;
 use amalthea::wire::kernel_info_reply::KernelInfoReply;
 use amalthea::wire::kernel_info_request::KernelInfoRequest;
 use amalthea::wire::language_info::LanguageInfo;
+use amalthea::wire::originator::Originator;
 use async_trait::async_trait;
 use crossbeam::channel::Sender;
 use log::warn;
@@ -104,7 +105,7 @@ impl ShellHandler for Shell {
     /// Handles an ExecuteRequest; "executes" the code by echoing it.
     async fn handle_execute_request(
         &mut self,
-        _originator: &Vec<u8>,
+        _originator: Option<Originator>,
         req: &ExecuteRequest,
     ) -> Result<ExecuteReply, ExecuteReplyException> {
         // Increment counter if we are storing this execution in history

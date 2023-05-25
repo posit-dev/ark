@@ -37,6 +37,7 @@ use crate::wire::jupyter_message::ProtocolMessage;
 use crate::wire::jupyter_message::Status;
 use crate::wire::kernel_info_reply::KernelInfoReply;
 use crate::wire::kernel_info_request::KernelInfoRequest;
+use crate::wire::originator::Originator;
 use crate::wire::status::ExecutionState;
 use crate::wire::status::KernelStatus;
 use crossbeam::channel::Receiver;
@@ -220,8 +221,8 @@ impl Shell {
         req: JupyterMessage<ExecuteRequest>,
     ) -> Result<(), Error> {
         debug!("Received execution request {:?}", req);
-        let originator = req.zmq_identities[0].clone();
-        match block_on(handler.handle_execute_request(&originator, &req.content)) {
+        let originator = Originator::from(&req);
+        match block_on(handler.handle_execute_request(Some(originator), &req.content)) {
             Ok(reply) => {
                 trace!("Got execution reply, delivering to front end: {:?}", reply);
                 let r = req.send_reply(reply, &self.socket);

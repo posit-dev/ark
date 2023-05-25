@@ -34,6 +34,7 @@ use crate::wire::is_complete_reply::IsCompleteReply;
 use crate::wire::is_complete_request::IsCompleteRequest;
 use crate::wire::kernel_info_reply::KernelInfoReply;
 use crate::wire::kernel_info_request::KernelInfoRequest;
+use crate::wire::originator::Originator;
 use crate::wire::shutdown_request::ShutdownRequest;
 use crate::wire::status::KernelStatus;
 use crate::wire::wire_message::WireMessage;
@@ -251,18 +252,23 @@ where
 
     /// Create a new Jupyter message with a specific ZeroMQ identity.
     pub fn create_with_identity(
-        identity: Vec<u8>,
+        orig: Option<Originator>,
         content: T,
         session: &Session,
     ) -> JupyterMessage<T> {
+        let (id, parent_header) = match orig {
+            Some(orig) => (orig.zmq_id, Some(orig.header)),
+            None => (Vec::new(), None)
+        };
+
         JupyterMessage::<T> {
-            zmq_identities: vec![identity],
+            zmq_identities: vec![id],
             header: JupyterHeader::create(
                 T::message_type(),
                 session.session_id.clone(),
                 session.username.clone(),
             ),
-            parent_header: None,
+            parent_header,
             content: content,
         }
     }

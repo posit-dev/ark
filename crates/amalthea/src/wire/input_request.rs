@@ -7,6 +7,7 @@
 
 use crate::wire::jupyter_message::MessageType;
 use serde::{Deserialize, Serialize};
+use crate::wire::originator::Originator;
 
 /// Represents a request from the kernel to the front end to prompt the user for
 /// input
@@ -23,7 +24,7 @@ pub struct InputRequest {
 /// An input request originating from a Shell handler
 pub struct ShellInputRequest {
     /// The identity of the Shell that sent the request
-    pub originator: Vec<u8>,
+    pub originator: Option<Originator>,
 
     /// The input request itself
     pub request: InputRequest,
