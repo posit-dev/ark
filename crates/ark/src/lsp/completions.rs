@@ -23,7 +23,7 @@ use harp::string::r_string_decode;
 use harp::utils::r_envir_name;
 use harp::utils::r_is_promise;
 use harp::utils::r_formals;
-use harp::utils::r_promise_force;
+use harp::utils::r_promise_force_with_rollback;
 use harp::utils::r_promise_is_forced;
 use harp::utils::r_symbol_quote_invalid;
 use harp::utils::r_symbol_valid;
@@ -485,7 +485,7 @@ unsafe fn completion_item_from_namespace(
     // important for functions, where we also set a `CompletionItem::command()`
     // to display function signature help after the completion.
     if r_is_promise(object) && !r_promise_is_forced(object) {
-        object = r_promise_force(object)?;
+        object = r_promise_force_with_rollback(object)?;
     }
 
     completion_item_from_object(name, object, namespace)
