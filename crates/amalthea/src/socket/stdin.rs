@@ -13,6 +13,7 @@ use crate::socket::socket::Socket;
 use crate::wire::input_request::ShellInputRequest;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
+use crate::wire::originator::Originator;
 use crossbeam::channel::bounded;
 use futures::executor::block_on;
 use log::{trace, warn};
@@ -53,6 +54,10 @@ impl Stdin {
             // Wait for a message (input request) from the back end
             let req = rx.recv().unwrap();
 
+            if let None = req.originator {
+                warn!("No originator for stdin request");
+            }
+
             // Deliver the message to the front end
             let msg = JupyterMessage::create_with_identity(
                 req.originator,
@@ -91,7 +96,8 @@ impl Stdin {
 
             // Send the reply to the shell handler
             let handler = self.handler.lock().unwrap();
-            if let Err(err) = block_on(handler.handle_input_reply(&reply.content)) {
+            let orig = Originator::from(&reply);
+            if let Err(err) = block_on(handler.handle_input_reply(&reply.content, orig)) {
                 warn!("Error handling input reply: {:?}", err);
             }
         }

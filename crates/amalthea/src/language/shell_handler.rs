@@ -84,7 +84,7 @@ pub trait ShellHandler: Send {
     /// Handles a reply to a request for input from the front end (from stdin socket)
     ///
     /// https://jupyter-client.readthedocs.io/en/stable/messaging.html#messages-on-the-stdin-router-dealer-channel
-    async fn handle_input_reply(&self, msg: &InputReply) -> Result<(), Exception>;
+    async fn handle_input_reply(&self, msg: &InputReply, orig: Originator) -> Result<(), Exception>;
 
     /// Establishes an input handler for the front end (from stdin socket); when
     /// input is needed, the language runtime can request it by sending an
