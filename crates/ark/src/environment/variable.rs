@@ -306,8 +306,19 @@ impl EnvironmentVariable {
         let display_name = binding.name.to_string();
 
         match binding.value {
-            BindingValue::Active{..} => Self::from_lazy(display_name, String::from("active binding")),
-            BindingValue::Promise{..} => Self::from_lazy(display_name, String::from("promise")),
+            BindingValue::Active{..} => Self::from_lazy(display_name, String::from(""), String::from("active binding")),
+            BindingValue::Promise { promise } => unsafe {
+                let code = RFunction::new("base", "format").add(PRCODE(promise)).call();
+                let display_value = match code {
+                    Ok(formatted) => CharacterVector::new_unchecked(formatted)
+                        .iter()
+                        .map(|v| v.unwrap())
+                        .join(""),
+                    Err(_) => String::from(""),
+                };
+
+                Self::from_lazy(display_name, display_value, String::from("promise"))
+            },
             BindingValue::Altrep{object, ..} | BindingValue::Standard {object, ..} => Self::from(display_name.clone(), display_name, object)
         }
     }
@@ -336,11 +347,11 @@ impl EnvironmentVariable {
         }
     }
 
-    fn from_lazy(display_name: String, lazy_type: String) -> Self {
+    fn from_lazy(display_name: String, display_value: String, lazy_type: String) -> Self {
         Self {
             access_key: display_name.clone(),
             display_name,
-            display_value: String::from(""),
+            display_value,
             display_type: lazy_type.clone(),
             type_info: lazy_type,
             kind: ValueKind::Other,
