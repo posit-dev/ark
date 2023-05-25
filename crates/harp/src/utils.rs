@@ -20,6 +20,7 @@ use crate::error::Result;
 use crate::exec::RArgument;
 use crate::exec::RFunction;
 use crate::exec::RFunctionExt;
+use crate::exec::geterrmessage;
 use crate::object::RObject;
 use crate::protect::RProtect;
 use crate::r_symbol;
@@ -394,4 +395,39 @@ pub fn r_symbol_quote_invalid(name: &str) -> String {
     } else {
         format!("`{}`", name.replace("`", "\\`"))
     }
+}
+
+pub unsafe fn r_promise_is_forced(x: SEXP) -> bool  {
+    PRVALUE(x) != R_UnboundValue
+}
+
+pub unsafe fn r_promise_force(x: SEXP) -> Result<SEXP> {
+    // Expect that the promise protects its own result
+    r_try_eval_silent(x, R_EmptyEnv)
+}
+
+pub unsafe fn r_promise_force_with_rollback(x: SEXP) -> Result<SEXP> {
+    // Like `r_promise_force()`, but if evaluation results in an error
+    // then the original promise is untouched, i.e. `PRSEEN` isn't modified,
+    // avoiding `"restarting interrupted promise evaluation"` warnings.
+    let out = r_try_eval_silent(PRCODE(x), PRENV(x))?;
+    SET_PRVALUE(x, out);
+    Ok(out)
+}
+
+pub unsafe fn r_try_eval_silent(
+    x: SEXP,
+    env: SEXP
+) -> Result<SEXP> {
+    let mut errc = 0;
+
+    let x = R_tryEvalSilent(x, env, &mut errc);
+
+    if errc != 0 {
+        return Err(Error::TryEvalError { 
+            message: geterrmessage()
+         })
+    }
+
+    Ok(x)
 }

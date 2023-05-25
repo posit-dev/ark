@@ -22,6 +22,7 @@ pub enum Error {
     UnexpectedType(u32, Vec<u32>),
     InvalidUtf8(Utf8Error),
     TryCatchError { message: Vec<String>, classes : Vec<String> },
+    TryEvalError { message: String },
     ParseSyntaxError { message: String, line: i32 },
     MissingValueError,
     InspectError { path : Vec<String> }
@@ -80,6 +81,10 @@ impl fmt::Display for Error {
 
             Error::TryCatchError { message: _, classes: _ } => {
                 write!(f, "tryCatch error")
+            }
+
+            Error::TryEvalError { message } => {
+                write!(f, "`eval()` error: {}", message)
             }
 
             Error::ParseSyntaxError { message, line } => {
