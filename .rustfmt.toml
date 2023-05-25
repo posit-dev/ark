@@ -1,8 +1,10 @@
 
 # These are speculative; we can update as appropriate.
+# Format the entire project with `cargo +nightly fmt`,
+# many of these require the nightly channel.
 
 binop_separator = "Back"
-fn_args_layout = "Vertical"
+fn_params_layout = "Vertical"
 format_macro_matchers = true
 group_imports = "StdExternalCrate"
 imports_granularity = "Item"
@@ -12,4 +14,3 @@ max_width = 100
 overflow_delimited_expr = true
 reorder_imports = true
 reorder_modules = true
-
