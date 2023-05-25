@@ -410,21 +410,9 @@ pub unsafe fn r_promise_force_with_rollback(x: SEXP) -> Result<SEXP> {
     // Like `r_promise_force()`, but if evaluation results in an error
     // then the original promise is untouched, i.e. `PRSEEN` isn't modified,
     // avoiding `"restarting interrupted promise evaluation"` warnings.
-    let copy = r_promise_clone(x);
-    let out = r_promise_force(*copy)?;
+    let out = r_try_eval_silent(PRCODE(x), PRENV(x))?;
     SET_PRVALUE(x, out);
     Ok(out)
-}
-
-unsafe fn r_promise_clone(x: SEXP) -> RObject {
-    // `Rf_shallow_duplicate()` and `Rf_duplicate()` are no-ops on promises.
-    // https://github.com/wch/r-source/blob/be24145e6efc1d4e27cef9067305bd515a510ebf/src/main/duplicate.c#LL355C11-L355C11
-    // `SET_PRSEEN()` doesn't exist so we don't copy `PRSEEN()` over.
-    let out = RObject::new(Rf_allocSExp(PROMSXP));
-    SET_PRCODE(*out, PRCODE(x));
-    SET_PRENV(*out, PRENV(x));
-    SET_PRVALUE(*out, PRVALUE(x));
-    out
 }
 
 pub unsafe fn r_try_eval_silent(
