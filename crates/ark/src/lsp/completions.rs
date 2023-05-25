@@ -21,7 +21,6 @@ use harp::object::RObject;
 use harp::r_symbol;
 use harp::string::r_string_decode;
 use harp::utils::r_envir_name;
-use harp::utils::r_is_promise;
 use harp::utils::r_formals;
 use harp::utils::r_promise_force_with_rollback;
 use harp::utils::r_promise_is_forced;
@@ -402,7 +401,7 @@ unsafe fn completion_item_from_object(
     object: SEXP,
     envir: SEXP,
 ) -> Result<CompletionItem> {
-    if r_is_promise(object) {
+    if r_typeof(object) == PROMSXP {
         return completion_item_from_promise(name, object, envir)
     }
 
@@ -484,7 +483,7 @@ unsafe fn completion_item_from_namespace(
     // promises to be able to determine the object type. Particularly
     // important for functions, where we also set a `CompletionItem::command()`
     // to display function signature help after the completion.
-    if r_is_promise(object) && !r_promise_is_forced(object) {
+    if r_typeof(object) == PROMSXP && !r_promise_is_forced(object) {
         object = r_promise_force_with_rollback(object)?;
     }
 

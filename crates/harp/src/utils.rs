@@ -397,10 +397,6 @@ pub fn r_symbol_quote_invalid(name: &str) -> String {
     }
 }
 
-pub fn r_is_promise(x: SEXP) -> bool {
-    r_typeof(x) == PROMSXP
-}
-
 pub unsafe fn r_promise_is_forced(x: SEXP) -> bool  {
     PRVALUE(x) != R_UnboundValue
 }
