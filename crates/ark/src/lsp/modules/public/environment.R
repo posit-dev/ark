@@ -26,10 +26,11 @@
 
 .ps.environment.describeCall <- function(expr, width.cutoff = 500L, nlines = -1L) {
     # TODO: take inspiration from .rs.deparse() in rstudio
-    deparse(
+    out <- deparse(
         expr,
         width.cutoff = width.cutoff,
         nlines       = nlines
     )
-
+    print(out)
+    out
 }
