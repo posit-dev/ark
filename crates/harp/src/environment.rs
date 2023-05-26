@@ -129,12 +129,17 @@ impl Binding {
 
             if r_typeof(value) == PROMSXP {
                 let pr_value = PRVALUE(value);
-                if pr_value == R_UnboundValue && r_typeof(PRCODE(value)) == LANGSXP {
-                    let value = BindingValue::Promise { promise: value };
-                    return Self { name, value };
+                if pr_value == R_UnboundValue {
+                    let code = PRCODE(value);
+                    if r_typeof(code) == LANGSXP {
+                        let value = BindingValue::Promise { promise: value };
+                        return Self { name, value };
+                    } else {
+                        value = code;
+                    }
+                } else {
+                    value = pr_value;
                 }
-
-                value = pr_value;
             }
 
             if r_is_altrep(value) {
