@@ -11,6 +11,7 @@ use std::sync::Mutex;
 use crate::language::shell_handler::ShellHandler;
 use crate::socket::socket::Socket;
 use crate::wire::input_request::ShellInputRequest;
+use crate::wire::header::JupyterHeader;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
 use crate::wire::originator::Originator;
@@ -24,6 +25,10 @@ pub struct Stdin {
 
     /// Language-provided shell handler object
     handler: Arc<Mutex<dyn ShellHandler>>,
+
+    // IOPub message context. Updated from StdIn on input replies so that new
+    // output gets attached to the correct input element in the console.
+    msg_context: Arc<Mutex<Option<JupyterHeader>>>,
 }
 
 impl Stdin {
@@ -31,10 +36,16 @@ impl Stdin {
     ///
     /// * `socket` - The underlying ZeroMQ socket
     /// * `handler` - The language's shell handler
-    pub fn new(socket: Socket, handler: Arc<Mutex<dyn ShellHandler>>) -> Self {
+    /// * `msg_context` - The IOPub message context
+    pub fn new(
+        socket: Socket,
+        handler: Arc<Mutex<dyn ShellHandler>>,
+        msg_context: Arc<Mutex<Option<JupyterHeader>>>,
+    ) -> Self {
         Self {
-            socket: socket,
-            handler: handler,
+            socket,
+            handler,
+            msg_context,
         }
     }
 
@@ -93,6 +104,12 @@ impl Stdin {
                 }
             };
             trace!("Received input reply from front-end: {:?}", reply);
+
+            // Update IOPub message context
+            {
+                let mut ctxt = self.msg_context.lock().unwrap();
+                *ctxt = Some(reply.header.clone());
+            }
 
             // Send the reply to the shell handler
             let handler = self.handler.lock().unwrap();
