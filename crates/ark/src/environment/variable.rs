@@ -71,6 +71,9 @@ pub enum ValueKind {
 
     /// A table, dataframe, 2D matrix, or other two-dimensional data structure
     Table,
+
+    /// Lazy: promise code
+    Lazy
 }
 
 /// Represents the serialized form of an environment variable.
@@ -359,7 +362,7 @@ impl EnvironmentVariable {
             display_value: formatted.result,
             display_type: String::from("promise"),
             type_info: String::from("promise"),
-            kind: ValueKind::Other,
+            kind: ValueKind::Lazy,
             length: 0,
             size: 0,
             has_children: false,
