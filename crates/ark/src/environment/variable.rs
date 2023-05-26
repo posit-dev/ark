@@ -351,7 +351,7 @@ impl EnvironmentVariable {
         let formatted = match deparsed {
             Ok(strings) => collapse(*strings, " ", 100, "" ).unwrap(),
             Err(_) => Collapse {
-                result: String::from(""),
+                result: String::from("(unevaluated)"),
                 truncated: false,
             },
         };
