@@ -255,6 +255,7 @@ impl ShellHandler for Shell {
     async fn handle_input_reply(
         &self,
         msg: &InputReply,
+        orig: Originator,
     ) -> Result<(), Exception> {
         // Send the input reply to R in the form of an ordinary execution request.
         let req = ExecuteRequest {
@@ -268,7 +269,7 @@ impl ShellHandler for Shell {
         let (sender, receiver) = unbounded::<ExecuteResponse>();
         if let Err(err) = self.shell_request_tx.send(Request::ExecuteCode(
             req.clone(),
-            None,
+            Some(orig),
             sender,
         )) {
             warn!("Could not deliver input reply to execution thread: {}", err)

@@ -5,6 +5,8 @@
  *
  */
 
+use std::sync::{Arc, Mutex};
+
 use crate::error::Error;
 use crate::events::PositronEvent;
 use crate::socket::socket::Socket;
@@ -33,7 +35,7 @@ pub struct IOPub {
 
     /// The current message context; attached to outgoing messages to pair
     /// outputs with the message that caused them.
-    context: Option<JupyterHeader>,
+    msg_context: Arc<Mutex<Option<JupyterHeader>>>,
 }
 
 /// Enumeration of all messages that can be delivered from the IOPub PUB/SUB
@@ -59,11 +61,15 @@ impl IOPub {
     ///   subscribed clients.
     /// * `receiver` - The receiver channel that will receive IOPub
     ///   messages from other threads.
-    pub fn new(socket: Socket, receiver: Receiver<IOPubMessage>) -> Self {
+    pub fn new(
+        socket: Socket,
+        receiver: Receiver<IOPubMessage>,
+        msg_context: Arc<Mutex<Option<JupyterHeader>>>,
+    ) -> Self {
         Self {
-            socket: socket,
-            receiver: receiver,
-            context: None,
+            socket,
+            receiver,
+            msg_context,
         }
     }
 
@@ -96,7 +102,8 @@ impl IOPub {
                 // their originator without requiring us to thread the values
                 // through the stack.
                 if msg.execution_state == ExecutionState::Busy {
-                    self.context = Some(context);
+                    let mut ctxt = self.msg_context.lock().unwrap();
+                    *ctxt = Some(context);
                 }
                 self.send_message(msg)
             },
@@ -115,7 +122,8 @@ impl IOPub {
     /// Send a message using the underlying socket with the given content. The
     /// parent message is assumed to be the current context.
     fn send_message<T: ProtocolMessage>(&self, content: T) -> Result<(), Error> {
-        let msg = JupyterMessage::<T>::create(content, self.context.clone(), &self.socket.session);
+        let ctxt = self.msg_context.lock().unwrap();
+        let msg = JupyterMessage::<T>::create(content, ctxt.clone(), &self.socket.session);
         msg.send(&self.socket)
     }
 
@@ -135,7 +143,7 @@ impl IOPub {
     fn send_event(&self, event: PositronEvent) -> Result<(), Error> {
         let msg = JupyterMessage::<ClientEvent>::create(
             ClientEvent::from(event),
-            self.context.clone(),
+            self.msg_context.lock().unwrap().clone(),
             &self.socket.session,
         );
         msg.send(&self.socket)

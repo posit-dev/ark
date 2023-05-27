@@ -255,7 +255,7 @@ impl ShellHandler for Shell {
         Ok(true)
     }
 
-    async fn handle_input_reply(&self, _msg: &InputReply) -> Result<(), Exception> {
+    async fn handle_input_reply(&self, _msg: &InputReply, _orig: Originator) -> Result<(), Exception> {
         // NYI
         Ok(())
     }

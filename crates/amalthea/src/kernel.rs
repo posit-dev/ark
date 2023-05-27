@@ -25,6 +25,7 @@ use crate::socket::shell::Shell;
 use crate::socket::socket::Socket;
 use crate::socket::stdin::Stdin;
 use crate::stream_capture::StreamCapture;
+use crate::wire::header::JupyterHeader;
 
 use crossbeam::channel::bounded;
 use crossbeam::channel::Receiver;
@@ -51,6 +52,11 @@ pub struct Kernel {
 
     /// Receives message sent to the IOPub socket
     iopub_rx: Option<Receiver<IOPubMessage>>,
+
+    /// The current message context; attached to outgoing messages to pair
+    /// outputs with the message that caused them. Normally set and accessed
+    /// by IOPub but can also be set by other threads such as StdIn.
+    msg_context: Arc<Mutex<Option<JupyterHeader>>>,
 
     /// Sends notifications about comm changes and events to the comm manager.
     /// Use `create_comm_manager_tx` to access it.
@@ -84,8 +90,9 @@ impl Kernel {
             name: name.to_string(),
             connection: file,
             session: Session::create(key)?,
-            iopub_tx: iopub_tx,
+            iopub_tx,
             iopub_rx: Some(iopub_rx),
+            msg_context: Arc::new(Mutex::new(None)),
             comm_manager_tx,
             comm_manager_rx,
         })
@@ -144,8 +151,9 @@ impl Kernel {
             self.connection.endpoint(self.connection.iopub_port),
         )?;
         let iopub_rx = self.iopub_rx.take().unwrap();
+        let msg_context = self.msg_context.clone();
         spawn!(format!("{}-iopub", self.name), move || {
-            Self::iopub_thread(iopub_socket, iopub_rx)
+            Self::iopub_thread(iopub_socket, iopub_rx, msg_context)
         });
 
         // Create the heartbeat socket and start a thread to listen for
@@ -174,8 +182,9 @@ impl Kernel {
             self.connection.endpoint(self.connection.stdin_port),
         )?;
         let shell_clone = shell_handler.clone();
+        let msg_context = self.msg_context.clone();
         spawn!(format!("{}-stdin", self.name), move || {
-            Self::stdin_thread(stdin_socket, shell_clone)
+            Self::stdin_thread(stdin_socket, shell_clone, msg_context)
         });
 
         // Create the thread that handles stdout and stderr, if requested
@@ -241,8 +250,12 @@ impl Kernel {
     }
 
     /// Starts the IOPub thread.
-    fn iopub_thread(socket: Socket, receiver: Receiver<IOPubMessage>) -> Result<(), Error> {
-        let mut iopub = IOPub::new(socket, receiver);
+    fn iopub_thread(
+        socket: Socket,
+        receiver: Receiver<IOPubMessage>,
+        msg_context: Arc<Mutex<Option<JupyterHeader>>>,
+    ) -> Result<(), Error> {
+        let mut iopub = IOPub::new(socket, receiver, msg_context);
         iopub.listen();
         Ok(())
     }
@@ -258,8 +271,9 @@ impl Kernel {
     fn stdin_thread(
         socket: Socket,
         shell_handler: Arc<Mutex<dyn ShellHandler>>,
+        msg_context: Arc<Mutex<Option<JupyterHeader>>>,
     ) -> Result<(), Error> {
-        let stdin = Stdin::new(socket, shell_handler);
+        let stdin = Stdin::new(socket, shell_handler, msg_context);
         stdin.listen();
         Ok(())
     }
