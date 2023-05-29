@@ -112,14 +112,14 @@ impl DataSet {
                         None => {
                             match col_name {
                                 Some(name) => name,
-                                None       => format!("[, {}]", i)
+                                None       => format!("[, {}]", i + 1)
                             }
                         },
 
                         Some(ref prefix) => {
                             match col_name {
                                 Some(name) => format!("{}${}", prefix, name),
-                                None       => format!("{}[, {}]", prefix, i)
+                                None       => format!("{}[, {}]", prefix, i + 1)
                             }
                         }
                     };
@@ -150,13 +150,13 @@ impl DataSet {
                         None => {
                             match col_name {
                                 Some(name) => name,
-                                None       => format!("[, {}]", i)
+                                None       => format!("[, {}]", i + 1)
                             }
                         },
                         Some(ref prefix) => {
                             match col_name {
                                 Some(name) => format!("{}[, \"{}\"]", prefix, name),
-                                None       => format!("{}[, {}]", prefix, i)
+                                None       => format!("{}[, {}]", prefix, i + 1)
                             }
                         }
                     };
