@@ -163,7 +163,7 @@ impl DataSet {
         Ok(())
     }
 
-    pub fn from_data_frame(id: String, title: String, object: RObject) -> Result<Self, anyhow::Error> {
+    pub fn from_object(id: String, title: String, object: RObject) -> Result<Self, anyhow::Error> {
         r_lock! {
             let row_count = {
                 if r_is_data_frame(*object) {
@@ -207,23 +207,24 @@ impl RDataViewer {
                 data: data,
                 comm: comm
             };
-            if let Err(error) = viewer.execution_thread() {
-                log::error!("Error while viewing object '{}': {}", title, error);
-            }
+            viewer.execution_thread();
         });
     }
 
-    pub fn execution_thread(self) -> Result<(), anyhow::Error> {
-        let data_set = DataSet::from_data_frame(self.id.clone(), self.title, self.data)?;
-        let json = serde_json::to_value(data_set)?;
+    pub fn execution_thread(self) {
+        // This is a simplistic version where all the data is converted as once to
+        // a message that is included in initial event of the comm.
+        let json = match DataSet::from_object(self.id.clone(), self.title.clone(), self.data) {
+            Ok(data_set) => serde_json::to_value(data_set).unwrap(),
+            Err(error) => {
+                log::error!("Error while viewing object '{}': {}", self.title, error);
+                return;
+            }
+        };
 
         let comm_manager_tx = comm_manager_tx();
         let event = CommEvent::Opened(self.comm.clone(), json);
-        comm_manager_tx.send(event)?;
-
-        // TODO: some sort of select!() loop to listen for events from the comm
-
-        Ok(())
+        comm_manager_tx.send(event).unwrap();
     }
 
 }
