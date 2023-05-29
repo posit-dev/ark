@@ -68,26 +68,50 @@ pub struct DataSet {
     pub row_count: usize
 }
 
+struct ColumnNames {
+    pub names: Option<CharacterVector>
+}
+
+impl ColumnNames {
+    pub fn new(names: SEXP) -> Self {
+        let names = if r_typeof(names) == STRSXP {
+            Some(unsafe { CharacterVector::new_unchecked(names) })
+        } else {
+            None
+        };
+        Self {
+            names
+        }
+    }
+
+    pub fn get_unchecked(&self, index: isize) -> String {
+        if let Some(names) = &self.names {
+            if let Some(name) = names.get_unchecked(index) {
+                if name.len() > 0 {
+                    return name;
+                }
+            }
+        }
+        format!("[, {}]", index + 1)
+    }
+}
+
 impl DataSet {
 
     unsafe fn extract_columns(object: SEXP, name: Option<String>, row_count: usize, columns: &mut Vec<DataColumn>) -> Result<(), anyhow::Error> {
         if r_is_data_frame(object) {
             unsafe {
-                let names = Rf_getAttrib(object, R_NamesSymbol);
-                if r_typeof(names) != STRSXP {
-                    bail!("data frame without names");
-                }
-                let names = CharacterVector::new_unchecked(names);
+                let names = ColumnNames::new(Rf_getAttrib(object, R_NamesSymbol));
 
                 let n_columns = XLENGTH(object);
                 for i in 0..n_columns {
-                    let name = match name {
-                        Some(ref prefix) => format!("{}${}", prefix, names.get_unchecked(i).unwrap()),
-                        None         => names.get_unchecked(i).unwrap()
+                    let col_name = match name {
+                        Some(ref prefix) => format!("{}${}", prefix, names.get_unchecked(i)),
+                        None             => names.get_unchecked(i)
                     };
                     // Protecting with `RObject` in case `object` happens to be an ALTLIST
                     let column = RObject::from(VECTOR_ELT(object, i));
-                    Self::extract_columns(*column, Some(name), row_count, columns)?;
+                    Self::extract_columns(*column, Some(col_name), row_count, columns)?;
                 }
             }
 
