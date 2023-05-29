@@ -17,7 +17,6 @@ use harp::utils::r_assert_length;
 use harp::utils::r_assert_type;
 use harp::utils::r_is_data_frame;
 use harp::utils::r_is_matrix;
-use harp::utils::r_is_null;
 use harp::utils::r_is_simple_vector;
 use harp::utils::r_typeof;
 use harp::vector::CharacterVector;
@@ -74,44 +73,60 @@ struct ColumnNames {
 
 impl ColumnNames {
     pub fn new(names: SEXP) -> Self {
-        let names = if r_typeof(names) == STRSXP {
-            Some(unsafe { CharacterVector::new_unchecked(names) })
-        } else {
-            None
-        };
-        Self {
-            names
+        unsafe {
+            let names = if r_typeof(names) == STRSXP {
+                Some(CharacterVector::new_unchecked(names))
+            } else {
+                None
+            };
+            Self {
+                names
+            }
         }
     }
 
-    pub fn get_unchecked(&self, index: isize) -> String {
+    pub fn get_unchecked(&self, index: isize) -> Option<String> {
         if let Some(names) = &self.names {
             if let Some(name) = names.get_unchecked(index) {
                 if name.len() > 0 {
-                    return name;
+                    return Some(name);
                 }
             }
         }
-        format!("[, {}]", index + 1)
+        None
     }
 }
 
 impl DataSet {
 
-    unsafe fn extract_columns(object: SEXP, name: Option<String>, row_count: usize, columns: &mut Vec<DataColumn>) -> Result<(), anyhow::Error> {
+    unsafe fn extract_columns(object: SEXP, prefix: Option<String>, row_count: usize, columns: &mut Vec<DataColumn>) -> Result<(), anyhow::Error> {
         if r_is_data_frame(object) {
             unsafe {
                 let names = ColumnNames::new(Rf_getAttrib(object, R_NamesSymbol));
 
                 let n_columns = XLENGTH(object);
                 for i in 0..n_columns {
-                    let col_name = match name {
-                        Some(ref prefix) => format!("{}${}", prefix, names.get_unchecked(i)),
-                        None             => names.get_unchecked(i)
+                    let col_name = names.get_unchecked(i);
+
+                    let name = match prefix {
+                        None => {
+                            match col_name {
+                                Some(name) => name,
+                                None       => format!("[, {}]", i)
+                            }
+                        },
+
+                        Some(ref prefix) => {
+                            match col_name {
+                                Some(name) => format!("{}${}", prefix, name),
+                                None       => format!("{}[, {}]", prefix, i)
+                            }
+                        }
                     };
+
                     // Protecting with `RObject` in case `object` happens to be an ALTLIST
                     let column = RObject::from(VECTOR_ELT(object, i));
-                    Self::extract_columns(*column, Some(col_name), row_count, columns)?;
+                    Self::extract_columns(*column, Some(name), row_count, columns)?;
                 }
             }
 
@@ -125,40 +140,34 @@ impl DataSet {
                 }
 
                 let colnames = RFunction::from("colnames").add(object).call()?;
+                let colnames = ColumnNames::new(*colnames);
 
-                if r_is_null(*colnames) {
-                    for i in 0..n_columns {
-                        let name = match name {
-                            Some(ref prefix) => format!("{}[, {}]", prefix, i + 1),
-                            None => format!("[, {}]", i + 1)
-                        };
+                for i in 0..n_columns {
 
-                        let matrix_column = RFunction::from("[")
-                            .add(object)
-                            .param("i", R_MissingArg)
-                            .param("j", i + 1)
-                            .call()?;
+                    let col_name = colnames.get_unchecked(i as isize);
 
-                        Self::extract_columns(*matrix_column, Some(name), row_count, columns)?;
-                    }
-                } else {
-                    let colnames = CharacterVector::new_unchecked(colnames);
+                    let name = match prefix {
+                        None => {
+                            match col_name {
+                                Some(name) => name,
+                                None       => format!("[, {}]", i)
+                            }
+                        },
+                        Some(ref prefix) => {
+                            match col_name {
+                                Some(name) => format!("{}[, \"{}\"]", prefix, name),
+                                None       => format!("{}[, {}]", prefix, i)
+                            }
+                        }
+                    };
 
-                    for i in 0..n_columns {
-                        let column_name = colnames.get_unchecked(i as isize).unwrap();
-                        let name = match name {
-                            Some(ref prefix) => format!("{}[, \"{}\"]", prefix, column_name),
-                            None => format!("[, \"{}\"]", column_name)
-                        };
+                    let matrix_column = RFunction::from("[")
+                        .add(object)
+                        .param("i", R_MissingArg)
+                        .param("j", i + 1)
+                        .call()?;
 
-                        let matrix_column = RFunction::from("[")
-                            .add(object)
-                            .param("i", R_MissingArg)
-                            .param("j", i + 1)
-                            .call()?;
-
-                        Self::extract_columns(*matrix_column, Some(name), row_count, columns)?;
-                    }
+                    Self::extract_columns(*matrix_column, Some(name), row_count, columns)?;
                 }
             }
         } else {
@@ -176,7 +185,7 @@ impl DataSet {
             };
 
             columns.push(DataColumn{
-                name: name.unwrap(),
+                name: prefix.unwrap(),
 
                 // TODO: String here is a placeholder
                 column_type: String::from("String"),
