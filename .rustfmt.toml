@@ -4,7 +4,6 @@
 # many of these require the nightly channel.
 
 binop_separator = "Back"
-fn_params_layout = "Vertical"
 format_macro_matchers = true
 group_imports = "StdExternalCrate"
 imports_granularity = "Item"
