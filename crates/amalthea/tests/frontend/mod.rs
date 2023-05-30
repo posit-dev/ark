@@ -8,7 +8,9 @@
 use amalthea::connection_file::ConnectionFile;
 use amalthea::session::Session;
 use amalthea::socket::socket::Socket;
-use amalthea::wire::jupyter_message::{JupyterMessage, Message, ProtocolMessage};
+use amalthea::wire::jupyter_message::JupyterMessage;
+use amalthea::wire::jupyter_message::Message;
+use amalthea::wire::jupyter_message::ProtocolMessage;
 
 pub struct Frontend {
     pub control_socket: Socket,

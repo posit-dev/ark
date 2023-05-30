@@ -23,14 +23,16 @@ impl Vector for LogicalVector {
     type CompareType = bool;
 
     unsafe fn new_unchecked(object: impl Into<SEXP>) -> Self {
-        Self { object: RObject::new(object.into()) }
+        Self {
+            object: RObject::new(object.into()),
+        }
     }
 
     unsafe fn create<T>(data: T) -> Self
     where
         T: IntoIterator,
         <T as IntoIterator>::IntoIter: ExactSizeIterator,
-        <T as IntoIterator>::Item: AsRef<Self::Item>
+        <T as IntoIterator>::Item: AsRef<Self::Item>,
     {
         let it = data.into_iter();
         let count = it.len();

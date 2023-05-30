@@ -5,8 +5,10 @@
  *
  */
 
+use serde::Deserialize;
+use serde::Serialize;
+
 use crate::wire::jupyter_message::MessageType;
-use serde::{Deserialize, Serialize};
 
 /// Represents a rebroadcast of code input; used by the IOPUb channel so all
 /// frontends can see what's being executed

@@ -28,21 +28,20 @@ use crate::lsp::indexer::IndexEntryData;
 use crate::lsp::traits::point::PointExt;
 use crate::lsp::traits::string::StringExt;
 
-pub fn symbols(_backend: &Backend, params: &WorkspaceSymbolParams) -> Result<Vec<SymbolInformation>> {
-
+pub fn symbols(
+    _backend: &Backend,
+    params: &WorkspaceSymbolParams,
+) -> Result<Vec<SymbolInformation>> {
     let query = &params.query;
-    let mut info : Vec<SymbolInformation> = Vec::new();
+    let mut info: Vec<SymbolInformation> = Vec::new();
 
     indexer::map(|path, symbol, entry| {
-
         if !symbol.fuzzy_matches(query) {
             return;
         }
 
         match &entry.data {
-
             IndexEntryData::Function { name, arguments: _ } => {
-
                 info.push(SymbolInformation {
                     name: name.to_string(),
                     kind: SymbolKind::FUNCTION,
@@ -54,11 +53,9 @@ pub fn symbols(_backend: &Backend, params: &WorkspaceSymbolParams) -> Result<Vec
                     deprecated: None,
                     container_name: None,
                 });
-
             },
 
             IndexEntryData::Section { level: _, title } => {
-
                 info.push(SymbolInformation {
                     name: title.to_string(),
                     kind: SymbolKind::MODULE,
@@ -70,20 +67,18 @@ pub fn symbols(_backend: &Backend, params: &WorkspaceSymbolParams) -> Result<Vec
                     deprecated: None,
                     container_name: None,
                 });
-
             },
-
         };
-
     });
 
     Ok(info)
-
 }
 
-pub fn document_symbols(backend: &Backend, params: &DocumentSymbolParams) -> Result<Vec<DocumentSymbol>> {
-
-    let mut symbols : Vec<DocumentSymbol> = Vec::new();
+pub fn document_symbols(
+    backend: &Backend,
+    params: &DocumentSymbolParams,
+) -> Result<Vec<DocumentSymbol>> {
+    let mut symbols: Vec<DocumentSymbol> = Vec::new();
 
     let uri = &params.text_document.uri;
     let document = backend.documents.get(uri).into_result()?;
@@ -107,7 +102,7 @@ pub fn document_symbols(backend: &Backend, params: &DocumentSymbolParams) -> Res
         selection_range: Range {
             start: node.start_position().as_position(),
             end: node.end_position().as_position(),
-        }
+        },
     };
 
     // index from the root
@@ -115,26 +110,31 @@ pub fn document_symbols(backend: &Backend, params: &DocumentSymbolParams) -> Res
 
     // return the children we found
     Ok(root.children.unwrap_or_default())
-
 }
 
 fn is_indexable(node: &Node) -> bool {
-
     // don't index 'arguments' or 'parameters'
     if matches!(node.kind(), "arguments" | "parameters") {
         return false;
     }
 
     true
-
 }
 
-fn index_node(node: &Node, contents: &String, parent: &mut DocumentSymbol, symbols: &mut Vec<DocumentSymbol>) -> Result<bool> {
-
+fn index_node(
+    node: &Node,
+    contents: &String,
+    parent: &mut DocumentSymbol,
+    symbols: &mut Vec<DocumentSymbol>,
+) -> Result<bool> {
     // if we find an assignment, index it
     if matches!(node.kind(), "<-" | "=") {
         match index_assignment(node, contents, parent, symbols) {
-            Ok(handled) => if handled { return Ok(true) },
+            Ok(handled) => {
+                if handled {
+                    return Ok(true);
+                }
+            },
             Err(error) => error!("{:?}", error),
         }
     }
@@ -148,14 +148,17 @@ fn index_node(node: &Node, contents: &String, parent: &mut DocumentSymbol, symbo
                 error!("{:?}", error);
             }
         }
-    };
+    }
 
     Ok(true)
-
 }
 
-fn index_assignment(node: &Node, contents: &String, parent: &mut DocumentSymbol, symbols: &mut Vec<DocumentSymbol>) -> Result<bool> {
-
+fn index_assignment(
+    node: &Node,
+    contents: &String,
+    parent: &mut DocumentSymbol,
+    symbols: &mut Vec<DocumentSymbol>,
+) -> Result<bool> {
     // check for assignment
     matches!(node.kind(), "<-" | "=").into_result()?;
 
@@ -165,8 +168,7 @@ fn index_assignment(node: &Node, contents: &String, parent: &mut DocumentSymbol,
 
     // check for identifier on lhs, function on rhs
     let function =
-        matches!(lhs.kind(), "identifier" | "string") &&
-        matches!(rhs.kind(), "function");
+        matches!(lhs.kind(), "identifier" | "string") && matches!(rhs.kind(), "function");
 
     if function {
         return index_function(node, contents, parent, symbols);
@@ -188,24 +190,27 @@ fn index_assignment(node: &Node, contents: &String, parent: &mut DocumentSymbol,
         selection_range: Range {
             start: lhs.start_position().as_position(),
             end: lhs.end_position().as_position(),
-        }
+        },
     };
 
     // add this symbol to the parent node
     parent.children.as_mut().unwrap().push(symbol);
 
     Ok(true)
-
 }
 
-fn index_function(node: &Node, contents: &String, parent: &mut DocumentSymbol, symbols: &mut Vec<DocumentSymbol>) -> Result<bool> {
-
+fn index_function(
+    node: &Node,
+    contents: &String,
+    parent: &mut DocumentSymbol,
+    symbols: &mut Vec<DocumentSymbol>,
+) -> Result<bool> {
     // check for lhs, rhs
     let lhs = node.child_by_field_name("lhs").into_result()?;
     let rhs = node.child_by_field_name("rhs").into_result()?;
 
     // start extracting the argument names
-    let mut arguments : Vec<String> = Vec::new();
+    let mut arguments: Vec<String> = Vec::new();
     let parameters = rhs.child_by_field_name("parameters").into_result()?;
 
     let mut cursor = parameters.walk();
@@ -233,7 +238,7 @@ fn index_function(node: &Node, contents: &String, parent: &mut DocumentSymbol, s
         selection_range: Range {
             start: lhs.start_position().as_position(),
             end: lhs.end_position().as_position(),
-        }
+        },
     };
 
     // add this symbol to the parent node
@@ -244,5 +249,4 @@ fn index_function(node: &Node, contents: &String, parent: &mut DocumentSymbol, s
     index_node(&rhs, contents, parent, symbols)?;
 
     Ok(true)
-
 }

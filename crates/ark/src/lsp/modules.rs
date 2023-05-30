@@ -5,6 +5,12 @@
 //
 //
 
+use std::collections::HashMap;
+use std::env;
+use std::path::Path;
+use std::path::PathBuf;
+use std::time::Duration;
+
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::protect::RProtect;
@@ -15,11 +21,6 @@ use libR_sys::*;
 use stdext::local;
 use stdext::spawn;
 use stdext::unwrap::IntoResult;
-use std::collections::HashMap;
-use std::env;
-use std::path::Path;
-use std::path::PathBuf;
-use std::time::Duration;
 use walkdir::WalkDir;
 
 // We use a set of three environments for the functions exposed to
@@ -61,17 +62,15 @@ struct RModuleWatcher {
 }
 
 impl RModuleWatcher {
-
     pub fn new(path: PathBuf) -> Self {
         Self {
-            path: path,
+            path,
             cache: HashMap::new(),
         }
     }
 
     pub fn watch(&mut self) -> anyhow::Result<()> {
-
-        let public  = self.path.join("public");
+        let public = self.path.join("public");
         let private = self.path.join("private");
 
         // initialize
@@ -88,7 +87,6 @@ impl RModuleWatcher {
 
         // start looking for changes
         loop {
-
             std::thread::sleep(Duration::from_secs(1));
             let status = local! {
                 for (path, oldmeta) in self.cache.iter_mut() {
@@ -108,15 +106,11 @@ impl RModuleWatcher {
             if let Err(error) = status {
                 log::error!("[watcher] error detecting changes: {}", error);
             }
-
         }
-
     }
-
 }
 
 pub unsafe fn initialize() -> anyhow::Result<RModuleInfo> {
-
     // Create the 'private' Positron environment.
     let private = RFunction::new("base", "new.env")
         .param("parent", R_GlobalEnv)
@@ -135,7 +129,7 @@ pub unsafe fn initialize() -> anyhow::Result<RModuleInfo> {
     Rf_setAttrib(
         POSITRON_PRIVATE_ENVIRONMENT,
         r_symbol!("name"),
-        r_string!("positron:private", &mut protect)
+        r_string!("positron:private", &mut protect),
     );
 
     R_PreserveObject(*public);
@@ -143,7 +137,7 @@ pub unsafe fn initialize() -> anyhow::Result<RModuleInfo> {
     Rf_setAttrib(
         POSITRON_PUBLIC_ENVIRONMENT,
         r_symbol!("name"),
-        r_string!("positron:public", &mut protect)
+        r_string!("positron:public", &mut protect),
     );
 
     // Create the attached 'tools:positron' environment.
@@ -162,7 +156,7 @@ pub unsafe fn initialize() -> anyhow::Result<RModuleInfo> {
         Err(error) => {
             log::warn!("Failed to get current exe path; can't find R modules");
             return Err(error.into());
-        }
+        },
     };
 
     // If that path doesn't exist, we're probably running from source, so
@@ -176,7 +170,10 @@ pub unsafe fn initialize() -> anyhow::Result<RModuleInfo> {
     // Import all module files.
     // TODO: Need to select appropriate path for package builds.
     log::info!("Loading modules from directory: {}", root.display());
-    for file in WalkDir::new(root.clone()).into_iter().filter_map(|file| file.ok()) {
+    for file in WalkDir::new(root.clone())
+        .into_iter()
+        .filter_map(|file| file.ok())
+    {
         let path = file.path();
         if let Some(ext) = path.extension() {
             if ext == "R" {
@@ -198,17 +195,12 @@ pub unsafe fn initialize() -> anyhow::Result<RModuleInfo> {
     });
 
     // Get the help server port.
-    let help_server_port = RFunction::new("tools", "httpdPort")
-        .call()?
-        .to::<i32>()?;
+    let help_server_port = RFunction::new("tools", "httpdPort").call()?.to::<i32>()?;
 
-    return Ok(RModuleInfo {
-        help_server_port: help_server_port,
-    });
+    return Ok(RModuleInfo { help_server_port });
 }
 
 pub unsafe fn import(file: &Path) -> anyhow::Result<()> {
-
     // Figure out if this is a 'private' or 'public' component.
     let parent = file.parent().into_result()?;
     let name = parent.file_name().into_result()?;
@@ -245,6 +237,4 @@ pub unsafe fn import(file: &Path) -> anyhow::Result<()> {
         .call()?;
 
     Ok(())
-
 }
-

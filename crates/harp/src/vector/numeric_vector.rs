@@ -23,14 +23,16 @@ impl Vector for NumericVector {
     type CompareType = f64;
 
     unsafe fn new_unchecked(object: impl Into<SEXP>) -> Self {
-        Self { object: RObject::new(object.into()) }
+        Self {
+            object: RObject::new(object.into()),
+        }
     }
 
     unsafe fn create<T>(data: T) -> Self
     where
         T: IntoIterator,
         <T as IntoIterator>::IntoIter: ExactSizeIterator,
-        <T as IntoIterator>::Item: AsRef<Self::Item>
+        <T as IntoIterator>::Item: AsRef<Self::Item>,
     {
         let it = data.into_iter();
         let count = it.len();
@@ -63,5 +65,4 @@ impl Vector for NumericVector {
     fn format_one(&self, x: Self::Type) -> String {
         x.to_string()
     }
-
 }

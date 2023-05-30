@@ -7,9 +7,9 @@
 
 use std::ffi::CStr;
 use std::mem;
+use std::os::raw::c_char;
 use std::os::raw::c_int;
 use std::os::raw::c_void;
-use std::os::raw::c_char;
 
 use libR_sys::*;
 
@@ -39,14 +39,12 @@ pub struct RArgument {
 }
 
 impl RArgument {
-
     pub fn new(name: &str, value: RObject) -> Self {
         Self {
             name: name.to_string(),
-            value: value
+            value,
         }
     }
-
 }
 
 pub struct RFunction {
@@ -61,7 +59,6 @@ pub trait RFunctionExt<T> {
 }
 
 impl<T: Into<RObject>> RFunctionExt<Option<T>> for RFunction {
-
     fn param(&mut self, name: &str, value: Option<T>) -> &mut Self {
         if let Some(value) = value {
             self._add(name, value.into());
@@ -75,45 +72,38 @@ impl<T: Into<RObject>> RFunctionExt<Option<T>> for RFunction {
         }
         self
     }
-
 }
 
 impl<T: Into<RObject>> RFunctionExt<T> for RFunction {
-
     fn param(&mut self, name: &str, value: T) -> &mut Self {
-        let value : RObject = value.into();
+        let value: RObject = value.into();
         return self._add(name, value);
     }
 
     fn add(&mut self, value: T) -> &mut Self {
-        let value : RObject = value.into();
+        let value: RObject = value.into();
         return self._add("", value);
     }
-
 }
 
 impl RFunction {
-
     pub fn new(package: &str, function: &str) -> Self {
-
         RFunction {
             package: package.to_string(),
             function: function.to_string(),
             arguments: Vec::new(),
         }
-
     }
 
     fn _add(&mut self, name: &str, value: RObject) -> &mut Self {
         self.arguments.push(RArgument {
             name: name.to_string(),
-            value: value,
+            value,
         });
         self
     }
 
     pub unsafe fn call(&mut self) -> Result<RObject> {
-
         let mut protect = RProtect::new();
 
         // start building the call to be evaluated
@@ -131,11 +121,14 @@ impl RFunction {
         // append arguments to the call
         let mut slot = CDR(call);
         for argument in self.arguments.iter() {
-
             // quote language objects by default
             let mut sexp = argument.value.sexp;
             if matches!(r_typeof(sexp), LANGSXP | SYMSXP | EXPRSXP) {
-                let quote = protect.add(Rf_lang3(r_symbol!("::"), r_symbol!("base"), r_symbol!("quote")));
+                let quote = protect.add(Rf_lang3(
+                    r_symbol!("::"),
+                    r_symbol!("base"),
+                    r_symbol!("quote"),
+                ));
                 sexp = protect.add(Rf_lang2(quote, sexp));
             }
 
@@ -148,31 +141,37 @@ impl RFunction {
         }
 
         // now, wrap call in tryCatch, so that errors don't longjmp
-        let try_catch = protect.add(Rf_lang3(r_symbol!("::"), r_symbol!("base"), r_symbol!("tryCatch")));
-        let call = protect.add(Rf_lang4(try_catch, call, r_symbol!("identity"), r_symbol!("identity")));
+        let try_catch = protect.add(Rf_lang3(
+            r_symbol!("::"),
+            r_symbol!("base"),
+            r_symbol!("tryCatch"),
+        ));
+        let call = protect.add(Rf_lang4(
+            try_catch,
+            call,
+            r_symbol!("identity"),
+            r_symbol!("identity"),
+        ));
         SET_TAG(call, R_NilValue);
         SET_TAG(CDDR(call), r_symbol!("error"));
         SET_TAG(CDDDR(call), r_symbol!("interrupt"));
 
         // evaluate the call
-        let envir = if self.package.is_empty() { R_GlobalEnv } else { R_BaseEnv };
+        let envir = if self.package.is_empty() {
+            R_GlobalEnv
+        } else {
+            R_BaseEnv
+        };
         let result = protect.add(Rf_eval(call, envir));
 
         if r_inherits(result, "error") {
-
             let code = r_stringify(call, "\n")?;
             let message = geterrmessage();
-            return Err(Error::EvaluationError {
-                code: code,
-                message: message,
-            });
-
+            return Err(Error::EvaluationError { code, message });
         }
 
         return Ok(RObject::new(result));
-
     }
-
 }
 
 impl From<&str> for RFunction {
@@ -182,7 +181,6 @@ impl From<&str> for RFunction {
 }
 
 pub fn geterrmessage() -> String {
-
     // SAFETY: Returns pointer to static memory buffer owned by R.
     let buffer = unsafe { R_curErrorBuf() };
 
@@ -193,7 +191,6 @@ pub fn geterrmessage() -> String {
         Ok(value) => return value.to_string(),
         Err(_) => return "".to_string(),
     }
-
 }
 
 /// Wrappers around R_tryCatch()
@@ -217,7 +214,11 @@ pub fn geterrmessage() -> String {
 ///     void (*finally)(void*), void* fdata
 /// )
 /// ```
-pub unsafe fn r_try_catch_finally<F, R, S, Finally>(mut fun: F, classes: S, mut finally: Finally) -> Result<RObject>
+pub unsafe fn r_try_catch_finally<F, R, S, Finally>(
+    mut fun: F,
+    classes: S,
+    mut finally: Finally,
+) -> Result<RObject>
 where
     F: FnMut() -> R,
     R: Into<RObject>,
@@ -228,14 +229,14 @@ where
     // the actual closure is passed as a void* through arg
     extern "C" fn body_fn<S>(arg: *mut c_void) -> SEXP
     where
-        S: Into<RObject>
+        S: Into<RObject>,
     {
         // extract the "closure" from the void*
         // idea from https://adventures.michaelfbryan.com/posts/rust-closures-in-ffi/
         let closure: &mut &mut dyn FnMut() -> S = unsafe { mem::transmute(arg) };
 
         // call the closure and return it result as a SEXP
-        let out : RObject = closure().into();
+        let out: RObject = closure().into();
         out.sexp
     }
 
@@ -281,12 +282,9 @@ where
     let result = R_tryCatch(
         Some(body_fn::<R>),
         body_data as *mut _ as *mut c_void,
-
         *classes,
-
         Some(handler_fn),
         success_ptr as *mut c_void,
-
         Some(finally_fn),
         finally_data as *mut _ as *mut c_void,
     );
@@ -300,7 +298,8 @@ where
         false => {
             // the call to tryCatch failed, so result is a condition
             // from which we can extract classes and message via a call to conditionMessage()
-            let classes : Vec<String> = RObject::from(Rf_getAttrib(result, R_ClassSymbol)).try_into()?;
+            let classes: Vec<String> =
+                RObject::from(Rf_getAttrib(result, R_ClassSymbol)).try_into()?;
 
             let mut protect = RProtect::new();
             let call = protect.add(Rf_lang2(r_symbol!("conditionMessage"), result));
@@ -310,10 +309,8 @@ where
             //       because it creates a recursion problem
             let message: Vec<String> = RObject::from(Rf_eval(call, R_BaseEnv)).try_into()?;
 
-            Err(Error::TryCatchError {
-                message, classes
-            })
-        }
+            Err(Error::TryCatchError { message, classes })
+        },
     }
 }
 
@@ -329,7 +326,7 @@ where
 pub unsafe fn r_try_catch_error<F, R>(fun: F) -> Result<RObject>
 where
     F: FnMut() -> R,
-    RObject: From<R>
+    RObject: From<R>,
 {
     let vector = CharacterVector::create(["error"]);
     r_try_catch_finally(fun, vector, || {})
@@ -337,38 +334,33 @@ where
 
 pub enum ParseResult {
     Complete(SEXP),
-    Incomplete()
+    Incomplete(),
 }
 
 #[allow(non_upper_case_globals)]
 pub unsafe fn r_parse_vector(code: &str) -> Result<ParseResult> {
-
-    let mut ps : ParseStatus = 0;
+    let mut ps: ParseStatus = 0;
     let mut protect = RProtect::new();
     let r_code = r_string!(code, &mut protect);
 
-    let result = r_try_catch_error(|| {
-        R_ParseVector(r_code, -1, &mut ps, R_NilValue)
-    })?;
+    let result = r_try_catch_error(|| R_ParseVector(r_code, -1, &mut ps, R_NilValue))?;
 
     match ps {
-        ParseStatus_PARSE_OK => {
-            Ok(ParseResult::Complete(*result))
-        },
+        ParseStatus_PARSE_OK => Ok(ParseResult::Complete(*result)),
         ParseStatus_PARSE_INCOMPLETE => Ok(ParseResult::Incomplete()),
-        ParseStatus_PARSE_ERROR => {
-            Err(Error::ParseSyntaxError {
-                message: CStr::from_ptr(R_ParseErrorMsg.as_ptr()).to_string_lossy().to_string(),
-                line: R_ParseError as i32
-            })
-        },
+        ParseStatus_PARSE_ERROR => Err(Error::ParseSyntaxError {
+            message: CStr::from_ptr(R_ParseErrorMsg.as_ptr())
+                .to_string_lossy()
+                .to_string(),
+            line: R_ParseError as i32,
+        }),
         _ => {
             // should not get here
             Err(Error::ParseError {
                 code: code.to_string(),
-                message: String::from("Unknown parse error")
+                message: String::from("Unknown parse error"),
             })
-        }
+        },
     }
 }
 
@@ -378,6 +370,7 @@ mod tests {
     use std::ffi::CString;
     use std::io::Write;
 
+    use super::*;
     use crate::assert_match;
     use crate::r_lock;
     use crate::r_test;
@@ -385,195 +378,205 @@ mod tests {
     use crate::utils::r_envir_remove;
     use crate::utils::r_is_null;
 
-    use super::*;
-
     #[test]
-    fn test_basic_function() { r_test! {
+    fn test_basic_function() {
+        r_test! {
 
-        // try adding some numbers
-        let result = RFunction::new("", "+")
-            .add(2)
-            .add(2)
-            .call()
-            .unwrap();
+            // try adding some numbers
+            let result = RFunction::new("", "+")
+                .add(2)
+                .add(2)
+                .call()
+                .unwrap();
 
-        // check the result
-        assert!(Rf_isInteger(*result) != 0);
-        assert!(Rf_asInteger(*result) == 4);
+            // check the result
+            assert!(Rf_isInteger(*result) != 0);
+            assert!(Rf_asInteger(*result) == 4);
 
-    }}
-
-    #[test]
-    fn test_utf8_strings() { r_test! {
-
-        // try sending some UTF-8 strings to and from R
-        let result = RFunction::new("base", "paste")
-            .add("世界")
-            .add("您好".to_string())
-            .call()
-            .unwrap();
-
-        assert!(Rf_isString(*result) != 0);
-
-        let value = TryInto::<String>::try_into(result);
-        assert!(value.is_ok());
-        if let Ok(value) = value {
-            assert!(value == "世界 您好")
         }
-
-    }}
-
-    #[test]
-    fn test_named_arguments() { r_test! {
-
-        let result = RFunction::new("stats", "rnorm")
-            .add(1.0)
-            .param("mean", 10)
-            .param("sd", 0)
-            .call()
-            .unwrap();
-
-        assert!(Rf_isNumeric(*result) != 0);
-        assert!(Rf_asInteger(*result) == 10);
-
-    }}
+    }
 
     #[test]
-    fn test_threads() { r_test_unlocked! {
+    fn test_utf8_strings() {
+        r_test! {
 
-        // Spawn a bunch of threads that try to interact with R.
-        const N : i32 = 1000;
-        let mut handles : Vec<_> = Vec::new();
-        for _i in 1..20 {
-            let handle = std::thread::spawn(move || {
-                let id = std::thread::current().id();
-                for _j in 1..20 {
-                    r_lock! {
-                        println!("Thread {:?} acquiring R lock.", id);
-                        std::io::stdout().flush().unwrap();
-                        let mut protect = RProtect::new();
-                        let code = protect.add(Rf_lang2(r_symbol!("rnorm"), Rf_ScalarInteger(N)));
-                        println!("Thread {:?} about to evaluate R code.", id);
-                        std::io::stdout().flush().unwrap();
-                        let result = protect.add(Rf_eval(code, R_GlobalEnv));
-                        println!("Thread {:?} finished evaluating R code.", id);
-                        std::io::stdout().flush().unwrap();
-                        assert!(Rf_length(result) == N);
-                        println!("Thread {:?} releasing R lock.", std::thread::current().id());
-                        std::io::stdout().flush().unwrap();
-                    };
-                }
+            // try sending some UTF-8 strings to and from R
+            let result = RFunction::new("base", "paste")
+                .add("世界")
+                .add("您好".to_string())
+                .call()
+                .unwrap();
+
+            assert!(Rf_isString(*result) != 0);
+
+            let value = TryInto::<String>::try_into(result);
+            assert!(value.is_ok());
+            if let Ok(value) = value {
+                assert!(value == "世界 您好")
+            }
+
+        }
+    }
+
+    #[test]
+    fn test_named_arguments() {
+        r_test! {
+
+            let result = RFunction::new("stats", "rnorm")
+                .add(1.0)
+                .param("mean", 10)
+                .param("sd", 0)
+                .call()
+                .unwrap();
+
+            assert!(Rf_isNumeric(*result) != 0);
+            assert!(Rf_asInteger(*result) == 10);
+
+        }
+    }
+
+    #[test]
+    fn test_threads() {
+        r_test_unlocked! {
+
+            // Spawn a bunch of threads that try to interact with R.
+            const N : i32 = 1000;
+            let mut handles : Vec<_> = Vec::new();
+            for _i in 1..20 {
+                let handle = std::thread::spawn(move || {
+                    let id = std::thread::current().id();
+                    for _j in 1..20 {
+                        r_lock! {
+                            println!("Thread {:?} acquiring R lock.", id);
+                            std::io::stdout().flush().unwrap();
+                            let mut protect = RProtect::new();
+                            let code = protect.add(Rf_lang2(r_symbol!("rnorm"), Rf_ScalarInteger(N)));
+                            println!("Thread {:?} about to evaluate R code.", id);
+                            std::io::stdout().flush().unwrap();
+                            let result = protect.add(Rf_eval(code, R_GlobalEnv));
+                            println!("Thread {:?} finished evaluating R code.", id);
+                            std::io::stdout().flush().unwrap();
+                            assert!(Rf_length(result) == N);
+                            println!("Thread {:?} releasing R lock.", std::thread::current().id());
+                            std::io::stdout().flush().unwrap();
+                        };
+                    }
+                });
+                handles.push(handle);
+            }
+
+            for handle in handles {
+                handle.join().unwrap();
+            }
+
+        }
+    }
+
+    #[test]
+    fn test_try_catch_error() {
+        r_test! {
+
+            // ok SEXP
+            let ok = r_try_catch_error(|| {
+                Rf_ScalarInteger(42)
             });
-            handles.push(handle);
-        }
+            assert_match!(ok, Ok(value) => {
+                assert_eq!(r_typeof(*value), INTSXP as u32);
+                assert_eq!(INTEGER_ELT(*value, 0), 42);
+            });
 
-        for handle in handles {
-            handle.join().unwrap();
-        }
+            // ok void
+            let void_ok = r_try_catch_error(|| {});
+            assert_match!(void_ok, Ok(value) => {
+                assert!(r_is_null(*value));
+            });
 
-    }}
+            // ok something else, Vec<&str>
+            let value = r_try_catch_error(|| {
+                CharacterVector::create(["hello", "world"]).cast()
+            });
 
-    #[test]
-    fn test_try_catch_error() { r_test! {
-
-        // ok SEXP
-        let ok = r_try_catch_error(|| {
-            Rf_ScalarInteger(42)
-        });
-        assert_match!(ok, Ok(value) => {
-            assert_eq!(r_typeof(*value), INTSXP as u32);
-            assert_eq!(INTEGER_ELT(*value, 0), 42);
-        });
-
-        // ok void
-        let void_ok = r_try_catch_error(|| {});
-        assert_match!(void_ok, Ok(value) => {
-            assert!(r_is_null(*value));
-        });
-
-        // ok something else, Vec<&str>
-        let value = r_try_catch_error(|| {
-            CharacterVector::create(["hello", "world"]).cast()
-        });
-
-        assert_match!(value, Ok(value) => {
-            assert_eq!(r_typeof(*value), STRSXP);
-            let value = CharacterVector::new(value);
             assert_match!(value, Ok(value) => {
-                assert_eq!(value, ["hello", "world"]);
-            })
-        });
+                assert_eq!(r_typeof(*value), STRSXP);
+                let value = CharacterVector::new(value);
+                assert_match!(value, Ok(value) => {
+                    assert_eq!(value, ["hello", "world"]);
+                })
+            });
 
-        // error
-        let out = r_try_catch_error(|| unsafe {
-            let msg = CString::new("ouch").unwrap();
-            Rf_error(msg.as_ptr());
-        });
+            // error
+            let out = r_try_catch_error(|| unsafe {
+                let msg = CString::new("ouch").unwrap();
+                Rf_error(msg.as_ptr());
+            });
 
-        assert_match!(out, Err(Error::TryCatchError { message, classes }) => {
-            assert_eq!(message, ["ouch"]);
-            assert_eq!(classes, ["simpleError", "error", "condition"]);
-        });
+            assert_match!(out, Err(Error::TryCatchError { message, classes }) => {
+                assert_eq!(message, ["ouch"]);
+                assert_eq!(classes, ["simpleError", "error", "condition"]);
+            });
 
-    }}
-
-    #[test]
-    fn test_parse_vector() { r_test! {
-        // complete
-        assert_match!(
-            r_parse_vector("force(42)"),
-            Ok(ParseResult::Complete(out)) => {
-                assert_eq!(r_typeof(out), EXPRSXP as u32);
-
-                let call = VECTOR_ELT(out, 0);
-                assert_eq!(r_typeof(call), LANGSXP as u32);
-                assert_eq!(Rf_length(call), 2);
-                assert_eq!(CAR(call), r_symbol!("force"));
-
-                let arg = CADR(call);
-                assert_eq!(r_typeof(arg), REALSXP as u32);
-                assert_eq!(*REAL(arg), 42.0);
-            }
-        );
-
-        // incomplete
-        assert_match!(
-            r_parse_vector("force(42"),
-            Ok(ParseResult::Incomplete())
-        );
-
-        // error
-        assert_match!(
-            r_parse_vector("42 + _"),
-            Err(_) => {}
-        );
-
-        // "normal" syntax error
-        assert_match!(
-            r_parse_vector("1+1\n*42"),
-            Err(Error::ParseSyntaxError {message, line}) => {
-                assert!(message.contains("unexpected"));
-                assert_eq!(line, 2);
-            }
-        );
-
-    }}
+        }
+    }
 
     #[test]
-    fn test_dirty_image() { r_test! {
-        libR_sys::R_DirtyImage = 2;
-        let sym = r_symbol!("aaa");
-        Rf_defineVar(sym, Rf_ScalarInteger(42), R_GlobalEnv);
-        assert_eq!(libR_sys::R_DirtyImage, 1);
+    fn test_parse_vector() {
+        r_test! {
+            // complete
+            assert_match!(
+                r_parse_vector("force(42)"),
+                Ok(ParseResult::Complete(out)) => {
+                    assert_eq!(r_typeof(out), EXPRSXP as u32);
 
-        libR_sys::R_DirtyImage = 2;
-        Rf_setVar(sym, Rf_ScalarInteger(43), R_GlobalEnv);
-        assert_eq!(libR_sys::R_DirtyImage, 1);
+                    let call = VECTOR_ELT(out, 0);
+                    assert_eq!(r_typeof(call), LANGSXP as u32);
+                    assert_eq!(Rf_length(call), 2);
+                    assert_eq!(CAR(call), r_symbol!("force"));
 
-        libR_sys::R_DirtyImage = 2;
-        r_envir_remove("aaa", R_GlobalEnv);
-        assert_eq!(libR_sys::R_DirtyImage, 1);
-    }}
+                    let arg = CADR(call);
+                    assert_eq!(r_typeof(arg), REALSXP as u32);
+                    assert_eq!(*REAL(arg), 42.0);
+                }
+            );
 
+            // incomplete
+            assert_match!(
+                r_parse_vector("force(42"),
+                Ok(ParseResult::Incomplete())
+            );
+
+            // error
+            assert_match!(
+                r_parse_vector("42 + _"),
+                Err(_) => {}
+            );
+
+            // "normal" syntax error
+            assert_match!(
+                r_parse_vector("1+1\n*42"),
+                Err(Error::ParseSyntaxError {message, line}) => {
+                    assert!(message.contains("unexpected"));
+                    assert_eq!(line, 2);
+                }
+            );
+
+        }
+    }
+
+    #[test]
+    fn test_dirty_image() {
+        r_test! {
+            libR_sys::R_DirtyImage = 2;
+            let sym = r_symbol!("aaa");
+            Rf_defineVar(sym, Rf_ScalarInteger(42), R_GlobalEnv);
+            assert_eq!(libR_sys::R_DirtyImage, 1);
+
+            libR_sys::R_DirtyImage = 2;
+            Rf_setVar(sym, Rf_ScalarInteger(43), R_GlobalEnv);
+            assert_eq!(libR_sys::R_DirtyImage, 1);
+
+            libR_sys::R_DirtyImage = 2;
+            r_envir_remove("aaa", R_GlobalEnv);
+            assert_eq!(libR_sys::R_DirtyImage, 1);
+        }
+    }
 }
-

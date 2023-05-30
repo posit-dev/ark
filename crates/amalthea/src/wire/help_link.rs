@@ -5,7 +5,8 @@
  *
  */
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 
 /// Represents a help link in a Jupyter message
 #[derive(Debug, Serialize, Deserialize, Clone)]

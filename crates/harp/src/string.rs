@@ -14,7 +14,6 @@ use crate::utils::r_typeof;
 
 // Given a quoted R string, decode it to get the string value.
 pub unsafe fn r_string_decode(code: &str) -> Option<String> {
-
     // convert to R string
     let mut protect = RProtect::new();
     let code = r_string!(code, &mut protect);
@@ -34,6 +33,4 @@ pub unsafe fn r_string_decode(code: &str) -> Option<String> {
     }
 
     None
-
-
 }

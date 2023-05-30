@@ -13,10 +13,7 @@ use scraper::ElementRef;
 use scraper::Node;
 use stdext::join;
 
-pub fn md_codeblock(
-    language: &str,
-    code: &str,
-) -> String {
+pub fn md_codeblock(language: &str, code: &str) -> String {
     join!("``` ", language, "\n", code, "\n", "```", "\n")
 }
 
@@ -95,11 +92,7 @@ impl<'a> MarkdownConverter<'a> {
         buffer
     }
 
-    fn convert_node(
-        &self,
-        node: NodeRef<'a, Node>,
-        buffer: &mut String,
-    ) {
+    fn convert_node(&self, node: NodeRef<'a, Node>, buffer: &mut String) {
         if node.value().is_element() {
             let element = ElementRef::wrap(node).unwrap();
             self.convert_element(element, buffer);
@@ -109,11 +102,7 @@ impl<'a> MarkdownConverter<'a> {
         }
     }
 
-    fn convert_element(
-        &self,
-        element: ElementRef<'a>,
-        buffer: &mut String,
-    ) {
+    fn convert_element(&self, element: ElementRef<'a>, buffer: &mut String) {
         let name = element.value().name();
         match name {
             "code" => {
@@ -165,29 +154,17 @@ impl<'a> MarkdownConverter<'a> {
         }
     }
 
-    fn convert_children(
-        &self,
-        node: ElementRef<'a>,
-        buffer: &mut String,
-    ) {
+    fn convert_children(&self, node: ElementRef<'a>, buffer: &mut String) {
         for child in node.children() {
             self.convert_node(child, buffer)
         }
     }
 
-    fn convert_text(
-        &self,
-        text: &Text,
-        buffer: &mut String,
-    ) {
+    fn convert_text(&self, text: &Text, buffer: &mut String) {
         buffer.push_str(text.to_string().as_str())
     }
 
-    fn convert_tr(
-        &self,
-        element: ElementRef<'a>,
-        buffer: &mut String,
-    ) {
+    fn convert_tr(&self, element: ElementRef<'a>, buffer: &mut String) {
         self.convert_row(element, buffer, |cell, buffer| {
             self.convert_node(*cell, buffer);
         })

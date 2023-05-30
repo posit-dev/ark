@@ -5,10 +5,12 @@
  *
  */
 
-use crate::error::Error;
-use hmac::{Hmac, Mac};
+use hmac::Hmac;
+use hmac::Mac;
 use sha2::Sha256;
 use uuid::Uuid;
+
+use crate::error::Error;
 
 /// A Jupyter kernel session; unique to a process.
 #[derive(Clone)]
@@ -39,7 +41,7 @@ impl Session {
                     Err(err) => return Err(Error::HmacKeyInvalid(key, err)),
                 };
                 Some(result)
-            }
+            },
         };
         Ok(Self {
             hmac: hmac_key,

@@ -191,11 +191,10 @@ impl ShellHandler for Shell {
         req: &ExecuteRequest,
     ) -> Result<ExecuteReply, ExecuteReplyException> {
         let (sender, receiver) = unbounded::<ExecuteResponse>();
-        if let Err(err) = self.shell_request_tx.send(Request::ExecuteCode(
-            req.clone(),
-            originator,
-            sender,
-        )) {
+        if let Err(err) =
+            self.shell_request_tx
+                .send(Request::ExecuteCode(req.clone(), originator, sender))
+        {
             warn!(
                 "Could not deliver execution request to execution thread: {}",
                 err
@@ -228,17 +227,13 @@ impl ShellHandler for Shell {
         Ok(InspectReply {
             status: Status::Ok,
             found: data != serde_json::Value::Null,
-            data: data,
+            data,
             metadata: json!({}),
         })
     }
 
     /// Handles a request to open a new comm channel
-    async fn handle_comm_open(
-        &self,
-        target: Comm,
-        comm: CommSocket,
-    ) -> Result<bool, Exception> {
+    async fn handle_comm_open(&self, target: Comm, comm: CommSocket) -> Result<bool, Exception> {
         match target {
             Comm::Environment => {
                 r_lock! {
@@ -267,11 +262,10 @@ impl ShellHandler for Shell {
             stop_on_error: false,
         };
         let (sender, receiver) = unbounded::<ExecuteResponse>();
-        if let Err(err) = self.shell_request_tx.send(Request::ExecuteCode(
-            req.clone(),
-            Some(orig),
-            sender,
-        )) {
+        if let Err(err) =
+            self.shell_request_tx
+                .send(Request::ExecuteCode(req.clone(), Some(orig), sender))
+        {
             warn!("Could not deliver input reply to execution thread: {}", err)
         }
 
@@ -284,10 +278,7 @@ impl ShellHandler for Shell {
         Ok(())
     }
 
-    fn establish_input_handler(
-        &mut self,
-        handler: Sender<ShellInputRequest>,
-    ) {
+    fn establish_input_handler(&mut self, handler: Sender<ShellInputRequest>) {
         self.shell_request_tx
             .send(Request::EstablishInputChannel(handler))
             .unwrap();

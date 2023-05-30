@@ -5,8 +5,10 @@
  *
  */
 
+use serde::Deserialize;
+use serde::Serialize;
+
 use crate::wire::jupyter_message::MessageType;
-use serde::{Deserialize, Serialize};
 
 /// Represents reply from the kernel to a shutdown request.
 #[derive(Debug, Serialize, Deserialize, Clone)]

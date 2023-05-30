@@ -5,10 +5,12 @@
  *
  */
 
+use serde::Deserialize;
+use serde::Serialize;
+use serde_json::Value;
+
 use crate::wire::jupyter_message::MessageType;
 use crate::wire::jupyter_message::Status;
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 /// Represents completion possibilities for a code fragment supplied by the front end.
 #[derive(Debug, Serialize, Deserialize, Clone)]

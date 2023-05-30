@@ -6,6 +6,7 @@
 //
 
 pub mod control;
+pub mod data_viewer;
 pub mod environment;
 pub mod interface;
 pub mod kernel;
@@ -15,7 +16,6 @@ pub mod plots;
 pub mod request;
 pub mod shell;
 pub mod version;
-pub mod data_viewer;
 
 use serde::Deserialize;
 use serde::Serialize;

@@ -19,4 +19,3 @@ impl Number for i64 {}
 
 impl Number for f32 {}
 impl Number for f64 {}
-

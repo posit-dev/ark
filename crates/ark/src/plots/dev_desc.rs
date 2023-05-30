@@ -190,7 +190,6 @@ pub struct DevDescVersion13 {
     pub reserved: [::std::os::raw::c_char; 64usize],
 }
 
-
 // Graphics Engine version 14 (R 4.1.x)
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -379,7 +378,6 @@ pub struct DevDescVersion14 {
     pub deviceClip: Rboolean,
     pub reserved: [::std::os::raw::c_char; 64usize],
 }
-
 
 // Graphics Engine version 15 (R 4.2.x)
 #[repr(C)]

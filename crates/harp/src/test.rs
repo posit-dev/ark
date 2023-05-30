@@ -25,9 +25,7 @@ use crate::lock::with_r_lock;
 static INIT: Once = Once::new();
 
 pub fn start_r() {
-
     INIT.call_once(|| {
-
         // TODO: Right now, tests can fail if the version of R discovered
         // on the PATH, and the version of R that 'ark' linked to at compile
         // time, do not match. We could relax this requirement by allowing
@@ -47,12 +45,14 @@ pub fn start_r() {
         let mut arguments = cargs!["R", "--slave", "--no-save", "--no-restore"];
 
         unsafe {
-            Rf_initialize_R(arguments.len() as i32, arguments.as_mut_ptr() as *mut *mut c_char);
+            Rf_initialize_R(
+                arguments.len() as i32,
+                arguments.as_mut_ptr() as *mut *mut c_char,
+            );
             R_CStackLimit = usize::MAX;
             setup_Rmainloop();
         }
     });
-
 }
 
 pub fn r_test_impl<F: FnMut()>(f: F) {

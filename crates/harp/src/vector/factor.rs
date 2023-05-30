@@ -9,13 +9,13 @@ use libR_sys::*;
 
 use crate::object::RObject;
 use crate::r_symbol;
-use crate::vector::Vector;
 use crate::vector::CharacterVector;
+use crate::vector::Vector;
 
 #[harp_macros::vector]
 pub struct Factor {
     object: RObject,
-    levels: CharacterVector
+    levels: CharacterVector,
 }
 
 impl Vector for Factor {
@@ -29,17 +29,14 @@ impl Vector for Factor {
         let object = RObject::new(object.into());
         let levels = CharacterVector::new(Rf_getAttrib(*object, r_symbol!("levels"))).unwrap();
 
-        Self {
-            object,
-            levels
-        }
+        Self { object, levels }
     }
 
     unsafe fn create<T>(data: T) -> Self
     where
         T: IntoIterator,
         <T as IntoIterator>::IntoIter: ExactSizeIterator,
-        <T as IntoIterator>::Item: AsRef<Self::Item>
+        <T as IntoIterator>::Item: AsRef<Self::Item>,
     {
         let it = data.into_iter();
         let count = it.len();

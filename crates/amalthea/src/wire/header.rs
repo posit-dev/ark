@@ -6,7 +6,8 @@
  */
 
 use chrono::Utc;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 use uuid::Uuid;
 
 /// Represents the header of a Jupyter message
@@ -36,9 +37,9 @@ impl JupyterHeader {
     pub fn create(msg_type: String, session: String, username: String) -> Self {
         Self {
             msg_id: Uuid::new_v4().to_string(),
-            session: session,
-            username: username,
-            msg_type: msg_type,
+            session,
+            username,
+            msg_type,
             date: Utc::now().to_rfc3339(),
             version: String::from("5.3"),
         }

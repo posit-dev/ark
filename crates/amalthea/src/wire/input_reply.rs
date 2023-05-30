@@ -5,8 +5,10 @@
  *
  */
 
+use serde::Deserialize;
+use serde::Serialize;
+
 use crate::wire::jupyter_message::MessageType;
-use serde::{Deserialize, Serialize};
 
 /// Represents a reply from the front end to the kernel delivering the response
 /// to an `input_request`

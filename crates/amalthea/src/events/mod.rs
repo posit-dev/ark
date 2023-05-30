@@ -19,25 +19,20 @@ pub trait PositronEventType {
 /// The kernel is busy when it is processing a request, but the runtime is busy only when a computation is running.
 #[positron::event("busy")]
 pub struct BusyEvent {
-
     /// Whether the runtime is busy.
     pub busy: bool,
-
 }
 
 /// Use this event to show a message to the user.
 #[positron::event("show_message")]
 pub struct ShowMessageEvent {
-
     /// The message to show to the user.
     pub message: String,
-
 }
 
 /// Show help content in the Help pane.
 #[positron::event("show_help")]
 pub struct ShowHelpEvent {
-
     /// The help content to be shown.
     pub content: String,
 
@@ -46,7 +41,6 @@ pub struct ShowHelpEvent {
 
     /// Focus the Help pane after the Help content has been rendered?
     pub focus: bool,
-
 }
 
 #[derive(Debug, Clone)]

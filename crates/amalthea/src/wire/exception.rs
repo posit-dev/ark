@@ -5,7 +5,8 @@
  *
  */
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 
 /// Represents a runtime exception on a ROUTER/DEALER socket
 #[derive(Debug, Serialize, Deserialize, Clone)]

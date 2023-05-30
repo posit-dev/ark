@@ -13,8 +13,10 @@ pub trait PositionExt {
 }
 
 impl PositionExt for Position {
-
     fn as_point(&self) -> Point {
-        Point { row: self.line as usize, column: self.character as usize }
+        Point {
+            row: self.line as usize,
+            column: self.character as usize,
+        }
     }
 }

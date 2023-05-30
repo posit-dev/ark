@@ -9,13 +9,13 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use crossbeam::channel::Sender;
+use serde::Deserialize;
+use serde::Serialize;
 use serde_json::json;
 
 use crate::comm::comm_channel::CommChannelMsg;
 use crate::error::Error;
 use crate::language::lsp_handler::LspHandler;
-
-use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct StartLsp {

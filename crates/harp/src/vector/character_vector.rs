@@ -65,10 +65,7 @@ impl Vector for CharacterVector {
         unsafe { *x == R_NaString }
     }
 
-    fn get_unchecked_elt(
-        &self,
-        index: isize,
-    ) -> Self::UnderlyingType {
+    fn get_unchecked_elt(&self, index: isize) -> Self::UnderlyingType {
         unsafe { STRING_ELT(self.data(), index as R_xlen_t) }
     }
 
@@ -80,10 +77,7 @@ impl Vector for CharacterVector {
         }
     }
 
-    fn format_one(
-        &self,
-        x: Self::Type,
-    ) -> String {
+    fn format_one(&self, x: Self::Type) -> String {
         x
     }
 }

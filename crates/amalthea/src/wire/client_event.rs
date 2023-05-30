@@ -5,11 +5,13 @@
  *
  */
 
+use serde::Deserialize;
+use serde::Serialize;
+use serde_json::Value;
+
 use crate::events::PositronEvent;
 use crate::events::PositronEventType;
-use crate::{wire::jupyter_message::MessageType};
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use crate::wire::jupyter_message::MessageType;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ClientEvent {
@@ -42,7 +44,6 @@ impl From<PositronEvent> for ClientEvent {
 /** end rust-client-event */
 
 impl ClientEvent {
-
     pub fn as_evt<T: WireEvent>(event: T) -> Self {
         Self {
             name: event.event_type(),

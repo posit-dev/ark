@@ -5,11 +5,13 @@
  *
  */
 
+use serde::Deserialize;
+use serde::Serialize;
+
 use crate::wire::help_link::HelpLink;
 use crate::wire::jupyter_message::MessageType;
 use crate::wire::jupyter_message::Status;
 use crate::wire::language_info::LanguageInfo;
-use serde::{Deserialize, Serialize};
 
 /// Represents a reply to a kernel_info_request
 #[derive(Debug, Serialize, Deserialize, Clone)]
