@@ -8,6 +8,7 @@ format_macro_matchers = true
 group_imports = "StdExternalCrate"
 imports_granularity = "Item"
 match_block_trailing_comma = true
+use_field_init_shorthand = true
 # normalize_comments = true
 overflow_delimited_expr = true
 reorder_imports = true
