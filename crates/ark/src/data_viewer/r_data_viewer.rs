@@ -17,7 +17,6 @@ use harp::utils::r_assert_length;
 use harp::utils::r_assert_type;
 use harp::utils::r_is_data_frame;
 use harp::utils::r_is_matrix;
-use harp::utils::r_is_null;
 use harp::utils::r_is_simple_vector;
 use harp::utils::r_typeof;
 use harp::vector::CharacterVector;
@@ -68,23 +67,63 @@ pub struct DataSet {
     pub row_count: usize
 }
 
+struct ColumnNames {
+    pub names: Option<CharacterVector>
+}
+
+impl ColumnNames {
+    pub fn new(names: SEXP) -> Self {
+        unsafe {
+            let names = if r_typeof(names) == STRSXP {
+                Some(CharacterVector::new_unchecked(names))
+            } else {
+                None
+            };
+            Self {
+                names
+            }
+        }
+    }
+
+    pub fn get_unchecked(&self, index: isize) -> Option<String> {
+        if let Some(names) = &self.names {
+            if let Some(name) = names.get_unchecked(index) {
+                if name.len() > 0 {
+                    return Some(name);
+                }
+            }
+        }
+        None
+    }
+}
+
 impl DataSet {
 
-    unsafe fn extract_columns(object: SEXP, name: Option<String>, row_count: usize, columns: &mut Vec<DataColumn>) -> Result<(), anyhow::Error> {
+    unsafe fn extract_columns(object: SEXP, prefix: Option<String>, row_count: usize, columns: &mut Vec<DataColumn>) -> Result<(), anyhow::Error> {
         if r_is_data_frame(object) {
             unsafe {
-                let names = Rf_getAttrib(object, R_NamesSymbol);
-                if r_typeof(names) != STRSXP {
-                    bail!("data frame without names");
-                }
-                let names = CharacterVector::new_unchecked(names);
+                let names = ColumnNames::new(Rf_getAttrib(object, R_NamesSymbol));
 
                 let n_columns = XLENGTH(object);
                 for i in 0..n_columns {
-                    let name = match name {
-                        Some(ref prefix) => format!("{}${}", prefix, names.get_unchecked(i).unwrap()),
-                        None         => names.get_unchecked(i).unwrap()
+                    let col_name = names.get_unchecked(i);
+
+                    let name = match prefix {
+                        None => {
+                            match col_name {
+                                Some(name) => name,
+                                None       => format!("[, {}]", i + 1)
+                            }
+                        },
+
+                        Some(ref prefix) => {
+                            match col_name {
+                                Some(name) => format!("{}${}", prefix, name),
+                                None       => format!("{}[, {}]", prefix, i + 1)
+                            }
+                        }
                     };
+
                     // Protecting with `RObject` in case `object` happens to be an ALTLIST
                     let column = RObject::from(VECTOR_ELT(object, i));
                     Self::extract_columns(*column, Some(name), row_count, columns)?;
@@ -101,40 +140,34 @@ impl DataSet {
                 }
 
                 let colnames = RFunction::from("colnames").add(object).call()?;
+                let colnames = ColumnNames::new(*colnames);
 
-                if r_is_null(*colnames) {
-                    for i in 0..n_columns {
-                        let name = match name {
-                            Some(ref prefix) => format!("{}[, {}]", prefix, i + 1),
-                            None => format!("[, {}]", i + 1)
-                        };
+                for i in 0..n_columns {
 
-                        let matrix_column = RFunction::from("[")
-                            .add(object)
-                            .param("i", R_MissingArg)
-                            .param("j", i + 1)
-                            .call()?;
+                    let col_name = colnames.get_unchecked(i as isize);
 
-                        Self::extract_columns(*matrix_column, Some(name), row_count, columns)?;
-                    }
-                } else {
-                    let colnames = CharacterVector::new_unchecked(colnames);
+                    let name = match prefix {
+                        None => {
+                            match col_name {
+                                Some(name) => name,
+                                None       => format!("[, {}]", i + 1)
+                            }
+                        },
+                        Some(ref prefix) => {
+                            match col_name {
+                                Some(name) => format!("{}[, \"{}\"]", prefix, name),
+                                None       => format!("{}[, {}]", prefix, i + 1)
+                            }
+                        }
+                    };
 
-                    for i in 0..n_columns {
-                        let column_name = colnames.get_unchecked(i as isize).unwrap();
-                        let name = match name {
-                            Some(ref prefix) => format!("{}[, \"{}\"]", prefix, column_name),
-                            None => format!("[, \"{}\"]", column_name)
-                        };
+                    let matrix_column = RFunction::from("[")
+                        .add(object)
+                        .param("i", R_MissingArg)
+                        .param("j", i + 1)
+                        .call()?;
 
-                        let matrix_column = RFunction::from("[")
-                            .add(object)
-                            .param("i", R_MissingArg)
-                            .param("j", i + 1)
-                            .call()?;
-
-                        Self::extract_columns(*matrix_column, Some(name), row_count, columns)?;
-                    }
+                    Self::extract_columns(*matrix_column, Some(name), row_count, columns)?;
                 }
             }
         } else {
@@ -152,7 +185,7 @@ impl DataSet {
             };
 
             columns.push(DataColumn{
-                name: name.unwrap(),
+                name: prefix.unwrap(),
 
                 // TODO: String here is a placeholder
                 column_type: String::from("String"),
@@ -163,7 +196,7 @@ impl DataSet {
         Ok(())
     }
 
-    pub fn from_data_frame(id: String, title: String, object: RObject) -> Result<Self, anyhow::Error> {
+    pub fn from_object(id: String, title: String, object: RObject) -> Result<Self, anyhow::Error> {
         r_lock! {
             let row_count = {
                 if r_is_data_frame(*object) {
@@ -207,23 +240,24 @@ impl RDataViewer {
                 data: data,
                 comm: comm
             };
-            if let Err(error) = viewer.execution_thread() {
-                log::error!("Error while viewing object '{}': {}", title, error);
-            }
+            viewer.execution_thread();
         });
     }
 
-    pub fn execution_thread(self) -> Result<(), anyhow::Error> {
-        let data_set = DataSet::from_data_frame(self.id.clone(), self.title, self.data)?;
-        let json = serde_json::to_value(data_set)?;
+    pub fn execution_thread(self) {
+        // This is a simplistic version where all the data is converted as once to
+        // a message that is included in initial event of the comm.
+        let json = match DataSet::from_object(self.id.clone(), self.title.clone(), self.data) {
+            Ok(data_set) => serde_json::to_value(data_set).unwrap(),
+            Err(error) => {
+                log::error!("Error while viewing object '{}': {}", self.title, error);
+                return;
+            }
+        };
 
         let comm_manager_tx = comm_manager_tx();
         let event = CommEvent::Opened(self.comm.clone(), json);
-        comm_manager_tx.send(event)?;
-
-        // TODO: some sort of select!() loop to listen for events from the comm
-
-        Ok(())
+        comm_manager_tx.send(event).unwrap();
     }
 
 }
