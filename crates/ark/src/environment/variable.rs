@@ -16,6 +16,7 @@ use harp::utils::pairlist_size;
 use harp::utils::r_classes;
 use harp::utils::r_is_altrep;
 use harp::utils::r_is_simple_vector;
+use harp::vector::Collapse;
 use itertools::Itertools;
 
 use harp::environment::Binding;
@@ -114,6 +115,33 @@ pub struct WorkspaceVariableDisplayValue {
     pub is_truncated: bool
 }
 
+struct DimDataFrame {
+    nrow: i32,
+    ncol: i32
+}
+
+fn dim_data_frame(data: SEXP) -> DimDataFrame {
+    unsafe {
+        let dim = RFunction::new("base", "dim.data.frame")
+            .add(data)
+            .call()
+            .unwrap();
+
+        DimDataFrame {
+            nrow: INTEGER_ELT(*dim, 0),
+            ncol: INTEGER_ELT(*dim, 1),
+        }
+    }
+}
+
+fn plural(text: &str, n: i32) -> String {
+    if n == 1 {
+        String::from(text)
+    } else {
+        format!("{}s", text)
+    }
+}
+
 impl WorkspaceVariableDisplayValue {
     fn new(display_value: String, is_truncated: bool) -> Self {
         WorkspaceVariableDisplayValue {
@@ -130,11 +158,32 @@ impl WorkspaceVariableDisplayValue {
         let rtype = r_typeof(value);
         if r_is_simple_vector(value) {
             let formatted = collapse(value, " ", 100, if rtype == STRSXP { "\"" } else { "" }).unwrap();
-            Self::new(formatted.result, formatted.truncated)
-        } else if rtype == VECSXP && ! r_inherits(value, "POSIXlt") {
-            // This includes data frames
-            Self::empty()
-        } else if rtype == LISTSXP {
+            return Self::new(formatted.result, formatted.truncated);
+        } else if rtype == VECSXP && !r_inherits(value, "POSIXlt") {
+            if r_inherits(value, "data.frame") {
+                let dim = dim_data_frame(value);
+                let classes = r_classes(value).unwrap().iter().map(|s| s.unwrap()).join(" / ");
+                let value = format!("[{} {} x {} {}] <{}>", dim.nrow, plural("row", dim.nrow), dim.ncol, plural("column", dim.ncol), classes);
+                return Self::new(value, false);
+            }
+
+            unsafe {
+                let deparsed = RFunction::from("deparse").add(value).call();
+                let formatted = match deparsed {
+                    Ok(s) => {
+                        collapse(*s, " ", 100, "").unwrap()
+                    },
+                    Err(_) => Collapse {
+                        result: String::from("[...]"),
+                        truncated: true
+                    }
+                };
+                return Self::new(formatted.result, formatted.truncated);
+            }
+
+        }
+
+        if rtype == LISTSXP {
             Self::empty()
         } else if rtype == SYMSXP && value == unsafe{ R_MissingArg } {
             Self::new(String::from("<missing>"), false)
