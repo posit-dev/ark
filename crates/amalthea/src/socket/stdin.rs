@@ -8,16 +8,18 @@
 use std::sync::Arc;
 use std::sync::Mutex;
 
+use crossbeam::channel::bounded;
+use futures::executor::block_on;
+use log::trace;
+use log::warn;
+
 use crate::language::shell_handler::ShellHandler;
 use crate::socket::socket::Socket;
-use crate::wire::input_request::ShellInputRequest;
 use crate::wire::header::JupyterHeader;
+use crate::wire::input_request::ShellInputRequest;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
 use crate::wire::originator::Originator;
-use crossbeam::channel::bounded;
-use futures::executor::block_on;
-use log::{trace, warn};
 
 pub struct Stdin {
     /// The ZeroMQ stdin socket
@@ -92,7 +94,7 @@ impl Stdin {
                 Err(err) => {
                     warn!("Could not read message from stdin socket: {}", err);
                     continue;
-                }
+                },
             };
 
             // Only input replies are expected on this socket
@@ -101,7 +103,7 @@ impl Stdin {
                 _ => {
                     warn!("Received unexpected message on stdin socket: {:?}", message);
                     continue;
-                }
+                },
             };
             trace!("Received input reply from front-end: {:?}", reply);
 

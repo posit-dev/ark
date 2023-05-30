@@ -5,9 +5,10 @@
 //
 //
 
+use std::os::raw::c_char;
+
 use harp::object::RObject;
 use libR_sys::*;
-use std::os::raw::c_char;
 
 /// Shows a message in the Positron frontend
 #[harp::register]

@@ -21,18 +21,18 @@ use harp::utils::r_is_simple_vector;
 use harp::utils::r_typeof;
 use harp::vector::CharacterVector;
 use harp::vector::Vector;
-use libR_sys::INTEGER_ELT;
+use libR_sys::R_CallMethodDef;
 use libR_sys::R_DimSymbol;
 use libR_sys::R_MissingArg;
 use libR_sys::R_NamesSymbol;
 use libR_sys::R_NilValue;
 use libR_sys::R_RowNamesSymbol;
 use libR_sys::Rf_getAttrib;
+use libR_sys::INTEGER_ELT;
 use libR_sys::SEXP;
 use libR_sys::STRSXP;
 use libR_sys::VECTOR_ELT;
 use libR_sys::XLENGTH;
-use libR_sys::R_CallMethodDef;
 use serde::Deserialize;
 use serde::Serialize;
 use stdext::spawn;
@@ -54,7 +54,7 @@ pub struct DataColumn {
     #[serde(rename = "type")]
     pub column_type: String,
 
-    pub data: Vec<String>
+    pub data: Vec<String>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -64,11 +64,11 @@ pub struct DataSet {
     pub columns: Vec<DataColumn>,
 
     #[serde(rename = "rowCount")]
-    pub row_count: usize
+    pub row_count: usize,
 }
 
 struct ColumnNames {
-    pub names: Option<CharacterVector>
+    pub names: Option<CharacterVector>,
 }
 
 impl ColumnNames {
@@ -79,9 +79,7 @@ impl ColumnNames {
             } else {
                 None
             };
-            Self {
-                names
-            }
+            Self { names }
         }
     }
 
@@ -98,8 +96,12 @@ impl ColumnNames {
 }
 
 impl DataSet {
-
-    unsafe fn extract_columns(object: SEXP, prefix: Option<String>, row_count: usize, columns: &mut Vec<DataColumn>) -> Result<(), anyhow::Error> {
+    unsafe fn extract_columns(
+        object: SEXP,
+        prefix: Option<String>,
+        row_count: usize,
+        columns: &mut Vec<DataColumn>,
+    ) -> Result<(), anyhow::Error> {
         if r_is_data_frame(object) {
             unsafe {
                 let names = ColumnNames::new(Rf_getAttrib(object, R_NamesSymbol));
@@ -109,19 +111,15 @@ impl DataSet {
                     let col_name = names.get_unchecked(i);
 
                     let name = match prefix {
-                        None => {
-                            match col_name {
-                                Some(name) => name,
-                                None       => format!("[, {}]", i + 1)
-                            }
+                        None => match col_name {
+                            Some(name) => name,
+                            None => format!("[, {}]", i + 1),
                         },
 
-                        Some(ref prefix) => {
-                            match col_name {
-                                Some(name) => format!("{}${}", prefix, name),
-                                None       => format!("{}[, {}]", prefix, i + 1)
-                            }
-                        }
+                        Some(ref prefix) => match col_name {
+                            Some(name) => format!("{}${}", prefix, name),
+                            None => format!("{}[, {}]", prefix, i + 1),
+                        },
                     };
 
                     // Protecting with `RObject` in case `object` happens to be an ALTLIST
@@ -129,7 +127,6 @@ impl DataSet {
                     Self::extract_columns(*column, Some(name), row_count, columns)?;
                 }
             }
-
         } else if r_is_matrix(object) {
             unsafe {
                 let dim = Rf_getAttrib(object, R_DimSymbol);
@@ -143,22 +140,17 @@ impl DataSet {
                 let colnames = ColumnNames::new(*colnames);
 
                 for i in 0..n_columns {
-
                     let col_name = colnames.get_unchecked(i as isize);
 
                     let name = match prefix {
-                        None => {
-                            match col_name {
-                                Some(name) => name,
-                                None       => format!("[, {}]", i + 1)
-                            }
+                        None => match col_name {
+                            Some(name) => name,
+                            None => format!("[, {}]", i + 1),
                         },
-                        Some(ref prefix) => {
-                            match col_name {
-                                Some(name) => format!("{}[, \"{}\"]", prefix, name),
-                                None       => format!("{}[, {}]", prefix, i + 1)
-                            }
-                        }
+                        Some(ref prefix) => match col_name {
+                            Some(name) => format!("{}[, \"{}\"]", prefix, name),
+                            None => format!("{}[, {}]", prefix, i + 1),
+                        },
                     };
 
                     let matrix_column = RFunction::from("[")
@@ -184,12 +176,12 @@ impl DataSet {
                 }
             };
 
-            columns.push(DataColumn{
+            columns.push(DataColumn {
                 name: prefix.unwrap(),
 
                 // TODO: String here is a placeholder
                 column_type: String::from("String"),
-                data: data
+                data,
             });
         }
 
@@ -221,11 +213,9 @@ impl DataSet {
             })
         }
     }
-
 }
 
 impl RDataViewer {
-
     pub fn start(title: String, data: RObject) {
         let id = Uuid::new_v4().to_string();
         spawn!(format!("ark-data-viewer-{}-{}", title, id), move || {
@@ -235,10 +225,10 @@ impl RDataViewer {
                 String::from("positron.dataViewer"),
             );
             let viewer = Self {
-                id: id,
+                id,
                 title: title.clone(),
-                data: data,
-                comm: comm
+                data,
+                comm,
             };
             viewer.execution_thread();
         });
@@ -252,21 +242,20 @@ impl RDataViewer {
             Err(error) => {
                 log::error!("Error while viewing object '{}': {}", self.title, error);
                 return;
-            }
+            },
         };
 
         let comm_manager_tx = comm_manager_tx();
         let event = CommEvent::Opened(self.comm.clone(), json);
         comm_manager_tx.send(event).unwrap();
     }
-
 }
 
 #[harp::register]
 pub unsafe extern "C" fn ps_view_data_frame(x: SEXP, title: SEXP) -> SEXP {
     let title = match String::try_from(RObject::view(title)) {
         Ok(s) => s,
-        Err(_) => String::from("")
+        Err(_) => String::from(""),
     };
     RDataViewer::start(title, RObject::from(x));
 

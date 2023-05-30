@@ -5,9 +5,14 @@
  *
  */
 
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::thread;
+
 use amalthea::comm::comm_channel::CommChannelMsg;
 use amalthea::comm::event::CommEvent;
-use amalthea::kernel::{Kernel, StreamBehavior};
+use amalthea::kernel::Kernel;
+use amalthea::kernel::StreamBehavior;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
 use amalthea::wire::comm_close::CommClose;
@@ -19,14 +24,15 @@ use amalthea::wire::execute_input::ExecuteInput;
 use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::execute_result::ExecuteResult;
 use amalthea::wire::input_reply::InputReply;
-use amalthea::wire::jupyter_message::{Message, MessageType, Status};
+use amalthea::wire::jupyter_message::Message;
+use amalthea::wire::jupyter_message::MessageType;
+use amalthea::wire::jupyter_message::Status;
 use amalthea::wire::kernel_info_request::KernelInfoRequest;
-use amalthea::wire::status::{ExecutionState, KernelStatus};
+use amalthea::wire::status::ExecutionState;
+use amalthea::wire::status::KernelStatus;
 use amalthea::wire::wire_message::WireMessage;
 use log::info;
 use serde_json;
-use std::sync::{Arc, Mutex};
-use std::thread;
 
 mod control;
 mod frontend;

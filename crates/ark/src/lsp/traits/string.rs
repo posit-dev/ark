@@ -6,7 +6,6 @@
 //
 
 fn _fuzzy_matches(lhs: &str, rhs: &str) -> bool {
-
     // get iterator over rhs string
     let mut it = rhs.chars();
     let mut rch = match it.next() {
@@ -27,7 +26,6 @@ fn _fuzzy_matches(lhs: &str, rhs: &str) -> bool {
 
     // if we get here, the match failed (some rhs characters didn't match)
     false
-
 }
 
 pub trait StringExt {
@@ -45,4 +43,3 @@ impl StringExt for String {
         _fuzzy_matches(self.as_ref(), rhs.as_ref())
     }
 }
-

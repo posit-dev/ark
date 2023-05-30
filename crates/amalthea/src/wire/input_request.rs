@@ -5,8 +5,10 @@
  *
  */
 
+use serde::Deserialize;
+use serde::Serialize;
+
 use crate::wire::jupyter_message::MessageType;
-use serde::{Deserialize, Serialize};
 use crate::wire::originator::Originator;
 
 /// Represents a request from the kernel to the front end to prompt the user for

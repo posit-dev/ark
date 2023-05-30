@@ -18,10 +18,7 @@ pub struct Complex {
 
 impl Complex {
     fn new(x: Rcomplex) -> Self {
-        Complex {
-            r: x.r,
-            i: x.i
-        }
+        Complex { r: x.r, i: x.i }
     }
 }
 
@@ -38,14 +35,16 @@ impl Vector for ComplexVector {
     type CompareType = Complex;
 
     unsafe fn new_unchecked(object: impl Into<SEXP>) -> Self {
-        Self { object: RObject::new(object.into()) }
+        Self {
+            object: RObject::new(object.into()),
+        }
     }
 
     unsafe fn create<T>(data: T) -> Self
     where
         T: IntoIterator,
         <T as IntoIterator>::IntoIter: ExactSizeIterator,
-        <T as IntoIterator>::Item: AsRef<Self::Item>
+        <T as IntoIterator>::Item: AsRef<Self::Item>,
     {
         let it = data.into_iter();
         let count = it.len();
@@ -78,5 +77,4 @@ impl Vector for ComplexVector {
     fn format_one(&self, x: Self::Type) -> String {
         format!("{}+{}i", x.r.to_string(), x.i.to_string())
     }
-
 }

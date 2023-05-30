@@ -61,7 +61,4 @@ mod test {
         assert!(slice.len() == 1);
         assert!(*slice.get(0).unwrap() == "hello");
     }
-
 }
-
-

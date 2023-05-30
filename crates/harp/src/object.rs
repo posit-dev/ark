@@ -32,7 +32,7 @@ use crate::utils::r_typeof;
 // Objects are protected using a doubly-linked list,
 // allowing for quick insertion and removal of objects.
 static PRECIOUS_LIST_ONCE: Once = Once::new();
-static mut PRECIOUS_LIST : Option<SEXP> = None;
+static mut PRECIOUS_LIST: Option<SEXP> = None;
 
 unsafe fn protect(object: SEXP) -> SEXP {
     // Nothing to do
@@ -74,11 +74,9 @@ unsafe fn protect(object: SEXP) -> SEXP {
 
     trace!("Protecting cell:   {:?}", cell);
     return cell;
-
 }
 
 unsafe fn unprotect(cell: SEXP) {
-
     if r_is_null(cell) {
         return;
     }
@@ -100,7 +98,6 @@ unsafe fn unprotect(cell: SEXP) {
     // There should now be no references to the cell above, allowing it
     // (and the object it contains) to be cleaned up.
     SET_TAG(cell, R_NilValue);
-
 }
 
 #[derive(Debug)]
@@ -130,33 +127,32 @@ fn r_size(x: SEXP) -> usize {
         return 0;
     }
     if r_is_altrep(x) {
-        return unsafe {
-            r_size(R_altrep_data1(x)) + r_size(R_altrep_data2(x))
-        };
+        return unsafe { r_size(R_altrep_data1(x)) + r_size(R_altrep_data2(x)) };
     }
-    let size = unsafe {
-        RFunction::new("utils", "object.size")
-            .add(x)
-            .call()
-    };
+    let size = unsafe { RFunction::new("utils", "object.size").add(x).call() };
 
     match size {
         Err(_) => 0,
         Ok(size) => {
             let value = unsafe { REAL_ELT(*size, 0) };
             value as usize
-        }
+        },
     }
 }
 
 impl RObject {
-
     pub unsafe fn new(data: SEXP) -> Self {
-        RObject { sexp: data, cell: protect(data) }
+        RObject {
+            sexp: data,
+            cell: protect(data),
+        }
     }
 
     pub fn view(data: SEXP) -> Self {
-        RObject { sexp: data, cell: unsafe { R_NilValue } }
+        RObject {
+            sexp: data,
+            cell: unsafe { R_NilValue },
+        }
     }
 
     pub fn null() -> Self {
@@ -186,7 +182,6 @@ impl RObject {
     pub fn size(&self) -> usize {
         r_size(self.sexp)
     }
-
 }
 
 impl Clone for RObject {
@@ -197,10 +192,7 @@ impl Clone for RObject {
         } else {
             unsafe { protect(sexp) }
         };
-        Self {
-            sexp,
-            cell
-        }
+        Self { sexp, cell }
     }
 }
 
@@ -239,9 +231,7 @@ impl From<SEXP> for RObject {
 
 impl From<()> for RObject {
     fn from(_value: ()) -> Self {
-        unsafe {
-            RObject::from(R_NilValue)
-        }
+        unsafe { RObject::from(R_NilValue) }
     }
 }
 
@@ -276,7 +266,11 @@ impl From<&str> for RObject {
     fn from(value: &str) -> Self {
         unsafe {
             let vector = Rf_protect(Rf_allocVector(STRSXP, 1));
-            let element = Rf_mkCharLenCE(value.as_ptr() as *mut c_char, value.len() as i32, cetype_t_CE_UTF8);
+            let element = Rf_mkCharLenCE(
+                value.as_ptr() as *mut c_char,
+                value.len() as i32,
+                cetype_t_CE_UTF8,
+            );
             SET_STRING_ELT(vector, 0, element);
             Rf_unprotect(1);
             return RObject::new(vector);
@@ -317,11 +311,13 @@ impl TryFrom<RObject> for Option<String> {
     type Error = crate::error::Error;
     fn try_from(value: RObject) -> Result<Self, Self::Error> {
         unsafe {
-
             let types = &[CHARSXP, STRSXP, SYMSXP];
             let charsexp = match r_typeof(*value) {
                 CHARSXP => *value,
-                STRSXP => { r_assert_length(*value, 1)?; STRING_ELT(*value, 0) },
+                STRSXP => {
+                    r_assert_length(*value, 1)?;
+                    STRING_ELT(*value, 0)
+                },
                 SYMSXP => PRINTNAME(*value),
                 _ => return Err(Error::UnexpectedType(r_typeof(*value), types.to_vec())),
             };
@@ -349,7 +345,7 @@ impl TryFrom<RObject> for Option<i32> {
                     } else {
                         Ok(Some(x))
                     }
-                }
+                },
                 REALSXP => {
                     let x = REAL_ELT(*value, 0);
                     if R_IsNA(x) != 0 {
@@ -357,8 +353,8 @@ impl TryFrom<RObject> for Option<i32> {
                     } else {
                         Ok(Some(x as i32))
                     }
-                }
-                _ => { Err(Error::UnexpectedType(r_typeof(*value), vec![INTSXP])) }
+                },
+                _ => Err(Error::UnexpectedType(r_typeof(*value), vec![INTSXP])),
             }
         }
     }
@@ -377,7 +373,7 @@ impl TryFrom<RObject> for Option<f64> {
                     } else {
                         Ok(Some(x as f64))
                     }
-                }
+                },
                 REALSXP => {
                     let x = REAL_ELT(*value, 0);
                     if R_IsNA(x) != 0 {
@@ -385,8 +381,8 @@ impl TryFrom<RObject> for Option<f64> {
                     } else {
                         Ok(Some(x))
                     }
-                }
-                _ => { Err(Error::UnexpectedType(r_typeof(*value), vec![REALSXP])) }
+                },
+                _ => Err(Error::UnexpectedType(r_typeof(*value), vec![REALSXP])),
             }
         }
     }
@@ -397,7 +393,7 @@ impl TryFrom<RObject> for String {
     fn try_from(value: RObject) -> Result<Self, Self::Error> {
         match Option::<String>::try_from(value)? {
             Some(x) => Ok(x),
-            None => Err(Error::MissingValueError)
+            None => Err(Error::MissingValueError),
         }
     }
 }
@@ -407,7 +403,7 @@ impl TryFrom<RObject> for bool {
     fn try_from(value: RObject) -> Result<Self, Self::Error> {
         match Option::<bool>::try_from(value)? {
             Some(x) => Ok(x),
-            None => Err(Error::MissingValueError)
+            None => Err(Error::MissingValueError),
         }
     }
 }
@@ -417,7 +413,7 @@ impl TryFrom<RObject> for i32 {
     fn try_from(value: RObject) -> Result<Self, Self::Error> {
         match Option::<i32>::try_from(value)? {
             Some(x) => Ok(x),
-            None => Err(Error::MissingValueError)
+            None => Err(Error::MissingValueError),
         }
     }
 }
@@ -427,7 +423,7 @@ impl TryFrom<RObject> for f64 {
     fn try_from(value: RObject) -> Result<Self, Self::Error> {
         match Option::<f64>::try_from(value)? {
             Some(x) => Ok(x),
-            None => Err(Error::MissingValueError)
+            None => Err(Error::MissingValueError),
         }
     }
 }
@@ -438,8 +434,8 @@ impl TryFrom<RObject> for Vec<String> {
         unsafe {
             r_assert_type(*value, &[STRSXP, NILSXP])?;
 
-            let mut result : Vec<String> = Vec::new();
-            let n = Rf_length(*value) as isize ;
+            let mut result: Vec<String> = Vec::new();
+            let n = Rf_length(*value) as isize;
             for i in 0..n {
                 let charsexp = STRING_ELT(*value, i);
                 if charsexp == R_NaString {
@@ -458,7 +454,7 @@ impl TryFrom<RObject> for Vec<String> {
 pub struct RObjectI32Iterator {
     object: RObject,
     current: isize,
-    size: isize
+    size: isize,
 }
 
 impl Iterator for RObjectI32Iterator {
@@ -489,7 +485,7 @@ impl TryFrom<RObject> for Vec<Option<String>> {
         unsafe {
             r_assert_type(*value, &[STRSXP, NILSXP])?;
 
-            let mut result : Vec<Option<String>> = Vec::new();
+            let mut result: Vec<Option<String>> = Vec::new();
             let n = Rf_length(*value);
             for i in 0..n {
                 let charsexp = STRING_ELT(*value, i as isize);
@@ -522,7 +518,6 @@ impl TryFrom<RObject> for HashMap<String, String> {
             let mut map = HashMap::<String, String>::with_capacity(n as usize);
 
             for i in 0..Rf_length(names) {
-
                 // Get access to element pointers.
                 let lhs = R_CHAR(STRING_ELT(names, i as isize));
                 let rhs = R_CHAR(STRING_ELT(value, i as isize));
@@ -543,197 +538,207 @@ impl TryFrom<RObject> for HashMap<String, String> {
 mod tests {
     use libR_sys::*;
 
+    use super::*;
     use crate::assert_match;
     use crate::r_char;
     use crate::r_test;
 
-    use super::*;
+    #[test]
+    #[allow(non_snake_case)]
+    fn test_tryfrom_RObject_bool() {
+        r_test! {
+            assert_match!(
+                Option::<bool>::try_from(RObject::from(Rf_ScalarLogical(R_NaInt))),
+                Ok(None) => {}
+            );
+            assert_eq!(
+                Option::<bool>::try_from(RObject::from(true)).unwrap(),
+                Some(true)
+            );
+            assert_eq!(
+                Option::<bool>::try_from(RObject::from(false)).unwrap(),
+                Some(false)
+            );
+            assert_match!(
+                bool::try_from(RObject::from(Rf_ScalarLogical(R_NaInt))),
+                Err(Error::MissingValueError) => {}
+            );
+            assert!(bool::try_from(RObject::from(true)).unwrap());
+            assert!(!bool::try_from(RObject::from(false)).unwrap());
+        }
+    }
 
     #[test]
     #[allow(non_snake_case)]
-    fn test_tryfrom_RObject_bool() { r_test! {
-        assert_match!(
-            Option::<bool>::try_from(RObject::from(Rf_ScalarLogical(R_NaInt))),
-            Ok(None) => {}
-        );
-        assert_eq!(
-            Option::<bool>::try_from(RObject::from(true)).unwrap(),
-            Some(true)
-        );
-        assert_eq!(
-            Option::<bool>::try_from(RObject::from(false)).unwrap(),
-            Some(false)
-        );
-        assert_match!(
-            bool::try_from(RObject::from(Rf_ScalarLogical(R_NaInt))),
-            Err(Error::MissingValueError) => {}
-        );
-        assert!(bool::try_from(RObject::from(true)).unwrap());
-        assert!(!bool::try_from(RObject::from(false)).unwrap());
-    }}
+    fn test_tryfrom_RObject_i32() {
+        r_test! {
+            assert_match!(
+                Option::<i32>::try_from(RObject::from(R_NaInt)),
+                Ok(None) => {}
+            );
+            assert_match!(
+                Option::<i32>::try_from(RObject::from(R_NaReal)),
+                Ok(None) => {}
+            );
+            assert_match!(
+                Option::<i32>::try_from(RObject::from(42)),
+                Ok(Some(x)) => {
+                    assert_eq!(x, 42)
+                }
+            );
+            assert_match!(
+                Option::<i32>::try_from(RObject::from(42.0)),
+                Ok(Some(x)) => {
+                    assert_eq!(x, 42)
+                }
+            );
 
-
-    #[test]
-    #[allow(non_snake_case)]
-    fn test_tryfrom_RObject_i32() { r_test! {
-        assert_match!(
-            Option::<i32>::try_from(RObject::from(R_NaInt)),
-            Ok(None) => {}
-        );
-        assert_match!(
-            Option::<i32>::try_from(RObject::from(R_NaReal)),
-            Ok(None) => {}
-        );
-        assert_match!(
-            Option::<i32>::try_from(RObject::from(42)),
-            Ok(Some(x)) => {
-                assert_eq!(x, 42)
-            }
-        );
-        assert_match!(
-            Option::<i32>::try_from(RObject::from(42.0)),
-            Ok(Some(x)) => {
-                assert_eq!(x, 42)
-            }
-        );
-
-        assert_match!(
-            i32::try_from(RObject::from(R_NaInt)),
-            Err(Error::MissingValueError) => {}
-        );
-        assert_match!(
-            i32::try_from(RObject::from(R_NaReal)),
-            Err(Error::MissingValueError) => {}
-        );
-        assert_match!(
-            i32::try_from(RObject::from(42)),
-            Ok(x) => {
-                assert_eq!(x, 42)
-            }
-        );
-        assert_match!(
-            i32::try_from(RObject::from(42.0)),
-            Ok(x) => {
-                assert_eq!(x, 42)
-            }
-        );
-    }}
+            assert_match!(
+                i32::try_from(RObject::from(R_NaInt)),
+                Err(Error::MissingValueError) => {}
+            );
+            assert_match!(
+                i32::try_from(RObject::from(R_NaReal)),
+                Err(Error::MissingValueError) => {}
+            );
+            assert_match!(
+                i32::try_from(RObject::from(42)),
+                Ok(x) => {
+                    assert_eq!(x, 42)
+                }
+            );
+            assert_match!(
+                i32::try_from(RObject::from(42.0)),
+                Ok(x) => {
+                    assert_eq!(x, 42)
+                }
+            );
+        }
+    }
 
     #[test]
     #[allow(non_snake_case)]
-    fn test_tryfrom_RObject_f64() { r_test! {
-        assert_match!(
-            Option::<f64>::try_from(RObject::from(R_NaInt)),
-            Ok(None) => {}
-        );
-        assert_match!(
-            Option::<f64>::try_from(RObject::from(R_NaReal)),
-            Ok(None) => {}
-        );
-        assert_match!(
-            Option::<f64>::try_from(RObject::from(42)),
-            Ok(Some(x)) => {
-                assert_eq!(x, 42.0)
-            }
-        );
-        assert_match!(
-            Option::<f64>::try_from(RObject::from(42.0)),
-            Ok(Some(x)) => {
-                assert_eq!(x, 42.0)
-            }
-        );
+    fn test_tryfrom_RObject_f64() {
+        r_test! {
+            assert_match!(
+                Option::<f64>::try_from(RObject::from(R_NaInt)),
+                Ok(None) => {}
+            );
+            assert_match!(
+                Option::<f64>::try_from(RObject::from(R_NaReal)),
+                Ok(None) => {}
+            );
+            assert_match!(
+                Option::<f64>::try_from(RObject::from(42)),
+                Ok(Some(x)) => {
+                    assert_eq!(x, 42.0)
+                }
+            );
+            assert_match!(
+                Option::<f64>::try_from(RObject::from(42.0)),
+                Ok(Some(x)) => {
+                    assert_eq!(x, 42.0)
+                }
+            );
 
-        assert_match!(
-            f64::try_from(RObject::from(R_NaInt)),
-            Err(Error::MissingValueError) => {}
-        );
-        assert_match!(
-            f64::try_from(RObject::from(R_NaReal)),
-            Err(Error::MissingValueError) => {}
-        );
-        assert_match!(
-            f64::try_from(RObject::from(42)),
-            Ok(x) => {
-                assert_eq!(x, 42.0)
-            }
-        );
-        assert_match!(
-            f64::try_from(RObject::from(42.0)),
-            Ok(x) => {
-                assert_eq!(x, 42.0)
-            }
-        );
-    }}
-
-
-    #[test]
-    #[allow(non_snake_case)]
-    fn test_tryfrom_RObject_Option_String() { r_test! {
-        let s = RObject::from("abc");
-
-        assert_match!(
-            Option::<String>::try_from(s),
-            Ok(Some(x)) => {
-                assert_eq!(x, "abc");
-            }
-        );
-
-        let s = RObject::from("abc");
-        SET_STRING_ELT(*s, 0, R_NaString);
-        assert_match!(
-            Option::<String>::try_from(s),
-            Ok(None) => {}
-        );
-    }}
+            assert_match!(
+                f64::try_from(RObject::from(R_NaInt)),
+                Err(Error::MissingValueError) => {}
+            );
+            assert_match!(
+                f64::try_from(RObject::from(R_NaReal)),
+                Err(Error::MissingValueError) => {}
+            );
+            assert_match!(
+                f64::try_from(RObject::from(42)),
+                Ok(x) => {
+                    assert_eq!(x, 42.0)
+                }
+            );
+            assert_match!(
+                f64::try_from(RObject::from(42.0)),
+                Ok(x) => {
+                    assert_eq!(x, 42.0)
+                }
+            );
+        }
+    }
 
     #[test]
     #[allow(non_snake_case)]
-    fn test_tryfrom_RObject_String() { r_test! {
-        let s = RObject::from("abc");
+    fn test_tryfrom_RObject_Option_String() {
+        r_test! {
+            let s = RObject::from("abc");
 
-        assert_match!(
-            String::try_from(s),
-            Ok(x) => {
-                assert_eq!(x, "abc");
-            }
-        );
+            assert_match!(
+                Option::<String>::try_from(s),
+                Ok(Some(x)) => {
+                    assert_eq!(x, "abc");
+                }
+            );
 
-        let s = RObject::from("abc");
-        SET_STRING_ELT(*s, 0, R_NaString);
-        assert_match!(
-            String::try_from(s),
-            Err(Error::MissingValueError) => {}
-        );
-    }}
-
-    #[test]
-    #[allow(non_snake_case)]
-    fn test_tryfrom_RObject_Vec_Option_String() { r_test! {
-        let s = RObject::from(Rf_allocVector(STRSXP, 2));
-        SET_STRING_ELT(*s, 0, r_char!("abc"));
-        SET_STRING_ELT(*s, 1, R_NaString);
-
-        assert_match!(
-            Vec::<Option<String>>::try_from(s),
-            Ok(mut x) => {
-                assert_eq!(x.pop(), Some(None));
-                assert_eq!(x.pop(), Some(Some(String::from("abc"))));
-                assert_eq!(x.pop(), None);
-            }
-        );
-    }}
+            let s = RObject::from("abc");
+            SET_STRING_ELT(*s, 0, R_NaString);
+            assert_match!(
+                Option::<String>::try_from(s),
+                Ok(None) => {}
+            );
+        }
+    }
 
     #[test]
     #[allow(non_snake_case)]
-    fn test_tryfrom_RObject_Vec_String() { r_test! {
-        let s = RObject::from(Rf_allocVector(STRSXP, 2));
-        SET_STRING_ELT(*s, 0, r_char!("abc"));
-        SET_STRING_ELT(*s, 1, R_NaString);
+    fn test_tryfrom_RObject_String() {
+        r_test! {
+            let s = RObject::from("abc");
 
-        assert_match!(
-            Vec::<String>::try_from(s),
-            Err(Error::MissingValueError) => {}
-        );
-    }}
+            assert_match!(
+                String::try_from(s),
+                Ok(x) => {
+                    assert_eq!(x, "abc");
+                }
+            );
 
+            let s = RObject::from("abc");
+            SET_STRING_ELT(*s, 0, R_NaString);
+            assert_match!(
+                String::try_from(s),
+                Err(Error::MissingValueError) => {}
+            );
+        }
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test_tryfrom_RObject_Vec_Option_String() {
+        r_test! {
+            let s = RObject::from(Rf_allocVector(STRSXP, 2));
+            SET_STRING_ELT(*s, 0, r_char!("abc"));
+            SET_STRING_ELT(*s, 1, R_NaString);
+
+            assert_match!(
+                Vec::<Option<String>>::try_from(s),
+                Ok(mut x) => {
+                    assert_eq!(x.pop(), Some(None));
+                    assert_eq!(x.pop(), Some(Some(String::from("abc"))));
+                    assert_eq!(x.pop(), None);
+                }
+            );
+        }
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test_tryfrom_RObject_Vec_String() {
+        r_test! {
+            let s = RObject::from(Rf_allocVector(STRSXP, 2));
+            SET_STRING_ELT(*s, 0, r_char!("abc"));
+            SET_STRING_ELT(*s, 1, R_NaString);
+
+            assert_match!(
+                Vec::<String>::try_from(s),
+                Err(Error::MissingValueError) => {}
+            );
+        }
+    }
 }

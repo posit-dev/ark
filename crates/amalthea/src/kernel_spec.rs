@@ -5,15 +5,17 @@
  *
  */
 
-use crate::error::Error;
-use crate::kernel_dirs;
-use log::trace;
-use serde::Serialize;
 use std::fs;
 use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
+
+use log::trace;
+use serde::Serialize;
 use serde_json::Value;
+
+use crate::error::Error;
+use crate::kernel_dirs;
 
 /// From the Jupyter documentation for [Kernel Specs](https://jupyter-client.readthedocs.io/en/stable/kernels.html#kernel-specs).
 #[derive(Serialize)]
@@ -59,13 +61,13 @@ impl KernelSpec {
                         } else {
                             return Ok(dest);
                         }
-                    }
+                    },
                     Err(err) => return Err(Error::CreateSpecFailed(err)),
                 };
-            }
+            },
             Err(err) => {
                 return Err(Error::JsonSerializeSpecFailed(err));
-            }
+            },
         }
     }
 }

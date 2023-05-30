@@ -6,8 +6,7 @@
 //
 
 #[derive(Debug, Clone)]
-pub struct EmptyOptionError {
-}
+pub struct EmptyOptionError {}
 
 impl std::fmt::Display for EmptyOptionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -18,8 +17,7 @@ impl std::fmt::Display for EmptyOptionError {
 impl std::error::Error for EmptyOptionError {}
 
 #[derive(Debug, Clone)]
-pub struct FalsyValueError {
-}
+pub struct FalsyValueError {}
 
 impl std::error::Error for FalsyValueError {}
 
@@ -35,7 +33,11 @@ pub trait IntoOption<T> {
 
 impl IntoOption<bool> for bool {
     fn into_option(self) -> Option<bool> {
-        if self { Some(self) } else { None }
+        if self {
+            Some(self)
+        } else {
+            None
+        }
     }
 }
 
@@ -44,12 +46,18 @@ pub trait IntoResult<T, E> {
 }
 
 impl<T, E> IntoResult<T, E> for Result<T, E> {
-    fn into_result(self) -> Result<T, E> { self }
+    fn into_result(self) -> Result<T, E> {
+        self
+    }
 }
 
 impl IntoResult<bool, FalsyValueError> for bool {
     fn into_result(self) -> Result<bool, FalsyValueError> {
-        if self { Ok(self) } else { Err(FalsyValueError {}) }
+        if self {
+            Ok(self)
+        } else {
+            Err(FalsyValueError {})
+        }
     }
 }
 
@@ -66,26 +74,24 @@ pub fn _into_result<T, E>(object: impl IntoResult<T, E>) -> Result<T, E> {
 
 #[macro_export]
 macro_rules! unwrap {
-
-    ($value:expr, Err($id:ident) => $error:expr) => {
+    ($value:expr,Err($id:ident) => $error:expr) => {
         match $crate::unwrap::_into_result($value) {
             Ok(value) => value,
             Err($id) => $error,
         }
     };
 
-    ($value:expr, Err(_) => $error:expr) => {
+    ($value:expr,Err(_) => $error:expr) => {
         match $crate::unwrap::_into_result($value) {
             Ok(value) => value,
             Err(_) => $error,
         }
     };
 
-    ($value:expr, None => $error:expr) => {
+    ($value:expr,None => $error:expr) => {
         match $value {
             Some(value) => value,
             None => $error,
         }
     };
-
 }

@@ -9,8 +9,8 @@ use std::path::Path;
 
 use anyhow::bail;
 use log::info;
-use stdext::*;
 use stdext::unwrap::IntoResult;
+use stdext::*;
 use tower_lsp::lsp_types::Location;
 use tower_lsp::lsp_types::Range;
 use tower_lsp::lsp_types::ReferenceParams;
@@ -19,19 +19,18 @@ use tree_sitter::Node;
 use tree_sitter::Point;
 use walkdir::WalkDir;
 
-
-use crate::lsp::indexer::filter_entry;
-use crate::lsp::traits::cursor::TreeCursorExt;
-use crate::lsp::traits::url::UrlExt;
 use crate::lsp::backend::Backend;
 use crate::lsp::documents::Document;
+use crate::lsp::indexer::filter_entry;
+use crate::lsp::traits::cursor::TreeCursorExt;
 use crate::lsp::traits::point::PointExt;
 use crate::lsp::traits::position::PositionExt;
+use crate::lsp::traits::url::UrlExt;
 
 enum ReferenceKind {
-    SymbolName,        // a regular R symbol
-    DollarName,        // a dollar name, following '$'
-    SlotName,          // a slot name, following '@'
+    SymbolName, // a regular R symbol
+    DollarName, // a dollar name, following '$'
+    SlotName,   // a slot name, following '@'
 }
 
 struct Context {
@@ -42,13 +41,15 @@ struct Context {
 fn add_reference(node: &Node, path: &Path, locations: &mut Vec<Location>) {
     let location = Location::new(
         Url::from_file_path(path).expect("valid path"),
-        Range::new(node.start_position().as_position(), node.end_position().as_position())
+        Range::new(
+            node.start_position().as_position(),
+            node.end_position().as_position(),
+        ),
     );
     locations.push(location);
 }
 
 fn found_match(node: &Node, contents: &str, context: &Context) -> bool {
-
     if node.kind() != "identifier" {
         return false;
     }
@@ -59,19 +60,15 @@ fn found_match(node: &Node, contents: &str, context: &Context) -> bool {
     }
 
     match context.kind {
-
         ReferenceKind::DollarName => {
-
             if let Some(sibling) = node.prev_sibling() {
                 if sibling.kind() == "$" {
                     return true;
                 }
             }
-
         },
 
         ReferenceKind::SlotName => {
-
             if let Some(sibling) = node.prev_sibling() {
                 if sibling.kind() == "@" {
                     return true;
@@ -80,7 +77,6 @@ fn found_match(node: &Node, contents: &str, context: &Context) -> bool {
         },
 
         ReferenceKind::SymbolName => {
-
             if let Some(sibling) = node.prev_sibling() {
                 if !matches!(sibling.kind(), "$" | "@") {
                     return true;
@@ -88,26 +84,24 @@ fn found_match(node: &Node, contents: &str, context: &Context) -> bool {
             } else {
                 return true;
             }
-        }
-
+        },
     }
 
     return false;
-
 }
 
 impl Backend {
-
-    fn build_context(&self, uri: &Url, point: Point) -> anyhow::Result<Context>{
-
+    fn build_context(&self, uri: &Url, point: Point) -> anyhow::Result<Context> {
         // Unwrap the URL.
         let path = uri.file_path()?;
 
         // Figure out the identifier we're looking for.
         let context = self.with_document(path.as_path(), |document| {
-
             let ast = &document.ast;
-            let mut node = ast.root_node().descendant_for_point_range(point, point).into_result()?;
+            let mut node = ast
+                .root_node()
+                .descendant_for_point_range(point, point)
+                .into_result()?;
 
             // Check and see if we got an identifier. If we didn't, we might need to use
             // some heuristics to look around. Unfortunately, it seems like if you double-click
@@ -119,18 +113,23 @@ impl Backend {
             // identifier.
             if node.kind() != "identifier" {
                 let point = Point::new(point.row, point.column - 1);
-                node = ast.root_node().descendant_for_point_range(point, point).into_result()?;
+                node = ast
+                    .root_node()
+                    .descendant_for_point_range(point, point)
+                    .into_result()?;
             }
 
             // double check that we found an identifier
             if node.kind() != "identifier" {
-                bail!("couldn't find an identifier associated with point {:?}", point);
+                bail!(
+                    "couldn't find an identifier associated with point {:?}",
+                    point
+                );
             }
 
             // check this node's previous sibling; if this is the name of a slot
             // or dollar accessed item, we should mark it
             let kind = match node.prev_sibling() {
-
                 None => {
                     info!("node {:?} has no previous sibling", node);
                     ReferenceKind::SymbolName
@@ -141,10 +140,9 @@ impl Backend {
                     match sibling.kind() {
                         "$" => ReferenceKind::DollarName,
                         "@" => ReferenceKind::SlotName,
-                        _   => ReferenceKind::SymbolName,
+                        _ => ReferenceKind::SymbolName,
                     }
-                }
-
+                },
             };
 
             // return identifier text contents
@@ -152,25 +150,28 @@ impl Backend {
             let symbol = node.utf8_text(contents.as_bytes())?;
 
             Ok(Context {
-                kind: kind,
+                kind,
                 symbol: symbol.to_string(),
             })
-
         });
 
         return context;
-
     }
 
-    fn find_references_in_folder(&self, context: &Context, path: &Path, locations: &mut Vec<Location>) {
-
+    fn find_references_in_folder(
+        &self,
+        context: &Context,
+        path: &Path,
+        locations: &mut Vec<Location>,
+    ) {
         let walker = WalkDir::new(path);
         for entry in walker.into_iter().filter_entry(|entry| filter_entry(entry)) {
-
             let entry = unwrap!(entry, Err(_) => { continue; });
             let path = entry.path();
             let ext = unwrap!(path.extension(), None => { continue; });
-            if ext != "r" && ext != "R" { continue; }
+            if ext != "r" && ext != "R" {
+                continue;
+            }
 
             info!("found R file {}", path.display());
             let result = self.with_document(path, |document| {
@@ -183,35 +184,34 @@ impl Backend {
                 Err(_error) => {
                     info!("error retrieving document for path {}", path.display());
                     continue;
-                }
+                },
             }
-
         }
-
     }
 
-    fn find_references_in_document(&self, context: &Context, path: &Path, document: &Document, locations: &mut Vec<Location>) {
-
+    fn find_references_in_document(
+        &self,
+        context: &Context,
+        path: &Path,
+        document: &Document,
+        locations: &mut Vec<Location>,
+    ) {
         let ast = &document.ast;
         let contents = document.contents.to_string();
 
         let mut cursor = ast.walk();
         cursor.recurse(|node| {
-
             if found_match(&node, &contents, &context) {
                 add_reference(&node, path, locations);
             }
 
             return true;
-
         });
-
     }
 
     pub fn find_references(&self, params: ReferenceParams) -> Result<Vec<Location>, ()> {
-
         // Create our locations vector.
-        let mut locations : Vec<Location> = Vec::new();
+        let mut locations: Vec<Location> = Vec::new();
 
         // Extract relevant parameters.
         let uri = params.text_document_position.text_document.uri;
@@ -233,6 +233,5 @@ impl Backend {
         }
 
         return Ok(locations);
-
     }
 }

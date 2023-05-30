@@ -8,15 +8,21 @@
 mod control;
 mod shell;
 
-use crate::control::Control;
-use crate::shell::Shell;
-use amalthea::connection_file::ConnectionFile;
-use amalthea::kernel::{Kernel, StreamBehavior};
-use amalthea::kernel_spec::KernelSpec;
-use log::{debug, error, info};
 use std::env;
 use std::io::stdin;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::sync::Mutex;
+
+use amalthea::connection_file::ConnectionFile;
+use amalthea::kernel::Kernel;
+use amalthea::kernel::StreamBehavior;
+use amalthea::kernel_spec::KernelSpec;
+use log::debug;
+use log::error;
+use log::info;
+
+use crate::control::Control;
+use crate::shell::Shell;
 
 fn start_kernel(connection_file: ConnectionFile) {
     let mut kernel = match Kernel::new("echo", connection_file) {
@@ -24,7 +30,7 @@ fn start_kernel(connection_file: ConnectionFile) {
         Err(e) => {
             error!("Failed to create kernel: {}", e);
             return;
-        }
+        },
     };
 
     let shell_tx = kernel.create_iopub_tx();
@@ -38,10 +44,10 @@ fn start_kernel(connection_file: ConnectionFile) {
             if let Err(err) = stdin().read_line(&mut s) {
                 error!("Could not read from stdin: {:?}", err);
             }
-        }
+        },
         Err(err) => {
             error!("Couldn't connect to front end: {:?}", err);
-        }
+        },
     }
 }
 
@@ -63,10 +69,10 @@ fn install_kernel_spec() {
             } else {
                 println!("Successfully installed Jupyter kernelspec.")
             }
-        }
+        },
         Err(err) => {
             eprintln!("Failed to determine path to Amalthea. {}", err);
-        }
+        },
     }
 }
 
@@ -79,13 +85,13 @@ fn parse_file(connection_file: &String) {
             );
             debug!("Connection data: {:?}", connection);
             start_kernel(connection);
-        }
+        },
         Err(error) => {
             error!(
                 "Couldn't read connection file {}: {:?}",
                 connection_file, error
             );
-        }
+        },
     }
 }
 
@@ -110,20 +116,20 @@ fn main() {
                     } else {
                         eprintln!("A connection file must be specified with the --connection_file argument.");
                     }
-                }
+                },
                 "--version" => {
                     println!("Amalthea {}", env!("CARGO_PKG_VERSION"));
-                }
+                },
                 "--install" => {
                     install_kernel_spec();
-                }
+                },
                 other => {
                     eprintln!("Argument '{}' unknown", other);
-                }
+                },
             }
-        }
+        },
         None => {
             println!("Usage: amalthea --connection_file /path/to/file");
-        }
+        },
     }
 }

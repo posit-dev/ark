@@ -5,9 +5,11 @@
  *
  */
 
+use serde::Deserialize;
+use serde::Serialize;
+
 use crate::wire::exception::Exception;
 use crate::wire::jupyter_message::MessageType;
-use serde::{Deserialize, Serialize};
 
 /// Represents an exception that occurred while executing code
 #[derive(Debug, Serialize, Deserialize, Clone)]

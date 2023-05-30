@@ -6,8 +6,8 @@
 //
 
 use stdext::all;
-use tree_sitter::Range;
 use tree_sitter::Point;
+use tree_sitter::Range;
 
 use crate::lsp::traits::point::PointExt;
 
@@ -16,12 +16,10 @@ pub trait RangeExt {
 }
 
 impl RangeExt for Range {
-
     fn contains_point(&self, point: Point) -> bool {
         all!(
             self.start_point.is_before_or_equal(point)
             self.end_point.is_after_or_equal(point)
         )
     }
-
 }

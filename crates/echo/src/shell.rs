@@ -44,7 +44,7 @@ pub struct Shell {
 impl Shell {
     pub fn new(iopub: Sender<IOPubMessage>) -> Self {
         Self {
-            iopub: iopub,
+            iopub,
             execution_count: 0,
             input_tx: None,
         }
@@ -151,7 +151,7 @@ impl ShellHandler for Shell {
             return Err(ExecuteReplyException {
                 status: Status::Error,
                 execution_count: self.execution_count,
-                exception: exception,
+                exception,
             });
         }
 
@@ -160,7 +160,7 @@ impl ShellHandler for Shell {
         let data = json!({"text/plain": req.code });
         if let Err(err) = self.iopub.send(IOPubMessage::ExecuteResult(ExecuteResult {
             execution_count: self.execution_count,
-            data: data,
+            data,
             metadata: json!({}),
         })) {
             warn!(
@@ -194,7 +194,7 @@ impl ShellHandler for Shell {
         Ok(InspectReply {
             status: Status::Ok,
             found: data != serde_json::Value::Null,
-            data: data,
+            data,
             metadata: json!({}),
         })
     }
@@ -204,7 +204,11 @@ impl ShellHandler for Shell {
         Ok(false)
     }
 
-    async fn handle_input_reply(&self, _msg: &InputReply, _orig: Originator) -> Result<(), Exception> {
+    async fn handle_input_reply(
+        &self,
+        _msg: &InputReply,
+        _orig: Originator,
+    ) -> Result<(), Exception> {
         // NYI
         Ok(())
     }

@@ -5,35 +5,34 @@
 //
 //
 
-use harp::environment::BindingValue;
-use harp::utils::r_altrep_class;
-use harp::utils::r_is_data_frame;
-use harp::utils::r_is_matrix;
-use harp::utils::r_is_s4;
-use harp::utils::r_vec_shape;
-use harp::utils::r_vec_type;
-use harp::utils::pairlist_size;
-use harp::utils::r_classes;
-use harp::utils::r_is_altrep;
-use harp::utils::r_is_simple_vector;
-use harp::vector::Collapse;
-use itertools::Itertools;
-
 use harp::environment::Binding;
+use harp::environment::BindingValue;
 use harp::environment::Environment;
+use harp::exec::r_try_catch_error;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
-use harp::exec::r_try_catch_error;
 use harp::object::RObject;
 use harp::r_symbol;
 use harp::symbol::RSymbol;
+use harp::utils::pairlist_size;
+use harp::utils::r_altrep_class;
 use harp::utils::r_assert_type;
+use harp::utils::r_classes;
 use harp::utils::r_inherits;
+use harp::utils::r_is_altrep;
+use harp::utils::r_is_data_frame;
+use harp::utils::r_is_matrix;
 use harp::utils::r_is_null;
+use harp::utils::r_is_s4;
+use harp::utils::r_is_simple_vector;
 use harp::utils::r_typeof;
-use harp::vector::CharacterVector;
-use harp::vector::Vector;
+use harp::utils::r_vec_shape;
+use harp::utils::r_vec_type;
 use harp::vector::collapse;
+use harp::vector::CharacterVector;
+use harp::vector::Collapse;
+use harp::vector::Vector;
+use itertools::Itertools;
 use libR_sys::*;
 use serde::Deserialize;
 use serde::Serialize;
@@ -73,7 +72,7 @@ pub enum ValueKind {
     Table,
 
     /// Lazy: promise code
-    Lazy
+    Lazy,
 }
 
 /// Represents the serialized form of an environment variable.
@@ -110,17 +109,17 @@ pub struct EnvironmentVariable {
     pub is_truncated: bool,
 
     /** True for things that can be View()ed */
-    pub has_viewer: bool
+    pub has_viewer: bool,
 }
 
 pub struct WorkspaceVariableDisplayValue {
     pub display_value: String,
-    pub is_truncated: bool
+    pub is_truncated: bool,
 }
 
 struct DimDataFrame {
     nrow: i32,
-    ncol: i32
+    ncol: i32,
 }
 
 fn dim_data_frame(data: SEXP) -> DimDataFrame {
@@ -149,7 +148,7 @@ impl WorkspaceVariableDisplayValue {
     fn new(display_value: String, is_truncated: bool) -> Self {
         WorkspaceVariableDisplayValue {
             display_value,
-            is_truncated
+            is_truncated,
         }
     }
 
@@ -160,50 +159,61 @@ impl WorkspaceVariableDisplayValue {
     pub fn from(value: SEXP) -> Self {
         let rtype = r_typeof(value);
         if r_is_simple_vector(value) {
-            let formatted = collapse(value, " ", 100, if rtype == STRSXP { "\"" } else { "" }).unwrap();
+            let formatted =
+                collapse(value, " ", 100, if rtype == STRSXP { "\"" } else { "" }).unwrap();
             return Self::new(formatted.result, formatted.truncated);
         } else if rtype == VECSXP && !r_inherits(value, "POSIXlt") {
             if r_inherits(value, "data.frame") {
                 let dim = dim_data_frame(value);
-                let classes = r_classes(value).unwrap().iter().map(|s| s.unwrap()).join(" / ");
-                let value = format!("[{} {} x {} {}] <{}>", dim.nrow, plural("row", dim.nrow), dim.ncol, plural("column", dim.ncol), classes);
+                let classes = r_classes(value)
+                    .unwrap()
+                    .iter()
+                    .map(|s| s.unwrap())
+                    .join(" / ");
+                let value = format!(
+                    "[{} {} x {} {}] <{}>",
+                    dim.nrow,
+                    plural("row", dim.nrow),
+                    dim.ncol,
+                    plural("column", dim.ncol),
+                    classes
+                );
                 return Self::new(value, false);
             }
 
             unsafe {
                 let deparsed = RFunction::from("deparse").add(value).call();
                 let formatted = match deparsed {
-                    Ok(s) => {
-                        collapse(*s, " ", 100, "").unwrap()
-                    },
+                    Ok(s) => collapse(*s, " ", 100, "").unwrap(),
                     Err(_) => Collapse {
                         result: String::from("[...]"),
-                        truncated: true
-                    }
+                        truncated: true,
+                    },
                 };
                 return Self::new(formatted.result, formatted.truncated);
             }
-
         }
 
         if rtype == LISTSXP {
             Self::empty()
-        } else if rtype == SYMSXP && value == unsafe{ R_MissingArg } {
+        } else if rtype == SYMSXP && value == unsafe { R_MissingArg } {
             Self::new(String::from("<missing>"), false)
         } else if rtype == CLOSXP {
             unsafe {
-                let args      = RFunction::from("args").add(value).call().unwrap();
+                let args = RFunction::from("args").add(value).call().unwrap();
                 let formatted = RFunction::from("format").add(*args).call().unwrap();
                 let formatted = CharacterVector::new_unchecked(formatted);
-                let out = formatted.iter().take(formatted.len() -1).map(|o|{ o.unwrap() }).join("");
+                let out = formatted
+                    .iter()
+                    .take(formatted.len() - 1)
+                    .map(|o| o.unwrap())
+                    .join("");
                 Self::new(out, false)
             }
         } else {
             unsafe {
                 // try to call format() on the object
-                let formatted = RFunction::new("base", "format")
-                    .add(value)
-                    .call();
+                let formatted = RFunction::new("base", "format").add(value).call();
 
                 match formatted {
                     Ok(fmt) => {
@@ -214,26 +224,22 @@ impl WorkspaceVariableDisplayValue {
                             Self::new(String::from("???"), false)
                         }
                     },
-                    Err(_) => {
-                        Self::new(String::from("???"), false)
-                    }
+                    Err(_) => Self::new(String::from("???"), false),
                 }
             }
         }
     }
 }
 
-
 pub struct WorkspaceVariableDisplayType {
     pub display_type: String,
-    pub type_info: String
+    pub type_info: String,
 }
 
 impl WorkspaceVariableDisplayType {
-
     pub fn from(value: SEXP) -> Self {
         if r_is_null(value) {
-            return Self::simple(String::from("NULL"))
+            return Self::simple(String::from("NULL"));
         }
 
         if r_is_s4(value) {
@@ -253,11 +259,13 @@ impl WorkspaceVariableDisplayType {
 
         let rtype = r_typeof(value);
         match rtype {
-            EXPRSXP => Self::from_class(value, format!("expression [{}]", unsafe { XLENGTH(value) })),
+            EXPRSXP => {
+                Self::from_class(value, format!("expression [{}]", unsafe { XLENGTH(value) }))
+            },
             LANGSXP => Self::from_class(value, String::from("language")),
-            CLOSXP  => Self::from_class(value, String::from("function")),
-            ENVSXP  => Self::from_class(value, String::from("environment")),
-            SYMSXP  => {
+            CLOSXP => Self::from_class(value, String::from("function")),
+            ENVSXP => Self::from_class(value, String::from("environment")),
+            SYMSXP => {
                 if r_is_null(value) {
                     Self::simple(String::from("missing"))
                 } else {
@@ -265,11 +273,9 @@ impl WorkspaceVariableDisplayType {
                 }
             },
 
-            LISTSXP => {
-                match pairlist_size(value) {
-                    Ok(n)  => Self::simple(format!("pairlist [{}]", n)),
-                    Err(_) => Self::simple(String::from("pairlist [?]"))
-                }
+            LISTSXP => match pairlist_size(value) {
+                Ok(n) => Self::simple(format!("pairlist [{}]", n)),
+                Err(_) => Self::simple(String::from("pairlist [?]")),
             },
 
             VECSXP => unsafe {
@@ -283,71 +289,63 @@ impl WorkspaceVariableDisplayType {
                         .unwrap();
                     let shape = collapse(*dim, ",", 0, "").unwrap().result;
 
-                    Self::simple(
-                        format!("{} [{}]", dfclass, shape)
-                    )
+                    Self::simple(format!("{} [{}]", dfclass, shape))
                 } else {
                     Self::from_class(value, format!("list [{}]", XLENGTH(value)))
                 }
             },
-            _      => Self::from_class(value, String::from("???"))
+            _ => Self::from_class(value, String::from("???")),
         }
-
     }
 
     fn simple(display_type: String) -> Self {
         Self {
             display_type,
-            type_info: String::from("")
+            type_info: String::from(""),
         }
     }
 
     fn from_class(value: SEXP, default: String) -> Self {
         match r_classes(value) {
             None => Self::simple(default),
-            Some(classes) => {
-                Self::new(
-                    classes.get_unchecked(0).unwrap(),
-                    classes.iter().map(|s| s.unwrap()).join("/")
-                )
-            }
+            Some(classes) => Self::new(
+                classes.get_unchecked(0).unwrap(),
+                classes.iter().map(|s| s.unwrap()).join("/"),
+            ),
         }
     }
 
     fn new(display_type: String, type_info: String) -> Self {
         Self {
             display_type,
-            type_info
+            type_info,
         }
     }
-
 }
 
 fn has_children(value: SEXP) -> bool {
     if RObject::view(value).is_s4() {
         unsafe {
-            let names = RFunction::new("methods", ".slotNames").add(value).call().unwrap();
+            let names = RFunction::new("methods", ".slotNames")
+                .add(value)
+                .call()
+                .unwrap();
             let names = CharacterVector::new_unchecked(names);
             names.len() > 0
         }
     } else {
         match r_typeof(value) {
-            VECSXP | EXPRSXP   => unsafe { XLENGTH(value) != 0 },
-            LISTSXP  => true,
-            ENVSXP   => !Environment::new(RObject::view(value)).is_empty(),
-            _        => false
+            VECSXP | EXPRSXP => unsafe { XLENGTH(value) != 0 },
+            LISTSXP => true,
+            ENVSXP => !Environment::new(RObject::view(value)).is_empty(),
+            _ => false,
         }
     }
 }
 
 enum EnvironmentVariableNode {
-    Concrete {
-        object: RObject
-    },
-    Artificial {
-        object: RObject,
-        name: String
-    }
+    Concrete { object: RObject },
+    Artificial { object: RObject, name: String },
 }
 
 impl EnvironmentVariable {
@@ -358,9 +356,11 @@ impl EnvironmentVariable {
         let display_name = binding.name.to_string();
 
         match binding.value {
-            BindingValue::Active{..} => Self::from_active_binding(display_name),
+            BindingValue::Active { .. } => Self::from_active_binding(display_name),
             BindingValue::Promise { promise } => Self::from_promise(display_name, promise),
-            BindingValue::Altrep{object, ..} | BindingValue::Standard {object, ..} => Self::from(display_name.clone(), display_name, object)
+            BindingValue::Altrep { object, .. } | BindingValue::Standard { object, .. } => {
+                Self::from(display_name.clone(), display_name, object)
+            },
         }
     }
 
@@ -368,8 +368,14 @@ impl EnvironmentVariable {
      * Create a new EnvironmentVariable from an R object
      */
     fn from(access_key: String, display_name: String, x: SEXP) -> Self {
-        let WorkspaceVariableDisplayValue{display_value, is_truncated} = WorkspaceVariableDisplayValue::from(x);
-        let WorkspaceVariableDisplayType{display_type, type_info} = WorkspaceVariableDisplayType::from(x);
+        let WorkspaceVariableDisplayValue {
+            display_value,
+            is_truncated,
+        } = WorkspaceVariableDisplayValue::from(x);
+        let WorkspaceVariableDisplayType {
+            display_type,
+            type_info,
+        } = WorkspaceVariableDisplayType::from(x);
 
         let kind = Self::variable_kind(x);
 
@@ -384,7 +390,7 @@ impl EnvironmentVariable {
             size: RObject::view(x).size(),
             has_children: has_children(x),
             is_truncated,
-            has_viewer: r_is_data_frame(x) || r_is_matrix(x)
+            has_viewer: r_is_data_frame(x) || r_is_matrix(x),
         }
     }
 
@@ -393,11 +399,13 @@ impl EnvironmentVariable {
             let code = PRCODE(promise);
             // TODO: handle lazyLoadDBfetch
 
-            RFunction::from(".ps.environment.describeCall").add(code).call()
+            RFunction::from(".ps.environment.describeCall")
+                .add(code)
+                .call()
         };
 
         let formatted = match deparsed {
-            Ok(strings) => collapse(*strings, " ", 100, "" ).unwrap(),
+            Ok(strings) => collapse(*strings, " ", 100, "").unwrap(),
             Err(_) => Collapse {
                 result: String::from("(unevaluated)"),
                 truncated: false,
@@ -415,7 +423,7 @@ impl EnvironmentVariable {
             size: 0,
             has_children: false,
             is_truncated: formatted.truncated,
-            has_viewer: false
+            has_viewer: false,
         }
     }
 
@@ -431,7 +439,7 @@ impl EnvironmentVariable {
             size: 0,
             has_children: false,
             is_truncated: false,
-            has_viewer: false
+            has_viewer: false,
         }
     }
 
@@ -454,15 +462,15 @@ impl EnvironmentVariable {
                 }
             },
             LISTSXP => match pairlist_size(x) {
-                Ok(n)  => n as usize,
-                Err(_) => 0
+                Ok(n) => n as usize,
+                Err(_) => 0,
             },
-            _ => 0
+            _ => 0,
         }
     }
 
     fn variable_kind(x: SEXP) -> ValueKind {
-        if x == unsafe {R_NilValue} {
+        if x == unsafe { R_NilValue } {
             return ValueKind::Empty;
         }
 
@@ -558,7 +566,7 @@ impl EnvironmentVariable {
                 } else {
                     ValueKind::Collection
                 }
-            }
+            },
 
             STRSXP => unsafe {
                 let dim = Rf_getAttrib(x, R_DimSymbol);
@@ -575,68 +583,71 @@ impl EnvironmentVariable {
                 }
             },
 
-            RAWSXP  => ValueKind::Bytes,
-            _       => ValueKind::Other
+            RAWSXP => ValueKind::Bytes,
+            _ => ValueKind::Other,
         }
     }
 
     pub fn inspect(env: RObject, path: &Vec<String>) -> Result<Vec<Self>, harp::error::Error> {
-        let node = unsafe {
-            Self::resolve_object_from_path(env, &path)?
-        };
+        let node = unsafe { Self::resolve_object_from_path(env, &path)? };
 
         match node {
-            EnvironmentVariableNode::Artificial { object, name } => {
-                match name.as_str() {
-                    "<private>" => {
-                        let env = Environment::new(object);
-                        let enclos = Environment::new(RObject::view(env.find(".__enclos_env__")));
-                        let private = RObject::view(enclos.find("private"));
+            EnvironmentVariableNode::Artificial { object, name } => match name.as_str() {
+                "<private>" => {
+                    let env = Environment::new(object);
+                    let enclos = Environment::new(RObject::view(env.find(".__enclos_env__")));
+                    let private = RObject::view(enclos.find("private"));
 
-                        Self::inspect_environment(private)
-                    }
+                    Self::inspect_environment(private)
+                },
 
-                    "<methods>" => Self::inspect_r6_methods(object),
+                "<methods>" => Self::inspect_r6_methods(object),
 
-                    _ => Err(harp::error::Error::InspectError {
-                        path: path.clone()
-                    })
-
-                }
-            }
+                _ => Err(harp::error::Error::InspectError { path: path.clone() }),
+            },
 
             EnvironmentVariableNode::Concrete { object } => {
                 if object.is_s4() {
                     Self::inspect_s4(*object)
                 } else {
                     match r_typeof(*object) {
-                        VECSXP | EXPRSXP  => Self::inspect_list(*object),
-                        LISTSXP           => Self::inspect_pairlist(*object),
-                        ENVSXP            => {
+                        VECSXP | EXPRSXP => Self::inspect_list(*object),
+                        LISTSXP => Self::inspect_pairlist(*object),
+                        ENVSXP => {
                             if r_inherits(*object, "R6") {
                                 Self::inspect_r6(object)
                             } else {
                                 Self::inspect_environment(object)
                             }
-
                         },
-                        _                 => Ok(vec![])
+                        _ => Ok(vec![]),
                     }
                 }
-            }
+            },
         }
-
     }
 
-    pub fn clip(env: RObject, path: &Vec<String>, _format: &String) -> Result<String, harp::error::Error> {
-        let node = unsafe {
-            Self::resolve_object_from_path(env, &path)?
-        };
+    pub fn clip(
+        env: RObject,
+        path: &Vec<String>,
+        _format: &String,
+    ) -> Result<String, harp::error::Error> {
+        let node = unsafe { Self::resolve_object_from_path(env, &path)? };
 
         match node {
             EnvironmentVariableNode::Concrete { object } => {
                 if r_is_simple_vector(*object) {
-                    let formatted = collapse(*object, " ", 0, if r_typeof(*object) == STRSXP { "\"" } else { "" }).unwrap();
+                    let formatted = collapse(
+                        *object,
+                        " ",
+                        0,
+                        if r_typeof(*object) == STRSXP {
+                            "\""
+                        } else {
+                            ""
+                        },
+                    )
+                    .unwrap();
                     Ok(formatted.result)
                 } else if r_is_data_frame(*object) {
                     unsafe {
@@ -651,52 +662,47 @@ impl EnvironmentVariable {
                     }
                 } else if r_typeof(*object) == CLOSXP {
                     unsafe {
-                        let deparsed : Vec<String> = RFunction::from("deparse")
-                            .add(*object)
-                            .call()?
-                            .try_into()?;
+                        let deparsed: Vec<String> =
+                            RFunction::from("deparse").add(*object).call()?.try_into()?;
 
                         Ok(deparsed.join("\n"))
                     }
                 } else {
                     Ok(String::from(""))
                 }
-
-            }
-            EnvironmentVariableNode::Artificial {..} => { Ok(String::from("")) }
+            },
+            EnvironmentVariableNode::Artificial { .. } => Ok(String::from("")),
         }
     }
 
-    pub fn resolve_data_object(env: RObject, path: &Vec<String>) -> Result<RObject, harp::error::Error> {
+    pub fn resolve_data_object(
+        env: RObject,
+        path: &Vec<String>,
+    ) -> Result<RObject, harp::error::Error> {
         let resolved = unsafe { Self::resolve_object_from_path(env, path)? };
 
         match resolved {
-            EnvironmentVariableNode::Concrete{object} => Ok(object),
+            EnvironmentVariableNode::Concrete { object } => Ok(object),
 
-            _ => {
-                Err(harp::error::Error::InspectError {
-                    path: path.clone()
-                })
-            }
+            _ => Err(harp::error::Error::InspectError { path: path.clone() }),
         }
     }
 
-    unsafe fn resolve_object_from_path(object: RObject, path: &Vec<String>) -> Result<EnvironmentVariableNode, harp::error::Error> {
+    unsafe fn resolve_object_from_path(
+        object: RObject,
+        path: &Vec<String>,
+    ) -> Result<EnvironmentVariableNode, harp::error::Error> {
         let mut node = EnvironmentVariableNode::Concrete { object };
 
         for path_element in path {
             node = match node {
-                EnvironmentVariableNode::Concrete{object} => {
+                EnvironmentVariableNode::Concrete { object } => {
                     if object.is_s4() {
                         let name = r_symbol!(path_element);
 
-                        let child = r_try_catch_error(|| {
-                            R_do_slot(*object, name)
-                        })?;
+                        let child = r_try_catch_error(|| R_do_slot(*object, name))?;
 
-                        EnvironmentVariableNode::Concrete {
-                            object: child
-                        }
+                        EnvironmentVariableNode::Concrete { object: child }
                     } else {
                         let rtype = r_typeof(*object);
                         match rtype {
@@ -704,7 +710,7 @@ impl EnvironmentVariable {
                                 if r_inherits(*object, "R6") && path_element.starts_with("<") {
                                     EnvironmentVariableNode::Artificial {
                                         object,
-                                        name: path_element.clone()
+                                        name: path_element.clone(),
                                     }
                                 } else {
                                     // TODO: consider the cases of :
@@ -718,16 +724,15 @@ impl EnvironmentVariable {
                                     }
 
                                     EnvironmentVariableNode::Concrete {
-                                        object: RObject::view(x)
+                                        object: RObject::view(x),
                                     }
-
                                 }
                             },
 
                             VECSXP | EXPRSXP => {
                                 let index = path_element.parse::<isize>().unwrap();
                                 EnvironmentVariableNode::Concrete {
-                                    object: RObject::view(VECTOR_ELT(*object, index))
+                                    object: RObject::view(VECTOR_ELT(*object, index)),
                                 }
                             },
 
@@ -738,13 +743,13 @@ impl EnvironmentVariable {
                                     pairlist = CDR(pairlist);
                                 }
                                 EnvironmentVariableNode::Concrete {
-                                    object: RObject::view(CAR(pairlist))
+                                    object: RObject::view(CAR(pairlist)),
                                 }
                             },
 
-                            _ => return Err(harp::error::Error::InspectError {
-                                path: path.clone()
-                            })
+                            _ => {
+                                return Err(harp::error::Error::InspectError { path: path.clone() })
+                            },
                         }
                     }
                 },
@@ -753,42 +758,43 @@ impl EnvironmentVariable {
                     match name.as_str() {
                         "<private>" => {
                             let env = Environment::new(object);
-                            let enclos = Environment::new(RObject::view(env.find(".__enclos_env__")));
+                            let enclos =
+                                Environment::new(RObject::view(env.find(".__enclos_env__")));
                             let private = Environment::new(RObject::view(enclos.find("private")));
 
                             // TODO: it seems unlikely that private would host active bindings
                             //       so find() is fine, we can assume this is concrete
                             EnvironmentVariableNode::Concrete {
-                                object: RObject::view(private.find(path_element))
+                                object: RObject::view(private.find(path_element)),
                             }
-                        }
+                        },
 
-                        _ => {
-                            return Err(harp::error::Error::InspectError {
-                                path: path.clone()
-                            })
-                        }
+                        _ => return Err(harp::error::Error::InspectError { path: path.clone() }),
                     }
-                }
+                },
             }
-       }
+        }
 
-       Ok(node)
+        Ok(node)
     }
 
     fn inspect_list(value: SEXP) -> Result<Vec<Self>, harp::error::Error> {
-        let mut out : Vec<Self> = vec![];
+        let mut out: Vec<Self> = vec![];
         let n = unsafe { XLENGTH(value) };
 
         let names = unsafe {
-            CharacterVector::new_unchecked(RFunction::from(".ps.environment.listDisplayNames").add(value).call()?)
+            CharacterVector::new_unchecked(
+                RFunction::from(".ps.environment.listDisplayNames")
+                    .add(value)
+                    .call()?,
+            )
         };
 
         for i in 0..n {
             out.push(Self::from(
                 i.to_string(),
                 names.get_unchecked(i).unwrap(),
-                unsafe{ VECTOR_ELT(value, i)}
+                unsafe { VECTOR_ELT(value, i) },
             ));
         }
 
@@ -796,13 +802,12 @@ impl EnvironmentVariable {
     }
 
     fn inspect_pairlist(value: SEXP) -> Result<Vec<Self>, harp::error::Error> {
-        let mut out : Vec<Self> = vec![];
+        let mut out: Vec<Self> = vec![];
 
         let mut pairlist = value;
         unsafe {
             let mut i = 0;
             while pairlist != R_NilValue {
-
                 r_assert_type(pairlist, &[LISTSXP])?;
 
                 let tag = TAG(pairlist);
@@ -840,7 +845,8 @@ impl EnvironmentVariable {
                     false
                 } else {
                     match b.value {
-                        BindingValue::Standard { object, .. } | BindingValue::Altrep { object, .. } => {
+                        BindingValue::Standard { object, .. } |
+                        BindingValue::Altrep { object, .. } => {
                             if r_typeof(object) == CLOSXP {
                                 has_methods = true;
                                 false
@@ -850,19 +856,14 @@ impl EnvironmentVariable {
                         },
 
                         // active bindings and promises
-                        _ => true
+                        _ => true,
                     }
                 }
-
             })
-            .map(|b| {
-                Self::new(&b)
-            })
+            .map(|b| Self::new(&b))
             .collect();
 
-        childs.sort_by(|a, b| {
-            a.display_name.cmp(&b.display_name)
-        });
+        childs.sort_by(|a, b| a.display_name.cmp(&b.display_name));
 
         if has_private {
             childs.push(Self {
@@ -876,7 +877,7 @@ impl EnvironmentVariable {
                 size: 0,
                 has_children: true,
                 is_truncated: false,
-                has_viewer: false
+                has_viewer: false,
             });
         }
 
@@ -892,7 +893,7 @@ impl EnvironmentVariable {
                 size: 0,
                 has_children: true,
                 is_truncated: false,
-                has_viewer: false
+                has_viewer: false,
             });
         }
 
@@ -902,17 +903,11 @@ impl EnvironmentVariable {
     fn inspect_environment(value: RObject) -> Result<Vec<Self>, harp::error::Error> {
         let mut out: Vec<Self> = Environment::new(value)
             .iter()
-            .filter(|b: &Binding| {
-                !b.is_hidden()
-            })
-            .map(|b| {
-                Self::new(&b)
-            })
+            .filter(|b: &Binding| !b.is_hidden())
+            .map(|b| Self::new(&b))
             .collect();
 
-        out.sort_by(|a, b| {
-            a.display_name.cmp(&b.display_name)
-        });
+        out.sort_by(|a, b| a.display_name.cmp(&b.display_name));
 
         Ok(out)
     }
@@ -921,25 +916,15 @@ impl EnvironmentVariable {
         let mut out: Vec<Self> = vec![];
 
         unsafe {
-            let slot_names = RFunction::new("methods", ".slotNames")
-                .add(value)
-                .call()?;
+            let slot_names = RFunction::new("methods", ".slotNames").add(value).call()?;
 
             let slot_names = CharacterVector::new_unchecked(*slot_names);
             let mut iter = slot_names.iter();
             while let Some(Some(display_name)) = iter.next() {
                 let slot_symbol = r_symbol!(display_name);
-                let slot = r_try_catch_error(|| {
-                    R_do_slot(value, slot_symbol)
-                })?;
+                let slot = r_try_catch_error(|| R_do_slot(value, slot_symbol))?;
                 let access_key = display_name.clone();
-                out.push(
-                    EnvironmentVariable::from(
-                        access_key,
-                        display_name,
-                        *slot
-                    )
-                );
+                out.push(EnvironmentVariable::from(access_key, display_name, *slot));
             }
         }
 
@@ -949,26 +934,16 @@ impl EnvironmentVariable {
     fn inspect_r6_methods(value: RObject) -> Result<Vec<Self>, harp::error::Error> {
         let mut out: Vec<Self> = Environment::new(value)
             .iter()
-            .filter(|b: &Binding| {
-                match b.value {
+            .filter(|b: &Binding| match b.value {
+                BindingValue::Standard { object, .. } => r_typeof(object) == CLOSXP,
 
-                    BindingValue::Standard { object, .. } => {
-                        r_typeof(object) == CLOSXP
-                    }
-
-                    _ => false
-                }
+                _ => false,
             })
-            .map(|b| {
-                Self::new(&b)
-            })
+            .map(|b| Self::new(&b))
             .collect();
 
-        out.sort_by(|a, b| {
-            a.display_name.cmp(&b.display_name)
-        });
+        out.sort_by(|a, b| a.display_name.cmp(&b.display_name));
 
         Ok(out)
     }
-
 }

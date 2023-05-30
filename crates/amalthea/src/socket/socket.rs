@@ -5,9 +5,10 @@
  *
  */
 
+use log::trace;
+
 use crate::error::Error;
 use crate::session::Session;
-use log::trace;
 
 /// Represents a socket that sends and receives messages that are optionally
 /// signed with a SHA-256 HMAC.
@@ -56,14 +57,14 @@ impl Socket {
                 if let Err(err) = socket.bind(&endpoint) {
                     return Err(Error::SocketBindError(name, endpoint, err));
                 }
-            }
+            },
             zmq::SocketType::DEALER | zmq::SocketType::SUB | zmq::SocketType::REQ => {
                 // Bind the socket to the requested endpoint
                 trace!("Connecting to ZeroMQ '{}' socket at {}", name, endpoint);
                 if let Err(err) = socket.connect(&endpoint) {
                     return Err(Error::SocketConnectError(name, endpoint, err));
                 }
-            }
+            },
             _ => return Err(Error::UnsupportedSocketType(kind)),
         }
 
@@ -81,7 +82,7 @@ impl Socket {
 
         // Create a new mutex and return
         Ok(Self {
-            socket: socket,
+            socket,
             session,
             name,
         })

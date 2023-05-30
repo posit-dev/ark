@@ -11,20 +11,19 @@ use std::str::FromStr;
 use std::sync::Mutex;
 use std::sync::Once;
 use std::time::SystemTime;
-use stdext::unwrap;
 
 use chrono::DateTime;
 use chrono::Utc;
 use lazy_static::lazy_static;
 use regex::Regex;
+use stdext::unwrap;
 
 lazy_static! {
-    static ref RE_ARK_BACKTRACE : Regex = Regex::new("^\\s*\\d+:\\s*[<]?ark::").unwrap();
-    static ref RE_BACKTRACE_HEADER : Regex = Regex::new("^\\s*Stack\\s+backtrace:?\\s*$").unwrap();
+    static ref RE_ARK_BACKTRACE: Regex = Regex::new("^\\s*\\d+:\\s*[<]?ark::").unwrap();
+    static ref RE_BACKTRACE_HEADER: Regex = Regex::new("^\\s*Stack\\s+backtrace:?\\s*$").unwrap();
 }
 
 fn annotate(mut message: String) -> String {
-
     // split into lines
     let mut lines = message.split("\n").collect::<Vec<_>>();
 
@@ -33,17 +32,15 @@ fn annotate(mut message: String) -> String {
 
     // look for a backtrace entry for ark
     for (index, line) in lines.iter().enumerate() {
-
         if let Some(_) = RE_BACKTRACE_HEADER.find(line) {
             backtrace_index = Some(index);
             continue;
         }
 
         if let Some(_) = RE_ARK_BACKTRACE.find(line) {
-            occurred = Some(lines[index..=index+1].join("\n"));
+            occurred = Some(lines[index..=index + 1].join("\n"));
             break;
         }
-
     }
 
     // if we found the backtrace entry, include it within the log output
@@ -56,7 +53,6 @@ fn annotate(mut message: String) -> String {
     }
 
     message
-
 }
 
 struct Logger {
@@ -70,13 +66,10 @@ struct Logger {
 }
 
 impl Logger {
-
     fn initialize(&mut self, file: Option<&str>) {
-
         self.mutex = None;
 
         if let Some(file) = file {
-
             let file = std::fs::OpenOptions::new()
                 .write(true)
                 .append(true)
@@ -87,21 +80,16 @@ impl Logger {
                 Ok(file) => self.mutex = Some(Mutex::new(file)),
                 Err(error) => eprintln!("Error initializing log: {}", error),
             }
-
         }
-
     }
-
 }
 
 impl log::Log for Logger {
-
     fn enabled(&self, metadata: &log::Metadata) -> bool {
         metadata.level() as i32 <= self.level as i32
     }
 
     fn log(&self, record: &log::Record) {
-
         if !self.enabled(record.metadata()) {
             return;
         }
@@ -146,7 +134,6 @@ impl log::Log for Logger {
                 println!("{}", message);
             }
         }
-
     }
 
     fn flush(&self) {
@@ -154,14 +141,10 @@ impl log::Log for Logger {
             file.flush().unwrap();
         }
     }
-
 }
 
-
 pub fn initialize(file: Option<&str>) {
-
     ONCE.call_once(|| {
-
         // Initialize the log level, using RUST_LOG.
         let level_envvar = std::env::var("RUST_LOG").unwrap_or("info".into());
         let level = unwrap!(
@@ -180,10 +163,11 @@ pub fn initialize(file: Option<&str>) {
             LOGGER.initialize(file);
             log::set_logger(&LOGGER).unwrap();
         };
-
     });
-
 }
 
 static ONCE: Once = Once::new();
-static mut LOGGER: Logger = Logger { mutex: None, level: log::Level::Info };
+static mut LOGGER: Logger = Logger {
+    mutex: None,
+    level: log::Level::Info,
+};

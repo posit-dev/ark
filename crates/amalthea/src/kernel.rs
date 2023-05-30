@@ -8,6 +8,12 @@
 use std::sync::Arc;
 use std::sync::Mutex;
 
+use crossbeam::channel::bounded;
+use crossbeam::channel::Receiver;
+use crossbeam::channel::Sender;
+use log::info;
+use stdext::spawn;
+
 use crate::comm::comm_manager::CommManager;
 use crate::comm::event::CommChanged;
 use crate::comm::event::CommEvent;
@@ -26,12 +32,6 @@ use crate::socket::socket::Socket;
 use crate::socket::stdin::Stdin;
 use crate::stream_capture::StreamCapture;
 use crate::wire::header::JupyterHeader;
-
-use crossbeam::channel::bounded;
-use crossbeam::channel::Receiver;
-use crossbeam::channel::Sender;
-use log::info;
-use stdext::spawn;
 
 /// A Kernel represents a unique Jupyter kernel session and is the host for all
 /// execution and messaging threads.

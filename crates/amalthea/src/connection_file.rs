@@ -5,11 +5,12 @@
  *
  */
 
-use serde::Deserialize;
 use std::error::Error;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
+
+use serde::Deserialize;
 
 /// The contents of the Connection File as listed in the Jupyter specfication;
 /// directly parsed from JSON.

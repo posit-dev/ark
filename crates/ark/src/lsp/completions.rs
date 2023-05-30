@@ -118,10 +118,7 @@ fn is_pipe_operator(node: &Node) -> bool {
     matches!(node.kind(), "%>%" | "|>")
 }
 
-fn call_uses_nse(
-    node: &Node,
-    context: &CompletionContext,
-) -> bool {
+fn call_uses_nse(node: &Node, context: &CompletionContext) -> bool {
     let result: Result<()> = local! {
 
         let lhs = node.child(0).into_result()?;
@@ -227,10 +224,7 @@ pub unsafe fn resolve_completion_item(
     }
 }
 
-fn completion_item(
-    label: impl AsRef<str>,
-    data: CompletionData,
-) -> Result<CompletionItem> {
+fn completion_item(label: impl AsRef<str>, data: CompletionData) -> Result<CompletionItem> {
     Ok(CompletionItem {
         label: label.as_ref().to_string(),
         data: Some(serde_json::to_value(data)?),
@@ -402,7 +396,7 @@ unsafe fn completion_item_from_object(
     envir: SEXP,
 ) -> Result<CompletionItem> {
     if r_typeof(object) == PROMSXP {
-        return completion_item_from_promise(name, object, envir)
+        return completion_item_from_promise(name, object, envir);
     }
 
     // TODO: For some functions (e.g. S4 generics?) the help file might be
@@ -439,7 +433,7 @@ unsafe fn completion_item_from_promise(
         // Promise has already been evaluated before.
         // Generate completion item from underlying value.
         let object = PRVALUE(object);
-        return completion_item_from_object(name, object, envir)
+        return completion_item_from_object(name, object, envir);
     }
 
     // Otherwise we never want to force promises, so we return a fairly
@@ -454,10 +448,7 @@ unsafe fn completion_item_from_promise(
     Ok(item)
 }
 
-unsafe fn completion_item_from_namespace(
-    name: &str,
-    namespace: SEXP,
-) -> Result<CompletionItem> {
+unsafe fn completion_item_from_namespace(name: &str, namespace: SEXP) -> Result<CompletionItem> {
     let symbol = r_symbol!(name);
 
     // First, look in the namespace itself.
@@ -510,10 +501,7 @@ unsafe fn completion_item_from_lazydata(
     completion_item_from_object(name, object, namespace)
 }
 
-unsafe fn completion_item_from_symbol(
-    name: &str,
-    envir: SEXP,
-) -> Result<CompletionItem> {
+unsafe fn completion_item_from_symbol(name: &str, envir: SEXP) -> Result<CompletionItem> {
     let symbol = r_symbol!(name);
     let object = Rf_findVarInFrame(envir, symbol);
     if object == R_UnboundValue {
@@ -537,10 +525,7 @@ fn completion_item_from_scope_parameter(
     Ok(item)
 }
 
-unsafe fn completion_item_from_parameter(
-    parameter: &str,
-    callee: &str,
-) -> Result<CompletionItem> {
+unsafe fn completion_item_from_parameter(parameter: &str, callee: &str) -> Result<CompletionItem> {
     let label = r_symbol_quote_invalid(parameter);
     let mut item = completion_item(label, CompletionData::Parameter {
         name: parameter.to_string(),
@@ -1514,7 +1499,7 @@ pub fn append_workspace_completions(
                 );
                 let markup = MarkupContent {
                     kind: MarkupKind::Markdown,
-                    value: value,
+                    value,
                 };
 
                 completion.documentation = Some(Documentation::MarkupContent(markup));

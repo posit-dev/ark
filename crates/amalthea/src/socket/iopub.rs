@@ -5,7 +5,12 @@
  *
  */
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::sync::Mutex;
+
+use crossbeam::channel::Receiver;
+use log::trace;
+use log::warn;
 
 use crate::error::Error;
 use crate::events::PositronEvent;
@@ -23,8 +28,6 @@ use crate::wire::jupyter_message::ProtocolMessage;
 use crate::wire::status::ExecutionState;
 use crate::wire::status::KernelStatus;
 use crate::wire::stream::StreamOutput;
-use crossbeam::channel::Receiver;
-use log::{trace, warn};
 
 pub struct IOPub {
     /// The underlying IOPub socket

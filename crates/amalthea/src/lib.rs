@@ -10,6 +10,7 @@ mod positron {
     pub use amalthea_macros::event;
 }
 
+pub mod comm;
 pub mod connection_file;
 pub mod error;
 pub mod events;
@@ -19,6 +20,5 @@ pub mod kernel_spec;
 pub mod language;
 pub mod session;
 pub mod socket;
-pub mod wire;
 pub mod stream_capture;
-pub mod comm;
+pub mod wire;

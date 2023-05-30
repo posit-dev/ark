@@ -5,19 +5,21 @@
  *
  */
 
+use generic_array::GenericArray;
+use hmac::Hmac;
+use log::trace;
+use serde::de::DeserializeOwned;
+use serde::Deserialize;
+use serde::Serialize;
+use serde_json::json;
+use serde_json::value::Value;
+use sha2::Sha256;
+
 use crate::error::Error;
 use crate::socket::socket::Socket;
 use crate::wire::header::JupyterHeader;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::ProtocolMessage;
-use generic_array::GenericArray;
-use hmac::Hmac;
-use log::trace;
-use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
-use serde_json::json;
-use serde_json::value::Value;
-use sha2::Sha256;
 
 /// This delimiter separates the ZeroMQ socket identities (IDS) from the message
 /// body payload (MSG).
@@ -98,7 +100,7 @@ impl WireMessage {
                 // buffer, we have no parent message, which is OK per the wire
                 // protocol.
                 None
-            }
+            },
             _ => {
                 // If we do have content, ensure it parses as a header.
                 let parent_val =
@@ -111,14 +113,14 @@ impl WireMessage {
                             parent_val,
                             err,
                         ))
-                    }
+                    },
                 }
-            }
+            },
         };
 
         Ok(Self {
             zmq_identities: bufs,
-            header: header,
+            header,
             parent_header: parent,
             metadata: WireMessage::parse_buffer(String::from("metadata"), &parts[3])?,
             content: WireMessage::parse_buffer(String::from("content"), &parts[4])?,
@@ -194,14 +196,14 @@ impl WireMessage {
                     parent.msg_type,
                     socket.name
                 );
-            }
+            },
             None => {
                 trace!(
                     "Sending '{}' message via {} socket",
                     self.header.msg_type,
                     socket.name
                 );
-            }
+            },
         }
 
         // Serialize JSON values into byte parts in preparation for transmission
@@ -219,7 +221,7 @@ impl WireMessage {
                     sig.update(&part);
                 }
                 hex::encode(sig.finalize().into_bytes().as_slice())
-            }
+            },
             None => String::new(),
         };
 
@@ -266,13 +268,13 @@ impl<T: ProtocolMessage + DeserializeOwned> TryFrom<&WireMessage> for JupyterMes
                     msg.content.clone(),
                     err,
                 ))
-            }
+            },
         };
         Ok(JupyterMessage {
             zmq_identities: msg.zmq_identities.clone(),
             header: msg.header.clone(),
             parent_header: msg.parent_header.clone(),
-            content: content,
+            content,
         })
     }
 }
@@ -297,7 +299,7 @@ impl<T: ProtocolMessage> TryFrom<&JupyterMessage<T>> for WireMessage {
             header: msg.header.clone(),
             parent_header: msg.parent_header.clone(),
             metadata: json!({}),
-            content: content,
+            content,
         })
     }
 }

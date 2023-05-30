@@ -55,19 +55,12 @@ struct DiagnosticContext<'a> {
 }
 
 impl<'a> DiagnosticContext<'a> {
-    pub fn add_defined_variable(
-        &mut self,
-        name: &str,
-        location: Range,
-    ) {
+    pub fn add_defined_variable(&mut self, name: &str, location: Range) {
         let symbols = self.document_symbols.last_mut().unwrap();
         symbols.insert(name.to_string(), location);
     }
 
-    pub fn has_definition(
-        &mut self,
-        name: &str,
-    ) -> bool {
+    pub fn has_definition(&mut self, name: &str) -> bool {
         // First, check document symbols.
         for symbols in self.document_symbols.iter() {
             if symbols.contains_key(name) {
@@ -85,11 +78,7 @@ impl<'a> DiagnosticContext<'a> {
     }
 }
 
-pub async fn enqueue_diagnostics(
-    backend: Backend,
-    uri: Url,
-    version: i32,
-) {
+pub async fn enqueue_diagnostics(backend: Backend, uri: Url, version: i32) {
     // Make sure we're trying to enqueue diagnostics for a newer version of the document.
     let current_version = VERSION.load(std::sync::atomic::Ordering::Acquire);
     if version < current_version {
@@ -116,10 +105,7 @@ pub async fn enqueue_diagnostics(
     });
 }
 
-async fn enqueue_diagnostics_impl(
-    backend: Backend,
-    uri: Url,
-) {
+async fn enqueue_diagnostics_impl(backend: Backend, uri: Url) {
     let mut diagnostics: Vec<Diagnostic> = Vec::new();
     {
         // get reference to document
@@ -513,11 +499,7 @@ fn recurse_default(
     ().ok()
 }
 
-fn dispatch(
-    node: Node,
-    context: &mut DiagnosticContext,
-    diagnostics: &mut Vec<Diagnostic>,
-) {
+fn dispatch(node: Node, context: &mut DiagnosticContext, diagnostics: &mut Vec<Diagnostic>) {
     let result: Result<bool> = local! {
         check_invalid_na_comparison(node, context, diagnostics)?;
         check_symbol_in_scope(node, context, diagnostics)?;

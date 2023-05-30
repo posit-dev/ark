@@ -14,9 +14,9 @@ use amalthea::wire::shutdown_request::ShutdownRequest;
 use async_trait::async_trait;
 use crossbeam::channel::Sender;
 use log::*;
-use nix::sys::signal::{self, Signal};
+use nix::sys::signal::Signal;
+use nix::sys::signal::{self};
 use nix::unistd::Pid;
-
 
 use crate::request::Request;
 

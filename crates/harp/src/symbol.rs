@@ -5,18 +5,18 @@
 //
 //
 
-use libR_sys::*;
 use std::ffi::CStr;
-
 use std::ops::Deref;
 
+use libR_sys::*;
+
 use crate::r_symbol;
-use crate::utils::HASHASH_MASK;
 use crate::utils::Sxpinfo;
+use crate::utils::HASHASH_MASK;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct RSymbol {
-    pub sexp: SEXP
+    pub sexp: SEXP,
 }
 
 impl RSymbol {
@@ -25,9 +25,7 @@ impl RSymbol {
     }
 
     pub fn has_hash(&self) -> bool {
-        unsafe {
-            ( Sxpinfo::interpret(&PRINTNAME(self.sexp)).gp() & HASHASH_MASK ) == 1
-        }
+        unsafe { (Sxpinfo::interpret(&PRINTNAME(self.sexp)).gp() & HASHASH_MASK) == 1 }
     }
 }
 
@@ -50,7 +48,7 @@ impl From<RSymbol> for String {
 impl From<&str> for RSymbol {
     fn from(value: &str) -> Self {
         RSymbol {
-            sexp: unsafe { r_symbol!(value) }
+            sexp: unsafe { r_symbol!(value) },
         }
     }
 }
