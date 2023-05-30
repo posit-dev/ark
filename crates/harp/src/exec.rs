@@ -27,10 +27,8 @@ use crate::vector::Vector;
 
 extern "C" {
     pub static R_ParseError: c_int;
-}
-
-extern "C" {
     pub static R_ParseErrorMsg: [c_char; 256usize];
+    pub static mut R_DirtyImage: ::std::os::raw::c_int;
 }
 
 pub struct RArgument {
@@ -561,18 +559,18 @@ mod tests {
 
     #[test]
     fn test_dirty_image() { r_test! {
-        libR_sys::R_DirtyImage = 2;
+        R_DirtyImage = 2;
         let sym = r_symbol!("aaa");
         Rf_defineVar(sym, Rf_ScalarInteger(42), R_GlobalEnv);
-        assert_eq!(libR_sys::R_DirtyImage, 1);
+        assert_eq!(R_DirtyImage, 1);
 
-        libR_sys::R_DirtyImage = 2;
+        R_DirtyImage = 2;
         Rf_setVar(sym, Rf_ScalarInteger(43), R_GlobalEnv);
-        assert_eq!(libR_sys::R_DirtyImage, 1);
+        assert_eq!(R_DirtyImage, 1);
 
-        libR_sys::R_DirtyImage = 2;
+        R_DirtyImage = 2;
         r_envir_remove("aaa", R_GlobalEnv);
-        assert_eq!(libR_sys::R_DirtyImage, 1);
+        assert_eq!(R_DirtyImage, 1);
     }}
 
 }
