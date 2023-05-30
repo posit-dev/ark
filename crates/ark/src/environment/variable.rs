@@ -71,6 +71,9 @@ pub enum ValueKind {
 
     /// A table, dataframe, 2D matrix, or other two-dimensional data structure
     Table,
+
+    /// Lazy: promise code
+    Lazy
 }
 
 /// Represents the serialized form of an environment variable.
@@ -355,8 +358,8 @@ impl EnvironmentVariable {
         let display_name = binding.name.to_string();
 
         match binding.value {
-            BindingValue::Active{..} => Self::from_lazy(display_name, String::from("active binding")),
-            BindingValue::Promise{..} => Self::from_lazy(display_name, String::from("promise")),
+            BindingValue::Active{..} => Self::from_active_binding(display_name),
+            BindingValue::Promise { promise } => Self::from_promise(display_name, promise),
             BindingValue::Altrep{object, ..} | BindingValue::Standard {object, ..} => Self::from(display_name.clone(), display_name, object)
         }
     }
@@ -385,13 +388,44 @@ impl EnvironmentVariable {
         }
     }
 
-    fn from_lazy(display_name: String, lazy_type: String) -> Self {
+    fn from_promise(display_name: String, promise: SEXP) -> Self {
+        let deparsed = unsafe {
+            let code = PRCODE(promise);
+            // TODO: handle lazyLoadDBfetch
+
+            RFunction::from(".ps.environment.describeCall").add(code).call()
+        };
+
+        let formatted = match deparsed {
+            Ok(strings) => collapse(*strings, " ", 100, "" ).unwrap(),
+            Err(_) => Collapse {
+                result: String::from("(unevaluated)"),
+                truncated: false,
+            },
+        };
+
+        Self {
+            access_key: display_name.clone(),
+            display_name,
+            display_value: formatted.result,
+            display_type: String::from("promise"),
+            type_info: String::from("promise"),
+            kind: ValueKind::Lazy,
+            length: 0,
+            size: 0,
+            has_children: false,
+            is_truncated: formatted.truncated,
+            has_viewer: false
+        }
+    }
+
+    fn from_active_binding(display_name: String) -> Self {
         Self {
             access_key: display_name.clone(),
             display_name,
             display_value: String::from(""),
-            display_type: lazy_type.clone(),
-            type_info: lazy_type,
+            display_type: String::from("active binding"),
+            type_info: String::from("active binding"),
             kind: ValueKind::Other,
             length: 0,
             size: 0,
