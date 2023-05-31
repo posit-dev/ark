@@ -413,13 +413,21 @@ fn recurse_call(
 
     // Recurse into the callee.
     if let Some(callee) = node.child(0) {
-        // Skip library() and require()
+        // Skip library(<identifier>) and require(<identifier>)
         let fun = callee.utf8_text(context.source.as_bytes())?;
         if matches!(fun, "library" | "require") {
-            // TODO: this should probably be more sophisticated than this
-            //       because library() has a bunch of arguments, and
-            //       diagnostics should not be disabled for them
-            return ().ok();
+            if let Some(arguments) = node.child_by_field_name("arguments") {
+                let mut cursor = arguments.walk();
+                let mut children = arguments.children_by_field_name("argument", &mut cursor);
+
+                if let Some(first_child) = children.next() {
+                    if let Some(value) = first_child.child_by_field_name("value") {
+                        if value.kind() == "identifier" && children.next().is_none() {
+                            return ().ok();
+                        }
+                    }
+                }
+            }
         }
 
         recurse(callee, context, diagnostics)?;
