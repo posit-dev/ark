@@ -13,8 +13,10 @@ use std::time::Duration;
 use anyhow::Result;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
+use harp::object::RObject;
 use harp::protect::RProtect;
 use harp::r_lock;
+use harp::r_symbol;
 use harp::utils::r_symbol_quote_invalid;
 use harp::utils::r_symbol_valid;
 use harp::vector::CharacterVector;
@@ -461,6 +463,51 @@ fn recurse_call_arguments_default(
     ().ok()
 }
 
+fn make_call_from_node(
+    node: Node,
+    context: &mut DiagnosticContext,
+    rfun: RObject,
+) -> Result<RObject> {
+    let callee = node.child(0).into_result()?;
+    let fun = callee.utf8_text(context.source.as_bytes())?;
+
+    unsafe {
+        let sym = r_symbol!(fun);
+
+        let sym_arg = r_symbol!("arg");
+        let call = RObject::new(Rf_lang1(sym));
+        let mut tail = *call;
+
+        if let Some(arguments) = node.child_by_field_name("arguments") {
+            let mut cursor = arguments.walk();
+            let children = arguments.children_by_field_name("argument", &mut cursor);
+            let mut i = 0;
+            for child in children {
+                let num = RObject::new(Rf_ScalarInteger(i));
+                let call_arg = RObject::new(Rf_lang2(sym_arg, *num));
+
+                let node = RObject::new(Rf_cons(*call_arg, R_NilValue));
+
+                SETCDR(tail, *node);
+                tail = CDR(tail);
+
+                if let Some(name) = child.child_by_field_name("name") {
+                    let name = name.utf8_text(context.source.as_bytes())?;
+                    let sym_name = r_symbol!(name);
+                    SET_TAG(tail, sym_name);
+                }
+
+                i = i + 1;
+            }
+        }
+
+        // at this point we have an R call of the form
+        // <fun>(arg(0L), arg(1L), foo = arg(3L), bar = arg(4L))
+
+        Ok(call)
+    }
+}
+
 // Recursion for calls to library() or require()
 // similar to recurse_call_arguments_default() but special
 // care about the first argument: skip the diagnostic
@@ -469,6 +516,11 @@ fn recurse_call_arguments_library(
     context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<()> {
+    r_lock! {
+        let call = make_call_from_node(node, context).unwrap();
+        Rf_PrintValue(*call);
+    };
+
     // Recurse into arguments.
     let mut i = 0;
     if let Some(arguments) = node.child_by_field_name("arguments") {
