@@ -403,53 +403,36 @@ fn recurse_paren(
     ().ok()
 }
 
-fn recurse_call(
+fn check_call_argument_next(
+    child: Node,
+    _context: &mut DiagnosticContext,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<()> {
+    if let Some(next) = child.next_sibling() {
+        if !matches!(next.kind(), "comma" | ")") {
+            let range: Range = child.range().into();
+            let message = "expected ',' after expression";
+            let diagnostic = Diagnostic::new_simple(range.into(), message.into());
+            diagnostics.push(diagnostic);
+        }
+    }
+
+    ().ok()
+}
+
+// Default recursion for arguments of a function call
+fn recurse_call_arguments_default(
     node: Node,
     context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<()> {
-    // Run diagnostics on the call.
-    dispatch(node, context, diagnostics);
-
-    // Recurse into the callee.
-    if let Some(callee) = node.child(0) {
-        // Skip library(<identifier>) and require(<identifier>)
-        let fun = callee.utf8_text(context.source.as_bytes())?;
-        if matches!(fun, "library" | "require") {
-            if let Some(arguments) = node.child_by_field_name("arguments") {
-                let mut cursor = arguments.walk();
-                let mut children = arguments.children_by_field_name("argument", &mut cursor);
-
-                if let Some(first_child) = children.next() {
-                    if let Some(value) = first_child.child_by_field_name("value") {
-                        if value.kind() == "identifier" && children.next().is_none() {
-                            return ().ok();
-                        }
-                    }
-                }
-            }
-        }
-
-        recurse(callee, context, diagnostics)?;
-    }
-
-    // TODO: Handle certain 'scope-generating' function calls, e.g.
-    // things like 'local({ ... })'.
-
     // Recurse into arguments.
     if let Some(arguments) = node.child_by_field_name("arguments") {
         let mut cursor = arguments.walk();
         let children = arguments.children_by_field_name("argument", &mut cursor);
         for child in children {
             // Warn if the next sibling is neither a comma nor a closing delimiter.
-            if let Some(next) = child.next_sibling() {
-                if !matches!(next.kind(), "comma" | ")") {
-                    let range: Range = child.range().into();
-                    let message = "expected ',' after expression";
-                    let diagnostic = Diagnostic::new_simple(range.into(), message.into());
-                    diagnostics.push(diagnostic);
-                }
-            }
+            check_call_argument_next(child, context, diagnostics)?;
 
             // Recurse into values.
             if let Some(value) = child.child_by_field_name("value") {
@@ -457,6 +440,67 @@ fn recurse_call(
             }
         }
     }
+
+    ().ok()
+}
+
+// Recursion for calls to library() or require()
+// similar to recurse_call_arguments_default() but special
+// care about the first argument: skip the diagnostic
+fn recurse_call_arguments_library(
+    node: Node,
+    context: &mut DiagnosticContext,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<()> {
+    // Recurse into arguments.
+    let mut i = 0;
+    if let Some(arguments) = node.child_by_field_name("arguments") {
+        let mut cursor = arguments.walk();
+        let children = arguments.children_by_field_name("argument", &mut cursor);
+        for child in children {
+            // Warn if the next sibling is neither a comma nor a closing delimiter.
+            check_call_argument_next(child, context, diagnostics)?;
+
+            // Recurse into values.
+            if let Some(value) = child.child_by_field_name("value") {
+                // disable diagnostics for the first argument
+                if i > 0 {
+                    recurse(value, context, diagnostics)?;
+                }
+            }
+
+            i = i + 1;
+        }
+    }
+
+    ().ok()
+}
+
+fn recurse_call(
+    node: Node,
+    context: &mut DiagnosticContext,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<()> {
+    // Run diagnostics on the call itself
+    dispatch(node, context, diagnostics);
+
+    // Recurse into the callee.
+    let callee = node.child(0).into_result()?;
+    recurse(callee, context, diagnostics)?;
+
+    // dispatch based on the function
+    //
+    // TODO: Handle certain 'scope-generating' function calls, e.g.
+    // things like 'local({ ... })'.
+    let fun = callee.utf8_text(context.source.as_bytes())?;
+    match fun {
+        // special case to deal with library() and require() nse
+        // TODO: also handle cases like base::library()
+        "library" | "require" => recurse_call_arguments_library(node, context, diagnostics)?,
+
+        // default case: recurse into each argument
+        _ => recurse_call_arguments_default(node, context, diagnostics)?,
+    };
 
     ().ok()
 }
