@@ -1,4 +1,5 @@
 {
+    "version": "2.0.0",
     "tasks": [
         {
             "type": "cargo",
@@ -11,6 +12,19 @@
                 "isDefault": true
             },
             "label": "rust: cargo build"
+        },
+        {
+            "type": "cargo",
+            "command": "test",
+            "problemMatcher": [
+                "$rustc",
+                "$rust-panic"
+            ],
+            "group": {
+                "kind": "test",
+                "isDefault": true
+            },
+            "label": "rust: cargo test"
         }
     ]
 }
