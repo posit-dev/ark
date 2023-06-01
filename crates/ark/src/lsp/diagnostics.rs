@@ -420,6 +420,23 @@ fn check_call_next_sibling(
     ().ok()
 }
 
+fn check_subset_next_sibling(
+    child: Node,
+    _context: &mut DiagnosticContext,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<()> {
+    if let Some(next) = child.next_sibling() {
+        if !matches!(next.kind(), "comma" | "]" | "]]") {
+            let range: Range = child.range().into();
+            let message = "expected ',' after expression";
+            let diagnostic = Diagnostic::new_simple(range.into(), message.into());
+            diagnostics.push(diagnostic);
+        }
+    }
+
+    ().ok()
+}
+
 // Default recursion for arguments of a function call
 fn recurse_call_arguments_default(
     node: Node,
@@ -523,15 +540,8 @@ fn recurse_subset(
         let mut cursor = arguments.walk();
         let children = arguments.children_by_field_name("argument", &mut cursor);
         for child in children {
-            // Warn if the next sibling is neither a comma nor a closing delimiter.
-            if let Some(next) = child.next_sibling() {
-                if !matches!(next.kind(), "comma" | "]" | "]]") {
-                    let range: Range = child.range().into();
-                    let message = "expected ',' after expression";
-                    let diagnostic = Diagnostic::new_simple(range.into(), message.into());
-                    diagnostics.push(diagnostic);
-                }
-            }
+            // Warn if the next sibling is neither a comma nor a closing ].
+            check_subset_next_sibling(child, context, diagnostics)?;
 
             // Recurse into values.
             if let Some(value) = child.child_by_field_name("value") {
