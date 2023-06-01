@@ -403,7 +403,7 @@ fn recurse_paren(
     ().ok()
 }
 
-fn check_call_argument_next(
+fn check_call_next_sibling_argument(
     child: Node,
     _context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
@@ -432,7 +432,7 @@ fn recurse_call_arguments_default(
         let children = arguments.children_by_field_name("argument", &mut cursor);
         for child in children {
             // Warn if the next sibling is neither a comma nor a closing delimiter.
-            check_call_argument_next(child, context, diagnostics)?;
+            check_call_next_sibling_argument(child, context, diagnostics)?;
 
             // Recurse into values.
             if let Some(value) = child.child_by_field_name("value") {
@@ -459,7 +459,7 @@ fn recurse_call_arguments_library(
         let children = arguments.children_by_field_name("argument", &mut cursor);
         for child in children {
             // Warn if the next sibling is neither a comma nor a closing delimiter.
-            check_call_argument_next(child, context, diagnostics)?;
+            check_call_next_sibling_argument(child, context, diagnostics)?;
 
             // Recurse into values.
             if let Some(value) = child.child_by_field_name("value") {
