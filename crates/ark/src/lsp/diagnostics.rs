@@ -476,7 +476,6 @@ fn match_node_call<'a>(
     unsafe {
         let sym = r_symbol!(fun);
 
-        let sym_arg = r_symbol!("arg");
         let call = RObject::new(Rf_lang1(sym));
         let mut tail = *call;
 
@@ -486,11 +485,7 @@ fn match_node_call<'a>(
             let children = arguments.children_by_field_name("argument", &mut cursor);
             let mut i = 0;
             for child in children {
-                let num = RObject::new(Rf_ScalarInteger(i));
-
-                let call_arg = RObject::new(Rf_lang2(sym_arg, *num));
-
-                SETCDR(tail, Rf_cons(*call_arg, R_NilValue));
+                SETCDR(tail, Rf_cons(Rf_ScalarInteger(i), R_NilValue));
                 tail = CDR(tail);
 
                 if let Some(name) = child.child_by_field_name("name") {
@@ -505,7 +500,7 @@ fn match_node_call<'a>(
         }
 
         // at this point we have an R call of the form
-        // <fun>(arg(0L), arg(1L), foo = arg(3L), bar = arg(4L))
+        // <fun>(0L, 1L, foo = 2L, bar = 3L)
 
         // use R's match.call()
         let matched = RFunction::new("base", "match.call")
@@ -518,7 +513,7 @@ fn match_node_call<'a>(
         let mut p = CDR(*matched);
         while !r_is_null(p) {
             let name = String::from(RSymbol::new(TAG(p)));
-            let pos: i32 = RObject::view(CADR(CAR(p))).try_into()?;
+            let pos: i32 = RObject::view(CAR(p)).try_into()?;
 
             map.insert(name, family.get_unchecked(pos as usize).clone());
 
