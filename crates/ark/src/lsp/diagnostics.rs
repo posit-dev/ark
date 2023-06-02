@@ -17,6 +17,8 @@ use harp::object::RObject;
 use harp::protect::RProtect;
 use harp::r_lock;
 use harp::r_symbol;
+use harp::symbol::RSymbol;
+use harp::utils::r_is_null;
 use harp::utils::r_symbol_quote_invalid;
 use harp::utils::r_symbol_valid;
 use harp::vector::CharacterVector;
@@ -463,11 +465,11 @@ fn recurse_call_arguments_default(
     ().ok()
 }
 
-fn make_call_from_node(
-    node: Node,
+fn match_node_call<'a>(
+    node: Node<'a>,
     context: &mut DiagnosticContext,
     rfun: RObject,
-) -> Result<RObject> {
+) -> Result<HashMap<String, Node<'a>>> {
     let callee = node.child(0).into_result()?;
     let fun = callee.utf8_text(context.source.as_bytes())?;
 
@@ -478,17 +480,17 @@ fn make_call_from_node(
         let call = RObject::new(Rf_lang1(sym));
         let mut tail = *call;
 
+        let mut family = vec![];
         if let Some(arguments) = node.child_by_field_name("arguments") {
             let mut cursor = arguments.walk();
             let children = arguments.children_by_field_name("argument", &mut cursor);
             let mut i = 0;
             for child in children {
                 let num = RObject::new(Rf_ScalarInteger(i));
+
                 let call_arg = RObject::new(Rf_lang2(sym_arg, *num));
 
-                let node = RObject::new(Rf_cons(*call_arg, R_NilValue));
-
-                SETCDR(tail, *node);
+                SETCDR(tail, Rf_cons(*call_arg, R_NilValue));
                 tail = CDR(tail);
 
                 if let Some(name) = child.child_by_field_name("name") {
@@ -497,6 +499,7 @@ fn make_call_from_node(
                     SET_TAG(tail, sym_name);
                 }
 
+                family.push(child);
                 i = i + 1;
             }
         }
@@ -504,7 +507,25 @@ fn make_call_from_node(
         // at this point we have an R call of the form
         // <fun>(arg(0L), arg(1L), foo = arg(3L), bar = arg(4L))
 
-        Ok(call)
+        // use R's match.call()
+        let matched = RFunction::new("base", "match.call")
+            .add(rfun)
+            .add(call)
+            .call()?;
+
+        // and then use the matched call to map arguments to child nodes
+        let mut map = HashMap::new();
+        let mut p = CDR(*matched);
+        while !r_is_null(p) {
+            let name = String::from(RSymbol::new(TAG(p)));
+            let pos: i32 = RObject::view(CADR(CAR(p))).try_into()?;
+
+            map.insert(name, family.get_unchecked(pos as usize).clone());
+
+            p = CDR(p);
+        }
+
+        Ok(map)
     }
 }
 
@@ -516,29 +537,36 @@ fn recurse_call_arguments_library(
     context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<()> {
-    r_lock! {
-        let call = make_call_from_node(node, context).unwrap();
-        Rf_PrintValue(*call);
+    let map = r_lock! {
+        let fun = RObject::from(Rf_findVarInFrame(R_BaseNamespace, r_symbol!("library")));
+        match_node_call(node, context, fun).unwrap()
     };
 
-    // Recurse into arguments.
-    let mut i = 0;
-    if let Some(arguments) = node.child_by_field_name("arguments") {
-        let mut cursor = arguments.walk();
-        let children = arguments.children_by_field_name("argument", &mut cursor);
-        for child in children {
-            // Warn if the next sibling is neither a comma nor a closing delimiter.
-            check_call_next_sibling(child, context, diagnostics)?;
+    // skip the diagnostics for package and help, unless `character.only=` is not set to FALSE
+    //
+    // There could still be some theoretical cases where `character.only=` is set to something
+    // that would evaluate to FALSE, but it seems esoteric:
+    //
+    // library(foo, character.only = <some expression>)
+    //
+    // if the argument `character.only=` is used, chances are it is set to TRUE
+    let skip = match map.get("character.only") {
+        Some(&character_only) => {
+            let value = character_only.child_by_field_name("value").into_result()?;
+            let x = value.utf8_text(context.source.as_bytes())?;
+            matches!(x, "FALSE" | "F")
+        },
+        None => true,
+    };
 
-            // Recurse into values.
+    for (name, child) in map {
+        // Warn if the next sibling is neither a comma nor a closing delimiter.
+        check_call_next_sibling(child, context, diagnostics)?;
+
+        if !skip || !matches!(name.as_str(), "package" | "help") {
             if let Some(value) = child.child_by_field_name("value") {
-                // disable diagnostics for the first argument
-                if i > 0 {
-                    recurse(value, context, diagnostics)?;
-                }
+                recurse(value, context, diagnostics)?;
             }
-
-            i = i + 1;
         }
     }
 
