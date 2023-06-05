@@ -504,9 +504,20 @@ fn match_node_call<'a>(
             let children = arguments.children_by_field_name("argument", &mut cursor);
             let mut i = 0;
             for child in children {
-                // set the argument with a scalar integer that corresponds
-                // to its O-based position
-                SETCDR(tail, Rf_cons(Rf_ScalarInteger(i), R_NilValue));
+                let arg_list = RObject::from(Rf_allocVector(VECSXP, 2));
+
+                // set the argument to a list<2>, with its first element: a scalar integer
+                // that corresponds to its O-based position. The position is used below to
+                // map back to the Node
+                SET_VECTOR_ELT(*arg_list, 0, Rf_ScalarInteger(i));
+
+                // Set the second element of the list to an external pointer
+                // to the child node. This might be useful in some future where
+                // the call would be further analysed in R code
+                //
+                // SET_VECTOR_ELT(*arg_list, 1, R_MakeExternalPtr(&child as *const Node as *const c_void as *mut c_void, R_NilValue, R_NilValue));
+
+                SETCDR(tail, Rf_cons(*arg_list, R_NilValue));
                 tail = CDR(tail);
 
                 // potentially add the argument name
@@ -522,7 +533,7 @@ fn match_node_call<'a>(
         }
 
         // at this point we have an R call of the form
-        // <fun>(0L, 1L, foo = 2L, bar = 3L)
+        // <fun>(list(0L, <ptr>), list(1L, <ptr>), foo = list(2L, <ptr>))
 
         // use R's match.call()
         let rfun = get_function(package, function)?;
@@ -537,7 +548,7 @@ fn match_node_call<'a>(
         let mut p = CDR(*matched);
         while !r_is_null(p) {
             let name = String::from(RSymbol::new(TAG(p)));
-            let pos: i32 = RObject::view(CAR(p)).try_into()?;
+            let pos: i32 = RObject::view(VECTOR_ELT(CAR(p), 0)).try_into()?;
 
             map.insert(name, family.get_unchecked(pos as usize).clone());
 
