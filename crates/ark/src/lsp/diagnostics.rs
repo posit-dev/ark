@@ -11,10 +11,12 @@ use std::sync::atomic::AtomicI32;
 use std::time::Duration;
 
 use anyhow::Result;
+use harp::exec::r_try_catch_error;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
 use harp::protect::RProtect;
+use harp::r_lang;
 use harp::r_lock;
 use harp::r_symbol;
 use harp::symbol::RSymbol;
@@ -465,18 +467,35 @@ fn recurse_call_arguments_default(
     ().ok()
 }
 
+fn get_function(package: &str, function: &str) -> Result<RObject, harp::error::Error> {
+    unsafe {
+        let fun_sym = r_symbol!(function);
+
+        let call = if package == "" {
+            r_lang!(fun_sym)
+        } else {
+            let pkg_sym = r_symbol!(package);
+            r_lang!(r_symbol!(":::"), pkg_sym, fun_sym)
+        };
+        let mut protect = RProtect::new();
+        let call = protect.add(call);
+
+        r_try_catch_error(|| Rf_eval(call, R_GlobalEnv))
+    }
+}
+
 fn match_node_call<'a>(
     node: Node<'a>,
     context: &mut DiagnosticContext,
-    rfun: RObject,
+    package: &str,
+    function: &str,
 ) -> Result<HashMap<String, Node<'a>>> {
-    let callee = node.child(0).into_result()?;
-    let fun = callee.utf8_text(context.source.as_bytes())?;
-
-    unsafe {
-        let sym = r_symbol!(fun);
-
+    r_lock! {
+        // start with a call to the function: <fun>()
+        let sym = r_symbol!(function);
         let call = RObject::new(Rf_lang1(sym));
+
+        // then augment it with arguments
         let mut tail = *call;
 
         let mut family = vec![];
@@ -485,9 +504,12 @@ fn match_node_call<'a>(
             let children = arguments.children_by_field_name("argument", &mut cursor);
             let mut i = 0;
             for child in children {
+                // set the argument with a scalar integer that corresponds
+                // to its O-based position
                 SETCDR(tail, Rf_cons(Rf_ScalarInteger(i), R_NilValue));
                 tail = CDR(tail);
 
+                // potentially add the argument name
                 if let Some(name) = child.child_by_field_name("name") {
                     let name = name.utf8_text(context.source.as_bytes())?;
                     let sym_name = r_symbol!(name);
@@ -503,12 +525,14 @@ fn match_node_call<'a>(
         // <fun>(0L, 1L, foo = 2L, bar = 3L)
 
         // use R's match.call()
+        let rfun = get_function(package, function)?;
         let matched = RFunction::new("base", "match.call")
             .add(rfun)
             .add(call)
             .call()?;
 
         // and then use the matched call to map arguments to child nodes
+        // so that further analysis can be done on the children nodes
         let mut map = HashMap::new();
         let mut p = CDR(*matched);
         while !r_is_null(p) {
@@ -532,10 +556,7 @@ fn recurse_call_arguments_library(
     context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<()> {
-    let map = r_lock! {
-        let fun = RObject::from(Rf_findVarInFrame(R_BaseNamespace, r_symbol!("library")));
-        match_node_call(node, context, fun).unwrap()
-    };
+    let map = match_node_call(node, context, "base", "library")?;
 
     // skip the diagnostics for package and help, unless `character.only=` is not set to FALSE
     //
@@ -587,7 +608,6 @@ fn recurse_call(
     let fun = callee.utf8_text(context.source.as_bytes())?;
     match fun {
         // special case to deal with library() and require() nse
-        // TODO: also handle cases like base::library()
         "library" | "require" => recurse_call_arguments_library(node, context, diagnostics)?,
 
         // default case: recurse into each argument
