@@ -7,6 +7,7 @@
 
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::os::raw::c_void;
 use std::sync::atomic::AtomicI32;
 use std::time::Duration;
 
@@ -19,7 +20,6 @@ use harp::protect::RProtect;
 use harp::r_lang;
 use harp::r_lock;
 use harp::r_symbol;
-use harp::symbol::RSymbol;
 use harp::utils::r_is_null;
 use harp::utils::r_symbol_quote_invalid;
 use harp::utils::r_symbol_valid;
@@ -467,6 +467,7 @@ fn recurse_call_arguments_default(
     ().ok()
 }
 
+#[allow(dead_code)]
 fn get_function(package: &str, function: &str) -> Result<RObject, harp::error::Error> {
     unsafe {
         let fun_sym = r_symbol!(function);
@@ -484,13 +485,31 @@ fn get_function(package: &str, function: &str) -> Result<RObject, harp::error::E
     }
 }
 
-fn match_node_call<'a>(
+fn make_external_ptr<T>(reference: &T) -> RObject {
+    unsafe {
+        RObject::from(R_MakeExternalPtr(
+            reference as *const T as *const c_void as *mut c_void,
+            R_NilValue,
+            R_NilValue,
+        ))
+    }
+}
+
+fn get_external_ptr<T>(ptr: SEXP) -> &'static T {
+    unsafe { &*(R_ExternalPtrAddr(ptr) as *const c_void as *const T) }
+}
+
+struct SyntheticCall<'a> {
+    call: RObject,
+    _values: Vec<Node<'a>>,
+}
+
+fn make_synthetic_call<'a>(
     node: Node<'a>,
-    context: &mut DiagnosticContext,
-    package: &str,
     function: &str,
-) -> Result<HashMap<String, Node<'a>>> {
-    r_lock! {
+    context: &mut DiagnosticContext,
+) -> Result<SyntheticCall<'a>> {
+    unsafe {
         // start with a call to the function: <fun>()
         let sym = r_symbol!(function);
         let call = RObject::new(Rf_lang1(sym));
@@ -498,7 +517,11 @@ fn match_node_call<'a>(
         // then augment it with arguments
         let mut tail = *call;
 
-        let mut family = vec![];
+        // values are stored in the call as external pointers
+        // to Node that are kept alive in this vector and
+        // in SyntheticCall::_values
+        let mut values = vec![];
+
         if let Some(arguments) = node.child_by_field_name("arguments") {
             let mut cursor = arguments.walk();
             let children = arguments.children_by_field_name("argument", &mut cursor);
@@ -509,13 +532,15 @@ fn match_node_call<'a>(
                 // set the argument to a list<2>, with its first element: a scalar integer
                 // that corresponds to its O-based position. The position is used below to
                 // map back to the Node
-                SET_VECTOR_ELT(*arg_list, 0, Rf_ScalarInteger(i));
+                SET_VECTOR_ELT(*arg_list, 0, Rf_ScalarInteger(i as i32));
 
                 // Set the second element of the list to an external pointer
-                // to the child node. This might be useful in some future where
-                // the call would be further analysed in R code
-                //
-                // SET_VECTOR_ELT(*arg_list, 1, R_MakeExternalPtr(&child as *const Node as *const c_void as *mut c_void, R_NilValue, R_NilValue));
+                // to the child node.
+                if let Some(value) = child.child_by_field_name("value") {
+                    values.push(value);
+                    let ptr = make_external_ptr(values.get_unchecked(values.len() - 1));
+                    SET_VECTOR_ELT(*arg_list, 1, *ptr);
+                }
 
                 SETCDR(tail, Rf_cons(*arg_list, R_NilValue));
                 tail = CDR(tail);
@@ -527,77 +552,87 @@ fn match_node_call<'a>(
                     SET_TAG(tail, sym_name);
                 }
 
-                family.push(child);
                 i = i + 1;
             }
         }
 
-        // at this point we have an R call of the form
-        // <fun>(list(0L, <ptr>), list(1L, <ptr>), foo = list(2L, <ptr>))
-
-        // use R's match.call()
-        let rfun = get_function(package, function)?;
-        let matched = RFunction::new("base", "match.call")
-            .add(rfun)
-            .add(call)
-            .call()?;
-
-        // and then use the matched call to map arguments to child nodes
-        // so that further analysis can be done on the children nodes
-        let mut map = HashMap::new();
-        let mut p = CDR(*matched);
-        while !r_is_null(p) {
-            let name = String::from(RSymbol::new(TAG(p)));
-            let pos: i32 = RObject::view(VECTOR_ELT(CAR(p), 0)).try_into()?;
-
-            map.insert(name, family.get_unchecked(pos as usize).clone());
-
-            p = CDR(p);
-        }
-
-        Ok(map)
+        Ok(SyntheticCall {
+            call,
+            _values: values,
+        })
     }
 }
 
-// Recursion for calls to library() or require()
-// similar to recurse_call_arguments_default() but special
-// care about the first argument: skip the diagnostic
-fn recurse_call_arguments_library(
+#[harp::register]
+pub unsafe extern "C" fn ps_diagnostics_treesitter_text(node_ptr: SEXP, context_ptr: SEXP) -> SEXP {
+    let node = get_external_ptr::<Node>(node_ptr);
+    let context = get_external_ptr::<DiagnosticContext>(context_ptr);
+
+    let text = node.utf8_text(context.source.as_bytes()).unwrap_or("");
+    *RObject::from(text)
+}
+
+#[harp::register]
+pub unsafe extern "C" fn ps_diagnostics_treesitter_kind(node_ptr: SEXP) -> SEXP {
+    let node = get_external_ptr::<Node>(node_ptr);
+
+    *RObject::from(node.kind())
+}
+
+fn recurse_call_arguments_custom(
     node: Node,
     context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
+    package: &str,
+    function: &str,
 ) -> Result<()> {
-    let map = match_node_call(node, context, "base", "library")?;
+    r_lock! {
+        let call = make_synthetic_call(node, function, context)?;
+        let ptr_context = make_external_ptr(context as &DiagnosticContext);
 
-    // skip the diagnostics for package and help, unless `character.only=` is not set to FALSE
-    //
-    // There could still be some theoretical cases where `character.only=` is set to something
-    // that would evaluate to FALSE, but it seems esoteric:
-    //
-    // library(foo, character.only = <some expression>)
-    //
-    // if the argument `character.only=` is used, chances are it is set to TRUE
-    let skip = match map.get("character.only") {
-        Some(&character_only) => {
-            let value = character_only.child_by_field_name("value").into_result()?;
-            let x = value.utf8_text(context.source.as_bytes())?;
-            matches!(x, "FALSE" | "F")
-        },
-        None => true,
-    };
+        let custom_diagnostics = RFunction::from(".ps.diagnostics.custom")
+            .add(package)
+            .add(function)
+            .add(call.call)
+            .add(ptr_context)
+            .call()?;
 
-    for (name, child) in map {
-        // Warn if the next sibling is neither a comma nor a closing delimiter.
-        check_call_next_sibling(child, context, diagnostics)?;
+        if !r_is_null(*custom_diagnostics) {
+            let n = XLENGTH(*custom_diagnostics);
+            for i in 0..n {
+                let diag = VECTOR_ELT(*custom_diagnostics, i);
 
-        if !skip || !matches!(name.as_str(), "package" | "help") {
-            if let Some(value) = child.child_by_field_name("value") {
-                recurse(value, context, diagnostics)?;
+                let kind: String = RObject::view(VECTOR_ELT(diag, 2)).try_into()?;
+
+                if kind == "skip" {
+                    // skip the diagnostic entirely, e.g.
+                    // library(foo)
+                    //         ^^^
+                    continue;
+                }
+
+                let ptr = VECTOR_ELT(diag, 1);
+                let value = *(R_ExternalPtrAddr(ptr) as *const c_void as *const Node);
+
+                if kind == "default" {
+                    // the R side gives up, so proceed as normal, e.g.
+                    // library(foo, pos = ...)
+                    //                    ^^^
+                    recurse(value, context, diagnostics)?;
+                } else if kind == "simple" {
+                    // Simple diagnostic from R, e.g.
+                    // library("ggplot3")
+                    //          ^^^^^^^   Package 'ggplot3' is not installed
+                    let message: String = RObject::view(VECTOR_ELT(diag, 3)).try_into()?;
+                    let range: Range = value.range().into();
+                    let diagnostic = Diagnostic::new_simple(range.into(), message.into());
+                    diagnostics.push(diagnostic);
+                }
             }
         }
-    }
 
-    ().ok()
+        ().ok()
+    }
 }
 
 fn recurse_call(
@@ -619,7 +654,8 @@ fn recurse_call(
     let fun = callee.utf8_text(context.source.as_bytes())?;
     match fun {
         // special case to deal with library() and require() nse
-        "library" | "require" => recurse_call_arguments_library(node, context, diagnostics)?,
+        "library" => recurse_call_arguments_custom(node, context, diagnostics, "base", "library")?,
+        "require" => recurse_call_arguments_custom(node, context, diagnostics, "base", "require")?,
 
         // default case: recurse into each argument
         _ => recurse_call_arguments_default(node, context, diagnostics)?,
