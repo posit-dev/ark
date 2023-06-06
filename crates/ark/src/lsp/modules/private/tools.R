@@ -20,3 +20,15 @@ ensure_directory <- function(path) {
 ensure_parent_directory <- function(path) {
     ensure_directory(dirname(path))
 }
+
+# Checks if a package is installed without loading it.
+# Could be slow on network drives.
+is_installed <- function(pkg, minimum_version = NULL) {
+    installed <- system.file(package = pkg) != ""
+
+    if (installed && !is.null(minimum_version)) {
+        installed <- packageVersion(pkg) >= minimum_version
+    }
+
+    installed
+}

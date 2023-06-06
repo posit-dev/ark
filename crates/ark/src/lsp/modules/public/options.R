@@ -29,11 +29,6 @@ options(browser = function(url) {
     .ps.Call("ps_browse_url", as.character(url))
 })
 
-# Set up error handlers
-options(error = function() {
-    .ps.Call("ps_error_handler")
-})
-
 # Set up graphics device
 options(device = function() {
     .ps.Call("ps_graphics_device")
