@@ -24,6 +24,12 @@ handle_error_base <- function(cnd) {
         traceback <- traceback[seq_len(n)]
     }
 
+    # TODO: This implementation prints the traceback in the same ordering
+    # as rlang, i.e. with call 1 on the stack being the first thing you
+    # see. `traceback()` prints in the reverse order, so users may want a
+    # way to reverse both our display ordering and rlang's (requiring a
+    # new `rlang::format()` argument).
+
     # Converts to a list of character vectors containing the deparsed calls.
     # Respects global options `"traceback.max.lines"` and `"deparse.max.lines"`!
     traceback <- .traceback(traceback)
