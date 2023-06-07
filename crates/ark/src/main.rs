@@ -258,6 +258,11 @@ fn main() {
     // Initialize the logger.
     logger::initialize(log_file.as_deref());
 
+    // Register segfault handler to get a backtrace. Should be after
+    // initialising `log!`.
+    #[cfg(not(target_os = "windows"))]
+    stdext::traps::register_trap_handlers();
+
     // Initialize harp.
     harp::initialize();
 
