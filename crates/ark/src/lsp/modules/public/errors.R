@@ -39,9 +39,7 @@
             # We have a non-rlang error, but the user requested we dont entrace it
             return(handle_error_base(cnd))
         }
-      
-        # TODO: Is `rlang::cnd_entrace()` an option?
-        # Lionel mentioned something against it.
+        
         cnd <- rlang::catch_cnd(rlang::entrace(cnd))
     }
     
