@@ -30,6 +30,12 @@ handle_error_base <- function(cnd) {
     # way to reverse both our display ordering and rlang's (requiring a
     # new `rlang::format()` argument).
 
+    # Collect source location, if there is any
+    srcrefs <- lapply(traceback, function(call) attr(call, "srcref"))
+    srcrefs <- vapply(srcrefs, src_loc, FUN.VALUE = character(1))
+    has_srcref <- nchar(srcrefs) != 0L
+    srcrefs[has_srcref] <- vec_paste0(" at ", srcrefs[has_srcref])
+
     # Converts to a list of character vectors containing the deparsed calls.
     # Respects global options `"traceback.max.lines"` and `"deparse.max.lines"`!
     traceback <- .traceback(traceback)
@@ -42,6 +48,7 @@ handle_error_base <- function(cnd) {
     traceback <- mapply(prepend_prefix, traceback, prefixes, SIMPLIFY = FALSE)
     traceback <- lapply(traceback, function(lines) paste0(lines, collapse = "\n"))
     traceback <- as.character(traceback)
+    traceback <- paste0(traceback, srcrefs)
     
     .ps.Call("ps_record_error", evalue, traceback)
 }
@@ -66,6 +73,48 @@ prepend_prefix <- function(lines, prefix) {
     lines <- c(line, lines)
 
     lines
+}
+
+src_loc <- function(srcref) {
+    # Adapted from `rlang:::src_loc()`
+    if (is.null(srcref)) {
+        return("")
+    }
+
+    srcfile <- attr(srcref, "srcfile")
+    if (is.null(srcfile)) {
+        return("")
+    }
+
+    # May be:
+    # - An actual file path
+    # - `""` for user defined functions in the console
+    # - `"<text>"` for `parse()`d functions
+    # We only try and display the source location for file paths
+    file <- srcfile$filename
+    if (identical(file, "") || identical(file, "<text>")) {
+        return("")
+    }
+
+    file_trimmed <- path_trim_prefix(file, 3L)
+
+    first_line <- srcref[[1L]]
+    first_column <- srcref[[5L]]
+
+    # TODO: We could generate file hyperlinks here like `rlang:::src_loc()`
+    paste0(file_trimmed, ":", first_line, ":", first_column)
+}
+
+path_trim_prefix <- function(path, n) {
+    # `rlang:::path_trim_prefix()`
+    split <- strsplit(path, "/")[[1]]
+    n_split <- length(split)
+
+    if (n_split <= n) {
+        path
+    } else {
+        paste(split[seq(n_split - n + 1, n_split)], collapse = "/")
+    }
 }
 
 handle_error_rlang <- function(cnd) {
