@@ -32,3 +32,17 @@ is_installed <- function(pkg, minimum_version = NULL) {
 
     installed
 }
+
+vec_paste0 <- function(..., collapse = NULL) {
+    # Like `paste0()`, but avoids `paste0("prefix:", character())`
+    # resulting in `"prefix:"` and instead recycles to size 0.
+    # Assumes that inputs with size >0 would validly recycle to size 0.
+    args <- list(...)
+
+    if (any(lengths(args) == 0L)) {
+        character()
+    } else {
+        args <- c(args, list(collapse = collapse))
+        do.call(paste0, args)
+    }
+}
