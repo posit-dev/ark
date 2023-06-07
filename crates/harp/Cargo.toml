@@ -13,8 +13,7 @@ ctor = "0.1.26"
 harp-macros = { path = "./harp-macros" }
 itertools = "0.10.5"
 lazy_static = "1.4.0"
-# TODO: make this 0.5.0 when available on crates.io
-libR-sys = { git = "https://github.com/extendr/libR-sys", branch = "master", features = ["use-bindgen"] }
+libR-sys = { version = "0.5.0", features = ["use-bindgen"] }
 libc = "0.2.140"
 log = "0.4.17"
 once_cell = "1.17.1"
@@ -23,6 +22,5 @@ regex = "1.7.3"
 stdext = { path = "../stdext" }
 
 [target.'cfg(all(target_os="linux", target_arch="aarch64"))'.dependencies]
-# TODO: make this 0.5.0 when available on crates.io
-libR-sys = { git = "https://github.com/extendr/libR-sys", branch = "master", features = ["use-bindgen"] }
+libR-sys = { git = "https://github.com/extendr/libR-sys", branch = "v0.5.0", features = ["use-bindgen"] }
 
