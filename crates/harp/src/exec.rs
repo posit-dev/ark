@@ -17,6 +17,7 @@ use crate::error::Error;
 use crate::error::Result;
 use crate::object::RObject;
 use crate::protect::RProtect;
+use crate::r_lang;
 use crate::r_string;
 use crate::r_symbol;
 use crate::utils::r_inherits;
@@ -188,6 +189,24 @@ pub fn geterrmessage() -> String {
     match cstr.to_str() {
         Ok(value) => return value.to_string(),
         Err(_) => return "".to_string(),
+    }
+}
+
+#[allow(dead_code)]
+fn r_get_function(package: &str, function: &str) -> Result<RObject> {
+    unsafe {
+        let fun_sym = r_symbol!(function);
+
+        let call = if package == "" {
+            r_lang!(fun_sym)
+        } else {
+            let pkg_sym = r_symbol!(package);
+            r_lang!(r_symbol!(":::"), pkg_sym, fun_sym)
+        };
+        let mut protect = RProtect::new();
+        let call = protect.add(call);
+
+        r_try_catch_error(|| Rf_eval(call, R_BaseEnv))
     }
 }
 

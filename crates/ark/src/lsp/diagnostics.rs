@@ -12,12 +12,10 @@ use std::sync::atomic::AtomicI32;
 use std::time::Duration;
 
 use anyhow::Result;
-use harp::exec::r_try_catch_error;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
 use harp::protect::RProtect;
-use harp::r_lang;
 use harp::r_lock;
 use harp::r_symbol;
 use harp::utils::r_is_null;
@@ -39,7 +37,7 @@ use crate::Range;
 static VERSION: AtomicI32 = AtomicI32::new(0);
 
 #[derive(Clone)]
-struct DiagnosticContext<'a> {
+pub struct DiagnosticContext<'a> {
     /// The contents of the source document.
     pub source: &'a str,
 
@@ -467,25 +465,7 @@ fn recurse_call_arguments_default(
     ().ok()
 }
 
-#[allow(dead_code)]
-fn get_function(package: &str, function: &str) -> Result<RObject, harp::error::Error> {
-    unsafe {
-        let fun_sym = r_symbol!(function);
-
-        let call = if package == "" {
-            r_lang!(fun_sym)
-        } else {
-            let pkg_sym = r_symbol!(package);
-            r_lang!(r_symbol!(":::"), pkg_sym, fun_sym)
-        };
-        let mut protect = RProtect::new();
-        let call = protect.add(call);
-
-        r_try_catch_error(|| Rf_eval(call, R_GlobalEnv))
-    }
-}
-
-fn make_external_ptr<T>(reference: &T) -> RObject {
+pub fn make_external_ptr<T>(reference: &T) -> RObject {
     unsafe {
         RObject::from(R_MakeExternalPtr(
             reference as *const T as *const c_void as *mut c_void,
@@ -495,7 +475,7 @@ fn make_external_ptr<T>(reference: &T) -> RObject {
     }
 }
 
-fn get_external_ptr<T>(ptr: SEXP) -> &'static T {
+pub fn get_external_ptr<T>(ptr: SEXP) -> &'static T {
     unsafe { &*(R_ExternalPtrAddr(ptr) as *const c_void as *const T) }
 }
 
@@ -561,22 +541,6 @@ fn make_synthetic_call<'a>(
             _values: values,
         })
     }
-}
-
-#[harp::register]
-pub unsafe extern "C" fn ps_diagnostics_treesitter_text(node_ptr: SEXP, context_ptr: SEXP) -> SEXP {
-    let node = get_external_ptr::<Node>(node_ptr);
-    let context = get_external_ptr::<DiagnosticContext>(context_ptr);
-
-    let text = node.utf8_text(context.source.as_bytes()).unwrap_or("");
-    *RObject::from(text)
-}
-
-#[harp::register]
-pub unsafe extern "C" fn ps_diagnostics_treesitter_kind(node_ptr: SEXP) -> SEXP {
-    let node = get_external_ptr::<Node>(node_ptr);
-
-    *RObject::from(node.kind())
 }
 
 fn recurse_call_arguments_custom(
