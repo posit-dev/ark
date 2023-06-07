@@ -5,6 +5,17 @@
  *
  */
 
+use std::str::FromStr;
+use std::sync::Arc;
+use std::sync::Mutex;
+
+use crossbeam::channel::Receiver;
+use crossbeam::channel::Sender;
+use futures::executor::block_on;
+use log::debug;
+use log::trace;
+use log::warn;
+
 use crate::comm::comm_channel::Comm;
 use crate::comm::comm_channel::CommChannelMsg;
 use crate::comm::event::CommChanged;
@@ -40,13 +51,6 @@ use crate::wire::kernel_info_request::KernelInfoRequest;
 use crate::wire::originator::Originator;
 use crate::wire::status::ExecutionState;
 use crate::wire::status::KernelStatus;
-use crossbeam::channel::Receiver;
-use crossbeam::channel::Sender;
-use futures::executor::block_on;
-use log::{debug, trace, warn};
-use std::str::FromStr;
-use std::sync::Arc;
-use std::sync::Mutex;
 
 /// Wrapper for the Shell socket; receives requests for execution, etc. from the
 /// front end and handles them or dispatches them to the execution thread.
@@ -284,19 +288,18 @@ impl Shell {
         for (comm_id, target_name) in &self.open_comms {
             // Only include comms that match the target name, if one was specified
             if req.content.target_name.is_empty() || &req.content.target_name == target_name {
-                let comm_info_target = CommInfoTargetName { target_name: target_name.clone() };
+                let comm_info_target = CommInfoTargetName {
+                    target_name: target_name.clone(),
+                };
                 let comm_info = serde_json::to_value(comm_info_target).unwrap();
-                info.insert(
-                    comm_id.clone(),
-                    comm_info
-                );
+                info.insert(comm_id.clone(), comm_info);
             }
         }
 
         // Form a reply and send it
         let reply = CommInfoReply {
             status: Status::Ok,
-            comms: info
+            comms: info,
         };
         req.send_reply(reply, &self.socket)
     }

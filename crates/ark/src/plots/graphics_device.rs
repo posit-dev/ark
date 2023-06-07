@@ -205,7 +205,7 @@ impl DeviceContext {
         let data = general_purpose::STANDARD_NO_PAD.encode(buffer);
 
         let response = PlotMessageOutput::Image(PlotMessageOutputImage {
-            data: data,
+            data,
             mime_type: "image/png".to_string(),
         });
 

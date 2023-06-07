@@ -5,29 +5,28 @@
 //
 //
 
-use c2rust_bitfields::BitfieldStruct;
-
 use std::ffi::CStr;
 use std::ffi::CString;
 use std::os::raw::c_void;
 
+use c2rust_bitfields::BitfieldStruct;
 use libR_sys::*;
 use once_cell::sync::Lazy;
 use regex::Regex;
 
 use crate::error::Error;
 use crate::error::Result;
+use crate::exec::geterrmessage;
 use crate::exec::RArgument;
 use crate::exec::RFunction;
 use crate::exec::RFunctionExt;
-use crate::exec::geterrmessage;
 use crate::object::RObject;
 use crate::protect::RProtect;
 use crate::r_symbol;
 use crate::symbol::RSymbol;
+use crate::vector::collapse;
 use crate::vector::CharacterVector;
 use crate::vector::Vector;
-use crate::vector::collapse;
 
 // NOTE: Regex::new() is quite slow to compile, so it's much better to keep
 // a single singleton pattern and use that repeatedly for matches.
@@ -35,10 +34,7 @@ static RE_SYNTACTIC_IDENTIFIER: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^[\p{L}\p{Nl}.][\p{L}\p{Nl}\p{Mn}\p{Mc}\p{Nd}\p{Pc}.]*$").unwrap());
 
 extern "C" {
-    fn R_removeVarFromFrame(
-        symbol: SEXP,
-        envir: SEXP,
-    ) -> c_void;
+    fn R_removeVarFromFrame(symbol: SEXP, envir: SEXP) -> c_void;
 }
 
 #[derive(Copy, Clone, BitfieldStruct)]
@@ -65,15 +61,12 @@ pub static mut S4_OBJECT_MASK: libc::c_uint = 1 << 4;
 pub static mut HASHASH_MASK: libc::c_uint = 1;
 
 impl Sxpinfo {
-
     pub fn interpret(x: &SEXP) -> &Self {
-        unsafe {
-            (*x as *mut Sxpinfo).as_ref().unwrap()
-        }
+        unsafe { (*x as *mut Sxpinfo).as_ref().unwrap() }
     }
 
     pub fn is_active(&self) -> bool {
-        self.gp() & unsafe {ACTIVE_BINDING_MASK} != 0
+        self.gp() & unsafe { ACTIVE_BINDING_MASK } != 0
     }
 
     pub fn is_immediate(&self) -> bool {
@@ -81,7 +74,7 @@ impl Sxpinfo {
     }
 
     pub fn is_s4(&self) -> bool {
-        self.gp() & unsafe {S4_OBJECT_MASK} != 0
+        self.gp() & unsafe { S4_OBJECT_MASK } != 0
     }
 
     pub fn is_altrep(&self) -> bool {
@@ -93,10 +86,7 @@ impl Sxpinfo {
     }
 }
 
-pub fn r_assert_type(
-    object: SEXP,
-    expected: &[u32],
-) -> Result<u32> {
+pub fn r_assert_type(object: SEXP, expected: &[u32]) -> Result<u32> {
     let actual = r_typeof(object);
 
     if !expected.contains(&actual) {
@@ -106,10 +96,7 @@ pub fn r_assert_type(
     Ok(actual)
 }
 
-pub unsafe fn r_assert_capacity(
-    object: SEXP,
-    required: usize,
-) -> Result<usize> {
+pub unsafe fn r_assert_capacity(object: SEXP, required: usize) -> Result<usize> {
     let actual = Rf_length(object) as usize;
     if actual < required {
         return Err(Error::UnexpectedLength(actual, required));
@@ -118,10 +105,7 @@ pub unsafe fn r_assert_capacity(
     Ok(actual)
 }
 
-pub fn r_assert_length(
-    object: SEXP,
-    expected: usize,
-) -> Result<usize> {
+pub fn r_assert_length(object: SEXP, expected: usize) -> Result<usize> {
     let actual = unsafe { Rf_xlength(object) as usize };
     if actual != expected {
         return Err(Error::UnexpectedLength(actual, expected));
@@ -160,17 +144,15 @@ pub fn r_is_simple_vector(value: SEXP) -> bool {
 
         match r_typeof(value) {
             LGLSXP | REALSXP | CPLXSXP | STRSXP | RAWSXP => r_is_null(class),
-            INTSXP  => r_is_null(class) || r_inherits(value, "factor"),
+            INTSXP => r_is_null(class) || r_inherits(value, "factor"),
 
-            _       => false
+            _ => false,
         }
     }
 }
 
 pub fn r_is_matrix(value: SEXP) -> bool {
-    unsafe {
-        Rf_isMatrix(value) == Rboolean_TRUE
-    }
+    unsafe { Rf_isMatrix(value) == Rboolean_TRUE }
 }
 
 pub fn r_classes(value: SEXP) -> Option<CharacterVector> {
@@ -200,7 +182,7 @@ pub fn pairlist_size(mut pairlist: SEXP) -> Result<isize> {
 
 pub fn r_vec_type(value: SEXP) -> String {
     match r_typeof(value) {
-        INTSXP  => unsafe {
+        INTSXP => unsafe {
             if r_inherits(value, "factor") {
                 let levels = Rf_getAttrib(value, R_LevelsSymbol);
                 format!("fct({})", XLENGTH(levels))
@@ -209,13 +191,13 @@ pub fn r_vec_type(value: SEXP) -> String {
             }
         },
         REALSXP => String::from("dbl"),
-        LGLSXP  => String::from("lgl"),
-        STRSXP  => String::from("str"),
-        RAWSXP  => String::from("raw"),
+        LGLSXP => String::from("lgl"),
+        STRSXP => String::from("str"),
+        RAWSXP => String::from("raw"),
         CPLXSXP => String::from("cplx"),
 
         // TODO: this should not happen
-        _       => String::from("???")
+        _ => String::from("???"),
     }
 }
 
@@ -236,12 +218,10 @@ pub fn r_vec_shape(value: SEXP) -> String {
 }
 
 pub fn r_altrep_class(object: SEXP) -> String {
-    let serialized_klass = unsafe{
-        ATTRIB(ALTREP_CLASS(object))
-    };
+    let serialized_klass = unsafe { ATTRIB(ALTREP_CLASS(object)) };
 
-    let klass = RSymbol::new(unsafe{CAR(serialized_klass)});
-    let pkg = RSymbol::new(unsafe{CADR(serialized_klass)});
+    let klass = RSymbol::new(unsafe { CAR(serialized_klass) });
+    let pkg = RSymbol::new(unsafe { CADR(serialized_klass) });
 
     format!("{}::{}", pkg, klass)
 }
@@ -266,9 +246,7 @@ pub unsafe fn r_get_option<T: TryFrom<RObject, Error = Error>>(name: &str) -> Re
 
 pub fn r_inherits(object: SEXP, class: &str) -> bool {
     let class = CString::new(class).unwrap();
-    unsafe {
-        Rf_inherits(object, class.as_ptr()) != 0
-    }
+    unsafe { Rf_inherits(object, class.as_ptr()) != 0 }
 }
 
 pub unsafe fn r_formals(object: SEXP) -> Result<Vec<RArgument>> {
@@ -329,10 +307,7 @@ pub unsafe fn r_envir_name(envir: SEXP) -> Result<String> {
     Ok(format!("{:p}", envir))
 }
 
-pub unsafe fn r_envir_get(
-    symbol: &str,
-    envir: SEXP,
-) -> Option<SEXP> {
+pub unsafe fn r_envir_get(symbol: &str, envir: SEXP) -> Option<SEXP> {
     let value = Rf_findVar(r_symbol!(symbol), envir);
     if value == R_UnboundValue {
         return None;
@@ -341,25 +316,15 @@ pub unsafe fn r_envir_get(
     Some(value)
 }
 
-pub unsafe fn r_envir_set(
-    symbol: &str,
-    value: SEXP,
-    envir: SEXP,
-) {
+pub unsafe fn r_envir_set(symbol: &str, value: SEXP, envir: SEXP) {
     Rf_defineVar(r_symbol!(symbol), value, envir);
 }
 
-pub unsafe fn r_envir_remove(
-    symbol: &str,
-    envir: SEXP,
-) {
+pub unsafe fn r_envir_remove(symbol: &str, envir: SEXP) {
     R_removeVarFromFrame(r_symbol!(symbol), envir);
 }
 
-pub unsafe fn r_stringify(
-    object: SEXP,
-    delimiter: &str,
-) -> Result<String> {
+pub unsafe fn r_stringify(object: SEXP, delimiter: &str) -> Result<String> {
     // handle SYMSXPs upfront
     if r_typeof(object) == SYMSXP {
         return RObject::view(object).to::<String>();
@@ -397,7 +362,7 @@ pub fn r_symbol_quote_invalid(name: &str) -> String {
     }
 }
 
-pub unsafe fn r_promise_is_forced(x: SEXP) -> bool  {
+pub unsafe fn r_promise_is_forced(x: SEXP) -> bool {
     PRVALUE(x) != R_UnboundValue
 }
 
@@ -415,18 +380,15 @@ pub unsafe fn r_promise_force_with_rollback(x: SEXP) -> Result<SEXP> {
     Ok(out)
 }
 
-pub unsafe fn r_try_eval_silent(
-    x: SEXP,
-    env: SEXP
-) -> Result<SEXP> {
+pub unsafe fn r_try_eval_silent(x: SEXP, env: SEXP) -> Result<SEXP> {
     let mut errc = 0;
 
     let x = R_tryEvalSilent(x, env, &mut errc);
 
     if errc != 0 {
-        return Err(Error::TryEvalError { 
-            message: geterrmessage()
-         })
+        return Err(Error::TryEvalError {
+            message: geterrmessage(),
+        });
     }
 
     Ok(x)

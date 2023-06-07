@@ -26,13 +26,11 @@ macro_rules! case {
 
 }
 
-
 #[cfg(test)]
 mod tests {
 
     #[test]
     fn test_case() {
-
         let x = 42;
         let result = case! {
             x < 42  => "apple",
@@ -42,9 +40,5 @@ mod tests {
         };
 
         assert!(result == "cherry");
-
     }
-
 }
-
-

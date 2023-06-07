@@ -5,8 +5,11 @@
  *
  */
 
+use log::debug;
+use log::trace;
+use log::warn;
+
 use crate::socket::socket::Socket;
-use log::{debug, trace, warn};
 
 /// Structure used for heartbeat messages
 pub struct Heartbeat {
@@ -16,7 +19,7 @@ pub struct Heartbeat {
 impl Heartbeat {
     /// Create a new heartbeat handler from the given heartbeat socket
     pub fn new(socket: Socket) -> Self {
-        Self { socket: socket }
+        Self { socket }
     }
 
     /// Listen for heartbeats; does not return

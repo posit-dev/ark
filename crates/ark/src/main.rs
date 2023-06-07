@@ -7,23 +7,24 @@
 
 #![allow(unused_unsafe)]
 
+use std::env;
+use std::sync::Arc;
+use std::sync::Mutex;
+
 use amalthea::connection_file::ConnectionFile;
 use amalthea::kernel::Kernel;
 use amalthea::kernel_spec::KernelSpec;
+use ark::control::Control;
 use ark::logger;
 use ark::lsp;
+use ark::request::Request;
+use ark::shell::Shell;
+use ark::version::detect_r;
 use bus::Bus;
 use crossbeam::channel::bounded;
 use log::*;
 use nix::sys::signal::*;
-use std::env;
-use std::sync::{Arc, Mutex};
 use stdext::unwrap;
-
-use ark::control::Control;
-use ark::request::Request;
-use ark::shell::Shell;
-use ark::version::detect_r;
 
 fn start_kernel(connection_file: ConnectionFile, capture_streams: bool) {
     // Create a new kernel from the connection file
@@ -117,7 +118,7 @@ fn install_kernel_spec() {
         ],
         language: String::from("R"),
         display_name: String::from("Amalthea R Kernel (ARK)"),
-        env: env,
+        env,
     };
 
     let dest = unwrap!(spec.install(String::from("ark")), Err(error) => {
@@ -179,7 +180,6 @@ Available options:
 }
 
 fn main() {
-
     #[cfg(target_os = "macos")]
     {
         // Unset DYLD_INSERT_LIBRARIES if it was passed down

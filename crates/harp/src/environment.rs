@@ -72,10 +72,7 @@ impl BindingReference {
 }
 
 impl PartialEq for BindingReference {
-    fn eq(
-        &self,
-        other: &Self,
-    ) -> bool {
+    fn eq(&self, other: &Self) -> bool {
         !(self.reference || other.reference)
     }
 }
@@ -107,10 +104,7 @@ pub struct Binding {
 }
 
 impl Binding {
-    pub fn new(
-        env: SEXP,
-        frame: SEXP,
-    ) -> Self {
+    pub fn new(env: SEXP, frame: SEXP) -> Self {
         unsafe {
             let name = RSymbol::new(TAG(frame));
 
@@ -130,11 +124,16 @@ impl Binding {
             if r_typeof(value) == PROMSXP {
                 let pr_value = PRVALUE(value);
                 if pr_value == R_UnboundValue {
-                    let value = BindingValue::Promise { promise: value };
-                    return Self { name, value };
+                    let code = PRCODE(value);
+                    if r_typeof(code) == LANGSXP {
+                        let value = BindingValue::Promise { promise: value };
+                        return Self { name, value };
+                    } else {
+                        value = code;
+                    }
+                } else {
+                    value = pr_value;
                 }
-
-                value = pr_value;
             }
 
             if r_is_altrep(value) {
@@ -346,16 +345,11 @@ impl Environment {
                 */
                 iter.find(|b| b.name == name).is_some()
             },
-            EnvironmentIter::NonHashed(mut iter) => {
-                iter.find(|b| b.name == name).is_some()
-            }
+            EnvironmentIter::NonHashed(mut iter) => iter.find(|b| b.name == name).is_some(),
         }
     }
 
-    pub fn find(
-        &self,
-        name: impl Into<RSymbol>,
-    ) -> SEXP {
+    pub fn find(&self, name: impl Into<RSymbol>) -> SEXP {
         let name = name.into();
         unsafe { Rf_findVarInFrame(self.env.sexp, *name) }
     }
@@ -369,12 +363,11 @@ impl Environment {
 mod tests {
     use libR_sys::*;
 
+    use super::*;
     use crate::exec::RFunction;
     use crate::exec::RFunctionExt;
     use crate::r_symbol;
     use crate::r_test;
-
-    use super::*;
 
     unsafe fn test_environment_iter_impl(hash: bool) {
         let test_env = RFunction::new("base", "new.env")

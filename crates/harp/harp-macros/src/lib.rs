@@ -9,8 +9,8 @@ use proc_macro::TokenStream;
 use quote::format_ident;
 use quote::quote;
 use quote::ToTokens;
-use syn::ItemStruct;
 use syn::parse_macro_input;
+use syn::ItemStruct;
 
 extern crate proc_macro;
 
@@ -37,7 +37,6 @@ fn invalid_extern(stream: impl ToTokens) -> ! {
 
 #[proc_macro_attribute]
 pub fn vector(_attr: TokenStream, item: TokenStream) -> TokenStream {
-
     // TODO: How do we parse an attribute?
 
     // Parse input as struct.
@@ -148,7 +147,6 @@ pub fn vector(_attr: TokenStream, item: TokenStream) -> TokenStream {
     };
 
     all.into()
-
 }
 
 #[proc_macro_attribute]

@@ -5,8 +5,10 @@
  *
  */
 
+use serde::Deserialize;
+use serde::Serialize;
+
 use crate::wire::jupyter_message::MessageType;
-use serde::{Deserialize, Serialize};
 
 /// Represents a request to close a Jupyter communication channel that was
 /// previously opened with a comm_open message.

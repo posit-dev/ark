@@ -26,8 +26,10 @@ pub struct GotoDefinitionContext<'a> {
     pub params: GotoDefinitionParams,
 }
 
-pub unsafe fn goto_definition<'a>(document: &'a Document, params: GotoDefinitionParams) -> Result<Option<GotoDefinitionResponse>> {
-
+pub unsafe fn goto_definition<'a>(
+    document: &'a Document,
+    params: GotoDefinitionParams,
+) -> Result<Option<GotoDefinitionResponse>> {
     // get reference to AST
     let ast = &document.ast;
 
@@ -40,7 +42,12 @@ pub unsafe fn goto_definition<'a>(document: &'a Document, params: GotoDefinition
     };
 
     // build completion context
-    let context = GotoDefinitionContext { document, node, range, params };
+    let context = GotoDefinitionContext {
+        document,
+        node,
+        range,
+        params,
+    };
 
     // search for a reference in the document index
     if matches!(context.node.kind(), "identifier") {
@@ -68,12 +75,15 @@ pub unsafe fn goto_definition<'a>(document: &'a Document, params: GotoDefinition
     // which will tell Positron to instead try to look for references for that symbol.
     let link = LocationLink {
         origin_selection_range: Some(context.range),
-        target_uri: context.params.text_document_position_params.text_document.uri,
+        target_uri: context
+            .params
+            .text_document_position_params
+            .text_document
+            .uri,
         target_range: context.range,
         target_selection_range: context.range,
     };
 
     let response = GotoDefinitionResponse::Link(vec![link]);
     Ok(Some(response))
-
 }

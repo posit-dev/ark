@@ -5,10 +5,10 @@
 //
 //
 
-use itertools::Itertools;
 use std::process::Command;
 
 use anyhow::Context;
+use itertools::Itertools;
 
 pub struct RVersion {
     // Major version of the R installation

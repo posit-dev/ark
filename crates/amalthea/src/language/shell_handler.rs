@@ -5,6 +5,9 @@
  *
  */
 
+use async_trait::async_trait;
+use crossbeam::channel::Sender;
+
 use crate::comm::comm_channel::Comm;
 use crate::socket::comm::CommSocket;
 use crate::wire::complete_reply::CompleteReply;
@@ -22,9 +25,6 @@ use crate::wire::is_complete_request::IsCompleteRequest;
 use crate::wire::kernel_info_reply::KernelInfoReply;
 use crate::wire::kernel_info_request::KernelInfoRequest;
 use crate::wire::originator::Originator;
-
-use async_trait::async_trait;
-use crossbeam::channel::Sender;
 
 #[async_trait]
 pub trait ShellHandler: Send {
@@ -84,7 +84,8 @@ pub trait ShellHandler: Send {
     /// Handles a reply to a request for input from the front end (from stdin socket)
     ///
     /// https://jupyter-client.readthedocs.io/en/stable/messaging.html#messages-on-the-stdin-router-dealer-channel
-    async fn handle_input_reply(&self, msg: &InputReply, orig: Originator) -> Result<(), Exception>;
+    async fn handle_input_reply(&self, msg: &InputReply, orig: Originator)
+        -> Result<(), Exception>;
 
     /// Establishes an input handler for the front end (from stdin socket); when
     /// input is needed, the language runtime can request it by sending an

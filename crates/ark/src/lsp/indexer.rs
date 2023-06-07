@@ -24,14 +24,20 @@ use tree_sitter::Node;
 use walkdir::DirEntry;
 use walkdir::WalkDir;
 
-use crate::lsp::documents::DOCUMENT_INDEX;
 use crate::lsp::documents::Document;
+use crate::lsp::documents::DOCUMENT_INDEX;
 use crate::lsp::traits::point::PointExt;
 
 #[derive(Clone, Debug)]
 pub enum IndexEntryData {
-    Function { name: String, arguments: Vec<String> },
-    Section { level: usize, title: String },
+    Function {
+        name: String,
+        arguments: Vec<String>,
+    },
+    Section {
+        level: usize,
+        title: String,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -47,20 +53,13 @@ type DocumentSymbolIndex = HashMap<DocumentSymbol, IndexEntry>;
 type WorkspaceIndex = Arc<Mutex<HashMap<DocumentPath, DocumentSymbolIndex>>>;
 
 lazy_static! {
-
-    static ref WORKSPACE_INDEX : WorkspaceIndex =
-        Default::default();
-
-    static ref RE_COMMENT_SECTION : Regex =
-        Regex::new(r"^\s*(#+)\s*(.*?)\s*[#=-]{4,}\s*$").unwrap();
-
+    static ref WORKSPACE_INDEX: WorkspaceIndex = Default::default();
+    static ref RE_COMMENT_SECTION: Regex = Regex::new(r"^\s*(#+)\s*(.*?)\s*[#=-]{4,}\s*$").unwrap();
 }
 
 pub fn start(folders: Vec<String>) {
-
     // create a task that indexes these folders
     let _handle = tokio::spawn(async move {
-
         let now = SystemTime::now();
         info!("Indexing started.");
 
@@ -81,11 +80,9 @@ pub fn start(folders: Vec<String>) {
             info!("Indexing finished after {:?}.", elapsed);
         }
     });
-
 }
 
 pub fn find(symbol: &str) -> Option<(String, IndexEntry)> {
-
     // get index lock
     let index = unwrap!(WORKSPACE_INDEX.lock(), Err(error) => {
         error!("{:?}", error);
@@ -100,11 +97,9 @@ pub fn find(symbol: &str) -> Option<(String, IndexEntry)> {
     }
 
     None
-
 }
 
 pub fn map(mut callback: impl FnMut(&Path, &String, &IndexEntry)) {
-
     let index = unwrap!(WORKSPACE_INDEX.lock(), Err(error) => {
         error!("{:?}", error);
         return;
@@ -116,7 +111,6 @@ pub fn map(mut callback: impl FnMut(&Path, &String, &IndexEntry)) {
             callback(path, symbol, entry);
         }
     }
-
 }
 
 pub fn update(document: &Document, path: &Path) -> Result<bool> {
@@ -124,7 +118,6 @@ pub fn update(document: &Document, path: &Path) -> Result<bool> {
 }
 
 fn insert(path: &Path, entry: IndexEntry) {
-
     let mut index = unwrap!(WORKSPACE_INDEX.lock(), Err(error) => {
         error!("{:?}", error);
         return;
@@ -137,14 +130,12 @@ fn insert(path: &Path, entry: IndexEntry) {
 
     let index = index.entry(path.to_string()).or_default();
     index.insert(entry.key.clone(), entry);
-
 }
 
 // TODO: Should we consult the project .gitignore for ignored files?
 // TODO: What about front-end ignores?
 // TODO: What about other kinds of ignores (e.g. revdepcheck)?
 pub fn filter_entry(entry: &DirEntry) -> bool {
-
     let name = entry.file_name();
 
     // skip common ignores
@@ -166,7 +157,6 @@ pub fn filter_entry(entry: &DirEntry) -> bool {
 }
 
 fn index_file(path: &Path) -> Result<bool> {
-
     // only index R files
     let ext = path.extension().unwrap_or_default();
     if ext != "r" && ext != "R" {
@@ -192,7 +182,6 @@ fn index_file(path: &Path) -> Result<bool> {
 }
 
 fn index_document(document: &Document, path: &Path) -> Result<bool> {
-
     let ast = &document.ast;
     let source = document.contents.to_string();
 
@@ -207,11 +196,9 @@ fn index_document(document: &Document, path: &Path) -> Result<bool> {
     }
 
     Ok(true)
-
 }
 
 fn index_node(path: &Path, source: &str, node: &Node) -> Result<Option<IndexEntry>> {
-
     if let Ok(Some(entry)) = index_function(path, source, node) {
         return Ok(Some(entry));
     }
@@ -221,11 +208,9 @@ fn index_node(path: &Path, source: &str, node: &Node) -> Result<Option<IndexEntr
     }
 
     Ok(None)
-
 }
 
 fn index_function(_path: &Path, source: &str, node: &Node) -> Result<Option<IndexEntry>> {
-
     // Check for assignment.
     matches!(node.kind(), "<-" | "=").into_result()?;
 
@@ -261,14 +246,12 @@ fn index_function(_path: &Path, source: &str, node: &Node) -> Result<Option<Inde
         },
         data: IndexEntryData::Function {
             name: name.to_string(),
-            arguments: arguments,
-        }
+            arguments,
+        },
     }))
-
 }
 
 fn index_comment(_path: &Path, source: &str, node: &Node) -> Result<Option<IndexEntry>> {
-
     // check for comment
     matches!(node.kind(), "comment").into_result()?;
 
@@ -293,7 +276,6 @@ fn index_comment(_path: &Path, source: &str, node: &Node) -> Result<Option<Index
             start: node.start_position().as_position(),
             end: node.end_position().as_position(),
         },
-        data: IndexEntryData::Section { level, title }
+        data: IndexEntryData::Section { level, title },
     }))
-
 }

@@ -79,14 +79,8 @@ extern "C" {
     // NOTE: Some of these routines don't really return (or use) void pointers,
     // but because we never introspect these values directly and they're always
     // passed around in R as pointers, it suffices to just use void pointers.
-    fn R_checkActivity(
-        usec: i32,
-        ignore_stdin: i32,
-    ) -> *const c_void;
-    fn R_runHandlers(
-        handlers: *const c_void,
-        fdset: *const c_void,
-    );
+    fn R_checkActivity(usec: i32, ignore_stdin: i32) -> *const c_void;
+    fn R_runHandlers(handlers: *const c_void, fdset: *const c_void);
     fn R_ProcessEvents();
     fn run_Rmainloop();
 
@@ -187,11 +181,7 @@ pub unsafe fn process_events() {
     graphics_device::on_process_events();
 }
 
-fn on_console_input(
-    buf: *mut c_uchar,
-    buflen: c_int,
-    mut input: String,
-) {
+fn on_console_input(buf: *mut c_uchar, buflen: c_int, mut input: String) {
     // TODO: What if the input is too large for the buffer?
     input.push_str("\n");
     if input.len() > buflen as usize {
@@ -299,11 +289,7 @@ pub extern "C" fn r_read_console(
  * Invoked by R to write output to the console.
  */
 #[no_mangle]
-pub extern "C" fn r_write_console(
-    buf: *const c_char,
-    _buflen: i32,
-    otype: i32,
-) {
+pub extern "C" fn r_write_console(buf: *const c_char, _buflen: i32, otype: i32) {
     let content = unsafe { CStr::from_ptr(buf) };
     let mutex = unsafe { KERNEL.as_ref().unwrap() };
     let stream = if otype == 0 {
@@ -469,10 +455,7 @@ pub fn start_r(
     }
 }
 
-fn handle_r_request(
-    req: &Request,
-    prompt_recv: &Receiver<String>,
-) {
+fn handle_r_request(req: &Request, prompt_recv: &Receiver<String>) {
     // Service the request.
     let mutex = unsafe { KERNEL.as_ref().unwrap() };
     {
@@ -487,10 +470,7 @@ fn handle_r_request(
     }
 }
 
-fn complete_execute_request(
-    req: &Request,
-    prompt_recv: &Receiver<String>,
-) {
+fn complete_execute_request(req: &Request, prompt_recv: &Receiver<String>) {
     let mutex = unsafe { KERNEL.as_ref().unwrap() };
 
     // Wait for R to prompt us again. This signals that the
@@ -541,10 +521,7 @@ fn complete_execute_request(
     return kernel.finish_request();
 }
 
-pub fn listen(
-    exec_recv: Receiver<Request>,
-    prompt_recv: Receiver<String>,
-) {
+pub fn listen(exec_recv: Receiver<Request>, prompt_recv: Receiver<String>) {
     // Before accepting execution requests from the front end, wait for R to
     // prompt us for input.
     trace!("Waiting for R's initial input prompt...");

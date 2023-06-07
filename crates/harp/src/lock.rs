@@ -24,25 +24,19 @@ extern "C" {
 }
 
 #[no_mangle]
-pub extern "C" fn r_polled_events_disabled() {
-
-}
+pub extern "C" fn r_polled_events_disabled() {}
 
 // The R runtime lock, used to synchronize access to R.
 pub static mut R_RUNTIME_LOCK: Mutex<()> = Mutex::new(());
 pub static R_RUNTIME_LOCK_COUNT: AtomicI32 = AtomicI32::new(0);
 
-pub fn initialize() {
-}
+pub fn initialize() {}
 
 pub fn with_r_lock<T, F: FnMut() -> T>(callback: F) -> T {
-    unsafe {
-        with_r_lock_impl(callback)
-    }
+    unsafe { with_r_lock_impl(callback) }
 }
 
-pub unsafe fn with_r_lock_impl<T, F: FnMut() ->T>(mut callback: F) -> T {
-
+pub unsafe fn with_r_lock_impl<T, F: FnMut() -> T>(mut callback: F) -> T {
     // Let the logger know we're taking the lock.
     let id = std::thread::current().id();
     info!("{:?} is requesting R runtime lock.", id);
@@ -62,7 +56,10 @@ pub unsafe fn with_r_lock_impl<T, F: FnMut() ->T>(mut callback: F) -> T {
 
     // Log how long we were stuck waiting.
     let elapsed = now.elapsed().unwrap().as_millis();
-    info!("{:?} obtained lock after waiting for {} milliseconds.", id, elapsed);
+    info!(
+        "{:?} obtained lock after waiting for {} milliseconds.",
+        id, elapsed
+    );
 
     // Disable polled events in this scope.
     let polled_events = unsafe { R_PolledEvents };
@@ -87,10 +84,11 @@ pub unsafe fn with_r_lock_impl<T, F: FnMut() ->T>(mut callback: F) -> T {
 
     // Let the logger know we've released the lock..
     let elapsed = now.elapsed().unwrap().as_millis();
-    info!("{:?} has released the R runtime lock after {} milliseconds.", id, elapsed);
+    info!(
+        "{:?} has released the R runtime lock after {} milliseconds.",
+        id, elapsed
+    );
 
     // Return the resulting expression.
     result
-
 }
-

@@ -19,10 +19,7 @@ use tokio::net::TcpStream;
 
 use crate::lsp::browser;
 
-async fn handle_request(
-    request: Request<Body>,
-    port: i32,
-) -> anyhow::Result<Response<Body>> {
+async fn handle_request(request: Request<Body>, port: i32) -> anyhow::Result<Response<Body>> {
     // connect to R help server
     let addr = format!("localhost:{}", port);
     let stream = TcpStream::connect(addr.as_str()).await?;

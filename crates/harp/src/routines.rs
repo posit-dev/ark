@@ -8,7 +8,7 @@
 use libR_sys::*;
 use log::error;
 
-static mut R_ROUTINES : Vec<R_CallMethodDef> = vec![];
+static mut R_ROUTINES: Vec<R_CallMethodDef> = vec![];
 
 // NOTE: This function is used via the #[harp::register] macro,
 // which ensures that routines are initialized and executed on
@@ -18,7 +18,6 @@ pub unsafe fn add(def: R_CallMethodDef) {
 }
 
 pub unsafe fn r_register_routines() {
-
     let info = R_getEmbeddingDllInfo();
     if info.is_null() {
         error!("internal error: no embedding DllInfo available");
@@ -30,10 +29,14 @@ pub unsafe fn r_register_routines() {
     routines.push(R_CallMethodDef {
         name: std::ptr::null(),
         fun: None,
-        numArgs: 0
+        numArgs: 0,
     });
 
-    R_registerRoutines(info, std::ptr::null(), routines.as_ptr(), std::ptr::null(), std::ptr::null());
-
+    R_registerRoutines(
+        info,
+        std::ptr::null(),
+        routines.as_ptr(),
+        std::ptr::null(),
+        std::ptr::null(),
+    );
 }
-

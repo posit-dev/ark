@@ -5,11 +5,13 @@
  *
  */
 
-use crate::wire::jupyter_message::MessageType;
-use crate::wire::jupyter_message::Status;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 use serde_json::Map;
 use serde_json::Value;
+
+use crate::wire::jupyter_message::MessageType;
+use crate::wire::jupyter_message::Status;
 
 /// Represents a reply from the kernel listing open comms
 #[derive(Debug, Serialize, Deserialize, Clone)]

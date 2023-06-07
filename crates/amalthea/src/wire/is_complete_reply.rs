@@ -5,8 +5,10 @@
  *
  */
 
+use serde::Deserialize;
+use serde::Serialize;
+
 use crate::wire::jupyter_message::MessageType;
-use serde::{Deserialize, Serialize};
 
 /// Represents a reply to an is_complete_request.
 #[derive(Debug, Serialize, Deserialize, Clone)]

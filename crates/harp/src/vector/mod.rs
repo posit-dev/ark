@@ -5,8 +5,9 @@
 //
 //
 
+use itertools::FoldWhile::Continue;
+use itertools::FoldWhile::Done;
 use itertools::Itertools;
-use itertools::FoldWhile::{Continue, Done};
 use libR_sys::*;
 
 use crate::error::Result;
@@ -52,7 +53,7 @@ pub trait Vector {
         let x = self.get_unchecked_elt(index);
         match Self::is_na(&x) {
             true => None,
-            false => Some(Self::convert_value(&x))
+            false => Some(Self::convert_value(&x)),
         }
     }
 
@@ -63,13 +64,19 @@ pub trait Vector {
         Ok(self.get_unchecked(index))
     }
 
-    unsafe fn new(object: impl Into<SEXP>) -> Result<Self> where Self: Sized {
+    unsafe fn new(object: impl Into<SEXP>) -> Result<Self>
+    where
+        Self: Sized,
+    {
         let object = object.into();
         r_assert_type(object, &[Self::SEXPTYPE])?;
         Ok(Self::new_unchecked(object))
     }
 
-    unsafe fn with_length(size: usize) -> Self where Self: Sized {
+    unsafe fn with_length(size: usize) -> Self
+    where
+        Self: Sized,
+    {
         let data = Rf_allocVector(Self::SEXPTYPE, size as isize);
         Self::new_unchecked(data)
     }
@@ -85,7 +92,6 @@ pub trait Vector {
     }
 
     fn format_one(&self, x: Self::Type) -> String;
-
 }
 
 pub struct Collapse {
@@ -97,7 +103,8 @@ pub fn collapse(vector: SEXP, sep: &str, max: usize, quote: &str) -> Result<Coll
     with_vector!(vector, |v| {
         let mut first = true;
         let formatted = v.iter().fold_while(String::from(""), |mut acc, x| {
-            let added = format!("{}{}{}{}",
+            let added = format!(
+                "{}{}{}{}",
                 if first {
                     first = false;
                     ""
@@ -107,7 +114,7 @@ pub fn collapse(vector: SEXP, sep: &str, max: usize, quote: &str) -> Result<Coll
                 quote,
                 match x {
                     Some(x) => v.format_one(x),
-                    None    => String::from("NA")
+                    None => String::from("NA"),
                 },
                 quote
             );
@@ -119,8 +126,14 @@ pub fn collapse(vector: SEXP, sep: &str, max: usize, quote: &str) -> Result<Coll
             }
         });
         match formatted {
-            Done(result) => Collapse{result, truncated: false},
-            Continue(result) => Collapse{result, truncated: true}
+            Done(result) => Collapse {
+                result,
+                truncated: false,
+            },
+            Continue(result) => Collapse {
+                result,
+                truncated: true,
+            },
         }
     })
 }
@@ -128,13 +141,11 @@ pub fn collapse(vector: SEXP, sep: &str, max: usize, quote: &str) -> Result<Coll
 pub fn format(vec: SEXP) -> Vec<String> {
     with_vector!(vec, |v| {
         let iter = v.iter();
-        iter.map(|value| {
-            match value {
-                Some(x) => v.format_one(x),
-                None    => String::from("NA")
-            }
+        iter.map(|value| match value {
+            Some(x) => v.format_one(x),
+            None => String::from("NA"),
         })
         .collect::<Vec<String>>()
-
-    }).unwrap()
+    })
+    .unwrap()
 }

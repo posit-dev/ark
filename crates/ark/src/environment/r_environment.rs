@@ -8,8 +8,8 @@ use amalthea::comm::comm_channel::CommChannelMsg;
 use amalthea::socket::comm::CommSocket;
 use crossbeam::channel::select;
 use crossbeam::channel::unbounded;
-use harp::environment::Environment;
 use harp::environment::Binding;
+use harp::environment::Environment;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
@@ -293,22 +293,22 @@ impl REnvironment {
         self.update(request_id);
     }
 
-    fn clipboard_format(&mut self, path: &Vec<String>, format: String, request_id: Option<String>){
+    fn clipboard_format(&mut self, path: &Vec<String>, format: String, request_id: Option<String>) {
         let clipped = r_lock! {
             EnvironmentVariable::clip(RObject::view(*self.env), &path, &format)
         };
 
         let msg = match clipped {
             Ok(content) => {
-                EnvironmentMessage::FormattedVariable(EnvironmentMessageFormattedVariable{
+                EnvironmentMessage::FormattedVariable(EnvironmentMessageFormattedVariable {
                     format,
-                    content
+                    content,
                 })
-            }
+            },
 
             Err(_) => EnvironmentMessage::Error(EnvironmentMessageError {
                 message: String::from("Clipboard Format error"),
-            })
+            }),
         };
         self.send_message(msg, request_id);
     }
@@ -346,11 +346,9 @@ impl REnvironment {
                 EnvironmentMessage::Success
             },
 
-            Err(_) => {
-                EnvironmentMessage::Error(EnvironmentMessageError {
-                    message: String::from("Inspection error"),
-                })
-            }
+            Err(_) => EnvironmentMessage::Error(EnvironmentMessageError {
+                message: String::from("Inspection error"),
+            }),
         };
 
         self.send_message(msg, request_id);
@@ -475,13 +473,10 @@ impl REnvironment {
 
     fn bindings(&self) -> Vec<Binding> {
         let env = Environment::new(self.env.clone());
-        let mut bindings: Vec<Binding> = env.iter().filter(|binding| {
-            !binding.is_hidden()
-        }).collect();
+        let mut bindings: Vec<Binding> =
+            env.iter().filter(|binding| !binding.is_hidden()).collect();
 
-        bindings.sort_by(|a, b| {
-            a.name.cmp(&b.name)
-        });
+        bindings.sort_by(|a, b| a.name.cmp(&b.name));
         bindings
     }
 }

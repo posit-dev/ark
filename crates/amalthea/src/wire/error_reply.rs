@@ -5,10 +5,12 @@
  *
  */
 
+use serde::Deserialize;
+use serde::Serialize;
+
 use crate::wire::exception::Exception;
 use crate::wire::jupyter_message::MessageType;
 use crate::wire::jupyter_message::Status;
-use serde::{Deserialize, Serialize};
 
 /// Represents an error that occurred after processing a request on a
 /// ROUTER/DEALER socket

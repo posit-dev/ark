@@ -24,6 +24,4 @@ mod tests {
         assert!(any!(true false) == true);
         assert!(any!(true true) == true);
     }
-
 }
-

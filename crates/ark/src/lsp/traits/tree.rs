@@ -16,15 +16,12 @@ pub trait TreeExt {
 }
 
 impl TreeExt for Tree {
-
     fn node_at_point(&self, point: Point) -> Node {
-
         let mut node = self.root_node();
 
         // First, recurse through children to find the smallest
         // node that contains the requested point.
         'outer: loop {
-
             let mut cursor = node.walk();
             let children = node.children(&mut cursor);
             for child in children {
@@ -35,7 +32,6 @@ impl TreeExt for Tree {
             }
 
             break;
-
         }
 
         // Next, iterate through the children of this node
@@ -50,6 +46,5 @@ impl TreeExt for Tree {
 
         // Return the discovered node.
         node
-
     }
 }

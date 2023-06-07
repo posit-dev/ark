@@ -5,7 +5,8 @@
  *
  */
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 
 /// Represents information about the langauge that the kernel implements
 #[derive(Debug, Serialize, Deserialize, Clone)]

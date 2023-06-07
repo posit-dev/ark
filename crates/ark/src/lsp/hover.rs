@@ -22,7 +22,6 @@ enum HoverContext {
 }
 
 fn hover_context(node: Node, context: &CompletionContext) -> Result<Option<HoverContext>> {
-
     // if the parent node is a namespace call, use that node instead
     // TODO: What if the user hovers the cursor over 'dplyr' in e.g. 'dplyr::mutate'?
     let mut node = node;
@@ -34,12 +33,10 @@ fn hover_context(node: Node, context: &CompletionContext) -> Result<Option<Hover
 
     // if we have a namespace call, use that to provide a qualified topic
     if matches!(node.kind(), "::" | ":::") {
-
         let lhs = node.child_by_field_name("lhs").into_result()?;
         let rhs = node.child_by_field_name("rhs").into_result()?;
 
-        let ok =
-            matches!(lhs.kind(), "identifier" | "string") &&
+        let ok = matches!(lhs.kind(), "identifier" | "string") &&
             matches!(rhs.kind(), "identifier" | "string");
 
         if !ok {
@@ -52,12 +49,10 @@ fn hover_context(node: Node, context: &CompletionContext) -> Result<Option<Hover
             package: package.to_string(),
             topic: topic.to_string(),
         }));
-
     }
 
     // otherwise, check for an identifier or a string
     if matches!(node.kind(), "identifier" | "string" | "keyword") {
-
         // only provide documentation for function calls for now,
         // since bare identifiers might not match the topic we expect
         if let Some(parent) = node.parent() {
@@ -68,17 +63,19 @@ fn hover_context(node: Node, context: &CompletionContext) -> Result<Option<Hover
 
         // otherwise, use it
         let topic = node.utf8_text(context.source.as_bytes())?;
-        return Ok(Some(HoverContext::Topic { topic: topic.to_string() }))
-
+        return Ok(Some(HoverContext::Topic {
+            topic: topic.to_string(),
+        }));
     }
 
     Ok(None)
-
 }
 
 /// SAFETY: Requires access to the R runtime.
-pub unsafe fn hover(_document: &Document, context: &CompletionContext) -> Result<Option<MarkupContent>> {
-
+pub unsafe fn hover(
+    _document: &Document,
+    context: &CompletionContext,
+) -> Result<Option<MarkupContent>> {
     // get the node
     let node = &context.node;
 
@@ -93,15 +90,11 @@ pub unsafe fn hover(_document: &Document, context: &CompletionContext) -> Result
     });
 
     let help = match ctx {
-
         HoverContext::QualifiedTopic { package, topic } => {
             RHtmlHelp::new(topic.as_str(), Some(package.as_str()))?
-        }
+        },
 
-        HoverContext::Topic { topic } => {
-            RHtmlHelp::new(topic.as_str(), None)?
-        }
-
+        HoverContext::Topic { topic } => RHtmlHelp::new(topic.as_str(), None)?,
     };
 
     let help = unwrap!(help, None => {
@@ -113,5 +106,4 @@ pub unsafe fn hover(_document: &Document, context: &CompletionContext) -> Result
         kind: MarkupKind::Markdown,
         value: markdown,
     }))
-
 }

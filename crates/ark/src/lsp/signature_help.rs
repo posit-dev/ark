@@ -6,8 +6,8 @@
 //
 
 use anyhow::Result;
-use harp::eval::RParseEvalOptions;
 use harp::eval::r_parse_eval;
+use harp::eval::RParseEvalOptions;
 use harp::utils::r_formals;
 use log::info;
 use stdext::unwrap;
@@ -26,8 +26,10 @@ use crate::lsp::traits::point::PointExt;
 use crate::lsp::traits::position::PositionExt;
 
 /// SAFETY: Requires access to the R runtime.
-pub unsafe fn signature_help(document: &Document, position: &Position) -> Result<Option<SignatureHelp>> {
-
+pub unsafe fn signature_help(
+    document: &Document,
+    position: &Position,
+) -> Result<Option<SignatureHelp>> {
     // Get document AST + completion position.
     let ast = &document.ast;
     let source = document.contents.to_string();
@@ -88,13 +90,11 @@ pub unsafe fn signature_help(document: &Document, position: &Position) -> Result
     let mut found_child = false;
 
     // The computed argument offset.
-    let mut offset : Option<u32> = None;
+    let mut offset: Option<u32> = None;
 
     let call = loop {
-
         // If we found an 'arguments' node, then use that to infer the current offset.
         if parent.kind() == "arguments" {
-
             // If the cursor lies upon a named argument, use that as an override.
             if let Some(name) = node.child_by_field_name("name") {
                 active_argument = Some(name.utf8_text(source.as_bytes())?);
@@ -103,9 +103,7 @@ pub unsafe fn signature_help(document: &Document, position: &Position) -> Result
             let mut cursor = parent.walk();
             let children = parent.children(&mut cursor);
             for child in children {
-
                 if let Some(name) = child.child_by_field_name("name") {
-
                     // If this is a named argument, add it to the list.
                     let name = name.utf8_text(source.as_bytes())?;
                     explicit_parameters.push(name);
@@ -114,7 +112,6 @@ pub unsafe fn signature_help(document: &Document, position: &Position) -> Result
                     // the next comma we see won't be associated with an
                     // unnamed argument.
                     num_unnamed_arguments -= 1;
-
                 }
 
                 // If we find a comma, add to the offset.
@@ -126,9 +123,7 @@ pub unsafe fn signature_help(document: &Document, position: &Position) -> Result
                 if child == node {
                     found_child = true;
                 }
-
             }
-
         }
 
         // If we find the 'call' node, we can quit.
@@ -142,7 +137,6 @@ pub unsafe fn signature_help(document: &Document, position: &Position) -> Result
             Some(parent) => parent,
             None => return Ok(None),
         };
-
     };
 
     // Get the left-hand side of the call.
@@ -164,7 +158,6 @@ pub unsafe fn signature_help(document: &Document, position: &Position) -> Result
 
     // Get the help documentation associated with this function.
     let help = if matches!(callee.kind(), "::" | ":::") {
-
         let lhs = callee.child_by_field_name("lhs").into_result()?;
         let package = lhs.utf8_text(source.as_bytes())?;
 
@@ -172,12 +165,9 @@ pub unsafe fn signature_help(document: &Document, position: &Position) -> Result
         let topic = rhs.utf8_text(source.as_bytes())?;
 
         RHtmlHelp::new(topic, Some(package))
-
     } else {
-
         let topic = callee.utf8_text(source.as_bytes())?;
         RHtmlHelp::new(topic, None)
-
     };
 
     // The signature label. We generate this as we walk through the
@@ -191,7 +181,6 @@ pub unsafe fn signature_help(document: &Document, position: &Position) -> Result
 
     // Iterate over the documentation for each parameter, and add the relevant information.
     for (index, argument) in formals.iter().enumerate() {
-
         // Compute signature offsets.
         let start = label.len() as u32;
         let end = start + argument.name.len() as u32;
@@ -218,9 +207,8 @@ pub unsafe fn signature_help(document: &Document, position: &Position) -> Result
         // Add the new parameter.
         parameters.push(ParameterInformation {
             label: ParameterLabel::LabelOffsets([start, end]),
-            documentation: documentation,
+            documentation,
         });
-
     }
 
     // Clean up the closing ', ', and add a closing parenthesis.
@@ -234,9 +222,7 @@ pub unsafe fn signature_help(document: &Document, position: &Position) -> Result
 
     // Finally, if we don't have an offset, figure it out now.
     if offset.is_none() {
-
         for (index, argument) in formals.iter().enumerate() {
-
             // Was this argument explicitly provided? If so, skip it.
             if explicit_parameters.contains(&argument.name.as_str()) {
                 continue;
@@ -251,9 +237,7 @@ pub unsafe fn signature_help(document: &Document, position: &Position) -> Result
             // This is the argument.
             offset = Some(index as u32);
             break;
-
         }
-
     }
 
     // NOTE: It seems like the front-end still tries to highlight the first
@@ -264,7 +248,7 @@ pub unsafe fn signature_help(document: &Document, position: &Position) -> Result
     }
 
     let signature = SignatureInformation {
-        label: label,
+        label,
         documentation: None,
         parameters: Some(parameters),
         active_parameter: offset,
@@ -278,5 +262,4 @@ pub unsafe fn signature_help(document: &Document, position: &Position) -> Result
 
     info!("{:?}", help);
     Ok(Some(help))
-
 }

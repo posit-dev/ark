@@ -16,7 +16,6 @@ pub struct RProtect {
 }
 
 impl RProtect {
-
     /// SAFETY: Assumes that the R lock is held.
     pub unsafe fn new() -> Self {
         Self { count: 0 }
@@ -27,11 +26,9 @@ impl RProtect {
         self.count += 1;
         return Rf_protect(object);
     }
-
 }
 
 impl Drop for RProtect {
-
     /// SAFETY: Assumes that the R lock is held.
     fn drop(&mut self) {
         unsafe { Rf_unprotect(self.count) }

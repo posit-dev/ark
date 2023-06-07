@@ -5,14 +5,18 @@
  *
  */
 
+use serde::Deserialize;
+use serde::Serialize;
+
+use super::client_event::ClientEvent;
 use crate::error::Error;
 use crate::session::Session;
 use crate::socket::socket::Socket;
+use crate::wire::comm_close::CommClose;
 use crate::wire::comm_info_reply::CommInfoReply;
 use crate::wire::comm_info_request::CommInfoRequest;
 use crate::wire::comm_msg::CommMsg;
 use crate::wire::comm_open::CommOpen;
-use crate::wire::comm_close::CommClose;
 use crate::wire::complete_reply::CompleteReply;
 use crate::wire::complete_request::CompleteRequest;
 use crate::wire::error_reply::ErrorReply;
@@ -38,9 +42,6 @@ use crate::wire::originator::Originator;
 use crate::wire::shutdown_request::ShutdownRequest;
 use crate::wire::status::KernelStatus;
 use crate::wire::wire_message::WireMessage;
-use serde::{Deserialize, Serialize};
-
-use super::client_event::ClientEvent;
 
 /// Represents a Jupyter message
 #[derive(Debug, Clone)]
@@ -246,7 +247,7 @@ where
                 session.username.clone(),
             ),
             parent_header: parent,
-            content: content,
+            content,
         }
     }
 
@@ -258,7 +259,7 @@ where
     ) -> JupyterMessage<T> {
         let (id, parent_header) = match orig {
             Some(orig) => (orig.zmq_id, Some(orig.header)),
-            None => (Vec::new(), None)
+            None => (Vec::new(), None),
         };
 
         JupyterMessage::<T> {
@@ -269,7 +270,7 @@ where
                 session.username.clone(),
             ),
             parent_header,
-            content: content,
+            content,
         }
     }
 
@@ -317,7 +318,7 @@ where
                 session.username.clone(),
             ),
             parent_header: Some(self.header.clone()),
-            content: content,
+            content,
         }
     }
 
@@ -341,7 +342,7 @@ where
             parent_header: Some(self.header.clone()),
             content: ErrorReply {
                 status: Status::Error,
-                exception: exception,
+                exception,
             },
         }
     }
