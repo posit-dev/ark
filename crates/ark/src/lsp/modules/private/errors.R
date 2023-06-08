@@ -119,15 +119,16 @@ path_trim_prefix <- function(path, n) {
 
 handle_error_rlang <- function(cnd) {
     evalue <- rlang::cnd_message(cnd, prefix = TRUE)
+    traceback <- cnd$trace
     
-    if (is.null(cnd$trace)) {
+    if (is.null(traceback)) {
         traceback <- character()
-    } else if (rlang::trace_length(cnd$trace) == 0L) {
+    } else if (rlang::trace_length(traceback) == 0L) {
         # Avoid showing traceback tree node when the trace is empty
         traceback <- character()
     } else {
         # Calls rlang specific `format()` method for the traceback
-        traceback <- format(cnd$trace)
+        traceback <- format(traceback)
     }
 
     .ps.Call("ps_record_error", evalue, traceback)
