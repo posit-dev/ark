@@ -28,3 +28,9 @@ impl<'a, T> ExternalPointer<'a, T> {
         unsafe { &*(R_ExternalPtrAddr(pointer) as *const c_void as *const T) }
     }
 }
+
+impl<'a, T> From<ExternalPointer<'a, T>> for RObject {
+    fn from(value: ExternalPointer<'a, T>) -> Self {
+        value.pointer
+    }
+}

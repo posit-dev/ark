@@ -11,14 +11,12 @@ use libR_sys::SEXP;
 use libR_sys::*;
 use tree_sitter::Node;
 
-use crate::lsp::diagnostics::DiagnosticContext;
-
 #[harp::register]
-pub unsafe extern "C" fn ps_treesitter_node_text(node_ptr: SEXP, context_ptr: SEXP) -> SEXP {
+pub unsafe extern "C" fn ps_treesitter_node_text(node_ptr: SEXP, source_ptr: SEXP) -> SEXP {
     let node = ExternalPointer::<Node>::reference(node_ptr);
-    let context = ExternalPointer::<DiagnosticContext>::reference(context_ptr);
+    let source = ExternalPointer::<&str>::reference(source_ptr);
 
-    let text = node.utf8_text(context.source.as_bytes()).unwrap_or("");
+    let text = node.utf8_text(source.as_bytes()).unwrap_or("");
     *RObject::from(text)
 }
 

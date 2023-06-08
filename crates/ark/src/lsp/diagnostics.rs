@@ -474,6 +474,12 @@ struct SyntheticCall<'a> {
     _value_nodes: Vec<Node<'a>>,
 }
 
+impl<'a> From<SyntheticCall<'a>> for RObject {
+    fn from(value: SyntheticCall<'a>) -> Self {
+        value.call
+    }
+}
+
 impl<'a> SyntheticCall<'a> {
     pub unsafe fn new(
         node: Node<'a>,
@@ -539,13 +545,13 @@ fn recurse_call_arguments_custom(
 ) -> Result<()> {
     r_lock! {
         let call = SyntheticCall::new(node, function, context)?;
-        let ptr_context = ExternalPointer::new(context as &DiagnosticContext);
+        let ptr_source = ExternalPointer::new(&context.source);
 
         let custom_diagnostics = RFunction::from(".ps.diagnostics.custom")
             .add(package)
             .add(function)
-            .add(call.call)
-            .add(ptr_context.pointer)
+            .add(call)
+            .add(ptr_source)
             .call()?;
 
         if !r_is_null(*custom_diagnostics) {
