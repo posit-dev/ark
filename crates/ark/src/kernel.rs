@@ -251,8 +251,10 @@ impl Kernel {
         // Send the reply to the front end
         if let Some(sender) = &self.execute_response_tx {
             if error_occurred {
-                // TODO: Should we fill out `ename` with something?
-                let ename = String::from("Error");
+                // We don't fill out `ename` with anything meaningful because typically
+                // R errors don't have names. We could consider using the condition class
+                // here, which r-lib/tidyverse packages have been using more heavily.
+                let ename = String::from("");
                 let evalue = R_ERROR_EVALUE.take();
                 let traceback = R_ERROR_TRACEBACK.take();
 
