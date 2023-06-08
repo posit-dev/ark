@@ -14,6 +14,7 @@ use std::time::Duration;
 use anyhow::Result;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
+use harp::external_ptr::ExternalPointer;
 use harp::object::RObject;
 use harp::protect::RProtect;
 use harp::r_lock;
@@ -465,31 +466,20 @@ fn recurse_call_arguments_default(
     ().ok()
 }
 
-pub fn make_external_ptr<T>(reference: &T) -> RObject {
-    unsafe {
-        RObject::from(R_MakeExternalPtr(
-            reference as *const T as *const c_void as *mut c_void,
-            R_NilValue,
-            R_NilValue,
-        ))
-    }
-}
-
-pub fn get_external_ptr<T>(ptr: SEXP) -> &'static T {
-    unsafe { &*(R_ExternalPtrAddr(ptr) as *const c_void as *const T) }
-}
-
 struct SyntheticCall<'a> {
+    // A call of the form <fun>(list(0L, <ptr>), foo = list(1L, <ptr>))
     call: RObject,
-    _values: Vec<Node<'a>>,
+
+    // holding on to each "value" Node for as long as call lives
+    _value_nodes: Vec<Node<'a>>,
 }
 
-fn make_synthetic_call<'a>(
-    node: Node<'a>,
-    function: &str,
-    context: &mut DiagnosticContext,
-) -> Result<SyntheticCall<'a>> {
-    unsafe {
+impl<'a> SyntheticCall<'a> {
+    pub unsafe fn new(
+        node: Node<'a>,
+        function: &str,
+        context: &mut DiagnosticContext,
+    ) -> Result<Self> {
         // start with a call to the function: <fun>()
         let sym = r_symbol!(function);
         let call = RObject::new(Rf_lang1(sym));
@@ -500,7 +490,7 @@ fn make_synthetic_call<'a>(
         // values are stored in the call as external pointers
         // to Node that are kept alive in this vector and
         // in SyntheticCall::_values
-        let mut values = vec![];
+        let mut _value_nodes = vec![];
 
         if let Some(arguments) = node.child_by_field_name("arguments") {
             let mut cursor = arguments.walk();
@@ -517,9 +507,9 @@ fn make_synthetic_call<'a>(
                 // Set the second element of the list to an external pointer
                 // to the child node.
                 if let Some(value) = child.child_by_field_name("value") {
-                    values.push(value);
-                    let ptr = make_external_ptr(values.get_unchecked(values.len() - 1));
-                    SET_VECTOR_ELT(*arg_list, 1, *ptr);
+                    _value_nodes.push(value);
+                    let value_node_ptr = ExternalPointer::new(_value_nodes.last().unwrap());
+                    SET_VECTOR_ELT(*arg_list, 1, *value_node_ptr.pointer);
                 }
 
                 SETCDR(tail, Rf_cons(*arg_list, R_NilValue));
@@ -536,10 +526,7 @@ fn make_synthetic_call<'a>(
             }
         }
 
-        Ok(SyntheticCall {
-            call,
-            _values: values,
-        })
+        Ok(Self { call, _value_nodes })
     }
 }
 
@@ -551,14 +538,14 @@ fn recurse_call_arguments_custom(
     function: &str,
 ) -> Result<()> {
     r_lock! {
-        let call = make_synthetic_call(node, function, context)?;
-        let ptr_context = make_external_ptr(context as &DiagnosticContext);
+        let call = SyntheticCall::new(node, function, context)?;
+        let ptr_context = ExternalPointer::new(context as &DiagnosticContext);
 
         let custom_diagnostics = RFunction::from(".ps.diagnostics.custom")
             .add(package)
             .add(function)
             .add(call.call)
-            .add(ptr_context)
+            .add(ptr_context.pointer)
             .call()?;
 
         if !r_is_null(*custom_diagnostics) {

@@ -9,6 +9,7 @@ pub mod environment;
 pub mod error;
 pub mod eval;
 pub mod exec;
+pub mod external_ptr;
 pub mod interrupts;
 pub mod lock;
 pub mod object;
