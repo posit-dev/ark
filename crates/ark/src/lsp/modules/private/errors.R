@@ -131,6 +131,19 @@ handle_error_rlang <- function(cnd) {
     }
 
     .ps.Call("ps_record_error", evalue, traceback)
+
+    if (!is_installed("rlang", "1.1.1.9000")) {
+        # In older versions of rlang, rlang did not respect `show.error.messages`
+        # and there was no way to keep it from printing to the console. To work
+        # around this, we throw a dummy base error after recording the rlang information.
+        # Nicely, this:
+        # - Won't print due to `show.error.messages = FALSE`
+        # - Prevents rlang from printing its own error
+        # However, this:
+        # - Causes `traceback()` to show the global calling handler frames
+        # - Causes `options(error = recover)` to show the global calling handler frames
+        stop("dummy")
+    }
 }
 
 positron_option_error_entrace <- function() {

@@ -28,9 +28,8 @@
 }
 
 .ps.errors.globalErrorHandler <- function(cnd) {    
-    if (!is_installed("rlang", "1.1.1.9000")) {
-        # rlang is not installed or is not new enough,
-        # no option except to use the base handler
+    if (!is_installed("rlang")) {
+        # rlang is not installed, no option except to use the base handler
         return(handle_error_base(cnd))
     }
     
