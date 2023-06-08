@@ -9,40 +9,20 @@
 // SIGSEGV to generate a backtrace with `info` verbosity (lowest level so
 // it's always reported).
 //
-// This could be supported on windows too (SIGSEGV is one of the rare
-// supported signals) but with `libc::signal()` instead of
-// `libc::sigaction()`
-#[cfg(not(target_os = "windows"))]
+// This uses `signal()` instead of `sigaction()` for Windows support
+// (SIGSEGV is one of the rare supported signals)
 pub fn register_trap_handlers() {
     unsafe {
-        let mut action: libc::sigaction = std::mem::zeroed();
-        action.sa_flags = libc::SA_SIGINFO | libc::SA_ONSTACK;
-        action.sa_sigaction = backtrace_handler as libc::sighandler_t;
-
-        libc::sigaction(libc::SIGBUS, &action, std::ptr::null_mut());
-        libc::sigaction(libc::SIGSEGV, &action, std::ptr::null_mut());
+        libc::signal(libc::SIGBUS, backtrace_handler as libc::sighandler_t);
+        libc::signal(libc::SIGSEGV, backtrace_handler as libc::sighandler_t);
     }
 }
 
-#[cfg(not(target_os = "windows"))]
-pub fn reset_traps_handler() {
-    unsafe {
-        let mut action: libc::sigaction = std::mem::zeroed();
-        action.sa_sigaction = libc::SIG_DFL;
-
-        libc::sigaction(libc::SIGBUS, &action, std::ptr::null_mut());
-        libc::sigaction(libc::SIGSEGV, &action, std::ptr::null_mut());
-    }
-}
-
-#[cfg(not(target_os = "windows"))]
-extern "C" fn backtrace_handler(
-    signum: libc::c_int,
-    _info: *mut libc::siginfo_t,
-    _data: *mut libc::c_void,
-) {
+extern "C" fn backtrace_handler(signum: libc::c_int) {
     // Prevent infloop into the handler
-    reset_traps_handler();
+    unsafe {
+        libc::signal(signum, libc::SIG_DFL);
+    }
 
     let mut header = format!("\n>>> Backtrace for signal {}", signum);
 
