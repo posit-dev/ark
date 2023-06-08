@@ -2,7 +2,7 @@
 
 set -eu
 
-if [ `uname` != "Darwin" ]; then
+if [ "$(uname)" != "Darwin" ]; then
     exit 0
 fi
 
@@ -16,13 +16,13 @@ fi
 # However, because using libR-sys still implies that the path to the R library
 # ends up in the library load list, we have to modify that after the fact anyhow.
 
-AMALTHEA_BUILD_TYPE="${AMALTHEA_BUILD_TYPE:-debug}"
+: ${AMALTHEA_BUILD_TYPE="debug"}
 
 # Should be called from Amalthea root by default so that we can find the Ark executable
 AMALTHEA_ROOT="${AMALTHEA_PATH:-.}"
 
 # Normalize
-AMALTHEA_ROOT=`(cd "$AMALTHEA_ROOT" && pwd)`
+AMALTHEA_ROOT=$(cd "$AMALTHEA_ROOT" && pwd)
 
 # Get the path to the Ark executable
 ARK_PATH="${AMALTHEA_ROOT}/target/${AMALTHEA_BUILD_TYPE}/ark"
