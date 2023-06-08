@@ -14,7 +14,7 @@ use tree_sitter::Node;
 use crate::lsp::diagnostics::DiagnosticContext;
 
 #[harp::register]
-pub unsafe extern "C" fn ps_diagnostics_treesitter_text(node_ptr: SEXP, context_ptr: SEXP) -> SEXP {
+pub unsafe extern "C" fn ps_treesitter_node_text(node_ptr: SEXP, context_ptr: SEXP) -> SEXP {
     let node = ExternalPointer::<Node>::reference(node_ptr);
     let context = ExternalPointer::<DiagnosticContext>::reference(context_ptr);
 
@@ -23,7 +23,7 @@ pub unsafe extern "C" fn ps_diagnostics_treesitter_text(node_ptr: SEXP, context_
 }
 
 #[harp::register]
-pub unsafe extern "C" fn ps_diagnostics_treesitter_kind(node_ptr: SEXP) -> SEXP {
+pub unsafe extern "C" fn ps_treesitter_node_kind(node_ptr: SEXP) -> SEXP {
     let node = ExternalPointer::<Node>::reference(node_ptr);
 
     *RObject::from(node.kind())

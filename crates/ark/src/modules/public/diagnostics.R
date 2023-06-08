@@ -15,7 +15,7 @@
             FALSE
         } else {
             ptr <- character_only[[2L]]
-            text <- .ps.diagnostics.treesitter.text(ptr, context)
+            text <- .ps.treesitter.node.kind(ptr, context)
             !(text %in% c("FALSE", "F"))
         }
 
@@ -29,9 +29,9 @@
 
             if (name %in% c("package", "help")) {
                 node <- arg[[2]]
-                kind <- .ps.diagnostics.treesitter.kind(node)
+                kind <- .ps.treesitter.node.kind(node)
 
-                text <- .ps.diagnostics.treesitter.text(node, context)
+                text <- .ps.treesitter.node.text(node, context)
 
                 if (kind == "string") {
                     pkg <- gsub("^(['\"])(.*)\\1$", "\\2", text)
@@ -66,12 +66,4 @@
 
         out
     }
-}
-
-.ps.diagnostics.treesitter.text <- function(node, context) {
-    .ps.Call("ps_diagnostics_treesitter_text", node, context)
-}
-
-.ps.diagnostics.treesitter.kind <- function(node) {
-    .ps.Call("ps_diagnostics_treesitter_kind", node)
 }
