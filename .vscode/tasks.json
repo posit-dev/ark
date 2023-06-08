@@ -2,8 +2,8 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "type": "cargo",
-            "command": "build",
+            "type": "shell",
+            "command": "cargo build && scripts/post-install.sh",
             "problemMatcher": [
                 "$rustc"
             ],
@@ -28,4 +28,3 @@
         }
     ]
 }
-
