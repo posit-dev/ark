@@ -474,9 +474,9 @@ struct SyntheticCall<'a> {
     _value_nodes: Vec<Node<'a>>,
 }
 
-impl<'a> From<SyntheticCall<'a>> for RObject {
-    fn from(value: SyntheticCall<'a>) -> Self {
-        value.call
+impl<'a> From<&SyntheticCall<'a>> for RObject {
+    fn from(value: &SyntheticCall<'a>) -> Self {
+        value.call.clone()
     }
 }
 
@@ -540,26 +540,27 @@ fn recurse_call_arguments_custom(
     node: Node,
     context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
-    package: &str,
     function: &str,
+    diagnostic_function: &str,
 ) -> Result<()> {
     r_lock! {
         let call = SyntheticCall::new(node, function, context)?;
-        let ptr_source = ExternalPointer::new(&context.source);
 
-        let custom_diagnostics = RFunction::from(".ps.diagnostics.custom")
-            .add(package)
-            .add(function)
-            .add(call)
-            .add(ptr_source)
+        let custom_diagnostics = RFunction::from(diagnostic_function)
+            .add(&call)
+            .add(ExternalPointer::new(&context.source))
             .call()?;
 
         if !r_is_null(*custom_diagnostics) {
             let n = XLENGTH(*custom_diagnostics);
             for i in 0..n {
+                // diag is a list with:
+                //   - The kind of diagnostic: skip, default, simple
+                //   - The node external pointer, i.e. the ones made in SyntheticCall::new
+                //   - The message, when kind is "simple"
                 let diag = VECTOR_ELT(*custom_diagnostics, i);
 
-                let kind: String = RObject::view(VECTOR_ELT(diag, 2)).try_into()?;
+                let kind: String = RObject::view(VECTOR_ELT(diag, 0)).try_into()?;
 
                 if kind == "skip" {
                     // skip the diagnostic entirely, e.g.
@@ -580,7 +581,7 @@ fn recurse_call_arguments_custom(
                     // Simple diagnostic from R, e.g.
                     // library("ggplot3")
                     //          ^^^^^^^   Package 'ggplot3' is not installed
-                    let message: String = RObject::view(VECTOR_ELT(diag, 3)).try_into()?;
+                    let message: String = RObject::view(VECTOR_ELT(diag, 2)).try_into()?;
                     let range: Range = value.range().into();
                     let diagnostic = Diagnostic::new_simple(range.into(), message.into());
                     diagnostics.push(diagnostic);
@@ -611,8 +612,20 @@ fn recurse_call(
     let fun = callee.utf8_text(context.source.as_bytes())?;
     match fun {
         // special case to deal with library() and require() nse
-        "library" => recurse_call_arguments_custom(node, context, diagnostics, "base", "library")?,
-        "require" => recurse_call_arguments_custom(node, context, diagnostics, "base", "require")?,
+        "library" => recurse_call_arguments_custom(
+            node,
+            context,
+            diagnostics,
+            "library",
+            ".ps.diagnostics.custom.library",
+        )?,
+        "require" => recurse_call_arguments_custom(
+            node,
+            context,
+            diagnostics,
+            "require",
+            ".ps.diagnostics.custom.require",
+        )?,
 
         // default case: recurse into each argument
         _ => recurse_call_arguments_default(node, context, diagnostics)?,
