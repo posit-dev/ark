@@ -18,7 +18,6 @@ use crate::kernel::R_ERROR_TRACEBACK;
 
 #[harp::register]
 unsafe extern "C" fn ps_record_error(evalue: SEXP, traceback: SEXP) -> SEXP {
-    // TODO: Add `try_from()` methods for `SEXP`?
     // Convert to `RObject` for access to `try_from()` methods.
     let evalue = RObject::new(evalue);
     let traceback = RObject::new(traceback);
