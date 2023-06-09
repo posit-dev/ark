@@ -23,6 +23,9 @@ pub enum Comm {
     /// A data viewer.
     DataViewer,
 
+    /// The Positron front end.
+    FrontEnd,
+
     /// Some other comm with a custom name.
     Other(String),
 }

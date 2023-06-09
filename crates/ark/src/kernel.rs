@@ -52,6 +52,7 @@ pub struct Kernel {
     kernel_init_tx: Bus<KernelInfo>,
     execute_response_tx: Option<Sender<ExecuteResponse>>,
     input_request_tx: Option<Sender<ShellInputRequest>>,
+    event_tx: Option<Sender<PositronEvent>>,
     banner: String,
     stdout: String,
     stderr: String,
@@ -79,6 +80,7 @@ impl Kernel {
             kernel_init_tx,
             execute_response_tx: None,
             input_request_tx: None,
+            event_tx: None,
             banner: String::new(),
             stdout: String::new(),
             stderr: String::new(),
@@ -120,6 +122,7 @@ impl Kernel {
                 }
             },
             Request::EstablishInputChannel(sender) => self.establish_input_handler(sender.clone()),
+            Request::EstablishEventChannel(sender) => self.establish_event_handler(sender.clone()),
             Request::DeliverEvent(event) => self.handle_event(event),
         }
     }
@@ -326,11 +329,24 @@ impl Kernel {
         self.input_request_tx = Some(input_request_tx);
     }
 
+    /// Establishes the event handler for the kernel to send events to the Positron
+    /// front end
+    pub fn establish_event_handler(&mut self, event_tx: Sender<PositronEvent>) {
+        self.event_tx = Some(event_tx);
+    }
+
     /// Sends an event to the front end (Positron-specific)
     pub fn send_event(&self, event: PositronEvent) {
         info!("Sending Positron event: {:?}", event);
-        if let Err(err) = self.iopub_tx.send(IOPubMessage::Event(event)) {
-            warn!("Could not publish event on iopub: {}", err);
+        if let Some(event_tx) = &self.event_tx {
+            if let Err(err) = event_tx.send(event) {
+                warn!("Error sending event to front end: {}", err);
+            }
+        } else {
+            warn!(
+                "Discarding event {:?}; no Positron front end connected",
+                event
+            );
         }
     }
 }
