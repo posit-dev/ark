@@ -31,6 +31,7 @@ use crossbeam::channel::Sender;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
+use harp::r_lock;
 use harp::r_symbol;
 use harp::utils::r_is_data_frame;
 use libR_sys::*;
@@ -87,9 +88,9 @@ impl Kernel {
     }
 
     /// Completes the kernel's initialization
-    pub fn complete_intialization(&mut self) {
+    pub fn complete_initialization(&mut self) {
         if self.initializing {
-            let version = unsafe {
+            let version = r_lock! {
                 let version = Rf_findVarInFrame(R_BaseNamespace, r_symbol!("R.version.string"));
                 RObject::new(version).to::<String>().unwrap()
             };
