@@ -247,7 +247,9 @@ impl RDataViewer {
 
         let comm_manager_tx = comm_manager_tx();
         let event = CommEvent::Opened(self.comm.clone(), json);
-        comm_manager_tx.send(event).unwrap();
+        if let Err(error) = comm_manager_tx.send(event) {
+            log::error!("Error while viewing object '{}': {}", self.title, error);
+        }
     }
 }
 
