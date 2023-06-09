@@ -35,7 +35,6 @@ use libR_sys::VECTOR_ELT;
 use libR_sys::XLENGTH;
 use serde::Deserialize;
 use serde::Serialize;
-use stdext::local;
 use stdext::spawn;
 use stdext::Ok;
 use uuid::Uuid;
