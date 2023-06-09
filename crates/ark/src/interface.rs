@@ -26,6 +26,7 @@ use crossbeam::channel::Sender;
 use harp::interrupts::RInterruptsSuspendedScope;
 use harp::lock::R_RUNTIME_LOCK;
 use harp::lock::R_RUNTIME_LOCK_COUNT;
+use harp::r_lock;
 use harp::routines::r_register_routines;
 use harp::utils::r_get_option;
 use libR_sys::*;
@@ -135,7 +136,7 @@ extern "C" fn handle_interrupt(_signal: libc::c_int) {
 /// The global R kernel state.
 pub static mut KERNEL: Option<Arc<Mutex<Kernel>>> = None;
 
-/// A lock guard, used to manage access to the R runtime.  The main thread holds
+/// A lock guard, used to manage access to the R runtime. The main thread holds
 /// the lock by default, but releases it at opportune times to allow the LSP to
 /// access the R runtime where appropriate.
 pub static mut R_RUNTIME_LOCK_GUARD: Option<MutexGuard<()>> = None;
@@ -264,6 +265,7 @@ pub extern "C" fn r_read_console(
             },
 
             Err(error) => {
+                // Take back the lock after we've timed out.
                 unsafe { R_RUNTIME_LOCK_GUARD = Some(R_RUNTIME_LOCK.lock()) };
 
                 use RecvTimeoutError::*;
@@ -482,8 +484,11 @@ fn complete_execute_request(req: &Request, prompt_recv: &Receiver<String>) {
     // Signal prompt
     EVENTS.console_prompt.emit(());
 
+    // Get necessary prompts
+    let (continue_prompt, default_prompt) =
+        r_lock! { (r_get_option::<String>("continue"), r_get_option::<String>("prompt")) };
+
     // The request is incomplete if we see the continue prompt
-    let continue_prompt = unsafe { r_get_option::<String>("continue") };
     let continue_prompt = unwrap!(continue_prompt, Err(error) => {
         warn!("Failed to read R continue prompt: {}", error);
         return kernel.finish_request();
@@ -495,7 +500,6 @@ fn complete_execute_request(req: &Request, prompt_recv: &Receiver<String>) {
     }
 
     // Figure out what the default prompt looks like.
-    let default_prompt = unsafe { r_get_option::<String>("prompt") };
     let default_prompt = unwrap!(default_prompt, Err(error) => {
         warn!("Failed to read R prompt: {}", error);
         return kernel.finish_request();

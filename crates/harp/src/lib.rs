@@ -13,6 +13,7 @@ pub mod interrupts;
 pub mod lock;
 pub mod object;
 pub mod protect;
+pub mod r_api;
 pub mod routines;
 pub mod string;
 pub mod symbol;

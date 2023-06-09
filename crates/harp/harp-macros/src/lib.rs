@@ -150,6 +150,36 @@ pub fn vector(_attr: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 #[proc_macro_attribute]
+pub fn lock(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    // Get the pieces of the function being wrapped
+    let syn::ItemFn {
+        attrs,
+        vis,
+        sig,
+        block,
+    } = syn::parse(item).unwrap();
+
+    let stmts = &block.stmts;
+
+    // Generate error message
+    let message = format!("Can't use `{}()` without holding the R lock.", sig.ident);
+
+    let out = quote! {
+        #(#attrs)* #vis #sig {
+
+            #[cfg(debug_assertions)]
+            unsafe {
+                std::assert!(crate::lock::R_RUNTIME_LOCK.is_locked(), #message);
+            }
+
+            #(#stmts)*
+        }
+    };
+
+    out.into()
+}
+
+#[proc_macro_attribute]
 pub fn register(_attr: TokenStream, item: TokenStream) -> TokenStream {
     // Get metadata about the function being registered.
     let function: syn::ItemFn = syn::parse(item).unwrap();

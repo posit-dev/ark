@@ -229,17 +229,19 @@ impl Kernel {
         let mut data = serde_json::Map::new();
         data.insert("text/plain".to_string(), json!(""));
 
-        // Include HTML representation of data.frame
-        // TODO: Do we need to hold the R lock here?
-        let value = unsafe { Rf_findVarInFrame(R_GlobalEnv, r_symbol!(".Last.value")) };
-        if r_is_data_frame(value) {
-            match Kernel::to_html(value) {
-                Ok(html) => data.insert("text/html".to_string(), json!(html)),
-                Err(error) => {
-                    error!("{:?}", error);
-                    None
-                },
-            };
+        r_lock! {
+            let value = Rf_findVarInFrame(R_GlobalEnv, r_symbol!(".Last.value"));
+
+            // Include HTML representation of data.frame
+            if r_is_data_frame(value) {
+                match Kernel::to_html(value) {
+                    Ok(html) => data.insert("text/html".to_string(), json!(html)),
+                    Err(error) => {
+                        error!("{:?}", error);
+                        None
+                    },
+                };
+            }
         }
 
         if let Err(err) = self

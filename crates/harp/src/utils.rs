@@ -23,6 +23,9 @@ use crate::exec::RFunction;
 use crate::exec::RFunctionExt;
 use crate::object::RObject;
 use crate::protect::RProtect;
+use crate::r_api::Rf_xlength;
+use crate::r_api::SEXP;
+use crate::r_api::TYPEOF;
 use crate::r_symbol;
 use crate::symbol::RSymbol;
 use crate::vector::CharacterVector;
@@ -87,6 +90,14 @@ impl Sxpinfo {
     }
 }
 
+pub fn r_length(x: SEXP) -> isize {
+    Rf_xlength(x)
+}
+
+pub fn r_typeof(x: SEXP) -> u32 {
+    TYPEOF(x) as u32
+}
+
 pub fn r_assert_type(object: SEXP, expected: &[u32]) -> Result<u32> {
     let actual = r_typeof(object);
 
@@ -107,7 +118,7 @@ pub unsafe fn r_assert_capacity(object: SEXP, required: usize) -> Result<usize> 
 }
 
 pub fn r_assert_length(object: SEXP, expected: usize) -> Result<usize> {
-    let actual = unsafe { Rf_xlength(object) as usize };
+    let actual = r_length(object) as usize;
     if actual != expected {
         return Err(Error::UnexpectedLength(actual, expected));
     }
@@ -207,7 +218,7 @@ pub fn r_vec_shape(value: SEXP) -> String {
         let dim = RObject::new(Rf_getAttrib(value, R_DimSymbol));
 
         if r_is_null(*dim) {
-            format!("{}", Rf_xlength(value))
+            format!("{}", r_length(value))
         } else {
             let dim = IntegerVector::new_unchecked(*dim);
             dim.iter().map(|d| d.unwrap()).join(", ")
@@ -222,13 +233,6 @@ pub fn r_altrep_class(object: SEXP) -> String {
     let pkg = RSymbol::new(unsafe { CADR(serialized_klass) });
 
     format!("{}::{}", pkg, klass)
-}
-
-pub fn r_typeof(object: SEXP) -> u32 {
-    // SAFETY: The type of an R object is typically considered constant,
-    // and TYPEOF merely queries the R type directly from the SEXPREC struct.
-    let object = object.into();
-    unsafe { TYPEOF(object) as u32 }
 }
 
 pub unsafe fn r_type2char<T: Into<u32>>(kind: T) -> String {
