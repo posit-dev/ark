@@ -259,7 +259,8 @@ fn main() {
     logger::initialize(log_file.as_deref());
 
     // Register segfault handler to get a backtrace. Should be after
-    // initialising `log!`.
+    // initialising `log!`. Note that R will not override this handler
+    // because we set `R_SignalHandlers` to 0 before startup.
     stdext::traps::register_trap_handlers();
 
     // Initialize harp.
