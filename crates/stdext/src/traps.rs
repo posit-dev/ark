@@ -11,6 +11,15 @@
 //
 // This uses `signal()` instead of `sigaction()` for Windows support
 // (SIGSEGV is one of the rare supported signals)
+//
+// Note that Rust also has a SIGSEGV handler to catch stack overflows. In
+// this case it displays an informative message and aborts the program (no
+// segfaults in Rust!). Ideally we'd save the Rust handler and notify
+// it. However the only safe way to notify an old handler on Unixes is to
+// use `sigaction()` so that we get the information needed to determine the
+// type of handler (old or new school). So we'd need to make a different
+// implementation for Windows (which only supports old style) and for Unix,
+// and this doesn't seem worth it.
 pub fn register_trap_handlers() {
     unsafe {
         libc::signal(libc::SIGBUS, backtrace_handler as libc::sighandler_t);
