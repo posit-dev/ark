@@ -535,7 +535,7 @@ pub fn listen(exec_recv: Receiver<Request>, prompt_recv: Receiver<String>) {
     let mutex = unsafe { KERNEL.as_ref().unwrap() };
     {
         let mut kernel = mutex.lock().unwrap();
-        kernel.complete_intialization();
+        kernel.complete_initialization();
     }
 
     loop {
