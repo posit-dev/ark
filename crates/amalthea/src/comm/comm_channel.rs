@@ -9,7 +9,7 @@ use serde_json::Value;
 use strum_macros::EnumString;
 
 #[derive(EnumString, PartialEq)]
-#[strum(serialize_all = "snake_case")]
+#[strum(serialize_all = "camelCase")]
 pub enum Comm {
     /// The Environment pane.
     Environment,
