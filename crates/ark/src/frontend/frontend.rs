@@ -14,14 +14,20 @@ use amalthea::socket::comm::CommSocket;
 use amalthea::wire::client_event::ClientEvent;
 use crossbeam::channel::Sender;
 
+/// PositronFrontend is a wrapper around a comm channel whose lifetime matches
+/// that of the Positron front end. It is used to perform communication with the
+/// front end that isn't scoped to any particular view.
 pub struct PositronFrontend {
     pub event_tx: Sender<PositronEvent>,
 }
 
 impl PositronFrontend {
     pub fn new(comm: CommSocket) -> Self {
+        // Create a sender-receiver pair for Positron global events
         let (event_tx, event_rx) = crossbeam::channel::unbounded::<PositronEvent>();
 
+        // Create a copy of the comm channel into which we will feed events from
+        // the backend
         let comm_tx = comm.outgoing_tx.clone();
 
         // Wait for events from the backend and forward them over the channel
@@ -40,13 +46,7 @@ impl PositronFrontend {
             };
 
             // Convert the event to a client event that the frontend can understand
-            let comm_evt = match ClientEvent::try_from(event.clone()) {
-                Ok(evt) => evt,
-                Err(err) => {
-                    log::error!("Error converting Positron event to message: {}", err);
-                    continue;
-                },
-            };
+            let comm_evt = ClientEvent::try_from(event.clone()).unwrap();
 
             // Convert the client event to a message we can send to the front end
             let frontend_evt = FrontendMessage::Event(comm_evt);

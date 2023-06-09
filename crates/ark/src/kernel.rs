@@ -329,8 +329,10 @@ impl Kernel {
         self.input_request_tx = Some(input_request_tx);
     }
 
-    /// Establishes the event handler for the kernel to send events to the Positron
-    /// front end
+    /// Establishes the event handler for the kernel to send events to the
+    /// Positron front end. This event handler is used to send global events
+    /// that are not scoped to any particular view. The `Sender` here is a
+    /// channel that is connected to a `positron.frontEnd` comm.
     pub fn establish_event_handler(&mut self, event_tx: Sender<PositronEvent>) {
         self.event_tx = Some(event_tx);
     }
