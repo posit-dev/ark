@@ -44,6 +44,7 @@ use serde_json::json;
 use stdext::spawn;
 
 use crate::environment::r_environment::REnvironment;
+use crate::frontend::frontend::PositronFrontend;
 use crate::kernel::KernelInfo;
 use crate::request::Request;
 
@@ -241,6 +242,18 @@ impl ShellHandler for Shell {
                     REnvironment::start(global_env, comm.clone());
                     Ok(true)
                 }
+            },
+            Comm::FrontEnd => {
+                let frontend_comm = PositronFrontend::new(comm.clone());
+                if let Err(err) = self.shell_request_tx.send(Request::EstablishEventChannel(
+                    frontend_comm.event_tx.clone(),
+                )) {
+                    warn!(
+                        "Could not deliver frontend event channel to execution thread: {}",
+                        err
+                    );
+                };
+                Ok(true)
             },
             _ => Ok(false),
         }
