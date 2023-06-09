@@ -36,7 +36,6 @@ use libR_sys::XLENGTH;
 use serde::Deserialize;
 use serde::Serialize;
 use stdext::spawn;
-use stdext::Ok;
 use uuid::Uuid;
 
 use crate::lsp::globals::comm_manager_tx;
@@ -236,7 +235,7 @@ impl RDataViewer {
     }
 
     pub fn execution_thread(self) {
-        let result = || -> Result<(), anyhow::Error> {
+        let execute = || -> Result<(), anyhow::Error> {
             // This is a simplistic version where all the data is converted as once to
             // a message that is included in initial event of the comm.
             let data_set = DataSet::from_object(self.id.clone(), self.title.clone(), self.data)?;
@@ -246,9 +245,9 @@ impl RDataViewer {
             let event = CommEvent::Opened(self.comm.clone(), json);
             comm_manager_tx.send(event)?;
 
-            ().ok()
-        }();
-        if let Err(error) = result {
+            Ok(())
+        };
+        if let Err(error) = execute() {
             log::error!("Error while viewing object '{}': {}", self.title, error);
         }
     }
