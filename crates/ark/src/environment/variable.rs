@@ -206,7 +206,7 @@ impl WorkspaceVariableDisplayValue {
                 let formatted = CharacterVector::new_unchecked(formatted);
                 let out = formatted
                     .iter()
-                    .take(formatted.len() - 1)
+                    .take(formatted.len() as usize - 1)
                     .map(|o| o.unwrap())
                     .join("");
                 Self::new(out, false)
@@ -385,7 +385,7 @@ impl EnvironmentVariable {
             display_type,
             type_info,
             kind,
-            length: Self::variable_length(x),
+            length: Self::variable_length(x) as usize,
             size: RObject::view(x).size(),
             has_children: has_children(x),
             is_truncated,
@@ -442,7 +442,7 @@ impl EnvironmentVariable {
         }
     }
 
-    fn variable_length(x: SEXP) -> usize {
+    fn variable_length(x: SEXP) -> isize {
         let rtype = r_typeof(x);
         match rtype {
             LGLSXP | RAWSXP | INTSXP | REALSXP | CPLXSXP | STRSXP => r_xlength(x),
@@ -455,15 +455,12 @@ impl EnvironmentVariable {
                         .call()
                         .unwrap();
 
-                    INTEGER_ELT(*dim, 0) as usize
+                    INTEGER_ELT(*dim, 0) as isize
                 } else {
                     r_xlength(x)
                 }
             },
-            LISTSXP => match pairlist_size(x) {
-                Ok(n) => n as usize,
-                Err(_) => 0,
-            },
+            LISTSXP => pairlist_size(x).unwrap_or(0),
             _ => 0,
         }
     }

@@ -35,9 +35,9 @@ impl Vector for NumericVector {
         <T as IntoIterator>::Item: AsRef<Self::Item>,
     {
         let it = data.into_iter();
-        let count = it.len();
+        let count = it.len() as isize;
 
-        let vector = Rf_allocVector(Self::SEXPTYPE, count as R_xlen_t);
+        let vector = Rf_allocVector(Self::SEXPTYPE, count);
         let dataptr = DATAPTR(vector) as *mut Self::Type;
         it.enumerate().for_each(|(index, value)| {
             *(dataptr.offset(index as isize)) = *value.as_ref();
@@ -55,7 +55,7 @@ impl Vector for NumericVector {
     }
 
     fn get_unchecked_elt(&self, index: isize) -> Self::UnderlyingType {
-        unsafe { REAL_ELT(self.data(), index as R_xlen_t) }
+        unsafe { REAL_ELT(self.data(), index) }
     }
 
     fn convert_value(x: &Self::UnderlyingType) -> Self::Type {

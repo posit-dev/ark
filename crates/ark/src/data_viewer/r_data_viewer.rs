@@ -64,7 +64,7 @@ pub struct DataSet {
     pub columns: Vec<DataColumn>,
 
     #[serde(rename = "rowCount")]
-    pub row_count: usize,
+    pub row_count: isize,
 }
 
 struct ColumnNames {
@@ -83,9 +83,9 @@ impl ColumnNames {
         }
     }
 
-    pub fn get_unchecked(&self, index: usize) -> Option<String> {
+    pub fn get_unchecked(&self, index: isize) -> Option<String> {
         if let Some(names) = &self.names {
-            if let Some(name) = names.get_unchecked(index as isize) {
+            if let Some(name) = names.get_unchecked(index) {
                 if name.len() > 0 {
                     return Some(name);
                 }
@@ -99,7 +99,7 @@ impl DataSet {
     unsafe fn extract_columns(
         object: SEXP,
         prefix: Option<String>,
-        row_count: usize,
+        row_count: isize,
         columns: &mut Vec<DataColumn>,
     ) -> Result<(), anyhow::Error> {
         if r_is_data_frame(object) {
@@ -130,8 +130,8 @@ impl DataSet {
         } else if r_is_matrix(object) {
             unsafe {
                 let dim = Rf_getAttrib(object, R_DimSymbol);
-                let n_columns = INTEGER_ELT(dim, 1) as usize;
-                let n_rows = INTEGER_ELT(dim, 0) as usize;
+                let n_columns = INTEGER_ELT(dim, 1) as isize;
+                let n_rows = INTEGER_ELT(dim, 0) as isize;
                 if n_rows != row_count {
                     bail!("matrix column with incompatible number of rows");
                 }
@@ -196,7 +196,7 @@ impl DataSet {
                     r_xlength(row_names)
                 } else if r_is_matrix(*object) {
                     let dim = Rf_getAttrib(*object, R_DimSymbol);
-                    INTEGER_ELT(dim, 0) as usize
+                    INTEGER_ELT(dim, 0) as isize
                 } else {
                     bail!("data viewer only handles data frames and matrices")
                 }

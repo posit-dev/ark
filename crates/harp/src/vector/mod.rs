@@ -60,7 +60,7 @@ pub trait Vector {
 
     fn get(&self, index: isize) -> Result<Option<Self::Type>> {
         unsafe {
-            r_assert_capacity(self.data(), index as usize)?;
+            r_assert_capacity(self.data(), index)?;
         }
         Ok(self.get_unchecked(index))
     }
@@ -88,7 +88,7 @@ pub trait Vector {
         <T as IntoIterator>::IntoIter: ExactSizeIterator,
         <T as IntoIterator>::Item: AsRef<Self::Item>;
 
-    unsafe fn len(&self) -> usize {
+    unsafe fn len(&self) -> isize {
         r_xlength(self.data())
     }
 

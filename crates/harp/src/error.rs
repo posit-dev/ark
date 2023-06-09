@@ -27,7 +27,7 @@ pub enum Error {
         message: String,
     },
     UnsafeEvaluationError(String),
-    UnexpectedLength(usize, usize),
+    UnexpectedLength(isize, isize),
     UnexpectedType(u32, Vec<u32>),
     InvalidUtf8(Utf8Error),
     TryCatchError {

@@ -111,8 +111,8 @@ impl RFunction {
         }
 
         // now, build the actual call to be evaluated
-        let size = (1 + self.arguments.len()) as R_xlen_t;
-        let call = protect.add(Rf_allocVector(LANGSXP, size));
+        let size = 1 + self.arguments.len();
+        let call = protect.add(Rf_allocVector(LANGSXP, size as isize));
         SET_TAG(call, R_NilValue);
         SETCAR(call, lhs);
 

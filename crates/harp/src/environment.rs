@@ -183,7 +183,7 @@ pub struct HashedEnvironmentIter<'a> {
     env: &'a Environment,
 
     hashtab: SEXP,
-    hashtab_index: usize,
+    hashtab_index: isize,
     frame: SEXP,
 }
 
@@ -192,7 +192,7 @@ impl<'a> HashedEnvironmentIter<'a> {
         unsafe {
             let hashtab = HASHTAB(**env);
             let hashtab_len = r_xlength(hashtab);
-            let mut hashtab_index: usize = 0;
+            let mut hashtab_index = 0;
             let mut frame = R_NilValue;
 
             // look for the first non null frame

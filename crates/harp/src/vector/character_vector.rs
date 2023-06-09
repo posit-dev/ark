@@ -55,7 +55,7 @@ impl Vector for CharacterVector {
                 value.len() as i32,
                 cetype_t_CE_UTF8,
             );
-            SET_STRING_ELT(vector.data(), i as R_xlen_t, charsexp);
+            SET_STRING_ELT(vector.data(), i as isize, charsexp);
         }
 
         vector
@@ -66,7 +66,7 @@ impl Vector for CharacterVector {
     }
 
     fn get_unchecked_elt(&self, index: isize) -> Self::UnderlyingType {
-        unsafe { STRING_ELT(self.data(), index as R_xlen_t) }
+        unsafe { STRING_ELT(self.data(), index) }
     }
 
     fn convert_value(x: &Self::UnderlyingType) -> Self::Type {
