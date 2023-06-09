@@ -35,7 +35,9 @@ use libR_sys::VECTOR_ELT;
 use libR_sys::XLENGTH;
 use serde::Deserialize;
 use serde::Serialize;
+use stdext::local;
 use stdext::spawn;
+use stdext::Ok;
 use uuid::Uuid;
 
 use crate::lsp::globals::comm_manager_tx;
@@ -235,19 +237,19 @@ impl RDataViewer {
     }
 
     pub fn execution_thread(self) {
-        // This is a simplistic version where all the data is converted as once to
-        // a message that is included in initial event of the comm.
-        let json = match DataSet::from_object(self.id.clone(), self.title.clone(), self.data) {
-            Ok(data_set) => serde_json::to_value(data_set).unwrap(),
-            Err(error) => {
-                log::error!("Error while viewing object '{}': {}", self.title, error);
-                return;
-            },
-        };
+        let result = || -> Result<(), anyhow::Error> {
+            // This is a simplistic version where all the data is converted as once to
+            // a message that is included in initial event of the comm.
+            let data_set = DataSet::from_object(self.id.clone(), self.title.clone(), self.data)?;
+            let json = serde_json::to_value(data_set)?;
 
-        let comm_manager_tx = comm_manager_tx();
-        let event = CommEvent::Opened(self.comm.clone(), json);
-        if let Err(error) = comm_manager_tx.send(event) {
+            let comm_manager_tx = comm_manager_tx();
+            let event = CommEvent::Opened(self.comm.clone(), json);
+            comm_manager_tx.send(event)?;
+
+            ().ok()
+        }();
+        if let Err(error) = result {
             log::error!("Error while viewing object '{}': {}", self.title, error);
         }
     }
