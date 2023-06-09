@@ -5,9 +5,9 @@
 //
 //
 
-// Call this after initialising the `log` package. Instruments SIGBUS and
-// SIGSEGV to generate a backtrace with `info` verbosity (lowest level so
-// it's always reported).
+// Call this after initialising the `log` package. Instruments SIGBUS,
+// SIGSEGV, and SIGILL to generate a backtrace with `info` verbosity
+// (lowest level so it's always reported).
 //
 // This uses `signal()` instead of `sigaction()` for Windows support
 // (SIGSEGV is one of the rare supported signals)
@@ -24,6 +24,7 @@ pub fn register_trap_handlers() {
     unsafe {
         libc::signal(libc::SIGBUS, backtrace_handler as libc::sighandler_t);
         libc::signal(libc::SIGSEGV, backtrace_handler as libc::sighandler_t);
+        libc::signal(libc::SIGILL, backtrace_handler as libc::sighandler_t);
     }
 }
 
