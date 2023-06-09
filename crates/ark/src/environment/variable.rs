@@ -28,6 +28,7 @@ use harp::utils::r_is_simple_vector;
 use harp::utils::r_typeof;
 use harp::utils::r_vec_shape;
 use harp::utils::r_vec_type;
+use harp::utils::r_xlength;
 use harp::vector::collapse;
 use harp::vector::CharacterVector;
 use harp::vector::Collapse;
@@ -259,9 +260,7 @@ impl WorkspaceVariableDisplayType {
 
         let rtype = r_typeof(value);
         match rtype {
-            EXPRSXP => {
-                Self::from_class(value, format!("expression [{}]", unsafe { XLENGTH(value) }))
-            },
+            EXPRSXP => Self::from_class(value, format!("expression [{}]", r_xlength(value))),
             LANGSXP => Self::from_class(value, String::from("language")),
             CLOSXP => Self::from_class(value, String::from("function")),
             ENVSXP => Self::from_class(value, String::from("environment")),
@@ -291,7 +290,7 @@ impl WorkspaceVariableDisplayType {
 
                     Self::simple(format!("{} [{}]", dfclass, shape))
                 } else {
-                    Self::from_class(value, format!("list [{}]", XLENGTH(value)))
+                    Self::from_class(value, format!("list [{}]", r_xlength(value)))
                 }
             },
             _ => Self::from_class(value, String::from("???")),
@@ -335,7 +334,7 @@ fn has_children(value: SEXP) -> bool {
         }
     } else {
         match r_typeof(value) {
-            VECSXP | EXPRSXP => unsafe { XLENGTH(value) != 0 },
+            VECSXP | EXPRSXP => r_xlength(value) != 0,
             LISTSXP => true,
             ENVSXP => !Environment::new(RObject::view(value)).is_empty(),
             _ => false,
@@ -446,10 +445,10 @@ impl EnvironmentVariable {
     fn variable_length(x: SEXP) -> usize {
         let rtype = r_typeof(x);
         match rtype {
-            LGLSXP | RAWSXP | INTSXP | REALSXP | CPLXSXP | STRSXP => unsafe { XLENGTH(x) as usize },
+            LGLSXP | RAWSXP | INTSXP | REALSXP | CPLXSXP | STRSXP => r_xlength(x),
             VECSXP => unsafe {
                 if r_inherits(x, "POSIXlt") {
-                    XLENGTH(VECTOR_ELT(x, 0)) as usize
+                    r_xlength(VECTOR_ELT(x, 0))
                 } else if r_is_data_frame(x) {
                     let dim = RFunction::new("base", "dim.data.frame")
                         .add(x)
@@ -458,7 +457,7 @@ impl EnvironmentVariable {
 
                     INTEGER_ELT(*dim, 0) as usize
                 } else {
-                    XLENGTH(x) as usize
+                    r_xlength(x)
                 }
             },
             LISTSXP => match pairlist_size(x) {
@@ -500,7 +499,7 @@ impl EnvironmentVariable {
 
             VECSXP => unsafe {
                 let dim = Rf_getAttrib(x, R_DimSymbol);
-                if dim != R_NilValue && XLENGTH(dim) == 2 {
+                if dim != R_NilValue && r_xlength(dim) == 2 {
                     ValueKind::Table
                 } else {
                     ValueKind::Map
@@ -509,9 +508,9 @@ impl EnvironmentVariable {
 
             LGLSXP => unsafe {
                 let dim = Rf_getAttrib(x, R_DimSymbol);
-                if dim != R_NilValue && XLENGTH(dim) == 2 {
+                if dim != R_NilValue && r_xlength(dim) == 2 {
                     ValueKind::Table
-                } else if XLENGTH(x) == 1 {
+                } else if r_xlength(x) == 1 {
                     if LOGICAL_ELT(x, 0) == R_NaInt {
                         ValueKind::Empty
                     } else {
@@ -524,9 +523,9 @@ impl EnvironmentVariable {
 
             INTSXP => unsafe {
                 let dim = Rf_getAttrib(x, R_DimSymbol);
-                if dim != R_NilValue && XLENGTH(dim) == 2 {
+                if dim != R_NilValue && r_xlength(dim) == 2 {
                     ValueKind::Table
-                } else if XLENGTH(x) == 1 {
+                } else if r_xlength(x) == 1 {
                     if INTEGER_ELT(x, 0) == R_NaInt {
                         ValueKind::Empty
                     } else {
@@ -539,9 +538,9 @@ impl EnvironmentVariable {
 
             REALSXP => unsafe {
                 let dim = Rf_getAttrib(x, R_DimSymbol);
-                if dim != R_NilValue && XLENGTH(dim) == 2 {
+                if dim != R_NilValue && r_xlength(dim) == 2 {
                     ValueKind::Table
-                } else if XLENGTH(x) == 1 {
+                } else if r_xlength(x) == 1 {
                     if R_IsNA(REAL_ELT(x, 0)) == 1 {
                         ValueKind::Empty
                     } else {
@@ -554,9 +553,9 @@ impl EnvironmentVariable {
 
             CPLXSXP => unsafe {
                 let dim = Rf_getAttrib(x, R_DimSymbol);
-                if dim != R_NilValue && XLENGTH(dim) == 2 {
+                if dim != R_NilValue && r_xlength(dim) == 2 {
                     ValueKind::Table
-                } else if XLENGTH(x) == 1 {
+                } else if r_xlength(x) == 1 {
                     let value = COMPLEX_ELT(x, 0);
                     if R_IsNA(value.r) == 1 || R_IsNA(value.i) == 1 {
                         ValueKind::Empty
@@ -570,9 +569,9 @@ impl EnvironmentVariable {
 
             STRSXP => unsafe {
                 let dim = Rf_getAttrib(x, R_DimSymbol);
-                if dim != R_NilValue && XLENGTH(dim) == 2 {
+                if dim != R_NilValue && r_xlength(dim) == 2 {
                     ValueKind::Table
-                } else if XLENGTH(x) == 1 {
+                } else if r_xlength(x) == 1 {
                     if STRING_ELT(x, 0) == R_NaString {
                         ValueKind::Empty
                     } else {
@@ -780,7 +779,7 @@ impl EnvironmentVariable {
 
     fn inspect_list(value: SEXP) -> Result<Vec<Self>, harp::error::Error> {
         let mut out: Vec<Self> = vec![];
-        let n = unsafe { XLENGTH(value) };
+        let n = r_xlength(value);
 
         let names = unsafe {
             CharacterVector::new_unchecked(
@@ -793,8 +792,8 @@ impl EnvironmentVariable {
         for i in 0..n {
             out.push(Self::from(
                 i.to_string(),
-                names.get_unchecked(i).unwrap(),
-                unsafe { VECTOR_ELT(value, i) },
+                names.get_unchecked(i as isize).unwrap(),
+                unsafe { VECTOR_ELT(value, i as isize) },
             ));
         }
 

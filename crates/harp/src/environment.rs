@@ -15,6 +15,7 @@ use crate::utils::r_is_altrep;
 use crate::utils::r_is_null;
 use crate::utils::r_is_s4;
 use crate::utils::r_typeof;
+use crate::utils::r_xlength;
 use crate::utils::Sxpinfo;
 
 #[derive(Eq)]
@@ -48,10 +49,10 @@ fn has_reference(value: SEXP) -> bool {
         LISTSXP | LANGSXP => unsafe { has_reference(CAR(value)) || has_reference(CDR(value)) },
 
         VECSXP | EXPRSXP => unsafe {
-            let n = XLENGTH(value);
+            let n = r_xlength(value);
             let mut has_ref = false;
             for i in 0..n {
-                if has_reference(VECTOR_ELT(value, i)) {
+                if has_reference(VECTOR_ELT(value, i as isize)) {
                     has_ref = true;
                     break;
                 }
@@ -182,7 +183,7 @@ pub struct HashedEnvironmentIter<'a> {
     env: &'a Environment,
 
     hashtab: SEXP,
-    hashtab_index: R_xlen_t,
+    hashtab_index: usize,
     frame: SEXP,
 }
 
@@ -190,13 +191,13 @@ impl<'a> HashedEnvironmentIter<'a> {
     pub fn new(env: &'a Environment) -> Self {
         unsafe {
             let hashtab = HASHTAB(**env);
-            let hashtab_len = XLENGTH(hashtab);
-            let mut hashtab_index = 0;
+            let hashtab_len = r_xlength(hashtab);
+            let mut hashtab_index: usize = 0;
             let mut frame = R_NilValue;
 
             // look for the first non null frame
             loop {
-                let f = VECTOR_ELT(hashtab, hashtab_index);
+                let f = VECTOR_ELT(hashtab, hashtab_index as isize);
                 if f != R_NilValue {
                     frame = f;
                     break;
@@ -235,7 +236,7 @@ impl<'a> Iterator for HashedEnvironmentIter<'a> {
 
             if self.frame == R_NilValue {
                 // end of frame: move to the next non empty frame
-                let hashtab_len = XLENGTH(self.hashtab);
+                let hashtab_len = r_xlength(self.hashtab);
                 loop {
                     // move to the next frame
                     self.hashtab_index = self.hashtab_index + 1;
@@ -247,7 +248,7 @@ impl<'a> Iterator for HashedEnvironmentIter<'a> {
                     }
 
                     // skip empty frames
-                    self.frame = VECTOR_ELT(self.hashtab, self.hashtab_index);
+                    self.frame = VECTOR_ELT(self.hashtab, self.hashtab_index as isize);
                     if self.frame != R_NilValue {
                         break;
                     }

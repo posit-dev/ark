@@ -19,6 +19,7 @@ use harp::utils::r_is_data_frame;
 use harp::utils::r_is_matrix;
 use harp::utils::r_is_simple_vector;
 use harp::utils::r_typeof;
+use harp::utils::r_xlength;
 use harp::vector::CharacterVector;
 use harp::vector::Vector;
 use libR_sys::R_CallMethodDef;
@@ -32,7 +33,6 @@ use libR_sys::INTEGER_ELT;
 use libR_sys::SEXP;
 use libR_sys::STRSXP;
 use libR_sys::VECTOR_ELT;
-use libR_sys::XLENGTH;
 use serde::Deserialize;
 use serde::Serialize;
 use stdext::spawn;
@@ -83,9 +83,9 @@ impl ColumnNames {
         }
     }
 
-    pub fn get_unchecked(&self, index: isize) -> Option<String> {
+    pub fn get_unchecked(&self, index: usize) -> Option<String> {
         if let Some(names) = &self.names {
-            if let Some(name) = names.get_unchecked(index) {
+            if let Some(name) = names.get_unchecked(index as isize) {
                 if name.len() > 0 {
                     return Some(name);
                 }
@@ -106,7 +106,7 @@ impl DataSet {
             unsafe {
                 let names = ColumnNames::new(Rf_getAttrib(object, R_NamesSymbol));
 
-                let n_columns = XLENGTH(object);
+                let n_columns = r_xlength(object);
                 for i in 0..n_columns {
                     let col_name = names.get_unchecked(i);
 
@@ -123,14 +123,14 @@ impl DataSet {
                     };
 
                     // Protecting with `RObject` in case `object` happens to be an ALTLIST
-                    let column = RObject::from(VECTOR_ELT(object, i));
+                    let column = RObject::from(VECTOR_ELT(object, i as isize));
                     Self::extract_columns(*column, Some(name), row_count, columns)?;
                 }
             }
         } else if r_is_matrix(object) {
             unsafe {
                 let dim = Rf_getAttrib(object, R_DimSymbol);
-                let n_columns = INTEGER_ELT(dim, 1);
+                let n_columns = INTEGER_ELT(dim, 1) as usize;
                 let n_rows = INTEGER_ELT(dim, 0) as usize;
                 if n_rows != row_count {
                     bail!("matrix column with incompatible number of rows");
@@ -140,7 +140,7 @@ impl DataSet {
                 let colnames = ColumnNames::new(*colnames);
 
                 for i in 0..n_columns {
-                    let col_name = colnames.get_unchecked(i as isize);
+                    let col_name = colnames.get_unchecked(i);
 
                     let name = match prefix {
                         None => match col_name {
@@ -156,7 +156,7 @@ impl DataSet {
                     let matrix_column = RFunction::from("[")
                         .add(object)
                         .param("i", R_MissingArg)
-                        .param("j", i + 1)
+                        .param("j", (i + 1) as i32)
                         .call()?;
 
                     Self::extract_columns(*matrix_column, Some(name), row_count, columns)?;
@@ -193,7 +193,7 @@ impl DataSet {
             let row_count = {
                 if r_is_data_frame(*object) {
                     let row_names = Rf_getAttrib(*object, R_RowNamesSymbol);
-                    XLENGTH(row_names) as usize
+                    r_xlength(row_names)
                 } else if r_is_matrix(*object) {
                     let dim = Rf_getAttrib(*object, R_DimSymbol);
                     INTEGER_ELT(dim, 0) as usize

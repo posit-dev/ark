@@ -105,8 +105,12 @@ pub unsafe fn r_assert_capacity(object: SEXP, required: usize) -> Result<usize> 
     Ok(actual)
 }
 
+pub fn r_xlength(object: SEXP) -> usize {
+    unsafe { Rf_xlength(object) as usize }
+}
+
 pub fn r_assert_length(object: SEXP, expected: usize) -> Result<usize> {
-    let actual = unsafe { Rf_xlength(object) as usize };
+    let actual = r_xlength(object);
     if actual != expected {
         return Err(Error::UnexpectedLength(actual, expected));
     }
@@ -185,7 +189,7 @@ pub fn r_vec_type(value: SEXP) -> String {
         INTSXP => unsafe {
             if r_inherits(value, "factor") {
                 let levels = Rf_getAttrib(value, R_LevelsSymbol);
-                format!("fct({})", XLENGTH(levels))
+                format!("fct({})", r_xlength(levels))
             } else {
                 String::from("int")
             }
@@ -206,10 +210,10 @@ pub fn r_vec_shape(value: SEXP) -> String {
         let dim = RObject::new(Rf_getAttrib(value, R_DimSymbol));
 
         if r_is_null(*dim) {
-            if XLENGTH(value) == 1 {
+            if r_xlength(value) == 1 {
                 String::from("")
             } else {
-                format!(" [{}]", Rf_xlength(value))
+                format!(" [{}]", r_xlength(value))
             }
         } else {
             format!(" [{}]", collapse(*dim, ",", 0, "").unwrap().result)

@@ -13,6 +13,7 @@ use libR_sys::*;
 use crate::error::Result;
 use crate::utils::r_assert_capacity;
 use crate::utils::r_assert_type;
+use crate::utils::r_xlength;
 use crate::with_vector;
 
 pub mod character_vector;
@@ -88,7 +89,7 @@ pub trait Vector {
         <T as IntoIterator>::Item: AsRef<Self::Item>;
 
     unsafe fn len(&self) -> usize {
-        Rf_xlength(self.data()) as usize
+        r_xlength(self.data())
     }
 
     fn format_one(&self, x: Self::Type) -> String;
