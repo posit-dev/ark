@@ -13,3 +13,12 @@ macro_rules! local {
         })()
     }
 }
+
+#[macro_export]
+macro_rules! try_local {
+    ($t:ty = {$($tokens:tt)*}) => {
+        (|| -> Result<$t, anyhow::Error> {
+            $($tokens)*
+        })()
+    }
+}
