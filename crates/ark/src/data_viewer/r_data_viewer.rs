@@ -35,10 +35,8 @@ use libR_sys::VECTOR_ELT;
 use libR_sys::XLENGTH;
 use serde::Deserialize;
 use serde::Serialize;
-use stdext::attempt;
 use stdext::local;
 use stdext::spawn;
-use stdext::try_local;
 use uuid::Uuid;
 
 use crate::lsp::globals::comm_manager_tx;
