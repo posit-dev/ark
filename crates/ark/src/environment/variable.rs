@@ -29,6 +29,7 @@ use harp::utils::r_typeof;
 use harp::utils::r_vec_shape;
 use harp::utils::r_vec_type;
 use harp::vector::collapse;
+use harp::vector::formatted_vector::FormattedVector;
 use harp::vector::vector_format_elt_unchecked;
 use harp::vector::CharacterVector;
 use harp::vector::Collapse;
@@ -831,12 +832,13 @@ impl EnvironmentVariable {
             let mut out: Vec<Self> = vec![];
             let display_type = r_vec_type(*vector);
             let r_type = r_typeof(*vector);
+            let formatted = FormattedVector::new(*vector)?;
+
             for i in 0..n {
                 out.push(Self {
                     access_key: format!("{}", i),
                     display_name: format!("[{}]", i + 1),
-                    display_value: vector_format_elt_unchecked(*vector, i)
-                        .unwrap_or(String::from("??")),
+                    display_value: formatted.get_unchecked(i),
                     display_type: display_type.clone(),
                     type_info: display_type.clone(),
                     kind: if r_type == STRSXP {
