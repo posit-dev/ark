@@ -338,6 +338,7 @@ fn has_children(value: SEXP) -> bool {
             VECSXP | EXPRSXP => unsafe { XLENGTH(value) != 0 },
             LISTSXP => true,
             ENVSXP => !Environment::new(RObject::view(value)).is_empty(),
+            LGLSXP | RAWSXP | STRSXP | INTSXP | REALSXP | CPLXSXP => unsafe { XLENGTH(value) != 0 },
             _ => false,
         }
     }
