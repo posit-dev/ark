@@ -368,6 +368,8 @@ mod tests {
     use std::ffi::CString;
     use std::io::Write;
 
+    use stdext::spawn;
+
     use super::*;
     use crate::assert_match;
     use crate::r_lock;
@@ -440,8 +442,8 @@ mod tests {
             // Spawn a bunch of threads that try to interact with R.
             const N : i32 = 1000;
             let mut handles : Vec<_> = Vec::new();
-            for _i in 1..20 {
-                let handle = std::thread::spawn(move || {
+            for i in 1..20 {
+                let handle = spawn!(format!("test_exec_test_threads_{}", i), move || {
                     let id = std::thread::current().id();
                     for _j in 1..20 {
                         r_lock! {
