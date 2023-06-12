@@ -14,6 +14,7 @@ pub mod local;
 pub mod ok;
 pub mod push;
 pub mod spawn;
+pub mod traps;
 pub mod unwrap;
 
 pub use crate::join::Joined;
