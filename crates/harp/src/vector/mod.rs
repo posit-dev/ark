@@ -92,6 +92,17 @@ pub trait Vector {
     }
 
     fn format_one(&self, x: Self::Type) -> String;
+
+    fn format_elt_unchecked(&self, index: isize) -> String {
+        match self.get_unchecked(index) {
+            Some(x) => self.format_one(x),
+            None => String::from("NA"),
+        }
+    }
+}
+
+pub fn vector_format_elt_unchecked(vector: SEXP, index: isize) -> Result<String> {
+    with_vector!(vector, |v| { v.format_elt_unchecked(index) })
 }
 
 pub struct Collapse {
