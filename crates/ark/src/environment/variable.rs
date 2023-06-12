@@ -29,6 +29,7 @@ use harp::utils::r_typeof;
 use harp::utils::r_vec_shape;
 use harp::utils::r_vec_type;
 use harp::vector::collapse;
+use harp::vector::vector_format_elt_unchecked;
 use harp::vector::CharacterVector;
 use harp::vector::Collapse;
 use harp::vector::Vector;
@@ -347,6 +348,7 @@ fn has_children(value: SEXP) -> bool {
 enum EnvironmentVariableNode {
     Concrete { object: RObject },
     Artificial { object: RObject, name: String },
+    VectorElement { object: RObject, index: isize },
 }
 
 impl EnvironmentVariable {
@@ -625,6 +627,8 @@ impl EnvironmentVariable {
                     }
                 }
             },
+
+            EnvironmentVariableNode::VectorElement { .. } => Ok(vec![]),
         }
     }
 
@@ -673,6 +677,9 @@ impl EnvironmentVariable {
                 }
             },
             EnvironmentVariableNode::Artificial { .. } => Ok(String::from("")),
+            EnvironmentVariableNode::VectorElement { object, index } => {
+                vector_format_elt_unchecked(*object, index)
+            },
         }
     }
 
@@ -748,6 +755,13 @@ impl EnvironmentVariable {
                                 }
                             },
 
+                            LGLSXP | RAWSXP | STRSXP | INTSXP | REALSXP | CPLXSXP => {
+                                EnvironmentVariableNode::VectorElement {
+                                    object,
+                                    index: path_element.parse::<isize>().unwrap(),
+                                }
+                            },
+
                             _ => {
                                 return Err(harp::error::Error::InspectError { path: path.clone() })
                             },
@@ -772,6 +786,10 @@ impl EnvironmentVariable {
 
                         _ => return Err(harp::error::Error::InspectError { path: path.clone() }),
                     }
+                },
+
+                EnvironmentVariableNode::VectorElement { .. } => {
+                    return Err(harp::error::Error::InspectError { path: path.clone() });
                 },
             }
         }
