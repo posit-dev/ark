@@ -234,6 +234,9 @@ macro_rules! with_device {
         } else if version == 15 {
             let $name = $value as *mut $crate::plots::dev_desc::DevDescVersion15;
             $block;
+        } else if version == 16 {
+            let $name = $value as *mut $crate::plots::dev_desc::DevDescVersion16;
+            $block;
         } else {
             panic!(
                 "R graphics engine version {} is not supported by this version of Positron.",
