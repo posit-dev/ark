@@ -32,13 +32,12 @@
         # rlang is not installed, no option except to use the base handler
         return(handle_error_base(cnd))
     }
+    if (!inherits(cnd, "rlang_error") && !positron_option_error_entrace()) {
+        # We have a non-rlang error, but the user requested we dont entrace it
+        return(handle_error_base(cnd))
+    }
     
     if (!inherits(cnd, "rlang_error")) {
-        if (!positron_option_error_entrace()) {
-            # We have a non-rlang error, but the user requested we dont entrace it
-            return(handle_error_base(cnd))
-        }
-        
         cnd <- rlang::catch_cnd(rlang::entrace(cnd))
     }
     
