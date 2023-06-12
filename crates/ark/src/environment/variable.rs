@@ -623,6 +623,9 @@ impl EnvironmentVariable {
                                 Self::inspect_environment(object)
                             }
                         },
+                        LGLSXP | RAWSXP | STRSXP | INTSXP | REALSXP | CPLXSXP => {
+                            Self::inspect_vector(*object)
+                        },
                         _ => Ok(vec![]),
                     }
                 }
@@ -818,6 +821,39 @@ impl EnvironmentVariable {
         }
 
         Ok(out)
+    }
+
+    fn inspect_vector(vector: SEXP) -> harp::error::Result<Vec<Self>> {
+        unsafe {
+            let vector = RObject::new(vector);
+            let n = XLENGTH(*vector);
+
+            let mut out: Vec<Self> = vec![];
+            let display_type = r_vec_type(*vector);
+            let r_type = r_typeof(*vector);
+            for i in 0..n {
+                out.push(Self {
+                    access_key: format!("{}", i),
+                    display_name: format!("[{}]", i + 1),
+                    display_value: vector_format_elt_unchecked(*vector, i)
+                        .unwrap_or(String::from("??")),
+                    display_type: display_type.clone(),
+                    type_info: display_type.clone(),
+                    kind: if r_type == STRSXP {
+                        ValueKind::String
+                    } else {
+                        ValueKind::Number
+                    },
+                    length: 1,
+                    size: 0,
+                    has_children: false,
+                    is_truncated: false,
+                    has_viewer: false,
+                });
+            }
+
+            Ok(out)
+        }
     }
 
     fn inspect_pairlist(value: SEXP) -> Result<Vec<Self>, harp::error::Error> {
