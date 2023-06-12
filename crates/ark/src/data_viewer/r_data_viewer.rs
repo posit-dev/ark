@@ -36,6 +36,7 @@ use libR_sys::XLENGTH;
 use serde::Deserialize;
 use serde::Serialize;
 use stdext::attempt;
+use stdext::local;
 use stdext::spawn;
 use stdext::try_local;
 use uuid::Uuid;
@@ -237,7 +238,7 @@ impl RDataViewer {
     }
 
     pub fn execution_thread(self) {
-        let execute = try_local! {() = {
+        let execute: Result<(), anyhow::Error> = local! {
             // This is a simplistic version where all the data is converted as once to
             // a message that is included in initial event of the comm.
             let data_set = DataSet::from_object(self.id.clone(), self.title.clone(), self.data)?;
@@ -248,7 +249,7 @@ impl RDataViewer {
             comm_manager_tx.send(event)?;
 
             Ok(())
-        }};
+        };
 
         if let Err(error) = execute {
             log::error!("Error while viewing object '{}': {}", self.title, error);
