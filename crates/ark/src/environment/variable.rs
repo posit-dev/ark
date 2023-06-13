@@ -32,8 +32,6 @@ use harp::vector::formatted_vector::FormattedVector;
 use harp::vector::names::Names;
 use harp::vector::CharacterVector;
 use harp::vector::Vector;
-use itertools::FoldWhile::Continue;
-use itertools::FoldWhile::Done;
 use itertools::Itertools;
 use libR_sys::*;
 use serde::Deserialize;
@@ -181,21 +179,25 @@ impl WorkspaceVariableDisplayValue {
                 return Self::new(value, false);
             }
 
-            // TODO: this should rather recurse and use children displays
             unsafe {
-                match RFunction::from("deparse").add(value).call() {
-                    Ok(deparsed) => {
-                        let collapsed = FormattedVector::new(*deparsed)
-                            .unwrap()
-                            .iter()
-                            .collapse(" ", 100);
-                        match collapsed {
-                            Continue(result) => Self::new(result, true),
-                            Done(result) => Self::new(result, false),
-                        }
-                    },
-                    Err(_) => Self::new(String::from("[...]"), true),
+                let n = Rf_xlength(value);
+                let mut display_value = String::from("");
+                let mut is_truncated = false;
+                for i in 0..n {
+                    if i > 0 {
+                        display_value.push_str(", ");
+                    }
+                    let display_i = Self::from(VECTOR_ELT(value, i));
+                    display_value.push_str("[");
+                    display_value.push_str(&display_i.display_value);
+                    display_value.push_str("]");
+
+                    if display_value.len() > 100 || display_i.is_truncated {
+                        is_truncated = true;
+                    }
                 }
+
+                Self::new(display_value, is_truncated)
             }
         } else if rtype == LISTSXP {
             Self::empty()
@@ -216,9 +218,24 @@ impl WorkspaceVariableDisplayValue {
         } else {
             let formatted = FormattedVector::new(value);
             match formatted {
-                Ok(formatted) => match formatted.iter().collapse(" ", 100) {
-                    Continue(result) => Self::new(result, true),
-                    Done(result) => Self::new(result, true),
+                Ok(formatted) => {
+                    let mut first = true;
+                    let mut display_value = String::from("");
+                    let mut is_truncated = false;
+                    for x in formatted.iter() {
+                        if first {
+                            first = false;
+                        } else {
+                            display_value.push_str(" ");
+                        }
+                        display_value.push_str(&x);
+                        if display_value.len() > 100 {
+                            is_truncated = true;
+                            break;
+                        }
+                    }
+
+                    Self::new(display_value, is_truncated)
                 },
                 Err(_) => Self::new(String::from("??"), true),
             }

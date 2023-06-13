@@ -1,13 +1,9 @@
-use itertools::FoldWhile;
 //
 // formatted_vector.rs
 //
 // Copyright (C) 2023 Posit Software, PBC. All rights reserved.
 //
 //
-use itertools::FoldWhile::Continue;
-use itertools::FoldWhile::Done;
-use itertools::Itertools;
 use libR_sys::*;
 
 use crate::error::Error;
@@ -147,24 +143,5 @@ impl<'a> Iterator for FormattedVectorIter<'a> {
 impl FormattedVector {
     pub fn iter(&self) -> FormattedVectorIter {
         FormattedVectorIter::new(self)
-    }
-}
-
-impl<'a> FormattedVectorIter<'a> {
-    pub fn collapse(&mut self, sep: &str, max: usize) -> FoldWhile<String> {
-        let mut first = true;
-        self.fold_while(String::from(""), |mut acc, x| {
-            if first {
-                first = false;
-                acc.push_str(&x);
-            } else {
-                acc.push_str(&format!("{}{}", sep, x));
-            }
-            if max > 0 && acc.len() > max {
-                Done(acc)
-            } else {
-                Continue(acc)
-            }
-        })
     }
 }
