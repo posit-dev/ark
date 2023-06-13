@@ -1,3 +1,4 @@
+use itertools::FoldWhile;
 //
 // formatted_vector.rs
 //
@@ -143,19 +144,16 @@ impl<'a> Iterator for FormattedVectorIter<'a> {
     }
 }
 
-pub struct Collapse {
-    pub result: String,
-    pub truncated: bool,
-}
-
 impl FormattedVector {
     pub fn iter(&self) -> FormattedVectorIter {
         FormattedVectorIter::new(self)
     }
+}
 
-    pub fn collapse(&self, sep: &str, max: usize) -> Collapse {
+impl<'a> FormattedVectorIter<'a> {
+    pub fn collapse(&mut self, sep: &str, max: usize) -> FoldWhile<String> {
         let mut first = true;
-        let shortened = self.iter().fold_while(String::from(""), |mut acc, x| {
+        self.fold_while(String::from(""), |mut acc, x| {
             if first {
                 first = false;
                 acc.push_str(&x);
@@ -167,17 +165,6 @@ impl FormattedVector {
             } else {
                 Continue(acc)
             }
-        });
-
-        match shortened {
-            Done(result) => Collapse {
-                result,
-                truncated: false,
-            },
-            Continue(result) => Collapse {
-                result,
-                truncated: true,
-            },
-        }
+        })
     }
 }

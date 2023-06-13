@@ -28,15 +28,17 @@ use harp::utils::r_is_simple_vector;
 use harp::utils::r_typeof;
 use harp::utils::r_vec_shape;
 use harp::utils::r_vec_type;
-use harp::vector::formatted_vector::Collapse;
 use harp::vector::formatted_vector::FormattedVector;
 use harp::vector::names::Names;
 use harp::vector::CharacterVector;
 use harp::vector::Vector;
+use itertools::FoldWhile::Continue;
+use itertools::FoldWhile::Done;
 use itertools::Itertools;
 use libR_sys::*;
 use serde::Deserialize;
 use serde::Serialize;
+use stdext::local;
 
 /// Represents the supported kinds of variable values.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Copy)]
@@ -181,15 +183,19 @@ impl WorkspaceVariableDisplayValue {
 
             // TODO: this should rather recurse and use children displays
             unsafe {
-                let deparsed = RFunction::from("deparse").add(value).call();
-                let formatted = match deparsed {
-                    Ok(s) => FormattedVector::new(*s).unwrap().collapse(" ", 100),
-                    Err(_) => Collapse {
-                        result: String::from("[...]"),
-                        truncated: true,
+                match RFunction::from("deparse").add(value).call() {
+                    Ok(deparsed) => {
+                        let collapsed = FormattedVector::new(*deparsed)
+                            .unwrap()
+                            .iter()
+                            .collapse(" ", 100);
+                        match collapsed {
+                            Continue(result) => Self::new(result, true),
+                            Done(result) => Self::new(result, false),
+                        }
                     },
-                };
-                return Self::new(formatted.result, formatted.truncated);
+                    Err(_) => Self::new(String::from("[...]"), true),
+                }
             }
         } else if rtype == LISTSXP {
             Self::empty()
@@ -208,8 +214,14 @@ impl WorkspaceVariableDisplayValue {
                 Self::new(out, false)
             }
         } else {
-            let formatted = FormattedVector::new(value).unwrap().collapse(" ", 100);
-            return Self::new(formatted.result, formatted.truncated);
+            let formatted = FormattedVector::new(value);
+            match formatted {
+                Ok(formatted) => match formatted.iter().collapse(" ", 100) {
+                    Continue(result) => Self::new(result, true),
+                    Done(result) => Self::new(result, true),
+                },
+                Err(_) => Self::new(String::from("??"), true),
+            }
         }
     }
 }
@@ -404,34 +416,30 @@ impl EnvironmentVariable {
     }
 
     fn from_promise(display_name: String, promise: SEXP) -> Self {
-        let deparsed = unsafe {
-            let code = PRCODE(promise);
-            // TODO: handle lazyLoadDBfetch
+        let display_value = local! {
+            unsafe {
+                let code = PRCODE(promise);
+                // TODO: handle lazyLoadDBfetch
 
-            RFunction::from(".ps.environment.describeCall")
-                .add(code)
-                .call()
-        };
+                let deparsed = RFunction::from(".ps.environment.describeCall")
+                    .add(code)
+                    .call()?;
 
-        let formatted = match deparsed {
-            Ok(strings) => FormattedVector::new(*strings).unwrap().collapse(" ", 100),
-            Err(_) => Collapse {
-                result: String::from("(unevaluated)"),
-                truncated: false,
-            },
+                String::try_from(deparsed)
+            }
         };
 
         Self {
             access_key: display_name.clone(),
             display_name,
-            display_value: formatted.result,
+            display_value: display_value.unwrap_or(String::from("(unevaluated)")),
             display_type: String::from("promise"),
             type_info: String::from("promise"),
             kind: ValueKind::Lazy,
             length: 0,
             size: 0,
             has_children: false,
-            is_truncated: formatted.truncated,
+            is_truncated: false,
             has_viewer: false,
         }
     }
