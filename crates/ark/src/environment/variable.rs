@@ -28,11 +28,10 @@ use harp::utils::r_is_simple_vector;
 use harp::utils::r_typeof;
 use harp::utils::r_vec_shape;
 use harp::utils::r_vec_type;
-use harp::vector::collapse;
+use harp::vector::formatted_vector::Collapse;
 use harp::vector::formatted_vector::FormattedVector;
 use harp::vector::names::Names;
 use harp::vector::CharacterVector;
-use harp::vector::Collapse;
 use harp::vector::Vector;
 use itertools::Itertools;
 use libR_sys::*;
@@ -160,10 +159,8 @@ impl WorkspaceVariableDisplayValue {
 
     pub fn from(value: SEXP) -> Self {
         let rtype = r_typeof(value);
-        if r_is_simple_vector(value) {
-            let formatted = collapse(value, " ", 100).unwrap();
-            return Self::new(formatted.result, formatted.truncated);
-        } else if rtype == VECSXP && !r_inherits(value, "POSIXlt") {
+
+        if rtype == VECSXP && !r_inherits(value, "POSIXlt") {
             if r_inherits(value, "data.frame") {
                 let dim = dim_data_frame(value);
                 let classes = r_classes(value)
@@ -182,10 +179,11 @@ impl WorkspaceVariableDisplayValue {
                 return Self::new(value, false);
             }
 
+            // TODO: this should rather recurse and use children displays
             unsafe {
                 let deparsed = RFunction::from("deparse").add(value).call();
                 let formatted = match deparsed {
-                    Ok(s) => collapse(*s, " ", 100).unwrap(),
+                    Ok(s) => FormattedVector::new(*s).unwrap().collapse(" ", 100),
                     Err(_) => Collapse {
                         result: String::from("[...]"),
                         truncated: true,
@@ -193,9 +191,7 @@ impl WorkspaceVariableDisplayValue {
                 };
                 return Self::new(formatted.result, formatted.truncated);
             }
-        }
-
-        if rtype == LISTSXP {
+        } else if rtype == LISTSXP {
             Self::empty()
         } else if rtype == SYMSXP && value == unsafe { R_MissingArg } {
             Self::new(String::from("<missing>"), false)
@@ -212,22 +208,8 @@ impl WorkspaceVariableDisplayValue {
                 Self::new(out, false)
             }
         } else {
-            unsafe {
-                // try to call format() on the object
-                let formatted = RFunction::new("base", "format").add(value).call();
-
-                match formatted {
-                    Ok(fmt) => {
-                        if r_typeof(*fmt) == STRSXP {
-                            let fmt = collapse(*fmt, " ", 100).unwrap();
-                            Self::new(fmt.result, fmt.truncated)
-                        } else {
-                            Self::new(String::from("???"), false)
-                        }
-                    },
-                    Err(_) => Self::new(String::from("???"), false),
-                }
-            }
+            let formatted = FormattedVector::new(value).unwrap().collapse(" ", 100);
+            return Self::new(formatted.result, formatted.truncated);
         }
     }
 }
@@ -304,8 +286,7 @@ impl WorkspaceVariableDisplayType {
                             .add(value)
                             .call()
                             .unwrap();
-                        let shape = collapse(*dim, ",", 0).unwrap().result;
-
+                        let shape = FormattedVector::new(*dim).unwrap().iter().join(", ");
                         format!("{} [{}]", dfclass, shape)
                     } else {
                         dfclass
@@ -433,7 +414,7 @@ impl EnvironmentVariable {
         };
 
         let formatted = match deparsed {
-            Ok(strings) => collapse(*strings, " ", 100).unwrap(),
+            Ok(strings) => FormattedVector::new(*strings).unwrap().collapse(" ", 100),
             Err(_) => Collapse {
                 result: String::from("(unevaluated)"),
                 truncated: false,
@@ -669,19 +650,13 @@ impl EnvironmentVariable {
 
         match node {
             EnvironmentVariableNode::Concrete { object } => {
-                if r_is_simple_vector(*object) {
-                    let formatted = collapse(*object, " ", 0).unwrap();
-                    Ok(formatted.result)
-                } else if r_is_data_frame(*object) {
+                if r_is_data_frame(*object) {
                     unsafe {
                         let formatted = RFunction::from(".ps.environment.clipboardFormatDataFrame")
                             .add(object)
                             .call()?;
 
-                        let formatted = CharacterVector::new_unchecked(formatted);
-
-                        let out = formatted.iter().map(|s| s.unwrap()).join("\n");
-                        Ok(out)
+                        Ok(FormattedVector::new(*formatted)?.iter().join("\n"))
                     }
                 } else if r_typeof(*object) == CLOSXP {
                     unsafe {
@@ -691,7 +666,7 @@ impl EnvironmentVariable {
                         Ok(deparsed.join("\n"))
                     }
                 } else {
-                    Ok(String::from(""))
+                    Ok(FormattedVector::new(*object)?.iter().join(" "))
                 }
             },
             EnvironmentVariableNode::Artificial { .. } => Ok(String::from("")),

@@ -5,15 +5,11 @@
 //
 //
 
-use itertools::FoldWhile::Continue;
-use itertools::FoldWhile::Done;
-use itertools::Itertools;
 use libR_sys::*;
 
 use crate::error::Result;
 use crate::utils::r_assert_capacity;
 use crate::utils::r_assert_type;
-use crate::vector::formatted_vector::FormattedVector;
 
 pub mod character_vector;
 pub use character_vector::CharacterVector;
@@ -101,39 +97,5 @@ pub trait Vector {
             Some(x) => self.format_one(x),
             None => String::from("NA"),
         }
-    }
-}
-
-pub struct Collapse {
-    pub result: String,
-    pub truncated: bool,
-}
-
-pub fn collapse(vector: SEXP, sep: &str, max: usize) -> Result<Collapse> {
-    let mut first = true;
-    let formatted = FormattedVector::new(vector)?;
-    let shortened = formatted.iter().fold_while(String::from(""), |mut acc, x| {
-        if first {
-            first = false;
-            acc.push_str(&x);
-        } else {
-            acc.push_str(&format!("{}{}", sep, x));
-        }
-        if max > 0 && acc.len() > max {
-            Done(acc)
-        } else {
-            Continue(acc)
-        }
-    });
-
-    match shortened {
-        Done(result) => Ok(Collapse {
-            result,
-            truncated: false,
-        }),
-        Continue(result) => Ok(Collapse {
-            result,
-            truncated: true,
-        }),
     }
 }

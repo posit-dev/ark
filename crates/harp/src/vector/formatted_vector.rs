@@ -4,9 +4,13 @@
 // Copyright (C) 2023 Posit Software, PBC. All rights reserved.
 //
 //
+use itertools::FoldWhile::Continue;
+use itertools::FoldWhile::Done;
+use itertools::Itertools;
 use libR_sys::*;
 
 use crate::error::Error;
+use crate::error::Result;
 use crate::exec::RFunction;
 use crate::exec::RFunctionExt;
 use crate::utils::r_assert_type;
@@ -36,7 +40,7 @@ pub enum FormattedVector {
 }
 
 impl FormattedVector {
-    pub fn new(vector: SEXP) -> Result<Self, Error> {
+    pub fn new(vector: SEXP) -> Result<Self> {
         unsafe {
             let class = Rf_getAttrib(vector, R_ClassSymbol);
             if r_is_null(class) {
@@ -139,8 +143,41 @@ impl<'a> Iterator for FormattedVectorIter<'a> {
     }
 }
 
+pub struct Collapse {
+    pub result: String,
+    pub truncated: bool,
+}
+
 impl FormattedVector {
     pub fn iter(&self) -> FormattedVectorIter {
         FormattedVectorIter::new(self)
+    }
+
+    pub fn collapse(&self, sep: &str, max: usize) -> Collapse {
+        let mut first = true;
+        let shortened = self.iter().fold_while(String::from(""), |mut acc, x| {
+            if first {
+                first = false;
+                acc.push_str(&x);
+            } else {
+                acc.push_str(&format!("{}{}", sep, x));
+            }
+            if max > 0 && acc.len() > max {
+                Done(acc)
+            } else {
+                Continue(acc)
+            }
+        });
+
+        match shortened {
+            Done(result) => Collapse {
+                result,
+                truncated: false,
+            },
+            Continue(result) => Collapse {
+                result,
+                truncated: true,
+            },
+        }
     }
 }
