@@ -147,15 +147,3 @@ pub fn collapse(vector: SEXP, sep: &str, max: usize, quote: &str) -> Result<Coll
         }
     })
 }
-
-pub fn format(vec: SEXP) -> Vec<String> {
-    with_vector!(vec, |v| {
-        let iter = v.iter();
-        iter.map(|value| match value {
-            Some(x) => v.format_one(x),
-            None => String::from("NA"),
-        })
-        .collect::<Vec<String>>()
-    })
-    .unwrap()
-}

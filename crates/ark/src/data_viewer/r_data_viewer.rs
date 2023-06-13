@@ -14,11 +14,10 @@ use harp::exec::RFunctionExt;
 use harp::object::RObject;
 use harp::r_lock;
 use harp::utils::r_assert_length;
-use harp::utils::r_assert_type;
 use harp::utils::r_is_data_frame;
 use harp::utils::r_is_matrix;
-use harp::utils::r_is_simple_vector;
 use harp::utils::r_typeof;
+use harp::vector::formatted_vector::FormattedVector;
 use harp::vector::CharacterVector;
 use harp::vector::Vector;
 use libR_sys::R_CallMethodDef;
@@ -165,17 +164,7 @@ impl DataSet {
             }
         } else {
             r_assert_length(object, row_count)?;
-
-            let data = {
-                if r_is_simple_vector(object) {
-                    harp::vector::format(object)
-                } else {
-                    let formatted = RFunction::from("format").add(object).call()?;
-                    r_assert_type(*formatted, &[STRSXP])?;
-                    r_assert_length(*formatted, row_count)?;
-                    harp::vector::format(*formatted)
-                }
-            };
+            let data = FormattedVector::new(object)?.iter().collect();
 
             columns.push(DataColumn {
                 name: prefix.unwrap(),
