@@ -31,7 +31,6 @@ use harp::utils::r_vec_type;
 use harp::vector::collapse;
 use harp::vector::formatted_vector::FormattedVector;
 use harp::vector::names::Names;
-use harp::vector::vector_format_elt_unchecked;
 use harp::vector::CharacterVector;
 use harp::vector::Collapse;
 use harp::vector::Vector;
@@ -708,7 +707,8 @@ impl EnvironmentVariable {
             },
             EnvironmentVariableNode::Artificial { .. } => Ok(String::from("")),
             EnvironmentVariableNode::VectorElement { object, index } => {
-                vector_format_elt_unchecked(*object, index)
+                let formatted = FormattedVector::new(*object)?;
+                Ok(formatted.get_unchecked(index))
             },
         }
     }

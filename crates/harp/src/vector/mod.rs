@@ -104,10 +104,6 @@ pub trait Vector {
     }
 }
 
-pub fn vector_format_elt_unchecked(vector: SEXP, index: isize) -> Result<String> {
-    with_vector!(vector, |v| { v.format_elt_unchecked(index) })
-}
-
 pub struct Collapse {
     pub result: String,
     pub truncated: bool,
