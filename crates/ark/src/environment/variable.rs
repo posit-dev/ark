@@ -240,7 +240,7 @@ pub struct WorkspaceVariableDisplayType {
 }
 
 impl WorkspaceVariableDisplayType {
-    pub fn from(value: SEXP) -> Self {
+    pub fn from(value: SEXP, with_shape: bool) -> Self {
         if r_is_null(value) {
             return Self::simple(String::from("NULL"));
         }
@@ -250,7 +250,11 @@ impl WorkspaceVariableDisplayType {
         }
 
         if r_is_simple_vector(value) {
-            let display_type = format!("{}{}", r_vec_type(value), r_vec_shape(value));
+            let display_type = if with_shape {
+                format!("{}{}", r_vec_type(value), r_vec_shape(value))
+            } else {
+                r_vec_type(value)
+            };
 
             let mut type_info = display_type.clone();
             if r_is_altrep(value) {
@@ -263,7 +267,12 @@ impl WorkspaceVariableDisplayType {
         let rtype = r_typeof(value);
         match rtype {
             EXPRSXP => {
-                Self::from_class(value, format!("expression [{}]", unsafe { XLENGTH(value) }))
+                let default = if with_shape {
+                    format!("expression [{}]", unsafe { XLENGTH(value) })
+                } else {
+                    String::from("expression")
+                };
+                Self::from_class(value, default)
             },
             LANGSXP => Self::from_class(value, String::from("language")),
             CLOSXP => Self::from_class(value, String::from("function")),
@@ -276,9 +285,15 @@ impl WorkspaceVariableDisplayType {
                 }
             },
 
-            LISTSXP => match pairlist_size(value) {
-                Ok(n) => Self::simple(format!("pairlist [{}]", n)),
-                Err(_) => Self::simple(String::from("pairlist [?]")),
+            LISTSXP => {
+                if with_shape {
+                    match pairlist_size(value) {
+                        Ok(n) => Self::simple(format!("pairlist [{}]", n)),
+                        Err(_) => Self::simple(String::from("pairlist [?]")),
+                    }
+                } else {
+                    Self::simple(String::from("pairlist"))
+                }
             },
 
             VECSXP => unsafe {
@@ -286,15 +301,25 @@ impl WorkspaceVariableDisplayType {
                     let classes = r_classes(value).unwrap();
                     let dfclass = classes.get_unchecked(0).unwrap();
 
-                    let dim = RFunction::new("base", "dim.data.frame")
-                        .add(value)
-                        .call()
-                        .unwrap();
-                    let shape = collapse(*dim, ",", 0, "").unwrap().result;
+                    let display_type = if with_shape {
+                        let dim = RFunction::new("base", "dim.data.frame")
+                            .add(value)
+                            .call()
+                            .unwrap();
+                        let shape = collapse(*dim, ",", 0, "").unwrap().result;
 
-                    Self::simple(format!("{} [{}]", dfclass, shape))
+                        format!("{} [{}]", dfclass, shape)
+                    } else {
+                        dfclass
+                    };
+                    Self::simple(display_type)
                 } else {
-                    Self::from_class(value, format!("list [{}]", XLENGTH(value)))
+                    let default = if with_shape {
+                        format!("list [{}]", XLENGTH(value))
+                    } else {
+                        String::from("list")
+                    };
+                    Self::from_class(value, default)
                 }
             },
             _ => Self::from_class(value, String::from("???")),
@@ -380,7 +405,7 @@ impl EnvironmentVariable {
         let WorkspaceVariableDisplayType {
             display_type,
             type_info,
-        } = WorkspaceVariableDisplayType::from(x);
+        } = WorkspaceVariableDisplayType::from(x, true);
 
         let kind = Self::variable_kind(x);
 
@@ -823,7 +848,6 @@ impl EnvironmentVariable {
             let n = XLENGTH(*vector);
 
             let mut out: Vec<Self> = vec![];
-            let display_type = r_vec_type(*vector);
             let r_type = r_typeof(*vector);
             let formatted = FormattedVector::new(*vector)?;
             let names = Names::new(*vector, |i| format!("[{}]", i + 1));
@@ -836,6 +860,10 @@ impl EnvironmentVariable {
             } else {
                 ValueKind::Number
             };
+            let WorkspaceVariableDisplayType {
+                display_type,
+                type_info,
+            } = WorkspaceVariableDisplayType::from(*vector, false);
 
             for i in 0..n {
                 out.push(Self {
@@ -843,7 +871,7 @@ impl EnvironmentVariable {
                     display_name: names.get_unchecked(i),
                     display_value: formatted.get_unchecked(i),
                     display_type: display_type.clone(),
-                    type_info: display_type.clone(),
+                    type_info: type_info.clone(),
                     kind,
                     length: 1,
                     size: 0,
