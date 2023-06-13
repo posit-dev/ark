@@ -92,4 +92,55 @@ impl FormattedVector {
             FormattedVector::FormattedVector { vector } => vector.format_elt_unchecked(index),
         }
     }
+
+    pub fn len(&self) -> isize {
+        unsafe {
+            match self {
+                FormattedVector::Raw { vector } => vector.len() as isize,
+                FormattedVector::Logical { vector } => vector.len() as isize,
+                FormattedVector::Integer { vector } => vector.len() as isize,
+                FormattedVector::Numeric { vector } => vector.len() as isize,
+                FormattedVector::Character { vector } => vector.len() as isize,
+                FormattedVector::Complex { vector } => vector.len() as isize,
+                FormattedVector::Factor { vector } => vector.len() as isize,
+                FormattedVector::FormattedVector { vector } => vector.len() as isize,
+            }
+        }
+    }
+}
+
+pub struct FormattedVectorIter<'a> {
+    formatted: &'a FormattedVector,
+    index: isize,
+    size: isize,
+}
+
+impl<'a> FormattedVectorIter<'a> {
+    pub fn new(formatted: &'a FormattedVector) -> Self {
+        Self {
+            formatted,
+            index: 0,
+            size: formatted.len(),
+        }
+    }
+}
+
+impl<'a> Iterator for FormattedVectorIter<'a> {
+    type Item = String;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index == self.size {
+            None
+        } else {
+            let out = Some(self.formatted.get_unchecked(self.index));
+            self.index = self.index + 1;
+            out
+        }
+    }
+}
+
+impl FormattedVector {
+    pub fn iter(&self) -> FormattedVectorIter {
+        FormattedVectorIter::new(self)
+    }
 }
