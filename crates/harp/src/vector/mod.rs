@@ -37,6 +37,7 @@ pub mod raw_vector;
 pub use raw_vector::RawVector;
 
 pub mod formatted_vector;
+pub mod names;
 
 pub trait Vector {
     type Type;

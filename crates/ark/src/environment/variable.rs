@@ -30,6 +30,7 @@ use harp::utils::r_vec_shape;
 use harp::utils::r_vec_type;
 use harp::vector::collapse;
 use harp::vector::formatted_vector::FormattedVector;
+use harp::vector::names::Names;
 use harp::vector::vector_format_elt_unchecked;
 use harp::vector::CharacterVector;
 use harp::vector::Collapse;
@@ -40,7 +41,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 /// Represents the supported kinds of variable values.
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Copy)]
 #[serde(rename_all = "snake_case")]
 pub enum ValueKind {
     /// A length-1 logical vector
@@ -833,19 +834,25 @@ impl EnvironmentVariable {
             let display_type = r_vec_type(*vector);
             let r_type = r_typeof(*vector);
             let formatted = FormattedVector::new(*vector)?;
+            let names = Names::new(*vector, |i| format!("[{}]", i + 1));
+            let kind = if r_type == STRSXP {
+                ValueKind::String
+            } else if r_type == RAWSXP {
+                ValueKind::Bytes
+            } else if r_type == LGLSXP {
+                ValueKind::Boolean
+            } else {
+                ValueKind::Number
+            };
 
             for i in 0..n {
                 out.push(Self {
                     access_key: format!("{}", i),
-                    display_name: format!("[{}]", i + 1),
+                    display_name: names.get_unchecked(i),
                     display_value: formatted.get_unchecked(i),
                     display_type: display_type.clone(),
                     type_info: display_type.clone(),
-                    kind: if r_type == STRSXP {
-                        ValueKind::String
-                    } else {
-                        ValueKind::Number
-                    },
+                    kind,
                     length: 1,
                     size: 0,
                     has_children: false,
