@@ -161,8 +161,7 @@ impl WorkspaceVariableDisplayValue {
     pub fn from(value: SEXP) -> Self {
         let rtype = r_typeof(value);
         if r_is_simple_vector(value) {
-            let formatted =
-                collapse(value, " ", 100, if rtype == STRSXP { "\"" } else { "" }).unwrap();
+            let formatted = collapse(value, " ", 100).unwrap();
             return Self::new(formatted.result, formatted.truncated);
         } else if rtype == VECSXP && !r_inherits(value, "POSIXlt") {
             if r_inherits(value, "data.frame") {
@@ -186,7 +185,7 @@ impl WorkspaceVariableDisplayValue {
             unsafe {
                 let deparsed = RFunction::from("deparse").add(value).call();
                 let formatted = match deparsed {
-                    Ok(s) => collapse(*s, " ", 100, "").unwrap(),
+                    Ok(s) => collapse(*s, " ", 100).unwrap(),
                     Err(_) => Collapse {
                         result: String::from("[...]"),
                         truncated: true,
@@ -220,7 +219,7 @@ impl WorkspaceVariableDisplayValue {
                 match formatted {
                     Ok(fmt) => {
                         if r_typeof(*fmt) == STRSXP {
-                            let fmt = collapse(*fmt, " ", 100, "").unwrap();
+                            let fmt = collapse(*fmt, " ", 100).unwrap();
                             Self::new(fmt.result, fmt.truncated)
                         } else {
                             Self::new(String::from("???"), false)
@@ -305,7 +304,7 @@ impl WorkspaceVariableDisplayType {
                             .add(value)
                             .call()
                             .unwrap();
-                        let shape = collapse(*dim, ",", 0, "").unwrap().result;
+                        let shape = collapse(*dim, ",", 0).unwrap().result;
 
                         format!("{} [{}]", dfclass, shape)
                     } else {
@@ -434,7 +433,7 @@ impl EnvironmentVariable {
         };
 
         let formatted = match deparsed {
-            Ok(strings) => collapse(*strings, " ", 100, "").unwrap(),
+            Ok(strings) => collapse(*strings, " ", 100).unwrap(),
             Err(_) => Collapse {
                 result: String::from("(unevaluated)"),
                 truncated: false,
@@ -671,17 +670,7 @@ impl EnvironmentVariable {
         match node {
             EnvironmentVariableNode::Concrete { object } => {
                 if r_is_simple_vector(*object) {
-                    let formatted = collapse(
-                        *object,
-                        " ",
-                        0,
-                        if r_typeof(*object) == STRSXP {
-                            "\""
-                        } else {
-                            ""
-                        },
-                    )
-                    .unwrap();
+                    let formatted = collapse(*object, " ", 0).unwrap();
                     Ok(formatted.result)
                 } else if r_is_data_frame(*object) {
                     unsafe {

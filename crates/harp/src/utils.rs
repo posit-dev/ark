@@ -212,7 +212,7 @@ pub fn r_vec_shape(value: SEXP) -> String {
                 format!(" [{}]", Rf_xlength(value))
             }
         } else {
-            format!(" [{}]", collapse(*dim, ",", 0, "").unwrap().result)
+            format!(" [{}]", collapse(*dim, ",", 0).unwrap().result)
         }
     }
 }

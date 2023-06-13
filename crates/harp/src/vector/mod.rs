@@ -109,23 +109,16 @@ pub struct Collapse {
     pub truncated: bool,
 }
 
-pub fn collapse(vector: SEXP, sep: &str, max: usize, quote: &str) -> Result<Collapse> {
+pub fn collapse(vector: SEXP, sep: &str, max: usize) -> Result<Collapse> {
     let mut first = true;
     let formatted = FormattedVector::new(vector)?;
     let shortened = formatted.iter().fold_while(String::from(""), |mut acc, x| {
-        let added = format!(
-            "{}{}{}{}",
-            if first {
-                first = false;
-                ""
-            } else {
-                sep
-            },
-            quote,
-            x,
-            quote
-        );
-        acc.push_str(&added);
+        if first {
+            first = false;
+            acc.push_str(&x);
+        } else {
+            acc.push_str(&format!("{}{}", sep, x));
+        }
         if max > 0 && acc.len() > max {
             Done(acc)
         } else {
