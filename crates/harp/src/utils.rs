@@ -207,14 +207,10 @@ pub fn r_vec_shape(value: SEXP) -> String {
         let dim = RObject::new(Rf_getAttrib(value, R_DimSymbol));
 
         if r_is_null(*dim) {
-            if XLENGTH(value) == 1 {
-                String::from("")
-            } else {
-                format!(" [{}]", Rf_xlength(value))
-            }
+            format!("{}", Rf_xlength(value))
         } else {
             let dim = IntegerVector::new_unchecked(*dim);
-            format!(" [{}]", dim.iter().map(|d| d.unwrap()).join(", "))
+            dim.iter().map(|d| d.unwrap()).join(", ")
         }
     }
 }

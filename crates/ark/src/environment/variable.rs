@@ -249,7 +249,7 @@ pub struct WorkspaceVariableDisplayType {
 }
 
 impl WorkspaceVariableDisplayType {
-    pub fn from(value: SEXP, with_shape: bool) -> Self {
+    pub fn from(value: SEXP) -> Self {
         if r_is_null(value) {
             return Self::simple(String::from("NULL"));
         }
@@ -259,11 +259,7 @@ impl WorkspaceVariableDisplayType {
         }
 
         if r_is_simple_vector(value) {
-            let display_type = if with_shape {
-                format!("{}{}", r_vec_type(value), r_vec_shape(value))
-            } else {
-                r_vec_type(value)
-            };
+            let display_type = format!("{} [{}]", r_vec_type(value), r_vec_shape(value));
 
             let mut type_info = display_type.clone();
             if r_is_altrep(value) {
@@ -276,11 +272,7 @@ impl WorkspaceVariableDisplayType {
         let rtype = r_typeof(value);
         match rtype {
             EXPRSXP => {
-                let default = if with_shape {
-                    format!("expression [{}]", unsafe { XLENGTH(value) })
-                } else {
-                    String::from("expression")
-                };
+                let default = format!("expression [{}]", unsafe { XLENGTH(value) });
                 Self::from_class(value, default)
             },
             LANGSXP => Self::from_class(value, String::from("language")),
@@ -294,15 +286,9 @@ impl WorkspaceVariableDisplayType {
                 }
             },
 
-            LISTSXP => {
-                if with_shape {
-                    match pairlist_size(value) {
-                        Ok(n) => Self::simple(format!("pairlist [{}]", n)),
-                        Err(_) => Self::simple(String::from("pairlist [?]")),
-                    }
-                } else {
-                    Self::simple(String::from("pairlist"))
-                }
+            LISTSXP => match pairlist_size(value) {
+                Ok(n) => Self::simple(format!("pairlist [{}]", n)),
+                Err(_) => Self::simple(String::from("pairlist [?]")),
             },
 
             VECSXP => unsafe {
@@ -310,23 +296,15 @@ impl WorkspaceVariableDisplayType {
                     let classes = r_classes(value).unwrap();
                     let dfclass = classes.get_unchecked(0).unwrap();
 
-                    let display_type = if with_shape {
-                        let dim = RFunction::new("base", "dim.data.frame")
-                            .add(value)
-                            .call()
-                            .unwrap();
-                        let shape = FormattedVector::new(*dim).unwrap().iter().join(", ");
-                        format!("{} [{}]", dfclass, shape)
-                    } else {
-                        dfclass
-                    };
+                    let dim = RFunction::new("base", "dim.data.frame")
+                        .add(value)
+                        .call()
+                        .unwrap();
+                    let shape = FormattedVector::new(*dim).unwrap().iter().join(", ");
+                    let display_type = format!("{} [{}]", dfclass, shape);
                     Self::simple(display_type)
                 } else {
-                    let default = if with_shape {
-                        format!("list [{}]", XLENGTH(value))
-                    } else {
-                        String::from("list")
-                    };
+                    let default = format!("list [{}]", XLENGTH(value));
                     Self::from_class(value, default)
                 }
             },
@@ -413,7 +391,7 @@ impl EnvironmentVariable {
         let WorkspaceVariableDisplayType {
             display_type,
             type_info,
-        } = WorkspaceVariableDisplayType::from(x, true);
+        } = WorkspaceVariableDisplayType::from(x);
 
         let kind = Self::variable_kind(x);
 
@@ -849,18 +827,14 @@ impl EnvironmentVariable {
             } else {
                 ValueKind::Number
             };
-            let WorkspaceVariableDisplayType {
-                display_type,
-                type_info,
-            } = WorkspaceVariableDisplayType::from(*vector, false);
 
             for i in 0..n {
                 out.push(Self {
                     access_key: format!("{}", i),
                     display_name: names.get_unchecked(i),
                     display_value: formatted.get_unchecked(i),
-                    display_type: display_type.clone(),
-                    type_info: type_info.clone(),
+                    display_type: String::from(""),
+                    type_info: String::from(""),
                     kind,
                     length: 1,
                     size: 0,
