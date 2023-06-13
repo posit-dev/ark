@@ -22,6 +22,9 @@ pub enum Request {
     /// Establish a channel to the front end to send input requests
     EstablishInputChannel(Sender<ShellInputRequest>),
 
+    /// Establish a channel to the front end to send events
+    EstablishEventChannel(Sender<PositronEvent>),
+
     /// Deliver an event to the front end
     DeliverEvent(PositronEvent),
 

@@ -9,7 +9,7 @@ use serde_json::Value;
 use strum_macros::EnumString;
 
 #[derive(EnumString, PartialEq)]
-#[strum(serialize_all = "snake_case")]
+#[strum(serialize_all = "camelCase")]
 pub enum Comm {
     /// The Environment pane.
     Environment,
@@ -22,6 +22,9 @@ pub enum Comm {
 
     /// A data viewer.
     DataViewer,
+
+    /// The Positron front end.
+    FrontEnd,
 
     /// Some other comm with a custom name.
     Other(String),

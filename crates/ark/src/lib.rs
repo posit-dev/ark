@@ -8,6 +8,7 @@
 pub mod control;
 pub mod data_viewer;
 pub mod environment;
+pub mod frontend;
 pub mod interface;
 pub mod kernel;
 pub mod logger;
