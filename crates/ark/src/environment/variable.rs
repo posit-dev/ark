@@ -806,20 +806,12 @@ impl EnvironmentVariable {
         let mut out: Vec<Self> = vec![];
         let n = unsafe { XLENGTH(value) };
 
-        let names = unsafe {
-            CharacterVector::new_unchecked(
-                RFunction::from(".ps.environment.listDisplayNames")
-                    .add(value)
-                    .call()?,
-            )
-        };
+        let names = Names::new(value, |i| format!("[[{}]]", i + 1));
 
         for i in 0..n {
-            out.push(Self::from(
-                i.to_string(),
-                names.get_unchecked(i).unwrap(),
-                unsafe { VECTOR_ELT(value, i) },
-            ));
+            out.push(Self::from(i.to_string(), names.get_unchecked(i), unsafe {
+                VECTOR_ELT(value, i)
+            }));
         }
 
         Ok(out)
