@@ -15,11 +15,11 @@ use crate::wire::jupyter_message::Status;
 /// Represents an exception that occurred while executing code
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ExecuteReplyException {
-    /// The execution counter
-    pub execution_count: u32,
-
     /// The status; always Error
     pub status: Status,
+
+    /// The execution counter
+    pub execution_count: u32,
 
     /// The exception that occurred during execution
     #[serde(flatten)]

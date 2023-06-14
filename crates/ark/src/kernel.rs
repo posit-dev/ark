@@ -43,7 +43,8 @@ use crate::request::Request;
 
 /// Represents whether an error occurred during R code execution.
 pub static R_ERROR_OCCURRED: AtomicBool = AtomicBool::new(false);
-pub static R_ERROR_MESSAGE: AtomicCell<String> = AtomicCell::new(String::new());
+pub static R_ERROR_EVALUE: AtomicCell<String> = AtomicCell::new(String::new());
+pub static R_ERROR_TRACEBACK: AtomicCell<Vec<String>> = AtomicCell::new(Vec::new());
 
 /// Represents the Rust state of the R kernel
 pub struct Kernel {
@@ -212,15 +213,6 @@ impl Kernel {
         // Save and reset error occurred flag
         let error_occurred = R_ERROR_OCCURRED.swap(false, std::sync::atomic::Ordering::AcqRel);
 
-        // TODO: Include a traceback if an error occurs.
-        if error_occurred {
-            let mut message = R_ERROR_MESSAGE.take();
-            if message.is_empty() {
-                message.push_str("[no message available]");
-            }
-            log::info!("An R error occurred: {}", message);
-        }
-
         // TODO: Implement rich printing of certain outputs.
         // Will we need something similar to the RStudio model,
         // where we implement custom print() methods? Or can
@@ -258,13 +250,38 @@ impl Kernel {
 
         // Send the reply to the front end
         if let Some(sender) = &self.execute_response_tx {
-            sender
-                .send(ExecuteResponse::Reply(ExecuteReply {
-                    status: Status::Ok,
-                    execution_count: self.execution_count,
-                    user_expressions: json!({}),
-                }))
-                .unwrap();
+            if error_occurred {
+                // We don't fill out `ename` with anything meaningful because typically
+                // R errors don't have names. We could consider using the condition class
+                // here, which r-lib/tidyverse packages have been using more heavily.
+                let ename = String::from("");
+                let evalue = R_ERROR_EVALUE.take();
+                let traceback = R_ERROR_TRACEBACK.take();
+
+                log::info!("An R error occurred: {}", evalue);
+
+                let exception = Exception {
+                    ename,
+                    evalue,
+                    traceback,
+                };
+
+                sender
+                    .send(ExecuteResponse::ReplyException(ExecuteReplyException {
+                        status: Status::Error,
+                        execution_count: self.execution_count,
+                        exception,
+                    }))
+                    .unwrap()
+            } else {
+                sender
+                    .send(ExecuteResponse::Reply(ExecuteReply {
+                        status: Status::Ok,
+                        execution_count: self.execution_count,
+                        user_expressions: json!({}),
+                    }))
+                    .unwrap();
+            }
         }
     }
 
