@@ -33,6 +33,7 @@ use harp::utils::r_vec_type;
 use harp::vector::formatted_vector::FormattedVector;
 use harp::vector::names::Names;
 use harp::vector::CharacterVector;
+use harp::vector::IntegerVector;
 use harp::vector::Vector;
 use itertools::Itertools;
 use libR_sys::*;
@@ -376,6 +377,7 @@ fn has_children(value: SEXP) -> bool {
 enum EnvironmentVariableNode {
     Concrete { object: RObject },
     Artificial { object: RObject, name: String },
+    Matrixcolumn { object: RObject, index: isize },
     VectorElement { object: RObject, index: isize },
 }
 
@@ -659,13 +661,21 @@ impl EnvironmentVariable {
                             }
                         },
                         LGLSXP | RAWSXP | STRSXP | INTSXP | REALSXP | CPLXSXP => {
-                            Self::inspect_vector(*object)
+                            if r_is_matrix(*object) {
+                                Self::inspect_matrix(*object)
+                            } else {
+                                Self::inspect_vector(*object)
+                            }
                         },
                         _ => Ok(vec![]),
                     }
                 }
             },
 
+            EnvironmentVariableNode::Matrixcolumn { .. } => {
+                // TODO: Self::inspect_matrix_columm(*object, index)
+                Ok(vec![])
+            },
             EnvironmentVariableNode::VectorElement { .. } => Ok(vec![]),
         }
     }
@@ -702,6 +712,17 @@ impl EnvironmentVariable {
             EnvironmentVariableNode::VectorElement { object, index } => {
                 let formatted = FormattedVector::new(*object)?;
                 Ok(formatted.get_unchecked(index))
+            },
+            EnvironmentVariableNode::Matrixcolumn { object, index } => unsafe {
+                let dim = IntegerVector::new(Rf_getAttrib(*object, R_DimSymbol))?;
+                let n_row = dim.get_unchecked(0).unwrap() as usize;
+
+                let clipped = FormattedVector::new(*object)?
+                    .iter()
+                    .skip(index as usize * n_row)
+                    .take(n_row)
+                    .join(" ");
+                Ok(clipped)
             },
         }
     }
@@ -779,9 +800,16 @@ impl EnvironmentVariable {
                             },
 
                             LGLSXP | RAWSXP | STRSXP | INTSXP | REALSXP | CPLXSXP => {
-                                EnvironmentVariableNode::VectorElement {
-                                    object,
-                                    index: path_element.parse::<isize>().unwrap(),
+                                if r_is_matrix(*object) {
+                                    EnvironmentVariableNode::Matrixcolumn {
+                                        object,
+                                        index: path_element.parse::<isize>().unwrap(),
+                                    }
+                                } else {
+                                    EnvironmentVariableNode::VectorElement {
+                                        object,
+                                        index: path_element.parse::<isize>().unwrap(),
+                                    }
                                 }
                             },
 
@@ -814,6 +842,20 @@ impl EnvironmentVariable {
                 EnvironmentVariableNode::VectorElement { .. } => {
                     return Err(harp::error::Error::InspectError { path: path.clone() });
                 },
+
+                EnvironmentVariableNode::Matrixcolumn { object, index } => unsafe {
+                    let dim = IntegerVector::new(Rf_getAttrib(*object, R_DimSymbol))?;
+                    let n_row = dim.get_unchecked(0).unwrap() as isize;
+
+                    // TODO: use ? here, but this does not return a crate::error::Error, so
+                    //       maybe use anyhow here instead ?
+                    let row_index = path_element.parse::<isize>().unwrap();
+
+                    EnvironmentVariableNode::VectorElement {
+                        object,
+                        index: n_row * index + row_index,
+                    }
+                },
             }
         }
 
@@ -833,6 +875,37 @@ impl EnvironmentVariable {
         }
 
         Ok(out)
+    }
+
+    fn inspect_matrix(matrix: SEXP) -> harp::error::Result<Vec<Self>> {
+        unsafe {
+            let matrix = RObject::new(matrix);
+            let dim = IntegerVector::new(Rf_getAttrib(*matrix, R_DimSymbol))?;
+
+            let n_col = dim.get_unchecked(1).unwrap();
+
+            let mut out: Vec<Self> = vec![];
+            let formatted = FormattedVector::new(*matrix)?;
+
+            for i in 0..n_col {
+                let display_value = format!("[{}]", formatted.column_iter(i as isize).join(", "));
+                out.push(Self {
+                    access_key: format!("{}", i),
+                    display_name: format!("[, {}]", i + 1),
+                    display_value,
+                    display_type: String::from(""),
+                    type_info: String::from(""),
+                    kind: ValueKind::Collection,
+                    length: 1,
+                    size: 0,
+                    has_children: true,
+                    is_truncated: false,
+                    has_viewer: false,
+                });
+            }
+
+            Ok(out)
+        }
     }
 
     fn inspect_vector(vector: SEXP) -> harp::error::Result<Vec<Self>> {
