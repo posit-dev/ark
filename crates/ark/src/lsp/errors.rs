@@ -18,16 +18,16 @@ use crate::kernel::R_ERROR_TRACEBACK;
 
 #[harp::register]
 unsafe extern "C" fn ps_record_error(evalue: SEXP, traceback: SEXP) -> SEXP {
-    // Convert to `RObject` for access to `try_from()` methods.
+    // Convert to `RObject` for access to `try_from()` / `try_into()` methods.
     let evalue = RObject::new(evalue);
     let traceback = RObject::new(traceback);
 
-    let evalue = unwrap!(String::try_from(evalue), Err(error) => {
+    let evalue: String = unwrap!(evalue.try_into(), Err(error) => {
         warn!("Can't convert `evalue` to a Rust string: {}.", error);
         "".to_string()
     });
 
-    let traceback = unwrap!(Vec::<String>::try_from(traceback), Err(error) => {
+    let traceback: Vec<String> = unwrap!(traceback.try_into(), Err(error) => {
         warn!("Can't convert `traceback` to a Rust string vector: {}.", error);
         Vec::<String>::new()
     });
