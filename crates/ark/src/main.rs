@@ -22,6 +22,7 @@ use ark::shell::Shell;
 use ark::version::detect_r;
 use bus::Bus;
 use crossbeam::channel::bounded;
+use crossbeam::channel::unbounded;
 use log::*;
 use nix::sys::signal::*;
 use notify::Watcher;
@@ -262,10 +263,14 @@ fn main() {
 
     if let Some(file) = delay_file {
         let path = std::path::Path::new(&file);
-        let (tx, rx) = bounded(1);
+        let (tx, rx) = unbounded();
 
         if let Err(err) = (|| -> anyhow::Result<()> {
-            let mut watcher = notify::RecommendedWatcher::new(tx, Default::default()).unwrap();
+            let config = notify::Config::default()
+                .with_poll_interval(std::time::Duration::from_millis(2))
+                .with_compare_contents(false);
+
+            let mut watcher = notify::RecommendedWatcher::new(tx, config).unwrap();
             watcher.watch(path, notify::RecursiveMode::NonRecursive)?;
 
             let _ = rx.recv()?;
