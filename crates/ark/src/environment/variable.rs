@@ -28,17 +28,18 @@ use harp::utils::r_is_simple_vector;
 use harp::utils::r_typeof;
 use harp::utils::r_vec_shape;
 use harp::utils::r_vec_type;
-use harp::vector::collapse;
+use harp::vector::formatted_vector::FormattedVector;
+use harp::vector::names::Names;
 use harp::vector::CharacterVector;
-use harp::vector::Collapse;
 use harp::vector::Vector;
 use itertools::Itertools;
 use libR_sys::*;
 use serde::Deserialize;
 use serde::Serialize;
+use stdext::local;
 
 /// Represents the supported kinds of variable values.
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Copy)]
 #[serde(rename_all = "snake_case")]
 pub enum ValueKind {
     /// A length-1 logical vector
@@ -158,11 +159,8 @@ impl WorkspaceVariableDisplayValue {
 
     pub fn from(value: SEXP) -> Self {
         let rtype = r_typeof(value);
-        if r_is_simple_vector(value) {
-            let formatted =
-                collapse(value, " ", 100, if rtype == STRSXP { "\"" } else { "" }).unwrap();
-            return Self::new(formatted.result, formatted.truncated);
-        } else if rtype == VECSXP && !r_inherits(value, "POSIXlt") {
+
+        if rtype == VECSXP && !r_inherits(value, "POSIXlt") {
             if r_inherits(value, "data.frame") {
                 let dim = dim_data_frame(value);
                 let classes = r_classes(value)
@@ -182,19 +180,26 @@ impl WorkspaceVariableDisplayValue {
             }
 
             unsafe {
-                let deparsed = RFunction::from("deparse").add(value).call();
-                let formatted = match deparsed {
-                    Ok(s) => collapse(*s, " ", 100, "").unwrap(),
-                    Err(_) => Collapse {
-                        result: String::from("[...]"),
-                        truncated: true,
-                    },
-                };
-                return Self::new(formatted.result, formatted.truncated);
-            }
-        }
+                let n = Rf_xlength(value);
+                let mut display_value = String::from("");
+                let mut is_truncated = false;
+                for i in 0..n {
+                    if i > 0 {
+                        display_value.push_str(", ");
+                    }
+                    let display_i = Self::from(VECTOR_ELT(value, i));
+                    display_value.push_str("[");
+                    display_value.push_str(&display_i.display_value);
+                    display_value.push_str("]");
 
-        if rtype == LISTSXP {
+                    if display_value.len() > 100 || display_i.is_truncated {
+                        is_truncated = true;
+                    }
+                }
+
+                Self::new(display_value, is_truncated)
+            }
+        } else if rtype == LISTSXP {
             Self::empty()
         } else if rtype == SYMSXP && value == unsafe { R_MissingArg } {
             Self::new(String::from("<missing>"), false)
@@ -211,21 +216,28 @@ impl WorkspaceVariableDisplayValue {
                 Self::new(out, false)
             }
         } else {
-            unsafe {
-                // try to call format() on the object
-                let formatted = RFunction::new("base", "format").add(value).call();
-
-                match formatted {
-                    Ok(fmt) => {
-                        if r_typeof(*fmt) == STRSXP {
-                            let fmt = collapse(*fmt, " ", 100, "").unwrap();
-                            Self::new(fmt.result, fmt.truncated)
+            let formatted = FormattedVector::new(value);
+            match formatted {
+                Ok(formatted) => {
+                    let mut first = true;
+                    let mut display_value = String::from("");
+                    let mut is_truncated = false;
+                    for x in formatted.iter() {
+                        if first {
+                            first = false;
                         } else {
-                            Self::new(String::from("???"), false)
+                            display_value.push_str(" ");
                         }
-                    },
-                    Err(_) => Self::new(String::from("???"), false),
-                }
+                        display_value.push_str(&x);
+                        if display_value.len() > 100 {
+                            is_truncated = true;
+                            break;
+                        }
+                    }
+
+                    Self::new(display_value, is_truncated)
+                },
+                Err(_) => Self::new(String::from("??"), true),
             }
         }
     }
@@ -247,7 +259,7 @@ impl WorkspaceVariableDisplayType {
         }
 
         if r_is_simple_vector(value) {
-            let display_type = format!("{}{}", r_vec_type(value), r_vec_shape(value));
+            let display_type = format!("{} [{}]", r_vec_type(value), r_vec_shape(value));
 
             let mut type_info = display_type.clone();
             if r_is_altrep(value) {
@@ -260,7 +272,8 @@ impl WorkspaceVariableDisplayType {
         let rtype = r_typeof(value);
         match rtype {
             EXPRSXP => {
-                Self::from_class(value, format!("expression [{}]", unsafe { XLENGTH(value) }))
+                let default = format!("expression [{}]", unsafe { XLENGTH(value) });
+                Self::from_class(value, default)
             },
             LANGSXP => Self::from_class(value, String::from("language")),
             CLOSXP => Self::from_class(value, String::from("function")),
@@ -287,11 +300,12 @@ impl WorkspaceVariableDisplayType {
                         .add(value)
                         .call()
                         .unwrap();
-                    let shape = collapse(*dim, ",", 0, "").unwrap().result;
-
-                    Self::simple(format!("{} [{}]", dfclass, shape))
+                    let shape = FormattedVector::new(*dim).unwrap().iter().join(", ");
+                    let display_type = format!("{} [{}]", dfclass, shape);
+                    Self::simple(display_type)
                 } else {
-                    Self::from_class(value, format!("list [{}]", XLENGTH(value)))
+                    let default = format!("list [{}]", XLENGTH(value));
+                    Self::from_class(value, default)
                 }
             },
             _ => Self::from_class(value, String::from("???")),
@@ -338,6 +352,7 @@ fn has_children(value: SEXP) -> bool {
             VECSXP | EXPRSXP => unsafe { XLENGTH(value) != 0 },
             LISTSXP => true,
             ENVSXP => !Environment::new(RObject::view(value)).is_empty(),
+            LGLSXP | RAWSXP | STRSXP | INTSXP | REALSXP | CPLXSXP => unsafe { XLENGTH(value) != 0 },
             _ => false,
         }
     }
@@ -346,6 +361,7 @@ fn has_children(value: SEXP) -> bool {
 enum EnvironmentVariableNode {
     Concrete { object: RObject },
     Artificial { object: RObject, name: String },
+    VectorElement { object: RObject, index: isize },
 }
 
 impl EnvironmentVariable {
@@ -395,34 +411,30 @@ impl EnvironmentVariable {
     }
 
     fn from_promise(display_name: String, promise: SEXP) -> Self {
-        let deparsed = unsafe {
-            let code = PRCODE(promise);
-            // TODO: handle lazyLoadDBfetch
+        let display_value = local! {
+            unsafe {
+                let code = PRCODE(promise);
+                // TODO: handle lazyLoadDBfetch
 
-            RFunction::from(".ps.environment.describeCall")
-                .add(code)
-                .call()
-        };
+                let deparsed = RFunction::from(".ps.environment.describeCall")
+                    .add(code)
+                    .call()?;
 
-        let formatted = match deparsed {
-            Ok(strings) => collapse(*strings, " ", 100, "").unwrap(),
-            Err(_) => Collapse {
-                result: String::from("(unevaluated)"),
-                truncated: false,
-            },
+                String::try_from(deparsed)
+            }
         };
 
         Self {
             access_key: display_name.clone(),
             display_name,
-            display_value: formatted.result,
+            display_value: display_value.unwrap_or(String::from("(unevaluated)")),
             display_type: String::from("promise"),
             type_info: String::from("promise"),
             kind: ValueKind::Lazy,
             length: 0,
             size: 0,
             has_children: false,
-            is_truncated: formatted.truncated,
+            is_truncated: false,
             has_viewer: false,
         }
     }
@@ -620,10 +632,15 @@ impl EnvironmentVariable {
                                 Self::inspect_environment(object)
                             }
                         },
+                        LGLSXP | RAWSXP | STRSXP | INTSXP | REALSXP | CPLXSXP => {
+                            Self::inspect_vector(*object)
+                        },
                         _ => Ok(vec![]),
                     }
                 }
             },
+
+            EnvironmentVariableNode::VectorElement { .. } => Ok(vec![]),
         }
     }
 
@@ -636,29 +653,13 @@ impl EnvironmentVariable {
 
         match node {
             EnvironmentVariableNode::Concrete { object } => {
-                if r_is_simple_vector(*object) {
-                    let formatted = collapse(
-                        *object,
-                        " ",
-                        0,
-                        if r_typeof(*object) == STRSXP {
-                            "\""
-                        } else {
-                            ""
-                        },
-                    )
-                    .unwrap();
-                    Ok(formatted.result)
-                } else if r_is_data_frame(*object) {
+                if r_is_data_frame(*object) {
                     unsafe {
                         let formatted = RFunction::from(".ps.environment.clipboardFormatDataFrame")
                             .add(object)
                             .call()?;
 
-                        let formatted = CharacterVector::new_unchecked(formatted);
-
-                        let out = formatted.iter().map(|s| s.unwrap()).join("\n");
-                        Ok(out)
+                        Ok(FormattedVector::new(*formatted)?.iter().join("\n"))
                     }
                 } else if r_typeof(*object) == CLOSXP {
                     unsafe {
@@ -668,10 +669,14 @@ impl EnvironmentVariable {
                         Ok(deparsed.join("\n"))
                     }
                 } else {
-                    Ok(String::from(""))
+                    Ok(FormattedVector::new(*object)?.iter().join(" "))
                 }
             },
             EnvironmentVariableNode::Artificial { .. } => Ok(String::from("")),
+            EnvironmentVariableNode::VectorElement { object, index } => {
+                let formatted = FormattedVector::new(*object)?;
+                Ok(formatted.get_unchecked(index))
+            },
         }
     }
 
@@ -747,6 +752,13 @@ impl EnvironmentVariable {
                                 }
                             },
 
+                            LGLSXP | RAWSXP | STRSXP | INTSXP | REALSXP | CPLXSXP => {
+                                EnvironmentVariableNode::VectorElement {
+                                    object,
+                                    index: path_element.parse::<isize>().unwrap(),
+                                }
+                            },
+
                             _ => {
                                 return Err(harp::error::Error::InspectError { path: path.clone() })
                             },
@@ -772,6 +784,10 @@ impl EnvironmentVariable {
                         _ => return Err(harp::error::Error::InspectError { path: path.clone() }),
                     }
                 },
+
+                EnvironmentVariableNode::VectorElement { .. } => {
+                    return Err(harp::error::Error::InspectError { path: path.clone() });
+                },
             }
         }
 
@@ -782,23 +798,54 @@ impl EnvironmentVariable {
         let mut out: Vec<Self> = vec![];
         let n = unsafe { XLENGTH(value) };
 
-        let names = unsafe {
-            CharacterVector::new_unchecked(
-                RFunction::from(".ps.environment.listDisplayNames")
-                    .add(value)
-                    .call()?,
-            )
-        };
+        let names = Names::new(value, |i| format!("[[{}]]", i + 1));
 
         for i in 0..n {
-            out.push(Self::from(
-                i.to_string(),
-                names.get_unchecked(i).unwrap(),
-                unsafe { VECTOR_ELT(value, i) },
-            ));
+            out.push(Self::from(i.to_string(), names.get_unchecked(i), unsafe {
+                VECTOR_ELT(value, i)
+            }));
         }
 
         Ok(out)
+    }
+
+    fn inspect_vector(vector: SEXP) -> harp::error::Result<Vec<Self>> {
+        unsafe {
+            let vector = RObject::new(vector);
+            let n = XLENGTH(*vector);
+
+            let mut out: Vec<Self> = vec![];
+            let r_type = r_typeof(*vector);
+            let formatted = FormattedVector::new(*vector)?;
+            let names = Names::new(*vector, |i| format!("[{}]", i + 1));
+            let kind = if r_type == STRSXP {
+                ValueKind::String
+            } else if r_type == RAWSXP {
+                ValueKind::Bytes
+            } else if r_type == LGLSXP {
+                ValueKind::Boolean
+            } else {
+                ValueKind::Number
+            };
+
+            for i in 0..n {
+                out.push(Self {
+                    access_key: format!("{}", i),
+                    display_name: names.get_unchecked(i),
+                    display_value: formatted.get_unchecked(i),
+                    display_type: String::from(""),
+                    type_info: String::from(""),
+                    kind,
+                    length: 1,
+                    size: 0,
+                    has_children: false,
+                    is_truncated: false,
+                    has_viewer: false,
+                });
+            }
+
+            Ok(out)
+        }
     }
 
     fn inspect_pairlist(value: SEXP) -> Result<Vec<Self>, harp::error::Error> {

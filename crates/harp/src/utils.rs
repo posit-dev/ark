@@ -10,6 +10,7 @@ use std::ffi::CString;
 use std::os::raw::c_void;
 
 use c2rust_bitfields::BitfieldStruct;
+use itertools::Itertools;
 use libR_sys::*;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -24,8 +25,8 @@ use crate::object::RObject;
 use crate::protect::RProtect;
 use crate::r_symbol;
 use crate::symbol::RSymbol;
-use crate::vector::collapse;
 use crate::vector::CharacterVector;
+use crate::vector::IntegerVector;
 use crate::vector::Vector;
 
 // NOTE: Regex::new() is quite slow to compile, so it's much better to keep
@@ -206,13 +207,10 @@ pub fn r_vec_shape(value: SEXP) -> String {
         let dim = RObject::new(Rf_getAttrib(value, R_DimSymbol));
 
         if r_is_null(*dim) {
-            if XLENGTH(value) == 1 {
-                String::from("")
-            } else {
-                format!(" [{}]", Rf_xlength(value))
-            }
+            format!("{}", Rf_xlength(value))
         } else {
-            format!(" [{}]", collapse(*dim, ",", 0, "").unwrap().result)
+            let dim = IntegerVector::new_unchecked(*dim);
+            dim.iter().map(|d| d.unwrap()).join(", ")
         }
     }
 }
