@@ -20,7 +20,7 @@ pub struct RSymbol {
 }
 
 impl RSymbol {
-    pub fn new(sexp: SEXP) -> Self {
+    pub fn new_unchecked(sexp: SEXP) -> Self {
         RSymbol { sexp }
     }
 

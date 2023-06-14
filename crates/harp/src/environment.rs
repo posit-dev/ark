@@ -106,7 +106,7 @@ pub struct Binding {
 impl Binding {
     pub fn new(env: SEXP, frame: SEXP) -> Self {
         unsafe {
-            let name = RSymbol::new(TAG(frame));
+            let name = RSymbol::new_unchecked(TAG(frame));
 
             let info = Sxpinfo::interpret(&frame);
 

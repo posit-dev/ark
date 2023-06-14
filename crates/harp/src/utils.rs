@@ -218,8 +218,8 @@ pub fn r_vec_shape(value: SEXP) -> String {
 pub fn r_altrep_class(object: SEXP) -> String {
     let serialized_klass = unsafe { ATTRIB(ALTREP_CLASS(object)) };
 
-    let klass = RSymbol::new(unsafe { CAR(serialized_klass) });
-    let pkg = RSymbol::new(unsafe { CADR(serialized_klass) });
+    let klass = RSymbol::new_unchecked(unsafe { CAR(serialized_klass) });
+    let pkg = RSymbol::new_unchecked(unsafe { CADR(serialized_klass) });
 
     format!("{}::{}", pkg, klass)
 }

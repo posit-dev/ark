@@ -414,7 +414,12 @@ impl EnvironmentVariable {
         let display_value = local! {
             unsafe {
                 let code = PRCODE(promise);
-                // TODO: handle lazyLoadDBfetch
+                if r_typeof(code) == LANGSXP {
+                    let fun = CAR(code);
+                    if r_typeof(fun) == SYMSXP && RSymbol::new_unchecked(fun) == "lazyLoadDBfetch" {
+                        return Ok(String::from("(unevaluated)"))
+                    }
+                }
 
                 let deparsed = RFunction::from(".ps.environment.describeCall")
                     .add(code)
@@ -861,7 +866,7 @@ impl EnvironmentVariable {
                 let display_name = if r_is_null(tag) {
                     format!("[[{}]]", i + 1)
                 } else {
-                    String::from(RSymbol::new(tag))
+                    String::from(RSymbol::new_unchecked(tag))
                 };
 
                 out.push(Self::from(i.to_string(), display_name, CAR(pairlist)));
