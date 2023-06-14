@@ -22,7 +22,6 @@ use crate::vector::LogicalVector;
 use crate::vector::NumericVector;
 use crate::vector::RawVector;
 use crate::vector::Vector;
-
 pub enum FormattedVector {
     // simple
     Raw { vector: RawVector },
@@ -95,17 +94,19 @@ impl FormattedVector {
     }
 
     pub fn len(&self) -> isize {
-        unsafe {
-            match self {
-                FormattedVector::Raw { vector } => vector.len() as isize,
-                FormattedVector::Logical { vector } => vector.len() as isize,
-                FormattedVector::Integer { vector } => vector.len() as isize,
-                FormattedVector::Numeric { vector } => vector.len() as isize,
-                FormattedVector::Character { vector } => vector.len() as isize,
-                FormattedVector::Complex { vector } => vector.len() as isize,
-                FormattedVector::Factor { vector } => vector.len() as isize,
-                FormattedVector::FormattedVector { vector } => vector.len() as isize,
-            }
+        unsafe { Rf_xlength(self.data()) }
+    }
+
+    pub fn data(&self) -> SEXP {
+        match self {
+            FormattedVector::Raw { vector } => vector.data(),
+            FormattedVector::Logical { vector } => vector.data(),
+            FormattedVector::Integer { vector } => vector.data(),
+            FormattedVector::Numeric { vector } => vector.data(),
+            FormattedVector::Character { vector } => vector.data(),
+            FormattedVector::Complex { vector } => vector.data(),
+            FormattedVector::Factor { vector } => vector.data(),
+            FormattedVector::FormattedVector { vector } => vector.data(),
         }
     }
 }
@@ -143,5 +144,21 @@ impl<'a> Iterator for FormattedVectorIter<'a> {
 impl FormattedVector {
     pub fn iter(&self) -> FormattedVectorIter {
         FormattedVectorIter::new(self)
+    }
+
+    pub fn column_iter(&self, column: isize) -> FormattedVectorIter {
+        unsafe {
+            let object = self.data();
+            let dim = IntegerVector::new(Rf_getAttrib(object, R_DimSymbol)).unwrap();
+            let n_row = dim.get_unchecked(0).unwrap() as isize;
+
+            let index = column * n_row;
+
+            FormattedVectorIter {
+                formatted: self,
+                index,
+                size: index + n_row,
+            }
+        }
     }
 }
