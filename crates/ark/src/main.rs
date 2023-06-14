@@ -24,6 +24,7 @@ use bus::Bus;
 use crossbeam::channel::bounded;
 use log::*;
 use nix::sys::signal::*;
+use notify::Watcher;
 use stdext::unwrap;
 
 fn start_kernel(connection_file: ConnectionFile, capture_streams: bool) {
@@ -203,6 +204,7 @@ fn main() {
 
     let mut connection_file: Option<String> = None;
     let mut log_file: Option<String> = None;
+    let mut delay_file: Option<String> = None;
     let mut has_action = false;
     let mut capture_streams = true;
 
@@ -241,10 +243,37 @@ fn main() {
                     break;
                 }
             },
+            "--delay-startup" => {
+                if let Some(file) = argv.next() {
+                    delay_file = Some(file);
+                } else {
+                    eprintln!(
+                        "A notification file must be specified with the --delay-startup argument."
+                    );
+                    break;
+                }
+            },
             other => {
                 eprintln!("Argument '{}' unknown", other);
                 break;
             },
+        }
+    }
+
+    if let Some(file) = delay_file {
+        let path = std::path::Path::new(&file);
+        let (tx, rx) = bounded(1);
+
+        if let Err(err) = (|| -> anyhow::Result<()> {
+            let mut watcher = notify::RecommendedWatcher::new(tx, Default::default()).unwrap();
+            watcher.watch(path, notify::RecursiveMode::NonRecursive)?;
+
+            let _ = rx.recv()?;
+            watcher.unwatch(path)?;
+
+            Ok(())
+        })() {
+            eprintln!("Problem with the delay file: {:?}", err);
         }
     }
 
