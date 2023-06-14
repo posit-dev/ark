@@ -10,7 +10,9 @@ use std::ops::Deref;
 
 use libR_sys::*;
 
+use crate::error::Result;
 use crate::r_symbol;
+use crate::utils::r_assert_type;
 use crate::utils::Sxpinfo;
 use crate::utils::HASHASH_MASK;
 
@@ -22,6 +24,12 @@ pub struct RSymbol {
 impl RSymbol {
     pub fn new_unchecked(sexp: SEXP) -> Self {
         RSymbol { sexp }
+    }
+
+    pub fn new(sexp: impl Into<SEXP>) -> Result<Self> {
+        let sexp = sexp.into();
+        r_assert_type(sexp, &[SYMSXP])?;
+        Ok(Self::new_unchecked(sexp))
     }
 
     pub fn has_hash(&self) -> bool {
