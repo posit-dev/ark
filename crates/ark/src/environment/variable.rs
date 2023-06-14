@@ -5,6 +5,7 @@
 //
 //
 
+use harp::call::RCall;
 use harp::environment::Binding;
 use harp::environment::BindingValue;
 use harp::environment::Environment;
@@ -413,18 +414,16 @@ impl EnvironmentVariable {
     fn from_promise(display_name: String, promise: SEXP) -> Self {
         let display_value = local! {
             unsafe {
-                let code = PRCODE(promise);
-                if r_typeof(code) == LANGSXP {
-                    if RSymbol::new(CAR(code))? == "lazyLoadDBfetch" {
-                        return Ok(String::from("(unevaluated)"))
-                    }
+                let code = RCall::new(PRCODE(promise))?;
+                let fun = RSymbol::new(CAR(*code))?;
+                if fun == "lazyLoadDBfetch" {
+                    return Ok(String::from("(unevaluated)"))
                 }
 
-                let deparsed = RFunction::from(".ps.environment.describeCall")
+                RFunction::from(".ps.environment.describeCall")
                     .add(code)
-                    .call()?;
-
-                String::try_from(deparsed)
+                    .call()?
+                    .try_into()
             }
         };
 

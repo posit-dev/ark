@@ -1,7 +1,7 @@
 //
 // symbol.rs
 //
-// Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -12,7 +12,7 @@ use libR_sys::*;
 
 use crate::error::Result;
 use crate::r_symbol;
-use crate::utils::r_assert_type;
+use crate::utils::r_assert_type_equal;
 use crate::utils::Sxpinfo;
 use crate::utils::HASHASH_MASK;
 
@@ -23,12 +23,12 @@ pub struct RSymbol {
 
 impl RSymbol {
     pub fn new_unchecked(sexp: SEXP) -> Self {
-        RSymbol { sexp }
+        Self { sexp }
     }
 
     pub fn new(sexp: impl Into<SEXP>) -> Result<Self> {
         let sexp = sexp.into();
-        r_assert_type(sexp, &[SYMSXP])?;
+        r_assert_type_equal(sexp, SYMSXP)?;
         Ok(Self::new_unchecked(sexp))
     }
 

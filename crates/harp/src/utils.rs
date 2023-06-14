@@ -97,6 +97,14 @@ pub fn r_assert_type(object: SEXP, expected: &[u32]) -> Result<u32> {
     Ok(actual)
 }
 
+pub fn r_assert_type_equal(object: SEXP, expected: u32) -> Result<u32> {
+    let actual = r_typeof(object);
+    if expected != actual {
+        return Err(Error::UnexpectedType(actual, vec![expected]));
+    }
+    Ok(actual)
+}
+
 pub unsafe fn r_assert_capacity(object: SEXP, required: usize) -> Result<usize> {
     let actual = Rf_length(object) as usize;
     if actual < required {

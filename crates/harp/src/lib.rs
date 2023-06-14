@@ -4,7 +4,7 @@
 // Copyright (C) 2022 Posit Software, PBC. All rights reserved.
 //
 //
-
+pub mod call;
 pub mod environment;
 pub mod error;
 pub mod eval;
