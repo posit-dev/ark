@@ -672,9 +672,8 @@ impl EnvironmentVariable {
                 }
             },
 
-            EnvironmentVariableNode::Matrixcolumn { .. } => {
-                // TODO: Self::inspect_matrix_columm(*object, index)
-                Ok(vec![])
+            EnvironmentVariableNode::Matrixcolumn { object, index } => {
+                Self::inspect_matrix_columm(*object, index)
             },
             EnvironmentVariableNode::VectorElement { .. } => Ok(vec![]),
         }
@@ -899,6 +898,47 @@ impl EnvironmentVariable {
                     length: 1,
                     size: 0,
                     has_children: true,
+                    is_truncated: false,
+                    has_viewer: false,
+                });
+            }
+
+            Ok(out)
+        }
+    }
+
+    fn inspect_matrix_columm(matrix: SEXP, index: isize) -> harp::error::Result<Vec<Self>> {
+        unsafe {
+            let matrix = RObject::new(matrix);
+            let dim = IntegerVector::new(Rf_getAttrib(*matrix, R_DimSymbol))?;
+
+            let n_row = dim.get_unchecked(0).unwrap();
+
+            let mut out: Vec<Self> = vec![];
+            let formatted = FormattedVector::new(*matrix)?;
+            let mut iter = formatted.column_iter(index);
+            let r_type = r_typeof(*matrix);
+            let kind = if r_type == STRSXP {
+                ValueKind::String
+            } else if r_type == RAWSXP {
+                ValueKind::Bytes
+            } else if r_type == LGLSXP {
+                ValueKind::Boolean
+            } else {
+                ValueKind::Number
+            };
+
+            for i in 0..n_row {
+                out.push(Self {
+                    access_key: format!("{}", i),
+                    display_name: format!("[{}, {}]", i + 1, index + 1),
+                    display_value: iter.next().unwrap(),
+                    display_type: String::from(""),
+                    type_info: String::from(""),
+                    kind,
+                    length: 1,
+                    size: 0,
+                    has_children: false,
                     is_truncated: false,
                     has_viewer: false,
                 });
