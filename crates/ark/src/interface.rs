@@ -399,6 +399,9 @@ pub fn start_r(
         *KERNEL.borrow_mut() = Some(Arc::new(Mutex::new(kernel)));
     });
 
+    // Start thread to watch for `r_lock!` deadlocks
+    harp::deadlock::watch();
+
     // Start thread to listen to execution requests
     spawn!("ark-execution", move || {
         listen(shell_request_rx, rprompt_rx)
