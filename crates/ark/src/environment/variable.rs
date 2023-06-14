@@ -415,8 +415,7 @@ impl EnvironmentVariable {
             unsafe {
                 let code = PRCODE(promise);
                 if r_typeof(code) == LANGSXP {
-                    let fun = CAR(code);
-                    if r_typeof(fun) == SYMSXP && RSymbol::new_unchecked(fun) == "lazyLoadDBfetch" {
+                    if RSymbol::new(CAR(code))? == "lazyLoadDBfetch" {
                         return Ok(String::from("(unevaluated)"))
                     }
                 }
