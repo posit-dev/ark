@@ -169,18 +169,21 @@ impl WorkspaceVariableDisplayValue {
         if rtype == VECSXP && !r_inherits(value, "POSIXlt") {
             if r_inherits(value, "data.frame") {
                 let dim = dim_data_frame(value);
-                let classes = r_classes(value)
-                    .unwrap()
-                    .iter()
-                    .map(|s| s.unwrap())
-                    .join(" / ");
+                let class = match r_classes(value) {
+                    None => String::from(""),
+                    Some(classes) => match classes.get_unchecked(0) {
+                        Some(class) => format!(" <{}>", class),
+                        None => String::from(""),
+                    },
+                };
+
                 let value = format!(
-                    "[{} {} x {} {}] <{}>",
+                    "[{} {} x {} {}]{}",
                     dim.nrow,
                     plural("row", dim.nrow),
                     dim.ncol,
                     plural("column", dim.ncol),
-                    classes
+                    class
                 );
                 return Self::new(value, false);
             }
