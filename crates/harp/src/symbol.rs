@@ -12,7 +12,7 @@ use libR_sys::*;
 
 use crate::error::Result;
 use crate::r_symbol;
-use crate::utils::r_assert_type_equal;
+use crate::utils::r_assert_type;
 use crate::utils::Sxpinfo;
 use crate::utils::HASHASH_MASK;
 
@@ -27,7 +27,7 @@ impl RSymbol {
     }
 
     pub fn new(sexp: SEXP) -> Result<Self> {
-        r_assert_type_equal(sexp, SYMSXP)?;
+        r_assert_type(sexp, &[SYMSXP])?;
         Ok(Self::new_unchecked(sexp))
     }
 
