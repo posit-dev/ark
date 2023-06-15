@@ -206,6 +206,7 @@ fn main() {
     let mut connection_file: Option<String> = None;
     let mut log_file: Option<String> = None;
     let mut startup_notifier_file: Option<String> = None;
+    let mut startup_delay: Option<std::time::Duration> = None;
     let mut has_action = false;
     let mut capture_streams = true;
 
@@ -254,6 +255,21 @@ fn main() {
                     break;
                 }
             },
+            "--startup-delay" => {
+                if let Some(delay_arg) = argv.next() {
+                    if let Ok(delay) = delay_arg.parse::<u64>() {
+                        startup_delay = Some(std::time::Duration::from_millis(delay));
+                    } else {
+                        eprintln!("Can't parse delay in milliseconds");
+                        break;
+                    }
+                } else {
+                    eprintln!(
+                        "A delay in milliseconds must be specified with the --startup-delay argument."
+                    );
+                    break;
+                }
+            },
             other => {
                 eprintln!("Argument '{}' unknown", other);
                 break;
@@ -296,6 +312,10 @@ fn main() {
         })() {
             eprintln!("Problem with the delay file: {:?}", err);
         }
+    }
+
+    if let Some(delay) = startup_delay {
+        std::thread::sleep(delay);
     }
 
     // If the user didn't specify an action, print the usage instructions and
