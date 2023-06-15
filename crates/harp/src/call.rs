@@ -18,8 +18,10 @@ pub struct RCall {
 }
 
 impl RCall {
-    pub fn new_unchecked(object: RObject) -> Self {
-        Self { object }
+    pub fn new_unchecked(object: impl Into<RObject>) -> Self {
+        Self {
+            object: object.into(),
+        }
     }
 
     pub fn new(object: impl Into<RObject>) -> Result<Self> {

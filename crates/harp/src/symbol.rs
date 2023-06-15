@@ -26,8 +26,7 @@ impl RSymbol {
         Self { sexp }
     }
 
-    pub fn new(sexp: impl Into<SEXP>) -> Result<Self> {
-        let sexp = sexp.into();
+    pub fn new(sexp: SEXP) -> Result<Self> {
         r_assert_type_equal(sexp, SYMSXP)?;
         Ok(Self::new_unchecked(sexp))
     }
