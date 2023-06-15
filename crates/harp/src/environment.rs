@@ -106,7 +106,7 @@ pub struct Binding {
 impl Binding {
     pub fn new(env: SEXP, frame: SEXP) -> Self {
         unsafe {
-            let name = RSymbol::new(TAG(frame));
+            let name = RSymbol::new_unchecked(TAG(frame));
 
             let info = Sxpinfo::interpret(&frame);
 
@@ -125,11 +125,17 @@ impl Binding {
                 let pr_value = PRVALUE(value);
                 if pr_value == R_UnboundValue {
                     let code = PRCODE(value);
-                    if r_typeof(code) == LANGSXP {
-                        let value = BindingValue::Promise { promise: value };
-                        return Self { name, value };
-                    } else {
-                        value = code;
+                    match r_typeof(code) {
+                        // only consider calls and symbols to be promises
+                        LANGSXP | SYMSXP => {
+                            let value = BindingValue::Promise { promise: value };
+                            return Self { name, value };
+                        },
+                        // all other types are not regarded as promises
+                        // but rather as their underlying object
+                        _ => {
+                            value = code;
+                        },
                     }
                 } else {
                     value = pr_value;

@@ -1,7 +1,7 @@
 //
 // symbol.rs
 //
-// Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -10,7 +10,9 @@ use std::ops::Deref;
 
 use libR_sys::*;
 
+use crate::error::Result;
 use crate::r_symbol;
+use crate::utils::r_assert_type;
 use crate::utils::Sxpinfo;
 use crate::utils::HASHASH_MASK;
 
@@ -20,8 +22,13 @@ pub struct RSymbol {
 }
 
 impl RSymbol {
-    pub fn new(sexp: SEXP) -> Self {
-        RSymbol { sexp }
+    pub fn new_unchecked(sexp: SEXP) -> Self {
+        Self { sexp }
+    }
+
+    pub fn new(sexp: SEXP) -> Result<Self> {
+        r_assert_type(sexp, &[SYMSXP])?;
+        Ok(Self::new_unchecked(sexp))
     }
 
     pub fn has_hash(&self) -> bool {

@@ -5,9 +5,11 @@
 //
 //
 
+use harp::call::RCall;
 use harp::environment::Binding;
 use harp::environment::BindingValue;
 use harp::environment::Environment;
+use harp::error::Error;
 use harp::exec::r_try_catch_error;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
@@ -158,6 +160,10 @@ impl WorkspaceVariableDisplayValue {
     }
 
     pub fn from(value: SEXP) -> Self {
+        if r_is_null(value) {
+            return Self::new(String::from("NULL"), false);
+        }
+
         let rtype = r_typeof(value);
 
         if rtype == VECSXP && !r_inherits(value, "POSIXlt") {
@@ -414,13 +420,24 @@ impl EnvironmentVariable {
         let display_value = local! {
             unsafe {
                 let code = PRCODE(promise);
-                // TODO: handle lazyLoadDBfetch
+                match r_typeof(code) {
+                    SYMSXP => {
+                        Ok(RSymbol::new_unchecked(code).to_string())
+                    },
+                    LANGSXP => {
+                        let code = RCall::new(code)?;
+                        let fun = RSymbol::new(CAR(*code))?;
+                        if fun == "lazyLoadDBfetch" {
+                            return Ok(String::from("(unevaluated)"))
+                        }
 
-                let deparsed = RFunction::from(".ps.environment.describeCall")
-                    .add(code)
-                    .call()?;
-
-                String::try_from(deparsed)
+                        RFunction::from(".ps.environment.describeCall")
+                            .add(code)
+                            .call()?
+                            .try_into()
+                    },
+                    _ => Err(Error::UnexpectedType(r_typeof(code), vec!(SYMSXP, LANGSXP)))
+                }
             }
         };
 
@@ -861,7 +878,7 @@ impl EnvironmentVariable {
                 let display_name = if r_is_null(tag) {
                     format!("[[{}]]", i + 1)
                 } else {
-                    String::from(RSymbol::new(tag))
+                    String::from(RSymbol::new_unchecked(tag))
                 };
 
                 out.push(Self::from(i.to_string(), display_name, CAR(pairlist)));
