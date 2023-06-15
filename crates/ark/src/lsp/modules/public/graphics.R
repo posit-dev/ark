@@ -40,10 +40,15 @@ setHook("before.grid.newpage", function(...) {
 
     # Create the graphics device.
     # TODO: Use 'ragg' if available?
-    grDevices::png(
-        filename = plotsPath,
-        type = type,
-        res = res
+    withCallingHandlers(
+        grDevices::png(
+            filename = plotsPath,
+            type = type,
+            res = res
+        ),
+        warning = function(w) {
+            stop("Error creating graphics device: ", conditionMessage(w))
+        })
     )
 
     # Update the device name + description in the base environment.
