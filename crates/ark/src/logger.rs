@@ -58,8 +58,8 @@ fn annotate(mut message: String) -> String {
 fn is_internal(record: &log::Record) -> bool {
     let target = record.target();
 
-    // Top level Amalthea crates
-    let crates = ["harp", "ark", "amalthea"];
+    // Known Positron crates
+    let crates = ["harp", "ark", "amalthea", "stdext"];
 
     // Log `target:`s default to module locations, like `harp::environment`,
     // where the element before the first `::` is the crate name. So we can use that
