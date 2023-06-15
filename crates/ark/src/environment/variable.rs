@@ -9,6 +9,7 @@ use harp::call::RCall;
 use harp::environment::Binding;
 use harp::environment::BindingValue;
 use harp::environment::Environment;
+use harp::error::Error;
 use harp::exec::r_try_catch_error;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
@@ -159,6 +160,10 @@ impl WorkspaceVariableDisplayValue {
     }
 
     pub fn from(value: SEXP) -> Self {
+        if r_is_null(value) {
+            return Self::new(String::from("NULL"), false);
+        }
+
         let rtype = r_typeof(value);
 
         if rtype == VECSXP && !r_inherits(value, "POSIXlt") {
@@ -414,16 +419,25 @@ impl EnvironmentVariable {
     fn from_promise(display_name: String, promise: SEXP) -> Self {
         let display_value = local! {
             unsafe {
-                let code = RCall::new(PRCODE(promise))?;
-                let fun = RSymbol::new(CAR(*code))?;
-                if fun == "lazyLoadDBfetch" {
-                    return Ok(String::from("(unevaluated)"))
-                }
+                let code = PRCODE(promise);
+                match r_typeof(code) {
+                    SYMSXP => {
+                        Ok(RSymbol::new_unchecked(code).to_string())
+                    },
+                    LANGSXP => {
+                        let code = RCall::new(code)?;
+                        let fun = RSymbol::new(CAR(*code))?;
+                        if fun == "lazyLoadDBfetch" {
+                            return Ok(String::from("(unevaluated)"))
+                        }
 
-                RFunction::from(".ps.environment.describeCall")
-                    .add(code)
-                    .call()?
-                    .try_into()
+                        RFunction::from(".ps.environment.describeCall")
+                            .add(code)
+                            .call()?
+                            .try_into()
+                    },
+                    _ => Err(Error::UnexpectedType(r_typeof(code), vec!(SYMSXP, LANGSXP)))
+                }
             }
         };
 
