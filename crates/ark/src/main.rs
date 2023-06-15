@@ -22,8 +22,10 @@ use ark::shell::Shell;
 use ark::version::detect_r;
 use bus::Bus;
 use crossbeam::channel::bounded;
+use crossbeam::channel::unbounded;
 use log::*;
 use nix::sys::signal::*;
+use notify::Watcher;
 use stdext::unwrap;
 
 fn start_kernel(connection_file: ConnectionFile, capture_streams: bool) {
@@ -203,6 +205,8 @@ fn main() {
 
     let mut connection_file: Option<String> = None;
     let mut log_file: Option<String> = None;
+    let mut startup_notifier_file: Option<String> = None;
+    let mut startup_delay: Option<std::time::Duration> = None;
     let mut has_action = false;
     let mut capture_streams = true;
 
@@ -241,11 +245,77 @@ fn main() {
                     break;
                 }
             },
+            "--startup-notifier-file" => {
+                if let Some(file) = argv.next() {
+                    startup_notifier_file = Some(file);
+                } else {
+                    eprintln!(
+                        "A notification file must be specified with the --startup-notifier-file argument."
+                    );
+                    break;
+                }
+            },
+            "--startup-delay" => {
+                if let Some(delay_arg) = argv.next() {
+                    if let Ok(delay) = delay_arg.parse::<u64>() {
+                        startup_delay = Some(std::time::Duration::from_millis(delay));
+                    } else {
+                        eprintln!("Can't parse delay in milliseconds");
+                        break;
+                    }
+                } else {
+                    eprintln!(
+                        "A delay in milliseconds must be specified with the --startup-delay argument."
+                    );
+                    break;
+                }
+            },
             other => {
                 eprintln!("Argument '{}' unknown", other);
                 break;
             },
         }
+    }
+
+    // Initialize the logger.
+    logger::initialize(log_file.as_deref());
+
+    if let Some(file) = startup_notifier_file {
+        let path = std::path::Path::new(&file);
+        let (tx, rx) = unbounded();
+
+        if let Err(err) = (|| -> anyhow::Result<()> {
+            let config = notify::Config::default()
+                .with_poll_interval(std::time::Duration::from_millis(2))
+                .with_compare_contents(false);
+
+            let mut watcher = notify::RecommendedWatcher::new(tx, config).unwrap();
+            watcher.watch(path, notify::RecursiveMode::NonRecursive)?;
+
+            loop {
+                let ev = rx.recv()?;
+                match ev.unwrap().kind {
+                    notify::event::EventKind::Modify(_) => {
+                        break;
+                    },
+                    notify::event::EventKind::Remove(_) => {
+                        break;
+                    },
+                    _ => {
+                        continue;
+                    },
+                }
+            }
+
+            watcher.unwatch(path)?;
+            Ok(())
+        })() {
+            eprintln!("Problem with the delay file: {:?}", err);
+        }
+    }
+
+    if let Some(delay) = startup_delay {
+        std::thread::sleep(delay);
     }
 
     // If the user didn't specify an action, print the usage instructions and
@@ -254,9 +324,6 @@ fn main() {
         print_usage();
         return;
     }
-
-    // Initialize the logger.
-    logger::initialize(log_file.as_deref());
 
     // Register segfault handler to get a backtrace. Should be after
     // initialising `log!`. Note that R will not override this handler
