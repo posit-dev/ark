@@ -15,7 +15,6 @@ use std::os::raw::c_int;
 use std::sync::Once;
 
 use libR_sys::*;
-use log::trace;
 
 use crate::error::Error;
 use crate::exec::RFunction;
