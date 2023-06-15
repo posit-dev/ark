@@ -48,7 +48,7 @@ setHook("before.grid.newpage", function(...) {
         ),
         warning = function(w) {
             stop("Error creating graphics device: ", conditionMessage(w))
-        })
+        }
     )
 
     # Update the device name + description in the base environment.
