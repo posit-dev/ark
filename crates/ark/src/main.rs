@@ -261,6 +261,9 @@ fn main() {
         }
     }
 
+    // Initialize the logger.
+    logger::initialize(log_file.as_deref());
+
     if let Some(file) = delay_file {
         let path = std::path::Path::new(&file);
         let (tx, rx) = unbounded();
@@ -273,9 +276,22 @@ fn main() {
             let mut watcher = notify::RecommendedWatcher::new(tx, config).unwrap();
             watcher.watch(path, notify::RecursiveMode::NonRecursive)?;
 
-            let _ = rx.recv()?;
-            watcher.unwatch(path)?;
+            loop {
+                let ev = rx.recv()?;
+                match ev.unwrap().kind {
+                    notify::event::EventKind::Modify(_) => {
+                        break;
+                    },
+                    notify::event::EventKind::Remove(_) => {
+                        break;
+                    },
+                    _ => {
+                        continue;
+                    },
+                }
+            }
 
+            watcher.unwatch(path)?;
             Ok(())
         })() {
             eprintln!("Problem with the delay file: {:?}", err);
@@ -288,9 +304,6 @@ fn main() {
         print_usage();
         return;
     }
-
-    // Initialize the logger.
-    logger::initialize(log_file.as_deref());
 
     // Register segfault handler to get a backtrace. Should be after
     // initialising `log!`. Note that R will not override this handler
