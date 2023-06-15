@@ -72,7 +72,8 @@ unsafe fn protect(object: SEXP) -> SEXP {
     // Clean up the protect stack and return.
     Rf_unprotect(2);
 
-    trace!("Protecting cell:   {:?}", cell);
+    // Uncomment if debugging protection issues
+    // trace!("Protecting cell:   {:?}", cell);
     return cell;
 }
 
@@ -81,7 +82,8 @@ unsafe fn unprotect(cell: SEXP) {
         return;
     }
 
-    trace!("Unprotecting cell: {:?}", cell);
+    // Uncomment if debugging protection issues
+    // trace!("Unprotecting cell: {:?}", cell);
 
     // We need to remove the cell from the precious list.
     // The CAR of the cell points to the previous cell in the precious list.
