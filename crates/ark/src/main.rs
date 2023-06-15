@@ -205,7 +205,7 @@ fn main() {
 
     let mut connection_file: Option<String> = None;
     let mut log_file: Option<String> = None;
-    let mut delay_file: Option<String> = None;
+    let mut startup_notifier_file: Option<String> = None;
     let mut has_action = false;
     let mut capture_streams = true;
 
@@ -244,12 +244,12 @@ fn main() {
                     break;
                 }
             },
-            "--delay-startup" => {
+            "--startup-notifier-file" => {
                 if let Some(file) = argv.next() {
-                    delay_file = Some(file);
+                    startup_notifier_file = Some(file);
                 } else {
                     eprintln!(
-                        "A notification file must be specified with the --delay-startup argument."
+                        "A notification file must be specified with the --startup-notifier-file argument."
                     );
                     break;
                 }
@@ -264,7 +264,7 @@ fn main() {
     // Initialize the logger.
     logger::initialize(log_file.as_deref());
 
-    if let Some(file) = delay_file {
+    if let Some(file) = startup_notifier_file {
         let path = std::path::Path::new(&file);
         let (tx, rx) = unbounded();
 
