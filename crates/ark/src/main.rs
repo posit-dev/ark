@@ -258,14 +258,14 @@ fn main() {
             "--startup-delay" => {
                 if let Some(delay_arg) = argv.next() {
                     if let Ok(delay) = delay_arg.parse::<u64>() {
-                        startup_delay = Some(std::time::Duration::from_millis(delay));
+                        startup_delay = Some(std::time::Duration::from_secs(delay));
                     } else {
-                        eprintln!("Can't parse delay in milliseconds");
+                        eprintln!("Can't parse delay in seconds");
                         break;
                     }
                 } else {
                     eprintln!(
-                        "A delay in milliseconds must be specified with the --startup-delay argument."
+                        "A delay in seconds must be specified with the --startup-delay argument."
                     );
                     break;
                 }
