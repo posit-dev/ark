@@ -27,6 +27,7 @@ use harp::utils::r_is_matrix;
 use harp::utils::r_is_null;
 use harp::utils::r_is_s4;
 use harp::utils::r_is_simple_vector;
+use harp::utils::r_is_unbound;
 use harp::utils::r_typeof;
 use harp::utils::r_vec_shape;
 use harp::utils::r_vec_type;
@@ -721,9 +722,7 @@ impl EnvironmentVariable {
                 EnvironmentVariableNode::Concrete { object } => {
                     if object.is_s4() {
                         let name = r_symbol!(path_element);
-
                         let child = r_try_catch_error(|| R_do_slot(*object, name))?;
-
                         EnvironmentVariableNode::Concrete { object: child }
                     } else {
                         let rtype = r_typeof(*object);
@@ -735,14 +734,21 @@ impl EnvironmentVariable {
                                         name: path_element.clone(),
                                     }
                                 } else {
-                                    // TODO: consider the cases of :
-                                    // - an unresolved promise
-                                    // - active binding
                                     let symbol = r_symbol!(path_element);
                                     let mut x = Rf_findVarInFrame(*object, symbol);
 
                                     if r_typeof(x) == PROMSXP {
-                                        x = PRVALUE(x);
+                                        // if we are here, it means the promise is either
+                                        // evaluated already, i.e. PRVALUE() is bound
+                                        // or it is a promise to something that is
+                                        // not a call or a symbol
+
+                                        let value = PRVALUE(x);
+                                        if r_is_unbound(value) {
+                                            x = PRCODE(x);
+                                        } else {
+                                            x = value;
+                                        }
                                     }
 
                                     EnvironmentVariableNode::Concrete {
