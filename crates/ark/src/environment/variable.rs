@@ -192,11 +192,17 @@ impl WorkspaceVariableDisplayValue {
                 let n = Rf_xlength(value);
                 let mut display_value = String::from("");
                 let mut is_truncated = false;
+                let names = Names::new(value, |_i| String::from(""));
                 for i in 0..n {
                     if i > 0 {
                         display_value.push_str(", ");
                     }
                     let display_i = Self::from(VECTOR_ELT(value, i));
+                    let name = names.get_unchecked(i);
+                    if !name.is_empty() {
+                        display_value.push_str(&name);
+                        display_value.push_str(" = ");
+                    }
                     display_value.push_str("[");
                     display_value.push_str(&display_i.display_value);
                     display_value.push_str("]");
