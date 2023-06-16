@@ -49,7 +49,7 @@ handle_error_base <- function(cnd) {
     traceback <- lapply(traceback, function(lines) paste0(lines, collapse = "\n"))
     traceback <- as.character(traceback)
     traceback <- paste0(traceback, srcrefs)
-    
+
     .ps.Call("ps_record_error", evalue, traceback)
 }
 
@@ -120,7 +120,7 @@ path_trim_prefix <- function(path, n) {
 handle_error_rlang <- function(cnd) {
     evalue <- rlang::cnd_message(cnd, prefix = TRUE)
     traceback <- cnd$trace
-    
+
     if (is.null(traceback)) {
         traceback <- character()
     } else if (rlang::trace_length(traceback) == 0L) {

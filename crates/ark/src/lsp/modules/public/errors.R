@@ -15,7 +15,7 @@
 
     # Unregister all handlers and hold onto them
     handlers <- globalCallingHandlers(NULL)
-    
+
     # Inject our global error handler at the end.
     # This allows other existing error handlers to run ahead of us.
     handlers <- c(handlers, list(error = .ps.errors.globalErrorHandler))
@@ -27,7 +27,7 @@
     invisible(NULL)
 }
 
-.ps.errors.globalErrorHandler <- function(cnd) {    
+.ps.errors.globalErrorHandler <- function(cnd) {
     if (!is_installed("rlang")) {
         # rlang is not installed, no option except to use the base handler
         return(handle_error_base(cnd))
@@ -36,10 +36,10 @@
         # We have a non-rlang error, but the user requested we dont entrace it
         return(handle_error_base(cnd))
     }
-    
+
     if (!inherits(cnd, "rlang_error")) {
         cnd <- rlang::catch_cnd(rlang::entrace(cnd))
     }
-    
+
     handle_error_rlang(cnd)
 }
