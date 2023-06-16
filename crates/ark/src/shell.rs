@@ -67,9 +67,20 @@ impl Shell {
         shell_request_rx: Receiver<Request>,
         kernel_init_tx: Bus<KernelInfo>,
         kernel_init_rx: BusReader<KernelInfo>,
+        conn_init_rx: Receiver<bool>,
     ) -> Self {
         let iopub_tx = iopub_tx.clone();
         spawn!("ark-r-main-thread", move || {
+            // Block until 0MQ is initialised before starting R to avoid
+            // thread-safety issues. See https://github.com/rstudio/positron/issues/720
+            if let Err(err) = conn_init_rx.recv_timeout(std::time::Duration::from_secs(3)) {
+                warn!(
+                    "Failed to get init notification from main thread: {:?}",
+                    err
+                );
+            }
+            drop(conn_init_rx);
+
             Self::execution_thread(iopub_tx, kernel_init_tx, shell_request_rx);
         });
 

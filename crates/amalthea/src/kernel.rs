@@ -105,6 +105,7 @@ impl Kernel {
         control_handler: Arc<Mutex<dyn ControlHandler>>,
         lsp_handler: Option<Arc<Mutex<dyn LspHandler>>>,
         stream_behavior: StreamBehavior,
+        conn_init_tx: Option<Sender<bool>>,
     ) -> Result<(), Error> {
         let ctx = zmq::Context::new();
 
@@ -204,6 +205,14 @@ impl Kernel {
             None,
             self.connection.endpoint(self.connection.control_port),
         )?;
+
+        // 0MQ sockets are now initialised. We can start the kernel runtime
+        // with relative multithreading safety. See
+        // https://github.com/rstudio/positron/issues/720
+        if let Some(tx) = conn_init_tx {
+            tx.send(true).unwrap();
+            drop(tx);
+        }
 
         // TODO: thread/join thread? Exiting this thread will cause the whole
         // kernel to exit.

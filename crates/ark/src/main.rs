@@ -60,6 +60,8 @@ fn start_kernel(connection_file: ConnectionFile, capture_streams: bool) {
         kernel_init_tx.add_rx(),
     )));
 
+    let (conn_init_tx, conn_init_rx) = bounded::<bool>(0);
+
     // Create the shell.
     let kernel_init_rx = kernel_init_tx.add_rx();
     let shell = Shell::new(
@@ -68,6 +70,7 @@ fn start_kernel(connection_file: ConnectionFile, capture_streams: bool) {
         shell_request_rx,
         kernel_init_tx,
         kernel_init_rx,
+        conn_init_rx,
     );
 
     // Create the control handler; this is used to handle shutdown/interrupt and
@@ -83,7 +86,13 @@ fn start_kernel(connection_file: ConnectionFile, capture_streams: bool) {
 
     // Create the kernel
     let shell = Arc::new(Mutex::new(shell));
-    match kernel.connect(shell, control, Some(lsp), stream_behavior) {
+    match kernel.connect(
+        shell,
+        control,
+        Some(lsp),
+        stream_behavior,
+        Some(conn_init_tx),
+    ) {
         Ok(()) => {
             println!("R Kernel exiting.");
         },
