@@ -36,7 +36,7 @@
         } else {
             ptr <- character_only[[2L]]
             text <- .ps.treesitter.node.text(ptr, source)
-            !(text %in% c("FALSE", "F"))
+            !identical(text, "FALSE")
         }
     }
 
