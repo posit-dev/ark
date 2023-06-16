@@ -192,24 +192,6 @@ pub fn geterrmessage() -> String {
     }
 }
 
-#[allow(dead_code)]
-fn r_get_function(package: &str, function: &str) -> Result<RObject> {
-    unsafe {
-        let fun_sym = r_symbol!(function);
-
-        let call = if package == "" {
-            r_lang!(fun_sym)
-        } else {
-            let pkg_sym = r_symbol!(package);
-            r_lang!(r_symbol!(":::"), pkg_sym, fun_sym)
-        };
-        let mut protect = RProtect::new();
-        let call = protect.add(call);
-
-        r_try_catch_error(|| Rf_eval(call, R_BaseEnv))
-    }
-}
-
 /// Wrappers around R_tryCatch()
 ///
 /// Takes a single closure that returns either a SEXP or `()`. If an R error is
