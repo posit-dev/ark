@@ -55,6 +55,27 @@ fn annotate(mut message: String) -> String {
     message
 }
 
+fn is_internal(record: &log::Record) -> bool {
+    let target = record.target();
+
+    // Known Positron crates
+    let crates = ["harp", "ark", "amalthea", "stdext"];
+
+    // Log `target:`s default to module locations, like `harp::environment`,
+    // where the element before the first `::` is the crate name. So we can use that
+    // as a proxy for whether or not we are in a foreign crate.
+    match target.find("::") {
+        // If we don't find `::`, assume we've manually set the `target:` at the log call site.
+        // This may log some false positives if foreign crates set `target:`, but that seems rare.
+        None => true,
+        // Otherwise match the module name against our known internal ones
+        Some(loc) => {
+            let this = &target[0..loc];
+            crates.contains(&this)
+        },
+    }
+}
+
 struct Logger {
     /// The log level (set with the RUST_LOG environment variable)
     level: log::Level,
@@ -91,6 +112,12 @@ impl log::Log for Logger {
 
     fn log(&self, record: &log::Record) {
         if !self.enabled(record.metadata()) {
+            return;
+        }
+
+        if !is_internal(record) && record.level() > log::Level::Warn {
+            // To avoid a noisy output channel, we don't log information
+            // from foreign crates unless they are warnings or errors
             return;
         }
 
