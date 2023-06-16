@@ -11,7 +11,18 @@
 
 .ps.diagnostics.custom.library <- function(call, source, fun = base::library) {
     matched_call <- match.call(fun, call)
+    # here we get a call where arguments are named, e.g.
+    # library(package = <x>) where <x> is a list of 2 things:
+    # - a 0-based integer position for this argument. This is not
+    #   currently used
+    # - an external pointer to a treesitter Node, which can be queried
+    #   with .ps.treesitter.node.text() and .ps.treesitter.node.kind()
+    #
+    # We might simplify and only pass around the external pointer if
+    # we realize the position isn't useful.
 
+    # identify if character.only was set, so that we can
+    # adapt the diagnostic appropriately
     is_character_only <- function(matched_call, source) {
         character_only <- matched_call[["character.only"]]
 
@@ -73,7 +84,7 @@
         diagnostic <- if (name %in% c("package", "help")) {
             diagnostic_package(arg, source, character_only)
         } else {
-            .ps.diagnostics.diagnostic("skip")
+            .ps.diagnostics.diagnostic("default", node = arg[[2L]])
         }
 
         out[[i]] <- diagnostic
