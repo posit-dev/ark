@@ -544,6 +544,16 @@ fn recurse_call_arguments_custom(
     diagnostic_function: &str,
 ) -> Result<()> {
     r_lock! {
+        // Build a call that mixes treesitter nodes (as external pointers)
+        // library(foo, pos = 2 + 2)
+        //    ->
+        // library([0, <node0>], pos = [1, <node1>])
+        // where:
+        //   - node0 is an external pointer to a treesitter Node for the identifier `foo`
+        //   - node1 is an external pointer to a treesitter Node for the call `2 + 2`
+        //
+        // The TreeSitterCall object holds on to the nodes, so that they can be
+        // safely passed down to the R side as external pointers
         let call = TreeSitterCall::new(node, function, context)?;
 
         let custom_diagnostics = RFunction::from(diagnostic_function)
