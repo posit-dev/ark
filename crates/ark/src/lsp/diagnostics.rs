@@ -611,6 +611,10 @@ fn recurse_call(
     // things like 'local({ ... })'.
     let fun = callee.utf8_text(context.source.as_bytes())?;
     match fun {
+        // TODO: there should be some sort of registration mechanism so
+        //       that functions can declare that they know how to generate
+        //       diagnostics, i.e. ggplot2::aes() would skip diagnostics
+
         // special case to deal with library() and require() nse
         "library" => recurse_call_arguments_custom(
             node,
