@@ -466,7 +466,7 @@ fn recurse_call_arguments_default(
     ().ok()
 }
 
-struct SyntheticCall<'a> {
+struct TreeSitterCall<'a> {
     // A call of the form <fun>(list(0L, <ptr>), foo = list(1L, <ptr>))
     call: RObject,
 
@@ -474,13 +474,13 @@ struct SyntheticCall<'a> {
     _value_nodes: Vec<Node<'a>>,
 }
 
-impl<'a> From<&SyntheticCall<'a>> for RObject {
-    fn from(value: &SyntheticCall<'a>) -> Self {
+impl<'a> From<&TreeSitterCall<'a>> for RObject {
+    fn from(value: &TreeSitterCall<'a>) -> Self {
         value.call.clone()
     }
 }
 
-impl<'a> SyntheticCall<'a> {
+impl<'a> TreeSitterCall<'a> {
     pub unsafe fn new(
         node: Node<'a>,
         function: &str,
@@ -495,7 +495,7 @@ impl<'a> SyntheticCall<'a> {
 
         // values are stored in the call as external pointers
         // to Node that are kept alive in this vector and
-        // in SyntheticCall::_values
+        // in TreeSitterCall::_values
         let mut _value_nodes = vec![];
 
         if let Some(arguments) = node.child_by_field_name("arguments") {
@@ -544,7 +544,7 @@ fn recurse_call_arguments_custom(
     diagnostic_function: &str,
 ) -> Result<()> {
     r_lock! {
-        let call = SyntheticCall::new(node, function, context)?;
+        let call = TreeSitterCall::new(node, function, context)?;
 
         let custom_diagnostics = RFunction::from(diagnostic_function)
             .add(&call)
@@ -556,7 +556,7 @@ fn recurse_call_arguments_custom(
             for i in 0..n {
                 // diag is a list with:
                 //   - The kind of diagnostic: skip, default, simple
-                //   - The node external pointer, i.e. the ones made in SyntheticCall::new
+                //   - The node external pointer, i.e. the ones made in TreeSitterCall::new
                 //   - The message, when kind is "simple"
                 let diag = VECTOR_ELT(*custom_diagnostics, i);
 
