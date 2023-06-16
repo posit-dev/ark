@@ -514,7 +514,7 @@ impl<'a> SyntheticCall<'a> {
                 // to the child node.
                 if let Some(value) = child.child_by_field_name("value") {
                     _value_nodes.push(value);
-                    let value_node_ptr = ExternalPointer::new(_value_nodes.last().unwrap());
+                    let value_node_ptr = ExternalPointer::new(_value_nodes.last().into_result()?);
                     SET_VECTOR_ELT(*arg_list, 1, *value_node_ptr.pointer);
                 }
 
