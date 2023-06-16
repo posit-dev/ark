@@ -17,7 +17,6 @@ use crate::error::Error;
 use crate::error::Result;
 use crate::object::RObject;
 use crate::protect::RProtect;
-use crate::r_lang;
 use crate::r_string;
 use crate::r_symbol;
 use crate::utils::r_inherits;
