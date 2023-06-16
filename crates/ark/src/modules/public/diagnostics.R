@@ -10,7 +10,12 @@
 }
 
 .ps.diagnostics.custom.library <- function(call, source, fun = base::library) {
+    # TODO: it could be interesting to have a diagnostic
+    #       when this will fail on wrong argument, e.g.
+    #       library(pkg = ggplot2)
+    #               ^^^ : unused argument (pkg)
     matched_call <- match.call(fun, call)
+
     # here we get a call where arguments are named, e.g.
     # library(package = <x>) where <x> is a list of 2 things:
     # - a 0-based integer position for this argument. This is not
