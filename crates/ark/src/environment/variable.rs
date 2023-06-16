@@ -238,16 +238,38 @@ impl WorkspaceVariableDisplayValue {
                     let mut first = true;
                     let mut display_value = String::from("");
                     let mut is_truncated = false;
-                    for x in formatted.iter() {
-                        if first {
-                            first = false;
-                        } else {
-                            display_value.push_str(" ");
+
+                    if r_is_matrix(value) {
+                        unsafe {
+                            let dim =
+                                IntegerVector::new_unchecked(Rf_getAttrib(value, R_DimSymbol));
+                            let n_col = dim.get_unchecked(1).unwrap() as isize;
+                            display_value.push_str("[");
+                            for i in 0..n_col {
+                                if first {
+                                    first = false;
+                                } else {
+                                    display_value.push_str(", ");
+                                }
+
+                                display_value.push_str("[");
+                                display_value.push_str(formatted.column_iter(i).join(" ").as_str());
+                                display_value.push_str("]");
+                            }
+                            display_value.push_str("]");
                         }
-                        display_value.push_str(&x);
-                        if display_value.len() > 100 {
-                            is_truncated = true;
-                            break;
+                    } else {
+                        for x in formatted.iter() {
+                            if first {
+                                first = false;
+                            } else {
+                                display_value.push_str(" ");
+                            }
+                            display_value.push_str(&x);
+                            if display_value.len() > 100 {
+                                is_truncated = true;
+                                break;
+                            }
                         }
                     }
 
