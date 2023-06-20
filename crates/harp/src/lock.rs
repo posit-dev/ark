@@ -9,7 +9,7 @@ use std::sync::atomic::AtomicI32;
 
 use libR_sys::R_interrupts_suspended;
 use log::info;
-use parking_lot::Mutex;
+use parking_lot::ReentrantMutex;
 
 // The R lock is to be used by threads which wish to access the R runtime. The
 // main thread owns access to the R runtime by default, but it can yield access
@@ -26,9 +26,12 @@ extern "C" {
 #[no_mangle]
 pub extern "C" fn r_polled_events_disabled() {}
 
-// The R runtime lock, used to synchronize access to R.
-pub static mut R_RUNTIME_LOCK: Mutex<()> = Mutex::new(());
+// The R runtime lock, used to synchronize access to R. A ReentrantMutex
+// is used to ensure we can call `r_lock!` from within an `r_lock!` without
+// causing a deadlock.
+pub static mut R_RUNTIME_LOCK: ReentrantMutex<()> = ReentrantMutex::new(());
 pub static R_RUNTIME_LOCK_COUNT: AtomicI32 = AtomicI32::new(0);
+pub static R_RUNTIME_NEST_LEVEL: AtomicI32 = AtomicI32::new(0);
 
 pub fn initialize() {}
 
@@ -36,6 +39,10 @@ pub fn with_r_lock<T, F: FnMut() -> T>(callback: F) -> T {
     unsafe { with_r_lock_impl(callback) }
 }
 
+// Because we use a ReentrantMutex to take the lock, it is important to ensure
+// that everything inside `with_r_lock_impl()` can be called in a recursive
+// manner. Resetting `R_PolledEvents` and `R_interrupts_suspended` to their "old"
+// values (rather than to a default value) on the way out is particularly important.
 pub unsafe fn with_r_lock_impl<T, F: FnMut() -> T>(mut callback: F) -> T {
     // Let the logger know we're taking the lock.
     let id = std::thread::current().id();
@@ -54,11 +61,14 @@ pub unsafe fn with_r_lock_impl<T, F: FnMut() -> T>(mut callback: F) -> T {
     // If we get here, we now have the lock, so decrement the count.
     R_RUNTIME_LOCK_COUNT.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
 
+    // Increment the nest level to track when we call `r_lock!` from within `r_lock!`.
+    let level = R_RUNTIME_NEST_LEVEL.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+
     // Log how long we were stuck waiting.
     let elapsed = now.elapsed().unwrap().as_millis();
     info!(
-        "{:?} obtained lock after waiting for {} milliseconds.",
-        id, elapsed
+        "{:?} (nest level {}) obtained lock after waiting for {} milliseconds.",
+        id, level, elapsed
     );
 
     // Disable polled events in this scope.
@@ -79,14 +89,17 @@ pub unsafe fn with_r_lock_impl<T, F: FnMut() -> T>(mut callback: F) -> T {
     // Restore the polled events handler.
     R_PolledEvents = polled_events;
 
+    // Decrement the nest level.
+    R_RUNTIME_NEST_LEVEL.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+
     // Release the runtime lock.
     drop(guard);
 
     // Let the logger know we've released the lock..
     let elapsed = now.elapsed().unwrap().as_millis();
     info!(
-        "{:?} has released the R runtime lock after {} milliseconds.",
-        id, elapsed
+        "{:?} (nest level {}) has released the R runtime lock after {} milliseconds.",
+        id, level, elapsed
     );
 
     // Return the resulting expression.
