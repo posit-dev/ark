@@ -144,7 +144,7 @@ pub static mut KERNEL: Option<Arc<Mutex<Kernel>>> = None;
 pub static mut R_RUNTIME_LOCK_GUARD: Option<ReentrantMutexGuard<()>> = None;
 
 /// A channel that sends prompts from R to the kernel
-static mut RPROMPT_SEND: Option<Mutex<Sender<String>>> = None;
+static mut RPROMPT_SEND: Option<Mutex<Sender<PromptInfo>>> = None;
 
 /// A channel that receives console input from the kernel and sends it to R;
 /// sending empty input (None) tells R to shut down
@@ -212,15 +212,15 @@ pub extern "C" fn r_read_console(
     buflen: c_int,
     _hist: c_int,
 ) -> i32 {
-    let r_prompt = unsafe { CStr::from_ptr(prompt) };
-    debug!("R prompt: {}", r_prompt.to_str().unwrap());
+    let info = prompt_info(prompt);
+    debug!("R prompt: {}", info.prompt);
 
     // TODO: Can we remove this below code?
     // If the prompt begins with "Save workspace", respond with (n)
     //
     // NOTE: Should be able to overwrite the `Cleanup` frontend method.
     // This would also help with detecting normal exits versus crashes.
-    if r_prompt.to_str().unwrap().starts_with("Save workspace") {
+    if info.prompt.starts_with("Save workspace") {
         let n = CString::new("n\n").unwrap();
         unsafe {
             libc::strcpy(buf as *mut c_char, n.as_ptr());
@@ -231,9 +231,7 @@ pub extern "C" fn r_read_console(
     // TODO: if R prompt is +, we need to tell the user their input is incomplete
     let mutex = unsafe { RPROMPT_SEND.as_ref().unwrap() };
     let r_prompt_tx = mutex.lock().unwrap();
-    r_prompt_tx
-        .send(r_prompt.to_string_lossy().into_owned())
-        .unwrap();
+    r_prompt_tx.send(info).unwrap();
 
     let mutex = unsafe { CONSOLE_RECV.as_ref().unwrap() };
     let receiver = mutex.lock().unwrap();
@@ -289,6 +287,51 @@ pub extern "C" fn r_read_console(
             },
         }
     }
+}
+
+/**
+ * This struct represents the data that we wish R would pass to
+ * `ReadConsole()` methods. We need this information to determine what kind
+ * of prompt we are dealing with.
+ *
+ * TODO: `browser` field */
+pub struct PromptInfo {
+    /** The prompt string to be presented to the user */
+    prompt: String,
+
+    /** Whether the last input didn't fully parse and R is waiting for more
+     * input */
+    incomplete: bool,
+
+    /** Whether this is a prompt from a fresh REPL iteration (browser or
+     * top level) or a prompt from some user code, e.g. via `readline()` */
+    user_request: bool,
+}
+
+fn prompt_info(prompt_c: *const c_char) -> PromptInfo {
+    let prompt_slice = unsafe { CStr::from_ptr(prompt_c) };
+    let prompt = prompt_slice.to_string_lossy().into_owned();
+
+    // The request is incomplete if we see the continue prompt
+    let continue_prompt = unsafe { r_get_option::<String>("continue").unwrap() };
+    let incomplete = prompt == continue_prompt;
+
+    // If the current prompt doesn't match the default prompt, assume that
+    // we're reading use input, e.g. via 'readline()'.
+    let default_prompt = unsafe { r_get_option::<String>("prompt").unwrap() };
+    let user_request = !incomplete && prompt != default_prompt;
+
+    if incomplete {
+        trace!("Got R prompt '{}', marking request incomplete", prompt);
+    } else if user_request {
+        trace!("Got R prompt '{}', asking user for input", prompt);
+    }
+
+    return PromptInfo {
+        prompt,
+        incomplete,
+        user_request,
+    };
 }
 
 /**
@@ -472,7 +515,7 @@ pub fn start_r(
     }
 }
 
-fn handle_r_request(req: &Request, prompt_recv: &Receiver<String>) {
+fn handle_r_request(req: &Request, prompt_recv: &Receiver<PromptInfo>) {
     // Service the request.
     let mutex = unsafe { KERNEL.as_ref().unwrap() };
     {
@@ -487,41 +530,24 @@ fn handle_r_request(req: &Request, prompt_recv: &Receiver<String>) {
     }
 }
 
-fn complete_execute_request(req: &Request, prompt_recv: &Receiver<String>) {
+fn complete_execute_request(req: &Request, prompt_recv: &Receiver<PromptInfo>) {
     let mutex = unsafe { KERNEL.as_ref().unwrap() };
 
     // Wait for R to prompt us again. This signals that the
     // execution is finished and R is ready for input again.
     trace!("Waiting for R prompt signaling completion of execution...");
-    let prompt = prompt_recv.recv().unwrap();
+    let prompt_info = prompt_recv.recv().unwrap();
+    let prompt = prompt_info.prompt;
     let kernel = mutex.lock().unwrap();
 
     // Signal prompt
     EVENTS.console_prompt.emit(());
 
-    // The request is incomplete if we see the continue prompt
-    let continue_prompt = unsafe { r_get_option::<String>("continue") };
-    let continue_prompt = unwrap!(continue_prompt, Err(error) => {
-        warn!("Failed to read R continue prompt: {}", error);
-        return kernel.finish_request();
-    });
-
-    if prompt == continue_prompt {
-        trace!("Got R prompt '{}', marking request incomplete", prompt);
+    if prompt_info.incomplete {
         return kernel.report_incomplete_request(&req);
     }
 
-    // Figure out what the default prompt looks like.
-    let default_prompt = unsafe { r_get_option::<String>("prompt") };
-    let default_prompt = unwrap!(default_prompt, Err(error) => {
-        warn!("Failed to read R prompt: {}", error);
-        return kernel.finish_request();
-    });
-
-    // If the current prompt doesn't match the default prompt, assume that
-    // we're reading use input, e.g. via 'readline()'.
-    if prompt != default_prompt {
-        trace!("Got R prompt '{}', asking user for input", prompt);
+    if prompt_info.user_request {
         if let Request::ExecuteCode(_, originator, _) = req {
             kernel.request_input(originator.clone(), &prompt);
         } else {
@@ -538,14 +564,14 @@ fn complete_execute_request(req: &Request, prompt_recv: &Receiver<String>) {
     return kernel.finish_request();
 }
 
-pub fn listen(exec_recv: Receiver<Request>, prompt_recv: Receiver<String>) {
+pub fn listen(exec_recv: Receiver<Request>, prompt_recv: Receiver<PromptInfo>) {
     // Before accepting execution requests from the front end, wait for R to
     // prompt us for input.
     trace!("Waiting for R's initial input prompt...");
-    let prompt = prompt_recv.recv().unwrap();
+    let info = prompt_recv.recv().unwrap();
     trace!(
         "Got initial R prompt '{}', ready for execution requests",
-        prompt
+        info.prompt
     );
 
     // Mark kernel as initialized as soon as we get the first input prompt from R
