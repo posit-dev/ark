@@ -217,6 +217,9 @@ pub extern "C" fn r_read_console(
 
     // TODO: Can we remove this below code?
     // If the prompt begins with "Save workspace", respond with (n)
+    //
+    // NOTE: Should be able to overwrite the `Cleanup` frontend method.
+    // This would also help with detecting normal exits versus crashes.
     if r_prompt.to_str().unwrap().starts_with("Save workspace") {
         let n = CString::new("n\n").unwrap();
         unsafe {
