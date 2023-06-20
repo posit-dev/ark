@@ -44,9 +44,14 @@ pub fn with_r_lock<T, F: FnMut() -> T>(callback: F) -> T {
 // manner. Resetting `R_PolledEvents` and `R_interrupts_suspended` to their "old"
 // values (rather than to a default value) on the way out is particularly important.
 pub unsafe fn with_r_lock_impl<T, F: FnMut() -> T>(mut callback: F) -> T {
+    let level = R_RUNTIME_NEST_LEVEL.load(std::sync::atomic::Ordering::Acquire);
+
     // Let the logger know we're taking the lock.
     let id = std::thread::current().id();
-    info!("{:?} is requesting R runtime lock.", id);
+    info!(
+        "{:?} (nest level {}) is requesting R runtime lock.",
+        id, level
+    );
 
     // Record how long it takes the acquire the lock.
     let now = std::time::SystemTime::now();
@@ -61,15 +66,15 @@ pub unsafe fn with_r_lock_impl<T, F: FnMut() -> T>(mut callback: F) -> T {
     // If we get here, we now have the lock, so decrement the count.
     R_RUNTIME_LOCK_COUNT.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
 
-    // Increment the nest level to track when we call `r_lock!` from within `r_lock!`.
-    let level = R_RUNTIME_NEST_LEVEL.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
-
     // Log how long we were stuck waiting.
     let elapsed = now.elapsed().unwrap().as_millis();
     info!(
         "{:?} (nest level {}) obtained lock after waiting for {} milliseconds.",
         id, level, elapsed
     );
+
+    // Increment the nest level to track when we call `r_lock!` from within `r_lock!`.
+    R_RUNTIME_NEST_LEVEL.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
 
     // Disable polled events in this scope.
     let polled_events = unsafe { R_PolledEvents };
