@@ -363,12 +363,10 @@ pub unsafe extern "C" fn r_polled_events() {
     );
     let now = SystemTime::now();
 
-    // Release the lock. This drops the lock, and gives other threads
-    // waiting for the lock a chance to acquire it.
-    R_RUNTIME_LOCK_GUARD = None;
-
-    // Take the lock back.
-    R_RUNTIME_LOCK_GUARD = Some(R_RUNTIME_LOCK.lock());
+    // `bump()` does a fair unlock, giving other threads
+    // waiting for the lock a chance to acquire it, and then
+    // relocks it.
+    MutexGuard::bump(R_RUNTIME_LOCK_GUARD.as_mut().unwrap());
 
     info!(
         "The main thread re-acquired the R runtime lock after {} milliseconds.",
