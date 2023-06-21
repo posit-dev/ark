@@ -309,17 +309,29 @@ pub struct PromptInfo {
 }
 
 fn prompt_info(prompt_c: *const c_char) -> PromptInfo {
+    let n_frame = unwrap!(harp::session::r_n_frame(), Err(err) => {
+        warn!("`r_n_frame()` failed: {}", err);
+        0
+    });
+    trace!("prompt_info(): n_frame = '{}'", n_frame);
+
     let prompt_slice = unsafe { CStr::from_ptr(prompt_c) };
     let prompt = prompt_slice.to_string_lossy().into_owned();
 
-    // The request is incomplete if we see the continue prompt
-    let continue_prompt = unsafe { r_get_option::<String>("continue").unwrap() };
-    let incomplete = prompt == continue_prompt;
+    // TODO: Detect with `env_is_browsed(sys.frame(sys.nframe()))`
+    let browser = false;
 
-    // If the current prompt doesn't match the default prompt, assume that
-    // we're reading use input, e.g. via 'readline()'.
-    let default_prompt = unsafe { r_get_option::<String>("prompt").unwrap() };
-    let user_request = !incomplete && prompt != default_prompt;
+    // If there are frames on the stack and we're not in a browser prompt,
+    // this means some user code is requesting input, e.g. via `readline()`
+    let user_request = !browser && n_frame > 0;
+
+    // The request is incomplete if we see the continue prompt, except if
+    // we're in a user request, e.g. `readline("+ ")`
+    let continue_prompt = unwrap!(unsafe { r_get_option::<String>("continue") }, Err(err) => {
+        warn!("`r_get_option()` failed: {}", err);
+        String::from("+ ")
+    });
+    let incomplete = !user_request && prompt == continue_prompt;
 
     if incomplete {
         trace!("Got R prompt '{}', marking request incomplete", prompt);
