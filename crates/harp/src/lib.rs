@@ -14,6 +14,7 @@ pub mod lock;
 pub mod object;
 pub mod protect;
 pub mod routines;
+pub mod session;
 pub mod string;
 pub mod symbol;
 pub mod test;
@@ -162,7 +163,7 @@ macro_rules! r_lang {
 
     ($($tts:tt)*) => {{
         let value = $crate::r_pairlist!($($tts)*);
-        libR_sys::SET_TYPEOF(value, LISTSXP as i32);
+        libR_sys::SET_TYPEOF(value, LANGSXP as i32);
         value
     }}
 
