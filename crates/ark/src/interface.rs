@@ -308,11 +308,11 @@ pub struct PromptInfo {
     user_request: bool,
 }
 
+// We prefer to panic if there is an error while trying to determine the
+// prompt type because any confusion here is prone to put the frontend in a
+// bad state (e.g. causing freezes)
 fn prompt_info(prompt_c: *const c_char) -> PromptInfo {
-    let n_frame = unwrap!(harp::session::r_n_frame(), Err(err) => {
-        warn!("`r_n_frame()` failed: {}", err);
-        0
-    });
+    let n_frame = harp::session::r_n_frame().unwrap();
     trace!("prompt_info(): n_frame = '{}'", n_frame);
 
     let prompt_slice = unsafe { CStr::from_ptr(prompt_c) };
@@ -327,10 +327,7 @@ fn prompt_info(prompt_c: *const c_char) -> PromptInfo {
 
     // The request is incomplete if we see the continue prompt, except if
     // we're in a user request, e.g. `readline("+ ")`
-    let continue_prompt = unwrap!(unsafe { r_get_option::<String>("continue") }, Err(err) => {
-        warn!("`r_get_option()` failed: {}", err);
-        String::from("+ ")
-    });
+    let continue_prompt = unsafe { r_get_option::<String>("continue").unwrap() };
     let incomplete = !user_request && prompt == continue_prompt;
 
     if incomplete {
