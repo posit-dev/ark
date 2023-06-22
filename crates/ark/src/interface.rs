@@ -34,9 +34,12 @@ use nix::sys::signal::*;
 use parking_lot::MutexGuard;
 use stdext::*;
 
+use crate::errors;
+use crate::help_proxy;
 use crate::kernel::Kernel;
 use crate::kernel::KernelInfo;
 use crate::lsp::events::EVENTS;
+use crate::modules;
 use crate::plots::graphics_device;
 use crate::request::Request;
 
@@ -447,6 +450,15 @@ pub fn start_r(
 
         // Register embedded routines
         r_register_routines();
+
+        // Initialize support functions (after routine registration)
+        let r_module_info = modules::initialize().unwrap();
+
+        // Start R help server proxy
+        help_proxy::start(r_module_info.help_server_port);
+
+        // Set up the global error handler (after support function initialization)
+        errors::initialize();
 
         // Run the main loop -- does not return
         run_Rmainloop();

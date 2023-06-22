@@ -163,7 +163,7 @@ pub unsafe fn initialize() -> anyhow::Result<RModuleInfo> {
     // look in the source tree (found via the 'CARGO_MANIFEST_DIR' environment
     // variable).
     if !root.exists() {
-        let source = format!("{}/src/lsp/modules", env!("CARGO_MANIFEST_DIR"));
+        let source = format!("{}/src/modules", env!("CARGO_MANIFEST_DIR"));
         root = Path::new(&source).to_path_buf();
     }
 

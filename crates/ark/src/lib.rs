@@ -5,14 +5,18 @@
 //
 //
 
+pub mod browser;
 pub mod control;
 pub mod data_viewer;
 pub mod environment;
+pub mod errors;
 pub mod frontend;
+pub mod help_proxy;
 pub mod interface;
 pub mod kernel;
 pub mod logger;
 pub mod lsp;
+pub mod modules;
 pub mod plots;
 pub mod request;
 pub mod shell;
