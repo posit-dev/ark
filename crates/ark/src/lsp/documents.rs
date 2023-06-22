@@ -131,21 +131,21 @@ impl Document {
         });
 
         // Apply as many changes as we can, bailing if we hit a non consecutive change.
-        let changes = std::mem::take(&mut self.pending);
+        let pending = std::mem::take(&mut self.pending);
 
         // We know there is at least 1 consecutive change to apply so that can serve
         // as the initial version since we don't always have a `self.version`.
         let mut loc = 0;
-        let mut version = changes.first().unwrap().text_document.version - 1;
+        let mut version = pending.first().unwrap().text_document.version - 1;
 
-        for change in changes.iter() {
-            let new_version = change.text_document.version;
+        for candidate in pending.iter() {
+            let new_version = candidate.text_document.version;
 
             if new_version > version + 1 {
                 // Not consecutive!
                 log::info!(
                     "on_did_change(): applying changes [{}, {}]; deferring still out-of-order change {}.",
-                    changes.first().unwrap().text_document.version,
+                    pending.first().unwrap().text_document.version,
                     version,
                     new_version
                 );
@@ -156,7 +156,11 @@ impl Document {
             version = new_version;
         }
 
-        let (changes, pending) = changes.split_at(loc);
+        // Split into the actual changes we can apply and the remaining pending changes.
+        let (changes, pending) = pending.split_at(loc);
+
+        // We will still have to apply these later (if any).
+        self.pending = pending.to_vec();
 
         // Apply the changes one-by-one.
         for change in changes {
@@ -171,9 +175,6 @@ impl Document {
 
         // Updates successfully applied; update cached document version.
         self.version = Some(version);
-
-        // We still haven't applied these changes (if any).
-        self.pending = pending.to_vec();
 
         Ok(version)
     }
