@@ -213,6 +213,14 @@ impl Kernel {
         // Save and reset error occurred flag
         let error_occurred = R_ERROR_OCCURRED.swap(false, std::sync::atomic::Ordering::AcqRel);
 
+        if error_occurred {
+            self.finish_request_error();
+        } else {
+            self.finish_request_result();
+        }
+    }
+
+    fn finish_request_result(&self) {
         // TODO: Implement rich printing of certain outputs.
         // Will we need something similar to the RStudio model,
         // where we implement custom print() methods? Or can
@@ -250,38 +258,41 @@ impl Kernel {
 
         // Send the reply to the front end
         if let Some(sender) = &self.execute_response_tx {
-            if error_occurred {
-                // We don't fill out `ename` with anything meaningful because typically
-                // R errors don't have names. We could consider using the condition class
-                // here, which r-lib/tidyverse packages have been using more heavily.
-                let ename = String::from("");
-                let evalue = R_ERROR_EVALUE.take();
-                let traceback = R_ERROR_TRACEBACK.take();
+            sender
+                .send(ExecuteResponse::Reply(ExecuteReply {
+                    status: Status::Ok,
+                    execution_count: self.execution_count,
+                    user_expressions: json!({}),
+                }))
+                .unwrap();
+        }
+    }
 
-                log::info!("An R error occurred: {}", evalue);
+    fn finish_request_error(&self) {
+        // We don't fill out `ename` with anything meaningful because typically
+        // R errors don't have names. We could consider using the condition class
+        // here, which r-lib/tidyverse packages have been using more heavily.
+        let ename = String::from("");
+        let evalue = R_ERROR_EVALUE.take();
+        let traceback = R_ERROR_TRACEBACK.take();
 
-                let exception = Exception {
-                    ename,
-                    evalue,
-                    traceback,
-                };
+        log::info!("An R error occurred: {}", evalue);
 
-                sender
-                    .send(ExecuteResponse::ReplyException(ExecuteReplyException {
-                        status: Status::Error,
-                        execution_count: self.execution_count,
-                        exception,
-                    }))
-                    .unwrap()
-            } else {
-                sender
-                    .send(ExecuteResponse::Reply(ExecuteReply {
-                        status: Status::Ok,
-                        execution_count: self.execution_count,
-                        user_expressions: json!({}),
-                    }))
-                    .unwrap();
-            }
+        let exception = Exception {
+            ename,
+            evalue,
+            traceback,
+        };
+
+        // Send the error to the front end
+        if let Some(sender) = &self.execute_response_tx {
+            sender
+                .send(ExecuteResponse::ReplyException(ExecuteReplyException {
+                    status: Status::Error,
+                    execution_count: self.execution_count,
+                    exception,
+                }))
+                .unwrap()
         }
     }
 
