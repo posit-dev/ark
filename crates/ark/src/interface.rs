@@ -31,7 +31,7 @@ use harp::utils::r_get_option;
 use libR_sys::*;
 use log::*;
 use nix::sys::signal::*;
-use parking_lot::MutexGuard;
+use parking_lot::ReentrantMutexGuard;
 use stdext::*;
 
 use crate::errors;
@@ -141,7 +141,7 @@ pub static mut KERNEL: Option<Arc<Mutex<Kernel>>> = None;
 /// A lock guard, used to manage access to the R runtime.  The main thread holds
 /// the lock by default, but releases it at opportune times to allow the LSP to
 /// access the R runtime where appropriate.
-pub static mut R_RUNTIME_LOCK_GUARD: Option<MutexGuard<()>> = None;
+pub static mut R_RUNTIME_LOCK_GUARD: Option<ReentrantMutexGuard<()>> = None;
 
 /// A channel that sends prompts from R to the kernel
 static mut RPROMPT_SEND: Option<Mutex<Sender<String>>> = None;
