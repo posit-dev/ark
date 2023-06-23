@@ -17,7 +17,7 @@ use stdext::spawn;
 use tokio::net::TcpListener;
 use tokio::net::TcpStream;
 
-use crate::lsp::browser;
+use crate::browser;
 
 async fn handle_request(request: Request<Body>, port: i32) -> anyhow::Result<Response<Body>> {
     // connect to R help server
