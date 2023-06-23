@@ -39,6 +39,7 @@ use log::*;
 use serde_json::json;
 use stdext::unwrap;
 
+use crate::interface::ConsoleInput;
 use crate::request::Request;
 
 /// Represents whether an error occurred during R code execution.
@@ -50,7 +51,6 @@ pub static R_ERROR_TRACEBACK: AtomicCell<Vec<String>> = AtomicCell::new(Vec::new
 pub struct Kernel {
     pub execution_count: u32,
     iopub_tx: Sender<IOPubMessage>,
-    console_tx: Sender<Option<String>>,
     kernel_init_tx: Bus<KernelInfo>,
     execute_response_tx: Option<Sender<ExecuteResponse>>,
     input_request_tx: Option<Sender<ShellInputRequest>>,
@@ -70,15 +70,10 @@ pub struct KernelInfo {
 
 impl Kernel {
     /// Create a new R kernel instance
-    pub fn new(
-        iopub_tx: Sender<IOPubMessage>,
-        console_tx: Sender<Option<String>>,
-        kernel_init_tx: Bus<KernelInfo>,
-    ) -> Self {
+    pub fn new(iopub_tx: Sender<IOPubMessage>, kernel_init_tx: Bus<KernelInfo>) -> Self {
         Self {
             execution_count: 0,
             iopub_tx,
-            console_tx,
             kernel_init_tx,
             execute_response_tx: None,
             input_request_tx: None,
@@ -112,21 +107,19 @@ impl Kernel {
     }
 
     /// Service an execution request from the front end
-    pub fn fulfill_request(&mut self, req: &Request) {
+    pub fn fulfill_request(&mut self, req: &Request) -> Option<ConsoleInput> {
         match req {
             Request::ExecuteCode(req, _, sender) => {
                 let sender = sender.clone();
-                self.handle_execute_request(req, sender);
+                return self.handle_execute_request(req, sender);
             },
-            Request::Shutdown(_) => {
-                if let Err(err) = self.console_tx.send(None) {
-                    warn!("Error sending shutdown message to console: {}", err);
-                }
-            },
+            Request::Shutdown(_) => return Some(ConsoleInput::EOF),
             Request::EstablishInputChannel(sender) => self.establish_input_handler(sender.clone()),
             Request::EstablishEventChannel(sender) => self.establish_event_handler(sender.clone()),
             Request::DeliverEvent(event) => self.handle_event(event),
         }
+
+        None
     }
 
     /// Handle an event from the back end to the front end
@@ -141,7 +134,7 @@ impl Kernel {
         &mut self,
         req: &ExecuteRequest,
         execute_response_tx: Sender<ExecuteResponse>,
-    ) {
+    ) -> Option<ConsoleInput> {
         // Clear error occurred flag
         R_ERROR_OCCURRED.store(false, std::sync::atomic::Ordering::Release);
 
@@ -171,8 +164,8 @@ impl Kernel {
             }
         }
 
-        // Send the code to the R console to be evaluated
-        self.console_tx.send(Some(req.code.clone())).unwrap();
+        // Return the code to the R console to be evaluated
+        Some(ConsoleInput::Input(req.code.clone()))
     }
 
     /// Converts a data frame to HTML

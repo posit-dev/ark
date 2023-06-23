@@ -137,6 +137,7 @@ extern "C" fn handle_interrupt(_signal: libc::c_int) {
 
 /// Ensures that the kernel is only ever initialized once
 static INIT: Once = Once::new();
+static INIT_KERNEL: Once = Once::new();
 
 // The global state used by R callbacks.
 //
@@ -146,12 +147,9 @@ static INIT: Once = Once::new();
 pub static mut R_MAIN: Option<RMain> = None;
 
 pub struct RMain {
-    /// A channel that sends prompts from R to the kernel
-    prompt_tx: Sender<PromptInfo>,
-
-    /// A channel that receives console input from the kernel and sends it
-    /// to R; sending empty input (None) tells R to shut down
-    console_rx: Receiver<Option<String>>,
+    /// Execution requests from the frontend. Processed from `ReadConsole()`.
+    /// Requests for code execution provide input to that method.
+    shell_request_rx: Receiver<Request>,
 
     /// A lock guard, used to manage access to the R runtime.  The main
     /// thread holds the lock by default, but releases it at opportune
@@ -164,18 +162,13 @@ pub struct RMain {
 }
 
 impl RMain {
-    pub fn new(
-        prompt_tx: Sender<PromptInfo>,
-        console_rx: Receiver<Option<String>>,
-        kernel: Arc<Mutex<Kernel>>,
-    ) -> Self {
+    pub fn new(shell_request_rx: Receiver<Request>, kernel: Arc<Mutex<Kernel>>) -> Self {
         // The main thread owns the R runtime lock by default, but releases
         // it when appropriate to give other threads a chance to execute.
         let lock_guard = unsafe { R_RUNTIME_LOCK.lock() };
 
         Self {
-            prompt_tx,
-            console_rx,
+            shell_request_rx,
             runtime_lock_guard: Some(lock_guard),
             kernel,
         }
@@ -227,6 +220,11 @@ fn on_console_input(buf: *mut c_uchar, buflen: c_int, mut input: String) {
     }
 }
 
+pub enum ConsoleInput {
+    EOF,
+    Input(String),
+}
+
 /// Invoked by R to read console input from the user.
 ///
 /// * `prompt` - The prompt shown to the user
@@ -246,6 +244,16 @@ pub extern "C" fn r_read_console(
     let info = prompt_info(prompt);
     debug!("R prompt: {}", info.prompt);
 
+    INIT_KERNEL.call_once(|| {
+        let mut kernel = main.kernel.lock().unwrap();
+        kernel.complete_initialization();
+
+        trace!(
+            "Got initial R prompt '{}', ready for execution requests",
+            info.prompt
+        );
+    });
+
     // TODO: Can we remove this below code?
     // If the prompt begins with "Save workspace", respond with (n)
     //
@@ -259,8 +267,8 @@ pub extern "C" fn r_read_console(
         return 1;
     }
 
-    // TODO: if R prompt is +, we need to tell the user their input is incomplete
-    main.prompt_tx.send(info).unwrap();
+    // Signal prompt
+    EVENTS.console_prompt.emit(());
 
     // Match with a timeout. Necessary because we need to
     // pump the event loop while waiting for console input.
@@ -272,8 +280,14 @@ pub extern "C" fn r_read_console(
         // Release the R runtime lock while we're waiting for input.
         main.runtime_lock_guard = None;
 
-        match main.console_rx.recv_timeout(Duration::from_millis(200)) {
-            Ok(response) => {
+        // Wait for an execution request from the front end.
+        match main
+            .shell_request_rx
+            .recv_timeout(Duration::from_millis(200))
+        {
+            Ok(req) => {
+                let response = handle_r_request(&req, info.clone(), main.kernel.clone());
+
                 // Take back the lock after we've received some console input.
                 unsafe { main.runtime_lock_guard = Some(R_RUNTIME_LOCK.lock()) };
 
@@ -287,37 +301,38 @@ pub extern "C" fn r_read_console(
                 unsafe { process_events() };
 
                 if let Some(input) = response {
-                    on_console_input(buf, buflen, input);
+                    match input {
+                        ConsoleInput::Input(code) => {
+                            on_console_input(buf, buflen, code);
+                            return 1;
+                        },
+                        ConsoleInput::EOF => return 0,
+                    }
                 }
-
-                return 1;
             },
-
-            Err(error) => {
+            Err(err) => {
                 unsafe { main.runtime_lock_guard = Some(R_RUNTIME_LOCK.lock()) };
 
                 use RecvTimeoutError::*;
-                match error {
+                match err {
                     Timeout => {
-                        // Process events.
+                        // Process events and keep waiting for console input.
                         unsafe { process_events() };
-
-                        // Keep waiting for console input.
                         continue;
                     },
-
                     Disconnected => {
                         return 1;
                     },
                 }
             },
-        }
+        };
     }
 }
 
 /// This struct represents the data that we wish R would pass to
 /// `ReadConsole()` methods. We need this information to determine what kind
 /// of prompt we are dealing with.
+#[derive(Clone)]
 pub struct PromptInfo {
     /// The prompt string to be presented to the user
     prompt: String,
@@ -464,21 +479,13 @@ pub fn start_r(
     kernel_init_tx: Bus<KernelInfo>,
     shell_request_rx: Receiver<Request>,
 ) {
-    // Start building the channels + kernel objects
-    let (console_tx, console_rx) = crossbeam::channel::unbounded();
-    let (rprompt_tx, rprompt_rx) = crossbeam::channel::unbounded();
-
-    let kernel = Kernel::new(iopub_tx, console_tx.clone(), kernel_init_tx);
+    // Start building the kernel object
+    let kernel = Kernel::new(iopub_tx, kernel_init_tx);
     let kernel_mutex = Arc::new(Mutex::new(kernel));
 
     // Initialize global state (ensure we only do this once!)
     INIT.call_once(|| unsafe {
-        R_MAIN = Some(RMain::new(rprompt_tx, console_rx, kernel_mutex.clone()));
-    });
-
-    // Start thread to listen to execution requests
-    spawn!("ark-execution", move || {
-        listen(shell_request_rx, rprompt_rx, kernel_mutex.clone())
+        R_MAIN = Some(RMain::new(shell_request_rx, kernel_mutex.clone()));
     });
 
     unsafe {
@@ -547,82 +554,45 @@ pub fn start_r(
 
 fn handle_r_request(
     req: &Request,
-    prompt_recv: &Receiver<PromptInfo>,
+    prompt_info: PromptInfo,
     kernel_mutex: Arc<Mutex<Kernel>>,
-) {
+) -> Option<ConsoleInput> {
     // Service the request.
-    {
+    let out = {
         let mut kernel = kernel_mutex.lock().unwrap();
         kernel.fulfill_request(&req)
-    }
+    };
 
     // If this is an execution request, complete it by waiting for R to prompt
     // us before we process another request
     if let Request::ExecuteCode(_, _, _) = req {
-        complete_execute_request(req, prompt_recv, kernel_mutex);
+        complete_execute_request(req, prompt_info, kernel_mutex);
     }
+
+    out
 }
 
 fn complete_execute_request(
     req: &Request,
-    prompt_recv: &Receiver<PromptInfo>,
+    prompt_info: PromptInfo,
     kernel_mutex: Arc<Mutex<Kernel>>,
 ) {
-    // Wait for R to prompt us again. This signals that the
-    // execution is finished and R is ready for input again.
-    trace!("Waiting for R prompt signaling completion of execution...");
-    let prompt_info = prompt_recv.recv().unwrap();
     let prompt = prompt_info.prompt;
     let kernel = kernel_mutex.lock().unwrap();
 
-    // Signal prompt
-    EVENTS.console_prompt.emit(());
-
     if prompt_info.incomplete {
-        return kernel.report_incomplete_request(&req);
-    }
-
-    if prompt_info.user_request {
+        kernel.report_incomplete_request(&req);
+    } else if prompt_info.user_request {
         if let Request::ExecuteCode(_, originator, _) = req {
             kernel.request_input(originator.clone(), &prompt);
         } else {
             warn!("No originator for input request, omitting");
             kernel.request_input(None, &prompt);
         }
-
         trace!("Input requested, waiting for reply...");
-        return;
-    }
-
-    // Default prompt, finishing request
-    trace!("Got R prompt '{}', completing execution", prompt);
-    return kernel.finish_request();
-}
-
-pub fn listen(
-    exec_recv: Receiver<Request>,
-    prompt_recv: Receiver<PromptInfo>,
-    kernel_mutex: Arc<Mutex<Kernel>>,
-) {
-    // Before accepting execution requests from the front end, wait for R to
-    // prompt us for input.
-    trace!("Waiting for R's initial input prompt...");
-    let info = prompt_recv.recv().unwrap();
-    trace!(
-        "Got initial R prompt '{}', ready for execution requests",
-        info.prompt
-    );
-
-    {
-        let mut kernel = kernel_mutex.lock().unwrap();
-        kernel.complete_initialization();
-    }
-
-    loop {
-        // Wait for an execution request from the front end.
-        match exec_recv.recv() {
-            Ok(req) => handle_r_request(&req, &prompt_recv, kernel_mutex.clone()),
-            Err(err) => warn!("Could not receive execution request from kernel: {}", err),
-        }
+    } else {
+        // Default prompt, finishing request
+        trace!("Got R prompt '{}', completing execution", prompt);
+        kernel.finish_request();
     }
 }
