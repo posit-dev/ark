@@ -7,3 +7,6 @@ members = [
     "crates/harp",
     "crates/stdext"
 ]
+
+[patch.crates-io]
+parking_lot = { git = 'https://github.com/DavisVaughan/parking_lot.git', branch = 'fix/reentrant-mutex-bump-count' }
