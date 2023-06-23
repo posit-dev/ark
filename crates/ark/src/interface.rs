@@ -369,7 +369,7 @@ pub unsafe extern "C" fn r_polled_events() {
     // `bump()` does a fair unlock, giving other threads
     // waiting for the lock a chance to acquire it, and then
     // relocks it.
-    MutexGuard::bump(R_RUNTIME_LOCK_GUARD.as_mut().unwrap());
+    ReentrantMutexGuard::bump(R_RUNTIME_LOCK_GUARD.as_mut().unwrap());
 
     info!(
         "The main thread re-acquired the R runtime lock after {} milliseconds.",
