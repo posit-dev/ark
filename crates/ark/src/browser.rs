@@ -14,7 +14,7 @@ use harp::exec::RFunction;
 use harp::object::RObject;
 use libR_sys::*;
 
-use crate::interface::KERNEL;
+use crate::interface::R_MAIN;
 
 pub static mut PORT: u16 = 0;
 
@@ -48,8 +48,10 @@ unsafe fn handle_help_url(url: &str) -> Result<bool> {
         focus: true,
     });
 
-    let kernel = KERNEL.as_ref().unwrap().lock().unwrap();
+    let main = unsafe { R_MAIN.as_ref().unwrap() };
+    let kernel = main.kernel.lock().unwrap();
     kernel.send_event(event);
+
     Ok(true)
 }
 
