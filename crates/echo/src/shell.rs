@@ -37,16 +37,16 @@ use serde_json::json;
 
 pub struct Shell {
     iopub: Sender<IOPubMessage>,
-    input_tx: Option<Sender<ShellInputRequest>>,
+    _input_tx: Sender<ShellInputRequest>,
     execution_count: u32,
 }
 
 impl Shell {
-    pub fn new(iopub: Sender<IOPubMessage>) -> Self {
+    pub fn new(iopub: Sender<IOPubMessage>, input_tx: Sender<ShellInputRequest>) -> Self {
         Self {
             iopub,
+            _input_tx: input_tx,
             execution_count: 0,
-            input_tx: None,
         }
     }
 }
@@ -211,9 +211,5 @@ impl ShellHandler for Shell {
     ) -> Result<(), Exception> {
         // NYI
         Ok(())
-    }
-
-    fn establish_input_handler(&mut self, handler: Sender<ShellInputRequest>) {
-        self.input_tx = Some(handler);
     }
 }

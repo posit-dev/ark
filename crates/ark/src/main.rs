@@ -14,6 +14,7 @@ use std::sync::Mutex;
 use amalthea::connection_file::ConnectionFile;
 use amalthea::kernel::Kernel;
 use amalthea::kernel_spec::KernelSpec;
+use amalthea::wire::input_request::ShellInputRequest;
 use ark::control::Control;
 use ark::logger;
 use ark::lsp;
@@ -62,7 +63,12 @@ fn start_kernel(connection_file: ConnectionFile, capture_streams: bool) {
         kernel_init_tx.add_rx(),
     )));
 
+    // One-off communication channel for 0MQ init event
     let (conn_init_tx, conn_init_rx) = bounded::<bool>(0);
+
+    // Communication channel between the R main thread and the Amalthea
+    // StdIn socket thread
+    let (input_request_tx, input_request_rx) = bounded::<ShellInputRequest>(1);
 
     // Create the shell.
     let kernel_init_rx = kernel_init_tx.add_rx();
@@ -74,6 +80,7 @@ fn start_kernel(connection_file: ConnectionFile, capture_streams: bool) {
         kernel_init_rx,
         kernel_request_tx,
         kernel_request_rx,
+        input_request_tx,
         conn_init_rx,
     );
 
@@ -95,6 +102,7 @@ fn start_kernel(connection_file: ConnectionFile, capture_streams: bool) {
         control,
         Some(lsp),
         stream_behavior,
+        input_request_rx,
         Some(conn_init_tx),
     ) {
         Ok(()) => {

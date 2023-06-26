@@ -13,7 +13,6 @@ use amalthea::events::PositronEvent;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::execute_input::ExecuteInput;
 use amalthea::wire::execute_request::ExecuteRequest;
-use amalthea::wire::input_request::ShellInputRequest;
 use amalthea::wire::stream::Stream;
 use amalthea::wire::stream::StreamOutput;
 use anyhow::*;
@@ -41,7 +40,6 @@ pub static R_ERROR_TRACEBACK: AtomicCell<Vec<String>> = AtomicCell::new(Vec::new
 pub struct Kernel {
     /** Counter used to populate `In[n]` and `Out[n]` prompts */
     pub execution_count: u32,
-    pub input_request_tx: Option<Sender<ShellInputRequest>>,
 
     iopub_tx: Sender<IOPubMessage>,
     kernel_init_tx: Bus<KernelInfo>,
@@ -66,7 +64,6 @@ impl Kernel {
             execution_count: 0,
             iopub_tx,
             kernel_init_tx,
-            input_request_tx: None,
             event_tx: None,
             banner: String::new(),
             stdout: String::new(),
@@ -99,9 +96,6 @@ impl Kernel {
     /// Service an execution request from the front end
     pub fn fulfill_request(&mut self, req: &KernelRequest) {
         match req {
-            KernelRequest::EstablishInputChannel(sender) => {
-                self.establish_input_handler(sender.clone())
-            },
             KernelRequest::EstablishEventChannel(sender) => {
                 self.establish_event_handler(sender.clone())
             },
@@ -184,12 +178,6 @@ impl Kernel {
         unwrap!(self.iopub_tx.send(message), Err(error) => {
             log::error!("{}", error);
         });
-    }
-
-    /// Establishes the input handler for the kernel to request input from the
-    /// user
-    pub fn establish_input_handler(&mut self, input_request_tx: Sender<ShellInputRequest>) {
-        self.input_request_tx = Some(input_request_tx);
     }
 
     /// Establishes the event handler for the kernel to send events to the

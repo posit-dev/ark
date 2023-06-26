@@ -8,7 +8,6 @@
 use amalthea::events::PositronEvent;
 use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::execute_response::ExecuteResponse;
-use amalthea::wire::input_request::ShellInputRequest;
 use amalthea::wire::originator::Originator;
 use crossbeam::channel::Sender;
 
@@ -26,9 +25,6 @@ pub enum RRequest {
 /// Represents requests to the kernel.
 #[derive(Debug, Clone)]
 pub enum KernelRequest {
-    /// Establish a channel to the front end to send input requests
-    EstablishInputChannel(Sender<ShellInputRequest>),
-
     /// Establish a channel to the front end to send events
     EstablishEventChannel(Sender<PositronEvent>),
 

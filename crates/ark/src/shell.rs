@@ -75,6 +75,7 @@ impl Shell {
         kernel_init_rx: BusReader<KernelInfo>,
         kernel_request_tx: Sender<KernelRequest>,
         kernel_request_rx: Receiver<KernelRequest>,
+        input_request_tx: Sender<ShellInputRequest>,
         conn_init_rx: Receiver<bool>,
     ) -> Self {
         // Start building the kernel object. It is shared by the shell, LSP, and main threads.
@@ -99,7 +100,7 @@ impl Shell {
             drop(conn_init_rx);
 
             // Start the R REPL (does not return)
-            crate::interface::start_r(kernel_clone, r_request_rx, iopub_tx_clone);
+            crate::interface::start_r(kernel_clone, r_request_rx, input_request_tx, iopub_tx_clone);
         });
 
         Self {
@@ -311,12 +312,6 @@ impl ShellHandler for Shell {
             warn!("Error in input reply: {:?}", err);
         }
         Ok(())
-    }
-
-    fn establish_input_handler(&mut self, handler: Sender<ShellInputRequest>) {
-        self.kernel_request_tx
-            .send(KernelRequest::EstablishInputChannel(handler))
-            .unwrap();
     }
 }
 

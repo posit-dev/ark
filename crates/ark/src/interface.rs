@@ -165,6 +165,10 @@ pub struct RMain {
     /// Requests for code execution provide input to that method.
     r_request_rx: Receiver<RRequest>,
 
+    /// Input requests to the frontend. Processed from `ReadConsole()`
+    /// calls triggered by e.g. `readline()`.
+    input_request_tx: Sender<ShellInputRequest>,
+
     /// IOPub channel for broadcasting outputs
     iopub_tx: Sender<IOPubMessage>,
 
@@ -182,6 +186,7 @@ impl RMain {
     pub fn new(
         kernel: Arc<Mutex<Kernel>>,
         r_request_rx: Receiver<RRequest>,
+        input_request_tx: Sender<ShellInputRequest>,
         iopub_tx: Sender<IOPubMessage>,
     ) -> Self {
         // The main thread owns the R runtime lock by default, but releases
@@ -190,6 +195,7 @@ impl RMain {
 
         Self {
             r_request_rx,
+            input_request_tx,
             iopub_tx,
             runtime_lock_guard: Some(lock_guard),
             kernel,
@@ -494,11 +500,17 @@ pub unsafe extern "C" fn r_polled_events() {
 pub fn start_r(
     kernel_mutex: Arc<Mutex<Kernel>>,
     r_request_rx: Receiver<RRequest>,
+    input_request_tx: Sender<ShellInputRequest>,
     iopub_tx: Sender<IOPubMessage>,
 ) {
     // Initialize global state (ensure we only do this once!)
     INIT.call_once(|| unsafe {
-        R_MAIN = Some(RMain::new(kernel_mutex, r_request_rx, iopub_tx));
+        R_MAIN = Some(RMain::new(
+            kernel_mutex,
+            r_request_rx,
+            input_request_tx,
+            iopub_tx,
+        ));
     });
 
     unsafe {
@@ -591,9 +603,12 @@ fn fulfill_execute_request(
     prompt_info: PromptInfo,
     kernel_mutex: Arc<Mutex<Kernel>>,
 ) -> ConsoleInput {
-    let mut kernel = kernel_mutex.lock().unwrap();
-    let (input, exec_count) = kernel.handle_execute_request(req);
+    let main = unsafe { R_MAIN.as_mut().unwrap() };
 
+    let (input, exec_count) = {
+        let mut kernel = kernel_mutex.lock().unwrap();
+        kernel.handle_execute_request(req)
+    };
     let prompt = prompt_info.prompt;
 
     let reply = if prompt_info.incomplete {
@@ -605,19 +620,15 @@ fn fulfill_execute_request(
             prompt
         );
 
-        if let Some(input_request_tx) = kernel.input_request_tx.clone() {
-            input_request_tx
-                .send(ShellInputRequest {
-                    originator: orig,
-                    request: InputRequest {
-                        prompt: prompt.to_string(),
-                        password: false,
-                    },
-                })
-                .unwrap();
-        } else {
-            warn!("Unable to request input: no input requestor set!");
-        }
+        main.input_request_tx
+            .send(ShellInputRequest {
+                originator: orig,
+                request: InputRequest {
+                    prompt: prompt.to_string(),
+                    password: false,
+                },
+            })
+            .unwrap();
 
         new_execute_response(exec_count)
     } else {
