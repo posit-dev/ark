@@ -289,24 +289,21 @@ pub extern "C" fn r_read_console(
     }
 }
 
-/**
- * This struct represents the data that we wish R would pass to
- * `ReadConsole()` methods. We need this information to determine what kind
- * of prompt we are dealing with.
- *
- * TODO: `browser` field */
+/// This struct represents the data that we wish R would pass to
+/// `ReadConsole()` methods. We need this information to determine what kind
+/// of prompt we are dealing with.
 pub struct PromptInfo {
-    /** The prompt string to be presented to the user */
+    /// The prompt string to be presented to the user
     prompt: String,
 
-    /** Whether the last input didn't fully parse and R is waiting for more
-     * input */
+    /// Whether the last input didn't fully parse and R is waiting for more input
     incomplete: bool,
 
-    /** Whether this is a prompt from a fresh REPL iteration (browser or
-     * top level) or a prompt from some user code, e.g. via `readline()` */
+    /// Whether this is a prompt from a fresh REPL iteration (browser or
+    /// top level) or a prompt from some user code, e.g. via `readline()`
     user_request: bool,
 }
+// TODO: `browser` field
 
 // We prefer to panic if there is an error while trying to determine the
 // prompt type because any confusion here is prone to put the frontend in a
