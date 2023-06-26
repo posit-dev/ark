@@ -14,11 +14,18 @@ use crossbeam::channel::Sender;
 
 /// Represents requests to the primary R execution thread.
 #[derive(Debug, Clone)]
-pub enum Request {
+pub enum RRequest {
     /// Fulfill an execution request from the front end, producing either a
     /// Reply or an Exception
     ExecuteCode(ExecuteRequest, Option<Originator>, Sender<ExecuteResponse>),
 
+    /// Shut down the R execution thread
+    Shutdown(bool),
+}
+
+/// Represents requests to the kernel.
+#[derive(Debug, Clone)]
+pub enum KernelRequest {
     /// Establish a channel to the front end to send input requests
     EstablishInputChannel(Sender<ShellInputRequest>),
 
@@ -27,7 +34,4 @@ pub enum Request {
 
     /// Deliver an event to the front end
     DeliverEvent(PositronEvent),
-
-    /// Shut down the R execution thread
-    Shutdown(bool),
 }

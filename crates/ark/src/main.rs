@@ -17,7 +17,8 @@ use amalthea::kernel_spec::KernelSpec;
 use ark::control::Control;
 use ark::logger;
 use ark::lsp;
-use ark::request::Request;
+use ark::request::KernelRequest;
+use ark::request::RRequest;
 use ark::shell::Shell;
 use ark::version::detect_r;
 use bus::Bus;
@@ -49,13 +50,14 @@ fn start_kernel(connection_file: ConnectionFile, capture_streams: bool) {
     // A channel pair used for shell requests.
     // These events are used to manage the runtime state, and also to
     // handle message delivery, among other things.
-    let (shell_request_tx, shell_request_rx) = bounded::<Request>(1);
+    let (r_request_tx, r_request_rx) = bounded::<RRequest>(1);
+    let (kernel_request_tx, kernel_request_rx) = bounded::<KernelRequest>(1);
 
     // Create the LSP client.
     // Not all Amalthea kernels provide one, but ark does.
     // It must be able to deliver messages to the shell channel directly.
     let lsp = Arc::new(Mutex::new(lsp::handler::Lsp::new(
-        shell_request_tx.clone(),
+        kernel_request_tx.clone(),
         kernel.create_comm_manager_tx(),
         kernel_init_tx.add_rx(),
     )));
@@ -66,16 +68,18 @@ fn start_kernel(connection_file: ConnectionFile, capture_streams: bool) {
     let kernel_init_rx = kernel_init_tx.add_rx();
     let shell = Shell::new(
         iopub_tx,
-        shell_request_tx,
-        shell_request_rx,
+        r_request_tx.clone(),
+        r_request_rx,
         kernel_init_tx,
         kernel_init_rx,
+        kernel_request_tx,
+        kernel_request_rx,
         conn_init_rx,
     );
 
     // Create the control handler; this is used to handle shutdown/interrupt and
     // related requests
-    let control = Arc::new(Mutex::new(Control::new(shell.request_tx())));
+    let control = Arc::new(Mutex::new(Control::new(r_request_tx.clone())));
 
     // Create the stream behavior; this determines whether the kernel should
     // capture stdout/stderr and send them to the front end as IOPub messages

@@ -40,7 +40,7 @@ use serde_json::json;
 use stdext::unwrap;
 
 use crate::interface::ConsoleInput;
-use crate::request::Request;
+use crate::request::KernelRequest;
 
 /// Represents whether an error occurred during R code execution.
 pub static R_ERROR_OCCURRED: AtomicBool = AtomicBool::new(false);
@@ -49,7 +49,9 @@ pub static R_ERROR_TRACEBACK: AtomicCell<Vec<String>> = AtomicCell::new(Vec::new
 
 /// Represents the Rust state of the R kernel
 pub struct Kernel {
+    /** Counter used to populate `In[n]` and `Out[n]` prompts */
     pub execution_count: u32,
+
     iopub_tx: Sender<IOPubMessage>,
     kernel_init_tx: Bus<KernelInfo>,
     execute_response_tx: Option<Sender<ExecuteResponse>>,
@@ -107,19 +109,16 @@ impl Kernel {
     }
 
     /// Service an execution request from the front end
-    pub fn fulfill_request(&mut self, req: &Request) -> Option<ConsoleInput> {
+    pub fn fulfill_request(&mut self, req: &KernelRequest) {
         match req {
-            Request::ExecuteCode(req, _, sender) => {
-                let sender = sender.clone();
-                return self.handle_execute_request(req, sender);
+            KernelRequest::EstablishInputChannel(sender) => {
+                self.establish_input_handler(sender.clone())
             },
-            Request::Shutdown(_) => return Some(ConsoleInput::EOF),
-            Request::EstablishInputChannel(sender) => self.establish_input_handler(sender.clone()),
-            Request::EstablishEventChannel(sender) => self.establish_event_handler(sender.clone()),
-            Request::DeliverEvent(event) => self.handle_event(event),
+            KernelRequest::EstablishEventChannel(sender) => {
+                self.establish_event_handler(sender.clone())
+            },
+            KernelRequest::DeliverEvent(event) => self.handle_event(event),
         }
-
-        None
     }
 
     /// Handle an event from the back end to the front end
@@ -134,7 +133,7 @@ impl Kernel {
         &mut self,
         req: &ExecuteRequest,
         execute_response_tx: Sender<ExecuteResponse>,
-    ) -> Option<ConsoleInput> {
+    ) -> ConsoleInput {
         // Clear error occurred flag
         R_ERROR_OCCURRED.store(false, std::sync::atomic::Ordering::Release);
 
@@ -165,7 +164,7 @@ impl Kernel {
         }
 
         // Return the code to the R console to be evaluated
-        Some(ConsoleInput::Input(req.code.clone()))
+        ConsoleInput::Input(req.code.clone())
     }
 
     /// Converts a data frame to HTML
@@ -180,18 +179,14 @@ impl Kernel {
     }
 
     /// Report an incomplete request to the front end
-    pub fn report_incomplete_request(&self, req: &Request) {
-        let code = match req {
-            Request::ExecuteCode(req, _, _) => req.code.clone(),
-            _ => String::new(),
-        };
+    pub fn report_incomplete_request(&self, req: &ExecuteRequest) {
         if let Some(sender) = self.execute_response_tx.as_ref() {
             let reply = ExecuteReplyException {
                 status: Status::Error,
                 execution_count: self.execution_count,
                 exception: Exception {
                     ename: "IncompleteInput".to_string(),
-                    evalue: format!("Code fragment is not complete: {}", code),
+                    evalue: format!("Code fragment is not complete: {}", req.code),
                     traceback: vec![],
                 },
             };

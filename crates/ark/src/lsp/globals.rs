@@ -11,7 +11,7 @@ use parking_lot::Mutex;
 use parking_lot::MutexGuard;
 use tower_lsp::Client;
 
-use crate::request::Request;
+use crate::request::KernelRequest;
 
 // The LSP client.
 // For use within R callback functions.
@@ -19,7 +19,7 @@ static mut LSP_CLIENT: Option<Client> = None;
 
 // The shell request channel.
 // For use within R callback functions.
-static mut SHELL_REQUEST_TX: Option<Mutex<Sender<Request>>> = None;
+static mut KERNEL_REQUEST_TX: Option<Mutex<Sender<KernelRequest>>> = None;
 
 // The communication channel manager's request channel.
 // For use within R callback functions.
@@ -29,8 +29,8 @@ pub fn lsp_client() -> Client {
     unsafe { LSP_CLIENT.as_ref().unwrap_unchecked().clone() }
 }
 
-pub fn shell_request_tx<'a>() -> MutexGuard<'a, Sender<Request>> {
-    unsafe { SHELL_REQUEST_TX.as_ref().unwrap_unchecked().lock() }
+pub fn kernel_request_tx<'a>() -> MutexGuard<'a, Sender<KernelRequest>> {
+    unsafe { KERNEL_REQUEST_TX.as_ref().unwrap_unchecked().lock() }
 }
 
 pub fn comm_manager_tx<'a>() -> MutexGuard<'a, Sender<CommEvent>> {
@@ -39,12 +39,12 @@ pub fn comm_manager_tx<'a>() -> MutexGuard<'a, Sender<CommEvent>> {
 
 pub fn initialize(
     lsp_client: Client,
-    shell_request_tx: Sender<Request>,
+    kernel_request_tx: Sender<KernelRequest>,
     comm_manager_tx: Sender<CommEvent>,
 ) {
     unsafe {
         LSP_CLIENT = Some(lsp_client);
-        SHELL_REQUEST_TX = Some(Mutex::new(shell_request_tx));
+        KERNEL_REQUEST_TX = Some(Mutex::new(kernel_request_tx));
         COMM_MANAGER_TX = Some(Mutex::new(comm_manager_tx));
     }
 }

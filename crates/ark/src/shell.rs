@@ -5,6 +5,9 @@
 //
 //
 
+use std::sync::Arc;
+use std::sync::Mutex;
+
 use amalthea::comm::comm_channel::Comm;
 use amalthea::language::shell_handler::ShellHandler;
 use amalthea::socket::comm::CommSocket;
@@ -45,11 +48,14 @@ use stdext::spawn;
 
 use crate::environment::r_environment::REnvironment;
 use crate::frontend::frontend::PositronFrontend;
+use crate::kernel::Kernel;
 use crate::kernel::KernelInfo;
-use crate::request::Request;
+use crate::request::KernelRequest;
+use crate::request::RRequest;
 
 pub struct Shell {
-    shell_request_tx: Sender<Request>,
+    r_request_tx: Sender<RRequest>,
+    kernel_request_tx: Sender<KernelRequest>,
     kernel_init_rx: BusReader<KernelInfo>,
     kernel_info: Option<KernelInfo>,
 }
@@ -63,13 +69,23 @@ impl Shell {
     /// Creates a new instance of the shell message handler.
     pub fn new(
         iopub_tx: Sender<IOPubMessage>,
-        shell_request_tx: Sender<Request>,
-        shell_request_rx: Receiver<Request>,
+        r_request_tx: Sender<RRequest>,
+        r_request_rx: Receiver<RRequest>,
         kernel_init_tx: Bus<KernelInfo>,
         kernel_init_rx: BusReader<KernelInfo>,
+        kernel_request_tx: Sender<KernelRequest>,
+        kernel_request_rx: Receiver<KernelRequest>,
         conn_init_rx: Receiver<bool>,
     ) -> Self {
-        let iopub_tx = iopub_tx.clone();
+        // Start building the kernel object. It is shared by the shell, LSP, and main threads.
+        let kernel_mutex = Arc::new(Mutex::new(Kernel::new(iopub_tx, kernel_init_tx)));
+
+        let kernel_clone = kernel_mutex.clone();
+        spawn!("ark-shell-thread", move || {
+            listen(kernel_clone, kernel_request_rx);
+        });
+
+        let kernel_clone = kernel_mutex.clone();
         spawn!("ark-r-main-thread", move || {
             // Block until 0MQ is initialised before starting R to avoid
             // thread-safety issues. See https://github.com/rstudio/positron/issues/720
@@ -81,30 +97,16 @@ impl Shell {
             }
             drop(conn_init_rx);
 
-            Self::execution_thread(iopub_tx, kernel_init_tx, shell_request_rx);
+            // Start the R REPL (does not return)
+            crate::interface::start_r(kernel_clone, r_request_rx);
         });
 
         Self {
-            shell_request_tx,
+            r_request_tx,
+            kernel_request_tx,
             kernel_init_rx,
             kernel_info: None,
         }
-    }
-
-    /// Starts the R execution thread (does not return)
-    pub fn execution_thread(
-        iopub_tx: Sender<IOPubMessage>,
-        kernel_init_tx: Bus<KernelInfo>,
-        shell_request_rx: Receiver<Request>,
-    ) {
-        // Start kernel (does not return)
-        crate::interface::start_r(iopub_tx, kernel_init_tx, shell_request_rx);
-    }
-
-    /// Returns a sender channel for the R execution thread; used outside the
-    /// shell handler
-    pub fn request_tx(&self) -> Sender<Request> {
-        self.shell_request_tx.clone()
     }
 
     /// SAFETY: Requires the R runtime lock.
@@ -204,8 +206,8 @@ impl ShellHandler for Shell {
     ) -> Result<ExecuteReply, ExecuteReplyException> {
         let (sender, receiver) = unbounded::<ExecuteResponse>();
         if let Err(err) =
-            self.shell_request_tx
-                .send(Request::ExecuteCode(req.clone(), originator, sender))
+            self.r_request_tx
+                .send(RRequest::ExecuteCode(req.clone(), originator, sender))
         {
             warn!(
                 "Could not deliver execution request to execution thread: {}",
@@ -261,9 +263,12 @@ impl ShellHandler for Shell {
 
                 // Send the frontend event channel to the execution thread so it can emit
                 // events to the frontend.
-                if let Err(err) = self.shell_request_tx.send(Request::EstablishEventChannel(
-                    frontend_comm.event_tx.clone(),
-                )) {
+                if let Err(err) = self
+                    .kernel_request_tx
+                    .send(KernelRequest::EstablishEventChannel(
+                        frontend_comm.event_tx.clone(),
+                    ))
+                {
                     warn!(
                         "Could not deliver frontend event channel to execution thread: {}",
                         err
@@ -292,8 +297,8 @@ impl ShellHandler for Shell {
         };
         let (sender, receiver) = unbounded::<ExecuteResponse>();
         if let Err(err) =
-            self.shell_request_tx
-                .send(Request::ExecuteCode(req.clone(), Some(orig), sender))
+            self.r_request_tx
+                .send(RRequest::ExecuteCode(req.clone(), Some(orig), sender))
         {
             warn!("Could not deliver input reply to execution thread: {}", err)
         }
@@ -308,8 +313,22 @@ impl ShellHandler for Shell {
     }
 
     fn establish_input_handler(&mut self, handler: Sender<ShellInputRequest>) {
-        self.shell_request_tx
-            .send(Request::EstablishInputChannel(handler))
+        self.kernel_request_tx
+            .send(KernelRequest::EstablishInputChannel(handler))
             .unwrap();
+    }
+}
+
+// Kernel is shared with the main R thread
+fn listen(kernel_mutex: Arc<Mutex<Kernel>>, kernel_request_rx: Receiver<KernelRequest>) {
+    loop {
+        // Wait for an execution request from the front end.
+        match kernel_request_rx.recv() {
+            Ok(req) => {
+                let mut kernel = kernel_mutex.lock().unwrap();
+                kernel.fulfill_request(&req)
+            },
+            Err(err) => warn!("Could not receive execution request from kernel: {}", err),
+        }
     }
 }

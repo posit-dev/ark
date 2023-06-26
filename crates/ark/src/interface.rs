@@ -17,9 +17,10 @@ use std::time::SystemTime;
 use amalthea::events::BusyEvent;
 use amalthea::events::PositronEvent;
 use amalthea::events::ShowMessageEvent;
-use amalthea::socket::iopub::IOPubMessage;
+use amalthea::wire::execute_request::ExecuteRequest;
+use amalthea::wire::execute_response::ExecuteResponse;
+use amalthea::wire::originator::Originator;
 use amalthea::wire::stream::Stream;
-use bus::Bus;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::RecvTimeoutError;
 use crossbeam::channel::Sender;
@@ -37,11 +38,10 @@ use stdext::*;
 use crate::errors;
 use crate::help_proxy;
 use crate::kernel::Kernel;
-use crate::kernel::KernelInfo;
 use crate::lsp::events::EVENTS;
 use crate::modules;
 use crate::plots::graphics_device;
-use crate::request::Request;
+use crate::request::RRequest;
 
 extern "C" {
     pub static mut R_running_as_main_program: ::std::os::raw::c_int;
@@ -149,7 +149,7 @@ pub static mut R_MAIN: Option<RMain> = None;
 pub struct RMain {
     /// Execution requests from the frontend. Processed from `ReadConsole()`.
     /// Requests for code execution provide input to that method.
-    shell_request_rx: Receiver<Request>,
+    r_request_rx: Receiver<RRequest>,
 
     /// A lock guard, used to manage access to the R runtime.  The main
     /// thread holds the lock by default, but releases it at opportune
@@ -162,13 +162,13 @@ pub struct RMain {
 }
 
 impl RMain {
-    pub fn new(shell_request_rx: Receiver<Request>, kernel: Arc<Mutex<Kernel>>) -> Self {
+    pub fn new(kernel: Arc<Mutex<Kernel>>, r_request_rx: Receiver<RRequest>) -> Self {
         // The main thread owns the R runtime lock by default, but releases
         // it when appropriate to give other threads a chance to execute.
         let lock_guard = unsafe { R_RUNTIME_LOCK.lock() };
 
         Self {
-            shell_request_rx,
+            r_request_rx,
             runtime_lock_guard: Some(lock_guard),
             kernel,
         }
@@ -281,12 +281,9 @@ pub extern "C" fn r_read_console(
         main.runtime_lock_guard = None;
 
         // Wait for an execution request from the front end.
-        match main
-            .shell_request_rx
-            .recv_timeout(Duration::from_millis(200))
-        {
+        match main.r_request_rx.recv_timeout(Duration::from_millis(200)) {
             Ok(req) => {
-                let response = handle_r_request(&req, info.clone(), main.kernel.clone());
+                let input = fulfill_r_request(&req, info.clone(), main.kernel.clone());
 
                 // Take back the lock after we've received some console input.
                 unsafe { main.runtime_lock_guard = Some(R_RUNTIME_LOCK.lock()) };
@@ -300,14 +297,12 @@ pub extern "C" fn r_read_console(
                 // Process events.
                 unsafe { process_events() };
 
-                if let Some(input) = response {
-                    match input {
-                        ConsoleInput::Input(code) => {
-                            on_console_input(buf, buflen, code);
-                            return 1;
-                        },
-                        ConsoleInput::EOF => return 0,
-                    }
+                match input {
+                    ConsoleInput::Input(code) => {
+                        on_console_input(buf, buflen, code);
+                        return 1;
+                    },
+                    ConsoleInput::EOF => return 0,
                 }
             },
             Err(err) => {
@@ -474,18 +469,10 @@ pub unsafe extern "C" fn r_polled_events() {
     );
 }
 
-pub fn start_r(
-    iopub_tx: Sender<IOPubMessage>,
-    kernel_init_tx: Bus<KernelInfo>,
-    shell_request_rx: Receiver<Request>,
-) {
-    // Start building the kernel object
-    let kernel = Kernel::new(iopub_tx, kernel_init_tx);
-    let kernel_mutex = Arc::new(Mutex::new(kernel));
-
+pub fn start_r(kernel_mutex: Arc<Mutex<Kernel>>, r_request_rx: Receiver<RRequest>) {
     // Initialize global state (ensure we only do this once!)
     INIT.call_once(|| unsafe {
-        R_MAIN = Some(RMain::new(shell_request_rx, kernel_mutex.clone()));
+        R_MAIN = Some(RMain::new(kernel_mutex, r_request_rx));
     });
 
     unsafe {
@@ -552,47 +539,47 @@ pub fn start_r(
     }
 }
 
-fn handle_r_request(
-    req: &Request,
+fn fulfill_r_request(
+    req: &RRequest,
     prompt_info: PromptInfo,
     kernel_mutex: Arc<Mutex<Kernel>>,
-) -> Option<ConsoleInput> {
-    // Service the request.
-    let out = {
-        let mut kernel = kernel_mutex.lock().unwrap();
-        kernel.fulfill_request(&req)
-    };
-
-    // If this is an execution request, complete it by waiting for R to prompt
-    // us before we process another request
-    if let Request::ExecuteCode(_, _, _) = req {
-        complete_execute_request(req, prompt_info, kernel_mutex);
+) -> ConsoleInput {
+    match req {
+        RRequest::ExecuteCode(req, orig, sender) => {
+            return fulfill_execute_request(
+                req,
+                orig.clone(),
+                sender.clone(),
+                prompt_info,
+                kernel_mutex,
+            );
+        },
+        RRequest::Shutdown(_) => return ConsoleInput::EOF,
     }
-
-    out
 }
 
-fn complete_execute_request(
-    req: &Request,
+fn fulfill_execute_request(
+    req: &ExecuteRequest,
+    orig: Option<Originator>,
+    sender: Sender<ExecuteResponse>,
     prompt_info: PromptInfo,
     kernel_mutex: Arc<Mutex<Kernel>>,
-) {
+) -> ConsoleInput {
+    let mut kernel = kernel_mutex.lock().unwrap();
+
+    let input = kernel.handle_execute_request(req, sender.clone());
     let prompt = prompt_info.prompt;
-    let kernel = kernel_mutex.lock().unwrap();
 
     if prompt_info.incomplete {
         kernel.report_incomplete_request(&req);
     } else if prompt_info.user_request {
-        if let Request::ExecuteCode(_, originator, _) = req {
-            kernel.request_input(originator.clone(), &prompt);
-        } else {
-            warn!("No originator for input request, omitting");
-            kernel.request_input(None, &prompt);
-        }
+        kernel.request_input(orig.clone(), &prompt);
         trace!("Input requested, waiting for reply...");
     } else {
         // Default prompt, finishing request
         trace!("Got R prompt '{}', completing execution", prompt);
         kernel.finish_request();
     }
+
+    input
 }
