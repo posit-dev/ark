@@ -43,6 +43,7 @@ use harp::interrupts::RInterruptsSuspendedScope;
 use harp::lock::R_RUNTIME_LOCK;
 use harp::lock::R_RUNTIME_LOCK_COUNT;
 use harp::object::RObject;
+use harp::r_lock;
 use harp::r_symbol;
 use harp::routines::r_register_routines;
 use harp::utils::r_get_option;
@@ -792,7 +793,7 @@ pub fn peek_execute_response(exec_count: u32) -> ExecuteResponse {
     data.insert("text/plain".to_string(), json!(""));
 
     // Include HTML representation of data.frame
-    let value = unsafe { Rf_findVarInFrame(R_GlobalEnv, r_symbol!(".Last.value")) };
+    let value = r_lock! { Rf_findVarInFrame(R_GlobalEnv, r_symbol!(".Last.value")) };
     if r_is_data_frame(value) {
         match to_html(value) {
             Ok(html) => data.insert("text/html".to_string(), json!(html)),
