@@ -13,6 +13,10 @@ use crate::utils::r_try_eval_silent;
 use crate::vector::integer_vector::IntegerVector;
 use crate::vector::Vector;
 
+// Globals
+static SESSION_INIT: Once = Once::new();
+static mut NFRAME_CALL: usize = 0;
+
 pub fn r_n_frame() -> crate::error::Result<i32> {
     SESSION_INIT.call_once(init_interface);
 
@@ -22,10 +26,6 @@ pub fn r_n_frame() -> crate::error::Result<i32> {
         Ok(n_frame.get_unchecked_elt(0))
     }
 }
-
-// Globals
-static SESSION_INIT: Once = Once::new();
-static mut NFRAME_CALL: usize = 0;
 
 fn init_interface() {
     unsafe {
