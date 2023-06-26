@@ -1181,7 +1181,7 @@ dependencies = [
 [[package]]
 name = "lock_api"
 version = "0.4.10"
-source = "git+https://github.com/DavisVaughan/parking_lot.git?branch=fix/reentrant-mutex-bump-count#92609bad2758b8d1475682a0423567245847af66"
+source = "git+https://github.com/Amanieu/parking_lot?branch=master#d36110fde9b50adedbe4fcff8d3d42dbda92348a"
 dependencies = [
  "autocfg",
  "scopeguard",
@@ -1384,7 +1384,7 @@ checksum = "b7e5500299e16ebb147ae15a00a942af264cf3688f47923b8fc2cd5858f23ad3"
 [[package]]
 name = "parking_lot"
 version = "0.12.1"
-source = "git+https://github.com/DavisVaughan/parking_lot.git?branch=fix/reentrant-mutex-bump-count#92609bad2758b8d1475682a0423567245847af66"
+source = "git+https://github.com/Amanieu/parking_lot?branch=master#d36110fde9b50adedbe4fcff8d3d42dbda92348a"
 dependencies = [
  "lock_api 0.4.10",
  "parking_lot_core 0.9.8",
@@ -1406,7 +1406,7 @@ dependencies = [
 [[package]]
 name = "parking_lot_core"
 version = "0.9.8"
-source = "git+https://github.com/DavisVaughan/parking_lot.git?branch=fix/reentrant-mutex-bump-count#92609bad2758b8d1475682a0423567245847af66"
+source = "git+https://github.com/Amanieu/parking_lot?branch=master#d36110fde9b50adedbe4fcff8d3d42dbda92348a"
 dependencies = [
  "cfg-if",
  "libc",

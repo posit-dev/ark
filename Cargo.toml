@@ -8,5 +8,6 @@ members = [
     "crates/stdext"
 ]
 
+# For https://github.com/Amanieu/parking_lot/pull/390
 [patch.crates-io]
-parking_lot = { git = 'https://github.com/DavisVaughan/parking_lot.git', branch = 'fix/reentrant-mutex-bump-count' }
+parking_lot = { git = 'https://github.com/Amanieu/parking_lot', branch = 'master' }
