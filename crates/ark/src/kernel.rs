@@ -11,17 +11,9 @@ use std::sync::atomic::AtomicBool;
 
 use amalthea::events::PositronEvent;
 use amalthea::socket::iopub::IOPubMessage;
-use amalthea::wire::exception::Exception;
 use amalthea::wire::execute_input::ExecuteInput;
-use amalthea::wire::execute_reply::ExecuteReply;
-use amalthea::wire::execute_reply_exception::ExecuteReplyException;
 use amalthea::wire::execute_request::ExecuteRequest;
-use amalthea::wire::execute_response::ExecuteResponse;
-use amalthea::wire::execute_result::ExecuteResult;
-use amalthea::wire::input_request::InputRequest;
 use amalthea::wire::input_request::ShellInputRequest;
-use amalthea::wire::jupyter_message::Status;
-use amalthea::wire::originator::Originator;
 use amalthea::wire::stream::Stream;
 use amalthea::wire::stream::StreamOutput;
 use anyhow::*;
@@ -33,10 +25,8 @@ use harp::exec::RFunctionExt;
 use harp::object::RObject;
 use harp::r_lock;
 use harp::r_symbol;
-use harp::utils::r_is_data_frame;
 use libR_sys::*;
 use log::*;
-use serde_json::json;
 use stdext::unwrap;
 
 use crate::interface::ConsoleInput;
@@ -51,11 +41,10 @@ pub static R_ERROR_TRACEBACK: AtomicCell<Vec<String>> = AtomicCell::new(Vec::new
 pub struct Kernel {
     /** Counter used to populate `In[n]` and `Out[n]` prompts */
     pub execution_count: u32,
+    pub input_request_tx: Option<Sender<ShellInputRequest>>,
 
     iopub_tx: Sender<IOPubMessage>,
     kernel_init_tx: Bus<KernelInfo>,
-    execute_response_tx: Option<Sender<ExecuteResponse>>,
-    input_request_tx: Option<Sender<ShellInputRequest>>,
     event_tx: Option<Sender<PositronEvent>>,
     banner: String,
     stdout: String,
@@ -77,7 +66,6 @@ impl Kernel {
             execution_count: 0,
             iopub_tx,
             kernel_init_tx,
-            execute_response_tx: None,
             input_request_tx: None,
             event_tx: None,
             banner: String::new(),
@@ -129,20 +117,13 @@ impl Kernel {
     }
 
     /// Handle an execute request from the front end
-    pub fn handle_execute_request(
-        &mut self,
-        req: &ExecuteRequest,
-        execute_response_tx: Sender<ExecuteResponse>,
-    ) -> ConsoleInput {
+    pub fn handle_execute_request(&mut self, req: &ExecuteRequest) -> (ConsoleInput, u32) {
         // Clear error occurred flag
         R_ERROR_OCCURRED.store(false, std::sync::atomic::Ordering::Release);
 
         // Initialize stdout, stderr
         self.stdout = String::new();
         self.stderr = String::new();
-
-        // Save copy of our response channel
-        self.execute_response_tx = Some(execute_response_tx);
 
         // Increment counter if we are storing this execution in history
         if req.store_history {
@@ -163,8 +144,8 @@ impl Kernel {
             }
         }
 
-        // Return the code to the R console to be evaluated
-        ConsoleInput::Input(req.code.clone())
+        // Return the code to the R console to be evaluated and the corresponding exec count
+        (ConsoleInput::Input(req.code.clone()), self.execution_count)
     }
 
     /// Converts a data frame to HTML
@@ -175,141 +156,6 @@ impl Kernel {
                 .call()?
                 .to::<String>()?;
             Ok(result)
-        }
-    }
-
-    /// Report an incomplete request to the front end
-    pub fn report_incomplete_request(&self, req: &ExecuteRequest) {
-        if let Some(sender) = self.execute_response_tx.as_ref() {
-            let reply = ExecuteReplyException {
-                status: Status::Error,
-                execution_count: self.execution_count,
-                exception: Exception {
-                    ename: "IncompleteInput".to_string(),
-                    evalue: format!("Code fragment is not complete: {}", req.code),
-                    traceback: vec![],
-                },
-            };
-            if let Err(err) = sender.send(ExecuteResponse::ReplyException(reply)) {
-                warn!("Error sending incomplete reply: {}", err);
-            }
-        }
-    }
-
-    /// Finishes the active execution request
-    pub fn finish_request(&self) {
-        // Save and reset error occurred flag
-        let error_occurred = R_ERROR_OCCURRED.swap(false, std::sync::atomic::Ordering::AcqRel);
-
-        if error_occurred {
-            self.finish_request_error();
-        } else {
-            self.finish_request_result();
-        }
-    }
-
-    fn finish_request_result(&self) {
-        // TODO: Implement rich printing of certain outputs.
-        // Will we need something similar to the RStudio model,
-        // where we implement custom print() methods? Or can
-        // we make the stub below behave sensibly even when
-        // streaming R output?
-        let mut data = serde_json::Map::new();
-        data.insert("text/plain".to_string(), json!(""));
-
-        // Include HTML representation of data.frame
-        // TODO: Do we need to hold the R lock here?
-        let value = unsafe { Rf_findVarInFrame(R_GlobalEnv, r_symbol!(".Last.value")) };
-        if r_is_data_frame(value) {
-            match Kernel::to_html(value) {
-                Ok(html) => data.insert("text/html".to_string(), json!(html)),
-                Err(error) => {
-                    error!("{:?}", error);
-                    None
-                },
-            };
-        }
-
-        if let Err(err) = self
-            .iopub_tx
-            .send(IOPubMessage::ExecuteResult(ExecuteResult {
-                execution_count: self.execution_count,
-                data: serde_json::Value::Object(data),
-                metadata: json!({}),
-            }))
-        {
-            warn!(
-                "Could not publish result of statement {} on iopub: {}",
-                self.execution_count, err
-            );
-        }
-
-        // Send the reply to the front end
-        if let Some(sender) = &self.execute_response_tx {
-            sender
-                .send(ExecuteResponse::Reply(ExecuteReply {
-                    status: Status::Ok,
-                    execution_count: self.execution_count,
-                    user_expressions: json!({}),
-                }))
-                .unwrap();
-        }
-    }
-
-    fn finish_request_error(&self) {
-        // We don't fill out `ename` with anything meaningful because typically
-        // R errors don't have names. We could consider using the condition class
-        // here, which r-lib/tidyverse packages have been using more heavily.
-        let ename = String::from("");
-        let evalue = R_ERROR_EVALUE.take();
-        let traceback = R_ERROR_TRACEBACK.take();
-
-        log::info!("An R error occurred: {}", evalue);
-
-        let exception = Exception {
-            ename,
-            evalue,
-            traceback,
-        };
-
-        // Send the error to the front end
-        if let Some(sender) = &self.execute_response_tx {
-            sender
-                .send(ExecuteResponse::ReplyException(ExecuteReplyException {
-                    status: Status::Error,
-                    execution_count: self.execution_count,
-                    exception,
-                }))
-                .unwrap()
-        }
-    }
-
-    /// Requests input from the front end
-    pub fn request_input(&self, originator: Option<Originator>, prompt: &str) {
-        if let Some(requestor) = &self.input_request_tx {
-            trace!("Requesting input from front-end for prompt: {}", prompt);
-            requestor
-                .send(ShellInputRequest {
-                    originator,
-                    request: InputRequest {
-                        prompt: prompt.to_string(),
-                        password: false,
-                    },
-                })
-                .unwrap();
-        } else {
-            warn!("Unable to request input: no input requestor set!");
-        }
-
-        // Send an execute reply to the front end
-        if let Some(sender) = &self.execute_response_tx {
-            sender
-                .send(ExecuteResponse::Reply(ExecuteReply {
-                    status: Status::Ok,
-                    execution_count: self.execution_count,
-                    user_expressions: json!({}),
-                }))
-                .unwrap();
         }
     }
 

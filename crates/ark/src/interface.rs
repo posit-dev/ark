@@ -17,8 +17,16 @@ use std::time::SystemTime;
 use amalthea::events::BusyEvent;
 use amalthea::events::PositronEvent;
 use amalthea::events::ShowMessageEvent;
+use amalthea::socket::iopub::IOPubMessage;
+use amalthea::wire::exception::Exception;
+use amalthea::wire::execute_reply::ExecuteReply;
+use amalthea::wire::execute_reply_exception::ExecuteReplyException;
 use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::execute_response::ExecuteResponse;
+use amalthea::wire::execute_result::ExecuteResult;
+use amalthea::wire::input_request::InputRequest;
+use amalthea::wire::input_request::ShellInputRequest;
+use amalthea::wire::jupyter_message::Status;
 use amalthea::wire::originator::Originator;
 use amalthea::wire::stream::Stream;
 use crossbeam::channel::Receiver;
@@ -27,17 +35,23 @@ use crossbeam::channel::Sender;
 use harp::interrupts::RInterruptsSuspendedScope;
 use harp::lock::R_RUNTIME_LOCK;
 use harp::lock::R_RUNTIME_LOCK_COUNT;
+use harp::r_symbol;
 use harp::routines::r_register_routines;
 use harp::utils::r_get_option;
+use harp::utils::r_is_data_frame;
 use libR_sys::*;
 use log::*;
 use nix::sys::signal::*;
 use parking_lot::ReentrantMutexGuard;
+use serde_json::json;
 use stdext::*;
 
 use crate::errors;
 use crate::help_proxy;
 use crate::kernel::Kernel;
+use crate::kernel::R_ERROR_EVALUE;
+use crate::kernel::R_ERROR_OCCURRED;
+use crate::kernel::R_ERROR_TRACEBACK;
 use crate::lsp::events::EVENTS;
 use crate::modules;
 use crate::plots::graphics_device;
@@ -151,6 +165,9 @@ pub struct RMain {
     /// Requests for code execution provide input to that method.
     r_request_rx: Receiver<RRequest>,
 
+    /// IOPub channel for broadcasting outputs
+    iopub_tx: Sender<IOPubMessage>,
+
     /// A lock guard, used to manage access to the R runtime.  The main
     /// thread holds the lock by default, but releases it at opportune
     /// times to allow the LSP to access the R runtime where appropriate.
@@ -162,13 +179,18 @@ pub struct RMain {
 }
 
 impl RMain {
-    pub fn new(kernel: Arc<Mutex<Kernel>>, r_request_rx: Receiver<RRequest>) -> Self {
+    pub fn new(
+        kernel: Arc<Mutex<Kernel>>,
+        r_request_rx: Receiver<RRequest>,
+        iopub_tx: Sender<IOPubMessage>,
+    ) -> Self {
         // The main thread owns the R runtime lock by default, but releases
         // it when appropriate to give other threads a chance to execute.
         let lock_guard = unsafe { R_RUNTIME_LOCK.lock() };
 
         Self {
             r_request_rx,
+            iopub_tx,
             runtime_lock_guard: Some(lock_guard),
             kernel,
         }
@@ -469,10 +491,14 @@ pub unsafe extern "C" fn r_polled_events() {
     );
 }
 
-pub fn start_r(kernel_mutex: Arc<Mutex<Kernel>>, r_request_rx: Receiver<RRequest>) {
+pub fn start_r(
+    kernel_mutex: Arc<Mutex<Kernel>>,
+    r_request_rx: Receiver<RRequest>,
+    iopub_tx: Sender<IOPubMessage>,
+) {
     // Initialize global state (ensure we only do this once!)
     INIT.call_once(|| unsafe {
-        R_MAIN = Some(RMain::new(kernel_mutex, r_request_rx));
+        R_MAIN = Some(RMain::new(kernel_mutex, r_request_rx, iopub_tx));
     });
 
     unsafe {
@@ -566,20 +592,131 @@ fn fulfill_execute_request(
     kernel_mutex: Arc<Mutex<Kernel>>,
 ) -> ConsoleInput {
     let mut kernel = kernel_mutex.lock().unwrap();
+    let (input, exec_count) = kernel.handle_execute_request(req);
 
-    let input = kernel.handle_execute_request(req, sender.clone());
     let prompt = prompt_info.prompt;
 
-    if prompt_info.incomplete {
-        kernel.report_incomplete_request(&req);
+    let reply = if prompt_info.incomplete {
+        trace!("Got prompt {} signaling incomplete request", prompt);
+        new_incomplete_response(&req, exec_count)
     } else if prompt_info.user_request {
-        kernel.request_input(orig.clone(), &prompt);
-        trace!("Input requested, waiting for reply...");
+        trace!(
+            "Got input request for prompt {}, waiting for reply...",
+            prompt
+        );
+
+        if let Some(input_request_tx) = kernel.input_request_tx.clone() {
+            input_request_tx
+                .send(ShellInputRequest {
+                    originator: orig,
+                    request: InputRequest {
+                        prompt: prompt.to_string(),
+                        password: false,
+                    },
+                })
+                .unwrap();
+        } else {
+            warn!("Unable to request input: no input requestor set!");
+        }
+
+        new_execute_response(exec_count)
     } else {
-        // Default prompt, finishing request
         trace!("Got R prompt '{}', completing execution", prompt);
-        kernel.finish_request();
-    }
+        peek_execute_response(exec_count)
+    };
+    sender.send(reply).unwrap();
 
     input
+}
+
+/// Report an incomplete request to the front end
+pub fn new_incomplete_response(req: &ExecuteRequest, exec_count: u32) -> ExecuteResponse {
+    ExecuteResponse::ReplyException(ExecuteReplyException {
+        status: Status::Error,
+        execution_count: exec_count,
+        exception: Exception {
+            ename: "IncompleteInput".to_string(),
+            evalue: format!("Code fragment is not complete: {}", req.code),
+            traceback: vec![],
+        },
+    })
+}
+
+// Gets response data from R state
+pub fn peek_execute_response(exec_count: u32) -> ExecuteResponse {
+    // Save and reset error occurred flag
+    let error_occurred = R_ERROR_OCCURRED.swap(false, std::sync::atomic::Ordering::AcqRel);
+
+    // TODO: Implement rich printing of certain outputs.
+    // Will we need something similar to the RStudio model,
+    // where we implement custom print() methods? Or can
+    // we make the stub below behave sensibly even when
+    // streaming R output?
+    let mut data = serde_json::Map::new();
+    data.insert("text/plain".to_string(), json!(""));
+
+    // Include HTML representation of data.frame
+    let value = unsafe { Rf_findVarInFrame(R_GlobalEnv, r_symbol!(".Last.value")) };
+    if r_is_data_frame(value) {
+        match Kernel::to_html(value) {
+            Ok(html) => data.insert("text/html".to_string(), json!(html)),
+            Err(error) => {
+                error!("{:?}", error);
+                None
+            },
+        };
+    }
+
+    let main = unsafe { R_MAIN.as_mut().unwrap() };
+
+    if let Err(err) = main
+        .iopub_tx
+        .send(IOPubMessage::ExecuteResult(ExecuteResult {
+            execution_count: exec_count,
+            data: serde_json::Value::Object(data),
+            metadata: json!({}),
+        }))
+    {
+        warn!(
+            "Could not publish result of statement {} on iopub: {}",
+            exec_count, err
+        );
+    }
+
+    // Send the reply to the front end
+    if error_occurred {
+        // We don't fill out `ename` with anything meaningful because typically
+        // R errors don't have names. We could consider using the condition class
+        // here, which r-lib/tidyverse packages have been using more heavily.
+        let ename = String::from("");
+        let evalue = R_ERROR_EVALUE.take();
+        let traceback = R_ERROR_TRACEBACK.take();
+
+        log::info!("An R error occurred: {}", evalue);
+
+        let exception = Exception {
+            ename,
+            evalue,
+            traceback,
+        };
+
+        new_execute_error_response(exception, exec_count)
+    } else {
+        new_execute_response(exec_count)
+    }
+}
+
+fn new_execute_response(exec_count: u32) -> ExecuteResponse {
+    ExecuteResponse::Reply(ExecuteReply {
+        status: Status::Ok,
+        execution_count: exec_count,
+        user_expressions: json!({}),
+    })
+}
+fn new_execute_error_response(exception: Exception, exec_count: u32) -> ExecuteResponse {
+    ExecuteResponse::ReplyException(ExecuteReplyException {
+        status: Status::Error,
+        execution_count: exec_count,
+        exception,
+    })
 }

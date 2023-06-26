@@ -78,7 +78,7 @@ impl Shell {
         conn_init_rx: Receiver<bool>,
     ) -> Self {
         // Start building the kernel object. It is shared by the shell, LSP, and main threads.
-        let kernel_mutex = Arc::new(Mutex::new(Kernel::new(iopub_tx, kernel_init_tx)));
+        let kernel_mutex = Arc::new(Mutex::new(Kernel::new(iopub_tx.clone(), kernel_init_tx)));
 
         let kernel_clone = kernel_mutex.clone();
         spawn!("ark-shell-thread", move || {
@@ -86,6 +86,7 @@ impl Shell {
         });
 
         let kernel_clone = kernel_mutex.clone();
+        let iopub_tx_clone = iopub_tx.clone();
         spawn!("ark-r-main-thread", move || {
             // Block until 0MQ is initialised before starting R to avoid
             // thread-safety issues. See https://github.com/rstudio/positron/issues/720
@@ -98,7 +99,7 @@ impl Shell {
             drop(conn_init_rx);
 
             // Start the R REPL (does not return)
-            crate::interface::start_r(kernel_clone, r_request_rx);
+            crate::interface::start_r(kernel_clone, r_request_rx, iopub_tx_clone);
         });
 
         Self {
