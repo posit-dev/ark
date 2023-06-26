@@ -169,6 +169,10 @@ pub struct RMain {
     /// IOPub channel for broadcasting outputs
     iopub_tx: Sender<IOPubMessage>,
 
+    /// Active request passed to `ReadConsole()`. Contains response channel
+    /// the reply should be send to once computation has finished.
+    active_request: Option<ActiveReadConsoleRequest>,
+
     /// A lock guard, used to manage access to the R runtime.  The main
     /// thread holds the lock by default, but releases it at opportune
     /// times to allow the LSP to access the R runtime where appropriate.
@@ -182,6 +186,13 @@ pub struct RMain {
     pub error_occurred: bool,
     pub error_evalue: String,
     pub error_traceback: Vec<String>,
+}
+
+struct ActiveReadConsoleRequest {
+    exec_count: u32,
+    request: ExecuteRequest,
+    orig: Option<Originator>,
+    response_tx: Sender<ExecuteResponse>,
 }
 
 impl RMain {
@@ -199,6 +210,7 @@ impl RMain {
             r_request_rx,
             input_request_tx,
             iopub_tx,
+            active_request: None,
             runtime_lock_guard: Some(lock_guard),
             kernel,
             error_occurred: false,
@@ -300,6 +312,13 @@ pub extern "C" fn r_read_console(
         return 1;
     }
 
+    // We got a prompt request marking the end of the previous
+    // execution. We can now send a reply to unblock the active Shell
+    // request.
+    if let Some(req) = &main.active_request {
+        reply_execute_request(req, info.clone());
+    }
+
     // Signal prompt
     EVENTS.console_prompt.emit(());
 
@@ -316,7 +335,26 @@ pub extern "C" fn r_read_console(
         // Wait for an execution request from the front end.
         match main.r_request_rx.recv_timeout(Duration::from_millis(200)) {
             Ok(req) => {
-                let input = fulfill_r_request(&req, info.clone(), main.kernel.clone());
+                let input = match req {
+                    RRequest::ExecuteCode(exec_req, orig, response_tx) => {
+                        // Extract input from request
+                        let (input, exec_count) = {
+                            let mut kernel = main.kernel.lock().unwrap();
+                            kernel.handle_execute_request(&exec_req)
+                        };
+
+                        // Save `ExecuteCode` request so we can respond to it at next prompt
+                        main.active_request = Some(ActiveReadConsoleRequest {
+                            exec_count,
+                            request: exec_req,
+                            orig,
+                            response_tx,
+                        });
+
+                        input
+                    },
+                    RRequest::Shutdown(_) => ConsoleInput::EOF,
+                };
 
                 // Take back the lock after we've received some console input.
                 unsafe { main.runtime_lock_guard = Some(R_RUNTIME_LOCK.lock()) };
@@ -585,52 +623,24 @@ pub fn start_r(
     }
 }
 
-fn fulfill_r_request(
-    req: &RRequest,
-    prompt_info: PromptInfo,
-    kernel_mutex: Arc<Mutex<Kernel>>,
-) -> ConsoleInput {
-    match req {
-        RRequest::ExecuteCode(req, orig, sender) => {
-            return fulfill_execute_request(
-                req,
-                orig.clone(),
-                sender.clone(),
-                prompt_info,
-                kernel_mutex,
-            );
-        },
-        RRequest::Shutdown(_) => return ConsoleInput::EOF,
-    }
-}
-
-fn fulfill_execute_request(
-    req: &ExecuteRequest,
-    orig: Option<Originator>,
-    sender: Sender<ExecuteResponse>,
-    prompt_info: PromptInfo,
-    kernel_mutex: Arc<Mutex<Kernel>>,
-) -> ConsoleInput {
-    let main = unsafe { R_MAIN.as_mut().unwrap() };
-
-    let (input, exec_count) = {
-        let mut kernel = kernel_mutex.lock().unwrap();
-        kernel.handle_execute_request(req)
-    };
+// Reply to the previously active request. The current prompt type and
+// whether an error has occurred defines the response kind.
+fn reply_execute_request(req: &ActiveReadConsoleRequest, prompt_info: PromptInfo) {
     let prompt = prompt_info.prompt;
 
     let reply = if prompt_info.incomplete {
         trace!("Got prompt {} signaling incomplete request", prompt);
-        new_incomplete_response(&req, exec_count)
+        new_incomplete_response(&req.request, req.exec_count)
     } else if prompt_info.user_request {
         trace!(
             "Got input request for prompt {}, waiting for reply...",
             prompt
         );
 
+        let main = unsafe { R_MAIN.as_mut().unwrap() };
         main.input_request_tx
             .send(ShellInputRequest {
-                originator: orig,
+                originator: req.orig.clone(),
                 request: InputRequest {
                     prompt: prompt.to_string(),
                     password: false,
@@ -638,14 +648,12 @@ fn fulfill_execute_request(
             })
             .unwrap();
 
-        new_execute_response(exec_count)
+        new_execute_response(req.exec_count)
     } else {
         trace!("Got R prompt '{}', completing execution", prompt);
-        peek_execute_response(exec_count)
+        peek_execute_response(req.exec_count)
     };
-    sender.send(reply).unwrap();
-
-    input
+    req.response_tx.send(reply).unwrap();
 }
 
 /// Report an incomplete request to the front end
