@@ -12,12 +12,12 @@ use log::info;
 use log::warn;
 use stdext::unwrap;
 
-use crate::kernel::R_ERROR_EVALUE;
-use crate::kernel::R_ERROR_OCCURRED;
-use crate::kernel::R_ERROR_TRACEBACK;
+use crate::interface::R_MAIN;
 
 #[harp::register]
 unsafe extern "C" fn ps_record_error(evalue: SEXP, traceback: SEXP) -> SEXP {
+    let main = unsafe { R_MAIN.as_mut().unwrap() };
+
     // Convert to `RObject` for access to `try_from()` / `try_into()` methods.
     let evalue = RObject::new(evalue);
     let traceback = RObject::new(traceback);
@@ -32,9 +32,9 @@ unsafe extern "C" fn ps_record_error(evalue: SEXP, traceback: SEXP) -> SEXP {
         Vec::<String>::new()
     });
 
-    R_ERROR_OCCURRED.store(true, std::sync::atomic::Ordering::Release);
-    R_ERROR_EVALUE.store(evalue);
-    R_ERROR_TRACEBACK.store(traceback);
+    main.error_occurred = true;
+    main.error_evalue = evalue;
+    main.error_traceback = traceback;
 
     R_NilValue
 }

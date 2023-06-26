@@ -49,9 +49,6 @@ use stdext::*;
 use crate::errors;
 use crate::help_proxy;
 use crate::kernel::Kernel;
-use crate::kernel::R_ERROR_EVALUE;
-use crate::kernel::R_ERROR_OCCURRED;
-use crate::kernel::R_ERROR_TRACEBACK;
 use crate::lsp::events::EVENTS;
 use crate::modules;
 use crate::plots::graphics_device;
@@ -180,6 +177,11 @@ pub struct RMain {
     /// Shared reference to kernel. Currently used by the ark-execution
     /// thread, the R frontend callbacks, and LSP routines called from R
     pub kernel: Arc<Mutex<Kernel>>,
+
+    /// Represents whether an error occurred during R code execution.
+    pub error_occurred: bool,
+    pub error_evalue: String,
+    pub error_traceback: Vec<String>,
 }
 
 impl RMain {
@@ -199,6 +201,9 @@ impl RMain {
             iopub_tx,
             runtime_lock_guard: Some(lock_guard),
             kernel,
+            error_occurred: false,
+            error_evalue: String::new(),
+            error_traceback: Vec::new(),
         }
     }
 }
@@ -324,6 +329,9 @@ pub extern "C" fn r_read_console(
 
                 // Process events.
                 unsafe { process_events() };
+
+                // Clear error flag
+                main.error_occurred = false;
 
                 match input {
                     ConsoleInput::Input(code) => {
@@ -655,8 +663,11 @@ pub fn new_incomplete_response(req: &ExecuteRequest, exec_count: u32) -> Execute
 
 // Gets response data from R state
 pub fn peek_execute_response(exec_count: u32) -> ExecuteResponse {
+    let main = unsafe { R_MAIN.as_mut().unwrap() };
+
     // Save and reset error occurred flag
-    let error_occurred = R_ERROR_OCCURRED.swap(false, std::sync::atomic::Ordering::AcqRel);
+    let error_occurred = main.error_occurred;
+    main.error_occurred = false;
 
     // TODO: Implement rich printing of certain outputs.
     // Will we need something similar to the RStudio model,
@@ -700,8 +711,8 @@ pub fn peek_execute_response(exec_count: u32) -> ExecuteResponse {
         // R errors don't have names. We could consider using the condition class
         // here, which r-lib/tidyverse packages have been using more heavily.
         let ename = String::from("");
-        let evalue = R_ERROR_EVALUE.take();
-        let traceback = R_ERROR_TRACEBACK.take();
+        let evalue = main.error_evalue.clone();
+        let traceback = main.error_traceback.clone();
 
         log::info!("An R error occurred: {}", evalue);
 

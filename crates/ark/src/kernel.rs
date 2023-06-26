@@ -7,7 +7,6 @@
 
 use std::result::Result::Err;
 use std::result::Result::Ok;
-use std::sync::atomic::AtomicBool;
 
 use amalthea::events::PositronEvent;
 use amalthea::socket::iopub::IOPubMessage;
@@ -17,7 +16,6 @@ use amalthea::wire::stream::Stream;
 use amalthea::wire::stream::StreamOutput;
 use anyhow::*;
 use bus::Bus;
-use crossbeam::atomic::AtomicCell;
 use crossbeam::channel::Sender;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
@@ -30,11 +28,6 @@ use stdext::unwrap;
 
 use crate::interface::ConsoleInput;
 use crate::request::KernelRequest;
-
-/// Represents whether an error occurred during R code execution.
-pub static R_ERROR_OCCURRED: AtomicBool = AtomicBool::new(false);
-pub static R_ERROR_EVALUE: AtomicCell<String> = AtomicCell::new(String::new());
-pub static R_ERROR_TRACEBACK: AtomicCell<Vec<String>> = AtomicCell::new(Vec::new());
 
 /// Represents the Rust state of the R kernel
 pub struct Kernel {
@@ -112,9 +105,6 @@ impl Kernel {
 
     /// Handle an execute request from the front end
     pub fn handle_execute_request(&mut self, req: &ExecuteRequest) -> (ConsoleInput, u32) {
-        // Clear error occurred flag
-        R_ERROR_OCCURRED.store(false, std::sync::atomic::Ordering::Release);
-
         // Initialize stdout, stderr
         self.stdout = String::new();
         self.stderr = String::new();
