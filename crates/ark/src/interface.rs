@@ -8,6 +8,7 @@
 use std::ffi::*;
 use std::os::raw::c_uchar;
 use std::os::raw::c_void;
+use std::result::Result::Ok;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::Once;
@@ -19,6 +20,7 @@ use amalthea::events::PositronEvent;
 use amalthea::events::ShowMessageEvent;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::exception::Exception;
+use amalthea::wire::execute_input::ExecuteInput;
 use amalthea::wire::execute_reply::ExecuteReply;
 use amalthea::wire::execute_reply_exception::ExecuteReplyException;
 use amalthea::wire::execute_request::ExecuteRequest;
@@ -29,12 +31,18 @@ use amalthea::wire::input_request::ShellInputRequest;
 use amalthea::wire::jupyter_message::Status;
 use amalthea::wire::originator::Originator;
 use amalthea::wire::stream::Stream;
+use amalthea::wire::stream::StreamOutput;
+use anyhow::*;
+use bus::Bus;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::RecvTimeoutError;
 use crossbeam::channel::Sender;
+use harp::exec::RFunction;
+use harp::exec::RFunctionExt;
 use harp::interrupts::RInterruptsSuspendedScope;
 use harp::lock::R_RUNTIME_LOCK;
 use harp::lock::R_RUNTIME_LOCK_COUNT;
+use harp::object::RObject;
 use harp::r_symbol;
 use harp::routines::r_register_routines;
 use harp::utils::r_get_option;
@@ -158,6 +166,9 @@ static INIT_KERNEL: Once = Once::new();
 pub static mut R_MAIN: Option<RMain> = None;
 
 pub struct RMain {
+    initializing: bool,
+    kernel_init_tx: Bus<KernelInfo>,
+
     /// Execution requests from the frontend. Processed from `ReadConsole()`.
     /// Requests for code execution provide input to that method.
     r_request_rx: Receiver<RRequest>,
@@ -172,6 +183,13 @@ pub struct RMain {
     /// Active request passed to `ReadConsole()`. Contains response channel
     /// the reply should be send to once computation has finished.
     active_request: Option<ActiveReadConsoleRequest>,
+
+    /// Execution request counter used to populate `In[n]` and `Out[n]` prompts
+    execution_count: u32,
+
+    stdout: String,
+    stderr: String,
+    banner: String,
 
     /// A lock guard, used to manage access to the R runtime.  The main
     /// thread holds the lock by default, but releases it at opportune
@@ -188,11 +206,20 @@ pub struct RMain {
     pub error_traceback: Vec<String>,
 }
 
+/// Represents the currently active execution request from the frontend. It
+/// resolves at the next invocation of the `ReadConsole()` frontend method.
 struct ActiveReadConsoleRequest {
     exec_count: u32,
     request: ExecuteRequest,
     orig: Option<Originator>,
     response_tx: Sender<ExecuteResponse>,
+}
+
+/// Represents kernel metadata (available after the kernel has fully started)
+#[derive(Debug, Clone)]
+pub struct KernelInfo {
+    pub version: String,
+    pub banner: String,
 }
 
 impl RMain {
@@ -201,22 +228,105 @@ impl RMain {
         r_request_rx: Receiver<RRequest>,
         input_request_tx: Sender<ShellInputRequest>,
         iopub_tx: Sender<IOPubMessage>,
+        kernel_init_tx: Bus<KernelInfo>,
     ) -> Self {
         // The main thread owns the R runtime lock by default, but releases
         // it when appropriate to give other threads a chance to execute.
         let lock_guard = unsafe { R_RUNTIME_LOCK.lock() };
 
         Self {
+            initializing: true,
             r_request_rx,
             input_request_tx,
             iopub_tx,
+            kernel_init_tx,
             active_request: None,
+            execution_count: 0,
+            stdout: String::new(),
+            stderr: String::new(),
+            banner: String::new(),
             runtime_lock_guard: Some(lock_guard),
             kernel,
             error_occurred: false,
             error_evalue: String::new(),
             error_traceback: Vec::new(),
         }
+    }
+
+    /// Completes the kernel's initialization
+    pub fn complete_initialization(&mut self) {
+        if self.initializing {
+            let version = unsafe {
+                let version = Rf_findVarInFrame(R_BaseNamespace, r_symbol!("R.version.string"));
+                RObject::new(version).to::<String>().unwrap()
+            };
+
+            let kernel_info = KernelInfo {
+                version: version.clone(),
+                banner: self.banner.clone(),
+            };
+
+            debug!("Sending kernel info: {}", version);
+            self.kernel_init_tx.broadcast(kernel_info);
+            self.initializing = false;
+        } else {
+            warn!("Initialization already complete!");
+        }
+    }
+
+    fn init_execute_request(&mut self, req: &ExecuteRequest) -> (ConsoleInput, u32) {
+        // Initialize stdout, stderr
+        self.stdout = String::new();
+        self.stderr = String::new();
+
+        // Increment counter if we are storing this execution in history
+        if req.store_history {
+            self.execution_count = self.execution_count + 1;
+        }
+
+        // If the code is not to be executed silently, re-broadcast the
+        // execution to all frontends
+        if !req.silent {
+            if let Err(err) = self.iopub_tx.send(IOPubMessage::ExecuteInput(ExecuteInput {
+                code: req.code.clone(),
+                execution_count: self.execution_count,
+            })) {
+                warn!(
+                    "Could not broadcast execution input {} to all front ends: {}",
+                    self.execution_count, err
+                );
+            }
+        }
+
+        // Return the code to the R console to be evaluated and the corresponding exec count
+        (ConsoleInput::Input(req.code.clone()), self.execution_count)
+    }
+
+    /// Called from R when console data is written.
+    pub fn write_console(&mut self, content: &str, stream: Stream) {
+        if self.initializing {
+            // During init, consider all output to be part of the startup banner
+            self.banner.push_str(content);
+            return;
+        }
+
+        let buffer = match stream {
+            Stream::Stdout => &mut self.stdout,
+            Stream::Stderr => &mut self.stderr,
+        };
+
+        // Append content to buffer.
+        buffer.push_str(content);
+
+        // Stream output via the IOPub channel.
+        let message = IOPubMessage::Stream(StreamOutput {
+            name: stream,
+            text: content.to_string(),
+        });
+
+        unwrap!(self.iopub_tx.send(message), Err(error) => {
+            log::error!("{}", error);
+        });
     }
 }
 
@@ -290,8 +400,7 @@ pub extern "C" fn r_read_console(
     debug!("R prompt: {}", info.prompt);
 
     INIT_KERNEL.call_once(|| {
-        let mut kernel = main.kernel.lock().unwrap();
-        kernel.complete_initialization();
+        main.complete_initialization();
 
         trace!(
             "Got initial R prompt '{}', ready for execution requests",
@@ -338,10 +447,7 @@ pub extern "C" fn r_read_console(
                 let input = match req {
                     RRequest::ExecuteCode(exec_req, orig, response_tx) => {
                         // Extract input from request
-                        let (input, exec_count) = {
-                            let mut kernel = main.kernel.lock().unwrap();
-                            kernel.handle_execute_request(&exec_req)
-                        };
+                        let (input, exec_count) = { main.init_execute_request(&exec_req) };
 
                         // Save `ExecuteCode` request so we can respond to it at next prompt
                         main.active_request = Some(ActiveReadConsoleRequest {
@@ -462,10 +568,8 @@ pub extern "C" fn r_write_console(buf: *const c_char, _buflen: i32, otype: i32) 
         Stream::Stderr
     };
 
-    let main = unsafe { R_MAIN.as_ref().unwrap() };
-    let mut kernel = main.kernel.lock().unwrap();
-
-    kernel.write_console(content.to_str().unwrap(), stream);
+    let main = unsafe { R_MAIN.as_mut().unwrap() };
+    main.write_console(content.to_str().unwrap(), stream);
 }
 
 /**
@@ -548,6 +652,7 @@ pub fn start_r(
     r_request_rx: Receiver<RRequest>,
     input_request_tx: Sender<ShellInputRequest>,
     iopub_tx: Sender<IOPubMessage>,
+    kernel_init_tx: Bus<KernelInfo>,
 ) {
     // Initialize global state (ensure we only do this once!)
     INIT.call_once(|| unsafe {
@@ -556,6 +661,7 @@ pub fn start_r(
             r_request_rx,
             input_request_tx,
             iopub_tx,
+            kernel_init_tx,
         ));
     });
 
@@ -688,7 +794,7 @@ pub fn peek_execute_response(exec_count: u32) -> ExecuteResponse {
     // Include HTML representation of data.frame
     let value = unsafe { Rf_findVarInFrame(R_GlobalEnv, r_symbol!(".Last.value")) };
     if r_is_data_frame(value) {
-        match Kernel::to_html(value) {
+        match to_html(value) {
             Ok(html) => data.insert("text/html".to_string(), json!(html)),
             Err(error) => {
                 error!("{:?}", error);
@@ -749,4 +855,15 @@ fn new_execute_error_response(exception: Exception, exec_count: u32) -> ExecuteR
         execution_count: exec_count,
         exception,
     })
+}
+
+/// Converts a data frame to HTML
+fn to_html(frame: SEXP) -> Result<String> {
+    unsafe {
+        let result = RFunction::from(".ps.format.toHtml")
+            .add(frame)
+            .call()?
+            .to::<String>()?;
+        Ok(result)
+    }
 }

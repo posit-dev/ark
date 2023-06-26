@@ -48,8 +48,8 @@ use stdext::spawn;
 
 use crate::environment::r_environment::REnvironment;
 use crate::frontend::frontend::PositronFrontend;
+use crate::interface::KernelInfo;
 use crate::kernel::Kernel;
-use crate::kernel::KernelInfo;
 use crate::request::KernelRequest;
 use crate::request::RRequest;
 
@@ -79,7 +79,7 @@ impl Shell {
         conn_init_rx: Receiver<bool>,
     ) -> Self {
         // Start building the kernel object. It is shared by the shell, LSP, and main threads.
-        let kernel_mutex = Arc::new(Mutex::new(Kernel::new(iopub_tx.clone(), kernel_init_tx)));
+        let kernel_mutex = Arc::new(Mutex::new(Kernel::new(iopub_tx.clone())));
 
         let kernel_clone = kernel_mutex.clone();
         spawn!("ark-shell-thread", move || {
@@ -100,7 +100,13 @@ impl Shell {
             drop(conn_init_rx);
 
             // Start the R REPL (does not return)
-            crate::interface::start_r(kernel_clone, r_request_rx, input_request_tx, iopub_tx_clone);
+            crate::interface::start_r(
+                kernel_clone,
+                r_request_rx,
+                input_request_tx,
+                iopub_tx_clone,
+                kernel_init_tx,
+            );
         });
 
         Self {

@@ -12,7 +12,7 @@ use crossbeam::channel::Sender;
 use stdext::spawn;
 
 use super::backend;
-use crate::kernel::KernelInfo;
+use crate::interface::KernelInfo;
 use crate::request::KernelRequest;
 
 pub struct Lsp {
