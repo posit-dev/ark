@@ -1,9 +1,14 @@
 //
 // r_interface.rs
 //
-// Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023 Posit Software, PBC. All rights reserved.
 //
 //
+
+// All code in this file runs synchronously with R. We store the global
+// state inside of a global `R_MAIN` singleton that implements `RMain`.
+// The frontend methods called by R are forwarded to the corresponding
+// `RMain` methods via `R_MAIN`.
 
 use std::ffi::*;
 use std::os::raw::c_uchar;
@@ -733,47 +738,6 @@ impl RMain {
     }
 }
 
-extern "C" fn handle_interrupt(_signal: libc::c_int) {
-    unsafe {
-        R_interrupts_pending = 1;
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn r_read_console(
-    prompt: *const c_char,
-    buf: *mut c_uchar,
-    buflen: c_int,
-    hist: c_int,
-) -> i32 {
-    let main = unsafe { R_MAIN.as_mut().unwrap() };
-    main.read_console(prompt, buf, buflen, hist)
-}
-
-#[no_mangle]
-pub extern "C" fn r_write_console(buf: *const c_char, buflen: i32, otype: i32) {
-    let main = unsafe { R_MAIN.as_mut().unwrap() };
-    main.write_console(buf, buflen, otype);
-}
-
-#[no_mangle]
-pub extern "C" fn r_show_message(buf: *const c_char) {
-    let main = unsafe { R_MAIN.as_ref().unwrap() };
-    main.show_message(buf);
-}
-
-#[no_mangle]
-pub extern "C" fn r_busy(which: i32) {
-    let main = unsafe { R_MAIN.as_ref().unwrap() };
-    main.busy(which);
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn r_polled_events() {
-    let main = unsafe { R_MAIN.as_mut().unwrap() };
-    main.polled_events();
-}
-
 /// Report an incomplete request to the front end
 fn new_incomplete_response(req: &ExecuteRequest, exec_count: u32) -> ExecuteResponse {
     ExecuteResponse::ReplyException(ExecuteReplyException {
@@ -877,5 +841,51 @@ fn to_html(frame: SEXP) -> Result<String> {
             .call()?
             .to::<String>()?;
         Ok(result)
+    }
+}
+
+// --- Frontend methods ---
+// These functions are hooked up as R frontend methods. They call into our
+// global `RMain` singleton.
+
+#[no_mangle]
+extern "C" fn r_read_console(
+    prompt: *const c_char,
+    buf: *mut c_uchar,
+    buflen: c_int,
+    hist: c_int,
+) -> i32 {
+    let main = unsafe { R_MAIN.as_mut().unwrap() };
+    main.read_console(prompt, buf, buflen, hist)
+}
+
+#[no_mangle]
+extern "C" fn r_write_console(buf: *const c_char, buflen: i32, otype: i32) {
+    let main = unsafe { R_MAIN.as_mut().unwrap() };
+    main.write_console(buf, buflen, otype);
+}
+
+#[no_mangle]
+extern "C" fn r_show_message(buf: *const c_char) {
+    let main = unsafe { R_MAIN.as_ref().unwrap() };
+    main.show_message(buf);
+}
+
+#[no_mangle]
+extern "C" fn r_busy(which: i32) {
+    let main = unsafe { R_MAIN.as_ref().unwrap() };
+    main.busy(which);
+}
+
+#[no_mangle]
+unsafe extern "C" fn r_polled_events() {
+    let main = unsafe { R_MAIN.as_mut().unwrap() };
+    main.polled_events();
+}
+
+// Not really a frontend method but hooked up with `signal()`
+extern "C" fn handle_interrupt(_signal: libc::c_int) {
+    unsafe {
+        R_interrupts_pending = 1;
     }
 }
