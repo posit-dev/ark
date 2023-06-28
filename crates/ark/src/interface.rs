@@ -300,7 +300,7 @@ impl RMain {
         buflen: c_int,
         _hist: c_int,
     ) -> i32 {
-        let info = prompt_info(prompt);
+        let info = Self::prompt_info(prompt);
         debug!("R prompt: {}", info.prompt);
 
         INIT_KERNEL.call_once(|| {
@@ -329,7 +329,7 @@ impl RMain {
         // execution. We can now send a reply to unblock the active Shell
         // request.
         if let Some(req) = &self.active_request {
-            reply_execute_request(req, info.clone());
+            self.reply_execute_request(req, info.clone());
         }
 
         // Signal prompt
@@ -383,7 +383,7 @@ impl RMain {
 
                     match input {
                         ConsoleInput::Input(code) => {
-                            on_console_input(buf, buflen, code);
+                            Self::on_console_input(buf, buflen, code);
                             return 1;
                         },
                         ConsoleInput::EOF => return 0,
@@ -406,6 +406,87 @@ impl RMain {
                 },
             };
         }
+    }
+
+    // We prefer to panic if there is an error while trying to determine the
+    // prompt type because any confusion here is prone to put the frontend in a
+    // bad state (e.g. causing freezes)
+    fn prompt_info(prompt_c: *const c_char) -> PromptInfo {
+        let n_frame = harp::session::r_n_frame().unwrap();
+        trace!("prompt_info(): n_frame = '{}'", n_frame);
+
+        let prompt_slice = unsafe { CStr::from_ptr(prompt_c) };
+        let prompt = prompt_slice.to_string_lossy().into_owned();
+
+        // TODO: Detect with `env_is_browsed(sys.frame(sys.nframe()))`
+        let browser = false;
+
+        // If there are frames on the stack and we're not in a browser prompt,
+        // this means some user code is requesting input, e.g. via `readline()`
+        let user_request = !browser && n_frame > 0;
+
+        // The request is incomplete if we see the continue prompt, except if
+        // we're in a user request, e.g. `readline("+ ")`
+        let continue_prompt = unsafe { r_get_option::<String>("continue").unwrap() };
+        let incomplete = !user_request && prompt == continue_prompt;
+
+        if incomplete {
+            trace!("Got R prompt '{}', marking request incomplete", prompt);
+        } else if user_request {
+            trace!("Got R prompt '{}', asking user for input", prompt);
+        }
+
+        return PromptInfo {
+            prompt,
+            incomplete,
+            user_request,
+        };
+    }
+
+    fn on_console_input(buf: *mut c_uchar, buflen: c_int, mut input: String) {
+        // TODO: What if the input is too large for the buffer?
+        input.push_str("\n");
+        if input.len() > buflen as usize {
+            info!("Error: input too large for buffer.");
+            return;
+        }
+
+        let src = CString::new(input).unwrap();
+        unsafe {
+            libc::strcpy(buf as *mut c_char, src.as_ptr());
+        }
+    }
+
+    // Reply to the previously active request. The current prompt type and
+    // whether an error has occurred defines the response kind.
+    fn reply_execute_request(&self, req: &ActiveReadConsoleRequest, prompt_info: PromptInfo) {
+        let prompt = prompt_info.prompt;
+
+        let reply = if prompt_info.incomplete {
+            trace!("Got prompt {} signaling incomplete request", prompt);
+            new_incomplete_response(&req.request, req.exec_count)
+        } else if prompt_info.user_request {
+            trace!(
+                "Got input request for prompt {}, waiting for reply...",
+                prompt
+            );
+
+            self.input_request_tx
+                .send(ShellInputRequest {
+                    originator: req.orig.clone(),
+                    request: InputRequest {
+                        prompt: prompt.to_string(),
+                        password: false,
+                    },
+                })
+                .unwrap();
+
+            new_execute_response(req.exec_count)
+        } else {
+            trace!("Got R prompt '{}', completing execution", prompt);
+            peek_execute_response(req.exec_count)
+        };
+        req.response_tx.send(reply).unwrap();
     }
 
     /// Invoked by R to write output to the console.
@@ -528,20 +609,6 @@ pub unsafe fn process_events() {
     graphics_device::on_process_events();
 }
 
-fn on_console_input(buf: *mut c_uchar, buflen: c_int, mut input: String) {
-    // TODO: What if the input is too large for the buffer?
-    input.push_str("\n");
-    if input.len() > buflen as usize {
-        info!("Error: input too large for buffer.");
-        return;
-    }
-
-    let src = CString::new(input).unwrap();
-    unsafe {
-        libc::strcpy(buf as *mut c_char, src.as_ptr());
-    }
-}
-
 #[no_mangle]
 pub extern "C" fn r_read_console(
     prompt: *const c_char,
@@ -551,41 +618,6 @@ pub extern "C" fn r_read_console(
 ) -> i32 {
     let main = unsafe { R_MAIN.as_mut().unwrap() };
     main.read_console(prompt, buf, buflen, hist)
-}
-
-// We prefer to panic if there is an error while trying to determine the
-// prompt type because any confusion here is prone to put the frontend in a
-// bad state (e.g. causing freezes)
-fn prompt_info(prompt_c: *const c_char) -> PromptInfo {
-    let n_frame = harp::session::r_n_frame().unwrap();
-    trace!("prompt_info(): n_frame = '{}'", n_frame);
-
-    let prompt_slice = unsafe { CStr::from_ptr(prompt_c) };
-    let prompt = prompt_slice.to_string_lossy().into_owned();
-
-    // TODO: Detect with `env_is_browsed(sys.frame(sys.nframe()))`
-    let browser = false;
-
-    // If there are frames on the stack and we're not in a browser prompt,
-    // this means some user code is requesting input, e.g. via `readline()`
-    let user_request = !browser && n_frame > 0;
-
-    // The request is incomplete if we see the continue prompt, except if
-    // we're in a user request, e.g. `readline("+ ")`
-    let continue_prompt = unsafe { r_get_option::<String>("continue").unwrap() };
-    let incomplete = !user_request && prompt == continue_prompt;
-
-    if incomplete {
-        trace!("Got R prompt '{}', marking request incomplete", prompt);
-    } else if user_request {
-        trace!("Got R prompt '{}', asking user for input", prompt);
-    }
-
-    return PromptInfo {
-        prompt,
-        incomplete,
-        user_request,
-    };
 }
 
 #[no_mangle]
@@ -734,39 +766,6 @@ pub fn start_r(
         // Run the main loop -- does not return
         run_Rmainloop();
     }
-}
-
-// Reply to the previously active request. The current prompt type and
-// whether an error has occurred defines the response kind.
-fn reply_execute_request(req: &ActiveReadConsoleRequest, prompt_info: PromptInfo) {
-    let prompt = prompt_info.prompt;
-
-    let reply = if prompt_info.incomplete {
-        trace!("Got prompt {} signaling incomplete request", prompt);
-        new_incomplete_response(&req.request, req.exec_count)
-    } else if prompt_info.user_request {
-        trace!(
-            "Got input request for prompt {}, waiting for reply...",
-            prompt
-        );
-
-        let main = unsafe { R_MAIN.as_mut().unwrap() };
-        main.input_request_tx
-            .send(ShellInputRequest {
-                originator: req.orig.clone(),
-                request: InputRequest {
-                    prompt: prompt.to_string(),
-                    password: false,
-                },
-            })
-            .unwrap();
-
-        new_execute_response(req.exec_count)
-    } else {
-        trace!("Got R prompt '{}', completing execution", prompt);
-        peek_execute_response(req.exec_count)
-    };
-    req.response_tx.send(reply).unwrap();
 }
 
 /// Report an incomplete request to the front end
