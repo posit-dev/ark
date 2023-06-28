@@ -710,7 +710,7 @@ impl EnvironmentVariable {
             },
 
             EnvironmentVariableNode::Matrixcolumn { object, index } => {
-                Self::inspect_matrix_columm(*object, index)
+                Self::inspect_matrix_column(*object, index)
             },
             EnvironmentVariableNode::VectorElement { .. } => Ok(vec![]),
         }
@@ -944,7 +944,7 @@ impl EnvironmentVariable {
         }
     }
 
-    fn inspect_matrix_columm(matrix: SEXP, index: isize) -> harp::error::Result<Vec<Self>> {
+    fn inspect_matrix_column(matrix: SEXP, index: isize) -> harp::error::Result<Vec<Self>> {
         unsafe {
             let matrix = RObject::new(matrix);
             let dim = IntegerVector::new(Rf_getAttrib(*matrix, R_DimSymbol))?;
