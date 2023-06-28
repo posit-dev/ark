@@ -449,6 +449,17 @@ impl RMain {
         // execution. We can now send a reply to unblock the active Shell
         // request.
         if let Some(req) = &self.active_request {
+            // FIXME: The messages below are involved in a race between the
+            // StdIn and Shell threads and the messages might arrive out of
+            // order on the frontend side. This is generally well handled
+            // (top-level prompt is updated to become a user prompt) except
+            // if a response is sent very quickly before the
+            // `input_request` message arrives. In that case, the elements
+            // in the console are displayed out of order.
+            if info.user_request {
+                self.request_input(req, info.prompt.to_string());
+            }
+
             self.reply_execute_request(req, info.clone());
         }
 
@@ -590,23 +601,28 @@ impl RMain {
                 "Got input request for prompt {}, waiting for reply...",
                 prompt
             );
-
-            self.input_request_tx
-                .send(ShellInputRequest {
-                    originator: req.orig.clone(),
-                    request: InputRequest {
-                        prompt: prompt.to_string(),
-                        password: false,
-                    },
-                })
-                .unwrap();
-
             new_execute_response(req.exec_count)
         } else {
             trace!("Got R prompt '{}', completing execution", prompt);
             peek_execute_response(req.exec_count)
         };
         req.response_tx.send(reply).unwrap();
+    }
+
+    /// Request input from frontend in case code like `readline()` is
+    /// waiting for input
+    fn request_input(&self, req: &ActiveReadConsoleRequest, prompt: String) {
+        unwrap!(
+            self.input_request_tx
+            .send(ShellInputRequest {
+                originator: req.orig.clone(),
+                request: InputRequest {
+                    prompt,
+                    password: false,
+                },
+            }),
+            Err(err) => panic!("Could not send input request: {}", err)
+        )
     }
 
     /// Invoked by R to write output to the console.
