@@ -523,6 +523,29 @@ impl RMain {
         });
     }
 
+    /// Invoked by R to change busy state
+    fn busy(&self, which: i32) {
+        // Ensure signal handlers are initialized.
+        //
+        // We perform this awkward dance because R tries to set and reset
+        // the interrupt signal handler here, using 'signal()':
+        //
+        // https://github.com/wch/r-source/blob/e7a21904029917a63b4717b53a173b01eeabcc7b/src/unix/sys-std.c#L171-L178
+        //
+        // However, it seems like this can cause the old interrupt handler to be
+        // 'moved' to a separate thread, such that interrupts end up being handled
+        // on a thread different from the R execution thread. At least, on macOS.
+        initialize_signal_handlers();
+
+        // Create an event representing the new busy state
+        let event = PositronEvent::Busy(BusyEvent { busy: which != 0 });
+
+        // Wait for a lock on the kernel and have it deliver the event to
+        // the front end
+        let kernel = self.kernel.lock().unwrap();
+        kernel.send_event(event);
+    }
+
     /// Invoked by R to show a message to the user.
     fn show_message(&self, buf: *const c_char) {
         let message = unsafe { CStr::from_ptr(buf) };
@@ -632,32 +655,10 @@ pub extern "C" fn r_show_message(buf: *const c_char) {
     main.show_message(buf);
 }
 
-/**
- * Invoked by R to change busy state
- */
 #[no_mangle]
 pub extern "C" fn r_busy(which: i32) {
-    // Ensure signal handlers are initialized.
-    //
-    // We perform this awkward dance because R tries to set and reset
-    // the interrupt signal handler here, using 'signal()':
-    //
-    // https://github.com/wch/r-source/blob/e7a21904029917a63b4717b53a173b01eeabcc7b/src/unix/sys-std.c#L171-L178
-    //
-    // However, it seems like this can cause the old interrupt handler to be
-    // 'moved' to a separate thread, such that interrupts end up being handled
-    // on a thread different from the R execution thread. At least, on macOS.
-    initialize_signal_handlers();
-
-    // Wait for a lock on the kernel
     let main = unsafe { R_MAIN.as_ref().unwrap() };
-    let kernel = main.kernel.lock().unwrap();
-
-    // Create an event representing the new busy state
-    let event = PositronEvent::Busy(BusyEvent { busy: which != 0 });
-
-    // Have the kernel deliver the event to the front end
-    kernel.send_event(event);
+    main.busy(which);
 }
 
 pub unsafe extern "C" fn r_polled_events() {
