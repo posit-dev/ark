@@ -112,45 +112,6 @@ extern "C" {
     pub static mut R_PolledEvents: Option<unsafe extern "C" fn()>;
 }
 
-fn initialize_signal_handlers() {
-    // Reset the signal block.
-    //
-    // This appears to be necessary on macOS; 'sigprocmask()' specifically
-    // blocks the signals in _all_ threads associated with the process, even
-    // when called from a spawned child thread. See:
-    //
-    // https://github.com/opensource-apple/xnu/blob/0a798f6738bc1db01281fc08ae024145e84df927/bsd/kern/kern_sig.c#L1238-L1285
-    // https://github.com/opensource-apple/xnu/blob/0a798f6738bc1db01281fc08ae024145e84df927/bsd/kern/kern_sig.c#L796-L839
-    //
-    // and note that 'sigprocmask()' uses 'block_procsigmask()' to apply the
-    // requested block to all threads in the process:
-    //
-    // https://github.com/opensource-apple/xnu/blob/0a798f6738bc1db01281fc08ae024145e84df927/bsd/kern/kern_sig.c#L571-L599
-    //
-    // We may need to re-visit this on Linux later on, since 'sigprocmask()' and
-    // 'pthread_sigmask()' may only target the executing thread there.
-    //
-    // The behavior of 'sigprocmask()' is unspecified after all, so we're really
-    // just relying on what the implementation happens to do.
-    let mut sigset = SigSet::empty();
-    sigset.add(SIGINT);
-    sigprocmask(SigmaskHow::SIG_BLOCK, Some(&sigset), None).unwrap();
-
-    // Unblock signals on this thread.
-    pthread_sigmask(SigmaskHow::SIG_UNBLOCK, Some(&sigset), None).unwrap();
-
-    // Install an interrupt handler.
-    unsafe {
-        signal(SIGINT, SigHandler::Handler(handle_interrupt)).unwrap();
-    }
-}
-
-extern "C" fn handle_interrupt(_signal: libc::c_int) {
-    unsafe {
-        R_interrupts_pending = 1;
-    }
-}
-
 // --- Globals ---
 // These values must be global in order for them to be accessible from R
 // callbacks, which do not have a facility for passing or returning context.
@@ -221,6 +182,28 @@ struct ActiveReadConsoleRequest {
 pub struct KernelInfo {
     pub version: String,
     pub banner: String,
+}
+
+/// This struct represents the data that we wish R would pass to
+/// `ReadConsole()` methods. We need this information to determine what kind
+/// of prompt we are dealing with.
+#[derive(Clone)]
+pub struct PromptInfo {
+    /// The prompt string to be presented to the user
+    prompt: String,
+
+    /// Whether the last input didn't fully parse and R is waiting for more input
+    incomplete: bool,
+
+    /// Whether this is a prompt from a fresh REPL iteration (browser or
+    /// top level) or a prompt from some user code, e.g. via `readline()`
+    user_request: bool,
+}
+// TODO: `browser` field
+
+pub enum ConsoleInput {
+    EOF,
+    Input(String),
 }
 
 impl RMain {
@@ -331,6 +314,45 @@ impl RMain {
     }
 }
 
+fn initialize_signal_handlers() {
+    // Reset the signal block.
+    //
+    // This appears to be necessary on macOS; 'sigprocmask()' specifically
+    // blocks the signals in _all_ threads associated with the process, even
+    // when called from a spawned child thread. See:
+    //
+    // https://github.com/opensource-apple/xnu/blob/0a798f6738bc1db01281fc08ae024145e84df927/bsd/kern/kern_sig.c#L1238-L1285
+    // https://github.com/opensource-apple/xnu/blob/0a798f6738bc1db01281fc08ae024145e84df927/bsd/kern/kern_sig.c#L796-L839
+    //
+    // and note that 'sigprocmask()' uses 'block_procsigmask()' to apply the
+    // requested block to all threads in the process:
+    //
+    // https://github.com/opensource-apple/xnu/blob/0a798f6738bc1db01281fc08ae024145e84df927/bsd/kern/kern_sig.c#L571-L599
+    //
+    // We may need to re-visit this on Linux later on, since 'sigprocmask()' and
+    // 'pthread_sigmask()' may only target the executing thread there.
+    //
+    // The behavior of 'sigprocmask()' is unspecified after all, so we're really
+    // just relying on what the implementation happens to do.
+    let mut sigset = SigSet::empty();
+    sigset.add(SIGINT);
+    sigprocmask(SigmaskHow::SIG_BLOCK, Some(&sigset), None).unwrap();
+
+    // Unblock signals on this thread.
+    pthread_sigmask(SigmaskHow::SIG_UNBLOCK, Some(&sigset), None).unwrap();
+
+    // Install an interrupt handler.
+    unsafe {
+        signal(SIGINT, SigHandler::Handler(handle_interrupt)).unwrap();
+    }
+}
+
+extern "C" fn handle_interrupt(_signal: libc::c_int) {
+    unsafe {
+        R_interrupts_pending = 1;
+    }
+}
+
 pub unsafe fn process_events() {
     // Don't process interrupts in this scope.
     let _interrupts_suspended = RInterruptsSuspendedScope::new();
@@ -374,11 +396,6 @@ fn on_console_input(buf: *mut c_uchar, buflen: c_int, mut input: String) {
     unsafe {
         libc::strcpy(buf as *mut c_char, src.as_ptr());
     }
-}
-
-pub enum ConsoleInput {
-    EOF,
-    Input(String),
 }
 
 /// Invoked by R to read console input from the user.
@@ -504,23 +521,6 @@ pub extern "C" fn r_read_console(
         };
     }
 }
-
-/// This struct represents the data that we wish R would pass to
-/// `ReadConsole()` methods. We need this information to determine what kind
-/// of prompt we are dealing with.
-#[derive(Clone)]
-pub struct PromptInfo {
-    /// The prompt string to be presented to the user
-    prompt: String,
-
-    /// Whether the last input didn't fully parse and R is waiting for more input
-    incomplete: bool,
-
-    /// Whether this is a prompt from a fresh REPL iteration (browser or
-    /// top level) or a prompt from some user code, e.g. via `readline()`
-    user_request: bool,
-}
-// TODO: `browser` field
 
 // We prefer to panic if there is an error while trying to determine the
 // prompt type because any confusion here is prone to put the frontend in a
