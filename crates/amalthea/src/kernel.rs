@@ -106,7 +106,7 @@ impl Kernel {
         control_handler: Arc<Mutex<dyn ControlHandler>>,
         lsp_handler: Option<Arc<Mutex<dyn LspHandler>>>,
         stream_behavior: StreamBehavior,
-        // Receiver channelfor the stdin socket; when input is needed, the
+        // Receiver channel for the stdin socket; when input is needed, the
         // language runtime can request it by sending an InputRequest to
         // this channel. The front end will prompt the user for input and
         // deliver it via the `handle_input_reply` method.
