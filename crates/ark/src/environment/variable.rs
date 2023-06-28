@@ -239,6 +239,8 @@ impl WorkspaceVariableDisplayValue {
                     let mut display_value = String::from("");
                     let mut is_truncated = false;
 
+                    // TODO: handle higher dimensional arrays, i.e. expand
+                    //       recursively from the higher dimension
                     if r_is_matrix(value) {
                         unsafe {
                             let dim =
