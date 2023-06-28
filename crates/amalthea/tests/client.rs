@@ -24,6 +24,7 @@ use amalthea::wire::execute_input::ExecuteInput;
 use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::execute_result::ExecuteResult;
 use amalthea::wire::input_reply::InputReply;
+use amalthea::wire::input_request::ShellInputRequest;
 use amalthea::wire::jupyter_message::Message;
 use amalthea::wire::jupyter_message::MessageType;
 use amalthea::wire::jupyter_message::Status;
@@ -31,6 +32,7 @@ use amalthea::wire::kernel_info_request::KernelInfoRequest;
 use amalthea::wire::status::ExecutionState;
 use amalthea::wire::status::KernelStatus;
 use amalthea::wire::wire_message::WireMessage;
+use crossbeam::channel::bounded;
 use log::info;
 use serde_json;
 
@@ -43,9 +45,12 @@ fn test_kernel() {
     let frontend = frontend::Frontend::new();
     let connection_file = frontend.get_connection_file();
     let mut kernel = Kernel::new("amalthea", connection_file).unwrap();
+
     let shell_tx = kernel.create_iopub_tx();
     let comm_manager_tx = kernel.create_comm_manager_tx();
-    let shell = Arc::new(Mutex::new(shell::Shell::new(shell_tx)));
+    let (input_tx, input_rx) = bounded::<ShellInputRequest>(1);
+
+    let shell = Arc::new(Mutex::new(shell::Shell::new(shell_tx, input_tx)));
     let control = Arc::new(Mutex::new(control::Control {}));
 
     // Initialize logging
@@ -53,16 +58,16 @@ fn test_kernel() {
     info!("Starting test kernel");
 
     // Create the thread that will run the Amalthea kernel
-    thread::spawn(
-        move || match kernel.connect(shell, control, None, StreamBehavior::None, None) {
+    thread::spawn(move || {
+        match kernel.connect(shell, control, None, StreamBehavior::None, input_rx, None) {
             Ok(_) => {
                 info!("Kernel connection initiated");
             },
             Err(e) => {
                 panic!("Error connecting kernel: {}", e);
             },
-        },
-    );
+        }
+    });
 
     // Give the kernel a little time to start up
     info!("Waiting 500ms for kernel startup to complete");

@@ -17,6 +17,8 @@ use amalthea::connection_file::ConnectionFile;
 use amalthea::kernel::Kernel;
 use amalthea::kernel::StreamBehavior;
 use amalthea::kernel_spec::KernelSpec;
+use amalthea::wire::input_request::ShellInputRequest;
+use crossbeam::channel::bounded;
 use log::debug;
 use log::error;
 use log::info;
@@ -33,11 +35,14 @@ fn start_kernel(connection_file: ConnectionFile) {
         },
     };
 
+    // Communication channel with StdIn
+    let (input_tx, input_rx) = bounded::<ShellInputRequest>(1);
+
     let shell_tx = kernel.create_iopub_tx();
-    let shell = Arc::new(Mutex::new(Shell::new(shell_tx)));
+    let shell = Arc::new(Mutex::new(Shell::new(shell_tx, input_tx)));
     let control = Arc::new(Mutex::new(Control {}));
 
-    match kernel.connect(shell, control, None, StreamBehavior::None, None) {
+    match kernel.connect(shell, control, None, StreamBehavior::None, input_rx, None) {
         Ok(()) => {
             let mut s = String::new();
             println!("Kernel activated, press Ctrl+C to end ");

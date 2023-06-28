@@ -8,6 +8,7 @@
 use std::ffi::*;
 use std::os::raw::c_uchar;
 use std::os::raw::c_void;
+use std::result::Result::Ok;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::Once;
@@ -18,30 +19,49 @@ use amalthea::events::BusyEvent;
 use amalthea::events::PositronEvent;
 use amalthea::events::ShowMessageEvent;
 use amalthea::socket::iopub::IOPubMessage;
+use amalthea::wire::exception::Exception;
+use amalthea::wire::execute_input::ExecuteInput;
+use amalthea::wire::execute_reply::ExecuteReply;
+use amalthea::wire::execute_reply_exception::ExecuteReplyException;
+use amalthea::wire::execute_request::ExecuteRequest;
+use amalthea::wire::execute_response::ExecuteResponse;
+use amalthea::wire::execute_result::ExecuteResult;
+use amalthea::wire::input_request::InputRequest;
+use amalthea::wire::input_request::ShellInputRequest;
+use amalthea::wire::jupyter_message::Status;
+use amalthea::wire::originator::Originator;
 use amalthea::wire::stream::Stream;
+use amalthea::wire::stream::StreamOutput;
+use anyhow::*;
 use bus::Bus;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::RecvTimeoutError;
 use crossbeam::channel::Sender;
+use harp::exec::RFunction;
+use harp::exec::RFunctionExt;
 use harp::interrupts::RInterruptsSuspendedScope;
 use harp::lock::R_RUNTIME_LOCK;
 use harp::lock::R_RUNTIME_LOCK_COUNT;
+use harp::object::RObject;
+use harp::r_lock;
+use harp::r_symbol;
 use harp::routines::r_register_routines;
 use harp::utils::r_get_option;
+use harp::utils::r_is_data_frame;
 use libR_sys::*;
 use log::*;
 use nix::sys::signal::*;
 use parking_lot::ReentrantMutexGuard;
+use serde_json::json;
 use stdext::*;
 
 use crate::errors;
 use crate::help_proxy;
 use crate::kernel::Kernel;
-use crate::kernel::KernelInfo;
 use crate::lsp::events::EVENTS;
 use crate::modules;
 use crate::plots::graphics_device;
-use crate::request::Request;
+use crate::request::RRequest;
 
 extern "C" {
     pub static mut R_running_as_main_program: ::std::os::raw::c_int;
@@ -137,6 +157,7 @@ extern "C" fn handle_interrupt(_signal: libc::c_int) {
 
 /// Ensures that the kernel is only ever initialized once
 static INIT: Once = Once::new();
+static INIT_KERNEL: Once = Once::new();
 
 // The global state used by R callbacks.
 //
@@ -146,12 +167,30 @@ static INIT: Once = Once::new();
 pub static mut R_MAIN: Option<RMain> = None;
 
 pub struct RMain {
-    /// A channel that sends prompts from R to the kernel
-    prompt_tx: Sender<PromptInfo>,
+    initializing: bool,
+    kernel_init_tx: Bus<KernelInfo>,
 
-    /// A channel that receives console input from the kernel and sends it
-    /// to R; sending empty input (None) tells R to shut down
-    console_rx: Receiver<Option<String>>,
+    /// Execution requests from the frontend. Processed from `ReadConsole()`.
+    /// Requests for code execution provide input to that method.
+    r_request_rx: Receiver<RRequest>,
+
+    /// Input requests to the frontend. Processed from `ReadConsole()`
+    /// calls triggered by e.g. `readline()`.
+    input_request_tx: Sender<ShellInputRequest>,
+
+    /// IOPub channel for broadcasting outputs
+    iopub_tx: Sender<IOPubMessage>,
+
+    /// Active request passed to `ReadConsole()`. Contains response channel
+    /// the reply should be send to once computation has finished.
+    active_request: Option<ActiveReadConsoleRequest>,
+
+    /// Execution request counter used to populate `In[n]` and `Out[n]` prompts
+    execution_count: u32,
+
+    stdout: String,
+    stderr: String,
+    banner: String,
 
     /// A lock guard, used to manage access to the R runtime.  The main
     /// thread holds the lock by default, but releases it at opportune
@@ -161,24 +200,134 @@ pub struct RMain {
     /// Shared reference to kernel. Currently used by the ark-execution
     /// thread, the R frontend callbacks, and LSP routines called from R
     pub kernel: Arc<Mutex<Kernel>>,
+
+    /// Represents whether an error occurred during R code execution.
+    pub error_occurred: bool,
+    pub error_message: String, // `evalue` in the Jupyter protocol
+    pub error_traceback: Vec<String>,
+}
+
+/// Represents the currently active execution request from the frontend. It
+/// resolves at the next invocation of the `ReadConsole()` frontend method.
+struct ActiveReadConsoleRequest {
+    exec_count: u32,
+    request: ExecuteRequest,
+    orig: Option<Originator>,
+    response_tx: Sender<ExecuteResponse>,
+}
+
+/// Represents kernel metadata (available after the kernel has fully started)
+#[derive(Debug, Clone)]
+pub struct KernelInfo {
+    pub version: String,
+    pub banner: String,
 }
 
 impl RMain {
     pub fn new(
-        prompt_tx: Sender<PromptInfo>,
-        console_rx: Receiver<Option<String>>,
         kernel: Arc<Mutex<Kernel>>,
+        r_request_rx: Receiver<RRequest>,
+        input_request_tx: Sender<ShellInputRequest>,
+        iopub_tx: Sender<IOPubMessage>,
+        kernel_init_tx: Bus<KernelInfo>,
     ) -> Self {
         // The main thread owns the R runtime lock by default, but releases
         // it when appropriate to give other threads a chance to execute.
         let lock_guard = unsafe { R_RUNTIME_LOCK.lock() };
 
         Self {
-            prompt_tx,
-            console_rx,
+            initializing: true,
+            r_request_rx,
+            input_request_tx,
+            iopub_tx,
+            kernel_init_tx,
+            active_request: None,
+            execution_count: 0,
+            stdout: String::new(),
+            stderr: String::new(),
+            banner: String::new(),
             runtime_lock_guard: Some(lock_guard),
             kernel,
+            error_occurred: false,
+            error_message: String::new(),
+            error_traceback: Vec::new(),
         }
+    }
+
+    /// Completes the kernel's initialization
+    pub fn complete_initialization(&mut self) {
+        if self.initializing {
+            let version = unsafe {
+                let version = Rf_findVarInFrame(R_BaseNamespace, r_symbol!("R.version.string"));
+                RObject::new(version).to::<String>().unwrap()
+            };
+
+            let kernel_info = KernelInfo {
+                version: version.clone(),
+                banner: self.banner.clone(),
+            };
+
+            debug!("Sending kernel info: {}", version);
+            self.kernel_init_tx.broadcast(kernel_info);
+            self.initializing = false;
+        } else {
+            warn!("Initialization already complete!");
+        }
+    }
+
+    fn init_execute_request(&mut self, req: &ExecuteRequest) -> (ConsoleInput, u32) {
+        // Initialize stdout, stderr
+        self.stdout = String::new();
+        self.stderr = String::new();
+
+        // Increment counter if we are storing this execution in history
+        if req.store_history {
+            self.execution_count = self.execution_count + 1;
+        }
+
+        // If the code is not to be executed silently, re-broadcast the
+        // execution to all frontends
+        if !req.silent {
+            if let Err(err) = self.iopub_tx.send(IOPubMessage::ExecuteInput(ExecuteInput {
+                code: req.code.clone(),
+                execution_count: self.execution_count,
+            })) {
+                warn!(
+                    "Could not broadcast execution input {} to all front ends: {}",
+                    self.execution_count, err
+                );
+            }
+        }
+
+        // Return the code to the R console to be evaluated and the corresponding exec count
+        (ConsoleInput::Input(req.code.clone()), self.execution_count)
+    }
+
+    /// Called from R when console data is written.
+    pub fn write_console(&mut self, content: &str, stream: Stream) {
+        if self.initializing {
+            // During init, consider all output to be part of the startup banner
+            self.banner.push_str(content);
+            return;
+        }
+
+        let buffer = match stream {
+            Stream::Stdout => &mut self.stdout,
+            Stream::Stderr => &mut self.stderr,
+        };
+
+        // Append content to buffer.
+        buffer.push_str(content);
+
+        // Stream output via the IOPub channel.
+        let message = IOPubMessage::Stream(StreamOutput {
+            name: stream,
+            text: content.to_string(),
+        });
+
+        unwrap!(self.iopub_tx.send(message), Err(error) => {
+            log::error!("{}", error);
+        });
     }
 }
 
@@ -227,6 +376,11 @@ fn on_console_input(buf: *mut c_uchar, buflen: c_int, mut input: String) {
     }
 }
 
+pub enum ConsoleInput {
+    EOF,
+    Input(String),
+}
+
 /// Invoked by R to read console input from the user.
 ///
 /// * `prompt` - The prompt shown to the user
@@ -246,6 +400,15 @@ pub extern "C" fn r_read_console(
     let info = prompt_info(prompt);
     debug!("R prompt: {}", info.prompt);
 
+    INIT_KERNEL.call_once(|| {
+        main.complete_initialization();
+
+        trace!(
+            "Got initial R prompt '{}', ready for execution requests",
+            info.prompt
+        );
+    });
+
     // TODO: Can we remove this below code?
     // If the prompt begins with "Save workspace", respond with (n)
     //
@@ -259,8 +422,15 @@ pub extern "C" fn r_read_console(
         return 1;
     }
 
-    // TODO: if R prompt is +, we need to tell the user their input is incomplete
-    main.prompt_tx.send(info).unwrap();
+    // We got a prompt request marking the end of the previous
+    // execution. We can now send a reply to unblock the active Shell
+    // request.
+    if let Some(req) = &main.active_request {
+        reply_execute_request(req, info.clone());
+    }
+
+    // Signal prompt
+    EVENTS.console_prompt.emit(());
 
     // Match with a timeout. Necessary because we need to
     // pump the event loop while waiting for console input.
@@ -272,8 +442,27 @@ pub extern "C" fn r_read_console(
         // Release the R runtime lock while we're waiting for input.
         main.runtime_lock_guard = None;
 
-        match main.console_rx.recv_timeout(Duration::from_millis(200)) {
-            Ok(response) => {
+        // Wait for an execution request from the front end.
+        match main.r_request_rx.recv_timeout(Duration::from_millis(200)) {
+            Ok(req) => {
+                let input = match req {
+                    RRequest::ExecuteCode(exec_req, orig, response_tx) => {
+                        // Extract input from request
+                        let (input, exec_count) = { main.init_execute_request(&exec_req) };
+
+                        // Save `ExecuteCode` request so we can respond to it at next prompt
+                        main.active_request = Some(ActiveReadConsoleRequest {
+                            exec_count,
+                            request: exec_req,
+                            orig,
+                            response_tx,
+                        });
+
+                        input
+                    },
+                    RRequest::Shutdown(_) => ConsoleInput::EOF,
+                };
+
                 // Take back the lock after we've received some console input.
                 unsafe { main.runtime_lock_guard = Some(R_RUNTIME_LOCK.lock()) };
 
@@ -286,38 +475,40 @@ pub extern "C" fn r_read_console(
                 // Process events.
                 unsafe { process_events() };
 
-                if let Some(input) = response {
-                    on_console_input(buf, buflen, input);
+                // Clear error flag
+                main.error_occurred = false;
+
+                match input {
+                    ConsoleInput::Input(code) => {
+                        on_console_input(buf, buflen, code);
+                        return 1;
+                    },
+                    ConsoleInput::EOF => return 0,
                 }
-
-                return 1;
             },
-
-            Err(error) => {
+            Err(err) => {
                 unsafe { main.runtime_lock_guard = Some(R_RUNTIME_LOCK.lock()) };
 
                 use RecvTimeoutError::*;
-                match error {
+                match err {
                     Timeout => {
-                        // Process events.
+                        // Process events and keep waiting for console input.
                         unsafe { process_events() };
-
-                        // Keep waiting for console input.
                         continue;
                     },
-
                     Disconnected => {
                         return 1;
                     },
                 }
             },
-        }
+        };
     }
 }
 
 /// This struct represents the data that we wish R would pass to
 /// `ReadConsole()` methods. We need this information to determine what kind
 /// of prompt we are dealing with.
+#[derive(Clone)]
 pub struct PromptInfo {
     /// The prompt string to be presented to the user
     prompt: String,
@@ -378,10 +569,8 @@ pub extern "C" fn r_write_console(buf: *const c_char, _buflen: i32, otype: i32) 
         Stream::Stderr
     };
 
-    let main = unsafe { R_MAIN.as_ref().unwrap() };
-    let mut kernel = main.kernel.lock().unwrap();
-
-    kernel.write_console(content.to_str().unwrap(), stream);
+    let main = unsafe { R_MAIN.as_mut().unwrap() };
+    main.write_console(content.to_str().unwrap(), stream);
 }
 
 /**
@@ -460,25 +649,21 @@ pub unsafe extern "C" fn r_polled_events() {
 }
 
 pub fn start_r(
+    kernel_mutex: Arc<Mutex<Kernel>>,
+    r_request_rx: Receiver<RRequest>,
+    input_request_tx: Sender<ShellInputRequest>,
     iopub_tx: Sender<IOPubMessage>,
     kernel_init_tx: Bus<KernelInfo>,
-    shell_request_rx: Receiver<Request>,
 ) {
-    // Start building the channels + kernel objects
-    let (console_tx, console_rx) = crossbeam::channel::unbounded();
-    let (rprompt_tx, rprompt_rx) = crossbeam::channel::unbounded();
-
-    let kernel = Kernel::new(iopub_tx, console_tx.clone(), kernel_init_tx);
-    let kernel_mutex = Arc::new(Mutex::new(kernel));
-
     // Initialize global state (ensure we only do this once!)
     INIT.call_once(|| unsafe {
-        R_MAIN = Some(RMain::new(rprompt_tx, console_rx, kernel_mutex.clone()));
-    });
-
-    // Start thread to listen to execution requests
-    spawn!("ark-execution", move || {
-        listen(shell_request_rx, rprompt_rx, kernel_mutex.clone())
+        R_MAIN = Some(RMain::new(
+            kernel_mutex,
+            r_request_rx,
+            input_request_tx,
+            iopub_tx,
+            kernel_init_tx,
+        ));
     });
 
     unsafe {
@@ -545,84 +730,141 @@ pub fn start_r(
     }
 }
 
-fn handle_r_request(
-    req: &Request,
-    prompt_recv: &Receiver<PromptInfo>,
-    kernel_mutex: Arc<Mutex<Kernel>>,
-) {
-    // Service the request.
-    {
-        let mut kernel = kernel_mutex.lock().unwrap();
-        kernel.fulfill_request(&req)
-    }
-
-    // If this is an execution request, complete it by waiting for R to prompt
-    // us before we process another request
-    if let Request::ExecuteCode(_, _, _) = req {
-        complete_execute_request(req, prompt_recv, kernel_mutex);
-    }
-}
-
-fn complete_execute_request(
-    req: &Request,
-    prompt_recv: &Receiver<PromptInfo>,
-    kernel_mutex: Arc<Mutex<Kernel>>,
-) {
-    // Wait for R to prompt us again. This signals that the
-    // execution is finished and R is ready for input again.
-    trace!("Waiting for R prompt signaling completion of execution...");
-    let prompt_info = prompt_recv.recv().unwrap();
+// Reply to the previously active request. The current prompt type and
+// whether an error has occurred defines the response kind.
+fn reply_execute_request(req: &ActiveReadConsoleRequest, prompt_info: PromptInfo) {
     let prompt = prompt_info.prompt;
-    let kernel = kernel_mutex.lock().unwrap();
 
-    // Signal prompt
-    EVENTS.console_prompt.emit(());
+    let reply = if prompt_info.incomplete {
+        trace!("Got prompt {} signaling incomplete request", prompt);
+        new_incomplete_response(&req.request, req.exec_count)
+    } else if prompt_info.user_request {
+        trace!(
+            "Got input request for prompt {}, waiting for reply...",
+            prompt
+        );
 
-    if prompt_info.incomplete {
-        return kernel.report_incomplete_request(&req);
-    }
+        let main = unsafe { R_MAIN.as_mut().unwrap() };
+        main.input_request_tx
+            .send(ShellInputRequest {
+                originator: req.orig.clone(),
+                request: InputRequest {
+                    prompt: prompt.to_string(),
+                    password: false,
+                },
+            })
+            .unwrap();
 
-    if prompt_info.user_request {
-        if let Request::ExecuteCode(_, originator, _) = req {
-            kernel.request_input(originator.clone(), &prompt);
-        } else {
-            warn!("No originator for input request, omitting");
-            kernel.request_input(None, &prompt);
-        }
-
-        trace!("Input requested, waiting for reply...");
-        return;
-    }
-
-    // Default prompt, finishing request
-    trace!("Got R prompt '{}', completing execution", prompt);
-    return kernel.finish_request();
+        new_execute_response(req.exec_count)
+    } else {
+        trace!("Got R prompt '{}', completing execution", prompt);
+        peek_execute_response(req.exec_count)
+    };
+    req.response_tx.send(reply).unwrap();
 }
 
-pub fn listen(
-    exec_recv: Receiver<Request>,
-    prompt_recv: Receiver<PromptInfo>,
-    kernel_mutex: Arc<Mutex<Kernel>>,
-) {
-    // Before accepting execution requests from the front end, wait for R to
-    // prompt us for input.
-    trace!("Waiting for R's initial input prompt...");
-    let info = prompt_recv.recv().unwrap();
-    trace!(
-        "Got initial R prompt '{}', ready for execution requests",
-        info.prompt
-    );
+/// Report an incomplete request to the front end
+pub fn new_incomplete_response(req: &ExecuteRequest, exec_count: u32) -> ExecuteResponse {
+    ExecuteResponse::ReplyException(ExecuteReplyException {
+        status: Status::Error,
+        execution_count: exec_count,
+        exception: Exception {
+            ename: "IncompleteInput".to_string(),
+            evalue: format!("Code fragment is not complete: {}", req.code),
+            traceback: vec![],
+        },
+    })
+}
 
-    {
-        let mut kernel = kernel_mutex.lock().unwrap();
-        kernel.complete_initialization();
+// Gets response data from R state
+pub fn peek_execute_response(exec_count: u32) -> ExecuteResponse {
+    let main = unsafe { R_MAIN.as_mut().unwrap() };
+
+    // Save and reset error occurred flag
+    let error_occurred = main.error_occurred;
+    main.error_occurred = false;
+
+    // TODO: Implement rich printing of certain outputs.
+    // Will we need something similar to the RStudio model,
+    // where we implement custom print() methods? Or can
+    // we make the stub below behave sensibly even when
+    // streaming R output?
+    let mut data = serde_json::Map::new();
+    data.insert("text/plain".to_string(), json!(""));
+
+    // Include HTML representation of data.frame
+    let value = r_lock! { Rf_findVarInFrame(R_GlobalEnv, r_symbol!(".Last.value")) };
+    if r_is_data_frame(value) {
+        match to_html(value) {
+            Ok(html) => data.insert("text/html".to_string(), json!(html)),
+            Err(error) => {
+                error!("{:?}", error);
+                None
+            },
+        };
     }
 
-    loop {
-        // Wait for an execution request from the front end.
-        match exec_recv.recv() {
-            Ok(req) => handle_r_request(&req, &prompt_recv, kernel_mutex.clone()),
-            Err(err) => warn!("Could not receive execution request from kernel: {}", err),
-        }
+    let main = unsafe { R_MAIN.as_mut().unwrap() };
+
+    if let Err(err) = main
+        .iopub_tx
+        .send(IOPubMessage::ExecuteResult(ExecuteResult {
+            execution_count: exec_count,
+            data: serde_json::Value::Object(data),
+            metadata: json!({}),
+        }))
+    {
+        warn!(
+            "Could not publish result of statement {} on iopub: {}",
+            exec_count, err
+        );
+    }
+
+    // Send the reply to the front end
+    if error_occurred {
+        // We don't fill out `ename` with anything meaningful because typically
+        // R errors don't have names. We could consider using the condition class
+        // here, which r-lib/tidyverse packages have been using more heavily.
+        let ename = String::from("");
+        let evalue = main.error_message.clone();
+        let traceback = main.error_traceback.clone();
+
+        log::info!("An R error occurred: {}", evalue);
+
+        let exception = Exception {
+            ename,
+            evalue,
+            traceback,
+        };
+
+        new_execute_error_response(exception, exec_count)
+    } else {
+        new_execute_response(exec_count)
+    }
+}
+
+fn new_execute_response(exec_count: u32) -> ExecuteResponse {
+    ExecuteResponse::Reply(ExecuteReply {
+        status: Status::Ok,
+        execution_count: exec_count,
+        user_expressions: json!({}),
+    })
+}
+fn new_execute_error_response(exception: Exception, exec_count: u32) -> ExecuteResponse {
+    ExecuteResponse::ReplyException(ExecuteReplyException {
+        status: Status::Error,
+        execution_count: exec_count,
+        exception,
+    })
+}
+
+/// Converts a data frame to HTML
+fn to_html(frame: SEXP) -> Result<String> {
+    unsafe {
+        let result = RFunction::from(".ps.format.toHtml")
+            .add(frame)
+            .call()?
+            .to::<String>()?;
+        Ok(result)
     }
 }

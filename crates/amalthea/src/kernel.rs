@@ -32,6 +32,7 @@ use crate::socket::socket::Socket;
 use crate::socket::stdin::Stdin;
 use crate::stream_capture::StreamCapture;
 use crate::wire::header::JupyterHeader;
+use crate::wire::input_request::ShellInputRequest;
 
 /// A Kernel represents a unique Jupyter kernel session and is the host for all
 /// execution and messaging threads.
@@ -105,6 +106,12 @@ impl Kernel {
         control_handler: Arc<Mutex<dyn ControlHandler>>,
         lsp_handler: Option<Arc<Mutex<dyn LspHandler>>>,
         stream_behavior: StreamBehavior,
+        // Receiver channel for the stdin socket; when input is needed, the
+        // language runtime can request it by sending an InputRequest to
+        // this channel. The front end will prompt the user for input and
+        // deliver it via the `handle_input_reply` method.
+        // https://jupyter-client.readthedocs.io/en/stable/messaging.html#messages-on-the-stdin-router-dealer-channel
+        input_request_rx: Receiver<ShellInputRequest>,
         conn_init_tx: Option<Sender<bool>>,
     ) -> Result<(), Error> {
         let ctx = zmq::Context::new();
@@ -185,7 +192,7 @@ impl Kernel {
         let shell_clone = shell_handler.clone();
         let msg_context = self.msg_context.clone();
         spawn!(format!("{}-stdin", self.name), move || {
-            Self::stdin_thread(stdin_socket, shell_clone, msg_context)
+            Self::stdin_thread(stdin_socket, shell_clone, msg_context, input_request_rx)
         });
 
         // Create the thread that handles stdout and stderr, if requested
@@ -281,9 +288,10 @@ impl Kernel {
         socket: Socket,
         shell_handler: Arc<Mutex<dyn ShellHandler>>,
         msg_context: Arc<Mutex<Option<JupyterHeader>>>,
+        input_request_rx: Receiver<ShellInputRequest>,
     ) -> Result<(), Error> {
         let stdin = Stdin::new(socket, shell_handler, msg_context);
-        stdin.listen();
+        stdin.listen(input_request_rx);
         Ok(())
     }
 

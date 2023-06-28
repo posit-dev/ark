@@ -6,7 +6,6 @@
  */
 
 use async_trait::async_trait;
-use crossbeam::channel::Sender;
 
 use crate::comm::comm_channel::Comm;
 use crate::socket::comm::CommSocket;
@@ -17,7 +16,6 @@ use crate::wire::execute_reply::ExecuteReply;
 use crate::wire::execute_reply_exception::ExecuteReplyException;
 use crate::wire::execute_request::ExecuteRequest;
 use crate::wire::input_reply::InputReply;
-use crate::wire::input_request::ShellInputRequest;
 use crate::wire::inspect_reply::InspectReply;
 use crate::wire::inspect_request::InspectRequest;
 use crate::wire::is_complete_reply::IsCompleteReply;
@@ -86,12 +84,4 @@ pub trait ShellHandler: Send {
     /// https://jupyter-client.readthedocs.io/en/stable/messaging.html#messages-on-the-stdin-router-dealer-channel
     async fn handle_input_reply(&self, msg: &InputReply, orig: Originator)
         -> Result<(), Exception>;
-
-    /// Establishes an input handler for the front end (from stdin socket); when
-    /// input is needed, the language runtime can request it by sending an
-    /// InputRequest to this channel. The front end will prompt the user for
-    /// input and deliver it via the `handle_input_reply` method.
-    ///
-    /// https://jupyter-client.readthedocs.io/en/stable/messaging.html#messages-on-the-stdin-router-dealer-channel
-    fn establish_input_handler(&mut self, handler: Sender<ShellInputRequest>);
 }

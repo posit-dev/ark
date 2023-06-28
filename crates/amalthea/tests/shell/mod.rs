@@ -41,34 +41,30 @@ use serde_json::json;
 
 pub struct Shell {
     iopub: Sender<IOPubMessage>,
-    input_tx: Option<Sender<ShellInputRequest>>,
+    input_tx: Sender<ShellInputRequest>,
     execution_count: u32,
 }
 
 /// Stub implementation of the shell handler for test harness
 impl Shell {
-    pub fn new(iopub: Sender<IOPubMessage>) -> Self {
+    pub fn new(iopub: Sender<IOPubMessage>, input_tx: Sender<ShellInputRequest>) -> Self {
         Self {
             iopub,
+            input_tx,
             execution_count: 0,
-            input_tx: None,
         }
     }
 
     // Simluates an input request
     fn prompt_for_input(&self, originator: Option<Originator>) {
-        if let Some(sender) = &self.input_tx {
-            if let Err(err) = sender.send(ShellInputRequest {
-                originator: originator.clone(),
-                request: InputRequest {
-                    prompt: String::from("Amalthea Echo> "),
-                    password: false,
-                },
-            }) {
-                warn!("Could not prompt for input: {}", err);
-            }
-        } else {
-            panic!("No input handler established!");
+        if let Err(err) = self.input_tx.send(ShellInputRequest {
+            originator: originator.clone(),
+            request: InputRequest {
+                prompt: String::from("Amalthea Echo> "),
+                password: false,
+            },
+        }) {
+            warn!("Could not prompt for input: {}", err);
         }
     }
 }
@@ -262,9 +258,5 @@ impl ShellHandler for Shell {
     ) -> Result<(), Exception> {
         // NYI
         Ok(())
-    }
-
-    fn establish_input_handler(&mut self, handler: Sender<ShellInputRequest>) {
-        self.input_tx = Some(handler);
     }
 }

@@ -14,10 +14,12 @@ use std::sync::Mutex;
 use amalthea::connection_file::ConnectionFile;
 use amalthea::kernel::Kernel;
 use amalthea::kernel_spec::KernelSpec;
+use amalthea::wire::input_request::ShellInputRequest;
 use ark::control::Control;
 use ark::logger;
 use ark::lsp;
-use ark::request::Request;
+use ark::request::KernelRequest;
+use ark::request::RRequest;
 use ark::shell::Shell;
 use ark::version::detect_r;
 use bus::Bus;
@@ -49,33 +51,42 @@ fn start_kernel(connection_file: ConnectionFile, capture_streams: bool) {
     // A channel pair used for shell requests.
     // These events are used to manage the runtime state, and also to
     // handle message delivery, among other things.
-    let (shell_request_tx, shell_request_rx) = bounded::<Request>(1);
+    let (r_request_tx, r_request_rx) = bounded::<RRequest>(1);
+    let (kernel_request_tx, kernel_request_rx) = bounded::<KernelRequest>(1);
 
     // Create the LSP client.
     // Not all Amalthea kernels provide one, but ark does.
     // It must be able to deliver messages to the shell channel directly.
     let lsp = Arc::new(Mutex::new(lsp::handler::Lsp::new(
-        shell_request_tx.clone(),
+        kernel_request_tx.clone(),
         kernel.create_comm_manager_tx(),
         kernel_init_tx.add_rx(),
     )));
 
+    // One-off communication channel for 0MQ init event
     let (conn_init_tx, conn_init_rx) = bounded::<bool>(0);
+
+    // Communication channel between the R main thread and the Amalthea
+    // StdIn socket thread
+    let (input_request_tx, input_request_rx) = bounded::<ShellInputRequest>(1);
 
     // Create the shell.
     let kernel_init_rx = kernel_init_tx.add_rx();
     let shell = Shell::new(
         iopub_tx,
-        shell_request_tx,
-        shell_request_rx,
+        r_request_tx.clone(),
+        r_request_rx,
         kernel_init_tx,
         kernel_init_rx,
+        kernel_request_tx,
+        kernel_request_rx,
+        input_request_tx,
         conn_init_rx,
     );
 
     // Create the control handler; this is used to handle shutdown/interrupt and
     // related requests
-    let control = Arc::new(Mutex::new(Control::new(shell.request_tx())));
+    let control = Arc::new(Mutex::new(Control::new(r_request_tx.clone())));
 
     // Create the stream behavior; this determines whether the kernel should
     // capture stdout/stderr and send them to the front end as IOPub messages
@@ -91,6 +102,7 @@ fn start_kernel(connection_file: ConnectionFile, capture_streams: bool) {
         control,
         Some(lsp),
         stream_behavior,
+        input_request_rx,
         Some(conn_init_tx),
     ) {
         Ok(()) => {

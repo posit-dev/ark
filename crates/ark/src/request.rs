@@ -8,26 +8,26 @@
 use amalthea::events::PositronEvent;
 use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::execute_response::ExecuteResponse;
-use amalthea::wire::input_request::ShellInputRequest;
 use amalthea::wire::originator::Originator;
 use crossbeam::channel::Sender;
 
 /// Represents requests to the primary R execution thread.
 #[derive(Debug, Clone)]
-pub enum Request {
+pub enum RRequest {
     /// Fulfill an execution request from the front end, producing either a
     /// Reply or an Exception
     ExecuteCode(ExecuteRequest, Option<Originator>, Sender<ExecuteResponse>),
 
-    /// Establish a channel to the front end to send input requests
-    EstablishInputChannel(Sender<ShellInputRequest>),
+    /// Shut down the R execution thread
+    Shutdown(bool),
+}
 
+/// Represents requests to the kernel.
+#[derive(Debug, Clone)]
+pub enum KernelRequest {
     /// Establish a channel to the front end to send events
     EstablishEventChannel(Sender<PositronEvent>),
 
     /// Deliver an event to the front end
     DeliverEvent(PositronEvent),
-
-    /// Shut down the R execution thread
-    Shutdown(bool),
 }

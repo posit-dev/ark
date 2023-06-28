@@ -12,8 +12,8 @@ use libR_sys::*;
 use stdext::local;
 use stdext::unwrap;
 
-use crate::lsp::globals::shell_request_tx;
-use crate::request::Request;
+use crate::lsp::globals::kernel_request_tx;
+use crate::request::KernelRequest;
 
 /// Shows a message in the Positron frontend
 #[harp::register]
@@ -25,10 +25,10 @@ pub unsafe extern "C" fn ps_show_message(message: SEXP) -> SEXP {
         // Get the global instance of the channel used to deliver requests to the
         // front end, and send a request to show the message
         let event = PositronEvent::ShowMessage(ShowMessageEvent { message });
-        let event = Request::DeliverEvent(event);
+        let event = KernelRequest::DeliverEvent(event);
 
-        let shell_request_tx = shell_request_tx();
-        let status = unwrap!(shell_request_tx.send(event), Err(error) => {
+        let kernel_request_tx = kernel_request_tx();
+        let status = unwrap!(kernel_request_tx.send(event), Err(error) => {
             anyhow::bail!("Error sending request: {}", error);
         });
 

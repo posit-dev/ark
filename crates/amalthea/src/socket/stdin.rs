@@ -8,7 +8,7 @@
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use crossbeam::channel::bounded;
+use crossbeam::channel::Receiver;
 use futures::executor::block_on;
 use log::trace;
 use log::warn;
@@ -54,18 +54,11 @@ impl Stdin {
     /// Listens for messages on the stdin socket. This follows a simple loop:
     ///
     /// 1. Wait for
-    pub fn listen(&self) {
-        // Create the communication channel for the shell handler and inject it
-        let (tx, rx) = bounded::<ShellInputRequest>(1);
-        {
-            let mut shell_handler = self.handler.lock().unwrap();
-            shell_handler.establish_input_handler(tx);
-        }
-
+    pub fn listen(&self, input_request_rx: Receiver<ShellInputRequest>) {
         // Listen for input requests from the back end
         loop {
             // Wait for a message (input request) from the back end
-            let req = rx.recv().unwrap();
+            let req = input_request_rx.recv().unwrap();
 
             if let None = req.originator {
                 warn!("No originator for stdin request");
