@@ -741,7 +741,11 @@ impl EnvironmentVariable {
                                         // if we are here, it means the promise is either
                                         // evaluated already, i.e. PRVALUE() is bound
                                         // or it is a promise to something that is
-                                        // not a call or a symbol
+                                        // not a call or a symbol because it would have been handled in
+                                        // Binding::new()
+
+                                        // Actual promises, i.e. unevaluated promises can't be expanded
+                                        // in the environment pane so we would not get here
 
                                         let value = PRVALUE(x);
                                         if r_is_unbound(value) {
