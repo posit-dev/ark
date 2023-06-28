@@ -127,6 +127,88 @@ static INIT_KERNEL: Once = Once::new();
 // invoked by the REPL.
 pub static mut R_MAIN: Option<RMain> = None;
 
+/// Starts the main R thread. Doesn't return.
+pub fn start_r(
+    kernel_mutex: Arc<Mutex<Kernel>>,
+    r_request_rx: Receiver<RRequest>,
+    input_request_tx: Sender<ShellInputRequest>,
+    iopub_tx: Sender<IOPubMessage>,
+    kernel_init_tx: Bus<KernelInfo>,
+) {
+    // Initialize global state (ensure we only do this once!)
+    INIT.call_once(|| unsafe {
+        R_MAIN = Some(RMain::new(
+            kernel_mutex,
+            r_request_rx,
+            input_request_tx,
+            iopub_tx,
+            kernel_init_tx,
+        ));
+    });
+
+    unsafe {
+        let mut args = cargs!["ark", "--interactive"];
+        R_running_as_main_program = 1;
+        R_SignalHandlers = 0;
+        Rf_initialize_R(args.len() as i32, args.as_mut_ptr() as *mut *mut c_char);
+
+        // Initialize the interrupt handler.
+        RMain::initialize_signal_handlers();
+
+        // Disable stack checking; R doesn't know the starting point of the
+        // stack for threads other than the main thread. Consequently, it will
+        // report a stack overflow if we don't disable it. This is a problem
+        // on all platforms, but is most obvious on aarch64 Linux due to how
+        // thread stacks are allocated on that platform.
+        //
+        // See https://cran.r-project.org/doc/manuals/R-exts.html#Threading-issues
+        // for more information.
+        R_CStackLimit = usize::MAX;
+
+        // Log the value of R_HOME, so we can know if something hairy is afoot
+        let home = CStr::from_ptr(R_HomeDir());
+        trace!("R_HOME: {:?}", home);
+
+        // Mark R session as interactive
+        R_Interactive = 1;
+
+        // Redirect console
+        R_Consolefile = std::ptr::null_mut();
+        R_Outputfile = std::ptr::null_mut();
+
+        ptr_R_WriteConsole = None;
+        ptr_R_WriteConsoleEx = Some(r_write_console);
+        ptr_R_ReadConsole = Some(r_read_console);
+        ptr_R_ShowMessage = Some(r_show_message);
+        ptr_R_Busy = Some(r_busy);
+
+        // Listen for polled events
+        R_wait_usec = 10000;
+        R_PolledEvents = Some(r_polled_events);
+
+        // Set up main loop
+        setup_Rmainloop();
+
+        // Register embedded routines
+        r_register_routines();
+
+        // Initialize support functions (after routine registration)
+        let r_module_info = modules::initialize().unwrap();
+
+        // TODO: Should starting the R help server proxy really be here?
+        // Are we sure we want our own server when ark runs in a Jupyter notebook?
+        // Moving this requires detangling `help_server_port` from
+        // `modules::initialize()`, which seems doable.
+        // Start R help server proxy
+        help_proxy::start(r_module_info.help_server_port);
+
+        // Set up the global error handler (after support function initialization)
+        errors::initialize();
+
+        // Run the main loop -- does not return
+        run_Rmainloop();
+    }
+}
 pub struct RMain {
     initializing: bool,
     kernel_init_tx: Bus<KernelInfo>,
@@ -255,6 +337,39 @@ impl RMain {
             self.initializing = false;
         } else {
             warn!("Initialization already complete!");
+        }
+    }
+
+    fn initialize_signal_handlers() {
+        // Reset the signal block.
+        //
+        // This appears to be necessary on macOS; 'sigprocmask()' specifically
+        // blocks the signals in _all_ threads associated with the process, even
+        // when called from a spawned child thread. See:
+        //
+        // https://github.com/opensource-apple/xnu/blob/0a798f6738bc1db01281fc08ae024145e84df927/bsd/kern/kern_sig.c#L1238-L1285
+        // https://github.com/opensource-apple/xnu/blob/0a798f6738bc1db01281fc08ae024145e84df927/bsd/kern/kern_sig.c#L796-L839
+        //
+        // and note that 'sigprocmask()' uses 'block_procsigmask()' to apply the
+        // requested block to all threads in the process:
+        //
+        // https://github.com/opensource-apple/xnu/blob/0a798f6738bc1db01281fc08ae024145e84df927/bsd/kern/kern_sig.c#L571-L599
+        //
+        // We may need to re-visit this on Linux later on, since 'sigprocmask()' and
+        // 'pthread_sigmask()' may only target the executing thread there.
+        //
+        // The behavior of 'sigprocmask()' is unspecified after all, so we're really
+        // just relying on what the implementation happens to do.
+        let mut sigset = SigSet::empty();
+        sigset.add(SIGINT);
+        sigprocmask(SigmaskHow::SIG_BLOCK, Some(&sigset), None).unwrap();
+
+        // Unblock signals on this thread.
+        pthread_sigmask(SigmaskHow::SIG_UNBLOCK, Some(&sigset), None).unwrap();
+
+        // Install an interrupt handler.
+        unsafe {
+            signal(SIGINT, SigHandler::Handler(handle_interrupt)).unwrap();
         }
     }
 
@@ -535,7 +650,7 @@ impl RMain {
         // However, it seems like this can cause the old interrupt handler to be
         // 'moved' to a separate thread, such that interrupts end up being handled
         // on a thread different from the R execution thread. At least, on macOS.
-        initialize_signal_handlers();
+        Self::initialize_signal_handlers();
 
         // Create an event representing the new busy state
         let event = PositronEvent::Busy(BusyEvent { busy: which != 0 });
@@ -584,39 +699,6 @@ impl RMain {
             "The main thread re-acquired the R runtime lock after {} milliseconds.",
             now.elapsed().unwrap().as_millis()
         );
-    }
-}
-
-fn initialize_signal_handlers() {
-    // Reset the signal block.
-    //
-    // This appears to be necessary on macOS; 'sigprocmask()' specifically
-    // blocks the signals in _all_ threads associated with the process, even
-    // when called from a spawned child thread. See:
-    //
-    // https://github.com/opensource-apple/xnu/blob/0a798f6738bc1db01281fc08ae024145e84df927/bsd/kern/kern_sig.c#L1238-L1285
-    // https://github.com/opensource-apple/xnu/blob/0a798f6738bc1db01281fc08ae024145e84df927/bsd/kern/kern_sig.c#L796-L839
-    //
-    // and note that 'sigprocmask()' uses 'block_procsigmask()' to apply the
-    // requested block to all threads in the process:
-    //
-    // https://github.com/opensource-apple/xnu/blob/0a798f6738bc1db01281fc08ae024145e84df927/bsd/kern/kern_sig.c#L571-L599
-    //
-    // We may need to re-visit this on Linux later on, since 'sigprocmask()' and
-    // 'pthread_sigmask()' may only target the executing thread there.
-    //
-    // The behavior of 'sigprocmask()' is unspecified after all, so we're really
-    // just relying on what the implementation happens to do.
-    let mut sigset = SigSet::empty();
-    sigset.add(SIGINT);
-    sigprocmask(SigmaskHow::SIG_BLOCK, Some(&sigset), None).unwrap();
-
-    // Unblock signals on this thread.
-    pthread_sigmask(SigmaskHow::SIG_UNBLOCK, Some(&sigset), None).unwrap();
-
-    // Install an interrupt handler.
-    unsafe {
-        signal(SIGINT, SigHandler::Handler(handle_interrupt)).unwrap();
     }
 }
 
@@ -690,88 +772,6 @@ pub extern "C" fn r_busy(which: i32) {
 pub unsafe extern "C" fn r_polled_events() {
     let main = unsafe { R_MAIN.as_mut().unwrap() };
     main.polled_events();
-}
-
-pub fn start_r(
-    kernel_mutex: Arc<Mutex<Kernel>>,
-    r_request_rx: Receiver<RRequest>,
-    input_request_tx: Sender<ShellInputRequest>,
-    iopub_tx: Sender<IOPubMessage>,
-    kernel_init_tx: Bus<KernelInfo>,
-) {
-    // Initialize global state (ensure we only do this once!)
-    INIT.call_once(|| unsafe {
-        R_MAIN = Some(RMain::new(
-            kernel_mutex,
-            r_request_rx,
-            input_request_tx,
-            iopub_tx,
-            kernel_init_tx,
-        ));
-    });
-
-    unsafe {
-        let mut args = cargs!["ark", "--interactive"];
-        R_running_as_main_program = 1;
-        R_SignalHandlers = 0;
-        Rf_initialize_R(args.len() as i32, args.as_mut_ptr() as *mut *mut c_char);
-
-        // Initialize the interrupt handler.
-        initialize_signal_handlers();
-
-        // Disable stack checking; R doesn't know the starting point of the
-        // stack for threads other than the main thread. Consequently, it will
-        // report a stack overflow if we don't disable it. This is a problem
-        // on all platforms, but is most obvious on aarch64 Linux due to how
-        // thread stacks are allocated on that platform.
-        //
-        // See https://cran.r-project.org/doc/manuals/R-exts.html#Threading-issues
-        // for more information.
-        R_CStackLimit = usize::MAX;
-
-        // Log the value of R_HOME, so we can know if something hairy is afoot
-        let home = CStr::from_ptr(R_HomeDir());
-        trace!("R_HOME: {:?}", home);
-
-        // Mark R session as interactive
-        R_Interactive = 1;
-
-        // Redirect console
-        R_Consolefile = std::ptr::null_mut();
-        R_Outputfile = std::ptr::null_mut();
-
-        ptr_R_WriteConsole = None;
-        ptr_R_WriteConsoleEx = Some(r_write_console);
-        ptr_R_ReadConsole = Some(r_read_console);
-        ptr_R_ShowMessage = Some(r_show_message);
-        ptr_R_Busy = Some(r_busy);
-
-        // Listen for polled events
-        R_wait_usec = 10000;
-        R_PolledEvents = Some(r_polled_events);
-
-        // Set up main loop
-        setup_Rmainloop();
-
-        // Register embedded routines
-        r_register_routines();
-
-        // Initialize support functions (after routine registration)
-        let r_module_info = modules::initialize().unwrap();
-
-        // TODO: Should starting the R help server proxy really be here?
-        // Are we sure we want our own server when ark runs in a Jupyter notebook?
-        // Moving this requires detangling `help_server_port` from
-        // `modules::initialize()`, which seems doable.
-        // Start R help server proxy
-        help_proxy::start(r_module_info.help_server_port);
-
-        // Set up the global error handler (after support function initialization)
-        errors::initialize();
-
-        // Run the main loop -- does not return
-        run_Rmainloop();
-    }
 }
 
 /// Report an incomplete request to the front end
