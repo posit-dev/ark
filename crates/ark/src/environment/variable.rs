@@ -255,8 +255,21 @@ impl WorkspaceVariableDisplayValue {
                                 }
 
                                 display_value.push_str("[");
-                                display_value.push_str(formatted.column_iter(i).join(" ").as_str());
+                                let display_column = formatted.column_iter(i).join(" ");
+                                if display_column.len() > 100 {
+                                    is_truncated = true;
+                                    // TODO: maybe this should only push_str() a slice
+                                    //       of the first n (100?) characters in that case ?
+                                }
+                                display_value.push_str(display_column.as_str());
                                 display_value.push_str("]");
+
+                                if display_value.len() > 100 {
+                                    is_truncated = true;
+                                }
+                                if is_truncated {
+                                    break;
+                                }
                             }
                             display_value.push_str("]");
                         }
