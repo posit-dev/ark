@@ -775,7 +775,7 @@ pub fn start_r(
 }
 
 /// Report an incomplete request to the front end
-pub fn new_incomplete_response(req: &ExecuteRequest, exec_count: u32) -> ExecuteResponse {
+fn new_incomplete_response(req: &ExecuteRequest, exec_count: u32) -> ExecuteResponse {
     ExecuteResponse::ReplyException(ExecuteReplyException {
         status: Status::Error,
         execution_count: exec_count,
@@ -788,7 +788,7 @@ pub fn new_incomplete_response(req: &ExecuteRequest, exec_count: u32) -> Execute
 }
 
 // Gets response data from R state
-pub fn peek_execute_response(exec_count: u32) -> ExecuteResponse {
+fn peek_execute_response(exec_count: u32) -> ExecuteResponse {
     let main = unsafe { R_MAIN.as_mut().unwrap() };
 
     // Save and reset error occurred flag
