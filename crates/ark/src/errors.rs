@@ -33,7 +33,7 @@ unsafe extern "C" fn ps_record_error(evalue: SEXP, traceback: SEXP) -> SEXP {
     });
 
     main.error_occurred = true;
-    main.error_evalue = evalue;
+    main.error_message = evalue;
     main.error_traceback = traceback;
 
     R_NilValue

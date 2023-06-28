@@ -203,7 +203,7 @@ pub struct RMain {
 
     /// Represents whether an error occurred during R code execution.
     pub error_occurred: bool,
-    pub error_evalue: String,
+    pub error_message: String, // `evalue` in the Jupyter protocol
     pub error_traceback: Vec<String>,
 }
 
@@ -249,7 +249,7 @@ impl RMain {
             runtime_lock_guard: Some(lock_guard),
             kernel,
             error_occurred: false,
-            error_evalue: String::new(),
+            error_message: String::new(),
             error_traceback: Vec::new(),
         }
     }
@@ -826,7 +826,7 @@ pub fn peek_execute_response(exec_count: u32) -> ExecuteResponse {
         // R errors don't have names. We could consider using the condition class
         // here, which r-lib/tidyverse packages have been using more heavily.
         let ename = String::from("");
-        let evalue = main.error_evalue.clone();
+        let evalue = main.error_message.clone();
         let traceback = main.error_traceback.clone();
 
         log::info!("An R error occurred: {}", evalue);
