@@ -441,6 +441,21 @@ impl RMain {
             log::error!("{}", error);
         });
     }
+
+    /// Invoked by R to show a message to the user.
+    fn show_message(&self, buf: *const c_char) {
+        let message = unsafe { CStr::from_ptr(buf) };
+
+        // Create an event representing the message
+        let event = PositronEvent::ShowMessage(ShowMessageEvent {
+            message: message.to_str().unwrap().to_string(),
+        });
+
+        // Wait for a lock on the kernel and have the kernel deliver the
+        // event to the front end
+        let kernel = self.kernel.lock().unwrap();
+        kernel.send_event(event);
+    }
 }
 
 fn initialize_signal_handlers() {
@@ -579,25 +594,10 @@ pub extern "C" fn r_write_console(buf: *const c_char, buflen: i32, otype: i32) {
     main.write_console(buf, buflen, otype);
 }
 
-/**
- * Invoked by R to show a message to the user.
- */
 #[no_mangle]
 pub extern "C" fn r_show_message(buf: *const c_char) {
-    // Convert the message to a string
-    let message = unsafe { CStr::from_ptr(buf) };
-
-    // Wait for a lock on the kernel
     let main = unsafe { R_MAIN.as_ref().unwrap() };
-    let kernel = main.kernel.lock().unwrap();
-
-    // Create an event representing the message
-    let event = PositronEvent::ShowMessage(ShowMessageEvent {
-        message: message.to_str().unwrap().to_string(),
-    });
-
-    // Have the kernel deliver the event to the front end
-    kernel.send_event(event);
+    main.show_message(buf);
 }
 
 /**
