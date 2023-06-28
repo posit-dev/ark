@@ -286,8 +286,130 @@ impl RMain {
         (ConsoleInput::Input(req.code.clone()), self.execution_count)
     }
 
+    /// Invoked by R to read console input from the user.
+    ///
+    /// * `prompt` - The prompt shown to the user
+    /// * `buf`    - Pointer to buffer to receive the user's input (type `CONSOLE_BUFFER_CHAR`)
+    /// * `buflen` - Size of the buffer to receiver user's input
+    /// * `hist`   - Whether to add the input to the history (1) or not (0)
+    ///
+    fn read_console(
+        &mut self,
+        prompt: *const c_char,
+        buf: *mut c_uchar,
+        buflen: c_int,
+        _hist: c_int,
+    ) -> i32 {
+        let info = prompt_info(prompt);
+        debug!("R prompt: {}", info.prompt);
+
+        INIT_KERNEL.call_once(|| {
+            self.complete_initialization();
+
+            trace!(
+                "Got initial R prompt '{}', ready for execution requests",
+                info.prompt
+            );
+        });
+
+        // TODO: Can we remove this below code?
+        // If the prompt begins with "Save workspace", respond with (n)
+        //
+        // NOTE: Should be able to overwrite the `Cleanup` frontend method.
+        // This would also help with detecting normal exits versus crashes.
+        if info.prompt.starts_with("Save workspace") {
+            let n = CString::new("n\n").unwrap();
+            unsafe {
+                libc::strcpy(buf as *mut c_char, n.as_ptr());
+            }
+            return 1;
+        }
+
+        // We got a prompt request marking the end of the previous
+        // execution. We can now send a reply to unblock the active Shell
+        // request.
+        if let Some(req) = &self.active_request {
+            reply_execute_request(req, info.clone());
+        }
+
+        // Signal prompt
+        EVENTS.console_prompt.emit(());
+
+        // Match with a timeout. Necessary because we need to
+        // pump the event loop while waiting for console input.
+        //
+        // Alternatively, we could try to figure out the file
+        // descriptors that R has open and select() on those for
+        // available data?
+        loop {
+            // Release the R runtime lock while we're waiting for input.
+            self.runtime_lock_guard = None;
+
+            // Wait for an execution request from the front end.
+            match self.r_request_rx.recv_timeout(Duration::from_millis(200)) {
+                Ok(req) => {
+                    let input = match req {
+                        RRequest::ExecuteCode(exec_req, orig, response_tx) => {
+                            // Extract input from request
+                            let (input, exec_count) = { self.init_execute_request(&exec_req) };
+
+                            // Save `ExecuteCode` request so we can respond to it at next prompt
+                            self.active_request = Some(ActiveReadConsoleRequest {
+                                exec_count,
+                                request: exec_req,
+                                orig,
+                                response_tx,
+                            });
+
+                            input
+                        },
+                        RRequest::Shutdown(_) => ConsoleInput::EOF,
+                    };
+
+                    // Take back the lock after we've received some console input.
+                    unsafe { self.runtime_lock_guard = Some(R_RUNTIME_LOCK.lock()) };
+
+                    // If we received an interrupt while the user was typing input,
+                    // we can assume the interrupt was 'handled' and so reset the flag.
+                    unsafe {
+                        R_interrupts_pending = 0;
+                    }
+
+                    // Process events.
+                    unsafe { process_events() };
+
+                    // Clear error flag
+                    self.error_occurred = false;
+
+                    match input {
+                        ConsoleInput::Input(code) => {
+                            on_console_input(buf, buflen, code);
+                            return 1;
+                        },
+                        ConsoleInput::EOF => return 0,
+                    }
+                },
+                Err(err) => {
+                    unsafe { self.runtime_lock_guard = Some(R_RUNTIME_LOCK.lock()) };
+
+                    use RecvTimeoutError::*;
+                    match err {
+                        Timeout => {
+                            // Process events and keep waiting for console input.
+                            unsafe { process_events() };
+                            continue;
+                        },
+                        Disconnected => {
+                            return 1;
+                        },
+                    }
+                },
+            };
+        }
+    }
+
     /// Called from R when console data is written.
-    pub fn write_console(&mut self, content: &str, stream: Stream) {
+    fn write_console(&mut self, content: &str, stream: Stream) {
         if self.initializing {
             // During init, consider all output to be part of the startup banner
             self.banner.push_str(content);
@@ -398,128 +520,15 @@ fn on_console_input(buf: *mut c_uchar, buflen: c_int, mut input: String) {
     }
 }
 
-/// Invoked by R to read console input from the user.
-///
-/// * `prompt` - The prompt shown to the user
-/// * `buf`    - Pointer to buffer to receive the user's input (type `CONSOLE_BUFFER_CHAR`)
-/// * `buflen` - Size of the buffer to receiver user's input
-/// * `hist`   - Whether to add the input to the history (1) or not (0)
-///
 #[no_mangle]
 pub extern "C" fn r_read_console(
     prompt: *const c_char,
     buf: *mut c_uchar,
     buflen: c_int,
-    _hist: c_int,
+    hist: c_int,
 ) -> i32 {
     let main = unsafe { R_MAIN.as_mut().unwrap() };
-
-    let info = prompt_info(prompt);
-    debug!("R prompt: {}", info.prompt);
-
-    INIT_KERNEL.call_once(|| {
-        main.complete_initialization();
-
-        trace!(
-            "Got initial R prompt '{}', ready for execution requests",
-            info.prompt
-        );
-    });
-
-    // TODO: Can we remove this below code?
-    // If the prompt begins with "Save workspace", respond with (n)
-    //
-    // NOTE: Should be able to overwrite the `Cleanup` frontend method.
-    // This would also help with detecting normal exits versus crashes.
-    if info.prompt.starts_with("Save workspace") {
-        let n = CString::new("n\n").unwrap();
-        unsafe {
-            libc::strcpy(buf as *mut c_char, n.as_ptr());
-        }
-        return 1;
-    }
-
-    // We got a prompt request marking the end of the previous
-    // execution. We can now send a reply to unblock the active Shell
-    // request.
-    if let Some(req) = &main.active_request {
-        reply_execute_request(req, info.clone());
-    }
-
-    // Signal prompt
-    EVENTS.console_prompt.emit(());
-
-    // Match with a timeout. Necessary because we need to
-    // pump the event loop while waiting for console input.
-    //
-    // Alternatively, we could try to figure out the file
-    // descriptors that R has open and select() on those for
-    // available data?
-    loop {
-        // Release the R runtime lock while we're waiting for input.
-        main.runtime_lock_guard = None;
-
-        // Wait for an execution request from the front end.
-        match main.r_request_rx.recv_timeout(Duration::from_millis(200)) {
-            Ok(req) => {
-                let input = match req {
-                    RRequest::ExecuteCode(exec_req, orig, response_tx) => {
-                        // Extract input from request
-                        let (input, exec_count) = { main.init_execute_request(&exec_req) };
-
-                        // Save `ExecuteCode` request so we can respond to it at next prompt
-                        main.active_request = Some(ActiveReadConsoleRequest {
-                            exec_count,
-                            request: exec_req,
-                            orig,
-                            response_tx,
-                        });
-
-                        input
-                    },
-                    RRequest::Shutdown(_) => ConsoleInput::EOF,
-                };
-
-                // Take back the lock after we've received some console input.
-                unsafe { main.runtime_lock_guard = Some(R_RUNTIME_LOCK.lock()) };
-
-                // If we received an interrupt while the user was typing input,
-                // we can assume the interrupt was 'handled' and so reset the flag.
-                unsafe {
-                    R_interrupts_pending = 0;
-                }
-
-                // Process events.
-                unsafe { process_events() };
-
-                // Clear error flag
-                main.error_occurred = false;
-
-                match input {
-                    ConsoleInput::Input(code) => {
-                        on_console_input(buf, buflen, code);
-                        return 1;
-                    },
-                    ConsoleInput::EOF => return 0,
-                }
-            },
-            Err(err) => {
-                unsafe { main.runtime_lock_guard = Some(R_RUNTIME_LOCK.lock()) };
-
-                use RecvTimeoutError::*;
-                match err {
-                    Timeout => {
-                        // Process events and keep waiting for console input.
-                        unsafe { process_events() };
-                        continue;
-                    },
-                    Disconnected => {
-                        return 1;
-                    },
-                }
-            },
-        };
-    }
+    main.read_console(prompt, buf, buflen, hist)
 }
 
 // We prefer to panic if there is an error while trying to determine the
