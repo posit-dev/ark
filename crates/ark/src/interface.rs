@@ -560,6 +560,31 @@ impl RMain {
         let kernel = self.kernel.lock().unwrap();
         kernel.send_event(event);
     }
+
+    /// Invoked by the R event loop
+    fn polled_events(&mut self) {
+        // Check for pending tasks.
+        let count = R_RUNTIME_LOCK_COUNT.load(std::sync::atomic::Ordering::Acquire);
+        if count == 0 {
+            return;
+        }
+
+        info!(
+            "{} thread(s) are waiting; the main thread is releasing the R runtime lock.",
+            count
+        );
+        let now = SystemTime::now();
+
+        // `bump()` does a fair unlock, giving other threads
+        // waiting for the lock a chance to acquire it, and then
+        // relocks it.
+        ReentrantMutexGuard::bump(self.runtime_lock_guard.as_mut().unwrap());
+
+        info!(
+            "The main thread re-acquired the R runtime lock after {} milliseconds.",
+            now.elapsed().unwrap().as_millis()
+        );
+    }
 }
 
 fn initialize_signal_handlers() {
@@ -661,30 +686,10 @@ pub extern "C" fn r_busy(which: i32) {
     main.busy(which);
 }
 
+#[no_mangle]
 pub unsafe extern "C" fn r_polled_events() {
     let main = unsafe { R_MAIN.as_mut().unwrap() };
-
-    // Check for pending tasks.
-    let count = R_RUNTIME_LOCK_COUNT.load(std::sync::atomic::Ordering::Acquire);
-    if count == 0 {
-        return;
-    }
-
-    info!(
-        "{} thread(s) are waiting; the main thread is releasing the R runtime lock.",
-        count
-    );
-    let now = SystemTime::now();
-
-    // `bump()` does a fair unlock, giving other threads
-    // waiting for the lock a chance to acquire it, and then
-    // relocks it.
-    ReentrantMutexGuard::bump(main.runtime_lock_guard.as_mut().unwrap());
-
-    info!(
-        "The main thread re-acquired the R runtime lock after {} milliseconds.",
-        now.elapsed().unwrap().as_millis()
-    );
+    main.polled_events();
 }
 
 pub fn start_r(
