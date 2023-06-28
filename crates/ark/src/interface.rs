@@ -408,8 +408,15 @@ impl RMain {
         }
     }
 
-    /// Called from R when console data is written.
-    fn write_console(&mut self, content: &str, stream: Stream) {
+    /// Invoked by R to write output to the console.
+    fn write_console(&mut self, buf: *const c_char, _buflen: i32, otype: i32) {
+        let content = unsafe { CStr::from_ptr(buf).to_str().unwrap() };
+        let stream = if otype == 0 {
+            Stream::Stdout
+        } else {
+            Stream::Stderr
+        };
+
         if self.initializing {
             // During init, consider all output to be part of the startup banner
             self.banner.push_str(content);
@@ -566,20 +573,10 @@ fn prompt_info(prompt_c: *const c_char) -> PromptInfo {
     };
 }
 
-/**
- * Invoked by R to write output to the console.
- */
 #[no_mangle]
-pub extern "C" fn r_write_console(buf: *const c_char, _buflen: i32, otype: i32) {
-    let content = unsafe { CStr::from_ptr(buf) };
-    let stream = if otype == 0 {
-        Stream::Stdout
-    } else {
-        Stream::Stderr
-    };
-
+pub extern "C" fn r_write_console(buf: *const c_char, buflen: i32, otype: i32) {
     let main = unsafe { R_MAIN.as_mut().unwrap() };
-    main.write_console(content.to_str().unwrap(), stream);
+    main.write_console(buf, buflen, otype);
 }
 
 /**
