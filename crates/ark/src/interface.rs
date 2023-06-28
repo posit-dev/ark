@@ -491,7 +491,7 @@ impl RMain {
                     }
 
                     // Process events.
-                    unsafe { process_events() };
+                    unsafe { Self::process_events() };
 
                     // Clear error flag
                     self.error_occurred = false;
@@ -511,7 +511,7 @@ impl RMain {
                     match err {
                         Timeout => {
                             // Process events and keep waiting for console input.
-                            unsafe { process_events() };
+                            unsafe { Self::process_events() };
                             continue;
                         },
                         Disconnected => {
@@ -700,43 +700,43 @@ impl RMain {
             now.elapsed().unwrap().as_millis()
         );
     }
+
+    unsafe fn process_events() {
+        // Don't process interrupts in this scope.
+        let _interrupts_suspended = RInterruptsSuspendedScope::new();
+
+        // Process regular R events.
+        R_ProcessEvents();
+
+        // Run handlers if we have data available. This is necessary
+        // for things like the HTML help server, which will listen
+        // for requests on an open socket() which would then normally
+        // be handled in a select() call when reading input from stdin.
+        //
+        // https://github.com/wch/r-source/blob/4ca6439c1ffc76958592455c44d83f95d5854b2a/src/unix/sys-std.c#L1084-L1086
+        //
+        // We run this in a loop just to make sure the R help server can
+        // be as responsive as possible when rendering help pages.
+        let mut fdset = R_checkActivity(0, 1);
+        while fdset != std::ptr::null_mut() {
+            R_runHandlers(R_InputHandlers, fdset);
+            fdset = R_checkActivity(0, 1);
+        }
+
+        // Run pending finalizers. We need to do this eagerly as otherwise finalizers
+        // might end up being executed on the LSP thread.
+        // https://github.com/rstudio/positron/issues/431
+        R_RunPendingFinalizers();
+
+        // Render pending plots.
+        graphics_device::on_process_events();
+    }
 }
 
 extern "C" fn handle_interrupt(_signal: libc::c_int) {
     unsafe {
         R_interrupts_pending = 1;
     }
-}
-
-pub unsafe fn process_events() {
-    // Don't process interrupts in this scope.
-    let _interrupts_suspended = RInterruptsSuspendedScope::new();
-
-    // Process regular R events.
-    R_ProcessEvents();
-
-    // Run handlers if we have data available. This is necessary
-    // for things like the HTML help server, which will listen
-    // for requests on an open socket() which would then normally
-    // be handled in a select() call when reading input from stdin.
-    //
-    // https://github.com/wch/r-source/blob/4ca6439c1ffc76958592455c44d83f95d5854b2a/src/unix/sys-std.c#L1084-L1086
-    //
-    // We run this in a loop just to make sure the R help server can
-    // be as responsive as possible when rendering help pages.
-    let mut fdset = R_checkActivity(0, 1);
-    while fdset != std::ptr::null_mut() {
-        R_runHandlers(R_InputHandlers, fdset);
-        fdset = R_checkActivity(0, 1);
-    }
-
-    // Run pending finalizers. We need to do this eagerly as otherwise finalizers
-    // might end up being executed on the LSP thread.
-    // https://github.com/rstudio/positron/issues/431
-    R_RunPendingFinalizers();
-
-    // Render pending plots.
-    graphics_device::on_process_events();
 }
 
 #[no_mangle]
