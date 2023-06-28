@@ -446,14 +446,12 @@ impl Kernel {
                 }
             );
 
-            while n > 0 {
+            for _ in 0..n {
                 if let Some(index) = has_outbound() {
                     unwrap!(
                         forward_outbound(index),
                         Err(err) => error!("While forwarding outbound message: {}", err)
                     );
-
-                    let _ = --n;
                     continue;
                 }
 
@@ -462,10 +460,10 @@ impl Kernel {
                         forward_inbound(),
                         Err(err) => error!("While forwarding inbound message: {}", err)
                     );
-
-                    let _ = --n;
                     continue;
                 }
+
+                log::warn!("Could not find readable message");
             }
         }
     }
