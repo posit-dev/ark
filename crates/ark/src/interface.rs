@@ -464,6 +464,12 @@ impl RMain {
             }
 
             self.reply_execute_request(req, info.clone());
+
+            // Clear active request. This doesn't matter if we return here
+            // after receiving an `ExecuteCode` request (as
+            // `self.active_request` will be set to a fresh request), but
+            // we might also return here after an interrupt.
+            self.active_request = None;
         }
 
         // Signal prompt
@@ -478,6 +484,12 @@ impl RMain {
         loop {
             // Release the R runtime lock while we're waiting for input.
             self.runtime_lock_guard = None;
+
+            // FIXME: Race between interrupt and new code request. To fix
+            // this, we could manage the Shell and Control sockets on the
+            // common message event thread. The Control messages would need
+            // to be handled in a blocking way to ensure subscribers are
+            // notified before the next incoming message is processed.
 
             // Wait for an execution request from the front end.
             match self.r_request_rx.recv_timeout(Duration::from_millis(200)) {
