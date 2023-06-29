@@ -7,14 +7,19 @@
 
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::os::raw::c_void;
 use std::sync::atomic::AtomicI32;
 use std::time::Duration;
 
 use anyhow::Result;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
+use harp::external_ptr::ExternalPointer;
+use harp::object::RObject;
 use harp::protect::RProtect;
 use harp::r_lock;
+use harp::r_symbol;
+use harp::utils::r_is_null;
 use harp::utils::r_symbol_quote_invalid;
 use harp::utils::r_symbol_valid;
 use harp::vector::CharacterVector;
@@ -33,7 +38,7 @@ use crate::Range;
 static VERSION: AtomicI32 = AtomicI32::new(0);
 
 #[derive(Clone)]
-struct DiagnosticContext<'a> {
+pub struct DiagnosticContext<'a> {
     /// The contents of the source document.
     pub source: &'a str,
 
@@ -461,36 +466,141 @@ fn recurse_call_arguments_default(
     ().ok()
 }
 
-// Recursion for calls to library() or require()
-// similar to recurse_call_arguments_default() but special
-// care about the first argument: skip the diagnostic
-fn recurse_call_arguments_library(
+struct TreeSitterCall<'a> {
+    // A call of the form <fun>(list(0L, <ptr>), foo = list(1L, <ptr>))
+    call: RObject,
+
+    // holding on to each "value" Node for as long as call lives
+    _value_nodes: Vec<Node<'a>>,
+}
+
+impl<'a> From<&TreeSitterCall<'a>> for RObject {
+    fn from(value: &TreeSitterCall<'a>) -> Self {
+        value.call.clone()
+    }
+}
+
+impl<'a> TreeSitterCall<'a> {
+    pub unsafe fn new(
+        node: Node<'a>,
+        function: &str,
+        context: &mut DiagnosticContext,
+    ) -> Result<Self> {
+        // start with a call to the function: <fun>()
+        let sym = r_symbol!(function);
+        let call = RObject::new(Rf_lang1(sym));
+
+        // then augment it with arguments
+        let mut tail = *call;
+
+        // values are stored in the call as external pointers
+        // to Node that are kept alive in this vector and
+        // in TreeSitterCall::_values
+        let mut _value_nodes = vec![];
+
+        if let Some(arguments) = node.child_by_field_name("arguments") {
+            let mut cursor = arguments.walk();
+            let children = arguments.children_by_field_name("argument", &mut cursor);
+            let mut i = 0;
+            for child in children {
+                let arg_list = RObject::from(Rf_allocVector(VECSXP, 2));
+
+                // set the argument to a list<2>, with its first element: a scalar integer
+                // that corresponds to its O-based position. The position is used below to
+                // map back to the Node
+                SET_VECTOR_ELT(*arg_list, 0, Rf_ScalarInteger(i as i32));
+
+                // Set the second element of the list to an external pointer
+                // to the child node.
+                if let Some(value) = child.child_by_field_name("value") {
+                    _value_nodes.push(value);
+                    let value_node_ptr = ExternalPointer::new(_value_nodes.last().into_result()?);
+                    SET_VECTOR_ELT(*arg_list, 1, *value_node_ptr.pointer);
+                }
+
+                SETCDR(tail, Rf_cons(*arg_list, R_NilValue));
+                tail = CDR(tail);
+
+                // potentially add the argument name
+                if let Some(name) = child.child_by_field_name("name") {
+                    let name = name.utf8_text(context.source.as_bytes())?;
+                    let sym_name = r_symbol!(name);
+                    SET_TAG(tail, sym_name);
+                }
+
+                i = i + 1;
+            }
+        }
+
+        Ok(Self { call, _value_nodes })
+    }
+}
+
+fn recurse_call_arguments_custom(
     node: Node,
     context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
+    function: &str,
+    diagnostic_function: &str,
 ) -> Result<()> {
-    // Recurse into arguments.
-    let mut i = 0;
-    if let Some(arguments) = node.child_by_field_name("arguments") {
-        let mut cursor = arguments.walk();
-        let children = arguments.children_by_field_name("argument", &mut cursor);
-        for child in children {
-            // Warn if the next sibling is neither a comma nor a closing delimiter.
-            check_call_next_sibling(child, context, diagnostics)?;
+    r_lock! {
+        // Build a call that mixes treesitter nodes (as external pointers)
+        // library(foo, pos = 2 + 2)
+        //    ->
+        // library([0, <node0>], pos = [1, <node1>])
+        // where:
+        //   - node0 is an external pointer to a treesitter Node for the identifier `foo`
+        //   - node1 is an external pointer to a treesitter Node for the call `2 + 2`
+        //
+        // The TreeSitterCall object holds on to the nodes, so that they can be
+        // safely passed down to the R side as external pointers
+        let call = TreeSitterCall::new(node, function, context)?;
 
-            // Recurse into values.
-            if let Some(value) = child.child_by_field_name("value") {
-                // disable diagnostics for the first argument
-                if i > 0 {
+        let custom_diagnostics = RFunction::from(diagnostic_function)
+            .add(&call)
+            .add(ExternalPointer::new(&context.source))
+            .call()?;
+
+        if !r_is_null(*custom_diagnostics) {
+            let n = XLENGTH(*custom_diagnostics);
+            for i in 0..n {
+                // diag is a list with:
+                //   - The kind of diagnostic: skip, default, simple
+                //   - The node external pointer, i.e. the ones made in TreeSitterCall::new
+                //   - The message, when kind is "simple"
+                let diag = VECTOR_ELT(*custom_diagnostics, i);
+
+                let kind: String = RObject::view(VECTOR_ELT(diag, 0)).try_into()?;
+
+                if kind == "skip" {
+                    // skip the diagnostic entirely, e.g.
+                    // library(foo)
+                    //         ^^^
+                    continue;
+                }
+
+                let ptr = VECTOR_ELT(diag, 1);
+                let value = *(R_ExternalPtrAddr(ptr) as *const c_void as *const Node);
+
+                if kind == "default" {
+                    // the R side gives up, so proceed as normal, e.g.
+                    // library(foo, pos = ...)
+                    //                    ^^^
                     recurse(value, context, diagnostics)?;
+                } else if kind == "simple" {
+                    // Simple diagnostic from R, e.g.
+                    // library("ggplot3")
+                    //          ^^^^^^^   Package 'ggplot3' is not installed
+                    let message: String = RObject::view(VECTOR_ELT(diag, 2)).try_into()?;
+                    let range: Range = value.range().into();
+                    let diagnostic = Diagnostic::new_simple(range.into(), message.into());
+                    diagnostics.push(diagnostic);
                 }
             }
-
-            i = i + 1;
         }
-    }
 
-    ().ok()
+        ().ok()
+    }
 }
 
 fn recurse_call(
@@ -511,9 +621,25 @@ fn recurse_call(
     // things like 'local({ ... })'.
     let fun = callee.utf8_text(context.source.as_bytes())?;
     match fun {
+        // TODO: there should be some sort of registration mechanism so
+        //       that functions can declare that they know how to generate
+        //       diagnostics, i.e. ggplot2::aes() would skip diagnostics
+
         // special case to deal with library() and require() nse
-        // TODO: also handle cases like base::library()
-        "library" | "require" => recurse_call_arguments_library(node, context, diagnostics)?,
+        "library" => recurse_call_arguments_custom(
+            node,
+            context,
+            diagnostics,
+            "library",
+            ".ps.diagnostics.custom.library",
+        )?,
+        "require" => recurse_call_arguments_custom(
+            node,
+            context,
+            diagnostics,
+            "require",
+            ".ps.diagnostics.custom.require",
+        )?,
 
         // default case: recurse into each argument
         _ => recurse_call_arguments_default(node, context, diagnostics)?,

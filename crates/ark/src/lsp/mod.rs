@@ -24,4 +24,5 @@ pub mod show_message;
 pub mod signature_help;
 pub mod symbols;
 pub mod traits;
+pub mod treesitter;
 pub mod util;
