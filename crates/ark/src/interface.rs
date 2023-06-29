@@ -413,13 +413,16 @@ impl RMain {
     /// * `buflen` - Size of the buffer to receiver user's input
     /// * `hist`   - Whether to add the input to the history (1) or not (0)
     ///
+    /// Returns a tuple. First value is to be passed on to `ReadConsole()` and
+    /// indicates whether new input is available. Second value indicates whether
+    /// we need to call `Rf_onintr()` to process an interrupt.
     fn read_console(
         &mut self,
         prompt: *const c_char,
         buf: *mut c_uchar,
         buflen: c_int,
         _hist: c_int,
-    ) -> i32 {
+    ) -> (i32, bool) {
         let info = Self::prompt_info(prompt);
         debug!("R prompt: {}", info.prompt);
 
@@ -442,7 +445,7 @@ impl RMain {
             unsafe {
                 libc::strcpy(buf as *mut c_char, n.as_ptr());
             }
-            return 1;
+            return (1, false);
         }
 
         // We got a prompt request marking the end of the previous
@@ -500,10 +503,8 @@ impl RMain {
                     // Take back the lock after we've received some console input.
                     unsafe { self.runtime_lock_guard = Some(R_RUNTIME_LOCK.lock()) };
 
-                    // If we received an interrupt while the user was typing input,
-                    // we can assume the interrupt was 'handled' and so reset the flag.
-                    unsafe {
-                        R_interrupts_pending = 0;
+                    if Self::process_interrupts(&info) {
+                        return (0, true);
                     }
 
                     // Process events.
@@ -515,9 +516,9 @@ impl RMain {
                     match input {
                         ConsoleInput::Input(code) => {
                             Self::on_console_input(buf, buflen, code);
-                            return 1;
+                            return (1, false);
                         },
-                        ConsoleInput::EOF => return 0,
+                        ConsoleInput::EOF => return (0, false),
                     }
                 },
                 Err(err) => {
@@ -526,12 +527,15 @@ impl RMain {
                     use RecvTimeoutError::*;
                     match err {
                         Timeout => {
+                            if Self::process_interrupts(&info) {
+                                return (0, true);
+                            }
                             // Process events and keep waiting for console input.
                             unsafe { Self::process_events() };
                             continue;
                         },
                         Disconnected => {
-                            return 1;
+                            return (1, false);
                         },
                     }
                 },
@@ -585,6 +589,23 @@ impl RMain {
         let src = CString::new(input).unwrap();
         unsafe {
             libc::strcpy(buf as *mut c_char, src.as_ptr());
+        }
+    }
+
+    // If we received an interrupt while the user was typing input, and we are
+    // at top level, we can assume the interrupt was 'handled' and so reset the
+    // flag. If on the other hand we are in a user request prompt,
+    // e.g. `readline()`, we need to propagate the interrupt to the R stack.
+    fn process_interrupts(prompt_info: &PromptInfo) -> bool {
+        unsafe {
+            if R_interrupts_suspended == 0 {
+                if R_interrupts_pending != 0 && prompt_info.user_request {
+                    return true;
+                }
+                R_interrupts_pending = 0;
+            }
+
+            false
         }
     }
 
@@ -872,7 +893,22 @@ extern "C" fn r_read_console(
     hist: c_int,
 ) -> i32 {
     let main = unsafe { R_MAIN.as_mut().unwrap() };
-    main.read_console(prompt, buf, buflen, hist)
+    let (out, interrupt) = main.read_console(prompt, buf, buflen, hist);
+
+    // NOTE: Keep this function a "Plain Old Frame" without any
+    // destructors. We're longjumping from here in case of interrupt.
+
+    if interrupt {
+        trace!("Interrupting `ReadConsole()`");
+        unsafe {
+            Rf_onintr();
+        }
+
+        // This normally does not return
+        error!("`Rf_onintr()` did not longjump");
+    }
+
+    out
 }
 
 #[no_mangle]
