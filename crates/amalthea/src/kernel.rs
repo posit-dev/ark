@@ -38,6 +38,7 @@ use crate::stream_capture::StreamCapture;
 use crate::wire::header::JupyterHeader;
 use crate::wire::input_request::ShellInputRequest;
 use crate::wire::jupyter_message::Message;
+use crate::wire::jupyter_message::OutboundMessage;
 
 /// A Kernel represents a unique Jupyter kernel session and is the host for all
 /// execution and messaging threads.
@@ -121,6 +122,10 @@ impl Kernel {
     ) -> Result<(), Error> {
         let ctx = zmq::Context::new();
 
+        // Channels for communication of outbound messages between the
+        // socket threads and the 0MQ forwarding thread
+        let (outbound_tx, outbound_rx) = unbounded();
+
         // Create the comm manager thread
         let iopub_tx = self.create_iopub_tx();
         let comm_manager_rx = self.comm_manager_rx.clone();
@@ -198,13 +203,12 @@ impl Kernel {
         let msg_context = self.msg_context.clone();
 
         let (stdin_inbound_tx, stdin_inbound_rx) = unbounded();
-        let (stdin_outbound_tx, stdin_outbound_rx) = unbounded();
         let stdin_session = stdin_socket.session.clone();
 
         spawn!(format!("{}-stdin", self.name), move || {
             Self::stdin_thread(
                 stdin_inbound_rx,
-                stdin_outbound_tx,
+                outbound_tx,
                 shell_clone,
                 msg_context,
                 input_request_rx,
@@ -249,7 +253,7 @@ impl Kernel {
             false,
         )?;
 
-        let stdin_outbound_rx_clone = stdin_outbound_rx.clone();
+        let outbound_rx_clone = outbound_rx.clone();
 
         // Forwarding thread that bridges 0MQ sockets and Amalthea
         // channels. Currently only used by StdIn.
@@ -258,7 +262,7 @@ impl Kernel {
                 outbound_notif_socket_rx,
                 stdin_socket,
                 stdin_inbound_tx,
-                stdin_outbound_rx_clone,
+                outbound_rx_clone,
             )
         });
 
@@ -266,7 +270,7 @@ impl Kernel {
         // messages for readiness. When a channel is hot, it notifies the
         // forwarding thread through a 0MQ socket.
         spawn!(format!("{}-zmq-notifier", self.name), move || {
-            Self::zmq_notifier_thread(outbound_notif_socket_tx, vec![stdin_outbound_rx])
+            Self::zmq_notifier_thread(outbound_notif_socket_tx, outbound_rx)
         });
 
         // 0MQ sockets are now initialised. We can start the kernel runtime
@@ -341,20 +345,14 @@ impl Kernel {
 
     /// Starts the stdin thread.
     fn stdin_thread(
-        stdin_inbound_rx: Receiver<Message>,
-        stdin_outbound_tx: Sender<Message>,
+        inbound_rx: Receiver<Message>,
+        outbound_tx: Sender<OutboundMessage>,
         shell_handler: Arc<Mutex<dyn ShellHandler>>,
         msg_context: Arc<Mutex<Option<JupyterHeader>>>,
         input_request_rx: Receiver<ShellInputRequest>,
         session: Session,
     ) -> Result<(), Error> {
-        let stdin = Stdin::new(
-            stdin_inbound_rx,
-            stdin_outbound_tx,
-            shell_handler,
-            msg_context,
-            session,
-        );
+        let stdin = Stdin::new(inbound_rx, outbound_tx, shell_handler, msg_context, session);
         stdin.listen(input_request_rx);
         Ok(())
     }
@@ -365,7 +363,7 @@ impl Kernel {
         outbound_notif_socket: Socket,
         stdin_socket: Socket,
         stdin_inbound_tx: Sender<Message>,
-        stdin_outbound_rx: Receiver<Message>,
+        outbound_rx: Receiver<OutboundMessage>,
     ) {
         // Create poll items necessary to call `zmq_poll()`
         let mut poll_items = {
@@ -374,30 +372,23 @@ impl Kernel {
             vec![outbound_notif_poll_item, stdin_poll_item]
         };
 
-        // This function checks that an outgoing message is ready to be
-        // read on an Amalthea channel. Returns the index of the hot
-        // channel (currently unused as we only have one channel at the
-        // moment).
-        let has_outbound = || -> Option<usize> {
+        // This function checks for notifications that an outgoing message
+        // is ready to be read on an Amalthea channel. It returns
+        // immediately whether a message is ready or not.
+        let has_outbound = || -> bool {
             if let Ok(n) = outbound_notif_socket.socket.poll(zmq::POLLIN, 0) {
                 if n == 0 {
-                    return None;
+                    return false;
                 }
                 // Consume notification
-                let bytes = unwrap!(outbound_notif_socket.socket.recv_bytes(0), Err(err) => {
-                    log::warn!("Could not consume outbound notification socket: {}", err);
-                    return None;
+                let _ = unwrap!(outbound_notif_socket.socket.recv_bytes(0), Err(err) => {
+                    log::error!("Could not consume outbound notification socket: {}", err);
+                    return false;
                 });
 
-                // Get index of hot channel
-                let index = unwrap!(bytes.try_into(), Err(_) => {
-                    log::error!("Could not extract index from outbound notification");
-                    return None;
-                });
-
-                Some(usize::from_be_bytes(index))
+                true
             } else {
-                None
+                false
             }
         };
 
@@ -410,21 +401,17 @@ impl Kernel {
         };
 
         // Forward channel message from Amalthea to the frontend via the
-        // corresponding 0MQ socket. Should consume exactly 1 channel. The
-        // `_i` argument indicates which channel to consume. It's currently
-        // unused as we only manage one channel at the moment but that
-        // could change.
-        let forward_outbound = |_i: usize| -> anyhow::Result<()> {
-            let msg = stdin_outbound_rx.recv()?;
-            msg.send(&stdin_socket)?;
+        // corresponding 0MQ socket. Should consume exactly 1 message and
+        // notify back the notifier thread to keep the mechanism synchronised.
+        let forward_outbound = || -> anyhow::Result<()> {
+            // Consume message and forward it
+            let outbound_msg = outbound_rx.recv()?;
+            match outbound_msg {
+                OutboundMessage::StdIn(msg) => msg.send(&stdin_socket)?,
+            };
 
-            // Send back a notification once the channel message is
-            // consumed. This way we keep the forwarding and notifier
-            // threads synchronised.
-            unwrap!(
-                outbound_notif_socket.send(zmq::Message::new()),
-                Err(err) => error!("While notifying back notifier thread: {}", err)
-            );
+            // Notify back
+            outbound_notif_socket.send(zmq::Message::new())?;
 
             Ok(())
         };
@@ -447,9 +434,9 @@ impl Kernel {
             );
 
             for _ in 0..n {
-                if let Some(index) = has_outbound() {
+                if has_outbound() {
                     unwrap!(
-                        forward_outbound(index),
+                        forward_outbound(),
                         Err(err) => error!("While forwarding outbound message: {}", err)
                     );
                     continue;
@@ -463,26 +450,26 @@ impl Kernel {
                     continue;
                 }
 
-                log::warn!("Could not find readable message");
+                log::error!("Could not find readable message");
             }
         }
     }
 
     /// Starts the thread that notifies the forwarding thread that new
     /// outgoing messages have arrived from Amalthea.
-    fn zmq_notifier_thread(notif_socket: Socket, watch_list: Vec<Receiver<Message>>) {
+    fn zmq_notifier_thread(notif_socket: Socket, outbound_rx: Receiver<OutboundMessage>) {
         let mut sel = Select::new();
-        for rx in watch_list.iter() {
-            sel.recv(rx);
-        }
+        sel.recv(&outbound_rx);
 
         loop {
-            let i: usize = sel.ready();
-            let i_bytes = i.to_be_bytes();
+            let _ = sel.ready();
 
             unwrap!(
-                notif_socket.send(zmq::Message::from(&i_bytes[..])),
-                Err(err) => error!("Couldn't notify 0MQ thread: {}", err)
+                notif_socket.send(zmq::Message::new()),
+                Err(err) => {
+                    error!("Couldn't notify 0MQ thread: {}", err);
+                    continue;
+                }
             );
 
             // To keep things synchronised, wait to be notified that the
@@ -492,7 +479,10 @@ impl Kernel {
                     let mut msg = zmq::Message::new();
                     notif_socket.recv(&mut msg)
                 },
-                Err(err) => error!("Couldn't notify 0MQ thread: {}", err)
+                Err(err) => {
+                    error!("Couldn't received acknowledgement from 0MQ thread: {}", err);
+                    continue;
+                }
             );
         }
     }

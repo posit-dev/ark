@@ -101,6 +101,11 @@ pub enum Message {
     ClientEvent(JupyterMessage<ClientEvent>),
 }
 
+/// Associates a `Message` to a 0MQ socket
+pub enum OutboundMessage {
+    StdIn(Message),
+}
+
 /// Represents status returned from kernel inside messages.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "snake_case")]

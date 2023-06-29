@@ -20,14 +20,15 @@ use crate::wire::header::JupyterHeader;
 use crate::wire::input_request::ShellInputRequest;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
+use crate::wire::jupyter_message::OutboundMessage;
 use crate::wire::originator::Originator;
 
 pub struct Stdin {
     /// Receiver connected to the StdIn's ZeroMQ socket
-    stdin_inbound_rx: Receiver<Message>,
+    inbound_rx: Receiver<Message>,
 
     /// Sender connected to the StdIn's ZeroMQ socket
-    stdin_outbound_tx: Sender<Message>,
+    outbound_tx: Sender<OutboundMessage>,
 
     /// Language-provided shell handler object
     handler: Arc<Mutex<dyn ShellHandler>>,
@@ -47,15 +48,15 @@ impl Stdin {
     /// * `handler` - The language's shell handler
     /// * `msg_context` - The IOPub message context
     pub fn new(
-        stdin_inbound_rx: Receiver<Message>,
-        stdin_outbound_tx: Sender<Message>,
+        inbound_rx: Receiver<Message>,
+        outbound_tx: Sender<OutboundMessage>,
         handler: Arc<Mutex<dyn ShellHandler>>,
         msg_context: Arc<Mutex<Option<JupyterHeader>>>,
         session: Session,
     ) -> Self {
         Self {
-            stdin_inbound_rx,
-            stdin_outbound_tx,
+            inbound_rx,
+            outbound_tx,
             handler,
             msg_context,
             session,
@@ -82,14 +83,14 @@ impl Stdin {
                 &self.session,
             ));
 
-            if let Err(_) = self.stdin_outbound_tx.send(msg) {
+            if let Err(_) = self.outbound_tx.send(OutboundMessage::StdIn(msg)) {
                 warn!("Failed to send message to front end");
             }
             trace!("Sent input request to front end, waiting for input reply...");
 
             // Wait for the front end's reply message from the ZeroMQ socket.
             // TODO: Wait for interrupts via another channel.
-            let message = match self.stdin_inbound_rx.recv() {
+            let message = match self.inbound_rx.recv() {
                 Ok(m) => m,
                 Err(err) => {
                     warn!("Could not read message from stdin socket: {}", err);
