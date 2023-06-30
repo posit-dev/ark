@@ -365,13 +365,6 @@ impl Kernel {
         stdin_inbound_tx: Sender<Message>,
         outbound_rx: Receiver<OutboundMessage>,
     ) {
-        // Create poll items necessary to call `zmq_poll()`
-        let mut poll_items = {
-            let outbound_notif_poll_item = outbound_notif_socket.socket.as_poll_item(zmq::POLLIN);
-            let stdin_poll_item = stdin_socket.socket.as_poll_item(zmq::POLLIN);
-            vec![outbound_notif_poll_item, stdin_poll_item]
-        };
-
         // This function checks for notifications that an outgoing message
         // is ready to be read on an Amalthea channel. It returns
         // immediately whether a message is ready or not.
@@ -392,7 +385,7 @@ impl Kernel {
             }
         };
 
-        // This function checks that a 0MQ message from the frontend is ready
+        // This function checks that a 0MQ message from the frontend is ready.
         let has_inbound = || -> bool {
             match stdin_socket.socket.poll(zmq::POLLIN, 0) {
                 Ok(n) if n > 0 => true,
@@ -400,7 +393,7 @@ impl Kernel {
             }
         };
 
-        // Forward channel message from Amalthea to the frontend via the
+        // Forwards channel message from Amalthea to the frontend via the
         // corresponding 0MQ socket. Should consume exactly 1 message and
         // notify back the notifier thread to keep the mechanism synchronised.
         let forward_outbound = || -> anyhow::Result<()> {
@@ -416,12 +409,19 @@ impl Kernel {
             Ok(())
         };
 
-        // Forward 0MQ message from the frontend to the corresponding
+        // Forwards 0MQ message from the frontend to the corresponding
         // Amalthea channel.
         let forward_inbound = || -> anyhow::Result<()> {
             let msg = Message::read_from_socket(&stdin_socket)?;
             stdin_inbound_tx.send(msg)?;
             Ok(())
+        };
+
+        // Create poll items necessary to call `zmq_poll()`
+        let mut poll_items = {
+            let outbound_notif_poll_item = outbound_notif_socket.socket.as_poll_item(zmq::POLLIN);
+            let stdin_poll_item = stdin_socket.socket.as_poll_item(zmq::POLLIN);
+            vec![outbound_notif_poll_item, stdin_poll_item]
         };
 
         loop {
