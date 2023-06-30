@@ -10,7 +10,9 @@ use std::sync::Mutex;
 
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
+use crossbeam::select;
 use futures::executor::block_on;
+use log::error;
 use log::trace;
 use log::warn;
 
@@ -66,11 +68,40 @@ impl Stdin {
     /// Listens for messages on the stdin socket. This follows a simple loop:
     ///
     /// 1. Wait for
-    pub fn listen(&self, input_request_rx: Receiver<ShellInputRequest>) {
-        // Listen for input requests from the back end
+    pub fn listen(
+        &self,
+        input_request_rx: Receiver<ShellInputRequest>,
+        interrupt_rx: Receiver<bool>,
+    ) {
         loop {
-            // Wait for a message (input request) from the back end
-            let req = input_request_rx.recv().unwrap();
+            // Listen for input requests from the backend. We ignore
+            // interrupt notifications here and loop infinitely over them.
+            //
+            // This could be simplified by having a mechanism for
+            // subscribing and unsubscribing to a broadcasting channel. We
+            // don't need to listen to interrupts at this stage so we'd
+            // only subscribe after receiving an input request, and the
+            // loop/select below could be removed.
+            let req: ShellInputRequest;
+            loop {
+                select! {
+                    recv(input_request_rx) -> msg => {
+                        match msg {
+                            Ok(m) => {
+                                req = m;
+                                break;
+                            },
+                            Err(err) => {
+                                error!("Could not read input request: {}", err);
+                                continue;
+                            }
+                        }
+                    },
+                    recv(interrupt_rx) -> _ => {
+                        continue;
+                    }
+                };
+            }
 
             if let None = req.originator {
                 warn!("No originator for stdin request");
@@ -83,19 +114,29 @@ impl Stdin {
                 &self.session,
             ));
 
-            if let Err(_) = self.outbound_tx.send(OutboundMessage::StdIn(msg)) {
-                warn!("Failed to send message to front end");
+            if let Err(err) = self.outbound_tx.send(OutboundMessage::StdIn(msg)) {
+                error!("Failed to send message to front end: {}", err);
             }
             trace!("Sent input request to front end, waiting for input reply...");
 
             // Wait for the front end's reply message from the ZeroMQ socket.
-            // TODO: Wait for interrupts via another channel.
-            let message = match self.inbound_rx.recv() {
-                Ok(m) => m,
-                Err(err) => {
-                    warn!("Could not read message from stdin socket: {}", err);
-                    continue;
+            let message = select! {
+                recv(self.inbound_rx) -> msg => match msg {
+                    Ok(m) => m,
+                    Err(err) => {
+                        error!("Could not read message from stdin socket: {}", err);
+                        continue;
+                    }
                 },
+                // Cancel current iteration if an interrupt is
+                // signaled. We're no longer waiting for an `input_reply`
+                // but for an `input_request`.
+                recv(interrupt_rx) -> msg => {
+                    if let Err(err) = msg {
+                        error!("Could not read interrupt message: {}", err);
+                    }
+                    continue;
+                }
             };
 
             // Only input replies are expected on this socket

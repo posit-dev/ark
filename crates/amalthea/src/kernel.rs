@@ -203,6 +203,7 @@ impl Kernel {
         let msg_context = self.msg_context.clone();
 
         let (stdin_inbound_tx, stdin_inbound_rx) = unbounded();
+        let (stdin_interrupt_tx, stdin_interrupt_rx) = bounded(1);
         let stdin_session = stdin_socket.session.clone();
 
         spawn!(format!("{}-stdin", self.name), move || {
@@ -212,6 +213,7 @@ impl Kernel {
                 shell_clone,
                 msg_context,
                 input_request_rx,
+                stdin_interrupt_rx,
                 stdin_session,
             )
         });
@@ -283,7 +285,7 @@ impl Kernel {
 
         // TODO: thread/join thread? Exiting this thread will cause the whole
         // kernel to exit.
-        Self::control_thread(control_socket, control_handler);
+        Self::control_thread(control_socket, control_handler, stdin_interrupt_tx);
         info!("Control thread exited, exiting kernel");
         Ok(())
     }
@@ -299,8 +301,12 @@ impl Kernel {
     }
 
     /// Starts the control thread
-    fn control_thread(socket: Socket, handler: Arc<Mutex<dyn ControlHandler>>) {
-        let control = Control::new(socket, handler);
+    fn control_thread(
+        socket: Socket,
+        handler: Arc<Mutex<dyn ControlHandler>>,
+        stdin_interrupt_tx: Sender<bool>,
+    ) {
+        let control = Control::new(socket, handler, stdin_interrupt_tx);
         control.listen();
     }
 
@@ -350,10 +356,11 @@ impl Kernel {
         shell_handler: Arc<Mutex<dyn ShellHandler>>,
         msg_context: Arc<Mutex<Option<JupyterHeader>>>,
         input_request_rx: Receiver<ShellInputRequest>,
+        interrupt_rx: Receiver<bool>,
         session: Session,
     ) -> Result<(), Error> {
         let stdin = Stdin::new(inbound_rx, outbound_tx, shell_handler, msg_context, session);
-        stdin.listen(input_request_rx);
+        stdin.listen(input_request_rx, interrupt_rx);
         Ok(())
     }
 
