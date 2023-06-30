@@ -9,21 +9,26 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use crossbeam::channel::Receiver;
+use crossbeam::channel::Sender;
 use futures::executor::block_on;
 use log::trace;
 use log::warn;
 
 use crate::language::shell_handler::ShellHandler;
-use crate::socket::socket::Socket;
+use crate::session::Session;
 use crate::wire::header::JupyterHeader;
 use crate::wire::input_request::ShellInputRequest;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
+use crate::wire::jupyter_message::OutboundMessage;
 use crate::wire::originator::Originator;
 
 pub struct Stdin {
-    /// The ZeroMQ stdin socket
-    socket: Socket,
+    /// Receiver connected to the StdIn's ZeroMQ socket
+    inbound_rx: Receiver<Message>,
+
+    /// Sender connected to the StdIn's ZeroMQ socket
+    outbound_tx: Sender<OutboundMessage>,
 
     /// Language-provided shell handler object
     handler: Arc<Mutex<dyn ShellHandler>>,
@@ -31,6 +36,9 @@ pub struct Stdin {
     // IOPub message context. Updated from StdIn on input replies so that new
     // output gets attached to the correct input element in the console.
     msg_context: Arc<Mutex<Option<JupyterHeader>>>,
+
+    // 0MQ session, needed to create `JupyterMessage` objects
+    session: Session,
 }
 
 impl Stdin {
@@ -40,14 +48,18 @@ impl Stdin {
     /// * `handler` - The language's shell handler
     /// * `msg_context` - The IOPub message context
     pub fn new(
-        socket: Socket,
+        inbound_rx: Receiver<Message>,
+        outbound_tx: Sender<OutboundMessage>,
         handler: Arc<Mutex<dyn ShellHandler>>,
         msg_context: Arc<Mutex<Option<JupyterHeader>>>,
+        session: Session,
     ) -> Self {
         Self {
-            socket,
+            inbound_rx,
+            outbound_tx,
             handler,
             msg_context,
+            session,
         }
     }
 
@@ -65,24 +77,20 @@ impl Stdin {
             }
 
             // Deliver the message to the front end
-            let msg = JupyterMessage::create_with_identity(
+            let msg = Message::InputRequest(JupyterMessage::create_with_identity(
                 req.originator,
                 req.request,
-                &self.socket.session,
-            );
-            if let Err(err) = msg.send(&self.socket) {
-                warn!("Failed to send message to front end: {}", err);
+                &self.session,
+            ));
+
+            if let Err(_) = self.outbound_tx.send(OutboundMessage::StdIn(msg)) {
+                warn!("Failed to send message to front end");
             }
             trace!("Sent input request to front end, waiting for input reply...");
 
-            // Attempt to read the front end's reply message from the ZeroMQ socket.
-            //
-            // TODO: This will block until the front end sends an input request,
-            // which could be a while and perhaps never if the user cancels the
-            // operation, never provides input, etc. We should probably have a
-            // timeout here, or some way to cancel the read if another input
-            // request arrives.
-            let message = match Message::read_from_socket(&self.socket) {
+            // Wait for the front end's reply message from the ZeroMQ socket.
+            // TODO: Wait for interrupts via another channel.
+            let message = match self.inbound_rx.recv() {
                 Ok(m) => m,
                 Err(err) => {
                     warn!("Could not read message from stdin socket: {}", err);

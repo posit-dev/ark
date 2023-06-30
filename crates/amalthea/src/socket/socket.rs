@@ -22,7 +22,7 @@ pub struct Socket {
     pub name: String,
 
     /// A ZeroMQ socket over which signed messages are to be sent/received
-    socket: zmq::Socket,
+    pub socket: zmq::Socket,
 }
 
 impl Socket {
@@ -35,18 +35,7 @@ impl Socket {
         identity: Option<&[u8]>,
         endpoint: String,
     ) -> Result<Self, Error> {
-        // Create the underlying ZeroMQ socket
-        let socket = match ctx.socket(kind) {
-            Ok(s) => s,
-            Err(err) => return Err(Error::CreateSocketFailed(name, err)),
-        };
-
-        // Set the socket's identity, if supplied
-        if let Some(identity) = identity {
-            if let Err(err) = socket.set_identity(identity) {
-                return Err(Error::CreateSocketFailed(name, err));
-            }
-        }
+        let socket = Self::new_raw(ctx, name.clone(), kind, identity)?;
 
         // One side of a socket must `bind()` to its endpoint, and the other
         // side must `connect()` to the same endpoint. The `bind()` side
@@ -86,6 +75,57 @@ impl Socket {
             session,
             name,
         })
+    }
+
+    pub fn new_pair(
+        session: Session,
+        ctx: zmq::Context,
+        name: String,
+        identity: Option<&[u8]>,
+        endpoint: String,
+        bind: bool,
+    ) -> Result<Self, Error> {
+        let socket = Self::new_raw(ctx, name.clone(), zmq::PAIR, identity)?;
+
+        if bind {
+            trace!("Binding to ZeroMQ '{}' socket at {}", name, endpoint);
+            if let Err(err) = socket.bind(&endpoint) {
+                return Err(Error::SocketBindError(name, endpoint, err));
+            }
+        } else {
+            trace!("Connecting to ZeroMQ '{}' socket at {}", name, endpoint);
+            if let Err(err) = socket.connect(&endpoint) {
+                return Err(Error::SocketConnectError(name, endpoint, err));
+            }
+        }
+
+        Ok(Self {
+            socket,
+            session,
+            name,
+        })
+    }
+
+    fn new_raw(
+        ctx: zmq::Context,
+        name: String,
+        kind: zmq::SocketType,
+        identity: Option<&[u8]>,
+    ) -> Result<zmq::Socket, Error> {
+        // Create the underlying ZeroMQ socket
+        let socket = match ctx.socket(kind) {
+            Ok(s) => s,
+            Err(err) => return Err(Error::CreateSocketFailed(name, err)),
+        };
+
+        // Set the socket's identity, if supplied
+        if let Some(identity) = identity {
+            if let Err(err) = socket.set_identity(identity) {
+                return Err(Error::CreateSocketFailed(name, err));
+            }
+        }
+
+        Ok(socket)
     }
 
     /// Receive a message from the socket.

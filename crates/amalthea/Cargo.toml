@@ -25,6 +25,7 @@ zmq = "0.10.0"
 strum = "0.24"
 strum_macros = "0.24"
 crossbeam = { version = "0.8.2", features = ["crossbeam-channel"] }
+anyhow = "1.0.71"
 
 [dev-dependencies]
 rand = "0.8.5"
