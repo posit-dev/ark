@@ -13,6 +13,7 @@ use crate::wire::jupyter_message::MessageType;
 use crate::wire::jupyter_message::Status;
 
 /// Represents a reply from an execute_request message
+#[serde_with::skip_serializing_none]
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ExecuteReply {
     /// The status of the request
@@ -23,6 +24,17 @@ pub struct ExecuteReply {
 
     /// Results for user expressions
     pub user_expressions: Value,
+
+    /// Extra Posit fields. Curnently only used for prompt strings.
+    pub posit_pbc: Option<ExecuteReplyPosit>,
+}
+
+#[serde_with::skip_serializing_none]
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ExecuteReplyPosit {
+    pub input_prompt: Option<String>,
+    pub continuation_prompt: Option<String>,
+    pub is_input_request: Option<bool>,
 }
 
 impl MessageType for ExecuteReply {

@@ -28,6 +28,7 @@ use amalthea::wire::exception::Exception;
 use amalthea::wire::execute_error::ExecuteError;
 use amalthea::wire::execute_input::ExecuteInput;
 use amalthea::wire::execute_reply::ExecuteReply;
+use amalthea::wire::execute_reply::ExecuteReplyPosit;
 use amalthea::wire::execute_reply_exception::ExecuteReplyException;
 use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::execute_response::ExecuteResponse;
@@ -278,8 +279,17 @@ pub struct KernelInfo {
 /// of prompt we are dealing with.
 #[derive(Clone)]
 struct PromptInfo {
-    /// The prompt string to be presented to the user
+    /// The prompt string to be presented to the user. This does not
+    /// necessarily correspond to `getOption("prompt")`, for instance in
+    /// case of a browser prompt or a readline prompt.
     prompt: String,
+
+    /// The continuation prompt string when user supplies incomplete
+    /// inputs.  This always corresponds to `getOption("continue"). We send
+    /// it to frontends along `prompt` because some frontends such as
+    /// Positron do not send incomplete inputs to Ark and take charge of
+    /// continuation prompts themselves.
+    continue_prompt: String,
 
     /// Whether this is a `browser()` prompt. A browser prompt can be
     /// incomplete but is never a user request.
@@ -288,6 +298,7 @@ struct PromptInfo {
     /// Whether the last input didn't fully parse and R is waiting for more input
     incomplete: bool,
 
+    /// TODO: Rename to `input_request` to match Juypter terminology
     /// Whether this is a prompt from a fresh REPL iteration (browser or
     /// top level) or a prompt from some user code, e.g. via `readline()`
     user_request: bool,
@@ -597,6 +608,7 @@ impl RMain {
 
         return PromptInfo {
             prompt,
+            continue_prompt,
             _browser: browser,
             incomplete,
             user_request,
@@ -637,7 +649,7 @@ impl RMain {
     // Reply to the previously active request. The current prompt type and
     // whether an error has occurred defines the response kind.
     fn reply_execute_request(&self, req: &ActiveReadConsoleRequest, prompt_info: PromptInfo) {
-        let prompt = prompt_info.prompt;
+        let prompt = prompt_info.prompt.clone();
 
         let reply = if prompt_info.incomplete {
             trace!("Got prompt {} signaling incomplete request", prompt);
@@ -647,10 +659,10 @@ impl RMain {
                 "Got input request for prompt {}, waiting for reply...",
                 prompt
             );
-            new_execute_response(req.exec_count)
+            new_execute_response(req.exec_count, prompt_info)
         } else {
             trace!("Got R prompt '{}', completing execution", prompt);
-            peek_execute_response(req.exec_count)
+            peek_execute_response(req.exec_count, prompt_info)
         };
         req.response_tx.send(reply).unwrap();
     }
@@ -814,7 +826,7 @@ fn new_incomplete_response(req: &ExecuteRequest, exec_count: u32) -> ExecuteResp
 }
 
 // Gets response data from R state
-fn peek_execute_response(exec_count: u32) -> ExecuteResponse {
+fn peek_execute_response(exec_count: u32, prompt_info: PromptInfo) -> ExecuteResponse {
     let main = unsafe { R_MAIN.as_mut().unwrap() };
 
     // Save and reset error occurred flag
@@ -877,17 +889,23 @@ fn peek_execute_response(exec_count: u32) -> ExecuteResponse {
                 exec_count
             ));
 
-        new_execute_response(exec_count)
+        new_execute_response(exec_count, prompt_info)
     }
 }
 
-fn new_execute_response(exec_count: u32) -> ExecuteResponse {
+fn new_execute_response(exec_count: u32, prompt_info: PromptInfo) -> ExecuteResponse {
     ExecuteResponse::Reply(ExecuteReply {
         status: Status::Ok,
         execution_count: exec_count,
         user_expressions: json!({}),
+        posit_pbc: Some(ExecuteReplyPosit {
+            input_prompt: Some(prompt_info.prompt),
+            continuation_prompt: Some(prompt_info.continue_prompt),
+            is_input_request: Some(prompt_info.user_request),
+        }),
     })
 }
+
 fn new_execute_error_response(exception: Exception, exec_count: u32) -> ExecuteResponse {
     ExecuteResponse::ReplyException(ExecuteReplyException {
         status: Status::Error,
