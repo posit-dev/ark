@@ -21,7 +21,7 @@ pub fn r_n_frame() -> crate::error::Result<i32> {
     SESSION_INIT.call_once(init_interface);
 
     unsafe {
-        let ffi = r_try_eval_silent(get_nframe_call(), R_BaseEnv)?;
+        let ffi = r_try_eval_silent(NFRAME_CALL.unwrap_unchecked(), R_BaseEnv)?;
         let n_frame = IntegerVector::new(ffi)?;
         Ok(n_frame.get_unchecked_elt(0))
     }
@@ -33,9 +33,4 @@ fn init_interface() {
         R_PreserveObject(nframe_call);
         NFRAME_CALL = Some(nframe_call);
     }
-}
-
-fn get_nframe_call() -> SEXP {
-    // SAFETY: Assumes `NFRAME_CALL` has been initialized by `init_interface()`
-    unsafe { NFRAME_CALL.unwrap_unchecked() }
 }
