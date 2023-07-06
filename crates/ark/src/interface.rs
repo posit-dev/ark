@@ -808,42 +808,6 @@ fn peek_execute_response(exec_count: u32) -> ExecuteResponse {
     let error_occurred = main.error_occurred;
     main.error_occurred = false;
 
-    // TODO: Implement rich printing of certain outputs.
-    // Will we need something similar to the RStudio model,
-    // where we implement custom print() methods? Or can
-    // we make the stub below behave sensibly even when
-    // streaming R output?
-    let mut data = serde_json::Map::new();
-    data.insert("text/plain".to_string(), json!(""));
-
-    // Include HTML representation of data.frame
-    let value = r_lock! { Rf_findVarInFrame(R_GlobalEnv, r_symbol!(".Last.value")) };
-    if r_is_data_frame(value) {
-        match to_html(value) {
-            Ok(html) => data.insert("text/html".to_string(), json!(html)),
-            Err(error) => {
-                error!("{:?}", error);
-                None
-            },
-        };
-    }
-
-    let main = unsafe { R_MAIN.as_mut().unwrap() };
-
-    if let Err(err) = main
-        .iopub_tx
-        .send(IOPubMessage::ExecuteResult(ExecuteResult {
-            execution_count: exec_count,
-            data: serde_json::Value::Object(data),
-            metadata: json!({}),
-        }))
-    {
-        warn!(
-            "Could not publish result of statement {} on iopub: {}",
-            exec_count, err
-        );
-    }
-
     // Send the reply to the front end
     if error_occurred {
         // We don't fill out `ename` with anything meaningful because typically
@@ -863,6 +827,40 @@ fn peek_execute_response(exec_count: u32) -> ExecuteResponse {
 
         new_execute_error_response(exception, exec_count)
     } else {
+        // TODO: Implement rich printing of certain outputs.
+        // Will we need something similar to the RStudio model,
+        // where we implement custom print() methods? Or can
+        // we make the stub below behave sensibly even when
+        // streaming R output?
+        let mut data = serde_json::Map::new();
+        data.insert("text/plain".to_string(), json!(""));
+
+        // Include HTML representation of data.frame
+        let value = r_lock! { Rf_findVarInFrame(R_GlobalEnv, r_symbol!(".Last.value")) };
+        if r_is_data_frame(value) {
+            match to_html(value) {
+                Ok(html) => data.insert("text/html".to_string(), json!(html)),
+                Err(error) => {
+                    error!("{:?}", error);
+                    None
+                },
+            };
+        }
+
+        if let Err(err) = main
+            .iopub_tx
+            .send(IOPubMessage::ExecuteResult(ExecuteResult {
+                execution_count: exec_count,
+                data: serde_json::Value::Object(data),
+                metadata: json!({}),
+            }))
+        {
+            warn!(
+                "Could not publish result of statement {} on iopub: {}",
+                exec_count, err
+            );
+        }
+
         new_execute_response(exec_count)
     }
 }
