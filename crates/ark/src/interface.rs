@@ -25,6 +25,7 @@ use amalthea::events::PositronEvent;
 use amalthea::events::ShowMessageEvent;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::exception::Exception;
+use amalthea::wire::execute_error::ExecuteError;
 use amalthea::wire::execute_input::ExecuteInput;
 use amalthea::wire::execute_reply::ExecuteReply;
 use amalthea::wire::execute_reply_exception::ExecuteReplyException;
@@ -824,6 +825,12 @@ fn peek_execute_response(exec_count: u32) -> ExecuteResponse {
             evalue,
             traceback,
         };
+
+        if let Err(err) = main.iopub_tx.send(IOPubMessage::ExecuteError(ExecuteError {
+            exception: exception.clone(),
+        })) {
+            warn!("Could not publish error {} on iopub: {}", exec_count, err);
+        }
 
         new_execute_error_response(exception, exec_count)
     } else {
