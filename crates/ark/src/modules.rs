@@ -222,8 +222,8 @@ pub unsafe fn import(file: &Path) -> anyhow::Result<()> {
         log::info!("Loading public module: {:?}", file);
         POSITRON_PUBLIC_ENVIRONMENT
     } else {
-        log::info!("Loading top-level module: {:?}", file);
-        POSITRON_ATTACHED_ENVIRONMENT
+        log::warn!("Skipping unknown module: {:?}", file);
+        return Ok(());
     };
 
     // Source the file in the appropriate environment.
