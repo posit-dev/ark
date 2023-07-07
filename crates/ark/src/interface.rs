@@ -25,6 +25,7 @@ use amalthea::events::PositronEvent;
 use amalthea::events::ShowMessageEvent;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::exception::Exception;
+use amalthea::wire::execute_error::ExecuteError;
 use amalthea::wire::execute_input::ExecuteInput;
 use amalthea::wire::execute_reply::ExecuteReply;
 use amalthea::wire::execute_reply_exception::ExecuteReplyException;
@@ -58,6 +59,7 @@ use log::*;
 use nix::sys::signal::*;
 use parking_lot::ReentrantMutexGuard;
 use serde_json::json;
+use stdext::result::ResultOrLog;
 use stdext::*;
 
 use crate::errors;
@@ -808,42 +810,6 @@ fn peek_execute_response(exec_count: u32) -> ExecuteResponse {
     let error_occurred = main.error_occurred;
     main.error_occurred = false;
 
-    // TODO: Implement rich printing of certain outputs.
-    // Will we need something similar to the RStudio model,
-    // where we implement custom print() methods? Or can
-    // we make the stub below behave sensibly even when
-    // streaming R output?
-    let mut data = serde_json::Map::new();
-    data.insert("text/plain".to_string(), json!(""));
-
-    // Include HTML representation of data.frame
-    let value = r_lock! { Rf_findVarInFrame(R_GlobalEnv, r_symbol!(".Last.value")) };
-    if r_is_data_frame(value) {
-        match to_html(value) {
-            Ok(html) => data.insert("text/html".to_string(), json!(html)),
-            Err(error) => {
-                error!("{:?}", error);
-                None
-            },
-        };
-    }
-
-    let main = unsafe { R_MAIN.as_mut().unwrap() };
-
-    if let Err(err) = main
-        .iopub_tx
-        .send(IOPubMessage::ExecuteResult(ExecuteResult {
-            execution_count: exec_count,
-            data: serde_json::Value::Object(data),
-            metadata: json!({}),
-        }))
-    {
-        warn!(
-            "Could not publish result of statement {} on iopub: {}",
-            exec_count, err
-        );
-    }
-
     // Send the reply to the front end
     if error_occurred {
         // We don't fill out `ename` with anything meaningful because typically
@@ -861,8 +827,45 @@ fn peek_execute_response(exec_count: u32) -> ExecuteResponse {
             traceback,
         };
 
+        main.iopub_tx
+            .send(IOPubMessage::ExecuteError(ExecuteError {
+                exception: exception.clone(),
+            }))
+            .or_log_warning(&format!("Could not publish error {} on iopub", exec_count));
+
         new_execute_error_response(exception, exec_count)
     } else {
+        // TODO: Implement rich printing of certain outputs.
+        // Will we need something similar to the RStudio model,
+        // where we implement custom print() methods? Or can
+        // we make the stub below behave sensibly even when
+        // streaming R output?
+        let mut data = serde_json::Map::new();
+        data.insert("text/plain".to_string(), json!(""));
+
+        // Include HTML representation of data.frame
+        let value = r_lock! { Rf_findVarInFrame(R_GlobalEnv, r_symbol!(".Last.value")) };
+        if r_is_data_frame(value) {
+            match to_html(value) {
+                Ok(html) => data.insert("text/html".to_string(), json!(html)),
+                Err(error) => {
+                    error!("{:?}", error);
+                    None
+                },
+            };
+        }
+
+        main.iopub_tx
+            .send(IOPubMessage::ExecuteResult(ExecuteResult {
+                execution_count: exec_count,
+                data: serde_json::Value::Object(data),
+                metadata: json!({}),
+            }))
+            .or_log_warning(&format!(
+                "Could not publish result of statement {} on iopub",
+                exec_count
+            ));
+
         new_execute_response(exec_count)
     }
 }
