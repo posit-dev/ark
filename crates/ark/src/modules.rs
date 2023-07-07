@@ -20,8 +20,8 @@ use harp::r_symbol;
 use libR_sys::*;
 use stdext::local;
 use stdext::spawn;
+use stdext::unwrap;
 use stdext::unwrap::IntoResult;
-use walkdir::WalkDir;
 
 // We use a set of three environments for the functions exposed to
 // the R session. The environment chain is:
@@ -169,15 +169,26 @@ pub unsafe fn initialize() -> anyhow::Result<RModuleInfo> {
 
     // Import all module files.
     // TODO: Need to select appropriate path for package builds.
-    log::info!("Loading modules from directory: {}", root.display());
-    for file in WalkDir::new(root.clone())
-        .into_iter()
-        .filter_map(|file| file.ok())
-    {
-        let path = file.path();
-        if let Some(ext) = path.extension() {
-            if ext == "R" {
-                import(path).unwrap();
+    let public = root.join("public");
+    let private = root.join("private");
+
+    for directory in [public, private] {
+        log::info!("Loading modules from directory: {}", directory.display());
+        let entries = std::fs::read_dir(directory)?;
+
+        for entry in entries {
+            let entry = unwrap!(
+                entry,
+                Err(err) => {
+                    log::error!("Can't load directory entry due to: {}", err);
+                    continue;
+                }
+            );
+
+            let path = entry.path();
+
+            if path.extension().is_some_and(|ext| ext == "R") {
+                import(&path).unwrap();
             }
         }
     }
