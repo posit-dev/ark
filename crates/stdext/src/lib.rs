@@ -13,6 +13,7 @@ pub mod join;
 pub mod local;
 pub mod ok;
 pub mod push;
+pub mod result;
 pub mod spawn;
 pub mod traps;
 pub mod unwrap;

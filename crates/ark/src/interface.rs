@@ -59,6 +59,7 @@ use log::*;
 use nix::sys::signal::*;
 use parking_lot::ReentrantMutexGuard;
 use serde_json::json;
+use stdext::result::ResultOrLog;
 use stdext::*;
 
 use crate::errors;
@@ -826,11 +827,11 @@ fn peek_execute_response(exec_count: u32) -> ExecuteResponse {
             traceback,
         };
 
-        if let Err(err) = main.iopub_tx.send(IOPubMessage::ExecuteError(ExecuteError {
-            exception: exception.clone(),
-        })) {
-            warn!("Could not publish error {} on iopub: {}", exec_count, err);
-        }
+        main.iopub_tx
+            .send(IOPubMessage::ExecuteError(ExecuteError {
+                exception: exception.clone(),
+            }))
+            .or_log_warning(&format!("Could not publish error {} on iopub", exec_count));
 
         new_execute_error_response(exception, exec_count)
     } else {
@@ -854,19 +855,16 @@ fn peek_execute_response(exec_count: u32) -> ExecuteResponse {
             };
         }
 
-        if let Err(err) = main
-            .iopub_tx
+        main.iopub_tx
             .send(IOPubMessage::ExecuteResult(ExecuteResult {
                 execution_count: exec_count,
                 data: serde_json::Value::Object(data),
                 metadata: json!({}),
             }))
-        {
-            warn!(
-                "Could not publish result of statement {} on iopub: {}",
-                exec_count, err
-            );
-        }
+            .or_log_warning(&format!(
+                "Could not publish result of statement {} on iopub",
+                exec_count
+            ));
 
         new_execute_response(exec_count)
     }
