@@ -31,6 +31,7 @@ use amalthea::wire::jupyter_message::Status;
 use amalthea::wire::kernel_info_reply::KernelInfoReply;
 use amalthea::wire::kernel_info_request::KernelInfoRequest;
 use amalthea::wire::language_info::LanguageInfo;
+use amalthea::wire::language_info::LanguageInfoPositPbc;
 use amalthea::wire::originator::Originator;
 use async_trait::async_trait;
 use bus::Bus;
@@ -174,6 +175,10 @@ impl ShellHandler for Shell {
             pygments_lexer: String::new(),
             codemirror_mode: String::new(),
             nbconvert_exporter: String::new(),
+            posit_pbc: Some(LanguageInfoPositPbc {
+                input_prompt: kernel_info.input_prompt.clone(),
+                continuation_prompt: kernel_info.continuation_prompt.clone(),
+            }),
         };
         Ok(KernelInfoReply {
             status: Status::Ok,

@@ -8,7 +8,8 @@
 use serde::Deserialize;
 use serde::Serialize;
 
-/// Represents information about the langauge that the kernel implements
+/// Represents information about the language that the kernel implements
+#[serde_with::skip_serializing_none]
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct LanguageInfo {
     /// The name of the programming language the kernel implements
@@ -31,4 +32,17 @@ pub struct LanguageInfo {
 
     /// Nbconvert exporter, if not default
     pub nbconvert_exporter: String,
+
+    /// Posit extension
+    pub posit_pbc: Option<LanguageInfoPositPbc>,
+}
+
+#[serde_with::skip_serializing_none]
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct LanguageInfoPositPbc {
+    /// Initial input prompt
+    pub input_prompt: Option<String>,
+
+    /// Initial continuation prompt
+    pub continuation_prompt: Option<String>,
 }

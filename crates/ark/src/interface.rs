@@ -272,13 +272,15 @@ struct ActiveReadConsoleRequest {
 pub struct KernelInfo {
     pub version: String,
     pub banner: String,
+    pub input_prompt: Option<String>,
+    pub continuation_prompt: Option<String>,
 }
 
 /// This struct represents the data that we wish R would pass to
 /// `ReadConsole()` methods. We need this information to determine what kind
 /// of prompt we are dealing with.
 #[derive(Clone)]
-struct PromptInfo {
+pub struct PromptInfo {
     /// The prompt string to be presented to the user. This does not
     /// necessarily correspond to `getOption("prompt")`, for instance in
     /// case of a browser prompt or a readline prompt.
@@ -341,7 +343,7 @@ impl RMain {
     }
 
     /// Completes the kernel's initialization
-    pub fn complete_initialization(&mut self) {
+    pub fn complete_initialization(&mut self, prompt_info: &PromptInfo) {
         if self.initializing {
             let version = unsafe {
                 let version = Rf_findVarInFrame(R_BaseNamespace, r_symbol!("R.version.string"));
@@ -351,6 +353,8 @@ impl RMain {
             let kernel_info = KernelInfo {
                 version: version.clone(),
                 banner: self.banner.clone(),
+                input_prompt: Some(prompt_info.prompt.clone()),
+                continuation_prompt: Some(prompt_info.continue_prompt.clone()),
             };
 
             debug!("Sending kernel info: {}", version);
@@ -443,7 +447,7 @@ impl RMain {
         debug!("R prompt: {}", info.prompt);
 
         INIT_KERNEL.call_once(|| {
-            self.complete_initialization();
+            self.complete_initialization(&info);
 
             trace!(
                 "Got initial R prompt '{}', ready for execution requests",
