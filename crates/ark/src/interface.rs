@@ -288,7 +288,7 @@ pub struct PromptInfo {
 
     /// The continuation prompt string when user supplies incomplete
     /// inputs.  This always corresponds to `getOption("continue"). We send
-    /// it to frontends along `prompt` because some frontends such as
+    /// it to frontends along with `prompt` because some frontends such as
     /// Positron do not send incomplete inputs to Ark and take charge of
     /// continuation prompts themselves.
     continue_prompt: String,
