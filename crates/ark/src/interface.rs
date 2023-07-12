@@ -725,7 +725,10 @@ impl RMain {
             // we make the stub below behave sensibly even when
             // streaming R output?
             let mut data = serde_json::Map::new();
-            data.insert("text/plain".to_string(), json!(self.stdout));
+
+            if self.stdout.len() != 0 {
+                data.insert("text/plain".to_string(), json!(self.stdout));
+            }
 
             // Include HTML representation of data.frame
             let value = r_lock! { Rf_findVarInFrame(R_GlobalEnv, r_symbol!(".Last.value")) };
@@ -790,8 +793,19 @@ impl RMain {
             Stream::Stderr => &mut self.stderr,
         };
 
-        // Append content to buffer.
-        buffer.push_str(content);
+        // If we are at top-level, this is the output printed by the R REPL
+        // when the result of the top-level `eval()` is visible. We
+        // accumulate this output (it typically comes in multiple parts) so
+        // we can emit it later on as part of execution results.
+        let n_frame = harp::session::r_n_frame().unwrap();
+        let frame = harp::session::r_sys_frame(n_frame).unwrap();
+        let browser = harp::session::r_env_is_browsed(frame).unwrap();
+        let top_level = n_frame == 0 || browser;
+
+        if top_level {
+            buffer.push_str(content);
+            return;
+        }
 
         // Stream output via the IOPub channel.
         let message = IOPubMessage::Stream(StreamOutput {
