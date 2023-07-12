@@ -62,7 +62,7 @@ impl Kernel {
                 warn!("Error sending event to front end: {}", err);
             }
         } else {
-            warn!(
+            info!(
                 "Discarding event {:?}; no Positron front end connected",
                 event
             );
