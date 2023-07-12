@@ -725,8 +725,15 @@ impl RMain {
             // streaming R output?
             let mut data = serde_json::Map::new();
 
-            if self.stdout.len() != 0 {
-                data.insert("text/plain".to_string(), json!(self.stdout));
+            // Remove the trailing newlines that R adds to outputs but that
+            // Jupyter frontends are not expecting. Is it worth taking a
+            // mutable self ref across calling methods to avoid the clone?
+            let mut stdout = self.stdout.clone();
+            if stdout.ends_with('\n') {
+                stdout.pop();
+            }
+            if stdout.len() != 0 {
+                data.insert("text/plain".to_string(), json!(stdout));
             }
 
             // Include HTML representation of data.frame
