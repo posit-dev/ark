@@ -681,9 +681,77 @@ impl RMain {
             new_execute_response(req.exec_count)
         } else {
             trace!("Got R prompt '{}', completing execution", prompt);
-            peek_execute_response(req.exec_count)
+            self.peek_execute_response(req.exec_count)
         };
         req.response_tx.send(reply).unwrap();
+    }
+
+    // Gets response data from R state
+    fn peek_execute_response(&self, exec_count: u32) -> ExecuteResponse {
+        let main = unsafe { R_MAIN.as_mut().unwrap() };
+
+        // Save and reset error occurred flag
+        let error_occurred = main.error_occurred;
+        main.error_occurred = false;
+
+        // Send the reply to the front end
+        if error_occurred {
+            // We don't fill out `ename` with anything meaningful because typically
+            // R errors don't have names. We could consider using the condition class
+            // here, which r-lib/tidyverse packages have been using more heavily.
+            let ename = String::from("");
+            let evalue = main.error_message.clone();
+            let traceback = main.error_traceback.clone();
+
+            log::info!("An R error occurred: {}", evalue);
+
+            let exception = Exception {
+                ename,
+                evalue,
+                traceback,
+            };
+
+            main.iopub_tx
+                .send(IOPubMessage::ExecuteError(ExecuteError {
+                    exception: exception.clone(),
+                }))
+                .or_log_warning(&format!("Could not publish error {} on iopub", exec_count));
+
+            new_execute_error_response(exception, exec_count)
+        } else {
+            // TODO: Implement rich printing of certain outputs.
+            // Will we need something similar to the RStudio model,
+            // where we implement custom print() methods? Or can
+            // we make the stub below behave sensibly even when
+            // streaming R output?
+            let mut data = serde_json::Map::new();
+            data.insert("text/plain".to_string(), json!(self.stdout));
+
+            // Include HTML representation of data.frame
+            let value = r_lock! { Rf_findVarInFrame(R_GlobalEnv, r_symbol!(".Last.value")) };
+            if r_is_data_frame(value) {
+                match to_html(value) {
+                    Ok(html) => data.insert("text/html".to_string(), json!(html)),
+                    Err(error) => {
+                        error!("{:?}", error);
+                        None
+                    },
+                };
+            }
+
+            main.iopub_tx
+                .send(IOPubMessage::ExecuteResult(ExecuteResult {
+                    execution_count: exec_count,
+                    data: serde_json::Value::Object(data),
+                    metadata: json!({}),
+                }))
+                .or_log_warning(&format!(
+                    "Could not publish result of statement {} on iopub",
+                    exec_count
+                ));
+
+            new_execute_response(exec_count)
+        }
     }
 
     /// Request input from frontend in case code like `readline()` is
@@ -842,74 +910,6 @@ fn new_incomplete_response(req: &ExecuteRequest, exec_count: u32) -> ExecuteResp
             traceback: vec![],
         },
     })
-}
-
-// Gets response data from R state
-fn peek_execute_response(exec_count: u32) -> ExecuteResponse {
-    let main = unsafe { R_MAIN.as_mut().unwrap() };
-
-    // Save and reset error occurred flag
-    let error_occurred = main.error_occurred;
-    main.error_occurred = false;
-
-    // Send the reply to the front end
-    if error_occurred {
-        // We don't fill out `ename` with anything meaningful because typically
-        // R errors don't have names. We could consider using the condition class
-        // here, which r-lib/tidyverse packages have been using more heavily.
-        let ename = String::from("");
-        let evalue = main.error_message.clone();
-        let traceback = main.error_traceback.clone();
-
-        log::info!("An R error occurred: {}", evalue);
-
-        let exception = Exception {
-            ename,
-            evalue,
-            traceback,
-        };
-
-        main.iopub_tx
-            .send(IOPubMessage::ExecuteError(ExecuteError {
-                exception: exception.clone(),
-            }))
-            .or_log_warning(&format!("Could not publish error {} on iopub", exec_count));
-
-        new_execute_error_response(exception, exec_count)
-    } else {
-        // TODO: Implement rich printing of certain outputs.
-        // Will we need something similar to the RStudio model,
-        // where we implement custom print() methods? Or can
-        // we make the stub below behave sensibly even when
-        // streaming R output?
-        let mut data = serde_json::Map::new();
-        data.insert("text/plain".to_string(), json!(""));
-
-        // Include HTML representation of data.frame
-        let value = r_lock! { Rf_findVarInFrame(R_GlobalEnv, r_symbol!(".Last.value")) };
-        if r_is_data_frame(value) {
-            match to_html(value) {
-                Ok(html) => data.insert("text/html".to_string(), json!(html)),
-                Err(error) => {
-                    error!("{:?}", error);
-                    None
-                },
-            };
-        }
-
-        main.iopub_tx
-            .send(IOPubMessage::ExecuteResult(ExecuteResult {
-                execution_count: exec_count,
-                data: serde_json::Value::Object(data),
-                metadata: json!({}),
-            }))
-            .or_log_warning(&format!(
-                "Could not publish result of statement {} on iopub",
-                exec_count
-            ));
-
-        new_execute_response(exec_count)
-    }
 }
 
 fn new_execute_response(exec_count: u32) -> ExecuteResponse {
