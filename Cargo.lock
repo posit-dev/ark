@@ -827,6 +827,7 @@ dependencies = [
 name = "harp"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "c2rust-bitfields",
  "ctor",
  "harp-macros",

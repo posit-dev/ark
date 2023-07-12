@@ -277,9 +277,13 @@ pub struct KernelInfo {
 /// `ReadConsole()` methods. We need this information to determine what kind
 /// of prompt we are dealing with.
 #[derive(Clone)]
-pub struct PromptInfo {
+struct PromptInfo {
     /// The prompt string to be presented to the user
     prompt: String,
+
+    /// Whether this is a `browser()` prompt. A browser prompt can be
+    /// incomplete but is never a user request.
+    _browser: bool,
 
     /// Whether the last input didn't fully parse and R is waiting for more input
     incomplete: bool,
@@ -288,7 +292,6 @@ pub struct PromptInfo {
     /// top level) or a prompt from some user code, e.g. via `readline()`
     user_request: bool,
 }
-// TODO: `browser` field
 
 pub enum ConsoleInput {
     EOF,
@@ -567,8 +570,15 @@ impl RMain {
         let prompt_slice = unsafe { CStr::from_ptr(prompt_c) };
         let prompt = prompt_slice.to_string_lossy().into_owned();
 
-        // TODO: Detect with `env_is_browsed(sys.frame(sys.nframe()))`
-        let browser = false;
+        // Detect browser prompts by inspecting the `RDEBUG` flag of the
+        // last frame on the stack. This is not 100% infallible, for
+        // instance `debug(readline)` followed by `n` will instantiate a
+        // user request prompt that will look like a browser prompt
+        // according to this heuristic. However it has the advantage of
+        // correctly detecting that continue prompts are top-level browser
+        // prompts in case of incomplete inputs within `browser()`.
+        let frame = harp::session::r_sys_frame(n_frame).unwrap();
+        let browser = harp::session::r_env_is_browsed(frame).unwrap();
 
         // If there are frames on the stack and we're not in a browser prompt,
         // this means some user code is requesting input, e.g. via `readline()`
@@ -587,6 +597,7 @@ impl RMain {
 
         return PromptInfo {
             prompt,
+            _browser: browser,
             incomplete,
             user_request,
         };
