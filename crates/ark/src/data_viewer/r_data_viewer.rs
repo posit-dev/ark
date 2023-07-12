@@ -38,7 +38,7 @@ use stdext::local;
 use stdext::spawn;
 use uuid::Uuid;
 
-use crate::lsp::globals::comm_manager_tx;
+use crate::data_viewer::globals::comm_manager_tx;
 
 pub struct RDataViewer {
     pub id: String,
@@ -231,6 +231,9 @@ impl RDataViewer {
             let data_set = DataSet::from_object(self.id.clone(), self.title.clone(), self.data)?;
             let json = serde_json::to_value(data_set)?;
 
+            // TODO: Can we avoid using a global variable for the comm manager here?
+            // Globals are usually reserved for R callbacks where we have no other option.
+            // That isn't the case here.
             let comm_manager_tx = comm_manager_tx();
             let event = CommEvent::Opened(self.comm.clone(), json);
             comm_manager_tx.send(event)?;

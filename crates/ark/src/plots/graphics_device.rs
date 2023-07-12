@@ -41,7 +41,7 @@ use once_cell::sync::Lazy;
 use stdext::unwrap;
 use uuid::Uuid;
 
-use crate::lsp::globals::comm_manager_tx;
+use crate::plots::globals::comm_manager_tx;
 use crate::plots::message::PlotMessageInput;
 use crate::plots::message::PlotMessageInputRender;
 use crate::plots::message::PlotMessageOutput;
