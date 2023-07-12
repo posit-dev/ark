@@ -239,8 +239,9 @@ pub struct RMain {
     /// Execution request counter used to populate `In[n]` and `Out[n]` prompts
     execution_count: u32,
 
+    /// Accumulated top-level output for the current execution
     stdout: String,
-    stderr: String,
+
     banner: String,
 
     /// A lock guard, used to manage access to the R runtime.  The main
@@ -332,7 +333,6 @@ impl RMain {
             active_request: None,
             execution_count: 0,
             stdout: String::new(),
-            stderr: String::new(),
             banner: String::new(),
             runtime_lock_guard: Some(lock_guard),
             kernel,
@@ -399,9 +399,8 @@ impl RMain {
     }
 
     fn init_execute_request(&mut self, req: &ExecuteRequest) -> (ConsoleInput, u32) {
-        // Initialize stdout, stderr
+        // Reset the stdout buffer
         self.stdout = String::new();
-        self.stderr = String::new();
 
         // Increment counter if we are storing this execution in history
         if req.store_history {
@@ -788,11 +787,6 @@ impl RMain {
             return;
         }
 
-        let buffer = match stream {
-            Stream::Stdout => &mut self.stdout,
-            Stream::Stderr => &mut self.stderr,
-        };
-
         // If we are at top-level, this is the output printed by the R REPL
         // when the result of the top-level `eval()` is visible. We
         // accumulate this output (it typically comes in multiple parts) so
@@ -803,7 +797,7 @@ impl RMain {
         let top_level = n_frame == 0 || browser;
 
         if top_level {
-            buffer.push_str(content);
+            self.stdout.push_str(content);
             return;
         }
 
