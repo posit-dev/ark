@@ -1,36 +1,38 @@
 //
 // globals.rs
 //
-// Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023 Posit Software, PBC. All rights reserved.
 //
 //
 
 use crossbeam::channel::Sender;
-use parking_lot::Mutex;
-use parking_lot::MutexGuard;
 use tower_lsp::Client;
 
 use crate::request::KernelRequest;
 
-// The LSP client.
-// For use within R callback functions.
-static mut LSP_CLIENT: Option<Client> = None;
+// The global state used by R callbacks.
+//
+// Doesn't need a mutex because it's only accessed by the R thread. Should
+// not be used elsewhere than from an R frontend callback or an R function
+// invoked by the REPL.
+pub(super) static mut R_CALLBACK_GLOBALS: Option<RCallbackGlobals> = None;
 
-// The shell request channel.
-// For use within R callback functions.
-static mut KERNEL_REQUEST_TX: Option<Mutex<Sender<KernelRequest>>> = None;
-
-pub(super) fn lsp_client() -> Client {
-    unsafe { LSP_CLIENT.as_ref().unwrap_unchecked().clone() }
+pub(super) struct RCallbackGlobals {
+    pub(super) lsp_client: Client,
+    pub(super) kernel_request_tx: Sender<KernelRequest>,
 }
 
-pub(super) fn kernel_request_tx<'a>() -> MutexGuard<'a, Sender<KernelRequest>> {
-    unsafe { KERNEL_REQUEST_TX.as_ref().unwrap_unchecked().lock() }
+impl RCallbackGlobals {
+    fn new(lsp_client: Client, kernel_request_tx: Sender<KernelRequest>) -> Self {
+        Self {
+            lsp_client,
+            kernel_request_tx,
+        }
+    }
 }
 
 pub fn initialize(lsp_client: Client, kernel_request_tx: Sender<KernelRequest>) {
     unsafe {
-        LSP_CLIENT = Some(lsp_client);
-        KERNEL_REQUEST_TX = Some(Mutex::new(kernel_request_tx));
+        R_CALLBACK_GLOBALS = Some(RCallbackGlobals::new(lsp_client, kernel_request_tx));
     }
 }

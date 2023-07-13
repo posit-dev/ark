@@ -12,17 +12,18 @@ use tokio::runtime::Runtime;
 use tower_lsp::lsp_types::ShowDocumentParams;
 use tower_lsp::lsp_types::Url;
 
-use crate::lsp::globals::lsp_client;
+use crate::lsp::globals::R_CALLBACK_GLOBALS;
 
 #[harp::register]
 unsafe extern "C" fn ps_editor(file: SEXP, _title: SEXP) -> SEXP {
     let rt = Runtime::new().unwrap();
+    let globals = R_CALLBACK_GLOBALS.as_ref().unwrap();
     let files = CharacterVector::new_unchecked(file);
     for file in files.iter() {
         if let Some(file) = file {
             rt.block_on(async move {
-                let client = lsp_client();
-                client
+                globals
+                    .lsp_client
                     .show_document(ShowDocumentParams {
                         uri: Url::from_file_path(file).unwrap(),
                         external: Some(false),
