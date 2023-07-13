@@ -25,15 +25,15 @@ static mut KERNEL_REQUEST_TX: Option<Mutex<Sender<KernelRequest>>> = None;
 // For use within R callback functions.
 static mut COMM_MANAGER_TX: Option<Mutex<Sender<CommEvent>>> = None;
 
-pub fn lsp_client() -> Client {
+pub(super) fn lsp_client() -> Client {
     unsafe { LSP_CLIENT.as_ref().unwrap_unchecked().clone() }
 }
 
-pub fn kernel_request_tx<'a>() -> MutexGuard<'a, Sender<KernelRequest>> {
+pub(super) fn kernel_request_tx<'a>() -> MutexGuard<'a, Sender<KernelRequest>> {
     unsafe { KERNEL_REQUEST_TX.as_ref().unwrap_unchecked().lock() }
 }
 
-pub fn comm_manager_tx<'a>() -> MutexGuard<'a, Sender<CommEvent>> {
+pub(super) fn comm_manager_tx<'a>() -> MutexGuard<'a, Sender<CommEvent>> {
     unsafe { COMM_MANAGER_TX.as_ref().unwrap_unchecked().lock() }
 }
 

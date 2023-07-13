@@ -14,7 +14,7 @@ use parking_lot::MutexGuard;
 // For use within R callback functions.
 static mut COMM_MANAGER_TX: Option<Mutex<Sender<CommEvent>>> = None;
 
-pub fn comm_manager_tx<'a>() -> MutexGuard<'a, Sender<CommEvent>> {
+pub(super) fn comm_manager_tx<'a>() -> MutexGuard<'a, Sender<CommEvent>> {
     unsafe { COMM_MANAGER_TX.as_ref().unwrap_unchecked().lock() }
 }
 
