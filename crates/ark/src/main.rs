@@ -78,6 +78,7 @@ fn start_kernel(connection_file: ConnectionFile, capture_streams: bool) {
     // Create the shell.
     let kernel_init_rx = kernel_init_tx.add_rx();
     let shell = Shell::new(
+        kernel.create_comm_manager_tx(),
         iopub_tx,
         r_request_tx.clone(),
         r_request_rx,

@@ -4,10 +4,13 @@
 // Copyright (C) 2023 by Posit Software, PBC
 //
 //
+
 use amalthea::comm::comm_channel::CommChannelMsg;
+use amalthea::comm::event::CommEvent;
 use amalthea::socket::comm::CommSocket;
 use crossbeam::channel::select;
 use crossbeam::channel::unbounded;
+use crossbeam::channel::Sender;
 use harp::environment::Binding;
 use harp::environment::Environment;
 use harp::exec::RFunction;
@@ -45,6 +48,7 @@ use crate::lsp::events::EVENTS;
  */
 pub struct REnvironment {
     comm: CommSocket,
+    comm_manager_tx: Sender<CommEvent>,
     pub env: RObject,
     current_bindings: Vec<Binding>,
     version: u64,
@@ -57,7 +61,7 @@ impl REnvironment {
      * - `env`: An R environment to scan for variables, typically R_GlobalEnv
      * - `comm`: A channel used to send messages to the front end
      */
-    pub fn start(env: RObject, comm: CommSocket) {
+    pub fn start(env: RObject, comm: CommSocket, comm_manager_tx: Sender<CommEvent>) {
         // Validate that the RObject we were passed is actually an environment
         if let Err(err) = r_assert_type(env.sexp, &[ENVSXP]) {
             warn!(
@@ -70,6 +74,7 @@ impl REnvironment {
         spawn!("ark-environment", move || {
             let environment = Self {
                 comm,
+                comm_manager_tx,
                 env,
                 current_bindings: vec![],
                 version: 0,
@@ -342,7 +347,7 @@ impl REnvironment {
         let msg = match data {
             Ok(data) => {
                 let name = unsafe { path.get_unchecked(path.len() - 1) };
-                RDataViewer::start(name.clone(), data.clone());
+                RDataViewer::start(name.clone(), data.clone(), self.comm_manager_tx.clone());
                 EnvironmentMessage::Success
             },
 

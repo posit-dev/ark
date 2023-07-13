@@ -6,6 +6,7 @@
 //
 
 use amalthea::comm::comm_channel::CommChannelMsg;
+use amalthea::comm::event::CommEvent;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
 use ark::environment::message::EnvironmentMessage;
@@ -15,6 +16,7 @@ use ark::environment::message::EnvironmentMessageList;
 use ark::environment::message::EnvironmentMessageUpdate;
 use ark::environment::r_environment::REnvironment;
 use ark::lsp::events::EVENTS;
+use crossbeam::channel::bounded;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
@@ -57,12 +59,17 @@ fn test_environment_list() {
         String::from("positron.environment"),
     );
 
+    // Create a dummy comm manager channel that isn't actually used.
+    // It's required when opening a `RDataViewer` comm through `view()`, but
+    // we don't test that here.
+    let (comm_manager_tx, _) = bounded::<CommEvent>(0);
+
     // Create a new environment handler and give it a view of the test
     // environment we created.
     let test_env_view = RObject::view(test_env.sexp);
     let incoming_tx = comm.incoming_tx.clone();
     let outgoing_rx = comm.outgoing_rx.clone();
-    REnvironment::start(test_env_view, comm);
+    REnvironment::start(test_env_view, comm, comm_manager_tx);
 
     // Ensure we get a list of variables after initialization
     let msg = outgoing_rx.recv().unwrap();

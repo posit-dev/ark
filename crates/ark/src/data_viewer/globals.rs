@@ -7,19 +7,26 @@
 
 use amalthea::comm::event::CommEvent;
 use crossbeam::channel::Sender;
-use parking_lot::Mutex;
-use parking_lot::MutexGuard;
 
-// The communication channel manager's request channel.
-// For use within R callback functions.
-static mut COMM_MANAGER_TX: Option<Mutex<Sender<CommEvent>>> = None;
+// The global state used by R callbacks.
+//
+// Doesn't need a mutex because it's only accessed by the R thread. Should
+// not be used elsewhere than from an R frontend callback or an R function
+// invoked by the REPL.
+pub(super) static mut R_CALLBACK_GLOBALS: Option<RCallbackGlobals> = None;
 
-pub(super) fn comm_manager_tx<'a>() -> MutexGuard<'a, Sender<CommEvent>> {
-    unsafe { COMM_MANAGER_TX.as_ref().unwrap_unchecked().lock() }
+pub(super) struct RCallbackGlobals {
+    pub(super) comm_manager_tx: Sender<CommEvent>,
+}
+
+impl RCallbackGlobals {
+    fn new(comm_manager_tx: Sender<CommEvent>) -> Self {
+        Self { comm_manager_tx }
+    }
 }
 
 pub fn initialize(comm_manager_tx: Sender<CommEvent>) {
     unsafe {
-        COMM_MANAGER_TX = Some(Mutex::new(comm_manager_tx));
+        R_CALLBACK_GLOBALS = Some(RCallbackGlobals::new(comm_manager_tx));
     }
 }

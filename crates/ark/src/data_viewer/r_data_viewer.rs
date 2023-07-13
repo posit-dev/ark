@@ -9,6 +9,7 @@ use amalthea::comm::event::CommEvent;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
 use anyhow::bail;
+use crossbeam::channel::Sender;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
@@ -38,13 +39,13 @@ use stdext::local;
 use stdext::spawn;
 use uuid::Uuid;
 
-use crate::data_viewer::globals::comm_manager_tx;
+use crate::data_viewer::globals::R_CALLBACK_GLOBALS;
 
 pub struct RDataViewer {
     pub id: String,
     pub title: String,
     pub data: RObject,
-    pub comm: CommSocket,
+    pub comm_manager_tx: Sender<CommEvent>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -206,19 +207,14 @@ impl DataSet {
 }
 
 impl RDataViewer {
-    pub fn start(title: String, data: RObject) {
+    pub fn start(title: String, data: RObject, comm_manager_tx: Sender<CommEvent>) {
         let id = Uuid::new_v4().to_string();
         spawn!(format!("ark-data-viewer-{}-{}", title, id), move || {
-            let comm = CommSocket::new(
-                CommInitiator::BackEnd,
-                id.clone(),
-                String::from("positron.dataViewer"),
-            );
             let viewer = Self {
                 id,
                 title: title.clone(),
                 data,
-                comm,
+                comm_manager_tx,
             };
             viewer.execution_thread();
         });
@@ -231,12 +227,15 @@ impl RDataViewer {
             let data_set = DataSet::from_object(self.id.clone(), self.title.clone(), self.data)?;
             let json = serde_json::to_value(data_set)?;
 
-            // TODO: Can we avoid using a global variable for the comm manager here?
-            // Globals are usually reserved for R callbacks where we have no other option.
-            // That isn't the case here.
-            let comm_manager_tx = comm_manager_tx();
-            let event = CommEvent::Opened(self.comm.clone(), json);
-            comm_manager_tx.send(event)?;
+            // Notify frontend that the data viewer comm is open
+            let comm = CommSocket::new(
+                CommInitiator::BackEnd,
+                self.id.clone(),
+                String::from("positron.dataViewer"),
+            );
+
+            let event = CommEvent::Opened(comm, json);
+            self.comm_manager_tx.send(event)?;
 
             Ok(())
         };
@@ -253,7 +252,13 @@ pub unsafe extern "C" fn ps_view_data_frame(x: SEXP, title: SEXP) -> SEXP {
         Ok(s) => s,
         Err(_) => String::from(""),
     };
-    RDataViewer::start(title, RObject::from(x));
+
+    // TODO: This `ps_view_data_frame()` convenience callback is the only reason
+    // we have `data_viewer/globals.rs`. Do we really need it? Or was it only
+    // useful for testing and not so much anymore?
+    let globals = R_CALLBACK_GLOBALS.as_ref().unwrap();
+
+    RDataViewer::start(title, RObject::from(x), globals.comm_manager_tx.clone());
 
     R_NilValue
 }
