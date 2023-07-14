@@ -12,16 +12,8 @@ options(max.print = 1000)
 options(help_type = "html")
 
 # Use internal editor
-options(editor = function(file, title, ...) {
-
-    # Make sure the requested files exist.
-    file <- as.character(path.expand(file))
-    ensure_parent_directory(file)
-    file.create(file[!file.exists(file)])
-
-    # Edit those files.
-    .ps.Call("ps_editor", as.character(file), as.character(title))
-
+options(editor = function(file, title, ..., name = NULL) {
+    handler_editor(file = file, title = title, ..., name = name)
 })
 
 # Use custom browser implementation
