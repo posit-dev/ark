@@ -9,6 +9,7 @@ use amalthea::comm::event::CommEvent;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
 use anyhow::bail;
+use crossbeam::channel::Sender;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
@@ -20,11 +21,9 @@ use harp::utils::r_typeof;
 use harp::vector::formatted_vector::FormattedVector;
 use harp::vector::CharacterVector;
 use harp::vector::Vector;
-use libR_sys::R_CallMethodDef;
 use libR_sys::R_DimSymbol;
 use libR_sys::R_MissingArg;
 use libR_sys::R_NamesSymbol;
-use libR_sys::R_NilValue;
 use libR_sys::R_RowNamesSymbol;
 use libR_sys::Rf_getAttrib;
 use libR_sys::INTEGER_ELT;
@@ -38,13 +37,11 @@ use stdext::local;
 use stdext::spawn;
 use uuid::Uuid;
 
-use crate::data_viewer::globals::comm_manager_tx;
-
 pub struct RDataViewer {
     pub id: String,
     pub title: String,
     pub data: RObject,
-    pub comm: CommSocket,
+    pub comm_manager_tx: Sender<CommEvent>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -206,19 +203,14 @@ impl DataSet {
 }
 
 impl RDataViewer {
-    pub fn start(title: String, data: RObject) {
+    pub fn start(title: String, data: RObject, comm_manager_tx: Sender<CommEvent>) {
         let id = Uuid::new_v4().to_string();
         spawn!(format!("ark-data-viewer-{}-{}", title, id), move || {
-            let comm = CommSocket::new(
-                CommInitiator::BackEnd,
-                id.clone(),
-                String::from("positron.dataViewer"),
-            );
             let viewer = Self {
                 id,
                 title: title.clone(),
                 data,
-                comm,
+                comm_manager_tx,
             };
             viewer.execution_thread();
         });
@@ -231,12 +223,15 @@ impl RDataViewer {
             let data_set = DataSet::from_object(self.id.clone(), self.title.clone(), self.data)?;
             let json = serde_json::to_value(data_set)?;
 
-            // TODO: Can we avoid using a global variable for the comm manager here?
-            // Globals are usually reserved for R callbacks where we have no other option.
-            // That isn't the case here.
-            let comm_manager_tx = comm_manager_tx();
-            let event = CommEvent::Opened(self.comm.clone(), json);
-            comm_manager_tx.send(event)?;
+            // Notify frontend that the data viewer comm is open
+            let comm = CommSocket::new(
+                CommInitiator::BackEnd,
+                self.id.clone(),
+                String::from("positron.dataViewer"),
+            );
+
+            let event = CommEvent::Opened(comm, json);
+            self.comm_manager_tx.send(event)?;
 
             Ok(())
         };
@@ -245,15 +240,4 @@ impl RDataViewer {
             log::error!("Error while viewing object '{}': {}", self.title, error);
         }
     }
-}
-
-#[harp::register]
-pub unsafe extern "C" fn ps_view_data_frame(x: SEXP, title: SEXP) -> SEXP {
-    let title = match String::try_from(RObject::view(title)) {
-        Ok(s) => s,
-        Err(_) => String::from(""),
-    };
-    RDataViewer::start(title, RObject::from(x));
-
-    R_NilValue
 }

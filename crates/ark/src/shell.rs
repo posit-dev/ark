@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use amalthea::comm::comm_channel::Comm;
+use amalthea::comm::event::CommEvent;
 use amalthea::language::shell_handler::ShellHandler;
 use amalthea::socket::comm::CommSocket;
 use amalthea::socket::iopub::IOPubMessage;
@@ -54,6 +55,7 @@ use crate::request::KernelRequest;
 use crate::request::RRequest;
 
 pub struct Shell {
+    comm_manager_tx: Sender<CommEvent>,
     r_request_tx: Sender<RRequest>,
     kernel_request_tx: Sender<KernelRequest>,
     kernel_init_rx: BusReader<KernelInfo>,
@@ -68,6 +70,7 @@ pub enum REvent {
 impl Shell {
     /// Creates a new instance of the shell message handler.
     pub fn new(
+        comm_manager_tx: Sender<CommEvent>,
         iopub_tx: Sender<IOPubMessage>,
         r_request_tx: Sender<RRequest>,
         r_request_rx: Receiver<RRequest>,
@@ -110,6 +113,7 @@ impl Shell {
         });
 
         Self {
+            comm_manager_tx,
             r_request_tx,
             kernel_request_tx,
             kernel_init_rx,
@@ -260,7 +264,7 @@ impl ShellHandler for Shell {
             Comm::Environment => {
                 r_lock! {
                     let global_env = RObject::view(R_GlobalEnv);
-                    REnvironment::start(global_env, comm.clone());
+                    REnvironment::start(global_env, comm.clone(), self.comm_manager_tx.clone());
                     Ok(true)
                 }
             },
