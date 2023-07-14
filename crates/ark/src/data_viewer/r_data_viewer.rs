@@ -21,11 +21,9 @@ use harp::utils::r_typeof;
 use harp::vector::formatted_vector::FormattedVector;
 use harp::vector::CharacterVector;
 use harp::vector::Vector;
-use libR_sys::R_CallMethodDef;
 use libR_sys::R_DimSymbol;
 use libR_sys::R_MissingArg;
 use libR_sys::R_NamesSymbol;
-use libR_sys::R_NilValue;
 use libR_sys::R_RowNamesSymbol;
 use libR_sys::Rf_getAttrib;
 use libR_sys::INTEGER_ELT;
@@ -38,8 +36,6 @@ use serde::Serialize;
 use stdext::local;
 use stdext::spawn;
 use uuid::Uuid;
-
-use crate::data_viewer::globals::R_CALLBACK_GLOBALS;
 
 pub struct RDataViewer {
     pub id: String,
@@ -244,21 +240,4 @@ impl RDataViewer {
             log::error!("Error while viewing object '{}': {}", self.title, error);
         }
     }
-}
-
-#[harp::register]
-pub unsafe extern "C" fn ps_view_data_frame(x: SEXP, title: SEXP) -> SEXP {
-    let title = match String::try_from(RObject::view(title)) {
-        Ok(s) => s,
-        Err(_) => String::from(""),
-    };
-
-    // TODO: This `ps_view_data_frame()` convenience callback is the only reason
-    // we have `data_viewer/globals.rs`. Do we really need it? Or was it only
-    // useful for testing and not so much anymore?
-    let globals = R_CALLBACK_GLOBALS.as_ref().unwrap();
-
-    RDataViewer::start(title, RObject::from(x), globals.comm_manager_tx.clone());
-
-    R_NilValue
 }

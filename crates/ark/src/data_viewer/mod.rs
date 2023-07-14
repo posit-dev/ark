@@ -5,5 +5,4 @@
 //
 //
 
-pub mod globals;
 pub mod r_data_viewer;
