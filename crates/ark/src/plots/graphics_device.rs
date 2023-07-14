@@ -41,7 +41,7 @@ use once_cell::sync::Lazy;
 use stdext::unwrap;
 use uuid::Uuid;
 
-use crate::lsp::globals::comm_manager_tx;
+use crate::plots::globals::R_CALLBACK_GLOBALS;
 use crate::plots::message::PlotMessageInput;
 use crate::plots::message::PlotMessageInputRender;
 use crate::plots::message::PlotMessageOutput;
@@ -117,9 +117,10 @@ impl DeviceContext {
             POSITRON_PLOT_CHANNEL_ID.to_string(),
         );
 
+        let globals = R_CALLBACK_GLOBALS.as_ref().unwrap();
+
         let event = CommEvent::Opened(socket.clone(), serde_json::Value::Null);
-        let comm_manager_tx = comm_manager_tx();
-        if let Err(error) = comm_manager_tx.send(event) {
+        if let Err(error) = globals.comm_manager_tx.send(event) {
             log::error!("{}", error);
         }
 

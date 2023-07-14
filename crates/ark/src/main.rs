@@ -16,8 +16,10 @@ use amalthea::kernel::Kernel;
 use amalthea::kernel_spec::KernelSpec;
 use amalthea::wire::input_request::ShellInputRequest;
 use ark::control::Control;
+use ark::data_viewer;
 use ark::logger;
 use ark::lsp;
+use ark::plots;
 use ark::request::KernelRequest;
 use ark::request::RRequest;
 use ark::shell::Shell;
@@ -40,6 +42,10 @@ fn start_kernel(connection_file: ConnectionFile, capture_streams: bool) {
         },
     };
 
+    // Initialize mandatory globals used in R callbacks
+    plots::globals::initialize(kernel.create_comm_manager_tx());
+    data_viewer::globals::initialize(kernel.create_comm_manager_tx());
+
     // Create the channels used for communication. These are created here
     // as they need to be shared across different components / threads.
     let iopub_tx = kernel.create_iopub_tx();
@@ -59,7 +65,6 @@ fn start_kernel(connection_file: ConnectionFile, capture_streams: bool) {
     // It must be able to deliver messages to the shell channel directly.
     let lsp = Arc::new(Mutex::new(lsp::handler::Lsp::new(
         kernel_request_tx.clone(),
-        kernel.create_comm_manager_tx(),
         kernel_init_tx.add_rx(),
     )));
 

@@ -12,7 +12,7 @@ use libR_sys::*;
 use stdext::local;
 use stdext::unwrap;
 
-use crate::lsp::globals::kernel_request_tx;
+use crate::lsp::globals::R_CALLBACK_GLOBALS;
 use crate::request::KernelRequest;
 
 /// Shows a message in the Positron frontend
@@ -27,8 +27,9 @@ pub unsafe extern "C" fn ps_show_message(message: SEXP) -> SEXP {
         let event = PositronEvent::ShowMessage(ShowMessageEvent { message });
         let event = KernelRequest::DeliverEvent(event);
 
-        let kernel_request_tx = kernel_request_tx();
-        let status = unwrap!(kernel_request_tx.send(event), Err(error) => {
+        let globals = R_CALLBACK_GLOBALS.as_ref().unwrap();
+
+        let status = unwrap!(globals.kernel_request_tx.send(event), Err(error) => {
             anyhow::bail!("Error sending request: {}", error);
         });
 
