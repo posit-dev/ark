@@ -83,7 +83,7 @@ impl ShellHandler for Shell {
             pygments_lexer: String::new(),
             codemirror_mode: String::new(),
             nbconvert_exporter: String::new(),
-            posit_pbc: None,
+            positron: None,
         };
         Ok(KernelInfoReply {
             status: Status::Ok,
@@ -202,7 +202,7 @@ impl ShellHandler for Shell {
             status: Status::Ok,
             execution_count: self.execution_count,
             user_expressions: serde_json::Value::Null,
-            posit_pbc: None,
+            positron: None,
         })
     }
 

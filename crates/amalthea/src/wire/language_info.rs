@@ -34,12 +34,12 @@ pub struct LanguageInfo {
     pub nbconvert_exporter: String,
 
     /// Posit extension
-    pub posit_pbc: Option<LanguageInfoPositPbc>,
+    pub positron: Option<LanguageInfoPositron>,
 }
 
 #[serde_with::skip_serializing_none]
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct LanguageInfoPositPbc {
+pub struct LanguageInfoPositron {
     /// Initial input prompt
     pub input_prompt: Option<String>,
 

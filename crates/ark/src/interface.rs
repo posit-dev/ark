@@ -28,7 +28,7 @@ use amalthea::wire::exception::Exception;
 use amalthea::wire::execute_error::ExecuteError;
 use amalthea::wire::execute_input::ExecuteInput;
 use amalthea::wire::execute_reply::ExecuteReply;
-use amalthea::wire::execute_reply::ExecuteReplyPosit;
+use amalthea::wire::execute_reply::ExecuteReplyPositron;
 use amalthea::wire::execute_reply_exception::ExecuteReplyException;
 use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::execute_response::ExecuteResponse;
@@ -902,7 +902,7 @@ fn new_execute_response(exec_count: u32, prompt_info: PromptInfo) -> ExecuteResp
         status: Status::Ok,
         execution_count: exec_count,
         user_expressions: json!({}),
-        posit_pbc: Some(ExecuteReplyPosit {
+        positron: Some(ExecuteReplyPositron {
             input_prompt: Some(prompt_info.prompt),
             continuation_prompt: Some(prompt_info.continue_prompt),
             is_input_request: Some(prompt_info.user_request),

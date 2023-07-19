@@ -25,13 +25,13 @@ pub struct ExecuteReply {
     /// Results for user expressions
     pub user_expressions: Value,
 
-    /// Extra Posit fields. Curnently only used for prompt strings.
-    pub posit_pbc: Option<ExecuteReplyPosit>,
+    /// Extra Posit fields. Currently only used for prompt strings.
+    pub positron: Option<ExecuteReplyPositron>,
 }
 
 #[serde_with::skip_serializing_none]
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct ExecuteReplyPosit {
+pub struct ExecuteReplyPositron {
     pub input_prompt: Option<String>,
     pub continuation_prompt: Option<String>,
     pub is_input_request: Option<bool>,
