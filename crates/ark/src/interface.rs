@@ -284,14 +284,14 @@ pub struct PromptInfo {
     /// The prompt string to be presented to the user. This does not
     /// necessarily correspond to `getOption("prompt")`, for instance in
     /// case of a browser prompt or a readline prompt.
-    prompt: String,
+    input_prompt: String,
 
     /// The continuation prompt string when user supplies incomplete
     /// inputs.  This always corresponds to `getOption("continue"). We send
     /// it to frontends along with `prompt` because some frontends such as
     /// Positron do not send incomplete inputs to Ark and take charge of
     /// continuation prompts themselves.
-    continue_prompt: String,
+    continuation_prompt: String,
 
     /// Whether this is a `browser()` prompt. A browser prompt can be
     /// incomplete but is never a user request.
@@ -353,8 +353,8 @@ impl RMain {
             let kernel_info = KernelInfo {
                 version: version.clone(),
                 banner: self.banner.clone(),
-                input_prompt: Some(prompt_info.prompt.clone()),
-                continuation_prompt: Some(prompt_info.continue_prompt.clone()),
+                input_prompt: Some(prompt_info.input_prompt.clone()),
+                continuation_prompt: Some(prompt_info.continuation_prompt.clone()),
             };
 
             debug!("Sending kernel info: {}", version);
@@ -444,14 +444,14 @@ impl RMain {
         _hist: c_int,
     ) -> (i32, bool) {
         let info = Self::prompt_info(prompt);
-        debug!("R prompt: {}", info.prompt);
+        debug!("R prompt: {}", info.input_prompt);
 
         INIT_KERNEL.call_once(|| {
             self.complete_initialization(&info);
 
             trace!(
                 "Got initial R prompt '{}', ready for execution requests",
-                info.prompt
+                info.input_prompt
             );
         });
 
@@ -460,7 +460,7 @@ impl RMain {
         //
         // NOTE: Should be able to overwrite the `Cleanup` frontend method.
         // This would also help with detecting normal exits versus crashes.
-        if info.prompt.starts_with("Save workspace") {
+        if info.input_prompt.starts_with("Save workspace") {
             let n = CString::new("n\n").unwrap();
             unsafe {
                 libc::strcpy(buf as *mut c_char, n.as_ptr());
@@ -480,7 +480,7 @@ impl RMain {
             // `input_request` message arrives. In that case, the elements
             // in the console are displayed out of order.
             if info.user_request {
-                self.request_input(req, info.prompt.to_string());
+                self.request_input(req, info.input_prompt.to_string());
             }
 
             // FIXME: Race condition between the comm and shell socket threads.
@@ -491,8 +491,8 @@ impl RMain {
             // call to `browser()`.
             {
                 let event = PositronEvent::PromptState(PromptStateEvent {
-                    input_prompt: info.prompt.clone(),
-                    continuation_prompt: info.continue_prompt.clone(),
+                    input_prompt: info.input_prompt.clone(),
+                    continuation_prompt: info.continuation_prompt.clone(),
                 });
                 let kernel = self.kernel.lock().unwrap();
                 kernel.send_event(event);
@@ -616,8 +616,8 @@ impl RMain {
 
         // The request is incomplete if we see the continue prompt, except if
         // we're in a user request, e.g. `readline("+ ")`
-        let continue_prompt = unsafe { r_get_option::<String>("continue").unwrap() };
-        let incomplete = !user_request && prompt == continue_prompt;
+        let continuation_prompt = unsafe { r_get_option::<String>("continue").unwrap() };
+        let incomplete = !user_request && prompt == continuation_prompt;
 
         if incomplete {
             trace!("Got R prompt '{}', marking request incomplete", prompt);
@@ -626,8 +626,8 @@ impl RMain {
         }
 
         return PromptInfo {
-            prompt,
-            continue_prompt,
+            input_prompt: prompt,
+            continuation_prompt,
             _browser: browser,
             incomplete,
             user_request,
@@ -668,7 +668,7 @@ impl RMain {
     // Reply to the previously active request. The current prompt type and
     // whether an error has occurred defines the response kind.
     fn reply_execute_request(&self, req: &ActiveReadConsoleRequest, prompt_info: PromptInfo) {
-        let prompt = prompt_info.prompt;
+        let prompt = prompt_info.input_prompt;
 
         let reply = if prompt_info.incomplete {
             trace!("Got prompt {} signaling incomplete request", prompt);
