@@ -300,10 +300,9 @@ pub struct PromptInfo {
     /// Whether the last input didn't fully parse and R is waiting for more input
     incomplete: bool,
 
-    /// TODO: Rename to `input_request` to match Juypter terminology
     /// Whether this is a prompt from a fresh REPL iteration (browser or
     /// top level) or a prompt from some user code, e.g. via `readline()`
-    user_request: bool,
+    input_request: bool,
 }
 
 pub enum ConsoleInput {
@@ -479,7 +478,7 @@ impl RMain {
             // if a response is sent very quickly before the
             // `input_request` message arrives. In that case, the elements
             // in the console are displayed out of order.
-            if info.user_request {
+            if info.input_request {
                 self.request_input(req, info.input_prompt.to_string());
             }
 
@@ -630,7 +629,7 @@ impl RMain {
             continuation_prompt,
             _browser: browser,
             incomplete,
-            user_request,
+            input_request: user_request,
         };
     }
 
@@ -655,7 +654,7 @@ impl RMain {
     fn process_interrupts(prompt_info: &PromptInfo) -> bool {
         unsafe {
             if R_interrupts_suspended == 0 {
-                if R_interrupts_pending != 0 && prompt_info.user_request {
+                if R_interrupts_pending != 0 && prompt_info.input_request {
                     return true;
                 }
                 R_interrupts_pending = 0;
@@ -673,7 +672,7 @@ impl RMain {
         let reply = if prompt_info.incomplete {
             trace!("Got prompt {} signaling incomplete request", prompt);
             new_incomplete_response(&req.request, req.exec_count)
-        } else if prompt_info.user_request {
+        } else if prompt_info.input_request {
             trace!(
                 "Got input request for prompt {}, waiting for reply...",
                 prompt
