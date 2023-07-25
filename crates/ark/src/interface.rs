@@ -22,13 +22,13 @@ use std::time::SystemTime;
 
 use amalthea::events::BusyEvent;
 use amalthea::events::PositronEvent;
+use amalthea::events::PromptStateEvent;
 use amalthea::events::ShowMessageEvent;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::exception::Exception;
 use amalthea::wire::execute_error::ExecuteError;
 use amalthea::wire::execute_input::ExecuteInput;
 use amalthea::wire::execute_reply::ExecuteReply;
-use amalthea::wire::execute_reply::ExecuteReplyPositron;
 use amalthea::wire::execute_reply_exception::ExecuteReplyException;
 use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::execute_response::ExecuteResponse;
@@ -483,6 +483,21 @@ impl RMain {
                 self.request_input(req, info.prompt.to_string());
             }
 
+            // FIXME: Race condition between the comm and shell socket threads.
+            //
+            // Send info for the next prompt to frontend. This handles
+            // custom prompts set by users, e.g. `options(prompt = ,
+            // continue = )`, as well as debugging prompts, e.g. after a
+            // call to `browser()`.
+            {
+                let event = PositronEvent::PromptState(PromptStateEvent {
+                    input_prompt: info.prompt.clone(),
+                    continuation_prompt: info.continue_prompt.clone(),
+                });
+                let kernel = self.kernel.lock().unwrap();
+                kernel.send_event(event);
+            }
+
             self.reply_execute_request(req, info.clone());
 
             // Clear active request. This doesn't matter if we return here
@@ -653,7 +668,7 @@ impl RMain {
     // Reply to the previously active request. The current prompt type and
     // whether an error has occurred defines the response kind.
     fn reply_execute_request(&self, req: &ActiveReadConsoleRequest, prompt_info: PromptInfo) {
-        let prompt = prompt_info.prompt.clone();
+        let prompt = prompt_info.prompt;
 
         let reply = if prompt_info.incomplete {
             trace!("Got prompt {} signaling incomplete request", prompt);
@@ -663,10 +678,10 @@ impl RMain {
                 "Got input request for prompt {}, waiting for reply...",
                 prompt
             );
-            new_execute_response(req.exec_count, prompt_info)
+            new_execute_response(req.exec_count)
         } else {
             trace!("Got R prompt '{}', completing execution", prompt);
-            peek_execute_response(req.exec_count, prompt_info)
+            peek_execute_response(req.exec_count)
         };
         req.response_tx.send(reply).unwrap();
     }
@@ -830,7 +845,7 @@ fn new_incomplete_response(req: &ExecuteRequest, exec_count: u32) -> ExecuteResp
 }
 
 // Gets response data from R state
-fn peek_execute_response(exec_count: u32, prompt_info: PromptInfo) -> ExecuteResponse {
+fn peek_execute_response(exec_count: u32) -> ExecuteResponse {
     let main = unsafe { R_MAIN.as_mut().unwrap() };
 
     // Save and reset error occurred flag
@@ -893,23 +908,17 @@ fn peek_execute_response(exec_count: u32, prompt_info: PromptInfo) -> ExecuteRes
                 exec_count
             ));
 
-        new_execute_response(exec_count, prompt_info)
+        new_execute_response(exec_count)
     }
 }
 
-fn new_execute_response(exec_count: u32, prompt_info: PromptInfo) -> ExecuteResponse {
+fn new_execute_response(exec_count: u32) -> ExecuteResponse {
     ExecuteResponse::Reply(ExecuteReply {
         status: Status::Ok,
         execution_count: exec_count,
         user_expressions: json!({}),
-        positron: Some(ExecuteReplyPositron {
-            input_prompt: Some(prompt_info.prompt),
-            continuation_prompt: Some(prompt_info.continue_prompt),
-            is_input_request: Some(prompt_info.user_request),
-        }),
     })
 }
-
 fn new_execute_error_response(exception: Exception, exec_count: u32) -> ExecuteResponse {
     ExecuteResponse::ReplyException(ExecuteReplyException {
         status: Status::Error,

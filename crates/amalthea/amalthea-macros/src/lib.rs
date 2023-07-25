@@ -19,6 +19,7 @@ pub fn event(attr: TokenStream, item: TokenStream) -> TokenStream {
     let generated = quote! {
 
         #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
         #original
 
         impl PositronEventType for #ident {

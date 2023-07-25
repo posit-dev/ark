@@ -175,7 +175,6 @@ impl ShellHandler for Shell {
             status: Status::Ok,
             execution_count: self.execution_count,
             user_expressions: serde_json::Value::Null,
-            positron: None,
         })
     }
 
