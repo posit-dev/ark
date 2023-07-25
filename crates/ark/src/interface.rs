@@ -22,6 +22,7 @@ use std::time::SystemTime;
 
 use amalthea::events::BusyEvent;
 use amalthea::events::PositronEvent;
+use amalthea::events::PromptStateEvent;
 use amalthea::events::ShowMessageEvent;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::exception::Exception;
@@ -271,6 +272,8 @@ struct ActiveReadConsoleRequest {
 pub struct KernelInfo {
     pub version: String,
     pub banner: String,
+    pub input_prompt: Option<String>,
+    pub continuation_prompt: Option<String>,
 }
 
 /// This struct represents the data that we wish R would pass to
@@ -278,17 +281,30 @@ pub struct KernelInfo {
 /// of prompt we are dealing with.
 #[derive(Clone)]
 pub struct PromptInfo {
-    /// The prompt string to be presented to the user
+    /// The prompt string to be presented to the user. This does not
+    /// necessarily correspond to `getOption("prompt")`, for instance in
+    /// case of a browser prompt or a readline prompt.
     prompt: String,
+
+    /// The continuation prompt string when user supplies incomplete
+    /// inputs.  This always corresponds to `getOption("continue"). We send
+    /// it to frontends along with `prompt` because some frontends such as
+    /// Positron do not send incomplete inputs to Ark and take charge of
+    /// continuation prompts themselves.
+    continue_prompt: String,
+
+    /// Whether this is a `browser()` prompt. A browser prompt can be
+    /// incomplete but is never a user request.
+    _browser: bool,
 
     /// Whether the last input didn't fully parse and R is waiting for more input
     incomplete: bool,
 
+    /// TODO: Rename to `input_request` to match Juypter terminology
     /// Whether this is a prompt from a fresh REPL iteration (browser or
     /// top level) or a prompt from some user code, e.g. via `readline()`
     user_request: bool,
 }
-// TODO: `browser` field
 
 pub enum ConsoleInput {
     EOF,
@@ -327,7 +343,7 @@ impl RMain {
     }
 
     /// Completes the kernel's initialization
-    pub fn complete_initialization(&mut self) {
+    pub fn complete_initialization(&mut self, prompt_info: &PromptInfo) {
         if self.initializing {
             let version = unsafe {
                 let version = Rf_findVarInFrame(R_BaseNamespace, r_symbol!("R.version.string"));
@@ -337,6 +353,8 @@ impl RMain {
             let kernel_info = KernelInfo {
                 version: version.clone(),
                 banner: self.banner.clone(),
+                input_prompt: Some(prompt_info.prompt.clone()),
+                continuation_prompt: Some(prompt_info.continue_prompt.clone()),
             };
 
             debug!("Sending kernel info: {}", version);
@@ -429,7 +447,7 @@ impl RMain {
         debug!("R prompt: {}", info.prompt);
 
         INIT_KERNEL.call_once(|| {
-            self.complete_initialization();
+            self.complete_initialization(&info);
 
             trace!(
                 "Got initial R prompt '{}', ready for execution requests",
@@ -463,6 +481,21 @@ impl RMain {
             // in the console are displayed out of order.
             if info.user_request {
                 self.request_input(req, info.prompt.to_string());
+            }
+
+            // FIXME: Race condition between the comm and shell socket threads.
+            //
+            // Send info for the next prompt to frontend. This handles
+            // custom prompts set by users, e.g. `options(prompt = ,
+            // continue = )`, as well as debugging prompts, e.g. after a
+            // call to `browser()`.
+            {
+                let event = PositronEvent::PromptState(PromptStateEvent {
+                    input_prompt: info.prompt.clone(),
+                    continuation_prompt: info.continue_prompt.clone(),
+                });
+                let kernel = self.kernel.lock().unwrap();
+                kernel.send_event(event);
             }
 
             self.reply_execute_request(req, info.clone());
@@ -567,8 +600,15 @@ impl RMain {
         let prompt_slice = unsafe { CStr::from_ptr(prompt_c) };
         let prompt = prompt_slice.to_string_lossy().into_owned();
 
-        // TODO: Detect with `env_is_browsed(sys.frame(sys.nframe()))`
-        let browser = false;
+        // Detect browser prompts by inspecting the `RDEBUG` flag of the
+        // last frame on the stack. This is not 100% infallible, for
+        // instance `debug(readline)` followed by `n` will instantiate a
+        // user request prompt that will look like a browser prompt
+        // according to this heuristic. However it has the advantage of
+        // correctly detecting that continue prompts are top-level browser
+        // prompts in case of incomplete inputs within `browser()`.
+        let frame = harp::session::r_sys_frame(n_frame).unwrap();
+        let browser = harp::session::r_env_is_browsed(frame).unwrap();
 
         // If there are frames on the stack and we're not in a browser prompt,
         // this means some user code is requesting input, e.g. via `readline()`
@@ -587,6 +627,8 @@ impl RMain {
 
         return PromptInfo {
             prompt,
+            continue_prompt,
+            _browser: browser,
             incomplete,
             user_request,
         };

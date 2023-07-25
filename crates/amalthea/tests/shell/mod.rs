@@ -83,6 +83,7 @@ impl ShellHandler for Shell {
             pygments_lexer: String::new(),
             codemirror_mode: String::new(),
             nbconvert_exporter: String::new(),
+            positron: None,
         };
         Ok(KernelInfoReply {
             status: Status::Ok,
