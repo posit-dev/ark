@@ -14,11 +14,67 @@
 }
 
 ensure_directory <- function(path) {
-    dir.create(path, showWarnings = FALSE, recursive = TRUE)
+    exists <- dir.exists(path)
+
+    if (all(exists)) {
+        # Nothing to do if they all exist
+        return(invisible())
+    }
+
+    path <- path[!exists]
+
+    # Try to create missing ones (`dir.create()` isn't vectorized)
+    for (elt in path) {
+        dir.create(elt, showWarnings = FALSE, recursive = TRUE)
+    }
+
+    exists <- dir.exists(path)
+
+    if (all(exists)) {
+        # Nothing left to do if the missing ones were successfully created
+        return(invisible())
+    }
+
+    path <- path[!exists]
+    path <- encodeString(path, quote = "\"")
+    path <- paste0(path, collapse = ", ")
+
+    stop("Can't create the directory at: ", path, call. = FALSE)
 }
 
 ensure_parent_directory <- function(path) {
     ensure_directory(dirname(path))
+}
+
+ensure_file <- function(path) {
+    exists <- file.exists(path)
+
+    if (all(exists)) {
+        # All files exist already, nothing to do
+        return(invisible())
+    }
+
+    path <- path[!exists]
+
+    # Create parent directories as needed
+    ensure_parent_directory(path)
+
+    # Try to create the missing files
+    file.create(path, showWarnings = FALSE)
+
+    exists <- file.exists(path)
+
+    if (all(exists)) {
+        # We successfully created the new files and can detect
+        # their existance
+        return(invisible())
+    }
+
+    path <- path[!exists]
+    path <- encodeString(path, quote = "\"")
+    path <- paste0(path, collapse = ", ")
+
+    stop("Can't create the files at: ", path, call. = FALSE)
 }
 
 # Checks if a package is installed without loading it.
