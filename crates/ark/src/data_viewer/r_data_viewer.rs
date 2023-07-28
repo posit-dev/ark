@@ -5,6 +5,7 @@
 //
 //
 
+use amalthea::comm::comm_channel::CommChannelMsg;
 use amalthea::comm::event::CommEvent;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
@@ -34,17 +35,24 @@ use libR_sys::XLENGTH;
 use serde::Deserialize;
 use serde::Serialize;
 use stdext::local;
+use stdext::result::ResultOrLog;
 use stdext::spawn;
+use stdext::unwrap;
 use uuid::Uuid;
 
+use crate::data_viewer::message::DataViewerMessageRequest;
+use crate::data_viewer::message::DataViewerMessageResponse;
+use crate::data_viewer::message::DataViewerRowRequest;
+use crate::data_viewer::message::DataViewerRowResponse;
+
 pub struct RDataViewer {
-    pub id: String,
-    pub title: String,
-    pub data: RObject,
-    pub comm_manager_tx: Sender<CommEvent>,
+    title: String,
+    dataset: DataSet,
+    comm: CommSocket,
+    comm_manager_tx: Sender<CommEvent>,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct DataColumn {
     pub name: String,
 
@@ -54,7 +62,13 @@ pub struct DataColumn {
     pub data: Vec<String>,
 }
 
-#[derive(Deserialize, Serialize)]
+impl DataColumn {
+    fn slice(&self, start: usize, size: usize) -> Vec<String> {
+        self.data[start..start + size].to_vec()
+    }
+}
+
+#[derive(Deserialize, Serialize, Debug)]
 pub struct DataSet {
     pub id: String,
     pub title: String,
@@ -62,6 +76,11 @@ pub struct DataSet {
 
     #[serde(rename = "rowCount")]
     pub row_count: usize,
+}
+
+#[derive(Deserialize, Serialize)]
+struct Metadata {
+    title: String,
 }
 
 struct ColumnNames {
@@ -200,16 +219,51 @@ impl DataSet {
             })
         }
     }
+
+    fn slice_data(&self, start: usize, size: usize) -> Result<Vec<DataColumn>, anyhow::Error> {
+        const ZERO: usize = 0;
+        if (start < ZERO) || (start >= self.row_count) {
+            bail!("Invalid start row: {start}");
+        } else if (start == ZERO) && (self.row_count <= size) {
+            // No need to slice the data
+            Ok(self.columns.clone())
+        } else {
+            let mut sliced_columns: Vec<DataColumn> = Vec::with_capacity(self.columns.len());
+            for column in self.columns.iter() {
+                sliced_columns.push(DataColumn {
+                    name: column.name.clone(),
+                    column_type: column.column_type.clone(),
+                    data: column.slice(start, size),
+                })
+            }
+            Ok(sliced_columns)
+        }
+    }
 }
 
 impl RDataViewer {
     pub fn start(title: String, data: RObject, comm_manager_tx: Sender<CommEvent>) {
         let id = Uuid::new_v4().to_string();
+
+        let comm = CommSocket::new(
+            CommInitiator::BackEnd,
+            id.clone(),
+            String::from("positron.dataViewer"),
+        );
+
+        // TODO: Don't preemptively format the full data set up front
+        let dataset = unwrap!(
+            DataSet::from_object(id.clone(), title.clone(), data), Err(error) => {
+                log::error!("Data Viewer: Error while converting object to DataSet: {error}");
+                return;
+            }
+        );
+
         spawn!(format!("ark-data-viewer-{}-{}", title, id), move || {
             let viewer = Self {
-                id,
-                title: title.clone(),
-                data,
+                title,
+                dataset,
+                comm,
                 comm_manager_tx,
             };
             viewer.execution_thread();
@@ -218,26 +272,135 @@ impl RDataViewer {
 
     pub fn execution_thread(self) {
         let execute: Result<(), anyhow::Error> = local! {
-            // This is a simplistic version where all the data is converted as once to
-            // a message that is included in initial event of the comm.
-            let data_set = DataSet::from_object(self.id.clone(), self.title.clone(), self.data)?;
-            let json = serde_json::to_value(data_set)?;
-
+            let metadata = Metadata {
+                title: self.title.clone(),
+            };
+            let comm_open_json = serde_json::to_value(metadata)?;
             // Notify frontend that the data viewer comm is open
-            let comm = CommSocket::new(
-                CommInitiator::BackEnd,
-                self.id.clone(),
-                String::from("positron.dataViewer"),
-            );
-
-            let event = CommEvent::Opened(comm, json);
+            let event = CommEvent::Opened(self.comm.clone(), comm_open_json);
             self.comm_manager_tx.send(event)?;
-
             Ok(())
         };
 
         if let Err(error) = execute {
             log::error!("Error while viewing object '{}': {}", self.title, error);
+        };
+
+        // Flag initially set to false, but set to true if the user closes the
+        // channel (i.e. the front end is closed)
+        let mut user_initiated_close = false;
+
+        // Set up event loop to listen for incoming messages from the frontend
+        loop {
+            let msg = unwrap!(self.comm.incoming_rx.recv(), Err(e) => {
+                log::error!("Data Viewer: Error while receiving message from frontend: {e:?}");
+                break;
+            });
+            log::debug!("Data Viewer: Received message from front end: {msg:?}");
+
+            // Break out of the loop if the frontend has closed the channel
+            if msg == CommChannelMsg::Close {
+                log::debug!("Data Viewer: Closing down after receiving comm_close from front end.");
+                user_initiated_close = true;
+                break;
+            }
+
+            // Process ordinary data messages
+            if let CommChannelMsg::Rpc(id, data) = msg {
+                let message = unwrap!(serde_json::from_value(data), Err(error) => {
+                    log::error!("Data Viewer: Received invalid message from front end. {error}");
+                    continue;
+                });
+
+                // Match on the type of message received
+                match message {
+                    DataViewerMessageRequest::Ready(DataViewerRowRequest {
+                        start_row,
+                        fetch_size,
+                    }) => {
+                        // Send the initial data (from 0 to fetch_size)
+                        let message = unwrap!(
+                            self.construct_response_message(start_row, fetch_size, true), Err(error) => {
+                            log::error!("{error}");
+                            break;
+                        });
+                        self.send_message(message, Some(id));
+                    },
+
+                    DataViewerMessageRequest::RequestRows(DataViewerRowRequest {
+                        start_row,
+                        fetch_size,
+                    }) => {
+                        // Send some additional data (from start_row to start_row + fetch_size)
+                        let message = unwrap!(
+                            self.construct_response_message(start_row, fetch_size, false), Err(error) => {
+                            log::error!("{error}");
+                            break;
+                        });
+                        self.send_message(message, Some(id));
+                    },
+                }
+            }
         }
+
+        if !user_initiated_close {
+            // Send a close message to the front end if the front end didn't
+            // initiate the close
+            self.comm
+                .outgoing_tx
+                .send(CommChannelMsg::Close)
+                .or_log_error("Data Viewer: Failed to properly close the comm");
+        }
+    }
+
+    fn construct_response_message(
+        &self,
+        start_row: usize,
+        fetch_size: usize,
+        initial: bool,
+    ) -> Result<DataViewerMessageResponse, anyhow::Error> {
+        let sliced_columns = unwrap!(self.dataset.slice_data(start_row, fetch_size), Err(e) => {
+            if initial {
+                bail!("Data Viewer: Failed to slice initial data: {e}");
+            } else {
+                bail!("Data Viewer: Failed to slice additional data at row {start_row}: {e}")
+            }
+        });
+
+        let response_dataset = DataSet {
+            id: self.dataset.id.clone(),
+            title: self.title.clone(),
+            columns: sliced_columns,
+            row_count: self.dataset.row_count,
+        };
+
+        let response = DataViewerRowResponse {
+            start_row,
+            fetch_size,
+            data: response_dataset,
+        };
+
+        let response = if initial {
+            DataViewerMessageResponse::InitialData(response)
+        } else {
+            DataViewerMessageResponse::ReceiveRows(response)
+        };
+        Ok(response)
+    }
+
+    fn send_message(&self, message: DataViewerMessageResponse, request_id: Option<String>) {
+        let message = unwrap!(serde_json::to_value(message), Err(err) => {
+            log::error!("Data Viewer: Failed to serialize data viewer data: {}", err);
+            return;
+        });
+
+        let comm_msg = match request_id {
+            Some(id) => CommChannelMsg::Rpc(id, message),
+            None => CommChannelMsg::Data(message),
+        };
+        self.comm
+            .outgoing_tx
+            .send(comm_msg)
+            .or_log_error("Data Viewer: Failed to send message {message}");
     }
 }
