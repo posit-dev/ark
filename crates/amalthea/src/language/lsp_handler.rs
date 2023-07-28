@@ -6,6 +6,7 @@
  */
 
 use async_trait::async_trait;
+use crossbeam::channel::Sender;
 
 use crate::error::Error;
 
@@ -15,5 +16,5 @@ use crate::error::Error;
 #[async_trait]
 pub trait LspHandler: Send {
     /// Starts the LSP server and binds it to the given TCP address.
-    fn start(&mut self, tcp_address: String) -> Result<(), Error>;
+    fn start(&mut self, tcp_address: String, conn_init_tx: Sender<bool>) -> Result<(), Error>;
 }

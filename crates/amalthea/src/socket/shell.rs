@@ -15,6 +15,8 @@ use futures::executor::block_on;
 use log::debug;
 use log::trace;
 use log::warn;
+use serde_json::json;
+use stdext::result::ResultOrLog;
 
 use crate::comm::comm_channel::Comm;
 use crate::comm::comm_channel::CommChannelMsg;
@@ -404,7 +406,12 @@ impl Shell {
         let comm_id = req.content.comm_id.clone();
         let comm_name = req.content.target_name.clone();
         let comm_data = req.content.data.clone();
-        let comm_socket = CommSocket::new(CommInitiator::FrontEnd, comm_id, comm_name.clone());
+        let comm_socket =
+            CommSocket::new(CommInitiator::FrontEnd, comm_id.clone(), comm_name.clone());
+
+        // Optional notification channel used by server comms to indicate
+        // they are ready to accept connections
+        let mut conn_init_rx: Option<Receiver<bool>> = None;
 
         // Create a routine to send messages to the front end over the IOPub
         // channel. This routine will be passed to the comm channel so it can
@@ -415,6 +422,9 @@ impl Shell {
             // If this is the special LSP comm, start the LSP server and create
             // a comm that wraps it
             Comm::Lsp => {
+                let (init_tx, init_rx) = crossbeam::channel::bounded::<bool>(1);
+                conn_init_rx = Some(init_rx);
+
                 if let Some(handler) = self.lsp_handler.clone() {
                     // Parse the data parameter to a StartLsp message. This is a
                     // message from the front end that contains the information
@@ -432,7 +442,7 @@ impl Shell {
                     // Create the new comm wrapper channel for the LSP and start
                     // the LSP server in a separate thread
                     let lsp_comm = LspComm::new(handler, comm_socket.outgoing_tx.clone());
-                    lsp_comm.start(&start_lsp)?;
+                    lsp_comm.start(&start_lsp, init_tx)?;
                     true
                 } else {
                     // If we don't have an LSP handler, return an error
@@ -476,14 +486,27 @@ impl Shell {
         if opened {
             // Send a notification to the comm message listener thread that a new
             // comm has been opened
-            if let Err(err) = self
-                .comm_manager_tx
+            self.comm_manager_tx
                 .send(CommEvent::Opened(comm_socket.clone(), comm_data))
-            {
-                warn!(
-                    "Failed to send '{}' comm open notification to listener thread: {}",
-                    comm_socket.comm_name, err
-                );
+                .or_log_warning(&format!(
+                    "Failed to send '{}' comm open notification to listener thread",
+                    comm_socket.comm_name
+                ));
+
+            // If the comm wraps a server, send notification once the
+            // server is ready to accept connections
+            if let Some(rx) = conn_init_rx {
+                let _ = rx.recv();
+                comm_socket
+                    .outgoing_tx
+                    .send(CommChannelMsg::Data(json!({
+                        "msg_type": "server_started",
+                        "content": {}
+                    })))
+                    .or_log_warning(&format!(
+                        "Failed to send '{}' comm init notification to frontend comm",
+                        comm_socket.comm_name
+                    ));
             }
         } else {
             // If the comm was not opened, return an error to the caller
