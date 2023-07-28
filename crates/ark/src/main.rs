@@ -31,7 +31,7 @@ use nix::sys::signal::*;
 use notify::Watcher;
 use stdext::unwrap;
 
-fn start_kernel(connection_file: ConnectionFile, capture_streams: bool) {
+fn start_kernel(connection_file: ConnectionFile, r_args: Vec<String>, capture_streams: bool) {
     // Create a new kernel from the connection file
     let mut kernel = match Kernel::new("ark", connection_file) {
         Ok(k) => k,
@@ -76,6 +76,7 @@ fn start_kernel(connection_file: ConnectionFile, capture_streams: bool) {
     // Create the shell.
     let kernel_init_rx = kernel_init_tx.add_rx();
     let shell = Shell::new(
+        r_args,
         kernel.create_comm_manager_tx(),
         iopub_tx,
         r_request_tx.clone(),
@@ -167,7 +168,7 @@ fn install_kernel_spec() {
     );
 }
 
-fn parse_file(connection_file: &String, capture_streams: bool) {
+fn parse_file(connection_file: &String, r_args: Vec<String>, capture_streams: bool) {
     match ConnectionFile::from_file(connection_file) {
         Ok(connection) => {
             info!(
@@ -175,7 +176,7 @@ fn parse_file(connection_file: &String, capture_streams: bool) {
                 connection_file
             );
             debug!("Connection data: {:?}", connection);
-            start_kernel(connection, capture_streams);
+            start_kernel(connection, r_args, capture_streams);
         },
         Err(error) => {
             error!(
@@ -196,6 +197,8 @@ Available options:
 
 --connection_file FILE   Start the kernel with the given JSON connection file
                          (see the Jupyter kernel documentation for details)
+-- arg1 arg2 ...         Set the argument list to pass to R; defaults to
+                         --interactive
 --no-capture-streams     Do not capture stdout/stderr from R
 --version                Print the version of Ark
 --log FILE               Log to the given file (if not specified, stdout/stderr
@@ -232,6 +235,7 @@ fn main() {
     let mut log_file: Option<String> = None;
     let mut startup_notifier_file: Option<String> = None;
     let mut startup_delay: Option<std::time::Duration> = None;
+    let mut r_args: Vec<String> = Vec::new();
     let mut has_action = false;
     let mut capture_streams = true;
 
@@ -294,6 +298,13 @@ fn main() {
                     );
                     break;
                 }
+            },
+            "--" => {
+                // Consume the rest of the arguments for passthrough delivery to R
+                while let Some(arg) = argv.next() {
+                    r_args.push(arg);
+                }
+                break;
             },
             other => {
                 eprintln!("Argument '{}' unknown", other);
@@ -358,8 +369,14 @@ fn main() {
     // Initialize harp.
     harp::initialize();
 
+    // If the r_args vector is empty, add `--interactive` to the list of
+    // arguments to pass to R.
+    if r_args.is_empty() {
+        r_args.push(String::from("--interactive"));
+    }
+
     // Parse the connection file and start the kernel
     if let Some(connection) = connection_file {
-        parse_file(&connection, capture_streams);
+        parse_file(&connection, r_args, capture_streams);
     }
 }

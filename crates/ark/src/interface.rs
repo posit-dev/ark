@@ -137,6 +137,7 @@ pub static mut R_MAIN: Option<RMain> = None;
 
 /// Starts the main R thread. Doesn't return.
 pub fn start_r(
+    r_args: Vec<String>,
     kernel_mutex: Arc<Mutex<Kernel>>,
     r_request_rx: Receiver<RRequest>,
     input_request_tx: Sender<ShellInputRequest>,
@@ -155,7 +156,14 @@ pub fn start_r(
     });
 
     unsafe {
-        let mut args = cargs!["ark", "--interactive"];
+        // Build the argument list from the command line arguments. The default
+        // list is `--interactive` unless altered with the `--` passthrough
+        // argument.
+        let mut args = cargs!["ark"];
+        for arg in r_args {
+            args.push(CString::new(arg).unwrap().into_raw());
+        }
+
         R_running_as_main_program = 1;
         R_SignalHandlers = 0;
         Rf_initialize_R(args.len() as i32, args.as_mut_ptr() as *mut *mut c_char);
