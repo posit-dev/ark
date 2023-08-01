@@ -96,6 +96,7 @@ dependencies = [
  "chrono",
  "crossbeam",
  "ctor",
+ "dap",
  "dashmap",
  "ego-tree",
  "harp",
@@ -466,6 +467,17 @@ checksum = "6d2301688392eb071b0bf1a37be05c469d3cc4dbbd95df672fe28ab021e6a096"
 dependencies = [
  "quote",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "dap"
+version = "0.3.1-alpha1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "99e0a43536a4f3f09c1d8ff2da64fa94575a07fa6024e9ccc627b0e84254ab08"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]

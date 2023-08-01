@@ -64,6 +64,7 @@ use serde_json::json;
 use stdext::result::ResultOrLog;
 use stdext::*;
 
+use crate::dap::Dap;
 use crate::errors;
 use crate::help_proxy;
 use crate::kernel::Kernel;
@@ -145,6 +146,7 @@ pub fn start_r(
     input_request_tx: Sender<ShellInputRequest>,
     iopub_tx: Sender<IOPubMessage>,
     kernel_init_tx: Bus<KernelInfo>,
+    dap: Arc<Mutex<Dap>>,
 ) {
     // Initialize global state (ensure we only do this once!)
     INIT.call_once(|| unsafe {
@@ -154,6 +156,7 @@ pub fn start_r(
             input_request_tx,
             iopub_tx,
             kernel_init_tx,
+            dap,
         ));
     });
 
@@ -271,6 +274,8 @@ pub struct RMain {
     pub error_occurred: bool,
     pub error_message: String, // `evalue` in the Jupyter protocol
     pub error_traceback: Vec<String>,
+
+    dap: Arc<Mutex<Dap>>,
 }
 
 /// Represents the currently active execution request from the frontend. It
@@ -310,7 +315,7 @@ pub struct PromptInfo {
 
     /// Whether this is a `browser()` prompt. A browser prompt can be
     /// incomplete but is never a user request.
-    _browser: bool,
+    browser: bool,
 
     /// Whether the last input didn't fully parse and R is waiting for more input
     incomplete: bool,
@@ -332,6 +337,7 @@ impl RMain {
         input_request_tx: Sender<ShellInputRequest>,
         iopub_tx: Sender<IOPubMessage>,
         kernel_init_tx: Bus<KernelInfo>,
+        dap: Arc<Mutex<Dap>>,
     ) -> Self {
         // The main thread owns the R runtime lock by default, but releases
         // it when appropriate to give other threads a chance to execute.
@@ -353,6 +359,7 @@ impl RMain {
             error_occurred: false,
             error_message: String::new(),
             error_traceback: Vec::new(),
+            dap,
         }
     }
 
@@ -524,6 +531,12 @@ impl RMain {
         // Signal prompt
         EVENTS.console_prompt.emit(());
 
+        if info.browser {
+            // TODO: Send stacktrace with srcref info to DAP.
+            let dap = self.dap.lock().unwrap();
+            dap.start_debug();
+        }
+
         // Match with a timeout. Necessary because we need to
         // pump the event loop while waiting for console input.
         //
@@ -642,7 +655,7 @@ impl RMain {
         return PromptInfo {
             input_prompt: prompt,
             continuation_prompt,
-            _browser: browser,
+            browser,
             incomplete,
             input_request: user_request,
         };

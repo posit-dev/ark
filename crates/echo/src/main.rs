@@ -42,7 +42,15 @@ fn start_kernel(connection_file: ConnectionFile) {
     let shell = Arc::new(Mutex::new(Shell::new(shell_tx, input_tx)));
     let control = Arc::new(Mutex::new(Control {}));
 
-    match kernel.connect(shell, control, None, StreamBehavior::None, input_rx, None) {
+    match kernel.connect(
+        shell,
+        control,
+        None,
+        None,
+        StreamBehavior::None,
+        input_rx,
+        None,
+    ) {
         Ok(()) => {
             let mut s = String::new();
             println!("Kernel activated, press Ctrl+C to end ");

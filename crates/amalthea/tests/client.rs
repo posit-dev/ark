@@ -59,7 +59,15 @@ fn test_kernel() {
 
     // Create the thread that will run the Amalthea kernel
     thread::spawn(move || {
-        match kernel.connect(shell, control, None, StreamBehavior::None, input_rx, None) {
+        match kernel.connect(
+            shell,
+            control,
+            None,
+            None,
+            StreamBehavior::None,
+            input_rx,
+            None,
+        ) {
             Ok(_) => {
                 info!("Kernel connection initiated");
             },

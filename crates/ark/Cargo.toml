@@ -16,6 +16,7 @@ bus = "2.3.0"
 chrono = "0.4.23"
 crossbeam = { version = "0.8.2", features = ["crossbeam-channel"] }
 ctor = "0.1.26"
+dap = "0.3.1-alpha1"
 dashmap = "5.4.0"
 ego-tree = "0.6.2"
 harp = { path = "../harp" }

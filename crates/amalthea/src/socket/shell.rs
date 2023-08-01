@@ -21,11 +21,14 @@ use stdext::result::ResultOrLog;
 
 use crate::comm::comm_channel::Comm;
 use crate::comm::comm_channel::CommChannelMsg;
+use crate::comm::dap_comm::DapComm;
+use crate::comm::dap_comm::StartDap;
 use crate::comm::event::CommChanged;
 use crate::comm::event::CommEvent;
 use crate::comm::lsp_comm::LspComm;
 use crate::comm::lsp_comm::StartLsp;
 use crate::error::Error;
+use crate::language::dap_handler::DapHandler;
 use crate::language::lsp_handler::LspHandler;
 use crate::language::shell_handler::ShellHandler;
 use crate::socket::comm::CommInitiator;
@@ -70,6 +73,9 @@ pub struct Shell {
     /// Language-provided LSP handler object
     lsp_handler: Option<Arc<Mutex<dyn LspHandler>>>,
 
+    /// Language-provided DAP handler object
+    dap_handler: Option<Arc<Mutex<dyn DapHandler>>>,
+
     /// Set of open comm channels; vector of (comm_id, target_name)
     open_comms: Vec<(String, String)>,
 
@@ -96,12 +102,14 @@ impl Shell {
         comm_changed_rx: Receiver<CommChanged>,
         shell_handler: Arc<Mutex<dyn ShellHandler>>,
         lsp_handler: Option<Arc<Mutex<dyn LspHandler>>>,
+        dap_handler: Option<Arc<Mutex<dyn DapHandler>>>,
     ) -> Self {
         Self {
             socket,
             iopub_tx,
             shell_handler,
             lsp_handler,
+            dap_handler,
             open_comms: Vec::new(),
             comm_manager_tx,
             comm_manager_rx: comm_changed_rx,
@@ -420,6 +428,22 @@ impl Shell {
         // internal ID or a reference to the IOPub channel.
 
         let opened = match comm {
+            Comm::Dap => {
+                if let Some(handler) = self.dap_handler.clone() {
+                    // Parse the message as server address
+                    let start_dap: StartDap = Self::req_server_address(&req, data_str)?;
+
+                    let dap_comm = DapComm::new(handler, comm_socket.outgoing_tx.clone());
+                    dap_comm.start(&start_dap)?;
+                    true
+                } else {
+                    // If we don't have an DAP handler, return an error
+                    warn!(
+                        "Client attempted to start DAP, but no DAP handler was provided by kernel."
+                    );
+                    return Err(Error::UnknownCommName(req.content.target_name.clone()));
+                }
+            },
             // If this is the special LSP comm, start the LSP server and create
             // a comm that wraps it
             Comm::Lsp => {
@@ -444,9 +468,9 @@ impl Shell {
                 }
             },
             _ => {
-                // Only the LSP comm is handled by the Amalthea kernel framework
-                // itself; all other comms are passed through to the shell
-                // handler.
+                // Only the LSP and DAP comms are handled by the Amalthea
+                // kernel framework itself; all other comms are passed
+                // through to the shell handler.
                 //
                 // Lock the shell handler object on this thread.
                 let handler = self.shell_handler.lock().unwrap();
