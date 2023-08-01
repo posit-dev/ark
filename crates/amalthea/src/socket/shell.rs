@@ -15,6 +15,7 @@ use futures::executor::block_on;
 use log::debug;
 use log::trace;
 use log::warn;
+use serde::de::DeserializeOwned;
 use serde_json::json;
 use stdext::result::ResultOrLog;
 
@@ -426,18 +427,8 @@ impl Shell {
                 conn_init_rx = Some(init_rx);
 
                 if let Some(handler) = self.lsp_handler.clone() {
-                    // Parse the data parameter to a StartLsp message. This is a
-                    // message from the front end that contains the information
-                    // about the client side of the LSP; specifically, the
-                    // address to bind to.
-                    let start_lsp: StartLsp = serde_json::from_value(req.content.data.clone())
-                        .map_err(|err| {
-                            Error::InvalidCommMessage(
-                                req.content.target_name.clone(),
-                                data_str,
-                                err.to_string(),
-                            )
-                        })?;
+                    // Parse the message as server address
+                    let start_lsp: StartLsp = Self::req_server_address(&req, data_str)?;
 
                     // Create the new comm wrapper channel for the LSP and start
                     // the LSP server in a separate thread
@@ -514,6 +505,18 @@ impl Shell {
         }
 
         Ok(())
+    }
+
+    // Parse the data parameter of a request to a server address
+    // message. This is a message from the front end that contains the
+    // the address that the client expects the server comm to bind to.
+    fn req_server_address<T>(req: &JupyterMessage<CommOpen>, data_str: String) -> Result<T, Error>
+    where
+        T: DeserializeOwned,
+    {
+        serde_json::from_value::<T>(req.content.data.clone()).map_err(|err| {
+            Error::InvalidCommMessage(req.content.target_name.clone(), data_str, err.to_string())
+        })
     }
 
     /// Handle a request to close a comm
