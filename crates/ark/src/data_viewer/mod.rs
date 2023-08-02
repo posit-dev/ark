@@ -6,3 +6,4 @@
 //
 
 pub mod r_data_viewer;
+pub mod message;
