@@ -7,7 +7,7 @@
 
 use std::fmt::Display;
 
-pub trait ResultOrLog<E> {
+pub trait ResultOrLog<T, E> {
     /// If `self` is an error, log an error, else do nothing and consume self.
     fn or_log_error(self, prefix: &str);
 
@@ -20,7 +20,7 @@ pub trait ResultOrLog<E> {
 
 // Implemented for "empty" results that never contain values,
 // but may contain errors
-impl<E> ResultOrLog<E> for Result<(), E>
+impl<T, E> ResultOrLog<T, E> for Result<T, E>
 where
     E: Display,
 {

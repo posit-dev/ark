@@ -16,5 +16,10 @@ use crate::{comm::comm_channel::CommChannelMsg, error::Error};
 #[async_trait]
 pub trait DapHandler: Send {
     /// Starts the DAP server and binds it to the given TCP address.
-    fn start(&mut self, tcp_address: String, comm_tx: Sender<CommChannelMsg>) -> Result<(), Error>;
+    fn start(
+        &mut self,
+        tcp_address: String,
+        conn_init_tx: Sender<bool>,
+        comm_tx: Sender<CommChannelMsg>,
+    ) -> Result<(), Error>;
 }

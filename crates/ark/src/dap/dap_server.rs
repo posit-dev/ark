@@ -9,18 +9,25 @@ use std::io::{BufReader, BufWriter, Read, Write};
 use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
 
+use crossbeam::channel::Sender;
 use dap::events::*;
 use dap::prelude::*;
 use dap::requests::*;
 use dap::responses::*;
 use dap::types::*;
+use stdext::result::ResultOrLog;
 
 use super::dap::DapState;
 
-pub fn start_dap(tcp_address: String, state: Arc<Mutex<DapState>>) {
+pub fn start_dap(tcp_address: String, state: Arc<Mutex<DapState>>, conn_init_tx: Sender<bool>) {
     log::trace!("DAP: Thread starting at address {}.", tcp_address);
 
     let listener = TcpListener::bind(tcp_address).unwrap();
+
+    conn_init_tx
+        .send(true)
+        .or_log_error("DAP: Can't send init notification");
+
     let stream = match listener.accept() {
         Ok((stream, addr)) => {
             log::info!("DAP: Connected to client {addr:?}");

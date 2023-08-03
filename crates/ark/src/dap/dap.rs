@@ -87,6 +87,7 @@ impl DapHandler for Dap {
     fn start(
         &mut self,
         tcp_address: String,
+        conn_init_tx: Sender<bool>,
         comm_tx: Sender<CommChannelMsg>,
     ) -> Result<(), amalthea::error::Error> {
         log::info!("DAP: Spawning thread");
@@ -97,7 +98,7 @@ impl DapHandler for Dap {
         // connect to the DAP without a Jupyter comm.
         let state_clone = self.state.clone();
         spawn!("ark-dap", move || {
-            dap_server::start_dap(tcp_address, state_clone)
+            dap_server::start_dap(tcp_address, state_clone, conn_init_tx)
         });
 
         // If `start()` is called we are now connected to a frontend

@@ -39,10 +39,14 @@ impl DapComm {
         DapComm { handler, msg_tx }
     }
 
-    pub fn start(&self, data: &StartDap) -> Result<(), Error> {
+    pub fn start(&self, data: &StartDap, conn_init_tx: Sender<bool>) -> Result<(), Error> {
         let mut handler = self.handler.lock().unwrap();
         handler
-            .start(data.client_address.clone(), self.msg_tx.clone())
+            .start(
+                data.client_address.clone(),
+                conn_init_tx,
+                self.msg_tx.clone(),
+            )
             .unwrap();
         Ok(())
     }

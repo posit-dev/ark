@@ -430,11 +430,14 @@ impl Shell {
         let opened = match comm {
             Comm::Dap => {
                 if let Some(handler) = self.dap_handler.clone() {
+                    let (init_tx, init_rx) = crossbeam::channel::bounded::<bool>(1);
+                    conn_init_rx = Some(init_rx);
+
                     // Parse the message as server address
                     let start_dap: StartDap = Self::req_server_address(&req, data_str)?;
 
                     let dap_comm = DapComm::new(handler, comm_socket.outgoing_tx.clone());
-                    dap_comm.start(&start_dap)?;
+                    dap_comm.start(&start_dap, init_tx)?;
                     true
                 } else {
                     // If we don't have an DAP handler, return an error
@@ -511,7 +514,9 @@ impl Shell {
             // If the comm wraps a server, send notification once the
             // server is ready to accept connections
             if let Some(rx) = conn_init_rx {
-                let _ = rx.recv();
+                rx.recv()
+                    .or_log_warning("Expected notification for server comm init");
+
                 comm_socket
                     .outgoing_tx
                     .send(CommChannelMsg::Data(json!({
