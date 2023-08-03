@@ -5,6 +5,8 @@
 //
 //
 
+use std::sync::{Arc, Mutex};
+
 use amalthea::{comm::comm_channel::CommChannelMsg, language::dap_handler::DapHandler};
 use crossbeam::channel::Sender;
 use serde_json::json;
@@ -13,30 +15,59 @@ use stdext::spawn;
 use crate::dap::dap_server;
 
 pub struct Dap {
-    running: bool,
+    /// State shared with the DAP server thread.
+    state: Arc<Mutex<DapState>>,
+
+    /// Channel for sending events to frontend.
     comm_tx: Option<Sender<CommChannelMsg>>,
+
+    /// Whether we are connected to the frontend.
+    connected: bool,
+}
+
+pub struct DapState {
+    /// Whether the REPL is stopped with a browser prompt.
+    pub debugging: bool,
+}
+
+impl DapState {
+    pub fn new() -> Self {
+        Self { debugging: false }
+    }
 }
 
 impl Dap {
     pub fn new() -> Self {
         Self {
-            running: false,
+            state: Arc::new(Mutex::new(DapState::new())),
             comm_tx: None,
+            connected: false,
         }
     }
 
     pub fn start_debug(&self) {
-        // FIXME: Should this be a `prompt_debug` event? We are not
-        // necessarily starting to debug, we just want to let the frontend
-        // know we are running in debug mode on the backend side.
-        if let Some(tx) = &self.comm_tx {
-            log::info!("DAP: Sending `start_debug` event");
-            let msg = CommChannelMsg::Data(json!({
-                "msg_type": "start_debug",
-                "content": {}
-            }));
-            tx.send(msg).unwrap();
+        let mut state = self.state.lock().unwrap();
+
+        if !state.debugging {
+            // FIXME: Should this be a `prompt_debug` event? We are not
+            // necessarily starting to debug, we just want to let the frontend
+            // know we are running in debug mode on the backend side.
+            if let Some(tx) = &self.comm_tx {
+                log::info!("DAP: Sending `start_debug` event");
+                let msg = CommChannelMsg::Data(json!({
+                    "msg_type": "start_debug",
+                    "content": {}
+                }));
+                tx.send(msg).unwrap();
+            }
+
+            state.debugging = true;
         }
+    }
+
+    pub fn stop_debug(&self) {
+        let mut state = self.state.lock().unwrap();
+        state.debugging = false;
     }
 }
 
@@ -53,10 +84,15 @@ impl DapHandler for Dap {
         // server when connected. This is currently the only way to create
         // this thread but in the future we might provide other ways to
         // connect to the DAP without a Jupyter comm.
-        spawn!("ark-dap", move || { dap_server::start_dap(tcp_address) });
+        let state_clone = self.state.clone();
+        spawn!("ark-dap", move || {
+            dap_server::start_dap(tcp_address, state_clone)
+        });
 
-        self.running = true;
+        // If `start()` is called we are now connected to a frontend
         self.comm_tx = Some(comm_tx);
+        self.connected = true;
+
         return Ok(());
     }
 }

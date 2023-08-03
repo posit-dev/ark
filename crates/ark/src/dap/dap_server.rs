@@ -7,6 +7,7 @@
 
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::net::TcpListener;
+use std::sync::{Arc, Mutex};
 
 use dap::events::*;
 use dap::prelude::*;
@@ -14,7 +15,9 @@ use dap::requests::*;
 use dap::responses::*;
 use dap::types::*;
 
-pub fn start_dap(tcp_address: String) {
+use super::dap::DapState;
+
+pub fn start_dap(tcp_address: String, state: Arc<Mutex<DapState>>) {
     log::trace!("DAP: Thread starting at address {}.", tcp_address);
 
     let listener = TcpListener::bind(tcp_address).unwrap();
@@ -28,7 +31,7 @@ pub fn start_dap(tcp_address: String) {
 
     let reader = BufReader::new(&stream);
     let writer = BufWriter::new(&stream);
-    let mut server = DapServer::new(reader, writer);
+    let mut server = DapServer::new(reader, writer, state);
 
     loop {
         server.serve();
@@ -37,12 +40,14 @@ pub fn start_dap(tcp_address: String) {
 
 pub struct DapServer<R: Read, W: Write> {
     server: Server<R, W>,
+    state: Arc<Mutex<DapState>>,
 }
 
 impl<R: Read, W: Write> DapServer<R, W> {
-    pub fn new(reader: BufReader<R>, writer: BufWriter<W>) -> Self {
+    pub fn new(reader: BufReader<R>, writer: BufWriter<W>, state: Arc<Mutex<DapState>>) -> Self {
         Self {
             server: Server::new(reader, writer),
+            state,
         }
     }
 
