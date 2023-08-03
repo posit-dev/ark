@@ -385,6 +385,20 @@ pub unsafe fn r_source(file: &str) -> Result<()> {
     }
 }
 
+pub unsafe fn r_parse(code: &str) -> Result<RObject> {
+    match r_parse_vector(code)? {
+        ParseResult::Complete(x) => {
+            return Ok(RObject::from(x));
+        },
+        ParseResult::Incomplete() => {
+            return Err(Error::ParseError {
+                code: code.to_string(),
+                message: String::from("Incomplete code"),
+            });
+        },
+    };
+}
+
 #[cfg(test)]
 mod tests {
 
