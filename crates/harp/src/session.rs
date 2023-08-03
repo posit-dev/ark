@@ -54,10 +54,11 @@ pub fn r_env_is_browsed(env: SEXP) -> anyhow::Result<bool> {
     Ok(browsed != 0)
 }
 
+#[derive(Clone)]
 pub struct FrameInfo {
     pub file: String,
-    pub line: i32,
-    pub column: i32,
+    pub line: i64,
+    pub column: i64,
 }
 
 impl TryFrom<SEXP> for FrameInfo {
@@ -73,7 +74,11 @@ impl TryFrom<SEXP> for FrameInfo {
             let column = VECTOR_ELT(value, 2);
             let column = RObject::view(column).to::<i32>()?;
 
-            Ok(FrameInfo { file, line, column })
+            Ok(FrameInfo {
+                file,
+                line: line.try_into()?,
+                column: column.try_into()?,
+            })
         }
     }
 }

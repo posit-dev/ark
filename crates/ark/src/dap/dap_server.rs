@@ -137,9 +137,21 @@ impl<R: Read, W: Write> DapServer<R, W> {
     }
 
     fn handle_stacktrace(&mut self, req: Request, _args: StackTraceArguments) {
+        let frame = {
+            let state = self.state.lock().unwrap();
+
+            let stack = state.stack.as_ref();
+            stack.and_then(|s| s.first().cloned())
+        };
+        let frame = frame.as_ref();
+
+        let path = frame.map(|f| f.file.clone());
+        let line = frame.map(|f| f.line).unwrap_or(-1);
+        let column = frame.map(|f| f.column).unwrap_or(-1);
+
         let src = Source {
             name: None,
-            path: None, // TODO
+            path,
             source_reference: None,
             presentation_hint: None,
             origin: None,
@@ -152,8 +164,8 @@ impl<R: Read, W: Write> DapServer<R, W> {
             id: -1,
             name: String::from("<frame>::TODO"),
             source: Some(src),
-            line: -1,
-            column: -1,
+            line,
+            column,
             end_line: None,
             end_column: None,
             can_restart: None,
