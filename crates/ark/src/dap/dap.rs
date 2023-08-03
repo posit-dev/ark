@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use amalthea::{comm::comm_channel::CommChannelMsg, language::dap_handler::DapHandler};
 use crossbeam::channel::Sender;
+use harp::session::FrameInfo;
 use serde_json::json;
 use stdext::spawn;
 
@@ -16,7 +17,7 @@ use crate::dap::dap_server;
 
 pub struct Dap {
     /// State shared with the DAP server thread.
-    state: Arc<Mutex<DapState>>,
+    pub state: Arc<Mutex<DapState>>,
 
     /// Channel for sending events to frontend.
     comm_tx: Option<Sender<CommChannelMsg>>,
@@ -28,11 +29,17 @@ pub struct Dap {
 pub struct DapState {
     /// Whether the REPL is stopped with a browser prompt.
     pub debugging: bool,
+
+    /// Stack information
+    pub stack: Option<Vec<FrameInfo>>,
 }
 
 impl DapState {
     pub fn new() -> Self {
-        Self { debugging: false }
+        Self {
+            debugging: false,
+            stack: None,
+        }
     }
 }
 
@@ -45,8 +52,11 @@ impl Dap {
         }
     }
 
-    pub fn start_debug(&self) {
+    pub fn start_debug(&self, stack: Vec<FrameInfo>) {
         let mut state = self.state.lock().unwrap();
+
+        // TODO: We probably need to send pause events to the server
+        state.stack = Some(stack);
 
         if !state.debugging {
             // FIXME: Should this be a `prompt_debug` event? We are not
@@ -66,8 +76,9 @@ impl Dap {
     }
 
     pub fn stop_debug(&self) {
+        // Reset state
         let mut state = self.state.lock().unwrap();
-        state.debugging = false;
+        *state = DapState::new();
     }
 }
 

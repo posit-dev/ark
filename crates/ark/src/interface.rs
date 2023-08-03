@@ -532,9 +532,11 @@ impl RMain {
         EVENTS.console_prompt.emit(());
 
         if info.browser {
-            // TODO: Send stacktrace with srcref info to DAP.
             let dap = self.dap.lock().unwrap();
-            dap.start_debug();
+            match harp::session::r_stack_info() {
+                Ok(stack) => dap.start_debug(stack),
+                Err(err) => error!("ReadConsole: Can't get stack info: {err}"),
+            };
         }
 
         // Match with a timeout. Necessary because we need to

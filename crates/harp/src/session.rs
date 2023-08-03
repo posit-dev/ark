@@ -10,6 +10,8 @@ use std::sync::Once;
 use libR_sys::*;
 use libc::c_int;
 
+use crate::exec::r_parse;
+use crate::object::RObject;
 use crate::protect::RProtect;
 use crate::r_lang;
 use crate::r_lock;
@@ -22,6 +24,7 @@ use crate::vector::Vector;
 // Globals
 static SESSION_INIT: Once = Once::new();
 static mut NFRAME_CALL: Option<SEXP> = None;
+static mut STACK_INFO_CALL: Option<SEXP> = None;
 
 pub fn r_n_frame() -> crate::error::Result<i32> {
     SESSION_INIT.call_once(init_interface);
@@ -51,10 +54,57 @@ pub fn r_env_is_browsed(env: SEXP) -> anyhow::Result<bool> {
     Ok(browsed != 0)
 }
 
+pub struct FrameInfo {
+    pub file: String,
+    pub line: i32,
+    pub column: i32,
+}
+
+impl TryFrom<SEXP> for FrameInfo {
+    type Error = anyhow::Error;
+    fn try_from(value: SEXP) -> Result<Self, Self::Error> {
+        unsafe {
+            let file = VECTOR_ELT(value, 0);
+            let file = RObject::view(file).to::<String>()?;
+
+            let line = VECTOR_ELT(value, 1);
+            let line = RObject::view(line).to::<i32>()?;
+
+            let column = VECTOR_ELT(value, 2);
+            let column = RObject::view(column).to::<i32>()?;
+
+            Ok(FrameInfo { file, line, column })
+        }
+    }
+}
+
+pub fn r_stack_info() -> anyhow::Result<Vec<FrameInfo>> {
+    r_lock! {
+        let mut protect = RProtect::new();
+
+        let info = Rf_eval(STACK_INFO_CALL.unwrap(), R_GlobalEnv);
+        protect.add(info);
+
+        let n: isize = Rf_length(info).try_into()?;
+        let mut out: Vec<FrameInfo> = Vec::with_capacity(n.try_into()?);
+
+        for i in 0..n {
+            let frame = VECTOR_ELT(info, i);
+            out.push(frame.try_into()?);
+        }
+
+        return Ok(out);
+    }
+}
+
 fn init_interface() {
     unsafe {
         let nframe_call = r_lang!(r_symbol!("sys.nframe"));
         R_PreserveObject(nframe_call);
         NFRAME_CALL = Some(nframe_call);
+
+        let stack_info_call = *r_parse(".ps.debug.stackInfo()").unwrap();
+        R_PreserveObject(stack_info_call);
+        STACK_INFO_CALL = Some(stack_info_call);
     }
 }
