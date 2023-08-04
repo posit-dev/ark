@@ -5,14 +5,13 @@
 //
 //
 
-use std::thread;
-
 use amalthea::comm::comm_channel::CommChannelMsg;
 use amalthea::comm::frontend_comm::FrontendMessage;
 use amalthea::events::PositronEvent;
 use amalthea::socket::comm::CommSocket;
 use amalthea::wire::client_event::ClientEvent;
 use crossbeam::channel::Sender;
+use stdext::spawn;
 
 /// PositronFrontend is a wrapper around a comm channel whose lifetime matches
 /// that of the Positron front end. It is used to perform communication with the
@@ -31,7 +30,7 @@ impl PositronFrontend {
         let comm_tx = comm.outgoing_tx.clone();
 
         // Wait for events from the backend and forward them over the channel
-        thread::spawn(move || loop {
+        spawn!("ark-comm-frontend", move || loop {
             // Read the event from the backend
             let event = match event_rx.recv() {
                 Ok(event) => event,
