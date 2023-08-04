@@ -11,6 +11,7 @@ use libR_sys::*;
 use libc::c_int;
 
 use crate::exec::r_parse;
+use crate::exec::r_try_catch_any;
 use crate::object::RObject;
 use crate::protect::RProtect;
 use crate::r_lang;
@@ -84,22 +85,27 @@ impl TryFrom<SEXP> for FrameInfo {
 }
 
 pub fn r_stack_info() -> anyhow::Result<Vec<FrameInfo>> {
-    r_lock! {
-        let mut protect = RProtect::new();
+    let mut out: Vec<FrameInfo> = vec![];
+    let mut protect = unsafe { RProtect::new() };
 
-        let info = Rf_eval(STACK_INFO_CALL.unwrap(), R_GlobalEnv);
-        protect.add(info);
+    let _ = r_lock!({
+        r_try_catch_any(|| -> anyhow::Result<()> {
+            let info = r_try_eval_silent(STACK_INFO_CALL.unwrap(), R_GlobalEnv)?;
+            protect.add(info);
 
-        let n: isize = Rf_length(info).try_into()?;
-        let mut out: Vec<FrameInfo> = Vec::with_capacity(n.try_into()?);
+            let n: isize = Rf_length(info).try_into()?;
+            out = Vec::with_capacity(n.try_into()?);
 
-        for i in 0..n {
-            let frame = VECTOR_ELT(info, i);
-            out.push(frame.try_into()?);
-        }
+            for i in 0..n {
+                let frame = VECTOR_ELT(info, i);
+                out.push(frame.try_into()?);
+            }
 
-        return Ok(out);
-    }
+            Ok(())
+        })
+    })??;
+
+    return Ok(out);
 }
 
 fn init_interface() {
