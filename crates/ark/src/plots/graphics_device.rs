@@ -240,7 +240,7 @@ impl DeviceContext {
         // TODO: Take these from R global options? Like `ark.plot.width`?
         let width = 400.0;
         let height = 650.0;
-        let pixel_ratio = 2.0;
+        let pixel_ratio = 1.0;
 
         let data = unwrap!(self.render_plot(id, width, height, pixel_ratio), Err(error) => {
             log::error!("Failed to render plot with id {id} due to: {error}.");
