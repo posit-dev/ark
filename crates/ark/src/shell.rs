@@ -245,6 +245,8 @@ impl ShellHandler for Shell {
         };
 
         // Check for pending graphics updates
+        // (Important that this occurs while in the "busy" state of this ExecuteRequest
+        // so that the `parent` message is set correctly in any Jupyter messages)
         unsafe { graphics_device::on_did_execute_request() };
 
         result
