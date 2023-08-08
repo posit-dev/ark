@@ -196,7 +196,6 @@ impl Shell {
         if let Err(err) = self.send_state(req, ExecutionState::Idle) {
             warn!("Failed to restore kernel status to idle: {}", err)
         }
-
         result
     }
 
@@ -498,7 +497,6 @@ impl Shell {
     fn handle_comm_close(&mut self, req: JupyterMessage<CommClose>) -> Result<(), Error> {
         // Look for the comm in our open comms
         debug!("Received request to close comm: {:?}", req);
-        std::thread::sleep(std::time::Duration::from_secs(1));
 
         // Enter the kernel-busy state in preparation for handling the message.
         if let Err(err) = self.send_state(req.clone(), ExecutionState::Busy) {
