@@ -177,7 +177,6 @@ impl Shell {
         if let Err(err) = self.send_state(req.clone(), ExecutionState::Busy) {
             warn!("Failed to change kernel status to busy: {}", err)
         }
-        log::info!("handle_request - kernel busy");
 
         // Lock the shell handler object on this thread
         let mut shell_handler = self.shell_handler.lock().unwrap();
@@ -197,7 +196,6 @@ impl Shell {
         if let Err(err) = self.send_state(req, ExecutionState::Idle) {
             warn!("Failed to restore kernel status to idle: {}", err)
         }
-        log::info!("handle_request - kernel idle");
 
         result
     }
