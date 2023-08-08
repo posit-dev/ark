@@ -216,31 +216,31 @@ pub unsafe fn r_try_catch_finally<F, R, S, Finally>(
     mut fun: F,
     classes: S,
     mut finally: Finally,
-) -> Result<RObject>
+) -> Result<R>
 where
     F: FnMut() -> R,
-    R: Into<RObject>,
     Finally: FnMut(),
     S: Into<CharacterVector>,
 {
-    // C function that is passed as `body`
-    // the actual closure is passed as a void* through arg
-    extern "C" fn body_fn<S>(arg: *mut c_void) -> SEXP
-    where
-        S: Into<RObject>,
-    {
-        // extract the "closure" from the void*
-        // idea from https://adventures.michaelfbryan.com/posts/rust-closures-in-ffi/
-        let closure: &mut &mut dyn FnMut() -> S = unsafe { mem::transmute(arg) };
+    // C function that is passed as `body`. The actual closure is passed as
+    // void* data, along with the pointer to the result variable.
+    extern "C" fn body_fn<R>(arg: *mut c_void) -> SEXP {
+        let data: &mut ClosureData<R> = unsafe { &mut *(arg as *mut ClosureData<R>) };
 
-        // call the closure and return it result as a SEXP
-        let out: RObject = closure().into();
-        out.sexp
+        // Move result to its stack space
+        *(data.res) = Some((data.closure)());
+
+        // Return dummy SEXP value expected by `R_tryCatch()`
+        unsafe { R_NilValue }
     }
 
-    // The actual closure is passed as a void*
-    let mut body_data: &mut dyn FnMut() -> R = &mut fun;
-    let body_data = &mut body_data;
+    // Allocate stack memory for the output
+    let mut res: Option<R> = None;
+
+    let mut body_data = ClosureData {
+        res: &mut res,
+        closure: &mut fun,
+    };
 
     // handler just returns the condition and sets success to false
     // to signal that an error was caught
@@ -279,7 +279,7 @@ where
 
     let result = R_tryCatch(
         Some(body_fn::<R>),
-        body_data as *mut _ as *mut c_void,
+        &mut body_data as *mut _ as *mut c_void,
         *classes,
         Some(handler_fn),
         success_ptr as *mut c_void,
@@ -291,7 +291,7 @@ where
         true => {
             // the call to tryCatch() was successful, so we return the result
             // as an RObject
-            Ok(RObject::from(result))
+            Ok(res.unwrap())
         },
         false => {
             // the call to tryCatch failed, so result is a condition
@@ -312,19 +312,33 @@ where
     }
 }
 
-pub unsafe fn r_try_catch<F, R, S>(fun: F, classes: S) -> Result<RObject>
+struct ClosureData<'a, R> {
+    res: &'a mut Option<R>,
+    closure: &'a mut dyn FnMut() -> R,
+}
+
+pub unsafe fn r_try_catch_classes<F, R, S>(fun: F, classes: S) -> Result<R>
 where
     F: FnMut() -> R,
-    RObject: From<R>,
     S: Into<CharacterVector>,
 {
     r_try_catch_finally(fun, classes, || {})
 }
 
-pub unsafe fn r_try_catch_error<F, R>(fun: F) -> Result<RObject>
+pub unsafe fn r_try_catch<F, R>(fun: F) -> Result<RObject>
 where
     F: FnMut() -> R,
     RObject: From<R>,
+{
+    let vector = CharacterVector::create(["error"]);
+    let out = r_try_catch_finally(fun, vector, || {});
+
+    out.map(|x| RObject::from(x))
+}
+
+pub unsafe fn r_try_catch_any<F, R>(fun: F) -> Result<R>
+where
+    F: FnMut() -> R,
 {
     let vector = CharacterVector::create(["error"]);
     r_try_catch_finally(fun, vector, || {})
@@ -341,7 +355,7 @@ pub unsafe fn r_parse_vector(code: &str) -> Result<ParseResult> {
     let mut protect = RProtect::new();
     let r_code = r_string!(code, &mut protect);
 
-    let result = r_try_catch_error(|| R_ParseVector(r_code, -1, &mut ps, R_NilValue))?;
+    let result = r_try_catch(|| R_ParseVector(r_code, -1, &mut ps, R_NilValue))?;
 
     match ps {
         ParseStatus_PARSE_OK => Ok(ParseResult::Complete(*result)),
@@ -477,7 +491,7 @@ mod tests {
         r_test! {
 
             // ok SEXP
-            let ok = r_try_catch_error(|| {
+            let ok = r_try_catch(|| {
                 Rf_ScalarInteger(42)
             });
             assert_match!(ok, Ok(value) => {
@@ -486,13 +500,13 @@ mod tests {
             });
 
             // ok void
-            let void_ok = r_try_catch_error(|| {});
+            let void_ok = r_try_catch(|| {});
             assert_match!(void_ok, Ok(value) => {
                 assert!(r_is_null(*value));
             });
 
             // ok something else, Vec<&str>
-            let value = r_try_catch_error(|| {
+            let value = r_try_catch(|| {
                 CharacterVector::create(["hello", "world"]).cast()
             });
 
@@ -505,7 +519,7 @@ mod tests {
             });
 
             // error
-            let out = r_try_catch_error(|| unsafe {
+            let out = r_try_catch(|| unsafe {
                 let msg = CString::new("ouch").unwrap();
                 Rf_error(msg.as_ptr());
             });
