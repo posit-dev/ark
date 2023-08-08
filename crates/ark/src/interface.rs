@@ -238,7 +238,7 @@ pub struct RMain {
     input_request_tx: Sender<ShellInputRequest>,
 
     /// IOPub channel for broadcasting outputs
-    iopub_tx: Sender<IOPubMessage>,
+    pub iopub_tx: Sender<IOPubMessage>,
 
     /// Active request passed to `ReadConsole()`. Contains response channel
     /// the reply should be send to once computation has finished.

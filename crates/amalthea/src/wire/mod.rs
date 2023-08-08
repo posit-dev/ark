@@ -13,6 +13,7 @@ pub mod comm_msg;
 pub mod comm_open;
 pub mod complete_reply;
 pub mod complete_request;
+pub mod display_data;
 pub mod error_reply;
 pub mod exception;
 pub mod execute_error;

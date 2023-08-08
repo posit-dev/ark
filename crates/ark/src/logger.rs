@@ -173,7 +173,7 @@ impl log::Log for Logger {
 pub fn initialize(file: Option<&str>) {
     ONCE.call_once(|| {
         // Initialize the log level, using RUST_LOG.
-        let level_envvar = std::env::var("RUST_LOG").unwrap_or("info".into());
+        let level_envvar = std::env::var("RUST_LOG").unwrap_or("debug".into());
         let level = unwrap!(
             log::Level::from_str(level_envvar.as_str()),
             Err(error) => {
