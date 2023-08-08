@@ -58,6 +58,7 @@ use crate::request::RRequest;
 
 pub struct Shell {
     comm_manager_tx: Sender<CommEvent>,
+    iopub_tx: Sender<IOPubMessage>,
     r_request_tx: Sender<RRequest>,
     kernel_request_tx: Sender<KernelRequest>,
     kernel_init_rx: BusReader<KernelInfo>,
@@ -118,6 +119,7 @@ impl Shell {
 
         Self {
             comm_manager_tx,
+            iopub_tx,
             r_request_tx,
             kernel_request_tx,
             kernel_init_rx,
@@ -247,7 +249,12 @@ impl ShellHandler for Shell {
         // Check for pending graphics updates
         // (Important that this occurs while in the "busy" state of this ExecuteRequest
         // so that the `parent` message is set correctly in any Jupyter messages)
-        unsafe { graphics_device::on_did_execute_request() };
+        unsafe {
+            graphics_device::on_did_execute_request(
+                self.comm_manager_tx.clone(),
+                self.iopub_tx.clone(),
+            )
+        };
 
         result
     }

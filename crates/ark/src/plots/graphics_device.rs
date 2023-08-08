@@ -37,8 +37,10 @@ use anyhow::bail;
 use base64::engine::general_purpose;
 use base64::Engine;
 use crossbeam::channel::Select;
+use crossbeam::channel::Sender;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
+use harp::r_lock;
 use libR_sys::*;
 use once_cell::sync::Lazy;
 use serde_json::json;
@@ -46,8 +48,6 @@ use stdext::result::ResultOrLog;
 use stdext::unwrap;
 use uuid::Uuid;
 
-use crate::interface::R_MAIN;
-use crate::plots::globals::R_CALLBACK_GLOBALS;
 use crate::plots::message::PlotMessageInput;
 use crate::plots::message::PlotMessageOutput;
 use crate::plots::message::PlotMessageOutputImage;
@@ -104,32 +104,36 @@ struct DeviceContext {
 }
 
 impl DeviceContext {
-    pub unsafe fn holdflush(&mut self, holdflush: i32) {
+    pub fn holdflush(&mut self, holdflush: i32) {
         self._holdflush = holdflush;
     }
 
-    pub unsafe fn mode(&mut self, mode: i32, _dev: pDevDesc) {
+    pub fn mode(&mut self, mode: i32, _dev: pDevDesc) {
         self._mode = mode;
         self._changes = self._changes || mode != 0;
     }
 
-    pub unsafe fn new_page(&mut self, _dd: pGEcontext, _dev: pDevDesc) {
+    pub fn new_page(&mut self, _dd: pGEcontext, _dev: pDevDesc) {
         // Create a new id for this new plot page and note that this is a new page
         let id = Uuid::new_v4().to_string();
         self._id = Some(id.clone());
         self._new_page = true;
     }
 
-    pub unsafe fn on_did_execute_request(&mut self) {
+    pub fn on_did_execute_request(
+        &mut self,
+        comm_manager_tx: Sender<CommEvent>,
+        iopub_tx: Sender<IOPubMessage>,
+    ) {
         // After R code has completed execution, we use this to check if any graphics
         // need to be created
         if self._changes {
             self._changes = false;
-            self.process_changes();
+            self.process_changes(comm_manager_tx, iopub_tx);
         }
     }
 
-    pub unsafe fn on_process_events(&mut self) {
+    pub fn on_process_events(&mut self) {
         // Don't try to render a plot if we're currently drawing.
         if self._mode != 0 {
             return;
@@ -157,8 +161,8 @@ impl DeviceContext {
             return;
         });
 
-        let plot_id = channels.get_unchecked(selection.index()).0;
-        let socket = channels.get_unchecked(selection.index()).1;
+        let plot_id = unsafe { channels.get_unchecked(selection.index()).0 };
+        let socket = unsafe { channels.get_unchecked(selection.index()).1 };
         let message = unwrap!(selection.recv(&socket.incoming_rx), Err(error) => {
             log::error!("{}", error);
             return;
@@ -195,7 +199,11 @@ impl DeviceContext {
         }
     }
 
-    unsafe fn process_changes(&mut self) {
+    fn process_changes(
+        &mut self,
+        comm_manager_tx: Sender<CommEvent>,
+        iopub_tx: Sender<IOPubMessage>,
+    ) {
         let id = unwrap!(self._id.clone(), None => {
             log::error!("Unexpected uninitialized `id`.");
             return;
@@ -203,19 +211,24 @@ impl DeviceContext {
 
         if self._new_page {
             self._new_page = false;
-            self.process_new_plot(id.as_str());
+            self.process_new_plot(id.as_str(), comm_manager_tx, iopub_tx);
         } else {
-            self.process_update_plot(id.as_str());
+            self.process_update_plot(id.as_str(), iopub_tx);
         }
     }
 
-    unsafe fn process_new_plot(&mut self, id: &str) {
+    fn process_new_plot(
+        &mut self,
+        id: &str,
+        comm_manager_tx: Sender<CommEvent>,
+        iopub_tx: Sender<IOPubMessage>,
+    ) {
         // TODO: Only do one or the other based on whether we are in Positron or not
-        self.process_new_plot_positron(id);
-        self.process_new_plot_jupyter_protocol(id);
+        self.process_new_plot_positron(id, comm_manager_tx);
+        self.process_new_plot_jupyter_protocol(id, iopub_tx);
     }
 
-    unsafe fn process_new_plot_positron(&mut self, id: &str) {
+    fn process_new_plot_positron(&mut self, id: &str, comm_manager_tx: Sender<CommEvent>) {
         // Let Positron know that we just created a new plot.
         let socket = CommSocket::new(
             CommInitiator::BackEnd,
@@ -223,10 +236,8 @@ impl DeviceContext {
             POSITRON_PLOT_CHANNEL_ID.to_string(),
         );
 
-        let globals = R_CALLBACK_GLOBALS.as_ref().unwrap();
-
         let event = CommEvent::Opened(socket.clone(), serde_json::Value::Null);
-        if let Err(error) = globals.comm_manager_tx.send(event) {
+        if let Err(error) = comm_manager_tx.send(event) {
             log::error!("{}", error);
         }
 
@@ -234,9 +245,7 @@ impl DeviceContext {
         self._channels.insert(id.to_string(), socket.clone());
     }
 
-    unsafe fn process_new_plot_jupyter_protocol(&mut self, id: &str) {
-        let main = unsafe { R_MAIN.as_mut().unwrap() };
-
+    fn process_new_plot_jupyter_protocol(&mut self, id: &str, iopub_tx: Sender<IOPubMessage>) {
         // TODO: Take these from R global options? Like `ark.plot.width`?
         let width = 400.0;
         let height = 650.0;
@@ -252,7 +261,7 @@ impl DeviceContext {
         let mut map = serde_json::Map::new();
         map.insert("image/png".to_string(), serde_json::to_value(data).unwrap());
 
-        main.iopub_tx
+        iopub_tx
             .send(IOPubMessage::DisplayData(DisplayData {
                 data: serde_json::Value::Object(map),
                 metadata: json!({}),
@@ -261,13 +270,13 @@ impl DeviceContext {
             .or_log_warning(&format!("Could not publish display data on iopub"));
     }
 
-    unsafe fn process_update_plot(&mut self, id: &str) {
+    fn process_update_plot(&mut self, id: &str, iopub_tx: Sender<IOPubMessage>) {
         // TODO: Only do one or the other based on whether we are in Positron or not
         self.process_update_plot_positron(id);
-        self.process_update_plot_jupyter_protocol(id);
+        self.process_update_plot_jupyter_protocol(id, iopub_tx);
     }
 
-    unsafe fn process_update_plot_positron(&mut self, id: &str) {
+    fn process_update_plot_positron(&mut self, id: &str) {
         // Find our socket
         let socket = unwrap!(self._channels.get(id), None => {
             // If socket doesn't exist, bail, nothing to update (should be rare, likely a bug?)
@@ -286,11 +295,11 @@ impl DeviceContext {
             .or_log_error("Failed to send update message for id {id}.");
     }
 
-    unsafe fn process_update_plot_jupyter_protocol(&mut self, _id: &str) {
+    fn process_update_plot_jupyter_protocol(&mut self, _id: &str, _iopub_tx: Sender<IOPubMessage>) {
         // TODO
     }
 
-    pub unsafe fn render_plot(
+    fn render_plot(
         &mut self,
         plot_id: &str,
         width: f64,
@@ -301,20 +310,20 @@ impl DeviceContext {
         // TODO: Is it possible to do this without writing to file; e.g. could
         // we instead write to a connection or something else?
         self._rendering = true;
-        let result = RFunction::from(".ps.graphics.renderPlot")
-            .param("id", plot_id)
-            .param("width", width)
-            .param("height", height)
-            .param("dpr", pixel_ratio)
-            .call();
-
-        if result.is_err() {
-            bail!("Failed to render plot in `.ps.graphics.renderPlot()`.");
-        }
+        let image_path = r_lock! {
+            RFunction::from(".ps.graphics.renderPlot")
+                .param("id", plot_id)
+                .param("width", width)
+                .param("height", height)
+                .param("dpr", pixel_ratio)
+                .call()?
+                .to::<String>()
+        };
         self._rendering = false;
 
-        // Get the path to the image.
-        let image_path = result?.to::<String>()?;
+        let image_path = unwrap!(image_path, Err(error) => {
+            bail!("Failed to render plot with id {plot_id} due to: {error}.");
+        });
 
         // Read contents into bytes.
         let conn = File::open(image_path)?;
@@ -362,8 +371,11 @@ pub unsafe fn on_process_events() {
     DEVICE_CONTEXT.on_process_events();
 }
 
-pub unsafe fn on_did_execute_request() {
-    DEVICE_CONTEXT.on_did_execute_request();
+pub unsafe fn on_did_execute_request(
+    comm_manager_tx: Sender<CommEvent>,
+    iopub_tx: Sender<IOPubMessage>,
+) {
+    DEVICE_CONTEXT.on_did_execute_request(comm_manager_tx, iopub_tx);
 }
 
 // NOTE: May be called when rendering a plot to file, since this is done by
