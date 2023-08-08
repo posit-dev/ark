@@ -114,18 +114,30 @@ impl DeviceContext {
     }
 
     pub unsafe fn new_page(&mut self, _dd: pGEcontext, _dev: pDevDesc) {
-        // Create a new id for this new plot page
+        // Create a new id for this new plot page and note that this is a new page
         let id = Uuid::new_v4().to_string();
         self._id = Some(id.clone());
         self._new_page = true;
     }
 
-    pub unsafe fn on_process_events(&mut self) {
-        trace!("on_process_events");
-
+    pub unsafe fn on_did_execute_request(&mut self) {
+        // After R code has completed execution, we use this to check if any graphics
+        // need to be created
         if self._changes {
             self._changes = false;
             self.process_changes();
+        }
+    }
+
+    pub unsafe fn on_process_events(&mut self) {
+        // Don't try to render a plot if we're currently drawing.
+        if self._mode != 0 {
+            return;
+        }
+
+        // Don't try to render a plot if the 'holdflush' flag is set.
+        if self._holdflush > 0 {
+            return;
         }
 
         // Collect existing channels into a vector of tuples.
@@ -167,90 +179,116 @@ impl DeviceContext {
                         return;
                     });
 
-                    self.send_plot(data.as_str(), rpc_id.as_str(), socket)
+                    let response = PlotMessageOutput::Image(PlotMessageOutputImage {
+                        data: data.to_string(),
+                        mime_type: "image/png".to_string(),
+                    });
+
+                    let json = serde_json::to_value(response).unwrap();
+
+                    socket
+                        .outgoing_tx
+                        .send(CommChannelMsg::Rpc(rpc_id.to_string(), json))
                         .or_log_error("Failed to send plot due to");
                 },
             }
         }
     }
 
-    pub unsafe fn process_changes(&mut self) {
-        trace!("process_changes");
+    unsafe fn process_changes(&mut self) {
+        let id = unwrap!(self._id.clone(), None => {
+            log::error!("Unexpected uninitialized `id`.");
+            return;
+        });
+
         if self._new_page {
-            trace!("process_changes(new_page)");
             self._new_page = false;
-
-            let id = unwrap!(self._id.clone(), None => {
-                log::error!("Unexpected uninitialized `id`.");
-                return;
-            });
-
-            // Let Positron know that we just created a new plot.
-            let socket = CommSocket::new(
-                CommInitiator::BackEnd,
-                id.clone(),
-                POSITRON_PLOT_CHANNEL_ID.to_string(),
-            );
-
-            let globals = R_CALLBACK_GLOBALS.as_ref().unwrap();
-
-            let event = CommEvent::Opened(socket.clone(), serde_json::Value::Null);
-            if let Err(error) = globals.comm_manager_tx.send(event) {
-                log::error!("{}", error);
-                log::info!("oh no");
-                return;
-            }
-
-            // Save our new socket.
-            self._channels.insert(id.clone(), socket.clone());
-
-            // Now do all the Jupyter message bits
-            let main = unsafe { R_MAIN.as_mut().unwrap() };
-
-            let width = 400.0;
-            let height = 600.0;
-            let pixel_ratio = 1.0;
-
-            let data = unwrap!(self.render_plot(id.as_str(), width, height, pixel_ratio), Err(error) => {
-                log::error!("Failed to render plot with id {id} due to: {error}.");
-                return;
-            });
-
-            log::info!("Sending display data to IOPub.");
-
-            let mut map = serde_json::Map::new();
-            map.insert("image/png".to_string(), serde_json::to_value(data).unwrap());
-
-            main.iopub_tx
-                .send(IOPubMessage::DisplayData(DisplayData {
-                    data: serde_json::Value::Object(map),
-                    metadata: json!({}),
-                    transient: json!({}),
-                }))
-                .or_log_warning(&format!("Could not publish display data on iopub"));
+            self.process_new_plot(id.as_str());
         } else {
-            // TODO: Update existing page?
+            self.process_update_plot(id.as_str());
         }
     }
 
-    pub unsafe fn send_plot(
-        &mut self,
-        data: &str,
-        rpc_id: &str,
-        socket: &CommSocket,
-    ) -> anyhow::Result<()> {
-        let response = PlotMessageOutput::Image(PlotMessageOutputImage {
-            data: data.to_string(),
-            mime_type: "image/png".to_string(),
+    unsafe fn process_new_plot(&mut self, id: &str) {
+        // TODO: Only do one or the other based on whether we are in Positron or not
+        self.process_new_plot_positron(id);
+        self.process_new_plot_jupyter_protocol(id);
+    }
+
+    unsafe fn process_new_plot_positron(&mut self, id: &str) {
+        // Let Positron know that we just created a new plot.
+        let socket = CommSocket::new(
+            CommInitiator::BackEnd,
+            id.to_string(),
+            POSITRON_PLOT_CHANNEL_ID.to_string(),
+        );
+
+        let globals = R_CALLBACK_GLOBALS.as_ref().unwrap();
+
+        let event = CommEvent::Opened(socket.clone(), serde_json::Value::Null);
+        if let Err(error) = globals.comm_manager_tx.send(event) {
+            log::error!("{}", error);
+        }
+
+        // Save our new socket.
+        self._channels.insert(id.to_string(), socket.clone());
+    }
+
+    unsafe fn process_new_plot_jupyter_protocol(&mut self, id: &str) {
+        let main = unsafe { R_MAIN.as_mut().unwrap() };
+
+        // TODO: Take these from R global options? Like `ark.plot.width`?
+        let width = 400.0;
+        let height = 650.0;
+        let pixel_ratio = 2.0;
+
+        let data = unwrap!(self.render_plot(id, width, height, pixel_ratio), Err(error) => {
+            log::error!("Failed to render plot with id {id} due to: {error}.");
+            return;
         });
 
-        let json = serde_json::to_value(response).unwrap();
+        log::info!("Sending display data to IOPub.");
 
+        let mut map = serde_json::Map::new();
+        map.insert("image/png".to_string(), serde_json::to_value(data).unwrap());
+
+        main.iopub_tx
+            .send(IOPubMessage::DisplayData(DisplayData {
+                data: serde_json::Value::Object(map),
+                metadata: json!({}),
+                transient: json!({}),
+            }))
+            .or_log_warning(&format!("Could not publish display data on iopub"));
+    }
+
+    unsafe fn process_update_plot(&mut self, id: &str) {
+        // TODO: Only do one or the other based on whether we are in Positron or not
+        self.process_update_plot_positron(id);
+        self.process_update_plot_jupyter_protocol(id);
+    }
+
+    unsafe fn process_update_plot_positron(&mut self, id: &str) {
+        // Find our socket
+        let socket = unwrap!(self._channels.get(id), None => {
+            // If socket doesn't exist, bail, nothing to update (should be rare, likely a bug?)
+            log::error!("Can't find socket to update with id: {id}.");
+            return;
+        });
+
+        log::info!("Sending plot update message for id: {id}.");
+
+        // Tell Positron we have an updated plot that it should request a rerender for
         socket
             .outgoing_tx
-            .send(CommChannelMsg::Rpc(rpc_id.to_string(), json))?;
+            .send(CommChannelMsg::Data(json!({
+                "msg_type": "update",
+                "id": id.to_string()
+            })))
+            .or_log_error("Failed to send update message for id {id}.");
+    }
 
-        Ok(())
+    unsafe fn process_update_plot_jupyter_protocol(&mut self, _id: &str) {
+        // TODO
     }
 
     pub unsafe fn render_plot(
@@ -322,19 +360,11 @@ macro_rules! with_device {
 }
 
 pub unsafe fn on_process_events() {
-    let context = &mut DEVICE_CONTEXT;
-
-    // Don't try to render a plot if we're currently drawing.
-    if context._mode != 0 {
-        return;
-    }
-
-    // Don't try to render a plot if the 'holdflush' flag is set.
-    if context._holdflush > 0 {
-        return;
-    }
-
     DEVICE_CONTEXT.on_process_events();
+}
+
+pub unsafe fn on_did_execute_request() {
+    DEVICE_CONTEXT.on_did_execute_request();
 }
 
 // NOTE: May be called when rendering a plot to file, since this is done by

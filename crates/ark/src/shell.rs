@@ -52,6 +52,7 @@ use crate::environment::r_environment::REnvironment;
 use crate::frontend::frontend::PositronFrontend;
 use crate::interface::KernelInfo;
 use crate::kernel::Kernel;
+use crate::plots::graphics_device;
 use crate::request::KernelRequest;
 use crate::request::RRequest;
 
@@ -237,10 +238,16 @@ impl ShellHandler for Shell {
         // Let the shell thread know that we've executed the code.
         trace!("Code sent to R: {}", req.code);
         let result = receiver.recv().unwrap();
-        match result {
+
+        let result = match result {
             ExecuteResponse::Reply(reply) => Ok(reply),
             ExecuteResponse::ReplyException(err) => Err(err),
-        }
+        };
+
+        // Check for pending graphics updates
+        unsafe { graphics_device::on_did_execute_request() };
+
+        result
     }
 
     /// Handles an introspection request
