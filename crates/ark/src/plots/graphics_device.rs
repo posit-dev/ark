@@ -277,13 +277,12 @@ impl DeviceContext {
 
         log::info!("Sending plot update message for id: {id}.");
 
+        let value = serde_json::to_value(PlotMessageOutput::Update).unwrap();
+
         // Tell Positron we have an updated plot that it should request a rerender for
         socket
             .outgoing_tx
-            .send(CommChannelMsg::Data(json!({
-                "msg_type": "update",
-                "id": id.to_string()
-            })))
+            .send(CommChannelMsg::Data(value))
             .or_log_error("Failed to send update message for id {id}.");
     }
 

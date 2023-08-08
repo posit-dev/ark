@@ -28,6 +28,7 @@ pub struct PlotMessageInputRender {
 #[serde(tag = "msg_type", rename_all = "snake_case")]
 pub enum PlotMessageOutput {
     Image(PlotMessageOutputImage),
+    Update,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
