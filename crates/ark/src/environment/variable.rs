@@ -10,7 +10,7 @@ use harp::environment::Binding;
 use harp::environment::BindingValue;
 use harp::environment::Environment;
 use harp::error::Error;
-use harp::exec::r_try_catch_error;
+use harp::exec::r_try_catch;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
@@ -788,7 +788,7 @@ impl EnvironmentVariable {
                 EnvironmentVariableNode::Concrete { object } => {
                     if object.is_s4() {
                         let name = r_symbol!(path_element);
-                        let child = r_try_catch_error(|| R_do_slot(*object, name))?;
+                        let child = r_try_catch(|| R_do_slot(*object, name))?;
                         EnvironmentVariableNode::Concrete { object: child }
                     } else {
                         let rtype = r_typeof(*object);
@@ -1078,8 +1078,8 @@ impl EnvironmentVariable {
                     false
                 } else {
                     match b.value {
-                        BindingValue::Standard { object, .. } |
-                        BindingValue::Altrep { object, .. } => {
+                        BindingValue::Standard { object, .. }
+                        | BindingValue::Altrep { object, .. } => {
                             if r_typeof(object) == CLOSXP {
                                 has_methods = true;
                                 false
@@ -1155,7 +1155,7 @@ impl EnvironmentVariable {
             let mut iter = slot_names.iter();
             while let Some(Some(display_name)) = iter.next() {
                 let slot_symbol = r_symbol!(display_name);
-                let slot = r_try_catch_error(|| R_do_slot(value, slot_symbol))?;
+                let slot = r_try_catch(|| R_do_slot(value, slot_symbol))?;
                 let access_key = display_name.clone();
                 out.push(EnvironmentVariable::from(access_key, display_name, *slot));
             }
