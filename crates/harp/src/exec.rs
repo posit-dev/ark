@@ -317,22 +317,12 @@ struct ClosureData<'a, R> {
     closure: &'a mut dyn FnMut() -> R,
 }
 
-pub unsafe fn r_try_catch_classes<F, R, S>(fun: F, classes: S) -> Result<R>
-where
-    F: FnMut() -> R,
-    S: Into<CharacterVector>,
-{
-    r_try_catch_finally(fun, classes, || {})
-}
-
 pub unsafe fn r_try_catch<F, R>(fun: F) -> Result<RObject>
 where
     F: FnMut() -> R,
     RObject: From<R>,
 {
-    let vector = CharacterVector::create(["error"]);
-    let out = r_try_catch_finally(fun, vector, || {});
-
+    let out = r_try_catch_any(fun);
     out.map(|x| RObject::from(x))
 }
 
@@ -342,6 +332,14 @@ where
 {
     let vector = CharacterVector::create(["error"]);
     r_try_catch_finally(fun, vector, || {})
+}
+
+pub unsafe fn r_try_catch_classes<F, R, S>(fun: F, classes: S) -> Result<R>
+where
+    F: FnMut() -> R,
+    S: Into<CharacterVector>,
+{
+    r_try_catch_finally(fun, classes, || {})
 }
 
 pub enum ParseResult {
