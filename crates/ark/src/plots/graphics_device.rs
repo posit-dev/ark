@@ -33,6 +33,7 @@ use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::display_data::DisplayData;
+use amalthea::wire::update_display_data::UpdateDisplayData;
 use anyhow::bail;
 use base64::engine::general_purpose;
 use base64::Engine;
@@ -251,28 +252,24 @@ impl DeviceContext {
     }
 
     fn process_new_plot_jupyter_protocol(&mut self, id: &str, iopub_tx: Sender<IOPubMessage>) {
-        // TODO: Take these from R global options? Like `ark.plot.width`?
-        let width = 400.0;
-        let height = 650.0;
-        let pixel_ratio = 1.0;
-
-        let data = unwrap!(self.render_plot(id, width, height, pixel_ratio), Err(error) => {
-            log::error!("Failed to render plot with id {id} due to: {error}.");
+        let data = unwrap!(self.create_display_data_plot(id), Err(error) => {
+            log::error!("Failed to create plot due to: {error}.");
             return;
         });
 
-        log::info!("Sending display data to IOPub.");
+        let metadata = json!({});
 
-        let mut map = serde_json::Map::new();
-        map.insert("image/png".to_string(), serde_json::to_value(data).unwrap());
+        let transient = self.create_display_data_transient(id);
+
+        log::info!("Sending display data to IOPub.");
 
         iopub_tx
             .send(IOPubMessage::DisplayData(DisplayData {
-                data: serde_json::Value::Object(map),
-                metadata: json!({}),
-                transient: json!({}),
+                data,
+                metadata,
+                transient,
             }))
-            .or_log_warning(&format!("Could not publish display data on iopub"));
+            .or_log_warning(&format!("Could not publish display data on IOPub."));
     }
 
     fn process_update_plot(
@@ -307,8 +304,47 @@ impl DeviceContext {
             .or_log_error("Failed to send update message for id {id}.");
     }
 
-    fn process_update_plot_jupyter_protocol(&mut self, _id: &str, _iopub_tx: Sender<IOPubMessage>) {
-        // TODO
+    fn process_update_plot_jupyter_protocol(&mut self, id: &str, iopub_tx: Sender<IOPubMessage>) {
+        let data = unwrap!(self.create_display_data_plot(id), Err(error) => {
+            log::error!("Failed to create plot due to: {error}.");
+            return;
+        });
+
+        let metadata = json!({});
+
+        let transient = self.create_display_data_transient(id);
+
+        log::info!("Sending update display data to IOPub.");
+
+        iopub_tx
+            .send(IOPubMessage::UpdateDisplayData(UpdateDisplayData {
+                data,
+                metadata,
+                transient,
+            }))
+            .or_log_warning(&format!("Could not publish update display data on IOPub."));
+    }
+
+    fn create_display_data_plot(&mut self, id: &str) -> Result<serde_json::Value, anyhow::Error> {
+        // TODO: Take these from R global options? Like `ark.plot.width`?
+        let width = 400.0;
+        let height = 650.0;
+        let pixel_ratio = 1.0;
+
+        let data = unwrap!(self.render_plot(id, width, height, pixel_ratio), Err(error) => {
+            bail!("Failed to render plot with id {id} due to: {error}.");
+        });
+
+        let mut map = serde_json::Map::new();
+        map.insert("image/png".to_string(), serde_json::to_value(data).unwrap());
+
+        Ok(serde_json::Value::Object(map))
+    }
+
+    fn create_display_data_transient(&self, id: &str) -> serde_json::Value {
+        let mut transient = serde_json::Map::new();
+        transient.insert("display_id".to_string(), serde_json::to_value(id).unwrap());
+        serde_json::Value::Object(transient)
     }
 
     fn render_plot(
