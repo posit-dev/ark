@@ -33,6 +33,7 @@ use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::display_data::DisplayData;
+use amalthea::wire::update_display_data::TransientValue;
 use amalthea::wire::update_display_data::UpdateDisplayData;
 use anyhow::bail;
 use base64::engine::general_purpose;
@@ -259,7 +260,15 @@ impl DeviceContext {
 
         let metadata = json!({});
 
-        let transient = self.create_display_data_transient(id);
+        // For `DisplayData`, the `transient` slot is a simple `Value`,
+        // but we can use the `TransientValue` required by `UpdateDisplayData`
+        // to structure this object since we pass through a `display_id` in
+        // this particular case.
+        let transient = TransientValue {
+            display_id: id.to_string(),
+            data: None,
+        };
+        let transient = serde_json::to_value(transient).unwrap();
 
         log::info!("Sending display data to IOPub.");
 
@@ -312,7 +321,10 @@ impl DeviceContext {
 
         let metadata = json!({});
 
-        let transient = self.create_display_data_transient(id);
+        let transient = TransientValue {
+            display_id: id.to_string(),
+            data: None,
+        };
 
         log::info!("Sending update display data to IOPub.");
 
@@ -339,12 +351,6 @@ impl DeviceContext {
         map.insert("image/png".to_string(), serde_json::to_value(data).unwrap());
 
         Ok(serde_json::Value::Object(map))
-    }
-
-    fn create_display_data_transient(&self, id: &str) -> serde_json::Value {
-        let mut transient = serde_json::Map::new();
-        transient.insert("display_id".to_string(), serde_json::to_value(id).unwrap());
-        serde_json::Value::Object(transient)
     }
 
     fn render_plot(

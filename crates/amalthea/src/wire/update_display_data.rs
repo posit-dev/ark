@@ -20,9 +20,20 @@ pub struct UpdateDisplayData {
     pub metadata: Value,
 
     /// Transient data
-    /// Must contain a `display_id` field linked to one in a
+    pub transient: TransientValue,
+}
+
+#[serde_with::skip_serializing_none]
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TransientValue {
+    /// An identifier to link an `UpdateDisplayData` message with its
     /// corresponding `DisplayData` message.
-    pub transient: Value,
+    pub display_id: String,
+
+    /// Additional optional transient data. Always flattened to
+    /// the same level as the required `display_id`.
+    #[serde(flatten)]
+    pub data: Option<Value>,
 }
 
 impl MessageType for UpdateDisplayData {
