@@ -124,12 +124,13 @@ impl DeviceContext {
         &mut self,
         comm_manager_tx: Sender<CommEvent>,
         iopub_tx: Sender<IOPubMessage>,
+        positron_connected: bool,
     ) {
         // After R code has completed execution, we use this to check if any graphics
         // need to be created
         if self._changes {
             self._changes = false;
-            self.process_changes(comm_manager_tx, iopub_tx);
+            self.process_changes(comm_manager_tx, iopub_tx, positron_connected);
         }
     }
 
@@ -203,6 +204,7 @@ impl DeviceContext {
         &mut self,
         comm_manager_tx: Sender<CommEvent>,
         iopub_tx: Sender<IOPubMessage>,
+        positron_connected: bool,
     ) {
         let id = unwrap!(self._id.clone(), None => {
             log::error!("Unexpected uninitialized `id`.");
@@ -211,9 +213,9 @@ impl DeviceContext {
 
         if self._new_page {
             self._new_page = false;
-            self.process_new_plot(id.as_str(), comm_manager_tx, iopub_tx);
+            self.process_new_plot(id.as_str(), comm_manager_tx, iopub_tx, positron_connected);
         } else {
-            self.process_update_plot(id.as_str(), iopub_tx);
+            self.process_update_plot(id.as_str(), iopub_tx, positron_connected);
         }
     }
 
@@ -222,10 +224,13 @@ impl DeviceContext {
         id: &str,
         comm_manager_tx: Sender<CommEvent>,
         iopub_tx: Sender<IOPubMessage>,
+        positron_connected: bool,
     ) {
-        // TODO: Only do one or the other based on whether we are in Positron or not
-        self.process_new_plot_positron(id, comm_manager_tx);
-        self.process_new_plot_jupyter_protocol(id, iopub_tx);
+        if positron_connected {
+            self.process_new_plot_positron(id, comm_manager_tx);
+        } else {
+            self.process_new_plot_jupyter_protocol(id, iopub_tx);
+        }
     }
 
     fn process_new_plot_positron(&mut self, id: &str, comm_manager_tx: Sender<CommEvent>) {
@@ -270,10 +275,17 @@ impl DeviceContext {
             .or_log_warning(&format!("Could not publish display data on iopub"));
     }
 
-    fn process_update_plot(&mut self, id: &str, iopub_tx: Sender<IOPubMessage>) {
-        // TODO: Only do one or the other based on whether we are in Positron or not
-        self.process_update_plot_positron(id);
-        self.process_update_plot_jupyter_protocol(id, iopub_tx);
+    fn process_update_plot(
+        &mut self,
+        id: &str,
+        iopub_tx: Sender<IOPubMessage>,
+        positron_connected: bool,
+    ) {
+        if positron_connected {
+            self.process_update_plot_positron(id);
+        } else {
+            self.process_update_plot_jupyter_protocol(id, iopub_tx);
+        }
     }
 
     fn process_update_plot_positron(&mut self, id: &str) {
@@ -374,8 +386,9 @@ pub unsafe fn on_process_events() {
 pub unsafe fn on_did_execute_request(
     comm_manager_tx: Sender<CommEvent>,
     iopub_tx: Sender<IOPubMessage>,
+    positron_connected: bool,
 ) {
-    DEVICE_CONTEXT.on_did_execute_request(comm_manager_tx, iopub_tx);
+    DEVICE_CONTEXT.on_did_execute_request(comm_manager_tx, iopub_tx, positron_connected);
 }
 
 // NOTE: May be called when rendering a plot to file, since this is done by

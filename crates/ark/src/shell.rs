@@ -60,6 +60,7 @@ pub struct Shell {
     comm_manager_tx: Sender<CommEvent>,
     iopub_tx: Sender<IOPubMessage>,
     r_request_tx: Sender<RRequest>,
+    kernel: Arc<Mutex<Kernel>>,
     kernel_request_tx: Sender<KernelRequest>,
     kernel_init_rx: BusReader<KernelInfo>,
     kernel_info: Option<KernelInfo>,
@@ -86,14 +87,14 @@ impl Shell {
         conn_init_rx: Receiver<bool>,
     ) -> Self {
         // Start building the kernel object. It is shared by the shell, LSP, and main threads.
-        let kernel_mutex = Arc::new(Mutex::new(Kernel::new(iopub_tx.clone())));
+        let kernel = Arc::new(Mutex::new(Kernel::new(iopub_tx.clone())));
 
-        let kernel_clone = kernel_mutex.clone();
+        let kernel_clone = kernel.clone();
         spawn!("ark-shell-thread", move || {
             listen(kernel_clone, kernel_request_rx);
         });
 
-        let kernel_clone = kernel_mutex.clone();
+        let kernel_clone = kernel.clone();
         let iopub_tx_clone = iopub_tx.clone();
         spawn!("ark-r-main-thread", move || {
             // Block until 0MQ is initialised before starting R to avoid
@@ -121,6 +122,7 @@ impl Shell {
             comm_manager_tx,
             iopub_tx,
             r_request_tx,
+            kernel,
             kernel_request_tx,
             kernel_init_rx,
             kernel_info: None,
@@ -246,6 +248,8 @@ impl ShellHandler for Shell {
             ExecuteResponse::ReplyException(err) => Err(err),
         };
 
+        let kernel = self.kernel.lock().unwrap();
+
         // Check for pending graphics updates
         // (Important that this occurs while in the "busy" state of this ExecuteRequest
         // so that the `parent` message is set correctly in any Jupyter messages)
@@ -253,6 +257,7 @@ impl ShellHandler for Shell {
             graphics_device::on_did_execute_request(
                 self.comm_manager_tx.clone(),
                 self.iopub_tx.clone(),
+                kernel.positron_connected(),
             )
         };
 

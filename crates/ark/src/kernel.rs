@@ -54,10 +54,16 @@ impl Kernel {
         self.event_tx = Some(event_tx);
     }
 
+    /// Check if the Positron front end is connected
+    pub fn positron_connected(&self) -> bool {
+        self.event_tx.is_some()
+    }
+
     /// Sends an event to the front end (Positron-specific)
     pub fn send_event(&self, event: PositronEvent) {
         info!("Sending Positron event: {:?}", event);
-        if let Some(event_tx) = &self.event_tx {
+        if self.positron_connected() {
+            let event_tx = self.event_tx.as_ref().unwrap();
             if let Err(err) = event_tx.send(event) {
                 warn!("Error sending event to front end: {}", err);
             }
