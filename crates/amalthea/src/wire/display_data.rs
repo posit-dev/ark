@@ -11,7 +11,6 @@ use serde_json::Value;
 
 use crate::wire::jupyter_message::MessageType;
 
-/// Represents a request from the front end to execute code
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct DisplayData {
     /// The data giving the MIME key/value pairs to display
