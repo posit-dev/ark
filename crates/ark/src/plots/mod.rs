@@ -6,6 +6,5 @@
 //
 
 pub mod dev_desc;
-pub mod globals;
 pub mod graphics_device;
 pub mod message;

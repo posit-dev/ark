@@ -18,7 +18,6 @@ use amalthea::wire::input_request::ShellInputRequest;
 use ark::control::Control;
 use ark::logger;
 use ark::lsp;
-use ark::plots;
 use ark::request::KernelRequest;
 use ark::request::RRequest;
 use ark::shell::Shell;
@@ -40,9 +39,6 @@ fn start_kernel(connection_file: ConnectionFile, r_args: Vec<String>, capture_st
             return;
         },
     };
-
-    // Initialize mandatory globals used in R callbacks
-    plots::globals::initialize(kernel.create_comm_manager_tx());
 
     // Create the channels used for communication. These are created here
     // as they need to be shared across different components / threads.

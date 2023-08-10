@@ -833,7 +833,7 @@ impl RMain {
         // https://github.com/rstudio/positron/issues/431
         R_RunPendingFinalizers();
 
-        // Render pending plots.
+        // Check for Positron render requests
         graphics_device::on_process_events();
     }
 }

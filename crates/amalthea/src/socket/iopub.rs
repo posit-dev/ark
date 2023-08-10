@@ -19,6 +19,7 @@ use crate::wire::client_event::ClientEvent;
 use crate::wire::comm_close::CommClose;
 use crate::wire::comm_msg::CommMsg;
 use crate::wire::comm_open::CommOpen;
+use crate::wire::display_data::DisplayData;
 use crate::wire::execute_error::ExecuteError;
 use crate::wire::execute_input::ExecuteInput;
 use crate::wire::execute_result::ExecuteResult;
@@ -28,6 +29,7 @@ use crate::wire::jupyter_message::ProtocolMessage;
 use crate::wire::status::ExecutionState;
 use crate::wire::status::KernelStatus;
 use crate::wire::stream::StreamOutput;
+use crate::wire::update_display_data::UpdateDisplayData;
 
 pub struct IOPub {
     /// The underlying IOPub socket
@@ -55,6 +57,8 @@ pub enum IOPubMessage {
     CommMsgReply(JupyterHeader, CommMsg),
     CommMsgEvent(CommMsg),
     CommClose(String),
+    DisplayData(DisplayData),
+    UpdateDisplayData(UpdateDisplayData),
 }
 
 impl IOPub {
@@ -118,6 +122,8 @@ impl IOPub {
             IOPubMessage::CommMsgEvent(msg) => self.send_message(msg),
             IOPubMessage::CommMsgReply(header, msg) => self.send_message_with_header(header, msg),
             IOPubMessage::CommClose(comm_id) => self.send_message(CommClose { comm_id }),
+            IOPubMessage::DisplayData(msg) => self.send_message(msg),
+            IOPubMessage::UpdateDisplayData(msg) => self.send_message(msg),
             IOPubMessage::Event(msg) => self.send_event(msg),
         }
     }
