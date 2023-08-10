@@ -112,10 +112,11 @@ impl fmt::Display for Error {
             },
 
             Error::TryCatchError {
-                message: _,
+                message,
                 classes: _,
             } => {
-                write!(f, "tryCatch error")
+                let message = message.join("\n");
+                write!(f, "tryCatch error: {message}")
             },
 
             Error::TryEvalError { message } => {
