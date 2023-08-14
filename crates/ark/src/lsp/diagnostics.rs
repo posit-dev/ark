@@ -717,16 +717,13 @@ fn check_unmatched_closing_bracket(
     _context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<bool> {
-    // TODO: Can we infer these node kinds in a better way?
-    if !matches!(node.kind_id(), 72 | 73 | 74) {
-        return false.ok();
-    }
-
+    // TODO: Can we figure out a way to match on the `kind_id()` instead without
+    // hardcoding the underlying (unstable) values? It would likely be faster.
     let bracket = match node.kind() {
         "}" => "brace",
         ")" => "paren",
         "]" => "bracket",
-        _ => "bracket",
+        _ => return false.ok(),
     };
 
     let range: Range = node.range().into();
