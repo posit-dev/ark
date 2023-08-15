@@ -235,16 +235,14 @@ fn recurse_function(
     context.document_symbols.push(HashMap::new());
     let context = &mut context;
 
-    // Recurse through the children of this node.
+    // Recurse through the arguments, adding their symbols to the `context`
     if let Some(parameters) = node.child_by_field_name("parameters") {
         recurse_parameters(parameters, context, diagnostics)?;
     }
 
-    // Recurse over children.
-    let mut cursor = node.walk();
-    let children = node.children(&mut cursor);
-    for child in children {
-        recurse(child, context, diagnostics)?;
+    // Recurse through the body
+    if let Some(body) = node.child_by_field_name("body") {
+        recurse(body, context, diagnostics)?;
     }
 
     Ok(())
