@@ -434,7 +434,7 @@ fn recurse_paren(
     // more than one 'body' statement in parentheses, as that is
     // not permitted by the R parser.
     let mut cursor = node.walk();
-    let children = node.children(&mut cursor);
+    let children = node.named_children(&mut cursor);
     for child in children {
         recurse(child, context, diagnostics)?;
     }
