@@ -201,6 +201,8 @@ fn recurse(
     match node.kind() {
         "function" => recurse_function(node, context, diagnostics),
         "for" => recurse_for(node, context, diagnostics),
+        "while" => recurse_while(node, context, diagnostics),
+        "if" => recurse_if(node, context, diagnostics),
         "~" => recurse_formula(node, context, diagnostics),
         "<<-" => recurse_superassignment(node, context, diagnostics),
         "<-" => recurse_assignment(node, context, diagnostics),
@@ -270,6 +272,38 @@ fn recurse_for(
     // Now, scan the body.
     if let Some(body) = node.child_by_field_name("body") {
         recurse(body, context, diagnostics)?;
+    }
+
+    ().ok()
+}
+
+fn recurse_if(
+    node: Node,
+    context: &mut DiagnosticContext,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<()> {
+    // TODO: What improvements can we make here? Right now we just have a
+    // separate code path to use `named_children()` to avoid running diagnostics
+    // on the individual parenthesis in the if statement
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        recurse(child, context, diagnostics)?;
+    }
+
+    ().ok()
+}
+
+fn recurse_while(
+    node: Node,
+    context: &mut DiagnosticContext,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<()> {
+    // TODO: What improvements can we make here? Right now we just have a
+    // separate code path to use `named_children()` to avoid running diagnostics
+    // on the individual parenthesis in the while statement
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        recurse(child, context, diagnostics)?;
     }
 
     ().ok()
