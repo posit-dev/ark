@@ -98,7 +98,10 @@ pub fn r_stack_info() -> anyhow::Result<Vec<FrameInfo>> {
 
             for i in 0..n {
                 let frame = VECTOR_ELT(info, i);
-                out.push(frame.try_into()?);
+
+                if frame != R_NilValue {
+                    out.push(frame.try_into()?);
+                }
             }
 
             Ok(())
