@@ -152,9 +152,12 @@ impl<R: Read, W: Write> DapServer<R, W> {
         };
         let frame = frame.as_ref();
 
+        let name = frame.map(|f| f.name.clone());
         let path = frame.map(|f| f.file.clone());
         let line = frame.map(|f| f.line).unwrap_or(-1);
         let column = frame.map(|f| f.column).unwrap_or(-1);
+
+        let name = name.unwrap_or(String::from("<anonymous>"));
 
         let src = Source {
             name: None,
@@ -169,7 +172,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
 
         let frame = StackFrame {
             id: -1,
-            name: String::from("<frame>::TODO"),
+            name,
             source: Some(src),
             line,
             column,

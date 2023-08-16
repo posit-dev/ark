@@ -33,7 +33,16 @@
     return(NULL)
   }
 
+  # Deparse expression in function position to use as name. This is not
+  # necessarily a symbol, it could be a complex expression. TODO: Include
+  # namespace information as in rlang backtraces.
+  name <- deparse(call[[1]])
+
+  # If a multiline expression we just truncate it
+  name <- name[[1]]
+
   list(
+    name = name,
     file = file,
     line = line,
     column = column

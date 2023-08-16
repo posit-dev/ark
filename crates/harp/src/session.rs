@@ -57,6 +57,7 @@ pub fn r_env_is_browsed(env: SEXP) -> anyhow::Result<bool> {
 
 #[derive(Clone)]
 pub struct FrameInfo {
+    pub name: String,
     pub file: String,
     pub line: i64,
     pub column: i64,
@@ -66,16 +67,25 @@ impl TryFrom<SEXP> for FrameInfo {
     type Error = anyhow::Error;
     fn try_from(value: SEXP) -> Result<Self, Self::Error> {
         unsafe {
-            let file = VECTOR_ELT(value, 0);
+            let mut i = 0;
+
+            let name = VECTOR_ELT(value, i);
+            let name = RObject::view(name).to::<String>()?;
+
+            i += 1;
+            let file = VECTOR_ELT(value, i);
             let file = RObject::view(file).to::<String>()?;
 
-            let line = VECTOR_ELT(value, 1);
+            i += 1;
+            let line = VECTOR_ELT(value, i);
             let line = RObject::view(line).to::<i32>()?;
 
-            let column = VECTOR_ELT(value, 2);
+            i += 1;
+            let column = VECTOR_ELT(value, i);
             let column = RObject::view(column).to::<i32>()?;
 
             Ok(FrameInfo {
+                name,
                 file,
                 line: line.try_into()?,
                 column: column.try_into()?,
