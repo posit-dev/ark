@@ -11,7 +11,6 @@ use libR_sys::*;
 use libc::c_int;
 
 use crate::exec::r_parse;
-use crate::exec::r_try_catch_any;
 use crate::object::RObject;
 use crate::protect::RProtect;
 use crate::r_lang;
@@ -97,8 +96,10 @@ impl TryFrom<SEXP> for FrameInfo {
 pub fn r_stack_info() -> anyhow::Result<Vec<FrameInfo>> {
     let mut out: Vec<FrameInfo> = vec![];
 
+    // FIXME: It's better not to use `r_try_catch()` here because it adds
+    // frames to the stack. Should wrap in a top-level-exec instead.
     let _ = r_lock!({
-        r_try_catch_any(|| -> anyhow::Result<()> {
+        (|| -> anyhow::Result<()> {
             let info = r_try_eval_silent(STACK_INFO_CALL.unwrap(), R_GlobalEnv)?;
             Rf_protect(info);
 
@@ -115,8 +116,8 @@ pub fn r_stack_info() -> anyhow::Result<Vec<FrameInfo>> {
 
             Rf_unprotect(1);
             Ok(())
-        })
-    })??;
+        })()
+    })?;
 
     return Ok(out);
 }

@@ -383,6 +383,8 @@ pub unsafe fn r_try_eval_silent(x: SEXP, env: SEXP) -> Result<SEXP> {
 
     let x = R_tryEvalSilent(x, env, &mut errc);
 
+    // NOTE: This error message is potentially incorrect because `errc`
+    // might be true in other cases of longjumps than just errors.
     if errc != 0 {
         return Err(Error::TryEvalError {
             message: geterrmessage(),
