@@ -16,6 +16,7 @@ use crate::protect::RProtect;
 use crate::r_lang;
 use crate::r_lock;
 use crate::r_symbol;
+use crate::utils::r_normalize_path;
 use crate::utils::r_try_eval_silent;
 use crate::utils::r_typeof;
 use crate::vector::integer_vector::IntegerVector;
@@ -103,8 +104,14 @@ pub fn r_stack_info() -> anyhow::Result<Vec<FrameInfo>> {
             let info = r_try_eval_silent(STACK_INFO_CALL.unwrap(), R_GlobalEnv)?;
             Rf_protect(info);
 
+            // Add top-level frame
+            // TODO: Shift srcrefs across the stack
+            match stack_pointer_frame() {
+                Ok(top) => out.push(top),
+                Err(err) => log::error!("Can't retrieve top-level frame: {err}"),
+            }
+
             let n: isize = Rf_length(info).try_into()?;
-            out = Vec::with_capacity(n.try_into()?);
 
             for i in (0..n).rev() {
                 let frame = VECTOR_ELT(info, i);
@@ -120,6 +127,40 @@ pub fn r_stack_info() -> anyhow::Result<Vec<FrameInfo>> {
     })?;
 
     return Ok(out);
+}
+
+fn stack_pointer_frame() -> anyhow::Result<FrameInfo> {
+    unsafe {
+        let mut srcref = R_Srcref;
+
+        // Shouldn't happen but just to be safe
+        if r_typeof(srcref) == VECSXP {
+            srcref = VECTOR_ELT(srcref, 0);
+        }
+
+        if r_typeof(srcref) != INTSXP || Rf_length(srcref) < 5 {
+            anyhow::bail!("Expected integer vector for srcref");
+        }
+
+        let line = INTEGER_ELT(srcref, 0);
+        let column = INTEGER_ELT(srcref, 4);
+
+        let srcfile: RObject = Rf_getAttrib(srcref, r_symbol!("srcfile")).into();
+
+        if r_typeof(srcfile.sexp) != ENVSXP {
+            anyhow::bail!("Expected environment for srcfile");
+        }
+
+        let file: RObject = Rf_findVar(r_symbol!("filename"), srcfile.sexp).into();
+        let file = r_normalize_path(file)?;
+
+        Ok(FrameInfo {
+            name: String::from("<current>"),
+            file,
+            line: line.into(),
+            column: column.into(),
+        })
+    }
 }
 
 fn init_interface() {
