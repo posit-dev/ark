@@ -95,7 +95,7 @@ pub fn r_stack_info() -> anyhow::Result<Vec<FrameInfo>> {
             let n: isize = Rf_length(info).try_into()?;
             out = Vec::with_capacity(n.try_into()?);
 
-            for i in 0..n {
+            for i in (0..n).rev() {
                 let frame = VECTOR_ELT(info, i);
 
                 if frame != R_NilValue {
