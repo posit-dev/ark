@@ -86,12 +86,11 @@ impl TryFrom<SEXP> for FrameInfo {
 
 pub fn r_stack_info() -> anyhow::Result<Vec<FrameInfo>> {
     let mut out: Vec<FrameInfo> = vec![];
-    let mut protect = unsafe { RProtect::new() };
 
     let _ = r_lock!({
         r_try_catch_any(|| -> anyhow::Result<()> {
             let info = r_try_eval_silent(STACK_INFO_CALL.unwrap(), R_GlobalEnv)?;
-            protect.add(info);
+            Rf_protect(info);
 
             let n: isize = Rf_length(info).try_into()?;
             out = Vec::with_capacity(n.try_into()?);
@@ -104,6 +103,7 @@ pub fn r_stack_info() -> anyhow::Result<Vec<FrameInfo>> {
                 }
             }
 
+            Rf_unprotect(1);
             Ok(())
         })
     })??;
