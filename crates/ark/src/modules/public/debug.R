@@ -33,14 +33,14 @@
     return(NULL)
   }
 
-  # Deparse expression in function position to use as name. This is not
-  # necessarily a symbol, it could be a complex expression. TODO: Include
-  # namespace information as in rlang backtraces.
-  name <- deparse(call[[1]])
+  # Deparse expression to use as name. In R, frames do not have a
+  # name. They only have a call site expression that we use as identifier.
+  name <- deparse(call)
 
   # If a multiline expression we just truncate it
   name <- name[[1]]
 
+  # TODO: Include namespace information as in rlang backtraces?
   list(
     name = name,
     file = file,
