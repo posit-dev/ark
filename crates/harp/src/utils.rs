@@ -24,6 +24,7 @@ use crate::exec::RFunctionExt;
 use crate::object::RObject;
 use crate::protect::RProtect;
 use crate::r_symbol;
+use crate::string::r_is_string;
 use crate::symbol::RSymbol;
 use crate::vector::CharacterVector;
 use crate::vector::IntegerVector;
@@ -392,4 +393,19 @@ pub unsafe fn r_try_eval_silent(x: SEXP, env: SEXP) -> Result<SEXP> {
     }
 
     Ok(x)
+}
+
+pub fn r_normalize_path(x: RObject) -> anyhow::Result<String> {
+    if !r_is_string(x.sexp) {
+        anyhow::bail!("Expected string for srcfile's filename");
+    }
+    unsafe {
+        let path = RFunction::new("base", "normalizePath")
+            .param("path", x)
+            .param("winslash", "/")
+            .param("mustWork", false)
+            .call()?
+            .to::<String>()?;
+        Ok(path)
+    }
 }

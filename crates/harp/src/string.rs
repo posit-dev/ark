@@ -34,3 +34,7 @@ pub unsafe fn r_string_decode(code: &str) -> Option<String> {
 
     None
 }
+
+pub fn r_is_string(x: SEXP) -> bool {
+    unsafe { r_typeof(x) == STRSXP && Rf_length(x) == 1 && x != R_NaString }
+}
