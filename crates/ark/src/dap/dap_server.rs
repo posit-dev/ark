@@ -31,20 +31,32 @@ pub fn start_dap(tcp_address: String, state: Arc<Mutex<DapState>>, conn_init_tx:
         .send(true)
         .or_log_error("DAP: Can't send init notification");
 
-    let stream = match listener.accept() {
-        Ok((stream, addr)) => {
-            log::info!("DAP: Connected to client {addr:?}");
-            stream
-        },
-        Err(e) => todo!("DAP: Can't get client: {e:?}"),
-    };
-
-    let reader = BufReader::new(&stream);
-    let writer = BufWriter::new(&stream);
-    let mut server = DapServer::new(reader, writer, state);
-
     loop {
-        server.serve();
+        log::trace!("DAP: Waiting for client");
+
+        let stream = match listener.accept() {
+            Ok((stream, addr)) => {
+                log::info!("DAP: Connected to client {addr:?}");
+                stream
+            },
+            Err(e) => {
+                log::error!("DAP: Can't get client: {e:?}");
+                continue;
+            },
+        };
+
+        let reader = BufReader::new(&stream);
+        let writer = BufWriter::new(&stream);
+        let mut server = DapServer::new(reader, writer, state.clone());
+
+        loop {
+            // If disconnected, break and accept a new connection to create a new server
+            if !server.serve() {
+                log::trace!("DAP: Disconnected from client");
+                state.lock().unwrap().debugging = false;
+                break;
+            }
+        }
     }
 }
 
@@ -61,11 +73,14 @@ impl<R: Read, W: Write> DapServer<R, W> {
         }
     }
 
-    pub fn serve(&mut self) {
+    pub fn serve(&mut self) -> bool {
         log::trace!("DAP: Polling");
         let req = match self.server.poll_request().unwrap() {
             Some(req) => req,
-            None => todo!("Frontend has disconnected"),
+            None => {
+                // TODO: Quit debugger if not busy
+                return false;
+            },
         };
         log::trace!("DAP: Got request: {:?}", req);
 
@@ -93,6 +108,8 @@ impl<R: Read, W: Write> DapServer<R, W> {
                 self.server.respond(rsp).unwrap();
             },
         }
+
+        true
     }
 
     fn handle_initialize(&mut self, req: Request, _args: InitializeArguments) {
