@@ -15,9 +15,12 @@ use dap::prelude::*;
 use dap::requests::*;
 use dap::responses::*;
 use dap::types::*;
+use harp::session::FrameInfo;
 use stdext::result::ResultOrLog;
 
 use super::dap::DapState;
+
+const THREAD_ID: i64 = -1;
 
 pub fn start_dap(tcp_address: String, state: Arc<Mutex<DapState>>, conn_init_tx: Sender<bool>) {
     log::trace!("DAP: Thread starting at address {}.", tcp_address);
@@ -109,7 +112,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
             .send_event(Event::Stopped(StoppedEventBody {
                 reason: StoppedEventReason::Step,
                 description: Some(String::from("Execution paused")),
-                thread_id: Some(-1),
+                thread_id: Some(THREAD_ID),
                 preserve_focus_hint: Some(false),
                 text: None,
                 all_threads_stopped: None,
@@ -123,7 +126,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
     fn handle_threads(&mut self, req: Request) {
         let rsp = req.success(ResponseBody::Threads(ThreadsResponse {
             threads: vec![Thread {
-                id: -1,
+                id: THREAD_ID,
                 name: String::from("Main thread"),
             }],
         }));
@@ -144,51 +147,50 @@ impl<R: Read, W: Write> DapServer<R, W> {
     }
 
     fn handle_stacktrace(&mut self, req: Request, _args: StackTraceArguments) {
-        let frame = {
-            let state = self.state.lock().unwrap();
+        let stack = { self.state.lock().unwrap().stack.clone() };
 
-            let stack = state.stack.as_ref();
-            stack.and_then(|s| s.first().cloned())
-        };
-        let frame = frame.as_ref();
-
-        let name = frame.map(|f| f.name.clone());
-        let path = frame.map(|f| f.file.clone());
-        let line = frame.map(|f| f.line).unwrap_or(-1);
-        let column = frame.map(|f| f.column).unwrap_or(-1);
-
-        let name = name.unwrap_or(String::from("<anonymous>"));
-
-        let src = Source {
-            name: None,
-            path,
-            source_reference: None,
-            presentation_hint: None,
-            origin: None,
-            sources: None,
-            adapter_data: None,
-            checksums: None,
-        };
-
-        let frame = StackFrame {
-            id: -1,
-            name,
-            source: Some(src),
-            line,
-            column,
-            end_line: None,
-            end_column: None,
-            can_restart: None,
-            instruction_pointer_reference: None,
-            module_id: None,
-            presentation_hint: None,
+        let stack = match stack {
+            Some(s) if s.len() > 0 => s.into_iter().map(into_dap_frame).collect(),
+            _ => vec![],
         };
 
         let rsp = req.success(ResponseBody::StackTrace(StackTraceResponse {
-            stack_frames: vec![frame], // TODO: Full call stack
+            stack_frames: stack,
             total_frames: Some(1),
         }));
 
         self.server.respond(rsp).unwrap();
+    }
+}
+
+fn into_dap_frame(frame: FrameInfo) -> StackFrame {
+    let name = frame.name.clone();
+    let path = frame.file.clone();
+    let line = frame.line;
+    let column = frame.column;
+
+    let src = Source {
+        name: None,
+        path: Some(path),
+        source_reference: None,
+        presentation_hint: None,
+        origin: None,
+        sources: None,
+        adapter_data: None,
+        checksums: None,
+    };
+
+    StackFrame {
+        id: THREAD_ID,
+        name,
+        source: Some(src),
+        line,
+        column,
+        end_line: None,
+        end_column: None,
+        can_restart: None,
+        instruction_pointer_reference: None,
+        module_id: None,
+        presentation_hint: None,
     }
 }
