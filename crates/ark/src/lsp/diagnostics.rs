@@ -58,6 +58,9 @@ pub struct DiagnosticContext<'a> {
 
     // Whether or not we're inside of a formula.
     pub in_formula: bool,
+
+    // Whether or not we're inside of a call's arguments
+    pub in_call: bool,
 }
 
 impl<'a> DiagnosticContext<'a> {
@@ -128,6 +131,7 @@ async fn enqueue_diagnostics_impl(backend: Backend, uri: Url) {
             workspace_symbols: HashSet::new(),
             installed_packages: HashSet::new(),
             in_formula: false,
+            in_call: false,
         };
 
         // Add a 'root' context for the document.
@@ -539,6 +543,13 @@ fn recurse_call_arguments_default(
     context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<()> {
+    // TODO: Can we better handle NSE in things like `quote()` and
+    // `dplyr::mutate()` so we don't have to turn off certain diagnostics when
+    // we are inside a call's arguments?
+    let mut context = context.clone();
+    context.in_call = true;
+    let context = &mut context;
+
     // Recurse into arguments.
     if let Some(arguments) = node.child_by_field_name("arguments") {
         let mut cursor = arguments.walk();
@@ -1004,6 +1015,11 @@ fn check_symbol_in_scope(
 ) -> Result<bool> {
     // Skip if we're in a formula.
     if context.in_formula {
+        return false.ok();
+    }
+
+    // Skip if we're working on the arguments of a call
+    if context.in_call {
         return false.ok();
     }
 
