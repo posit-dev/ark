@@ -11,6 +11,7 @@ use std::os::raw::c_void;
 use std::sync::atomic::AtomicI64;
 use std::time::Duration;
 
+use anyhow::bail;
 use anyhow::Result;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
@@ -183,7 +184,10 @@ async fn enqueue_diagnostics_impl(backend: Backend, uri: Url) {
         let root = doc.ast.root_node();
         let result = recurse(root, &mut context, &mut diagnostics);
         if let Err(error) = result {
-            log::error!("{:#?}", error.backtrace());
+            log::error!(
+                "diagnostics: Error while generating: {error}\n{:#?}",
+                error.backtrace()
+            );
         }
     }
 
@@ -201,6 +205,9 @@ fn recurse(
     match node.kind() {
         "function" => recurse_function(node, context, diagnostics),
         "for" => recurse_for(node, context, diagnostics),
+        "while" => recurse_while(node, context, diagnostics),
+        "repeat" => recurse_repeat(node, context, diagnostics),
+        "if" => recurse_if(node, context, diagnostics),
         "~" => recurse_formula(node, context, diagnostics),
         "<<-" => recurse_superassignment(node, context, diagnostics),
         "<-" => recurse_assignment(node, context, diagnostics),
@@ -233,16 +240,16 @@ fn recurse_function(
     context.document_symbols.push(HashMap::new());
     let context = &mut context;
 
-    // Recurse through the children of this node.
-    if let Some(parameters) = node.child_by_field_name("parameters") {
-        recurse_parameters(parameters, context, diagnostics)?;
-    }
+    // Recurse through the arguments, adding their symbols to the `context`
+    let parameters = unwrap!(node.child_by_field_name("parameters"), None => {
+        bail!("Missing `parameters` field in a `function` node");
+    });
 
-    // Recurse over children.
-    let mut cursor = node.walk();
-    let children = node.children(&mut cursor);
-    for child in children {
-        recurse(child, context, diagnostics)?;
+    recurse_parameters(parameters, context, diagnostics)?;
+
+    // Recurse through the body, if one exists
+    if let Some(body) = node.child_by_field_name("body") {
+        recurse(body, context, diagnostics)?;
     }
 
     Ok(())
@@ -254,20 +261,84 @@ fn recurse_for(
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<()> {
     // First, scan the 'sequence' node.
-    if let Some(sequence) = node.child_by_field_name("sequence") {
-        recurse(sequence, context, diagnostics)?;
-    }
+    let sequence = unwrap!(node.child_by_field_name("sequence"), None => {
+        bail!("Missing `sequence` field in a `for` node");
+    });
+
+    recurse(sequence, context, diagnostics)?;
 
     // Now, check for an identifier, and put that in scope.
-    if let Some(identifier) = node.child_by_field_name("variable") {
-        if identifier.kind() == "identifier" {
-            let name = identifier.utf8_text(context.source.as_bytes())?;
-            let range: Range = identifier.range().into();
-            context.add_defined_variable(name.into(), range.into());
-        }
+    let variable = unwrap!(node.child_by_field_name("variable"), None => {
+        bail!("Missing `variable` field in a `for` node");
+    });
+
+    if variable.kind() == "identifier" {
+        let name = variable.utf8_text(context.source.as_bytes())?;
+        let range: Range = variable.range().into();
+        context.add_defined_variable(name.into(), range.into());
     }
 
-    // Now, scan the body.
+    // Now, scan the body, if it exists
+    if let Some(body) = node.child_by_field_name("body") {
+        recurse(body, context, diagnostics)?;
+    }
+
+    ().ok()
+}
+
+fn recurse_if(
+    node: Node,
+    context: &mut DiagnosticContext,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<()> {
+    // First scan the `condition`.
+    let condition = unwrap!(node.child_by_field_name("condition"), None => {
+        bail!("Missing `condition` field in an `if` node.");
+    });
+
+    recurse(condition, context, diagnostics)?;
+
+    // Now, scan the `consequence`.
+    let consequence = unwrap!(node.child_by_field_name("consequence"), None => {
+        bail!("Missing `consequence` field in an `if` node.");
+    });
+
+    recurse(consequence, context, diagnostics)?;
+
+    // And finally the optional `alternative`
+    if let Some(alternative) = node.child_by_field_name("alternative") {
+        recurse(alternative, context, diagnostics)?;
+    }
+
+    ().ok()
+}
+
+fn recurse_while(
+    node: Node,
+    context: &mut DiagnosticContext,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<()> {
+    // First scan the `condition`.
+    let condition = unwrap!(node.child_by_field_name("condition"), None => {
+        bail!("Missing `condition` field in a `while` node.");
+    });
+
+    recurse(condition, context, diagnostics)?;
+
+    // Now, scan the `body`, if it exists.
+    if let Some(body) = node.child_by_field_name("body") {
+        recurse(body, context, diagnostics)?;
+    }
+
+    ().ok()
+}
+
+fn recurse_repeat(
+    node: Node,
+    context: &mut DiagnosticContext,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<()> {
+    // Only thing to scan is the `body`, if it exists
     if let Some(body) = node.child_by_field_name("body") {
         recurse(body, context, diagnostics)?;
     }
@@ -361,14 +432,24 @@ fn recurse_parameters(
     context: &mut DiagnosticContext,
     _diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<()> {
+    // TODO: Should we do anything with default values? i.e. `function(x = 4)`?
+    // They are marked with a field name of `"default"`.
     let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        if let Some(name) = child.child_by_field_name("name") {
-            let symbol = name.utf8_text(context.source.as_bytes())?;
-            let location: Range = name.range().into();
-            context.add_defined_variable(symbol, location.into());
-        }
+
+    for child in node.children_by_field_name("parameter", &mut cursor) {
+        let name = unwrap!(child.child_by_field_name("name"), None => {
+            bail!("Missing a `name` field in a `parameter` node.");
+        });
+
+        let symbol = unwrap!(name.utf8_text(context.source.as_bytes()), Err(error) => {
+            bail!("Failed to convert `name` node to a string due to: {error}");
+        });
+
+        let location = name.range();
+
+        context.add_defined_variable(symbol, location.into());
     }
+
     ().ok()
 }
 
@@ -382,8 +463,8 @@ fn recurse_block(
 
     // Recurse into body statements.
     let mut cursor = node.walk();
-    let children = node.children(&mut cursor);
-    for child in children {
+
+    for child in node.children_by_field_name("body", &mut cursor) {
         recurse(child, context, diagnostics)?;
     }
 
@@ -395,14 +476,24 @@ fn recurse_paren(
     context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<()> {
-    // TODO: Warn if multiple 'body' children? The tree-sitter
-    // grammar allows it, but we should warn when we encounter
-    // more than one 'body' statement in parentheses, as that is
-    // not permitted by the R parser.
+    // Check that the opening parenthesis is balanced.
+    check_unmatched_opening_paren(node, context, diagnostics)?;
+
+    let mut n = 0;
     let mut cursor = node.walk();
-    let children = node.children(&mut cursor);
-    for child in children {
+
+    for child in node.children_by_field_name("body", &mut cursor) {
         recurse(child, context, diagnostics)?;
+        n = n + 1;
+    }
+
+    if n > 1 {
+        // The tree-sitter grammar allows multiple `body` statements, but we warn
+        // the user about this as it is not allowed by the R parser.
+        let range: Range = node.range().into();
+        let message = format!("expected at most 1 statement within parentheses, not {n}");
+        let diagnostic = Diagnostic::new_simple(range.into(), message);
+        diagnostics.push(diagnostic);
     }
 
     ().ok()
@@ -703,34 +794,39 @@ fn dispatch(node: Node, context: &mut DiagnosticContext, diagnostics: &mut Vec<D
         check_syntax_error(node, context, diagnostics)?;
         check_unclosed_arguments(node, context, diagnostics)?;
         check_unexpected_assignment_in_if_conditional(node, context, diagnostics)?;
-        check_unmatched_closing_bracket(node, context, diagnostics)?;
+        check_unmatched_closing_token(node, context, diagnostics)?;
         true.ok()
     };
 
     if let Err(error) = result {
-        log::error!("{}", error);
+        log::error!("{error}");
     }
 }
 
-fn check_unmatched_closing_bracket(
+fn check_unmatched_closing_token(
     node: Node,
     _context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<bool> {
-    // TODO: Can we infer these node kinds in a better way?
-    if !matches!(node.kind_id(), 72 | 73 | 74) {
-        return false.ok();
-    }
+    // TODO: Can we figure out a way to match on the `kind_id()` instead without
+    // hardcoding the underlying (unstable) values? It would likely be faster.
 
-    let bracket = match node.kind() {
+    // These should all be skipped over by function, if, for, while, and repeat
+    // handling, so if we ever get here then it means we didn't have an
+    // equivalent leading token (or there was some other syntax error that
+    // caused the parser to not recognize one of the aforementioned control flow
+    // operators, like `repeat { 1 + }`).
+    let kind = node.kind();
+
+    let token = match kind {
         "}" => "brace",
         ")" => "paren",
         "]" => "bracket",
-        _ => "bracket",
+        _ => return false.ok(),
     };
 
     let range: Range = node.range().into();
-    let message = format!("unmatched closing {} '{}'", bracket, node.kind());
+    let message = format!("unmatched closing {token} '{kind}'");
     let diagnostic = Diagnostic::new_simple(range.into(), message.into());
     diagnostics.push(diagnostic);
 
@@ -743,17 +839,41 @@ fn check_unmatched_opening_brace(
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<bool> {
     let n = node.child_count();
-    if n == 0 {
-        return false.ok();
+
+    if n == 0 || n == 1 {
+        bail!("A block `body` must have a minimum size of 2, not {n}.");
     }
 
     let lhs = node.child(1 - 1).unwrap();
     let rhs = node.child(n - 1).unwrap();
 
     if lhs.kind() == "{" && rhs.kind() != "}" {
-        let child = node.child(0).into_result()?;
-        let range: Range = child.range().into();
+        let range: Range = lhs.range().into();
         let message = "unmatched opening brace '{'";
+        let diagnostic = Diagnostic::new_simple(range.into(), message.into());
+        diagnostics.push(diagnostic);
+    }
+
+    true.ok()
+}
+
+fn check_unmatched_opening_paren(
+    node: Node,
+    _context: &mut DiagnosticContext,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<bool> {
+    let n = node.child_count();
+
+    if n == 0 || n == 1 {
+        bail!("A paren `body` must have a minimum size of 2, not {n}.");
+    }
+
+    let lhs = node.child(1 - 1).unwrap();
+    let rhs = node.child(n - 1).unwrap();
+
+    if lhs.kind() == "(" && rhs.kind() != ")" {
+        let range: Range = lhs.range().into();
+        let message = "unmatched opening parenthesis '('";
         let diagnostic = Diagnostic::new_simple(range.into(), message.into());
         diagnostics.push(diagnostic);
     }
