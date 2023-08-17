@@ -9,6 +9,7 @@ use std::sync::Once;
 
 use libR_sys::*;
 use libc::c_int;
+use stdext::unwrap;
 
 use crate::exec::r_parse;
 use crate::object::RObject;
@@ -104,13 +105,6 @@ pub fn r_stack_info() -> anyhow::Result<Vec<FrameInfo>> {
             let info = r_try_eval_silent(STACK_INFO_CALL.unwrap(), R_GlobalEnv)?;
             Rf_protect(info);
 
-            // Add top-level frame
-            // TODO: Shift srcrefs across the stack
-            match stack_pointer_frame() {
-                Ok(top) => out.push(top),
-                Err(err) => log::error!("Can't retrieve top-level frame: {err}"),
-            }
-
             let n: isize = Rf_length(info).try_into()?;
 
             for i in (0..n).rev() {
@@ -125,6 +119,15 @@ pub fn r_stack_info() -> anyhow::Result<Vec<FrameInfo>> {
             Ok(())
         })()
     })?;
+
+    // Add information from top-level frame and shift the source
+    // information one frame up so it represents the frame's execution
+    // state instead of its call site.
+    let pointer = unwrap!(stack_pointer_frame(), Err(err) => {
+        log::error!("Can't retrieve top-level frame: {err}");
+        return Ok(out);
+    });
+    stack_shift(&mut out, pointer);
 
     return Ok(out);
 }
@@ -160,6 +163,30 @@ fn stack_pointer_frame() -> anyhow::Result<FrameInfo> {
             line: line.into(),
             column: column.into(),
         })
+    }
+}
+
+// The call stack produced by `sys.calls()` includes file information for
+// the call site, not for the execution state inside the frame. We fix this
+// by shifting the source information one frame up, starting from the
+// global frame pointer `R_SrcRef`.
+fn stack_shift(stack: &mut Vec<FrameInfo>, pointer: FrameInfo) {
+    // Shouldn't happen but just in case
+    if stack.len() == 0 {
+        stack.insert(0, pointer);
+        return;
+    }
+
+    let mut current = pointer;
+
+    for frame in stack.iter_mut() {
+        let next = frame.clone();
+
+        frame.file = current.file;
+        frame.line = current.line;
+        frame.column = current.column;
+
+        current = next;
     }
 }
 
