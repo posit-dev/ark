@@ -64,7 +64,7 @@ use serde_json::json;
 use stdext::result::ResultOrLog;
 use stdext::*;
 
-use crate::dap::dap::DapEvent;
+use crate::dap::dap::DapBackendEvent;
 use crate::dap::Dap;
 use crate::errors;
 use crate::help_proxy;
@@ -545,7 +545,7 @@ impl RMain {
             };
         } else if self.is_debugging {
             // Terminate debugging session
-            self.send_dap(DapEvent::Terminate);
+            self.send_dap(DapBackendEvent::Terminated);
             self.is_debugging = false;
         }
 
@@ -605,7 +605,7 @@ impl RMain {
                             if self.is_debugging {
                                 let continue_cmds = vec!["n", "f", "c", "cont"];
                                 if continue_cmds.contains(&&code[..]) {
-                                    self.send_dap(DapEvent::Continue);
+                                    self.send_dap(DapBackendEvent::Continued);
                                 }
                             }
 
@@ -877,7 +877,7 @@ impl RMain {
         graphics_device::on_process_events();
     }
 
-    fn send_dap(&self, event: DapEvent) {
+    fn send_dap(&self, event: DapBackendEvent) {
         let dap = self.dap.lock().unwrap();
         dap.send_event(event);
     }

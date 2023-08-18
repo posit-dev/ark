@@ -21,7 +21,7 @@ use harp::session::FrameInfo;
 use stdext::result::ResultOrLog;
 use stdext::spawn;
 
-use super::dap::{DapEvent, DapState};
+use super::dap::{DapBackendEvent, DapState};
 
 const THREAD_ID: i64 = -1;
 
@@ -29,7 +29,7 @@ pub fn start_dap(
     tcp_address: String,
     state: Arc<Mutex<DapState>>,
     conn_init_tx: Sender<bool>,
-    events_rx: Receiver<DapEvent>,
+    events_rx: Receiver<DapBackendEvent>,
 ) {
     log::trace!("DAP: Thread starting at address {}.", tcp_address);
 
@@ -88,7 +88,7 @@ pub fn start_dap(
 // `ReadConsole()` method. These are forwarded to the DAP client.
 fn listen_dap_events<W: Write>(
     _output: Arc<Mutex<ServerOutput<W>>>,
-    events_rx: Receiver<DapEvent>,
+    events_rx: Receiver<DapBackendEvent>,
     done_rx: Receiver<bool>,
 ) {
     loop {
@@ -96,7 +96,7 @@ fn listen_dap_events<W: Write>(
             recv(events_rx) -> event => {
                 log::trace!("DAP: Got event from backend: {:?}", event);
                 match event.unwrap() {
-                    DapEvent::Continue => {
+                    DapBackendEvent::Continued => {
                         let mut output = _output.lock().unwrap();
                         let event = Event::Continued(ContinuedEventBody {
                             thread_id: THREAD_ID,
@@ -104,7 +104,7 @@ fn listen_dap_events<W: Write>(
                         });
                         output.send_event(event).unwrap();
                     },
-                    DapEvent::Terminate => {
+                    DapBackendEvent::Terminated => {
                         let mut output = _output.lock().unwrap();
                         output.send_event(Event::Terminated(None)).unwrap();
                     },

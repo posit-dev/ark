@@ -16,13 +16,13 @@ use stdext::{result::ResultOrLog, spawn};
 use crate::dap::dap_server;
 
 #[derive(Debug, Copy, Clone)]
-pub enum DapEvent {
+pub enum DapBackendEvent {
     /// Event sent when a normal (non-browser) prompt marks the end of a
-    /// debugging session or when user typed in `Q`.
-    Terminate,
+    /// debugging session.
+    Terminated,
 
     /// Event sent when user types `n`, `f`, `c`, or `cont`.
-    Continue,
+    Continued,
 }
 
 pub struct Dap {
@@ -30,10 +30,10 @@ pub struct Dap {
     pub state: Arc<Mutex<DapState>>,
 
     /// Channel for sending events to the DAP frontend.
-    pub events_tx: Sender<DapEvent>,
+    pub events_tx: Sender<DapBackendEvent>,
 
     /// Receiving side of event channel, managed on its own thread.
-    events_rx: Receiver<DapEvent>,
+    events_rx: Receiver<DapBackendEvent>,
 
     /// Channel for sending events to the comm frontend.
     comm_tx: Option<Sender<CommChannelMsg>>,
@@ -61,7 +61,7 @@ impl DapState {
 
 impl Dap {
     pub fn new() -> Self {
-        let (events_tx, events_rx) = unbounded::<DapEvent>();
+        let (events_tx, events_rx) = unbounded::<DapBackendEvent>();
         Self {
             state: Arc::new(Mutex::new(DapState::new())),
             events_tx,
