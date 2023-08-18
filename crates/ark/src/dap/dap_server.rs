@@ -95,21 +95,36 @@ fn listen_dap_events<W: Write>(
         select!(
             recv(events_rx) -> event => {
                 log::trace!("DAP: Got event from backend: {:?}", event);
-                match event.unwrap() {
+
+                let event = match event.unwrap() {
                     DapBackendEvent::Continued => {
-                        let mut output = _output.lock().unwrap();
-                        let event = Event::Continued(ContinuedEventBody {
+                        Event::Continued(ContinuedEventBody {
                             thread_id: THREAD_ID,
                             all_threads_continued: Some(true)
-                        });
-                        output.send_event(event).unwrap();
+                        })
                     },
+
+                    DapBackendEvent::Stopped => {
+                        Event::Stopped(StoppedEventBody {
+                            reason: StoppedEventReason::Step,
+                            description: None,
+                            thread_id: Some(THREAD_ID),
+                            preserve_focus_hint: Some(false),
+                            text: None,
+                            all_threads_stopped: Some(true),
+                            hit_breakpoint_ids: None,
+                        })
+                    },
+
                     DapBackendEvent::Terminated => {
-                        let mut output = _output.lock().unwrap();
-                        output.send_event(Event::Terminated(None)).unwrap();
+                        Event::Terminated(None)
                     },
-                }
+                };
+
+                let mut output = _output.lock().unwrap();
+                output.send_event(event).unwrap();
             },
+
             recv(done_rx) -> _ => { return; },
         )
     }

@@ -23,6 +23,10 @@ pub enum DapBackendEvent {
 
     /// Event sent when user types `n`, `f`, `c`, or `cont`.
     Continued,
+
+    /// Event sent when a browser prompt is emitted during an existing
+    /// debugging session
+    Stopped,
 }
 
 pub struct Dap {
@@ -74,13 +78,11 @@ impl Dap {
     pub fn start_debug(&self, stack: Vec<FrameInfo>) {
         let mut state = self.state.lock().unwrap();
 
-        // TODO: We probably need to send pause events to the server
         state.stack = Some(stack);
 
-        if !state.debugging {
-            // FIXME: Should this be a `prompt_debug` event? We are not
-            // necessarily starting to debug, we just want to let the frontend
-            // know we are running in debug mode on the backend side.
+        if state.debugging {
+            self.send_event(DapBackendEvent::Stopped);
+        } else {
             if let Some(tx) = &self.comm_tx {
                 log::info!("DAP: Sending `start_debug` event");
                 let msg = CommChannelMsg::Data(json!({
