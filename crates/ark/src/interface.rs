@@ -64,6 +64,7 @@ use serde_json::json;
 use stdext::result::ResultOrLog;
 use stdext::*;
 
+use crate::dap::dap::DapEvent;
 use crate::dap::Dap;
 use crate::errors;
 use crate::help_proxy;
@@ -276,7 +277,7 @@ pub struct RMain {
     pub error_traceback: Vec<String>,
 
     dap: Arc<Mutex<Dap>>,
-    was_debugging: bool,
+    is_debugging: bool,
 }
 
 /// Represents the currently active execution request from the frontend. It
@@ -361,7 +362,7 @@ impl RMain {
             error_message: String::new(),
             error_traceback: Vec::new(),
             dap,
-            was_debugging: false,
+            is_debugging: false,
         }
     }
 
@@ -537,14 +538,16 @@ impl RMain {
             let dap = self.dap.lock().unwrap();
             match harp::session::r_stack_info() {
                 Ok(stack) => {
-                    self.was_debugging = true;
+                    self.is_debugging = true;
                     dap.start_debug(stack)
                 },
                 Err(err) => error!("ReadConsole: Can't get stack info: {err}"),
             };
-        } else if self.was_debugging {
-            self.was_debugging = false;
-            // TODO: Disconnect
+        } else if self.is_debugging {
+            // Terminate debugging session
+            let dap = self.dap.lock().unwrap();
+            let _ = dap.events_tx.send(DapEvent::Terminate);
+            self.is_debugging = false;
         }
 
         // Match with a timeout. Necessary because we need to

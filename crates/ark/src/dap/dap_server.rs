@@ -93,7 +93,15 @@ fn listen_dap_events<W: Write>(
 ) {
     loop {
         select!(
-            recv(events_rx) -> _event => {},
+            recv(events_rx) -> event => {
+                log::trace!("DAP: Got event from backend: {:?}", event);
+                match event.unwrap() {
+                    DapEvent::Terminate => {
+                        let mut output = _output.lock().unwrap();
+                        output.send_event(Event::Terminated(None)).unwrap();
+                    },
+                }
+            },
             recv(done_rx) -> _ => { return; },
         )
     }

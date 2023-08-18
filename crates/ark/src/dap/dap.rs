@@ -15,7 +15,12 @@ use stdext::spawn;
 
 use crate::dap::dap_server;
 
-pub enum DapEvent {}
+#[derive(Debug)]
+pub enum DapEvent {
+    /// Event sent when a normal (non-browser) prompt marks the end of a
+    /// debugging session
+    Terminate,
+}
 
 pub struct Dap {
     /// State shared with the DAP server thread.
