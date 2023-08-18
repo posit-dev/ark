@@ -601,6 +601,14 @@ impl RMain {
 
                     match input {
                         ConsoleInput::Input(code) => {
+                            // Handle commands for the debug interpreter
+                            if self.is_debugging {
+                                let continue_cmds = vec!["n", "f", "c", "cont"];
+                                if continue_cmds.contains(&&code[..]) {
+                                    self.send_dap(DapEvent::Continue);
+                                }
+                            }
+
                             Self::on_console_input(buf, buflen, code);
                             return (1, false);
                         },

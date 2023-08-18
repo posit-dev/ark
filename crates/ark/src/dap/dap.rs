@@ -18,8 +18,11 @@ use crate::dap::dap_server;
 #[derive(Debug, Copy, Clone)]
 pub enum DapEvent {
     /// Event sent when a normal (non-browser) prompt marks the end of a
-    /// debugging session
+    /// debugging session or when user typed in `Q`.
     Terminate,
+
+    /// Event sent when user types `n`, `f`, `c`, or `cont`.
+    Continue,
 }
 
 pub struct Dap {
