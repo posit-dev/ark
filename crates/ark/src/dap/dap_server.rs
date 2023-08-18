@@ -9,20 +9,28 @@ use std::io::{BufReader, BufWriter, Read, Write};
 use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
 
-use crossbeam::channel::Sender;
+use crossbeam::channel::{bounded, Receiver, Sender};
+use crossbeam::select;
 use dap::events::*;
 use dap::prelude::*;
 use dap::requests::*;
 use dap::responses::*;
+use dap::server::ServerOutput;
 use dap::types::*;
 use harp::session::FrameInfo;
 use stdext::result::ResultOrLog;
+use stdext::spawn;
 
-use super::dap::DapState;
+use super::dap::{DapEvent, DapState};
 
 const THREAD_ID: i64 = -1;
 
-pub fn start_dap(tcp_address: String, state: Arc<Mutex<DapState>>, conn_init_tx: Sender<bool>) {
+pub fn start_dap(
+    tcp_address: String,
+    state: Arc<Mutex<DapState>>,
+    conn_init_tx: Sender<bool>,
+    events_rx: Receiver<DapEvent>,
+) {
     log::trace!("DAP: Thread starting at address {}.", tcp_address);
 
     let listener = TcpListener::bind(tcp_address).unwrap();
@@ -49,26 +57,61 @@ pub fn start_dap(tcp_address: String, state: Arc<Mutex<DapState>>, conn_init_tx:
         let writer = BufWriter::new(&stream);
         let mut server = DapServer::new(reader, writer, state.clone());
 
-        loop {
-            // If disconnected, break and accept a new connection to create a new server
-            if !server.serve() {
-                log::trace!("DAP: Disconnected from client");
-                state.lock().unwrap().debugging = false;
-                break;
+        let (done_tx, done_rx) = bounded::<bool>(0);
+        let events_rx_clone = events_rx.clone();
+        let output_clone = server.output.clone();
+
+        // We need a scope to let the borrow checker know that
+        // `output_clone` drops before the next iteration (it gets tangled
+        // to the stack variable `stream` through `server`)
+        let _ = crossbeam::thread::scope(|scope| {
+            spawn!(scope, "ark-dap-events", {
+                move |_| listen_dap_events(output_clone, events_rx_clone, done_rx)
+            });
+
+            loop {
+                // If disconnected, break and accept a new connection to create a new server
+                if !server.serve() {
+                    log::trace!("DAP: Disconnected from client");
+                    state.lock().unwrap().debugging = false;
+                    break;
+                }
             }
-        }
+
+            // Terminate the events thread
+            let _ = done_tx.send(true);
+        });
+    }
+}
+
+// Thread that listens for events sent by the backend, usually the
+// `ReadConsole()` method. These are forwarded to the DAP client.
+fn listen_dap_events<W: Write>(
+    _output: Arc<Mutex<ServerOutput<W>>>,
+    events_rx: Receiver<DapEvent>,
+    done_rx: Receiver<bool>,
+) {
+    loop {
+        select!(
+            recv(events_rx) -> _event => {},
+            recv(done_rx) -> _ => { return; },
+        )
     }
 }
 
 pub struct DapServer<R: Read, W: Write> {
     server: Server<R, W>,
+    pub output: Arc<Mutex<ServerOutput<W>>>,
     state: Arc<Mutex<DapState>>,
 }
 
 impl<R: Read, W: Write> DapServer<R, W> {
     pub fn new(reader: BufReader<R>, writer: BufWriter<W>, state: Arc<Mutex<DapState>>) -> Self {
+        let server = Server::new(reader, writer);
+        let output = server.output.clone();
         Self {
-            server: Server::new(reader, writer),
+            server,
+            output,
             state,
         }
     }

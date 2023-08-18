@@ -8,18 +8,26 @@
 use std::sync::{Arc, Mutex};
 
 use amalthea::{comm::comm_channel::CommChannelMsg, language::dap_handler::DapHandler};
-use crossbeam::channel::Sender;
+use crossbeam::channel::{unbounded, Receiver, Sender};
 use harp::session::FrameInfo;
 use serde_json::json;
 use stdext::spawn;
 
 use crate::dap::dap_server;
 
+pub enum DapEvent {}
+
 pub struct Dap {
     /// State shared with the DAP server thread.
     pub state: Arc<Mutex<DapState>>,
 
-    /// Channel for sending events to frontend.
+    /// Channel for sending events to the DAP frontend.
+    pub events_tx: Sender<DapEvent>,
+
+    /// Receiving side of event channel, managed on its own thread.
+    events_rx: Receiver<DapEvent>,
+
+    /// Channel for sending events to the comm frontend.
     comm_tx: Option<Sender<CommChannelMsg>>,
 
     /// Whether we are connected to the frontend.
@@ -45,8 +53,11 @@ impl DapState {
 
 impl Dap {
     pub fn new() -> Self {
+        let (events_tx, events_rx) = unbounded::<DapEvent>();
         Self {
             state: Arc::new(Mutex::new(DapState::new())),
+            events_tx,
+            events_rx,
             comm_tx: None,
             connected: false,
         }
@@ -97,8 +108,9 @@ impl DapHandler for Dap {
         // this thread but in the future we might provide other ways to
         // connect to the DAP without a Jupyter comm.
         let state_clone = self.state.clone();
+        let events_rx_clone = self.events_rx.clone();
         spawn!("ark-dap", move || {
-            dap_server::start_dap(tcp_address, state_clone, conn_init_tx)
+            dap_server::start_dap(tcp_address, state_clone, conn_init_tx, events_rx_clone)
         });
 
         // If `start()` is called we are now connected to a frontend
