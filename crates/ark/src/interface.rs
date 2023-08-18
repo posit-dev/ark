@@ -72,6 +72,7 @@ use crate::kernel::Kernel;
 use crate::lsp::events::EVENTS;
 use crate::modules;
 use crate::plots::graphics_device;
+use crate::request::DebugRequest;
 use crate::request::RRequest;
 
 extern "C" {
@@ -583,7 +584,23 @@ impl RMain {
 
                             input
                         },
+
                         RRequest::Shutdown(_) => ConsoleInput::EOF,
+
+                        RRequest::DebugCommand(cmd) => {
+                            // Just ignore command in case we left the debugging state already
+                            if !self.is_debugging {
+                                continue;
+                            }
+
+                            // Translate requests from the debugger frontend to actual inputs for
+                            // the debug interpreter
+                            match cmd {
+                                DebugRequest::Next => ConsoleInput::Input(String::from("n")),
+                                DebugRequest::StepIn => ConsoleInput::Input(String::from("s")),
+                                DebugRequest::StepOut => ConsoleInput::Input(String::from("f")),
+                            }
+                        },
                     };
 
                     // Take back the lock after we've received some console input.

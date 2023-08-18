@@ -13,7 +13,7 @@ use harp::session::FrameInfo;
 use serde_json::json;
 use stdext::{result::ResultOrLog, spawn};
 
-use crate::dap::dap_server;
+use crate::{dap::dap_server, request::RRequest};
 
 #[derive(Debug, Copy, Clone)]
 pub enum DapBackendEvent {
@@ -42,6 +42,9 @@ pub struct Dap {
     /// Channel for sending events to the comm frontend.
     comm_tx: Option<Sender<CommChannelMsg>>,
 
+    /// Channel for sending debug commands to `read_console()`
+    r_request_tx: Sender<RRequest>,
+
     /// Whether we are connected to the frontend.
     connected: bool,
 }
@@ -64,13 +67,14 @@ impl DapState {
 }
 
 impl Dap {
-    pub fn new() -> Self {
+    pub fn new(r_request_tx: Sender<RRequest>) -> Self {
         let (events_tx, events_rx) = unbounded::<DapBackendEvent>();
         Self {
             state: Arc::new(Mutex::new(DapState::new())),
             events_tx,
             events_rx,
             comm_tx: None,
+            r_request_tx,
             connected: false,
         }
     }
@@ -125,8 +129,15 @@ impl DapHandler for Dap {
         // connect to the DAP without a Jupyter comm.
         let state_clone = self.state.clone();
         let events_rx_clone = self.events_rx.clone();
+        let r_request_tx_clone = self.r_request_tx.clone();
         spawn!("ark-dap", move || {
-            dap_server::start_dap(tcp_address, state_clone, conn_init_tx, events_rx_clone)
+            dap_server::start_dap(
+                tcp_address,
+                state_clone,
+                conn_init_tx,
+                events_rx_clone,
+                r_request_tx_clone,
+            )
         });
 
         // If `start()` is called we are now connected to a frontend

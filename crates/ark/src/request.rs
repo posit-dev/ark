@@ -20,6 +20,16 @@ pub enum RRequest {
 
     /// Shut down the R execution thread
     Shutdown(bool),
+
+    /// Commands from the debugger frontend
+    DebugCommand(DebugRequest),
+}
+
+#[derive(Debug, Clone)]
+pub enum DebugRequest {
+    Next,
+    StepIn,
+    StepOut,
 }
 
 /// Represents requests to the kernel.
