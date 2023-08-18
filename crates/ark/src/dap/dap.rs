@@ -11,11 +11,11 @@ use amalthea::{comm::comm_channel::CommChannelMsg, language::dap_handler::DapHan
 use crossbeam::channel::{unbounded, Receiver, Sender};
 use harp::session::FrameInfo;
 use serde_json::json;
-use stdext::spawn;
+use stdext::{result::ResultOrLog, spawn};
 
 use crate::dap::dap_server;
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum DapEvent {
     /// Event sent when a normal (non-browser) prompt marks the end of a
     /// debugging session
@@ -95,6 +95,12 @@ impl Dap {
         // Reset state
         let mut state = self.state.lock().unwrap();
         *state = DapState::new();
+    }
+
+    pub fn send_event(&self, event: DapBackendEvent) {
+        self.events_tx
+            .send(event)
+            .or_log_error(&format!("Couldn't send event {:?}", event));
     }
 }
 

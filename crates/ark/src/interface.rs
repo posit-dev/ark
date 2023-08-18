@@ -545,8 +545,7 @@ impl RMain {
             };
         } else if self.is_debugging {
             // Terminate debugging session
-            let dap = self.dap.lock().unwrap();
-            let _ = dap.events_tx.send(DapEvent::Terminate);
+            self.send_dap(DapEvent::Terminate);
             self.is_debugging = false;
         }
 
@@ -868,6 +867,11 @@ impl RMain {
 
         // Check for Positron render requests
         graphics_device::on_process_events();
+    }
+
+    fn send_dap(&self, event: DapEvent) {
+        let dap = self.dap.lock().unwrap();
+        dap.send_event(event);
     }
 }
 
