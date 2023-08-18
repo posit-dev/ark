@@ -6,7 +6,6 @@
 //
 
 pub mod dap;
-pub mod dap_event_loop;
 pub mod dap_server;
 
 pub use self::dap::Dap;

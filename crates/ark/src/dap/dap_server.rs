@@ -6,8 +6,8 @@
 //
 
 use std::io::{BufReader, BufWriter, Read, Write};
+use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
-use stdext::spawn;
 
 use crossbeam::channel::Sender;
 use dap::events::*;
@@ -19,15 +19,13 @@ use harp::session::FrameInfo;
 use stdext::result::ResultOrLog;
 
 use super::dap::DapState;
-use crate::dap::dap_event_loop::DapEventLoop;
 
 const THREAD_ID: i64 = -1;
 
 pub fn start_dap(tcp_address: String, state: Arc<Mutex<DapState>>, conn_init_tx: Sender<bool>) {
     log::trace!("DAP: Thread starting at address {}.", tcp_address);
 
-    // Start with a blocking connection to simplify things at connection time
-    let listener = std::net::TcpListener::bind(tcp_address).unwrap();
+    let listener = TcpListener::bind(tcp_address).unwrap();
 
     conn_init_tx
         .send(true)
@@ -36,7 +34,7 @@ pub fn start_dap(tcp_address: String, state: Arc<Mutex<DapState>>, conn_init_tx:
     loop {
         log::trace!("DAP: Waiting for client");
 
-        let tcp_stream = match listener.accept() {
+        let stream = match listener.accept() {
             Ok((stream, addr)) => {
                 log::info!("DAP: Connected to client {addr:?}");
                 stream
@@ -47,16 +45,9 @@ pub fn start_dap(tcp_address: String, state: Arc<Mutex<DapState>>, conn_init_tx:
             },
         };
 
-        let mut el = DapEventLoop::new(tcp_stream);
-        let (dap_incoming_reader, dap_outgoing_writer) = el.dap_streams();
-
-        spawn!("ark-dap-event-loop", move || {
-            if let Err(err) = el.event_loop() {
-                log::error!("DAP event loop thread terminated abruptly: {err}");
-            }
-        });
-
-        let mut server = DapServer::new(dap_incoming_reader, dap_outgoing_writer, state.clone());
+        let reader = BufReader::new(&stream);
+        let writer = BufWriter::new(&stream);
+        let mut server = DapServer::new(reader, writer, state.clone());
 
         loop {
             // If disconnected, break and accept a new connection to create a new server
@@ -66,9 +57,6 @@ pub fn start_dap(tcp_address: String, state: Arc<Mutex<DapState>>, conn_init_tx:
                 break;
             }
         }
-
-        // The end of this scope drops the sending side of
-        // `bridge_outgoing_reader` which shuts downs the event loop thread
     }
 }
 

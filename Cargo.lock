@@ -108,8 +108,6 @@ dependencies = [
  "libR-sys",
  "libc",
  "log",
- "mio",
- "mio-misc",
  "nix",
  "notify",
  "once_cell",
@@ -1333,26 +1331,14 @@ dependencies = [
 
 [[package]]
 name = "mio"
-version = "0.8.8"
+version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "927a765cd3fc26206e66b296465fa9d3e5ab003e651c1b3c060e7956d96b19d2"
+checksum = "5b9d9a46eff5b4ff64b45a9e316a6d1e0bc719ef429cbec4dc630684212bfdf9"
 dependencies = [
  "libc",
  "log",
  "wasi 0.11.0+wasi-snapshot-preview1",
- "windows-sys 0.48.0",
-]
-
-[[package]]
-name = "mio-misc"
-version = "2.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4fb08f340b30aec76a6452f9a7dcb8949b8d7afff6e78884bb1b143f1e6ce5df"
-dependencies = [
- "crossbeam",
- "crossbeam-queue",
- "log",
- "mio",
+ "windows-sys 0.45.0",
 ]
 
 [[package]]
