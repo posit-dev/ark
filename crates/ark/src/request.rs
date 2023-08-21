@@ -30,6 +30,7 @@ pub enum DebugRequest {
     Next,
     StepIn,
     StepOut,
+    Quit,
 }
 
 /// Represents requests to the kernel.

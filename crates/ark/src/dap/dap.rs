@@ -51,7 +51,7 @@ pub struct Dap {
 
 pub struct DapState {
     /// Whether the REPL is stopped with a browser prompt.
-    pub debugging: bool,
+    pub is_debugging: bool,
 
     /// Stack information
     pub stack: Option<Vec<FrameInfo>>,
@@ -60,7 +60,7 @@ pub struct DapState {
 impl DapState {
     pub fn new() -> Self {
         Self {
-            debugging: false,
+            is_debugging: false,
             stack: None,
         }
     }
@@ -84,7 +84,7 @@ impl Dap {
 
         state.stack = Some(stack);
 
-        if state.debugging {
+        if state.is_debugging {
             self.send_event(DapBackendEvent::Stopped);
         } else {
             if let Some(tx) = &self.comm_tx {
@@ -96,7 +96,7 @@ impl Dap {
                 tx.send(msg).unwrap();
             }
 
-            state.debugging = true;
+            state.is_debugging = true;
         }
     }
 
@@ -104,6 +104,9 @@ impl Dap {
         // Reset state
         let mut state = self.state.lock().unwrap();
         *state = DapState::new();
+
+        // Let frontend know we've quitted the debugger
+        self.send_event(DapBackendEvent::Terminated);
     }
 
     pub fn send_event(&self, event: DapBackendEvent) {

@@ -85,7 +85,7 @@ pub fn start_dap(
                 // If disconnected, break and accept a new connection to create a new server
                 if !server.serve() {
                     log::trace!("DAP: Disconnected from client");
-                    state.lock().unwrap().debugging = false;
+                    state.lock().unwrap().is_debugging = false;
                     break;
                 }
             }
@@ -173,10 +173,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
         log::trace!("DAP: Polling");
         let req = match self.server.poll_request().unwrap() {
             Some(req) => req,
-            None => {
-                // TODO: Quit debugger if not busy
-                return false;
-            },
+            None => return false,
         };
         log::trace!("DAP: Got request: {:?}", req);
 
@@ -188,6 +185,9 @@ impl<R: Read, W: Write> DapServer<R, W> {
             },
             Command::Attach(args) => {
                 self.handle_attach(req, args);
+            },
+            Command::Disconnect(args) => {
+                self.handle_disconnect(req, args);
             },
             Command::Threads => {
                 self.handle_threads(req);
@@ -243,6 +243,17 @@ impl<R: Read, W: Write> DapServer<R, W> {
             .unwrap();
     }
 
+    fn handle_disconnect(&mut self, req: Request, _args: DisconnectArguments) {
+        // Only send `Q` if currently in a debugging session.
+        let is_debugging = { self.state.lock().unwrap().is_debugging };
+        if is_debugging {
+            self.send_command(DebugRequest::Quit);
+        }
+
+        let rsp = req.success(ResponseBody::Disconnect);
+        self.server.respond(rsp).unwrap();
+    }
+
     // All servers must respond to `Threads` requests, possibly with
     // a dummy thread as is the case here
     fn handle_threads(&mut self, req: Request) {
@@ -285,6 +296,12 @@ impl<R: Read, W: Write> DapServer<R, W> {
     }
 
     fn handle_step<A>(&mut self, req: Request, _args: A, cmd: DebugRequest, resp: ResponseBody) {
+        self.send_command(cmd);
+        let rsp = req.success(resp);
+        self.server.respond(rsp).unwrap();
+    }
+
+    fn send_command(&mut self, cmd: DebugRequest) {
         if let Some(tx) = &self.comm_tx {
             // If we have a comm channel (always the case as of this
             // writing) we are connected to Positron or similar. Send
@@ -297,6 +314,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
                         DebugRequest::Next => String::from("n"),
                         DebugRequest::StepIn => String::from("s"),
                         DebugRequest::StepOut => String::from("f"),
+                        DebugRequest::Quit => String::from("Q"),
                     }
                 }
             }));
@@ -305,9 +323,6 @@ impl<R: Read, W: Write> DapServer<R, W> {
             // Otherwise, send command to R's `ReadConsole()` frontend method
             self.r_request_tx.send(RRequest::DebugCommand(cmd)).unwrap();
         }
-
-        let rsp = req.success(resp);
-        self.server.respond(rsp).unwrap();
     }
 }
 

@@ -546,7 +546,8 @@ impl RMain {
             };
         } else if self.is_debugging {
             // Terminate debugging session
-            self.send_dap(DapBackendEvent::Terminated);
+            let dap = self.dap.lock().unwrap();
+            dap.stop_debug();
             self.is_debugging = false;
         }
 
@@ -595,11 +596,12 @@ impl RMain {
 
                             // Translate requests from the debugger frontend to actual inputs for
                             // the debug interpreter
-                            match cmd {
-                                DebugRequest::Next => ConsoleInput::Input(String::from("n")),
-                                DebugRequest::StepIn => ConsoleInput::Input(String::from("s")),
-                                DebugRequest::StepOut => ConsoleInput::Input(String::from("f")),
-                            }
+                            ConsoleInput::Input(String::from(match cmd {
+                                DebugRequest::Next => "n",
+                                DebugRequest::StepIn => "s",
+                                DebugRequest::StepOut => "f",
+                                DebugRequest::Quit => "Q",
+                            }))
                         },
                     };
 
