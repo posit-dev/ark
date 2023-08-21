@@ -130,6 +130,7 @@ impl DapHandler for Dap {
         let state_clone = self.state.clone();
         let events_rx_clone = self.events_rx.clone();
         let r_request_tx_clone = self.r_request_tx.clone();
+        let comm_tx_clone = comm_tx.clone();
         spawn!("ark-dap", move || {
             dap_server::start_dap(
                 tcp_address,
@@ -137,6 +138,7 @@ impl DapHandler for Dap {
                 conn_init_tx,
                 events_rx_clone,
                 r_request_tx_clone,
+                comm_tx_clone,
             )
         });
 

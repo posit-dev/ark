@@ -9,6 +9,7 @@ use std::io::{BufReader, BufWriter, Read, Write};
 use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
 
+use amalthea::comm::comm_channel::CommChannelMsg;
 use crossbeam::channel::{bounded, Receiver, Sender};
 use crossbeam::select;
 use dap::events::*;
@@ -18,6 +19,7 @@ use dap::responses::*;
 use dap::server::ServerOutput;
 use dap::types::*;
 use harp::session::FrameInfo;
+use serde_json::json;
 use stdext::result::ResultOrLog;
 use stdext::spawn;
 
@@ -33,6 +35,7 @@ pub fn start_dap(
     conn_init_tx: Sender<bool>,
     events_rx: Receiver<DapBackendEvent>,
     r_request_tx: Sender<RRequest>,
+    comm_tx: Sender<CommChannelMsg>,
 ) {
     log::trace!("DAP: Thread starting at address {}.", tcp_address);
 
@@ -58,7 +61,13 @@ pub fn start_dap(
 
         let reader = BufReader::new(&stream);
         let writer = BufWriter::new(&stream);
-        let mut server = DapServer::new(reader, writer, state.clone(), r_request_tx.clone());
+        let mut server = DapServer::new(
+            reader,
+            writer,
+            state.clone(),
+            r_request_tx.clone(),
+            comm_tx.clone(),
+        );
 
         let (done_tx, done_rx) = bounded::<bool>(0);
         let events_rx_clone = events_rx.clone();
@@ -138,6 +147,7 @@ pub struct DapServer<R: Read, W: Write> {
     pub output: Arc<Mutex<ServerOutput<W>>>,
     state: Arc<Mutex<DapState>>,
     r_request_tx: Sender<RRequest>,
+    comm_tx: Option<Sender<CommChannelMsg>>,
 }
 
 impl<R: Read, W: Write> DapServer<R, W> {
@@ -146,6 +156,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
         writer: BufWriter<W>,
         state: Arc<Mutex<DapState>>,
         r_request_tx: Sender<RRequest>,
+        comm_tx: Sender<CommChannelMsg>,
     ) -> Self {
         let server = Server::new(reader, writer);
         let output = server.output.clone();
@@ -154,6 +165,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
             output,
             state,
             r_request_tx,
+            comm_tx: Some(comm_tx),
         }
     }
 
@@ -272,11 +284,28 @@ impl<R: Read, W: Write> DapServer<R, W> {
         self.server.respond(rsp).unwrap();
     }
 
-    // TODO: For Positron, we should either send these commands from the
-    // REPL to have visual feedback on the prompt, or have a way to update
-    // the current prompt from `read_console()`
     fn handle_step<A>(&mut self, req: Request, _args: A, cmd: DebugRequest, resp: ResponseBody) {
-        self.r_request_tx.send(RRequest::DebugCommand(cmd)).unwrap();
+        if let Some(tx) = &self.comm_tx {
+            // If we have a comm channel (always the case as of this
+            // writing) we are connected to Positron or similar. Send
+            // control events so that the IDE can execute these as if they
+            // were sent by the user. This ensures prompts are updated.
+            let msg = CommChannelMsg::Data(json!({
+                "msg_type": "execute",
+                "content": {
+                    "command": match cmd {
+                        DebugRequest::Next => String::from("n"),
+                        DebugRequest::StepIn => String::from("s"),
+                        DebugRequest::StepOut => String::from("f"),
+                    }
+                }
+            }));
+            tx.send(msg).unwrap();
+        } else {
+            // Otherwise, send command to R's `ReadConsole()` frontend method
+            self.r_request_tx.send(RRequest::DebugCommand(cmd)).unwrap();
+        }
+
         let rsp = req.success(resp);
         self.server.respond(rsp).unwrap();
     }
