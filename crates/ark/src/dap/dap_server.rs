@@ -189,6 +189,9 @@ impl<R: Read, W: Write> DapServer<R, W> {
             Command::Disconnect(args) => {
                 self.handle_disconnect(req, args);
             },
+            Command::Restart(args) => {
+                self.handle_restart(req, args);
+            },
             Command::Threads => {
                 self.handle_threads(req);
             },
@@ -225,6 +228,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
 
     fn handle_initialize(&mut self, req: Request, _args: InitializeArguments) {
         let rsp = req.success(ResponseBody::Initialize(types::Capabilities {
+            supports_restart_request: Some(true),
             ..Default::default()
         }));
         self.server.respond(rsp).unwrap();
@@ -257,6 +261,18 @@ impl<R: Read, W: Write> DapServer<R, W> {
         }
 
         let rsp = req.success(ResponseBody::Disconnect);
+        self.server.respond(rsp).unwrap();
+    }
+
+    fn handle_restart(&mut self, req: Request, _args: RestartArguments) {
+        // If connected to Positron, forward the restart command to the
+        // frontend. Otherwise ignore it.
+        if let Some(tx) = &self.comm_tx {
+            let msg = CommChannelMsg::Data(json!({ "msg_type": "restart" }));
+            tx.send(msg).unwrap();
+        }
+
+        let rsp = req.success(ResponseBody::Restart);
         self.server.respond(rsp).unwrap();
     }
 
