@@ -99,7 +99,7 @@ pub fn start_dap(
 // Thread that listens for events sent by the backend, usually the
 // `ReadConsole()` method. These are forwarded to the DAP client.
 fn listen_dap_events<W: Write>(
-    _output: Arc<Mutex<ServerOutput<W>>>,
+    output: Arc<Mutex<ServerOutput<W>>>,
     events_rx: Receiver<DapBackendEvent>,
     done_rx: Receiver<bool>,
 ) {
@@ -133,10 +133,11 @@ fn listen_dap_events<W: Write>(
                     },
                 };
 
-                let mut output = _output.lock().unwrap();
+                let mut output = output.lock().unwrap();
                 output.send_event(event).unwrap();
             },
 
+            // Break the loop and terminate the thread
             recv(done_rx) -> _ => { return; },
         )
     }
