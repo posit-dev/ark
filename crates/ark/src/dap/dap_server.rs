@@ -51,6 +51,10 @@ pub fn start_dap(
         let stream = match listener.accept() {
             Ok((stream, addr)) => {
                 log::info!("DAP: Connected to client {addr:?}");
+
+                let mut state = state.lock().unwrap();
+                state.is_connected = true;
+
                 stream
             },
             Err(e) => {
@@ -85,7 +89,8 @@ pub fn start_dap(
                 // If disconnected, break and accept a new connection to create a new server
                 if !server.serve() {
                     log::trace!("DAP: Disconnected from client");
-                    state.lock().unwrap().is_debugging = false;
+                    let mut state = state.lock().unwrap();
+                    state.is_connected = false;
                     break;
                 }
             }

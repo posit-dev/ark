@@ -44,14 +44,14 @@ pub struct Dap {
 
     /// Channel for sending debug commands to `read_console()`
     r_request_tx: Sender<RRequest>,
-
-    /// Whether we are connected to the frontend.
-    connected: bool,
 }
 
 pub struct DapState {
     /// Whether the REPL is stopped with a browser prompt.
     pub is_debugging: bool,
+
+    /// Whether the DAP server is connected to a client.
+    pub is_connected: bool,
 
     /// Stack information
     pub stack: Option<Vec<FrameInfo>>,
@@ -61,6 +61,7 @@ impl DapState {
     pub fn new() -> Self {
         Self {
             is_debugging: false,
+            is_connected: false,
             stack: None,
         }
     }
@@ -75,7 +76,6 @@ impl Dap {
             events_rx,
             comm_tx: None,
             r_request_tx,
-            connected: false,
         }
     }
 
@@ -85,10 +85,13 @@ impl Dap {
         state.stack = Some(stack);
 
         if state.is_debugging {
-            self.send_event(DapBackendEvent::Stopped);
+            if state.is_connected {
+                self.send_event(DapBackendEvent::Stopped);
+            }
         } else {
             if let Some(tx) = &self.comm_tx {
-                log::info!("DAP: Sending `start_debug` event");
+                // Ask frontend to connect to the DAP
+                log::trace!("DAP: Sending `start_debug` event");
                 let msg = CommChannelMsg::Data(json!({
                     "msg_type": "start_debug",
                     "content": {}
@@ -103,10 +106,20 @@ impl Dap {
     pub fn stop_debug(&self) {
         // Reset state
         let mut state = self.state.lock().unwrap();
-        *state = DapState::new();
+        state.stack = None;
+        state.is_debugging = false;
 
-        // Let frontend know we've quitted the debugger
-        self.send_event(DapBackendEvent::Terminated);
+        if state.is_connected {
+            if let Some(_) = &self.comm_tx {
+                // Let frontend know we've quitted the debugger so it can
+                // terminate the debugging session and disconnect.
+                log::trace!("DAP: Sending `start_debug` event");
+                self.send_event(DapBackendEvent::Terminated);
+            }
+            // else: If not connected to a frontend, the DAP client should
+            // have received a `Continued` event already, after a `n`
+            // command or similar.
+        }
     }
 
     pub fn send_event(&self, event: DapBackendEvent) {
@@ -147,7 +160,6 @@ impl DapHandler for Dap {
 
         // If `start()` is called we are now connected to a frontend
         self.comm_tx = Some(comm_tx);
-        self.connected = true;
 
         return Ok(());
     }
