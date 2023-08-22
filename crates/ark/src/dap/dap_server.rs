@@ -302,7 +302,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
         self.server.respond(rsp).unwrap();
     }
 
-    fn handle_stacktrace(&mut self, req: Request, _args: StackTraceArguments) {
+    fn handle_stacktrace(&mut self, req: Request, args: StackTraceArguments) {
         let stack = { self.state.lock().unwrap().stack.clone() };
 
         let stack = match stack {
@@ -310,9 +310,24 @@ impl<R: Read, W: Write> DapServer<R, W> {
             _ => vec![],
         };
 
+        // Slice the stack as requested
+        let n_usize = stack.len();
+        let start: usize = args.start_frame.unwrap_or(0).try_into().unwrap();
+        let start = std::cmp::min(start, n_usize);
+
+        let end = if let Some(levels) = args.levels {
+            let levels: usize = levels.try_into().unwrap();
+            std::cmp::min(start + levels, n_usize)
+        } else {
+            n_usize
+        };
+
+        let stack = stack[start..end].to_vec();
+        let n = stack.len().try_into().unwrap();
+
         let rsp = req.success(ResponseBody::StackTrace(StackTraceResponse {
             stack_frames: stack,
-            total_frames: Some(1),
+            total_frames: Some(n),
         }));
 
         self.server.respond(rsp).unwrap();
