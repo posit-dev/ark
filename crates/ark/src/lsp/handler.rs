@@ -34,7 +34,11 @@ impl Lsp {
 }
 
 impl LspHandler for Lsp {
-    fn start(&mut self, tcp_address: String) -> Result<(), amalthea::error::Error> {
+    fn start(
+        &mut self,
+        tcp_address: String,
+        conn_init_tx: Sender<bool>,
+    ) -> Result<(), amalthea::error::Error> {
         // If the kernel hasn't been initialized yet, wait for it to finish.
         // This prevents the LSP from attempting to start up before the kernel
         // is ready; on subsequent starts (reconnects), the kernel will already
@@ -48,8 +52,9 @@ impl LspHandler for Lsp {
         }
 
         let kernel_request_tx = self.kernel_request_tx.clone();
+
         spawn!("ark-lsp", move || {
-            backend::start_lsp(tcp_address, kernel_request_tx)
+            backend::start_lsp(tcp_address, kernel_request_tx, conn_init_tx)
         });
         return Ok(());
     }

@@ -11,7 +11,6 @@ use std::sync::Mutex;
 use crossbeam::channel::Sender;
 use serde::Deserialize;
 use serde::Serialize;
-use serde_json::json;
 
 use crate::comm::comm_channel::CommChannelMsg;
 use crate::error::Error;
@@ -25,7 +24,7 @@ pub struct StartLsp {
 
 pub struct LspComm {
     handler: Arc<Mutex<dyn LspHandler>>,
-    msg_tx: Sender<CommChannelMsg>,
+    _msg_tx: Sender<CommChannelMsg>,
 }
 
 /**
@@ -37,17 +36,16 @@ pub struct LspComm {
  */
 impl LspComm {
     pub fn new(handler: Arc<Mutex<dyn LspHandler>>, msg_tx: Sender<CommChannelMsg>) -> LspComm {
-        LspComm { handler, msg_tx }
+        LspComm {
+            handler,
+            _msg_tx: msg_tx,
+        }
     }
 
-    pub fn start(&self, data: &StartLsp) -> Result<(), Error> {
+    pub fn start(&self, data: &StartLsp, conn_init_tx: Sender<bool>) -> Result<(), Error> {
         let mut handler = self.handler.lock().unwrap();
-        handler.start(data.client_address.clone()).unwrap();
-        self.msg_tx
-            .send(CommChannelMsg::Data(json!({
-                "msg_type": "lsp_started",
-                "content": {}
-            })))
+        handler
+            .start(data.client_address.clone(), conn_init_tx)
             .unwrap();
         Ok(())
     }
