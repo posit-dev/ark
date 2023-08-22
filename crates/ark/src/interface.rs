@@ -72,7 +72,7 @@ use crate::kernel::Kernel;
 use crate::lsp::events::EVENTS;
 use crate::modules;
 use crate::plots::graphics_device;
-use crate::request::DebugRequest;
+use crate::request::debug_request_command;
 use crate::request::RRequest;
 
 extern "C" {
@@ -596,13 +596,7 @@ impl RMain {
 
                             // Translate requests from the debugger frontend to actual inputs for
                             // the debug interpreter
-                            ConsoleInput::Input(String::from(match cmd {
-                                DebugRequest::Continue => "c",
-                                DebugRequest::Next => "n",
-                                DebugRequest::StepIn => "s",
-                                DebugRequest::StepOut => "f",
-                                DebugRequest::Quit => "Q",
-                            }))
+                            ConsoleInput::Input(debug_request_command(cmd))
                         },
                     };
 

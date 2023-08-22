@@ -34,6 +34,16 @@ pub enum DebugRequest {
     Quit,
 }
 
+pub fn debug_request_command(req: DebugRequest) -> String {
+    String::from(match req {
+        DebugRequest::Continue => "c",
+        DebugRequest::Next => "n",
+        DebugRequest::StepIn => "s",
+        DebugRequest::StepOut => "f",
+        DebugRequest::Quit => "Q",
+    })
+}
+
 /// Represents requests to the kernel.
 #[derive(Debug, Clone)]
 pub enum KernelRequest {

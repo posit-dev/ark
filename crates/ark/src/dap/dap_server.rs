@@ -23,7 +23,7 @@ use serde_json::json;
 use stdext::result::ResultOrLog;
 use stdext::spawn;
 
-use crate::request::{DebugRequest, RRequest};
+use crate::request::{debug_request_command, DebugRequest, RRequest};
 
 use super::dap::{DapBackendEvent, DapState};
 
@@ -316,13 +316,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
             let msg = CommChannelMsg::Data(json!({
                 "msg_type": "execute",
                 "content": {
-                    "command": String::from(match cmd {
-                        DebugRequest::Continue => "c",
-                        DebugRequest::Next => "n",
-                        DebugRequest::StepIn => "s",
-                        DebugRequest::StepOut => "f",
-                        DebugRequest::Quit => "Q",
-                    })
+                    "command": debug_request_command(cmd)
                 }
             }));
             tx.send(msg).unwrap();
