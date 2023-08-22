@@ -27,6 +27,7 @@ pub enum RRequest {
 
 #[derive(Debug, Clone)]
 pub enum DebugRequest {
+    Continue,
     Next,
     StepIn,
     StepOut,

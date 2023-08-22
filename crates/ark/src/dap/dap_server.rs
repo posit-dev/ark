@@ -198,6 +198,12 @@ impl<R: Read, W: Write> DapServer<R, W> {
             Command::StackTrace(args) => {
                 self.handle_stacktrace(req, args);
             },
+            Command::Continue(args) => {
+                let resp = ResponseBody::Continue(ContinueResponse {
+                    all_threads_continued: Some(true),
+                });
+                self.handle_step(req, args, DebugRequest::Continue, resp);
+            },
             Command::Next(args) => {
                 self.handle_step(req, args, DebugRequest::Next, ResponseBody::Next);
             },
@@ -310,12 +316,13 @@ impl<R: Read, W: Write> DapServer<R, W> {
             let msg = CommChannelMsg::Data(json!({
                 "msg_type": "execute",
                 "content": {
-                    "command": match cmd {
-                        DebugRequest::Next => String::from("n"),
-                        DebugRequest::StepIn => String::from("s"),
-                        DebugRequest::StepOut => String::from("f"),
-                        DebugRequest::Quit => String::from("Q"),
-                    }
+                    "command": String::from(match cmd {
+                        DebugRequest::Continue => "c",
+                        DebugRequest::Next => "n",
+                        DebugRequest::StepIn => "s",
+                        DebugRequest::StepOut => "f",
+                        DebugRequest::Quit => "Q",
+                    })
                 }
             }));
             tx.send(msg).unwrap();

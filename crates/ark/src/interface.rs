@@ -597,6 +597,7 @@ impl RMain {
                             // Translate requests from the debugger frontend to actual inputs for
                             // the debug interpreter
                             ConsoleInput::Input(String::from(match cmd {
+                                DebugRequest::Continue => "c",
                                 DebugRequest::Next => "n",
                                 DebugRequest::StepIn => "s",
                                 DebugRequest::StepOut => "f",
