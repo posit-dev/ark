@@ -24,8 +24,7 @@ use crate::comm::event::CommEvent;
 use crate::connection_file::ConnectionFile;
 use crate::error::Error;
 use crate::language::control_handler::ControlHandler;
-use crate::language::dap_handler::DapHandler;
-use crate::language::lsp_handler::LspHandler;
+use crate::language::server_handler::ServerHandler;
 use crate::language::shell_handler::ShellHandler;
 use crate::session::Session;
 use crate::socket::control::Control;
@@ -111,8 +110,8 @@ impl Kernel {
         &mut self,
         shell_handler: Arc<Mutex<dyn ShellHandler>>,
         control_handler: Arc<Mutex<dyn ControlHandler>>,
-        lsp_handler: Option<Arc<Mutex<dyn LspHandler>>>,
-        dap_handler: Option<Arc<Mutex<dyn DapHandler>>>,
+        lsp_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
+        dap_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
         stream_behavior: StreamBehavior,
         // Receiver channel for the stdin socket; when input is needed, the
         // language runtime can request it by sending an InputRequest to
@@ -321,8 +320,8 @@ impl Kernel {
         comm_manager_tx: Sender<CommEvent>,
         comm_changed_rx: Receiver<CommChanged>,
         shell_handler: Arc<Mutex<dyn ShellHandler>>,
-        lsp_handler: Option<Arc<Mutex<dyn LspHandler>>>,
-        dap_handler: Option<Arc<Mutex<dyn DapHandler>>>,
+        lsp_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
+        dap_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
     ) -> Result<(), Error> {
         let mut shell = Shell::new(
             socket,

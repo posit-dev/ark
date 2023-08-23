@@ -7,7 +7,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use amalthea::{comm::comm_channel::CommChannelMsg, language::dap_handler::DapHandler};
+use amalthea::{comm::comm_channel::CommChannelMsg, language::server_handler::ServerHandler};
 use crossbeam::channel::Sender;
 use harp::session::FrameInfo;
 use serde_json::json;
@@ -121,7 +121,7 @@ impl Dap {
 }
 
 // Handler for Amalthea socket threads
-impl DapHandler for Dap {
+impl ServerHandler for Dap {
     fn start(
         &mut self,
         tcp_address: String,

@@ -275,7 +275,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
         self.server.respond(rsp).unwrap();
     }
 
-    fn handle_restart(&mut self, req: Request, _args: RestartArguments) {
+    fn handle_restart<T>(&mut self, req: Request, _args: T) {
         // If connected to Positron, forward the restart command to the
         // frontend. Otherwise ignore it.
         if let Some(tx) = &self.comm_tx {

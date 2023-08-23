@@ -6,6 +6,5 @@
  */
 
 pub mod control_handler;
-pub mod dap_handler;
-pub mod lsp_handler;
+pub mod server_handler;
 pub mod shell_handler;

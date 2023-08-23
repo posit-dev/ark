@@ -15,21 +15,16 @@ use futures::executor::block_on;
 use log::debug;
 use log::trace;
 use log::warn;
-use serde::de::DeserializeOwned;
 use serde_json::json;
 use stdext::result::ResultOrLog;
 
 use crate::comm::comm_channel::Comm;
 use crate::comm::comm_channel::CommChannelMsg;
-use crate::comm::dap_comm::DapComm;
-use crate::comm::dap_comm::StartDap;
 use crate::comm::event::CommChanged;
 use crate::comm::event::CommEvent;
-use crate::comm::lsp_comm::LspComm;
-use crate::comm::lsp_comm::StartLsp;
+use crate::comm::server_comm::ServerComm;
 use crate::error::Error;
-use crate::language::dap_handler::DapHandler;
-use crate::language::lsp_handler::LspHandler;
+use crate::language::server_handler::ServerHandler;
 use crate::language::shell_handler::ShellHandler;
 use crate::socket::comm::CommInitiator;
 use crate::socket::comm::CommSocket;
@@ -71,10 +66,10 @@ pub struct Shell {
     shell_handler: Arc<Mutex<dyn ShellHandler>>,
 
     /// Language-provided LSP handler object
-    lsp_handler: Option<Arc<Mutex<dyn LspHandler>>>,
+    lsp_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
 
     /// Language-provided DAP handler object
-    dap_handler: Option<Arc<Mutex<dyn DapHandler>>>,
+    dap_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
 
     /// Set of open comm channels; vector of (comm_id, target_name)
     open_comms: Vec<(String, String)>,
@@ -101,8 +96,8 @@ impl Shell {
         comm_manager_tx: Sender<CommEvent>,
         comm_changed_rx: Receiver<CommChanged>,
         shell_handler: Arc<Mutex<dyn ShellHandler>>,
-        lsp_handler: Option<Arc<Mutex<dyn LspHandler>>>,
-        dap_handler: Option<Arc<Mutex<dyn DapHandler>>>,
+        lsp_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
+        dap_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
     ) -> Self {
         Self {
             socket,
@@ -428,53 +423,33 @@ impl Shell {
         // internal ID or a reference to the IOPub channel.
 
         let opened = match comm {
-            Comm::Dap => {
-                if let Some(handler) = self.dap_handler.clone() {
-                    let (init_tx, init_rx) = crossbeam::channel::bounded::<bool>(1);
-                    conn_init_rx = Some(init_rx);
-
-                    // Parse the message as server address
-                    let start_dap: StartDap = Self::req_server_address(&req, data_str)?;
-
-                    let dap_comm = DapComm::new(handler, comm_socket.outgoing_tx.clone());
-                    dap_comm.start(&start_dap, init_tx)?;
-                    true
-                } else {
-                    // If we don't have an DAP handler, return an error
-                    warn!(
-                        "Client attempted to start DAP, but no DAP handler was provided by kernel."
-                    );
-                    return Err(Error::UnknownCommName(req.content.target_name.clone()));
-                }
-            },
-            // If this is the special LSP comm, start the LSP server and create
+            // If this is the special LSP or DAP comms, start the server and create
             // a comm that wraps it
-            Comm::Lsp => {
-                let (init_tx, init_rx) = crossbeam::channel::bounded::<bool>(1);
+            Comm::Dap => {
+                let init_rx = Self::start_server_comm(
+                    &req,
+                    data_str,
+                    self.dap_handler.clone(),
+                    &comm_socket,
+                )?;
                 conn_init_rx = Some(init_rx);
-
-                if let Some(handler) = self.lsp_handler.clone() {
-                    // Parse the message as server address
-                    let start_lsp: StartLsp = Self::req_server_address(&req, data_str)?;
-
-                    // Create the new comm wrapper channel for the LSP and start
-                    // the LSP server in a separate thread
-                    let lsp_comm = LspComm::new(handler, comm_socket.outgoing_tx.clone());
-                    lsp_comm.start(&start_lsp, init_tx)?;
-                    true
-                } else {
-                    // If we don't have an LSP handler, return an error
-                    warn!(
-                        "Client attempted to start LSP, but no LSP handler was provided by kernel."
-                    );
-                    return Err(Error::UnknownCommName(req.content.target_name.clone()));
-                }
+                true
             },
+            Comm::Lsp => {
+                let init_rx = Self::start_server_comm(
+                    &req,
+                    data_str,
+                    self.lsp_handler.clone(),
+                    &comm_socket,
+                )?;
+                conn_init_rx = Some(init_rx);
+                true
+            },
+
+            // Only the LSP and DAP comms are handled by the Amalthea
+            // kernel framework itself; all other comms are passed through
+            // to the shell handler.
             _ => {
-                // Only the LSP and DAP comms are handled by the Amalthea
-                // kernel framework itself; all other comms are passed
-                // through to the shell handler.
-                //
                 // Lock the shell handler object on this thread.
                 let handler = self.shell_handler.lock().unwrap();
 
@@ -536,16 +511,35 @@ impl Shell {
         Ok(())
     }
 
-    // Parse the data parameter of a request to a server address
-    // message. This is a message from the front end that contains the
-    // the address that the client expects the server comm to bind to.
-    fn req_server_address<T>(req: &JupyterMessage<CommOpen>, data_str: String) -> Result<T, Error>
-    where
-        T: DeserializeOwned,
-    {
-        serde_json::from_value::<T>(req.content.data.clone()).map_err(|err| {
-            Error::InvalidCommMessage(req.content.target_name.clone(), data_str, err.to_string())
-        })
+    fn start_server_comm(
+        req: &JupyterMessage<CommOpen>,
+        data_str: String,
+        handler: Option<Arc<Mutex<dyn ServerHandler>>>,
+        comm_socket: &CommSocket,
+    ) -> Result<Receiver<bool>, Error> {
+        if let Some(handler) = handler {
+            let (init_tx, init_rx) = crossbeam::channel::bounded::<bool>(1);
+
+            // Parse the message as server address
+            let address = serde_json::from_value(req.content.data.clone()).map_err(|err| {
+                Error::InvalidCommMessage(
+                    req.content.target_name.clone(),
+                    data_str,
+                    err.to_string(),
+                )
+            })?;
+
+            // Create the new comm wrapper for the server and start it in a
+            // separate thread
+            let comm = ServerComm::new(handler, comm_socket.outgoing_tx.clone());
+            comm.start(&address, init_tx)?;
+
+            Ok(init_rx)
+        } else {
+            // If we don't have the corresponding handler, return an error
+            warn!("Client attempted to start LSP or DAP, but no handler was provided by kernel.");
+            Err(Error::UnknownCommName(req.content.target_name.clone()))
+        }
     }
 
     /// Handle a request to close a comm
