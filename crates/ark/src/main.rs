@@ -30,7 +30,12 @@ use nix::sys::signal::*;
 use notify::Watcher;
 use stdext::unwrap;
 
-fn start_kernel(connection_file: ConnectionFile, r_args: Vec<String>, capture_streams: bool) {
+fn start_kernel(
+    connection_file: ConnectionFile,
+    r_args: Vec<String>,
+    startup_file: Option<String>,
+    capture_streams: bool,
+) {
     // Create a new kernel from the connection file
     let mut kernel = match Kernel::new("ark", connection_file) {
         Ok(k) => k,
@@ -73,6 +78,7 @@ fn start_kernel(connection_file: ConnectionFile, r_args: Vec<String>, capture_st
     let kernel_init_rx = kernel_init_tx.add_rx();
     let shell = Shell::new(
         r_args,
+        startup_file,
         kernel.create_comm_manager_tx(),
         iopub_tx,
         r_request_tx.clone(),
@@ -164,7 +170,12 @@ fn install_kernel_spec() {
     );
 }
 
-fn parse_file(connection_file: &String, r_args: Vec<String>, capture_streams: bool) {
+fn parse_file(
+    connection_file: &String,
+    r_args: Vec<String>,
+    startup_file: Option<String>,
+    capture_streams: bool,
+) {
     match ConnectionFile::from_file(connection_file) {
         Ok(connection) => {
             info!(
@@ -172,7 +183,7 @@ fn parse_file(connection_file: &String, r_args: Vec<String>, capture_streams: bo
                 connection_file
             );
             debug!("Connection data: {:?}", connection);
-            start_kernel(connection, r_args, capture_streams);
+            start_kernel(connection, r_args, startup_file, capture_streams);
         },
         Err(error) => {
             error!(
@@ -195,6 +206,7 @@ Available options:
                          (see the Jupyter kernel documentation for details)
 -- arg1 arg2 ...         Set the argument list to pass to R; defaults to
                          --interactive
+--startup-file FILE      An R file to run on session startup
 --no-capture-streams     Do not capture stdout/stderr from R
 --version                Print the version of Ark
 --log FILE               Log to the given file (if not specified, stdout/stderr
@@ -228,6 +240,7 @@ fn main() {
     argv.next();
 
     let mut connection_file: Option<String> = None;
+    let mut startup_file: Option<String> = None;
     let mut log_file: Option<String> = None;
     let mut startup_notifier_file: Option<String> = None;
     let mut startup_delay: Option<std::time::Duration> = None;
@@ -246,6 +259,15 @@ fn main() {
                     eprintln!(
                         "A connection file must be specified with the --connection_file argument."
                     );
+                    break;
+                }
+            },
+            "--startup-file" => {
+                if let Some(file) = argv.next() {
+                    startup_file = Some(file);
+                    has_action = true;
+                } else {
+                    eprintln!("A startup file must be specified with the --startup-file argument.");
                     break;
                 }
             },
@@ -373,6 +395,6 @@ fn main() {
 
     // Parse the connection file and start the kernel
     if let Some(connection) = connection_file {
-        parse_file(&connection, r_args, capture_streams);
+        parse_file(&connection, r_args, startup_file, capture_streams);
     }
 }

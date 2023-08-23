@@ -44,6 +44,7 @@ use bus::Bus;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::RecvTimeoutError;
 use crossbeam::channel::Sender;
+use harp::exec::r_source;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::interrupts::RInterruptsSuspendedScope;
@@ -138,6 +139,7 @@ pub static mut R_MAIN: Option<RMain> = None;
 /// Starts the main R thread. Doesn't return.
 pub fn start_r(
     r_args: Vec<String>,
+    startup_file: Option<String>,
     kernel_mutex: Arc<Mutex<Kernel>>,
     r_request_rx: Receiver<RRequest>,
     input_request_tx: Sender<ShellInputRequest>,
@@ -204,6 +206,11 @@ pub fn start_r(
 
         // Set up main loop
         setup_Rmainloop();
+
+        // Optionally run a user specified R startup script
+        if let Some(file) = &startup_file {
+            r_source(file).or_log_error(&format!("Failed to source startup file '{file}' due to"));
+        }
 
         // Register embedded routines
         r_register_routines();

@@ -75,6 +75,7 @@ impl Shell {
     /// Creates a new instance of the shell message handler.
     pub fn new(
         r_args: Vec<String>,
+        startup_file: Option<String>,
         comm_manager_tx: Sender<CommEvent>,
         iopub_tx: Sender<IOPubMessage>,
         r_request_tx: Sender<RRequest>,
@@ -110,6 +111,7 @@ impl Shell {
             // Start the R REPL (does not return)
             crate::interface::start_r(
                 r_args,
+                startup_file,
                 kernel_clone,
                 r_request_rx,
                 input_request_tx,
