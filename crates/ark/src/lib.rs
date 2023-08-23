@@ -20,7 +20,6 @@ pub mod modules;
 pub mod plots;
 pub mod request;
 pub mod shell;
-pub mod startup;
 pub mod version;
 
 use serde::Deserialize;

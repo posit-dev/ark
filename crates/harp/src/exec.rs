@@ -374,6 +374,17 @@ pub unsafe fn r_parse_vector(code: &str) -> Result<ParseResult> {
     }
 }
 
+pub unsafe fn r_source(file: &str) -> Result<()> {
+    let mut func = RFunction::new("base", "source");
+    func.param("file", file);
+
+    match func.call() {
+        // Return value isn't meaningful here
+        Ok(_) => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
 #[cfg(test)]
 mod tests {
 

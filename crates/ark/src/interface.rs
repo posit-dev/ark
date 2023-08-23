@@ -44,6 +44,7 @@ use bus::Bus;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::RecvTimeoutError;
 use crossbeam::channel::Sender;
+use harp::exec::r_source;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::interrupts::RInterruptsSuspendedScope;
@@ -70,7 +71,6 @@ use crate::lsp::events::EVENTS;
 use crate::modules;
 use crate::plots::graphics_device;
 use crate::request::RRequest;
-use crate::startup;
 
 extern "C" {
     pub static mut R_running_as_main_program: ::std::os::raw::c_int;
@@ -208,8 +208,8 @@ pub fn start_r(
         setup_Rmainloop();
 
         // Optionally run a user specified R startup script
-        if let Some(file) = startup_file {
-            startup::source(file);
+        if let Some(file) = &startup_file {
+            r_source(file).or_log_error(&format!("Failed to source startup file '{file}' due to"));
         }
 
         // Register embedded routines
