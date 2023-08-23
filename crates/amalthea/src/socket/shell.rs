@@ -16,7 +16,7 @@ use log::debug;
 use log::trace;
 use log::warn;
 use serde_json::json;
-use stdext::result::ResultOrLog;
+use stdext::result::ResultExt;
 
 use crate::comm::comm_channel::Comm;
 use crate::comm::comm_channel::CommChannelMsg;
@@ -488,10 +488,12 @@ impl Shell {
             // comm has been opened
             self.comm_manager_tx
                 .send(CommEvent::Opened(comm_socket.clone(), comm_data))
-                .or_log_warning(&format!(
-                    "Failed to send '{}' comm open notification to listener thread",
-                    comm_socket.comm_name
-                ));
+                .on_err(|e| {
+                    let comm_name = &comm_socket.comm_name;
+                    log::warn!(
+                        "Failed to send '{comm_name}' comm open notification to listener thread due to: {e}."
+                    )
+                });
 
             // If the comm wraps a server, send notification once the
             // server is ready to accept connections
@@ -503,10 +505,10 @@ impl Shell {
                         "msg_type": "server_started",
                         "content": {}
                     })))
-                    .or_log_warning(&format!(
-                        "Failed to send '{}' comm init notification to frontend comm",
-                        comm_socket.comm_name
-                    ));
+                    .on_err(|e| {
+                        let comm_name = &comm_socket.comm_name;
+                        log::warn!("Failed to send '{comm_name}' comm init notification to frontend comm due to: {e}.")
+                    });
             }
         } else {
             // If the comm was not opened, return an error to the caller

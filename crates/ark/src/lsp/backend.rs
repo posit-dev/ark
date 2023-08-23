@@ -18,7 +18,7 @@ use log::*;
 use parking_lot::Mutex;
 use regex::Regex;
 use serde_json::Value;
-use stdext::result::ResultOrLog;
+use stdext::result::ResultExt;
 use stdext::*;
 use tokio::net::TcpListener;
 use tower_lsp::jsonrpc::Result;
@@ -591,7 +591,7 @@ pub async fn start_lsp(
     // Notify frontend that we are ready to accept connections
     conn_init_tx
         .send(true)
-        .or_log_warning("Couldn't send LSP server init notification");
+        .on_err(|e| log::warn!("Couldn't send LSP server init notification due to: {e}."));
 
     let (stream, _) = listener.accept().await.unwrap();
     debug!("Connected to LSP at '{}'", address);

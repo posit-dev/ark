@@ -46,7 +46,7 @@ use harp::r_lock;
 use libR_sys::*;
 use once_cell::sync::Lazy;
 use serde_json::json;
-use stdext::result::ResultOrLog;
+use stdext::result::ResultExt;
 use stdext::unwrap;
 use uuid::Uuid;
 
@@ -196,7 +196,7 @@ impl DeviceContext {
                     socket
                         .outgoing_tx
                         .send(CommChannelMsg::Rpc(rpc_id.to_string(), json))
-                        .or_log_error("Failed to send plot due to");
+                        .on_err(|e| log::error!("Failed to send plot due to: {e}."));
                 },
             }
         }
@@ -278,7 +278,7 @@ impl DeviceContext {
                 metadata,
                 transient,
             }))
-            .or_log_warning(&format!("Could not publish display data on IOPub."));
+            .on_err(|e| log::warn!("Could not publish display data on IOPub due to: {e}."));
     }
 
     fn process_update_plot(
@@ -310,7 +310,7 @@ impl DeviceContext {
         socket
             .outgoing_tx
             .send(CommChannelMsg::Data(value))
-            .or_log_error("Failed to send update message for id {id}.");
+            .on_err(|e| log::error!("Failed to send update message for id {id} due to {e}."));
     }
 
     fn process_update_plot_jupyter_protocol(&mut self, id: &str, iopub_tx: Sender<IOPubMessage>) {
@@ -334,7 +334,7 @@ impl DeviceContext {
                 metadata,
                 transient,
             }))
-            .or_log_warning(&format!("Could not publish update display data on IOPub."));
+            .on_err(|e| log::warn!("Could not publish update display data on IOPub due to: {e}."));
     }
 
     fn create_display_data_plot(&mut self, id: &str) -> Result<serde_json::Value, anyhow::Error> {

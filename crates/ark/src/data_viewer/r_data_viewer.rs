@@ -35,7 +35,7 @@ use libR_sys::XLENGTH;
 use serde::Deserialize;
 use serde::Serialize;
 use stdext::local;
-use stdext::result::ResultOrLog;
+use stdext::result::ResultExt;
 use stdext::spawn;
 use stdext::unwrap;
 use uuid::Uuid;
@@ -349,7 +349,9 @@ impl RDataViewer {
             self.comm
                 .outgoing_tx
                 .send(CommChannelMsg::Close)
-                .or_log_error("Data Viewer: Failed to properly close the comm");
+                .on_err(|e| {
+                    log::error!("Data Viewer: Failed to properly close the comm due to {e}.")
+                });
         }
     }
 
@@ -395,12 +397,12 @@ impl RDataViewer {
         });
 
         let comm_msg = match request_id {
-            Some(id) => CommChannelMsg::Rpc(id, message),
-            None => CommChannelMsg::Data(message),
+            Some(id) => CommChannelMsg::Rpc(id, message.clone()),
+            None => CommChannelMsg::Data(message.clone()),
         };
         self.comm
             .outgoing_tx
             .send(comm_msg)
-            .or_log_error("Data Viewer: Failed to send message {message}");
+            .on_err(|e| log::error!("Data Viewer: Failed to send message {message} due to: {e}."));
     }
 }

@@ -61,7 +61,7 @@ use log::*;
 use nix::sys::signal::*;
 use parking_lot::ReentrantMutexGuard;
 use serde_json::json;
-use stdext::result::ResultOrLog;
+use stdext::result::ResultExt;
 use stdext::*;
 
 use crate::errors;
@@ -209,7 +209,8 @@ pub fn start_r(
 
         // Optionally run a user specified R startup script
         if let Some(file) = &startup_file {
-            r_source(file).or_log_error(&format!("Failed to source startup file '{file}' due to"));
+            r_source(file)
+                .on_err(|e| log::error!("Failed to source startup file '{file}' due to {e}."));
         }
 
         // Register embedded routines
@@ -887,7 +888,7 @@ fn peek_execute_response(exec_count: u32) -> ExecuteResponse {
             .send(IOPubMessage::ExecuteError(ExecuteError {
                 exception: exception.clone(),
             }))
-            .or_log_warning(&format!("Could not publish error {} on iopub", exec_count));
+            .on_err(|e| log::warn!("Could not publish error {exec_count} on iopub due to: {e}."));
 
         new_execute_error_response(exception, exec_count)
     } else {
@@ -917,10 +918,11 @@ fn peek_execute_response(exec_count: u32) -> ExecuteResponse {
                 data: serde_json::Value::Object(data),
                 metadata: json!({}),
             }))
-            .or_log_warning(&format!(
-                "Could not publish result of statement {} on iopub",
-                exec_count
-            ));
+            .on_err(|e| {
+                log::warn!(
+                    "Could not publish result of statement {exec_count} on iopub due to: {e}."
+                )
+            });
 
         new_execute_response(exec_count)
     }
