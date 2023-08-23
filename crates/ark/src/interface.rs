@@ -536,7 +536,7 @@ impl RMain {
         EVENTS.console_prompt.emit(());
 
         if info.browser {
-            let dap = self.dap.lock().unwrap();
+            let mut dap = self.dap.lock().unwrap();
             match harp::session::r_stack_info() {
                 Ok(stack) => {
                     self.is_debugging = true;
@@ -546,7 +546,7 @@ impl RMain {
             };
         } else if self.is_debugging {
             // Terminate debugging session
-            let dap = self.dap.lock().unwrap();
+            let mut dap = self.dap.lock().unwrap();
             dap.stop_debug();
             self.is_debugging = false;
         }
@@ -893,8 +893,7 @@ impl RMain {
 
     fn send_dap(&self, event: DapBackendEvent) {
         let dap = self.dap.lock().unwrap();
-        let state = dap.state.lock().unwrap();
-        if let Some(tx) = &state.backend_events_tx {
+        if let Some(tx) = &dap.backend_events_tx {
             log_error!(tx.send(event));
         }
     }

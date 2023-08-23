@@ -25,13 +25,13 @@ use stdext::spawn;
 
 use crate::request::{debug_request_command, DebugRequest, RRequest};
 
-use super::dap::{DapBackendEvent, DapState};
+use super::dap::{Dap, DapBackendEvent};
 
 const THREAD_ID: i64 = -1;
 
 pub fn start_dap(
     tcp_address: String,
-    state: Arc<Mutex<DapState>>,
+    state: Arc<Mutex<Dap>>,
     conn_init_tx: Sender<bool>,
     r_request_tx: Sender<RRequest>,
     comm_tx: Sender<CommChannelMsg>,
@@ -156,7 +156,7 @@ fn listen_dap_events<W: Write>(
 pub struct DapServer<R: Read, W: Write> {
     server: Server<R, W>,
     pub output: Arc<Mutex<ServerOutput<W>>>,
-    state: Arc<Mutex<DapState>>,
+    state: Arc<Mutex<Dap>>,
     r_request_tx: Sender<RRequest>,
     comm_tx: Option<Sender<CommChannelMsg>>,
 }
@@ -165,7 +165,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
     pub fn new(
         reader: BufReader<R>,
         writer: BufWriter<W>,
-        state: Arc<Mutex<DapState>>,
+        state: Arc<Mutex<Dap>>,
         r_request_tx: Sender<RRequest>,
         comm_tx: Sender<CommChannelMsg>,
     ) -> Self {

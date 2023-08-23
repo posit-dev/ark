@@ -30,17 +30,6 @@ pub enum DapBackendEvent {
 }
 
 pub struct Dap {
-    /// State shared with the DAP server thread.
-    pub state: Arc<Mutex<DapState>>,
-
-    /// Channel for sending events to the comm frontend.
-    comm_tx: Option<Sender<CommChannelMsg>>,
-
-    /// Channel for sending debug commands to `read_console()`
-    r_request_tx: Sender<RRequest>,
-}
-
-pub struct DapState {
     /// Whether the REPL is stopped with a browser prompt.
     pub is_debugging: bool,
 
@@ -51,37 +40,48 @@ pub struct DapState {
     /// This always exists when `is_connected` is true.
     pub backend_events_tx: Option<Sender<DapBackendEvent>>,
 
-    /// Stack information
+    /// Current call stack
     pub stack: Option<Vec<FrameInfo>>,
+
+    /// Channel for sending events to the comm frontend.
+    comm_tx: Option<Sender<CommChannelMsg>>,
+
+    /// Channel for sending debug commands to `read_console()`
+    r_request_tx: Sender<RRequest>,
+
+    /// Self-reference under a mutex. Shared with the R, Shell socket, and
+    /// DAP server threads.
+    shared_self: Option<Arc<Mutex<Dap>>>,
 }
 
-impl DapState {
-    pub fn new() -> Self {
-        Self {
+impl Dap {
+    pub fn new_shared(r_request_tx: Sender<RRequest>) -> Arc<Mutex<Self>> {
+        let state = Self {
             is_debugging: false,
             is_connected: false,
             backend_events_tx: None,
             stack: None,
-        }
-    }
-}
-
-impl Dap {
-    pub fn new(r_request_tx: Sender<RRequest>) -> Self {
-        Self {
-            state: Arc::new(Mutex::new(DapState::new())),
             comm_tx: None,
             r_request_tx,
+            shared_self: None,
+        };
+
+        let shared = Arc::new(Mutex::new(state));
+
+        // Set shareable self-reference
+        {
+            let mut state = shared.lock().unwrap();
+            state.shared_self = Some(shared.clone());
         }
+
+        shared
     }
 
-    pub fn start_debug(&self, stack: Vec<FrameInfo>) {
-        let mut state = self.state.lock().unwrap();
+    pub fn start_debug(&mut self, stack: Vec<FrameInfo>) {
+        self.stack = Some(stack);
 
-        state.stack = Some(stack);
-
-        if state.is_debugging {
-            if let Some(tx) = &state.backend_events_tx {
+        if self.is_debugging {
+            if let Some(tx) = &self.backend_events_tx {
                 log_error!(tx.send(DapBackendEvent::Stopped));
             }
         } else {
@@ -95,21 +95,20 @@ impl Dap {
                 log_error!(tx.send(msg));
             }
 
-            state.is_debugging = true;
+            self.is_debugging = true;
         }
     }
 
-    pub fn stop_debug(&self) {
+    pub fn stop_debug(&mut self) {
         // Reset state
-        let mut state = self.state.lock().unwrap();
-        state.stack = None;
-        state.is_debugging = false;
+        self.stack = None;
+        self.is_debugging = false;
 
-        if state.is_connected {
+        if self.is_connected {
             if let Some(_) = &self.comm_tx {
                 // Let frontend know we've quitted the debugger so it can
                 // terminate the debugging session and disconnect.
-                if let Some(tx) = &state.backend_events_tx {
+                if let Some(tx) = &self.backend_events_tx {
                     log::trace!("DAP: Sending `start_debug` event");
                     log_error!(tx.send(DapBackendEvent::Terminated));
                 }
@@ -135,9 +134,12 @@ impl DapHandler for Dap {
         // server when connected. This is currently the only way to create
         // this thread but in the future we might provide other ways to
         // connect to the DAP without a Jupyter comm.
-        let state_clone = self.state.clone();
         let r_request_tx_clone = self.r_request_tx.clone();
         let comm_tx_clone = comm_tx.clone();
+
+        // This can't panic as `Dap` can't be constructed without a shared self
+        let state_clone = self.shared_self.as_ref().unwrap().clone();
+
         spawn!("ark-dap", move || {
             dap_server::start_dap(
                 tcp_address,

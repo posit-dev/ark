@@ -70,7 +70,7 @@ fn start_kernel(
 
     // DAP needs the `RRequest` channel to communicate with
     // `read_console()` and send commands to the debug interpreter
-    let dap = Arc::new(Mutex::new(dap::Dap::new(r_request_tx.clone())));
+    let dap = dap::Dap::new_shared(r_request_tx.clone());
 
     // One-off communication channel for 0MQ init event
     let (conn_init_tx, conn_init_rx) = bounded::<bool>(0);
