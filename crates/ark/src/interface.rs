@@ -893,7 +893,10 @@ impl RMain {
 
     fn send_dap(&self, event: DapBackendEvent) {
         let dap = self.dap.lock().unwrap();
-        dap.send_event(event);
+        let state = dap.state.lock().unwrap();
+        if let Some(tx) = &state.backend_events_tx {
+            log_error!(tx.send(event));
+        }
     }
 }
 

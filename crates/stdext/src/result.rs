@@ -7,6 +7,22 @@
 
 use std::fmt::Display;
 
+// Since this is a macro, this correctly records call site information.
+// TODO: Should we retire the `ResultOrLog` trait?
+#[macro_export(local_inner_macros)]
+macro_rules! log_error {
+    ($res:expr) => {
+        if let Err(err) = $res {
+            log::error!("{err}");
+        }
+    };
+    ($prefix:expr, $res:expr) => {
+        if let Err(err) = $res {
+            log::error!("{}: {err}", $prefix);
+        }
+    };
+}
+
 pub trait ResultOrLog<T, E> {
     /// If `self` is an error, log an error, else do nothing and consume self.
     fn or_log_error(self, prefix: &str);

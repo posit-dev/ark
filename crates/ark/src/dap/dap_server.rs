@@ -10,7 +10,7 @@ use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
 
 use amalthea::comm::comm_channel::CommChannelMsg;
-use crossbeam::channel::{bounded, Receiver, Sender};
+use crossbeam::channel::{bounded, unbounded, Receiver, Sender};
 use crossbeam::select;
 use dap::events::*;
 use dap::prelude::*;
@@ -33,7 +33,6 @@ pub fn start_dap(
     tcp_address: String,
     state: Arc<Mutex<DapState>>,
     conn_init_tx: Sender<bool>,
-    events_rx: Receiver<DapBackendEvent>,
     r_request_tx: Sender<RRequest>,
     comm_tx: Sender<CommChannelMsg>,
 ) {
@@ -73,8 +72,8 @@ pub fn start_dap(
             comm_tx.clone(),
         );
 
+        let (backend_events_tx, backend_events_rx) = unbounded::<DapBackendEvent>();
         let (done_tx, done_rx) = bounded::<bool>(0);
-        let events_rx_clone = events_rx.clone();
         let output_clone = server.output.clone();
 
         // We need a scope to let the borrow checker know that
@@ -82,8 +81,14 @@ pub fn start_dap(
         // to the stack variable `stream` through `server`)
         let _ = crossbeam::thread::scope(|scope| {
             spawn!(scope, "ark-dap-events", {
-                move |_| listen_dap_events(output_clone, events_rx_clone, done_rx)
+                move |_| listen_dap_events(output_clone, backend_events_rx, done_rx)
             });
+
+            // Connect the backend to the events thread
+            {
+                let mut state = state.lock().unwrap();
+                state.backend_events_tx = Some(backend_events_tx);
+            }
 
             loop {
                 // If disconnected, break and accept a new connection to create a new server
@@ -105,12 +110,12 @@ pub fn start_dap(
 // `ReadConsole()` method. These are forwarded to the DAP client.
 fn listen_dap_events<W: Write>(
     output: Arc<Mutex<ServerOutput<W>>>,
-    events_rx: Receiver<DapBackendEvent>,
+    backend_events_rx: Receiver<DapBackendEvent>,
     done_rx: Receiver<bool>,
 ) {
     loop {
         select!(
-            recv(events_rx) -> event => {
+            recv(backend_events_rx) -> event => {
                 log::trace!("DAP: Got event from backend: {:?}", event);
 
                 let event = match event.unwrap() {

@@ -8,10 +8,10 @@
 use std::sync::{Arc, Mutex};
 
 use amalthea::{comm::comm_channel::CommChannelMsg, language::dap_handler::DapHandler};
-use crossbeam::channel::{unbounded, Receiver, Sender};
+use crossbeam::channel::Sender;
 use harp::session::FrameInfo;
 use serde_json::json;
-use stdext::{result::ResultOrLog, spawn};
+use stdext::{log_error, spawn};
 
 use crate::{dap::dap_server, request::RRequest};
 
@@ -33,12 +33,6 @@ pub struct Dap {
     /// State shared with the DAP server thread.
     pub state: Arc<Mutex<DapState>>,
 
-    /// Channel for sending events to the DAP frontend.
-    pub events_tx: Sender<DapBackendEvent>,
-
-    /// Receiving side of event channel, managed on its own thread.
-    events_rx: Receiver<DapBackendEvent>,
-
     /// Channel for sending events to the comm frontend.
     comm_tx: Option<Sender<CommChannelMsg>>,
 
@@ -53,6 +47,10 @@ pub struct DapState {
     /// Whether the DAP server is connected to a client.
     pub is_connected: bool,
 
+    /// Channel for sending events to the DAP frontend.
+    /// This always exists when `is_connected` is true.
+    pub backend_events_tx: Option<Sender<DapBackendEvent>>,
+
     /// Stack information
     pub stack: Option<Vec<FrameInfo>>,
 }
@@ -62,6 +60,7 @@ impl DapState {
         Self {
             is_debugging: false,
             is_connected: false,
+            backend_events_tx: None,
             stack: None,
         }
     }
@@ -69,11 +68,8 @@ impl DapState {
 
 impl Dap {
     pub fn new(r_request_tx: Sender<RRequest>) -> Self {
-        let (events_tx, events_rx) = unbounded::<DapBackendEvent>();
         Self {
             state: Arc::new(Mutex::new(DapState::new())),
-            events_tx,
-            events_rx,
             comm_tx: None,
             r_request_tx,
         }
@@ -85,8 +81,8 @@ impl Dap {
         state.stack = Some(stack);
 
         if state.is_debugging {
-            if state.is_connected {
-                self.send_event(DapBackendEvent::Stopped);
+            if let Some(tx) = &state.backend_events_tx {
+                log_error!(tx.send(DapBackendEvent::Stopped));
             }
         } else {
             if let Some(tx) = &self.comm_tx {
@@ -96,7 +92,7 @@ impl Dap {
                     "msg_type": "start_debug",
                     "content": {}
                 }));
-                tx.send(msg).unwrap();
+                log_error!(tx.send(msg));
             }
 
             state.is_debugging = true;
@@ -113,19 +109,15 @@ impl Dap {
             if let Some(_) = &self.comm_tx {
                 // Let frontend know we've quitted the debugger so it can
                 // terminate the debugging session and disconnect.
-                log::trace!("DAP: Sending `start_debug` event");
-                self.send_event(DapBackendEvent::Terminated);
+                if let Some(tx) = &state.backend_events_tx {
+                    log::trace!("DAP: Sending `start_debug` event");
+                    log_error!(tx.send(DapBackendEvent::Terminated));
+                }
             }
             // else: If not connected to a frontend, the DAP client should
             // have received a `Continued` event already, after a `n`
             // command or similar.
         }
-    }
-
-    pub fn send_event(&self, event: DapBackendEvent) {
-        self.events_tx
-            .send(event)
-            .or_log_error(&format!("Couldn't send event {:?}", event));
     }
 }
 
@@ -144,7 +136,6 @@ impl DapHandler for Dap {
         // this thread but in the future we might provide other ways to
         // connect to the DAP without a Jupyter comm.
         let state_clone = self.state.clone();
-        let events_rx_clone = self.events_rx.clone();
         let r_request_tx_clone = self.r_request_tx.clone();
         let comm_tx_clone = comm_tx.clone();
         spawn!("ark-dap", move || {
@@ -152,7 +143,6 @@ impl DapHandler for Dap {
                 tcp_address,
                 state_clone,
                 conn_init_tx,
-                events_rx_clone,
                 r_request_tx_clone,
                 comm_tx_clone,
             )
