@@ -532,7 +532,7 @@ impl Shell {
             // Create the new comm wrapper for the server and start it in a
             // separate thread
             let comm = ServerComm::new(handler, comm_socket.outgoing_tx.clone());
-            comm.start(&address, init_tx)?;
+            comm.start(address, init_tx)?;
 
             Ok(init_rx)
         } else {

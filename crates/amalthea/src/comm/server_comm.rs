@@ -45,7 +45,7 @@ impl ServerComm {
     /// This should return immediately after starting the server in a
     /// separate thread. Signal that the server is ready to accept
     /// connection by sending `true` via `conn_init_tx`.
-    pub fn start(&self, data: &StartServer, conn_init_tx: Sender<bool>) -> Result<(), Error> {
+    pub fn start(&self, data: StartServer, conn_init_tx: Sender<bool>) -> Result<(), Error> {
         let mut handler = self.handler.lock().unwrap();
         handler.start(
             data.client_address.clone(),
