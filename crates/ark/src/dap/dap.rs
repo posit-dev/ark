@@ -130,12 +130,14 @@ impl ServerHandler for Dap {
     ) -> Result<(), amalthea::error::Error> {
         log::info!("DAP: Spawning thread");
 
+        // If `start()` is called we are now connected to a frontend
+        self.comm_tx = Some(comm_tx.clone());
+
         // Create the DAP thread that manages connections and creates a
         // server when connected. This is currently the only way to create
         // this thread but in the future we might provide other ways to
         // connect to the DAP without a Jupyter comm.
         let r_request_tx_clone = self.r_request_tx.clone();
-        let comm_tx_clone = comm_tx.clone();
 
         // This can't panic as `Dap` can't be constructed without a shared self
         let state_clone = self.shared_self.as_ref().unwrap().clone();
@@ -146,12 +148,9 @@ impl ServerHandler for Dap {
                 state_clone,
                 conn_init_tx,
                 r_request_tx_clone,
-                comm_tx_clone,
+                comm_tx,
             )
         });
-
-        // If `start()` is called we are now connected to a frontend
-        self.comm_tx = Some(comm_tx);
 
         return Ok(());
     }
