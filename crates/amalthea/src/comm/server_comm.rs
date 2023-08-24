@@ -47,13 +47,11 @@ impl ServerComm {
     /// connection by sending `true` via `conn_init_tx`.
     pub fn start(&self, data: &StartServer, conn_init_tx: Sender<bool>) -> Result<(), Error> {
         let mut handler = self.handler.lock().unwrap();
-        handler
-            .start(
-                data.client_address.clone(),
-                conn_init_tx,
-                self.msg_tx.clone(),
-            )
-            .unwrap();
+        handler.start(
+            data.client_address.clone(),
+            conn_init_tx,
+            self.msg_tx.clone(),
+        )?;
         Ok(())
     }
 
