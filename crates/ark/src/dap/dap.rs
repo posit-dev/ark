@@ -106,10 +106,10 @@ impl Dap {
 
         if self.is_connected {
             if let Some(_) = &self.comm_tx {
-                // Let frontend know we've quitted the debugger so it can
+                // Let frontend know we've quit the debugger so it can
                 // terminate the debugging session and disconnect.
                 if let Some(tx) = &self.backend_events_tx {
-                    log::trace!("DAP: Sending `start_debug` event");
+                    log::trace!("DAP: Sending `stop_debug` event");
                     log_error!(tx.send(DapBackendEvent::Terminated));
                 }
             }
