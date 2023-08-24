@@ -316,7 +316,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
         let stack = { self.state.lock().unwrap().stack.clone() };
 
         let stack = match stack {
-            Some(s) if s.len() > 0 => s.into_iter().map(into_dap_frame).collect(),
+            Some(s) => s.into_iter().map(into_dap_frame).collect(),
             _ => vec![],
         };
 
