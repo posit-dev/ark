@@ -32,6 +32,7 @@ use tower_lsp::lsp_types::Url;
 use tree_sitter::Node;
 
 use crate::lsp::backend::Backend;
+use crate::lsp::documents::Document;
 use crate::lsp::indexer;
 use crate::Range;
 
@@ -96,15 +97,14 @@ pub async fn enqueue_diagnostics(backend: Backend, uri: Url, version: i32) {
         tokio::time::sleep(Duration::from_millis(1000)).await;
 
         // The document is thread safe to access due to the usage of DashMap
-        let current_version = match backend.documents.get(&uri) {
-            Some(doc) => doc.version.unwrap_or(0),
-            None => {
-                log::error!(
-                    "[diagnostics({version}, {uri})] No document associated with uri available."
-                );
-                return;
-            },
-        };
+        let doc = unwrap!(backend.documents.get(&uri), None => {
+            log::error!(
+                "[diagnostics({version}, {uri})] No document associated with uri available."
+            );
+            return;
+        });
+
+        let current_version = doc.version.unwrap_or(0);
 
         if version != current_version {
             // log::trace!("[diagnostics({version}, {uri})] Aborting diagnostics in favor of version {current_version}.");
@@ -113,19 +113,19 @@ pub async fn enqueue_diagnostics(backend: Backend, uri: Url, version: i32) {
 
         // Okay, it's our chance to provide diagnostics.
         // log::trace!("[diagnostics({version}, {uri})] Generating diagnostics.");
-        enqueue_diagnostics_impl(backend, uri).await;
+        let diagnostics = enqueue_diagnostics_impl(&doc);
+
+        backend
+            .client
+            .publish_diagnostics(uri, diagnostics, None)
+            .await;
     });
 }
 
-async fn enqueue_diagnostics_impl(backend: Backend, uri: Url) {
-    let mut diagnostics: Vec<Diagnostic> = Vec::new();
-    {
-        // get reference to document
-        let doc = unwrap!(backend.documents.get(&uri), None => {
-            log::error!("diagnostics: no document associated with uri {} available", uri);
-            return;
-        });
+fn enqueue_diagnostics_impl(doc: &Document) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::new();
 
+    {
         let source = doc.contents.to_string();
         let mut context = DiagnosticContext {
             source: source.as_str(),
@@ -198,10 +198,7 @@ async fn enqueue_diagnostics_impl(backend: Backend, uri: Url) {
         }
     }
 
-    backend
-        .client
-        .publish_diagnostics(uri, diagnostics, None)
-        .await;
+    diagnostics
 }
 
 fn recurse(
