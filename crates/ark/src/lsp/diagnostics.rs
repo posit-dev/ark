@@ -85,7 +85,7 @@ impl<'a> DiagnosticContext<'a> {
 }
 
 pub async fn enqueue_diagnostics(backend: Backend, uri: Url, version: i32) {
-    log::trace!("[diagnostics({version}, {uri})] Spawning task to enqueue diagnostics.");
+    // log::trace!("[diagnostics({version}, {uri})] Spawning task to enqueue diagnostics.");
 
     // Spawn a task to enqueue diagnostics.
     tokio::spawn(async move {
@@ -107,12 +107,12 @@ pub async fn enqueue_diagnostics(backend: Backend, uri: Url, version: i32) {
         };
 
         if version != current_version {
-            log::trace!("[diagnostics({version}, {uri})] Aborting diagnostics in favor of version {current_version}.");
+            // log::trace!("[diagnostics({version}, {uri})] Aborting diagnostics in favor of version {current_version}.");
             return;
         }
 
         // Okay, it's our chance to provide diagnostics.
-        log::trace!("[diagnostics({version}, {uri})] Generating diagnostics.");
+        // log::trace!("[diagnostics({version}, {uri})] Generating diagnostics.");
         enqueue_diagnostics_impl(backend, uri).await;
     });
 }
