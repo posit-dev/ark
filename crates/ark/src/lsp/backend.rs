@@ -293,7 +293,7 @@ impl LanguageServer for Backend {
         // the document now matches the version of the change after applying
         // it in `on_did_change()`
         if params.text_document.version == version {
-            diagnostics::enqueue_diagnostics(self.clone(), uri.clone()).await;
+            diagnostics::enqueue_diagnostics(self.clone(), uri.clone(), version).await;
         }
     }
 
