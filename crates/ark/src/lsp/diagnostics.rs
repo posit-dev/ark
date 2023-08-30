@@ -113,7 +113,7 @@ pub async fn enqueue_diagnostics(backend: Backend, uri: Url, version: i32) {
 
         // Okay, it's our chance to provide diagnostics.
         // log::trace!("[diagnostics({version}, {uri})] Generating diagnostics.");
-        let diagnostics = enqueue_diagnostics_impl(&doc);
+        let diagnostics = generate_diagnostics(&doc);
 
         backend
             .client
@@ -122,7 +122,7 @@ pub async fn enqueue_diagnostics(backend: Backend, uri: Url, version: i32) {
     });
 }
 
-fn enqueue_diagnostics_impl(doc: &Document) -> Vec<Diagnostic> {
+fn generate_diagnostics(doc: &Document) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
 
     {
