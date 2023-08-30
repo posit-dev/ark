@@ -8,7 +8,6 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::os::raw::c_void;
-use std::sync::atomic::AtomicI64;
 use std::time::Duration;
 
 use anyhow::bail;
@@ -33,10 +32,9 @@ use tower_lsp::lsp_types::Url;
 use tree_sitter::Node;
 
 use crate::lsp::backend::Backend;
+use crate::lsp::documents::Document;
 use crate::lsp::indexer;
 use crate::Range;
-
-static DIAGNOSTICS_VERSION: AtomicI64 = AtomicI64::new(0);
 
 #[derive(Clone)]
 pub struct DiagnosticContext<'a> {
@@ -87,42 +85,47 @@ impl<'a> DiagnosticContext<'a> {
     }
 }
 
-pub async fn enqueue_diagnostics(backend: Backend, uri: Url) {
-    // Bump to the version associated with this diagnostics call.
-    let version = DIAGNOSTICS_VERSION.load(std::sync::atomic::Ordering::Acquire) + 1;
-    // log::trace!("[diagnostics({version})] Spawning task to enqueue diagnostics.");
-
-    // Store the version we're planning to apply diagnostics for.
-    DIAGNOSTICS_VERSION.store(version, std::sync::atomic::Ordering::Release);
+pub async fn enqueue_diagnostics(backend: Backend, uri: Url, version: i32) {
+    // log::trace!("[diagnostics({version}, {uri})] Spawning task to enqueue diagnostics.");
 
     // Spawn a task to enqueue diagnostics.
     tokio::spawn(async move {
         // Wait some amount of time. Note that the document version is updated on
         // every document change, so if the document changes while this task is waiting,
-        // we'll see that the global DIAGNOSTICS_VERSION is now out-of-sync with the version
+        // we'll see that the current document version is now out-of-sync with the version
         // associated with this task, and toss it away.
         tokio::time::sleep(Duration::from_millis(1000)).await;
-        let current_version = DIAGNOSTICS_VERSION.load(std::sync::atomic::Ordering::Acquire);
+
+        // The document is thread safe to access due to the usage of DashMap
+        let doc = unwrap!(backend.documents.get(&uri), None => {
+            log::error!(
+                "[diagnostics({version}, {uri})] No document associated with uri available."
+            );
+            return;
+        });
+
+        let current_version = doc.version.unwrap_or(0);
+
         if version != current_version {
-            // log::trace!("[diagnostics({version})] Aborting diagnostics in favor of version {current_version}.");
+            // log::trace!("[diagnostics({version}, {uri})] Aborting diagnostics in favor of version {current_version}.");
             return;
         }
 
         // Okay, it's our chance to provide diagnostics.
-        // log::trace!("[diagnostics({version})] Generating diagnostics.");
-        enqueue_diagnostics_impl(backend, uri).await;
+        // log::trace!("[diagnostics({version}, {uri})] Generating diagnostics.");
+        let diagnostics = generate_diagnostics(&doc);
+
+        backend
+            .client
+            .publish_diagnostics(uri, diagnostics, None)
+            .await;
     });
 }
 
-async fn enqueue_diagnostics_impl(backend: Backend, uri: Url) {
-    let mut diagnostics: Vec<Diagnostic> = Vec::new();
-    {
-        // get reference to document
-        let doc = unwrap!(backend.documents.get_mut(&uri), None => {
-            log::error!("diagnostics: no document associated with uri {} available", uri);
-            return;
-        });
+fn generate_diagnostics(doc: &Document) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::new();
 
+    {
         let source = doc.contents.to_string();
         let mut context = DiagnosticContext {
             source: source.as_str(),
@@ -195,10 +198,7 @@ async fn enqueue_diagnostics_impl(backend: Backend, uri: Url) {
         }
     }
 
-    backend
-        .client
-        .publish_diagnostics(uri, diagnostics, None)
-        .await;
+    diagnostics
 }
 
 fn recurse(
