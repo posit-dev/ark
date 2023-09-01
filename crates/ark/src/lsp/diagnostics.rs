@@ -122,7 +122,7 @@ pub async fn enqueue_diagnostics(backend: Backend, uri: Url, version: i32) {
     });
 }
 
-fn generate_diagnostics(doc: &Document) -> Vec<Diagnostic> {
+pub fn generate_diagnostics(doc: &Document) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
 
     {

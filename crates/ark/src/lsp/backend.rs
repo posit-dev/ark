@@ -17,6 +17,7 @@ use harp::r_lock;
 use log::*;
 use parking_lot::Mutex;
 use regex::Regex;
+use serde_json::json;
 use serde_json::Value;
 use stdext::result::ResultOrLog;
 use stdext::*;
@@ -189,6 +190,23 @@ impl LanguageServer for Backend {
 
     async fn initialized(&self, params: InitializedParams) {
         backend_trace!(self, "initialized({:?})", params);
+
+        let options_diagnostic = json!({
+            "documentSelector": [
+                { "language": "r", "pattern": "**/*.{R,r}" }
+            ],
+        });
+
+        let registration_diagnostic = Registration {
+            id: String::from("ark-diagnostic"),
+            method: String::from("textDocument/diagnostic"),
+            register_options: Some(options_diagnostic),
+        };
+
+        self.client
+            .register_capability(vec![registration_diagnostic])
+            .await
+            .or_log_error("Failed to register diagnostic capability.");
     }
 
     async fn shutdown(&self) -> Result<()> {
@@ -487,6 +505,43 @@ impl LanguageServer for Backend {
             contents: HoverContents::Markup(result),
             range: None,
         }))
+    }
+
+    async fn diagnostic(
+        &self,
+        params: DocumentDiagnosticParams,
+    ) -> Result<DocumentDiagnosticReportResult> {
+        backend_trace!(self, "diagnostic({:?})", params);
+
+        // Get reference to document
+        let uri = &params.text_document.uri;
+        let doc = unwrap!(self.documents.get_mut(uri), None => {
+            backend_trace!(self, "diagnostic(): unexpected document uri '{}'", uri);
+            return Err(tower_lsp::jsonrpc::Error {
+                // TODO: Better server error code?
+                code: tower_lsp::jsonrpc::ErrorCode::ServerError(1),
+                message: format!("Unexpected document URI '{uri}'.").into(),
+                data: None
+            });
+        });
+
+        let diagnostics = diagnostics::generate_diagnostics(&doc);
+
+        let full_document_diagnostic_report = FullDocumentDiagnosticReport {
+            result_id: None,
+            items: diagnostics,
+        };
+
+        let related_full_document_report = RelatedFullDocumentDiagnosticReport {
+            related_documents: None,
+            full_document_diagnostic_report,
+        };
+
+        let document_report = DocumentDiagnosticReport::Full(related_full_document_report);
+
+        let document_report_result = DocumentDiagnosticReportResult::Report(document_report);
+
+        Ok(document_report_result)
     }
 
     async fn signature_help(&self, params: SignatureHelpParams) -> Result<Option<SignatureHelp>> {

@@ -52,6 +52,7 @@ use crate::environment::r_environment::REnvironment;
 use crate::frontend::frontend::PositronFrontend;
 use crate::interface::KernelInfo;
 use crate::kernel::Kernel;
+use crate::lsp::globals::R_CALLBACK_GLOBALS;
 use crate::plots::graphics_device;
 use crate::request::KernelRequest;
 use crate::request::RRequest;
@@ -250,18 +251,34 @@ impl ShellHandler for Shell {
             ExecuteResponse::ReplyException(err) => Err(err),
         };
 
-        let kernel = self.kernel.lock().unwrap();
+        /*
+         * Hack
+         *
+         * Commenting this out because `await`ing the future below causes the
+         * `kernel` line to throw an error that it isn't safe to `Send` across
+         * threads.
+         */
 
-        // Check for pending graphics updates
-        // (Important that this occurs while in the "busy" state of this ExecuteRequest
-        // so that the `parent` message is set correctly in any Jupyter messages)
-        unsafe {
-            graphics_device::on_did_execute_request(
-                self.comm_manager_tx.clone(),
-                self.iopub_tx.clone(),
-                kernel.positron_connected(),
-            )
-        };
+        // let kernel = self.kernel.lock().unwrap();
+
+        // // Check for pending graphics updates
+        // // (Important that this occurs while in the "busy" state of this ExecuteRequest
+        // // so that the `parent` message is set correctly in any Jupyter messages)
+        // unsafe {
+        //     graphics_device::on_did_execute_request(
+        //         self.comm_manager_tx.clone(),
+        //         self.iopub_tx.clone(),
+        //         kernel.positron_connected(),
+        //     )
+        // };
+
+        /*
+         * TODO: Figure out any other way to do this besides using global variables
+         */
+
+        let globals = unsafe { R_CALLBACK_GLOBALS.as_ref().unwrap() };
+        let fut = globals.lsp_client.workspace_diagnostic_refresh();
+        fut.await.unwrap();
 
         result
     }
