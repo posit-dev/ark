@@ -18,6 +18,15 @@ pub struct RParseEvalOptions {
     pub forbid_function_calls: bool,
 }
 
+pub unsafe fn r_parse_eval0(code: &str) -> Result<RObject> {
+    r_parse_eval(
+        code,
+        RParseEvalOptions {
+            forbid_function_calls: false,
+        },
+    )
+}
+
 pub unsafe fn r_parse_eval(code: &str, options: RParseEvalOptions) -> Result<RObject> {
     // Forbid certain kinds of evaluation if requested.
     if options.forbid_function_calls && code.find('(').is_some() {
