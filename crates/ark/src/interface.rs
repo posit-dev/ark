@@ -54,6 +54,7 @@ use harp::object::RObject;
 use harp::r_lock;
 use harp::r_symbol;
 use harp::routines::r_register_routines;
+use harp::session::r_poke_option_show_error_messages;
 use harp::utils::r_get_option;
 use harp::utils::r_is_data_frame;
 use libR_sys::*;
@@ -81,6 +82,7 @@ extern "C" {
     pub static mut R_Interactive: Rboolean;
     pub static mut R_Consolefile: *mut FILE;
     pub static mut R_Outputfile: *mut FILE;
+    pub static mut R_ShowErrorMessages: ::std::os::raw::c_int;
 
     pub static mut ptr_R_WriteConsole: ::std::option::Option<
         unsafe extern "C" fn(arg1: *const ::std::os::raw::c_char, arg2: ::std::os::raw::c_int),
@@ -279,6 +281,11 @@ pub struct RMain {
 
     dap: Arc<Mutex<Dap>>,
     is_debugging: bool,
+
+    /// The `show.error.messages` global option is set to `TRUE` whenever
+    /// we get in the browser. We save the previous value here and restore
+    /// it the next time we see a non-browser prompt.
+    old_show_error_messages: Option<bool>,
 }
 
 /// Represents the currently active execution request from the frontend. It
@@ -364,6 +371,7 @@ impl RMain {
             error_traceback: Vec::new(),
             dap,
             is_debugging: false,
+            old_show_error_messages: None,
         }
     }
 
@@ -536,6 +544,17 @@ impl RMain {
         EVENTS.console_prompt.emit(());
 
         if info.browser {
+            unsafe {
+                // Calling handlers don't currently reach inside the
+                // debugger. So we temporarily reenable the
+                // `show.error.messages` option to let error messages
+                // stream to stderr.
+                if let None = self.old_show_error_messages {
+                    self.old_show_error_messages = Some(R_ShowErrorMessages != 0);
+                    r_poke_option_show_error_messages(true);
+                }
+            };
+
             let mut dap = self.dap.lock().unwrap();
             match harp::session::r_stack_info() {
                 Ok(stack) => {
@@ -544,11 +563,21 @@ impl RMain {
                 },
                 Err(err) => error!("ReadConsole: Can't get stack info: {err}"),
             };
-        } else if self.is_debugging {
-            // Terminate debugging session
-            let mut dap = self.dap.lock().unwrap();
-            dap.stop_debug();
-            self.is_debugging = false;
+        } else {
+            // We've left the `browser()` state, so we can disable the
+            // `show.error.messages` option again to let our global handler
+            // capture error messages as before.
+            if let Some(old) = self.old_show_error_messages {
+                r_poke_option_show_error_messages(old);
+                self.old_show_error_messages = None;
+            }
+
+            if self.is_debugging {
+                // Terminate debugging session
+                let mut dap = self.dap.lock().unwrap();
+                dap.stop_debug();
+                self.is_debugging = false;
+            }
         }
 
         // Match with a timeout. Necessary because we need to

@@ -28,6 +28,11 @@
 }
 
 .ps.errors.globalErrorHandler <- function(cnd) {
+    # Don't instrument errors if the option has been switched back on
+    if (isTRUE(getOption("show.error.messages", TRUE))) {
+        return()
+    }
+
     if (!is_installed("rlang")) {
         # rlang is not installed, no option except to use the base handler
         return(handle_error_base(cnd))
