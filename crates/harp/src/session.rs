@@ -142,12 +142,24 @@ fn stack_pointer_frame() -> anyhow::Result<FrameInfo> {
             srcref = VECTOR_ELT(srcref, 0);
         }
 
-        if r_typeof(srcref) != INTSXP || Rf_length(srcref) < 5 {
+        let n = Rf_length(srcref);
+        if r_typeof(srcref) != INTSXP || n < 4 {
             anyhow::bail!("Expected integer vector for srcref");
         }
 
-        let line = INTEGER_ELT(srcref, 0);
-        let column = INTEGER_ELT(srcref, 4);
+        // The first field is sensitive to #line directives if they exist,
+        // which we want to honour in order to jump to original files
+        // rather than generated files.
+        let line_idx = 0;
+
+        // We need the `column` value rather than the `byte` value, so we
+        // can index into a character. However the srcref documentation
+        // allows a 4 elements vector when the bytes and column values are
+        // the same. We account for this here.
+        let col_idx = if n >= 5 { 4 } else { 1 };
+
+        let line = INTEGER_ELT(srcref, line_idx);
+        let column = INTEGER_ELT(srcref, col_idx);
 
         let srcfile: RObject = Rf_getAttrib(srcref, r_symbol!("srcfile")).into();
 
