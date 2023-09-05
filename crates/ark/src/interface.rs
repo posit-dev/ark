@@ -82,7 +82,6 @@ extern "C" {
     pub static mut R_Interactive: Rboolean;
     pub static mut R_Consolefile: *mut FILE;
     pub static mut R_Outputfile: *mut FILE;
-    pub static mut R_ShowErrorMessages: ::std::os::raw::c_int;
 
     pub static mut ptr_R_WriteConsole: ::std::option::Option<
         unsafe extern "C" fn(arg1: *const ::std::os::raw::c_char, arg2: ::std::os::raw::c_int),
@@ -544,16 +543,14 @@ impl RMain {
         EVENTS.console_prompt.emit(());
 
         if info.browser {
-            unsafe {
-                // Calling handlers don't currently reach inside the
-                // debugger. So we temporarily reenable the
-                // `show.error.messages` option to let error messages
-                // stream to stderr.
-                if let None = self.old_show_error_messages {
-                    self.old_show_error_messages = Some(R_ShowErrorMessages != 0);
-                    r_poke_option_show_error_messages(true);
-                }
-            };
+            // Calling handlers don't currently reach inside the
+            // debugger. So we temporarily reenable the
+            // `show.error.messages` option to let error messages
+            // stream to stderr.
+            if let None = self.old_show_error_messages {
+                let old = r_poke_option_show_error_messages(true);
+                self.old_show_error_messages = Some(old);
+            }
 
             let mut dap = self.dap.lock().unwrap();
             match harp::session::r_stack_info() {

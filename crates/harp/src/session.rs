@@ -193,22 +193,27 @@ fn stack_shift(stack: &mut Vec<FrameInfo>, pointer: FrameInfo) {
 
 // Note this might throw if wrong data types are passed in. The C-level
 // implementation of `options()` type-checks some base options.
-pub fn r_poke_option(sym: SEXP, value: SEXP) {
+pub fn r_poke_option(sym: SEXP, value: SEXP) -> SEXP {
     unsafe {
         let mut protect = RProtect::new();
 
         let call = r_lang!(OPTIONS_FN.unwrap_unchecked(), !!sym = value);
         protect.add(call);
 
-        Rf_eval(call, R_BaseEnv);
+        // `options()` is guaranteed by R to return a list
+        VECTOR_ELT(Rf_eval(call, R_BaseEnv), 0)
     }
 }
 
-pub fn r_poke_option_show_error_messages(value: bool) {
+pub fn r_poke_option_show_error_messages(value: bool) -> bool {
     unsafe {
         let value = Rf_ScalarLogical(value as i32);
-        r_poke_option(r_symbol!("show.error.messages"), value);
-    };
+        let old = r_poke_option(r_symbol!("show.error.messages"), value);
+
+        // This option is type-checked by R so we can assume a valid
+        // logical value
+        *LOGICAL(old) != 0
+    }
 }
 
 fn init_interface() {
