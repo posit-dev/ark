@@ -12,6 +12,8 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::Position;
 use tower_lsp::lsp_types::Range;
 use tower_lsp::lsp_types::VersionedTextDocumentIdentifier;
+use tree_sitter::Point;
+use tree_sitter::TreeCursor;
 
 use crate::backend_trace;
 use crate::lsp::backend::Backend;
@@ -55,14 +57,13 @@ impl Backend {
         let root = document.ast.root_node();
         let mut cursor = root.walk();
 
-        if cursor.goto_first_child_for_point(point).is_none() {
+        if !Backend::goto_first_child_for_point(&mut cursor, point) {
+            // TODO: Uncommenting this causes a compile error???
             // backend_trace!(self, "statement_range(): No child associated with point.");
             return Ok(None);
         }
 
         let node = cursor.node();
-        let source = document.contents.to_string();
-        let _name = node.utf8_text(source.as_str().as_bytes()).unwrap();
 
         // Tree-sitter `Point`s
         let start_point = node.start_position();
@@ -80,5 +81,39 @@ impl Backend {
         let response = StatementRangeResponse { range };
 
         Ok(Some(response))
+    }
+
+    /// Move this cursor to the first child of its current node that extends
+    /// beyond or touches the given point. Returns `true` if a child node was found,
+    /// otherwise returns `false`.
+    ///
+    /// TODO: In theory we should be using `cursor.goto_first_child_for_point()`,
+    /// but it is reported to be broken, and indeed does not work right if I
+    /// substitute it in.
+    /// https://github.com/tree-sitter/tree-sitter/issues/2012
+    ///
+    /// This simple reimplementation is based on this Emacs hot patch
+    /// https://git.savannah.gnu.org/cgit/emacs.git/commit/?h=emacs-29&id=7c61a304104fe3a35c47d412150d29b93a697c5e
+    fn goto_first_child_for_point(cursor: &mut TreeCursor, point: Point) -> bool {
+        if !cursor.goto_first_child() {
+            return false;
+        }
+
+        let mut node = cursor.node();
+
+        // The emacs patch used `<=` in the while condition, but we want the
+        // following to execute all of `fn()` if the cursor is placed at the `|`
+        // fn <- function() {
+        // }|
+        while node.end_position() < point {
+            if cursor.goto_next_sibling() {
+                node = cursor.node();
+            } else {
+                // Reached the end and still can't find a valid sibling
+                return false;
+            }
+        }
+
+        return true;
     }
 }
