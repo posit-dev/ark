@@ -22,6 +22,7 @@ pub mod markdown;
 pub mod references;
 pub mod show_message;
 pub mod signature_help;
+pub mod statement_range;
 pub mod symbols;
 pub mod traits;
 pub mod treesitter;

@@ -86,6 +86,19 @@ pub trait TreeCursorExt {
     // Find a leaf node in the AST. The leaf node either at the requested point,
     // or the leaf node closest (but not after) the requested point, will be returned.
     fn find_leaf(&mut self, point: Point) -> Node;
+
+    /// Move this cursor to the first child of its current node that extends
+    /// beyond or touches the given point. Returns `true` if a child node was found,
+    /// otherwise returns `false`.
+    ///
+    /// TODO: In theory we should be using `cursor.goto_first_child_for_point()`,
+    /// but it is reported to be broken, and indeed does not work right if I
+    /// substitute it in.
+    /// https://github.com/tree-sitter/tree-sitter/issues/2012
+    ///
+    /// This simple reimplementation is based on this Emacs hot patch
+    /// https://git.savannah.gnu.org/cgit/emacs.git/commit/?h=emacs-29&id=7c61a304104fe3a35c47d412150d29b93a697c5e
+    fn goto_first_child_for_point_patched(&mut self, point: Point) -> bool;
 }
 
 impl TreeCursorExt for TreeCursor<'_> {
@@ -110,5 +123,28 @@ impl TreeCursorExt for TreeCursor<'_> {
     fn find_leaf(&mut self, point: Point) -> Node {
         let node = self.node();
         _find_leaf_impl(node, point)
+    }
+
+    fn goto_first_child_for_point_patched(&mut self, point: Point) -> bool {
+        if !self.goto_first_child() {
+            return false;
+        }
+
+        let mut node = self.node();
+
+        // The emacs patch used `<=` in the while condition, but we want the
+        // following to execute all of `fn()` if the cursor is placed at the `|`
+        // fn <- function() {
+        // }|
+        while node.end_position() < point {
+            if self.goto_next_sibling() {
+                node = self.node();
+            } else {
+                // Reached the end and still can't find a valid sibling
+                return false;
+            }
+        }
+
+        return true;
     }
 }
