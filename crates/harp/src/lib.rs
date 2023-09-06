@@ -140,6 +140,13 @@ macro_rules! r_pairlist_impl {
 #[macro_export]
 macro_rules! r_pairlist {
 
+    // Dotted pairlist entry with injected name.
+    (!!$name:ident = $value:expr $(, $($tts:tt)*)?) => {{
+        let value = $crate::r_pairlist_impl!($value, $crate::r_pairlist!($($($tts)*)?));
+        libR_sys::SET_TAG(value, $name);
+        value
+    }};
+
     // Dotted pairlist entry.
     ($name:pat = $value:expr $(, $($tts:tt)*)?) => {{
         let value = $crate::r_pairlist_impl!($value, $crate::r_pairlist!($($($tts)*)?));
@@ -215,11 +222,12 @@ mod tests {
     #[test]
     fn test_pairlist() {
         r_test! {
+            let sym = r_symbol!("injected");
 
             let mut protect = RProtect::new();
             let value = RObject::new(r_pairlist! {
                 A = r_symbol!("a"),
-                B = r_symbol!("b"),
+                !!sym = r_symbol!("b"),
                 C = r_symbol!("c"),
                 D = r_symbol!("d"),
             });
@@ -230,7 +238,8 @@ mod tests {
             assert!(CADDDR(*value) == r_symbol!("d"));
 
             assert!(TAG(*value) == r_symbol!("A"));
-            assert!(TAG(CDR(*value)) == r_symbol!("B"));
+            assert!(TAG(CDR(*value)) == r_symbol!("injected"));
+            assert!(TAG(CDDR(*value)) == r_symbol!("C"));
 
             let value = RObject::new(r_pairlist! {
                 r_symbol!("a"),
@@ -269,6 +278,32 @@ mod tests {
             assert!(r_typeof(CAR(*value)) == STRSXP);
             assert!(r_is_null(TAG(*value)));
 
+        }
+    }
+
+    #[test]
+    fn test_call() {
+        r_test! {
+            let sym = r_symbol!("injected");
+
+            let value = RObject::new(r_lang! {
+                A = r_symbol!("a"),
+                !!sym = r_symbol!("b"),
+                C = r_symbol!("c"),
+                D = r_symbol!("d"),
+            });
+
+            assert!(r_typeof(value.sexp) == LANGSXP);
+
+            assert!(CAR(*value) == r_symbol!("a"));
+            assert!(CADR(*value) == r_symbol!("b"));
+            assert!(CADDR(*value) == r_symbol!("c"));
+            assert!(CADDDR(*value) == r_symbol!("d"));
+
+            assert!(TAG(*value) == r_symbol!("A"));
+            assert!(TAG(CDR(*value)) == r_symbol!("injected"));
+            assert!(TAG(CDDR(*value)) == r_symbol!("C"));
+            assert!(TAG(CDDR(CDR(*value))) == r_symbol!("D"));
         }
     }
 }
