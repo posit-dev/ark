@@ -10,8 +10,7 @@ use libR_sys::*;
 use crate::error::Error;
 use crate::error::Result;
 use crate::exec::geterrmessage;
-use crate::exec::r_parse_vector;
-use crate::exec::ParseResult;
+use crate::exec::r_parse_exprs;
 use crate::object::RObject;
 
 pub struct RParseEvalOptions {
@@ -34,15 +33,7 @@ pub unsafe fn r_parse_eval(code: &str, options: RParseEvalOptions) -> Result<ROb
     }
 
     // Parse the provided code.
-    let parsed_sexp = match r_parse_vector(code)? {
-        ParseResult::Complete(x) => RObject::from(x),
-        ParseResult::Incomplete() => {
-            return Err(Error::ParseError {
-                code: code.to_string(),
-                message: String::from("Incomplete code"),
-            });
-        },
-    };
+    let parsed_sexp = r_parse_exprs(code)?;
 
     // Evaluate the provided code.
     let mut value = R_NilValue;

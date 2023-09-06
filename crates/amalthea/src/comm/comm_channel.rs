@@ -17,6 +17,9 @@ pub enum Comm {
     /// A wrapper for a Language Server Protocol server.
     Lsp,
 
+    /// A wrapper for a Debug Adapter Protocol server.
+    Dap,
+
     /// A dynamic (resizable) plot.
     Plot,
 

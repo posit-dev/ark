@@ -7,6 +7,7 @@
 
 pub mod browser;
 pub mod control;
+pub mod dap;
 pub mod data_viewer;
 pub mod environment;
 pub mod errors;

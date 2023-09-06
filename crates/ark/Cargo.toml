@@ -16,6 +16,7 @@ bus = "2.3.0"
 chrono = "0.4.23"
 crossbeam = { version = "0.8.2", features = ["crossbeam-channel"] }
 ctor = "0.1.26"
+dap = { git = "https://github.com/lionel-/dap-rs", branch = "feature/all" }
 dashmap = "5.4.0"
 ego-tree = "0.6.2"
 harp = { path = "../harp" }
@@ -34,7 +35,7 @@ parking_lot = "0.12.1"
 regex = "1.7.1"
 ropey = "1.6.0"
 scraper = "0.15.0"
-serde = { version = "1.0.154", features = ["derive"] }
+serde = { version = "1.0.183", features = ["derive"] }
 serde_json = "1.0.94"
 stdext = { path = "../stdext" }
 tokio = { version = "1.26.0", features = ["full"] }

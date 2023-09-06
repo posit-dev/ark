@@ -385,6 +385,39 @@ pub unsafe fn r_source(file: &str) -> Result<()> {
     }
 }
 
+/// Returns an EXPRSXP vector
+pub unsafe fn r_parse_exprs(code: &str) -> Result<RObject> {
+    match r_parse_vector(code)? {
+        ParseResult::Complete(x) => {
+            return Ok(RObject::from(x));
+        },
+        ParseResult::Incomplete() => {
+            return Err(Error::ParseError {
+                code: code.to_string(),
+                message: String::from("Incomplete code"),
+            });
+        },
+    };
+}
+
+/// Returns a single expression
+pub fn r_parse(code: &str) -> Result<RObject> {
+    unsafe {
+        let exprs = r_parse_exprs(code)?;
+
+        let n = Rf_length(*exprs);
+        if n != 1 {
+            return Err(Error::ParseError {
+                code: code.to_string(),
+                message: String::from("Expected a single expression, got {n}"),
+            });
+        }
+
+        let expr = VECTOR_ELT(*exprs, 0);
+        Ok(expr.into())
+    }
+}
+
 #[cfg(test)]
 mod tests {
 

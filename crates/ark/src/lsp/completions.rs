@@ -22,6 +22,7 @@ use harp::r_symbol;
 use harp::string::r_string_decode;
 use harp::utils::r_envir_name;
 use harp::utils::r_formals;
+use harp::utils::r_normalize_path;
 use harp::utils::r_promise_force_with_rollback;
 use harp::utils::r_promise_is_forced;
 use harp::utils::r_symbol_quote_invalid;
@@ -1239,12 +1240,7 @@ unsafe fn append_file_completions(
     log::info!("String value (decoded): {}", contents);
 
     // Use R to normalize the path.
-    let path = RFunction::new("base", "normalizePath")
-        .param("path", contents)
-        .param("winslash", "/")
-        .param("mustWork", false)
-        .call()?
-        .to::<String>()?;
+    let path = r_normalize_path(RObject::from(contents))?;
 
     // parse the file path and get the directory component
     let mut path = PathBuf::from(path.as_str());

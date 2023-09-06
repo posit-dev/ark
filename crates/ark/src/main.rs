@@ -16,6 +16,7 @@ use amalthea::kernel::Kernel;
 use amalthea::kernel_spec::KernelSpec;
 use amalthea::wire::input_request::ShellInputRequest;
 use ark::control::Control;
+use ark::dap;
 use ark::logger;
 use ark::lsp;
 use ark::request::KernelRequest;
@@ -59,13 +60,17 @@ fn start_kernel(
     let (r_request_tx, r_request_rx) = bounded::<RRequest>(1);
     let (kernel_request_tx, kernel_request_rx) = bounded::<KernelRequest>(1);
 
-    // Create the LSP client.
-    // Not all Amalthea kernels provide one, but ark does.
-    // It must be able to deliver messages to the shell channel directly.
+    // Create the LSP and DAP clients.
+    // Not all Amalthea kernels provide these, but ark does.
+    // They must be able to deliver messages to the shell channel directly.
     let lsp = Arc::new(Mutex::new(lsp::handler::Lsp::new(
         kernel_request_tx.clone(),
         kernel_init_tx.add_rx(),
     )));
+
+    // DAP needs the `RRequest` channel to communicate with
+    // `read_console()` and send commands to the debug interpreter
+    let dap = dap::Dap::new_shared(r_request_tx.clone());
 
     // One-off communication channel for 0MQ init event
     let (conn_init_tx, conn_init_rx) = bounded::<bool>(0);
@@ -89,6 +94,7 @@ fn start_kernel(
         kernel_request_rx,
         input_request_tx,
         conn_init_rx,
+        dap.clone(),
     );
 
     // Create the control handler; this is used to handle shutdown/interrupt and
@@ -108,6 +114,7 @@ fn start_kernel(
         shell,
         control,
         Some(lsp),
+        Some(dap),
         stream_behavior,
         input_request_rx,
         Some(conn_init_tx),

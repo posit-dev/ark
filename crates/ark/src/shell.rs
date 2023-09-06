@@ -48,6 +48,7 @@ use log::*;
 use serde_json::json;
 use stdext::spawn;
 
+use crate::dap::Dap;
 use crate::environment::r_environment::REnvironment;
 use crate::frontend::frontend::PositronFrontend;
 use crate::interface::KernelInfo;
@@ -86,6 +87,7 @@ impl Shell {
         kernel_request_rx: Receiver<KernelRequest>,
         input_request_tx: Sender<ShellInputRequest>,
         conn_init_rx: Receiver<bool>,
+        dap: Arc<Mutex<Dap>>,
     ) -> Self {
         // Start building the kernel object. It is shared by the shell, LSP, and main threads.
         let kernel = Arc::new(Mutex::new(Kernel::new(iopub_tx.clone())));
@@ -117,6 +119,7 @@ impl Shell {
                 input_request_tx,
                 iopub_tx_clone,
                 kernel_init_tx,
+                dap,
             );
         });
 

@@ -54,6 +54,7 @@ use harp::object::RObject;
 use harp::r_lock;
 use harp::r_symbol;
 use harp::routines::r_register_routines;
+use harp::session::r_poke_option_show_error_messages;
 use harp::utils::r_get_option;
 use harp::utils::r_is_data_frame;
 use libR_sys::*;
@@ -64,12 +65,15 @@ use serde_json::json;
 use stdext::result::ResultOrLog;
 use stdext::*;
 
+use crate::dap::dap::DapBackendEvent;
+use crate::dap::Dap;
 use crate::errors;
 use crate::help_proxy;
 use crate::kernel::Kernel;
 use crate::lsp::events::EVENTS;
 use crate::modules;
 use crate::plots::graphics_device;
+use crate::request::debug_request_command;
 use crate::request::RRequest;
 
 extern "C" {
@@ -145,6 +149,7 @@ pub fn start_r(
     input_request_tx: Sender<ShellInputRequest>,
     iopub_tx: Sender<IOPubMessage>,
     kernel_init_tx: Bus<KernelInfo>,
+    dap: Arc<Mutex<Dap>>,
 ) {
     // Initialize global state (ensure we only do this once!)
     INIT.call_once(|| unsafe {
@@ -154,6 +159,7 @@ pub fn start_r(
             input_request_tx,
             iopub_tx,
             kernel_init_tx,
+            dap,
         ));
     });
 
@@ -271,6 +277,14 @@ pub struct RMain {
     pub error_occurred: bool,
     pub error_message: String, // `evalue` in the Jupyter protocol
     pub error_traceback: Vec<String>,
+
+    dap: Arc<Mutex<Dap>>,
+    is_debugging: bool,
+
+    /// The `show.error.messages` global option is set to `TRUE` whenever
+    /// we get in the browser. We save the previous value here and restore
+    /// it the next time we see a non-browser prompt.
+    old_show_error_messages: Option<bool>,
 }
 
 /// Represents the currently active execution request from the frontend. It
@@ -310,7 +324,7 @@ pub struct PromptInfo {
 
     /// Whether this is a `browser()` prompt. A browser prompt can be
     /// incomplete but is never a user request.
-    _browser: bool,
+    browser: bool,
 
     /// Whether the last input didn't fully parse and R is waiting for more input
     incomplete: bool,
@@ -332,6 +346,7 @@ impl RMain {
         input_request_tx: Sender<ShellInputRequest>,
         iopub_tx: Sender<IOPubMessage>,
         kernel_init_tx: Bus<KernelInfo>,
+        dap: Arc<Mutex<Dap>>,
     ) -> Self {
         // The main thread owns the R runtime lock by default, but releases
         // it when appropriate to give other threads a chance to execute.
@@ -353,6 +368,9 @@ impl RMain {
             error_occurred: false,
             error_message: String::new(),
             error_traceback: Vec::new(),
+            dap,
+            is_debugging: false,
+            old_show_error_messages: None,
         }
     }
 
@@ -524,6 +542,41 @@ impl RMain {
         // Signal prompt
         EVENTS.console_prompt.emit(());
 
+        if info.browser {
+            // Calling handlers don't currently reach inside the
+            // debugger. So we temporarily reenable the
+            // `show.error.messages` option to let error messages
+            // stream to stderr.
+            if let None = self.old_show_error_messages {
+                let old = r_poke_option_show_error_messages(true);
+                self.old_show_error_messages = Some(old);
+            }
+
+            let mut dap = self.dap.lock().unwrap();
+            match harp::session::r_stack_info() {
+                Ok(stack) => {
+                    self.is_debugging = true;
+                    dap.start_debug(stack)
+                },
+                Err(err) => error!("ReadConsole: Can't get stack info: {err}"),
+            };
+        } else {
+            // We've left the `browser()` state, so we can disable the
+            // `show.error.messages` option again to let our global handler
+            // capture error messages as before.
+            if let Some(old) = self.old_show_error_messages {
+                r_poke_option_show_error_messages(old);
+                self.old_show_error_messages = None;
+            }
+
+            if self.is_debugging {
+                // Terminate debugging session
+                let mut dap = self.dap.lock().unwrap();
+                dap.stop_debug();
+                self.is_debugging = false;
+            }
+        }
+
         // Match with a timeout. Necessary because we need to
         // pump the event loop while waiting for console input.
         //
@@ -558,7 +611,19 @@ impl RMain {
 
                             input
                         },
+
                         RRequest::Shutdown(_) => ConsoleInput::EOF,
+
+                        RRequest::DebugCommand(cmd) => {
+                            // Just ignore command in case we left the debugging state already
+                            if !self.is_debugging {
+                                continue;
+                            }
+
+                            // Translate requests from the debugger frontend to actual inputs for
+                            // the debug interpreter
+                            ConsoleInput::Input(debug_request_command(cmd))
+                        },
                     };
 
                     // Take back the lock after we've received some console input.
@@ -576,6 +641,14 @@ impl RMain {
 
                     match input {
                         ConsoleInput::Input(code) => {
+                            // Handle commands for the debug interpreter
+                            if self.is_debugging {
+                                let continue_cmds = vec!["n", "f", "c", "cont"];
+                                if continue_cmds.contains(&&code[..]) {
+                                    self.send_dap(DapBackendEvent::Continued);
+                                }
+                            }
+
                             Self::on_console_input(buf, buflen, code);
                             return (1, false);
                         },
@@ -642,7 +715,7 @@ impl RMain {
         return PromptInfo {
             input_prompt: prompt,
             continuation_prompt,
-            _browser: browser,
+            browser,
             incomplete,
             input_request: user_request,
         };
@@ -842,6 +915,13 @@ impl RMain {
 
         // Check for Positron render requests
         graphics_device::on_process_events();
+    }
+
+    fn send_dap(&self, event: DapBackendEvent) {
+        let dap = self.dap.lock().unwrap();
+        if let Some(tx) = &dap.backend_events_tx {
+            log_error!(tx.send(event));
+        }
     }
 }
 

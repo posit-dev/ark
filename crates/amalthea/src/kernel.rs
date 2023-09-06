@@ -24,7 +24,7 @@ use crate::comm::event::CommEvent;
 use crate::connection_file::ConnectionFile;
 use crate::error::Error;
 use crate::language::control_handler::ControlHandler;
-use crate::language::lsp_handler::LspHandler;
+use crate::language::server_handler::ServerHandler;
 use crate::language::shell_handler::ShellHandler;
 use crate::session::Session;
 use crate::socket::control::Control;
@@ -110,7 +110,8 @@ impl Kernel {
         &mut self,
         shell_handler: Arc<Mutex<dyn ShellHandler>>,
         control_handler: Arc<Mutex<dyn ControlHandler>>,
-        lsp_handler: Option<Arc<Mutex<dyn LspHandler>>>,
+        lsp_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
+        dap_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
         stream_behavior: StreamBehavior,
         // Receiver channel for the stdin socket; when input is needed, the
         // language runtime can request it by sending an InputRequest to
@@ -146,6 +147,7 @@ impl Kernel {
         let iopub_tx_clone = self.create_iopub_tx();
         let comm_manager_tx_clone = self.comm_manager_tx.clone();
         let lsp_handler_clone = lsp_handler.clone();
+        let dap_handler_clone = dap_handler.clone();
         spawn!(format!("{}-shell", self.name), move || {
             Self::shell_thread(
                 shell_socket,
@@ -154,6 +156,7 @@ impl Kernel {
                 comm_changed_rx,
                 shell_clone,
                 lsp_handler_clone,
+                dap_handler_clone,
             )
         });
 
@@ -317,7 +320,8 @@ impl Kernel {
         comm_manager_tx: Sender<CommEvent>,
         comm_changed_rx: Receiver<CommChanged>,
         shell_handler: Arc<Mutex<dyn ShellHandler>>,
-        lsp_handler: Option<Arc<Mutex<dyn LspHandler>>>,
+        lsp_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
+        dap_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
     ) -> Result<(), Error> {
         let mut shell = Shell::new(
             socket,
@@ -326,6 +330,7 @@ impl Kernel {
             comm_changed_rx,
             shell_handler,
             lsp_handler,
+            dap_handler,
         );
         shell.listen();
         Ok(())

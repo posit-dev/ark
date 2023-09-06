@@ -13,4 +13,11 @@ macro_rules! spawn {
             .spawn($body)
             .unwrap()
     };
+    ($scope:ident, $name:expr, $body:expr) => {
+        $scope
+            .builder()
+            .name($name.to_string())
+            .spawn($body)
+            .unwrap()
+    };
 }
