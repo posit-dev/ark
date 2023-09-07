@@ -8,6 +8,7 @@
 use std::sync::Arc;
 use std::sync::Mutex;
 
+use crossbeam::channel::SendError;
 use crossbeam::channel::Sender;
 use futures::executor::block_on;
 use log::error;
@@ -17,6 +18,7 @@ use log::warn;
 
 use crate::error::Error;
 use crate::language::control_handler::ControlHandler;
+use crate::socket::iopub::IOPubContextChannel;
 use crate::socket::iopub::IOPubMessage;
 use crate::socket::socket::Socket;
 use crate::traits::iopub::IOPubSenderExt;
@@ -81,13 +83,22 @@ impl Control {
         }
     }
 
+    fn send_state<T: ProtocolMessage>(
+        &self,
+        parent: JupyterMessage<T>,
+        state: ExecutionState,
+    ) -> Result<(), SendError<IOPubMessage>> {
+        self.iopub_tx
+            .send_state(parent, IOPubContextChannel::Control, state)
+    }
+
     fn handle_request<T, H>(&self, req: JupyterMessage<T>, handler: H) -> Result<(), Error>
     where
         T: ProtocolMessage,
         H: FnOnce(JupyterMessage<T>) -> Result<(), Error>,
     {
         // Enter the kernel-busy state in preparation for handling the message.
-        if let Err(err) = self.iopub_tx.send_state(req.clone(), ExecutionState::Busy) {
+        if let Err(err) = self.send_state(req.clone(), ExecutionState::Busy) {
             warn!("Failed to change kernel status to busy: {err}");
         }
 
@@ -97,7 +108,7 @@ impl Control {
         // Return to idle -- we always do this, even if the message generated an
         // error, since many front ends won't submit additional messages until
         // the kernel is marked idle.
-        if let Err(err) = self.iopub_tx.send_state(req, ExecutionState::Idle) {
+        if let Err(err) = self.send_state(req, ExecutionState::Idle) {
             warn!("Failed to restore kernel status to idle: {err}");
         }
 

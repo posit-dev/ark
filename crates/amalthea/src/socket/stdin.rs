@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use crossbeam::channel::Receiver;
+use crossbeam::channel::SendError;
 use crossbeam::channel::Sender;
 use crossbeam::select;
 use futures::executor::block_on;
@@ -18,12 +19,17 @@ use log::warn;
 
 use crate::language::shell_handler::ShellHandler;
 use crate::session::Session;
-use crate::wire::header::JupyterHeader;
+use crate::socket::iopub::IOPubContextChannel;
+use crate::socket::iopub::IOPubMessage;
+use crate::traits::iopub::IOPubSenderExt;
+use crate::wire::input_reply::InputReply;
 use crate::wire::input_request::ShellInputRequest;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
 use crate::wire::jupyter_message::OutboundMessage;
+use crate::wire::jupyter_message::ProtocolMessage;
 use crate::wire::originator::Originator;
+use crate::wire::status::ExecutionState;
 
 pub struct Stdin {
     /// Receiver connected to the StdIn's ZeroMQ socket
@@ -33,11 +39,12 @@ pub struct Stdin {
     outbound_tx: Sender<OutboundMessage>,
 
     /// Language-provided shell handler object
-    handler: Arc<Mutex<dyn ShellHandler>>,
+    shell_handler: Arc<Mutex<dyn ShellHandler>>,
 
-    // IOPub message context. Updated from StdIn on input replies so that new
-    // output gets attached to the correct input element in the console.
-    msg_context: Arc<Mutex<Option<JupyterHeader>>>,
+    // Sends messages to the IOPub socket. In particular for busy/idle updates
+    // related to input replies so that new output gets attached to the correct
+    // input element in the console.
+    iopub_tx: Sender<IOPubMessage>,
 
     // 0MQ session, needed to create `JupyterMessage` objects
     session: Session,
@@ -47,20 +54,20 @@ impl Stdin {
     /// Create a new Stdin socket
     ///
     /// * `socket` - The underlying ZeroMQ socket
-    /// * `handler` - The language's shell handler
-    /// * `msg_context` - The IOPub message context
+    /// * `shell_handler` - The language's shell handler
+    /// * `iopub_tx` - The IOPub message sender
     pub fn new(
         inbound_rx: Receiver<Message>,
         outbound_tx: Sender<OutboundMessage>,
-        handler: Arc<Mutex<dyn ShellHandler>>,
-        msg_context: Arc<Mutex<Option<JupyterHeader>>>,
+        shell_handler: Arc<Mutex<dyn ShellHandler>>,
+        iopub_tx: Sender<IOPubMessage>,
         session: Session,
     ) -> Self {
         Self {
             inbound_rx,
             outbound_tx,
-            handler,
-            msg_context,
+            shell_handler,
+            iopub_tx,
             session,
         }
     }
@@ -149,18 +156,40 @@ impl Stdin {
             };
             trace!("Received input reply from front-end: {:?}", reply);
 
-            // Update IOPub message context
-            {
-                let mut ctxt = self.msg_context.lock().unwrap();
-                *ctxt = Some(reply.header.clone());
-            }
+            self.handle_input_reply(reply)
+        }
+    }
 
-            // Send the reply to the shell handler
-            let handler = self.handler.lock().unwrap();
-            let orig = Originator::from(&reply);
-            if let Err(err) = block_on(handler.handle_input_reply(&reply.content, orig)) {
-                warn!("Error handling input reply: {:?}", err);
-            }
+    fn send_state<T: ProtocolMessage>(
+        &self,
+        parent: JupyterMessage<T>,
+        state: ExecutionState,
+    ) -> Result<(), SendError<IOPubMessage>> {
+        self.iopub_tx
+            .send_state(parent, IOPubContextChannel::Shell, state)
+    }
+
+    // Mimics the structure of handling other messages in `Shell`. In
+    // particular, toggling busy/idle states.
+    fn handle_input_reply(&self, reply: JupyterMessage<InputReply>) {
+        // Enter the kernel-busy state in preparation for handling the message.
+        if let Err(err) = self.send_state(reply.clone(), ExecutionState::Busy) {
+            warn!("Failed to change kernel status to busy: {err}");
+        }
+
+        // Send the reply to the shell handler
+        let shell_handler = self.shell_handler.lock().unwrap();
+
+        let orig = Originator::from(&reply);
+        if let Err(err) = block_on(shell_handler.handle_input_reply(&reply.content, orig)) {
+            warn!("Error handling input reply: {:?}", err);
+        }
+
+        // Return to idle -- we always do this, even if the message generated an
+        // error, since many front ends won't submit additional messages until
+        // the kernel is marked idle.
+        if let Err(err) = self.send_state(reply, ExecutionState::Idle) {
+            warn!("Failed to restore kernel status to idle: {err}");
         }
     }
 }

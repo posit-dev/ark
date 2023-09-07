@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use crossbeam::channel::Receiver;
+use crossbeam::channel::SendError;
 use crossbeam::channel::Sender;
 use futures::executor::block_on;
 use log::debug;
@@ -28,6 +29,7 @@ use crate::language::server_handler::ServerHandler;
 use crate::language::shell_handler::ShellHandler;
 use crate::socket::comm::CommInitiator;
 use crate::socket::comm::CommSocket;
+use crate::socket::iopub::IOPubContextChannel;
 use crate::socket::iopub::IOPubMessage;
 use crate::socket::socket::Socket;
 use crate::traits::iopub::IOPubSenderExt;
@@ -166,6 +168,15 @@ impl Shell {
         }
     }
 
+    fn send_state<T: ProtocolMessage>(
+        &self,
+        parent: JupyterMessage<T>,
+        state: ExecutionState,
+    ) -> Result<(), SendError<IOPubMessage>> {
+        self.iopub_tx
+            .send_state(parent, IOPubContextChannel::Shell, state)
+    }
+
     /// Wrapper for all request handlers; emits busy, invokes the handler, then
     /// emits idle. Most frontends expect all shell messages to be wrapped in
     /// this pair of statuses.
@@ -180,7 +191,7 @@ impl Shell {
         use std::ops::DerefMut;
 
         // Enter the kernel-busy state in preparation for handling the message.
-        if let Err(err) = self.iopub_tx.send_state(req.clone(), ExecutionState::Busy) {
+        if let Err(err) = self.send_state(req.clone(), ExecutionState::Busy) {
             warn!("Failed to change kernel status to busy: {}", err)
         }
 
@@ -199,7 +210,7 @@ impl Shell {
         // Return to idle -- we always do this, even if the message generated an
         // error, since many front ends won't submit additional messages until
         // the kernel is marked idle.
-        if let Err(err) = self.iopub_tx.send_state(req, ExecutionState::Idle) {
+        if let Err(err) = self.send_state(req, ExecutionState::Idle) {
             warn!("Failed to restore kernel status to idle: {}", err)
         }
         result
@@ -297,7 +308,7 @@ impl Shell {
         debug!("Received request to open comm: {:?}", req);
 
         // Enter the kernel-busy state in preparation for handling the message.
-        if let Err(err) = self.iopub_tx.send_state(req.clone(), ExecutionState::Busy) {
+        if let Err(err) = self.send_state(req.clone(), ExecutionState::Busy) {
             warn!("Failed to change kernel status to busy: {}", err)
         }
 
@@ -305,7 +316,7 @@ impl Shell {
         let result = self.open_comm(req.clone());
 
         // Return kernel to idle state
-        if let Err(err) = self.iopub_tx.send_state(req, ExecutionState::Idle) {
+        if let Err(err) = self.send_state(req, ExecutionState::Idle) {
             warn!("Failed to restore kernel status to idle: {}", err)
         }
 
@@ -324,7 +335,7 @@ impl Shell {
         debug!("Received request to send a message on a comm: {:?}", req);
 
         // Enter the kernel-busy state in preparation for handling the message.
-        if let Err(err) = self.iopub_tx.send_state(req.clone(), ExecutionState::Busy) {
+        if let Err(err) = self.send_state(req.clone(), ExecutionState::Busy) {
             warn!("Failed to change kernel status to busy: {}", err)
         }
 
@@ -341,7 +352,7 @@ impl Shell {
             .unwrap();
 
         // Return kernel to idle state
-        if let Err(err) = self.iopub_tx.send_state(req, ExecutionState::Idle) {
+        if let Err(err) = self.send_state(req, ExecutionState::Idle) {
             warn!("Failed to restore kernel status to idle: {}", err)
         }
         Ok(())
@@ -530,7 +541,7 @@ impl Shell {
         debug!("Received request to close comm: {:?}", req);
 
         // Enter the kernel-busy state in preparation for handling the message.
-        if let Err(err) = self.iopub_tx.send_state(req.clone(), ExecutionState::Busy) {
+        if let Err(err) = self.send_state(req.clone(), ExecutionState::Busy) {
             warn!("Failed to change kernel status to busy: {}", err)
         }
 
@@ -541,7 +552,7 @@ impl Shell {
             .unwrap();
 
         // Return kernel to idle state
-        if let Err(err) = self.iopub_tx.send_state(req, ExecutionState::Idle) {
+        if let Err(err) = self.send_state(req, ExecutionState::Idle) {
             warn!("Failed to restore kernel status to idle: {}", err)
         }
 

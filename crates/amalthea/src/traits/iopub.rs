@@ -8,6 +8,7 @@
 use crossbeam::channel::SendError;
 use crossbeam::channel::Sender;
 
+use crate::socket::iopub::IOPubContextChannel;
 use crate::socket::iopub::IOPubMessage;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::ProtocolMessage;
@@ -19,6 +20,7 @@ pub trait IOPubSenderExt {
     fn send_state<T: ProtocolMessage>(
         &self,
         parent: JupyterMessage<T>,
+        context_channel: IOPubContextChannel,
         state: ExecutionState,
     ) -> Result<(), SendError<IOPubMessage>>;
 }
@@ -27,11 +29,12 @@ impl IOPubSenderExt for Sender<IOPubMessage> {
     fn send_state<T: ProtocolMessage>(
         &self,
         parent: JupyterMessage<T>,
+        context_channel: IOPubContextChannel,
         state: ExecutionState,
     ) -> Result<(), SendError<IOPubMessage>> {
         let reply = KernelStatus {
             execution_state: state,
         };
-        self.send(IOPubMessage::Status(parent.header, reply))
+        self.send(IOPubMessage::Status(parent.header, context_channel, reply))
     }
 }
