@@ -19,7 +19,9 @@ use log::warn;
 
 use crate::language::shell_handler::ShellHandler;
 use crate::session::Session;
+use crate::socket::iopub::IOPubContextChannel;
 use crate::socket::iopub::IOPubMessage;
+use crate::traits::iopub::IOPubSenderExt;
 use crate::wire::input_reply::InputReply;
 use crate::wire::input_request::ShellInputRequest;
 use crate::wire::jupyter_message::JupyterMessage;
@@ -28,7 +30,6 @@ use crate::wire::jupyter_message::OutboundMessage;
 use crate::wire::jupyter_message::ProtocolMessage;
 use crate::wire::originator::Originator;
 use crate::wire::status::ExecutionState;
-use crate::wire::status::KernelStatus;
 
 pub struct Stdin {
     /// Receiver connected to the StdIn's ZeroMQ socket
@@ -164,12 +165,8 @@ impl Stdin {
         parent: JupyterMessage<T>,
         state: ExecutionState,
     ) -> Result<(), SendError<IOPubMessage>> {
-        // TODO: Simplify with common `send_state()` extension
-        let reply = KernelStatus {
-            execution_state: state,
-        };
         self.iopub_tx
-            .send(IOPubMessage::Status(parent.header, reply))
+            .send_state(parent, IOPubContextChannel::Shell, state)
     }
 
     // Mimics the structure of handling other messages in `Shell`. In

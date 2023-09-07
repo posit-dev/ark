@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use crossbeam::channel::Receiver;
+use crossbeam::channel::SendError;
 use crossbeam::channel::Sender;
 use futures::executor::block_on;
 use log::debug;
@@ -28,8 +29,10 @@ use crate::language::server_handler::ServerHandler;
 use crate::language::shell_handler::ShellHandler;
 use crate::socket::comm::CommInitiator;
 use crate::socket::comm::CommSocket;
+use crate::socket::iopub::IOPubContextChannel;
 use crate::socket::iopub::IOPubMessage;
 use crate::socket::socket::Socket;
+use crate::traits::iopub::IOPubSenderExt;
 use crate::wire::comm_close::CommClose;
 use crate::wire::comm_info_reply::CommInfoReply;
 use crate::wire::comm_info_reply::CommInfoTargetName;
@@ -51,7 +54,6 @@ use crate::wire::kernel_info_reply::KernelInfoReply;
 use crate::wire::kernel_info_request::KernelInfoRequest;
 use crate::wire::originator::Originator;
 use crate::wire::status::ExecutionState;
-use crate::wire::status::KernelStatus;
 
 /// Wrapper for the Shell socket; receives requests for execution, etc. from the
 /// front end and handles them or dispatches them to the execution thread.
@@ -210,17 +212,9 @@ impl Shell {
         &self,
         parent: JupyterMessage<T>,
         state: ExecutionState,
-    ) -> Result<(), Error> {
-        let reply = KernelStatus {
-            execution_state: state,
-        };
-        if let Err(err) = self
-            .iopub_tx
-            .send(IOPubMessage::Status(parent.header, reply))
-        {
-            return Err(Error::SendError(format!("{}", err)));
-        }
-        Ok(())
+    ) -> Result<(), SendError<IOPubMessage>> {
+        self.iopub_tx
+            .send_state(parent, IOPubContextChannel::Shell, state)
     }
 
     /// Handles an ExecuteRequest; dispatches the request to the execution
