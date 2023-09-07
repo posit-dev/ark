@@ -521,7 +521,7 @@ impl RMain {
             // custom prompts set by users, e.g. `options(prompt = ,
             // continue = )`, as well as debugging prompts, e.g. after a
             // call to `browser()`.
-            {
+            if !info.input_request {
                 let event = PositronEvent::PromptState(PromptStateEvent {
                     input_prompt: info.input_prompt.clone(),
                     continuation_prompt: info.continuation_prompt.clone(),
