@@ -35,7 +35,6 @@ use crate::socket::shell::Shell;
 use crate::socket::socket::Socket;
 use crate::socket::stdin::Stdin;
 use crate::stream_capture::StreamCapture;
-use crate::wire::header::JupyterHeader;
 use crate::wire::input_request::ShellInputRequest;
 use crate::wire::jupyter_message::Message;
 use crate::wire::jupyter_message::OutboundMessage;
@@ -59,11 +58,6 @@ pub struct Kernel {
 
     /// Receives message sent to the IOPub socket
     iopub_rx: Option<Receiver<IOPubMessage>>,
-
-    /// The current message context; attached to outgoing messages to pair
-    /// outputs with the message that caused them. Normally set and accessed
-    /// by IOPub but can also be set by other threads such as StdIn.
-    msg_context: Arc<Mutex<Option<JupyterHeader>>>,
 
     /// Sends notifications about comm changes and events to the comm manager.
     /// Use `create_comm_manager_tx` to access it.
@@ -99,7 +93,6 @@ impl Kernel {
             session: Session::create(key)?,
             iopub_tx,
             iopub_rx: Some(iopub_rx),
-            msg_context: Arc::new(Mutex::new(None)),
             comm_manager_tx,
             comm_manager_rx,
         })
@@ -172,9 +165,8 @@ impl Kernel {
             self.connection.endpoint(self.connection.iopub_port),
         )?;
         let iopub_rx = self.iopub_rx.take().unwrap();
-        let msg_context = self.msg_context.clone();
         spawn!(format!("{}-iopub", self.name), move || {
-            Self::iopub_thread(iopub_socket, iopub_rx, msg_context)
+            Self::iopub_thread(iopub_socket, iopub_rx)
         });
 
         // Create the heartbeat socket and start a thread to listen for
@@ -203,18 +195,18 @@ impl Kernel {
             self.connection.endpoint(self.connection.stdin_port),
         )?;
         let shell_clone = shell_handler.clone();
-        let msg_context = self.msg_context.clone();
 
         let (stdin_inbound_tx, stdin_inbound_rx) = unbounded();
         let (stdin_interrupt_tx, stdin_interrupt_rx) = bounded(1);
         let stdin_session = stdin_socket.session.clone();
+        let stdin_iopub_tx = self.create_iopub_tx();
 
         spawn!(format!("{}-stdin", self.name), move || {
             Self::stdin_thread(
                 stdin_inbound_rx,
                 outbound_tx,
                 shell_clone,
-                msg_context,
+                stdin_iopub_tx,
                 input_request_rx,
                 stdin_interrupt_rx,
                 stdin_session,
@@ -337,12 +329,8 @@ impl Kernel {
     }
 
     /// Starts the IOPub thread.
-    fn iopub_thread(
-        socket: Socket,
-        receiver: Receiver<IOPubMessage>,
-        msg_context: Arc<Mutex<Option<JupyterHeader>>>,
-    ) -> Result<(), Error> {
-        let mut iopub = IOPub::new(socket, receiver, msg_context);
+    fn iopub_thread(socket: Socket, receiver: Receiver<IOPubMessage>) -> Result<(), Error> {
+        let mut iopub = IOPub::new(socket, receiver);
         iopub.listen();
         Ok(())
     }
@@ -359,12 +347,12 @@ impl Kernel {
         inbound_rx: Receiver<Message>,
         outbound_tx: Sender<OutboundMessage>,
         shell_handler: Arc<Mutex<dyn ShellHandler>>,
-        msg_context: Arc<Mutex<Option<JupyterHeader>>>,
+        iopub_tx: Sender<IOPubMessage>,
         input_request_rx: Receiver<ShellInputRequest>,
         interrupt_rx: Receiver<bool>,
         session: Session,
     ) -> Result<(), Error> {
-        let stdin = Stdin::new(inbound_rx, outbound_tx, shell_handler, msg_context, session);
+        let stdin = Stdin::new(inbound_rx, outbound_tx, shell_handler, iopub_tx, session);
         stdin.listen(input_request_rx, interrupt_rx);
         Ok(())
     }

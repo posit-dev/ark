@@ -68,11 +68,9 @@ impl IOPub {
     ///   subscribed clients.
     /// * `receiver` - The receiver channel that will receive IOPub
     ///   messages from other threads.
-    pub fn new(
-        socket: Socket,
-        receiver: Receiver<IOPubMessage>,
-        msg_context: Arc<Mutex<Option<JupyterHeader>>>,
-    ) -> Self {
+    pub fn new(socket: Socket, receiver: Receiver<IOPubMessage>) -> Self {
+        let msg_context = Arc::new(Mutex::new(None));
+
         Self {
             socket,
             receiver,
