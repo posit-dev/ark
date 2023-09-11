@@ -790,7 +790,7 @@ impl RMain {
     }
 
     /// Invoked by R to write output to the console.
-    fn write_console(&mut self, buf: *const c_char, _buflen: i32, otype: i32) {
+    fn write_console(&mut self, buf: *const c_char, buflen: i32, otype: i32) {
         let content = unsafe { CStr::from_ptr(buf).to_str().unwrap() };
         let stream = if otype == 0 {
             Stream::Stdout
@@ -801,6 +801,21 @@ impl RMain {
         if self.initializing {
             // During init, consider all output to be part of the startup banner
             self.banner.push_str(content);
+            return;
+        }
+
+        if stream == Stream::Stderr && buflen == 1 && content.chars().next() == Some('\n') {
+            // R emits a single newline to stderr when an interrupt is processed,
+            // but the Positron Console already handles interrupts elegantly, so
+            // we actually want to avoid this extra newline.
+            // https://github.com/wch/r-source/blob/819477cd6dbefb8fae61a07fc13064faa29a2714/src/main/errors.c#L188
+            // Ideally we'd also use a global "have we been interrupted?" flag
+            // that would be used as another pre-condition here, like RStudio
+            // does, but that has proven difficult to do as our interrupt
+            // handler (`handle_interrupt()`) doesn't seem to always run.
+            // https://github.com/rstudio/rstudio/commit/3f239473babc0182c780d937239179fbf86da1a3
+            // In particular, since messages go through stderr it currently means
+            // this is missing a newline `{ message("oh"); message(""); message("hi"); }`.
             return;
         }
 
