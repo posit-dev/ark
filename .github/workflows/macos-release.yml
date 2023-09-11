@@ -1,5 +1,10 @@
 
 name: "Build macOS Release"
+on:
+  push:
+    branches:
+      - main
+
 
 jobs:
   revive_agent:
@@ -128,7 +133,7 @@ jobs:
       - name: Create release
         uses: actions/create-release@v1
         id: create_release
-        if: github.ref == 'refs/heads/main' && !steps.check_tag.exists
+        if: !steps.check_tag.exists
         with:
           draft: false
           prerelease: true
@@ -137,7 +142,7 @@ jobs:
 
       - name: Upload release artifact (x64)
         uses: actions/upload-release-asset@v1
-        if: github.ref == 'refs/heads/main' && !steps.check_tag.exists
+        if: !steps.check_tag.exists
         env:
           GITHUB_TOKEN: ${{ github.token }}
         with:
@@ -148,7 +153,7 @@ jobs:
 
       - name: Upload release artifact (arm64)
         uses: actions/upload-release-asset@v1
-        if: github.ref == 'refs/heads/main' && !steps.check_tag.exists
+        if: !steps.check_tag.exists
         env:
           GITHUB_TOKEN: ${{ github.token }}
         with:
