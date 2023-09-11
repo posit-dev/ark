@@ -292,7 +292,12 @@ impl Kernel {
 
         // TODO: thread/join thread? Exiting this thread will cause the whole
         // kernel to exit.
-        Self::control_thread(control_socket, control_handler, stdin_interrupt_tx);
+        Self::control_thread(
+            control_socket,
+            self.create_iopub_tx(),
+            control_handler,
+            stdin_interrupt_tx,
+        );
         info!("Control thread exited, exiting kernel");
         Ok(())
     }
@@ -310,10 +315,11 @@ impl Kernel {
     /// Starts the control thread
     fn control_thread(
         socket: Socket,
+        iopub_tx: Sender<IOPubMessage>,
         handler: Arc<Mutex<dyn ControlHandler>>,
         stdin_interrupt_tx: Sender<bool>,
     ) {
-        let control = Control::new(socket, handler, stdin_interrupt_tx);
+        let control = Control::new(socket, iopub_tx, handler, stdin_interrupt_tx);
         control.listen();
     }
 
