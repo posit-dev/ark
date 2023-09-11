@@ -40,14 +40,22 @@ pub struct IOPub {
 
     /// The current message context; attached to outgoing messages to pair
     /// outputs with the message that caused them.
-    msg_context: Arc<Mutex<Option<JupyterHeader>>>,
+    shell_context: Arc<Mutex<Option<JupyterHeader>>>,
+    control_context: Arc<Mutex<Option<JupyterHeader>>>,
+}
+
+/// Enumeration of possible channels that an IOPub message can be associated
+/// with.
+pub enum IOPubContextChannel {
+    Shell,
+    Control,
 }
 
 /// Enumeration of all messages that can be delivered from the IOPub PUB/SUB
 /// socket. These messages generally are created on other threads and then sent
 /// via a channel to the IOPub thread.
 pub enum IOPubMessage {
-    Status(JupyterHeader, KernelStatus),
+    Status(JupyterHeader, IOPubContextChannel, KernelStatus),
     ExecuteResult(ExecuteResult),
     ExecuteError(ExecuteError),
     ExecuteInput(ExecuteInput),
@@ -71,12 +79,14 @@ impl IOPub {
     pub fn new(
         socket: Socket,
         receiver: Receiver<IOPubMessage>,
-        msg_context: Arc<Mutex<Option<JupyterHeader>>>,
+        shell_context: Arc<Mutex<Option<JupyterHeader>>>,
+        control_context: Arc<Mutex<Option<JupyterHeader>>>,
     ) -> Self {
         Self {
             socket,
             receiver,
-            msg_context,
+            shell_context,
+            control_context,
         }
     }
 
@@ -101,39 +111,84 @@ impl IOPub {
     /// Process an IOPub message from another thread.
     fn process_message(&mut self, message: IOPubMessage) -> Result<(), Error> {
         match message {
-            IOPubMessage::Status(context, msg) => {
+            IOPubMessage::Status(context, context_channel, msg) => {
                 // When we enter the Busy state as a result of a message, we
                 // update the context. Future messages to IOPub name this
                 // context in the parent header sent to the client; this makes
                 // it possible for the client to associate events/output with
                 // their originator without requiring us to thread the values
                 // through the stack.
-                if msg.execution_state == ExecutionState::Busy {
-                    let mut ctxt = self.msg_context.lock().unwrap();
-                    *ctxt = Some(context);
+                match (&context_channel, &msg.execution_state) {
+                    (IOPubContextChannel::Control, ExecutionState::Busy) => {
+                        let mut control_context = self.control_context.lock().unwrap();
+                        *control_context = Some(context.clone());
+                    },
+                    (IOPubContextChannel::Control, ExecutionState::Idle) => {
+                        let mut control_context = self.control_context.lock().unwrap();
+                        *control_context = None;
+                    },
+                    (IOPubContextChannel::Control, ExecutionState::Starting) => {
+                        // Nothing to do
+                    },
+                    (IOPubContextChannel::Shell, ExecutionState::Busy) => {
+                        let mut shell_context = self.shell_context.lock().unwrap();
+                        *shell_context = Some(context.clone());
+                    },
+                    (IOPubContextChannel::Shell, ExecutionState::Idle) => {
+                        let mut shell_context = self.shell_context.lock().unwrap();
+                        *shell_context = None;
+                    },
+                    (IOPubContextChannel::Shell, ExecutionState::Starting) => {
+                        // Nothing to do
+                    },
                 }
-                self.send_message(msg)
+
+                self.send_message_with_header(context, msg)
             },
-            IOPubMessage::ExecuteResult(msg) => self.send_message(msg),
-            IOPubMessage::ExecuteError(msg) => self.send_message(msg),
-            IOPubMessage::ExecuteInput(msg) => self.send_message(msg),
-            IOPubMessage::Stream(msg) => self.send_message(msg),
+            IOPubMessage::ExecuteResult(msg) => {
+                self.send_message_with_context(msg, IOPubContextChannel::Shell)
+            },
+            IOPubMessage::ExecuteError(msg) => {
+                self.send_message_with_context(msg, IOPubContextChannel::Shell)
+            },
+            IOPubMessage::ExecuteInput(msg) => {
+                self.send_message_with_context(msg, IOPubContextChannel::Shell)
+            },
+            IOPubMessage::Stream(msg) => {
+                self.send_message_with_context(msg, IOPubContextChannel::Shell)
+            },
             IOPubMessage::CommOpen(msg) => self.send_message(msg),
             IOPubMessage::CommMsgEvent(msg) => self.send_message(msg),
             IOPubMessage::CommMsgReply(header, msg) => self.send_message_with_header(header, msg),
             IOPubMessage::CommClose(comm_id) => self.send_message(CommClose { comm_id }),
-            IOPubMessage::DisplayData(msg) => self.send_message(msg),
-            IOPubMessage::UpdateDisplayData(msg) => self.send_message(msg),
+            IOPubMessage::DisplayData(msg) => {
+                self.send_message_with_context(msg, IOPubContextChannel::Shell)
+            },
+            IOPubMessage::UpdateDisplayData(msg) => {
+                self.send_message_with_context(msg, IOPubContextChannel::Shell)
+            },
             IOPubMessage::Event(msg) => self.send_event(msg),
         }
     }
 
+    /// Send a message using the underlying socket with the given content.
+    /// No parent is assumed.
+    fn send_message<T: ProtocolMessage>(&self, content: T) -> Result<(), Error> {
+        self.send_message_impl(None, content)
+    }
+
     /// Send a message using the underlying socket with the given content. The
     /// parent message is assumed to be the current context.
-    fn send_message<T: ProtocolMessage>(&self, content: T) -> Result<(), Error> {
-        let ctxt = self.msg_context.lock().unwrap();
-        let msg = JupyterMessage::<T>::create(content, ctxt.clone(), &self.socket.session);
-        msg.send(&self.socket)
+    fn send_message_with_context<T: ProtocolMessage>(
+        &self,
+        content: T,
+        context_channel: IOPubContextChannel,
+    ) -> Result<(), Error> {
+        let context = match context_channel {
+            IOPubContextChannel::Control => self.control_context.lock().unwrap(),
+            IOPubContextChannel::Shell => self.shell_context.lock().unwrap(),
+        };
+        self.send_message_impl(context.clone(), content)
     }
 
     /// Send a message using the underlying socket with the given content and
@@ -144,7 +199,15 @@ impl IOPub {
         header: JupyterHeader,
         content: T,
     ) -> Result<(), Error> {
-        let msg = JupyterMessage::<T>::create(content, Some(header), &self.socket.session);
+        self.send_message_impl(Some(header), content)
+    }
+
+    fn send_message_impl<T: ProtocolMessage>(
+        &self,
+        header: Option<JupyterHeader>,
+        content: T,
+    ) -> Result<(), Error> {
+        let msg = JupyterMessage::<T>::create(content, header, &self.socket.session);
         msg.send(&self.socket)
     }
 
@@ -152,7 +215,7 @@ impl IOPub {
     fn send_event(&self, event: PositronEvent) -> Result<(), Error> {
         let msg = JupyterMessage::<ClientEvent>::create(
             ClientEvent::from(event),
-            self.msg_context.lock().unwrap().clone(),
+            None,
             &self.socket.session,
         );
         msg.send(&self.socket)

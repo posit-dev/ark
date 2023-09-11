@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use crossbeam::channel::Receiver;
+use crossbeam::channel::SendError;
 use crossbeam::channel::Sender;
 use futures::executor::block_on;
 use log::debug;
@@ -28,6 +29,7 @@ use crate::language::server_handler::ServerHandler;
 use crate::language::shell_handler::ShellHandler;
 use crate::socket::comm::CommInitiator;
 use crate::socket::comm::CommSocket;
+use crate::socket::iopub::IOPubContextChannel;
 use crate::socket::iopub::IOPubMessage;
 use crate::socket::socket::Socket;
 use crate::wire::comm_close::CommClose;
@@ -210,17 +212,12 @@ impl Shell {
         &self,
         parent: JupyterMessage<T>,
         state: ExecutionState,
-    ) -> Result<(), Error> {
+    ) -> Result<(), SendError<IOPubMessage>> {
         let reply = KernelStatus {
             execution_state: state,
         };
-        if let Err(err) = self
-            .iopub_tx
-            .send(IOPubMessage::Status(parent.header, reply))
-        {
-            return Err(Error::SendError(format!("{}", err)));
-        }
-        Ok(())
+        let message = IOPubMessage::Status(parent.header, IOPubContextChannel::Shell, reply);
+        self.iopub_tx.send(message)
     }
 
     /// Handles an ExecuteRequest; dispatches the request to the execution
