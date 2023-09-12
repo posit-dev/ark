@@ -172,6 +172,8 @@ jobs:
     runs-on: [self-hosted, macos, arm64]
     needs: [get_version, build_archs, check_release]
     if: ${{ !needs.check_release.outputs.EXISTING_RELEASE }}
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
 
     steps:
       # Download arm64 and x64 binaries
