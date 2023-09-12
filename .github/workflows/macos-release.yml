@@ -37,8 +37,9 @@ jobs:
           # nothing, but if there isn't one, start one up now.
           ssh -o "StrictHostKeyChecking no" user229818@NY503.macincloud.com "/bin/zsh -li -c \"if screen -list | grep -q 'No Sockets found'; then screen -dmS agent_session /bin/zsh -li -c 'cd ./actions-runner && ./run.sh'; fi\""
 
+  # Extract the current version of ARK from its Cargo.toml file.
   get_version:
-    name: Determine Version
+    name: Determine ARK Version
     runs-on: ubuntu-latest
 
     steps:
@@ -55,20 +56,25 @@ jobs:
             echo "ARK_VERSION=${VERSION}" >> $GITHUB_OUTPUT
 
 
+  # Check to see whether we have already released this version. If we have, we will skip the
+  # release process later on.
   check_release:
     name: Check for Existing Release
-      steps:
-      - name: Check for existing release tag
-        uses: mukunku/tag-exists-action@v1.3.0
-        id: check_tag
-        with:
-            tag: {{ steps.extract_version.outputs.version }}
+    steps:
+    - name: Check for existing release tag
+      uses: mukunku/tag-exists-action@v1.3.0
+      id: check_tag
+      with:
+          tag: {{ steps.extract_version.outputs.version }}
 
-      - name: Set release flag
-        id: release_flag
-        run: |
-            echo "EXISTING_RELEASE=${{steps.check_tag.output.exists}}" >> $GITHUB_OUTPUT
+    - name: Set release flag
+      id: release_flag
+      run: |
+          echo "Existing release: ${{steps.check_tag.output.exists}}"
+          echo "EXISTING_RELEASE=${{steps.check_tag.output.exists}}" >> $GITHUB_OUTPUT
 
+
+  # Build ARK for both arm64 (Apple Silicon) and x64 (Intel) hosts.
   build_archs:
     name: Build macOS
     runs-on: [self-hosted, macos, arm64]
@@ -143,7 +149,7 @@ jobs:
       - name: Create archive
         run: |
           pushd target/release
-          zip -Xry $GITHUB_WORKSPACE/ark-${{ needs.get_version.outputs.ARK_VERSION }}-darwin-${{ matrix.arch }}.zip
+          zip -Xry $GITHUB_WORKSPACE/ark-${{ needs.get_version.outputs.ARK_VERSION }}-darwin-${{ matrix.arch }}.zip ark
           popd
 
       # Create build artifact
@@ -153,44 +159,61 @@ jobs:
           name: ark-darwin-${{ matrix.arch }}-archive
           path: ark-${{ needs.get_version.outputs.ARK_VERSION }}-darwin-${{ matrix.arch }}.zip
 
-   create_release:
+  # Creates a new release if we don't have a release yet for this version.
+  create_release:
     name: Create Release
     runs-on: [self-hosted, macos, arm64]
     needs: [get_verison, build_archs, check_release]
     if: !{{ needs.check_release.outputs.EXISTING_RELEASE }}
 
     steps:
+      # Download arm64 and x64 binaries
+      - name: Download arm64 kernel
+        uses: actions/download-artifact@v3
+        with:
+          name: ark-darwin-arm64-archive
 
-      # The following steps run only if we're on the main branch and there's no existing release
-      # tag.
+      - name: Download x64 kernel
+        uses: actions/download-artifact@v3
+        with:
+          name: ark-darwin-x64-archive
+
+      # Combine them to a single binary with lipo
+      - name: Create universal binary
+        run: |
+            # Decompress x64 build
+            mkdir x64 && pushd x64
+            unzip ark-${{ needs.get_version.outputs.ARK_VERSION }}-darwin-x64.zip
+            popd
+
+            # Decompress arm64 build
+            mkdir arm64 && pushd arm64
+            unzip ark-${{ needs.get_version.outputs.ARK_VERSION }}-darwin-arm64.zip
+            popd
+
+            # Create a universal binary
+            lipo -create x64/ark arm64/ark -output ark
+
+            # Compress
+            zip -Xry $GITHUB_WORKSPACE/ark-${{ needs.get_version.outputs.ARK_VERSION }}-darwin-universal.zip ark
+
       - name: Create release
         uses: actions/create-release@v1
         id: create_release
         with:
           draft: false
           prerelease: true
-          release_name: ${{ steps.extract_version.outputs.version }}
-          tag_name: ${{ steps.extract_version.outputs.version }}
+          release_name: ${{ needs.get_version.outputs.ARK_VERSION }}
+          tag_name: ${{ needs.get_version.outputs.ARK_VERSION }}
 
-      - name: Upload release artifact (x64)
+      - name: Upload release artifact (universal)
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ github.token }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ark-${{ steps.extract_version.outputs.version }}-darwin-x64.zip
+          asset_path: ark-${{ steps.extract_version.outputs.version }}-darwin-universal.zip
           asset_name: Amalthea R Kernel (Intel)
-          asset_content_type: application/octet-stream
-
-      - name: Upload release artifact (arm64)
-        uses: actions/upload-release-asset@v1
-        if: !steps.check_tag.exists
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ark-${{ steps.extract_version.outputs.version }}-darwin-arm64.zip
-          asset_name: Amalthea R Kernel (Apple Silicon)
           asset_content_type: application/octet-stream
 
   status:
