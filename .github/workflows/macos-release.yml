@@ -37,10 +37,42 @@ jobs:
           # nothing, but if there isn't one, start one up now.
           ssh -o "StrictHostKeyChecking no" user229818@NY503.macincloud.com "/bin/zsh -li -c \"if screen -list | grep -q 'No Sockets found'; then screen -dmS agent_session /bin/zsh -li -c 'cd ./actions-runner && ./run.sh'; fi\""
 
-  build-archs:
+  get_version:
+    name: Determine Version
+    runs-on: ubuntu-latest
+
+    steps:
+      # Checkout sources
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      # Extract version
+      - name: Determine Version
+        id: extract_version
+        run: |
+            VERSION=$(cat crates/ark/Cargo.toml | grep '^version' | sed -e "s/[^.0-9]//g")
+            echo "ARK version: ${VERSION}"
+            echo "ARK_VERSION=${VERSION}" >> $GITHUB_OUTPUT
+
+
+  check_release:
+    name: Check for Existing Release
+      steps:
+      - name: Check for existing release tag
+        uses: mukunku/tag-exists-action@v1.3.0
+        id: check_tag
+        with:
+            tag: {{ steps.extract_version.outputs.version }}
+
+      - name: Set release flag
+        id: release_flag
+        run: |
+            echo "EXISTING_RELEASE=${{steps.check_tag.output.exists}}" >> $GITHUB_OUTPUT
+
+  build_archs:
     name: Build macOS
     runs-on: [self-hosted, macos, arm64]
-    needs: [revive_agent]
+    needs: [revive_agent, get_version]
     timeout-minutes: 40
 
     env:
@@ -107,33 +139,33 @@ jobs:
           R_HOME: ${{ steps.r_installation.outputs.r_home }}
         run: cargo build --release
 
-      # Extract version
-      - name: Extract version
-        id: extract_version
-        run: |
-            VERSION=$(./target/release/ark --version | sed -e "s/[^.0-9]//g")
-            echo "ARK version: ${VERSION}"
-            echo "ARK_VERSION=${VERSION}" >> $GITHUB_OUTPUT
-
-      # Compress client to a zip file
-      - name: Create release archive
+      # Compress kernel to a zip file
+      - name: Create archive
         run: |
           pushd target/release
-          zip -Xry $GITHUB_WORKSPACE/ark-${{ steps.extract_version.outputs.version }}-darwin-${{ matrix.arch }}.zip
+          zip -Xry $GITHUB_WORKSPACE/ark-${{ needs.get_version.outputs.ARK_VERSION }}-darwin-${{ matrix.arch }}.zip
           popd
 
-      # Check for an existing release
-      - uses: mukunku/tag-exists-action@v1.3.0
-        id: check_tag
+      # Create build artifact
+      - name: Upload client archive
+        uses: actions/upload-artifact@v3
         with:
-            tag: {{ steps.extract_version.outputs.version }}
+          name: ark-darwin-${{ matrix.arch }}-archive
+          path: ark-${{ needs.get_version.outputs.ARK_VERSION }}-darwin-${{ matrix.arch }}.zip
+
+   create_release:
+    name: Create Release
+    runs-on: [self-hosted, macos, arm64]
+    needs: [get_verison, build_archs, check_release]
+    if: !{{ needs.check_release.outputs.EXISTING_RELEASE }}
+
+    steps:
 
       # The following steps run only if we're on the main branch and there's no existing release
       # tag.
       - name: Create release
         uses: actions/create-release@v1
         id: create_release
-        if: !steps.check_tag.exists
         with:
           draft: false
           prerelease: true
@@ -142,7 +174,6 @@ jobs:
 
       - name: Upload release artifact (x64)
         uses: actions/upload-release-asset@v1
-        if: !steps.check_tag.exists
         env:
           GITHUB_TOKEN: ${{ github.token }}
         with:
