@@ -65,13 +65,13 @@ jobs:
       uses: mukunku/tag-exists-action@v1.3.0
       id: check_tag
       with:
-          tag: {{ steps.extract_version.outputs.version }}
+        tag: {{ steps.extract_version.outputs.version }}
 
     - name: Set release flag
       id: release_flag
       run: |
-          echo "Existing release: ${{steps.check_tag.output.exists}}"
-          echo "EXISTING_RELEASE=${{steps.check_tag.output.exists}}" >> $GITHUB_OUTPUT
+        echo "Existing release: ${{steps.check_tag.output.exists}}"
+        echo "EXISTING_RELEASE=${{steps.check_tag.output.exists}}" >> $GITHUB_OUTPUT
 
 
   # Build ARK for both arm64 (Apple Silicon) and x64 (Intel) hosts.
