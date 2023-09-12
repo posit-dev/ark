@@ -60,6 +60,7 @@ jobs:
   # release process later on.
   check_release:
     name: Check for Existing Release
+    runs-on: ubuntu-latest
     steps:
     - name: Check for existing release tag
       uses: mukunku/tag-exists-action@v1.3.0
