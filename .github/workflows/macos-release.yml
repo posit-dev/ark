@@ -212,14 +212,14 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ark-${{ steps.extract_version.outputs.version }}-darwin-universal.zip
+          asset_path: ark-${{ needs.get_version.outputs.ARK_VERSION }}-darwin-universal.zip
           asset_name: Amalthea R Kernel (Intel)
           asset_content_type: application/octet-stream
 
   status:
     if: ${{ failure() }}
     runs-on: self-hosted
-    needs: macos-universal
+    needs: [macos-universal, get_version]
     steps:
       - name: Notify slack if build fails
         uses: slackapi/slack-github-action@v1.24.0
@@ -227,7 +227,7 @@ jobs:
         with:
           payload: |
             {
-              "message": "Positron build ${{ needs.version_string.outputs.build_number }} failed",
+              "message": "Positron build ${{ needs.get_version.outputs.ARK_VERSION }} failed",
               "status": "Failure",
               "run_url": "https://github.com/posit-dev/positron/actions/runs/${{ github.run_id }}"
             }
