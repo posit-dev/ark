@@ -222,7 +222,7 @@ jobs:
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_path: ark-${{ needs.get_version.outputs.ARK_VERSION }}-darwin-universal.zip
-          asset_name: Amalthea R Kernel (Intel)
+          asset_name: ark-darwin-universal
           asset_content_type: application/octet-stream
 
   status:
