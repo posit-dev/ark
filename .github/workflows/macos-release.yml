@@ -41,7 +41,8 @@ jobs:
   get_version:
     name: Determine ARK Version
     runs-on: ubuntu-latest
-
+    outputs:
+      ARK_VERSION: ${{ steps.extract_version.outputs.result }}
     steps:
       # Checkout sources
       - name: Checkout sources
@@ -53,7 +54,7 @@ jobs:
         run: |
             VERSION=$(cat crates/ark/Cargo.toml | grep '^version' | sed -e "s/[^.0-9]//g")
             echo "ARK version: ${VERSION}"
-            echo "ARK_VERSION=${VERSION}" >> $GITHUB_OUTPUT
+            echo "result=${VERSION}" >> $GITHUB_OUTPUT
 
 
   # Check to see whether we have already released this version. If we have, we will skip the
@@ -150,7 +151,9 @@ jobs:
       - name: Create archive
         run: |
           pushd target/release
-          zip -Xry $GITHUB_WORKSPACE/ark-${{ needs.get_version.outputs.ARK_VERSION }}-darwin-${{ matrix.arch }}.zip ark
+          ARCHIVE="$GITHUB_WORKSPACE/ark-${{ needs.get_version.outputs.ARK_VERSION }}-darwin-${{ matrix.arch }}.zip"
+          echo "Compressing kernel to $ARCHIVE..."
+          zip -Xry $ARCHIVE ark
           popd
 
       # Create build artifact
