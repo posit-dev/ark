@@ -164,7 +164,7 @@ jobs:
     name: Create Release
     runs-on: [self-hosted, macos, arm64]
     needs: [get_verison, build_archs, check_release]
-    if: {{ !needs.check_release.outputs.EXISTING_RELEASE }}
+    if: ${{ !needs.check_release.outputs.EXISTING_RELEASE }}
 
     steps:
       # Download arm64 and x64 binaries
