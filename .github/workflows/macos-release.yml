@@ -187,12 +187,12 @@ jobs:
         run: |
             # Decompress x64 build
             mkdir x64 && pushd x64
-            unzip ark-${{ needs.get_version.outputs.ARK_VERSION }}-darwin-x64.zip
+            unzip ../ark-${{ needs.get_version.outputs.ARK_VERSION }}-darwin-x64.zip
             popd
 
             # Decompress arm64 build
             mkdir arm64 && pushd arm64
-            unzip ark-${{ needs.get_version.outputs.ARK_VERSION }}-darwin-arm64.zip
+            unzip ../ark-${{ needs.get_version.outputs.ARK_VERSION }}-darwin-arm64.zip
             popd
 
             # Create a universal binary
