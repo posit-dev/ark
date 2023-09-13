@@ -175,6 +175,12 @@ jobs:
           zip -Xry $ARCHIVE ark
           popd
 
+          # Add the R modules (these aren't architecture dependent)
+          echo "Adding R modules ..."
+          pushd crates/ark/src
+          zip -Xry $ARCHIVE modules
+          popd
+
       # Create build artifact
       - name: Upload client archive
         uses: actions/upload-artifact@v3
