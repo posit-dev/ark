@@ -175,12 +175,6 @@ jobs:
           zip -Xry $ARCHIVE ark
           popd
 
-          # Add the R modules (these aren't architecture dependent)
-          echo "Adding R modules ..."
-          pushd crates/ark/src
-          zip -Xry $ARCHIVE modules
-          popd
-
       # Create build artifact
       - name: Upload client archive
         uses: actions/upload-artifact@v3
@@ -226,7 +220,14 @@ jobs:
             lipo -create x64/ark arm64/ark -output ark
 
             # Compress
-            zip -Xry $GITHUB_WORKSPACE/ark-${{ needs.get_version.outputs.ARK_VERSION }}-darwin-universal.zip ark
+            ARCHIVE="$GITHUB_WORKSPACE/ark-${{ needs.get_version.outputs.ARK_VERSION }}-darwin-universal.zip"
+            zip -Xry $ARCHIVE ark
+
+            # Add the R modules (these aren't architecture dependent)
+            echo "Adding R modules ..."
+            pushd crates/ark/src
+            zip -Xry $ARCHIVE modules
+            popd
 
       - name: Create release
         uses: actions/create-release@v1
