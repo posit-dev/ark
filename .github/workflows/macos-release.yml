@@ -73,8 +73,8 @@ jobs:
     - name: Set release flag
       id: release_flag
       run: |
-        echo "Existing ${{ needs.get_version.outputs.ARK_VERSION }} release: ${{steps.check_tag.output.exists}}"
-        echo "EXISTING_RELEASE=${{steps.check_tag.output.exists}}" >> $GITHUB_OUTPUT
+        echo "Existing ${{ needs.get_version.outputs.ARK_VERSION }} release: ${{steps.check_tag.outputs.exists}}"
+        echo "EXISTING_RELEASE=${{steps.check_tag.outputs.exists}}" >> $GITHUB_OUTPUT
 
 
   # Build ARK for both arm64 (Apple Silicon) and x64 (Intel) hosts.
