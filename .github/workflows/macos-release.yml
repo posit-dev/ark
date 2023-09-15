@@ -190,7 +190,7 @@ jobs:
     name: Create Release
     runs-on: [self-hosted, macos, arm64]
     needs: [get_version, build_archs, check_release]
-    if: ${{ needs.check_release.outputs.EXISTING_RELEASE == "false" }}
+    if: ${{ needs.check_release.outputs.EXISTING_RELEASE == 'false' }}
     env:
       GITHUB_TOKEN: ${{ github.token }}
 
