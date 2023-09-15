@@ -62,17 +62,18 @@ jobs:
   check_release:
     name: Check for Existing Release
     runs-on: ubuntu-latest
+    needs: [get_version]
     steps:
     - name: Check for existing release tag
       uses: mukunku/tag-exists-action@v1.3.0
       id: check_tag
       with:
-        tag: ${{ steps.extract_version.outputs.version }}
+        tag: ${{ needs.get_version.outputs.ARK_VERSION }}
 
     - name: Set release flag
       id: release_flag
       run: |
-        echo "Existing release: ${{steps.check_tag.output.exists}}"
+        echo "Existing ${{ needs.get_version.outputs.ARK_VERSION }} release: ${{steps.check_tag.output.exists}}"
         echo "EXISTING_RELEASE=${{steps.check_tag.output.exists}}" >> $GITHUB_OUTPUT
 
 
