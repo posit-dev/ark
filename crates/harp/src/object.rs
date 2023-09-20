@@ -285,6 +285,27 @@ impl From<String> for RObject {
     }
 }
 
+impl From<HashMap<String, String>> for RObject {
+    fn from(value: HashMap<String, String>) -> Self {
+        unsafe {
+            let values = Rf_allocVector(STRSXP, value.len() as isize);
+            let names = Rf_allocVector(STRSXP, value.len() as isize);
+
+            let mut idx = 0;
+            for (key, value) in value {
+                SET_STRING_ELT(values, idx, Rf_mkChar(value.as_ptr() as *mut c_char));
+                SET_STRING_ELT(names, idx, Rf_mkChar(key.as_ptr() as *mut c_char));
+                idx = idx + 1;
+            }
+
+            // Set the names attribute on the values vector
+            Rf_setAttrib(values, R_NamesSymbol, names);
+
+            RObject::new(values)
+        }
+    }
+}
+
 /// Convert RObject into other types.
 
 impl From<RObject> for SEXP {
