@@ -32,3 +32,7 @@
     }
 
 }
+
+.ps.ark.version <- function() {
+    .ps.Call("ps_ark_version")
+}
