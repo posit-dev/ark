@@ -6,7 +6,6 @@
 //
 
 use std::collections::HashMap;
-use std::os::raw::c_char;
 use std::process::Command;
 
 use anyhow::Context;

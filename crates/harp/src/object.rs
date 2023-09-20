@@ -141,6 +141,10 @@ fn r_size(x: SEXP) -> usize {
     }
 }
 
+fn r_length(x: SEXP) -> isize {
+    unsafe { Rf_xlength(x) }
+}
+
 impl RObject {
     pub unsafe fn new(data: SEXP) -> Self {
         RObject {
@@ -182,6 +186,10 @@ impl RObject {
 
     pub fn size(&self) -> usize {
         r_size(self.sexp)
+    }
+
+    pub fn length(&self) -> isize {
+        r_length(self.sexp)
     }
 }
 
@@ -703,6 +711,29 @@ mod tests {
                 String::try_from(s),
                 Err(Error::MissingValueError) => {}
             );
+        }
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test_tryfrom_RObject_hashmap_string() {
+        r_test! {
+            // Create a map of pizza toppings to their acceptability.
+            let mut map = HashMap::<String, String>::new();
+            map.insert(String::from("pepperoni"), String::from("OK"));
+            map.insert(String::from("sausage"), String::from("OK"));
+            map.insert(String::from("pineapple"), String::from("NOT OK"));
+            let len = map.len();
+
+            // Ensure we created an object of the same size as the map.
+            let robj = RObject::from(map);
+            assert_eq!(robj.length(), len as isize);
+
+            // Ensure we can convert the object back into a map with the same values.
+            let out: HashMap<String, String> = robj.try_into().unwrap();
+            assert_eq!(out.get("pepperoni").unwrap(), "OK");
+            assert_eq!(out.get("sausage").unwrap(), "OK");
+            assert_eq!(out.get("pineapple").unwrap(), "NOT OK");
         }
     }
 
