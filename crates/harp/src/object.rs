@@ -285,12 +285,15 @@ impl From<String> for RObject {
     }
 }
 
+// Convert a String -> String HashMap into named character vector.
 impl From<HashMap<String, String>> for RObject {
     fn from(value: HashMap<String, String>) -> Self {
         unsafe {
+            // Allocate the vectors of values and names
             let values = Rf_allocVector(STRSXP, value.len() as isize);
             let names = Rf_allocVector(STRSXP, value.len() as isize);
 
+            // Loop over the HashMap and populate the vectors
             let mut idx = 0;
             for (key, value) in value {
                 SET_STRING_ELT(values, idx, Rf_mkChar(value.as_ptr() as *mut c_char));
@@ -301,6 +304,7 @@ impl From<HashMap<String, String>> for RObject {
             // Set the names attribute on the values vector
             Rf_setAttrib(values, R_NamesSymbol, names);
 
+            // Create and return the RObject from the values vector
             RObject::new(values)
         }
     }

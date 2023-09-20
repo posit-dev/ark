@@ -76,6 +76,8 @@ pub unsafe extern "C" fn ps_ark_version() -> SEXP {
         String::from("version"),
         String::from(env!("CARGO_PKG_VERSION")),
     );
+    info.insert(String::from("commit"), String::from(env!("BUILD_GIT_HASH")));
+    info.insert(String::from("date"), String::from(env!("BUILD_DATE")));
 
     let result = RObject::from(info);
     result.sexp
