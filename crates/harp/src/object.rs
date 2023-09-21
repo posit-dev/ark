@@ -300,17 +300,22 @@ impl From<HashMap<String, String>> for RObject {
             // Allocate the vectors of values and names
             let values = Rf_allocVector(STRSXP, value.len() as isize);
             let names = Rf_allocVector(STRSXP, value.len() as isize);
-
-            // Loop over the HashMap and populate the vectors
-            let mut idx = 0;
-            for (key, value) in value {
-                SET_STRING_ELT(values, idx, Rf_mkChar(value.as_ptr() as *mut c_char));
-                SET_STRING_ELT(names, idx, Rf_mkChar(key.as_ptr() as *mut c_char));
-                idx = idx + 1;
-            }
-
-            // Set the names attribute on the values vector
             Rf_setAttrib(values, R_NamesSymbol, names);
+
+            // Convert the hashmap to a sorted vector of tuples; we do this so that the
+            // order of the values and names is deterministic
+            let mut sorted: Vec<_> = value.into_iter().collect();
+            sorted.sort_by(|a, b| a.0.cmp(&b.0));
+
+            // Loop over the values and names, setting them in the vectors
+            for (idx, (key, value)) in sorted.iter().enumerate() {
+                SET_STRING_ELT(
+                    values,
+                    idx as isize,
+                    Rf_mkChar(value.as_ptr() as *mut c_char),
+                );
+                SET_STRING_ELT(names, idx as isize, Rf_mkChar(key.as_ptr() as *mut c_char));
+            }
 
             // Create and return the RObject from the values vector
             RObject::new(values)
