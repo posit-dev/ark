@@ -5,10 +5,13 @@
 //
 //
 
+use std::collections::HashMap;
 use std::process::Command;
 
 use anyhow::Context;
+use harp::object::RObject;
 use itertools::Itertools;
+use libR_sys::*;
 
 pub struct RVersion {
     // Major version of the R installation
@@ -62,4 +65,19 @@ pub fn detect_r() -> anyhow::Result<RVersion> {
     } else {
         anyhow::bail!("Failed to extract R version");
     }
+}
+
+#[harp::register]
+pub unsafe extern "C" fn ps_ark_version() -> SEXP {
+    let mut info = HashMap::<String, String>::new();
+    // Set the version info in the map
+    info.insert(
+        String::from("version"),
+        String::from(env!("CARGO_PKG_VERSION")),
+    );
+    info.insert(String::from("commit"), String::from(env!("BUILD_GIT_HASH")));
+    info.insert(String::from("date"), String::from(env!("BUILD_DATE")));
+
+    let result = RObject::from(info);
+    result.sexp
 }

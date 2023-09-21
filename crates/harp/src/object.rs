@@ -141,6 +141,10 @@ fn r_size(x: SEXP) -> usize {
     }
 }
 
+fn r_length(x: SEXP) -> isize {
+    unsafe { Rf_xlength(x) }
+}
+
 impl RObject {
     pub unsafe fn new(data: SEXP) -> Self {
         RObject {
@@ -182,6 +186,10 @@ impl RObject {
 
     pub fn size(&self) -> usize {
         r_size(self.sexp)
+    }
+
+    pub fn length(&self) -> isize {
+        r_length(self.sexp)
     }
 }
 
@@ -282,6 +290,41 @@ impl From<&str> for RObject {
 impl From<String> for RObject {
     fn from(value: String) -> Self {
         value.as_str().into()
+    }
+}
+
+// Convert a String -> String HashMap into named character vector.
+impl From<HashMap<String, String>> for RObject {
+    fn from(value: HashMap<String, String>) -> Self {
+        unsafe {
+            // Allocate the vector of values
+            let values = Rf_protect(Rf_allocVector(STRSXP, value.len() as isize));
+
+            // Allocate the vector of names; this will be protected by attaching
+            // it to the values vector as an attribute
+            let names = Rf_allocVector(STRSXP, value.len() as isize);
+            Rf_setAttrib(values, R_NamesSymbol, names);
+
+            // Convert the hashmap to a sorted vector of tuples; we do this so that the
+            // order of the values and names is deterministic
+            let mut sorted: Vec<_> = value.into_iter().collect();
+            sorted.sort_by(|a, b| a.0.cmp(&b.0));
+
+            // Loop over the values and names, setting them in the vectors
+            for (idx, (key, value)) in sorted.iter().enumerate() {
+                SET_STRING_ELT(
+                    values,
+                    idx as isize,
+                    Rf_mkChar(value.as_ptr() as *mut c_char),
+                );
+                SET_STRING_ELT(names, idx as isize, Rf_mkChar(key.as_ptr() as *mut c_char));
+            }
+
+            // Clean up the protect stack and return the RObject from the values
+            // vector
+            Rf_unprotect(1);
+            RObject::new(values)
+        }
     }
 }
 
@@ -678,6 +721,29 @@ mod tests {
                 String::try_from(s),
                 Err(Error::MissingValueError) => {}
             );
+        }
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test_tryfrom_RObject_hashmap_string() {
+        r_test! {
+            // Create a map of pizza toppings to their acceptability.
+            let mut map = HashMap::<String, String>::new();
+            map.insert(String::from("pepperoni"), String::from("OK"));
+            map.insert(String::from("sausage"), String::from("OK"));
+            map.insert(String::from("pineapple"), String::from("NOT OK"));
+            let len = map.len();
+
+            // Ensure we created an object of the same size as the map.
+            let robj = RObject::from(map);
+            assert_eq!(robj.length(), len as isize);
+
+            // Ensure we can convert the object back into a map with the same values.
+            let out: HashMap<String, String> = robj.try_into().unwrap();
+            assert_eq!(out.get("pepperoni").unwrap(), "OK");
+            assert_eq!(out.get("sausage").unwrap(), "OK");
+            assert_eq!(out.get("pineapple").unwrap(), "NOT OK");
         }
     }
 
