@@ -297,8 +297,11 @@ impl From<String> for RObject {
 impl From<HashMap<String, String>> for RObject {
     fn from(value: HashMap<String, String>) -> Self {
         unsafe {
-            // Allocate the vectors of values and names
-            let values = Rf_allocVector(STRSXP, value.len() as isize);
+            // Allocate the vector of values
+            let values = Rf_protect(Rf_allocVector(STRSXP, value.len() as isize));
+
+            // Allocate the vector of names; this will be protected by attaching
+            // it to the values vector as an attribute
             let names = Rf_allocVector(STRSXP, value.len() as isize);
             Rf_setAttrib(values, R_NamesSymbol, names);
 
@@ -317,7 +320,9 @@ impl From<HashMap<String, String>> for RObject {
                 SET_STRING_ELT(names, idx as isize, Rf_mkChar(key.as_ptr() as *mut c_char));
             }
 
-            // Create and return the RObject from the values vector
+            // Clean up the protect stack and return the RObject from the values
+            // vector
+            Rf_unprotect(1);
             RObject::new(values)
         }
     }
