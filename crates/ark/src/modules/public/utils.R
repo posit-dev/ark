@@ -34,5 +34,20 @@
 }
 
 .ps.ark.version <- function() {
-    .ps.Call("ps_ark_version")
+    # Read the version information from Ark
+    ark_version <- .ps.Call("ps_ark_version")
+
+    # Format the date into the current timezone for display
+    if (nzchar(ark_version['date'])) {
+        utc_date <- as.POSIXct(ark_version['date'],
+                               format = "%Y-%m-%dT%H:%M:%SZ",
+                               tz = "UTC")
+        local_date <- format(utc_date,
+                             format = "%Y-%m-%d %H:%M:%S",
+                             usetz = TRUE,
+                             tz = Sys.timezone())
+        ark_version['date'] <- local_date
+    }
+
+    ark_version
 }
