@@ -298,7 +298,9 @@ impl From<HashMap<String, String>> for RObject {
     fn from(value: HashMap<String, String>) -> Self {
         unsafe {
             // Allocate the vector of values
-            let values = Rf_protect(Rf_allocVector(STRSXP, value.len() as isize));
+            let mut protect = RProtect::new();
+            let values = Rf_allocVector(STRSXP, value.len() as isize);
+            protect.add(values);
 
             // Allocate the vector of names; this will be protected by attaching
             // it to the values vector as an attribute
@@ -312,17 +314,21 @@ impl From<HashMap<String, String>> for RObject {
 
             // Loop over the values and names, setting them in the vectors
             for (idx, (key, value)) in sorted.iter().enumerate() {
+                let value_str = Rf_mkCharLenCE(value.as_ptr() as *mut c_char,
+                    value.len() as i32,
+                    cetype_t_CE_UTF8);
                 SET_STRING_ELT(
                     values,
                     idx as isize,
-                    Rf_mkChar(value.as_ptr() as *mut c_char),
-                );
-                SET_STRING_ELT(names, idx as isize, Rf_mkChar(key.as_ptr() as *mut c_char));
+                    value_str);
+                let key_str = Rf_mkCharLenCE(key.as_ptr() as *mut c_char,
+                    key.len() as i32,
+                    cetype_t_CE_UTF8);
+                SET_STRING_ELT(names, idx as isize, key_str);
             }
 
             // Clean up the protect stack and return the RObject from the values
             // vector
-            Rf_unprotect(1);
             RObject::new(values)
         }
     }
@@ -535,8 +541,8 @@ impl TryFrom<RObject> for HashMap<String, String> {
 
             for i in 0..Rf_length(names) {
                 // Get access to element pointers.
-                let lhs = R_CHAR(STRING_ELT(names, i as isize));
-                let rhs = R_CHAR(STRING_ELT(value, i as isize));
+                let lhs = Rf_translateCharUTF8(STRING_ELT(names, i as isize));
+                let rhs = Rf_translateCharUTF8(STRING_ELT(value, i as isize));
 
                 // Create strings.
                 let lhs = CStr::from_ptr(lhs).to_str()?;
