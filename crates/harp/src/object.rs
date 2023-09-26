@@ -26,6 +26,7 @@ use crate::utils::r_is_altrep;
 use crate::utils::r_is_null;
 use crate::utils::r_is_object;
 use crate::utils::r_is_s4;
+use crate::utils::r_translate_string;
 use crate::utils::r_typeof;
 
 // Objects are protected using a doubly-linked list,
@@ -540,15 +541,11 @@ impl TryFrom<RObject> for HashMap<String, String> {
             let mut map = HashMap::<String, String>::with_capacity(n as usize);
 
             for i in 0..Rf_length(names) {
-                // Get access to element pointers.
-                let lhs = Rf_translateCharUTF8(STRING_ELT(names, i as isize));
-                let rhs = Rf_translateCharUTF8(STRING_ELT(value, i as isize));
+                // Translate the name and value into Rust strings.
+                let lhs = r_translate_string(names, i as isize)?;
+                let rhs = r_translate_string(value, i as isize)?;
 
-                // Create strings.
-                let lhs = CStr::from_ptr(lhs).to_str()?;
-                let rhs = CStr::from_ptr(rhs).to_str()?;
-
-                map.insert(lhs.to_string(), rhs.to_string());
+                map.insert(lhs, rhs);
             }
 
             Ok(map)

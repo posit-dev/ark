@@ -169,6 +169,22 @@ pub fn r_classes(value: SEXP) -> Option<CharacterVector> {
     }
 }
 
+/// Translates a UTF-8 string from an R character vector to a Rust string.
+///
+/// - `vec` is the R vector to translate from.
+/// - `index` is the index in the vector of the string to translate.
+pub fn r_translate_string(vec: *mut SEXPREC, index: isize) -> Result<String> {
+    unsafe {
+        let charsexp = STRING_ELT(vec, index);
+        if charsexp == R_NaString {
+            return Err(Error::MissingValueError);
+        }
+        let translated = Rf_translateCharUTF8(charsexp);
+        let cstr = CStr::from_ptr(translated).to_str()?;
+        Ok(cstr.to_string())
+    }
+}
+
 pub fn pairlist_size(mut pairlist: SEXP) -> Result<isize> {
     let mut n = 0;
     unsafe {
