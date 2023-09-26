@@ -1,7 +1,7 @@
 //
 // object.rs
 //
-// Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -298,9 +298,7 @@ impl From<HashMap<String, String>> for RObject {
     fn from(value: HashMap<String, String>) -> Self {
         unsafe {
             // Allocate the vector of values
-            let mut protect = RProtect::new();
-            let values = Rf_allocVector(STRSXP, value.len() as isize);
-            protect.add(values);
+            let values = Rf_protect(Rf_allocVector(STRSXP, value.len() as isize));
 
             // Allocate the vector of names; this will be protected by attaching
             // it to the values vector as an attribute
@@ -314,21 +312,23 @@ impl From<HashMap<String, String>> for RObject {
 
             // Loop over the values and names, setting them in the vectors
             for (idx, (key, value)) in sorted.iter().enumerate() {
-                let value_str = Rf_mkCharLenCE(value.as_ptr() as *mut c_char,
+                let value_str = Rf_mkCharLenCE(
+                    value.as_ptr() as *mut c_char,
                     value.len() as i32,
-                    cetype_t_CE_UTF8);
-                SET_STRING_ELT(
-                    values,
-                    idx as isize,
-                    value_str);
-                let key_str = Rf_mkCharLenCE(key.as_ptr() as *mut c_char,
+                    cetype_t_CE_UTF8,
+                );
+                SET_STRING_ELT(values, idx as isize, value_str);
+                let key_str = Rf_mkCharLenCE(
+                    key.as_ptr() as *mut c_char,
                     key.len() as i32,
-                    cetype_t_CE_UTF8);
+                    cetype_t_CE_UTF8,
+                );
                 SET_STRING_ELT(names, idx as isize, key_str);
             }
 
             // Clean up the protect stack and return the RObject from the values
             // vector
+            Rf_unprotect(1);
             RObject::new(values)
         }
     }
