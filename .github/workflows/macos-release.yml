@@ -226,7 +226,7 @@ jobs:
             - name: Download x64 kernel (${{ matrix.flavor}})
               uses: actions/download-artifact@v3
               with:
-                  name: ark-${{ matrix.flavor }}-x64-archive
+                  name: ark-${{ matrix.flavor }}-darwin-x64-archive
 
             # Combine them to a single binary with lipo
             - name: Create universal binary
