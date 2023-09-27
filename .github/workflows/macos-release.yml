@@ -1,270 +1,292 @@
-
 name: "Build macOS Release"
 on:
-  push:
-    branches:
-      - main
-  workflow_dispatch:
+    push:
+        branches:
+            - main
+    workflow_dispatch:
 
 jobs:
-  revive_agent:
-    # The build agent runs on a MacInCloud instance that is frequently (at
-    # least once a day) rebooted, which shuts down the build agent. Before we
-    # run a build, ensure that the build agent is running; otherwise, the
-    # `runs-on: macos` steps will not execute.
-    #
-    # We run the build agent in a persistent screen session so that it's
-    # possible to connect to the live session for debugging purposes with
-    # the `screen -r` command.
-    name: Revive build agent
-    runs-on: ubuntu-latest
-    steps:
-      # Establish an SSH agent into which we can load the key. The build host
-      # has the public side of this trusted keypair.
-      - name: Setup SSH Keys and known_hosts
+    revive_agent:
+        # The build agent runs on a MacInCloud instance that is frequently (at
+        # least once a day) rebooted, which shuts down the build agent. Before we
+        # run a build, ensure that the build agent is running; otherwise, the
+        # `runs-on: macos` steps will not execute.
+        #
+        # We run the build agent in a persistent screen session so that it's
+        # possible to connect to the live session for debugging purposes with
+        # the `screen -r` command.
+        name: Revive build agent
+        runs-on: ubuntu-latest
+        steps:
+            # Establish an SSH agent into which we can load the key. The build host
+            # has the public side of this trusted keypair.
+            - name: Setup SSH Keys and known_hosts
+              env:
+                  SSH_AUTH_SOCK: /tmp/ssh_agent.sock
+              run: |
+                  ssh-agent -a $SSH_AUTH_SOCK > /dev/null
+                  ssh-add - <<< "${{ secrets.MACOS_PRIVATE_SSH_KEY }}"
+
+            - name: Revive Screen session
+              id: revive_agent
+              env:
+                  SSH_AUTH_SOCK: /tmp/ssh_agent.sock
+              run: |
+                  # Connect to the host; if there is a screen session running, do
+                  # nothing, but if there isn't one, start one up now.
+                  ssh -o "StrictHostKeyChecking no" user229818@NY503.macincloud.com "/bin/zsh -li -c \"if screen -list | grep -q 'No Sockets found'; then screen -dmS agent_session /bin/zsh -li -c 'cd ./actions-runner && ./run.sh'; fi\""
+
+    # Extract the current version of ARK from its Cargo.toml file.
+    get_version:
+        name: Determine ARK Version
+        runs-on: ubuntu-latest
+        outputs:
+            ARK_VERSION: ${{ steps.extract_version.outputs.result }}
+        steps:
+            # Checkout sources
+            - name: Checkout sources
+              uses: actions/checkout@v4
+
+            # Extract version
+            - name: Determine Version
+              id: extract_version
+              run: |
+                  VERSION=$(cat crates/ark/Cargo.toml | grep '^version' | sed -e "s/[^.0-9]//g")
+                  echo "ARK version: ${VERSION}"
+                  echo "result=${VERSION}" >> $GITHUB_OUTPUT
+
+    # Check to see whether we have already released this version. If we have, we will skip the
+    # release process later on.
+    check_release:
+        name: Check for Existing Release
+        runs-on: ubuntu-latest
+        needs: [get_version]
+        outputs:
+            EXISTING_RELEASE: ${{ steps.release_flag.outputs.result }}
+        steps:
+            - name: Check for existing release tag
+              uses: mukunku/tag-exists-action@v1.3.0
+              id: check_tag
+              with:
+                  tag: ${{ needs.get_version.outputs.ARK_VERSION }}
+
+            - name: Set release flag
+              id: release_flag
+              run: |
+                  echo "Existing ${{ needs.get_version.outputs.ARK_VERSION }} release: ${{steps.check_tag.outputs.exists}}"
+                  echo "result=${{steps.check_tag.outputs.exists}}" >> $GITHUB_OUTPUT
+
+    # Build ARK for both arm64 (Apple Silicon) and x64 (Intel) hosts.
+    build_archs:
+        name: Build macOS
+        runs-on: [self-hosted, macos, arm64]
+        needs: [revive_agent, get_version]
+        timeout-minutes: 40
+
         env:
-          SSH_AUTH_SOCK: /tmp/ssh_agent.sock
-        run: |
-          ssh-agent -a $SSH_AUTH_SOCK > /dev/null
-          ssh-add - <<< "${{ secrets.MACOS_PRIVATE_SSH_KEY }}"
+            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Revive Screen session
-        id: revive_agent
+        strategy:
+            max-parallel: 1
+            matrix:
+                arch: [arm64, x64]
+                flavor: [debug, release]
+                include:
+                    - arch: arm64
+                      arch_terminal: arm64
+                      homebrew_folder: homebrew
+                      rust_target_prefix: aarch64
+                    - arch: x64
+                      arch_terminal: x86_64
+                      homebrew_folder: homebrew-x86_64
+                      rust_target_prefix: x86_64
+
+        steps:
+            # Checkout sources
+            - name: Checkout sources
+              uses: actions/checkout@v4
+
+            # These are already installed for both architectures, but would be required if we switch off
+            # a self-hosted runner, so we may as well leave them in
+            - name: Install zeromq dependencies
+              id: install_zeromq_dependencies
+              run: |
+                  arch -${{matrix.arch_terminal}} /bin/bash -c "~/${{matrix.homebrew_folder}}/bin/brew install pkg-config"
+                  arch -${{matrix.arch_terminal}} /bin/bash -c "~/${{matrix.homebrew_folder}}/bin/brew install libsodium"
+
+            # Zeromq calls whatever pkg-config version is findable on the PATH to be able to locate
+            # libsodium, so we have to ensure the x86_64 version is first on the PATH when compiling for
+            # that architecture, so that it finds the x86_64 version of libsodium for zeromq to link against.
+            - name: Update PATH to pkg-config for zeromq
+              id: update_path_for_zeromq
+              if: matrix.arch == 'x64'
+              run: |
+                  echo "~/${{matrix.homebrew_folder}}/bin" >> $GITHUB_PATH
+
+            # Determine R_HOME (for building ark)
+            - name: Find Homebrew R installation
+              id: r_installation
+              run: |
+                  # Path to the Homebrew build of R, e.g. /Users/user229818/homebrew/Cellar/r
+                  R_FOLDER=~/${{matrix.homebrew_folder}}/Cellar/r
+                  # Get the first (and generally) only installed version, e.g. 4.2.2
+                  R_VERSION=$(ls ${R_FOLDER} | head -1)
+                  # Form the path to the R binary, e.g. /Users/user229818/homebrew/Cellar/r/4.2.2/bin/R
+                  R_EXECUTABLE="${R_FOLDER}/${R_VERSION}/bin/R"
+                  # Invoke the R binary to determine its RHOME directory (usually lib/R)
+                  R_HOME=$(${R_EXECUTABLE} RHOME)
+                  # Output the result for consumption in later steps
+                  echo "Using R at ${R_HOME}"
+                  echo "r_home=${R_HOME}" >> $GITHUB_OUTPUT
+
+            # Compile
+            - name: Compile ARK (${{ matrix.arch }})
+              env:
+                  npm_config_arch: ${{ matrix.arch }}
+                  ARK_BUILD_TYPE: ${{ matrix.flavor }}
+                  RUST_TARGET: ${{ matrix.rust_target_prefix }}-apple-darwin
+                  R_HOME: ${{ steps.r_installation.outputs.r_home }}
+                  CARGO_FLAGS:
+                  PKG_CONFIG_ALLOW_CROSS: 1
+              run: |
+                  cargo clean
+                  cargo build ${{ matrix.flavor == 'release' && '--release' || '' }} --target ${{ matrix.rust_target_prefix }}-apple-darwin
+
+            # Compress kernel to a zip file
+            - name: Create archive
+              run: |
+                  # Enter the build directory
+                  pushd target/${{ matrix.rust_target_prefix }}-apple-darwin/${{ matrix.flavor }}
+
+                  # On macOS, we use install_name_tool to fix up the link to libR.dylib.
+                  #
+                  # Note that we still try to link with '-undefined dynamic_lookup', just to ensure that
+                  # linking succeeds when we compile against a version of R compiled for a different
+                  # architecture. This is mostly relevant when producing x86_64 builds of ark on an arm64
+                  # machine.
+                  #
+                  # However, because using libR-sys still implies that the path to the R library ends up in
+                  # the library load list, we have to modify that after the fact anyhow.
+                  OLD_LIBR_PATH=$(otool -L ark | grep libR.dylib | cut -c2- | cut -d ' ' -f1)
+                  echo "Fixing path to shared R library at ${OLD_LIBR_PATH}..."
+                  install_name_tool -change "${OLD_LIBR_PATH}" "@rpath/libR.dylib" ark
+
+                  # Compress the kernel to an archive
+                  ARCHIVE="$GITHUB_WORKSPACE/ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ matrix.flavor }}-darwin-${{ matrix.arch }}.zip"
+                  zip -Xry $ARCHIVE ark
+                  popd
+
+            # Create build artifact
+            - name: Upload client archive
+              uses: actions/upload-artifact@v3
+              with:
+                  name: ark-${{ matrix.flavor }}-darwin-${{ matrix.arch }}-archive
+                  path: ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ matrix.flavor }}-darwin-${{ matrix.arch }}.zip
+
+    create_release:
+        name: Create Release
+        runs-on: [self-hosted, macos, arm64]
+        needs: [get_version, build_archs, check_release]
+        if: ${{ needs.check_release.outputs.EXISTING_RELEASE == 'false' }}
         env:
-          SSH_AUTH_SOCK: /tmp/ssh_agent.sock
-        run: |
-          # Connect to the host; if there is a screen session running, do
-          # nothing, but if there isn't one, start one up now.
-          ssh -o "StrictHostKeyChecking no" user229818@NY503.macincloud.com "/bin/zsh -li -c \"if screen -list | grep -q 'No Sockets found'; then screen -dmS agent_session /bin/zsh -li -c 'cd ./actions-runner && ./run.sh'; fi\""
+            GITHUB_TOKEN: ${{ github.token }}
+        outputs:
+            upload_url: ${{ steps.create_release.outputs.upload_url }}
+        steps:
+            - name: Create release
+              uses: actions/create-release@v1
+              id: create_release
+              with:
+                  draft: false
+                  prerelease: true
+                  release_name: ${{ needs.get_version.outputs.ARK_VERSION }}
+                  tag_name: ${{ needs.get_version.outputs.ARK_VERSION }}
 
-  # Extract the current version of ARK from its Cargo.toml file.
-  get_version:
-    name: Determine ARK Version
-    runs-on: ubuntu-latest
-    outputs:
-      ARK_VERSION: ${{ steps.extract_version.outputs.result }}
-    steps:
-      # Checkout sources
-      - name: Checkout sources
-        uses: actions/checkout@v4
-
-      # Extract version
-      - name: Determine Version
-        id: extract_version
-        run: |
-            VERSION=$(cat crates/ark/Cargo.toml | grep '^version' | sed -e "s/[^.0-9]//g")
-            echo "ARK version: ${VERSION}"
-            echo "result=${VERSION}" >> $GITHUB_OUTPUT
-
-
-  # Check to see whether we have already released this version. If we have, we will skip the
-  # release process later on.
-  check_release:
-    name: Check for Existing Release
-    runs-on: ubuntu-latest
-    needs: [get_version]
-    outputs:
-      EXISTING_RELEASE: ${{ steps.release_flag.outputs.result }}
-    steps:
-    - name: Check for existing release tag
-      uses: mukunku/tag-exists-action@v1.3.0
-      id: check_tag
-      with:
-        tag: ${{ needs.get_version.outputs.ARK_VERSION }}
-
-    - name: Set release flag
-      id: release_flag
-      run: |
-        echo "Existing ${{ needs.get_version.outputs.ARK_VERSION }} release: ${{steps.check_tag.outputs.exists}}"
-        echo "result=${{steps.check_tag.outputs.exists}}" >> $GITHUB_OUTPUT
-
-
-  # Build ARK for both arm64 (Apple Silicon) and x64 (Intel) hosts.
-  build_archs:
-    name: Build macOS
-    runs-on: [self-hosted, macos, arm64]
-    needs: [revive_agent, get_version]
-    timeout-minutes: 40
-
-    env:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-    strategy:
-      max-parallel: 1
-      matrix:
-        arch: [arm64, x64]
-        include:
-          - arch: arm64
-            arch_terminal: arm64
-            homebrew_folder: homebrew
-            rust_target_prefix: aarch64
-          - arch: x64
-            arch_terminal: x86_64
-            homebrew_folder: homebrew-x86_64
-            rust_target_prefix: x86_64
-
-    steps:
-      # Checkout sources
-      - name: Checkout sources
-        uses: actions/checkout@v4
-
-      # These are already installed for both architectures, but would be required if we switch off
-      # a self-hosted runner, so we may as well leave them in
-      - name: Install zeromq dependencies
-        id: install_zeromq_dependencies
-        run: |
-          arch -${{matrix.arch_terminal}} /bin/bash -c "~/${{matrix.homebrew_folder}}/bin/brew install pkg-config"
-          arch -${{matrix.arch_terminal}} /bin/bash -c "~/${{matrix.homebrew_folder}}/bin/brew install libsodium"
-
-      # Zeromq calls whatever pkg-config version is findable on the PATH to be able to locate
-      # libsodium, so we have to ensure the x86_64 version is first on the PATH when compiling for
-      # that architecture, so that it finds the x86_64 version of libsodium for zeromq to link against.
-      - name: Update PATH to pkg-config for zeromq
-        id: update_path_for_zeromq
-        if: matrix.arch == 'x64'
-        run: |
-          echo "~/${{matrix.homebrew_folder}}/bin" >> $GITHUB_PATH
-
-      # Determine R_HOME (for building ark)
-      - name: Find Homebrew R installation
-        id: r_installation
-        run: |
-          # Path to the Homebrew build of R, e.g. /Users/user229818/homebrew/Cellar/r
-          R_FOLDER=~/${{matrix.homebrew_folder}}/Cellar/r
-          # Get the first (and generally) only installed version, e.g. 4.2.2
-          R_VERSION=$(ls ${R_FOLDER} | head -1)
-          # Form the path to the R binary, e.g. /Users/user229818/homebrew/Cellar/r/4.2.2/bin/R
-          R_EXECUTABLE="${R_FOLDER}/${R_VERSION}/bin/R"
-          # Invoke the R binary to determine its RHOME directory (usually lib/R)
-          R_HOME=$(${R_EXECUTABLE} RHOME)
-          # Output the result for consumption in later steps
-          echo "Using R at ${R_HOME}"
-          echo "r_home=${R_HOME}" >> $GITHUB_OUTPUT
-
-      # Compile
-      - name: Compile ARK
+    # Uploads binaries, if we created a release
+    upload_release_binaries:
+        name: Upload Release Binaries
+        runs-on: [self-hosted, macos, arm64]
+        needs: [create_release, get_version]
         env:
-          npm_config_arch: ${{ matrix.arch }}
-          ARK_BUILD_TYPE: release
-          RUST_TARGET: ${{ matrix.rust_target_prefix }}-apple-darwin
-          R_HOME: ${{ steps.r_installation.outputs.r_home }}
-          PKG_CONFIG_ALLOW_CROSS: 1
-        run: |
-          cargo clean
-          cargo build --release --target ${{ matrix.rust_target_prefix }}-apple-darwin
+            GITHUB_TOKEN: ${{ github.token }}
+            DEBUG_FLAG: ${{ matrix.flavor == 'debug' && '-debug' || '' }}
 
-      # Compress kernel to a zip file
-      - name: Create archive
-        run: |
-          # Enter the build directory
-          pushd target/${{ matrix.rust_target_prefix }}-apple-darwin/release
+        strategy:
+            max-parallel: 1
+            matrix:
+                flavor: [debug, release]
 
-          # On macOS, we use install_name_tool to fix up the link to libR.dylib.
-          #
-          # Note that we still try to link with '-undefined dynamic_lookup', just to ensure that
-          # linking succeeds when we compile against a version of R compiled for a different
-          # architecture. This is mostly relevant when producing x86_64 builds of ark on an arm64
-          # machine.
-          #
-          # However, because using libR-sys still implies that the path to the R library ends up in
-          # the library load list, we have to modify that after the fact anyhow.
-          OLD_LIBR_PATH=$(otool -L ark | grep libR.dylib | cut -c2- | cut -d ' ' -f1)
-          echo "Fixing path to shared R library at ${OLD_LIBR_PATH}..."
-          install_name_tool -change "${OLD_LIBR_PATH}" "@rpath/libR.dylib" ark
+        steps:
+            # Download arm64 and x64 binaries
+            - name: Download arm64 kernel (${{ matrix.flavor }})
+              uses: actions/download-artifact@v3
+              with:
+                  name: ark-${{ matrix.flavor }}-darwin-arm64-archive
 
-          # Compress the kernel to an archive
-          ARCHIVE="$GITHUB_WORKSPACE/ark-${{ needs.get_version.outputs.ARK_VERSION }}-darwin-${{ matrix.arch }}.zip"
-          echo "Compressing kernel to $ARCHIVE..."
-          zip -Xry $ARCHIVE ark
-          popd
+            - name: Download x64 kernel (${{ matrix.flavor}})
+              uses: actions/download-artifact@v3
+              with:
+                  name: ark-${{ matrix.flavor }}-x64-archive
 
-      # Create build artifact
-      - name: Upload client archive
-        uses: actions/upload-artifact@v3
-        with:
-          name: ark-darwin-${{ matrix.arch }}-archive
-          path: ark-${{ needs.get_version.outputs.ARK_VERSION }}-darwin-${{ matrix.arch }}.zip
+            # Combine them to a single binary with lipo
+            - name: Create universal binary
+              run: |
+                  # Decompress x64 builds
+                  rm -rf x64 && mkdir x64 && pushd x64
+                  unzip ../ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ matrix.flavor }}-darwin-x64.zip
+                  popd
 
-  # Creates a new release if we don't have a release yet for this version.
-  create_release:
-    name: Create Release
-    runs-on: [self-hosted, macos, arm64]
-    needs: [get_version, build_archs, check_release]
-    if: ${{ needs.check_release.outputs.EXISTING_RELEASE == 'false' }}
-    env:
-      GITHUB_TOKEN: ${{ github.token }}
+                  # Decompress arm64 build
+                  rm -rf arm64 && mkdir arm64 && pushd arm64
+                  unzip ../ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ matrix.flavor }}-darwin-arm64.zip
+                  popd
 
-    steps:
-      # Download arm64 and x64 binaries
-      - name: Download arm64 kernel
-        uses: actions/download-artifact@v3
-        with:
-          name: ark-darwin-arm64-archive
+                  # Create a universal binary
+                  lipo -create x64/ark arm64/ark -output ark
 
-      - name: Download x64 kernel
-        uses: actions/download-artifact@v3
-        with:
-          name: ark-darwin-x64-archive
+                  # Compress
+                  ARCHIVE="$GITHUB_WORKSPACE/ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ env.DEBUG_FLAG }}darwin-universal.zip"
+                  zip -Xry $ARCHIVE ark
 
-      # Combine them to a single binary with lipo
-      - name: Create universal binary
-        run: |
-            # Decompress x64 build
-            rm -rf x64 && mkdir x64 && pushd x64
-            unzip ../ark-${{ needs.get_version.outputs.ARK_VERSION }}-darwin-x64.zip
-            popd
+                  # Add the R modules (these aren't architecture dependent)
+                  echo "Adding R modules ..."
+                  pushd crates/ark/src
+                  zip -Xry $ARCHIVE modules
+                  popd
 
-            # Decompress arm64 build
-            rm -rf arm64 && mkdir arm64 && pushd arm64
-            unzip ../ark-${{ needs.get_version.outputs.ARK_VERSION }}-darwin-arm64.zip
-            popd
+            - name: Create release
+              uses: actions/create-release@v1
+              id: create_release
+              with:
+                  draft: false
+                  prerelease: true
+                  release_name: ${{ needs.get_version.outputs.ARK_VERSION }}
+                  tag_name: ${{ needs.get_version.outputs.ARK_VERSION }}
 
-            # Create a universal binary
-            lipo -create x64/ark arm64/ark -output ark
+            - name: Upload release artifact (universal)
+              uses: actions/upload-release-asset@v1
+              env:
+                  GITHUB_TOKEN: ${{ github.token }}
+              with:
+                  upload_url: ${{ needs.create_release.outputs.upload_url }}
+                  asset_path: ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ env.DEBUG_FLAG }}darwin-universal.zip
+                  asset_name: ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ env.DEBUG_FLAG }}darwin-universal.zip
+                  asset_content_type: application/octet-stream
 
-            # Compress
-            ARCHIVE="$GITHUB_WORKSPACE/ark-${{ needs.get_version.outputs.ARK_VERSION }}-darwin-universal.zip"
-            zip -Xry $ARCHIVE ark
-
-            # Add the R modules (these aren't architecture dependent)
-            echo "Adding R modules ..."
-            pushd crates/ark/src
-            zip -Xry $ARCHIVE modules
-            popd
-
-      - name: Create release
-        uses: actions/create-release@v1
-        id: create_release
-        with:
-          draft: false
-          prerelease: true
-          release_name: ${{ needs.get_version.outputs.ARK_VERSION }}
-          tag_name: ${{ needs.get_version.outputs.ARK_VERSION }}
-
-      - name: Upload release artifact (universal)
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ark-${{ needs.get_version.outputs.ARK_VERSION }}-darwin-universal.zip
-          asset_name: ark-${{ needs.get_version.outputs.ARK_VERSION }}-darwin-universal.zip
-          asset_content_type: application/octet-stream
-
-  status:
-    if: ${{ failure() }}
-    runs-on: self-hosted
-    needs: [build_archs, get_version]
-    steps:
-      - name: Notify slack if build fails
-        uses: slackapi/slack-github-action@v1.24.0
-        id: slack-failure
-        with:
-          payload: |
-            {
-              "message": "Positron build ${{ needs.get_version.outputs.ARK_VERSION }} failed",
-              "status": "Failure",
-              "run_url": "https://github.com/posit-dev/positron/actions/runs/${{ github.run_id }}"
-            }
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+    status:
+        if: ${{ failure() }}
+        runs-on: self-hosted
+        needs: [build_archs, get_version]
+        steps:
+            - name: Notify slack if build fails
+              uses: slackapi/slack-github-action@v1.24.0
+              id: slack-failure
+              with:
+                  payload: |
+                      {
+                        "message": "Positron build ${{ needs.get_version.outputs.ARK_VERSION }} failed",
+                        "status": "Failure",
+                        "run_url": "https://github.com/posit-dev/positron/actions/runs/${{ github.run_id }}"
+                      }
+              env:
+                  SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
