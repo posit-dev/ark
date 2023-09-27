@@ -245,7 +245,7 @@ jobs:
                   lipo -create x64/ark arm64/ark -output ark
 
                   # Compress
-                  ARCHIVE="$GITHUB_WORKSPACE/ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ env.DEBUG_FLAG }}darwin-universal.zip"
+                  ARCHIVE="$GITHUB_WORKSPACE/ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-darwin-universal.zip"
                   zip -Xry $ARCHIVE ark
 
                   # Add the R modules (these aren't architecture dependent)
@@ -260,8 +260,8 @@ jobs:
                   GITHUB_TOKEN: ${{ github.token }}
               with:
                   upload_url: ${{ needs.create_release.outputs.upload_url }}
-                  asset_path: ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ env.DEBUG_FLAG }}darwin-universal.zip
-                  asset_name: ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ env.DEBUG_FLAG }}darwin-universal.zip
+                  asset_path: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-darwin-universal.zip
+                  asset_name: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-darwin-universal.zip
                   asset_content_type: application/octet-stream
 
     status:
