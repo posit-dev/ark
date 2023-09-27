@@ -175,11 +175,19 @@ pub fn r_classes(value: SEXP) -> Option<CharacterVector> {
 /// - `index` is the index in the vector of the string to translate.
 pub fn r_translate_string(vec: *mut SEXPREC, index: isize) -> Result<String> {
     unsafe {
+        // Extract the SEXP from the vector
         let charsexp = STRING_ELT(vec, index);
         if charsexp == R_NaString {
             return Err(Error::MissingValueError);
         }
+
+        // Translate it to a UTF-8 C string (note that this allocates with `R_alloc()` so we need
+        // to save and reset the protection stack)
+        let vmax = vmaxget();
         let translated = Rf_translateCharUTF8(charsexp);
+        vmaxset(vmax);
+
+        // Convert to a Rust string and return
         let cstr = CStr::from_ptr(translated).to_str()?;
         Ok(cstr.to_string())
     }
