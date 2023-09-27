@@ -254,15 +254,6 @@ jobs:
                   zip -Xry $ARCHIVE modules
                   popd
 
-            - name: Create release
-              uses: actions/create-release@v1
-              id: create_release
-              with:
-                  draft: false
-                  prerelease: true
-                  release_name: ${{ needs.get_version.outputs.ARK_VERSION }}
-                  tag_name: ${{ needs.get_version.outputs.ARK_VERSION }}
-
             - name: Upload release artifact (universal)
               uses: actions/upload-release-asset@v1
               env:
