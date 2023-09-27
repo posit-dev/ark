@@ -6,6 +6,8 @@
 //
 
 use std::collections::HashMap;
+use std::env;
+use std::path::PathBuf;
 use std::process::Command;
 
 use anyhow::Context;
@@ -75,8 +77,22 @@ pub unsafe extern "C" fn ps_ark_version() -> SEXP {
         String::from("version"),
         String::from(env!("CARGO_PKG_VERSION")),
     );
+
+    // Add the current commit hash; this is set by the build script (build.rs)
     info.insert(String::from("commit"), String::from(env!("BUILD_GIT_HASH")));
+
+    // Add the build; this is also set by the build script
     info.insert(String::from("date"), String::from(env!("BUILD_DATE")));
+
+    // Add the path to the kernel
+    let path = env::current_exe().unwrap_or_else(|_| PathBuf::from("<unknown>"));
+    info.insert(String::from("path"), path.to_string_lossy().into_owned());
+
+    // Insert the flavor (debug or release)
+    #[cfg(debug_assertions)]
+    info.insert(String::from("flavor"), String::from("debug"));
+    #[cfg(not(debug_assertions))]
+    info.insert(String::from("flavor"), String::from("release"));
 
     let result = RObject::from(info);
     result.sexp
