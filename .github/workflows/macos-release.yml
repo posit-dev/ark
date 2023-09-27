@@ -209,6 +209,7 @@ jobs:
         needs: [create_release, get_version]
         env:
             GITHUB_TOKEN: ${{ github.token }}
+            DEBUG_FLAG: ${{ matrix.flavor == 'debug' && '-debug' || '' }}
 
         strategy:
             max-parallel: 1
@@ -232,19 +233,19 @@ jobs:
               run: |
                   # Decompress x64 builds
                   rm -rf x64 && mkdir x64 && pushd x64
-                  unzip ../ark-${{ needs.get_version.outputs.ARK_VERSION }}-darwin-x64.zip
+                  unzip ../ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ matrix.flavor }}-darwin-x64.zip
                   popd
 
                   # Decompress arm64 build
                   rm -rf arm64 && mkdir arm64 && pushd arm64
-                  unzip ../ark-${{ needs.get_version.outputs.ARK_VERSION }}-darwin-arm64.zip
+                  unzip ../ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ matrix.flavor }}-darwin-arm64.zip
                   popd
 
                   # Create a universal binary
                   lipo -create x64/ark arm64/ark -output ark
 
                   # Compress
-                  ARCHIVE="$GITHUB_WORKSPACE/ark-${{ needs.get_version.outputs.ARK_VERSION }}-darwin-universal.zip"
+                  ARCHIVE="$GITHUB_WORKSPACE/ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ env.DEBUG_FLAG }}darwin-universal.zip"
                   zip -Xry $ARCHIVE ark
 
                   # Add the R modules (these aren't architecture dependent)
@@ -268,8 +269,8 @@ jobs:
                   GITHUB_TOKEN: ${{ github.token }}
               with:
                   upload_url: ${{ needs.create_release.outputs.upload_url }}
-                  asset_path: ark-${{ needs.get_version.outputs.ARK_VERSION }}-darwin-universal.zip
-                  asset_name: ark-${{ needs.get_version.outputs.ARK_VERSION }}-darwin-universal.zip
+                  asset_path: ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ env.DEBUG_FLAG }}darwin-universal.zip
+                  asset_name: ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ env.DEBUG_FLAG }}darwin-universal.zip
                   asset_content_type: application/octet-stream
 
     status:
