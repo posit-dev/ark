@@ -150,7 +150,7 @@ jobs:
                   PKG_CONFIG_ALLOW_CROSS: 1
               run: |
                   cargo clean
-                  cargo build --target ${{ matrix.flavor == 'release' && '--release' || '' }} ${{ matrix.rust_target_prefix }}-apple-darwin
+                  cargo build ${{ matrix.flavor == 'release' && '--release' || '' }} --target ${{ matrix.rust_target_prefix }}-apple-darwin
 
             # Compress kernel to a zip file
             - name: Create archive
