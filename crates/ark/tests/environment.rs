@@ -66,10 +66,12 @@ fn test_environment_list() {
 
     // Create a new environment handler and give it a view of the test
     // environment we created.
-    let test_env_view = RObject::view(test_env.sexp);
     let incoming_tx = comm.incoming_tx.clone();
     let outgoing_rx = comm.outgoing_rx.clone();
-    REnvironment::start(test_env_view, comm, comm_manager_tx);
+    r_lock! {
+        let test_env_view = RObject::view(test_env.sexp);
+        REnvironment::start(test_env_view, comm.clone(), comm_manager_tx.clone());
+    }
 
     // Ensure we get a list of variables after initialization
     let msg = outgoing_rx.recv().unwrap();
