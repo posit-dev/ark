@@ -116,17 +116,10 @@ fn find_statement_range_node(root: Node, row: usize) -> Option<Node> {
 }
 
 fn recurse(node: Node, row: usize) -> Result<Option<Node>> {
-    // General row-based heuristics that apply to all node types
+    // General row-based heuristic that apply to all node types.
+    // If we are on or before the node row, execute whole node.
+    // End position behavior is node kind dependent.
     if row <= node.start_position().row {
-        // On or before node row, execute whole node
-        return Ok(Some(node));
-    }
-    if row == node.end_position().row {
-        // On closing node row, execute whole node
-        // Note: This applies even for things like functions, which typically
-        // end with `}` but don't have to. We always execute the whole statement
-        // here to avoid sending just a block node without its leading
-        // `function` node.
         return Ok(Some(node));
     }
 
@@ -152,74 +145,107 @@ fn recurse_function(node: Node, row: usize) -> Result<Option<Node>> {
         return Ok(Some(node));
     }
 
-    if let Some(body) = node.child_by_field_name("body") {
-        // If we are somewhere inside the body, then we only want to execute
-        // the particular expression the cursor is over
-        if body.start_position().row <= row && body.end_position().row >= row {
-            return recurse(body, row);
-        }
+    let Some(body) = node.child_by_field_name("body") else {
+        // No `body`, execute entire function
+        return Ok(Some(node));
+    };
+
+    if row < body.start_position().row || row > body.end_position().row {
+        // We are outside the `body`, so no need to continue recursing
+        // (possibly on a newline a user inserted between the parameters and body)
+        return Ok(Some(node));
     }
 
-    // If we had a detectable `function` node and nothing else matched,
-    // just run the whole function
-    Ok(Some(node))
+    if body.kind() == "{" && (row == body.start_position().row || row == body.end_position().row) {
+        // For the most common `{` bodies, if we are on the `{` or the `}` rows, then we execute the
+        // entire function. This avoids sending a `{` block without its leading `function` node if
+        // `{` happens to be on a different line or if the user is on the `}` line.
+        return Ok(Some(node));
+    }
+
+    // If we are somewhere inside the body, then we only want to execute
+    // the particular expression the cursor is over
+    recurse(body, row)
 }
 
 fn recurse_loop(node: Node, row: usize) -> Result<Option<Node>> {
-    let body = unwrap!(node.child_by_field_name("body"), None => {
+    let Some(body) = node.child_by_field_name("body") else {
         // Rare, but no body is possible, just send whole loop node anyways
         return Ok(Some(node));
-    });
+    };
 
-    // Are we placed on a statement inside braces? If so, run just that
-    // statement.
-    let candidate = contains_row_at_different_start_position(body, row);
-    if candidate.is_some() {
-        return Ok(candidate);
+    if !(row >= body.start_position().row && row <= body.end_position().row) {
+        // We aren't in the `body` at all. Might be on newlines inserted by the user
+        // between the `for/while/repeat` line and the `body`, or in a `condition` node
+        // that spans multiple lines. In this case, run the whole node.
+        return Ok(Some(node));
     }
 
-    // Otherwise run whole loop node
-    Ok(Some(node))
+    if body.kind() == "{" && (row == body.start_position().row || row == body.end_position().row) {
+        // For the most common `{` bodies, if we are on the `{` or the `}` rows, then we execute the
+        // entire loop. This avoids sending a `{` block without its leading loop node if
+        // `{` happens to be on a different line or if the user is on the `}` line.
+        return Ok(Some(node));
+    }
+
+    // If we are somewhere inside the body, then we only want to execute
+    // the particular expression the cursor is over
+    recurse(body, row)
 }
 
 fn recurse_if(node: Node, row: usize) -> Result<Option<Node>> {
-    let consequence = unwrap!(node.child_by_field_name("consequence"), None => {
+    let Some(consequence) = node.child_by_field_name("consequence") else {
         bail!("Missing `consequence` child in an `if` node.");
-    });
-    if row == consequence.start_position().row {
-        // On start row of the `if` branch, likely a `{` so just execute whole statement
-        return Ok(Some(node));
-    }
-    if row == consequence.end_position().row {
-        // On end row of the `if` branch, likely a `}` so just execute whole statement.
-        return Ok(Some(node));
+    };
+    if row >= consequence.start_position().row && row <= consequence.end_position().row {
+        // We are somewhere inside the `consequence`
+
+        if consequence.kind() == "{" &&
+            (row == consequence.start_position().row || row == consequence.end_position().row)
+        {
+            // On `{` or `}` row of a `{` node, execute entire if statement
+            return Ok(Some(node));
+        }
+
+        // If the `consequence` contains the user row and we aren't on a `{` or `}` row,
+        // then we only want to run the expression the cursor is over
+        return recurse(consequence, row);
     }
 
-    let candidate = contains_row_at_different_start_position(consequence, row);
-    if candidate.is_some() {
-        // The `if` branch contains the user's `row` and the `row` is on a
-        // standalone line that should be executed on its own
-        return Ok(candidate);
-    }
-
-    let alternative = unwrap!(node.child_by_field_name("alternative"), None => {
+    let Some(alternative) = node.child_by_field_name("alternative") else {
         // No `else` and nothing above matched, execute whole if statement
-        return Ok(Some(node))
-    });
-    if row == alternative.start_position().row {
-        // On start row of the `else` branch, likely a `{` so just execute whole statement
         return Ok(Some(node));
-    }
-    if row == alternative.end_position().row {
-        // On end row of the `else` branch, likely a `}` so just execute whole statement.
-        return Ok(Some(node));
-    }
+    };
+    if row >= alternative.start_position().row && row <= alternative.end_position().row {
+        // We are somewhere inside the `alternative`, possibly in an `else if`
 
-    let candidate = contains_row_at_different_start_position(alternative, row);
-    if candidate.is_some() {
-        // The `else` branch contains the user's `row` and the `row` is on a
-        // standalone line that should be executed on its own
-        return Ok(candidate);
+        if alternative.kind() == "{" &&
+            (row == alternative.start_position().row || row == alternative.end_position().row)
+        {
+            // On `{` or `}` row of a `{` node, execute entire if statement
+            return Ok(Some(node));
+        }
+
+        if alternative.kind() == "if" {
+            // We are inside an `else if {` case. See if recursing over this `if` node
+            // results in a new start position row.
+            let Some(candidate) = recurse_if(alternative, row)? else {
+                // No result from recursing over `if` node, send entire original `if` statement
+                return Ok(Some(node));
+            };
+
+            if alternative.start_position().row == candidate.start_position().row {
+                // Use original `if` node since it looks like we are on an `else if` or `{` or `}` line
+                return Ok(Some(node));
+            } else {
+                // Otherwise assume `candidate` is a standalone row
+                return Ok(Some(candidate));
+            }
+        }
+
+        // If the `alternative` contains the user row and we aren't on a `{` or `}` row or in another `if` block,
+        // then we only want to run the expression the cursor is over
+        return recurse(alternative, row);
     }
 
     // If we get here we may be in the if statement's `condition` node or on
@@ -255,10 +281,10 @@ fn recurse_call(node: Node, row: usize) -> Result<Option<Node>> {
     let children = arguments.children_by_field_name("argument", &mut cursor);
 
     for child in children {
-        let value = unwrap!(child.child_by_field_name("value"), None => {
+        let Some(value) = child.child_by_field_name("value") else {
             // Rare, but can have no value node
             continue;
-        });
+        };
 
         let candidate = contains_row_at_different_start_position(value, row);
         if candidate.is_some() {
@@ -270,6 +296,12 @@ fn recurse_call(node: Node, row: usize) -> Result<Option<Node>> {
 }
 
 fn recurse_block(node: Node, row: usize) -> Result<Option<Node>> {
+    if row == node.end_position().row {
+        // `recurse()` handled the start position, but if we are on the
+        // `}` row, then we also execute the entire block
+        return Ok(Some(node));
+    }
+
     // Recurse into body statements if you are somewhere inside the block
     let mut cursor = node.walk();
 
@@ -289,6 +321,8 @@ fn recurse_block(node: Node, row: usize) -> Result<Option<Node>> {
         return recurse(child, row);
     }
 
+    // We are likely on some blank line after the last `body` child,
+    // but before the closing `}`. In this case we don't send anything.
     Ok(None)
 }
 
@@ -426,13 +460,18 @@ fn test_statement_range() {
     assert_eq!(node.end_point, Point { row: 2, column: 7 });
 
     // Executes entire function
-    let row = 0;
     let contents = "
 function() {
   1 + 1
   2 + 2
 }
 ";
+    let row = 0;
+    let node = find_statement_range_node_test(contents, row);
+    assert_eq!(node.start_point, Point { row: 1, column: 0 });
+    assert_eq!(node.end_point, Point { row: 4, column: 1 });
+
+    let row = 4;
     let node = find_statement_range_node_test(contents, row);
     assert_eq!(node.start_point, Point { row: 1, column: 0 });
     assert_eq!(node.end_point, Point { row: 4, column: 1 });
@@ -463,6 +502,38 @@ function(a,
     assert_eq!(node.start_point, Point { row: 1, column: 0 });
     assert_eq!(node.end_point, Point { row: 6, column: 1 });
 
+    // Executes just the expression if on a 1 line function
+    let row = 2;
+    let contents = "
+function()
+  1 + 1
+";
+    let node = find_statement_range_node_test(contents, row);
+    assert_eq!(node.start_point, Point { row: 2, column: 2 });
+    assert_eq!(node.end_point, Point { row: 2, column: 7 });
+
+    // Executes just the expression if on a 1 line function in an assignment
+    let row = 2;
+    let contents = "
+fn <- function()
+  1 + 1
+";
+    let node = find_statement_range_node_test(contents, row);
+    assert_eq!(node.start_point, Point { row: 2, column: 2 });
+    assert_eq!(node.end_point, Point { row: 2, column: 7 });
+
+    // Executes entire function if on a `{` that is on its own line
+    let row = 2;
+    let contents = "
+fn <- function()
+{
+    1 + 1
+}
+";
+    let node = find_statement_range_node_test(contents, row);
+    assert_eq!(node.start_point, Point { row: 1, column: 0 });
+    assert_eq!(node.end_point, Point { row: 4, column: 1 });
+
     // Executes entire loop if on first or last row
     let contents = "
 for(i in 1:5) {
@@ -485,6 +556,41 @@ for(i in 1:5) {
     let node = find_statement_range_node_test(contents, row);
     assert_eq!(node.start_point, Point { row: 2, column: 2 });
     assert_eq!(node.end_point, Point { row: 2, column: 10 });
+
+    // Executes just expression if on a 1 line loop with no braces
+    let contents = "
+for(i in 1:5)
+  print(1)
+";
+    let row = 2;
+    let node = find_statement_range_node_test(contents, row);
+    assert_eq!(node.start_point, Point { row: 2, column: 2 });
+    assert_eq!(node.end_point, Point { row: 2, column: 10 });
+
+    // Executes entire loop if on a `{` that is on its own line
+    let contents = "
+for(i in 1:5)
+{
+    print(1)
+}
+";
+    let row = 2;
+    let node = find_statement_range_node_test(contents, row);
+    assert_eq!(node.start_point, Point { row: 1, column: 0 });
+    assert_eq!(node.end_point, Point { row: 4, column: 1 });
+
+    // Executes entire loop if on a `condition` that is on its own line
+    let contents = "
+for
+(i in 1:5)
+{
+    1 + 1
+}
+";
+    let row = 2;
+    let node = find_statement_range_node_test(contents, row);
+    assert_eq!(node.start_point, Point { row: 1, column: 0 });
+    assert_eq!(node.end_point, Point { row: 5, column: 1 });
 
     // Function within function executes whole subfunction
     let row = 3;
@@ -586,6 +692,78 @@ if (a > b) {
     let node = find_statement_range_node_test(contents, row);
     assert_eq!(node.start_point, Point { row: 7, column: 4 });
     assert_eq!(node.end_point, Point { row: 7, column: 9 });
+
+    // `if` statements without braces can run individual expressions
+    let contents = "
+if (a > b)
+  1 + 1
+";
+
+    let row = 1;
+    let node = find_statement_range_node_test(contents, row);
+    assert_eq!(node.start_point, Point { row: 1, column: 0 });
+    // TODO: This is a tree-sitter bug! It should only go to row: 2, column: 7.
+    assert_eq!(node.end_point, Point { row: 3, column: 0 });
+
+    let row = 2;
+    let node = find_statement_range_node_test(contents, row);
+    assert_eq!(node.start_point, Point { row: 2, column: 2 });
+    assert_eq!(node.end_point, Point { row: 2, column: 7 });
+
+    // `if`-else statements without braces can run individual expressions
+    let contents = "
+if (a > b)
+  1 + 1
+else if (b > c)
+  2 + 2
+else
+  4 + 4
+";
+    let row = 1;
+    let node = find_statement_range_node_test(contents, row);
+    assert_eq!(node.start_point, Point { row: 1, column: 0 });
+    assert_eq!(node.end_point, Point { row: 6, column: 7 });
+
+    let row = 2;
+    let node = find_statement_range_node_test(contents, row);
+    assert_eq!(node.start_point, Point { row: 2, column: 2 });
+    assert_eq!(node.end_point, Point { row: 2, column: 7 });
+
+    let row = 3;
+    let node = find_statement_range_node_test(contents, row);
+    assert_eq!(node.start_point, Point { row: 1, column: 0 });
+    assert_eq!(node.end_point, Point { row: 6, column: 7 });
+
+    let row = 4;
+    let node = find_statement_range_node_test(contents, row);
+    assert_eq!(node.start_point, Point { row: 4, column: 2 });
+    assert_eq!(node.end_point, Point { row: 4, column: 7 });
+
+    let row = 5;
+    let node = find_statement_range_node_test(contents, row);
+    assert_eq!(node.start_point, Point { row: 1, column: 0 });
+    assert_eq!(node.end_point, Point { row: 6, column: 7 });
+
+    let row = 6;
+    let node = find_statement_range_node_test(contents, row);
+    assert_eq!(node.start_point, Point { row: 6, column: 2 });
+    assert_eq!(node.end_point, Point { row: 6, column: 7 });
+
+    // TODO: This test should fail once we fix the tree-sitter bug.
+    // `if` statements without an `else` don't consume newlines
+    let contents = "
+if (a > b) {
+    1 + 1
+}
+
+
+";
+
+    let row = 1;
+    let node = find_statement_range_node_test(contents, row);
+    assert_eq!(node.start_point, Point { row: 1, column: 0 });
+    // TODO: It should only go to row: 3, column: 1.
+    assert_eq!(node.end_point, Point { row: 6, column: 0 });
 
     // Subsetting runs whole expression
     let row = 3;
