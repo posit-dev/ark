@@ -46,10 +46,13 @@ impl Backend {
         backend_trace!(self, "statement_range({:?})", params);
 
         let uri = &params.text_document.uri;
-        let document = unwrap!(self.documents.get_mut(uri), None => {
-            backend_trace!(self, "statement_range(): No document associated with URI {uri}");
+        let Some(document) = self.documents.get_mut(uri) else {
+            backend_trace!(
+                self,
+                "statement_range(): No document associated with URI {uri}"
+            );
             return Ok(None);
-        });
+        };
 
         let root = document.ast.root_node();
 
@@ -57,9 +60,9 @@ impl Backend {
         let point = position.as_point();
         let row = point.row;
 
-        let node = unwrap!(find_statement_range_node(root, row), None => {
-            return Ok(None)
-        });
+        let Some(node) = find_statement_range_node(root, row) else {
+            return Ok(None);
+        };
 
         // Tree-sitter `Point`s
         let start_point = node.start_position();
@@ -135,9 +138,9 @@ fn recurse(node: Node, row: usize) -> Result<Option<Node>> {
 }
 
 fn recurse_function(node: Node, row: usize) -> Result<Option<Node>> {
-    let parameters = unwrap!(node.child_by_field_name("parameters"), None => {
+    let Some(parameters) = node.child_by_field_name("parameters") else {
         bail!("Missing `parameters` field in a `function` node");
-    });
+    };
 
     if parameters.start_position().row <= row && parameters.end_position().row >= row {
         // If we are inside the parameters list, execute entire function
@@ -254,9 +257,9 @@ fn recurse_if(node: Node, row: usize) -> Result<Option<Node>> {
 }
 
 fn recurse_call(node: Node, row: usize) -> Result<Option<Node>> {
-    let arguments = unwrap!(node.child_by_field_name("arguments"), None => {
+    let Some(arguments) = node.child_by_field_name("arguments") else {
         bail!("Missing `arguments` field in a call node");
-    });
+    };
     if row == arguments.start_position().row {
         // On start row containing `(`, execute whole call
         return Ok(Some(node));
