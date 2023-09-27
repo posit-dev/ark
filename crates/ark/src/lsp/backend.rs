@@ -450,7 +450,7 @@ impl LanguageServer for Backend {
 
         // Handle error case
         unwrap!(result, Err(error) => {
-            error!("Failed to resolve completion item due to: {error}.");
+            error!("Failed to resolve completion item due to: {error:?}.");
             return Ok(item);
         });
 
