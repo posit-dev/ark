@@ -49,8 +49,10 @@ pub unsafe fn with_r_lock_impl<T, F: FnMut() -> T>(mut callback: F) -> T {
     // Let the logger know we're taking the lock.
     let id = std::thread::current().id();
     info!(
-        "{:?} (nest level {}) is requesting R runtime lock.",
-        id, level
+        "Thread '{}' ({:?}, nest level {}) is requesting R runtime lock.",
+        std::thread::current().name().unwrap_or("<unnamed>"),
+        id,
+        level
     );
 
     // Record how long it takes the acquire the lock.
@@ -69,8 +71,11 @@ pub unsafe fn with_r_lock_impl<T, F: FnMut() -> T>(mut callback: F) -> T {
     // Log how long we were stuck waiting.
     let elapsed = now.elapsed().unwrap().as_millis();
     info!(
-        "{:?} (nest level {}) obtained lock after waiting for {} milliseconds.",
-        id, level, elapsed
+        "Thread '{}' ({:?}, nest level {}) obtained lock after waiting for {} milliseconds.",
+        std::thread::current().name().unwrap_or("<unnamed>"),
+        id,
+        level,
+        elapsed
     );
 
     // Increment the nest level to track when we call `r_lock!` from within `r_lock!`.
@@ -103,8 +108,11 @@ pub unsafe fn with_r_lock_impl<T, F: FnMut() -> T>(mut callback: F) -> T {
     // Let the logger know we've released the lock..
     let elapsed = now.elapsed().unwrap().as_millis();
     info!(
-        "{:?} (nest level {}) has released the R runtime lock after {} milliseconds.",
-        id, level, elapsed
+        "Thread '{}' ({:?}, nest level {}) has released the R runtime lock after {} milliseconds.",
+        std::thread::current().name().unwrap_or("<unnamed>"),
+        id,
+        level,
+        elapsed
     );
 
     // Return the resulting expression.
