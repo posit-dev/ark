@@ -1,7 +1,7 @@
 //
 // object.rs
 //
-// Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -26,6 +26,7 @@ use crate::utils::r_is_altrep;
 use crate::utils::r_is_null;
 use crate::utils::r_is_object;
 use crate::utils::r_is_s4;
+use crate::utils::r_translate_string;
 use crate::utils::r_typeof;
 
 // Objects are protected using a doubly-linked list,
@@ -312,12 +313,18 @@ impl From<HashMap<String, String>> for RObject {
 
             // Loop over the values and names, setting them in the vectors
             for (idx, (key, value)) in sorted.iter().enumerate() {
-                SET_STRING_ELT(
-                    values,
-                    idx as isize,
-                    Rf_mkChar(value.as_ptr() as *mut c_char),
+                let value_str = Rf_mkCharLenCE(
+                    value.as_ptr() as *mut c_char,
+                    value.len() as i32,
+                    cetype_t_CE_UTF8,
                 );
-                SET_STRING_ELT(names, idx as isize, Rf_mkChar(key.as_ptr() as *mut c_char));
+                SET_STRING_ELT(values, idx as isize, value_str);
+                let key_str = Rf_mkCharLenCE(
+                    key.as_ptr() as *mut c_char,
+                    key.len() as i32,
+                    cetype_t_CE_UTF8,
+                );
+                SET_STRING_ELT(names, idx as isize, key_str);
             }
 
             // Clean up the protect stack and return the RObject from the values
@@ -534,15 +541,11 @@ impl TryFrom<RObject> for HashMap<String, String> {
             let mut map = HashMap::<String, String>::with_capacity(n as usize);
 
             for i in 0..Rf_length(names) {
-                // Get access to element pointers.
-                let lhs = R_CHAR(STRING_ELT(names, i as isize));
-                let rhs = R_CHAR(STRING_ELT(value, i as isize));
+                // Translate the name and value into Rust strings.
+                let lhs = r_translate_string(names, i as isize)?;
+                let rhs = r_translate_string(value, i as isize)?;
 
-                // Create strings.
-                let lhs = CStr::from_ptr(lhs).to_str()?;
-                let rhs = CStr::from_ptr(rhs).to_str()?;
-
-                map.insert(lhs.to_string(), rhs.to_string());
+                map.insert(lhs, rhs);
             }
 
             Ok(map)
