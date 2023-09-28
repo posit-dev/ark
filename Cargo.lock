@@ -86,7 +86,7 @@ dependencies = [
 
 [[package]]
 name = "ark"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "amalthea",
  "anyhow",
