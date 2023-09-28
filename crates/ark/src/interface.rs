@@ -980,15 +980,17 @@ fn peek_execute_response(exec_count: u32) -> ExecuteResponse {
         data.insert("text/plain".to_string(), json!(""));
 
         // Include HTML representation of data.frame
-        let value = r_lock! { Rf_findVarInFrame(R_GlobalEnv, r_symbol!(".Last.value")) };
-        if r_is_data_frame(value) {
-            match to_html(value) {
-                Ok(html) => data.insert("text/html".to_string(), json!(html)),
-                Err(error) => {
-                    error!("{:?}", error);
-                    None
-                },
-            };
+        r_lock! {
+            let value = Rf_findVarInFrame(R_GlobalEnv, r_symbol!(".Last.value"));
+            if r_is_data_frame(value) {
+                match to_html(value) {
+                    Ok(html) => data.insert("text/html".to_string(), json!(html)),
+                    Err(error) => {
+                        error!("{:?}", error);
+                        None
+                    },
+                };
+            }
         }
 
         main.iopub_tx
