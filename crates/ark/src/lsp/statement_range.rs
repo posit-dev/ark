@@ -387,473 +387,664 @@ fn contains_row_at_different_start_position(node: Node, row: usize) -> Option<No
     }
 }
 
+#[rustfmt::skip]
 #[test]
 fn test_statement_range() {
     use tree_sitter::Parser;
     use tree_sitter::Point;
-    use tree_sitter::Range;
 
-    let find_statement_range_node_test = |contents: &str, row: usize| -> Range {
+    // Intended to ease statement range testing. Supply `x` as a string containing
+    // the expression to test along with:
+    // - `@` marking the cursor position
+    // - `<<` marking the expected selection start position
+    // - `>>` marking the expected selection end position
+    // These characters will be replaced with the empty string before being parsed
+    // by tree-sitter. It is generally best to left align the string against the
+    // far left margin to avoid unexpected whitespace and mimic real life.
+    fn statement_range_test(x: &str) {
+        let lines = x.split("\n").collect::<Vec<&str>>();
+
+        let mut cursor: Option<Point> = None;
+        let mut sel_start: Option<Point> = None;
+        let mut sel_end: Option<Point> = None;
+
+        let mark_start = b'<';
+        let mark_cursor = b'@';
+        let mark_end = b'>';
+
+        let mut in_start = false;
+        let mut in_end = false;
+
+        for (line_row, line) in lines.into_iter().enumerate() {
+            for (char_column, char) in line.as_bytes().into_iter().enumerate() {
+                if in_start {
+                    // We are in a `<`. Whatever happens next, we will exit the "in start" state.
+                    in_start = false;
+
+                    // Found a `<<`
+                    if char == &mark_start {
+                        if !sel_end.is_none() {
+                            panic!("`<<` must be used before `>>`.");
+                        }
+                        if !sel_start.is_none() {
+                            panic!("`<<` must only be used once.");
+                        }
+
+                        // `adjustment = 1` is for the 2 byte wide `<<`
+                        let adjustment = 1;
+
+                        let adjustment2 = match cursor {
+                            Some(cursor) => {
+                                (cursor.row == line_row && cursor.column < char_column) as usize
+                            },
+                            None => 0,
+                        };
+
+                        sel_start = Some(Point {
+                            row: line_row,
+                            column: char_column - adjustment - adjustment2,
+                        });
+
+                        continue;
+                    }
+                }
+
+                if in_end {
+                    // We are in a `>`. Whatever happens next, we will exit the "in end" state.
+                    in_end = false;
+
+                    // Found a `>>`
+                    if char == &mark_end {
+                        if sel_start.is_none() {
+                            panic!("`<<` must be used before `>>`.");
+                        }
+                        if !sel_end.is_none() {
+                            panic!("`>>` must only be used once.");
+                        }
+
+                        // `adjustment = 1` is for the 2 byte wide `>>`
+                        let adjustment = 1;
+
+                        let adjustment2 = match sel_start {
+                            Some(sel_start) => {
+                                (sel_start.row == line_row && sel_start.column < char_column)
+                                    as usize
+                            },
+                            None => 0,
+                        };
+                        let adjustment2 = adjustment2 * 2;
+
+                        let adjustment3 = match cursor {
+                            Some(cursor) => {
+                                (cursor.row == line_row && cursor.column < char_column) as usize
+                            },
+                            None => 0,
+                        };
+
+                        sel_end = Some(Point {
+                            row: line_row,
+                            column: char_column - adjustment - adjustment2 - adjustment3,
+                        });
+
+                        continue;
+                    }
+                }
+
+                if char == &mark_start {
+                    in_start = true;
+                    continue;
+                }
+
+                if char == &mark_end {
+                    in_end = true;
+                    continue;
+                }
+
+                if char == &mark_cursor {
+                    if !cursor.is_none() {
+                        panic!("`@` must only be used once.");
+                    }
+
+                    let adjustment = match sel_start {
+                        Some(sel_start) => {
+                            (sel_start.row == line_row && sel_start.column < char_column) as usize
+                        },
+                        None => 0,
+                    };
+                    let adjustment = adjustment * 2;
+
+                    let adjustment2 = match sel_end {
+                        Some(sel_end) => {
+                            (sel_end.row == line_row && sel_end.column < char_column) as usize
+                        },
+                        None => 0,
+                    };
+                    let adjustment2 = adjustment2 * 2;
+
+                    cursor = Some(Point {
+                        row: line_row,
+                        column: char_column - adjustment - adjustment2,
+                    });
+
+                    continue;
+                }
+            }
+        }
+
+        if cursor.is_none() || sel_start.is_none() || sel_end.is_none() {
+            panic!("`<<`, `@`, and `>>` must all be used.");
+        }
+
+        // Replace mark characters with empty string.
+        // We adjusted column positions for this already.
+        // (i.e. create the R parsable string assuming those characters weren't there)
+        let x = x.replace("<<", "");
+        let x = x.replace("@", "");
+        let x = x.replace(">>", "");
+
         let mut parser = Parser::new();
         parser
             .set_language(tree_sitter_r::language())
             .expect("Failed to create parser");
-        let ast = parser.parse(contents, None).unwrap();
+
+        let ast = parser.parse(x, None).unwrap();
+
         let root = ast.root_node();
-        find_statement_range_node(root, row).unwrap().range()
-    };
 
-    let row = 0;
-    let contents = "1 + 1";
-    assert_eq!(
-        find_statement_range_node_test(contents, row)
-            .start_point
-            .row,
-        0
-    );
+        let node = find_statement_range_node(root, cursor.unwrap().row).unwrap();
+
+        assert_eq!(node.start_position(), sel_start.unwrap());
+        assert_eq!(node.end_position(), sel_end.unwrap());
+    }
+
+    // Simple test
+    statement_range_test("<<1@+ 1>>");
 
     // Finds next row
-    let row = 0;
-    let contents = "
-1 + 1
-";
-    assert_eq!(
-        find_statement_range_node_test(contents, row)
-            .start_point
-            .row,
-        1
+    statement_range_test(
+"
+@
+<<1 + 1>>
+",
     );
 
-    // Finds next row
-    let row = 0;
-    let contents = "
+    // Finds next row with many spaces
+    statement_range_test(
+"
+@
 
 
 
-1 + 1
-";
-    assert_eq!(
-        find_statement_range_node_test(contents, row)
-            .start_point
-            .row,
-        4
+<<1 + 1>>
+",
     );
 
     // Executes all braces
-    let row = 0;
-    let contents = "
-{
-  1 + 1
-}
-";
-    let node = find_statement_range_node_test(contents, row);
-    assert_eq!(node.start_point, Point { row: 1, column: 0 });
-    assert_eq!(node.end_point, Point { row: 3, column: 1 });
+    statement_range_test(
+"
+@
+<<{
+    1 + 1
+}>>
+",
+    );
 
     // Inside braces, runs the statement the cursor is on
-    let row = 2;
-    let contents = "
+    statement_range_test(
+"
 {
-  1 + 1
-  2 + 2
+    @<<1 + 1>>
+    2 + 2
 }
-";
-    let node = find_statement_range_node_test(contents, row);
-    assert_eq!(node.start_point, Point { row: 2, column: 2 });
-    assert_eq!(node.end_point, Point { row: 2, column: 7 });
+",
+    );
 
     // Executes entire function
-    let contents = "
-function() {
-  1 + 1
-  2 + 2
-}
-";
-    let row = 0;
-    let node = find_statement_range_node_test(contents, row);
-    assert_eq!(node.start_point, Point { row: 1, column: 0 });
-    assert_eq!(node.end_point, Point { row: 4, column: 1 });
-
-    let row = 4;
-    let node = find_statement_range_node_test(contents, row);
-    assert_eq!(node.start_point, Point { row: 1, column: 0 });
-    assert_eq!(node.end_point, Point { row: 4, column: 1 });
+    statement_range_test(
+"
+@
+<<function() {
+    1 + 1
+    2 + 2
+}>>
+",
+    );
+    statement_range_test(
+"
+<<function() {
+    1 + 1
+    2 + 2
+}>>@
+",
+    );
 
     // Executes individual lines of a function if user puts cursor there
-    let row = 3;
-    let contents = "
+    statement_range_test(
+"
 function() {
-  1 + 1
-  2 + 2
+    1 + 1
+    <<2 + @2>>
 }
-";
-    let node = find_statement_range_node_test(contents, row);
-    assert_eq!(node.start_point, Point { row: 3, column: 2 });
-    assert_eq!(node.end_point, Point { row: 3, column: 7 });
+",
+    );
 
     // Executes entire function if on multiline argument signature
-    let row = 2;
-    let contents = "
-function(a,
-         b,
-         c) {
-  1 + 1
-  2 + 2
-}
-";
-    let node = find_statement_range_node_test(contents, row);
-    assert_eq!(node.start_point, Point { row: 1, column: 0 });
-    assert_eq!(node.end_point, Point { row: 6, column: 1 });
+    statement_range_test(
+"
+<<function(a,
+            b,@
+            c) {
+    1 + 1
+    2 + 2
+}>>
+",
+    );
 
     // Executes just the expression if on a 1 line function
-    let row = 2;
-    let contents = "
+    statement_range_test(
+"
 function()
-  1 + 1
-";
-    let node = find_statement_range_node_test(contents, row);
-    assert_eq!(node.start_point, Point { row: 2, column: 2 });
-    assert_eq!(node.end_point, Point { row: 2, column: 7 });
+    @<<1 + 1>>
+",
+    );
 
     // Executes just the expression if on a 1 line function in an assignment
-    let row = 2;
-    let contents = "
+    statement_range_test(
+"
 fn <- function()
-  1 + 1
-";
-    let node = find_statement_range_node_test(contents, row);
-    assert_eq!(node.start_point, Point { row: 2, column: 2 });
-    assert_eq!(node.end_point, Point { row: 2, column: 7 });
+    @<<1 + 1>>
+",
+    );
 
     // Executes entire function if on a `{` that is on its own line
-    let row = 2;
-    let contents = "
-fn <- function()
-{
+    statement_range_test(
+"
+<<fn <- function()
+{@
     1 + 1
-}
-";
-    let node = find_statement_range_node_test(contents, row);
-    assert_eq!(node.start_point, Point { row: 1, column: 0 });
-    assert_eq!(node.end_point, Point { row: 4, column: 1 });
+}>>
+",
+    );
 
     // Executes entire loop if on first or last row
-    let contents = "
-for(i in 1:5) {
-  print(i)
-  1 + 1
-}
-";
-    let row = 1;
-    let node = find_statement_range_node_test(contents, row);
-    assert_eq!(node.start_point, Point { row: 1, column: 0 });
-    assert_eq!(node.end_point, Point { row: 4, column: 1 });
-
-    let row = 4;
-    let node = find_statement_range_node_test(contents, row);
-    assert_eq!(node.start_point, Point { row: 1, column: 0 });
-    assert_eq!(node.end_point, Point { row: 4, column: 1 });
+    statement_range_test(
+"
+<<for(i@ in 1:5) {
+    print(i)
+    1 + 1
+}>>
+",
+    );
+    statement_range_test(
+"
+<<for(i in 1:5) {
+    print(i)
+    1 + 1
+}@>>
+",
+    );
 
     // But if inside the braces, runs the line the user was on
-    let row = 2;
-    let node = find_statement_range_node_test(contents, row);
-    assert_eq!(node.start_point, Point { row: 2, column: 2 });
-    assert_eq!(node.end_point, Point { row: 2, column: 10 });
-
-    // Executes just expression if on a 1 line loop with no braces
-    let contents = "
-for(i in 1:5)
-  print(1)
-";
-    let row = 2;
-    let node = find_statement_range_node_test(contents, row);
-    assert_eq!(node.start_point, Point { row: 2, column: 2 });
-    assert_eq!(node.end_point, Point { row: 2, column: 10 });
-
-    // Executes entire loop if on a `{` that is on its own line
-    let contents = "
-for(i in 1:5)
-{
-    print(1)
-}
-";
-    let row = 2;
-    let node = find_statement_range_node_test(contents, row);
-    assert_eq!(node.start_point, Point { row: 1, column: 0 });
-    assert_eq!(node.end_point, Point { row: 4, column: 1 });
-
-    // Executes entire loop if on a `condition` that is on its own line
-    let contents = "
-for
-(i in 1:5)
-{
+    statement_range_test(
+"
+for(i in 1:5) {
+    <<print@(i)>>
     1 + 1
 }
-";
-    let row = 2;
-    let node = find_statement_range_node_test(contents, row);
-    assert_eq!(node.start_point, Point { row: 1, column: 0 });
-    assert_eq!(node.end_point, Point { row: 5, column: 1 });
+",
+    );
+
+    // Executes just expression if on a 1 line loop with no braces
+    statement_range_test(
+"
+for(i in 1:5)
+    <<print(1)@>>
+",
+    );
+
+    // Executes entire loop if on a `{` that is on its own line
+    statement_range_test(
+"
+<<for(i in 1:5)
+{@
+    print(1)
+}>>
+",
+    );
+
+    // Executes entire loop if on a `condition` that is on its own line
+    statement_range_test(
+"
+<<for
+(i in @1:5)
+{
+    1 + 1
+}>>
+",
+    );
 
     // Function within function executes whole subfunction
-    let row = 3;
-    let contents = "
+    statement_range_test(
+"
 function() {
-  1 + 1
-
-  function(a) {
+    1 + 1
+    @
+    <<function(a) {
     2 + 2
-  }
+    }>>
 }
-";
-    let node = find_statement_range_node_test(contents, row);
-    assert_eq!(node.start_point, Point { row: 4, column: 2 });
-    assert_eq!(node.end_point, Point { row: 6, column: 3 });
+",
+    );
 
     // Function with weird signature setup works as expected
-    let contents = "
-function
+    statement_range_test(
+"
+<<function@
 (a,
     b
 )
 {
     1 + 1
-}
-";
-    let row = 1;
-    let node = find_statement_range_node_test(contents, row);
-    assert_eq!(node.start_point, Point { row: 1, column: 0 });
-    assert_eq!(node.end_point, Point { row: 7, column: 1 });
-
-    let row = 2;
-    let node = find_statement_range_node_test(contents, row);
-    assert_eq!(node.start_point, Point { row: 1, column: 0 });
-    assert_eq!(node.end_point, Point { row: 7, column: 1 });
-
-    let row = 3;
-    let node = find_statement_range_node_test(contents, row);
-    assert_eq!(node.start_point, Point { row: 1, column: 0 });
-    assert_eq!(node.end_point, Point { row: 7, column: 1 });
-
-    let row = 7;
-    let node = find_statement_range_node_test(contents, row);
-    assert_eq!(node.start_point, Point { row: 1, column: 0 });
-    assert_eq!(node.end_point, Point { row: 7, column: 1 });
+}>>
+",
+    );
+    statement_range_test(
+"
+<<function
+(a@,
+    b
+)
+{
+    1 + 1
+}>>
+",
+    );
+    statement_range_test(
+"
+<<function
+(a,
+    b@
+)
+{
+    1 + 1
+}>>
+",
+    );
+    statement_range_test(
+"
+<<function
+(a,
+    b
+)
+{
+    1 + 1
+}@>>
+",
+    );
 
     // Function with newlines runs whole function
-    let row = 2;
-    let contents = "
-function()
-
+    statement_range_test(
+"
+<<function()
+@
 
 {
     1 + 1
-}
-";
-    let node = find_statement_range_node_test(contents, row);
-    assert_eq!(node.start_point, Point { row: 1, column: 0 });
-    assert_eq!(node.end_point, Point { row: 6, column: 1 });
+}>>
+",
+    );
 
     // `if` statements run whole statement where appropriate
-    let contents = "
-if (a > b) {
+    statement_range_test(
+"
+<<if @(a > b) {
     1 + 1
 } else if (b > c) {
     2 + 2
     3 + 3
 } else {
     4 + 4
-}
-";
-    let row = 1;
-    let node = find_statement_range_node_test(contents, row);
-    assert_eq!(node.start_point, Point { row: 1, column: 0 });
-    assert_eq!(node.end_point, Point { row: 8, column: 1 });
-
-    let row = 3;
-    let node = find_statement_range_node_test(contents, row);
-    assert_eq!(node.start_point, Point { row: 1, column: 0 });
-    assert_eq!(node.end_point, Point { row: 8, column: 1 });
-
-    let row = 6;
-    let node = find_statement_range_node_test(contents, row);
-    assert_eq!(node.start_point, Point { row: 1, column: 0 });
-    assert_eq!(node.end_point, Point { row: 8, column: 1 });
-
-    let row = 8;
-    let node = find_statement_range_node_test(contents, row);
-    assert_eq!(node.start_point, Point { row: 1, column: 0 });
-    assert_eq!(node.end_point, Point { row: 8, column: 1 });
+}>>
+",
+    );
+    statement_range_test(
+"
+<<if (a > b) {
+    1 + 1
+} else if @(b > c) {
+    2 + 2
+    3 + 3
+} else {
+    4 + 4
+}>>
+",
+    );
+    statement_range_test(
+"
+<<if (a > b) {
+    1 + 1
+} else if (b > c) {
+    2 + 2
+    3 + 3
+} else {@
+    4 + 4
+}>>
+",
+    );
+    statement_range_test(
+"
+<<if (a > b) {
+    1 + 1
+} else if (b > c) {
+    2 + 2
+    3 + 3
+} else {
+    4 + 4
+}@>>
+",
+    );
 
     // Inside braces, runs individual statement
-    let row = 5;
-    let node = find_statement_range_node_test(contents, row);
-    assert_eq!(node.start_point, Point { row: 5, column: 4 });
-    assert_eq!(node.end_point, Point { row: 5, column: 9 });
-
-    let row = 7;
-    let node = find_statement_range_node_test(contents, row);
-    assert_eq!(node.start_point, Point { row: 7, column: 4 });
-    assert_eq!(node.end_point, Point { row: 7, column: 9 });
+    statement_range_test(
+"
+if (a > b) {
+    1 + 1
+} else if (b > c) {
+    2 + 2
+    <<3 + @3>>
+} else {
+    4 + 4
+}
+",
+    );
+    statement_range_test(
+"
+if (a > b) {
+    1 + 1
+} else if (b > c) {
+    2 + 2
+    3 + 3
+} else {
+    <<@4 + 4>>
+}
+",
+    );
 
     // `if` statements without braces can run individual expressions
-    let contents = "
-if (a > b)
-  1 + 1
-";
-
-    let row = 1;
-    let node = find_statement_range_node_test(contents, row);
-    assert_eq!(node.start_point, Point { row: 1, column: 0 });
     // TODO: This is a tree-sitter bug! It should only go to row: 2, column: 7.
-    assert_eq!(node.end_point, Point { row: 3, column: 0 });
-
-    let row = 2;
-    let node = find_statement_range_node_test(contents, row);
-    assert_eq!(node.start_point, Point { row: 2, column: 2 });
-    assert_eq!(node.end_point, Point { row: 2, column: 7 });
+    statement_range_test(
+"
+<<if (@a > b)
+    1 + 1
+>>",
+    );
+    statement_range_test(
+"
+if (a > b)
+  <<1 + 1@>>
+",
+    );
 
     // `if`-else statements without braces can run individual expressions
-    let contents = "
+    statement_range_test(
+"
+<<if @(a > b)
+  1 + 1
+else if (b > c)
+  2 + 2
+else
+  4 + 4>>
+",
+    );
+    statement_range_test(
+"
+if (a > b)
+  <<@1 + 1>>
+else if (b > c)
+  2 + 2
+else
+  4 + 4
+",
+    );
+    statement_range_test(
+"
+<<if (a > b)
+  1 + 1
+else if @(b > c)
+  2 + 2
+else
+  4 + 4>>
+",
+    );
+    statement_range_test(
+"
+if (a > b)
+  1 + 1
+else if (b > c)
+  <<2 + @2>>
+else
+  4 + 4
+",
+    );
+    statement_range_test(
+"
+<<if (a > b)
+  1 + 1
+else if (b > c)
+  2 + 2
+else@
+  4 + 4>>
+",
+    );
+    statement_range_test(
+"
 if (a > b)
   1 + 1
 else if (b > c)
   2 + 2
 else
-  4 + 4
-";
-    let row = 1;
-    let node = find_statement_range_node_test(contents, row);
-    assert_eq!(node.start_point, Point { row: 1, column: 0 });
-    assert_eq!(node.end_point, Point { row: 6, column: 7 });
-
-    let row = 2;
-    let node = find_statement_range_node_test(contents, row);
-    assert_eq!(node.start_point, Point { row: 2, column: 2 });
-    assert_eq!(node.end_point, Point { row: 2, column: 7 });
-
-    let row = 3;
-    let node = find_statement_range_node_test(contents, row);
-    assert_eq!(node.start_point, Point { row: 1, column: 0 });
-    assert_eq!(node.end_point, Point { row: 6, column: 7 });
-
-    let row = 4;
-    let node = find_statement_range_node_test(contents, row);
-    assert_eq!(node.start_point, Point { row: 4, column: 2 });
-    assert_eq!(node.end_point, Point { row: 4, column: 7 });
-
-    let row = 5;
-    let node = find_statement_range_node_test(contents, row);
-    assert_eq!(node.start_point, Point { row: 1, column: 0 });
-    assert_eq!(node.end_point, Point { row: 6, column: 7 });
-
-    let row = 6;
-    let node = find_statement_range_node_test(contents, row);
-    assert_eq!(node.start_point, Point { row: 6, column: 2 });
-    assert_eq!(node.end_point, Point { row: 6, column: 7 });
+  <<4 @+ 4>>
+",
+    );
 
     // TODO: This test should fail once we fix the tree-sitter bug.
+    // TODO: It should only go to row: 3, column: 1.
     // `if` statements without an `else` don't consume newlines
-    let contents = "
-if (a > b) {
+    statement_range_test(
+"
+<<if @(a > b) {
     1 + 1
 }
 
 
-";
-
-    let row = 1;
-    let node = find_statement_range_node_test(contents, row);
-    assert_eq!(node.start_point, Point { row: 1, column: 0 });
-    // TODO: It should only go to row: 3, column: 1.
-    assert_eq!(node.end_point, Point { row: 6, column: 0 });
+>>",
+    );
 
     // Subsetting runs whole expression
-    let row = 3;
-    let contents = "
-dt[
+    statement_range_test(
+"
+<<dt[
   a > b,
-  by = 4,
+  by @= 4,
   foo
-]
-";
-    let node = find_statement_range_node_test(contents, row);
-    assert_eq!(node.start_point, Point { row: 1, column: 0 });
-    assert_eq!(node.end_point, Point { row: 5, column: 1 });
+]>>
+",
+    );
 
     // Blocks within calls run one line at a time (testthat, withr, quote())
-    let row = 2;
-    let contents = "
+    statement_range_test(
+"
 test_that('stuff', {
-    x <- 1
-    y <- 2
-    expect_equal(x, y)
+  <<x @<- 1>>
+  y <- 2
+  expect_equal(x, y)
 })
-";
-    let node = find_statement_range_node_test(contents, row);
-    assert_eq!(node.start_point, Point { row: 2, column: 4 });
-    assert_eq!(node.end_point, Point { row: 2, column: 10 });
+",
+    );
 
     // But can run entire expression
-    let row = 1;
-    let node = find_statement_range_node_test(contents, row);
-    assert_eq!(node.start_point, Point { row: 1, column: 0 });
-    assert_eq!(node.end_point, Point { row: 5, column: 2 });
-
-    let row = 5;
-    let node = find_statement_range_node_test(contents, row);
-    assert_eq!(node.start_point, Point { row: 1, column: 0 });
-    assert_eq!(node.end_point, Point { row: 5, column: 2 });
+    statement_range_test(
+"
+<<test_that(@'stuff', {
+  x <- 1
+  y <- 2
+  expect_equal(x, y)
+})>>
+",
+    );
+    statement_range_test(
+"
+<<test_that('stuff', {
+  x <- 1
+  y <- 2
+  expect_equal(x, y)
+}@)>>
+",
+    );
 
     // Comments are skipped from root level
-    let row = 0;
-    let contents = "
+    statement_range_test(
+"
+@
 # hi there
 
 # another one
 
-1 + 1
-";
-    let node = find_statement_range_node_test(contents, row);
-    assert_eq!(node.start_point, Point { row: 5, column: 0 });
-    assert_eq!(node.end_point, Point { row: 5, column: 5 });
+<<1 + 1>>
+",
+    );
 
     // Comments are skipped in blocks
-    let row = 2;
-    let contents = "
+    statement_range_test(
+"
 {
-    # hi there
+    # hi there@
 
     # another one
 
-    1 + 1
+    <<1 + 1>>
 }
-";
-    let node = find_statement_range_node_test(contents, row);
-    assert_eq!(node.start_point, Point { row: 6, column: 4 });
-    assert_eq!(node.end_point, Point { row: 6, column: 9 });
+",
+    );
 
     // Unmatched opening braces send the full partial statement
-    let row = 0;
-    let contents = "
-{
+    statement_range_test(
+"
+@
+<<{
     1 + 1
 
-";
-    let node = find_statement_range_node_test(contents, row);
-    assert_eq!(node.start_point, Point { row: 1, column: 0 });
-    assert_eq!(node.end_point, Point { row: 4, column: 0 });
+>>",
+    );
 
     // Binary op with braces respects that you can put the cursor inside the braces
-    let row = 2;
-    let contents = "
+    statement_range_test(
+"
 1 + {
-    2 + 2
+    <<2 + 2@>>
 }
-";
-    let node = find_statement_range_node_test(contents, row);
-    assert_eq!(node.start_point, Point { row: 2, column: 4 });
-    assert_eq!(node.end_point, Point { row: 2, column: 9 });
+",
+    );
 
     // Will return `None` when there is no top level statement
     let row = 2;
