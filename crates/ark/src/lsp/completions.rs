@@ -1147,6 +1147,16 @@ unsafe fn append_search_path_completions(
         // Get environment name
         let name = r_envir_name(envir)?;
 
+        // If this is a package environment (with special consideration for the base env),
+        // we will need to force promises to give meaningful completions, particularly with functions
+        // because we add a `CompletionItem::command()` that adds trailing `()` onto
+        // the completion and triggers parameter completions.
+        let promise_strategy = if r_env_is_pkg(envir) || envir == R_BaseEnv {
+            PromiseStrategy::Force
+        } else {
+            PromiseStrategy::Simple
+        };
+
         // List symbols in the environment.
         let symbols = R_lsInternal(envir, 1);
 
@@ -1169,7 +1179,7 @@ unsafe fn append_search_path_completions(
                 symbol,
                 envir,
                 Some(name.as_str()),
-                PromiseStrategy::Simple,
+                promise_strategy.clone(),
             ) else {
                 error!("Completion symbol '{symbol}' was unexpectedly not found.");
                 continue;
