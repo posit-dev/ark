@@ -20,6 +20,7 @@ log = "0.4.17"
 once_cell = "1.17.1"
 parking_lot = "0.12.1"
 regex = "1.7.3"
+semver = "1.0.19"
 stdext = { path = "../stdext" }
 
 [target.'cfg(all(target_os="linux", target_arch="aarch64"))'.dependencies]

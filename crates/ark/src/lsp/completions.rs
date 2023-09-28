@@ -20,6 +20,9 @@ use harp::exec::RFunctionExt;
 use harp::object::RObject;
 use harp::r_symbol;
 use harp::string::r_string_decode;
+use harp::utils::r_env_binding_is_active;
+use harp::utils::r_env_has;
+use harp::utils::r_env_is_pkg;
 use harp::utils::r_envir_name;
 use harp::utils::r_formals;
 use harp::utils::r_normalize_path;
@@ -113,6 +116,12 @@ pub struct CompletionContext<'a> {
     pub node: Node<'a>,
     pub source: String,
     pub point: Point,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum PromiseStrategy {
+    Simple,
+    Force,
 }
 
 fn is_pipe_operator(node: &Node) -> bool {
@@ -334,13 +343,13 @@ unsafe fn completion_item_from_package(
 
 pub fn completion_item_from_function<T: AsRef<str>>(
     name: &str,
-    envir: Option<&str>,
+    package: Option<&str>,
     parameters: &[T],
 ) -> Result<CompletionItem> {
     let label = format!("{}", name);
     let mut item = completion_item(label, CompletionData::Function {
         name: name.to_string(),
-        package: envir.map(|s| s.to_string()),
+        package: package.map(|s| s.to_string()),
     })?;
 
     item.kind = Some(CompletionItemKind::FUNCTION);
@@ -395,9 +404,11 @@ unsafe fn completion_item_from_object(
     name: &str,
     object: SEXP,
     envir: SEXP,
+    package: Option<&str>,
+    promise_strategy: PromiseStrategy,
 ) -> Result<CompletionItem> {
     if r_typeof(object) == PROMSXP {
-        return completion_item_from_promise(name, object, envir);
+        return completion_item_from_promise(name, object, envir, package, promise_strategy);
     }
 
     // TODO: For some functions (e.g. S4 generics?) the help file might be
@@ -406,13 +417,12 @@ unsafe fn completion_item_from_object(
     // In other words, when creating a completion item for these functions,
     // we should also figure out where we can receive the help from.
     if Rf_isFunction(object) != 0 {
-        let envir = r_envir_name(envir)?;
         let formals = r_formals(object)?;
         let arguments = formals
             .iter()
             .map(|formal| formal.name.as_str())
             .collect::<Vec<_>>();
-        return completion_item_from_function(name, Some(envir.as_str()), &arguments);
+        return completion_item_from_function(name, package, &arguments);
     }
 
     let mut item = completion_item(name, CompletionData::Object {
@@ -429,12 +439,24 @@ unsafe fn completion_item_from_promise(
     name: &str,
     object: SEXP,
     envir: SEXP,
+    package: Option<&str>,
+    promise_strategy: PromiseStrategy,
 ) -> Result<CompletionItem> {
     if r_promise_is_forced(object) {
         // Promise has already been evaluated before.
         // Generate completion item from underlying value.
         let object = PRVALUE(object);
-        return completion_item_from_object(name, object, envir);
+        return completion_item_from_object(name, object, envir, package, promise_strategy);
+    }
+
+    if promise_strategy == PromiseStrategy::Force {
+        // TODO: Can we do any better here? Can we avoid evaluation?
+        // Namespace completions are the one place we eagerly force unevaluated
+        // promises to be able to determine the object type. Particularly
+        // important for functions, where we also set a `CompletionItem::command()`
+        // to display function signature help after the completion.
+        let object = r_promise_force_with_rollback(object)?;
+        return completion_item_from_object(name, object, envir, package, promise_strategy);
     }
 
     // Otherwise we never want to force promises, so we return a fairly
@@ -449,67 +471,95 @@ unsafe fn completion_item_from_promise(
     Ok(item)
 }
 
-unsafe fn completion_item_from_namespace(name: &str, namespace: SEXP) -> Result<CompletionItem> {
-    let symbol = r_symbol!(name);
+fn completion_item_from_active_binding(name: &str) -> Result<CompletionItem> {
+    // We never want to force active bindings, so we return a fairly
+    // generic completion item
+    let mut item = completion_item(name, CompletionData::Object {
+        name: name.to_string(),
+    })?;
 
+    item.detail = Some("Active binding".to_string());
+    item.kind = Some(CompletionItemKind::STRUCT);
+
+    Ok(item)
+}
+
+unsafe fn completion_item_from_namespace(
+    name: &str,
+    namespace: SEXP,
+    package: &str,
+) -> Result<CompletionItem> {
     // First, look in the namespace itself.
-    let mut object = Rf_findVarInFrame(namespace, symbol);
-
-    if object == R_UnboundValue {
-        // Otherwise, try the imports environment.
-        let imports = ENCLOS(namespace);
-        object = Rf_findVarInFrame(imports, symbol);
+    if let Some(item) =
+        completion_item_from_symbol(name, namespace, Some(package), PromiseStrategy::Force)
+    {
+        return item;
     }
 
-    if object == R_UnboundValue {
-        // If still not found, something is wrong.
-        bail!(
-            "Object '{}' not defined in namespace {:?}",
-            name,
-            r_envir_name(namespace)?
-        )
+    // Otherwise, try the imports environment.
+    let imports = ENCLOS(namespace);
+    if let Some(item) =
+        completion_item_from_symbol(name, imports, Some(package), PromiseStrategy::Force)
+    {
+        return item;
     }
 
-    // TODO: Can we do any better here? Can we avoid evaluation?
-    // Namespace completions are the one place we eagerly force unevaluated
-    // promises to be able to determine the object type. Particularly
-    // important for functions, where we also set a `CompletionItem::command()`
-    // to display function signature help after the completion.
-    if r_typeof(object) == PROMSXP && !r_promise_is_forced(object) {
-        object = r_promise_force_with_rollback(object)?;
-    }
-
-    completion_item_from_object(name, object, namespace)
+    // If still not found, something is wrong.
+    bail!(
+        "Object '{}' not defined in namespace {:?}",
+        name,
+        r_envir_name(namespace)?
+    )
 }
 
 unsafe fn completion_item_from_lazydata(
     name: &str,
     env: SEXP,
-    namespace: SEXP,
+    package: &str,
 ) -> Result<CompletionItem> {
-    let symbol = r_symbol!(name);
-    let object = Rf_findVarInFrame(env, symbol);
-
-    if object == R_UnboundValue {
-        // Should be impossible, but we'll be extra safe
-        bail!(
-            "Object '{}' not defined in lazydata environment for namespace {:?}",
-            name,
-            r_envir_name(namespace)?
-        )
+    match completion_item_from_symbol(name, env, Some(package), PromiseStrategy::Simple) {
+        Some(item) => item,
+        None => {
+            // Should be impossible, but we'll be extra safe
+            bail!("Object '{name}' not defined in lazydata environment for namespace {package}")
+        },
     }
-
-    completion_item_from_object(name, object, namespace)
 }
 
-unsafe fn completion_item_from_symbol(name: &str, envir: SEXP) -> Result<CompletionItem> {
+unsafe fn completion_item_from_symbol(
+    name: &str,
+    envir: SEXP,
+    package: Option<&str>,
+    promise_strategy: PromiseStrategy,
+) -> Option<Result<CompletionItem>> {
     let symbol = r_symbol!(name);
-    let object = Rf_findVarInFrame(envir, symbol);
-    if object == R_UnboundValue {
-        bail!("Object '{}' not defined in environment {:?}", name, envir);
+
+    if !r_env_has(envir, symbol) {
+        // `r_env_binding_is_active()` will error if the `envir` doesn't contain
+        // the symbol in question
+        return None;
     }
 
-    return completion_item_from_object(name, object, envir);
+    if r_env_binding_is_active(envir, symbol) {
+        // Active bindings must be checked before `Rf_findVarInFrame()`, as that
+        // triggers active bindings
+        return Some(completion_item_from_active_binding(name));
+    }
+
+    let object = Rf_findVarInFrame(envir, symbol);
+
+    if object == R_UnboundValue {
+        log::error!("Symbol '{name}' should have been found.");
+        return None;
+    }
+
+    Some(completion_item_from_object(
+        name,
+        object,
+        envir,
+        package,
+        promise_strategy,
+    ))
 }
 
 // This is used when providing completions for a parameter in a document
@@ -984,7 +1034,7 @@ unsafe fn append_namespace_completions(
 
     let strings = symbols.to::<Vec<String>>()?;
     for string in strings.iter() {
-        match completion_item_from_namespace(string, *namespace) {
+        match completion_item_from_namespace(string, *namespace, package) {
             Ok(item) => completions.push(item),
             Err(error) => error!("{:?}", error),
         }
@@ -993,7 +1043,7 @@ unsafe fn append_namespace_completions(
     if exports_only {
         // `pkg:::object` doesn't return lazy objects, so we don't want
         // to show lazydata completions if we are inside `:::`
-        append_namespace_lazydata_completions(*namespace, completions)?;
+        append_namespace_lazydata_completions(*namespace, package, completions)?;
     }
 
     Ok(())
@@ -1001,6 +1051,7 @@ unsafe fn append_namespace_completions(
 
 unsafe fn append_namespace_lazydata_completions(
     namespace: SEXP,
+    package: &str,
     completions: &mut Vec<CompletionItem>,
 ) -> Result<()> {
     let ns = Rf_findVarInFrame(namespace, r_symbol!(".__NAMESPACE__."));
@@ -1016,7 +1067,7 @@ unsafe fn append_namespace_lazydata_completions(
     let names = RObject::to::<Vec<String>>(RObject::from(R_lsInternal(env, Rboolean_TRUE)))?;
 
     for name in names.iter() {
-        match completion_item_from_lazydata(name, env, namespace) {
+        match completion_item_from_lazydata(name, env, package) {
             Ok(item) => completions.push(item),
             Err(error) => error!("{:?}", error),
         }
@@ -1093,6 +1144,9 @@ unsafe fn append_search_path_completions(
     let mut envir = R_GlobalEnv;
 
     while envir != R_EmptyEnv {
+        // Get environment name
+        let name = r_envir_name(envir)?;
+
         // List symbols in the environment.
         let symbols = R_lsInternal(envir, 1);
 
@@ -1111,10 +1165,20 @@ unsafe fn append_search_path_completions(
             }
 
             // Add the completion item.
-            match completion_item_from_symbol(symbol, envir) {
+            let Some(item) = completion_item_from_symbol(
+                symbol,
+                envir,
+                Some(name.as_str()),
+                PromiseStrategy::Simple,
+            ) else {
+                error!("Completion symbol '{symbol}' was unexpectedly not found.");
+                continue;
+            };
+
+            match item {
                 Ok(item) => completions.push(item),
                 Err(error) => error!("{:?}", error),
-            }
+            };
         }
 
         // Get the next environment.
