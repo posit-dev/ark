@@ -174,17 +174,24 @@ pub fn r_classes(value: SEXP) -> Option<CharacterVector> {
 /// - `vec` is the R vector to translate from.
 /// - `index` is the index in the vector of the string to translate.
 pub fn r_chr_get_owned_utf8(vec: *mut SEXPREC, index: isize) -> Result<String> {
+    unsafe { r_str_to_owned_utf8(STRING_ELT(vec, index)) }
+}
+
+/// Translates an R string to a UTF-8 Rust string.
+///
+/// - `x` is a CHARSXP.
+///
+/// Missing values return an `Error::MissingValueError`.
+pub fn r_str_to_owned_utf8(x: SEXP) -> Result<String> {
     unsafe {
-        // Extract the SEXP from the vector
-        let charsexp = STRING_ELT(vec, index);
-        if charsexp == R_NaString {
+        if x == R_NaString {
             return Err(Error::MissingValueError);
         }
 
-        // Translate it to a UTF-8 C string (note that this allocates with `R_alloc()` so we need
-        // to save and reset the protection stack)
+        // Translate it to a UTF-8 C string (note that this allocates with
+        // `R_alloc()` so we need to save and reset the protection stack)
         let vmax = vmaxget();
-        let translated = Rf_translateCharUTF8(charsexp);
+        let translated = Rf_translateCharUTF8(x);
         vmaxset(vmax);
 
         // Convert to a Rust string and return
