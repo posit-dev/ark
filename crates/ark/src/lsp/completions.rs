@@ -22,7 +22,7 @@ use harp::r_symbol;
 use harp::string::r_string_decode;
 use harp::utils::r_env_binding_is_active;
 use harp::utils::r_env_has;
-use harp::utils::r_env_is_pkg;
+use harp::utils::r_env_is_pkg_env;
 use harp::utils::r_envir_name;
 use harp::utils::r_formals;
 use harp::utils::r_normalize_path;
@@ -1147,11 +1147,10 @@ unsafe fn append_search_path_completions(
         // Get environment name
         let name = r_envir_name(envir)?;
 
-        // If this is a package environment (with special consideration for the base env),
-        // we will need to force promises to give meaningful completions, particularly with functions
-        // because we add a `CompletionItem::command()` that adds trailing `()` onto
+        // If this is a package environment, we will need to force promises to give meaningful completions,
+        // particularly with functions because we add a `CompletionItem::command()` that adds trailing `()` onto
         // the completion and triggers parameter completions.
-        let promise_strategy = if r_env_is_pkg(envir) || envir == R_BaseEnv {
+        let promise_strategy = if r_env_is_pkg_env(envir) {
             PromiseStrategy::Force
         } else {
             PromiseStrategy::Simple

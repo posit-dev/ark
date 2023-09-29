@@ -24,6 +24,7 @@ use crate::exec::RFunction;
 use crate::exec::RFunctionExt;
 use crate::object::RObject;
 use crate::protect::RProtect;
+use crate::r_char;
 use crate::r_lang;
 use crate::r_symbol;
 use crate::r_version::r_version;
@@ -330,21 +331,14 @@ pub unsafe fn r_formals(object: SEXP) -> Result<Vec<RArgument>> {
 pub unsafe fn r_envir_name(envir: SEXP) -> Result<String> {
     r_assert_type(envir, &[ENVSXP])?;
 
-    if envir == R_BaseNamespace || envir == R_BaseEnv {
-        return Ok("base".to_string());
-    }
-
-    if r_env_is_pkg(envir) {
-        let name = RObject::from(R_PackageEnvName(envir));
+    if r_env_is_pkg_env(envir) {
+        let name = RObject::from(r_pkg_env_name(envir));
         return name.to::<String>();
     }
 
-    if R_IsNamespaceEnv(envir) != 0 {
-        let spec = R_NamespaceEnvSpec(envir);
-        if let Ok(vector) = CharacterVector::new(spec) {
-            let package = vector.get(0)?.unwrap();
-            return Ok(package.to_string());
-        }
+    if r_env_is_ns_env(envir) {
+        let name = RObject::from(r_ns_env_name(envir));
+        return name.to::<String>();
     }
 
     let name = Rf_getAttrib(envir, r_symbol!("name"));
@@ -456,8 +450,46 @@ pub unsafe fn r_env_binding_is_active(env: SEXP, sym: SEXP) -> bool {
     R_BindingIsActive(sym, env) == Rboolean_TRUE
 }
 
-pub unsafe fn r_env_is_pkg(env: SEXP) -> bool {
-    R_IsPackageEnv(env) == Rboolean_TRUE
+pub unsafe fn r_env_is_pkg_env(env: SEXP) -> bool {
+    R_IsPackageEnv(env) == Rboolean_TRUE || env == R_BaseEnv
+}
+
+pub unsafe fn r_pkg_env_name(env: SEXP) -> SEXP {
+    if env == R_BaseEnv {
+        // `R_BaseEnv` is not handled by `R_PackageEnvName()`, but most of the time we want to
+        // treat it like a package namespace
+        return r_char!("base");
+    }
+
+    let name = R_PackageEnvName(env);
+
+    if name == R_NilValue {
+        // Should be very unlikely, but `NULL` can be returned
+        return r_char!("");
+    }
+
+    STRING_ELT(name, 0)
+}
+
+pub unsafe fn r_env_is_ns_env(env: SEXP) -> bool {
+    // Does handle `R_BaseNamespace`
+    // https://github.com/wch/r-source/blob/1cb35ff692d3eb3ab546e0db4761102b5ea4ac89/src/main/envir.c#L3689
+    R_IsNamespaceEnv(env) == Rboolean_TRUE
+}
+
+pub unsafe fn r_ns_env_name(env: SEXP) -> SEXP {
+    // Does handle `R_BaseNamespace`
+    // https://github.com/wch/r-source/blob/1cb35ff692d3eb3ab546e0db4761102b5ea4ac89/src/main/envir.c#L3720
+    let mut protect = RProtect::new();
+
+    let spec = protect.add(R_NamespaceEnvSpec(env));
+
+    if spec == R_NilValue {
+        // Should be very unlikely, but `NULL` can be returned
+        return r_char!("");
+    }
+
+    STRING_ELT(spec, 0)
 }
 
 pub unsafe fn r_try_eval_silent(x: SEXP, env: SEXP) -> Result<SEXP> {
