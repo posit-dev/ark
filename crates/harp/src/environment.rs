@@ -316,11 +316,6 @@ impl<'a> EnvironmentIter<'a> {
     }
 }
 
-pub enum EnvironmentFilter {
-    IncludeHiddenBindings,
-    ExcludeHiddenBindings,
-}
-
 impl<'a> Iterator for EnvironmentIter<'a> {
     type Item = Binding;
 
@@ -365,22 +360,8 @@ impl Environment {
         unsafe { Rf_findVarInFrame(self.env.sexp, *name) }
     }
 
-    pub fn is_empty(&self, filter: EnvironmentFilter) -> bool {
-        match filter {
-            EnvironmentFilter::IncludeHiddenBindings => self.env.length() == 0,
-            EnvironmentFilter::ExcludeHiddenBindings => {
-                self.iter().filter(|b| !b.is_hidden()).next().is_none()
-            },
-        }
-    }
-
-    pub fn length(&self, filter: EnvironmentFilter) -> usize {
-        match filter {
-            EnvironmentFilter::IncludeHiddenBindings => self.env.length() as usize,
-            EnvironmentFilter::ExcludeHiddenBindings => {
-                self.iter().filter(|b| !b.is_hidden()).count()
-            },
-        }
+    pub fn is_empty(&self) -> bool {
+        self.iter().filter(|b| !b.is_hidden()).next().is_none()
     }
 }
 

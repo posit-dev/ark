@@ -9,7 +9,6 @@ use harp::call::RCall;
 use harp::environment::Binding;
 use harp::environment::BindingValue;
 use harp::environment::Environment;
-use harp::environment::EnvironmentFilter;
 use harp::error::Error;
 use harp::exec::r_try_catch;
 use harp::exec::RFunction;
@@ -42,9 +41,6 @@ use libR_sys::*;
 use serde::Deserialize;
 use serde::Serialize;
 use stdext::local;
-
-// Constants.
-const MAX_DISPLAY_VALUE_LENGTH: usize = 100;
 
 /// Represents the supported kinds of variable values.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Copy)]
@@ -213,7 +209,7 @@ impl WorkspaceVariableDisplayValue {
                     display_value.push_str(&display_i.display_value);
                     display_value.push_str("]");
 
-                    if display_value.len() > MAX_DISPLAY_VALUE_LENGTH || display_i.is_truncated {
+                    if display_value.len() > 100 || display_i.is_truncated {
                         is_truncated = true;
                     }
                 }
@@ -235,60 +231,6 @@ impl WorkspaceVariableDisplayValue {
                     .map(|o| o.unwrap())
                     .join("");
                 Self::new(out, false)
-            }
-        } else if rtype == ENVSXP {
-            // Get the environment and its length (excluding hidden bindings).
-            let environment = Environment::new(RObject::view(value));
-            let environment_length = environment.length(EnvironmentFilter::ExcludeHiddenBindings);
-
-            // If the environment is empty, return the empty display value. If the environment is
-            // large, return the large display value (because it may be too expensive to sort the
-            // bindings). Otherwise, return a detailed display value that shows some or all of the
-            // bindings in the environment.
-            if environment_length == 0 {
-                Self::new(String::from("Empty Environment"), false)
-            } else if environment_length > 1_000 {
-                Self::new(
-                    format!("Large Environment [{} Values]", environment_length),
-                    true,
-                )
-            } else {
-                // Build the detailed display value.
-                let mut display_value = String::new();
-                let mut is_truncated = false;
-                for (i, environment_variable) in environment
-                    .iter()
-                    .filter(|binding| !binding.is_hidden())
-                    .map(|binding| EnvironmentVariable::new(&binding))
-                    .sorted_by(|lhs, rhs| Ord::cmp(&lhs.display_name, &rhs.display_name))
-                    .enumerate()
-                {
-                    // If this isn't the first entry, append a space separator.
-                    if i > 0 {
-                        display_value.push_str(" ");
-                    }
-
-                    // Append the environment variable display name.
-                    display_value.push_str(&environment_variable.display_name);
-
-                    // When the display value becomes too long, mark it as truncated and stop adding
-                    // to it.
-                    if i == 10 || display_value.len() > MAX_DISPLAY_VALUE_LENGTH {
-                        // If there are remaining entries, set the is_truncated flag and append a
-                        // counter of how many more entries there are.
-                        let remaining_entries = environment_length - 1 - i;
-                        if remaining_entries > 0 {
-                            is_truncated = true;
-                            display_value.push_str(&format!(" [{} more]", remaining_entries));
-                        }
-
-                        // Stop building the display value.
-                        break;
-                    }
-                }
-
-                // Return the display value.
-                Self::new(display_value, is_truncated)
             }
         } else {
             let formatted = FormattedVector::new(value);
@@ -315,15 +257,15 @@ impl WorkspaceVariableDisplayValue {
 
                                 display_value.push_str("[");
                                 let display_column = formatted.column_iter(i).join(" ");
-                                if display_column.len() > MAX_DISPLAY_VALUE_LENGTH {
+                                if display_column.len() > 100 {
                                     is_truncated = true;
                                     // TODO: maybe this should only push_str() a slice
-                                    //       of the first n (MAX_WIDTH?) characters in that case ?
+                                    //       of the first n (100?) characters in that case ?
                                 }
                                 display_value.push_str(display_column.as_str());
                                 display_value.push_str("]");
 
-                                if display_value.len() > MAX_DISPLAY_VALUE_LENGTH {
+                                if display_value.len() > 100 {
                                     is_truncated = true;
                                 }
                                 if is_truncated {
@@ -340,7 +282,7 @@ impl WorkspaceVariableDisplayValue {
                                 display_value.push_str(" ");
                             }
                             display_value.push_str(&x);
-                            if display_value.len() > MAX_DISPLAY_VALUE_LENGTH {
+                            if display_value.len() > 100 {
                                 is_truncated = true;
                                 break;
                             }
@@ -463,8 +405,7 @@ fn has_children(value: SEXP) -> bool {
         match r_typeof(value) {
             VECSXP | EXPRSXP => unsafe { XLENGTH(value) != 0 },
             LISTSXP => true,
-            ENVSXP => !Environment::new(RObject::view(value))
-                .is_empty(EnvironmentFilter::ExcludeHiddenBindings),
+            ENVSXP => !Environment::new(RObject::view(value)).is_empty(),
             LGLSXP | RAWSXP | STRSXP | INTSXP | REALSXP | CPLXSXP => unsafe { XLENGTH(value) != 0 },
             _ => false,
         }
@@ -1137,8 +1078,8 @@ impl EnvironmentVariable {
                     false
                 } else {
                     match b.value {
-                        BindingValue::Standard { object, .. } |
-                        BindingValue::Altrep { object, .. } => {
+                        BindingValue::Standard { object, .. }
+                        | BindingValue::Altrep { object, .. } => {
                             if r_typeof(object) == CLOSXP {
                                 has_methods = true;
                                 false
