@@ -271,8 +271,8 @@ impl WorkspaceVariableDisplayValue {
                     // Append the environment variable display name.
                     display_value.push_str(&environment_variable.display_name);
 
-                    // When the display value becomes too long, mark it as truncated and stop adding
-                    // to it.
+                    // When the display value becomes too long, mark it as truncated and stop
+                    // building it.
                     if i == 10 || display_value.len() > MAX_DISPLAY_VALUE_LENGTH {
                         // If there are remaining entries, set the is_truncated flag and append a
                         // counter of how many more entries there are.
