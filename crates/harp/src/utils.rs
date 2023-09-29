@@ -200,6 +200,22 @@ pub fn r_str_to_owned_utf8(x: SEXP) -> Result<String> {
     }
 }
 
+/// Translates an R string to a UTF-8 Rust string without type checking.
+///
+/// - `x` is a CHARSXP that is assumed to not be missing.
+///
+/// Uses `from_utf8_unchecked()`.
+pub fn r_str_to_owned_utf8_unchecked(x: SEXP) -> String {
+    unsafe {
+        let vmax = vmaxget();
+        let translated = Rf_translateCharUTF8(x);
+        vmaxset(vmax);
+
+        let bytes = CStr::from_ptr(translated).to_bytes();
+        std::str::from_utf8_unchecked(bytes).to_owned()
+    }
+}
+
 pub fn pairlist_size(mut pairlist: SEXP) -> Result<isize> {
     let mut n = 0;
     unsafe {
