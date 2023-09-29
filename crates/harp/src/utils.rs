@@ -173,7 +173,7 @@ pub fn r_classes(value: SEXP) -> Option<CharacterVector> {
 ///
 /// - `vec` is the R vector to translate from.
 /// - `index` is the index in the vector of the string to translate.
-pub fn r_translate_string(vec: *mut SEXPREC, index: isize) -> Result<String> {
+pub fn r_chr_get_owned_utf8(vec: *mut SEXPREC, index: isize) -> Result<String> {
     unsafe {
         // Extract the SEXP from the vector
         let charsexp = STRING_ELT(vec, index);

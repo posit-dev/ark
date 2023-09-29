@@ -22,11 +22,11 @@ use crate::exec::RFunctionExt;
 use crate::protect::RProtect;
 use crate::utils::r_assert_length;
 use crate::utils::r_assert_type;
+use crate::utils::r_chr_get_owned_utf8;
 use crate::utils::r_is_altrep;
 use crate::utils::r_is_null;
 use crate::utils::r_is_object;
 use crate::utils::r_is_s4;
-use crate::utils::r_translate_string;
 use crate::utils::r_typeof;
 
 // Objects are protected using a doubly-linked list,
@@ -542,8 +542,8 @@ impl TryFrom<RObject> for HashMap<String, String> {
 
             for i in 0..Rf_length(names) {
                 // Translate the name and value into Rust strings.
-                let lhs = r_translate_string(names, i as isize)?;
-                let rhs = r_translate_string(value, i as isize)?;
+                let lhs = r_chr_get_owned_utf8(names, i as isize)?;
+                let rhs = r_chr_get_owned_utf8(value, i as isize)?;
 
                 map.insert(lhs, rhs);
             }
