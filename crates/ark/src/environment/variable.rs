@@ -246,10 +246,10 @@ impl WorkspaceVariableDisplayValue {
             // bindings). Otherwise, return a detailed display value that shows some or all of the
             // bindings in the environment.
             if environment_length == 0 {
-                Self::new(String::from("Empty Environment"), false)
+                Self::new(String::from("Empty Environment [0 values]"), false)
             } else if environment_length > 1_000 {
                 Self::new(
-                    format!("Large Environment [{} Values]", environment_length),
+                    format!("Large Environment [{} values]", environment_length),
                     true,
                 )
             } else {
