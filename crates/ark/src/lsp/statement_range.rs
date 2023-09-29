@@ -102,7 +102,7 @@ fn find_statement_range_node(root: Node, row: usize) -> Option<Node> {
         }
 
         // If there was a node associated with the point, recurse into it
-        // to figure out exactly which range to execute
+        // to figure out exactly which range to select
         match recurse(child, row) {
             Ok(node) => {
                 out = node;
@@ -120,7 +120,7 @@ fn find_statement_range_node(root: Node, row: usize) -> Option<Node> {
 
 fn recurse(node: Node, row: usize) -> Result<Option<Node>> {
     // General row-based heuristic that apply to all node types.
-    // If we are on or before the node row, execute whole node.
+    // If we are on or before the node row, select whole node.
     // End position behavior is node kind dependent.
     if row <= node.start_position().row {
         return Ok(Some(node));
@@ -143,13 +143,13 @@ fn recurse_function(node: Node, row: usize) -> Result<Option<Node>> {
     };
 
     if parameters.start_position().row <= row && parameters.end_position().row >= row {
-        // If we are inside the parameters list, execute entire function
+        // If we are inside the parameters list, select entire function
         // (parameter lists often span multiple lines for long signatures)
         return Ok(Some(node));
     }
 
     let Some(body) = node.child_by_field_name("body") else {
-        // No `body`, execute entire function
+        // No `body`, select entire function
         return Ok(Some(node));
     };
 
@@ -160,13 +160,13 @@ fn recurse_function(node: Node, row: usize) -> Result<Option<Node>> {
     }
 
     if body.kind() == "{" && (row == body.start_position().row || row == body.end_position().row) {
-        // For the most common `{` bodies, if we are on the `{` or the `}` rows, then we execute the
+        // For the most common `{` bodies, if we are on the `{` or the `}` rows, then we select the
         // entire function. This avoids sending a `{` block without its leading `function` node if
         // `{` happens to be on a different line or if the user is on the `}` line.
         return Ok(Some(node));
     }
 
-    // If we are somewhere inside the body, then we only want to execute
+    // If we are somewhere inside the body, then we only want to select
     // the particular expression the cursor is over
     recurse(body, row)
 }
@@ -185,13 +185,13 @@ fn recurse_loop(node: Node, row: usize) -> Result<Option<Node>> {
     }
 
     if body.kind() == "{" && (row == body.start_position().row || row == body.end_position().row) {
-        // For the most common `{` bodies, if we are on the `{` or the `}` rows, then we execute the
+        // For the most common `{` bodies, if we are on the `{` or the `}` rows, then we select the
         // entire loop. This avoids sending a `{` block without its leading loop node if
         // `{` happens to be on a different line or if the user is on the `}` line.
         return Ok(Some(node));
     }
 
-    // If we are somewhere inside the body, then we only want to execute
+    // If we are somewhere inside the body, then we only want to select
     // the particular expression the cursor is over
     recurse(body, row)
 }
@@ -206,7 +206,7 @@ fn recurse_if(node: Node, row: usize) -> Result<Option<Node>> {
         if consequence.kind() == "{" &&
             (row == consequence.start_position().row || row == consequence.end_position().row)
         {
-            // On `{` or `}` row of a `{` node, execute entire if statement
+            // On `{` or `}` row of a `{` node, select entire if statement
             return Ok(Some(node));
         }
 
@@ -216,7 +216,7 @@ fn recurse_if(node: Node, row: usize) -> Result<Option<Node>> {
     }
 
     let Some(alternative) = node.child_by_field_name("alternative") else {
-        // No `else` and nothing above matched, execute whole if statement
+        // No `else` and nothing above matched, select whole if statement
         return Ok(Some(node));
     };
     if row >= alternative.start_position().row && row <= alternative.end_position().row {
@@ -225,7 +225,7 @@ fn recurse_if(node: Node, row: usize) -> Result<Option<Node>> {
         if alternative.kind() == "{" &&
             (row == alternative.start_position().row || row == alternative.end_position().row)
         {
-            // On `{` or `}` row of a `{` node, execute entire if statement
+            // On `{` or `}` row of a `{` node, select entire if statement
             return Ok(Some(node));
         }
 
@@ -261,24 +261,24 @@ fn recurse_call(node: Node, row: usize) -> Result<Option<Node>> {
         bail!("Missing `arguments` field in a call node");
     };
     if row == arguments.start_position().row {
-        // On start row containing `(`, execute whole call
+        // On start row containing `(`, select whole call
         return Ok(Some(node));
     }
     if row == arguments.end_position().row {
-        // On ending row containing `)`, execute whole call
+        // On ending row containing `)`, select whole call
         return Ok(Some(node));
     }
 
-    // In general if the user executes a statement while on a function argument,
-    // then we execute the entire function call. However, calls like
+    // In general if the user selects a statement while on a function argument,
+    // then we select the entire function call. However, calls like
     // test_that("foo", {
     //   1 + 1
     // })
-    // purposefully span multiple lines and you want to be able to execute
+    // purposefully span multiple lines and you want to be able to select
     // `1 + 1` interactively (similar with `withr::local_*()` calls).
     // To detect this we use a heuristic that if the argument `value` node has a
     // different start row than the row you'd get by recursing into that `value`
-    // node, then we prefer the row from the recursion, otherwise we execute the
+    // node, then we prefer the row from the recursion, otherwise we select the
     // entire function call.
     let mut cursor = arguments.walk();
     let children = arguments.children_by_field_name("argument", &mut cursor);
@@ -301,7 +301,7 @@ fn recurse_call(node: Node, row: usize) -> Result<Option<Node>> {
 fn recurse_block(node: Node, row: usize) -> Result<Option<Node>> {
     if row == node.end_position().row {
         // `recurse()` handled the start position, but if we are on the
-        // `}` row, then we also execute the entire block
+        // `}` row, then we also select the entire block
         return Ok(Some(node));
     }
 
@@ -320,7 +320,7 @@ fn recurse_block(node: Node, row: usize) -> Result<Option<Node>> {
         }
 
         // If there was a node associated with the point, recurse into it
-        // to figure out exactly which range to execute
+        // to figure out exactly which range to select
         return recurse(child, row);
     }
 
@@ -579,7 +579,7 @@ fn test_statement_range() {
 ",
     );
 
-    // Executes all braces
+    // Selects all braces
     statement_range_test(
 "
 @
@@ -599,7 +599,7 @@ fn test_statement_range() {
 ",
     );
 
-    // Executes entire function
+    // Selects entire function
     statement_range_test(
 "
 @
@@ -618,7 +618,7 @@ fn test_statement_range() {
 ",
     );
 
-    // Executes individual lines of a function if user puts cursor there
+    // Selects individual lines of a function if user puts cursor there
     statement_range_test(
 "
 function() {
@@ -628,7 +628,7 @@ function() {
 ",
     );
 
-    // Executes entire function if on multiline argument signature
+    // Selects entire function if on multiline argument signature
     statement_range_test(
 "
 <<function(a,
@@ -640,7 +640,7 @@ function() {
 ",
     );
 
-    // Executes just the expression if on a 1 line function
+    // Selects just the expression if on a 1 line function
     statement_range_test(
 "
 function()
@@ -648,7 +648,7 @@ function()
 ",
     );
 
-    // Executes just the expression if on a 1 line function in an assignment
+    // Selects just the expression if on a 1 line function in an assignment
     statement_range_test(
 "
 fn <- function()
@@ -656,7 +656,7 @@ fn <- function()
 ",
     );
 
-    // Executes entire function if on a `{` that is on its own line
+    // Selects entire function if on a `{` that is on its own line
     statement_range_test(
 "
 <<fn <- function()
@@ -666,7 +666,7 @@ fn <- function()
 ",
     );
 
-    // Executes entire loop if on first or last row
+    // Selects entire loop if on first or last row
     statement_range_test(
 "
 <<for(i@ in 1:5) {
@@ -694,7 +694,7 @@ for(i in 1:5) {
 ",
     );
 
-    // Executes just expression if on a 1 line loop with no braces
+    // Selects just expression if on a 1 line loop with no braces
     statement_range_test(
 "
 for(i in 1:5)
@@ -702,7 +702,7 @@ for(i in 1:5)
 ",
     );
 
-    // Executes entire loop if on a `{` that is on its own line
+    // Selects entire loop if on a `{` that is on its own line
     statement_range_test(
 "
 <<for(i in 1:5)
@@ -712,7 +712,7 @@ for(i in 1:5)
 ",
     );
 
-    // Executes entire loop if on a `condition` that is on its own line
+    // Selects entire loop if on a `condition` that is on its own line
     statement_range_test(
 "
 <<for
@@ -723,7 +723,7 @@ for(i in 1:5)
 ",
     );
 
-    // Function within function executes whole subfunction
+    // Function within function selects whole subfunction
     statement_range_test(
 "
 function() {
