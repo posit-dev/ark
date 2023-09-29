@@ -28,6 +28,7 @@ use harp::utils::r_formals;
 use harp::utils::r_normalize_path;
 use harp::utils::r_promise_force_with_rollback;
 use harp::utils::r_promise_is_forced;
+use harp::utils::r_promise_is_lazy_load_binding;
 use harp::utils::r_symbol_quote_invalid;
 use harp::utils::r_symbol_valid;
 use harp::utils::r_typeof;
@@ -449,7 +450,7 @@ unsafe fn completion_item_from_promise(
         return completion_item_from_object(name, object, envir, package, promise_strategy);
     }
 
-    if promise_strategy == PromiseStrategy::Force {
+    if promise_strategy == PromiseStrategy::Force && r_promise_is_lazy_load_binding(object) {
         // TODO: Can we do any better here? Can we avoid evaluation?
         // Namespace completions are the one place we eagerly force unevaluated
         // promises to be able to determine the object type. Particularly
@@ -517,7 +518,12 @@ unsafe fn completion_item_from_lazydata(
     env: SEXP,
     package: &str,
 ) -> Result<CompletionItem> {
-    match completion_item_from_symbol(name, env, Some(package), PromiseStrategy::Simple) {
+    // Important to use `Simple` here, as lazydata bindings are calls to `lazyLoadDBfetch()`
+    // but we don't want to force them during completion generation because they often take a
+    // long time to load.
+    let promise_strategy = PromiseStrategy::Simple;
+
+    match completion_item_from_symbol(name, env, Some(package), promise_strategy) {
         Some(item) => item,
         None => {
             // Should be impossible, but we'll be extra safe

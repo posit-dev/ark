@@ -423,6 +423,32 @@ pub unsafe fn r_promise_force_with_rollback(x: SEXP) -> Result<SEXP> {
     Ok(out)
 }
 
+pub unsafe fn r_promise_is_lazy_load_binding(x: SEXP) -> bool {
+    // `rlang:::promise_expr("across", asNamespace("dplyr"))`
+    // returns:
+    // `lazyLoadDBfetch(c(105202L, 4670L), datafile, compressed, envhook)`
+    // We can take advantage of this to identify promises in namespaces
+    // that correspond to symbols we should evaluate when generating completions.
+
+    let expr = PRCODE(x);
+
+    if r_typeof(expr) != LANGSXP {
+        return false;
+    }
+
+    if Rf_xlength(expr) == 0 {
+        return false;
+    }
+
+    let expr = CAR(expr);
+
+    if r_typeof(expr) != SYMSXP {
+        return false;
+    }
+
+    expr == r_symbol!("lazyLoadDBfetch")
+}
+
 pub unsafe fn r_env_has(env: SEXP, sym: SEXP) -> bool {
     const R_4_2_0: Version = Version::new(4, 2, 0);
 
