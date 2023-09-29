@@ -971,6 +971,53 @@ else
 ",
     );
 
+    // Calls generally run the whole call no matter where you are in it
+    statement_range_test(
+"
+<<foo(@
+  a = 1,
+  b
+)>>
+"
+    );
+    statement_range_test(
+"
+<<foo(
+  a = @1,
+  b
+)>>
+"
+    );
+
+    // Nested calls run the whole outer call no matter where you are in it
+    statement_range_test(
+"
+<<foo(bar(
+  a = 1,
+  b@
+))>>
+"
+    );
+    statement_range_test(
+"
+<<foo(@bar(
+  a = 1,
+  b
+))>>
+"
+    );
+    // Unless the cursor is within a block, which only runs that line
+    statement_range_test(
+"
+foo(bar(
+  a = {
+    <<@1 + 1>>
+  },
+  b
+))
+"
+    );
+
     // Blocks within calls run one line at a time (testthat, withr, quote())
     statement_range_test(
 "
