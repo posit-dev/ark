@@ -44,6 +44,7 @@ use serde::Serialize;
 use stdext::local;
 
 // Constants.
+const MAX_DISPLAY_VALUE_ENTRIES: usize = 1_000;
 const MAX_DISPLAY_VALUE_LENGTH: usize = 100;
 
 /// Represents the supported kinds of variable values.
@@ -247,7 +248,7 @@ impl WorkspaceVariableDisplayValue {
             // bindings in the environment.
             if environment_length == 0 {
                 Self::new(String::from("Empty Environment [0 values]"), false)
-            } else if environment_length > 1_000 {
+            } else if environment_length > MAX_DISPLAY_VALUE_ENTRIES {
                 Self::new(
                     format!("Large Environment [{} values]", environment_length),
                     true,
