@@ -78,10 +78,14 @@ pub unsafe extern "C" fn ps_ark_version() -> SEXP {
         String::from(env!("CARGO_PKG_VERSION")),
     );
 
-    // Add the current commit hash; this is set by the build script (build.rs)
+    // Add the current commit hash branch; this is set by the build script (build.rs)
     info.insert(String::from("commit"), String::from(env!("BUILD_GIT_HASH")));
+    info.insert(
+        String::from("branch"),
+        String::from(env!("BUILD_GIT_BRANCH")),
+    );
 
-    // Add the build; this is also set by the build script
+    // Add the build date; this is also set by the build script
     info.insert(String::from("date"), String::from(env!("BUILD_DATE")));
 
     // Add the path to the kernel
