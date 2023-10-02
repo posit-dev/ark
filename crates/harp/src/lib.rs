@@ -14,6 +14,7 @@ pub mod interrupts;
 pub mod lock;
 pub mod object;
 pub mod protect;
+pub mod r_version;
 pub mod routines;
 pub mod session;
 pub mod string;
