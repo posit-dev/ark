@@ -13,6 +13,7 @@ use libR_sys::*;
 use crate::error::Result;
 use crate::r_symbol;
 use crate::utils::r_assert_type;
+use crate::utils::r_str_to_owned_utf8_unchecked;
 use crate::utils::Sxpinfo;
 use crate::utils::HASHASH_MASK;
 
@@ -45,10 +46,7 @@ impl Deref for RSymbol {
 
 impl From<RSymbol> for String {
     fn from(symbol: RSymbol) -> Self {
-        unsafe {
-            let utf8text = Rf_translateCharUTF8(PRINTNAME(*symbol));
-            CStr::from_ptr(utf8text).to_str().unwrap().to_string()
-        }
+        unsafe { r_str_to_owned_utf8_unchecked(PRINTNAME(*symbol)) }
     }
 }
 
@@ -75,7 +73,9 @@ impl std::fmt::Display for RSymbol {
 impl PartialEq<&str> for RSymbol {
     fn eq(&self, other: &&str) -> bool {
         unsafe {
+            let vmax = vmaxget();
             let utf8text = Rf_translateCharUTF8(PRINTNAME(self.sexp));
+            vmaxset(vmax);
             CStr::from_ptr(utf8text).to_str().unwrap() == *other
         }
     }

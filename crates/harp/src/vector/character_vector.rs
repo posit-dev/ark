@@ -5,12 +5,12 @@
 //
 //
 
-use std::ffi::CStr;
 use std::os::raw::c_char;
 
 use libR_sys::*;
 
 use crate::object::RObject;
+use crate::utils::r_str_to_owned_utf8_unchecked;
 use crate::vector::Vector;
 
 #[harp_macros::vector]
@@ -70,11 +70,7 @@ impl Vector for CharacterVector {
     }
 
     fn convert_value(x: &Self::UnderlyingType) -> Self::Type {
-        unsafe {
-            let cstr = Rf_translateCharUTF8(*x);
-            let bytes = CStr::from_ptr(cstr).to_bytes();
-            std::str::from_utf8_unchecked(bytes).to_owned()
-        }
+        r_str_to_owned_utf8_unchecked(*x)
     }
 
     fn format_one(&self, x: Self::Type) -> String {

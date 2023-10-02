@@ -7,7 +7,6 @@
 
 use std::collections::HashMap;
 use std::convert::TryFrom;
-use std::ffi::CStr;
 use std::ops::Deref;
 use std::ops::DerefMut;
 use std::os::raw::c_char;
@@ -22,11 +21,12 @@ use crate::exec::RFunctionExt;
 use crate::protect::RProtect;
 use crate::utils::r_assert_length;
 use crate::utils::r_assert_type;
+use crate::utils::r_chr_get_owned_utf8;
 use crate::utils::r_is_altrep;
 use crate::utils::r_is_null;
 use crate::utils::r_is_object;
 use crate::utils::r_is_s4;
-use crate::utils::r_translate_string;
+use crate::utils::r_str_to_owned_utf8;
 use crate::utils::r_typeof;
 
 // Objects are protected using a doubly-linked list,
@@ -377,8 +377,8 @@ impl TryFrom<RObject> for Option<String> {
                 return Ok(None);
             }
 
-            let utf8text = Rf_translateCharUTF8(charsexp);
-            Ok(Some(CStr::from_ptr(utf8text).to_str()?.to_string()))
+            let translated = r_str_to_owned_utf8(charsexp)?;
+            Ok(Some(translated))
         }
     }
 }
@@ -488,13 +488,8 @@ impl TryFrom<RObject> for Vec<String> {
             let mut result: Vec<String> = Vec::new();
             let n = Rf_length(*value) as isize;
             for i in 0..n {
-                let charsexp = STRING_ELT(*value, i);
-                if charsexp == R_NaString {
-                    return Err(Error::MissingValueError);
-                }
-                let cstr = Rf_translateCharUTF8(charsexp);
-                let string = CStr::from_ptr(cstr);
-                result.push(string.to_str().unwrap().to_string());
+                let res = r_chr_get_owned_utf8(*value, i)?;
+                result.push(res);
             }
 
             return Ok(result);
@@ -515,9 +510,7 @@ impl TryFrom<RObject> for Vec<Option<String>> {
                 if charsexp == R_NaString {
                     result.push(None);
                 } else {
-                    let cstr = Rf_translateCharUTF8(charsexp);
-                    let string = CStr::from_ptr(cstr);
-                    result.push(Some(string.to_str().unwrap().to_string()));
+                    result.push(Some(r_str_to_owned_utf8(charsexp)?));
                 }
             }
             return Ok(result);
@@ -542,8 +535,8 @@ impl TryFrom<RObject> for HashMap<String, String> {
 
             for i in 0..Rf_length(names) {
                 // Translate the name and value into Rust strings.
-                let lhs = r_translate_string(names, i as isize)?;
-                let rhs = r_translate_string(value, i as isize)?;
+                let lhs = r_chr_get_owned_utf8(names, i as isize)?;
+                let rhs = r_chr_get_owned_utf8(value, i as isize)?;
 
                 map.insert(lhs, rhs);
             }
