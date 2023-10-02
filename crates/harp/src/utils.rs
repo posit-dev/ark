@@ -171,10 +171,10 @@ pub fn r_classes(value: SEXP) -> Option<CharacterVector> {
 
 /// Translates a UTF-8 string from an R character vector to a Rust string.
 ///
-/// - `vec` is the R vector to translate from.
-/// - `index` is the index in the vector of the string to translate.
-pub fn r_chr_get_owned_utf8(vec: *mut SEXPREC, index: isize) -> Result<String> {
-    unsafe { r_str_to_owned_utf8(STRING_ELT(vec, index)) }
+/// - `x` is the R vector to translate from.
+/// - `i` is the index in the vector of the string to translate.
+pub fn r_chr_get_owned_utf8(x: *mut SEXPREC, i: isize) -> Result<String> {
+    unsafe { r_str_to_owned_utf8(STRING_ELT(x, i)) }
 }
 
 /// Translates an R string to a UTF-8 Rust string.
