@@ -20,6 +20,15 @@ fn main() {
     };
     println!("cargo:rustc-env=BUILD_GIT_HASH={}", git_hash);
 
+    let git_branch = match Command::new("git")
+        .args(&["branch", "--show-current"])
+        .output()
+    {
+        Ok(output) => String::from_utf8(output.stdout).unwrap(),
+        Err(_) => String::from("<unknown>"),
+    };
+    println!("cargo:rustc-env=BUILD_GIT_BRANCH={}", git_branch);
+
     // Get the build date as a string
     let build_date = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
     println!("cargo:rustc-env=BUILD_DATE={}", build_date);
