@@ -6,7 +6,6 @@
 //
 
 use std::collections::HashMap;
-use std::convert::TryFrom;
 use std::env;
 use std::path::Path;
 use std::path::PathBuf;
@@ -207,7 +206,7 @@ pub unsafe fn initialize() -> anyhow::Result<RModuleInfo> {
     });
 
     return Ok(RModuleInfo {
-        help_server_port: u16::try_from(RFunction::new("tools", "httpdPort").call()?.to::<i32>()?)?,
+        help_server_port: RFunction::new("tools", "httpdPort").call()?.to::<u16>()?,
     });
 }
 
