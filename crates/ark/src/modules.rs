@@ -6,6 +6,7 @@
 //
 
 use std::collections::HashMap;
+use std::convert::TryFrom;
 use std::env;
 use std::path::Path;
 use std::path::PathBuf;
@@ -43,7 +44,7 @@ static mut POSITRON_ATTACHED_ENVIRONMENT: SEXP = std::ptr::null_mut();
 pub const POSITRION_ATTACHED_ENVIRONMENT_NAME: &str = "tools:positron";
 
 pub struct RModuleInfo {
-    pub help_server_port: i32,
+    pub help_server_port: u16,
 }
 
 // NOTE: We use a custom watcher implementation here to detect changes
@@ -205,10 +206,9 @@ pub unsafe fn initialize() -> anyhow::Result<RModuleInfo> {
         }
     });
 
-    // Get the help server port.
-    let help_server_port = RFunction::new("tools", "httpdPort").call()?.to::<i32>()?;
-
-    return Ok(RModuleInfo { help_server_port });
+    return Ok(RModuleInfo {
+        help_server_port: u16::try_from(RFunction::new("tools", "httpdPort").call()?.to::<i32>()?)?,
+    });
 }
 
 pub unsafe fn import(file: &Path) -> anyhow::Result<()> {

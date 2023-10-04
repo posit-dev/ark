@@ -5,6 +5,7 @@
 //
 //
 
+use std::convert::TryFrom;
 use std::process::Command;
 
 use amalthea::events::PositronEvent;
@@ -31,7 +32,7 @@ pub unsafe extern "C" fn ps_browse_url(url: SEXP) -> SEXP {
 
 unsafe fn handle_help_url(url: &str) -> Result<bool> {
     // Check for help URLs
-    let port = RFunction::new("tools", "httpdPort").call()?.to::<i32>()?;
+    let port = u16::try_from(RFunction::new("tools", "httpdPort").call()?.to::<i32>()?)?;
     let prefix = format!("http://127.0.0.1:{}/", port);
     if !url.starts_with(&prefix) {
         return Ok(false);
