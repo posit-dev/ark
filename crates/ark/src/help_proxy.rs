@@ -95,7 +95,7 @@ async fn proxy_request(path: web::Path<(String,)>, app_state: web::Data<AppState
     let target_url = match Url::parse(&target_url_string) {
         Ok(url) => url,
         Err(error) => {
-            log::info!("Error proxying {}: {}", target_url_string, error);
+            log::error!("Error proxying {}: {}", target_url_string, error);
             return HttpResponse::BadGateway().finish();
         },
     };
@@ -140,7 +140,7 @@ async fn proxy_request(path: web::Path<(String,)>, app_state: web::Data<AppState
                 None => http_response_builder.body(match response.bytes().await {
                     Ok(body) => body,
                     Err(error) => {
-                        log::info!("Error proxying {}: {}", target_url_string, error);
+                        log::error!("Error proxying {}: {}", target_url_string, error);
                         return HttpResponse::BadGateway().finish();
                     },
                 }),
@@ -148,7 +148,7 @@ async fn proxy_request(path: web::Path<(String,)>, app_state: web::Data<AppState
         },
         // Error.
         Err(error) => {
-            log::info!("Error proxying {}: {}", target_url, error);
+            log::error!("Error proxying {}: {}", target_url, error);
             HttpResponse::BadGateway().finish()
         },
     }
