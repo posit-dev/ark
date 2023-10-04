@@ -140,7 +140,7 @@ async fn proxy_request(path: web::Path<(String,)>, app_state: web::Data<AppState
                 None => http_response_builder.body(match response.bytes().await {
                     Ok(body) => body,
                     Err(error) => {
-                        println!("Error {:?}", error);
+                        log::info!("Error proxying {}: {}", target_url_string, error);
                         return HttpResponse::BadGateway().finish();
                     },
                 }),
