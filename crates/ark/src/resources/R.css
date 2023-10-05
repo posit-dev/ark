@@ -1,0 +1,90 @@
+/*
+ * R.css
+ *
+ * Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+ *
+ */
+
+ body, td {
+    font-size: var(--vscode-font-size);
+    font-family: var(--vscode-font-family);
+    color: var(--vscode-editor-foreground);
+    background: var(--vscode-editor-background);
+    line-height: 1.5;
+}
+body code,
+body pre {
+    color: var(--vscode-editor-foreground);
+    font-size: var(--vscode-editor-font-size);
+    font-family: var(--vscode-editor-font-family);
+    font-weight: var(--vscode-editor-font-weight);
+}
+a {
+    color: var(--vscode-textLink-foreground);
+}
+::selection {
+    background: var(--vscode-editor-selectionBackground);
+}
+h1 {
+    font-size: x-large;
+}
+h2 {
+    font-size: x-large;
+    font-weight: normal;
+}
+h3 {
+}
+h4 {
+    font-style: italic;
+}
+h5 {
+}
+h6 {
+    font-style: italic;
+}
+img.toplogo {
+    max-width: 4em;
+    vertical-align: middle;
+}
+img.arrow {
+    width: 30px;
+    height: 30px;
+    border: 0;
+}
+span.acronym {
+    font-size: small;
+}
+span.env {
+    font-size: var(--vscode-editor-font-size);
+    font-family: var(--vscode-editor-font-family);
+}
+span.file {
+    font-size: var(--vscode-editor-font-size);
+    font-family: var(--vscode-editor-font-family);
+}
+span.option {
+    font-size: var(--vscode-editor-font-size);
+    font-family: var(--vscode-editor-font-family);
+}
+span.pkg {
+    font-weight: bold;
+}
+span.samp {
+    font-size: var(--vscode-editor-font-size);
+    font-family: var(--vscode-editor-font-family);
+}
+table p {
+    margin-top: 0;
+    margin-bottom: 6px;
+    margin-left: 6px;
+}
+h3.r-arguments-title + table tr td:first-child {
+    vertical-align: top;
+    min-width: 24px;
+    padding-right: 12px;
+}
+hr {
+    height: 1.5px;
+    border: none;
+    background-color: var(--vscode-textBlockQuote-border);
+}

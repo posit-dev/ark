@@ -362,7 +362,6 @@ impl TryFrom<RObject> for Option<String> {
     type Error = crate::error::Error;
     fn try_from(value: RObject) -> Result<Self, Self::Error> {
         unsafe {
-            let types = &[CHARSXP, STRSXP, SYMSXP];
             let charsexp = match r_typeof(*value) {
                 CHARSXP => *value,
                 STRSXP => {
@@ -370,7 +369,11 @@ impl TryFrom<RObject> for Option<String> {
                     STRING_ELT(*value, 0)
                 },
                 SYMSXP => PRINTNAME(*value),
-                _ => return Err(Error::UnexpectedType(r_typeof(*value), types.to_vec())),
+                _ => {
+                    return Err(Error::UnexpectedType(r_typeof(*value), vec![
+                        CHARSXP, STRSXP, SYMSXP,
+                    ]))
+                },
             };
 
             if charsexp == R_NaString {
@@ -379,6 +382,32 @@ impl TryFrom<RObject> for Option<String> {
 
             let translated = r_str_to_owned_utf8(charsexp)?;
             Ok(Some(translated))
+        }
+    }
+}
+
+impl TryFrom<RObject> for Option<u16> {
+    type Error = crate::error::Error;
+    fn try_from(value: RObject) -> Result<Self, Self::Error> {
+        unsafe {
+            r_assert_length(*value, 1)?;
+            match r_typeof(*value) {
+                INTSXP => {
+                    let x = INTEGER_ELT(*value, 0);
+                    if x == R_NaInt {
+                        Ok(None)
+                    } else if x < u16::MIN as i32 || x > u16::MAX as i32 {
+                        Err(Error::ValueOutOfRange {
+                            value: x as i64,
+                            min: u16::MIN as i64,
+                            max: u16::MAX as i64,
+                        })
+                    } else {
+                        Ok(Some(x as u16))
+                    }
+                },
+                _ => Err(Error::UnexpectedType(r_typeof(*value), vec![INTSXP])),
+            }
         }
     }
 }
@@ -395,14 +424,6 @@ impl TryFrom<RObject> for Option<i32> {
                         Ok(None)
                     } else {
                         Ok(Some(x))
-                    }
-                },
-                REALSXP => {
-                    let x = REAL_ELT(*value, 0);
-                    if R_IsNA(x) != 0 {
-                        Ok(None)
-                    } else {
-                        Ok(Some(x as i32))
                     }
                 },
                 _ => Err(Error::UnexpectedType(r_typeof(*value), vec![INTSXP])),
@@ -453,6 +474,16 @@ impl TryFrom<RObject> for bool {
     type Error = crate::error::Error;
     fn try_from(value: RObject) -> Result<Self, Self::Error> {
         match Option::<bool>::try_from(value)? {
+            Some(x) => Ok(x),
+            None => Err(Error::MissingValueError),
+        }
+    }
+}
+
+impl TryFrom<RObject> for u16 {
+    type Error = crate::error::Error;
+    fn try_from(value: RObject) -> Result<Self, Self::Error> {
+        match Option::<u16>::try_from(value)? {
             Some(x) => Ok(x),
             None => Err(Error::MissingValueError),
         }
@@ -582,47 +613,271 @@ mod tests {
 
     #[test]
     #[allow(non_snake_case)]
+    fn test_tryfrom_RObject_u16() {
+        r_test! {
+            // -------------------------------------------------------------------------------------
+            // Option::<u16>::try_from tests.
+            // -------------------------------------------------------------------------------------
+
+            // Test that R_NaInt is None.
+            assert_match!(
+                Option::<u16>::try_from(RObject::from(R_NaInt)),
+                Ok(None) => {}
+            );
+
+            // Test that below range is as error.
+            {
+                let test_value = (u16::MIN as i32) - 1;
+                assert_match!(
+                    Option::<u16>::try_from(RObject::from(test_value)),
+                    Err(Error::ValueOutOfRange { value, min, max }) => {
+                        assert_eq!(value, test_value as i64);
+                        assert_eq!(min, u16::MIN as i64);
+                        assert_eq!(max, u16::MAX as i64);
+                    }
+                );
+            }
+
+            // Test that above range is None.
+            {
+                let test_value = (u16::MAX as i32) + 1;
+                assert_match!(
+                    Option::<u16>::try_from(RObject::from(test_value)),
+                    Err(Error::ValueOutOfRange { value, min, max }) => {
+                        assert_eq!(value, test_value as i64);
+                        assert_eq!(min, u16::MIN as i64);
+                        assert_eq!(max, u16::MAX as i64);
+                    }
+                );
+            }
+
+            // Test that minimum value is OK.
+            assert_match!(
+                Option::<u16>::try_from(RObject::from(u16::MIN as i32)),
+                Ok(Some(x)) => {
+                    assert_eq!(x, u16::MIN)
+                }
+            );
+
+            // Test that maximum value is OK.
+            assert_match!(
+                Option::<u16>::try_from(RObject::from(u16::MAX as i32)),
+                Ok(Some(x)) => {
+                    assert_eq!(x, u16::MAX)
+                }
+            );
+
+            // Test that some u16 value is OK.
+            assert_match!(
+                Option::<u16>::try_from(RObject::from(42)),
+                Ok(Some(x)) => {
+                    assert_eq!(x, 42)
+                }
+            );
+
+            // Test that R_NaReal is an error.
+            assert_match!(
+                Option::<u16>::try_from(RObject::from(R_NaReal)),
+                Err(Error::UnexpectedType(actual_type, expected_types)) => {
+                    assert_eq!(actual_type, REALSXP);
+                    assert_eq!(expected_types, vec![INTSXP]);
+                }
+            );
+
+            // Test that some f64 is an error.
+            assert_match!(
+                Option::<u16>::try_from(RObject::from(42.0)),
+                Err(Error::UnexpectedType(actual_type, expected_types)) => {
+                    assert_eq!(actual_type, REALSXP);
+                    assert_eq!(expected_types, vec![INTSXP]);
+                }
+            );
+
+            // -------------------------------------------------------------------------------------
+            // u16::try_from tests.
+            // -------------------------------------------------------------------------------------
+
+            // Test that R_NaInt is an error.
+            assert_match!(
+                u16::try_from(RObject::from(R_NaInt)),
+                Err(Error::MissingValueError) => {}
+            );
+
+            // Test that below range is an error.
+            {
+                let test_value = (u16::MIN as i32) - 1;
+                assert_match!(
+                    u16::try_from(RObject::from((u16::MIN as i32) - 1)),
+                    Err(Error::ValueOutOfRange { value, min, max }) => {
+                        assert_eq!(value, test_value as i64);
+                        assert_eq!(min, u16::MIN as i64);
+                        assert_eq!(max, u16::MAX as i64);
+                    }
+                );
+            }
+
+            // Test that above range is an error.
+            {
+                let test_value = (u16::MAX as i32) + 1;
+                assert_match!(
+                    u16::try_from(RObject::from((u16::MAX as i32) + 1)),
+                    Err(Error::ValueOutOfRange { value, min, max }) => {
+                        assert_eq!(value, test_value as i64);
+                        assert_eq!(min, u16::MIN as i64);
+                        assert_eq!(max, u16::MAX as i64);
+                    }
+                );
+            }
+
+            // Test that minimum value is OK.
+            assert_match!(
+                u16::try_from(RObject::from(u16::MIN as i32)),
+                Ok(x) => {
+                    assert_eq!(x, u16::MIN)
+                }
+            );
+
+            // Test that maximum value is OK.
+            assert_match!(
+                u16::try_from(RObject::from(u16::MAX as i32)),
+                Ok(x) => {
+                    assert_eq!(x, u16::MAX)
+                }
+            );
+
+            // Test that some u16 value is OK.
+            assert_match!(
+                u16::try_from(RObject::from(42)),
+                Ok(x) => {
+                    assert_eq!(x, 42)
+                }
+            );
+
+            // Test that R_NaReal is an error.
+            assert_match!(
+                u16::try_from(RObject::from(R_NaReal)),
+                Err(Error::UnexpectedType(actual_type, expected_types)) => {
+                    assert_eq!(actual_type, REALSXP);
+                    assert_eq!(expected_types, vec![INTSXP]);
+                }
+            );
+
+            // Test that some f64 value is an error.
+            assert_match!(
+                u16::try_from(RObject::from(42.0)),
+                Err(Error::UnexpectedType(actual_type, expected_types)) => {
+                    assert_eq!(actual_type, REALSXP);
+                    assert_eq!(expected_types, vec![INTSXP]);
+                }
+            );
+        }
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
     fn test_tryfrom_RObject_i32() {
         r_test! {
+            // -------------------------------------------------------------------------------------
+            // Option::<i32>::try_from tests.
+            // -------------------------------------------------------------------------------------
+
+            // Test that R_NaInt is None.
             assert_match!(
                 Option::<i32>::try_from(RObject::from(R_NaInt)),
                 Ok(None) => {}
             );
+
+            // Test that minimum value is OK.
             assert_match!(
-                Option::<i32>::try_from(RObject::from(R_NaReal)),
-                Ok(None) => {}
+                Option::<i32>::try_from(RObject::from(i32::MIN + 1)),
+                Ok(Some(x)) => {
+                    assert_eq!(x, i32::MIN + 1)
+                }
             );
+
+            // Test that maximum value is OK.
+            assert_match!(
+                Option::<i32>::try_from(RObject::from(i32::MAX)),
+                Ok(Some(x)) => {
+                    assert_eq!(x, i32::MAX)
+                }
+            );
+
+            // Test that some i32 value is OK.
             assert_match!(
                 Option::<i32>::try_from(RObject::from(42)),
                 Ok(Some(x)) => {
                     assert_eq!(x, 42)
                 }
             );
+
+            // Test that R_NaReal is an error.
             assert_match!(
-                Option::<i32>::try_from(RObject::from(42.0)),
-                Ok(Some(x)) => {
-                    assert_eq!(x, 42)
+                Option::<i32>::try_from(RObject::from(R_NaReal)),
+                Err(Error::UnexpectedType(actual_type, expected_types)) => {
+                    assert_eq!(actual_type, REALSXP);
+                    assert_eq!(expected_types, vec![INTSXP]);
                 }
             );
 
+            // Test that some f64 value is an error.
+            assert_match!(
+                Option::<i32>::try_from(RObject::from(42.0)),
+                Err(Error::UnexpectedType(actual_type, expected_types)) => {
+                    assert_eq!(actual_type, REALSXP);
+                    assert_eq!(expected_types, vec![INTSXP]);
+                }
+            );
+
+            // -------------------------------------------------------------------------------------
+            // i32::try_from tests.
+            // -------------------------------------------------------------------------------------
+
+            // Test that R_NaInt is an error.
             assert_match!(
                 i32::try_from(RObject::from(R_NaInt)),
                 Err(Error::MissingValueError) => {}
             );
+
+            // Test that minimum value is OK.
             assert_match!(
-                i32::try_from(RObject::from(R_NaReal)),
-                Err(Error::MissingValueError) => {}
+                i32::try_from(RObject::from(i32::MIN + 1)),
+                Ok(x) => {
+                    assert_eq!(x, i32::MIN + 1)
+                }
             );
+
+            // Test that maximum value is OK.
+            assert_match!(
+                i32::try_from(RObject::from(i32::MAX)),
+                Ok(x) => {
+                    assert_eq!(x, i32::MAX)
+                }
+            );
+
+            // Test that some i32 value is OK.
             assert_match!(
                 i32::try_from(RObject::from(42)),
                 Ok(x) => {
                     assert_eq!(x, 42)
                 }
             );
+
+            // Test that R_NaReal is an error.
+            assert_match!(
+                i32::try_from(RObject::from(R_NaReal)),
+                Err(Error::UnexpectedType(actual_type, expected_types)) => {
+                    assert_eq!(actual_type, REALSXP);
+                    assert_eq!(expected_types, vec![INTSXP]);
+                }
+            );
+
+            // Test that some f64 value is an error.
             assert_match!(
                 i32::try_from(RObject::from(42.0)),
-                Ok(x) => {
-                    assert_eq!(x, 42)
+                Err(Error::UnexpectedType(actual_type, expected_types)) => {
+                    assert_eq!(actual_type, REALSXP);
+                    assert_eq!(expected_types, vec![INTSXP]);
                 }
             );
         }
