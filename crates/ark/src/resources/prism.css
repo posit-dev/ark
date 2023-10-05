@@ -5,7 +5,7 @@
  *
  */
 
- code[class*='language-'],
+code[class*='language-'],
 pre[class*='language-'] {
     color: var(--vscode-editor-foreground);
     background: none;
