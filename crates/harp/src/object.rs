@@ -394,8 +394,14 @@ impl TryFrom<RObject> for Option<u16> {
             match r_typeof(*value) {
                 INTSXP => {
                     let x = INTEGER_ELT(*value, 0);
-                    if x < u16::MIN as i32 || x > u16::MAX as i32 {
+                    if x == R_NaInt {
                         Ok(None)
+                    } else if x < u16::MIN as i32 || x > u16::MAX as i32 {
+                        Err(Error::ValueOutOfRange {
+                            value: x as i64,
+                            min: u16::MIN as i64,
+                            max: u16::MAX as i64,
+                        })
                     } else {
                         Ok(Some(x as u16))
                     }
@@ -619,17 +625,31 @@ mod tests {
                 Ok(None) => {}
             );
 
-            // Test that below range is None.
-            assert_match!(
-                Option::<u16>::try_from(RObject::from((u16::MIN as i32) - 1)),
-                Ok(None) => {}
-            );
+            // Test that below range is as error.
+            {
+                let test_value = (u16::MIN as i32) - 1;
+                assert_match!(
+                    Option::<u16>::try_from(RObject::from(test_value)),
+                    Err(Error::ValueOutOfRange { value, min, max }) => {
+                        assert_eq!(value, test_value as i64);
+                        assert_eq!(min, u16::MIN as i64);
+                        assert_eq!(max, u16::MAX as i64);
+                    }
+                );
+            }
 
             // Test that above range is None.
-            assert_match!(
-                Option::<u16>::try_from(RObject::from((u16::MAX as i32) + 1)),
-                Ok(None) => {}
-            );
+            {
+                let test_value = (u16::MAX as i32) + 1;
+                assert_match!(
+                    Option::<u16>::try_from(RObject::from(test_value)),
+                    Err(Error::ValueOutOfRange { value, min, max }) => {
+                        assert_eq!(value, test_value as i64);
+                        assert_eq!(min, u16::MIN as i64);
+                        assert_eq!(max, u16::MAX as i64);
+                    }
+                );
+            }
 
             // Test that minimum value is OK.
             assert_match!(
@@ -684,16 +704,30 @@ mod tests {
             );
 
             // Test that below range is an error.
-            assert_match!(
-                u16::try_from(RObject::from((u16::MIN as i32) - 1)),
-                Err(Error::MissingValueError) => {}
-            );
+            {
+                let test_value = (u16::MIN as i32) - 1;
+                assert_match!(
+                    u16::try_from(RObject::from((u16::MIN as i32) - 1)),
+                    Err(Error::ValueOutOfRange { value, min, max }) => {
+                        assert_eq!(value, test_value as i64);
+                        assert_eq!(min, u16::MIN as i64);
+                        assert_eq!(max, u16::MAX as i64);
+                    }
+                );
+            }
 
             // Test that above range is an error.
-            assert_match!(
-                u16::try_from(RObject::from((u16::MAX as i32) + 1)),
-                Err(Error::MissingValueError) => {}
-            );
+            {
+                let test_value = (u16::MAX as i32) + 1;
+                assert_match!(
+                    u16::try_from(RObject::from((u16::MAX as i32) + 1)),
+                    Err(Error::ValueOutOfRange { value, min, max }) => {
+                        assert_eq!(value, test_value as i64);
+                        assert_eq!(min, u16::MIN as i64);
+                        assert_eq!(max, u16::MAX as i64);
+                    }
+                );
+            }
 
             // Test that minimum value is OK.
             assert_match!(

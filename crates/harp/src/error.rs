@@ -29,6 +29,11 @@ pub enum Error {
     UnsafeEvaluationError(String),
     UnexpectedLength(usize, usize),
     UnexpectedType(u32, Vec<u32>),
+    ValueOutOfRange {
+        value: i64,
+        min: i64,
+        max: i64,
+    },
     InvalidUtf8(Utf8Error),
     TryCatchError {
         message: Vec<String>,
@@ -104,6 +109,14 @@ impl fmt::Display for Error {
                     f,
                     "Unexpected vector type (expected {}; got {})",
                     expected, actual
+                )
+            },
+
+            Error::ValueOutOfRange { value, min, max } => {
+                write!(
+                    f,
+                    "Value is out of range: value: {} min: {} max: {}",
+                    value, min, max
                 )
             },
 
