@@ -103,6 +103,10 @@ pub struct Binding {
     pub value: BindingValue,
 }
 
+// For sending to mean thread as R task
+unsafe impl Send for Binding {}
+unsafe impl Sync for Binding {}
+
 impl Binding {
     pub fn new(env: SEXP, frame: SEXP) -> Self {
         unsafe {

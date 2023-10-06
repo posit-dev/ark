@@ -218,6 +218,7 @@ impl Drop for RObject {
 // allow them to be sent across threads because we require the acquisition of a
 // lock on the outer R interpreter (see `r_lock!`) before using them.
 unsafe impl Send for RObject {}
+unsafe impl Sync for RObject {}
 
 impl Deref for RObject {
     type Target = SEXP;

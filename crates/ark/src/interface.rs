@@ -41,6 +41,7 @@ use amalthea::wire::stream::Stream;
 use amalthea::wire::stream::StreamOutput;
 use anyhow::*;
 use bus::Bus;
+use crossbeam::channel::unbounded;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::RecvTimeoutError;
 use crossbeam::channel::Sender;
@@ -73,6 +74,7 @@ use crate::kernel::Kernel;
 use crate::lsp::events::EVENTS;
 use crate::modules;
 use crate::plots::graphics_device;
+use crate::r_task::RTaskMain;
 use crate::request::debug_request_command;
 use crate::request::RRequest;
 
@@ -268,6 +270,10 @@ pub struct RMain {
     /// thread holds the lock by default, but releases it at opportune
     /// times to allow the LSP to access the R runtime where appropriate.
     runtime_lock_guard: Option<ReentrantMutexGuard<'static, ()>>,
+    pub thread_id: std::thread::ThreadId,
+
+    pub tasks_tx: Sender<RTaskMain>,
+    tasks_rx: Receiver<RTaskMain>,
 
     /// Shared reference to kernel. Currently used by the ark-execution
     /// thread, the R frontend callbacks, and LSP routines called from R
@@ -352,6 +358,9 @@ impl RMain {
         // it when appropriate to give other threads a chance to execute.
         let lock_guard = unsafe { R_RUNTIME_LOCK.lock() };
 
+        // Channel to receive tasks from auxiliary threads via `r_task()`
+        let (tasks_tx, tasks_rx) = unbounded::<RTaskMain>();
+
         Self {
             initializing: true,
             r_request_rx,
@@ -371,6 +380,9 @@ impl RMain {
             dap,
             is_debugging: false,
             old_show_error_messages: None,
+            tasks_tx,
+            tasks_rx,
+            thread_id: std::thread::current().id(),
         }
     }
 
@@ -586,6 +598,12 @@ impl RMain {
         loop {
             // Release the R runtime lock while we're waiting for input.
             self.runtime_lock_guard = None;
+
+            // Run pending task, one at a time
+            if !self.tasks_rx.is_empty() {
+                let mut task = self.tasks_rx.recv().unwrap();
+                task.fulfill();
+            }
 
             // FIXME: Race between interrupt and new code request. To fix
             // this, we could manage the Shell and Control sockets on the
