@@ -43,6 +43,16 @@ macro_rules! r_lock {
 }
 
 #[macro_export]
+macro_rules! r_safely {
+    ($($expr:tt)*) => {{
+        #[allow(unused_unsafe)]
+        $crate::exec::safely(|| {
+            unsafe { $($expr)* } }
+        )
+    }}
+}
+
+#[macro_export]
 macro_rules! with_vector_impl {
     ($x:expr, $class:ident, $variable:ident, $($code:tt)*) => {{
         let fun = |$variable: $class| {

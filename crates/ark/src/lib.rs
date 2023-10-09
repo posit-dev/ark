@@ -29,6 +29,16 @@ pub use r_task::r_task;
 use serde::Deserialize;
 use serde::Serialize;
 
+#[macro_export]
+macro_rules! r_safely {
+    ($($expr:tt)*) => {{
+        #[allow(unused_unsafe)]
+        ark::r_task::safely(|| {
+            unsafe { $($expr)* } }
+        )
+    }}
+}
+
 #[derive(Debug, Eq, PartialEq, Copy, Clone, Default, Deserialize, Serialize)]
 pub struct Position {
     row: usize,

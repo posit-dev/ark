@@ -15,6 +15,8 @@ use libR_sys::*;
 
 use crate::error::Error;
 use crate::error::Result;
+use crate::lock::r_polled_events_disabled;
+use crate::lock::R_PolledEvents;
 use crate::object::RObject;
 use crate::protect::RProtect;
 use crate::r_string;
@@ -416,6 +418,39 @@ pub fn r_parse(code: &str) -> Result<RObject> {
         let expr = VECTOR_ELT(*exprs, 0);
         Ok(expr.into())
     }
+}
+
+// TODO: Should probably run in a toplevel-exec. Tasks also need a timeout.
+// This could be implemented with R interrupts but would require to
+// unsafely jump over the Rust stack, unless we wrapped all R API functions
+// to return an Option.
+pub fn safely<'env, F, T>(f: F) -> T
+where
+    F: FnOnce() -> T,
+    F: 'env,
+    T: 'env,
+{
+    let polled_events = unsafe { R_PolledEvents };
+    let interrupts_suspended = unsafe { R_interrupts_suspended };
+    unsafe {
+        // Disable polled events in this scope.
+        R_PolledEvents = Some(r_polled_events_disabled);
+
+        // Disable interrupts in this scope.
+        R_interrupts_suspended = 1;
+    }
+
+    // Execute the callback.
+    let result = f();
+
+    // Restore state
+    // TODO: Needs unwind protection
+    unsafe {
+        R_interrupts_suspended = interrupts_suspended;
+        R_PolledEvents = polled_events;
+    }
+
+    result
 }
 
 #[cfg(test)]

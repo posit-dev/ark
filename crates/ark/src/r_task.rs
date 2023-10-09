@@ -10,14 +10,11 @@ use std::{
     time::Duration,
 };
 
-use libR_sys::R_interrupts_suspended;
+use harp::exec::safely;
 
 extern "C" {
     pub static mut R_PolledEvents: Option<unsafe extern "C" fn()>;
 }
-
-#[no_mangle]
-pub extern "C" fn r_polled_events_disabled() {}
 
 use crossbeam::channel::bounded;
 use log::info;
@@ -117,39 +114,6 @@ fn acquire_r_main() -> &'static mut RMain {
             std::thread::sleep(Duration::from_millis(100));
         }
     }
-}
-
-// TODO: Should probably run in a toplevel-exec. Tasks also need a timeout.
-// This could be implemented with R interrupts but would require to
-// unsafely jump over the Rust stack, unless we wrapped all R API functions
-// to return an Option.
-fn safely<'env, F, T>(f: F) -> T
-where
-    F: FnOnce() -> T,
-    F: 'env + Send,
-    T: 'env + Send,
-{
-    let polled_events = unsafe { R_PolledEvents };
-    let interrupts_suspended = unsafe { R_interrupts_suspended };
-    unsafe {
-        // Disable polled events in this scope.
-        R_PolledEvents = Some(r_polled_events_disabled);
-
-        // Disable interrupts in this scope.
-        R_interrupts_suspended = 1;
-    }
-
-    // Execute the callback.
-    let result = f();
-
-    // Restore state
-    // TODO: Needs unwind protection
-    unsafe {
-        R_interrupts_suspended = interrupts_suspended;
-        R_PolledEvents = polled_events;
-    }
-
-    result
 }
 
 // Tests are tricky because `harp::test::start_r()` is very bare bones and

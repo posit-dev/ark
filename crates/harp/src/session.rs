@@ -15,7 +15,7 @@ use crate::exec::r_parse;
 use crate::object::RObject;
 use crate::protect::RProtect;
 use crate::r_lang;
-use crate::r_lock;
+use crate::r_safely;
 use crate::r_symbol;
 use crate::utils::r_normalize_path;
 use crate::utils::r_try_eval_silent;
@@ -32,7 +32,7 @@ static mut OPTIONS_FN: Option<SEXP> = None;
 pub fn r_n_frame() -> crate::error::Result<i32> {
     SESSION_INIT.call_once(init_interface);
 
-    r_lock! {
+    r_safely! {
         let ffi = r_try_eval_silent(NFRAME_CALL.unwrap_unchecked(), R_BaseEnv)?;
         let n_frame = IntegerVector::new(ffi)?;
         Ok(n_frame.get_unchecked_elt(0))
@@ -40,8 +40,8 @@ pub fn r_n_frame() -> crate::error::Result<i32> {
 }
 
 pub fn r_sys_frame(n: c_int) -> crate::error::Result<SEXP> {
-    r_lock! {
-        let mut protect = RProtect::new();
+    let mut protect = unsafe { RProtect::new() };
+    r_safely! {
         let n = protect.add(Rf_ScalarInteger(n));
         let call = protect.add(r_lang!(r_symbol!("sys.frame"), n));
         Ok(r_try_eval_silent(call, R_BaseEnv)?)
@@ -101,7 +101,7 @@ pub fn r_stack_info() -> anyhow::Result<Vec<FrameInfo>> {
 
     // FIXME: It's better not to use `r_try_catch()` here because it adds
     // frames to the stack. Should wrap in a top-level-exec instead.
-    let _ = r_lock!({
+    let _ = r_safely!({
         (|| -> anyhow::Result<()> {
             let info = r_try_eval_silent(STACK_INFO_CALL.unwrap(), R_GlobalEnv)?;
             Rf_protect(info);
