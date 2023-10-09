@@ -10,16 +10,15 @@ use std::{
     time::Duration,
 };
 
+use crate::interface::{RMain, R_MAIN};
+use crossbeam::channel::bounded;
 use harp::exec::safely;
+use harp::test::R_TASK_BYPASS;
+use log::info;
 
 extern "C" {
     pub static mut R_PolledEvents: Option<unsafe extern "C" fn()>;
 }
-
-use crossbeam::channel::bounded;
-use log::info;
-
-use crate::interface::{RMain, R_MAIN};
 
 type SharedOption<T> = Arc<Mutex<Option<T>>>;
 
@@ -29,6 +28,11 @@ where
     F: 'env + Send,
     T: 'env + Send,
 {
+    // Escape hatch for unit tests
+    if unsafe { R_TASK_BYPASS } {
+        return f();
+    }
+
     let main = acquire_r_main();
 
     // Recursive case: If we're on ark-r-main already, just run the

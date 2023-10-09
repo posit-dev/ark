@@ -22,10 +22,17 @@ use stdext::cargs;
 
 use crate::lock::with_r_lock;
 
+// Escape hatch for unit tests
+pub static mut R_TASK_BYPASS: bool = false;
+
 static INIT: Once = Once::new();
 
 pub fn start_r() {
     INIT.call_once(|| {
+        unsafe {
+            R_TASK_BYPASS = true;
+        }
+
         // TODO: Right now, tests can fail if the version of R discovered
         // on the PATH, and the version of R that 'ark' linked to at compile
         // time, do not match. We could relax this requirement by allowing
