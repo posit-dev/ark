@@ -7,7 +7,17 @@
 
 use std::sync::{Arc, Mutex};
 
+use libR_sys::R_interrupts_suspended;
+
+extern "C" {
+    pub static mut R_PolledEvents: Option<unsafe extern "C" fn()>;
+}
+
+#[no_mangle]
+pub extern "C" fn r_polled_events_disabled() {}
+
 use crossbeam::channel::bounded;
+use log::info;
 
 use crate::interface::R_MAIN;
 
@@ -23,13 +33,17 @@ where
     // task and return. This allows `r_task(|| { r_task(|| {}) })`
     // to run without deadlocking.
     let main = unsafe { R_MAIN.as_mut().unwrap() }; // FIXME: Check init timings
-    if main.thread_id == std::thread::current().id() {
+    let thread_id = std::thread::current().id();
+    if main.thread_id == thread_id {
         return f();
     }
 
     // The following is adapted from `Crossbeam::thread::ScopedThreadBuilder`.
     // Instead of scoping the task with a thread join, we send it on the R
     // thread and block the thread until a completion channel wakes us up.
+
+    // Record how long it takes for the task to be picked up on the main thread.
+    let now = std::time::SystemTime::now();
 
     // The result of `f` will be stored here.
     let result = SharedOption::default();
@@ -38,7 +52,7 @@ where
     {
         let result = Arc::clone(&result);
         let closure = move || {
-            let res = f();
+            let res = safely(f);
             *result.lock().unwrap() = Some(res);
         };
 
@@ -60,6 +74,15 @@ where
         status_rx.recv().unwrap();
     }
 
+    // Log how long we were stuck waiting.
+    let elapsed = now.elapsed().unwrap().as_millis();
+    info!(
+        "Thread '{}' ({:?}) was unblocked after waiting for {} milliseconds.",
+        std::thread::current().name().unwrap_or("<unnamed>"),
+        thread_id,
+        elapsed
+    );
+
     // Retrieve closure result from the synchronized shared option.
     // If we get here without panicking we know the result was assigned.
     return result.lock().unwrap().take().unwrap();
@@ -78,6 +101,39 @@ impl RTaskMain {
         // Unblock caller
         self.status_tx.send(true).unwrap();
     }
+}
+
+// TODO: Should probably run in a toplevel-exec. Tasks also need a timeout.
+// This could be implemented with R interrupts but would require to
+// unsafely jump over the Rust stack, unless we wrapped all R API functions
+// to return an Option.
+fn safely<'env, F, T>(f: F) -> T
+where
+    F: FnOnce() -> T,
+    F: 'env + Send,
+    T: 'env + Send,
+{
+    let polled_events = unsafe { R_PolledEvents };
+    let interrupts_suspended = unsafe { R_interrupts_suspended };
+    unsafe {
+        // Disable polled events in this scope.
+        R_PolledEvents = Some(r_polled_events_disabled);
+
+        // Disable interrupts in this scope.
+        R_interrupts_suspended = 1;
+    }
+
+    // Execute the callback.
+    let result = f();
+
+    // Restore state
+    // TODO: Needs unwind protection
+    unsafe {
+        R_interrupts_suspended = interrupts_suspended;
+        R_PolledEvents = polled_events;
+    }
+
+    result
 }
 
 // Tests are tricky because `harp::test::start_r()` is very bare bones and
