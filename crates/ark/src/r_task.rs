@@ -5,7 +5,10 @@
 //
 //
 
-use std::sync::{Arc, Mutex};
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use libR_sys::R_interrupts_suspended;
 
@@ -19,7 +22,7 @@ pub extern "C" fn r_polled_events_disabled() {}
 use crossbeam::channel::bounded;
 use log::info;
 
-use crate::interface::R_MAIN;
+use crate::interface::{RMain, R_MAIN};
 
 type SharedOption<T> = Arc<Mutex<Option<T>>>;
 
@@ -29,10 +32,11 @@ where
     F: 'env + Send,
     T: 'env + Send,
 {
+    let main = acquire_r_main();
+
     // Recursive case: If we're on ark-r-main already, just run the
     // task and return. This allows `r_task(|| { r_task(|| {}) })`
     // to run without deadlocking.
-    let main = unsafe { R_MAIN.as_mut().unwrap() }; // FIXME: Check init timings
     let thread_id = std::thread::current().id();
     if main.thread_id == thread_id {
         return f();
@@ -100,6 +104,18 @@ impl RTaskMain {
 
         // Unblock caller
         self.status_tx.send(true).unwrap();
+    }
+}
+
+// Be defensive for the case an auxiliary thread runs a task before R is initialized
+fn acquire_r_main() -> &'static mut RMain {
+    unsafe {
+        loop {
+            if !R_MAIN.is_none() {
+                return R_MAIN.as_mut().unwrap();
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
     }
 }
 
