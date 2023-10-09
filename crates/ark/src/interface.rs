@@ -52,7 +52,6 @@ use harp::interrupts::RInterruptsSuspendedScope;
 use harp::lock::R_RUNTIME_LOCK;
 use harp::lock::R_RUNTIME_LOCK_COUNT;
 use harp::object::RObject;
-use harp::r_lock;
 use harp::r_safely;
 use harp::r_symbol;
 use harp::routines::r_register_routines;
@@ -75,6 +74,7 @@ use crate::kernel::Kernel;
 use crate::lsp::events::EVENTS;
 use crate::modules;
 use crate::plots::graphics_device;
+use crate::r_task;
 use crate::r_task::RTaskMain;
 use crate::request::debug_request_command;
 use crate::request::RRequest;
@@ -999,7 +999,7 @@ fn peek_execute_response(exec_count: u32) -> ExecuteResponse {
         data.insert("text/plain".to_string(), json!(""));
 
         // Include HTML representation of data.frame
-        r_lock! {
+        r_task(|| unsafe {
             let value = Rf_findVarInFrame(R_GlobalEnv, r_symbol!(".Last.value"));
             if r_is_data_frame(value) {
                 match to_html(value) {
@@ -1010,7 +1010,7 @@ fn peek_execute_response(exec_count: u32) -> ExecuteResponse {
                     },
                 };
             }
-        }
+        });
 
         main.iopub_tx
             .send(IOPubMessage::ExecuteResult(ExecuteResult {

@@ -34,6 +34,7 @@ use tree_sitter::Node;
 use crate::lsp::backend::Backend;
 use crate::lsp::documents::Document;
 use crate::lsp::indexer;
+use crate::r_task;
 use crate::Range;
 
 #[derive(Clone)]
@@ -148,11 +149,10 @@ fn generate_diagnostics(doc: &Document) -> Vec<Diagnostic> {
             _ => {},
         });
 
-        r_lock! {
+        r_task(|| unsafe {
             // Get the set of symbols currently in scope.
             let mut envir = R_GlobalEnv;
             while envir != R_EmptyEnv {
-
                 // List symbol names in this environment.
                 let mut protect = RProtect::new();
                 let objects = protect.add(R_lsInternal(envir, 1));
@@ -185,7 +185,7 @@ fn generate_diagnostics(doc: &Document) -> Vec<Diagnostic> {
                     context.installed_packages.insert(name);
                 }
             }
-        }
+        });
 
         // Start iterating through the nodes.
         let root = doc.ast.root_node();
@@ -637,6 +637,12 @@ impl<'a> TreeSitterCall<'a> {
         Ok(Self { call, _value_nodes })
     }
 }
+
+// FIXME: Can't directly switch to `r_task()`
+// rustc [E0277]: `*const tree_sitter::ffi::TSTree` cannot be shared between threads safely
+// within `tree_sitter::Node<'_>`, the trait `Sync` is not implemented for `*const tree_sitter::ffi::TSTree`
+// required for `&tree_sitter::Node<'_>` to implement `Send`
+// rustc [E0277]: `*const c_void` cannot be shared between threads safely
 
 fn recurse_call_arguments_custom(
     node: Node,

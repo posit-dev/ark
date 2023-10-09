@@ -42,6 +42,8 @@ fn test_environment_list() {
     // against.
     start_r();
 
+    // TODO: Switch to `r_task()`
+
     // Create a new environment for the test. We use a new, empty environment
     // (with the empty environment as its parent) so that each test in this
     // file can run independently.

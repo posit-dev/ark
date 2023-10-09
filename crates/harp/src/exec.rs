@@ -530,6 +530,7 @@ mod tests {
 
     #[test]
     fn test_threads() {
+        // TODO: Switch to `r_task()`
         r_test_unlocked! {
 
             // Spawn a bunch of threads that try to interact with R.

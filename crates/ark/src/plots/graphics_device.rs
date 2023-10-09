@@ -42,7 +42,6 @@ use crossbeam::channel::Select;
 use crossbeam::channel::Sender;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
-use harp::r_lock;
 use libR_sys::*;
 use once_cell::sync::Lazy;
 use serde_json::json;
@@ -53,6 +52,7 @@ use uuid::Uuid;
 use crate::plots::message::PlotMessageInput;
 use crate::plots::message::PlotMessageOutput;
 use crate::plots::message::PlotMessageOutputImage;
+use crate::r_task;
 
 const POSITRON_PLOT_CHANNEL_ID: &str = "positron.plot";
 
@@ -364,7 +364,7 @@ impl DeviceContext {
         // TODO: Is it possible to do this without writing to file; e.g. could
         // we instead write to a connection or something else?
         self._rendering = true;
-        let image_path = r_lock! {
+        let image_path = r_task(|| unsafe {
             RFunction::from(".ps.graphics.renderPlot")
                 .param("id", plot_id)
                 .param("width", width)
@@ -372,7 +372,7 @@ impl DeviceContext {
                 .param("dpr", pixel_ratio)
                 .call()?
                 .to::<String>()
-        };
+        });
         self._rendering = false;
 
         let image_path = unwrap!(image_path, Err(error) => {
