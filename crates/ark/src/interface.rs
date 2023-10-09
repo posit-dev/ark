@@ -599,12 +599,7 @@ impl RMain {
         loop {
             // Release the R runtime lock while we're waiting for input.
             self.runtime_lock_guard = None;
-
-            // Run pending task, one at a time
-            if !self.tasks_rx.is_empty() {
-                let mut task = self.tasks_rx.recv().unwrap();
-                task.fulfill();
-            }
+            self.run_one_task();
 
             // FIXME: Race between interrupt and new code request. To fix
             // this, we could manage the Shell and Control sockets on the
@@ -883,6 +878,8 @@ impl RMain {
     /// Invoked by the R event loop
     fn polled_events(&mut self) {
         // Check for pending tasks.
+        self.run_one_task();
+
         let count = R_RUNTIME_LOCK_COUNT.load(std::sync::atomic::Ordering::Acquire);
         if count == 0 {
             return;
@@ -934,6 +931,14 @@ impl RMain {
 
         // Check for Positron render requests
         graphics_device::on_process_events();
+    }
+
+    fn run_one_task(&mut self) {
+        // Run pending task, one at a time
+        if !self.tasks_rx.is_empty() {
+            let mut task = self.tasks_rx.recv().unwrap();
+            task.fulfill();
+        }
     }
 
     fn send_dap(&self, event: DapBackendEvent) {
