@@ -430,6 +430,8 @@ where
     F: 'env,
     T: 'env,
 {
+    // NOTE: Keep this function a Plain Old Frame without Drop destructors
+
     let polled_events = unsafe { R_PolledEvents };
     let interrupts_suspended = unsafe { R_interrupts_suspended };
     unsafe {

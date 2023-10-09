@@ -53,6 +53,7 @@ use harp::lock::R_RUNTIME_LOCK;
 use harp::lock::R_RUNTIME_LOCK_COUNT;
 use harp::object::RObject;
 use harp::r_lock;
+use harp::r_safely;
 use harp::r_symbol;
 use harp::routines::r_register_routines;
 use harp::session::r_poke_option_show_error_messages;
@@ -1064,7 +1065,7 @@ extern "C" fn r_read_console(
     hist: c_int,
 ) -> i32 {
     let main = unsafe { R_MAIN.as_mut().unwrap() };
-    let (out, interrupt) = main.read_console(prompt, buf, buflen, hist);
+    let (out, interrupt) = r_safely!(main.read_console(prompt, buf, buflen, hist));
 
     // NOTE: Keep this function a "Plain Old Frame" without any
     // destructors. We're longjumping from here in case of interrupt.

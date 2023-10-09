@@ -32,7 +32,7 @@ static mut OPTIONS_FN: Option<SEXP> = None;
 pub fn r_n_frame() -> crate::error::Result<i32> {
     SESSION_INIT.call_once(init_interface);
 
-    r_safely! {
+    unsafe {
         let ffi = r_try_eval_silent(NFRAME_CALL.unwrap_unchecked(), R_BaseEnv)?;
         let n_frame = IntegerVector::new(ffi)?;
         Ok(n_frame.get_unchecked_elt(0))
@@ -40,8 +40,8 @@ pub fn r_n_frame() -> crate::error::Result<i32> {
 }
 
 pub fn r_sys_frame(n: c_int) -> crate::error::Result<SEXP> {
-    let mut protect = unsafe { RProtect::new() };
-    r_safely! {
+    unsafe {
+        let mut protect = RProtect::new();
         let n = protect.add(Rf_ScalarInteger(n));
         let call = protect.add(r_lang!(r_symbol!("sys.frame"), n));
         Ok(r_try_eval_silent(call, R_BaseEnv)?)
