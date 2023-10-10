@@ -25,8 +25,8 @@ type SharedOption<T> = Arc<Mutex<Option<T>>>;
 pub fn r_task<'env, F, T>(f: F) -> T
 where
     F: FnOnce() -> T,
-    F: 'env + Send,
-    T: 'env + Send,
+    F: 'env,
+    T: 'env,
 {
     // Escape hatch for unit tests
     if unsafe { R_TASK_BYPASS } {
@@ -62,7 +62,7 @@ where
         };
 
         // Move `f` to heap and erase its lifetime
-        let closure: Box<dyn FnOnce() + Send + 'env> = Box::new(closure);
+        let closure: Box<dyn FnOnce() + 'env> = Box::new(closure);
         let closure: Box<dyn FnOnce() + Send + 'static> = unsafe { std::mem::transmute(closure) };
 
         // Channel to communicate completion status of the task/closure
