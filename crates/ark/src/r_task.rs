@@ -5,16 +5,17 @@
 //
 //
 
-use std::{
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::time::Duration;
 
-use crate::interface::{RMain, R_MAIN};
 use crossbeam::channel::bounded;
 use harp::exec::safely;
 use harp::test::R_TASK_BYPASS;
 use log::info;
+
+use crate::interface::RMain;
+use crate::interface::R_MAIN;
 
 extern "C" {
     pub static mut R_PolledEvents: Option<unsafe extern "C" fn()>;
