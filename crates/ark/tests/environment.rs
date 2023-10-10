@@ -69,7 +69,7 @@ fn test_environment_list() {
     let incoming_tx = comm.incoming_tx.clone();
     let outgoing_rx = comm.outgoing_rx.clone();
     r_task(|| {
-        let test_env_view = RObject::view(*test_env);
+        let test_env_view = RObject::view(test_env.sexp);
         REnvironment::start(test_env_view, comm.clone(), comm_manager_tx.clone());
     });
 
@@ -90,7 +90,7 @@ fn test_environment_list() {
     // variables with the new variable in it.
     r_task(|| unsafe {
         let sym = r_symbol!("everything");
-        Rf_defineVar(sym, Rf_ScalarInteger(42), *test_env);
+        Rf_defineVar(sym, Rf_ScalarInteger(42), test_env.sexp);
     });
 
     // Request that the environment be refreshed
@@ -122,7 +122,7 @@ fn test_environment_list() {
 
     // Create another variable
     r_task(|| unsafe {
-        r_envir_set("nothing", Rf_ScalarInteger(43), *test_env);
+        r_envir_set("nothing", Rf_ScalarInteger(43), test_env.sexp);
         r_envir_remove("everything", test_env.sexp);
     });
 
@@ -173,17 +173,17 @@ fn test_environment_list() {
 
     // test the env is now empty
     r_task(|| unsafe {
-        let contents = RObject::new(R_lsInternal(*test_env, Rboolean_TRUE));
+        let contents = RObject::new(R_lsInternal(test_env.sexp, Rboolean_TRUE));
         assert_eq!(Rf_length(*contents), 0);
     });
 
     // Create some more variables
     r_task(|| unsafe {
         let sym = r_symbol!("a");
-        Rf_defineVar(sym, Rf_ScalarInteger(42), *test_env);
+        Rf_defineVar(sym, Rf_ScalarInteger(42), test_env.sexp);
 
         let sym = r_symbol!("b");
-        Rf_defineVar(sym, Rf_ScalarInteger(43), *test_env);
+        Rf_defineVar(sym, Rf_ScalarInteger(43), test_env.sexp);
     });
 
     // Simulate a prompt signal
