@@ -7,7 +7,6 @@
 
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::os::raw::c_void;
 use std::time::Duration;
 
 use anyhow::bail;
@@ -17,9 +16,7 @@ use harp::exec::RFunctionExt;
 use harp::external_ptr::ExternalPointer;
 use harp::object::RObject;
 use harp::protect::RProtect;
-use harp::r_lock;
 use harp::r_symbol;
-use harp::utils::r_is_null;
 use harp::utils::r_symbol_quote_invalid;
 use harp::utils::r_symbol_valid;
 use harp::vector::CharacterVector;
@@ -644,72 +641,72 @@ impl<'a> TreeSitterCall<'a> {
 // required for `&tree_sitter::Node<'_>` to implement `Send`
 // rustc [E0277]: `*const c_void` cannot be shared between threads safely
 
-fn recurse_call_arguments_custom(
-    node: Node,
-    context: &mut DiagnosticContext,
-    diagnostics: &mut Vec<Diagnostic>,
-    function: &str,
-    diagnostic_function: &str,
-) -> Result<()> {
-    r_lock! {
-        // Build a call that mixes treesitter nodes (as external pointers)
-        // library(foo, pos = 2 + 2)
-        //    ->
-        // library([0, <node0>], pos = [1, <node1>])
-        // where:
-        //   - node0 is an external pointer to a treesitter Node for the identifier `foo`
-        //   - node1 is an external pointer to a treesitter Node for the call `2 + 2`
-        //
-        // The TreeSitterCall object holds on to the nodes, so that they can be
-        // safely passed down to the R side as external pointers
-        let call = TreeSitterCall::new(node, function, context)?;
+// fn recurse_call_arguments_custom(
+//     node: Node,
+//     context: &mut DiagnosticContext,
+//     diagnostics: &mut Vec<Diagnostic>,
+//     function: &str,
+//     diagnostic_function: &str,
+// ) -> Result<()> {
+//     r_lock! {
+//         // Build a call that mixes treesitter nodes (as external pointers)
+//         // library(foo, pos = 2 + 2)
+//         //    ->
+//         // library([0, <node0>], pos = [1, <node1>])
+//         // where:
+//         //   - node0 is an external pointer to a treesitter Node for the identifier `foo`
+//         //   - node1 is an external pointer to a treesitter Node for the call `2 + 2`
+//         //
+//         // The TreeSitterCall object holds on to the nodes, so that they can be
+//         // safely passed down to the R side as external pointers
+//         let call = TreeSitterCall::new(node, function, context)?;
 
-        let custom_diagnostics = RFunction::from(diagnostic_function)
-            .add(&call)
-            .add(ExternalPointer::new(&context.source))
-            .call()?;
+//         let custom_diagnostics = RFunction::from(diagnostic_function)
+//             .add(&call)
+//             .add(ExternalPointer::new(&context.source))
+//             .call()?;
 
-        if !r_is_null(*custom_diagnostics) {
-            let n = XLENGTH(*custom_diagnostics);
-            for i in 0..n {
-                // diag is a list with:
-                //   - The kind of diagnostic: skip, default, simple
-                //   - The node external pointer, i.e. the ones made in TreeSitterCall::new
-                //   - The message, when kind is "simple"
-                let diag = VECTOR_ELT(*custom_diagnostics, i);
+//         if !r_is_null(*custom_diagnostics) {
+//             let n = XLENGTH(*custom_diagnostics);
+//             for i in 0..n {
+//                 // diag is a list with:
+//                 //   - The kind of diagnostic: skip, default, simple
+//                 //   - The node external pointer, i.e. the ones made in TreeSitterCall::new
+//                 //   - The message, when kind is "simple"
+//                 let diag = VECTOR_ELT(*custom_diagnostics, i);
 
-                let kind: String = RObject::view(VECTOR_ELT(diag, 0)).try_into()?;
+//                 let kind: String = RObject::view(VECTOR_ELT(diag, 0)).try_into()?;
 
-                if kind == "skip" {
-                    // skip the diagnostic entirely, e.g.
-                    // library(foo)
-                    //         ^^^
-                    continue;
-                }
+//                 if kind == "skip" {
+//                     // skip the diagnostic entirely, e.g.
+//                     // library(foo)
+//                     //         ^^^
+//                     continue;
+//                 }
 
-                let ptr = VECTOR_ELT(diag, 1);
-                let value = *(R_ExternalPtrAddr(ptr) as *const c_void as *const Node);
+//                 let ptr = VECTOR_ELT(diag, 1);
+//                 let value = *(R_ExternalPtrAddr(ptr) as *const c_void as *const Node);
 
-                if kind == "default" {
-                    // the R side gives up, so proceed as normal, e.g.
-                    // library(foo, pos = ...)
-                    //                    ^^^
-                    recurse(value, context, diagnostics)?;
-                } else if kind == "simple" {
-                    // Simple diagnostic from R, e.g.
-                    // library("ggplot3")
-                    //          ^^^^^^^   Package 'ggplot3' is not installed
-                    let message: String = RObject::view(VECTOR_ELT(diag, 2)).try_into()?;
-                    let range: Range = value.range().into();
-                    let diagnostic = Diagnostic::new_simple(range.into(), message.into());
-                    diagnostics.push(diagnostic);
-                }
-            }
-        }
+//                 if kind == "default" {
+//                     // the R side gives up, so proceed as normal, e.g.
+//                     // library(foo, pos = ...)
+//                     //                    ^^^
+//                     recurse(value, context, diagnostics)?;
+//                 } else if kind == "simple" {
+//                     // Simple diagnostic from R, e.g.
+//                     // library("ggplot3")
+//                     //          ^^^^^^^   Package 'ggplot3' is not installed
+//                     let message: String = RObject::view(VECTOR_ELT(diag, 2)).try_into()?;
+//                     let range: Range = value.range().into();
+//                     let diagnostic = Diagnostic::new_simple(range.into(), message.into());
+//                     diagnostics.push(diagnostic);
+//                 }
+//             }
+//         }
 
-        ().ok()
-    }
-}
+//         ().ok()
+//     }
+// }
 
 fn recurse_call(
     node: Node,
@@ -729,25 +726,30 @@ fn recurse_call(
     // things like 'local({ ... })'.
     let fun = callee.utf8_text(context.source.as_bytes())?;
     match fun {
-        // TODO: there should be some sort of registration mechanism so
-        //       that functions can declare that they know how to generate
-        //       diagnostics, i.e. ggplot2::aes() would skip diagnostics
+        // FIXME: These are currently disabled because they use the R
+        // runtime to match arguments with an approach that meshes R and
+        // treesitter objects. This is not compatible with `r_task()`
+        // because treesitter objects are not Send/Sync.
 
-        // special case to deal with library() and require() nse
-        "library" => recurse_call_arguments_custom(
-            node,
-            context,
-            diagnostics,
-            "library",
-            ".ps.diagnostics.custom.library",
-        )?,
-        "require" => recurse_call_arguments_custom(
-            node,
-            context,
-            diagnostics,
-            "require",
-            ".ps.diagnostics.custom.require",
-        )?,
+        // // TODO: there should be some sort of registration mechanism so
+        // //       that functions can declare that they know how to generate
+        // //       diagnostics, i.e. ggplot2::aes() would skip diagnostics
+
+        // // special case to deal with library() and require() nse
+        // "library" => recurse_call_arguments_custom(
+        //     node,
+        //     context,
+        //     diagnostics,
+        //     "library",
+        //     ".ps.diagnostics.custom.library",
+        // )?,
+        // "require" => recurse_call_arguments_custom(
+        //     node,
+        //     context,
+        //     diagnostics,
+        //     "require",
+        //     ".ps.diagnostics.custom.require",
+        // )?,
 
         // default case: recurse into each argument
         _ => recurse_call_arguments_default(node, context, diagnostics)?,
