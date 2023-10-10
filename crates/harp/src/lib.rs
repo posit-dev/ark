@@ -11,7 +11,6 @@ pub mod eval;
 pub mod exec;
 pub mod external_ptr;
 pub mod interrupts;
-pub mod lock;
 pub mod object;
 pub mod protect;
 pub mod r_version;
@@ -26,21 +25,7 @@ pub mod vector;
 
 pub use harp_macros::register;
 
-pub fn initialize() {
-    lock::initialize();
-}
-
-#[macro_export]
-macro_rules! r_lock {
-
-    ($($expr:tt)*) => {{
-        #[allow(unused_unsafe)]
-        $crate::lock::with_r_lock(|| {
-            unsafe { $($expr)* } }
-        )
-    }}
-
-}
+pub fn initialize() {}
 
 #[macro_export]
 macro_rules! r_safely {

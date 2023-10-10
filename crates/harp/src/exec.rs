@@ -15,8 +15,6 @@ use libR_sys::*;
 
 use crate::error::Error;
 use crate::error::Result;
-use crate::lock::r_polled_events_disabled;
-use crate::lock::R_PolledEvents;
 use crate::object::RObject;
 use crate::protect::RProtect;
 use crate::r_string;
@@ -26,6 +24,13 @@ use crate::utils::r_stringify;
 use crate::utils::r_typeof;
 use crate::vector::CharacterVector;
 use crate::vector::Vector;
+
+extern "C" {
+    pub static mut R_PolledEvents: Option<unsafe extern "C" fn()>;
+}
+
+#[no_mangle]
+pub extern "C" fn r_polled_events_disabled() {}
 
 extern "C" {
     pub static R_ParseError: c_int;

@@ -20,7 +20,7 @@ use std::sync::Once;
 use libR_sys::*;
 use stdext::cargs;
 
-use crate::lock::with_r_lock;
+use crate::r_safely;
 
 // Escape hatch for unit tests
 pub static mut R_TASK_BYPASS: bool = false;
@@ -64,30 +64,13 @@ pub fn start_r() {
 
 pub fn r_test_impl<F: FnMut()>(f: F) {
     start_r();
-    with_r_lock(f);
-}
-
-pub fn r_test_unlocked_impl<F: FnMut()>(mut f: F) {
-    start_r();
-    f();
+    r_safely!(f);
 }
 
 #[macro_export]
 macro_rules! r_test {
-
     ($($expr:tt)*) => {
         #[allow(unused_unsafe)]
         $crate::test::r_test_impl(|| unsafe { $($expr)* })
     }
-
-}
-
-#[macro_export]
-macro_rules! r_test_unlocked {
-
-    ($($expr:tt)*) => {
-        #[allow(unused_unsafe)]
-        $crate::test::r_test_unlocked_impl(|| unsafe { $($expr)* })
-    }
-
 }

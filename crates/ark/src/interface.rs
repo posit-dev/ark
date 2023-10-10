@@ -18,7 +18,6 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::Once;
 use std::time::Duration;
-use std::time::SystemTime;
 
 use amalthea::events::BusyEvent;
 use amalthea::events::PositronEvent;
@@ -49,8 +48,6 @@ use harp::exec::r_source;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::interrupts::RInterruptsSuspendedScope;
-use harp::lock::R_RUNTIME_LOCK;
-use harp::lock::R_RUNTIME_LOCK_COUNT;
 use harp::object::RObject;
 use harp::r_safely;
 use harp::r_symbol;
@@ -61,7 +58,6 @@ use harp::utils::r_is_data_frame;
 use libR_sys::*;
 use log::*;
 use nix::sys::signal::*;
-use parking_lot::ReentrantMutexGuard;
 use serde_json::json;
 use stdext::result::ResultOrLog;
 use stdext::*;
@@ -267,12 +263,10 @@ pub struct RMain {
     stderr: String,
     banner: String,
 
-    /// A lock guard, used to manage access to the R runtime.  The main
-    /// thread holds the lock by default, but releases it at opportune
-    /// times to allow the LSP to access the R runtime where appropriate.
-    runtime_lock_guard: Option<ReentrantMutexGuard<'static, ()>>,
+    /// The ID of the R thread
     pub thread_id: std::thread::ThreadId,
 
+    /// Channel to receive tasks from `r_task()`
     pub tasks_tx: Sender<RTaskMain>,
     tasks_rx: Receiver<RTaskMain>,
 
@@ -355,10 +349,6 @@ impl RMain {
         kernel_init_tx: Bus<KernelInfo>,
         dap: Arc<Mutex<Dap>>,
     ) -> Self {
-        // The main thread owns the R runtime lock by default, but releases
-        // it when appropriate to give other threads a chance to execute.
-        let lock_guard = unsafe { R_RUNTIME_LOCK.lock() };
-
         // Channel to receive tasks from auxiliary threads via `r_task()`
         let (tasks_tx, tasks_rx) = unbounded::<RTaskMain>();
 
@@ -373,7 +363,6 @@ impl RMain {
             stdout: String::new(),
             stderr: String::new(),
             banner: String::new(),
-            runtime_lock_guard: Some(lock_guard),
             kernel,
             error_occurred: false,
             error_message: String::new(),
@@ -597,8 +586,7 @@ impl RMain {
         // descriptors that R has open and select() on those for
         // available data?
         loop {
-            // Release the R runtime lock while we're waiting for input.
-            self.runtime_lock_guard = None;
+            // Yield to auxiliary threads.
             self.run_one_task();
 
             // FIXME: Race between interrupt and new code request. To fix
@@ -640,9 +628,6 @@ impl RMain {
                         },
                     };
 
-                    // Take back the lock after we've received some console input.
-                    unsafe { self.runtime_lock_guard = Some(R_RUNTIME_LOCK.lock()) };
-
                     if Self::process_interrupts(&info) {
                         return (0, true);
                     }
@@ -670,8 +655,6 @@ impl RMain {
                     }
                 },
                 Err(err) => {
-                    unsafe { self.runtime_lock_guard = Some(R_RUNTIME_LOCK.lock()) };
-
                     use RecvTimeoutError::*;
                     match err {
                         Timeout => {
@@ -879,27 +862,6 @@ impl RMain {
     fn polled_events(&mut self) {
         // Check for pending tasks.
         self.run_one_task();
-
-        let count = R_RUNTIME_LOCK_COUNT.load(std::sync::atomic::Ordering::Acquire);
-        if count == 0 {
-            return;
-        }
-
-        info!(
-            "{} thread(s) are waiting; the main thread is releasing the R runtime lock.",
-            count
-        );
-        let now = SystemTime::now();
-
-        // `bump()` does a fair unlock, giving other threads
-        // waiting for the lock a chance to acquire it, and then
-        // relocks it.
-        ReentrantMutexGuard::bump(self.runtime_lock_guard.as_mut().unwrap());
-
-        info!(
-            "The main thread re-acquired the R runtime lock after {} milliseconds.",
-            now.elapsed().unwrap().as_millis()
-        );
     }
 
     unsafe fn process_events() {
