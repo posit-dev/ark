@@ -18,12 +18,9 @@ pub struct RParseEvalOptions {
 }
 
 pub unsafe fn r_parse_eval0(code: &str) -> Result<RObject> {
-    r_parse_eval(
-        code,
-        RParseEvalOptions {
-            forbid_function_calls: false,
-        },
-    )
+    r_parse_eval(code, RParseEvalOptions {
+        forbid_function_calls: false,
+    })
 }
 
 pub unsafe fn r_parse_eval(code: &str, options: RParseEvalOptions) -> Result<RObject> {

@@ -5,15 +5,19 @@
 //
 //
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::sync::Mutex;
 
-use amalthea::{comm::comm_channel::CommChannelMsg, language::server_handler::ServerHandler};
+use amalthea::comm::comm_channel::CommChannelMsg;
+use amalthea::language::server_handler::ServerHandler;
 use crossbeam::channel::Sender;
 use harp::session::FrameInfo;
 use serde_json::json;
-use stdext::{log_error, spawn};
+use stdext::log_error;
+use stdext::spawn;
 
-use crate::{dap::dap_server, request::RRequest};
+use crate::dap::dap_server;
+use crate::request::RRequest;
 
 #[derive(Debug, Copy, Clone)]
 pub enum DapBackendEvent {

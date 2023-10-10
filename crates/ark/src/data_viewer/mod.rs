@@ -5,5 +5,5 @@
 //
 //
 
-pub mod r_data_viewer;
 pub mod message;
+pub mod r_data_viewer;

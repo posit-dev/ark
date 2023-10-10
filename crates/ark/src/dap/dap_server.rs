@@ -5,12 +5,19 @@
 //
 //
 
-use std::io::{BufReader, BufWriter, Read, Write};
+use std::io::BufReader;
+use std::io::BufWriter;
+use std::io::Read;
+use std::io::Write;
 use std::net::TcpListener;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::sync::Mutex;
 
 use amalthea::comm::comm_channel::CommChannelMsg;
-use crossbeam::channel::{bounded, unbounded, Receiver, Sender};
+use crossbeam::channel::bounded;
+use crossbeam::channel::unbounded;
+use crossbeam::channel::Receiver;
+use crossbeam::channel::Sender;
 use crossbeam::select;
 use dap::events::*;
 use dap::prelude::*;
@@ -23,9 +30,11 @@ use serde_json::json;
 use stdext::result::ResultOrLog;
 use stdext::spawn;
 
-use crate::request::{debug_request_command, DebugRequest, RRequest};
-
-use super::dap::{Dap, DapBackendEvent};
+use super::dap::Dap;
+use super::dap::DapBackendEvent;
+use crate::request::debug_request_command;
+use crate::request::DebugRequest;
+use crate::request::RRequest;
 
 const THREAD_ID: i64 = -1;
 
