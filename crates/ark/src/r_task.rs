@@ -110,12 +110,19 @@ impl RTaskMain {
 
 // Be defensive for the case an auxiliary thread runs a task before R is initialized
 fn acquire_r_main() -> &'static mut RMain {
+    let now = std::time::SystemTime::now();
+
     unsafe {
         loop {
             if !R_MAIN.is_none() {
                 return R_MAIN.as_mut().unwrap();
             }
             std::thread::sleep(Duration::from_millis(100));
+
+            let elapsed = now.elapsed().unwrap().as_secs();
+            if elapsed > 50 {
+                panic!("Can't acquire main thread");
+            }
         }
     }
 }
