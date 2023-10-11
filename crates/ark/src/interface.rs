@@ -10,6 +10,7 @@
 // The frontend methods called by R are forwarded to the corresponding
 // `RMain` methods via `R_MAIN`.
 
+use std::collections::VecDeque;
 use std::ffi::*;
 use std::os::raw::c_uchar;
 use std::os::raw::c_void;
@@ -269,6 +270,7 @@ pub struct RMain {
     /// Channel to receive tasks from `r_task()`
     pub tasks_tx: Sender<RTaskMain>,
     tasks_rx: Receiver<RTaskMain>,
+    pending_tasks: VecDeque<RTaskMain>,
 
     /// Shared reference to kernel. Currently used by the ark-execution
     /// thread, the R frontend callbacks, and LSP routines called from R
@@ -378,6 +380,7 @@ impl RMain {
             old_show_error_messages: None,
             tasks_tx,
             tasks_rx,
+            pending_tasks: VecDeque::new(),
             thread_id: std::thread::current().id(),
         }
     }
@@ -668,11 +671,10 @@ impl RMain {
                     }
                 }
 
-                // A task woke us up, fulfill it and start next loop tick
-                // (this might run more tasks)
+                // A task woke us up, start next loop tick to yield to it
                 recv(self.tasks_rx) -> task => {
-                    if let Ok(mut task) = task {
-                        task.fulfill();
+                    if let Ok(task) = task {
+                        self.pending_tasks.push_back(task);
                     }
                     continue;
                 }
@@ -892,12 +894,24 @@ impl RMain {
     }
 
     fn yield_to_tasks(&mut self) {
-        // Run pending tasks but yield back to R after max 3 tasks
-        for _ in 0..3 {
+        loop {
             match self.tasks_rx.try_recv() {
-                Ok(mut task) => task.fulfill(),
+                Ok(task) => self.pending_tasks.push_back(task),
                 Err(TryRecvError::Empty) => break,
                 Err(err) => log::error!("{err:}"),
+            }
+        }
+
+        // Run pending tasks but yield back to R after max 3 tasks
+        for _ in 0..3 {
+            if let Some(mut task) = self.pending_tasks.pop_front() {
+                log::info!(
+                    "Yielding to task - {} more task(s) remaining",
+                    self.pending_tasks.len()
+                );
+                task.fulfill();
+            } else {
+                return;
             }
         }
     }
