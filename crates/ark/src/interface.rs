@@ -44,10 +44,10 @@ use crossbeam::channel::unbounded;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::RecvTimeoutError;
 use crossbeam::channel::Sender;
+use crossbeam::channel::TryRecvError;
 use harp::exec::r_source;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
-use harp::interrupts::RInterruptsSuspendedScope;
 use harp::object::RObject;
 use harp::r_safely;
 use harp::r_symbol;
@@ -586,8 +586,7 @@ impl RMain {
         // descriptors that R has open and select() on those for
         // available data?
         loop {
-            // Yield to auxiliary threads.
-            self.run_one_task();
+            self.yield_to_tasks();
 
             // FIXME: Race between interrupt and new code request. To fix
             // this, we could manage the Shell and Control sockets on the
@@ -860,8 +859,7 @@ impl RMain {
 
     /// Invoked by the R event loop
     fn polled_events(&mut self) {
-        // Check for pending tasks.
-        self.run_one_task();
+        self.yield_to_tasks();
     }
 
     unsafe fn process_events() {
@@ -893,11 +891,14 @@ impl RMain {
         graphics_device::on_process_events();
     }
 
-    fn run_one_task(&mut self) {
-        // Run pending task, one at a time
-        if !self.tasks_rx.is_empty() {
-            let mut task = self.tasks_rx.recv().unwrap();
-            task.fulfill();
+    fn yield_to_tasks(&mut self) {
+        // Run pending tasks but yield back to R after max 3 tasks
+        for _ in 0..3 {
+            match self.tasks_rx.try_recv() {
+                Ok(mut task) => task.fulfill(),
+                Err(TryRecvError::Empty) => break,
+                Err(err) => log::error!("{err:}"),
+            }
         }
     }
 
