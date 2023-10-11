@@ -865,10 +865,8 @@ impl RMain {
     }
 
     unsafe fn process_events() {
-        // Don't process interrupts in this scope.
-        let _interrupts_suspended = RInterruptsSuspendedScope::new();
-
-        // Process regular R events.
+        // Process regular R events. We're normally running with polled
+        // events disabled so that won't run here.
         R_ProcessEvents();
 
         // Run handlers if we have data available. This is necessary
