@@ -46,11 +46,11 @@ use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use crossbeam::channel::TryRecvError;
 use crossbeam::select;
+use harp::exec::r_safely;
 use harp::exec::r_source;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
-use harp::r_safely;
 use harp::r_symbol;
 use harp::routines::r_register_routines;
 use harp::session::r_poke_option_show_error_messages;
@@ -1045,7 +1045,7 @@ extern "C" fn r_read_console(
     hist: c_int,
 ) -> i32 {
     let main = unsafe { R_MAIN.as_mut().unwrap() };
-    let result = r_safely!(main.read_console(prompt, buf, buflen, hist));
+    let result = r_safely(|| main.read_console(prompt, buf, buflen, hist));
 
     // NOTE: Keep this function a "Plain Old Frame" without any
     // destructors. We're longjumping from here in case of interrupt.

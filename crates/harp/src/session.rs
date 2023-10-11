@@ -15,7 +15,6 @@ use crate::exec::r_parse;
 use crate::object::RObject;
 use crate::protect::RProtect;
 use crate::r_lang;
-use crate::r_safely;
 use crate::r_symbol;
 use crate::utils::r_normalize_path;
 use crate::utils::r_try_eval_silent;

@@ -20,7 +20,7 @@ use std::sync::Once;
 use libR_sys::*;
 use stdext::cargs;
 
-use crate::r_safely;
+use crate::exec::r_safely;
 
 // Escape hatch for unit tests
 pub static mut R_TASK_BYPASS: bool = false;
@@ -62,9 +62,10 @@ pub fn start_r() {
     });
 }
 
+// FIXME: Actually run `f` and fix thread safety in tests
 pub fn r_test_impl<F: FnMut()>(f: F) {
     start_r();
-    r_safely!(f);
+    r_safely(|| f);
 }
 
 #[macro_export]

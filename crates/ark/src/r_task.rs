@@ -10,7 +10,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use crossbeam::channel::bounded;
-use harp::exec::safely;
+use harp::exec::r_safely;
 use harp::test::R_TASK_BYPASS;
 
 use crate::interface::RMain;
@@ -67,7 +67,7 @@ where
     {
         let result = Arc::clone(&result);
         let closure = move || {
-            let res = safely(f);
+            let res = r_safely(f);
             *result.lock().unwrap() = Some(res);
         };
 
