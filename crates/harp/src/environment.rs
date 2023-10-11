@@ -103,7 +103,7 @@ pub struct Binding {
     pub value: BindingValue,
 }
 
-// For sending to mean thread as R task
+// For sending to main thread as R task
 unsafe impl Send for Binding {}
 unsafe impl Sync for Binding {}
 

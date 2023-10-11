@@ -53,7 +53,6 @@ where
 
     // The result of `f` will be stored here.
     let result = SharedOption::default();
-    let result = Arc::clone(&result);
 
     {
         let result = Arc::clone(&result);
