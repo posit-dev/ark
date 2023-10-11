@@ -15,6 +15,7 @@
 
 use std::os::raw::c_char;
 use std::process::Command;
+use std::sync::Mutex;
 use std::sync::Once;
 
 use libR_sys::*;
@@ -62,10 +63,14 @@ pub fn start_r() {
     });
 }
 
-// FIXME: Actually run `f` and fix thread safety in tests
+static mut R_RUNTIME_LOCK: Mutex<()> = Mutex::new(());
+
 pub fn r_test_impl<F: FnMut()>(f: F) {
     start_r();
-    r_safely(|| f);
+
+    let guard = unsafe { R_RUNTIME_LOCK.lock() };
+    r_safely(f);
+    drop(guard);
 }
 
 #[macro_export]
