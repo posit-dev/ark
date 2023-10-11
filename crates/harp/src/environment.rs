@@ -104,8 +104,10 @@ pub struct Binding {
 }
 
 // For sending to main thread as R task
-unsafe impl Send for Binding {}
 unsafe impl Sync for Binding {}
+
+// FIXME: This should only be Sync
+unsafe impl Send for Binding {}
 
 impl Binding {
     pub fn new(env: SEXP, frame: SEXP) -> Self {
