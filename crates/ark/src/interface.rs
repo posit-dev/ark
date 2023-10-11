@@ -42,9 +42,9 @@ use anyhow::*;
 use bus::Bus;
 use crossbeam::channel::unbounded;
 use crossbeam::channel::Receiver;
-use crossbeam::channel::RecvTimeoutError;
 use crossbeam::channel::Sender;
 use crossbeam::channel::TryRecvError;
+use crossbeam::select;
 use harp::exec::r_source;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
@@ -340,6 +340,12 @@ pub enum ConsoleInput {
     Input(String),
 }
 
+pub enum ConsoleResult {
+    NewInput,
+    Interrupt,
+    Disconnected,
+}
+
 impl RMain {
     pub fn new(
         kernel: Arc<Mutex<Kernel>>,
@@ -476,7 +482,7 @@ impl RMain {
         buf: *mut c_uchar,
         buflen: c_int,
         _hist: c_int,
-    ) -> (i32, bool) {
+    ) -> ConsoleResult {
         let info = Self::prompt_info(prompt);
         debug!("R prompt: {}", info.input_prompt);
 
@@ -499,7 +505,7 @@ impl RMain {
             unsafe {
                 libc::strcpy(buf as *mut c_char, n.as_ptr());
             }
-            return (1, false);
+            return ConsoleResult::NewInput;
         }
 
         // We got a prompt request marking the end of the previous
@@ -579,14 +585,24 @@ impl RMain {
             }
         }
 
-        // Match with a timeout. Necessary because we need to
-        // pump the event loop while waiting for console input.
-        //
-        // Alternatively, we could try to figure out the file
-        // descriptors that R has open and select() on those for
-        // available data?
         loop {
+            // Yield to auxiliary threads and to the R event loop
             self.yield_to_tasks();
+            unsafe { Self::process_events() };
+
+            unsafe {
+                // If an interrupt was signaled and we are in a user
+                // request prompt, e.g. `readline()`, we need to propagate
+                // the interrupt to the R stack.
+                if info.input_request && R_interrupts_pending != 0 {
+                    return ConsoleResult::Interrupt;
+                }
+
+                // Otherwise we are at top level and we can assume the
+                // interrupt was 'handled' on the frontend side and so
+                // reset the flag
+                R_interrupts_pending = 0;
+            }
 
             // FIXME: Race between interrupt and new code request. To fix
             // this, we could manage the Shell and Control sockets on the
@@ -594,9 +610,14 @@ impl RMain {
             // to be handled in a blocking way to ensure subscribers are
             // notified before the next incoming message is processed.
 
-            // Wait for an execution request from the front end.
-            match self.r_request_rx.recv_timeout(Duration::from_millis(200)) {
-                Ok(req) => {
+            select! {
+                // Wait for an execution request from the front end.
+                recv(self.r_request_rx) -> req => {
+                    let req = unwrap!(req, Err(_) => {
+                        // The channel is disconnected and empty
+                        return ConsoleResult::Disconnected;
+                    });
+
                     let input = match req {
                         RRequest::ExecuteCode(exec_req, orig, response_tx) => {
                             // Extract input from request
@@ -627,17 +648,10 @@ impl RMain {
                         },
                     };
 
-                    if Self::process_interrupts(&info) {
-                        return (0, true);
-                    }
-
-                    // Process events.
-                    unsafe { Self::process_events() };
-
                     // Clear error flag
                     self.error_occurred = false;
 
-                    match input {
+                    return match input {
                         ConsoleInput::Input(code) => {
                             // Handle commands for the debug interpreter
                             if self.is_debugging {
@@ -648,28 +662,31 @@ impl RMain {
                             }
 
                             Self::on_console_input(buf, buflen, code);
-                            return (1, false);
+                            ConsoleResult::NewInput
                         },
-                        ConsoleInput::EOF => return (0, false),
+                        ConsoleInput::EOF => ConsoleResult::Disconnected,
                     }
-                },
-                Err(err) => {
-                    use RecvTimeoutError::*;
-                    match err {
-                        Timeout => {
-                            if Self::process_interrupts(&info) {
-                                return (0, true);
-                            }
-                            // Process events and keep waiting for console input.
-                            unsafe { Self::process_events() };
-                            continue;
-                        },
-                        Disconnected => {
-                            return (1, false);
-                        },
+                }
+
+                // A task woke us up, fulfill it and start next loop tick
+                // (this might run more tasks)
+                recv(self.tasks_rx) -> task => {
+                    if let Ok(mut task) = task {
+                        task.fulfill();
                     }
-                },
-            };
+                    continue;
+                }
+
+                // Wait with a timeout. Necessary because we need to
+                // pump the event loop while waiting for console input.
+                //
+                // Alternatively, we could try to figure out the file
+                // descriptors that R has open and select() on those for
+                // available data?
+                default(Duration::from_millis(200)) => {
+                    continue;
+                }
+            }
         }
     }
 
@@ -728,23 +745,6 @@ impl RMain {
         let src = CString::new(input).unwrap();
         unsafe {
             libc::strcpy(buf as *mut c_char, src.as_ptr());
-        }
-    }
-
-    // If we received an interrupt while the user was typing input, and we are
-    // at top level, we can assume the interrupt was 'handled' and so reset the
-    // flag. If on the other hand we are in a user request prompt,
-    // e.g. `readline()`, we need to propagate the interrupt to the R stack.
-    fn process_interrupts(prompt_info: &PromptInfo) -> bool {
-        unsafe {
-            // Signal wrapping code it needs to process the interrupt
-            if R_interrupts_pending != 0 && prompt_info.input_request {
-                return true;
-            }
-
-            // Consider the interrupt handled
-            R_interrupts_pending = 0;
-            false
         }
     }
 
@@ -1031,22 +1031,25 @@ extern "C" fn r_read_console(
     hist: c_int,
 ) -> i32 {
     let main = unsafe { R_MAIN.as_mut().unwrap() };
-    let (out, interrupt) = r_safely!(main.read_console(prompt, buf, buflen, hist));
+    let result = r_safely!(main.read_console(prompt, buf, buflen, hist));
 
     // NOTE: Keep this function a "Plain Old Frame" without any
     // destructors. We're longjumping from here in case of interrupt.
 
-    if interrupt {
-        trace!("Interrupting `ReadConsole()`");
-        unsafe {
-            Rf_onintr();
-        }
+    match result {
+        ConsoleResult::NewInput => return 1,
+        ConsoleResult::Disconnected => return 0,
+        ConsoleResult::Interrupt => {
+            log::trace!("Interrupting `ReadConsole()`");
+            unsafe {
+                Rf_onintr();
+            }
 
-        // This normally does not return
-        error!("`Rf_onintr()` did not longjump");
-    }
-
-    out
+            // This normally does not return
+            log::error!("`Rf_onintr()` did not longjump");
+            return 0;
+        },
+    };
 }
 
 #[no_mangle]
