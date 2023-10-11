@@ -22,6 +22,11 @@ extern "C" {
 
 type SharedOption<T> = Arc<Mutex<Option<T>>>;
 
+// The `Send` bound on `F` is necessary for safety. Although we are not
+// worried about data races since control flow from one thread to the other
+// is sequential, objects captured by `f` might have implementations
+// sensitive to some thread state (ID, thread-local storage, etc).
+
 pub fn r_task<'env, F, T>(f: F) -> T
 where
     F: FnOnce() -> T,
@@ -66,7 +71,9 @@ where
             *result.lock().unwrap() = Some(res);
         };
 
-        // Move `f` to heap and erase its lifetime
+        // Move `f` to heap and erase its lifetime so we can send it to
+        // another thread. It is safe to do so because we block in this
+        // scope until the closure has finished running.
         let closure: Box<dyn FnOnce() + 'env + Send> = Box::new(closure);
         let closure: Box<dyn FnOnce() + Send + 'static> = unsafe { std::mem::transmute(closure) };
 
