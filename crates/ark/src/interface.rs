@@ -738,13 +738,13 @@ impl RMain {
     // e.g. `readline()`, we need to propagate the interrupt to the R stack.
     fn process_interrupts(prompt_info: &PromptInfo) -> bool {
         unsafe {
-            if R_interrupts_suspended == 0 {
-                if R_interrupts_pending != 0 && prompt_info.input_request {
-                    return true;
-                }
-                R_interrupts_pending = 0;
+            // Signal wrapping code it needs to process the interrupt
+            if R_interrupts_pending != 0 && prompt_info.input_request {
+                return true;
             }
 
+            // Consider the interrupt handled
+            R_interrupts_pending = 0;
             false
         }
     }
