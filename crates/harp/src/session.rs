@@ -101,7 +101,7 @@ pub fn r_stack_info() -> anyhow::Result<Vec<FrameInfo>> {
 
     // FIXME: It's better not to use `r_try_catch()` here because it adds
     // frames to the stack. Should wrap in a top-level-exec instead.
-    let _ = r_safely!({
+    let _ = unsafe {
         (|| -> anyhow::Result<()> {
             let info = r_try_eval_silent(STACK_INFO_CALL.unwrap(), R_GlobalEnv)?;
             Rf_protect(info);
@@ -119,7 +119,7 @@ pub fn r_stack_info() -> anyhow::Result<Vec<FrameInfo>> {
             Rf_unprotect(1);
             Ok(())
         })()
-    })?;
+    }?;
 
     // Add information from top-level frame and shift the source
     // information one frame up so it represents the frame's execution
