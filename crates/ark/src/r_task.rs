@@ -12,7 +12,6 @@ use std::time::Duration;
 use crossbeam::channel::bounded;
 use harp::exec::safely;
 use harp::test::R_TASK_BYPASS;
-use log::info;
 
 use crate::interface::RMain;
 use crate::interface::R_MAIN;
@@ -43,6 +42,12 @@ where
     if main.thread_id == thread_id {
         return f();
     }
+
+    log::info!(
+        "Thread '{}' ({:?}) is requesting a task.",
+        std::thread::current().name().unwrap_or("<unnamed>"),
+        thread_id,
+    );
 
     // The following is adapted from `Crossbeam::thread::ScopedThreadBuilder`.
     // Instead of scoping the task with a thread join, we send it on the R
@@ -81,7 +86,7 @@ where
 
     // Log how long we were stuck waiting.
     let elapsed = now.elapsed().unwrap().as_millis();
-    info!(
+    log::info!(
         "Thread '{}' ({:?}) was unblocked after waiting for {} milliseconds.",
         std::thread::current().name().unwrap_or("<unnamed>"),
         thread_id,
