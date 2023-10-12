@@ -15,17 +15,25 @@
 
 use std::os::raw::c_char;
 use std::process::Command;
+use std::sync::Mutex;
 use std::sync::Once;
 
 use libR_sys::*;
 use stdext::cargs;
 
-use crate::lock::with_r_lock;
+use crate::exec::r_safely;
+
+// Escape hatch for unit tests
+pub static mut R_TASK_BYPASS: bool = false;
 
 static INIT: Once = Once::new();
 
 pub fn start_r() {
     INIT.call_once(|| {
+        unsafe {
+            R_TASK_BYPASS = true;
+        }
+
         // TODO: Right now, tests can fail if the version of R discovered
         // on the PATH, and the version of R that 'ark' linked to at compile
         // time, do not match. We could relax this requirement by allowing
@@ -55,32 +63,20 @@ pub fn start_r() {
     });
 }
 
+static mut R_RUNTIME_LOCK: Mutex<()> = Mutex::new(());
+
 pub fn r_test_impl<F: FnMut()>(f: F) {
     start_r();
-    with_r_lock(f);
-}
 
-pub fn r_test_unlocked_impl<F: FnMut()>(mut f: F) {
-    start_r();
-    f();
+    let guard = unsafe { R_RUNTIME_LOCK.lock() };
+    r_safely(f);
+    drop(guard);
 }
 
 #[macro_export]
 macro_rules! r_test {
-
     ($($expr:tt)*) => {
         #[allow(unused_unsafe)]
         $crate::test::r_test_impl(|| unsafe { $($expr)* })
     }
-
-}
-
-#[macro_export]
-macro_rules! r_test_unlocked {
-
-    ($($expr:tt)*) => {
-        #[allow(unused_unsafe)]
-        $crate::test::r_test_unlocked_impl(|| unsafe { $($expr)* })
-    }
-
 }

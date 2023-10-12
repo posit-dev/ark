@@ -1,5 +1,10 @@
 [workspace]
 
+# Was necessary after switching to dev tree-sitter to fix this warning:
+# > some crates are on edition 2021 which defaults to `resolver = "2"`, but
+# > virtual workspaces default to `resolver = "1"`
+resolver = "2"
+
 members = [
     "crates/amalthea",
     "crates/ark",

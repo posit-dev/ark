@@ -7,7 +7,6 @@
 
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::os::raw::c_void;
 use std::time::Duration;
 
 use anyhow::bail;
@@ -17,7 +16,6 @@ use harp::exec::RFunctionExt;
 use harp::external_ptr::ExternalPointer;
 use harp::object::RObject;
 use harp::protect::RProtect;
-use harp::r_lock;
 use harp::r_symbol;
 use harp::utils::r_is_null;
 use harp::utils::r_symbol_quote_invalid;
@@ -25,6 +23,7 @@ use harp::utils::r_symbol_valid;
 use harp::vector::CharacterVector;
 use harp::vector::Vector;
 use libR_sys::*;
+use libc::c_void;
 use stdext::*;
 use tower_lsp::lsp_types::Diagnostic;
 use tower_lsp::lsp_types::DiagnosticSeverity;
@@ -34,6 +33,7 @@ use tree_sitter::Node;
 use crate::lsp::backend::Backend;
 use crate::lsp::documents::Document;
 use crate::lsp::indexer;
+use crate::r_task;
 use crate::Range;
 
 #[derive(Clone)]
@@ -148,11 +148,10 @@ fn generate_diagnostics(doc: &Document) -> Vec<Diagnostic> {
             _ => {},
         });
 
-        r_lock! {
+        r_task(|| unsafe {
             // Get the set of symbols currently in scope.
             let mut envir = R_GlobalEnv;
             while envir != R_EmptyEnv {
-
                 // List symbol names in this environment.
                 let mut protect = RProtect::new();
                 let objects = protect.add(R_lsInternal(envir, 1));
@@ -185,7 +184,7 @@ fn generate_diagnostics(doc: &Document) -> Vec<Diagnostic> {
                     context.installed_packages.insert(name);
                 }
             }
-        }
+        });
 
         // Start iterating through the nodes.
         let root = doc.ast.root_node();
@@ -645,7 +644,7 @@ fn recurse_call_arguments_custom(
     function: &str,
     diagnostic_function: &str,
 ) -> Result<()> {
-    r_lock! {
+    r_task(|| unsafe {
         // Build a call that mixes treesitter nodes (as external pointers)
         // library(foo, pos = 2 + 2)
         //    ->
@@ -702,7 +701,7 @@ fn recurse_call_arguments_custom(
         }
 
         ().ok()
-    }
+    })
 }
 
 fn recurse_call(

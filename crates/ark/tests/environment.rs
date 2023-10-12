@@ -16,11 +16,11 @@ use ark::environment::message::EnvironmentMessageList;
 use ark::environment::message::EnvironmentMessageUpdate;
 use ark::environment::r_environment::REnvironment;
 use ark::lsp::events::EVENTS;
+use ark::r_task;
 use crossbeam::channel::bounded;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
-use harp::r_lock;
 use harp::r_symbol;
 use harp::test::start_r;
 use harp::utils::r_envir_remove;
@@ -45,12 +45,12 @@ fn test_environment_list() {
     // Create a new environment for the test. We use a new, empty environment
     // (with the empty environment as its parent) so that each test in this
     // file can run independently.
-    let test_env = r_lock! {
+    let test_env = r_task(|| unsafe {
         RFunction::new("base", "new.env")
             .param("parent", R_EmptyEnv)
             .call()
             .unwrap()
-    };
+    });
 
     // Create a sender/receiver pair for the comm channel.
     let comm = CommSocket::new(
@@ -68,10 +68,10 @@ fn test_environment_list() {
     // environment we created.
     let incoming_tx = comm.incoming_tx.clone();
     let outgoing_rx = comm.outgoing_rx.clone();
-    r_lock! {
-        let test_env_view = RObject::view(test_env.sexp);
+    r_task(|| {
+        let test_env_view = RObject::view(*test_env);
         REnvironment::start(test_env_view, comm.clone(), comm_manager_tx.clone());
-    }
+    });
 
     // Ensure we get a list of variables after initialization
     let msg = outgoing_rx.recv().unwrap();
@@ -88,10 +88,10 @@ fn test_environment_list() {
 
     // Now create a variable in the R environment and ensure we get a list of
     // variables with the new variable in it.
-    r_lock! {
+    r_task(|| unsafe {
         let sym = r_symbol!("everything");
-        Rf_defineVar(sym, Rf_ScalarInteger(42), test_env.sexp);
-    }
+        Rf_defineVar(sym, Rf_ScalarInteger(42), *test_env);
+    });
 
     // Request that the environment be refreshed
     let refresh = EnvironmentMessage::Refresh;
@@ -120,11 +120,11 @@ fn test_environment_list() {
     assert_eq!(var.display_name, "everything");
     assert_eq!(list.version, 2);
 
-    // create another variable
-    r_lock! {
-        r_envir_set("nothing", Rf_ScalarInteger(43), test_env.sexp);
-        r_envir_remove("everything", test_env.sexp);
-    }
+    // Create another variable
+    r_task(|| unsafe {
+        r_envir_set("nothing", Rf_ScalarInteger(43), *test_env);
+        r_envir_remove("everything", *test_env);
+    });
 
     // Simulate a prompt signal
     EVENTS.console_prompt.emit(());
@@ -172,19 +172,19 @@ fn test_environment_list() {
     assert_eq!(list.version, 4);
 
     // test the env is now empty
-    r_lock! {
+    r_task(|| unsafe {
         let contents = RObject::new(R_lsInternal(*test_env, Rboolean_TRUE));
         assert_eq!(Rf_length(*contents), 0);
-    }
+    });
 
-    // create some more variables
-    r_lock! {
+    // Create some more variables
+    r_task(|| unsafe {
         let sym = r_symbol!("a");
-        Rf_defineVar(sym, Rf_ScalarInteger(42), test_env.sexp);
+        Rf_defineVar(sym, Rf_ScalarInteger(42), *test_env);
 
         let sym = r_symbol!("b");
-        Rf_defineVar(sym, Rf_ScalarInteger(43), test_env.sexp);
-    }
+        Rf_defineVar(sym, Rf_ScalarInteger(43), *test_env);
+    });
 
     // Simulate a prompt signal
     EVENTS.console_prompt.emit(());
@@ -223,6 +223,6 @@ fn test_environment_list() {
     assert_eq!(update.removed, ["a"]);
     assert_eq!(update.version, 6);
 
-    // close the comm. Otherwise the thread panics
+    // Close the comm. Otherwise the thread panics
     incoming_tx.send(CommChannelMsg::Close).unwrap();
 }

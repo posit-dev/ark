@@ -42,7 +42,6 @@ use crossbeam::channel::Sender;
 use harp::exec::r_parse_vector;
 use harp::exec::ParseResult;
 use harp::object::RObject;
-use harp::r_lock;
 use libR_sys::*;
 use log::*;
 use serde_json::json;
@@ -54,6 +53,7 @@ use crate::frontend::frontend::PositronFrontend;
 use crate::interface::KernelInfo;
 use crate::kernel::Kernel;
 use crate::plots::graphics_device;
+use crate::r_task;
 use crate::request::KernelRequest;
 use crate::request::RRequest;
 
@@ -221,9 +221,7 @@ impl ShellHandler for Shell {
         &self,
         req: &IsCompleteRequest,
     ) -> Result<IsCompleteReply, Exception> {
-        r_lock! {
-            self.handle_is_complete_request_impl(req)
-        }
+        r_task(|| unsafe { self.handle_is_complete_request_impl(req) })
     }
 
     /// Handles an ExecuteRequest by sending the code to the R execution thread
@@ -294,13 +292,11 @@ impl ShellHandler for Shell {
     /// Handles a request to open a new comm channel
     async fn handle_comm_open(&self, target: Comm, comm: CommSocket) -> Result<bool, Exception> {
         match target {
-            Comm::Environment => {
-                r_lock! {
-                    let global_env = RObject::view(R_GlobalEnv);
-                    REnvironment::start(global_env, comm.clone(), self.comm_manager_tx.clone());
-                    Ok(true)
-                }
-            },
+            Comm::Environment => r_task(|| unsafe {
+                let global_env = RObject::view(R_GlobalEnv);
+                REnvironment::start(global_env, comm.clone(), self.comm_manager_tx.clone());
+                Ok(true)
+            }),
             Comm::FrontEnd => {
                 // Create a frontend to wrap the comm channel we were just given. This starts
                 // a thread that proxies messages to the frontend.

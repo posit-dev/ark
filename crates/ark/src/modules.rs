@@ -14,7 +14,6 @@ use std::time::Duration;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::protect::RProtect;
-use harp::r_lock;
 use harp::r_string;
 use harp::r_symbol;
 use libR_sys::*;
@@ -22,6 +21,8 @@ use stdext::local;
 use stdext::spawn;
 use stdext::unwrap;
 use stdext::unwrap::IntoResult;
+
+use crate::r_task;
 
 // We use a set of three environments for the functions exposed to
 // the R session. The environment chain is:
@@ -92,11 +93,11 @@ impl RModuleWatcher {
                 for (path, oldmeta) in self.cache.iter_mut() {
                     let newmeta = path.metadata()?;
                     if oldmeta.modified()? != newmeta.modified()? {
-                        r_lock! {
-                            if let Err(error) = import(path) {
-                                log::error!("{}", error);
+                        r_task(|| {
+                            if let Err(error) = unsafe { import(path) } {
+                                log::error!("{error:?}");
                             }
-                        };
+                        });
                         *oldmeta = newmeta;
                     }
                 }

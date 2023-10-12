@@ -16,7 +16,6 @@ use harp::environment::Environment;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
-use harp::r_lock;
 use harp::utils::r_assert_type;
 use harp::vector::CharacterVector;
 use harp::vector::Vector;
@@ -40,6 +39,7 @@ use crate::environment::message::EnvironmentMessageUpdate;
 use crate::environment::message::EnvironmentMessageView;
 use crate::environment::variable::EnvironmentVariable;
 use crate::lsp::events::EVENTS;
+use crate::r_task;
 
 /**
  * The R Environment handler provides the server side of Positron's Environment
@@ -218,14 +218,13 @@ impl REnvironment {
     fn refresh(&mut self, request_id: Option<String>) {
         let mut variables: Vec<EnvironmentVariable> = vec![];
 
-        r_lock! {
+        r_task(|| {
             self.update_bindings(self.bindings());
 
             for binding in &self.current_bindings {
                 variables.push(EnvironmentVariable::new(binding));
             }
-
-        }
+        });
 
         // TODO: Avoid serializing the full list of variables if it exceeds a
         // certain threshold
@@ -244,8 +243,7 @@ impl REnvironment {
      */
     fn clear(&mut self, include_hidden_objects: bool, request_id: Option<String>) {
         // try to rm(<env>, list = ls(envir = <env>, all.names = TRUE)))
-        let result: Result<(), harp::error::Error> = r_lock! {
-
+        let result: Result<(), harp::error::Error> = r_task(|| unsafe {
             let mut list = RFunction::new("base", "ls")
                 .param("envir", *self.env)
                 .param("all.names", Rf_ScalarLogical(include_hidden_objects as i32))
@@ -264,7 +262,7 @@ impl REnvironment {
                 .call()?;
 
             Ok(())
-        };
+        });
 
         if let Err(_err) = result {
             error!("Failed to clear the environment");
@@ -281,8 +279,8 @@ impl REnvironment {
      * Clear the environment. Uses rm(envir = <env>, list = ls(<env>, all.names = TRUE))
      */
     fn delete(&mut self, variables: Vec<String>, request_id: Option<String>) {
-        r_lock! {
-            let variables : Vec<&str> = variables.iter().map(|s| s as &str).collect();
+        r_task(|| unsafe {
+            let variables: Vec<&str> = variables.iter().map(|s| s as &str).collect();
 
             let result = RFunction::new("base", "rm")
                 .param("list", CharacterVector::create(variables).cast())
@@ -292,16 +290,15 @@ impl REnvironment {
             if let Err(_) = result {
                 error!("Failed to delete variables from the environment");
             }
-        }
+        });
 
         // and then update
         self.update(request_id);
     }
 
     fn clipboard_format(&mut self, path: &Vec<String>, format: String, request_id: Option<String>) {
-        let clipped = r_lock! {
-            EnvironmentVariable::clip(RObject::view(*self.env), &path, &format)
-        };
+        let clipped =
+            r_task(|| EnvironmentVariable::clip(RObject::view(*self.env), &path, &format));
 
         let msg = match clipped {
             Ok(content) => {
@@ -319,9 +316,7 @@ impl REnvironment {
     }
 
     fn inspect(&mut self, path: &Vec<String>, request_id: Option<String>) {
-        let inspect = r_lock! {
-            EnvironmentVariable::inspect(RObject::view(*self.env), &path)
-        };
+        let inspect = r_task(|| EnvironmentVariable::inspect(RObject::view(*self.env), &path));
         let msg = match inspect {
             Ok(children) => {
                 let length = children.len();
@@ -340,9 +335,8 @@ impl REnvironment {
     }
 
     fn view(&mut self, path: &Vec<String>, request_id: Option<String>) {
-        let data = r_lock! {
-            EnvironmentVariable::resolve_data_object(RObject::view(*self.env), &path)
-        };
+        let data =
+            r_task(|| EnvironmentVariable::resolve_data_object(RObject::view(*self.env), &path));
 
         let msg = match data {
             Ok(data) => {
@@ -386,7 +380,7 @@ impl REnvironment {
         let old_bindings = &self.current_bindings;
         let mut new_bindings = vec![];
 
-        r_lock! {
+        r_task(|| {
             new_bindings = self.bindings();
 
             let mut old_iter = old_bindings.iter();
@@ -396,25 +390,20 @@ impl REnvironment {
             let mut new_next = new_iter.next();
 
             loop {
-
                 match (old_next, new_next) {
                     // nothing more to do
-                    (None, None) => {
-                        break
-                    },
+                    (None, None) => break,
 
                     // No more old, collect last new into added
                     (None, Some(mut new)) => {
                         loop {
-                            assigned.push(
-                                EnvironmentVariable::new(&new)
-                            );
+                            assigned.push(EnvironmentVariable::new(&new));
 
                             match new_iter.next() {
                                 Some(x) => {
                                     new = x;
                                 },
-                                None => break
+                                None => break,
                             };
                         }
                         break;
@@ -429,7 +418,7 @@ impl REnvironment {
                                 Some(x) => {
                                     old = x;
                                 },
-                                None => break
+                                None => break,
                             };
                         }
 
@@ -439,9 +428,7 @@ impl REnvironment {
                     (Some(old), Some(new)) => {
                         if old.name == new.name {
                             if old.value != new.value {
-                                assigned.push(
-                                    EnvironmentVariable::new(&new)
-                                );
+                                assigned.push(EnvironmentVariable::new(&new));
                             }
                             old_next = old_iter.next();
                             new_next = new_iter.next();
@@ -449,15 +436,13 @@ impl REnvironment {
                             removed.push(old.name.to_string());
                             old_next = old_iter.next();
                         } else {
-                            assigned.push(
-                                EnvironmentVariable::new(&new)
-                            );
+                            assigned.push(EnvironmentVariable::new(&new));
                             new_next = new_iter.next();
                         }
-                    }
+                    },
                 }
             }
-        }
+        });
 
         if assigned.len() > 0 || removed.len() > 0 || request_id.is_some() {
             // only update the bindings (and the version)

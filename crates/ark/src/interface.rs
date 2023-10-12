@@ -10,6 +10,7 @@
 // The frontend methods called by R are forwarded to the corresponding
 // `RMain` methods via `R_MAIN`.
 
+use std::collections::VecDeque;
 use std::ffi::*;
 use std::os::raw::c_uchar;
 use std::os::raw::c_void;
@@ -18,7 +19,6 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::Once;
 use std::time::Duration;
-use std::time::SystemTime;
 
 use amalthea::events::BusyEvent;
 use amalthea::events::PositronEvent;
@@ -41,17 +41,16 @@ use amalthea::wire::stream::Stream;
 use amalthea::wire::stream::StreamOutput;
 use anyhow::*;
 use bus::Bus;
+use crossbeam::channel::unbounded;
 use crossbeam::channel::Receiver;
-use crossbeam::channel::RecvTimeoutError;
 use crossbeam::channel::Sender;
+use crossbeam::channel::TryRecvError;
+use crossbeam::select;
+use harp::exec::r_safely;
 use harp::exec::r_source;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
-use harp::interrupts::RInterruptsSuspendedScope;
-use harp::lock::R_RUNTIME_LOCK;
-use harp::lock::R_RUNTIME_LOCK_COUNT;
 use harp::object::RObject;
-use harp::r_lock;
 use harp::r_symbol;
 use harp::routines::r_register_routines;
 use harp::session::r_poke_option_show_error_messages;
@@ -60,7 +59,6 @@ use harp::utils::r_is_data_frame;
 use libR_sys::*;
 use log::*;
 use nix::sys::signal::*;
-use parking_lot::ReentrantMutexGuard;
 use serde_json::json;
 use stdext::result::ResultOrLog;
 use stdext::*;
@@ -73,6 +71,8 @@ use crate::kernel::Kernel;
 use crate::lsp::events::EVENTS;
 use crate::modules;
 use crate::plots::graphics_device;
+use crate::r_task;
+use crate::r_task::RTaskMain;
 use crate::request::debug_request_command;
 use crate::request::RRequest;
 
@@ -264,10 +264,13 @@ pub struct RMain {
     stderr: String,
     banner: String,
 
-    /// A lock guard, used to manage access to the R runtime.  The main
-    /// thread holds the lock by default, but releases it at opportune
-    /// times to allow the LSP to access the R runtime where appropriate.
-    runtime_lock_guard: Option<ReentrantMutexGuard<'static, ()>>,
+    /// The ID of the R thread
+    pub thread_id: std::thread::ThreadId,
+
+    /// Channel to receive tasks from `r_task()`
+    pub tasks_tx: Sender<RTaskMain>,
+    tasks_rx: Receiver<RTaskMain>,
+    pending_tasks: VecDeque<RTaskMain>,
 
     /// Shared reference to kernel. Currently used by the ark-execution
     /// thread, the R frontend callbacks, and LSP routines called from R
@@ -339,6 +342,12 @@ pub enum ConsoleInput {
     Input(String),
 }
 
+pub enum ConsoleResult {
+    NewInput,
+    Interrupt,
+    Disconnected,
+}
+
 impl RMain {
     pub fn new(
         kernel: Arc<Mutex<Kernel>>,
@@ -348,9 +357,8 @@ impl RMain {
         kernel_init_tx: Bus<KernelInfo>,
         dap: Arc<Mutex<Dap>>,
     ) -> Self {
-        // The main thread owns the R runtime lock by default, but releases
-        // it when appropriate to give other threads a chance to execute.
-        let lock_guard = unsafe { R_RUNTIME_LOCK.lock() };
+        // Channel to receive tasks from auxiliary threads via `r_task()`
+        let (tasks_tx, tasks_rx) = unbounded::<RTaskMain>();
 
         Self {
             initializing: true,
@@ -363,7 +371,6 @@ impl RMain {
             stdout: String::new(),
             stderr: String::new(),
             banner: String::new(),
-            runtime_lock_guard: Some(lock_guard),
             kernel,
             error_occurred: false,
             error_message: String::new(),
@@ -371,6 +378,10 @@ impl RMain {
             dap,
             is_debugging: false,
             old_show_error_messages: None,
+            tasks_tx,
+            tasks_rx,
+            pending_tasks: VecDeque::new(),
+            thread_id: std::thread::current().id(),
         }
     }
 
@@ -474,7 +485,7 @@ impl RMain {
         buf: *mut c_uchar,
         buflen: c_int,
         _hist: c_int,
-    ) -> (i32, bool) {
+    ) -> ConsoleResult {
         let info = Self::prompt_info(prompt);
         debug!("R prompt: {}", info.input_prompt);
 
@@ -497,7 +508,7 @@ impl RMain {
             unsafe {
                 libc::strcpy(buf as *mut c_char, n.as_ptr());
             }
-            return (1, false);
+            return ConsoleResult::NewInput;
         }
 
         // We got a prompt request marking the end of the previous
@@ -577,15 +588,24 @@ impl RMain {
             }
         }
 
-        // Match with a timeout. Necessary because we need to
-        // pump the event loop while waiting for console input.
-        //
-        // Alternatively, we could try to figure out the file
-        // descriptors that R has open and select() on those for
-        // available data?
         loop {
-            // Release the R runtime lock while we're waiting for input.
-            self.runtime_lock_guard = None;
+            // Yield to auxiliary threads and to the R event loop
+            self.yield_to_tasks();
+            unsafe { Self::process_events() };
+
+            unsafe {
+                // If an interrupt was signaled and we are in a user
+                // request prompt, e.g. `readline()`, we need to propagate
+                // the interrupt to the R stack.
+                if info.input_request && R_interrupts_pending != 0 {
+                    return ConsoleResult::Interrupt;
+                }
+
+                // Otherwise we are at top level and we can assume the
+                // interrupt was 'handled' on the frontend side and so
+                // reset the flag
+                R_interrupts_pending = 0;
+            }
 
             // FIXME: Race between interrupt and new code request. To fix
             // this, we could manage the Shell and Control sockets on the
@@ -593,9 +613,14 @@ impl RMain {
             // to be handled in a blocking way to ensure subscribers are
             // notified before the next incoming message is processed.
 
-            // Wait for an execution request from the front end.
-            match self.r_request_rx.recv_timeout(Duration::from_millis(200)) {
-                Ok(req) => {
+            select! {
+                // Wait for an execution request from the front end.
+                recv(self.r_request_rx) -> req => {
+                    let req = unwrap!(req, Err(_) => {
+                        // The channel is disconnected and empty
+                        return ConsoleResult::Disconnected;
+                    });
+
                     let input = match req {
                         RRequest::ExecuteCode(exec_req, orig, response_tx) => {
                             // Extract input from request
@@ -626,20 +651,10 @@ impl RMain {
                         },
                     };
 
-                    // Take back the lock after we've received some console input.
-                    unsafe { self.runtime_lock_guard = Some(R_RUNTIME_LOCK.lock()) };
-
-                    if Self::process_interrupts(&info) {
-                        return (0, true);
-                    }
-
-                    // Process events.
-                    unsafe { Self::process_events() };
-
                     // Clear error flag
                     self.error_occurred = false;
 
-                    match input {
+                    return match input {
                         ConsoleInput::Input(code) => {
                             // Handle commands for the debug interpreter
                             if self.is_debugging {
@@ -650,30 +665,30 @@ impl RMain {
                             }
 
                             Self::on_console_input(buf, buflen, code);
-                            return (1, false);
+                            ConsoleResult::NewInput
                         },
-                        ConsoleInput::EOF => return (0, false),
+                        ConsoleInput::EOF => ConsoleResult::Disconnected,
                     }
-                },
-                Err(err) => {
-                    unsafe { self.runtime_lock_guard = Some(R_RUNTIME_LOCK.lock()) };
+                }
 
-                    use RecvTimeoutError::*;
-                    match err {
-                        Timeout => {
-                            if Self::process_interrupts(&info) {
-                                return (0, true);
-                            }
-                            // Process events and keep waiting for console input.
-                            unsafe { Self::process_events() };
-                            continue;
-                        },
-                        Disconnected => {
-                            return (1, false);
-                        },
+                // A task woke us up, start next loop tick to yield to it
+                recv(self.tasks_rx) -> task => {
+                    if let Ok(task) = task {
+                        self.pending_tasks.push_back(task);
                     }
-                },
-            };
+                    continue;
+                }
+
+                // Wait with a timeout. Necessary because we need to
+                // pump the event loop while waiting for console input.
+                //
+                // Alternatively, we could try to figure out the file
+                // descriptors that R has open and select() on those for
+                // available data?
+                default(Duration::from_millis(200)) => {
+                    continue;
+                }
+            }
         }
     }
 
@@ -732,23 +747,6 @@ impl RMain {
         let src = CString::new(input).unwrap();
         unsafe {
             libc::strcpy(buf as *mut c_char, src.as_ptr());
-        }
-    }
-
-    // If we received an interrupt while the user was typing input, and we are
-    // at top level, we can assume the interrupt was 'handled' and so reset the
-    // flag. If on the other hand we are in a user request prompt,
-    // e.g. `readline()`, we need to propagate the interrupt to the R stack.
-    fn process_interrupts(prompt_info: &PromptInfo) -> bool {
-        unsafe {
-            if R_interrupts_suspended == 0 {
-                if R_interrupts_pending != 0 && prompt_info.input_request {
-                    return true;
-                }
-                R_interrupts_pending = 0;
-            }
-
-            false
         }
     }
 
@@ -863,34 +861,12 @@ impl RMain {
 
     /// Invoked by the R event loop
     fn polled_events(&mut self) {
-        // Check for pending tasks.
-        let count = R_RUNTIME_LOCK_COUNT.load(std::sync::atomic::Ordering::Acquire);
-        if count == 0 {
-            return;
-        }
-
-        info!(
-            "{} thread(s) are waiting; the main thread is releasing the R runtime lock.",
-            count
-        );
-        let now = SystemTime::now();
-
-        // `bump()` does a fair unlock, giving other threads
-        // waiting for the lock a chance to acquire it, and then
-        // relocks it.
-        ReentrantMutexGuard::bump(self.runtime_lock_guard.as_mut().unwrap());
-
-        info!(
-            "The main thread re-acquired the R runtime lock after {} milliseconds.",
-            now.elapsed().unwrap().as_millis()
-        );
+        self.yield_to_tasks();
     }
 
     unsafe fn process_events() {
-        // Don't process interrupts in this scope.
-        let _interrupts_suspended = RInterruptsSuspendedScope::new();
-
-        // Process regular R events.
+        // Process regular R events. We're normally running with polled
+        // events disabled so that won't run here.
         R_ProcessEvents();
 
         // Run handlers if we have data available. This is necessary
@@ -915,6 +891,29 @@ impl RMain {
 
         // Check for Positron render requests
         graphics_device::on_process_events();
+    }
+
+    fn yield_to_tasks(&mut self) {
+        loop {
+            match self.tasks_rx.try_recv() {
+                Ok(task) => self.pending_tasks.push_back(task),
+                Err(TryRecvError::Empty) => break,
+                Err(err) => log::error!("{err:}"),
+            }
+        }
+
+        // Run pending tasks but yield back to R after max 3 tasks
+        for _ in 0..3 {
+            if let Some(mut task) = self.pending_tasks.pop_front() {
+                log::info!(
+                    "Yielding to task - {} more task(s) remaining",
+                    self.pending_tasks.len()
+                );
+                task.fulfill();
+            } else {
+                return;
+            }
+        }
     }
 
     fn send_dap(&self, event: DapBackendEvent) {
@@ -980,7 +979,7 @@ fn peek_execute_response(exec_count: u32) -> ExecuteResponse {
         data.insert("text/plain".to_string(), json!(""));
 
         // Include HTML representation of data.frame
-        r_lock! {
+        r_task(|| unsafe {
             let value = Rf_findVarInFrame(R_GlobalEnv, r_symbol!(".Last.value"));
             if r_is_data_frame(value) {
                 match to_html(value) {
@@ -991,7 +990,7 @@ fn peek_execute_response(exec_count: u32) -> ExecuteResponse {
                     },
                 };
             }
-        }
+        });
 
         main.iopub_tx
             .send(IOPubMessage::ExecuteResult(ExecuteResult {
@@ -1046,22 +1045,25 @@ extern "C" fn r_read_console(
     hist: c_int,
 ) -> i32 {
     let main = unsafe { R_MAIN.as_mut().unwrap() };
-    let (out, interrupt) = main.read_console(prompt, buf, buflen, hist);
+    let result = r_safely(|| main.read_console(prompt, buf, buflen, hist));
 
     // NOTE: Keep this function a "Plain Old Frame" without any
     // destructors. We're longjumping from here in case of interrupt.
 
-    if interrupt {
-        trace!("Interrupting `ReadConsole()`");
-        unsafe {
-            Rf_onintr();
-        }
+    match result {
+        ConsoleResult::NewInput => return 1,
+        ConsoleResult::Disconnected => return 0,
+        ConsoleResult::Interrupt => {
+            log::trace!("Interrupting `ReadConsole()`");
+            unsafe {
+                Rf_onintr();
+            }
 
-        // This normally does not return
-        error!("`Rf_onintr()` did not longjump");
-    }
-
-    out
+            // This normally does not return
+            log::error!("`Rf_onintr()` did not longjump");
+            return 0;
+        },
+    };
 }
 
 #[no_mangle]

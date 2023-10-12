@@ -26,6 +26,13 @@ use crate::vector::CharacterVector;
 use crate::vector::Vector;
 
 extern "C" {
+    pub static mut R_PolledEvents: Option<unsafe extern "C" fn()>;
+}
+
+#[no_mangle]
+pub extern "C" fn r_polled_events_disabled() {}
+
+extern "C" {
     pub static R_ParseError: c_int;
     pub static R_ParseErrorMsg: [c_char; 256usize];
     pub static mut R_DirtyImage: ::std::os::raw::c_int;
@@ -418,19 +425,48 @@ pub fn r_parse(code: &str) -> Result<RObject> {
     }
 }
 
+// TODO: Should probably run in a toplevel-exec. Tasks also need a timeout.
+// This could be implemented with R interrupts but would require to
+// unsafely jump over the Rust stack, unless we wrapped all R API functions
+// to return an Option.
+pub fn r_safely<'env, F, T>(f: F) -> T
+where
+    F: FnOnce() -> T,
+    F: 'env,
+    T: 'env,
+{
+    // NOTE: Keep this function a Plain Old Frame without Drop destructors
+
+    let polled_events = unsafe { R_PolledEvents };
+    let interrupts_suspended = unsafe { R_interrupts_suspended };
+    unsafe {
+        // Disable polled events in this scope.
+        R_PolledEvents = Some(r_polled_events_disabled);
+
+        // Disable interrupts in this scope.
+        R_interrupts_suspended = 1;
+    }
+
+    // Execute the callback.
+    let result = f();
+
+    // Restore state
+    // TODO: Needs unwind protection
+    unsafe {
+        R_interrupts_suspended = interrupts_suspended;
+        R_PolledEvents = polled_events;
+    }
+
+    result
+}
+
 #[cfg(test)]
 mod tests {
-
     use std::ffi::CString;
-    use std::io::Write;
-
-    use stdext::spawn;
 
     use super::*;
     use crate::assert_match;
-    use crate::r_lock;
     use crate::r_test;
-    use crate::r_test_unlocked;
     use crate::utils::r_envir_remove;
     use crate::utils::r_is_null;
 
@@ -487,43 +523,6 @@ mod tests {
 
             assert!(Rf_isNumeric(*result) != 0);
             assert!(Rf_asInteger(*result) == 10);
-
-        }
-    }
-
-    #[test]
-    fn test_threads() {
-        r_test_unlocked! {
-
-            // Spawn a bunch of threads that try to interact with R.
-            const N : i32 = 1000;
-            let mut handles : Vec<_> = Vec::new();
-            for i in 1..20 {
-                let handle = spawn!(format!("test_exec_test_threads_{}", i), move || {
-                    let id = std::thread::current().id();
-                    for _j in 1..20 {
-                        r_lock! {
-                            println!("Thread {:?} acquiring R lock.", id);
-                            std::io::stdout().flush().unwrap();
-                            let mut protect = RProtect::new();
-                            let code = protect.add(Rf_lang2(r_symbol!("rnorm"), Rf_ScalarInteger(N)));
-                            println!("Thread {:?} about to evaluate R code.", id);
-                            std::io::stdout().flush().unwrap();
-                            let result = protect.add(Rf_eval(code, R_GlobalEnv));
-                            println!("Thread {:?} finished evaluating R code.", id);
-                            std::io::stdout().flush().unwrap();
-                            assert!(Rf_length(result) == N);
-                            println!("Thread {:?} releasing R lock.", std::thread::current().id());
-                            std::io::stdout().flush().unwrap();
-                        };
-                    }
-                });
-                handles.push(handle);
-            }
-
-            for handle in handles {
-                handle.join().unwrap();
-            }
 
         }
     }

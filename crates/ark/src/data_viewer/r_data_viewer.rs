@@ -14,7 +14,6 @@ use crossbeam::channel::Sender;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
-use harp::r_lock;
 use harp::utils::r_assert_length;
 use harp::utils::r_is_data_frame;
 use harp::utils::r_is_matrix;
@@ -44,6 +43,7 @@ use crate::data_viewer::message::DataViewerMessageRequest;
 use crate::data_viewer::message::DataViewerMessageResponse;
 use crate::data_viewer::message::DataViewerRowRequest;
 use crate::data_viewer::message::DataViewerRowResponse;
+use crate::r_task;
 
 pub struct RDataViewer {
     title: String,
@@ -195,7 +195,7 @@ impl DataSet {
     }
 
     pub fn from_object(id: String, title: String, object: RObject) -> Result<Self, anyhow::Error> {
-        r_lock! {
+        r_task(|| unsafe {
             let row_count = {
                 if r_is_data_frame(*object) {
                     let row_names = Rf_getAttrib(*object, R_RowNamesSymbol);
@@ -214,10 +214,10 @@ impl DataSet {
             Ok(Self {
                 id: id.clone(),
                 title: title.clone(),
-                columns: columns,
-                row_count: row_count
+                columns,
+                row_count,
             })
-        }
+        })
     }
 
     fn slice_data(&self, start: usize, size: usize) -> Result<Vec<DataColumn>, anyhow::Error> {

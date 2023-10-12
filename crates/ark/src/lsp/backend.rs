@@ -13,7 +13,6 @@ use std::sync::Arc;
 
 use crossbeam::channel::Sender;
 use dashmap::DashMap;
-use harp::r_lock;
 use log::*;
 use parking_lot::Mutex;
 use regex::Regex;
@@ -47,6 +46,7 @@ use crate::lsp::indexer;
 use crate::lsp::signature_help::signature_help;
 use crate::lsp::statement_range;
 use crate::lsp::symbols;
+use crate::r_task;
 use crate::request::KernelRequest;
 
 #[macro_export]
@@ -372,8 +372,8 @@ impl LanguageServer for Backend {
 
         log::info!("Completion context: {:#?}", context);
 
-        // add session completions
-        let result = r_lock! { append_session_completions(&context, &mut completions) };
+        // Add session completions
+        let result = r_task(|| unsafe { append_session_completions(&context, &mut completions) });
         if let Err(error) = result {
             error!("{:?}", error);
         }
@@ -455,9 +455,7 @@ impl LanguageServer for Backend {
         });
 
         // Try resolving the completion item
-        let result = r_lock! {
-            resolve_completion_item(&mut item, &data)
-        };
+        let result = r_task(|| unsafe { resolve_completion_item(&mut item, &data) });
 
         // Handle error case
         unwrap!(result, Err(error) => {
@@ -486,9 +484,7 @@ impl LanguageServer for Backend {
         });
 
         // request hover information
-        let result = r_lock! {
-            hover(&document, &context)
-        };
+        let result = r_task(|| unsafe { hover(&document, &context) });
 
         // unwrap errors
         let result = unwrap!(result, Err(error) => {
@@ -519,9 +515,7 @@ impl LanguageServer for Backend {
         let position = params.text_document_position_params.position;
 
         // request signature help
-        let result = r_lock! {
-            signature_help(document.value(), &position)
-        };
+        let result = r_task(|| unsafe { signature_help(document.value(), &position) });
 
         // unwrap errors
         let result = unwrap!(result, Err(error) => {

@@ -214,9 +214,12 @@ impl Drop for RObject {
     }
 }
 
-// RObjects are not inherently thread-safe since they wrap a raw pointer, but we
-// allow them to be sent across threads because we require the acquisition of a
-// lock on the outer R interpreter (see `r_lock!`) before using them.
+// References to RObjects are safe to send over threads but the actual
+// object should remain on the R thread at all times. We can only `drop()`
+// them on the R thread since that calls the R API.
+unsafe impl Sync for RObject {}
+
+// FIXME: This should only be Sync
 unsafe impl Send for RObject {}
 
 impl Deref for RObject {
