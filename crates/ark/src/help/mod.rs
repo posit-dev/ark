@@ -5,4 +5,5 @@
 //
 //
 
+pub mod message;
 pub mod r_help;
