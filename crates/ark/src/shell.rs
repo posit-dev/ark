@@ -50,6 +50,7 @@ use stdext::spawn;
 use crate::dap::Dap;
 use crate::environment::r_environment::REnvironment;
 use crate::frontend::frontend::PositronFrontend;
+use crate::help::r_help::RHelp;
 use crate::interface::KernelInfo;
 use crate::kernel::Kernel;
 use crate::plots::graphics_device;
@@ -315,6 +316,11 @@ impl ShellHandler for Shell {
                         err
                     );
                 };
+                Ok(true)
+            },
+            Comm::Help => {
+                // Start the R Help handler
+                RHelp::start(comm.clone(), self.comm_manager_tx.clone());
                 Ok(true)
             },
             _ => Ok(false),
