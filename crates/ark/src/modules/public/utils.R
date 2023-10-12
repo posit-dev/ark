@@ -51,3 +51,8 @@
 
     ark_version
 }
+
+# Sleep that doesn't check for interrupts to test an unresponsive runtime.
+.ps.deep_sleep <- function(secs) {
+    .ps.Call("ps_deep_sleep", secs)
+}
