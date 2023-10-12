@@ -14,6 +14,7 @@ use log::error;
 use log::warn;
 use stdext::spawn;
 
+use crate::browser;
 use crate::help::message::HelpMessage;
 use crate::help_proxy;
 use crate::r_task;
@@ -29,26 +30,19 @@ pub struct RHelp {
 
 impl RHelp {
     pub fn start(comm: CommSocket, comm_manager_tx: Sender<CommEvent>) {
-        // Get the help port from R and start the help proxy thread.
-        //
-        // CONSIDER: What happens on a UI reload? In this case the help comm
-        // will get shut down, but the help proxy will keep on running, and then
-        // we'll try to start another one here. That isn't good.
-        let help_server_port =
-            r_task(|| unsafe { RFunction::new("tools", "httpdPort").call()?.to::<u16>() });
+        // Check to see whether the help server has started. We set the port
+        // number when it starts, so if it's still at the default value (0), it
+        // hasn't started.
+        let mut started = false;
+        unsafe {
+            if browser::PORT != 0 {
+                started = true;
+            }
+        }
 
-        match help_server_port {
-            Ok(port) => {
-                // Start the help proxy.
-                help_proxy::start(port);
-            },
-            Err(err) => {
-                error!(
-                    "Help: Error getting help server port from R: {}; not starting help proxy.",
-                    err
-                );
-                return;
-            },
+        // If we haven't started the help server, start it now.
+        if !started {
+            RHelp::start_help_proxy();
         }
 
         // Start the help request thread and wait for requests from the front end
@@ -102,6 +96,25 @@ impl RHelp {
                     "Help: Received unexpected message from front end: {:?}",
                     message
                 );
+            },
+        }
+    }
+
+    fn start_help_proxy() {
+        let help_server_port =
+            r_task(|| unsafe { RFunction::new("tools", "httpdPort").call()?.to::<u16>() });
+
+        match help_server_port {
+            Ok(port) => {
+                // Start the help proxy.
+                help_proxy::start(port);
+            },
+            Err(err) => {
+                error!(
+                    "Help: Error getting help server port from R: {}; not starting help proxy.",
+                    err
+                );
+                return;
             },
         }
     }
