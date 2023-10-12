@@ -6,9 +6,10 @@
 //
 
 use amalthea::comm::comm_channel::CommChannelMsg;
-use amalthea::comm::event::CommEvent;
 use amalthea::socket::comm::CommSocket;
+use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
+use crossbeam::select;
 use harp::exec::RFunction;
 use log::error;
 use log::warn;
@@ -16,6 +17,7 @@ use stdext::spawn;
 
 use crate::browser;
 use crate::help::message::HelpMessage;
+use crate::help::message::HelpRequest;
 use crate::help_proxy;
 use crate::r_task;
 
@@ -25,11 +27,11 @@ use crate::r_task;
  */
 pub struct RHelp {
     comm: CommSocket,
-    comm_manager_tx: Sender<CommEvent>,
+    help_request_rx: Receiver<HelpRequest>,
 }
 
 impl RHelp {
-    pub fn start(comm: CommSocket, comm_manager_tx: Sender<CommEvent>) {
+    pub fn start(comm: CommSocket) -> Sender<HelpRequest> {
         // Check to see whether the help server has started. We set the port
         // number when it starts, so if it's still at the default value (0), it
         // hasn't started.
@@ -45,44 +47,65 @@ impl RHelp {
             RHelp::start_help_proxy();
         }
 
+        let (help_request_tx, help_request_rx) = crossbeam::channel::unbounded();
+
         // Start the help request thread and wait for requests from the front end
         spawn!("ark-help", move || {
             let help = Self {
                 comm,
-                comm_manager_tx,
+                help_request_rx,
             };
             help.execution_thread();
         });
+
+        help_request_tx
     }
 
     pub fn execution_thread(&self) {
         loop {
-            match self.comm.incoming_rx.recv() {
-                Ok(msg) => {
-                    if let CommChannelMsg::Close = msg {
-                        // The front end has closed the connection; let the
-                        // thread exit.
-                        break;
+            select! {
+                recv(&self.comm.incoming_rx) -> msg => {
+                    match msg {
+                        Ok(msg) => {
+                            if !self.handle_comm_message(msg) {
+                                break;
+                            }
+                        },
+                        Err(e) => {
+                            // The connection with the front end has been closed; let
+                            // the thread exit.
+                            warn!("Error receiving message from front end: {}", e);
+                            break;
+                        },
                     }
-                    if let CommChannelMsg::Rpc(id, data) = msg {
-                        let message = match serde_json::from_value::<HelpMessage>(data) {
-                            Ok(m) => m,
-                            Err(err) => {
-                                error!("Help: Received invalid message from front end. {}", err);
-                                continue;
-                            },
-                        };
-                        self.handle_message(message);
-                    }
-                },
-                Err(e) => {
-                    // The connection with the front end has been closed; let
-                    // the thread exit.
-                    warn!("Error receiving message from front end: {}", e);
-                    break;
-                },
+                }
             }
         }
+    }
+
+    /**
+     * Handles a comm message from the front end.
+     *
+     * Returns true if the thread should continue, false if it should exit.
+     */
+    fn handle_comm_message(&self, message: CommChannelMsg) -> bool {
+        if let CommChannelMsg::Close = message {
+            // The front end has closed the connection; let the
+            // thread exit.
+            return false;
+        }
+        if let CommChannelMsg::Rpc(id, data) = message {
+            let message = match serde_json::from_value::<HelpMessage>(data) {
+                Ok(m) => m,
+                Err(err) => {
+                    error!("Help: Received invalid message from front end. {}", err);
+                    return true;
+                },
+            };
+            self.handle_message(message);
+        }
+
+        true
     }
 
     fn handle_message(&self, message: HelpMessage) {

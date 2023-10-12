@@ -1,19 +1,18 @@
 //
 // browser.rs
 //
-// Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023 Posit Software, PBC. All rights reserved.
 //
 //
 
 use std::process::Command;
 
-use amalthea::events::PositronEvent;
-use amalthea::events::ShowHelpEvent;
 use anyhow::Result;
 use harp::exec::RFunction;
 use harp::object::RObject;
 use libR_sys::*;
 
+use crate::help::message::HelpRequest;
 use crate::interface::R_MAIN;
 
 pub static mut PORT: u16 = 0;
@@ -42,15 +41,15 @@ unsafe fn handle_help_url(url: &str) -> Result<bool> {
 
     // Fire an event for the front-end.
     let url = url.replace(prefix.as_str(), replacement.as_str());
-    let event = PositronEvent::ShowHelp(ShowHelpEvent {
-        kind: "url".to_string(),
-        content: url,
-        focus: true,
-    });
 
-    let main = unsafe { R_MAIN.as_ref().unwrap() };
-    let kernel = main.kernel.lock().unwrap();
-    kernel.send_event(event);
+    let main = R_MAIN.as_ref().unwrap();
+    let help = &main.help_tx;
+
+    if let Some(help) = help {
+        if let Err(err) = help.send(HelpRequest::ShowHelpUrl(url)) {
+            log::error!("Failed to send help message: {}", err);
+        }
+    }
 
     Ok(true)
 }

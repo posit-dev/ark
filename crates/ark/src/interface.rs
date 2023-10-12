@@ -66,6 +66,7 @@ use stdext::*;
 use crate::dap::dap::DapBackendEvent;
 use crate::dap::Dap;
 use crate::errors;
+use crate::help::message::HelpRequest;
 use crate::kernel::Kernel;
 use crate::lsp::events::EVENTS;
 use crate::modules;
@@ -273,6 +274,9 @@ pub struct RMain {
     pub error_message: String, // `evalue` in the Jupyter protocol
     pub error_traceback: Vec<String>,
 
+    // Channel to communicate with the Help thread
+    pub help_tx: Option<Sender<HelpRequest>>,
+
     dap: Arc<Mutex<Dap>>,
     is_debugging: bool,
 
@@ -367,6 +371,7 @@ impl RMain {
             error_occurred: false,
             error_message: String::new(),
             error_traceback: Vec::new(),
+            help_tx: None,
             dap,
             is_debugging: false,
             old_show_error_messages: None,

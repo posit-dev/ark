@@ -52,6 +52,7 @@ use crate::environment::r_environment::REnvironment;
 use crate::frontend::frontend::PositronFrontend;
 use crate::help::r_help::RHelp;
 use crate::interface::KernelInfo;
+use crate::interface::R_MAIN;
 use crate::kernel::Kernel;
 use crate::plots::graphics_device;
 use crate::r_task;
@@ -320,7 +321,13 @@ impl ShellHandler for Shell {
             },
             Comm::Help => {
                 // Start the R Help handler
-                RHelp::start(comm.clone(), self.comm_manager_tx.clone());
+                let help_request_tx = RHelp::start(comm.clone());
+
+                unsafe {
+                    let main = R_MAIN.as_mut().unwrap();
+                    main.help_tx = Some(help_request_tx.clone());
+                }
+
                 Ok(true)
             },
             _ => Ok(false),
