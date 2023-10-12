@@ -42,6 +42,9 @@ pub enum Error {
     TryEvalError {
         message: String,
     },
+    TopLevelExecError {
+        message: String,
+    },
     ParseSyntaxError {
         message: String,
         line: i32,
@@ -134,6 +137,10 @@ impl fmt::Display for Error {
 
             Error::TryEvalError { message } => {
                 write!(f, "`eval()` error: {}", message)
+            },
+
+            Error::TopLevelExecError { message } => {
+                write!(f, "`R_topLevelExec()` error: {}", message)
             },
 
             Error::ParseSyntaxError { message, line } => {

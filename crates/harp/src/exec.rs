@@ -351,6 +351,41 @@ where
     r_try_catch_finally(fun, classes, || {})
 }
 
+pub fn r_top_level_exec<F, T>(mut fun: F) -> Result<T>
+where
+    F: FnMut() -> T,
+{
+    // C function that is passed as `fun`. The actual closure is passed via
+    // void* data, along with the pointer to the result variable.
+    extern "C" fn c_fn<T>(arg: *mut c_void) {
+        let data: &mut ClosureData<T> = unsafe { &mut *(arg as *mut ClosureData<T>) };
+
+        // Move result to its stack space
+        *(data.res) = Some((data.closure)());
+    }
+
+    // Allocate stack memory for the output
+    let mut res: Option<T> = None;
+
+    let mut c_data = ClosureData {
+        res: &mut res,
+        closure: &mut fun,
+    };
+
+    let success = unsafe { R_ToplevelExec(Some(c_fn::<T>), &mut c_data as *mut _ as *mut c_void) };
+
+    if success == 1 {
+        Ok(res.unwrap())
+    } else {
+        Err(Error::TopLevelExecError {
+            message: String::from(format!(
+                "Unexpected longjump.\nLikely caused by: {}",
+                geterrmessage()
+            )),
+        })
+    }
+}
+
 pub enum ParseResult {
     Complete(SEXP),
     Incomplete(),
@@ -572,6 +607,34 @@ mod tests {
                 assert_eq!(classes, ["simpleError", "error", "condition"]);
             });
 
+        }
+    }
+
+    #[test]
+    fn test_top_level_exec() {
+        r_test! {
+            let ok = r_top_level_exec(|| { 42 });
+            assert_match!(ok, Ok(value) => {
+                assert_eq!(value, 42);
+            });
+
+            // SAFETY: Rust allocations out of the top-level-exec context
+            // NOTE: "my message" shows up in the test output. We might
+            // want to quiet that by setting `show.error.messages` to `FALSE`.
+            let msg = CString::new("my message").unwrap();
+            let stop = CString::new("stop").unwrap();
+
+            let out = r_top_level_exec(|| unsafe {
+                let msg = Rf_protect(Rf_cons(Rf_mkString(msg.as_ptr()), R_NilValue));
+                let call = Rf_protect(Rf_lcons(Rf_install(stop.as_ptr()), msg));
+                Rf_eval(call, R_BaseEnv);
+                unreachable!()
+            });
+
+            assert_match!(out, Err(Error::TopLevelExecError { message }) => {
+                assert!(message.contains("Unexpected longjump"));
+                assert!(message.contains("my message"));
+            });
         }
     }
 
