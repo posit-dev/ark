@@ -43,10 +43,6 @@ static mut POSITRON_PUBLIC_ENVIRONMENT: SEXP = std::ptr::null_mut();
 static mut POSITRON_ATTACHED_ENVIRONMENT: SEXP = std::ptr::null_mut();
 pub const POSITRION_ATTACHED_ENVIRONMENT_NAME: &str = "tools:positron";
 
-pub struct RModuleInfo {
-    pub help_server_port: u16,
-}
-
 // NOTE: We use a custom watcher implementation here to detect changes
 // to module files, and automatically source those files when they change.
 //
@@ -111,7 +107,7 @@ impl RModuleWatcher {
     }
 }
 
-pub unsafe fn initialize() -> anyhow::Result<RModuleInfo> {
+pub unsafe fn initialize() -> anyhow::Result<()> {
     // Create the 'private' Positron environment.
     let private = RFunction::new("base", "new.env")
         .param("parent", R_GlobalEnv)
@@ -206,9 +202,7 @@ pub unsafe fn initialize() -> anyhow::Result<RModuleInfo> {
         }
     });
 
-    return Ok(RModuleInfo {
-        help_server_port: RFunction::new("tools", "httpdPort").call()?.to::<u16>()?,
-    });
+    return Ok(());
 }
 
 pub unsafe fn import(file: &Path) -> anyhow::Result<()> {
