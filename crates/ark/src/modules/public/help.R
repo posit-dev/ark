@@ -9,11 +9,11 @@ options(help_type = "html")
 
 # Start R's dynamic HTTP help server; returns the chosen port (invisibly)
 .ps.help.startHelpServer <- function() {
-    tools::startDynamicHelp(start = NA)
+    suppressMessages(tools::startDynamicHelp(start = NA))
 }
 
-# Find help on a topic. If no match is found, search for help on the topic.
-.ps.help.findHelpTopic <- function(topic) {
+# Show help on a topic. If no match is found, search for help on the topic.
+.ps.help.showHelpTopic <- function(topic) {
     results <- help(topic)
     if (length(results) == 0) {
         help.search(topic)

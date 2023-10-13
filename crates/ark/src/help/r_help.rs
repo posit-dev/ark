@@ -184,7 +184,8 @@ impl RHelp {
         }
 
         // Re-direct the help request to our help proxy server.
-        let replacement = format!("http://127.0.0.1:{}/", self.r_help_port);
+        let proxy_port = unsafe { browser::PORT };
+        let replacement = format!("http://127.0.0.1:{}/", proxy_port);
 
         let url = url.replace(prefix.as_str(), replacement.as_str());
         let msg = HelpMessage::ShowHelp(HelpMessageShowHelp {
