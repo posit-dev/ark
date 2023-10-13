@@ -615,6 +615,14 @@ mod tests {
                 }
             );
 
+            // CRLF
+            assert_match!(
+                r_parse_vector("x <-\r\n1"),
+                Ok(ParseResult::Complete(out)) => {
+                    assert_eq!(r_typeof(out), EXPRSXP as u32);
+                    assert_eq!(r_stringify(out, "").unwrap(), "expression(x <- 1)");
+                }
+            );
         }
     }
 
