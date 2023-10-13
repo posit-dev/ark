@@ -358,7 +358,8 @@ pub enum ParseResult {
 pub unsafe fn r_parse_vector(code: &str) -> Result<ParseResult> {
     let mut ps: ParseStatus = 0;
     let mut protect = RProtect::new();
-    let r_code = r_string!(code, &mut protect);
+    let code2 = code.replace("\r\n", "\n");
+    let r_code = r_string!(code2, &mut protect);
 
     let result = r_try_catch(|| R_ParseVector(r_code, -1, &mut ps, R_NilValue))?;
 

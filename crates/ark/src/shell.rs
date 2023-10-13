@@ -232,9 +232,11 @@ impl ShellHandler for Shell {
         req: &ExecuteRequest,
     ) -> Result<ExecuteReply, ExecuteReplyException> {
         let (sender, receiver) = unbounded::<ExecuteResponse>();
-        if let Err(err) =
-            self.r_request_tx
-                .send(RRequest::ExecuteCode(req.clone(), originator, sender))
+        let mut req2 = req.clone();
+        req2.code = req2.code.replace("\r\n", "\n");
+        if let Err(err) = self
+            .r_request_tx
+            .send(RRequest::ExecuteCode(req2, originator, sender))
         {
             warn!(
                 "Could not deliver execution request to execution thread: {}",
