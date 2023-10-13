@@ -219,9 +219,6 @@ impl Drop for RObject {
 // them on the R thread since that calls the R API.
 unsafe impl Sync for RObject {}
 
-// FIXME: This should only be Sync
-unsafe impl Send for RObject {}
-
 impl Deref for RObject {
     type Target = SEXP;
     fn deref(&self) -> &Self::Target {
