@@ -356,7 +356,7 @@ pub enum ParseResult {
 
 #[allow(non_upper_case_globals)]
 pub unsafe fn r_parse_vector(code: &str) -> Result<ParseResult> {
-    let mut ps: ParseStatus = 0;
+    let mut ps: ParseStatus = ParseStatus_PARSE_NULL;
     let mut protect = RProtect::new();
     let code2 = code.replace("\r\n", "\n");
     let r_code = r_string!(code2, &mut protect);
