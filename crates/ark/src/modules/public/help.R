@@ -24,7 +24,7 @@ options(help_type = "html")
     }
 
     # If we found results of any kind, show them.
-    if (results) {
+    if (length(results) > 0) {
         print(results)
     }
 
