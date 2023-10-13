@@ -13,6 +13,7 @@ use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use crossbeam::select;
 use harp::exec::RFunction;
+use harp::exec::RFunctionExt;
 use log::error;
 use log::warn;
 use stdext::spawn;
@@ -31,7 +32,6 @@ use crate::r_task;
 pub struct RHelp {
     comm: CommSocket,
     r_help_port: u16,
-    help_proxy_port: Option<u16>,
     help_request_rx: Receiver<HelpRequest>,
 }
 
@@ -61,7 +61,6 @@ impl RHelp {
             let help = Self {
                 comm,
                 r_help_port,
-                help_proxy_port: None,
                 help_request_rx,
             };
             help.execution_thread();
@@ -91,7 +90,9 @@ impl RHelp {
                 recv(&self.help_request_rx) -> msg => {
                     match msg {
                         Ok(msg) => {
-                            self.handle_request(msg);
+                            if let Err(err) = self.handle_request(msg) {
+                                warn!("Error handling Help request: {}", err);
+                            }
                         },
                         Err(e) => {
                             // The connection with the front end has been closed; let
@@ -116,7 +117,7 @@ impl RHelp {
             // thread exit.
             return false;
         }
-        if let CommChannelMsg::Rpc(id, data) = message {
+        if let CommChannelMsg::Rpc(_, data) = message {
             let message = match serde_json::from_value::<HelpMessage>(data) {
                 Ok(m) => m,
                 Err(err) => {
@@ -124,24 +125,20 @@ impl RHelp {
                     return true;
                 },
             };
-            self.handle_message(message);
+            if let Err(err) = self.handle_message(message) {
+                error!("Help: Error handling message from front end: {}", err);
+                return true;
+            }
         }
 
         true
     }
 
-    fn handle_message(&self, message: HelpMessage) {
+    fn handle_message(&self, message: HelpMessage) -> Result<()> {
         // Match on the type of data received.
         match message {
-            HelpMessage::ShowHelpTopic(topic) => {
-                // TODO: show the help topic
-            },
-            _ => {
-                warn!(
-                    "Help: Received unexpected message from front end: {:?}",
-                    message
-                );
-            },
+            HelpMessage::ShowHelpTopic(topic) => self.show_help_topic(topic.topic),
+            _ => Err(anyhow!("Help: Received unexpected message {:?}", message)),
         }
     }
 
@@ -171,7 +168,6 @@ impl RHelp {
         // Re-direct the help request to our help proxy server.
         let replacement = format!("http://127.0.0.1:{}/", self.r_help_port);
 
-        // TODO: Fire an event for the front-end.
         let url = url.replace(prefix.as_str(), replacement.as_str());
         let msg = HelpMessage::ShowHelp(HelpMessageShowHelp {
             content: url,
@@ -180,6 +176,11 @@ impl RHelp {
         });
         let json = serde_json::to_value(msg)?;
         self.comm.outgoing_tx.send(CommChannelMsg::Data(json))?;
+        Ok(())
+    }
+
+    fn show_help_topic(&self, topic: String) -> Result<()> {
+        r_task(|| unsafe { RFunction::from(".ps.help.showHelpTopic").add(topic).call() })?;
         Ok(())
     }
 
