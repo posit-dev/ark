@@ -8,7 +8,6 @@
 use std::process::Command;
 
 use anyhow::Result;
-use harp::exec::RFunction;
 use harp::object::RObject;
 use libR_sys::*;
 
@@ -29,24 +28,11 @@ pub unsafe extern "C" fn ps_browse_url(url: SEXP) -> SEXP {
 }
 
 unsafe fn handle_help_url(url: &str) -> Result<bool> {
-    // Check for help URLs
-    let port = RFunction::new("tools", "httpdPort").call()?.to::<u16>()?;
-    let prefix = format!("http://127.0.0.1:{}/", port);
-    if !url.starts_with(&prefix) {
-        return Ok(false);
-    }
-
-    // Re-direct the help request to our help proxy server.
-    let replacement = format!("http://127.0.0.1:{}/", PORT);
-
-    // Fire an event for the front-end.
-    let url = url.replace(prefix.as_str(), replacement.as_str());
-
     let main = R_MAIN.as_ref().unwrap();
     let help = &main.help_tx;
 
     if let Some(help) = help {
-        if let Err(err) = help.send(HelpRequest::ShowHelpUrl(url)) {
+        if let Err(err) = help.send(HelpRequest::ShowHelpUrl(url.to_string())) {
             log::error!("Failed to send help message: {}", err);
         }
     }
