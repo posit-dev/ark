@@ -26,9 +26,6 @@ pub enum HelpMessage {
  * Enum representing requests for the Help thread from other threads.
  */
 pub enum HelpRequest {
-    /// Set the proxy port for the Help server.
-    SetHelpProxyPort(u16),
-
     // Show the given URL to the user in the Help pane.
     ShowHelpUrl(String),
 }

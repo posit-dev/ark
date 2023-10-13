@@ -36,6 +36,12 @@ pub struct RHelp {
 }
 
 impl RHelp {
+    /**
+     * Start the help handler. Returns a channel for sending help requests to
+     * the help thread.
+     *
+     * - `comm`: The socket for communicating with the front end.
+     */
     pub fn start(comm: CommSocket) -> Result<Sender<HelpRequest>> {
         // Check to see whether the help server has started. We set the port
         // number when it starts, so if it's still at the default value (0), it
@@ -54,9 +60,12 @@ impl RHelp {
             r_help_port = RHelp::start_help_server()?
         }
 
+        // Create the channels that will be used to communicate with the help
+        // thread from other threads.
         let (help_request_tx, help_request_rx) = crossbeam::channel::unbounded();
 
-        // Start the help request thread and wait for requests from the front end
+        // Start the help request thread and wait for requests from the front
+        // end.
         spawn!("ark-help", move || {
             let help = Self {
                 comm,
@@ -66,12 +75,21 @@ impl RHelp {
             help.execution_thread();
         });
 
+        // Return the channel for sending help requests to the help thread.
         Ok(help_request_tx)
     }
 
+    /**
+     * The main help execution thread; receives messages from the frontend and
+     * other threads and processes them.
+     */
     pub fn execution_thread(&self) {
         loop {
+            // Wait for either a message from the front end or a help request
+            // from another thread.
             select! {
+                // A message from the front end; typically a request to show
+                // help for a specific topic.
                 recv(&self.comm.incoming_rx) -> msg => {
                     match msg {
                         Ok(msg) => {
@@ -87,6 +105,9 @@ impl RHelp {
                         },
                     }
                 },
+
+                // A message from another thread, typically notifying us that a
+                // help URL is ready for viewing.
                 recv(&self.help_request_rx) -> msg => {
                     match msg {
                         Ok(msg) => {
@@ -144,9 +165,6 @@ impl RHelp {
 
     fn handle_request(&self, message: HelpRequest) -> Result<()> {
         match message {
-            HelpRequest::SetHelpProxyPort(port) => unsafe {
-                browser::PORT = port;
-            },
             HelpRequest::ShowHelpUrl(url) => {
                 self.show_help_url(url.as_str())?;
             },
