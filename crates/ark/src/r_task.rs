@@ -83,7 +83,7 @@ where
         // Send the task to the R thread
         let task = RTaskMain {
             closure: Some(closure),
-            status_tx,
+            status_tx: Some(status_tx),
         };
         main.tasks_tx.send(task).unwrap();
 
@@ -105,9 +105,60 @@ where
     return result.lock().unwrap().take().unwrap();
 }
 
+pub fn r_task_nonblocking<F>(f: F)
+where
+    F: FnOnce(),
+    F: Send + 'static,
+{
+    // Escape hatch for unit tests
+    if unsafe { R_TASK_BYPASS } {
+        f();
+        return;
+    }
+
+    let main = acquire_r_main();
+
+    // Recursive case: If we're on ark-r-main already, just run the
+    // task and return. This allows `r_task(|| { r_task(|| {}) })`
+    // to run without deadlocking.
+    let thread_id = std::thread::current().id();
+    if main.thread_id == thread_id {
+        f();
+        return;
+    }
+
+    log::info!(
+        "Thread '{}' ({:?}) is requesting a non-blocking task.",
+        std::thread::current().name().unwrap_or("<unnamed>"),
+        thread_id,
+    );
+
+    {
+        let closure = move || {
+            r_safely(f);
+        };
+
+        let closure: Box<dyn FnOnce() + Send + 'static> = Box::new(closure);
+
+        // Send the non-blocking task to the R thread
+        let task = RTaskMain {
+            closure: Some(closure),
+            status_tx: None,
+        };
+        main.tasks_tx.send(task).unwrap();
+    }
+
+    // Log that we've sent off the non-blocking task
+    log::info!(
+        "Thread '{}' ({:?}) has sent the non-blocking task.",
+        std::thread::current().name().unwrap_or("<unnamed>"),
+        thread_id
+    );
+}
+
 pub struct RTaskMain {
     pub closure: Option<Box<dyn FnOnce() + Send + 'static>>,
-    pub status_tx: crossbeam::channel::Sender<bool>,
+    pub status_tx: Option<crossbeam::channel::Sender<bool>>,
 }
 
 impl RTaskMain {
@@ -115,8 +166,11 @@ impl RTaskMain {
         // Move closure here and call it
         self.closure.take().map(|closure| closure());
 
-        // Unblock caller
-        self.status_tx.send(true).unwrap();
+        // Unblock caller if it was a blocking call
+        match &self.status_tx {
+            Some(status_tx) => status_tx.send(true).unwrap(),
+            None => return,
+        }
     }
 }
 
