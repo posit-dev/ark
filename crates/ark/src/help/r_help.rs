@@ -21,6 +21,7 @@ use stdext::spawn;
 use crate::browser;
 use crate::help::message::HelpMessage;
 use crate::help::message::HelpMessageShowHelp;
+use crate::help::message::HelpMessageTopicReply;
 use crate::help::message::HelpRequest;
 use crate::help_proxy;
 use crate::r_task;
@@ -138,7 +139,7 @@ impl RHelp {
             // thread exit.
             return false;
         }
-        if let CommChannelMsg::Rpc(_, data) = message {
+        if let CommChannelMsg::Rpc(id, data) = message {
             let message = match serde_json::from_value::<HelpMessage>(data) {
                 Ok(m) => m,
                 Err(err) => {
@@ -146,7 +147,7 @@ impl RHelp {
                     return true;
                 },
             };
-            if let Err(err) = self.handle_message(message) {
+            if let Err(err) = self.handle_message(id, message) {
                 error!("Help: Error handling message from front end: {}", err);
                 return true;
             }
@@ -155,10 +156,26 @@ impl RHelp {
         true
     }
 
-    fn handle_message(&self, message: HelpMessage) -> Result<()> {
+    fn handle_message(&self, id: String, message: HelpMessage) -> Result<()> {
         // Match on the type of data received.
         match message {
-            HelpMessage::ShowHelpTopic(topic) => self.show_help_topic(topic.topic),
+            HelpMessage::ShowHelpTopic(topic) => {
+                // Look up the help topic and attempt to show it; this returns a
+                // boolean indicating whether the topic was found.
+                let found = match self.show_help_topic(topic.topic.clone()) {
+                    Ok(found) => found,
+                    Err(err) => {
+                        error!("Error looking up help topic {}: {}", topic.topic, err);
+                        false
+                    },
+                };
+
+                // Create and send a reply to the front end.
+                let reply = HelpMessage::HelpTopicReply(HelpMessageTopicReply { found });
+                let json = serde_json::to_value(reply)?;
+                self.comm.outgoing_tx.send(CommChannelMsg::Rpc(id, json))?;
+                Ok(())
+            },
             _ => Err(anyhow!("Help: Received unexpected message {:?}", message)),
         }
     }
@@ -198,9 +215,14 @@ impl RHelp {
         Ok(())
     }
 
-    fn show_help_topic(&self, topic: String) -> Result<()> {
-        r_task(|| unsafe { RFunction::from(".ps.help.showHelpTopic").add(topic).call() })?;
-        Ok(())
+    fn show_help_topic(&self, topic: String) -> Result<bool> {
+        let found = r_task(|| unsafe {
+            RFunction::from(".ps.help.showHelpTopic")
+                .add(topic)
+                .call()?
+                .to::<bool>()
+        })?;
+        Ok(found)
     }
 
     fn start_help_server() -> Result<u16> {

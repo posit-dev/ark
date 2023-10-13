@@ -18,6 +18,9 @@ pub enum HelpMessage {
     /// Request from the front end to show a help topic in the Help pane.
     ShowHelpTopic(HelpMessageShowTopic),
 
+    /// Reply to ShowHelpTopic.
+    HelpTopicReply(HelpMessageTopicReply),
+
     /// Notify the front end of new content in the Help pane.
     ShowHelp(HelpMessageShowHelp),
 }
@@ -35,6 +38,13 @@ pub enum HelpRequest {
 pub struct HelpMessageShowTopic {
     /// The help topic to be shown.
     pub topic: String,
+}
+
+/// Reply to a request to show a help topic in the Help pane.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct HelpMessageTopicReply {
+    /// Whether or not the topic was found.
+    pub found: bool,
 }
 
 /// Show help content in the Help pane.

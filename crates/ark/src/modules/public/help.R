@@ -13,13 +13,23 @@ options(help_type = "html")
 }
 
 # Show help on a topic. If no match is found, search for help on the topic.
+# Returns a logical value indicating whether help was found.
 .ps.help.showHelpTopic <- function(topic) {
+    # Try to find help on the topic.
     results <- help(topic)
+
+    # If no results were found, try to search for help on the topic.
     if (length(results) == 0) {
-        help.search(topic)
-    } else {
+       results <- help.search(topic)
+    }
+
+    # If we found results of any kind, show them.
+    if (results) {
         print(results)
     }
+
+    # Return whether we found any help.
+    length(results) > 0
 }
 
 .ps.help.getHtmlHelpContents <- function(topic, package = "") {
