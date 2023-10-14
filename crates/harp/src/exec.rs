@@ -615,21 +615,21 @@ mod tests {
                 }
             );
 
-            // CRLF in the code string
+            // CRLF in the code string, like a file with CRLF line endings
             assert_match!(
-                r_parse_vector("x <-\r\n1"),
+                r_parse_vector("x<-\r\n1\r\npi"),
                 Ok(ParseResult::Complete(out)) => {
                     assert_eq!(r_typeof(out), EXPRSXP as u32);
-                    assert_eq!(r_stringify(out, "").unwrap(), "expression(x <- 1)");
+                    assert_eq!(r_stringify(out, "").unwrap(), "expression(x <- 1, pi)");
                 }
             );
 
-            // CRLF in a string literal in the code
+            // CRLF inside a string literal in the code
             assert_match!(
-                r_parse_vector(r#"x <-'hello\r\nworld'"#),
+                r_parse_vector(r#"'a\r\nb'"#),
                 Ok(ParseResult::Complete(out)) => {
                     assert_eq!(r_typeof(out), EXPRSXP as u32);
-                    assert_eq!(r_stringify(out, "").unwrap(), r#"expression(x <- "hello\r\nworld")"#);
+                    assert_eq!(r_stringify(out, "").unwrap(), r#"expression("a\r\nb")"#);
                 }
             );
         }
