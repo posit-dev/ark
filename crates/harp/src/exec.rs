@@ -615,12 +615,21 @@ mod tests {
                 }
             );
 
-            // CRLF
+            // CRLF in the code string
             assert_match!(
                 r_parse_vector("x <-\r\n1"),
                 Ok(ParseResult::Complete(out)) => {
                     assert_eq!(r_typeof(out), EXPRSXP as u32);
                     assert_eq!(r_stringify(out, "").unwrap(), "expression(x <- 1)");
+                }
+            );
+
+            // CRLF in a string literal in the code
+            assert_match!(
+                r_parse_vector(r#"x <-'hello\r\nworld'"#),
+                Ok(ParseResult::Complete(out)) => {
+                    assert_eq!(r_typeof(out), EXPRSXP as u32);
+                    assert_eq!(r_stringify(out, "").unwrap(), r#"expression(x <- "hello\r\nworld")"#);
                 }
             );
         }
