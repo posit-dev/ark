@@ -42,6 +42,7 @@ use crossbeam::channel::Sender;
 use harp::exec::r_parse_vector;
 use harp::exec::ParseResult;
 use harp::object::RObject;
+use harp::utils::convert_line_endings;
 use libR_sys::*;
 use log::*;
 use serde_json::json;
@@ -233,7 +234,7 @@ impl ShellHandler for Shell {
     ) -> Result<ExecuteReply, ExecuteReplyException> {
         let (sender, receiver) = unbounded::<ExecuteResponse>();
         let mut req2 = req.clone();
-        req2.code = req2.code.replace("\r\n", "\n");
+        req2.code = convert_line_endings(&req2.code);
         if let Err(err) = self
             .r_request_tx
             .send(RRequest::ExecuteCode(req2, originator, sender))

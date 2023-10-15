@@ -548,3 +548,9 @@ pub fn r_normalize_path(x: RObject) -> anyhow::Result<String> {
         Ok(path)
     }
 }
+
+// TODO: introduce an enum to specify what you want the line endings to be
+// https://github.com/rstudio/rstudio/blob/9516dec57312035414041cac6f37b87d3d49cacf/src/cpp/core/StringUtils.cpp#L214
+pub fn convert_line_endings(s: &str) -> String {
+    s.replace("\r\n", "\n")
+}

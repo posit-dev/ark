@@ -19,6 +19,7 @@ use crate::object::RObject;
 use crate::protect::RProtect;
 use crate::r_string;
 use crate::r_symbol;
+use crate::utils::convert_line_endings;
 use crate::utils::r_inherits;
 use crate::utils::r_stringify;
 use crate::utils::r_typeof;
@@ -358,8 +359,7 @@ pub enum ParseResult {
 pub unsafe fn r_parse_vector(code: &str) -> Result<ParseResult> {
     let mut ps: ParseStatus = ParseStatus_PARSE_NULL;
     let mut protect = RProtect::new();
-    let code2 = code.replace("\r\n", "\n");
-    let r_code = r_string!(code2, &mut protect);
+    let r_code = r_string!(convert_line_endings(code), &mut protect);
 
     let result = r_try_catch(|| R_ParseVector(r_code, -1, &mut ps, R_NilValue))?;
 
