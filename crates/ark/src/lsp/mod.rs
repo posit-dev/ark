@@ -16,6 +16,7 @@ pub mod events;
 pub mod globals;
 pub mod handler;
 pub mod help;
+pub mod help_topic;
 pub mod hover;
 pub mod indexer;
 pub mod markdown;
