@@ -128,7 +128,7 @@ where
     }
 
     log::info!(
-        "Thread '{}' ({:?}) is requesting a non-blocking task.",
+        "Thread '{}' ({:?}) is requesting an async task.",
         std::thread::current().name().unwrap_or("<unnamed>"),
         thread_id,
     );
@@ -140,7 +140,7 @@ where
 
         let closure: Box<dyn FnOnce() + Send + 'static> = Box::new(closure);
 
-        // Send the non-blocking task to the R thread
+        // Send the async task to the R thread
         let task = RTaskMain {
             closure: Some(closure),
             status_tx: None,
@@ -148,9 +148,9 @@ where
         main.tasks_tx.send(task).unwrap();
     }
 
-    // Log that we've sent off the non-blocking task
+    // Log that we've sent off the async task
     log::info!(
-        "Thread '{}' ({:?}) has sent the non-blocking task.",
+        "Thread '{}' ({:?}) has sent the async task.",
         std::thread::current().name().unwrap_or("<unnamed>"),
         thread_id
     );
