@@ -42,8 +42,6 @@ pub struct RThreadSafeObject {
     shelter: Option<RObjectShelter>,
 }
 
-unsafe impl Send for RThreadSafeObject {}
-
 impl RThreadSafeObject {
     pub fn new(object: RObject) -> Self {
         let shelter = RObjectShelter { object };
