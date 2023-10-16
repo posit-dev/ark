@@ -105,7 +105,7 @@ where
     return result.lock().unwrap().take().unwrap();
 }
 
-pub fn r_task_nonblocking<F>(f: F)
+pub fn r_async_task<F>(f: F)
 where
     F: FnOnce(),
     F: Send + 'static,

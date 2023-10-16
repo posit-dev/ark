@@ -7,7 +7,7 @@
 
 use harp::object::RObject;
 
-use crate::r_task::r_task_nonblocking;
+use crate::r_task::r_async_task;
 use crate::shell::R_MAIN_THREAD_NAME;
 
 /// Private "shelter" around an `RObject` that makes it `Send`able
@@ -81,7 +81,7 @@ impl Drop for RThreadSafeObject {
             return;
         };
 
-        r_task_nonblocking(move || {
+        r_async_task(move || {
             // Run the `drop()` method of the `RObjectShelter`, which in turn
             // runs the `drop()` method of the `RObject`, which uses the R API
             // so it must be called on the main R thread.

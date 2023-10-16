@@ -77,7 +77,7 @@ impl REnvironment {
 
         // Start the execution thread and wait for requests from the front end
         spawn!("ark-environment", move || {
-            // When `env` is dropped, a `r_task_nonblocking()` call unprotects it
+            // When `env` is dropped, a `r_async_task()` call unprotects it
             let environment = Self {
                 comm,
                 comm_manager_tx,
