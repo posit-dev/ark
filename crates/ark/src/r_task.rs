@@ -133,20 +133,18 @@ where
         thread_id,
     );
 
-    {
-        let closure = move || {
-            r_safely(f);
-        };
+    let closure = move || {
+        r_safely(f);
+    };
 
-        let closure: Box<dyn FnOnce() + Send + 'static> = Box::new(closure);
+    let closure: Box<dyn FnOnce() + Send + 'static> = Box::new(closure);
 
-        // Send the async task to the R thread
-        let task = RTaskMain {
-            closure: Some(closure),
-            status_tx: None,
-        };
-        main.tasks_tx.send(task).unwrap();
-    }
+    // Send the async task to the R thread
+    let task = RTaskMain {
+        closure: Some(closure),
+        status_tx: None,
+    };
+    main.tasks_tx.send(task).unwrap();
 
     // Log that we've sent off the async task
     log::info!(
