@@ -44,6 +44,7 @@ use crate::data_viewer::message::DataViewerMessageResponse;
 use crate::data_viewer::message::DataViewerRowRequest;
 use crate::data_viewer::message::DataViewerRowResponse;
 use crate::r_task;
+use crate::thread::RThreadSafeObject;
 
 pub struct RDataViewer {
     title: String,
@@ -194,29 +195,31 @@ impl DataSet {
         Ok(())
     }
 
-    pub fn from_object(id: String, title: String, object: RObject) -> Result<Self, anyhow::Error> {
-        r_task(|| unsafe {
-            let row_count = {
-                if r_is_data_frame(*object) {
-                    let row_names = Rf_getAttrib(*object, R_RowNamesSymbol);
-                    XLENGTH(row_names) as usize
-                } else if r_is_matrix(*object) {
-                    let dim = Rf_getAttrib(*object, R_DimSymbol);
-                    INTEGER_ELT(dim, 0) as usize
-                } else {
-                    bail!("data viewer only handles data frames and matrices")
-                }
-            };
+    unsafe fn from_object(
+        id: String,
+        title: String,
+        object: RObject,
+    ) -> Result<Self, anyhow::Error> {
+        let row_count = {
+            if r_is_data_frame(*object) {
+                let row_names = Rf_getAttrib(*object, R_RowNamesSymbol);
+                XLENGTH(row_names) as usize
+            } else if r_is_matrix(*object) {
+                let dim = Rf_getAttrib(*object, R_DimSymbol);
+                INTEGER_ELT(dim, 0) as usize
+            } else {
+                bail!("data viewer only handles data frames and matrices")
+            }
+        };
 
-            let mut columns = vec![];
-            Self::extract_columns(*object, None, row_count, &mut columns)?;
+        let mut columns = vec![];
+        Self::extract_columns(*object, None, row_count, &mut columns)?;
 
-            Ok(Self {
-                id: id.clone(),
-                title: title.clone(),
-                columns,
-                row_count,
-            })
+        Ok(Self {
+            id: id.clone(),
+            title: title.clone(),
+            columns,
+            row_count,
         })
     }
 
@@ -251,15 +254,24 @@ impl RDataViewer {
             String::from("positron.dataViewer"),
         );
 
-        // TODO: Don't preemptively format the full data set up front
-        let dataset = unwrap!(
-            DataSet::from_object(id.clone(), title.clone(), data), Err(error) => {
-                log::error!("Data Viewer: Error while converting object to DataSet: {error}");
-                return;
-            }
-        );
+        // To be able to `Send` the `data` to the thread to be owned by the data
+        // viewer, it needs to be made thread safe
+        let data = RThreadSafeObject::new(data);
 
         spawn!(format!("ark-data-viewer-{}-{}", title, id), move || {
+            let title_dataset = title.clone();
+
+            // TODO: Don't preemptively format the full data set up front
+            let dataset = r_task(move || {
+                let data = data.get().clone();
+                unsafe { DataSet::from_object(id, title_dataset, data) }
+            });
+
+            let dataset = unwrap!(dataset, Err(error) => {
+                log::error!("Data Viewer: Error while converting object to DataSet: {error:?}");
+                return;
+            });
+
             let viewer = Self {
                 title,
                 dataset,

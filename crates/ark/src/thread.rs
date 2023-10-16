@@ -24,6 +24,7 @@ struct RObjectShelter {
     object: RObject,
 }
 
+unsafe impl Sync for RObjectShelter {}
 unsafe impl Send for RObjectShelter {}
 
 /// Thread safe wrapper around an `RObject`
