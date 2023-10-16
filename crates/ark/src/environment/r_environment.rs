@@ -39,8 +39,8 @@ use crate::environment::message::EnvironmentMessageUpdate;
 use crate::environment::message::EnvironmentMessageView;
 use crate::environment::variable::EnvironmentVariable;
 use crate::lsp::events::EVENTS;
-use crate::object_store::RObjectThreadSafe;
 use crate::r_task;
+use crate::thread::RThreadSafeObject;
 
 /**
  * The R Environment handler provides the server side of Positron's Environment
@@ -50,7 +50,7 @@ use crate::r_task;
 pub struct REnvironment {
     comm: CommSocket,
     comm_manager_tx: Sender<CommEvent>,
-    pub env: RObjectThreadSafe,
+    pub env: RThreadSafeObject,
     current_bindings: Vec<Binding>,
     version: u64,
 }
@@ -73,7 +73,7 @@ impl REnvironment {
 
         // To be able to `Send` the `env` to the thread, it needs to be made
         // thread safe
-        let env = RObjectThreadSafe::new(env);
+        let env = RThreadSafeObject::new(env);
 
         // Start the execution thread and wait for requests from the front end
         spawn!("ark-environment", move || {
@@ -250,7 +250,7 @@ impl REnvironment {
     fn clear(&mut self, include_hidden_objects: bool, request_id: Option<String>) {
         // try to rm(<env>, list = ls(envir = <env>, all.names = TRUE)))
         let result: Result<(), harp::error::Error> = r_task(|| unsafe {
-            let env = self.env.get().unwrap();
+            let env = self.env.get().clone();
 
             let mut list = RFunction::new("base", "ls")
                 .param("envir", *env)
@@ -290,11 +290,11 @@ impl REnvironment {
         r_task(|| unsafe {
             let variables: Vec<&str> = variables.iter().map(|s| s as &str).collect();
 
-            let env = self.env.get().unwrap();
+            let env = self.env.get().clone();
 
             let result = RFunction::new("base", "rm")
                 .param("list", CharacterVector::create(variables).cast())
-                .param("envir", *env)
+                .param("envir", env)
                 .call();
 
             if let Err(_) = result {
@@ -308,8 +308,8 @@ impl REnvironment {
 
     fn clipboard_format(&mut self, path: &Vec<String>, format: String, request_id: Option<String>) {
         let clipped = r_task(|| {
-            let env = self.env.get().unwrap();
-            EnvironmentVariable::clip(RObject::view(*env), &path, &format)
+            let env = self.env.get().clone();
+            EnvironmentVariable::clip(env, &path, &format)
         });
 
         let msg = match clipped {
@@ -329,8 +329,8 @@ impl REnvironment {
 
     fn inspect(&mut self, path: &Vec<String>, request_id: Option<String>) {
         let inspect = r_task(|| {
-            let env = self.env.get().unwrap();
-            EnvironmentVariable::inspect(RObject::view(*env), &path)
+            let env = self.env.get().clone();
+            EnvironmentVariable::inspect(env, &path)
         });
         let msg = match inspect {
             Ok(children) => {
@@ -351,7 +351,7 @@ impl REnvironment {
 
     fn view(&mut self, path: &Vec<String>, request_id: Option<String>) {
         let message = r_task(|| {
-            let env = self.env.get().unwrap();
+            let env = self.env.get().clone();
 
             let data = EnvironmentVariable::resolve_data_object(env, &path);
 
@@ -484,7 +484,7 @@ impl REnvironment {
 
     fn bindings(&self) -> Vec<Binding> {
         // SAFETY: Should be called in an `r_task()`
-        let env = self.env.get().unwrap();
+        let env = self.env.get().clone();
         let env = Environment::new(env);
         let mut bindings: Vec<Binding> =
             env.iter().filter(|binding| !binding.is_hidden()).collect();

@@ -16,8 +16,8 @@ use ark::environment::message::EnvironmentMessageList;
 use ark::environment::message::EnvironmentMessageUpdate;
 use ark::environment::r_environment::REnvironment;
 use ark::lsp::events::EVENTS;
-use ark::object_store::RObjectThreadSafe;
 use ark::r_task;
+use ark::thread::RThreadSafeObject;
 use crossbeam::channel::bounded;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
@@ -51,7 +51,7 @@ fn test_environment_list() {
             .param("parent", R_EmptyEnv)
             .call()
             .unwrap();
-        RObjectThreadSafe::new(env)
+        RThreadSafeObject::new(env)
     });
 
     // Create a sender/receiver pair for the comm channel.
@@ -71,7 +71,7 @@ fn test_environment_list() {
     let incoming_tx = comm.incoming_tx.clone();
     let outgoing_rx = comm.outgoing_rx.clone();
     r_task(|| {
-        let test_env = test_env.get().unwrap();
+        let test_env = test_env.get().clone();
         REnvironment::start(test_env, comm.clone(), comm_manager_tx.clone());
     });
 
@@ -91,7 +91,7 @@ fn test_environment_list() {
     // Now create a variable in the R environment and ensure we get a list of
     // variables with the new variable in it.
     r_task(|| unsafe {
-        let test_env = test_env.get().unwrap();
+        let test_env = test_env.get().clone();
         let sym = r_symbol!("everything");
         Rf_defineVar(sym, Rf_ScalarInteger(42), *test_env);
     });
@@ -125,7 +125,7 @@ fn test_environment_list() {
 
     // Create another variable
     r_task(|| unsafe {
-        let test_env = test_env.get().unwrap();
+        let test_env = test_env.get().clone();
         r_envir_set("nothing", Rf_ScalarInteger(43), *test_env);
         r_envir_remove("everything", *test_env);
     });
@@ -177,14 +177,14 @@ fn test_environment_list() {
 
     // test the env is now empty
     r_task(|| unsafe {
-        let test_env = test_env.get().unwrap();
+        let test_env = test_env.get().clone();
         let contents = RObject::new(R_lsInternal(*test_env, Rboolean_TRUE));
         assert_eq!(Rf_length(*contents), 0);
     });
 
     // Create some more variables
     r_task(|| unsafe {
-        let test_env = test_env.get().unwrap();
+        let test_env = test_env.get().clone();
 
         let sym = r_symbol!("a");
         Rf_defineVar(sym, Rf_ScalarInteger(42), *test_env);

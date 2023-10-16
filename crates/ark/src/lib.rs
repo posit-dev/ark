@@ -18,11 +18,11 @@ pub mod kernel;
 pub mod logger;
 pub mod lsp;
 pub mod modules;
-pub mod object_store;
 pub mod plots;
 pub mod r_task;
 pub mod request;
 pub mod shell;
+pub mod thread;
 pub mod version;
 
 pub use r_task::r_task;
