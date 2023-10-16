@@ -12,16 +12,11 @@ options(help_type = "html")
     suppressMessages(tools::startDynamicHelp(start = NA))
 }
 
-# Show help on a topic. If no match is found, search for help on the topic.
-# Returns a logical value indicating whether help was found.
+# Show help on a topic. Returns a logical value indicating whether help was
+# found.
 .ps.help.showHelpTopic <- function(topic) {
     # Try to find help on the topic.
     results <- help(topic)
-
-    # If no results were found, try to search for help on the topic.
-    if (length(results) == 0) {
-       results <- help.search(topic)
-    }
 
     # If we found results of any kind, show them.
     if (length(results) > 0) {

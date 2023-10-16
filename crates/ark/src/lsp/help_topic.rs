@@ -51,22 +51,35 @@ impl Backend {
         let point = position.as_point();
 
         let mut cursor = root.walk();
-        let node = cursor.find_leaf(point);
+        let mut node = cursor.find_leaf(point);
 
-        // Check to see whether it's a function node (currently that's what we
-        // support)
-        if node.kind() != "function" {
-            backend_trace!(self, "help_topic(): No function node at position {point}");
-            return Ok(None);
+        // Find the nearest node that is an identifier.
+        while node.kind() != "identifier" {
+            if let Some(sibling) = node.prev_sibling() {
+                // Move to an adjacent sibling if we can.
+                node = sibling;
+            } else if let Some(parent) = node.parent() {
+                // If no sibling, check the parent.
+                node = parent;
+            } else {
+                backend_trace!(self, "help_topic(): No help at position {point}");
+                return Ok(None);
+            }
         }
 
         // Get the text of the node
         let source = document.contents.to_string();
         let text = node.utf8_text(source.as_bytes()).unwrap();
 
+        // Form the response
         let response = HelpTopicResponse {
             topic: String::from(text),
         };
+
+        backend_trace!(
+            self,
+            "help_topic(): Using help topic {text} at position {point}"
+        );
 
         Ok(Some(response))
     }
