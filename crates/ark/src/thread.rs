@@ -6,6 +6,7 @@
 //
 
 use harp::object::RObject;
+use harp::test::R_TASK_BYPASS;
 
 use crate::r_task::r_async_task;
 use crate::shell::R_MAIN_THREAD_NAME;
@@ -50,12 +51,13 @@ impl RThreadSafeObject {
         Self { shelter }
     }
 
-    /// SAFETY: `get()` can only be called on the main R thread
+    /// SAFETY: `get()` can only be called on the main R thread.
+    /// We also make an exception for tests where `test::start_r()` is used.
     pub fn get(&self) -> &RObject {
         let thread = std::thread::current();
         let name = thread.name().unwrap_or("<unnamed>");
 
-        if name != R_MAIN_THREAD_NAME {
+        if name != R_MAIN_THREAD_NAME && unsafe { !R_TASK_BYPASS } {
             #[cfg(debug_assertions)]
             panic!("Can't access thread safe `RObject` on thread '{name}'.");
             #[cfg(not(debug_assertions))]
