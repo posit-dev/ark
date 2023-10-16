@@ -549,8 +549,28 @@ pub fn r_normalize_path(x: RObject) -> anyhow::Result<String> {
     }
 }
 
-// TODO: introduce an enum to specify what you want the line endings to be
-// https://github.com/rstudio/rstudio/blob/9516dec57312035414041cac6f37b87d3d49cacf/src/cpp/core/StringUtils.cpp#L214
-pub fn convert_line_endings(s: &str) -> String {
-    s.replace("\r\n", "\n")
+#[cfg(windows)]
+const DEFAULT_LINE_ENDING: &'static str = "\r\n";
+#[cfg(not(windows))]
+const DEFAULT_LINE_ENDING: &'static str = "\n";
+
+#[derive(Debug)]
+pub enum LineEnding {
+    Windows,
+    Posix,
+    Native,
+}
+
+impl LineEnding {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            LineEnding::Windows => "\r\n",
+            LineEnding::Posix => "\n",
+            LineEnding::Native => DEFAULT_LINE_ENDING,
+        }
+    }
+}
+
+pub fn convert_line_endings(s: &str, eol_type: LineEnding) -> String {
+    s.replace("\r\n", eol_type.as_str())
 }

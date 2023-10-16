@@ -23,6 +23,7 @@ use crate::utils::convert_line_endings;
 use crate::utils::r_inherits;
 use crate::utils::r_stringify;
 use crate::utils::r_typeof;
+use crate::utils::LineEnding;
 use crate::vector::CharacterVector;
 use crate::vector::Vector;
 
@@ -359,7 +360,7 @@ pub enum ParseResult {
 pub unsafe fn r_parse_vector(code: &str) -> Result<ParseResult> {
     let mut ps: ParseStatus = ParseStatus_PARSE_NULL;
     let mut protect = RProtect::new();
-    let r_code = r_string!(convert_line_endings(code), &mut protect);
+    let r_code = r_string!(convert_line_endings(code, LineEnding::Posix), &mut protect);
 
     let result = r_try_catch(|| R_ParseVector(r_code, -1, &mut ps, R_NilValue))?;
 
