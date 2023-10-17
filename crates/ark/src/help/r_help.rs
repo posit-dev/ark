@@ -15,6 +15,7 @@ use crossbeam::select;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use log::error;
+use log::trace;
 use log::warn;
 use stdext::spawn;
 
@@ -48,17 +49,30 @@ impl RHelp {
         // number when it starts, so if it's still at the default value (0), it
         // hasn't started.
         let mut started = false;
-        let mut r_help_port = 0;
+        let r_help_port: u16;
         unsafe {
             if browser::PORT != 0 {
                 started = true;
-                r_help_port = browser::PORT;
             }
         }
 
-        // If we haven't started the help server, start it now.
-        if !started {
-            r_help_port = RHelp::start_help_server()?
+        if started {
+            // We have already started the help server; get the port number.
+            r_help_port =
+                r_task(|| unsafe { RFunction::new("tools", "httpdPort").call()?.to::<u16>() })?;
+            trace!(
+                "Help comm {} started; reconnected help server on port {}",
+                comm.comm_id,
+                r_help_port
+            );
+        } else {
+            // If we haven't started the help server, start it now.
+            r_help_port = RHelp::start_help_server()?;
+            trace!(
+                "Help comm {} started; started help server on port {}",
+                comm.comm_id,
+                r_help_port
+            );
         }
 
         // Create the channels that will be used to communicate with the help
@@ -126,6 +140,7 @@ impl RHelp {
                 },
             }
         }
+        trace!("Help comm {} closed.", self.comm.comm_id);
     }
 
     /**

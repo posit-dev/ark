@@ -78,7 +78,7 @@ impl Backend {
 
         backend_trace!(
             self,
-            "help_topic(): Using help topic {text} at position {point}"
+            "help_topic(): Using help topic '{text}' at position {point}"
         );
 
         Ok(Some(response))
