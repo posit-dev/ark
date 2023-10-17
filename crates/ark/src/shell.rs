@@ -236,9 +236,9 @@ impl ShellHandler for Shell {
         let (sender, receiver) = unbounded::<ExecuteResponse>();
         let mut req2 = req.clone();
         req2.code = convert_line_endings(&req2.code, LineEnding::Posix);
-        if let Err(err) = self
-            .r_request_tx
-            .send(RRequest::ExecuteCode(req2, originator, sender))
+        if let Err(err) =
+            self.r_request_tx
+                .send(RRequest::ExecuteCode(req2.clone(), originator, sender))
         {
             warn!(
                 "Could not deliver execution request to execution thread: {}",
@@ -246,9 +246,7 @@ impl ShellHandler for Shell {
             )
         }
 
-        // Let the shell thread know that we've executed the code.
-        // TO DISCUSS: should really be `req2.code`
-        trace!("Code sent to R: {}", req.code);
+        trace!("Code sent to R: {}", req2.code);
         let result = receiver.recv().unwrap();
 
         let result = match result {
