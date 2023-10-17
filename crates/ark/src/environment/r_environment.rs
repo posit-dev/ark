@@ -40,7 +40,7 @@ use crate::environment::message::EnvironmentMessageView;
 use crate::environment::variable::EnvironmentVariable;
 use crate::lsp::events::EVENTS;
 use crate::r_task;
-use crate::thread::RThreadSafeObject;
+use crate::thread::RThreadSafe;
 
 /**
  * The R Environment handler provides the server side of Positron's Environment
@@ -50,7 +50,7 @@ use crate::thread::RThreadSafeObject;
 pub struct REnvironment {
     comm: CommSocket,
     comm_manager_tx: Sender<CommEvent>,
-    pub env: RThreadSafeObject,
+    pub env: RThreadSafe<RObject>,
     current_bindings: Vec<Binding>,
     version: u64,
 }
@@ -73,7 +73,7 @@ impl REnvironment {
 
         // To be able to `Send` the `env` to the thread, it needs to be made
         // thread safe
-        let env = RThreadSafeObject::new(env);
+        let env = RThreadSafe::new(env);
 
         // Start the execution thread and wait for requests from the front end
         spawn!("ark-environment", move || {

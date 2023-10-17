@@ -17,7 +17,7 @@ use ark::environment::message::EnvironmentMessageUpdate;
 use ark::environment::r_environment::REnvironment;
 use ark::lsp::events::EVENTS;
 use ark::r_task;
-use ark::thread::RThreadSafeObject;
+use ark::thread::RThreadSafe;
 use crossbeam::channel::bounded;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
@@ -51,7 +51,7 @@ fn test_environment_list() {
             .param("parent", R_EmptyEnv)
             .call()
             .unwrap();
-        RThreadSafeObject::new(env)
+        RThreadSafe::new(env)
     });
 
     // Create a sender/receiver pair for the comm channel.
