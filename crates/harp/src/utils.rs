@@ -575,5 +575,41 @@ impl LineEnding {
 }
 
 pub fn convert_line_endings(s: &str, eol_type: LineEnding) -> String {
+    // so far, no demonstrated need to repair anything other than CRLF, hence
+    // the `from` value
     s.replace("\r\n", eol_type.as_str())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_convert_line_endings_explicit() {
+        let s = "\r\n";
+
+        let posix = convert_line_endings(s, LineEnding::Posix);
+        assert_eq!(posix, "\n");
+
+        let windows = convert_line_endings(s, LineEnding::Windows);
+        assert_eq!(windows, s);
+
+        let s2 = r#"a\r\nb"#;
+        let s2_res = convert_line_endings(s2, LineEnding::Posix);
+        assert_eq!(s2_res, s2);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_convert_line_endings_native_windows() {
+        let res = convert_line_endings("\r\n", LineEnding::Native);
+        assert_eq!(res, "\r\n");
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn test_convert_line_endings_native_not_windows() {
+        let res = convert_line_endings("\r\n", LineEnding::Native);
+        assert_eq!(res, "\n");
+    }
 }
