@@ -51,7 +51,14 @@ pub struct REnvironment {
     comm: CommSocket,
     comm_manager_tx: Sender<CommEvent>,
     pub env: RThreadSafe<RObject>,
-    current_bindings: Vec<Binding>,
+    /// `Binding` does not currently protect anything, and therefore doesn't
+    /// implement `Drop`, which might use the R API. It assumes that R SYMSXPs
+    /// protect themselves, and that the binding value is protected by the
+    /// `env`. This seems to work fine, so technically we don't need
+    /// `RThreadSafe` to ensure that the `drop()` runs on the R main thread.
+    /// However, we do need to `Send` the underlying `SEXP` values between
+    /// threads, so we still use `RThreadSafe` for that.
+    current_bindings: RThreadSafe<Vec<Binding>>,
     version: u64,
 }
 
@@ -78,11 +85,14 @@ impl REnvironment {
         // Start the execution thread and wait for requests from the front end
         spawn!("ark-environment", move || {
             // When `env` is dropped, a `r_async_task()` call unprotects it
+
+            let current_bindings = RThreadSafe::new(vec![]);
+
             let environment = Self {
                 comm,
                 comm_manager_tx,
                 env,
-                current_bindings: vec![],
+                current_bindings,
                 version: 0,
             };
             environment.execution_thread();
@@ -209,7 +219,8 @@ impl REnvironment {
         }
     }
 
-    fn update_bindings(&mut self, new_bindings: Vec<Binding>) -> u64 {
+    fn update_bindings(&mut self, new_bindings: RThreadSafe<Vec<Binding>>) -> u64 {
+        // Updating will `drop()` the old `current_bindings` on the main R thread
         self.current_bindings = new_bindings;
         self.version = self.version + 1;
 
@@ -227,7 +238,9 @@ impl REnvironment {
         r_task(|| {
             self.update_bindings(self.bindings());
 
-            for binding in &self.current_bindings {
+            let current_bindings = self.current_bindings.get();
+
+            for binding in current_bindings {
                 variables.push(EnvironmentVariable::new(binding));
             }
         });
@@ -395,16 +408,13 @@ impl REnvironment {
         let mut assigned: Vec<EnvironmentVariable> = vec![];
         let mut removed: Vec<String> = vec![];
 
-        let old_bindings = &self.current_bindings;
-        let mut new_bindings = vec![];
-
         r_task(|| {
-            new_bindings = self.bindings();
+            let new_bindings = self.bindings();
 
-            let mut old_iter = old_bindings.iter();
+            let mut old_iter = self.current_bindings.get().iter();
             let mut old_next = old_iter.next();
 
-            let mut new_iter = new_bindings.iter();
+            let mut new_iter = new_bindings.get().iter();
             let mut new_next = new_iter.next();
 
             loop {
@@ -460,16 +470,15 @@ impl REnvironment {
                     },
                 }
             }
-        });
 
-        if assigned.len() > 0 || removed.len() > 0 || request_id.is_some() {
-            // only update the bindings (and the version)
-            // if anything changed
+            // Only update the bindings (and the version) if anything changed
             if assigned.len() > 0 || removed.len() > 0 {
                 self.update_bindings(new_bindings);
             }
+        });
 
-            // but the message might be sent anyway if this comes from a request
+        if assigned.len() > 0 || removed.len() > 0 || request_id.is_some() {
+            // Send the message if anything changed or if this came from a request
             let message = EnvironmentMessage::Update(EnvironmentMessageUpdate {
                 assigned,
                 removed,
@@ -479,14 +488,14 @@ impl REnvironment {
         }
     }
 
-    fn bindings(&self) -> Vec<Binding> {
+    fn bindings(&self) -> RThreadSafe<Vec<Binding>> {
         // SAFETY: Should be called in an `r_task()`
         let env = self.env.get().clone();
         let env = Environment::new(env);
         let mut bindings: Vec<Binding> =
             env.iter().filter(|binding| !binding.is_hidden()).collect();
-
         bindings.sort_by(|a, b| a.name.cmp(&b.name));
+        let bindings = RThreadSafe::new(bindings);
         bindings
     }
 }
