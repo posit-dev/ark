@@ -19,9 +19,11 @@ use crate::object::RObject;
 use crate::protect::RProtect;
 use crate::r_string;
 use crate::r_symbol;
+use crate::utils::convert_line_endings;
 use crate::utils::r_inherits;
 use crate::utils::r_stringify;
 use crate::utils::r_typeof;
+use crate::utils::LineEnding;
 use crate::vector::CharacterVector;
 use crate::vector::Vector;
 
@@ -356,9 +358,9 @@ pub enum ParseResult {
 
 #[allow(non_upper_case_globals)]
 pub unsafe fn r_parse_vector(code: &str) -> Result<ParseResult> {
-    let mut ps: ParseStatus = 0;
+    let mut ps: ParseStatus = ParseStatus_PARSE_NULL;
     let mut protect = RProtect::new();
-    let r_code = r_string!(code, &mut protect);
+    let r_code = r_string!(convert_line_endings(code, LineEnding::Posix), &mut protect);
 
     let result = r_try_catch(|| R_ParseVector(r_code, -1, &mut ps, R_NilValue))?;
 
@@ -614,6 +616,23 @@ mod tests {
                 }
             );
 
+            // CRLF in the code string, like a file with CRLF line endings
+            assert_match!(
+                r_parse_vector("x<-\r\n1\r\npi"),
+                Ok(ParseResult::Complete(out)) => {
+                    assert_eq!(r_typeof(out), EXPRSXP as u32);
+                    assert_eq!(r_stringify(out, "").unwrap(), "expression(x <- 1, pi)");
+                }
+            );
+
+            // CRLF inside a string literal in the code
+            assert_match!(
+                r_parse_vector(r#"'a\r\nb'"#),
+                Ok(ParseResult::Complete(out)) => {
+                    assert_eq!(r_typeof(out), EXPRSXP as u32);
+                    assert_eq!(r_stringify(out, "").unwrap(), r#"expression("a\r\nb")"#);
+                }
+            );
         }
     }
 
