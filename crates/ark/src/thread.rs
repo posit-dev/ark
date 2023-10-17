@@ -63,11 +63,10 @@ impl RThreadSafeObject {
             log::error!("Can't access thread safe `RObject` on thread '{name}'.");
         }
 
-        // Reference to `RObjectShelter`
-        let shelter = self.shelter.as_ref().unwrap();
+        let shelter: &RObjectShelter = self.shelter.as_ref().unwrap();
+        let object: &RObject = &shelter.object;
 
-        // Reference to `RObject`
-        &shelter.object
+        object
     }
 }
 
