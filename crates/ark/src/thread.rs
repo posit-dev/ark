@@ -38,7 +38,7 @@ unsafe impl Send for RObjectShelter {}
 /// thread to unprotect the underlying `RObject`.
 ///
 /// Purposefully does not implement `Clone`, as we want the thread safe objects
-/// to be moved across threads.
+/// to be moved across threads without running any R code.
 pub struct RThreadSafeObject {
     shelter: Option<RObjectShelter>,
 }
