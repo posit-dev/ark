@@ -334,7 +334,7 @@ impl ShellHandler for Shell {
     ) -> Result<(), Exception> {
         // Send the input reply to R in the form of an ordinary execution request.
         let req = ExecuteRequest {
-            code: msg.value.clone(),
+            code: convert_line_endings(&msg.value, LineEnding::Posix),
             silent: true,
             store_history: false,
             user_expressions: json!({}),
