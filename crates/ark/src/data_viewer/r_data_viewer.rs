@@ -64,12 +64,8 @@ pub struct DataColumn {
 }
 
 impl DataColumn {
-    fn slice(&self, start: usize, size: usize) -> Vec<String> {
-        // If start + size exceeds the length of the DataColumn, just return the slice from start to end
-        if (start + size) > self.data.len() {
-            return self.data[start..].to_vec()
-        }
-        self.data[start..start + size].to_vec()
+    fn slice(&self, start: usize, end: usize) -> Vec<String> {
+        self.data[start..end].to_vec()
     }
 }
 
@@ -237,10 +233,11 @@ impl DataSet {
         } else {
             let mut sliced_columns: Vec<DataColumn> = Vec::with_capacity(self.columns.len());
             for column in self.columns.iter() {
+                let end = std::cmp::min(start + size, self.row_count);
                 sliced_columns.push(DataColumn {
                     name: column.name.clone(),
                     column_type: column.column_type.clone(),
-                    data: column.slice(start, size),
+                    data: column.slice(start, end),
                 })
             }
             Ok(sliced_columns)
