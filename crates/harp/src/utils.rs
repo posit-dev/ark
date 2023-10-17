@@ -549,10 +549,13 @@ pub fn r_normalize_path(x: RObject) -> anyhow::Result<String> {
     }
 }
 
+const POSIX_LINE_ENDING: &'static str = "\n";
+const WINDOWS_LINE_ENDING: &'static str = "\r\n";
+
 #[cfg(windows)]
-const DEFAULT_LINE_ENDING: &'static str = "\r\n";
+const NATIVE_LINE_ENDING: &'static str = WINDOWS_LINE_ENDING;
 #[cfg(not(windows))]
-const DEFAULT_LINE_ENDING: &'static str = "\n";
+const NATIVE_LINE_ENDING: &'static str = POSIX_LINE_ENDING;
 
 #[derive(Debug)]
 pub enum LineEnding {
@@ -564,9 +567,9 @@ pub enum LineEnding {
 impl LineEnding {
     pub fn as_str(self) -> &'static str {
         match self {
-            LineEnding::Windows => "\r\n",
-            LineEnding::Posix => "\n",
-            LineEnding::Native => DEFAULT_LINE_ENDING,
+            LineEnding::Windows => WINDOWS_LINE_ENDING,
+            LineEnding::Posix => POSIX_LINE_ENDING,
+            LineEnding::Native => NATIVE_LINE_ENDING,
         }
     }
 }
