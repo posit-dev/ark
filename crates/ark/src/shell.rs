@@ -234,11 +234,11 @@ impl ShellHandler for Shell {
         req: &ExecuteRequest,
     ) -> Result<ExecuteReply, ExecuteReplyException> {
         let (sender, receiver) = unbounded::<ExecuteResponse>();
-        let mut req2 = req.clone();
-        req2.code = convert_line_endings(&req2.code, LineEnding::Posix);
+        let mut req_clone = req.clone();
+        req_clone.code = convert_line_endings(&req_clone.code, LineEnding::Posix);
         if let Err(err) =
             self.r_request_tx
-                .send(RRequest::ExecuteCode(req2.clone(), originator, sender))
+                .send(RRequest::ExecuteCode(req_clone.clone(), originator, sender))
         {
             warn!(
                 "Could not deliver execution request to execution thread: {}",
@@ -246,7 +246,7 @@ impl ShellHandler for Shell {
             )
         }
 
-        trace!("Code sent to R: {}", req2.code);
+        trace!("Code sent to R: {}", req_clone.code);
         let result = receiver.recv().unwrap();
 
         let result = match result {
