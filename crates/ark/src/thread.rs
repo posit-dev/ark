@@ -34,8 +34,9 @@ unsafe impl Send for RObjectShelter {}
 /// main R thread. If `get()` is called off the main R thread, it will log an
 /// error in release mode and panic in development mode.
 ///
-/// When this object is dropped, it runs a non-blocking task on the main R
-/// thread to unprotect the underlying `RObject`.
+/// When this object is dropped, it `take()`s the `RObjectShelter` out of the
+/// `shelter` and `move`s it to the main R thread through an async task to be
+/// able to `drop()` it on the main R thread.
 ///
 /// Purposefully does not implement `Clone`, as we want the thread safe objects
 /// to be moved across threads without running any R code.
