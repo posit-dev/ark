@@ -26,6 +26,12 @@ type SharedOption<T> = Arc<Mutex<Option<T>>>;
 // worried about data races since control flow from one thread to the other
 // is sequential, objects captured by `f` might have implementations
 // sensitive to some thread state (ID, thread-local storage, etc).
+//
+// The 'env lifetime is for objects captured by the closure `f`.
+// `r_task()` is blocking and guaranteed to return _after_ `f` has finished
+// running, so borrowing is allowed even though we send it to another
+// thread. See also `Crossbeam::thread::ScopedThreadBuilder` (from which
+// `r_task()` is adapted) for a similar approach.
 
 pub fn r_task<'env, F, T>(f: F) -> T
 where
@@ -73,7 +79,9 @@ where
 
         // Move `f` to heap and erase its lifetime so we can send it to
         // another thread. It is safe to do so because we block in this
-        // scope until the closure has finished running.
+        // scope until the closure has finished running, so the objects
+        // captured by the closure are guaranteed to exist for the duration
+        // of the closure call.
         let closure: Box<dyn FnOnce() + 'env + Send> = Box::new(closure);
         let closure: Box<dyn FnOnce() + Send + 'static> = unsafe { std::mem::transmute(closure) };
 
