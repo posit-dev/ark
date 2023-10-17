@@ -42,6 +42,8 @@ use crossbeam::channel::Sender;
 use harp::exec::r_parse_vector;
 use harp::exec::ParseResult;
 use harp::object::RObject;
+use harp::utils::convert_line_endings;
+use harp::utils::LineEnding;
 use libR_sys::*;
 use log::*;
 use serde_json::json;
@@ -234,9 +236,11 @@ impl ShellHandler for Shell {
         req: &ExecuteRequest,
     ) -> Result<ExecuteReply, ExecuteReplyException> {
         let (sender, receiver) = unbounded::<ExecuteResponse>();
+        let mut req_clone = req.clone();
+        req_clone.code = convert_line_endings(&req_clone.code, LineEnding::Posix);
         if let Err(err) =
             self.r_request_tx
-                .send(RRequest::ExecuteCode(req.clone(), originator, sender))
+                .send(RRequest::ExecuteCode(req_clone.clone(), originator, sender))
         {
             warn!(
                 "Could not deliver execution request to execution thread: {}",
@@ -244,8 +248,7 @@ impl ShellHandler for Shell {
             )
         }
 
-        // Let the shell thread know that we've executed the code.
-        trace!("Code sent to R: {}", req.code);
+        trace!("Code sent to R: {}", req_clone.code);
         let result = receiver.recv().unwrap();
 
         let result = match result {
@@ -331,7 +334,7 @@ impl ShellHandler for Shell {
     ) -> Result<(), Exception> {
         // Send the input reply to R in the form of an ordinary execution request.
         let req = ExecuteRequest {
-            code: msg.value.clone(),
+            code: convert_line_endings(&msg.value, LineEnding::Posix),
             silent: true,
             store_history: false,
             user_expressions: json!({}),
