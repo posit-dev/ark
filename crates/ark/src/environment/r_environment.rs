@@ -358,9 +358,6 @@ impl REnvironment {
             match data {
                 Ok(data) => {
                     let name = unsafe { path.get_unchecked(path.len() - 1) };
-                    // `start()` will use its own `r_task()` when converting `data` to a `DataSet`,
-                    // which is fine. In the future it may also store a thread safe `RObject`, once
-                    // we figure out how to convert the data in batches on demand.
                     RDataViewer::start(name.clone(), data, self.comm_manager_tx.clone());
                     EnvironmentMessage::Success
                 },
