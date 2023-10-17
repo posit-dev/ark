@@ -235,14 +235,14 @@ impl DataSet {
             return Ok(self.columns.clone());
         }
 
-        let end = start + size; // exclusive, 1 more than the final row index of the slice
+        let mut end = start + size; // exclusive, 1 more than the final row index of the slice
 
         if end > self.row_count {
             // Censor end to avoid a panic, but log an error as we expect the frontend
             // to handle this case already
             let row_count = self.row_count;
             log::error!("Requested rows [{start}, {end}), but only {row_count} rows exist.");
-            end = row_count;
+            end = self.row_count;
         }
 
         let mut sliced_columns: Vec<DataColumn> = Vec::with_capacity(self.columns.len());
