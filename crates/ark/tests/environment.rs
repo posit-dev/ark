@@ -17,6 +17,7 @@ use ark::environment::message::EnvironmentMessageUpdate;
 use ark::environment::r_environment::REnvironment;
 use ark::lsp::events::EVENTS;
 use ark::r_task;
+use ark::thread::RThreadSafeObject;
 use crossbeam::channel::bounded;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
@@ -46,10 +47,11 @@ fn test_environment_list() {
     // (with the empty environment as its parent) so that each test in this
     // file can run independently.
     let test_env = r_task(|| unsafe {
-        RFunction::new("base", "new.env")
+        let env = RFunction::new("base", "new.env")
             .param("parent", R_EmptyEnv)
             .call()
-            .unwrap()
+            .unwrap();
+        RThreadSafeObject::new(env)
     });
 
     // Create a sender/receiver pair for the comm channel.
@@ -64,13 +66,13 @@ fn test_environment_list() {
     // we don't test that here.
     let (comm_manager_tx, _) = bounded::<CommEvent>(0);
 
-    // Create a new environment handler and give it a view of the test
+    // Create a new environment handler and give it the test
     // environment we created.
     let incoming_tx = comm.incoming_tx.clone();
     let outgoing_rx = comm.outgoing_rx.clone();
     r_task(|| {
-        let test_env_view = RObject::view(*test_env);
-        REnvironment::start(test_env_view, comm.clone(), comm_manager_tx.clone());
+        let test_env = test_env.get().clone();
+        REnvironment::start(test_env, comm.clone(), comm_manager_tx.clone());
     });
 
     // Ensure we get a list of variables after initialization
@@ -89,6 +91,7 @@ fn test_environment_list() {
     // Now create a variable in the R environment and ensure we get a list of
     // variables with the new variable in it.
     r_task(|| unsafe {
+        let test_env = test_env.get().clone();
         let sym = r_symbol!("everything");
         Rf_defineVar(sym, Rf_ScalarInteger(42), *test_env);
     });
@@ -122,6 +125,7 @@ fn test_environment_list() {
 
     // Create another variable
     r_task(|| unsafe {
+        let test_env = test_env.get().clone();
         r_envir_set("nothing", Rf_ScalarInteger(43), *test_env);
         r_envir_remove("everything", *test_env);
     });
@@ -173,12 +177,15 @@ fn test_environment_list() {
 
     // test the env is now empty
     r_task(|| unsafe {
+        let test_env = test_env.get().clone();
         let contents = RObject::new(R_lsInternal(*test_env, Rboolean_TRUE));
         assert_eq!(Rf_length(*contents), 0);
     });
 
     // Create some more variables
     r_task(|| unsafe {
+        let test_env = test_env.get().clone();
+
         let sym = r_symbol!("a");
         Rf_defineVar(sym, Rf_ScalarInteger(42), *test_env);
 

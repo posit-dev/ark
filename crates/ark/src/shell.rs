@@ -57,6 +57,8 @@ use crate::r_task;
 use crate::request::KernelRequest;
 use crate::request::RRequest;
 
+pub static R_MAIN_THREAD_NAME: &'static str = "ark-r-main-thread";
+
 pub struct Shell {
     comm_manager_tx: Sender<CommEvent>,
     iopub_tx: Sender<IOPubMessage>,
@@ -99,7 +101,7 @@ impl Shell {
 
         let kernel_clone = kernel.clone();
         let iopub_tx_clone = iopub_tx.clone();
-        spawn!("ark-r-main-thread", move || {
+        spawn!(R_MAIN_THREAD_NAME, move || {
             // Block until 0MQ is initialised before starting R to avoid
             // thread-safety issues. See https://github.com/rstudio/positron/issues/720
             if let Err(err) = conn_init_rx.recv_timeout(std::time::Duration::from_secs(3)) {

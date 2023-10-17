@@ -22,6 +22,7 @@ pub mod plots;
 pub mod r_task;
 pub mod request;
 pub mod shell;
+pub mod thread;
 pub mod version;
 
 pub use r_task::r_task;

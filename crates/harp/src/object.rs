@@ -214,13 +214,12 @@ impl Drop for RObject {
     }
 }
 
-// References to RObjects are safe to send over threads but the actual
-// object should remain on the R thread at all times. We can only `drop()`
-// them on the R thread since that calls the R API.
-unsafe impl Sync for RObject {}
-
-// FIXME: This should only be Sync
-unsafe impl Send for RObject {}
+// SAFETY: Neither `Sync` nor `Send` are safe to implement for `RObject`. Even
+// with `Sync`, you can call methods from `&RObject` while on different threads,
+// which could call the R API. Instead, use `RThreadSafeObject` to send across
+// threads.
+// unsafe impl Sync for RObject {}
+// unsafe impl Send for RObject {}
 
 impl Deref for RObject {
     type Target = SEXP;
