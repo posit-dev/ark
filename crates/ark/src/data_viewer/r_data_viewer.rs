@@ -65,6 +65,10 @@ pub struct DataColumn {
 
 impl DataColumn {
     fn slice(&self, start: usize, size: usize) -> Vec<String> {
+        // If start + size exceeds the length of the DataColumn, just return the slice from start to end
+        if (start + size) > self.data.len() {
+            return self.data[start..].to_vec()
+        }
         self.data[start..start + size].to_vec()
     }
 }
