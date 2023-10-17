@@ -232,8 +232,8 @@ impl DataSet {
             Ok(self.columns.clone())
         } else {
             let mut sliced_columns: Vec<DataColumn> = Vec::with_capacity(self.columns.len());
+            let end = std::cmp::min(start + size, self.row_count);
             for column in self.columns.iter() {
-                let end = std::cmp::min(start + size, self.row_count);
                 sliced_columns.push(DataColumn {
                     name: column.name.clone(),
                     column_type: column.column_type.clone(),
