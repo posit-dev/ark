@@ -586,6 +586,7 @@ mod tests {
 
     #[test]
     fn test_convert_line_endings_explicit() {
+        // [\r] [\n]
         let s = "\r\n";
 
         let posix = convert_line_endings(s, LineEnding::Posix);
@@ -594,6 +595,7 @@ mod tests {
         let windows = convert_line_endings(s, LineEnding::Windows);
         assert_eq!(windows, s);
 
+        // [a] [\] [r] [\] [n] [b]
         let s2 = r#"a\r\nb"#;
         let s2_res = convert_line_endings(s2, LineEnding::Posix);
         assert_eq!(s2_res, s2);
