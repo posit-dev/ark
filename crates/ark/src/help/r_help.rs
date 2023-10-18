@@ -21,9 +21,9 @@ use stdext::spawn;
 
 use crate::browser;
 use crate::help::message::HelpMessage;
-use crate::help::message::HelpMessageShowHelp;
-use crate::help::message::HelpMessageTopicReply;
 use crate::help::message::HelpRequest;
+use crate::help::message::ShowHelpContent;
+use crate::help::message::ShowTopicReply;
 use crate::help_proxy;
 use crate::r_task;
 
@@ -174,7 +174,7 @@ impl RHelp {
     fn handle_message(&self, id: String, message: HelpMessage) -> Result<()> {
         // Match on the type of data received.
         match message {
-            HelpMessage::ShowHelpTopic(topic) => {
+            HelpMessage::ShowHelpTopicRequest(topic) => {
                 // Look up the help topic and attempt to show it; this returns a
                 // boolean indicating whether the topic was found.
                 let found = match self.show_help_topic(topic.topic.clone()) {
@@ -186,7 +186,7 @@ impl RHelp {
                 };
 
                 // Create and send a reply to the front end.
-                let reply = HelpMessage::HelpTopicReply(HelpMessageTopicReply { found });
+                let reply = HelpMessage::ShowHelpTopicReply(ShowTopicReply { found });
                 let json = serde_json::to_value(reply)?;
                 self.comm.outgoing_tx.send(CommChannelMsg::Rpc(id, json))?;
                 Ok(())
@@ -220,7 +220,7 @@ impl RHelp {
         let replacement = format!("http://127.0.0.1:{}/", proxy_port);
 
         let url = url.replace(prefix.as_str(), replacement.as_str());
-        let msg = HelpMessage::ShowHelp(HelpMessageShowHelp {
+        let msg = HelpMessage::ShowHelpEvent(ShowHelpContent {
             content: url,
             kind: "url".to_string(),
             focus: true,

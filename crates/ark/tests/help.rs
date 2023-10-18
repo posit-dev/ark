@@ -11,7 +11,7 @@ use amalthea::comm::comm_channel::CommChannelMsg;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
 use ark::help::message::HelpMessage;
-use ark::help::message::HelpMessageShowTopic;
+use ark::help::message::ShowTopicRequest;
 use ark::help::r_help::RHelp;
 use ark::modules;
 use harp::test::start_r;
@@ -46,7 +46,7 @@ fn test_help_comm() {
     let help_request_tx = RHelp::start(comm).unwrap();
 
     // Send a request for the help topic 'library'
-    let request = HelpMessage::ShowHelpTopic(HelpMessageShowTopic {
+    let request = HelpMessage::ShowHelpTopicRequest(ShowTopicRequest {
         topic: String::from("library"),
     });
     let data = serde_json::to_value(request).unwrap();
@@ -62,7 +62,7 @@ fn test_help_comm() {
         CommChannelMsg::Rpc(id, val) => {
             let response = serde_json::from_value::<HelpMessage>(val).unwrap();
             match response {
-                HelpMessage::HelpTopicReply(_reply) => {
+                HelpMessage::ShowHelpTopicReply(_reply) => {
                     // Ensure we got a reply with an ID that matches the request
                     assert_eq!(id, request_id);
                 },

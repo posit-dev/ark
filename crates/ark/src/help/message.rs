@@ -16,13 +16,13 @@ use serde::Serialize;
 #[serde(tag = "msg_type", rename_all = "snake_case")]
 pub enum HelpMessage {
     /// Request from the front end to show a help topic in the Help pane.
-    ShowHelpTopic(HelpMessageShowTopic),
+    ShowHelpTopicRequest(ShowTopicRequest),
 
     /// Reply to ShowHelpTopic.
-    HelpTopicReply(HelpMessageTopicReply),
+    ShowHelpTopicReply(ShowTopicReply),
 
     /// Notify the front end of new content in the Help pane.
-    ShowHelp(HelpMessageShowHelp),
+    ShowHelpEvent(ShowHelpContent),
 }
 
 /**
@@ -35,21 +35,21 @@ pub enum HelpRequest {
 
 /// Request to show a help topic in the Help pane.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct HelpMessageShowTopic {
+pub struct ShowTopicRequest {
     /// The help topic to be shown.
     pub topic: String,
 }
 
 /// Reply to a request to show a help topic in the Help pane.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct HelpMessageTopicReply {
+pub struct ShowTopicReply {
     /// Whether or not the topic was found.
     pub found: bool,
 }
 
 /// Show help content in the Help pane.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct HelpMessageShowHelp {
+pub struct ShowHelpContent {
     /// The help content to be shown.
     pub content: String,
 
