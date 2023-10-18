@@ -10,7 +10,8 @@ use harp::test::R_TASK_BYPASS;
 use crate::r_task::r_async_task;
 use crate::shell::R_MAIN_THREAD_NAME;
 
-/// Private "shelter" around an R object that makes it `Send`able
+/// Private "shelter" around a Rust object (typically wrapping a `SEXP`, like
+/// an `RObject`) that makes it `Send`able
 ///
 /// Shelters can only be created by `RThreadSafe`, and the lifetime
 /// management of the `RThreadSafe` ensures that the shelter (and the
@@ -33,10 +34,10 @@ struct RShelter<T: 'static> {
 unsafe impl<T> Sync for RShelter<T> {}
 unsafe impl<T> Send for RShelter<T> {}
 
-/// Thread safe wrapper around a generic R object
+/// Thread safe wrapper around a Rust object (typically wrapping a `SEXP`)
 ///
 /// Create one with `new()`, pass it between threads, and access the underlying
-/// R object with `get()` once you reach another context that will run on the
+/// object with `get()` once you reach another context that will run on the
 /// main R thread. If `get()` is called off the main R thread, it will log an
 /// error in release mode and panic in development mode.
 ///
@@ -90,8 +91,9 @@ impl<T> Drop for RThreadSafe<T> {
 
         r_async_task(move || {
             // Run the `drop()` method of the `RShelter`, which in turn
-            // runs the `drop()` method of the R object, which uses the R API
-            // so it must be called on the main R thread.
+            // runs the `drop()` method of the wrapped Rust object, which likely
+            // uses the R API (i.e. if it is an `RObject`) so it must be called
+            // on the main R thread.
             drop(shelter);
         })
     }
