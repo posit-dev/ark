@@ -292,7 +292,7 @@ dependencies = [
 
 [[package]]
 name = "ark"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "actix-web",
  "amalthea",
