@@ -66,8 +66,8 @@ pub struct DataColumn {
 }
 
 impl DataColumn {
-    fn slice(&self, start: usize, size: usize) -> Vec<String> {
-        self.data[start..start + size].to_vec()
+    fn slice(&self, start: usize, end: usize) -> Vec<String> {
+        self.data[start..end].to_vec()
     }
 }
 
@@ -227,22 +227,35 @@ impl DataSet {
 
     fn slice_data(&self, start: usize, size: usize) -> Result<Vec<DataColumn>, anyhow::Error> {
         const ZERO: usize = 0;
+
         if (start < ZERO) || (start >= self.row_count) {
             bail!("Invalid start row: {start}");
-        } else if (start == ZERO) && (self.row_count <= size) {
-            // No need to slice the data
-            Ok(self.columns.clone())
-        } else {
-            let mut sliced_columns: Vec<DataColumn> = Vec::with_capacity(self.columns.len());
-            for column in self.columns.iter() {
-                sliced_columns.push(DataColumn {
-                    name: column.name.clone(),
-                    column_type: column.column_type.clone(),
-                    data: column.slice(start, size),
-                })
-            }
-            Ok(sliced_columns)
         }
+
+        if (start == ZERO) && (self.row_count <= size) {
+            // No need to slice the data
+            return Ok(self.columns.clone());
+        }
+
+        let mut end = start + size; // exclusive, 1 more than the final row index of the slice
+
+        if end > self.row_count {
+            // Censor end to avoid a panic, but log an error as we expect the frontend
+            // to handle this case already
+            let row_count = self.row_count;
+            log::error!("Requested rows [{start}, {end}), but only {row_count} rows exist.");
+            end = self.row_count;
+        }
+
+        let mut sliced_columns: Vec<DataColumn> = Vec::with_capacity(self.columns.len());
+        for column in self.columns.iter() {
+            sliced_columns.push(DataColumn {
+                name: column.name.clone(),
+                column_type: column.column_type.clone(),
+                data: column.slice(start, end),
+            })
+        }
+        Ok(sliced_columns)
     }
 }
 
