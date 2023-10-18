@@ -15,6 +15,7 @@ use crossbeam::select;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use log::error;
+use log::info;
 use log::trace;
 use log::warn;
 use stdext::spawn;
@@ -109,13 +110,14 @@ impl RHelp {
                     match msg {
                         Ok(msg) => {
                             if !self.handle_comm_message(msg) {
+                                info!("Help comm {} closing by request from front end.", self.comm.comm_id);
                                 break;
                             }
                         },
-                        Err(e) => {
+                        Err(err) => {
                             // The connection with the front end has been closed; let
                             // the thread exit.
-                            warn!("Error receiving message from front end: {}", e);
+                            warn!("Error receiving message from front end: {:?}", err);
                             break;
                         },
                     }
@@ -127,13 +129,13 @@ impl RHelp {
                     match msg {
                         Ok(msg) => {
                             if let Err(err) = self.handle_request(msg) {
-                                warn!("Error handling Help request: {}", err);
+                                warn!("Error handling Help request: {:?}", err);
                             }
                         },
-                        Err(e) => {
+                        Err(err) => {
                             // The connection with the front end has been closed; let
                             // the thread exit.
-                            warn!("Error receiving internal Help message: {:?}", e);
+                            warn!("Error receiving internal Help message: {:?}", err);
                             break;
                         },
                     }
@@ -158,12 +160,12 @@ impl RHelp {
             let message = match serde_json::from_value::<HelpMessage>(data) {
                 Ok(m) => m,
                 Err(err) => {
-                    error!("Help: Received invalid message from front end. {}", err);
+                    error!("Help: Received invalid message from front end. {:?}", err);
                     return true;
                 },
             };
             if let Err(err) = self.handle_message(id, message) {
-                error!("Help: Error handling message from front end: {}", err);
+                error!("Help: Error handling message from front end: {:?}", err);
                 return true;
             }
         }
@@ -180,7 +182,7 @@ impl RHelp {
                 let found = match self.show_help_topic(topic.topic.clone()) {
                     Ok(found) => found,
                     Err(err) => {
-                        error!("Error looking up help topic {}: {}", topic.topic, err);
+                        error!("Error looking up help topic {}: {:?}", topic.topic, err);
                         false
                     },
                 };
