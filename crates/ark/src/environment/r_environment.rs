@@ -79,15 +79,15 @@ impl REnvironment {
         }
 
         // To be able to `Send` the `env` to the thread, it needs to be made
-        // thread safe
+        // thread safe. To create `current_bindings`, we need to be on the main
+        // R thread.
         let env = RThreadSafe::new(env);
+        let current_bindings = RThreadSafe::new(vec![]);
 
         // Start the execution thread and wait for requests from the front end
         spawn!("ark-environment", move || {
-            // When `env` is dropped, a `r_async_task()` call unprotects it
-
-            let current_bindings = RThreadSafe::new(vec![]);
-
+            // When `env` and `current_bindings` are dropped, a `r_async_task()`
+            // call unprotects them
             let environment = Self {
                 comm,
                 comm_manager_tx,

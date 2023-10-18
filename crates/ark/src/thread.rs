@@ -38,8 +38,12 @@ unsafe impl<T> Send for RShelter<T> {}
 ///
 /// Create one with `new()`, pass it between threads, and access the underlying
 /// object with `get()` once you reach another context that will run on the
-/// main R thread. If `get()` is called off the main R thread, it will log an
-/// error in release mode and panic in development mode.
+/// main R thread.
+///
+/// Both `new()` and `get()` must be called on the main R thread. This ensures
+/// that R thread-safe objects can only be created on and unwrapped from the
+/// R thread. If either of these are called off the main R thread, they will
+/// log an error in release mode and panic in development mode.
 ///
 /// When this object is dropped, it `take()`s the `RShelter` out of the
 /// `shelter` and `move`s it to the main R thread through an async task to be
@@ -53,27 +57,16 @@ pub struct RThreadSafe<T: 'static> {
 
 impl<T> RThreadSafe<T> {
     pub fn new(object: T) -> Self {
+        check_on_main_r_thread("new");
         let shelter = RShelter { object };
         let shelter = Some(shelter);
         Self { shelter }
     }
 
-    /// SAFETY: `get()` can only be called on the main R thread.
-    /// We also make an exception for tests where `test::start_r()` is used.
     pub fn get(&self) -> &T {
-        let thread = std::thread::current();
-        let name = thread.name().unwrap_or("<unnamed>");
-
-        if name != R_MAIN_THREAD_NAME && unsafe { !R_TASK_BYPASS } {
-            #[cfg(debug_assertions)]
-            panic!("Can't access thread safe R object on thread '{name}'.");
-            #[cfg(not(debug_assertions))]
-            log::error!("Can't access thread safe R object on thread '{name}'.");
-        }
-
+        check_on_main_r_thread("get");
         let shelter: &RShelter<T> = self.shelter.as_ref().unwrap();
         let object: &T = &shelter.object;
-
         object
     }
 }
@@ -96,5 +89,21 @@ impl<T> Drop for RThreadSafe<T> {
             // on the main R thread.
             drop(shelter);
         })
+    }
+}
+
+fn check_on_main_r_thread(f: &str) {
+    let thread = std::thread::current();
+    let name = thread.name().unwrap_or("<unnamed>");
+
+    // An exception is made for testing, where we set `R_TASK_BYPASS` inside of
+    // `test::start_r()`
+    if name != R_MAIN_THREAD_NAME && unsafe { !R_TASK_BYPASS } {
+        let message =
+            format!("Must call `RThreadSafe::{f}()` on the main R thread, not thread '{name}'.");
+        #[cfg(debug_assertions)]
+        panic!("{message}");
+        #[cfg(not(debug_assertions))]
+        log::error!("{message}");
     }
 }
