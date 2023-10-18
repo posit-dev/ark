@@ -46,7 +46,7 @@ use crate::data_viewer::message::DataViewerRowRequest;
 use crate::data_viewer::message::DataViewerRowResponse;
 use crate::interface::R_MAIN;
 use crate::r_task;
-use crate::thread::RThreadSafeObject;
+use crate::thread::RThreadSafe;
 
 pub struct RDataViewer {
     title: String,
@@ -271,7 +271,7 @@ impl RDataViewer {
 
         // To be able to `Send` the `data` to the thread to be owned by the data
         // viewer, it needs to be made thread safe
-        let data = RThreadSafeObject::new(data);
+        let data = RThreadSafe::new(data);
 
         spawn!(format!("ark-data-viewer-{}-{}", title, id), move || {
             let title_dataset = title.clone();
