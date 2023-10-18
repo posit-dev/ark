@@ -334,10 +334,12 @@ impl ShellHandler for Shell {
                     },
                 };
 
-                unsafe {
+                // Send the help request channel to the main R thread so it can
+                // emit help events, to be delivered over the help comm.
+                r_task(|| unsafe {
                     let main = R_MAIN.as_mut().unwrap();
                     main.help_tx = Some(help_request_tx.clone());
-                }
+                });
 
                 Ok(true)
             },
