@@ -31,10 +31,19 @@ unsafe fn handle_help_url(url: &str) -> Result<bool> {
     let main = R_MAIN.as_ref().unwrap();
     let help_tx = &main.help_tx;
 
-    if let Some(help_tx) = help_tx {
-        if let Err(err) = help_tx.send(HelpRequest::ShowHelpUrl(url.to_string())) {
-            log::error!("Failed to send help message: {}", err);
-        }
+    let Some(help_tx) = help_tx else {
+        log::error!(
+            "No help channel available to handle help URL {}. Is the help comm open?",
+            url
+        );
+        return Ok(false);
+    };
+
+    let message = HelpRequest::ShowHelpUrlRequest(url.to_string());
+
+    if let Err(err) = help_tx.send(message) {
+        log::error!("Failed to send help message: {err:?}");
+        return Ok(false);
     }
 
     Ok(true)

@@ -199,11 +199,9 @@ impl RHelp {
 
     fn handle_request(&self, message: HelpRequest) -> Result<()> {
         match message {
-            HelpRequest::ShowHelpUrl(url) => {
-                self.show_help_url(url.as_str())?;
-            },
+            HelpRequest::ShowHelpUrlRequest(url) => self.show_help_url(url.as_str()),
+            _ => Err(anyhow!("Help: Received unexpected request {:?}", message)),
         }
-        Ok(())
     }
 
     fn show_help_url(&self, url: &str) -> Result<()> {

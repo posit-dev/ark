@@ -28,9 +28,11 @@ pub enum HelpMessage {
 /**
  * Enum representing requests for the Help thread from other threads.
  */
+#[derive(Debug)]
 pub enum HelpRequest {
-    // Show the given URL to the user in the Help pane.
-    ShowHelpUrl(String),
+    /// Request to show the given URL to the user in the Help pane.
+    ShowHelpUrlRequest(String),
+    ShowHelpUrlReply(bool),
 }
 
 /// Request to show a help topic in the Help pane.
