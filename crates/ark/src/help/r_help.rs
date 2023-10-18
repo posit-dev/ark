@@ -22,6 +22,7 @@ use stdext::spawn;
 
 use crate::browser;
 use crate::help::message::HelpMessage;
+use crate::help::message::HelpReply;
 use crate::help::message::HelpRequest;
 use crate::help::message::ShowHelpContent;
 use crate::help::message::ShowTopicReply;
@@ -36,6 +37,7 @@ pub struct RHelp {
     comm: CommSocket,
     r_help_port: u16,
     help_request_rx: Receiver<HelpRequest>,
+    help_reply_tx: Sender<HelpReply>,
 }
 
 impl RHelp {
@@ -45,7 +47,7 @@ impl RHelp {
      *
      * - `comm`: The socket for communicating with the front end.
      */
-    pub fn start(comm: CommSocket) -> Result<Sender<HelpRequest>> {
+    pub fn start(comm: CommSocket) -> Result<(Sender<HelpRequest>, Receiver<HelpReply>)> {
         // Check to see whether the help server has started. We set the port
         // number when it starts, so if it's still at the default value (0), it
         // hasn't started.
@@ -79,6 +81,7 @@ impl RHelp {
         // Create the channels that will be used to communicate with the help
         // thread from other threads.
         let (help_request_tx, help_request_rx) = crossbeam::channel::unbounded();
+        let (help_reply_tx, help_reply_rx) = crossbeam::channel::unbounded();
 
         // Start the help request thread and wait for requests from the front
         // end.
@@ -87,12 +90,13 @@ impl RHelp {
                 comm,
                 r_help_port,
                 help_request_rx,
+                help_reply_tx,
             };
             help.execution_thread();
         });
 
         // Return the channel for sending help requests to the help thread.
-        Ok(help_request_tx)
+        Ok((help_request_tx, help_reply_rx))
     }
 
     /**
@@ -199,20 +203,33 @@ impl RHelp {
 
     fn handle_request(&self, message: HelpRequest) -> Result<()> {
         match message {
-            HelpRequest::ShowHelpUrlRequest(url) => self.show_help_url(url.as_str()),
-            _ => Err(anyhow!("Help: Received unexpected request {:?}", message)),
+            HelpRequest::ShowHelpUrlRequest(url) => {
+                let found = match self.show_help_url(&url) {
+                    Ok(found) => found,
+                    Err(err) => {
+                        error!("Error showing help URL {}: {:?}", url, err);
+                        false
+                    },
+                };
+                self.help_reply_tx
+                    .send(HelpReply::ShowHelpUrlReply(found))?;
+            },
         }
+        Ok(())
     }
 
-    fn show_help_url(&self, url: &str) -> Result<()> {
-        // Check for help URLs
+    /// Shows a help URL by sending a message to the front end. Returns
+    /// `Ok(true)` if the URL was handled, `Ok(false)` if it wasn't.
+    fn show_help_url(&self, url: &str) -> Result<bool> {
+        // Check for help URLs. If this is an R help URL, we'll re-direct it to
+        // our help proxy server.
         let prefix = format!("http://127.0.0.1:{}/", self.r_help_port);
         if !url.starts_with(&prefix) {
-            return Err(anyhow!(
-                "Help URL '{}' doesn't have expected prefix '{}'",
-                url,
-                prefix
-            ));
+            info!(
+                "Help URL '{}' doesn't have expected prefix '{}'; not handling",
+                url, prefix
+            );
+            return Ok(false);
         }
 
         // Re-direct the help request to our help proxy server.
@@ -227,7 +244,9 @@ impl RHelp {
         });
         let json = serde_json::to_value(msg)?;
         self.comm.outgoing_tx.send(CommChannelMsg::Data(json))?;
-        Ok(())
+
+        // The URL was handled.
+        Ok(true)
     }
 
     fn show_help_topic(&self, topic: String) -> Result<bool> {

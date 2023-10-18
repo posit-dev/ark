@@ -32,6 +32,14 @@ pub enum HelpMessage {
 pub enum HelpRequest {
     /// Request to show the given URL to the user in the Help pane.
     ShowHelpUrlRequest(String),
+}
+
+/**
+ * Enum representing replies from the Help thread.
+ */
+pub enum HelpReply {
+    /// Reply to ShowHelpUrlRequest; indicates whether the URL was successfully
+    /// shown.
     ShowHelpUrlReply(bool),
 }
 

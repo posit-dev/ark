@@ -43,7 +43,7 @@ fn test_help_comm() {
     // Start the help comm. It's important to save the help request sender so
     // that the help comm doesn't exit before we're done with it; allowing the
     // sender to be dropped signals the help comm to exit.
-    let help_request_tx = RHelp::start(comm).unwrap();
+    let (help_request_tx, help_reply_rx) = RHelp::start(comm).unwrap();
 
     // Send a request for the help topic 'library'
     let request = HelpMessage::ShowHelpTopicRequest(ShowTopicRequest {
@@ -76,6 +76,7 @@ fn test_help_comm() {
         },
     }
 
-    // No-op request to satisfy usage of help_request_tx
+    // No-op request to keep variables in scope
     help_request_tx.len();
+    help_reply_rx.len();
 }

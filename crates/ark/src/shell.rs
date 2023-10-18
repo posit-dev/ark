@@ -328,7 +328,7 @@ impl ShellHandler for Shell {
             },
             Comm::Help => {
                 // Start the R Help handler
-                let help_request_tx = match RHelp::start(comm.clone()) {
+                let (help_request_tx, help_reply_rx) = match RHelp::start(comm.clone()) {
                     Ok(tx) => tx,
                     Err(err) => {
                         warn!("Could not start R Help handler: {}", err);
@@ -341,6 +341,7 @@ impl ShellHandler for Shell {
                 r_task(|| unsafe {
                     let main = R_MAIN.as_mut().unwrap();
                     main.help_tx = Some(help_request_tx.clone());
+                    main.help_rx = Some(help_reply_rx.clone());
                 });
 
                 Ok(true)

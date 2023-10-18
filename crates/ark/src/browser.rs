@@ -11,6 +11,7 @@ use anyhow::Result;
 use harp::object::RObject;
 use libR_sys::*;
 
+use crate::help::message::HelpReply;
 use crate::help::message::HelpRequest;
 use crate::interface::R_MAIN;
 
@@ -46,7 +47,16 @@ unsafe fn handle_help_url(url: &str) -> Result<bool> {
         return Ok(false);
     }
 
-    Ok(true)
+    // Wait up to 1 second for a reply from the help thread
+    let reply = main
+        .help_rx
+        .as_ref()
+        .unwrap()
+        .recv_timeout(std::time::Duration::from_secs(1))?;
+
+    match reply {
+        HelpReply::ShowHelpUrlReply(found) => Ok(found),
+    }
 }
 
 unsafe fn ps_browse_url_impl(url: SEXP) -> Result<()> {
