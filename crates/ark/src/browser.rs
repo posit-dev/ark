@@ -29,10 +29,10 @@ pub unsafe extern "C" fn ps_browse_url(url: SEXP) -> SEXP {
 
 unsafe fn handle_help_url(url: &str) -> Result<bool> {
     let main = R_MAIN.as_ref().unwrap();
-    let help = &main.help_tx;
+    let help_tx = &main.help_tx;
 
-    if let Some(help) = help {
-        if let Err(err) = help.send(HelpRequest::ShowHelpUrl(url.to_string())) {
+    if let Some(help_tx) = help_tx {
+        if let Err(err) = help_tx.send(HelpRequest::ShowHelpUrl(url.to_string())) {
             log::error!("Failed to send help message: {}", err);
         }
     }
