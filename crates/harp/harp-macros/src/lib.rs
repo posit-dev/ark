@@ -218,7 +218,7 @@ pub fn register(_attr: TokenStream, item: TokenStream) -> TokenStream {
         fn #register() {
 
             unsafe {
-                harp::routines::add(R_CallMethodDef {
+                harp::routines::add(libR_sys::R_CallMethodDef {
                     name: (#name).as_ptr() as *const std::os::raw::c_char,
                     fun: Some(::std::mem::transmute(#ident as *const ())),
                     numArgs: #nargs
