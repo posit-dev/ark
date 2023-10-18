@@ -16,6 +16,7 @@ impl ControlHandler for Control {
     ) -> Result<ShutdownReply, Exception> {
         // NYI
         Ok(ShutdownReply {
+            status: Status::Ok,
             restart: msg.restart,
         })
     }

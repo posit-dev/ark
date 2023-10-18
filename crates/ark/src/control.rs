@@ -39,13 +39,21 @@ impl ControlHandler for Control {
         msg: &ShutdownRequest,
     ) -> Result<ShutdownReply, Exception> {
         debug!("Received shutdown request: {:?}", msg);
-        if let Err(err) = self.r_request_tx.send(RRequest::Shutdown(msg.restart)) {
-            warn!(
-                "Could not deliver shutdown request to execution thread: {}",
-                err
-            )
-        }
+
+        // According to the Jupyter protocol we should block here until the
+        // shutdown is complete. However AFAICS ipykernel doesn't wait
+        // until complete shutdown before replying and instead just signals
+        // a shutdown via a global flag picked up by an event loop.
+
+        let status = if let Err(err) = self.r_request_tx.send(RRequest::Shutdown(msg.restart)) {
+            log::error!("Could not deliver shutdown request to execution thread: {err:?}");
+            Status::Error
+        } else {
+            Status::Ok
+        };
+
         Ok(ShutdownReply {
+            status,
             restart: msg.restart,
         })
     }
