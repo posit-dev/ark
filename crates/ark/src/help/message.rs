@@ -18,7 +18,7 @@ pub enum HelpMessage {
     /// Request from the front end to show a help topic in the Help pane.
     ShowHelpTopicRequest(ShowTopicRequest),
 
-    /// Reply to ShowHelpTopic.
+    /// Reply to ShowHelpTopicRequest.
     ShowHelpTopicReply(ShowTopicReply),
 
     /// Notify the front end of new content in the Help pane.
