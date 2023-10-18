@@ -20,6 +20,7 @@ use std::sync::Mutex;
 use std::sync::Once;
 use std::time::Duration;
 
+use amalthea::comm::event::CommEvent;
 use amalthea::events::BusyEvent;
 use amalthea::events::PositronEvent;
 use amalthea::events::PromptStateEvent;
@@ -145,6 +146,7 @@ pub fn start_r(
     r_args: Vec<String>,
     startup_file: Option<String>,
     kernel_mutex: Arc<Mutex<Kernel>>,
+    comm_manager_tx: Sender<CommEvent>,
     r_request_rx: Receiver<RRequest>,
     input_request_tx: Sender<ShellInputRequest>,
     iopub_tx: Sender<IOPubMessage>,
@@ -155,6 +157,7 @@ pub fn start_r(
     INIT.call_once(|| unsafe {
         R_MAIN = Some(RMain::new(
             kernel_mutex,
+            comm_manager_tx,
             r_request_rx,
             input_request_tx,
             iopub_tx,
@@ -234,6 +237,9 @@ pub fn start_r(
 pub struct RMain {
     initializing: bool,
     kernel_init_tx: Bus<KernelInfo>,
+
+    /// Channel used to send along messages relayed on the open comms.
+    comm_manager_tx: Sender<CommEvent>,
 
     /// Execution requests from the frontend. Processed from `ReadConsole()`.
     /// Requests for code execution provide input to that method.
@@ -347,6 +353,7 @@ pub enum ConsoleResult {
 impl RMain {
     pub fn new(
         kernel: Arc<Mutex<Kernel>>,
+        comm_manager_tx: Sender<CommEvent>,
         r_request_rx: Receiver<RRequest>,
         input_request_tx: Sender<ShellInputRequest>,
         iopub_tx: Sender<IOPubMessage>,
@@ -359,6 +366,7 @@ impl RMain {
         Self {
             initializing: true,
             r_request_rx,
+            comm_manager_tx,
             input_request_tx,
             iopub_tx,
             kernel_init_tx,
@@ -918,6 +926,11 @@ impl RMain {
         if let Some(tx) = &dap.backend_events_tx {
             log_error!(tx.send(event));
         }
+    }
+
+    pub fn get_comm_manager_tx(&self) -> &Sender<CommEvent> {
+        // Read only access to `comm_manager_tx`
+        &self.comm_manager_tx
     }
 }
 

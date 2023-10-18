@@ -8,7 +8,6 @@
 use harp::external_ptr::ExternalPointer;
 use harp::object::RObject;
 use libR_sys::SEXP;
-use libR_sys::*;
 use tree_sitter::Node;
 
 #[harp::register]

@@ -24,6 +24,7 @@ use harp::vector::Vector;
 use libR_sys::R_DimSymbol;
 use libR_sys::R_MissingArg;
 use libR_sys::R_NamesSymbol;
+use libR_sys::R_NilValue;
 use libR_sys::R_RowNamesSymbol;
 use libR_sys::Rf_getAttrib;
 use libR_sys::INTEGER_ELT;
@@ -43,8 +44,9 @@ use crate::data_viewer::message::DataViewerMessageRequest;
 use crate::data_viewer::message::DataViewerMessageResponse;
 use crate::data_viewer::message::DataViewerRowRequest;
 use crate::data_viewer::message::DataViewerRowResponse;
+use crate::interface::R_MAIN;
 use crate::r_task;
-use crate::thread::RThreadSafeObject;
+use crate::thread::RThreadSafe;
 
 pub struct RDataViewer {
     title: String,
@@ -64,8 +66,8 @@ pub struct DataColumn {
 }
 
 impl DataColumn {
-    fn slice(&self, start: usize, size: usize) -> Vec<String> {
-        self.data[start..start + size].to_vec()
+    fn slice(&self, start: usize, end: usize) -> Vec<String> {
+        self.data[start..end].to_vec()
     }
 }
 
@@ -225,22 +227,35 @@ impl DataSet {
 
     fn slice_data(&self, start: usize, size: usize) -> Result<Vec<DataColumn>, anyhow::Error> {
         const ZERO: usize = 0;
+
         if (start < ZERO) || (start >= self.row_count) {
             bail!("Invalid start row: {start}");
-        } else if (start == ZERO) && (self.row_count <= size) {
-            // No need to slice the data
-            Ok(self.columns.clone())
-        } else {
-            let mut sliced_columns: Vec<DataColumn> = Vec::with_capacity(self.columns.len());
-            for column in self.columns.iter() {
-                sliced_columns.push(DataColumn {
-                    name: column.name.clone(),
-                    column_type: column.column_type.clone(),
-                    data: column.slice(start, size),
-                })
-            }
-            Ok(sliced_columns)
         }
+
+        if (start == ZERO) && (self.row_count <= size) {
+            // No need to slice the data
+            return Ok(self.columns.clone());
+        }
+
+        let mut end = start + size; // exclusive, 1 more than the final row index of the slice
+
+        if end > self.row_count {
+            // Censor end to avoid a panic, but log an error as we expect the frontend
+            // to handle this case already
+            let row_count = self.row_count;
+            log::error!("Requested rows [{start}, {end}), but only {row_count} rows exist.");
+            end = self.row_count;
+        }
+
+        let mut sliced_columns: Vec<DataColumn> = Vec::with_capacity(self.columns.len());
+        for column in self.columns.iter() {
+            sliced_columns.push(DataColumn {
+                name: column.name.clone(),
+                column_type: column.column_type.clone(),
+                data: column.slice(start, end),
+            })
+        }
+        Ok(sliced_columns)
     }
 }
 
@@ -256,7 +271,7 @@ impl RDataViewer {
 
         // To be able to `Send` the `data` to the thread to be owned by the data
         // viewer, it needs to be made thread safe
-        let data = RThreadSafeObject::new(data);
+        let data = RThreadSafe::new(data);
 
         spawn!(format!("ark-data-viewer-{}-{}", title, id), move || {
             let title_dataset = title.clone();
@@ -415,4 +430,19 @@ impl RDataViewer {
             .send(comm_msg)
             .or_log_error("Data Viewer: Failed to send message {message}");
     }
+}
+
+#[harp::register]
+pub unsafe extern "C" fn ps_view_data_frame(x: SEXP, title: SEXP) -> SEXP {
+    let x = RObject::new(x);
+
+    let title = RObject::new(title);
+    let title = unwrap!(String::try_from(title), Err(_) => "".to_string());
+
+    let main = unsafe { R_MAIN.as_ref().unwrap() };
+    let comm_manager_tx = main.get_comm_manager_tx().clone();
+
+    RDataViewer::start(title, x, comm_manager_tx);
+
+    R_NilValue
 }

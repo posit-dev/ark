@@ -15,6 +15,7 @@ use log::error;
 use log::info;
 use log::trace;
 use log::warn;
+use stdext::unwrap;
 
 use crate::error::Error;
 use crate::language::control_handler::ControlHandler;
@@ -124,10 +125,25 @@ impl Control {
         // Lock the control handler object on this thread
         let control_handler = self.handler.lock().unwrap();
 
-        if let Err(err) = block_on(control_handler.handle_shutdown_request(&req.content)) {
-            warn!("Failed to handle shutdown request: {:?}", err);
-            // TODO: if this fails, maybe we need to force a process shutdown?
-        }
+        let reply = unwrap!(
+            block_on(control_handler.handle_shutdown_request(&req.content)),
+            Err(err) => {
+                log::error!("Failed to handle shutdown request: {err:?}");
+                return Ok(())
+                // TODO: if this fails, maybe we need to force a process shutdown?
+            }
+        );
+
+        // TODO: This currently races with the R thread exiting the
+        // REPL and calling `exit()`. Odds are that this is never sent.
+        // We should send this from the `R_CleanUp()` frontend method
+        // once we implement it.
+        unwrap!(
+            req.send_reply(reply, &self.socket),
+            Err(err) => {
+                log::error!("Failed to reply to interrupt request: {err:?}");
+            }
+        );
 
         Ok(())
     }
@@ -148,10 +164,21 @@ impl Control {
         // Lock the control handler object on this thread
         let control_handler = self.handler.lock().unwrap();
 
-        if let Err(err) = block_on(control_handler.handle_interrupt_request()) {
-            error!("Failed to handle interrupt request: {:?}", err);
-            // TODO: What happens if the interrupt isn't handled?
-        }
+        let reply = unwrap!(
+            block_on(control_handler.handle_interrupt_request()),
+            Err(err) => {
+                log::error!("Failed to handle interrupt request: {err:?}");
+                return Ok(())
+                // TODO: What happens if the interrupt isn't handled?
+            }
+        );
+
+        unwrap!(
+            req.send_reply(reply, &self.socket),
+            Err(err) => {
+                log::error!("Failed to reply to interrupt request: {err:?}");
+            }
+        );
 
         Ok(())
     }

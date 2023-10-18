@@ -103,6 +103,7 @@ impl Shell {
             listen(kernel_clone, kernel_request_rx);
         });
 
+        let comm_manager_tx_clone = comm_manager_tx.clone();
         let kernel_clone = kernel.clone();
         let iopub_tx_clone = iopub_tx.clone();
         spawn!(R_MAIN_THREAD_NAME, move || {
@@ -121,6 +122,7 @@ impl Shell {
                 r_args,
                 startup_file,
                 kernel_clone,
+                comm_manager_tx_clone,
                 r_request_rx,
                 input_request_tx,
                 iopub_tx_clone,
