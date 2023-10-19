@@ -1082,33 +1082,7 @@ unsafe fn append_namespace_lazydata_completions(
 }
 
 fn append_keyword_completions(completions: &mut Vec<CompletionItem>) -> anyhow::Result<()> {
-    // add some built-in snippet completions for control flow
-    // NOTE: We don't use placeholder names for the final cursor locations below,
-    // as the editting experience is not great (e.g. trying to insert a '{' will
-    // cause the editor to just surround the snippet text with '{}'.
-    let snippets = vec![
-        ("function", "function(${1:arguments}) $0"),
-        ("while", "while (${1:condition}) $0"),
-        ("repeat", "repeat $0"),
-        ("for", "for (${1:variable} in ${2:vector}) $0"),
-        ("if", "if (${1:condition}) $0"),
-        ("return", "return(${0:value})"),
-    ];
-
-    for snippet in snippets {
-        let label = snippet.0.to_string();
-        let mut item = completion_item(label.to_string(), CompletionData::Snippet {
-            text: label.clone(),
-        })?;
-
-        item.detail = Some("[keyword]".to_string());
-        item.insert_text_format = Some(InsertTextFormat::SNIPPET);
-        item.insert_text = Some(snippet.1.to_string());
-
-        completions.push(item);
-    }
-
-    // provide other completion results
+    // provide keyword completion results
     // NOTE: Some R keywords have definitions provided in the R
     // base namespace, so we don't need to provide duplicate
     // definitions for these here.
