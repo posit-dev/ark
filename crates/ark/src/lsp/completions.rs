@@ -1233,7 +1233,7 @@ unsafe fn append_roxygen_completions(
             item.insert_text = Some(format!("@{}", label.as_str()));
         }
 
-        item.detail = Some(format!("@{}{}", name, template.unwrap_or("")));
+        item.detail = Some(format!("roxygen @{} (R)", name));
         if let Some(description) = entry["description"].as_str() {
             let markup = MarkupContent {
                 kind: MarkupKind::Markdown,
