@@ -11,9 +11,13 @@ use amalthea::comm::comm_channel::CommChannelMsg;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
 use ark::help::message::HelpMessage;
+use ark::help::message::HelpReply;
+use ark::help::message::HelpRequest;
 use ark::help::message::ShowTopicRequest;
 use ark::help::r_help::RHelp;
 use ark::modules;
+use ark::r_task;
+use harp::exec::RFunction;
 use harp::test::start_r;
 
 /**
@@ -76,7 +80,32 @@ fn test_help_comm() {
         },
     }
 
-    // No-op request to keep variables in scope
-    help_request_tx.len();
-    help_reply_rx.len();
+    // Send a request to show a help URL. This URL isn't in help format, so we
+    // don't expect it to be handled.
+    let url = String::from("https://www.example.com");
+    let request = HelpRequest::ShowHelpUrlRequest(url);
+    help_request_tx.send(request).unwrap();
+    let response = help_reply_rx.recv_timeout(duration).unwrap();
+    let handled = match response {
+        HelpReply::ShowHelpUrlReply(handled) => handled,
+    };
+    assert_eq!(handled, false);
+
+    // Figure out which port the R help server is running on (or would run on)
+    let r_help_port =
+        r_task(|| unsafe { RFunction::new("tools", "httpdPort").call()?.to::<u16>() }).unwrap();
+
+    // Send a request to show a help URL with a valid help URL. This one should
+    // be handled.
+    let url = format!(
+        "http://127.0.0.1:{}/library/base/html/plot.html",
+        r_help_port
+    );
+    let request = HelpRequest::ShowHelpUrlRequest(url);
+    help_request_tx.send(request).unwrap();
+    let response = help_reply_rx.recv_timeout(duration).unwrap();
+    let handled = match response {
+        HelpReply::ShowHelpUrlReply(handled) => handled,
+    };
+    assert_eq!(handled, true);
 }
