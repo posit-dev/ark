@@ -36,6 +36,8 @@ pub struct StatementRangeParams {
 pub struct StatementRangeResponse {
     /// The document range the statement covers.
     pub range: Range,
+    /// Optionally, code to be executed for this range.
+    pub code: Option<String>,
 }
 
 impl Backend {
@@ -77,7 +79,7 @@ impl Backend {
             end: end_position,
         };
 
-        let response = StatementRangeResponse { range };
+        let response = StatementRangeResponse { range, code: None };
 
         Ok(Some(response))
     }
