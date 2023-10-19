@@ -73,15 +73,15 @@ span.samp {
     font-size: var(--vscode-editor-font-size);
     font-family: var(--vscode-editor-font-family);
 }
+tr {
+    vertical-align: top;
+}
+span.rlang {
+}
 table p {
     margin-top: 0;
     margin-bottom: 6px;
     margin-left: 6px;
-}
-h3.r-arguments-title + table tr td:first-child {
-    vertical-align: top;
-    min-width: 24px;
-    padding-right: 12px;
 }
 hr {
     height: 1.5px;
