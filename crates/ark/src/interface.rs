@@ -67,7 +67,8 @@ use stdext::*;
 use crate::dap::dap::DapBackendEvent;
 use crate::dap::Dap;
 use crate::errors;
-use crate::help_proxy;
+use crate::help::message::HelpReply;
+use crate::help::message::HelpRequest;
 use crate::kernel::Kernel;
 use crate::lsp::events::EVENTS;
 use crate::modules;
@@ -225,14 +226,7 @@ pub fn start_r(
         r_register_routines();
 
         // Initialize support functions (after routine registration)
-        let r_module_info = modules::initialize().unwrap();
-
-        // TODO: Should starting the R help server proxy really be here?
-        // Are we sure we want our own server when ark runs in a Jupyter notebook?
-        // Moving this requires detangling `help_server_port` from
-        // `modules::initialize()`, which seems doable.
-        // Start R help server proxy
-        help_proxy::start(r_module_info.help_server_port);
+        modules::initialize().unwrap();
 
         // Set up the global error handler (after support function initialization)
         errors::initialize();
@@ -286,6 +280,10 @@ pub struct RMain {
     pub error_occurred: bool,
     pub error_message: String, // `evalue` in the Jupyter protocol
     pub error_traceback: Vec<String>,
+
+    // Channels to communicate with the Help thread
+    pub help_tx: Option<Sender<HelpRequest>>,
+    pub help_rx: Option<Receiver<HelpReply>>,
 
     dap: Arc<Mutex<Dap>>,
     is_debugging: bool,
@@ -383,6 +381,8 @@ impl RMain {
             error_occurred: false,
             error_message: String::new(),
             error_traceback: Vec::new(),
+            help_tx: None,
+            help_rx: None,
             dap,
             is_debugging: false,
             old_show_error_messages: None,

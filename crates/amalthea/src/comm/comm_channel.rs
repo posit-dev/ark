@@ -26,6 +26,9 @@ pub enum Comm {
     /// A data viewer.
     DataViewer,
 
+    /// The Positron help pane.
+    Help,
+
     /// The Positron front end.
     FrontEnd,
 
