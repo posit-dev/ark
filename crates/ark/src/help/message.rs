@@ -57,14 +57,22 @@ pub struct ShowTopicReply {
     pub found: bool,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HelpContentKind {
+    Html,
+    Markdown,
+    Url,
+}
+
 /// Show help content in the Help pane.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ShowHelpContent {
     /// The help content to be shown.
     pub content: String,
 
-    /// The content help type. Must be one of 'html', 'markdown', or 'url'.
-    pub kind: String,
+    /// The content help type.
+    pub kind: HelpContentKind,
 
     /// Focus the Help pane after the Help content has been rendered?
     pub focus: bool,

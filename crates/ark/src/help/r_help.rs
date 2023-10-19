@@ -21,6 +21,7 @@ use log::warn;
 use stdext::spawn;
 
 use crate::browser;
+use crate::help::message::HelpContentKind;
 use crate::help::message::HelpMessage;
 use crate::help::message::HelpReply;
 use crate::help::message::HelpRequest;
@@ -239,7 +240,7 @@ impl RHelp {
         let url = url.replace(prefix.as_str(), replacement.as_str());
         let msg = HelpMessage::ShowHelpEvent(ShowHelpContent {
             content: url,
-            kind: "url".to_string(),
+            kind: HelpContentKind::Url,
             focus: true,
         });
         let json = serde_json::to_value(msg)?;
