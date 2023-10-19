@@ -139,7 +139,8 @@ static INIT_KERNEL: Once = Once::new();
 //
 // Doesn't need a mutex because it's only accessed by the R thread. Should
 // not be used elsewhere than from an R frontend callback or an R function
-// invoked by the REPL (this is enforced by `RMain.get()` and `RMain.get_mut()`).
+// invoked by the REPL (this is enforced by `RMain::get()` and
+// `RMain::get_mut()`).
 static mut R_MAIN: Option<RMain> = None;
 
 pub static R_MAIN_THREAD_NAME: &'static str = "ark-r-main-thread";
