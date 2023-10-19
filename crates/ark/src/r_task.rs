@@ -7,7 +7,6 @@
 
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::MutexGuard;
 use std::time::Duration;
 
 use crossbeam::channel::bounded;
@@ -22,10 +21,6 @@ extern "C" {
 }
 
 type SharedOption<T> = Arc<Mutex<Option<T>>>;
-
-/// Channel for sending tasks to `R_MAIN`. Initialized by `initialize()`, but
-/// is otherwise only accessed by `r_task()` and `r_async_task()`.
-static mut R_MAIN_TASKS_TX: Mutex<Option<Sender<RTaskMain>>> = Mutex::new(None);
 
 // The `Send` bound on `F` is necessary for safety. Although we are not
 // worried about data races since control flow from one thread to the other
@@ -69,9 +64,6 @@ where
     // Record how long it takes for the task to be picked up on the main thread.
     let now = std::time::SystemTime::now();
 
-    let tasks_tx_guard = lock_tasks_tx();
-    let tasks_tx = tasks_tx_guard.as_ref().unwrap();
-
     // The result of `f` will be stored here.
     let result = SharedOption::default();
 
@@ -98,10 +90,7 @@ where
             closure: Some(closure),
             status_tx: Some(status_tx),
         };
-        tasks_tx.send(task).unwrap();
-
-        // Unblock other task senders
-        drop(tasks_tx_guard);
+        get_tasks_tx().send(task).unwrap();
 
         // Block until task was completed
         status_rx.recv().unwrap();
@@ -143,9 +132,6 @@ where
 
     log::info!("Thread '{thread_name}' ({thread_id:?}) is requesting an async task.");
 
-    let tasks_tx_guard = lock_tasks_tx();
-    let tasks_tx = tasks_tx_guard.as_ref().unwrap();
-
     let closure = move || {
         r_safely(f);
     };
@@ -157,10 +143,7 @@ where
         closure: Some(closure),
         status_tx: None,
     };
-    tasks_tx.send(task).unwrap();
-
-    // Unblock other task senders
-    drop(tasks_tx_guard);
+    get_tasks_tx().send(task).unwrap();
 
     // Log that we've sent off the async task
     log::info!("Thread '{thread_name}' ({thread_id:?}) has sent the async task.");
@@ -184,13 +167,17 @@ impl RTaskMain {
     }
 }
 
+/// Channel for sending tasks to `R_MAIN`. Initialized by `initialize()`, but
+/// is otherwise only accessed by `r_task()` and `r_async_task()`.
+static mut R_MAIN_TASKS_TX: Mutex<Option<Sender<RTaskMain>>> = Mutex::new(None);
+
 pub fn initialize(tasks_tx: Sender<RTaskMain>) {
     unsafe { *R_MAIN_TASKS_TX.lock().unwrap() = Some(tasks_tx) };
 }
 
 // Be defensive for the case an auxiliary thread runs a task before R is initialized
 // by `start_r()`, which calls `r_task::initialize()`
-fn lock_tasks_tx() -> MutexGuard<'static, Option<Sender<RTaskMain>>> {
+fn get_tasks_tx() -> Sender<RTaskMain> {
     let now = std::time::SystemTime::now();
 
     loop {
@@ -200,12 +187,14 @@ fn lock_tasks_tx() -> MutexGuard<'static, Option<Sender<RTaskMain>>> {
                 .expect("Can't lock `R_MAIN_TASKS_TX`.")
         };
 
-        // Use smart pointer capability to check if underlying option is initialized yet
-        if guard.is_some() {
-            return guard;
+        if let Some(ref tasks_tx) = *guard {
+            // Return a clone of the sender so we can immediately unlock
+            // `R_MAIN_TASKS_TX` for use by other tasks (especially async ones)
+            return tasks_tx.clone();
         }
 
-        // If not initialized, drop to give `initialize()` time to lock and set the global
+        // If not initialized, drop to give `initialize()` time to lock
+        // and set `R_MAIN_TASKS_TX`
         drop(guard);
 
         std::thread::sleep(Duration::from_millis(100));
