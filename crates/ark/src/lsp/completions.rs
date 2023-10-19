@@ -36,7 +36,6 @@ use harp::vector::CharacterVector;
 use harp::vector::Vector;
 use libR_sys::*;
 use log::*;
-use regex::Captures;
 use regex::Regex;
 use serde::Deserialize;
 use serde::Serialize;
@@ -1254,18 +1253,8 @@ unsafe fn append_roxygen_completions(
         // TODO: What is the appropriate icon for us to use here?
         let template = entry["template"].as_str();
         if let Some(template) = template {
-            let text = format!("{}{}", name, template);
-            let pattern = Regex::new(r"\{([^}]+)\}").unwrap();
-
-            let mut count = 0;
-            let text = pattern.replace_all(&text, |caps: &Captures| {
-                count += 1;
-                let capture = caps.get(1).map_or("", |m| m.as_str());
-                format!("${{{}:{}}}", count, capture)
-            });
-
             item.insert_text_format = Some(InsertTextFormat::SNIPPET);
-            item.insert_text = Some(text.to_string());
+            item.insert_text = Some(format!("{}{}", name, template));
         } else {
             item.insert_text = Some(format!("@{}", label.as_str()));
         }
