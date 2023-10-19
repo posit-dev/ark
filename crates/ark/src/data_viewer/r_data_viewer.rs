@@ -44,7 +44,7 @@ use crate::data_viewer::message::DataViewerMessageRequest;
 use crate::data_viewer::message::DataViewerMessageResponse;
 use crate::data_viewer::message::DataViewerRowRequest;
 use crate::data_viewer::message::DataViewerRowResponse;
-use crate::interface::R_MAIN;
+use crate::interface::RMain;
 use crate::r_task;
 use crate::thread::RThreadSafe;
 
@@ -439,7 +439,7 @@ pub unsafe extern "C" fn ps_view_data_frame(x: SEXP, title: SEXP) -> SEXP {
     let title = RObject::new(title);
     let title = unwrap!(String::try_from(title), Err(_) => "".to_string());
 
-    let main = unsafe { R_MAIN.as_ref().unwrap() };
+    let main = RMain::get();
     let comm_manager_tx = main.get_comm_manager_tx().clone();
 
     RDataViewer::start(title, x, comm_manager_tx);

@@ -7,8 +7,8 @@
 
 use harp::test::R_TASK_BYPASS;
 
+use crate::interface::RMain;
 use crate::r_task::r_async_task;
-use crate::shell::R_MAIN_THREAD_NAME;
 
 /// Private "shelter" around a Rust object (typically wrapping a `SEXP`, like
 /// an `RObject`) that makes it `Send`able
@@ -93,12 +93,11 @@ impl<T> Drop for RThreadSafe<T> {
 }
 
 fn check_on_main_r_thread(f: &str) {
-    let thread = std::thread::current();
-    let name = thread.name().unwrap_or("<unnamed>");
-
     // An exception is made for testing, where we set `R_TASK_BYPASS` inside of
     // `test::start_r()`
-    if name != R_MAIN_THREAD_NAME && unsafe { !R_TASK_BYPASS } {
+    if !RMain::on_main_thread() && unsafe { !R_TASK_BYPASS } {
+        let thread = std::thread::current();
+        let name = thread.name().unwrap_or("<unnamed>");
         let message =
             format!("Must call `RThreadSafe::{f}()` on the main R thread, not thread '{name}'.");
         #[cfg(debug_assertions)]

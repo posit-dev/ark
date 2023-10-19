@@ -13,7 +13,7 @@ use libR_sys::*;
 
 use crate::help::message::HelpReply;
 use crate::help::message::HelpRequest;
-use crate::interface::R_MAIN;
+use crate::interface::RMain;
 
 pub static mut PORT: u16 = 0;
 
@@ -29,7 +29,7 @@ pub unsafe extern "C" fn ps_browse_url(url: SEXP) -> SEXP {
 }
 
 unsafe fn handle_help_url(url: &str) -> Result<bool> {
-    let main = R_MAIN.as_ref().unwrap();
+    let main = RMain::get();
     let help_tx = &main.help_tx;
 
     let Some(help_tx) = help_tx else {

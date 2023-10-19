@@ -7,20 +7,25 @@
 
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::MutexGuard;
 use std::time::Duration;
 
 use crossbeam::channel::bounded;
+use crossbeam::channel::Sender;
 use harp::exec::r_safely;
 use harp::test::R_TASK_BYPASS;
 
 use crate::interface::RMain;
-use crate::interface::R_MAIN;
 
 extern "C" {
     pub static mut R_PolledEvents: Option<unsafe extern "C" fn()>;
 }
 
 type SharedOption<T> = Arc<Mutex<Option<T>>>;
+
+/// Channel for sending tasks to `R_MAIN`. Initialized by `initialize()`, but
+/// is otherwise only accessed by `r_task()` and `r_async_task()`.
+static mut R_MAIN_TASKS_TX: Mutex<Option<Sender<RTaskMain>>> = Mutex::new(None);
 
 // The `Send` bound on `F` is necessary for safety. Although we are not
 // worried about data races since control flow from one thread to the other
@@ -44,21 +49,18 @@ where
         return f();
     }
 
-    let main = acquire_r_main();
-
     // Recursive case: If we're on ark-r-main already, just run the
     // task and return. This allows `r_task(|| { r_task(|| {}) })`
     // to run without deadlocking.
-    let thread_id = std::thread::current().id();
-    if main.thread_id == thread_id {
+    if RMain::on_main_thread() {
         return f();
     }
 
-    log::info!(
-        "Thread '{}' ({:?}) is requesting a task.",
-        std::thread::current().name().unwrap_or("<unnamed>"),
-        thread_id,
-    );
+    let thread = std::thread::current();
+    let thread_id = thread.id();
+    let thread_name = thread.name().unwrap_or("<unnamed>");
+
+    log::info!("Thread '{thread_name}' ({thread_id:?}) is requesting a task.");
 
     // The following is adapted from `Crossbeam::thread::ScopedThreadBuilder`.
     // Instead of scoping the task with a thread join, we send it on the R
@@ -66,6 +68,9 @@ where
 
     // Record how long it takes for the task to be picked up on the main thread.
     let now = std::time::SystemTime::now();
+
+    let tasks_tx_guard = lock_tasks_tx();
+    let tasks_tx = tasks_tx_guard.as_ref().unwrap();
 
     // The result of `f` will be stored here.
     let result = SharedOption::default();
@@ -93,7 +98,10 @@ where
             closure: Some(closure),
             status_tx: Some(status_tx),
         };
-        main.tasks_tx.send(task).unwrap();
+        tasks_tx.send(task).unwrap();
+
+        // Unblock other task senders
+        drop(tasks_tx_guard);
 
         // Block until task was completed
         status_rx.recv().unwrap();
@@ -102,10 +110,7 @@ where
     // Log how long we were stuck waiting.
     let elapsed = now.elapsed().unwrap().as_millis();
     log::info!(
-        "Thread '{}' ({:?}) was unblocked after waiting for {} milliseconds.",
-        std::thread::current().name().unwrap_or("<unnamed>"),
-        thread_id,
-        elapsed
+        "Thread '{thread_name}' ({thread_id:?}) was unblocked after waiting for {elapsed} milliseconds."
     );
 
     // Retrieve closure result from the synchronized shared option.
@@ -124,22 +129,22 @@ where
         return;
     }
 
-    let main = acquire_r_main();
-
     // Recursive case: If we're on ark-r-main already, just run the
     // task and return. This allows `r_task(|| { r_task(|| {}) })`
     // to run without deadlocking.
-    let thread_id = std::thread::current().id();
-    if main.thread_id == thread_id {
+    if RMain::on_main_thread() {
         f();
         return;
     }
 
-    log::info!(
-        "Thread '{}' ({:?}) is requesting an async task.",
-        std::thread::current().name().unwrap_or("<unnamed>"),
-        thread_id,
-    );
+    let thread = std::thread::current();
+    let thread_id = thread.id();
+    let thread_name = thread.name().unwrap_or("<unnamed>");
+
+    log::info!("Thread '{thread_name}' ({thread_id:?}) is requesting an async task.");
+
+    let tasks_tx_guard = lock_tasks_tx();
+    let tasks_tx = tasks_tx_guard.as_ref().unwrap();
 
     let closure = move || {
         r_safely(f);
@@ -152,14 +157,13 @@ where
         closure: Some(closure),
         status_tx: None,
     };
-    main.tasks_tx.send(task).unwrap();
+    tasks_tx.send(task).unwrap();
+
+    // Unblock other task senders
+    drop(tasks_tx_guard);
 
     // Log that we've sent off the async task
-    log::info!(
-        "Thread '{}' ({:?}) has sent the async task.",
-        std::thread::current().name().unwrap_or("<unnamed>"),
-        thread_id
-    );
+    log::info!("Thread '{thread_name}' ({thread_id:?}) has sent the async task.");
 }
 
 pub struct RTaskMain {
@@ -180,24 +184,39 @@ impl RTaskMain {
     }
 }
 
+pub fn initialize(tasks_tx: Sender<RTaskMain>) {
+    unsafe { *R_MAIN_TASKS_TX.lock().unwrap() = Some(tasks_tx) };
+}
+
 // Be defensive for the case an auxiliary thread runs a task before R is initialized
-fn acquire_r_main() -> &'static mut RMain {
+// by `start_r()`, which calls `r_task::initialize()`
+fn lock_tasks_tx() -> MutexGuard<'static, Option<Sender<RTaskMain>>> {
     let now = std::time::SystemTime::now();
 
-    unsafe {
-        loop {
-            if !R_MAIN.is_none() {
-                return R_MAIN.as_mut().unwrap();
-            }
-            std::thread::sleep(Duration::from_millis(100));
+    loop {
+        let guard = unsafe {
+            R_MAIN_TASKS_TX
+                .lock()
+                .expect("Can't lock `R_MAIN_TASKS_TX`.")
+        };
 
-            let elapsed = now.elapsed().unwrap().as_secs();
-            if elapsed > 50 {
-                panic!("Can't acquire main thread");
-            }
+        // Use smart pointer capability to check if underlying option is initialized yet
+        if guard.is_some() {
+            return guard;
+        }
+
+        // If not initialized, drop to give `initialize()` time to lock and set the global
+        drop(guard);
+
+        std::thread::sleep(Duration::from_millis(100));
+
+        let elapsed = now.elapsed().unwrap().as_secs();
+
+        if elapsed > 50 {
+            panic!("Can't acquire `tasks_tx`.");
         }
     }
 }
 
 // Tests are tricky because `harp::test::start_r()` is very bare bones and
-// doesn't have an `R_MAIN`.
+// doesn't have an `R_MAIN` or `R_MAIN_TASKS_TX`.
