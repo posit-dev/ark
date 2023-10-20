@@ -181,11 +181,7 @@ fn get_tasks_tx() -> Sender<RTaskMain> {
     let now = std::time::SystemTime::now();
 
     loop {
-        let guard = unsafe {
-            R_MAIN_TASKS_TX
-                .lock()
-                .expect("Can't lock `R_MAIN_TASKS_TX`.")
-        };
+        let guard = unsafe { R_MAIN_TASKS_TX.lock().unwrap() };
 
         if let Some(ref tasks_tx) = *guard {
             // Return a clone of the sender so we can immediately unlock
