@@ -27,7 +27,7 @@ use std::fs::File;
 use std::io::BufReader;
 use std::io::Read;
 
-use amalthea::comm::comm_channel::CommChannelMsg;
+use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::event::CommEvent;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
@@ -172,7 +172,7 @@ impl DeviceContext {
         });
 
         // Get the RPC request.
-        if let CommChannelMsg::Rpc(rpc_id, value) = message {
+        if let CommMsg::Rpc(rpc_id, value) = message {
             let input = serde_json::from_value::<PlotMessageInput>(value);
             let input = unwrap!(input, Err(error) => {
                 log::error!("{}", error);
@@ -195,7 +195,7 @@ impl DeviceContext {
 
                     socket
                         .outgoing_tx
-                        .send(CommChannelMsg::Rpc(rpc_id.to_string(), json))
+                        .send(CommMsg::Rpc(rpc_id.to_string(), json))
                         .or_log_error("Failed to send plot due to");
                 },
             }
@@ -309,7 +309,7 @@ impl DeviceContext {
         // Tell Positron we have an updated plot that it should request a rerender for
         socket
             .outgoing_tx
-            .send(CommChannelMsg::Data(value))
+            .send(CommMsg::Data(value))
             .or_log_error("Failed to send update message for id {id}.");
     }
 

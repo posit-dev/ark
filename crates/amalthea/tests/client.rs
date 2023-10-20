@@ -8,7 +8,7 @@
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use amalthea::comm::comm_channel::CommChannelMsg;
+use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::event::CommEvent;
 use amalthea::kernel::Kernel;
 use amalthea::kernel::StreamBehavior;
@@ -512,7 +512,7 @@ fn test_kernel() {
     // created.
     test_comm
         .outgoing_tx
-        .send(CommChannelMsg::Data(serde_json::Value::Null))
+        .send(CommMsg::Data(serde_json::Value::Null))
         .unwrap();
 
     // Wait for the comm data message to be received by the frontend.
@@ -530,7 +530,7 @@ fn test_kernel() {
     }
 
     // Close the test comm from the backend side
-    test_comm.outgoing_tx.send(CommChannelMsg::Close).unwrap();
+    test_comm.outgoing_tx.send(CommMsg::Close).unwrap();
 
     // Ensure that the frontend is notified
     loop {

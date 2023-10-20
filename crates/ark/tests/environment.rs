@@ -5,7 +5,7 @@
 //
 //
 
-use amalthea::comm::comm_channel::CommChannelMsg;
+use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::event::CommEvent;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
@@ -78,7 +78,7 @@ fn test_environment_list() {
     // Ensure we get a list of variables after initialization
     let msg = outgoing_rx.recv().unwrap();
     let data = match msg {
-        CommChannelMsg::Data(data) => data,
+        CommMsg::Data(data) => data,
         _ => panic!("Expected data message"),
     };
 
@@ -101,13 +101,13 @@ fn test_environment_list() {
     let data = serde_json::to_value(refresh).unwrap();
     let request_id = String::from("refresh-id-1234");
     incoming_tx
-        .send(CommChannelMsg::Rpc(request_id.clone(), data))
+        .send(CommMsg::Rpc(request_id.clone(), data))
         .unwrap();
 
     // Wait for the new list of variables to be delivered
     let msg = outgoing_rx.recv().unwrap();
     let data = match msg {
-        CommChannelMsg::Rpc(reply_id, data) => {
+        CommMsg::Rpc(reply_id, data) => {
             // Ensure that the reply ID we received from then environment pane
             // matches the request ID we sent
             assert_eq!(request_id, reply_id);
@@ -136,7 +136,7 @@ fn test_environment_list() {
     // Wait for the new list of variables to be delivered
     let msg = outgoing_rx.recv().unwrap();
     let data = match msg {
-        CommChannelMsg::Data(data) => data,
+        CommMsg::Data(data) => data,
         _ => panic!("Expected data message, got {:?}", msg),
     };
 
@@ -155,12 +155,12 @@ fn test_environment_list() {
     let data = serde_json::to_value(clear).unwrap();
     let request_id = String::from("clear-id-1235");
     incoming_tx
-        .send(CommChannelMsg::Rpc(request_id.clone(), data))
+        .send(CommMsg::Rpc(request_id.clone(), data))
         .unwrap();
 
     // Wait for the success message to be delivered
     let data = match outgoing_rx.recv().unwrap() {
-        CommChannelMsg::Rpc(reply_id, data) => {
+        CommMsg::Rpc(reply_id, data) => {
             // Ensure that the reply ID we received from then environment pane
             // matches the request ID we sent
             assert_eq!(request_id, reply_id);
@@ -198,7 +198,7 @@ fn test_environment_list() {
 
     let msg = outgoing_rx.recv().unwrap();
     let data = match msg {
-        CommChannelMsg::Data(data) => data,
+        CommMsg::Data(data) => data,
         _ => panic!("Expected data message, got {:?}", msg),
     };
 
@@ -214,11 +214,11 @@ fn test_environment_list() {
     let data = serde_json::to_value(delete).unwrap();
     let request_id = String::from("delete-id-1236");
     incoming_tx
-        .send(CommChannelMsg::Rpc(request_id.clone(), data))
+        .send(CommMsg::Rpc(request_id.clone(), data))
         .unwrap();
 
     let data = match outgoing_rx.recv().unwrap() {
-        CommChannelMsg::Rpc(reply_id, data) => {
+        CommMsg::Rpc(reply_id, data) => {
             assert_eq!(request_id, reply_id);
             data
         },
@@ -231,5 +231,5 @@ fn test_environment_list() {
     assert_eq!(update.version, 6);
 
     // Close the comm. Otherwise the thread panics
-    incoming_tx.send(CommChannelMsg::Close).unwrap();
+    incoming_tx.send(CommMsg::Close).unwrap();
 }

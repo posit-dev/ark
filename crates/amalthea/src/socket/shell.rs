@@ -20,7 +20,7 @@ use serde_json::json;
 use stdext::result::ResultOrLog;
 
 use crate::comm::comm_channel::Comm;
-use crate::comm::comm_channel::CommChannelMsg;
+use crate::comm::comm_channel::CommMsg;
 use crate::comm::event::CommChanged;
 use crate::comm::event::CommEvent;
 use crate::comm::server_comm::ServerComm;
@@ -350,7 +350,7 @@ impl Shell {
             .unwrap();
 
         // Send the message to the comm
-        let msg = CommChannelMsg::Rpc(req.header.msg_id.clone(), req.content.data.clone());
+        let msg = CommMsg::Rpc(req.header.msg_id.clone(), req.content.data.clone());
         self.comm_manager_tx
             .send(CommEvent::Message(req.content.comm_id.clone(), msg))
             .unwrap();
@@ -491,7 +491,7 @@ impl Shell {
 
                 comm_socket
                     .outgoing_tx
-                    .send(CommChannelMsg::Data(json!({
+                    .send(CommMsg::Data(json!({
                         "msg_type": "server_started",
                         "content": {}
                     })))

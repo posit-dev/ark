@@ -8,7 +8,7 @@
 use async_trait::async_trait;
 use crossbeam::channel::Sender;
 
-use crate::comm::comm_channel::CommChannelMsg;
+use crate::comm::comm_channel::CommMsg;
 use crate::error::Error;
 
 /// A trait for handling LSP and DAP requests. Not all kernels will support
@@ -21,6 +21,6 @@ pub trait ServerHandler: Send {
         &mut self,
         tcp_address: String,
         conn_init_tx: Sender<bool>,
-        comm_tx: Sender<CommChannelMsg>,
+        comm_tx: Sender<CommMsg>,
     ) -> Result<(), Error>;
 }

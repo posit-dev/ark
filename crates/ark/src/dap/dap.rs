@@ -8,7 +8,7 @@
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use amalthea::comm::comm_channel::CommChannelMsg;
+use amalthea::comm::comm_channel::CommMsg;
 use amalthea::language::server_handler::ServerHandler;
 use crossbeam::channel::Sender;
 use harp::session::FrameInfo;
@@ -48,7 +48,7 @@ pub struct Dap {
     pub stack: Option<Vec<FrameInfo>>,
 
     /// Channel for sending events to the comm frontend.
-    comm_tx: Option<Sender<CommChannelMsg>>,
+    comm_tx: Option<Sender<CommMsg>>,
 
     /// Channel for sending debug commands to `read_console()`
     r_request_tx: Sender<RRequest>,
@@ -92,7 +92,7 @@ impl Dap {
             if let Some(tx) = &self.comm_tx {
                 // Ask frontend to connect to the DAP
                 log::trace!("DAP: Sending `start_debug` event");
-                let msg = CommChannelMsg::Data(json!({
+                let msg = CommMsg::Data(json!({
                     "msg_type": "start_debug",
                     "content": {}
                 }));
@@ -130,7 +130,7 @@ impl ServerHandler for Dap {
         &mut self,
         tcp_address: String,
         conn_init_tx: Sender<bool>,
-        comm_tx: Sender<CommChannelMsg>,
+        comm_tx: Sender<CommMsg>,
     ) -> Result<(), amalthea::error::Error> {
         log::info!("DAP: Spawning thread");
 

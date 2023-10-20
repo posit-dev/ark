@@ -14,7 +14,7 @@ use log::info;
 use log::warn;
 use stdext::spawn;
 
-use crate::comm::comm_channel::CommChannelMsg;
+use crate::comm::comm_channel::CommMsg;
 use crate::comm::event::CommChanged;
 use crate::comm::event::CommEvent;
 use crate::socket::comm::CommInitiator;
@@ -208,7 +208,7 @@ impl CommManager {
             let msg = match comm_msg {
                 // The comm is emitting data to the front end without being
                 // asked; this is treated like an event.
-                CommChannelMsg::Data(data) => IOPubMessage::CommMsgEvent(CommWireMsg {
+                CommMsg::Data(data) => IOPubMessage::CommMsgEvent(CommWireMsg {
                     comm_id: comm_socket.comm_id.clone(),
                     data,
                 }),
@@ -216,7 +216,7 @@ impl CommManager {
                 // The comm is replying to a message from the front end; the
                 // first parameter names the ID of the message to which this is
                 // a reply.
-                CommChannelMsg::Rpc(string, data) => {
+                CommMsg::Rpc(string, data) => {
                     // Create the payload to send to the front end
                     let payload = CommWireMsg {
                         comm_id: comm_socket.comm_id.clone(),
@@ -242,7 +242,7 @@ impl CommManager {
                         },
                     }
                 },
-                CommChannelMsg::Close => IOPubMessage::CommClose(comm_socket.comm_id.clone()),
+                CommMsg::Close => IOPubMessage::CommClose(comm_socket.comm_id.clone()),
             };
 
             // Deliver the message to the front end

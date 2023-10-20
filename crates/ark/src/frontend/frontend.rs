@@ -5,7 +5,7 @@
 //
 //
 
-use amalthea::comm::comm_channel::CommChannelMsg;
+use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::frontend_comm::FrontendMessage;
 use amalthea::events::PositronEvent;
 use amalthea::socket::comm::CommSocket;
@@ -49,7 +49,7 @@ impl PositronFrontend {
 
             // Convert the client event to a message we can send to the front end
             let frontend_evt = FrontendMessage::Event(comm_evt);
-            let comm_msg = CommChannelMsg::Data(serde_json::to_value(frontend_evt).unwrap());
+            let comm_msg = CommMsg::Data(serde_json::to_value(frontend_evt).unwrap());
 
             // Deliver the event to the front end over the comm channel
             if let Err(err) = comm_tx.send(comm_msg) {
