@@ -216,8 +216,8 @@ impl Drop for RObject {
 
 // SAFETY: Neither `Sync` nor `Send` are safe to implement for `RObject`. Even
 // with `Sync`, you can call methods from `&RObject` while on different threads,
-// which could call the R API. Instead, use `RThreadSafeObject` to send across
-// threads.
+// which could call the R API. Instead, use `RThreadSafe<RObject>` to send
+// across threads.
 // unsafe impl Sync for RObject {}
 // unsafe impl Send for RObject {}
 

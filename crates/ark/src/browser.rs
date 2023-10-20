@@ -1,20 +1,19 @@
 //
 // browser.rs
 //
-// Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023 Posit Software, PBC. All rights reserved.
 //
 //
 
 use std::process::Command;
 
-use amalthea::events::PositronEvent;
-use amalthea::events::ShowHelpEvent;
 use anyhow::Result;
-use harp::exec::RFunction;
 use harp::object::RObject;
 use libR_sys::*;
 
-use crate::interface::R_MAIN;
+use crate::help::message::HelpReply;
+use crate::help::message::HelpRequest;
+use crate::interface::RMain;
 
 pub static mut PORT: u16 = 0;
 
@@ -30,29 +29,34 @@ pub unsafe extern "C" fn ps_browse_url(url: SEXP) -> SEXP {
 }
 
 unsafe fn handle_help_url(url: &str) -> Result<bool> {
-    // Check for help URLs
-    let port = RFunction::new("tools", "httpdPort").call()?.to::<u16>()?;
-    let prefix = format!("http://127.0.0.1:{}/", port);
-    if !url.starts_with(&prefix) {
+    let main = RMain::get();
+    let help_tx = &main.help_tx;
+
+    let Some(help_tx) = help_tx else {
+        log::error!(
+            "No help channel available to handle help URL {}. Is the help comm open?",
+            url
+        );
+        return Ok(false);
+    };
+
+    let message = HelpRequest::ShowHelpUrlRequest(url.to_string());
+
+    if let Err(err) = help_tx.send(message) {
+        log::error!("Failed to send help message: {err:?}");
         return Ok(false);
     }
 
-    // Re-direct the help request to our help proxy server.
-    let replacement = format!("http://127.0.0.1:{}/", PORT);
+    // Wait up to 1 second for a reply from the help thread
+    let reply = main
+        .help_rx
+        .as_ref()
+        .unwrap()
+        .recv_timeout(std::time::Duration::from_secs(1))?;
 
-    // Fire an event for the front-end.
-    let url = url.replace(prefix.as_str(), replacement.as_str());
-    let event = PositronEvent::ShowHelp(ShowHelpEvent {
-        kind: "url".to_string(),
-        content: url,
-        focus: true,
-    });
-
-    let main = unsafe { R_MAIN.as_ref().unwrap() };
-    let kernel = main.kernel.lock().unwrap();
-    kernel.send_event(event);
-
-    Ok(true)
+    match reply {
+        HelpReply::ShowHelpUrlReply(found) => Ok(found),
+    }
 }
 
 unsafe fn ps_browse_url_impl(url: SEXP) -> Result<()> {

@@ -1,15 +1,31 @@
 #
 # help.R
 #
-# Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+# Copyright (C) 2023 Posit Software, PBC. All rights reserved.
 #
 #
 
 options(help_type = "html")
 
-# Start the R help server on startup. We use 'NA' here to support
-# hot-reloading this file.
-suppressMessages(tools::startDynamicHelp(start = NA))
+# Start R's dynamic HTTP help server; returns the chosen port (invisibly)
+.ps.help.startHelpServer <- function() {
+    suppressMessages(tools::startDynamicHelp(start = NA))
+}
+
+# Show help on a topic. Returns a logical value indicating whether help was
+# found.
+.ps.help.showHelpTopic <- function(topic) {
+    # Try to find help on the topic.
+    results <- help(topic)
+
+    # If we found results of any kind, show them.
+    if (length(results) > 0) {
+        print(results)
+    }
+
+    # Return whether we found any help.
+    length(results) > 0
+}
 
 .ps.help.getHtmlHelpContents <- function(topic, package = "") {
 
@@ -46,4 +62,3 @@ suppressMessages(tools::startDynamicHelp(start = NA))
   paste(contents, collapse = "\n")
 
 }
-

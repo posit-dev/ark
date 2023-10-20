@@ -12,6 +12,7 @@ pub mod data_viewer;
 pub mod environment;
 pub mod errors;
 pub mod frontend;
+pub mod help;
 pub mod help_proxy;
 pub mod interface;
 pub mod kernel;

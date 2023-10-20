@@ -12,11 +12,11 @@ use log::info;
 use log::warn;
 use stdext::unwrap;
 
-use crate::interface::R_MAIN;
+use crate::interface::RMain;
 
 #[harp::register]
 unsafe extern "C" fn ps_record_error(evalue: SEXP, traceback: SEXP) -> SEXP {
-    let main = unsafe { R_MAIN.as_mut().unwrap() };
+    let main = RMain::get_mut();
 
     // Convert to `RObject` for access to `try_from()` / `try_into()` methods.
     let evalue = RObject::new(evalue);

@@ -52,14 +52,15 @@ use stdext::spawn;
 use crate::dap::Dap;
 use crate::environment::r_environment::REnvironment;
 use crate::frontend::frontend::PositronFrontend;
+use crate::help::r_help::RHelp;
 use crate::interface::KernelInfo;
+use crate::interface::RMain;
+use crate::interface::R_MAIN_THREAD_NAME;
 use crate::kernel::Kernel;
 use crate::plots::graphics_device;
 use crate::r_task;
 use crate::request::KernelRequest;
 use crate::request::RRequest;
-
-pub static R_MAIN_THREAD_NAME: &'static str = "ark-r-main-thread";
 
 pub struct Shell {
     comm_manager_tx: Sender<CommEvent>,
@@ -322,6 +323,26 @@ impl ShellHandler for Shell {
                         err
                     );
                 };
+                Ok(true)
+            },
+            Comm::Help => {
+                // Start the R Help handler
+                let (help_request_tx, help_reply_rx) = match RHelp::start(comm.clone()) {
+                    Ok(tx) => tx,
+                    Err(err) => {
+                        warn!("Could not start R Help handler: {}", err);
+                        return Ok(false);
+                    },
+                };
+
+                // Send the help request channel to the main R thread so it can
+                // emit help events, to be delivered over the help comm.
+                r_task(|| {
+                    let main = RMain::get_mut();
+                    main.help_tx = Some(help_request_tx.clone());
+                    main.help_rx = Some(help_reply_rx.clone());
+                });
+
                 Ok(true)
             },
             _ => Ok(false),
