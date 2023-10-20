@@ -6,7 +6,7 @@
 //
 
 use amalthea::comm::comm_channel::CommMsg;
-use amalthea::comm::event::CommEvent;
+use amalthea::comm::event::CommManagerEvent;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
 use ark::variables::message::VariablesMessage;
@@ -64,7 +64,7 @@ fn test_environment_list() {
     // Create a dummy comm manager channel that isn't actually used.
     // It's required when opening a `RDataViewer` comm through `view()`, but
     // we don't test that here.
-    let (comm_manager_tx, _) = bounded::<CommEvent>(0);
+    let (comm_manager_tx, _) = bounded::<CommManagerEvent>(0);
 
     // Create a new environment handler and give it the test
     // environment we created.

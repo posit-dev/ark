@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use amalthea::comm::comm_channel::Comm;
-use amalthea::comm::event::CommEvent;
+use amalthea::comm::event::CommManagerEvent;
 use amalthea::language::shell_handler::ShellHandler;
 use amalthea::socket::comm::CommSocket;
 use amalthea::socket::iopub::IOPubMessage;
@@ -58,7 +58,7 @@ use crate::request::RRequest;
 use crate::variables::r_variables::RVariables;
 
 pub struct Shell {
-    comm_manager_tx: Sender<CommEvent>,
+    comm_manager_tx: Sender<CommManagerEvent>,
     iopub_tx: Sender<IOPubMessage>,
     r_request_tx: Sender<RRequest>,
     pub kernel: Arc<Mutex<Kernel>>,
@@ -75,7 +75,7 @@ pub enum REvent {
 impl Shell {
     /// Creates a new instance of the shell message handler.
     pub fn new(
-        comm_manager_tx: Sender<CommEvent>,
+        comm_manager_tx: Sender<CommManagerEvent>,
         iopub_tx: Sender<IOPubMessage>,
         r_request_tx: Sender<RRequest>,
         kernel_init_rx: BusReader<KernelInfo>,

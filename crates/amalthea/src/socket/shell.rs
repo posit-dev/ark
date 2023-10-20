@@ -22,7 +22,7 @@ use stdext::result::ResultOrLog;
 use crate::comm::comm_channel::Comm;
 use crate::comm::comm_channel::CommMsg;
 use crate::comm::event::CommChanged;
-use crate::comm::event::CommEvent;
+use crate::comm::event::CommManagerEvent;
 use crate::comm::server_comm::ServerComm;
 use crate::error::Error;
 use crate::language::server_handler::ServerHandler;
@@ -77,7 +77,7 @@ pub struct Shell {
     open_comms: Vec<(String, String)>,
 
     /// Channel used to deliver comm events to the comm manager
-    comm_manager_tx: Sender<CommEvent>,
+    comm_manager_tx: Sender<CommManagerEvent>,
 
     /// Channel used to receive comm events from the comm manager
     comm_manager_rx: Receiver<CommChanged>,
@@ -95,7 +95,7 @@ impl Shell {
     pub fn new(
         socket: Socket,
         iopub_tx: Sender<IOPubMessage>,
-        comm_manager_tx: Sender<CommEvent>,
+        comm_manager_tx: Sender<CommManagerEvent>,
         comm_changed_rx: Receiver<CommChanged>,
         shell_handler: Arc<Mutex<dyn ShellHandler>>,
         lsp_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
@@ -346,13 +346,13 @@ impl Shell {
         // Store this message as a pending RPC request so that when the comm
         // responds, we can match it up
         self.comm_manager_tx
-            .send(CommEvent::PendingRpc(req.header.clone()))
+            .send(CommManagerEvent::PendingRpc(req.header.clone()))
             .unwrap();
 
         // Send the message to the comm
         let msg = CommMsg::Rpc(req.header.msg_id.clone(), req.content.data.clone());
         self.comm_manager_tx
-            .send(CommEvent::Message(req.content.comm_id.clone(), msg))
+            .send(CommManagerEvent::Message(req.content.comm_id.clone(), msg))
             .unwrap();
 
         // Return kernel to idle state
@@ -477,7 +477,7 @@ impl Shell {
             // Send a notification to the comm message listener thread that a new
             // comm has been opened
             self.comm_manager_tx
-                .send(CommEvent::Opened(comm_socket.clone(), comm_data))
+                .send(CommManagerEvent::Opened(comm_socket.clone(), comm_data))
                 .or_log_warning(&format!(
                     "Failed to send '{}' comm open notification to listener thread",
                     comm_socket.comm_name
@@ -552,7 +552,7 @@ impl Shell {
         // Send a notification to the comm message listener thread notifying it that
         // the comm has been closed
         self.comm_manager_tx
-            .send(CommEvent::Closed(req.content.comm_id.clone()))
+            .send(CommManagerEvent::Closed(req.content.comm_id.clone()))
             .unwrap();
 
         // Return kernel to idle state

@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use amalthea::comm::comm_channel::CommMsg;
-use amalthea::comm::event::CommEvent;
+use amalthea::comm::event::CommManagerEvent;
 use amalthea::kernel::Kernel;
 use amalthea::kernel::StreamBehavior;
 use amalthea::socket::comm::CommInitiator;
@@ -454,7 +454,7 @@ fn test_kernel() {
         test_comm_name.clone(),
     );
     comm_manager_tx
-        .send(CommEvent::Opened(
+        .send(CommManagerEvent::Opened(
             test_comm.clone(),
             serde_json::Value::Null,
         ))

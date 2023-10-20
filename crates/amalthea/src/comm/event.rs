@@ -14,7 +14,7 @@ use crate::wire::header::JupyterHeader;
 /**
  * Enumeration of events that can be received by the comm manager.
  */
-pub enum CommEvent {
+pub enum CommManagerEvent {
     /// A new Comm was opened
     Opened(CommSocket, Value),
 

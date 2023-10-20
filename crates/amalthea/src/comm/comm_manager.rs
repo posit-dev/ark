@@ -16,7 +16,7 @@ use stdext::spawn;
 
 use crate::comm::comm_channel::CommMsg;
 use crate::comm::event::CommChanged;
-use crate::comm::event::CommEvent;
+use crate::comm::event::CommManagerEvent;
 use crate::socket::comm::CommInitiator;
 use crate::socket::comm::CommSocket;
 use crate::socket::iopub::IOPubMessage;
@@ -27,7 +27,7 @@ use crate::wire::header::JupyterHeader;
 pub struct CommManager {
     open_comms: Vec<CommSocket>,
     iopub_tx: Sender<IOPubMessage>,
-    comm_event_rx: Receiver<CommEvent>,
+    comm_event_rx: Receiver<CommManagerEvent>,
     comm_changed_tx: Sender<CommChanged>,
     pending_rpcs: HashMap<String, JupyterHeader>,
 }
@@ -44,7 +44,7 @@ impl CommManager {
      */
     pub fn start(
         iopub_tx: Sender<IOPubMessage>,
-        comm_event_rx: Receiver<CommEvent>,
+        comm_event_rx: Receiver<CommManagerEvent>,
     ) -> Receiver<CommChanged> {
         let (comm_changed_tx, comm_changed_rx) = crossbeam::channel::unbounded();
         spawn!("comm-manager", move || {
@@ -61,7 +61,7 @@ impl CommManager {
      */
     pub fn new(
         iopub_tx: Sender<IOPubMessage>,
-        comm_event_rx: Receiver<CommEvent>,
+        comm_event_rx: Receiver<CommManagerEvent>,
         comm_changed_tx: Sender<CommChanged>,
     ) -> Self {
         Self {
@@ -107,7 +107,7 @@ impl CommManager {
             }
             match comm_event.unwrap() {
                 // A Comm was opened; notify everyone
-                CommEvent::Opened(comm_socket, val) => {
+                CommManagerEvent::Opened(comm_socket, val) => {
                     // Notify the shell handler; it maintains a list of open
                     // comms so that the frontend can query for comm state
                     self.comm_changed_tx
@@ -138,12 +138,12 @@ impl CommManager {
                 },
 
                 // An RPC was received; add it to the map of pending RPCs
-                CommEvent::PendingRpc(header) => {
+                CommManagerEvent::PendingRpc(header) => {
                     self.pending_rpcs.insert(header.msg_id.clone(), header);
                 },
 
                 // A message was received from the front end
-                CommEvent::Message(comm_id, msg) => {
+                CommManagerEvent::Message(comm_id, msg) => {
                     // Find the index of the comm in the vector
                     let index = self
                         .open_comms
@@ -167,7 +167,7 @@ impl CommManager {
                 },
 
                 // A Comm was closed; attempt to remove it from the set of open comms
-                CommEvent::Closed(comm_id) => {
+                CommManagerEvent::Closed(comm_id) => {
                     // Find the index of the comm in the vector
                     let index = self
                         .open_comms

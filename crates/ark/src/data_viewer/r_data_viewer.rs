@@ -6,7 +6,7 @@
 //
 
 use amalthea::comm::comm_channel::CommMsg;
-use amalthea::comm::event::CommEvent;
+use amalthea::comm::event::CommManagerEvent;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
 use anyhow::bail;
@@ -52,7 +52,7 @@ pub struct RDataViewer {
     title: String,
     dataset: DataSet,
     comm: CommSocket,
-    comm_manager_tx: Sender<CommEvent>,
+    comm_manager_tx: Sender<CommManagerEvent>,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
@@ -260,7 +260,7 @@ impl DataSet {
 }
 
 impl RDataViewer {
-    pub fn start(title: String, data: RObject, comm_manager_tx: Sender<CommEvent>) {
+    pub fn start(title: String, data: RObject, comm_manager_tx: Sender<CommManagerEvent>) {
         let id = Uuid::new_v4().to_string();
 
         let comm = CommSocket::new(
@@ -304,7 +304,7 @@ impl RDataViewer {
             };
             let comm_open_json = serde_json::to_value(metadata)?;
             // Notify frontend that the data viewer comm is open
-            let event = CommEvent::Opened(self.comm.clone(), comm_open_json);
+            let event = CommManagerEvent::Opened(self.comm.clone(), comm_open_json);
             self.comm_manager_tx.send(event)?;
             Ok(())
         };

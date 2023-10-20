@@ -6,7 +6,7 @@
 //
 
 use amalthea::comm::comm_channel::CommMsg;
-use amalthea::comm::event::CommEvent;
+use amalthea::comm::event::CommManagerEvent;
 use amalthea::socket::comm::CommSocket;
 use crossbeam::channel::select;
 use crossbeam::channel::unbounded;
@@ -48,7 +48,7 @@ use crate::variables::variable::Variable;
  */
 pub struct RVariables {
     comm: CommSocket,
-    comm_manager_tx: Sender<CommEvent>,
+    comm_manager_tx: Sender<CommManagerEvent>,
     pub env: RThreadSafe<RObject>,
     /// `Binding` does not currently protect anything, and therefore doesn't
     /// implement `Drop`, which might use the R API. It assumes that R SYMSXPs
@@ -75,7 +75,7 @@ impl RVariables {
      * - `env`: An R environment to scan for variables, typically R_GlobalEnv
      * - `comm`: A channel used to send messages to the front end
      */
-    pub fn start(env: RObject, comm: CommSocket, comm_manager_tx: Sender<CommEvent>) {
+    pub fn start(env: RObject, comm: CommSocket, comm_manager_tx: Sender<CommManagerEvent>) {
         // Validate that the RObject we were passed is actually an environment
         if let Err(err) = r_assert_type(env.sexp, &[ENVSXP]) {
             warn!(

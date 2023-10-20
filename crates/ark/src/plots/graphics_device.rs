@@ -28,7 +28,7 @@ use std::io::BufReader;
 use std::io::Read;
 
 use amalthea::comm::comm_channel::CommMsg;
-use amalthea::comm::event::CommEvent;
+use amalthea::comm::event::CommManagerEvent;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
 use amalthea::socket::iopub::IOPubMessage;
@@ -124,7 +124,7 @@ impl DeviceContext {
 
     pub fn on_did_execute_request(
         &mut self,
-        comm_manager_tx: Sender<CommEvent>,
+        comm_manager_tx: Sender<CommManagerEvent>,
         iopub_tx: Sender<IOPubMessage>,
         positron_connected: bool,
     ) {
@@ -204,7 +204,7 @@ impl DeviceContext {
 
     fn process_changes(
         &mut self,
-        comm_manager_tx: Sender<CommEvent>,
+        comm_manager_tx: Sender<CommManagerEvent>,
         iopub_tx: Sender<IOPubMessage>,
         positron_connected: bool,
     ) {
@@ -224,7 +224,7 @@ impl DeviceContext {
     fn process_new_plot(
         &mut self,
         id: &str,
-        comm_manager_tx: Sender<CommEvent>,
+        comm_manager_tx: Sender<CommManagerEvent>,
         iopub_tx: Sender<IOPubMessage>,
         positron_connected: bool,
     ) {
@@ -235,7 +235,7 @@ impl DeviceContext {
         }
     }
 
-    fn process_new_plot_positron(&mut self, id: &str, comm_manager_tx: Sender<CommEvent>) {
+    fn process_new_plot_positron(&mut self, id: &str, comm_manager_tx: Sender<CommManagerEvent>) {
         // Let Positron know that we just created a new plot.
         let socket = CommSocket::new(
             CommInitiator::BackEnd,
@@ -243,7 +243,7 @@ impl DeviceContext {
             POSITRON_PLOT_CHANNEL_ID.to_string(),
         );
 
-        let event = CommEvent::Opened(socket.clone(), serde_json::Value::Null);
+        let event = CommManagerEvent::Opened(socket.clone(), serde_json::Value::Null);
         if let Err(error) = comm_manager_tx.send(event) {
             log::error!("{}", error);
         }
@@ -426,7 +426,7 @@ pub unsafe fn on_process_events() {
 }
 
 pub unsafe fn on_did_execute_request(
-    comm_manager_tx: Sender<CommEvent>,
+    comm_manager_tx: Sender<CommManagerEvent>,
     iopub_tx: Sender<IOPubMessage>,
     positron_connected: bool,
 ) {
