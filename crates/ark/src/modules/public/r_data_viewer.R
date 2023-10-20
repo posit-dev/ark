@@ -7,7 +7,7 @@
 
 .ps.view_data_frame <- function(x, title) {
     if (missing(title)) {
-        title <- paste(deparse(substitute(x)), collapse = "")
+        title <- .ps.as_label(substitute(x))
     }
     stopifnot(
         is.data.frame(x) || is.matrix(x),

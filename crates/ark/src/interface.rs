@@ -237,6 +237,12 @@ pub fn start_r(
         // Initialize support functions (after routine registration)
         modules::initialize().unwrap();
 
+        // Register all hooks once all modules have been imported
+        let hook_result = RFunction::from(".ps.register_all_hooks").call();
+        if let Err(err) = hook_result {
+            warn!("Error registering some hooks: {}", err);
+        }
+
         // Set up the global error handler (after support function initialization)
         errors::initialize();
 

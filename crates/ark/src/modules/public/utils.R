@@ -56,3 +56,8 @@
 .ps.deep_sleep <- function(secs) {
     .ps.Call("ps_deep_sleep", secs)
 }
+
+# Extracts a character label from a syntactically valid quoted R expression
+.ps.as_label <- function(expr) {
+    paste(deparse(expr, backtick = TRUE), collapse = "")
+}
