@@ -227,6 +227,10 @@ pub fn start_r(
         // Initialize support functions (after routine registration)
         let r_module_info = modules::initialize().unwrap();
 
+        // Register all hooks once all modules have been imported
+        let call = RObject::new(Rf_lcons(r_symbol!(".ps.register_all_hooks"), R_NilValue));
+        Rf_eval(*call, R_GlobalEnv);
+
         // TODO: Should starting the R help server proxy really be here?
         // Are we sure we want our own server when ark runs in a Jupyter notebook?
         // Moving this requires detangling `help_server_port` from

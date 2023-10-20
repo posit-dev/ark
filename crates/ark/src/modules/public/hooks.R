@@ -27,3 +27,8 @@
         }
     }
 }
+
+# Wrapper to contain the definition of all hooks we want to register
+.ps.register_all_hooks <- function() {
+    .ps.register_utils_hook("View", .ps.view_data_frame, namespace = TRUE)
+}

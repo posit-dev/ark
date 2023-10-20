@@ -15,5 +15,3 @@
     )
     invisible(.ps.Call("ps_view_data_frame", x, title))
 }
-
-.ps.register_utils_hook("View", .ps.view_data_frame, namespace = TRUE)
