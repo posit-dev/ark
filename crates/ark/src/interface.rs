@@ -238,8 +238,10 @@ pub fn start_r(
         modules::initialize().unwrap();
 
         // Register all hooks once all modules have been imported
-        let call = RObject::new(Rf_lcons(r_symbol!(".ps.register_all_hooks"), R_NilValue));
-        Rf_eval(*call, R_GlobalEnv);
+        let hook_result = RFunction::from(".ps.register_all_hooks").call();
+        if let Err(err) = hook_result {
+            warn!("Error registering some hooks: {}", err);
+        }
 
         // Set up the global error handler (after support function initialization)
         errors::initialize();
