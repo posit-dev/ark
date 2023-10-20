@@ -21,8 +21,8 @@ use stdext::result::ResultOrLog;
 
 use crate::comm::comm_channel::Comm;
 use crate::comm::comm_channel::CommMsg;
-use crate::comm::event::CommChanged;
 use crate::comm::event::CommManagerEvent;
+use crate::comm::event::CommShellEvent;
 use crate::comm::server_comm::ServerComm;
 use crate::error::Error;
 use crate::language::server_handler::ServerHandler;
@@ -80,7 +80,7 @@ pub struct Shell {
     comm_manager_tx: Sender<CommManagerEvent>,
 
     /// Channel used to receive comm events from the comm manager
-    comm_manager_rx: Receiver<CommChanged>,
+    comm_shell_rx: Receiver<CommShellEvent>,
 }
 
 impl Shell {
@@ -96,7 +96,7 @@ impl Shell {
         socket: Socket,
         iopub_tx: Sender<IOPubMessage>,
         comm_manager_tx: Sender<CommManagerEvent>,
-        comm_changed_rx: Receiver<CommChanged>,
+        comm_shell_rx: Receiver<CommShellEvent>,
         shell_handler: Arc<Mutex<dyn ShellHandler>>,
         lsp_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
         dap_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
@@ -109,7 +109,7 @@ impl Shell {
             dap_handler,
             open_comms: Vec::new(),
             comm_manager_tx,
-            comm_manager_rx: comm_changed_rx,
+            comm_shell_rx,
         }
     }
 
@@ -578,15 +578,15 @@ impl Shell {
 
     // Process changes to open comms
     fn process_comm_changes(&mut self) {
-        if let Ok(comm_changed) = self.comm_manager_rx.try_recv() {
+        if let Ok(comm_changed) = self.comm_shell_rx.try_recv() {
             match comm_changed {
                 // Comm was added; add it to the list of open comms
-                CommChanged::Added(comm_id, target_name) => {
+                CommShellEvent::Added(comm_id, target_name) => {
                     self.open_comms.push((comm_id, target_name));
                 },
 
                 // Comm was removed; remove it from the list of open comms
-                CommChanged::Removed(comm_id) => {
+                CommShellEvent::Removed(comm_id) => {
                     self.open_comms.retain(|(id, _)| id != &comm_id);
                 },
             }

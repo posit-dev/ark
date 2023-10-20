@@ -34,7 +34,7 @@ pub enum CommManagerEvent {
  * other parts of the application that a comm was opened or closed, so that they
  * can update their state.
  */
-pub enum CommChanged {
+pub enum CommShellEvent {
     /// A new comm was opened. The first value is the comm ID, and the second
     /// value is the comm name.
     Added(String, String),

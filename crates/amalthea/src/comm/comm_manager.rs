@@ -15,8 +15,8 @@ use log::warn;
 use stdext::spawn;
 
 use crate::comm::comm_channel::CommMsg;
-use crate::comm::event::CommChanged;
 use crate::comm::event::CommManagerEvent;
+use crate::comm::event::CommShellEvent;
 use crate::socket::comm::CommInitiator;
 use crate::socket::comm::CommSocket;
 use crate::socket::iopub::IOPubMessage;
@@ -28,7 +28,7 @@ pub struct CommManager {
     open_comms: Vec<CommSocket>,
     iopub_tx: Sender<IOPubMessage>,
     comm_event_rx: Receiver<CommManagerEvent>,
-    comm_changed_tx: Sender<CommChanged>,
+    comm_shell_tx: Sender<CommShellEvent>,
     pending_rpcs: HashMap<String, JupyterHeader>,
 }
 
@@ -45,7 +45,7 @@ impl CommManager {
     pub fn start(
         iopub_tx: Sender<IOPubMessage>,
         comm_event_rx: Receiver<CommManagerEvent>,
-    ) -> Receiver<CommChanged> {
+    ) -> Receiver<CommShellEvent> {
         let (comm_changed_tx, comm_changed_rx) = crossbeam::channel::unbounded();
         spawn!("comm-manager", move || {
             let mut comm_manager = CommManager::new(iopub_tx, comm_event_rx, comm_changed_tx);
@@ -62,12 +62,12 @@ impl CommManager {
     pub fn new(
         iopub_tx: Sender<IOPubMessage>,
         comm_event_rx: Receiver<CommManagerEvent>,
-        comm_changed_tx: Sender<CommChanged>,
+        comm_shell_tx: Sender<CommShellEvent>,
     ) -> Self {
         Self {
             iopub_tx,
             comm_event_rx,
-            comm_changed_tx,
+            comm_shell_tx,
             open_comms: Vec::<CommSocket>::new(),
             pending_rpcs: HashMap::<String, JupyterHeader>::new(),
         }
@@ -110,8 +110,8 @@ impl CommManager {
                 CommManagerEvent::Opened(comm_socket, val) => {
                     // Notify the shell handler; it maintains a list of open
                     // comms so that the frontend can query for comm state
-                    self.comm_changed_tx
-                        .send(CommChanged::Added(
+                    self.comm_shell_tx
+                        .send(CommShellEvent::Added(
                             comm_socket.comm_id.clone(),
                             comm_socket.comm_name.clone(),
                         ))
@@ -177,8 +177,8 @@ impl CommManager {
                     // If we found it, remove it.
                     if let Some(index) = index {
                         self.open_comms.remove(index);
-                        self.comm_changed_tx
-                            .send(CommChanged::Removed(comm_id))
+                        self.comm_shell_tx
+                            .send(CommShellEvent::Removed(comm_id))
                             .unwrap();
                         info!(
                             "Comm channel closed; there are now {} open comms",

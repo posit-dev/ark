@@ -18,8 +18,8 @@ use stdext::spawn;
 use stdext::unwrap;
 
 use crate::comm::comm_manager::CommManager;
-use crate::comm::event::CommChanged;
 use crate::comm::event::CommManagerEvent;
+use crate::comm::event::CommShellEvent;
 use crate::connection_file::ConnectionFile;
 use crate::error::Error;
 use crate::language::control_handler::ControlHandler;
@@ -309,7 +309,7 @@ impl Kernel {
         socket: Socket,
         iopub_tx: Sender<IOPubMessage>,
         comm_manager_tx: Sender<CommManagerEvent>,
-        comm_changed_rx: Receiver<CommChanged>,
+        comm_changed_rx: Receiver<CommShellEvent>,
         shell_handler: Arc<Mutex<dyn ShellHandler>>,
         lsp_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
         dap_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
