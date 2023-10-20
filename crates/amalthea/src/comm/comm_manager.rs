@@ -20,7 +20,7 @@ use crate::comm::event::CommEvent;
 use crate::socket::comm::CommInitiator;
 use crate::socket::comm::CommSocket;
 use crate::socket::iopub::IOPubMessage;
-use crate::wire::comm_msg::CommMsg;
+use crate::wire::comm_msg::CommWireMsg;
 use crate::wire::comm_open::CommOpen;
 use crate::wire::header::JupyterHeader;
 
@@ -208,7 +208,7 @@ impl CommManager {
             let msg = match comm_msg {
                 // The comm is emitting data to the front end without being
                 // asked; this is treated like an event.
-                CommChannelMsg::Data(data) => IOPubMessage::CommMsgEvent(CommMsg {
+                CommChannelMsg::Data(data) => IOPubMessage::CommMsgEvent(CommWireMsg {
                     comm_id: comm_socket.comm_id.clone(),
                     data,
                 }),
@@ -218,7 +218,7 @@ impl CommManager {
                 // a reply.
                 CommChannelMsg::Rpc(string, data) => {
                     // Create the payload to send to the front end
-                    let payload = CommMsg {
+                    let payload = CommWireMsg {
                         comm_id: comm_socket.comm_id.clone(),
                         data,
                     };

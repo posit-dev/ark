@@ -17,7 +17,7 @@ use amalthea::socket::comm::CommSocket;
 use amalthea::wire::comm_close::CommClose;
 use amalthea::wire::comm_info_reply::CommInfoTargetName;
 use amalthea::wire::comm_info_request::CommInfoRequest;
-use amalthea::wire::comm_msg::CommMsg;
+use amalthea::wire::comm_msg::CommWireMsg;
 use amalthea::wire::comm_open::CommOpen;
 use amalthea::wire::execute_input::ExecuteInput;
 use amalthea::wire::execute_request::ExecuteRequest;
@@ -378,7 +378,7 @@ fn test_kernel() {
     }
 
     info!("Sending comm message to the test comm and waiting for a reply");
-    let comm_req_id = frontend.send_shell(CommMsg {
+    let comm_req_id = frontend.send_shell(CommWireMsg {
         comm_id: comm_id.to_string(),
         data: serde_json::Value::Null,
     });

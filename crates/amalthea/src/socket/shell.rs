@@ -36,7 +36,7 @@ use crate::wire::comm_close::CommClose;
 use crate::wire::comm_info_reply::CommInfoReply;
 use crate::wire::comm_info_reply::CommInfoTargetName;
 use crate::wire::comm_info_request::CommInfoRequest;
-use crate::wire::comm_msg::CommMsg;
+use crate::wire::comm_msg::CommWireMsg;
 use crate::wire::comm_open::CommOpen;
 use crate::wire::complete_reply::CompleteReply;
 use crate::wire::complete_request::CompleteRequest;
@@ -334,7 +334,7 @@ impl Shell {
     fn handle_comm_msg(
         &self,
         _handler: &dyn ShellHandler,
-        req: JupyterMessage<CommMsg>,
+        req: JupyterMessage<CommWireMsg>,
     ) -> Result<(), Error> {
         debug!("Received request to send a message on a comm: {:?}", req);
 
@@ -458,7 +458,7 @@ impl Shell {
                         // This is a language evaluation error, so we can send
                         // it back in that form.
                         let errname = err.ename.clone();
-                        req.send_error::<CommMsg>(err, &self.socket)?;
+                        req.send_error::<CommWireMsg>(err, &self.socket)?;
 
                         // Return an error to the caller indicating that the
                         // comm could not be opened due to the invalid open
