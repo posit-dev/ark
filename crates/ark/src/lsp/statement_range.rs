@@ -57,12 +57,13 @@ impl Backend {
         };
 
         let root = document.ast.root_node();
+        let source = document.contents.to_string();
 
         let position = params.position;
         let point = position.as_point();
         let row = point.row;
 
-        let Some(node) = find_statement_range_node(root, row) else {
+        let Some(node) = find_statement_range_node(root, source.clone(), row) else {
             return Ok(None);
         };
 
@@ -79,13 +80,20 @@ impl Backend {
             end: end_position,
         };
 
-        let response = StatementRangeResponse { range, code: None };
+        let code = node
+            .utf8_text(source.as_bytes())
+            .unwrap_or("")
+            // Returns `None` if prefix is not there, which is exactly what we want:
+            .strip_prefix("#'")
+            .map(|s| s.to_string());
+
+        let response = StatementRangeResponse { range, code };
 
         Ok(Some(response))
     }
 }
 
-fn find_statement_range_node(root: Node, row: usize) -> Option<Node> {
+fn find_statement_range_node(root: Node, source: String, row: usize) -> Option<Node> {
     let mut cursor = root.walk();
 
     let children = root.children(&mut cursor);
@@ -99,8 +107,13 @@ fn find_statement_range_node(root: Node, row: usize) -> Option<Node> {
             continue;
         }
         if child.kind() == "comment" {
-            // Skip comments
-            continue;
+            // Find roxygen comments
+            let text = child.utf8_text(source.as_bytes());
+            let roxygen_comment = text.and_then(|x| Ok(x.starts_with("#'"))).unwrap_or(false);
+            if !roxygen_comment {
+                // Skip other comments
+                continue;
+            }
         }
 
         // If there was a node associated with the point, recurse into it
@@ -549,11 +562,11 @@ fn test_statement_range() {
             .set_language(tree_sitter_r::language())
             .expect("Failed to create parser");
 
-        let ast = parser.parse(x, None).unwrap();
+        let ast = parser.parse(x.clone(), None).unwrap();
 
         let root = ast.root_node();
 
-        let node = find_statement_range_node(root, cursor.unwrap().row).unwrap();
+        let node = find_statement_range_node(root, x, cursor.unwrap().row).unwrap();
 
         assert_eq!(node.start_position(), sel_start.unwrap());
         assert_eq!(node.end_position(), sel_end.unwrap());
@@ -1108,7 +1121,7 @@ test_that('stuff', {
         .expect("Failed to create parser");
     let ast = parser.parse(contents, None).unwrap();
     let root = ast.root_node();
-    assert_eq!(find_statement_range_node(root, row), None);
+    assert_eq!(find_statement_range_node(root, contents.to_string(), row), None);
 
     // Will return `None` when there is no block level statement
     let row = 3;
@@ -1125,5 +1138,5 @@ test_that('stuff', {
         .expect("Failed to create parser");
     let ast = parser.parse(contents, None).unwrap();
     let root = ast.root_node();
-    assert_eq!(find_statement_range_node(root, row), None);
+    assert_eq!(find_statement_range_node(root, contents.to_string(), row), None);
 }
