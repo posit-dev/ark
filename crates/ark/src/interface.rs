@@ -139,8 +139,11 @@ static INIT_KERNEL: Once = Once::new();
 //
 // Doesn't need a mutex because it's only accessed by the R thread. Should
 // not be used elsewhere than from an R frontend callback or an R function
-// invoked by the REPL.
-pub static mut R_MAIN: Option<RMain> = None;
+// invoked by the REPL (this is enforced by `RMain::get()` and
+// `RMain::get_mut()`).
+static mut R_MAIN: Option<RMain> = None;
+
+pub static R_MAIN_THREAD_NAME: &'static str = "ark-r-main-thread";
 
 /// Starts the main R thread. Doesn't return.
 pub fn start_r(
@@ -156,8 +159,14 @@ pub fn start_r(
 ) {
     // Initialize global state (ensure we only do this once!)
     INIT.call_once(|| unsafe {
+        // Channels to send/receive tasks from auxiliary threads via `r_task()`
+        let (tasks_tx, tasks_rx) = unbounded::<RTaskMain>();
+
+        r_task::initialize(tasks_tx);
+
         R_MAIN = Some(RMain::new(
             kernel_mutex,
+            tasks_rx,
             comm_manager_tx,
             r_request_rx,
             input_request_tx,
@@ -268,7 +277,6 @@ pub struct RMain {
     pub thread_id: std::thread::ThreadId,
 
     /// Channel to receive tasks from `r_task()`
-    pub tasks_tx: Sender<RTaskMain>,
     tasks_rx: Receiver<RTaskMain>,
     pending_tasks: VecDeque<RTaskMain>,
 
@@ -355,6 +363,7 @@ pub enum ConsoleResult {
 impl RMain {
     pub fn new(
         kernel: Arc<Mutex<Kernel>>,
+        tasks_rx: Receiver<RTaskMain>,
         comm_manager_tx: Sender<CommEvent>,
         r_request_rx: Receiver<RRequest>,
         input_request_tx: Sender<ShellInputRequest>,
@@ -362,9 +371,6 @@ impl RMain {
         kernel_init_tx: Bus<KernelInfo>,
         dap: Arc<Mutex<Dap>>,
     ) -> Self {
-        // Channel to receive tasks from auxiliary threads via `r_task()`
-        let (tasks_tx, tasks_rx) = unbounded::<RTaskMain>();
-
         Self {
             initializing: true,
             r_request_rx,
@@ -386,11 +392,47 @@ impl RMain {
             dap,
             is_debugging: false,
             old_show_error_messages: None,
-            tasks_tx,
             tasks_rx,
             pending_tasks: VecDeque::new(),
             thread_id: std::thread::current().id(),
         }
+    }
+
+    /// Access a reference to the singleton instance of this struct
+    ///
+    /// SAFETY: Accesses must occur after `start_r()` initializes it, and must
+    /// occur on the main R thread.
+    pub fn get() -> &'static Self {
+        RMain::get_mut()
+    }
+
+    /// Access a mutable reference to the singleton instance of this struct
+    ///
+    /// SAFETY: Accesses must occur after `start_r()` initializes it, and must
+    /// occur on the main R thread.
+    pub fn get_mut() -> &'static mut Self {
+        if !RMain::on_main_thread() {
+            let thread = std::thread::current();
+            let name = thread.name().unwrap_or("<unnamed>");
+            let message =
+                format!("Must access `R_MAIN` on the main R thread, not thread '{name}'.");
+            #[cfg(debug_assertions)]
+            panic!("{message}");
+            #[cfg(not(debug_assertions))]
+            log::error!("{message}");
+        }
+
+        unsafe {
+            R_MAIN
+                .as_mut()
+                .expect("`R_MAIN` can't be used before it is initialized!")
+        }
+    }
+
+    pub fn on_main_thread() -> bool {
+        let thread = std::thread::current();
+        let name = thread.name().unwrap_or("<unnamed>");
+        name == R_MAIN_THREAD_NAME
     }
 
     /// Completes the kernel's initialization
@@ -952,7 +994,7 @@ fn new_incomplete_response(req: &ExecuteRequest, exec_count: u32) -> ExecuteResp
 
 // Gets response data from R state
 fn peek_execute_response(exec_count: u32) -> ExecuteResponse {
-    let main = unsafe { R_MAIN.as_mut().unwrap() };
+    let main = RMain::get_mut();
 
     // Save and reset error occurred flag
     let error_occurred = main.error_occurred;
@@ -1057,7 +1099,7 @@ extern "C" fn r_read_console(
     buflen: c_int,
     hist: c_int,
 ) -> i32 {
-    let main = unsafe { R_MAIN.as_mut().unwrap() };
+    let main = RMain::get_mut();
     let result = r_safely(|| main.read_console(prompt, buf, buflen, hist));
 
     // NOTE: Keep this function a "Plain Old Frame" without any
@@ -1081,25 +1123,25 @@ extern "C" fn r_read_console(
 
 #[no_mangle]
 extern "C" fn r_write_console(buf: *const c_char, buflen: i32, otype: i32) {
-    let main = unsafe { R_MAIN.as_mut().unwrap() };
+    let main = RMain::get_mut();
     main.write_console(buf, buflen, otype);
 }
 
 #[no_mangle]
 extern "C" fn r_show_message(buf: *const c_char) {
-    let main = unsafe { R_MAIN.as_ref().unwrap() };
+    let main = RMain::get();
     main.show_message(buf);
 }
 
 #[no_mangle]
 extern "C" fn r_busy(which: i32) {
-    let main = unsafe { R_MAIN.as_ref().unwrap() };
+    let main = RMain::get();
     main.busy(which);
 }
 
 #[no_mangle]
 unsafe extern "C" fn r_polled_events() {
-    let main = unsafe { R_MAIN.as_mut().unwrap() };
+    let main = RMain::get_mut();
     main.polled_events();
 }
 
