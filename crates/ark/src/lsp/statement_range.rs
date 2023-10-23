@@ -7,6 +7,8 @@
 
 use anyhow::bail;
 use anyhow::Result;
+use once_cell::sync::Lazy;
+use regex::Regex;
 use ropey::Rope;
 use serde::Deserialize;
 use serde::Serialize;
@@ -43,6 +45,10 @@ pub struct StatementRangeResponse {
     /// what is actually pointed to by the `range` (i.e. roxygen examples).
     pub code: Option<String>,
 }
+
+// `Regex::new()` is fairly slow to compile.
+// roxygen2 comments can contain 1 or more leading `#` before the `'`.
+static RE_ROXYGEN2_COMMENT: Lazy<Regex> = Lazy::new(|| Regex::new(r"^#+'").unwrap());
 
 impl Backend {
     pub async fn statement_range(
@@ -123,16 +129,18 @@ fn find_roxygen_comment_at_point(
     let source = contents.to_string();
     let text = node.utf8_text(source.as_bytes()).unwrap();
 
-    // Returns `None` if the prefix doesn't exist
-    let Some(text) = text.strip_prefix("#'") else {
+    // Does the roxygen2 prefix exist?
+    if !RE_ROXYGEN2_COMMENT.is_match(text) {
         return None;
-    };
+    }
+
+    let text = RE_ROXYGEN2_COMMENT.replace(text, "").into_owned();
 
     // It is likely that we have at least 1 leading whitespace character,
     // so we try and remove that if it exists
     let text = match text.strip_prefix(" ") {
         Some(text) => text,
-        None => text,
+        None => &text,
     };
 
     // At this point we know we are in a roxygen2 comment block so we are at
@@ -168,9 +176,11 @@ fn find_roxygen_comment_at_point(
         let sibling = sibling.utf8_text(source.as_bytes()).unwrap();
 
         // Have we exited roxygen comments specifically?
-        let Some(sibling) = sibling.strip_prefix("#'") else {
-            break;
-        };
+        if !RE_ROXYGEN2_COMMENT.is_match(sibling) {
+            return None;
+        }
+
+        let sibling = RE_ROXYGEN2_COMMENT.replace(sibling, "").into_owned();
 
         // Trim off any leading whitespace
         let sibling = sibling.trim_start();
@@ -1318,5 +1328,44 @@ fn test_statement_range_roxygen() {
     let (node, code) =
         find_roxygen_comment_at_point(root.clone(), contents.clone(), point).unwrap();
     assert_eq!(get_text(&node, &contents), String::from("#' @returns"));
+    assert!(code.is_none());
+
+    let text = "
+##' Hi
+##' @param x foo
+##' @examples
+##' 1 + 1
+###' 2 + 2
+###' @returns
+";
+
+    let document = Document::new(text);
+    let root = document.ast.root_node();
+    let contents = document.contents.clone();
+
+    // With multiple leading `#` followed by code
+    let point = Point { row: 4, column: 1 };
+    let (node, code) =
+        find_roxygen_comment_at_point(root.clone(), contents.clone(), point).unwrap();
+    assert_eq!(get_text(&node, &contents), String::from("##' 1 + 1"));
+    assert_eq!(code.unwrap(), String::from("1 + 1"));
+
+    let point = Point { row: 5, column: 1 };
+    let (node, code) =
+        find_roxygen_comment_at_point(root.clone(), contents.clone(), point).unwrap();
+    assert_eq!(get_text(&node, &contents), String::from("###' 2 + 2"));
+    assert_eq!(code.unwrap(), String::from("2 + 2"));
+
+    // With multiple leading `#` followed by non-code
+    let point = Point { row: 3, column: 1 };
+    let (node, code) =
+        find_roxygen_comment_at_point(root.clone(), contents.clone(), point).unwrap();
+    assert_eq!(get_text(&node, &contents), String::from("##' @examples"));
+    assert!(code.is_none());
+
+    let point = Point { row: 6, column: 1 };
+    let (node, code) =
+        find_roxygen_comment_at_point(root.clone(), contents.clone(), point).unwrap();
+    assert_eq!(get_text(&node, &contents), String::from("###' @returns"));
     assert!(code.is_none());
 }
