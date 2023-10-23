@@ -114,7 +114,7 @@ fn find_roxygen_comment_at_point(
 
     let node = cursor.node();
 
-    // Tree sitter doesn't (and shouldn't) know about the special `#'` marker,
+    // Tree sitter doesn't know about the special `#'` marker,
     // but does tell us if we are in a `#` comment
     if node.kind() != "comment" {
         return None;
