@@ -14,7 +14,6 @@ use crossbeam::channel::Receiver;
 use crossbeam::channel::Select;
 use crossbeam::channel::Sender;
 use log::error;
-use log::info;
 use stdext::spawn;
 use stdext::unwrap;
 
@@ -122,7 +121,6 @@ impl Kernel {
         // deliver it via the `handle_input_reply` method.
         // https://jupyter-client.readthedocs.io/en/stable/messaging.html#messages-on-the-stdin-router-dealer-channel
         input_request_rx: Receiver<ShellInputRequest>,
-        conn_init_tx: Option<Sender<bool>>,
     ) -> Result<(), Error> {
         let ctx = zmq::Context::new();
 
@@ -282,23 +280,18 @@ impl Kernel {
             Self::zmq_notifier_thread(outbound_notif_socket_tx, outbound_rx)
         });
 
-        // 0MQ sockets are now initialised. We can start the kernel runtime
-        // with relative multithreading safety. See
-        // https://github.com/rstudio/positron/issues/720
-        if let Some(tx) = conn_init_tx {
-            tx.send(true).unwrap();
-            drop(tx);
-        }
+        let iopub_tx = self.create_iopub_tx();
 
-        // TODO: thread/join thread? Exiting this thread will cause the whole
-        // kernel to exit.
-        Self::control_thread(
-            control_socket,
-            self.create_iopub_tx(),
-            control_handler,
-            stdin_interrupt_tx,
-        );
-        info!("Control thread exited, exiting kernel");
+        spawn!(format!("{}-control", self.name), || {
+            Self::control_thread(
+                control_socket,
+                iopub_tx,
+                control_handler,
+                stdin_interrupt_tx,
+            );
+            log::error!("Control thread exited");
+        });
+
         Ok(())
     }
 

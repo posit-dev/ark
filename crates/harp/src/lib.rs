@@ -27,6 +27,13 @@ pub use harp_macros::register;
 
 pub fn initialize() {}
 
+// This lives here so we can set it from harp unit tests without creating a
+// circular dependency on Ark.
+//
+// R should normally live on the main thread but detecting the main thread in
+// a cross-platform way is tricky, see https://docs.rs/is_main_thread
+pub static mut R_MAIN_THREAD_ID: Option<std::thread::ThreadId> = None;
+
 #[macro_export]
 macro_rules! with_vector_impl {
     ($x:expr, $class:ident, $variable:ident, $($code:tt)*) => {{

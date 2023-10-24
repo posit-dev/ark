@@ -22,6 +22,7 @@ use libR_sys::*;
 use stdext::cargs;
 
 use crate::exec::r_safely;
+use crate::R_MAIN_THREAD_ID;
 
 // Escape hatch for unit tests
 pub static mut R_TASK_BYPASS: bool = false;
@@ -32,6 +33,7 @@ pub fn start_r() {
     INIT.call_once(|| {
         unsafe {
             R_TASK_BYPASS = true;
+            R_MAIN_THREAD_ID = Some(std::thread::current().id());
         }
 
         // TODO: Right now, tests can fail if the version of R discovered

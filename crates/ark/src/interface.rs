@@ -57,6 +57,7 @@ use harp::routines::r_register_routines;
 use harp::session::r_poke_option_show_error_messages;
 use harp::utils::r_get_option;
 use harp::utils::r_is_data_frame;
+use harp::R_MAIN_THREAD_ID;
 use libR_sys::*;
 use log::*;
 use nix::sys::signal::*;
@@ -142,8 +143,6 @@ static INIT_KERNEL: Once = Once::new();
 // invoked by the REPL (this is enforced by `RMain::get()` and
 // `RMain::get_mut()`).
 static mut R_MAIN: Option<RMain> = None;
-
-pub static R_MAIN_THREAD_NAME: &'static str = "ark-r-main-thread";
 
 /// Starts the main R thread. Doesn't return.
 pub fn start_r(
@@ -279,9 +278,6 @@ pub struct RMain {
     stderr: String,
     banner: String,
 
-    /// The ID of the R thread
-    pub thread_id: std::thread::ThreadId,
-
     /// Channel to receive tasks from `r_task()`
     tasks_rx: Receiver<RTaskMain>,
     pending_tasks: VecDeque<RTaskMain>,
@@ -377,6 +373,10 @@ impl RMain {
         kernel_init_tx: Bus<KernelInfo>,
         dap: Arc<Mutex<Dap>>,
     ) -> Self {
+        unsafe {
+            R_MAIN_THREAD_ID = Some(std::thread::current().id());
+        }
+
         Self {
             initializing: true,
             r_request_rx,
@@ -400,7 +400,6 @@ impl RMain {
             old_show_error_messages: None,
             tasks_rx,
             pending_tasks: VecDeque::new(),
-            thread_id: std::thread::current().id(),
         }
     }
 
@@ -437,8 +436,7 @@ impl RMain {
 
     pub fn on_main_thread() -> bool {
         let thread = std::thread::current();
-        let name = thread.name().unwrap_or("<unnamed>");
-        name == R_MAIN_THREAD_NAME
+        thread.id() == unsafe { R_MAIN_THREAD_ID.unwrap() }
     }
 
     /// Completes the kernel's initialization
