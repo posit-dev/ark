@@ -990,10 +990,17 @@ unsafe fn append_argument_completions(
         forbid_function_calls: true,
     })?;
 
+    // If the user is writing pseudocode, this object might not exist yet,
+    // in which case we just want to ignore the error from trying to evaluate it
+    // and just provide typical completions.
     let r_object = if let Some(object) = object {
-        r_parse_eval(object, RParseEvalOptions {
+        let options = RParseEvalOptions {
             forbid_function_calls: true,
-        })?
+        };
+        r_parse_eval(object, options).unwrap_or_else(|error| {
+            log::info!("append_argument_completions(): Failed to evaluate first argument: {error}");
+            RObject::null()
+        })
     } else {
         RObject::null()
     };
