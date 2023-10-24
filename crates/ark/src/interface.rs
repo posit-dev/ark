@@ -47,8 +47,10 @@ use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use crossbeam::channel::TryRecvError;
 use crossbeam::select;
+use harp::exec::geterrmessage;
 use harp::exec::r_safely;
 use harp::exec::r_source;
+use harp::exec::r_try_catch;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
@@ -61,6 +63,8 @@ use harp::R_MAIN_THREAD_ID;
 use libR_sys::*;
 use log::*;
 use nix::sys::signal::*;
+use once_cell::sync::Lazy;
+use regex::Regex;
 use serde_json::json;
 use stdext::result::ResultOrLog;
 use stdext::*;
@@ -190,16 +194,6 @@ pub fn start_r(
 
         // Initialize the interrupt handler.
         RMain::initialize_signal_handlers();
-
-        // Disable stack checking; R doesn't know the starting point of the
-        // stack for threads other than the main thread. Consequently, it will
-        // report a stack overflow if we don't disable it. This is a problem
-        // on all platforms, but is most obvious on aarch64 Linux due to how
-        // thread stacks are allocated on that platform.
-        //
-        // See https://cran.r-project.org/doc/manuals/R-exts.html#Threading-issues
-        // for more information.
-        R_CStackLimit = usize::MAX;
 
         // Log the value of R_HOME, so we can know if something hairy is afoot
         let home = CStr::from_ptr(R_HomeDir());
@@ -996,6 +990,9 @@ fn new_incomplete_response(req: &ExecuteRequest, exec_count: u32) -> ExecuteResp
     })
 }
 
+static RE_STACK_OVERFLOW: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"C stack usage [ 0-9]+ is too close to the limit\n").unwrap());
+
 // Gets response data from R state
 fn peek_execute_response(exec_count: u32) -> ExecuteResponse {
     let main = RMain::get_mut();
@@ -1004,22 +1001,45 @@ fn peek_execute_response(exec_count: u32) -> ExecuteResponse {
     let error_occurred = main.error_occurred;
     main.error_occurred = false;
 
+    // Error handlers are not called on stack overflow so the error flag
+    // isn't set. Instead we detect stack overflows by peeking at the error
+    // buffer. The message is explicitly not translated to save stack space
+    // so the matching should be reliable.
+    let err_buf = geterrmessage();
+    let so_occurred = RE_STACK_OVERFLOW.is_match(&err_buf);
+
+    // Reset error buffer so we don't display this message again
+    if so_occurred {
+        unsafe {
+            let _ = r_try_catch(|| {
+                let _ = RFunction::new("base", "stop").call();
+            });
+        };
+    }
+
     // Send the reply to the front end
-    if error_occurred {
+    if error_occurred || so_occurred {
         // We don't fill out `ename` with anything meaningful because typically
         // R errors don't have names. We could consider using the condition class
         // here, which r-lib/tidyverse packages have been using more heavily.
-        let ename = String::from("");
-        let evalue = main.error_message.clone();
-        let traceback = main.error_traceback.clone();
+        let exception = if error_occurred {
+            Exception {
+                ename: String::from(""),
+                evalue: main.error_message.clone(),
+                traceback: main.error_traceback.clone(),
+            }
+        } else {
+            // FIXME: Should we pick up traceback()?
+            // And reverse
 
-        log::info!("An R error occurred: {}", evalue);
-
-        let exception = Exception {
-            ename,
-            evalue,
-            traceback,
+            Exception {
+                ename: String::from(""),
+                evalue: err_buf.clone(),
+                traceback: vec![],
+            }
         };
+
+        log::info!("An R error occurred: {}", exception.evalue);
 
         main.iopub_tx
             .send(IOPubMessage::ExecuteError(ExecuteError {
