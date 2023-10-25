@@ -57,6 +57,7 @@ use harp::object::RObject;
 use harp::r_symbol;
 use harp::routines::r_register_routines;
 use harp::session::r_poke_option_show_error_messages;
+use harp::session::r_traceback;
 use harp::utils::r_get_option;
 use harp::utils::r_is_data_frame;
 use harp::R_MAIN_THREAD_ID;
@@ -1029,13 +1030,15 @@ fn peek_execute_response(exec_count: u32) -> ExecuteResponse {
                 traceback: main.error_traceback.clone(),
             }
         } else {
-            // FIXME: Should we pick up traceback()?
-            // And reverse
-
+            // Call `base::traceback()` since we don't have a handled error
+            // object carrying a backtrace. This won't be formatted as a
+            // tree which is just as well since the recursive calls would
+            // push a tree too far to the right.
+            let traceback = r_traceback();
             Exception {
                 ename: String::from(""),
                 evalue: err_buf.clone(),
-                traceback: vec![],
+                traceback,
             }
         };
 

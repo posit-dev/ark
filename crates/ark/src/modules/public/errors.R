@@ -48,3 +48,13 @@
 
     handle_error_rlang(cnd)
 }
+
+.ps.errors.traceback <- function() {
+    traceback <- get0(".Traceback", baseenv(), ifnotfound = list())
+
+    if (!length(traceback)) {
+        return(character())
+    }
+
+    format_traceback(traceback)
+}

@@ -12,6 +12,7 @@ use libc::c_int;
 use stdext::unwrap;
 
 use crate::exec::r_parse;
+use crate::exec::RFunction;
 use crate::object::RObject;
 use crate::protect::RProtect;
 use crate::r_lang;
@@ -54,6 +55,23 @@ pub fn r_env_is_browsed(env: SEXP) -> anyhow::Result<bool> {
 
     let browsed = unsafe { RDEBUG(env) };
     Ok(browsed != 0)
+}
+
+pub fn r_traceback() -> Vec<String> {
+    let trace = unsafe { RFunction::new("", ".ps.errors.traceback").call() };
+
+    match trace {
+        Err(err) => {
+            log::error!("Can't get traceback: {err:?}");
+            vec![]
+        },
+        Ok(trace) => {
+            unwrap!(Vec::<String>::try_from(trace), Err(err) => {
+                log::error!("Can't convert traceback: {err:?}");
+                vec![]
+            })
+        },
+    }
 }
 
 #[derive(Clone)]

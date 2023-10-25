@@ -23,6 +23,14 @@ handle_error_base <- function(cnd) {
         n <- n - 3L
         traceback <- traceback[seq_len(n)]
     }
+    traceback <- format_traceback(traceback, srcrefs)
+
+    .ps.Call("ps_record_error", evalue, traceback)
+}
+
+#' @param traceback A list of calls.
+format_traceback <- function(traceback) {
+    n <- length(traceback)
 
     # TODO: This implementation prints the traceback in the same ordering
     # as rlang, i.e. with call 1 on the stack being the first thing you
@@ -36,7 +44,7 @@ handle_error_base <- function(cnd) {
     has_srcref <- nchar(srcrefs) != 0L
     srcrefs[has_srcref] <- vec_paste0(" at ", srcrefs[has_srcref])
 
-    # Converts to a list of character vectors containing the deparsed calls.
+    # Converts to a list of quoted calls to a list of deparsd calls.
     # Respects global options `"traceback.max.lines"` and `"deparse.max.lines"`!
     traceback <- .traceback(traceback)
 
@@ -48,9 +56,12 @@ handle_error_base <- function(cnd) {
     traceback <- mapply(prepend_prefix, traceback, prefixes, SIMPLIFY = FALSE)
     traceback <- lapply(traceback, function(lines) paste0(lines, collapse = "\n"))
     traceback <- as.character(traceback)
-    traceback <- paste0(traceback, srcrefs)
 
-    .ps.Call("ps_record_error", evalue, traceback)
+    if (!is.null(srcrefs)) {
+        traceback <- paste0(traceback, srcrefs)
+    }
+
+    traceback
 }
 
 prepend_prefix <- function(lines, prefix) {
