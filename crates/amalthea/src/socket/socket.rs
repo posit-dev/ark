@@ -125,6 +125,12 @@ impl Socket {
             }
         }
 
+        if kind == zmq::SocketType::PUB {
+            if let Err(err) = socket.set_sndhwm(0) {
+                return Err(Error::CreateSocketFailed(name, err));
+            }
+        }
+
         Ok(socket)
     }
 
