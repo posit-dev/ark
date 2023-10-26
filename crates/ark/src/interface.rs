@@ -25,6 +25,7 @@ use amalthea::events::BusyEvent;
 use amalthea::events::PositronEvent;
 use amalthea::events::PromptStateEvent;
 use amalthea::events::ShowMessageEvent;
+use amalthea::socket::iopub::Flush;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::exception::Exception;
 use amalthea::wire::execute_error::ExecuteError;
@@ -42,6 +43,7 @@ use amalthea::wire::stream::Stream;
 use amalthea::wire::stream::StreamOutput;
 use anyhow::*;
 use bus::Bus;
+use crossbeam::channel::bounded;
 use crossbeam::channel::unbounded;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
@@ -561,6 +563,12 @@ impl RMain {
         // execution. We can now send a reply to unblock the active Shell
         // request.
         if let Some(req) = &self.active_request {
+            // Flush iopub and block until our flush request has gone through.
+            // This lets iopub "catch up" before we unblock the active Shell
+            // request and reset the status to `idle` (important for user input
+            // requests that occur while output is being streamed to stdout).
+            self.flush_iopub();
+
             // FIXME: The messages below are involved in a race between the
             // StdIn and Shell threads and the messages might arrive out of
             // order on the frontend side. This is generally well handled
@@ -815,6 +823,23 @@ impl RMain {
             peek_execute_response(req.exec_count)
         };
         req.response_tx.send(reply).unwrap();
+    }
+
+    fn flush_iopub(&self) {
+        let (flush_tx, flush_rx) = bounded::<()>(1);
+
+        let message = IOPubMessage::Flush(Flush {
+            flush_tx: Some(flush_tx),
+        });
+
+        if let Err(error) = self.iopub_tx.send(message) {
+            log::error!("Failed to send flush request to iopub: {error:?}");
+            return;
+        }
+
+        if let Err(error) = flush_rx.recv() {
+            log::error!("Failed to receive flush response from iopub: {error:?}");
+        }
     }
 
     /// Request input from frontend in case code like `readline()` is

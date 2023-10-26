@@ -7,8 +7,12 @@
 
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::time::Duration;
+use std::time::Instant;
 
 use crossbeam::channel::Receiver;
+use crossbeam::channel::RecvTimeoutError;
+use crossbeam::channel::Sender;
 use log::trace;
 use log::warn;
 
@@ -28,6 +32,7 @@ use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::ProtocolMessage;
 use crate::wire::status::ExecutionState;
 use crate::wire::status::KernelStatus;
+use crate::wire::stream::Stream;
 use crate::wire::stream::StreamOutput;
 use crate::wire::update_display_data::UpdateDisplayData;
 
@@ -42,6 +47,10 @@ pub struct IOPub {
     /// outputs with the message that caused them.
     shell_context: Arc<Mutex<Option<JupyterHeader>>>,
     control_context: Arc<Mutex<Option<JupyterHeader>>>,
+
+    /// A buffer for the active stdout/stderr stream to batch stream messages
+    /// that we send to the frontend, since this can be extremely high traffic.
+    buffer: StreamBuffer,
 }
 
 /// Enumeration of possible channels that an IOPub message can be associated
@@ -67,6 +76,14 @@ pub enum IOPubMessage {
     CommClose(String),
     DisplayData(DisplayData),
     UpdateDisplayData(UpdateDisplayData),
+    Flush(Flush),
+}
+
+/// A special IOPub message used to force a flush of the active stream buffer,
+/// optionally waiting on a response that responds once the request has actually
+/// been forwarded to the front end.
+pub struct Flush {
+    pub flush_tx: Option<Sender<()>>,
 }
 
 impl IOPub {
@@ -82,11 +99,14 @@ impl IOPub {
         shell_context: Arc<Mutex<Option<JupyterHeader>>>,
         control_context: Arc<Mutex<Option<JupyterHeader>>>,
     ) -> Self {
+        let buffer = StreamBuffer::new(Stream::Stdout);
+
         Self {
             socket,
             receiver,
             shell_context,
             control_context,
+            buffer,
         }
     }
 
@@ -94,22 +114,38 @@ impl IOPub {
     pub fn listen(&mut self) {
         // Begin by emitting the starting state
         self.emit_state(ExecutionState::Starting);
+
+        let timeout = StreamBuffer::interval().clone();
+
         loop {
-            let message = match self.receiver.recv() {
-                Ok(m) => m,
-                Err(err) => {
-                    warn!("Failed to receive iopub message: {}", err);
-                    continue;
+            match self.receiver.recv_timeout(timeout) {
+                Ok(message) => {
+                    if let Err(error) = self.process_message(message) {
+                        warn!("Error delivering iopub message: {error:?}")
+                    }
+                },
+                Err(error) => match error {
+                    RecvTimeoutError::Timeout => self.flush_stream(),
+                    RecvTimeoutError::Disconnected => {
+                        warn!("Failed to receive iopub message due to disconnect: {error:?}");
+                    },
                 },
             };
-            if let Err(err) = self.process_message(message) {
-                warn!("Error delivering iopub message: {}", err)
-            }
         }
     }
 
     /// Process an IOPub message from another thread.
     fn process_message(&mut self, message: IOPubMessage) -> Result<(), Error> {
+        // TODO: Is there a better way to do this?
+        // Flush the stream if we are processing anything other than a `Stream`
+        // message. Particularly important for `ExecuteError`s where we need to
+        // flush any output that may have been emitted by R before the error
+        // occurred.
+        match &message {
+            IOPubMessage::Stream(_) => {},
+            _ => self.flush_stream(),
+        };
+
         match message {
             IOPubMessage::Status(context, context_channel, msg) => {
                 // When we enter the Busy state as a result of a message, we
@@ -154,9 +190,7 @@ impl IOPub {
             IOPubMessage::ExecuteInput(msg) => {
                 self.send_message_with_context(msg, IOPubContextChannel::Shell)
             },
-            IOPubMessage::Stream(msg) => {
-                self.send_message_with_context(msg, IOPubContextChannel::Shell)
-            },
+            IOPubMessage::Stream(msg) => self.process_stream_message(msg),
             IOPubMessage::CommOpen(msg) => self.send_message(msg),
             IOPubMessage::CommMsgEvent(msg) => self.send_message(msg),
             IOPubMessage::CommMsgReply(header, msg) => self.send_message_with_header(header, msg),
@@ -168,6 +202,7 @@ impl IOPub {
                 self.send_message_with_context(msg, IOPubContextChannel::Shell)
             },
             IOPubMessage::Event(msg) => self.send_event(msg),
+            IOPubMessage::Flush(msg) => self.process_flush_message(msg),
         }
     }
 
@@ -221,6 +256,67 @@ impl IOPub {
         msg.send(&self.socket)
     }
 
+    /// Flushes the active stream, sending along the message if the buffer
+    /// wasn't empty. Handles its own errors since we often call this before
+    /// sending some other message and we don't want to prevent that from going
+    /// through.
+    fn flush_stream(&mut self) {
+        let Some(message) = self.buffer.flush() else {
+            // Nothing to flush
+            return;
+        };
+
+        let Err(error) = self.send_message_with_context(message, IOPubContextChannel::Shell) else {
+            // Message sent successfully
+            return;
+        };
+
+        let name = match self.buffer.name {
+            Stream::Stdout => "stdout",
+            Stream::Stderr => "stderr",
+        };
+
+        warn!("Error delivering iopub 'stream' message over '{name}': {error:?}");
+    }
+
+    /// Processes a `Stream` message
+    ///
+    /// If this new message switches streams, then we flush the existing stream
+    /// before switching.
+    fn process_stream_message(&mut self, message: StreamOutput) -> Result<(), Error> {
+        if message.name != self.buffer.name {
+            // Swap streams, but flush the existing stream first
+            self.flush_stream();
+            self.buffer.swap();
+        }
+
+        self.buffer.push(&message.text);
+
+        if !self.buffer.ready() {
+            // Not enough time has passed since last flush
+            return Ok(());
+        }
+
+        let Some(message) = self.buffer.flush() else {
+            // Nothing to flush
+            return Ok(());
+        };
+
+        self.send_message_with_context(message, IOPubContextChannel::Shell)
+    }
+
+    fn process_flush_message(&mut self, message: Flush) -> Result<(), Error> {
+        self.flush_stream();
+
+        if let Some(flush_tx) = message.flush_tx {
+            // Notify receiver that we've send along the flush request
+            // to the frontend
+            flush_tx.send(()).unwrap();
+        }
+
+        Ok(())
+    }
+
     /// Emits the given kernel state to the client.
     fn emit_state(&self, state: ExecutionState) {
         trace!("Entering kernel state: {:?}", state);
@@ -235,5 +331,64 @@ impl IOPub {
         {
             warn!("Could not emit kernel's state. {}", err)
         }
+    }
+}
+
+struct StreamBuffer {
+    name: Stream,
+    buffer: String,
+    last_flush: Instant,
+}
+
+impl StreamBuffer {
+    fn new(name: Stream) -> Self {
+        return StreamBuffer {
+            name,
+            buffer: String::new(),
+            last_flush: Instant::now(),
+        };
+    }
+
+    fn push(&mut self, message: &str) {
+        self.buffer.push_str(message);
+    }
+
+    fn ready(&self) -> bool {
+        let elapsed = Instant::now().duration_since(self.last_flush);
+        &elapsed > StreamBuffer::interval()
+    }
+
+    fn flush(&mut self) -> Option<StreamOutput> {
+        if self.buffer.is_empty() {
+            // Nothing to send, but we tried a flush so reset the instant
+            self.last_flush = Instant::now();
+            return None;
+        }
+
+        let result = StreamOutput {
+            name: self.name.clone(),
+            text: self.buffer.clone(),
+        };
+
+        self.buffer.clear();
+        self.last_flush = Instant::now();
+
+        Some(result)
+    }
+
+    fn swap(&mut self) {
+        // Clearing the buffer on swap is more efficient than going through
+        // `new()` because it doesn't reset the buffer capacity.
+        self.name = match self.name {
+            Stream::Stdout => Stream::Stderr,
+            Stream::Stderr => Stream::Stdout,
+        };
+        self.buffer.clear();
+        self.last_flush = Instant::now();
+    }
+
+    fn interval() -> &'static Duration {
+        static STREAM_BUFFER_INTERVAL: Duration = Duration::from_millis(80);
+        &STREAM_BUFFER_INTERVAL
     }
 }
