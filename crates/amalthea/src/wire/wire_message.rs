@@ -192,7 +192,7 @@ impl WireMessage {
             Some(parent) => {
                 trace!(
                     "Sending '{}' message (reply to '{}') via {} socket",
-                    self.header.msg_type,
+                    self.msg_type(),
                     parent.msg_type,
                     socket.name
                 );
@@ -200,7 +200,7 @@ impl WireMessage {
             None => {
                 trace!(
                     "Sending '{}' message via {} socket",
-                    self.header.msg_type,
+                    self.msg_type(),
                     socket.name
                 );
             },
@@ -252,6 +252,70 @@ impl WireMessage {
         parts.push(serde_json::to_vec(&self.metadata)?);
         parts.push(serde_json::to_vec(&self.content)?);
         Ok(parts)
+    }
+
+    fn msg_type(&self) -> String {
+        match self.header.msg_type.as_str() {
+            "comm_msg" => {
+                if let Value::Object(map) = &self.content {
+                    let comm_id = Self::comm_msg_id(map.get("comm_id"));
+                    let comm_msg_type = Self::comm_msg_type(map.get("data"));
+                    return String::from(format!("comm_msg/{comm_id}/{comm_msg_type}"));
+                }
+            },
+            "status" => {
+                if let Value::Object(map) = &self.content {
+                    if let Some(Value::String(execution_state)) = map.get("execution_state") {
+                        return String::from(format!("status/{execution_state}"));
+                    }
+                }
+            },
+            _ => {},
+        }
+        self.header.msg_type.clone()
+    }
+
+    fn comm_msg_type(data: Option<&Value>) -> String {
+        if let Some(Value::Object(map)) = data {
+            if let Some(Value::String(msg_type)) = map.get("msg_type") {
+                if msg_type == "event" {
+                    if let Some(Value::String(event_name)) = map.get("name") {
+                        return String::from(format!("{msg_type}/{event_name}"));
+                    }
+                }
+                return msg_type.clone();
+            }
+        }
+        String::from("unknown")
+    }
+
+    fn comm_msg_id(id: Option<&Value>) -> String {
+        if let Some(Value::String(id)) = id {
+            return Self::comm_msg_id_type(&id);
+        }
+        String::from("unknown")
+    }
+
+    fn comm_msg_id_type(id: &str) -> String {
+        if id.contains("frontEnd-") {
+            return String::from("frontEnd");
+        }
+        if id.contains("environment-") {
+            return String::from("environment");
+        }
+        if id.contains("dataViewer-") {
+            return String::from("dataViewer");
+        }
+        if id.contains("help-") {
+            return String::from("help");
+        }
+        if id.contains("lsp-") {
+            return String::from("LSP");
+        }
+        if id.contains("dap-") {
+            return String::from("DAP");
+        }
+        return id.to_string();
     }
 }
 
