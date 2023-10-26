@@ -24,8 +24,13 @@ use stdext::cargs;
 use crate::exec::r_safely;
 use crate::R_MAIN_THREAD_ID;
 
-// Escape hatch for unit tests
+// Escape hatch for unit tests. We need this because the default
+// implementation of `r_task()` needs a fully formed `RMain` to send the
+// task to, which we don't have in unit tests. Consequently tasks run
+// immediately in the current thread in unit tests. Since each test has its
+// own thread, they are synchronised via the `R_RUNTIME_LOCK` mutex.
 pub static mut R_TASK_BYPASS: bool = false;
+static mut R_RUNTIME_LOCK: Mutex<()> = Mutex::new(());
 
 static INIT: Once = Once::new();
 
@@ -64,8 +69,6 @@ pub fn start_r() {
         }
     });
 }
-
-static mut R_RUNTIME_LOCK: Mutex<()> = Mutex::new(());
 
 pub fn r_test_impl<F: FnMut()>(f: F) {
     start_r();
