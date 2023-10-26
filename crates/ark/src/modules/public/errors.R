@@ -52,6 +52,7 @@
 .ps.errors.traceback <- function() {
     traceback <- get0(".Traceback", baseenv(), ifnotfound = list())
 
+    # Be defensive against potential `NULL` as this comes from foreign code
     if (!length(traceback)) {
         return(character())
     }
