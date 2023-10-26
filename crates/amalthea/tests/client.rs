@@ -7,7 +7,6 @@
 
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::thread;
 
 use amalthea::comm::comm_channel::CommChannelMsg;
 use amalthea::comm::event::CommEvent;
@@ -57,25 +56,9 @@ fn test_kernel() {
     env_logger::init();
     info!("Starting test kernel");
 
-    // Create the thread that will run the Amalthea kernel
-    thread::spawn(move || {
-        match kernel.connect(
-            shell,
-            control,
-            None,
-            None,
-            StreamBehavior::None,
-            input_rx,
-            None,
-        ) {
-            Ok(_) => {
-                info!("Kernel connection initiated");
-            },
-            Err(e) => {
-                panic!("Error connecting kernel: {}", e);
-            },
-        }
-    });
+    if let Err(err) = kernel.connect(shell, control, None, None, StreamBehavior::None, input_rx) {
+        panic!("Error connecting kernel: {err:?}");
+    };
 
     // Give the kernel a little time to start up
     info!("Waiting 500ms for kernel startup to complete");

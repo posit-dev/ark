@@ -47,6 +47,7 @@ use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use crossbeam::channel::TryRecvError;
 use crossbeam::select;
+use harp::exec::geterrmessage;
 use harp::exec::r_safely;
 use harp::exec::r_source;
 use harp::exec::RFunction;
@@ -55,11 +56,15 @@ use harp::object::RObject;
 use harp::r_symbol;
 use harp::routines::r_register_routines;
 use harp::session::r_poke_option_show_error_messages;
+use harp::session::r_traceback;
 use harp::utils::r_get_option;
 use harp::utils::r_is_data_frame;
+use harp::R_MAIN_THREAD_ID;
 use libR_sys::*;
 use log::*;
 use nix::sys::signal::*;
+use once_cell::sync::Lazy;
+use regex::Regex;
 use serde_json::json;
 use stdext::result::ResultOrLog;
 use stdext::*;
@@ -143,8 +148,6 @@ static INIT_KERNEL: Once = Once::new();
 // `RMain::get_mut()`).
 static mut R_MAIN: Option<RMain> = None;
 
-pub static R_MAIN_THREAD_NAME: &'static str = "ark-r-main-thread";
-
 /// Starts the main R thread. Doesn't return.
 pub fn start_r(
     r_args: Vec<String>,
@@ -159,6 +162,8 @@ pub fn start_r(
 ) {
     // Initialize global state (ensure we only do this once!)
     INIT.call_once(|| unsafe {
+        R_MAIN_THREAD_ID = Some(std::thread::current().id());
+
         // Channels to send/receive tasks from auxiliary threads via `r_task()`
         let (tasks_tx, tasks_rx) = unbounded::<RTaskMain>();
 
@@ -191,16 +196,6 @@ pub fn start_r(
 
         // Initialize the interrupt handler.
         RMain::initialize_signal_handlers();
-
-        // Disable stack checking; R doesn't know the starting point of the
-        // stack for threads other than the main thread. Consequently, it will
-        // report a stack overflow if we don't disable it. This is a problem
-        // on all platforms, but is most obvious on aarch64 Linux due to how
-        // thread stacks are allocated on that platform.
-        //
-        // See https://cran.r-project.org/doc/manuals/R-exts.html#Threading-issues
-        // for more information.
-        R_CStackLimit = usize::MAX;
 
         // Log the value of R_HOME, so we can know if something hairy is afoot
         let home = CStr::from_ptr(R_HomeDir());
@@ -278,9 +273,6 @@ pub struct RMain {
     stdout: String,
     stderr: String,
     banner: String,
-
-    /// The ID of the R thread
-    pub thread_id: std::thread::ThreadId,
 
     /// Channel to receive tasks from `r_task()`
     tasks_rx: Receiver<RTaskMain>,
@@ -400,7 +392,6 @@ impl RMain {
             old_show_error_messages: None,
             tasks_rx,
             pending_tasks: VecDeque::new(),
-            thread_id: std::thread::current().id(),
         }
     }
 
@@ -437,8 +428,7 @@ impl RMain {
 
     pub fn on_main_thread() -> bool {
         let thread = std::thread::current();
-        let name = thread.name().unwrap_or("<unnamed>");
-        name == R_MAIN_THREAD_NAME
+        thread.id() == unsafe { R_MAIN_THREAD_ID.unwrap() }
     }
 
     /// Completes the kernel's initialization
@@ -998,6 +988,9 @@ fn new_incomplete_response(req: &ExecuteRequest, exec_count: u32) -> ExecuteResp
     })
 }
 
+static RE_STACK_OVERFLOW: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"C stack usage [ 0-9]+ is too close to the limit\n").unwrap());
+
 // Gets response data from R state
 fn peek_execute_response(exec_count: u32) -> ExecuteResponse {
     let main = RMain::get_mut();
@@ -1006,22 +999,45 @@ fn peek_execute_response(exec_count: u32) -> ExecuteResponse {
     let error_occurred = main.error_occurred;
     main.error_occurred = false;
 
+    // Error handlers are not called on stack overflow so the error flag
+    // isn't set. Instead we detect stack overflows by peeking at the error
+    // buffer. The message is explicitly not translated to save stack space
+    // so the matching should be reliable.
+    let err_buf = geterrmessage();
+    let stack_overflow_occurred = RE_STACK_OVERFLOW.is_match(&err_buf);
+
+    // Reset error buffer so we don't display this message again
+    if stack_overflow_occurred {
+        unsafe {
+            let _ = RFunction::new("base", "stop").call();
+        };
+    }
+
     // Send the reply to the front end
-    if error_occurred {
+    if error_occurred || stack_overflow_occurred {
         // We don't fill out `ename` with anything meaningful because typically
         // R errors don't have names. We could consider using the condition class
         // here, which r-lib/tidyverse packages have been using more heavily.
-        let ename = String::from("");
-        let evalue = main.error_message.clone();
-        let traceback = main.error_traceback.clone();
-
-        log::info!("An R error occurred: {}", evalue);
-
-        let exception = Exception {
-            ename,
-            evalue,
-            traceback,
+        let exception = if error_occurred {
+            Exception {
+                ename: String::from(""),
+                evalue: main.error_message.clone(),
+                traceback: main.error_traceback.clone(),
+            }
+        } else {
+            // Call `base::traceback()` since we don't have a handled error
+            // object carrying a backtrace. This won't be formatted as a
+            // tree which is just as well since the recursive calls would
+            // push a tree too far to the right.
+            let traceback = r_traceback();
+            Exception {
+                ename: String::from(""),
+                evalue: err_buf.clone(),
+                traceback,
+            }
         };
+
+        log::info!("An R error occurred: {}", exception.evalue);
 
         main.iopub_tx
             .send(IOPubMessage::ExecuteError(ExecuteError {

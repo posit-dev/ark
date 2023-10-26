@@ -21,7 +21,6 @@ use amalthea::wire::execute_reply_exception::ExecuteReplyException;
 use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::execute_response::ExecuteResponse;
 use amalthea::wire::input_reply::InputReply;
-use amalthea::wire::input_request::ShellInputRequest;
 use amalthea::wire::inspect_reply::InspectReply;
 use amalthea::wire::inspect_request::InspectRequest;
 use amalthea::wire::is_complete_reply::IsComplete;
@@ -34,7 +33,6 @@ use amalthea::wire::language_info::LanguageInfo;
 use amalthea::wire::language_info::LanguageInfoPositron;
 use amalthea::wire::originator::Originator;
 use async_trait::async_trait;
-use bus::Bus;
 use bus::BusReader;
 use crossbeam::channel::unbounded;
 use crossbeam::channel::Receiver;
@@ -49,13 +47,11 @@ use log::*;
 use serde_json::json;
 use stdext::spawn;
 
-use crate::dap::Dap;
 use crate::environment::r_environment::REnvironment;
 use crate::frontend::frontend::PositronFrontend;
 use crate::help::r_help::RHelp;
 use crate::interface::KernelInfo;
 use crate::interface::RMain;
-use crate::interface::R_MAIN_THREAD_NAME;
 use crate::kernel::Kernel;
 use crate::plots::graphics_device;
 use crate::r_task;
@@ -66,7 +62,7 @@ pub struct Shell {
     comm_manager_tx: Sender<CommEvent>,
     iopub_tx: Sender<IOPubMessage>,
     r_request_tx: Sender<RRequest>,
-    kernel: Arc<Mutex<Kernel>>,
+    pub kernel: Arc<Mutex<Kernel>>,
     kernel_request_tx: Sender<KernelRequest>,
     kernel_init_rx: BusReader<KernelInfo>,
     kernel_info: Option<KernelInfo>,
@@ -80,19 +76,12 @@ pub enum REvent {
 impl Shell {
     /// Creates a new instance of the shell message handler.
     pub fn new(
-        r_args: Vec<String>,
-        startup_file: Option<String>,
         comm_manager_tx: Sender<CommEvent>,
         iopub_tx: Sender<IOPubMessage>,
         r_request_tx: Sender<RRequest>,
-        r_request_rx: Receiver<RRequest>,
-        kernel_init_tx: Bus<KernelInfo>,
         kernel_init_rx: BusReader<KernelInfo>,
         kernel_request_tx: Sender<KernelRequest>,
         kernel_request_rx: Receiver<KernelRequest>,
-        input_request_tx: Sender<ShellInputRequest>,
-        conn_init_rx: Receiver<bool>,
-        dap: Arc<Mutex<Dap>>,
     ) -> Self {
         // Start building the kernel object. It is shared by the shell, LSP, and main threads.
         let kernel = Arc::new(Mutex::new(Kernel::new(iopub_tx.clone())));
@@ -100,34 +89,6 @@ impl Shell {
         let kernel_clone = kernel.clone();
         spawn!("ark-shell-thread", move || {
             listen(kernel_clone, kernel_request_rx);
-        });
-
-        let comm_manager_tx_clone = comm_manager_tx.clone();
-        let kernel_clone = kernel.clone();
-        let iopub_tx_clone = iopub_tx.clone();
-        spawn!(R_MAIN_THREAD_NAME, move || {
-            // Block until 0MQ is initialised before starting R to avoid
-            // thread-safety issues. See https://github.com/rstudio/positron/issues/720
-            if let Err(err) = conn_init_rx.recv_timeout(std::time::Duration::from_secs(3)) {
-                warn!(
-                    "Failed to get init notification from main thread: {:?}",
-                    err
-                );
-            }
-            drop(conn_init_rx);
-
-            // Start the R REPL (does not return)
-            crate::interface::start_r(
-                r_args,
-                startup_file,
-                kernel_clone,
-                comm_manager_tx_clone,
-                r_request_rx,
-                input_request_tx,
-                iopub_tx_clone,
-                kernel_init_tx,
-                dap,
-            );
         });
 
         Self {

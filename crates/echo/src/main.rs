@@ -29,8 +29,8 @@ use crate::shell::Shell;
 fn start_kernel(connection_file: ConnectionFile) {
     let mut kernel = match Kernel::new("echo", connection_file) {
         Ok(k) => k,
-        Err(e) => {
-            error!("Failed to create kernel: {}", e);
+        Err(err) => {
+            log::error!("Failed to create kernel: {err:?}");
             return;
         },
     };
@@ -42,26 +42,18 @@ fn start_kernel(connection_file: ConnectionFile) {
     let shell = Arc::new(Mutex::new(Shell::new(shell_tx, input_tx)));
     let control = Arc::new(Mutex::new(Control {}));
 
-    match kernel.connect(
-        shell,
-        control,
-        None,
-        None,
-        StreamBehavior::None,
-        input_rx,
-        None,
-    ) {
-        Ok(()) => {
-            let mut s = String::new();
-            println!("Kernel activated, press Ctrl+C to end ");
-            if let Err(err) = stdin().read_line(&mut s) {
-                error!("Could not read from stdin: {:?}", err);
-            }
-        },
-        Err(err) => {
-            error!("Couldn't connect to front end: {:?}", err);
-        },
+    if let Err(err) = kernel.connect(shell, control, None, None, StreamBehavior::None, input_rx) {
+        panic!("Couldn't connect to front end: {err:?}");
     }
+
+    let mut s = String::new();
+    println!("Kernel activated, press Ctrl+C to end ");
+    if let Err(err) = stdin().read_line(&mut s) {
+        log::error!("Could not read from stdin: {err:?}");
+    }
+
+    // FIXME: This currently returns immediately.
+    // Should block on message from Control thread instead.
 }
 
 fn install_kernel_spec() {

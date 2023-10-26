@@ -72,29 +72,22 @@ fn start_kernel(
     // `read_console()` and send commands to the debug interpreter
     let dap = dap::Dap::new_shared(r_request_tx.clone());
 
-    // One-off communication channel for 0MQ init event
-    let (conn_init_tx, conn_init_rx) = bounded::<bool>(0);
-
     // Communication channel between the R main thread and the Amalthea
     // StdIn socket thread
     let (input_request_tx, input_request_rx) = bounded::<ShellInputRequest>(1);
 
+    // Communication channel for `CommEvent`
+    let comm_manager_tx = kernel.create_comm_manager_tx();
+
     // Create the shell.
     let kernel_init_rx = kernel_init_tx.add_rx();
     let shell = Shell::new(
-        r_args,
-        startup_file,
-        kernel.create_comm_manager_tx(),
-        iopub_tx,
+        comm_manager_tx.clone(),
+        iopub_tx.clone(),
         r_request_tx.clone(),
-        r_request_rx,
-        kernel_init_tx,
         kernel_init_rx,
         kernel_request_tx,
         kernel_request_rx,
-        input_request_tx,
-        conn_init_rx,
-        dap.clone(),
     );
 
     // Create the control handler; this is used to handle shutdown/interrupt and
@@ -109,23 +102,33 @@ fn start_kernel(
     };
 
     // Create the kernel
+    let kernel_clone = shell.kernel.clone();
     let shell = Arc::new(Mutex::new(shell));
-    match kernel.connect(
+
+    let res = kernel.connect(
         shell,
         control,
         Some(lsp),
-        Some(dap),
+        Some(dap.clone()),
         stream_behavior,
         input_request_rx,
-        Some(conn_init_tx),
-    ) {
-        Ok(()) => {
-            println!("R Kernel exiting.");
-        },
-        Err(err) => {
-            error!("Couldn't connect to front end: {:?}", err);
-        },
+    );
+    if let Err(err) = res {
+        panic!("Couldn't connect to front end: {:?}", err);
     }
+
+    // Start the R REPL (does not return for the duration of the session)
+    ark::interface::start_r(
+        r_args,
+        startup_file,
+        kernel_clone,
+        comm_manager_tx,
+        r_request_rx,
+        input_request_tx,
+        iopub_tx,
+        kernel_init_tx,
+        dap,
+    )
 }
 
 // Installs the kernelspec JSON file into one of Jupyter's search paths.
