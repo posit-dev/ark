@@ -162,6 +162,8 @@ pub fn start_r(
 ) {
     // Initialize global state (ensure we only do this once!)
     INIT.call_once(|| unsafe {
+        R_MAIN_THREAD_ID = Some(std::thread::current().id());
+
         // Channels to send/receive tasks from auxiliary threads via `r_task()`
         let (tasks_tx, tasks_rx) = unbounded::<RTaskMain>();
 
@@ -367,10 +369,6 @@ impl RMain {
         kernel_init_tx: Bus<KernelInfo>,
         dap: Arc<Mutex<Dap>>,
     ) -> Self {
-        unsafe {
-            R_MAIN_THREAD_ID = Some(std::thread::current().id());
-        }
-
         Self {
             initializing: true,
             r_request_rx,
