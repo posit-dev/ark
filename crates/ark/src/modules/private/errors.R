@@ -23,13 +23,13 @@ handle_error_base <- function(cnd) {
         n <- n - 3L
         traceback <- traceback[seq_len(n)]
     }
-    traceback <- format_traceback(traceback, srcrefs)
+    traceback <- format_traceback(traceback)
 
     .ps.Call("ps_record_error", evalue, traceback)
 }
 
 #' @param traceback A list of calls.
-format_traceback <- function(traceback) {
+format_traceback <- function(traceback = list()) {
     n <- length(traceback)
 
     # TODO: This implementation prints the traceback in the same ordering
@@ -57,11 +57,7 @@ format_traceback <- function(traceback) {
     traceback <- lapply(traceback, function(lines) paste0(lines, collapse = "\n"))
     traceback <- as.character(traceback)
 
-    if (!is.null(srcrefs)) {
-        traceback <- paste0(traceback, srcrefs)
-    }
-
-    traceback
+    paste0(traceback, srcrefs)
 }
 
 prepend_prefix <- function(lines, prefix) {
