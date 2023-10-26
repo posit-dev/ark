@@ -118,15 +118,20 @@ impl Socket {
             Err(err) => return Err(Error::CreateSocketFailed(name, err)),
         };
 
-        // Set the socket's identity, if supplied
-        if let Some(identity) = identity {
-            if let Err(err) = socket.set_identity(identity) {
-                return Err(Error::CreateSocketFailed(name, err));
+        // For IOPub in particular, which is fairly high traffic, we up the
+        // "high water mark" from the default of 1k -> 10k to avoid dropping
+        // messages if the subscriber is processing them too slowly. This has
+        // to be set before the call to `bind()`.
+        // https://github.com/posit-dev/amalthea/pull/129
+        if name == "IOPub" {
+            if let Err(error) = socket.set_sndhwm(10000) {
+                return Err(Error::CreateSocketFailed(name, error));
             }
         }
 
-        if kind == zmq::SocketType::PUB {
-            if let Err(err) = socket.set_sndhwm(0) {
+        // Set the socket's identity, if supplied
+        if let Some(identity) = identity {
+            if let Err(err) = socket.set_identity(identity) {
                 return Err(Error::CreateSocketFailed(name, err));
             }
         }
