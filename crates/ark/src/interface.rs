@@ -50,7 +50,6 @@ use crossbeam::select;
 use harp::exec::geterrmessage;
 use harp::exec::r_safely;
 use harp::exec::r_source;
-use harp::exec::r_try_catch;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
@@ -1007,19 +1006,17 @@ fn peek_execute_response(exec_count: u32) -> ExecuteResponse {
     // buffer. The message is explicitly not translated to save stack space
     // so the matching should be reliable.
     let err_buf = geterrmessage();
-    let so_occurred = RE_STACK_OVERFLOW.is_match(&err_buf);
+    let stack_overflow_occurred = RE_STACK_OVERFLOW.is_match(&err_buf);
 
     // Reset error buffer so we don't display this message again
-    if so_occurred {
+    if stack_overflow_occurred {
         unsafe {
-            let _ = r_try_catch(|| {
-                let _ = RFunction::new("base", "stop").call();
-            });
+            let _ = RFunction::new("base", "stop").call();
         };
     }
 
     // Send the reply to the front end
-    if error_occurred || so_occurred {
+    if error_occurred || stack_overflow_occurred {
         // We don't fill out `ename` with anything meaningful because typically
         // R errors don't have names. We could consider using the condition class
         // here, which r-lib/tidyverse packages have been using more heavily.
