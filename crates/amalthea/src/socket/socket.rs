@@ -118,6 +118,21 @@ impl Socket {
             Err(err) => return Err(Error::CreateSocketFailed(name, err)),
         };
 
+        // For IOPub in particular, which is fairly high traffic, we up the
+        // "high water mark" from the default of 1k -> 100k to avoid dropping
+        // messages if the subscriber is processing them too slowly. This has
+        // to be set before the call to `bind()`. It seems like we could
+        // alternatively set the rcvhwm on the subscriber side, since the
+        // "total" sndhmw seems to be the sum of the pub + sub values, but this
+        // is probably best to tell any subscribers out there that this is a
+        // high traffic channel.
+        // https://github.com/posit-dev/amalthea/pull/129
+        if name == "IOPub" {
+            if let Err(error) = socket.set_sndhwm(100000) {
+                return Err(Error::CreateSocketFailed(name, error));
+            }
+        }
+
         // Set the socket's identity, if supplied
         if let Some(identity) = identity {
             if let Err(err) = socket.set_identity(identity) {
