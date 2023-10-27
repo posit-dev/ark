@@ -25,8 +25,8 @@ use amalthea::events::BusyEvent;
 use amalthea::events::PositronEvent;
 use amalthea::events::PromptStateEvent;
 use amalthea::events::ShowMessageEvent;
-use amalthea::socket::iopub::Flush;
 use amalthea::socket::iopub::IOPubMessage;
+use amalthea::socket::iopub::Wait;
 use amalthea::wire::exception::Exception;
 use amalthea::wire::execute_error::ExecuteError;
 use amalthea::wire::execute_input::ExecuteInput;
@@ -563,12 +563,6 @@ impl RMain {
         // execution. We can now send a reply to unblock the active Shell
         // request.
         if let Some(req) = &self.active_request {
-            // Flush iopub and block until our flush request has gone through.
-            // This lets iopub "catch up" before we unblock the active Shell
-            // request and reset the status to `idle` (important for user input
-            // requests that occur while output is being streamed to stdout).
-            self.flush_iopub();
-
             // FIXME: The messages below are involved in a race between the
             // StdIn and Shell threads and the messages might arrive out of
             // order on the frontend side. This is generally well handled
@@ -825,26 +819,35 @@ impl RMain {
         req.response_tx.send(reply).unwrap();
     }
 
-    fn flush_iopub(&self) {
-        let (flush_tx, flush_rx) = bounded::<()>(1);
+    /// Sends a `Wait` message to IOPub, which responds when the IOPub thread
+    /// actually processes the message, implying that all other IOPub messages
+    /// in front of this one have been forwarded on to the frontend.
+    /// TODO: Remove this when we can, see `request_input()` for rationale.
+    fn wait_for_empty_iopub(&self) {
+        let (wait_tx, wait_rx) = bounded::<()>(1);
 
-        let message = IOPubMessage::Flush(Flush {
-            flush_tx: Some(flush_tx),
-        });
+        let message = IOPubMessage::Wait(Wait { wait_tx });
 
         if let Err(error) = self.iopub_tx.send(message) {
-            log::error!("Failed to send flush request to iopub: {error:?}");
+            log::error!("Failed to send wait request to iopub: {error:?}");
             return;
         }
 
-        if let Err(error) = flush_rx.recv() {
-            log::error!("Failed to receive flush response from iopub: {error:?}");
+        if let Err(error) = wait_rx.recv() {
+            log::error!("Failed to receive wait response from iopub: {error:?}");
         }
     }
 
     /// Request input from frontend in case code like `readline()` is
     /// waiting for input
     fn request_input(&self, req: &ActiveReadConsoleRequest, prompt: String) {
+        // TODO: We really should not have to wait on IOPub to be cleared, but
+        // if an IOPub `'stream'` message arrives on the frontend while an input
+        // request is being handled, it currently breaks the Console. We should
+        // remove `wait_on_empty_iopub()` once this is fixed:
+        // https://github.com/posit-dev/positron/issues/1700
+        self.wait_for_empty_iopub();
+
         unwrap!(
             self.input_request_tx
             .send(ShellInputRequest {

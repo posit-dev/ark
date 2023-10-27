@@ -80,14 +80,14 @@ pub enum IOPubMessage {
     CommClose(String),
     DisplayData(DisplayData),
     UpdateDisplayData(UpdateDisplayData),
-    Flush(Flush),
+    Flush,
+    Wait(Wait),
 }
 
-/// A special IOPub message used to force a flush of the active stream buffer,
-/// optionally waiting on a response that responds once the request has actually
-/// been forwarded to the front end.
-pub struct Flush {
-    pub flush_tx: Option<Sender<()>>,
+/// A special IOPub message used to block the sender until the IOPub queue has
+/// forwarded all messages before this one on to the frontend.
+pub struct Wait {
+    pub wait_tx: Sender<()>,
 }
 
 impl IOPub {
@@ -176,6 +176,7 @@ impl IOPub {
                         *control_context = Some(context.clone());
                     },
                     (IOPubContextChannel::Control, ExecutionState::Idle) => {
+                        self.flush_stream();
                         let mut control_context = self.control_context.lock().unwrap();
                         *control_context = None;
                     },
@@ -187,6 +188,7 @@ impl IOPub {
                         *shell_context = Some(context.clone());
                     },
                     (IOPubContextChannel::Shell, ExecutionState::Idle) => {
+                        self.flush_stream();
                         let mut shell_context = self.shell_context.lock().unwrap();
                         *shell_context = None;
                     },
@@ -198,9 +200,11 @@ impl IOPub {
                 self.send_message_with_header(context, msg)
             },
             IOPubMessage::ExecuteResult(msg) => {
+                self.flush_stream();
                 self.send_message_with_context(msg, IOPubContextChannel::Shell)
             },
             IOPubMessage::ExecuteError(msg) => {
+                self.flush_stream();
                 self.send_message_with_context(msg, IOPubContextChannel::Shell)
             },
             IOPubMessage::ExecuteInput(msg) => {
@@ -212,13 +216,16 @@ impl IOPub {
             IOPubMessage::CommMsgReply(header, msg) => self.send_message_with_header(header, msg),
             IOPubMessage::CommClose(comm_id) => self.send_message(CommClose { comm_id }),
             IOPubMessage::DisplayData(msg) => {
+                self.flush_stream();
                 self.send_message_with_context(msg, IOPubContextChannel::Shell)
             },
             IOPubMessage::UpdateDisplayData(msg) => {
+                self.flush_stream();
                 self.send_message_with_context(msg, IOPubContextChannel::Shell)
             },
             IOPubMessage::Event(msg) => self.send_event(msg),
-            IOPubMessage::Flush(msg) => self.process_flush_message(msg),
+            IOPubMessage::Flush => self.process_flush_request(),
+            IOPubMessage::Wait(msg) => self.process_wait_request(msg),
         }
     }
 
@@ -315,15 +322,24 @@ impl IOPub {
         Ok(())
     }
 
-    fn process_flush_message(&mut self, message: Flush) -> Result<(), Error> {
+    /// Process a `Flush` request to manually flush the active IOPub stream
+    ///
+    /// Often used before sending some other IOPub message, forcing the active
+    /// stream to be flushed first. For example before sending an
+    /// `ExecuteError` we manually `Flush` to ensure that any buffered
+    /// stdout/stderr is sent to the frontend before the exception.
+    fn process_flush_request(&mut self) -> Result<(), Error> {
         self.flush_stream();
+        Ok(())
+    }
 
-        if let Some(flush_tx) = message.flush_tx {
-            // Notify receiver that we've send along the flush request
-            // to the frontend
-            flush_tx.send(()).unwrap();
-        }
-
+    /// Process a `Wait` request
+    ///
+    /// Processing the request is simple, we just respond. The actual "wait"
+    /// occurred in `iopub_tx` / `iopub_rx` where all other pending messages had
+    /// to be send along before we got here.
+    fn process_wait_request(&mut self, message: Wait) -> Result<(), Error> {
+        message.wait_tx.send(()).unwrap();
         Ok(())
     }
 
