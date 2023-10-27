@@ -151,16 +151,6 @@ impl IOPub {
 
     /// Process an IOPub message from another thread.
     fn process_message(&mut self, message: IOPubMessage) -> Result<(), Error> {
-        // TODO: Is there a better way to do this?
-        // Flush the stream if we are processing anything other than a `Stream`
-        // message. Particularly important for `ExecuteError`s where we need to
-        // flush any output that may have been emitted by R before the error
-        // occurred.
-        match &message {
-            IOPubMessage::Stream(_) => {},
-            _ => self.flush_stream(),
-        };
-
         match message {
             IOPubMessage::Status(context, context_channel, msg) => {
                 // When we enter the Busy state as a result of a message, we
