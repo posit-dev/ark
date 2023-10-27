@@ -303,7 +303,7 @@ impl IOPub {
         if message.name != self.buffer.name {
             // Swap streams, but flush the existing stream first
             self.flush_stream();
-            self.buffer.swap();
+            self.buffer = StreamBuffer::new(message.name);
         }
 
         self.buffer.push(&message.text);
@@ -375,17 +375,6 @@ impl StreamBuffer {
         self.last_flush = Instant::now();
 
         Some(result)
-    }
-
-    fn swap(&mut self) {
-        // Clearing the buffer on swap is more efficient than going through
-        // `new()` because it doesn't reset the buffer capacity.
-        self.name = match self.name {
-            Stream::Stdout => Stream::Stderr,
-            Stream::Stderr => Stream::Stdout,
-        };
-        self.buffer.clear();
-        self.last_flush = Instant::now();
     }
 
     fn interval() -> &'static Duration {
