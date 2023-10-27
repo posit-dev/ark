@@ -306,7 +306,7 @@ impl IOPub {
             self.buffer = StreamBuffer::new(message.name);
         }
 
-        self.buffer.push(&message.text);
+        self.buffer.push(message.text);
 
         Ok(())
     }
@@ -342,7 +342,7 @@ impl IOPub {
 
 struct StreamBuffer {
     name: Stream,
-    buffer: String,
+    buffer: Vec<String>,
     last_flush: Instant,
 }
 
@@ -350,13 +350,13 @@ impl StreamBuffer {
     fn new(name: Stream) -> Self {
         return StreamBuffer {
             name,
-            buffer: String::new(),
+            buffer: Vec::new(),
             last_flush: Instant::now(),
         };
     }
 
-    fn push(&mut self, message: &str) {
-        self.buffer.push_str(message);
+    fn push(&mut self, message: String) {
+        self.buffer.push(message);
     }
 
     fn flush(&mut self) -> Option<StreamOutput> {
@@ -368,7 +368,7 @@ impl StreamBuffer {
 
         let result = StreamOutput {
             name: self.name.clone(),
-            text: self.buffer.clone(),
+            text: self.buffer.join(""),
         };
 
         self.buffer.clear();
