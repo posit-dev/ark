@@ -8,7 +8,6 @@
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
-use std::time::Instant;
 
 use crossbeam::channel::tick;
 use crossbeam::channel::Receiver;
@@ -274,10 +273,11 @@ impl IOPub {
     /// sending some other message and we don't want to prevent that from going
     /// through.
     fn flush_stream(&mut self) {
-        let Some(message) = self.buffer.flush() else {
-            // Nothing to flush
+        if self.buffer.is_empty() {
             return;
-        };
+        }
+
+        let message = self.buffer.drain();
 
         let Err(error) = self.send_message_with_context(message, IOPubContextChannel::Shell) else {
             // Message sent successfully
@@ -343,7 +343,6 @@ impl IOPub {
 struct StreamBuffer {
     name: Stream,
     buffer: Vec<String>,
-    last_flush: Instant,
 }
 
 impl StreamBuffer {
@@ -351,7 +350,6 @@ impl StreamBuffer {
         return StreamBuffer {
             name,
             buffer: Vec::new(),
-            last_flush: Instant::now(),
         };
     }
 
@@ -359,22 +357,18 @@ impl StreamBuffer {
         self.buffer.push(message);
     }
 
-    fn flush(&mut self) -> Option<StreamOutput> {
-        if self.buffer.is_empty() {
-            // Nothing to send, but we tried a flush so reset the instant
-            self.last_flush = Instant::now();
-            return None;
-        }
+    fn is_empty(&self) -> bool {
+        self.buffer.is_empty()
+    }
 
-        let result = StreamOutput {
-            name: self.name.clone(),
-            text: self.buffer.join(""),
-        };
-
+    fn drain(&mut self) -> StreamOutput {
+        let text = self.buffer.join("");
         self.buffer.clear();
-        self.last_flush = Instant::now();
 
-        Some(result)
+        StreamOutput {
+            name: self.name.clone(),
+            text,
+        }
     }
 
     fn interval() -> &'static Duration {
