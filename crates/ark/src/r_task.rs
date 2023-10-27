@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use crossbeam::channel::bounded;
 use crossbeam::channel::Sender;
-use harp::exec::r_safely;
+use harp::exec::r_sandbox;
 use harp::test::R_TASK_BYPASS;
 
 use crate::interface::RMain;
@@ -70,7 +70,7 @@ where
     {
         let result = Arc::clone(&result);
         let closure = move || {
-            let res = r_safely(f);
+            let res = r_sandbox(f);
             *result.lock().unwrap() = Some(res);
         };
 
@@ -133,7 +133,7 @@ where
     log::info!("Thread '{thread_name}' ({thread_id:?}) is requesting an async task.");
 
     let closure = move || {
-        r_safely(f);
+        r_sandbox(f);
     };
 
     let closure: Box<dyn FnOnce() + Send + 'static> = Box::new(closure);

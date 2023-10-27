@@ -431,7 +431,7 @@ pub fn r_parse(code: &str) -> Result<RObject> {
 // This could be implemented with R interrupts but would require to
 // unsafely jump over the Rust stack, unless we wrapped all R API functions
 // to return an Option.
-pub fn r_safely<'env, F, T>(f: F) -> T
+pub fn r_sandbox<'env, F, T>(f: F) -> T
 where
     F: FnOnce() -> T,
     F: 'env,
