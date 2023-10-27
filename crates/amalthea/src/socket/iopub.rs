@@ -315,6 +315,12 @@ impl IOPub {
     /// Processing the request is simple, we just respond. The actual "wait"
     /// occurred in `iopub_tx` / `iopub_rx` where all other pending messages had
     /// to be send along before we got here.
+    ///
+    /// Note that this doesn't guarantee that the frontend has received all of
+    /// the messages on the IOPub socket in front of this one. So even after
+    /// waiting for the queue to empty, it is possible for a message on a
+    /// different socket that is sent after waiting to still get processed by
+    /// the frontend before the messages we cleared from the IOPub queue.
     fn process_wait_request(&mut self, message: Wait) -> Result<(), Error> {
         message.wait_tx.send(()).unwrap();
         Ok(())
