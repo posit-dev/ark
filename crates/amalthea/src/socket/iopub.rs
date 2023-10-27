@@ -50,6 +50,10 @@ pub struct IOPub {
 
     /// A buffer for the active stdout/stderr stream to batch stream messages
     /// that we send to the frontend, since this can be extremely high traffic.
+    /// We only have 1 buffer because we immediately flush the active stream if
+    /// we are about to process a message for the other stream. The idea is that
+    /// this avoids a message sequence of <stdout, stderr, stdout> getting
+    /// accidentally sent to the frontend as <stdout, stdout, stderr>.
     buffer: StreamBuffer,
 }
 
