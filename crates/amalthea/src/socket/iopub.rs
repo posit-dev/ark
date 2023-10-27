@@ -10,9 +10,10 @@ use std::sync::Mutex;
 use std::time::Duration;
 use std::time::Instant;
 
+use crossbeam::channel::tick;
 use crossbeam::channel::Receiver;
-use crossbeam::channel::RecvTimeoutError;
 use crossbeam::channel::Sender;
+use crossbeam::select;
 use log::trace;
 use log::warn;
 
@@ -115,22 +116,34 @@ impl IOPub {
         // Begin by emitting the starting state
         self.emit_state(ExecutionState::Starting);
 
-        let timeout = StreamBuffer::interval().clone();
+        // Flush the active stream (either stdout or stderr) at regular
+        // intervals
+        let flush_interval = StreamBuffer::interval().clone();
+        let flush_interval = tick(flush_interval);
 
         loop {
-            match self.receiver.recv_timeout(timeout) {
-                Ok(message) => {
-                    if let Err(error) = self.process_message(message) {
-                        warn!("Error delivering iopub message: {error:?}")
+            select! {
+                recv(self.receiver) -> message => {
+                    match message {
+                        Ok(message) => {
+                            if let Err(error) = self.process_message(message) {
+                                warn!("Error delivering iopub message: {error:?}")
+                            }
+                        },
+                        Err(error) => {
+                            warn!("Failed to receive iopub message: {error:?}");
+                        },
                     }
                 },
-                Err(error) => match error {
-                    RecvTimeoutError::Timeout => self.flush_stream(),
-                    RecvTimeoutError::Disconnected => {
-                        warn!("Failed to receive iopub message due to disconnect: {error:?}");
-                    },
-                },
-            };
+                recv(flush_interval) -> message => {
+                    match message {
+                        Ok(_) => self.flush_stream(),
+                        Err(error) => {
+                            warn!("Failed to receive flush interval message: {error:?}");
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -279,7 +292,10 @@ impl IOPub {
         warn!("Error delivering iopub 'stream' message over '{name}': {error:?}");
     }
 
-    /// Processes a `Stream` message
+    /// Processes a `Stream` message by appending it to the stream buffer
+    ///
+    /// The buffer will be flushed on the next tick interval unless it is
+    /// manually flushed before then.
     ///
     /// If this new message switches streams, then we flush the existing stream
     /// before switching.
@@ -292,17 +308,7 @@ impl IOPub {
 
         self.buffer.push(&message.text);
 
-        if !self.buffer.ready() {
-            // Not enough time has passed since last flush
-            return Ok(());
-        }
-
-        let Some(message) = self.buffer.flush() else {
-            // Nothing to flush
-            return Ok(());
-        };
-
-        self.send_message_with_context(message, IOPubContextChannel::Shell)
+        Ok(())
     }
 
     fn process_flush_message(&mut self, message: Flush) -> Result<(), Error> {
@@ -351,11 +357,6 @@ impl StreamBuffer {
 
     fn push(&mut self, message: &str) {
         self.buffer.push_str(message);
-    }
-
-    fn ready(&self) -> bool {
-        let elapsed = Instant::now().duration_since(self.last_flush);
-        &elapsed > StreamBuffer::interval()
     }
 
     fn flush(&mut self) -> Option<StreamOutput> {
