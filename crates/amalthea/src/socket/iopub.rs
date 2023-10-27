@@ -80,7 +80,6 @@ pub enum IOPubMessage {
     CommClose(String),
     DisplayData(DisplayData),
     UpdateDisplayData(UpdateDisplayData),
-    Flush,
     Wait(Wait),
 }
 
@@ -224,7 +223,6 @@ impl IOPub {
                 self.send_message_with_context(msg, IOPubContextChannel::Shell)
             },
             IOPubMessage::Event(msg) => self.send_event(msg),
-            IOPubMessage::Flush => self.process_flush_request(),
             IOPubMessage::Wait(msg) => self.process_wait_request(msg),
         }
     }
@@ -319,17 +317,6 @@ impl IOPub {
 
         self.buffer.push(message.text);
 
-        Ok(())
-    }
-
-    /// Process a `Flush` request to manually flush the active IOPub stream
-    ///
-    /// Often used before sending some other IOPub message, forcing the active
-    /// stream to be flushed first. For example before sending an
-    /// `ExecuteError` we manually `Flush` to ensure that any buffered
-    /// stdout/stderr is sent to the frontend before the exception.
-    fn process_flush_request(&mut self) -> Result<(), Error> {
-        self.flush_stream();
         Ok(())
     }
 
