@@ -25,6 +25,7 @@ pub mod request;
 pub mod shell;
 pub mod thread;
 pub mod version;
+pub mod viewer;
 
 pub use r_task::r_task;
 use serde::Deserialize;
