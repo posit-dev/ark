@@ -23,6 +23,7 @@ ego-tree = "0.6.2"
 harp = { path = "../harp" }
 html5ever = "0.26.0"
 http = "0.2.9"
+home = "0.5.5"
 hyper = { version = "0.14.24", features = ["full"] }
 itertools = "0.10.5"
 lazy_static = "1.4.0"

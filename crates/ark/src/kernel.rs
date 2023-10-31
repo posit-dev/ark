@@ -5,6 +5,7 @@
 //
 //
 
+use std::path::PathBuf;
 use std::result::Result::Err;
 
 use amalthea::events::BusyEvent;
@@ -23,7 +24,7 @@ use crate::request::KernelRequest;
 pub struct Kernel {
     iopub_tx: Sender<IOPubMessage>,
     event_tx: Option<Sender<PositronEvent>>,
-    working_directory: String,
+    working_directory: PathBuf,
 }
 
 impl Kernel {
@@ -32,7 +33,7 @@ impl Kernel {
         Self {
             iopub_tx,
             event_tx: None,
-            working_directory: String::new(),
+            working_directory: PathBuf::new(),
         }
     }
 
@@ -62,7 +63,7 @@ impl Kernel {
 
         // Clear the current working directory to generate an event for the new
         // client
-        self.working_directory = String::new();
+        self.working_directory = PathBuf::new();
         if let Err(err) = self.poll_working_directory() {
             warn!(
                 "Error establishing working directory for front end: {}",
@@ -82,14 +83,24 @@ impl Kernel {
     /// front end if the working directory has changed.
     pub fn poll_working_directory(&mut self) -> Result<()> {
         // Get the current working directory
-        let current_dir = std::env::current_dir()?;
-        let current_dir = current_dir.to_string_lossy();
+        let mut current_dir = std::env::current_dir()?;
 
         // If it isn't the same as the last working directory, send an event
         if current_dir != self.working_directory {
-            self.working_directory = String::from(current_dir);
+            self.working_directory = current_dir.clone();
+
+            // Attempt to alias the directory, if it's within the home directory
+            if let Some(home_dir) = home::home_dir() {
+                if let Ok(stripped_dir) = current_dir.strip_prefix(home_dir) {
+                    let mut new_path = PathBuf::from("~");
+                    new_path.push(stripped_dir);
+                    current_dir = new_path;
+                }
+            }
+
+            // Deliver event to client
             self.send_event(PositronEvent::WorkingDirectory(WorkingDirectoryEvent {
-                directory: self.working_directory.clone(),
+                directory: current_dir.to_string_lossy().to_string(),
             }));
         };
         Ok(())
