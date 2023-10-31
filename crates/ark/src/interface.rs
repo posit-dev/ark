@@ -293,6 +293,7 @@ pub struct RMain {
 
     dap: Arc<Mutex<Dap>>,
     is_debugging: bool,
+    pub is_busy: bool,
 
     /// The `show.error.messages` global option is set to `TRUE` whenever
     /// we get in the browser. We save the previous value here and restore
@@ -389,6 +390,7 @@ impl RMain {
             help_rx: None,
             dap,
             is_debugging: false,
+            is_busy: false,
             old_show_error_messages: None,
             tasks_rx,
             pending_tasks: VecDeque::new(),
@@ -868,7 +870,7 @@ impl RMain {
     }
 
     /// Invoked by R to change busy state
-    fn busy(&self, which: i32) {
+    fn busy(&mut self, which: i32) {
         // Ensure signal handlers are initialized.
         //
         // We perform this awkward dance because R tries to set and reset
@@ -882,7 +884,8 @@ impl RMain {
         Self::initialize_signal_handlers();
 
         // Create an event representing the new busy state
-        let event = PositronEvent::Busy(BusyEvent { busy: which != 0 });
+        self.is_busy = which != 0;
+        let event = PositronEvent::Busy(BusyEvent { busy: self.is_busy });
 
         // Wait for a lock on the kernel and have it deliver the event to
         // the front end
@@ -1157,7 +1160,7 @@ extern "C" fn r_show_message(buf: *const c_char) {
 
 #[no_mangle]
 extern "C" fn r_busy(which: i32) {
-    let main = RMain::get();
+    let main = RMain::get_mut();
     main.busy(which);
 }
 

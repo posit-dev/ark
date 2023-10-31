@@ -7,11 +7,15 @@
 
 use std::result::Result::Err;
 
+use amalthea::events::BusyEvent;
 use amalthea::events::PositronEvent;
+use amalthea::events::WorkingDirectoryEvent;
 use amalthea::socket::iopub::IOPubMessage;
 use crossbeam::channel::Sender;
 use log::*;
 
+use crate::interface::RMain;
+use crate::r_task;
 use crate::request::KernelRequest;
 
 /// Represents the Rust state of the R kernel
@@ -52,6 +56,25 @@ impl Kernel {
     /// channel that is connected to a `positron.frontEnd` comm.
     pub fn establish_event_handler(&mut self, event_tx: Sender<PositronEvent>) {
         self.event_tx = Some(event_tx);
+
+        // Get the current working directory
+        match std::env::current_dir() {
+            Ok(dir) => {
+                self.send_event(PositronEvent::WorkingDirectory(WorkingDirectoryEvent {
+                    directory: dir.to_str().unwrap().to_string(),
+                }));
+            },
+            Err(err) => {
+                log::error!("Error getting current working directory: {}", err);
+            },
+        };
+
+        // Get the current busy status
+        let busy = r_task(|| {
+            let main = RMain::get();
+            main.is_busy
+        });
+        self.send_event(PositronEvent::Busy(BusyEvent { busy }));
     }
 
     /// Check if the Positron front end is connected
