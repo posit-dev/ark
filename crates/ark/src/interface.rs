@@ -454,6 +454,11 @@ impl RMain {
         }
     }
 
+    /// Provides read-only access to `iopub_tx`
+    pub fn get_iopub_tx(&self) -> &Sender<IOPubMessage> {
+        &self.iopub_tx
+    }
+
     fn initialize_signal_handlers() {
         // Reset the signal block.
         //
