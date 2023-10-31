@@ -49,7 +49,8 @@ pub unsafe extern "C" fn ps_html_viewer(url: SEXP) -> SEXP {
         Ok(path) => {
             // Emit the HTML output
             let main = RMain::get();
-            if let Err(err) = emit_html_output(main.iopub_tx.clone(), path) {
+            let iopub_tx = main.get_iopub_tx().clone();
+            if let Err(err) = emit_html_output(iopub_tx, path) {
                 log::error!("Failed to emit HTML output: {:?}", err);
             }
         },
