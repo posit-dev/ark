@@ -261,7 +261,7 @@ pub struct RMain {
     input_request_tx: Sender<ShellInputRequest>,
 
     /// IOPub channel for broadcasting outputs
-    pub iopub_tx: Sender<IOPubMessage>,
+    iopub_tx: Sender<IOPubMessage>,
 
     /// Active request passed to `ReadConsole()`. Contains response channel
     /// the reply should be send to once computation has finished.
@@ -452,6 +452,11 @@ impl RMain {
         } else {
             warn!("Initialization already complete!");
         }
+    }
+
+    /// Provides read-only access to `iopub_tx`
+    pub fn get_iopub_tx(&self) -> &Sender<IOPubMessage> {
+        &self.iopub_tx
     }
 
     fn initialize_signal_handlers() {
