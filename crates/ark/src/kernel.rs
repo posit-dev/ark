@@ -11,6 +11,7 @@ use amalthea::events::BusyEvent;
 use amalthea::events::PositronEvent;
 use amalthea::events::WorkingDirectoryEvent;
 use amalthea::socket::iopub::IOPubMessage;
+use anyhow::Result;
 use crossbeam::channel::Sender;
 use log::*;
 
@@ -22,6 +23,7 @@ use crate::request::KernelRequest;
 pub struct Kernel {
     iopub_tx: Sender<IOPubMessage>,
     event_tx: Option<Sender<PositronEvent>>,
+    working_directory: String,
 }
 
 impl Kernel {
@@ -30,6 +32,7 @@ impl Kernel {
         Self {
             iopub_tx,
             event_tx: None,
+            working_directory: String::new(),
         }
     }
 
@@ -57,17 +60,15 @@ impl Kernel {
     pub fn establish_event_handler(&mut self, event_tx: Sender<PositronEvent>) {
         self.event_tx = Some(event_tx);
 
-        // Get the current working directory
-        match std::env::current_dir() {
-            Ok(dir) => {
-                self.send_event(PositronEvent::WorkingDirectory(WorkingDirectoryEvent {
-                    directory: dir.to_str().unwrap().to_string(),
-                }));
-            },
-            Err(err) => {
-                log::error!("Error getting current working directory: {}", err);
-            },
-        };
+        // Clear the current working directory to generate an event for the new
+        // client
+        self.working_directory = String::new();
+        if let Err(err) = self.poll_working_directory() {
+            warn!(
+                "Error establishing working directory for front end: {}",
+                err
+            );
+        }
 
         // Get the current busy status
         let busy = r_task(|| {
@@ -75,6 +76,23 @@ impl Kernel {
             main.is_busy
         });
         self.send_event(PositronEvent::Busy(BusyEvent { busy }));
+    }
+
+    /// Polls for changes to the working directory, and sends an event to the
+    /// front end if the working directory has changed.
+    pub fn poll_working_directory(&mut self) -> Result<()> {
+        // Get the current working directory
+        let current_dir = std::env::current_dir()?;
+        let current_dir = current_dir.to_string_lossy();
+
+        // If it isn't the same as the last working directory, send an event
+        if current_dir != self.working_directory {
+            self.working_directory = String::from(current_dir);
+            self.send_event(PositronEvent::WorkingDirectory(WorkingDirectoryEvent {
+                directory: self.working_directory.clone(),
+            }));
+        };
+        Ok(())
     }
 
     /// Check if the Positron front end is connected

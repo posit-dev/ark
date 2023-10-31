@@ -220,7 +220,7 @@ impl ShellHandler for Shell {
             ExecuteResponse::ReplyException(err) => Err(err),
         };
 
-        let kernel = self.kernel.lock().unwrap();
+        let mut kernel = self.kernel.lock().unwrap();
 
         // Check for pending graphics updates
         // (Important that this occurs while in the "busy" state of this ExecuteRequest
@@ -232,6 +232,11 @@ impl ShellHandler for Shell {
                 kernel.positron_connected(),
             )
         };
+
+        // Check for changes to the working directory
+        if let Err(err) = kernel.poll_working_directory() {
+            warn!("Error polling working directory: {}", err);
+        }
 
         result
     }
