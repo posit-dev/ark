@@ -39,6 +39,7 @@ impl From<PositronEvent> for ClientEvent {
             PositronEvent::ShowMessage(data) => Self::as_evt(data),
             PositronEvent::ShowHelp(data) => Self::as_evt(data),
             PositronEvent::PromptState(data) => Self::as_evt(data),
+            PositronEvent::WorkingDirectory(data) => Self::as_evt(data),
         }
     }
 }
