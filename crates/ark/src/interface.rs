@@ -293,6 +293,9 @@ pub struct RMain {
 
     dap: Arc<Mutex<Dap>>,
     is_debugging: bool,
+    
+    /// Whether or not R itself is actively busy.
+    /// This does not represent the busy state of the kernel.
     pub is_busy: bool,
 
     /// The `show.error.messages` global option is set to `TRUE` whenever
