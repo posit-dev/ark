@@ -62,7 +62,7 @@ impl Kernel {
         self.event_tx = Some(event_tx);
 
         // Clear the current working directory to generate an event for the new
-        // client
+        // client (i.e. after a reconnect)
         self.working_directory = PathBuf::new();
         if let Err(err) = self.poll_working_directory() {
             warn!(
