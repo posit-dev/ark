@@ -1,7 +1,7 @@
 //
 // kernel.rs
 //
-// Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -73,8 +73,11 @@ impl Kernel {
 
         // Get the current busy status
         let busy = r_task(|| {
-            let main = RMain::get();
-            main.is_busy
+            if RMain::initialized() {
+                RMain::get().is_busy
+            } else {
+                false
+            }
         });
         self.send_event(PositronEvent::Busy(BusyEvent { busy }));
     }

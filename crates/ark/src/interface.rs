@@ -293,7 +293,7 @@ pub struct RMain {
 
     dap: Arc<Mutex<Dap>>,
     is_debugging: bool,
-    
+
     /// Whether or not R itself is actively busy.
     /// This does not represent the busy state of the kernel.
     pub is_busy: bool,
@@ -406,6 +406,16 @@ impl RMain {
     /// occur on the main R thread.
     pub fn get() -> &'static Self {
         RMain::get_mut()
+    }
+
+    /// Indicate whether RMain has been created and is initialized.
+    pub fn initialized() -> bool {
+        unsafe {
+            match &R_MAIN {
+                Some(main) => !main.initializing,
+                None => false,
+            }
+        }
     }
 
     /// Access a mutable reference to the singleton instance of this struct
