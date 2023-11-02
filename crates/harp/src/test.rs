@@ -72,9 +72,12 @@ pub fn start_r() {
 
 pub fn r_test_impl<F: FnMut()>(f: F) {
     start_r();
-
     let guard = unsafe { R_RUNTIME_LOCK.lock() };
-    r_sandbox(f);
+
+    if let Err(err) = r_sandbox(f) {
+        log::error!("While running test: {err:?}");
+    }
+
     drop(guard);
 }
 

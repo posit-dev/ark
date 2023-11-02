@@ -7,6 +7,7 @@
 
 use std::ffi::CStr;
 use std::mem;
+use std::mem::take;
 use std::os::raw::c_char;
 use std::os::raw::c_int;
 use std::os::raw::c_void;
@@ -326,6 +327,14 @@ struct ClosureData<'a, R> {
     closure: &'a mut dyn FnMut() -> R,
 }
 
+struct ClosureData2<'a, F, T>
+where
+    F: FnOnce() -> T + 'a,
+{
+    res: &'a mut Option<T>,
+    closure: Option<F>,
+}
+
 pub unsafe fn r_try_catch<F, R>(fun: F) -> Result<RObject>
 where
     F: FnMut() -> R,
@@ -351,28 +360,49 @@ where
     r_try_catch_finally(fun, classes, || {})
 }
 
-pub fn r_top_level_exec<F, T>(mut fun: F) -> Result<T>
+/// Run closure inside top-level context
+///
+/// Top-level contexts are insulated from condition handlers (both calling
+/// and exiting) on the R stack. This removes one source of side effects
+/// and long jumps. If a longjump does occur for any reason (including but
+/// not limited to R errors), the caller is notified, in this case by an
+/// `Err` return value.
+pub fn r_top_level_exec<'env, F, T>(fun: F) -> Result<T>
 where
-    F: FnMut() -> T,
+    F: FnOnce() -> T,
+    F: 'env,
 {
-    // C function that is passed as `fun`. The actual closure is passed via
-    // void* data, along with the pointer to the result variable.
-    extern "C" fn c_fn<T>(arg: *mut c_void) {
-        let data: &mut ClosureData<T> = unsafe { &mut *(arg as *mut ClosureData<T>) };
-
-        // Move result to its stack space
-        *(data.res) = Some((data.closure)());
-    }
-
-    // Allocate stack memory for the output
+    // Allocate stack memory for the result
     let mut res: Option<T> = None;
 
-    let mut c_data = ClosureData {
+    // Because it's an `FnOnce`, the closure needs to be moved inside
+    // `c_fn()` so it can be called. However we must also pass it via a
+    // mutable borrow (void*), which prevents it from being moved. To work
+    // around this, we wrap it in an `Option` that allows us to move it
+    // with `take()`.
+    let mut c_data = ClosureData2 {
         res: &mut res,
-        closure: &mut fun,
+        closure: Some(fun),
     };
+    let p_data = &mut c_data as *mut _ as *mut c_void;
 
-    let success = unsafe { R_ToplevelExec(Some(c_fn::<T>), &mut c_data as *mut _ as *mut c_void) };
+    // C function that is passed as `fun`. The actual closure is passed via
+    // void* data, along with the pointer to the result variable.
+    extern "C" fn c_fn<'env, F, T>(arg: *mut c_void)
+    where
+        F: FnOnce() -> T,
+        F: 'env,
+    {
+        let data: &mut ClosureData2<F, T> = unsafe { &mut *(arg as *mut ClosureData2<F, T>) };
+
+        // Move closure here so it can be called. Required since that's an `FnOnce`.
+        let closure = take(&mut data.closure).unwrap();
+
+        // Call closure and move the result to its stack space
+        *(data.res) = Some(closure());
+    }
+
+    let success = unsafe { R_ToplevelExec(Some(c_fn::<F, T>), p_data) };
 
     if success == 1 {
         Ok(res.unwrap())
@@ -462,11 +492,10 @@ pub fn r_parse(code: &str) -> Result<RObject> {
     }
 }
 
-// TODO: Should probably run in a toplevel-exec. Tasks also need a timeout.
-// This could be implemented with R interrupts but would require to
-// unsafely jump over the Rust stack, unless we wrapped all R API functions
-// to return an Option.
-pub fn r_sandbox<'env, F, T>(f: F) -> T
+// TODO: Tasks also need a timeout. This could be implemented with R
+// interrupts but would require to unsafely jump over the Rust stack,
+// unless we wrapped all R API functions to return an Option.
+pub fn r_sandbox<'env, F, T>(f: F) -> Result<T>
 where
     F: FnOnce() -> T,
     F: 'env,
@@ -477,18 +506,17 @@ where
     let polled_events = unsafe { R_PolledEvents };
     let interrupts_suspended = unsafe { R_interrupts_suspended };
     unsafe {
-        // Disable polled events in this scope.
+        // Disable polled events in this scope
         R_PolledEvents = Some(r_polled_events_disabled);
 
-        // Disable interrupts in this scope.
+        // Disable interrupts in this scope
         R_interrupts_suspended = 1;
     }
 
-    // Execute the callback.
-    let result = f();
+    // Execute the callback
+    let result = r_top_level_exec(f);
 
     // Restore state
-    // TODO: Needs unwind protection
     unsafe {
         R_interrupts_suspended = interrupts_suspended;
         R_PolledEvents = polled_events;
