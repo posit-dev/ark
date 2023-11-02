@@ -7,8 +7,12 @@
 
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::time::Duration;
 
+use crossbeam::channel::tick;
 use crossbeam::channel::Receiver;
+use crossbeam::channel::Sender;
+use crossbeam::select;
 use log::trace;
 use log::warn;
 
@@ -28,6 +32,7 @@ use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::ProtocolMessage;
 use crate::wire::status::ExecutionState;
 use crate::wire::status::KernelStatus;
+use crate::wire::stream::Stream;
 use crate::wire::stream::StreamOutput;
 use crate::wire::update_display_data::UpdateDisplayData;
 
@@ -42,6 +47,14 @@ pub struct IOPub {
     /// outputs with the message that caused them.
     shell_context: Arc<Mutex<Option<JupyterHeader>>>,
     control_context: Arc<Mutex<Option<JupyterHeader>>>,
+
+    /// A buffer for the active stdout/stderr stream to batch stream messages
+    /// that we send to the frontend, since this can be extremely high traffic.
+    /// We only have 1 buffer because we immediately flush the active stream if
+    /// we are about to process a message for the other stream. The idea is that
+    /// this avoids a message sequence of <stdout, stderr, stdout> getting
+    /// accidentally sent to the frontend as <stdout, stdout, stderr>.
+    buffer: StreamBuffer,
 }
 
 /// Enumeration of possible channels that an IOPub message can be associated
@@ -67,6 +80,13 @@ pub enum IOPubMessage {
     CommClose(String),
     DisplayData(DisplayData),
     UpdateDisplayData(UpdateDisplayData),
+    Wait(Wait),
+}
+
+/// A special IOPub message used to block the sender until the IOPub queue has
+/// forwarded all messages before this one on to the frontend.
+pub struct Wait {
+    pub wait_tx: Sender<()>,
 }
 
 impl IOPub {
@@ -82,11 +102,14 @@ impl IOPub {
         shell_context: Arc<Mutex<Option<JupyterHeader>>>,
         control_context: Arc<Mutex<Option<JupyterHeader>>>,
     ) -> Self {
+        let buffer = StreamBuffer::new(Stream::Stdout);
+
         Self {
             socket,
             receiver,
             shell_context,
             control_context,
+            buffer,
         }
     }
 
@@ -94,16 +117,32 @@ impl IOPub {
     pub fn listen(&mut self) {
         // Begin by emitting the starting state
         self.emit_state(ExecutionState::Starting);
+
+        // Flush the active stream (either stdout or stderr) at regular
+        // intervals
+        let flush_interval = StreamBuffer::interval().clone();
+        let flush_interval = tick(flush_interval);
+
         loop {
-            let message = match self.receiver.recv() {
-                Ok(m) => m,
-                Err(err) => {
-                    warn!("Failed to receive iopub message: {}", err);
-                    continue;
+            select! {
+                recv(self.receiver) -> message => {
+                    match message {
+                        Ok(message) => {
+                            if let Err(error) = self.process_message(message) {
+                                warn!("Error delivering iopub message: {error:?}")
+                            }
+                        },
+                        Err(error) => {
+                            warn!("Failed to receive iopub message: {error:?}");
+                        },
+                    }
                 },
-            };
-            if let Err(err) = self.process_message(message) {
-                warn!("Error delivering iopub message: {}", err)
+                recv(flush_interval) -> message => {
+                    match message {
+                        Ok(_) => self.flush_stream(),
+                        Err(_) => unreachable!()
+                    }
+                }
             }
         }
     }
@@ -124,6 +163,7 @@ impl IOPub {
                         *control_context = Some(context.clone());
                     },
                     (IOPubContextChannel::Control, ExecutionState::Idle) => {
+                        self.flush_stream();
                         let mut control_context = self.control_context.lock().unwrap();
                         *control_context = None;
                     },
@@ -135,6 +175,7 @@ impl IOPub {
                         *shell_context = Some(context.clone());
                     },
                     (IOPubContextChannel::Shell, ExecutionState::Idle) => {
+                        self.flush_stream();
                         let mut shell_context = self.shell_context.lock().unwrap();
                         *shell_context = None;
                     },
@@ -146,28 +187,31 @@ impl IOPub {
                 self.send_message_with_header(context, msg)
             },
             IOPubMessage::ExecuteResult(msg) => {
+                self.flush_stream();
                 self.send_message_with_context(msg, IOPubContextChannel::Shell)
             },
             IOPubMessage::ExecuteError(msg) => {
+                self.flush_stream();
                 self.send_message_with_context(msg, IOPubContextChannel::Shell)
             },
             IOPubMessage::ExecuteInput(msg) => {
                 self.send_message_with_context(msg, IOPubContextChannel::Shell)
             },
-            IOPubMessage::Stream(msg) => {
-                self.send_message_with_context(msg, IOPubContextChannel::Shell)
-            },
+            IOPubMessage::Stream(msg) => self.process_stream_message(msg),
             IOPubMessage::CommOpen(msg) => self.send_message(msg),
             IOPubMessage::CommMsgEvent(msg) => self.send_message(msg),
             IOPubMessage::CommMsgReply(header, msg) => self.send_message_with_header(header, msg),
             IOPubMessage::CommClose(comm_id) => self.send_message(CommClose { comm_id }),
             IOPubMessage::DisplayData(msg) => {
+                self.flush_stream();
                 self.send_message_with_context(msg, IOPubContextChannel::Shell)
             },
             IOPubMessage::UpdateDisplayData(msg) => {
+                self.flush_stream();
                 self.send_message_with_context(msg, IOPubContextChannel::Shell)
             },
             IOPubMessage::Event(msg) => self.send_event(msg),
+            IOPubMessage::Wait(msg) => self.process_wait_request(msg),
         }
     }
 
@@ -221,6 +265,65 @@ impl IOPub {
         msg.send(&self.socket)
     }
 
+    /// Flushes the active stream, sending along the message if the buffer
+    /// wasn't empty. Handles its own errors since we often call this before
+    /// sending some other message and we don't want to prevent that from going
+    /// through.
+    fn flush_stream(&mut self) {
+        if self.buffer.is_empty() {
+            return;
+        }
+
+        let message = self.buffer.drain();
+
+        let Err(error) = self.send_message_with_context(message, IOPubContextChannel::Shell) else {
+            // Message sent successfully
+            return;
+        };
+
+        let name = match self.buffer.name {
+            Stream::Stdout => "stdout",
+            Stream::Stderr => "stderr",
+        };
+
+        warn!("Error delivering iopub 'stream' message over '{name}': {error:?}");
+    }
+
+    /// Processes a `Stream` message by appending it to the stream buffer
+    ///
+    /// The buffer will be flushed on the next tick interval unless it is
+    /// manually flushed before then.
+    ///
+    /// If this new message switches streams, then we flush the existing stream
+    /// before switching.
+    fn process_stream_message(&mut self, message: StreamOutput) -> Result<(), Error> {
+        if message.name != self.buffer.name {
+            // Swap streams, but flush the existing stream first
+            self.flush_stream();
+            self.buffer = StreamBuffer::new(message.name);
+        }
+
+        self.buffer.push(message.text);
+
+        Ok(())
+    }
+
+    /// Process a `Wait` request
+    ///
+    /// Processing the request is simple, we just respond. The actual "wait"
+    /// occurred in `iopub_tx` / `iopub_rx` where all other pending messages had
+    /// to be send along before we got here.
+    ///
+    /// Note that this doesn't guarantee that the frontend has received all of
+    /// the messages on the IOPub socket in front of this one. So even after
+    /// waiting for the queue to empty, it is possible for a message on a
+    /// different socket that is sent after waiting to still get processed by
+    /// the frontend before the messages we cleared from the IOPub queue.
+    fn process_wait_request(&mut self, message: Wait) -> Result<(), Error> {
+        message.wait_tx.send(()).unwrap();
+        Ok(())
+    }
+
     /// Emits the given kernel state to the client.
     fn emit_state(&self, state: ExecutionState) {
         trace!("Entering kernel state: {:?}", state);
@@ -235,5 +338,42 @@ impl IOPub {
         {
             warn!("Could not emit kernel's state. {}", err)
         }
+    }
+}
+
+struct StreamBuffer {
+    name: Stream,
+    buffer: Vec<String>,
+}
+
+impl StreamBuffer {
+    fn new(name: Stream) -> Self {
+        return StreamBuffer {
+            name,
+            buffer: Vec::new(),
+        };
+    }
+
+    fn push(&mut self, message: String) {
+        self.buffer.push(message);
+    }
+
+    fn is_empty(&self) -> bool {
+        self.buffer.is_empty()
+    }
+
+    fn drain(&mut self) -> StreamOutput {
+        let text = self.buffer.join("");
+        self.buffer.clear();
+
+        StreamOutput {
+            name: self.name.clone(),
+            text,
+        }
+    }
+
+    fn interval() -> &'static Duration {
+        static STREAM_BUFFER_INTERVAL: Duration = Duration::from_millis(80);
+        &STREAM_BUFFER_INTERVAL
     }
 }

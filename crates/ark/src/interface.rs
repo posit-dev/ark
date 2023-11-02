@@ -26,6 +26,7 @@ use amalthea::events::PositronEvent;
 use amalthea::events::PromptStateEvent;
 use amalthea::events::ShowMessageEvent;
 use amalthea::socket::iopub::IOPubMessage;
+use amalthea::socket::iopub::Wait;
 use amalthea::wire::exception::Exception;
 use amalthea::wire::execute_error::ExecuteError;
 use amalthea::wire::execute_input::ExecuteInput;
@@ -42,6 +43,7 @@ use amalthea::wire::stream::Stream;
 use amalthea::wire::stream::StreamOutput;
 use anyhow::*;
 use bus::Bus;
+use crossbeam::channel::bounded;
 use crossbeam::channel::unbounded;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
@@ -837,9 +839,42 @@ impl RMain {
         req.response_tx.send(reply).unwrap();
     }
 
+    /// Sends a `Wait` message to IOPub, which responds when the IOPub thread
+    /// actually processes the message, implying that all other IOPub messages
+    /// in front of this one have been forwarded on to the frontend.
+    /// TODO: Remove this when we can, see `request_input()` for rationale.
+    fn wait_for_empty_iopub(&self) {
+        let (wait_tx, wait_rx) = bounded::<()>(1);
+
+        let message = IOPubMessage::Wait(Wait { wait_tx });
+
+        if let Err(error) = self.iopub_tx.send(message) {
+            log::error!("Failed to send wait request to iopub: {error:?}");
+            return;
+        }
+
+        if let Err(error) = wait_rx.recv() {
+            log::error!("Failed to receive wait response from iopub: {error:?}");
+        }
+    }
+
     /// Request input from frontend in case code like `readline()` is
     /// waiting for input
     fn request_input(&self, req: &ActiveReadConsoleRequest, prompt: String) {
+        // TODO: We really should not have to wait on IOPub to be cleared, but
+        // if an IOPub `'stream'` message arrives on the frontend while an input
+        // request is being handled, it currently breaks the Console. We should
+        // remove `wait_on_empty_iopub()` once this is fixed:
+        // https://github.com/posit-dev/positron/issues/1700
+        // https://github.com/posit-dev/amalthea/pull/131
+        self.wait_for_empty_iopub();
+        // TODO: Remove this too. Unfortunately even if we wait for the IOPub
+        // queue to clear, that doesn't guarantee the frontend has processed
+        // all of the messages in the queue, only that they have been send over.
+        // So the input request (sent over the stdin socket) can STILL arrive
+        // before all of the IOPub messages have been processed by the frontend.
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
         unwrap!(
             self.input_request_tx
             .send(ShellInputRequest {
