@@ -1189,7 +1189,7 @@ extern "C" fn r_read_console(
     let result = r_sandbox(|| main.read_console(prompt, buf, buflen, hist));
 
     let result = unwrap!(result, Err(err) => {
-        panic!("Unexpected longjump while reading console: {err:?}");
+        log_and_panic!("Unexpected longjump while reading console: {err:?}");
     });
 
     // NOTE: Keep this function a "Plain Old Frame" without any

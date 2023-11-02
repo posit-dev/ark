@@ -13,6 +13,7 @@ use crossbeam::channel::bounded;
 use crossbeam::channel::Sender;
 use harp::exec::r_sandbox;
 use harp::test::R_TASK_BYPASS;
+use stdext::log_and_panic;
 use stdext::unwrap;
 
 use crate::interface::RMain;
@@ -73,7 +74,7 @@ where
         let closure = move || {
             let res = r_sandbox(f);
             let res = unwrap!(res, Err(err) => {
-                panic!("While running task: {err:?}");
+                log_and_panic!("While running task: {err:?}");
             });
             *result.lock().unwrap() = Some(res);
         };
@@ -138,7 +139,7 @@ where
 
     let closure = move || {
         unwrap!(r_sandbox(f), Err(err) => {
-            panic!("While running async task: {err:?}");
+            log_and_panic!("While running async task: {err:?}");
         });
     };
 
