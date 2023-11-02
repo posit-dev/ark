@@ -27,7 +27,6 @@ macro_rules! log_error {
 macro_rules! log_and_panic {
     ($arg:expr) => {
         log::error!($arg);
-        log::error!("Backtrace:\n{}", std::backtrace::Backtrace::capture());
         log::logger().flush();
         std::panic!($arg);
     };

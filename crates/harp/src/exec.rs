@@ -417,6 +417,7 @@ where
                 "Unexpected longjump.\nLikely caused by: {}",
                 geterrmessage()
             )),
+            backtrace: std::backtrace::Backtrace::capture(),
         })
     }
 }
@@ -664,7 +665,7 @@ mod tests {
                 unreachable!()
             });
 
-            assert_match!(out, Err(Error::TopLevelExecError { message }) => {
+            assert_match!(out, Err(Error::TopLevelExecError { message, backtrace: _ }) => {
                 assert!(message.contains("Unexpected longjump"));
                 assert!(message.contains("my message"));
             });
