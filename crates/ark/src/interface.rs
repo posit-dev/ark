@@ -846,13 +846,14 @@ impl RMain {
         // request is being handled, it currently breaks the Console. We should
         // remove `wait_on_empty_iopub()` once this is fixed:
         // https://github.com/posit-dev/positron/issues/1700
+        // https://github.com/posit-dev/amalthea/pull/131
         self.wait_for_empty_iopub();
         // TODO: Remove this too. Unfortunately even if we wait for the IOPub
         // queue to clear, that doesn't guarantee the frontend has processed
         // all of the messages in the queue, only that they have been send over.
         // So the input request (sent over the stdin socket) can STILL arrive
         // before all of the IOPub messages have been processed by the frontend.
-        std::thread::sleep(std::time::Duration::from_millis(200));
+        std::thread::sleep(std::time::Duration::from_millis(50));
 
         unwrap!(
             self.input_request_tx
