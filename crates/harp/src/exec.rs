@@ -223,22 +223,28 @@ pub fn geterrmessage() -> String {
 /// )
 /// ```
 pub unsafe fn r_try_catch_finally<F, R, S, Finally>(
-    mut fun: F,
+    fun: F,
     classes: S,
-    mut finally: Finally,
+    finally: Finally,
 ) -> Result<R>
 where
-    F: FnMut() -> R,
-    Finally: FnMut(),
+    F: FnOnce() -> R,
+    Finally: FnOnce(),
     S: Into<CharacterVector>,
 {
     // C function that is passed as `body`. The actual closure is passed as
     // void* data, along with the pointer to the result variable.
-    extern "C" fn body_fn<R>(arg: *mut c_void) -> SEXP {
-        let data: &mut ClosureData<R> = unsafe { &mut *(arg as *mut ClosureData<R>) };
+    extern "C" fn body_fn<F, R>(arg: *mut c_void) -> SEXP
+    where
+        F: FnOnce() -> R,
+    {
+        let data: &mut ClosureData<F, R> = unsafe { &mut *(arg as *mut ClosureData<F, R>) };
+
+        // Move closure here so it can be called. Required since that's an `FnOnce`.
+        let closure = take(&mut data.closure).unwrap();
 
         // Move result to its stack space
-        *(data.res) = Some((data.closure)());
+        *(data.res) = Some(closure());
 
         // Return dummy SEXP value expected by `R_tryCatch()`
         unsafe { R_NilValue }
@@ -249,7 +255,7 @@ where
 
     let mut body_data = ClosureData {
         res: &mut res,
-        closure: &mut fun,
+        closure: Some(fun),
     };
 
     // handler just returns the condition and sets success to false
@@ -274,26 +280,30 @@ where
 
     // C function that is passed as `finally`
     // the actual closure is passed as a void* through arg
-    extern "C" fn finally_fn(arg: *mut c_void) {
-        // extract the "closure" from the void*
-        let closure: &mut &mut dyn FnMut() = unsafe { mem::transmute(arg) };
+    extern "C" fn finally_fn<Finally>(arg: *mut c_void)
+    where
+        Finally: FnOnce(),
+    {
+        // Extract the "closure" from the void* and move it here
+        let closure: &mut Option<Finally> = unsafe { mem::transmute(arg) };
+        let closure = take(closure).unwrap();
 
         closure();
     }
 
     // The actual finally closure is passed as a void*
-    let mut finally_data: &mut dyn FnMut() = &mut finally;
+    let mut finally_data: Option<Finally> = Some(finally);
     let finally_data = &mut finally_data;
 
     let classes = classes.into();
 
     let result = R_tryCatch(
-        Some(body_fn::<R>),
+        Some(body_fn::<F, R>),
         &mut body_data as *mut _ as *mut c_void,
         *classes,
         Some(handler_fn),
         success_ptr as *mut c_void,
-        Some(finally_fn),
+        Some(finally_fn::<Finally>),
         finally_data as *mut _ as *mut c_void,
     );
 
@@ -322,12 +332,7 @@ where
     }
 }
 
-struct ClosureData<'a, R> {
-    res: &'a mut Option<R>,
-    closure: &'a mut dyn FnMut() -> R,
-}
-
-struct ClosureData2<'a, F, T>
+struct ClosureData<'a, F, T>
 where
     F: FnOnce() -> T + 'a,
 {
@@ -380,7 +385,7 @@ where
     // mutable borrow (void*), which prevents it from being moved. To work
     // around this, we wrap it in an `Option` that allows us to move it
     // with `take()`.
-    let mut c_data = ClosureData2 {
+    let mut c_data = ClosureData {
         res: &mut res,
         closure: Some(fun),
     };
@@ -393,7 +398,7 @@ where
         F: FnOnce() -> T,
         F: 'env,
     {
-        let data: &mut ClosureData2<F, T> = unsafe { &mut *(arg as *mut ClosureData2<F, T>) };
+        let data: &mut ClosureData<F, T> = unsafe { &mut *(arg as *mut ClosureData<F, T>) };
 
         // Move closure here so it can be called. Required since that's an `FnOnce`.
         let closure = take(&mut data.closure).unwrap();
