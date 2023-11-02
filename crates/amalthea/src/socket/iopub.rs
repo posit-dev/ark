@@ -140,9 +140,7 @@ impl IOPub {
                 recv(flush_interval) -> message => {
                     match message {
                         Ok(_) => self.flush_stream(),
-                        Err(error) => {
-                            warn!("Failed to receive flush interval message: {error:?}");
-                        }
+                        Err(_) => unreachable!()
                     }
                 }
             }
