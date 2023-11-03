@@ -15,3 +15,15 @@ options("viewer" = function(url, ...) {
         utils::browseURL(url, ...)
     }
 })
+
+.ps.view_html_widget <- function(x, ...) {
+    print(paste0("HTML WIDGET: ", class(x)))
+}
+
+.ps.viewer.addOverrides <- function() {
+    .ps.s3.addS3Override("print.htmlwidget", .ps.view_html_widget)
+}
+
+.ps.viewer.removeOverrides <- function() {
+    .ps.s3.removeS3Override("print.htmlwidget")
+}
