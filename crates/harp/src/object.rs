@@ -192,6 +192,10 @@ impl RObject {
     pub fn length(&self) -> isize {
         r_length(self.sexp)
     }
+
+    pub fn kind(&self) -> u32 {
+        r_typeof(self.sexp)
+    }
 }
 
 impl Clone for RObject {
