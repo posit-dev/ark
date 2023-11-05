@@ -9,8 +9,10 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
 
+use crossbeam::channel::after;
 use crossbeam::channel::bounded;
 use crossbeam::channel::Sender;
+use crossbeam::select;
 use harp::exec::r_sandbox;
 use harp::test::R_TASK_BYPASS;
 use stdext::log_and_panic;
@@ -93,8 +95,18 @@ where
         };
         get_tasks_tx().send(task).unwrap();
 
-        // Block until task was completed
-        let status = status_rx.recv().unwrap();
+        let timeout = std::time::Duration::from_secs(5);
+
+        // Block until task was completed or timed out
+        let status = select! {
+            recv(status_rx) -> status => status.unwrap(),
+            recv(after(timeout)) -> _ => {
+                let trace = std::backtrace::Backtrace::capture();
+                log_and_panic!("Timeout while running task.\n\
+                                Backtrace of calling thread:\n\n\
+                                {trace}");
+            },
+        };
 
         // If the task failed send a backtrace of the current thread to the
         // main thread
