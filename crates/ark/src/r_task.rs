@@ -16,7 +16,6 @@ use crossbeam::select;
 use harp::exec::r_sandbox;
 use harp::test::R_TASK_BYPASS;
 use stdext::log_and_panic;
-use stdext::unwrap;
 
 use crate::interface::RMain;
 
@@ -156,13 +155,7 @@ where
 
     log::info!("Thread '{thread_name}' ({thread_id:?}) is requesting an async task.");
 
-    let closure = move || {
-        unwrap!(r_sandbox(f), Err(err) => {
-            log_and_panic!("While running async task: {err:?}");
-        });
-    };
-
-    let closure: Box<dyn FnOnce() + Send + 'static> = Box::new(closure);
+    let closure: Box<dyn FnOnce() + Send + 'static> = Box::new(f);
 
     // Send the async task to the R thread
     let task = RTaskMain {
