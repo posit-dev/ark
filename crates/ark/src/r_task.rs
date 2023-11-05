@@ -72,11 +72,7 @@ where
     {
         let result = Arc::clone(&result);
         let closure = move || {
-            let res = r_sandbox(f);
-            let res = unwrap!(res, Err(err) => {
-                log_and_panic!("While running task: {err:?}");
-            });
-            *result.lock().unwrap() = Some(res);
+            *result.lock().unwrap() = Some(f());
         };
 
         // Move `f` to heap and erase its lifetime so we can send it to
@@ -88,7 +84,7 @@ where
         let closure: Box<dyn FnOnce() + Send + 'static> = unsafe { std::mem::transmute(closure) };
 
         // Channel to communicate completion status of the task/closure
-        let (status_tx, status_rx) = bounded::<bool>(0);
+        let (status_tx, status_rx) = bounded::<RTaskStatus>(0);
 
         // Send the task to the R thread
         let task = RTaskMain {
@@ -98,7 +94,17 @@ where
         get_tasks_tx().send(task).unwrap();
 
         // Block until task was completed
-        status_rx.recv().unwrap();
+        let status = status_rx.recv().unwrap();
+
+        // If the task failed send a backtrace of the current thread to the
+        // main thread
+        if let RTaskStatus::Failure(trace_tx) = status {
+            trace_tx.send(std::backtrace::Backtrace::capture()).unwrap();
+
+            // Give some time to main thread to panic
+            std::thread::sleep(Duration::from_secs(5));
+            unreachable!();
+        }
     }
 
     // Log how long we were stuck waiting.
@@ -158,19 +164,47 @@ where
 
 pub struct RTaskMain {
     pub closure: Option<Box<dyn FnOnce() + Send + 'static>>,
-    pub status_tx: Option<crossbeam::channel::Sender<bool>>,
+    pub status_tx: Option<Sender<RTaskStatus>>,
+}
+
+pub enum RTaskStatus {
+    Success,
+    Failure(Sender<std::backtrace::Backtrace>),
 }
 
 impl RTaskMain {
     pub fn fulfill(&mut self) {
         // Move closure here and call it
-        self.closure.take().map(|closure| closure());
+        let closure = self.closure.take().unwrap();
+        let result = r_sandbox(closure);
+
+        // Retrieve notification channel of blocking task
+        let status_tx = match &self.status_tx {
+            Some(status_tx) => status_tx,
+            None => {
+                // If task is async return or panic immediately
+                if let Err(err) = result {
+                    log_and_panic!("While running task: {err:?}");
+                }
+                return;
+            },
+        };
+
+        // In case of failure, request backtrace from calling thread and panic
+        if let Err(err) = result {
+            let (trace_tx, trace_rx) = bounded::<std::backtrace::Backtrace>(1);
+            status_tx.send(RTaskStatus::Failure(trace_tx)).unwrap();
+            let trace = trace_rx.recv().unwrap();
+
+            log_and_panic!(
+                "While running task: {err:?}\n\
+                 Backtrace of calling thread:\n\n\
+                 {trace}"
+            );
+        }
 
         // Unblock caller if it was a blocking call
-        match &self.status_tx {
-            Some(status_tx) => status_tx.send(true).unwrap(),
-            None => return,
-        }
+        status_tx.send(RTaskStatus::Success).unwrap()
     }
 }
 
