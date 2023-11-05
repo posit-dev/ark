@@ -369,9 +369,20 @@ where
 ///
 /// Top-level contexts are insulated from condition handlers (both calling
 /// and exiting) on the R stack. This removes one source of side effects
-/// and long jumps. If a longjump does occur for any reason (including but
-/// not limited to R errors), the caller is notified, in this case by an
-/// `Err` return value.
+/// and long jumps.
+///
+/// If a longjump does occur for any reason (including but not limited to R
+/// errors), the caller is notified, in this case by an `Err` return value
+/// of kind `TopLevelExecError`. The error message contains the contents of
+/// the C-level error buffer. It might or might not be related to the cause
+/// of the longjump. The error also carries a Rust backtrace.
+///
+/// Note that if an unhandled R-level error does occur during a top-level
+/// context, the error message is normally printed in the R console, even
+/// if the calling code recovers from the failure. Since we turn off normal
+/// error printing via the `show.error.messages` global option though, that
+/// isn't normally the case in Ark. That said, if errors are expected, it's
+/// better to catch them with `r_try_catch()`.
 pub fn r_top_level_exec<'env, F, T>(fun: F) -> Result<T>
 where
     F: FnOnce() -> T,
