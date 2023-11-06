@@ -223,6 +223,10 @@ impl RObject {
         unsafe { RObject::view(VECTOR_ELT(self.sexp, idx)) }
     }
 
+    pub fn logical_elt(&self, idx: isize) -> bool {
+        unsafe { LOGICAL_ELT(self.sexp, idx) != 0 }
+    }
+
     pub fn names(&self) -> Option<Vec<String>> {
         let names = unsafe { Rf_getAttrib(self.sexp, R_NamesSymbol) };
         let names = RObject::view(names);

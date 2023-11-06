@@ -51,6 +51,22 @@ impl TryFrom<RObject> for Value {
                 },
             },
 
+            LGLSXP => match obj.length() {
+                0 => Ok(Value::Null),
+                1 => {
+                    let value = unsafe { obj.to::<bool>()? };
+                    Ok(Value::Bool(value))
+                },
+                _ => {
+                    let mut arr = Vec::<Value>::with_capacity(obj.length().try_into().unwrap());
+                    let n = obj.length();
+                    for i in 0..n {
+                        arr.push(Value::Bool(obj.logical_elt(i)))
+                    }
+                    Ok(serde_json::Value::Array(arr))
+                },
+            },
+
             CHARSXP => match obj.length() {
                 0 => Ok(Value::Null),
                 1 => {
