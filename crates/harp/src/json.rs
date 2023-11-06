@@ -5,10 +5,8 @@
 //
 //
 
-use libR_sys::CHARSXP;
-use libR_sys::INTSXP;
-use libR_sys::NILSXP;
-use libR_sys::STRSXP;
+use libR_sys::*;
+use serde_json::json;
 use serde_json::Value;
 
 use crate::object::RObject;
@@ -16,30 +14,67 @@ use crate::object::RObject;
 impl TryFrom<RObject> for Value {
     type Error = crate::error::Error;
     fn try_from(obj: RObject) -> Result<Self, Self::Error> {
-        // return nil
         match obj.kind() {
-            NILSXP => return Ok(Value::Null),
+            NILSXP => Ok(Value::Null),
 
-            INTSXP => {
-                let value = unsafe { obj.to::<i32>()? };
-                return Ok(Value::Number(value.into()));
+            INTSXP => match obj.length() {
+                0 => Ok(Value::Null),
+                1 => {
+                    let value = unsafe { obj.to::<i32>()? };
+                    Ok(Value::Number(value.into()))
+                },
+                _ => {
+                    let mut arr = Vec::<Value>::with_capacity(obj.length().try_into().unwrap());
+                    let n = obj.length();
+                    for i in 0..n {
+                        arr.push(Value::Number(obj.integer_elt(i).into()));
+                    }
+                    Ok(serde_json::Value::Array(arr))
+                },
+            },
+
+            REALSXP => {
+                let value = unsafe { obj.to::<f64>()? };
+                Ok(json!(value))
             },
 
             CHARSXP => match obj.length() {
-                0 => return Ok(Value::Null),
+                0 => Ok(Value::Null),
                 1 => {
                     let value = unsafe { obj.to::<String>()? };
-                    return Ok(Value::String(value));
+                    Ok(Value::String(value))
                 },
-                _ => {},
+                _ => Ok(Value::Null),
             },
 
-            STRSXP => {
-                let value = unsafe { obj.to::<String>()? };
-                return Ok(Value::String(value));
+            SYMSXP => {
+                let val = Option::<String>::try_from(obj)?;
+                match val {
+                    Some(value) => return Ok(Value::String(value)),
+                    None => Ok(Value::Null),
+                }
             },
-            _ => {},
+
+            STRSXP => match obj.length() {
+                0 => Ok(Value::Null),
+                1 => {
+                    let str = unsafe { obj.to::<String>()? };
+                    Ok(Value::String(str))
+                },
+                _ => {
+                    let mut arr = Vec::<Value>::with_capacity(obj.length().try_into().unwrap());
+                    let n = obj.length();
+                    for i in 0..n {
+                        arr.push(match obj.string_elt(i) {
+                            Some(str) => Value::String(str),
+                            None => Value::Null,
+                        });
+                    }
+                    Ok(serde_json::Value::Array(arr))
+                },
+            },
+
+            _ => Ok(serde_json::Value::Null),
         }
-        Ok(Value::Null)
     }
 }

@@ -196,6 +196,24 @@ impl RObject {
     pub fn kind(&self) -> u32 {
         r_typeof(self.sexp)
     }
+
+    pub fn string_elt(&self, idx: isize) -> Option<String> {
+        unsafe {
+            let charsexp = STRING_ELT(self.sexp, idx);
+            if charsexp == R_NaString {
+                None
+            } else {
+                match RObject::view(charsexp).try_into() {
+                    Ok(x) => Some(x),
+                    Err(_) => None,
+                }
+            }
+        }
+    }
+
+    pub fn integer_elt(&self, idx: isize) -> i32 {
+        unsafe { INTEGER_ELT(self.sexp, idx) }
+    }
 }
 
 impl Clone for RObject {
