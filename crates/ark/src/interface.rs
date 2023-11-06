@@ -903,6 +903,14 @@ impl RMain {
             return;
         }
 
+        // If active execution request is silent don't broadcast
+        // any output
+        if let Some(ref req) = self.active_request {
+            if req.request.silent {
+                return;
+            }
+        }
+
         let buffer = match stream {
             Stream::Stdout => &mut self.stdout,
             Stream::Stderr => &mut self.stderr,
