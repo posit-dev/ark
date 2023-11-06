@@ -182,8 +182,14 @@ mod tests {
     #[allow(non_snake_case)]
     fn test_json_vectors() {
         r_test! {
-            test_json_conversion("c(1L, 2L, 3L)", "[1,2,3]");
-            test_json_conversion("c('one', 'two')", "[\"one\", \"two\"]");
+            test_json_conversion(
+                "c(1L, 2L, 3L)",
+                "[1,2,3]"
+            );
+            test_json_conversion(
+                "c('one', 'two')",
+                "[\"one\", \"two\"]"
+            );
         }
     }
 
@@ -191,8 +197,14 @@ mod tests {
     #[allow(non_snake_case)]
     fn test_json_lists_unnamed() {
         r_test! {
-            test_json_conversion("list(1L, 2L, 3L)", "[1,2,3]");
-            test_json_conversion("list(TRUE, FALSE, TRUE)", "[true, false, true]");
+            test_json_conversion(
+                "list(1L, 2L, 3L)",
+                "[1,2,3]"
+            );
+            test_json_conversion(
+                "list(TRUE, FALSE, TRUE)",
+                "[true, false, true]"
+            );
         }
     }
 
@@ -200,8 +212,25 @@ mod tests {
     #[allow(non_snake_case)]
     fn test_json_lists_named() {
         r_test! {
-            test_json_conversion("list(a = 1L, b = 2L)", "{\"a\": 1, \"b\": 2}");
-            test_json_conversion("list(a = TRUE, b = 'cats')", "{\"a\": true, \"b\": \"cats\"}");
+            test_json_conversion(
+                "list(a = 1L, b = 2L)",
+                "{\"a\": 1, \"b\": 2}"
+            );
+            test_json_conversion(
+                "list(a = TRUE, b = 'cats')",
+                "{\"a\": true, \"b\": \"cats\"}"
+            );
+        }
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test_json_lists_nested() {
+        r_test! {
+            test_json_conversion(
+                "list(a = 1L, b = 2L, c = list(3L, 4L, 5L))",
+                "{\"a\": 1, \"b\": 2, \"c\": [3,4,5]}"
+            );
         }
     }
 }
