@@ -135,3 +135,44 @@ impl TryFrom<RObject> for Value {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+    use crate::exec::RFunction;
+    use crate::exec::RFunctionExt;
+    use crate::r_test;
+
+    fn r_to_json(expr: &str) -> Value {
+        // Parse the string
+        let parsed = unsafe {
+            RFunction::new("base", "parse")
+                .param("text", expr)
+                .call()
+                .unwrap()
+        };
+        // Evaluate it
+        let evaluated = unsafe {
+            RFunction::new("base", "eval")
+                .param("expr", parsed)
+                .call()
+                .unwrap()
+        };
+        Value::try_from(evaluated).unwrap()
+    }
+
+    fn test_json_conversion(r_expr: &str, json_expr: &str) {
+        let r = r_to_json(r_expr);
+        let json: Value = serde_json::from_str(json_expr).unwrap();
+        assert_eq!(r, json)
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test_json_vector() {
+        r_test! {
+            test_json_conversion("c(1L, 2L, 3L)", "[1,2,3]");
+        }
+    }
+}
