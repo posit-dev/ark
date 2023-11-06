@@ -49,7 +49,4 @@ pub fn debug_request_command(req: DebugRequest) -> String {
 pub enum KernelRequest {
     /// Establish a channel to the front end to send events
     EstablishEventChannel(Sender<PositronEvent>),
-
-    /// Deliver an event to the front end
-    DeliverEvent(PositronEvent),
 }
