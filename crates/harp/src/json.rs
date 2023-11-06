@@ -5,6 +5,8 @@
 //
 //
 
+use std::cmp::min;
+
 use libR_sys::*;
 use serde_json::json;
 use serde_json::Value;
@@ -71,6 +73,34 @@ impl TryFrom<RObject> for Value {
                         });
                     }
                     Ok(serde_json::Value::Array(arr))
+                },
+            },
+
+            VECSXP => match obj.length() {
+                0 => Ok(Value::Null),
+                _ => {
+                    let names = obj.names();
+                    match names {
+                        Some(names) => {
+                            let mut map = serde_json::Map::new();
+                            let n = min(obj.length(), names.len().try_into().unwrap());
+                            for i in 0..n {
+                                map.insert(
+                                    names[i as usize].clone(),
+                                    Value::try_from(obj.vector_elt(i))?,
+                                );
+                            }
+                            Ok(serde_json::Value::Object(map))
+                        },
+                        None => {
+                            let n = obj.length();
+                            let mut arr = Vec::<Value>::with_capacity(n.try_into().unwrap());
+                            for i in 0..n {
+                                arr.push(Value::try_from(obj.vector_elt(i))?)
+                            }
+                            Ok(serde_json::Value::Array(arr))
+                        },
+                    }
                 },
             },
 

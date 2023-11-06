@@ -214,6 +214,19 @@ impl RObject {
     pub fn integer_elt(&self, idx: isize) -> i32 {
         unsafe { INTEGER_ELT(self.sexp, idx) }
     }
+
+    pub fn vector_elt(&self, idx: isize) -> RObject {
+        unsafe { RObject::view(VECTOR_ELT(self.sexp, idx)) }
+    }
+
+    pub fn names(&self) -> Option<Vec<String>> {
+        let names = unsafe { Rf_getAttrib(self.sexp, R_NamesSymbol) };
+        let names = RObject::view(names);
+        match names.kind() {
+            STRSXP => Vec::<String>::try_from(names).ok(),
+            _ => None,
+        }
+    }
 }
 
 impl Clone for RObject {
