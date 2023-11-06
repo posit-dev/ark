@@ -215,6 +215,10 @@ impl RObject {
         unsafe { INTEGER_ELT(self.sexp, idx) }
     }
 
+    pub fn real_elt(&self, idx: isize) -> f64 {
+        unsafe { REAL_ELT(self.sexp, idx) }
+    }
+
     pub fn vector_elt(&self, idx: isize) -> RObject {
         unsafe { RObject::view(VECTOR_ELT(self.sexp, idx)) }
     }

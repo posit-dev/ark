@@ -35,9 +35,20 @@ impl TryFrom<RObject> for Value {
                 },
             },
 
-            REALSXP => {
-                let value = unsafe { obj.to::<f64>()? };
-                Ok(json!(value))
+            REALSXP => match obj.length() {
+                0 => Ok(Value::Null),
+                1 => {
+                    let value = unsafe { obj.to::<f64>()? };
+                    Ok(json!(value))
+                },
+                _ => {
+                    let mut arr = Vec::<Value>::with_capacity(obj.length().try_into().unwrap());
+                    let n = obj.length();
+                    for i in 0..n {
+                        arr.push(json!(obj.real_elt(i)))
+                    }
+                    Ok(serde_json::Value::Array(arr))
+                },
             },
 
             CHARSXP => match obj.length() {
