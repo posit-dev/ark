@@ -15,6 +15,7 @@ pub mod frontend;
 pub mod help;
 pub mod help_proxy;
 pub mod interface;
+pub mod json;
 pub mod kernel;
 pub mod logger;
 pub mod lsp;

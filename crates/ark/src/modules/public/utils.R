@@ -61,3 +61,8 @@
 .ps.as_label <- function(expr) {
     paste(deparse(expr, backtick = TRUE), collapse = "")
 }
+
+# Converts an R object to JSON (returned as a string)
+.ps.to_json <- function(object) {
+    .ps.Call("ps_to_json", object)
+}
