@@ -170,9 +170,38 @@ mod tests {
 
     #[test]
     #[allow(non_snake_case)]
-    fn test_json_vector() {
+    fn test_json_scalars() {
+        r_test! {
+            test_json_conversion("TRUE", "true");
+            test_json_conversion("1L", "1");
+            test_json_conversion("'applesauce'", "\"applesauce\"");
+        }
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test_json_vectors() {
         r_test! {
             test_json_conversion("c(1L, 2L, 3L)", "[1,2,3]");
+            test_json_conversion("c('one', 'two')", "[\"one\", \"two\"]");
+        }
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test_json_lists_unnamed() {
+        r_test! {
+            test_json_conversion("list(1L, 2L, 3L)", "[1,2,3]");
+            test_json_conversion("list(TRUE, FALSE, TRUE)", "[true, false, true]");
+        }
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test_json_lists_named() {
+        r_test! {
+            test_json_conversion("list(a = 1L, b = 2L)", "{\"a\": 1, \"b\": 2}");
+            test_json_conversion("list(a = TRUE, b = 'cats')", "{\"a\": true, \"b\": \"cats\"}");
         }
     }
 }
