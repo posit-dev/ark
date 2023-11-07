@@ -141,13 +141,19 @@ impl StreamCapture {
         let (read, write) = match nix::unistd::pipe() {
             Ok((read, write)) => (read, write),
             Err(e) => {
-                return Err(Error::SysError(format!("create socket for {}", fd), e));
+                return Err(Error::SysError(
+                    format!("create socket for {}", fd),
+                    format!("{e}"),
+                ));
             },
         };
 
         // Redirect the stream into the write end of the pipe
         if let Err(e) = nix::unistd::dup2(write, fd) {
-            return Err(Error::SysError(format!("redirect stream for {}", fd), e));
+            return Err(Error::SysError(
+                format!("redirect stream for {}", fd),
+                format!("{e}"),
+            ));
         }
 
         // Make reads non-blocking on the read end of the pipe

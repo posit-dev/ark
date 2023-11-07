@@ -20,5 +20,6 @@ pub mod kernel_spec;
 pub mod language;
 pub mod session;
 pub mod socket;
+#[cfg(not(windows))]
 pub mod stream_capture;
 pub mod wire;

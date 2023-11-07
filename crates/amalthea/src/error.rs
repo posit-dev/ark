@@ -38,7 +38,7 @@ pub enum Error {
     ReceiveError(String),
     ZmqError(String, zmq::Error),
     CannotLockSocket(String, String),
-    SysError(String, nix::Error),
+    SysError(String, String),
     UnknownCommName(String),
     UnknownCommId(String),
     InvalidCommMessage(String, String, String),
@@ -169,8 +169,8 @@ impl fmt::Display for Error {
             Error::CannotLockSocket(name, op) => {
                 write!(f, "Cannot lock ZeroMQ socket '{}' for {}", name, op)
             },
-            Error::SysError(context, err) => {
-                write!(f, "{} failed: system/libc error '{}'", context, err)
+            Error::SysError(context, message) => {
+                write!(f, "{} failed: system/libc error '{}'", context, message)
             },
             Error::UnknownCommName(target) => {
                 write!(
