@@ -324,7 +324,11 @@ impl ShellHandler for Shell {
         // Send the input reply to R in the form of an ordinary execution request.
         let req = ExecuteRequest {
             code: convert_line_endings(&msg.value, LineEnding::Posix),
-            silent: true,
+            // Ideally we might want to propagate the current setting for
+            // silent (in `RMain`'s current active request) but we don't
+            // have access to that state here and if we're interacting with
+            // the user this is likely not a silent request.
+            silent: false,
             store_history: false,
             user_expressions: json!({}),
             allow_stdin: false,
