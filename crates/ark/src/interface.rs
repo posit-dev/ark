@@ -79,7 +79,6 @@ use libR_shim::Rf_onintr;
 use libR_shim::FILE;
 use libR_shim::SEXP;
 use log::*;
-use nix::sys::signal::*;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde_json::json;
@@ -521,17 +520,23 @@ impl RMain {
         //
         // The behavior of 'sigprocmask()' is unspecified after all, so we're really
         // just relying on what the implementation happens to do.
-        let mut sigset = SigSet::empty();
-        sigset.add(SIGINT);
-        sigprocmask(SigmaskHow::SIG_BLOCK, Some(&sigset), None).unwrap();
+        #[cfg(not(windows))]
+        {
+            use nix::sys::signal::*;
 
-        // Unblock signals on this thread.
-        pthread_sigmask(SigmaskHow::SIG_UNBLOCK, Some(&sigset), None).unwrap();
+            let mut sigset = SigSet::empty();
+            sigset.add(SIGINT);
+            sigprocmask(SigmaskHow::SIG_BLOCK, Some(&sigset), None).unwrap();
 
-        // Install an interrupt handler.
-        unsafe {
-            signal(SIGINT, SigHandler::Handler(handle_interrupt)).unwrap();
+            // Unblock signals on this thread.
+            pthread_sigmask(SigmaskHow::SIG_UNBLOCK, Some(&sigset), None).unwrap();
+
+            // Install an interrupt handler.
+            unsafe {
+                signal(SIGINT, SigHandler::Handler(handle_interrupt)).unwrap();
+            }
         }
+        // TODO: Windows.
     }
 
     fn init_execute_request(&mut self, req: &ExecuteRequest) -> (ConsoleInput, u32) {
