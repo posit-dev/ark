@@ -22,9 +22,10 @@
 // and this doesn't seem worth it.
 pub fn register_trap_handlers() {
     unsafe {
-        libc::signal(libc::SIGBUS, backtrace_handler as libc::sighandler_t);
         libc::signal(libc::SIGSEGV, backtrace_handler as libc::sighandler_t);
         libc::signal(libc::SIGILL, backtrace_handler as libc::sighandler_t);
+        #[cfg(not(windows))]
+        libc::signal(libc::SIGBUS, backtrace_handler as libc::sighandler_t);
     }
 }
 
