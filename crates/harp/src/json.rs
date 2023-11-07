@@ -50,7 +50,7 @@ impl TryFrom<RObject> for Value {
                     let mut arr = Vec::<Value>::with_capacity(obj.length().try_into().unwrap());
                     let n = obj.length();
                     for i in 0..n {
-                        arr.push(Value::Number(obj.integer_elt(i).into()));
+                        arr.push(Value::Number(obj.integer_elt(i)?.into()));
                     }
                     Ok(serde_json::Value::Array(arr))
                 },
@@ -74,7 +74,7 @@ impl TryFrom<RObject> for Value {
                     let mut arr = Vec::<Value>::with_capacity(obj.length().try_into().unwrap());
                     let n = obj.length();
                     for i in 0..n {
-                        arr.push(json!(obj.real_elt(i)))
+                        arr.push(json!(obj.real_elt(i)?))
                     }
                     Ok(serde_json::Value::Array(arr))
                 },
@@ -96,7 +96,7 @@ impl TryFrom<RObject> for Value {
                     let mut arr = Vec::<Value>::with_capacity(obj.length().try_into().unwrap());
                     let n = obj.length();
                     for i in 0..n {
-                        arr.push(Value::Bool(obj.logical_elt(i)))
+                        arr.push(Value::Bool(obj.logical_elt(i)?))
                     }
                     Ok(serde_json::Value::Array(arr))
                 },
@@ -185,7 +185,7 @@ impl TryFrom<RObject> for Value {
                             for i in 0..n {
                                 map.insert(
                                     names[i as usize].clone(),
-                                    Value::try_from(obj.vector_elt(i))?,
+                                    Value::try_from(obj.vector_elt(i)?)?,
                                 );
                             }
                             Ok(serde_json::Value::Object(map))
@@ -201,7 +201,7 @@ impl TryFrom<RObject> for Value {
                             // list, JSON arrays can have elements of different
                             // types.
                             for i in 0..n {
-                                arr.push(Value::try_from(obj.vector_elt(i))?)
+                                arr.push(Value::try_from(obj.vector_elt(i)?)?)
                             }
                             Ok(serde_json::Value::Array(arr))
                         },

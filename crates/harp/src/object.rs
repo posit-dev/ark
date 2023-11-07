@@ -19,6 +19,7 @@ use crate::error::Error;
 use crate::exec::RFunction;
 use crate::exec::RFunctionExt;
 use crate::protect::RProtect;
+use crate::utils::r_assert_capacity;
 use crate::utils::r_assert_length;
 use crate::utils::r_assert_type;
 use crate::utils::r_chr_get_owned_utf8;
@@ -197,6 +198,12 @@ impl RObject {
         r_typeof(self.sexp)
     }
 
+    /// String accessor; get a string value from a vector of strings.
+    ///
+    /// - `idx` - The index of the string to return.
+    ///
+    /// Returns the string at the given index, or None if the index is out of
+    /// bounds or the value is NA.
     pub fn string_elt(&self, idx: isize) -> Option<String> {
         unsafe {
             let charsexp = STRING_ELT(self.sexp, idx);
@@ -211,22 +218,61 @@ impl RObject {
         }
     }
 
-    pub fn integer_elt(&self, idx: isize) -> i32 {
-        unsafe { INTEGER_ELT(self.sexp, idx) }
+    /// Integer accessor; get an integer value from a vector of integers.
+    ///
+    /// - `idx` - The index of the integer to return.
+    ///
+    /// Returns the intger at the given index.
+    pub fn integer_elt(&self, idx: isize) -> crate::error::Result<i32> {
+        unsafe {
+            r_assert_type(self.sexp, &[INTSXP])?;
+            r_assert_capacity(self.sexp, idx as usize)?;
+            Ok(INTEGER_ELT(self.sexp, idx))
+        }
     }
 
-    pub fn real_elt(&self, idx: isize) -> f64 {
-        unsafe { REAL_ELT(self.sexp, idx) }
+    /// Real-value accessor; get an real (floating point) value from a vector.
+    ///
+    /// - `idx` - The index of the value to return.
+    ///
+    /// Returns the real value at the given index.
+    pub fn real_elt(&self, idx: isize) -> crate::error::Result<f64> {
+        unsafe {
+            r_assert_type(self.sexp, &[REALSXP])?;
+            r_assert_capacity(self.sexp, idx as usize)?;
+            Ok(REAL_ELT(self.sexp, idx))
+        }
     }
 
-    pub fn vector_elt(&self, idx: isize) -> RObject {
-        unsafe { RObject::view(VECTOR_ELT(self.sexp, idx)) }
+    /// Logical-value accessor; get a logical (boolean) value from a vector.
+    ///
+    /// - `idx` - The index of the value to return.
+    ///
+    /// Returns the logical value at the given index.
+    pub fn logical_elt(&self, idx: isize) -> crate::error::Result<bool> {
+        unsafe {
+            r_assert_type(self.sexp, &[LGLSXP])?;
+            r_assert_capacity(self.sexp, idx as usize)?;
+            Ok(LOGICAL_ELT(self.sexp, idx) != 0)
+        }
     }
 
-    pub fn logical_elt(&self, idx: isize) -> bool {
-        unsafe { LOGICAL_ELT(self.sexp, idx) != 0 }
+    /// Vector (list) accessor; get a vector value from a list as another
+    /// RObject.
+    ///
+    /// - `idx` - The index of the value to return.
+    ///
+    /// Returns an RObject representing the value at the given index.
+    pub fn vector_elt(&self, idx: isize) -> crate::error::Result<RObject> {
+        unsafe {
+            r_assert_type(self.sexp, &[VECSXP])?;
+            r_assert_capacity(self.sexp, idx as usize)?;
+            Ok(RObject::view(VECTOR_ELT(self.sexp, idx)))
+        }
     }
 
+    /// Gets a vector containing names for the object's values (from the `names`
+    /// attribute). Returns `None` if the object's value(s) don't have names.
     pub fn names(&self) -> Option<Vec<String>> {
         let names = unsafe { Rf_getAttrib(self.sexp, R_NamesSymbol) };
         let names = RObject::view(names);
