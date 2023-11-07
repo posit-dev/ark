@@ -254,6 +254,13 @@ pub fn r_vec_type(value: SEXP) -> String {
     }
 }
 
+pub fn r_vec_is_single_dimension_with_single_value(value: SEXP) -> bool {
+    unsafe {
+        let dim = RObject::new(Rf_getAttrib(value, R_DimSymbol));
+        r_is_null(*dim) && Rf_xlength(value) == 1
+    }
+}
+
 pub fn r_vec_shape(value: SEXP) -> String {
     unsafe {
         let dim = RObject::new(Rf_getAttrib(value, R_DimSymbol));
