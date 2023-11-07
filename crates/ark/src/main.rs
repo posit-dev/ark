@@ -27,7 +27,6 @@ use bus::Bus;
 use crossbeam::channel::bounded;
 use crossbeam::channel::unbounded;
 use log::*;
-use nix::sys::signal::*;
 use notify::Watcher;
 use stdext::unwrap;
 
@@ -240,9 +239,14 @@ fn main() {
     // Any threads that would like to handle signals should explicitly
     // unblock the signals they want to handle. This allows us to ensure
     // that interrupts are consistently handled on the same thread.
-    let mut sigset = SigSet::empty();
-    sigset.add(SIGINT);
-    sigprocmask(SigmaskHow::SIG_BLOCK, Some(&sigset), None).unwrap();
+    // TODO: Windows
+    #[cfg(not(windows))]
+    {
+        use nix::sys::signal::*;
+        let mut sigset = SigSet::empty();
+        sigset.add(SIGINT);
+        sigprocmask(SigmaskHow::SIG_BLOCK, Some(&sigset), None).unwrap();
+    }
 
     // Get an iterator over all the command-line arguments
     let mut argv = std::env::args();
