@@ -107,7 +107,7 @@
 }
 
 # Recovers from changes made to the S3 method dispatch table during e.g. package load
-.ps.reattachS3Overrides <- function() {
+.ps.s3.reattachS3Overrides <- function() {
    # get a list of all of the methods that are currently overridden
    names <- ls(envir = .ps.S3Overrides)
    table <- .BaseNamespaceEnv[[".__S3MethodsTable__."]]

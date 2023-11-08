@@ -27,3 +27,14 @@ options("viewer" = function(url, ...) {
 .ps.viewer.removeOverrides <- function() {
     .ps.s3.removeS3Override("print.htmlwidget")
 }
+
+# When the htmlwidgets package is loaded, inject/overlay our print method.
+loadEvent <- packageEvent("htmlwidgets", "onLoad")
+setHook(loadEvent, function(...) {
+   .ps.viewer.addOverrides()
+}, action = "append")
+
+unloadEvent <- packageEvent("htmlwidgets", "onUnload")
+setHook(unloadEvent, function(...) {
+   .ps.viewer.removeOverrides()
+}, action = "append")
