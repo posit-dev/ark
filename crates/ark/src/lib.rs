@@ -14,6 +14,7 @@ pub mod errors;
 pub mod frontend;
 pub mod help;
 pub mod help_proxy;
+pub mod html_widget;
 pub mod interface;
 pub mod json;
 pub mod kernel;
