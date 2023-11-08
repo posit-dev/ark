@@ -12,7 +12,7 @@ use tower_lsp::lsp_types::MarkupContent;
 use tower_lsp::lsp_types::MarkupKind;
 use tree_sitter::Node;
 
-use crate::lsp::completions::CompletionContext;
+use crate::lsp::completions::types::CompletionContext;
 use crate::lsp::documents::Document;
 use crate::lsp::help::RHtmlHelp;
 
