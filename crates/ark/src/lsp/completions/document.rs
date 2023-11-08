@@ -19,7 +19,7 @@ use crate::lsp::document_context::DocumentContext;
 use crate::lsp::traits::cursor::TreeCursorExt;
 use crate::lsp::traits::point::PointExt;
 
-pub fn append_document_completions(
+pub(super) fn append_document_completions(
     context: &DocumentContext,
     completions: &mut Vec<CompletionItem>,
 ) -> Result<()> {

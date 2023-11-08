@@ -54,7 +54,7 @@ use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::point::PointExt;
 use crate::lsp::traits::tree::TreeExt;
 
-pub unsafe fn append_session_completions(
+pub(super) unsafe fn append_session_completions(
     context: &DocumentContext,
     completions: &mut Vec<CompletionItem>,
 ) -> Result<()> {

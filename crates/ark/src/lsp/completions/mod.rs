@@ -5,10 +5,13 @@
 //
 //
 
-pub mod activate;
-pub mod completion_item;
-pub mod document;
-pub mod resolve;
-pub mod session;
-pub mod types;
-pub mod workspace;
+mod completion_item;
+mod document;
+mod provide;
+mod resolve;
+mod session;
+mod types;
+mod workspace;
+
+pub use provide::provide_completions;
+pub use resolve::resolve_completion;

@@ -11,7 +11,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 #[derive(Serialize, Deserialize, Debug)]
-pub enum CompletionData {
+pub(super) enum CompletionData {
     DataVariable {
         name: String,
         owner: String,

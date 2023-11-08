@@ -19,7 +19,7 @@ use crate::lsp::document_context::DocumentContext;
 use crate::lsp::indexer;
 use crate::lsp::traits::string::StringExt;
 
-pub fn append_workspace_completions(
+pub(super) fn append_workspace_completions(
     backend: &Backend,
     context: &DocumentContext,
     completions: &mut Vec<CompletionItem>,

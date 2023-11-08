@@ -35,7 +35,7 @@ use crate::lsp::completions::types::CompletionData;
 use crate::lsp::completions::types::PromiseStrategy;
 use crate::lsp::document_context::DocumentContext;
 
-pub(crate) fn completion_item(
+pub(super) fn completion_item(
     label: impl AsRef<str>,
     data: CompletionData,
 ) -> Result<CompletionItem> {
@@ -46,7 +46,7 @@ pub(crate) fn completion_item(
     })
 }
 
-pub(crate) fn completion_item_from_file(entry: DirEntry) -> Result<CompletionItem> {
+pub(super) fn completion_item_from_file(entry: DirEntry) -> Result<CompletionItem> {
     let name = entry.file_name().to_string_lossy().to_string();
     let mut item = completion_item(name, CompletionData::File { path: entry.path() })?;
 
@@ -54,7 +54,7 @@ pub(crate) fn completion_item_from_file(entry: DirEntry) -> Result<CompletionIte
     Ok(item)
 }
 
-pub(crate) fn completion_item_from_directory(entry: DirEntry) -> Result<CompletionItem> {
+pub(super) fn completion_item_from_directory(entry: DirEntry) -> Result<CompletionItem> {
     let mut name = entry.file_name().to_string_lossy().to_string();
     name.push_str("/");
 
@@ -70,7 +70,7 @@ pub(crate) fn completion_item_from_directory(entry: DirEntry) -> Result<Completi
     Ok(item)
 }
 
-pub(crate) fn completion_item_from_direntry(entry: DirEntry) -> Result<CompletionItem> {
+pub(super) fn completion_item_from_direntry(entry: DirEntry) -> Result<CompletionItem> {
     let is_dir = entry
         .file_type()
         .map(|value| value.is_dir())
@@ -82,7 +82,7 @@ pub(crate) fn completion_item_from_direntry(entry: DirEntry) -> Result<Completio
     }
 }
 
-pub(crate) fn completion_item_from_assignment(
+pub(super) fn completion_item_from_assignment(
     node: &Node,
     context: &DocumentContext,
 ) -> Result<CompletionItem> {
@@ -122,7 +122,7 @@ pub(crate) fn completion_item_from_assignment(
     return Ok(item);
 }
 
-pub(crate) unsafe fn completion_item_from_package(
+pub(super) unsafe fn completion_item_from_package(
     package: &str,
     append_colons: bool,
 ) -> Result<CompletionItem> {
@@ -145,7 +145,7 @@ pub(crate) unsafe fn completion_item_from_package(
     return Ok(item);
 }
 
-pub(crate) fn completion_item_from_function<T: AsRef<str>>(
+pub(super) fn completion_item_from_function<T: AsRef<str>>(
     name: &str,
     package: Option<&str>,
     parameters: &[T],
@@ -179,13 +179,13 @@ pub(crate) fn completion_item_from_function<T: AsRef<str>>(
 }
 
 // TODO
-pub(crate) unsafe fn completion_item_from_dataset(name: &str) -> Result<CompletionItem> {
+pub(super) unsafe fn completion_item_from_dataset(name: &str) -> Result<CompletionItem> {
     let mut item = completion_item(name.to_string(), CompletionData::Unknown)?;
     item.kind = Some(CompletionItemKind::STRUCT);
     Ok(item)
 }
 
-pub(crate) unsafe fn completion_item_from_data_variable(
+pub(super) unsafe fn completion_item_from_data_variable(
     name: &str,
     owner: &str,
     enquote: bool,
@@ -205,7 +205,7 @@ pub(crate) unsafe fn completion_item_from_data_variable(
     Ok(item)
 }
 
-pub(crate) unsafe fn completion_item_from_object(
+pub(super) unsafe fn completion_item_from_object(
     name: &str,
     object: SEXP,
     envir: SEXP,
@@ -240,7 +240,7 @@ pub(crate) unsafe fn completion_item_from_object(
     Ok(item)
 }
 
-pub(crate) unsafe fn completion_item_from_promise(
+pub(super) unsafe fn completion_item_from_promise(
     name: &str,
     object: SEXP,
     envir: SEXP,
@@ -276,7 +276,7 @@ pub(crate) unsafe fn completion_item_from_promise(
     Ok(item)
 }
 
-pub(crate) fn completion_item_from_active_binding(name: &str) -> Result<CompletionItem> {
+pub(super) fn completion_item_from_active_binding(name: &str) -> Result<CompletionItem> {
     // We never want to force active bindings, so we return a fairly
     // generic completion item
     let mut item = completion_item(name, CompletionData::Object {
@@ -289,7 +289,7 @@ pub(crate) fn completion_item_from_active_binding(name: &str) -> Result<Completi
     Ok(item)
 }
 
-pub(crate) unsafe fn completion_item_from_namespace(
+pub(super) unsafe fn completion_item_from_namespace(
     name: &str,
     namespace: SEXP,
     package: &str,
@@ -317,7 +317,7 @@ pub(crate) unsafe fn completion_item_from_namespace(
     )
 }
 
-pub(crate) unsafe fn completion_item_from_lazydata(
+pub(super) unsafe fn completion_item_from_lazydata(
     name: &str,
     env: SEXP,
     package: &str,
@@ -336,7 +336,7 @@ pub(crate) unsafe fn completion_item_from_lazydata(
     }
 }
 
-pub(crate) unsafe fn completion_item_from_symbol(
+pub(super) unsafe fn completion_item_from_symbol(
     name: &str,
     envir: SEXP,
     package: Option<&str>,
@@ -374,7 +374,7 @@ pub(crate) unsafe fn completion_item_from_symbol(
 
 // This is used when providing completions for a parameter in a document
 // that is considered in-scope at the cursor position.
-pub(crate) fn completion_item_from_scope_parameter(
+pub(super) fn completion_item_from_scope_parameter(
     parameter: &str,
     _context: &DocumentContext,
 ) -> Result<CompletionItem> {
@@ -386,7 +386,7 @@ pub(crate) fn completion_item_from_scope_parameter(
     Ok(item)
 }
 
-pub(crate) unsafe fn completion_item_from_parameter(
+pub(super) unsafe fn completion_item_from_parameter(
     parameter: &str,
     callee: &str,
 ) -> Result<CompletionItem> {
