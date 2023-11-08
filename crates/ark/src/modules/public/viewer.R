@@ -17,7 +17,9 @@ options("viewer" = function(url, ...) {
 })
 
 .ps.view_html_widget <- function(x, ...) {
-    print(paste0("HTML WIDGET: ", class(x)))
+    .ps.Call("ps_html_widget",
+        class(x)[1],
+        htmltools::renderTags(x))
 }
 
 .ps.viewer.addOverrides <- function() {
