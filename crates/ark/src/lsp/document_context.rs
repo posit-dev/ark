@@ -23,14 +23,16 @@ pub struct DocumentContext<'a> {
 
 impl<'a> DocumentContext<'a> {
     pub fn new(document: &'a Document, position: &TextDocumentPositionParams) -> Self {
+        // convert to tree-sitter point
+        let point = position.position.as_point();
+
         // get reference to AST
         let ast = &document.ast;
 
-        // try to find node at completion position
-        let point = position.position.as_point();
-
-        // use the node to figure out the completion token
+        // find node at point
         let node = ast.node_at_point(point);
+
+        // convert document contents to a string once, to be reused elsewhere
         let source = document.contents.to_string();
 
         // build document context
