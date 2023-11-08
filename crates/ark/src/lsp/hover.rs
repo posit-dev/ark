@@ -12,8 +12,7 @@ use tower_lsp::lsp_types::MarkupContent;
 use tower_lsp::lsp_types::MarkupKind;
 use tree_sitter::Node;
 
-use crate::lsp::completions::types::CompletionContext;
-use crate::lsp::documents::Document;
+use crate::lsp::document_context::DocumentContext;
 use crate::lsp::help::RHtmlHelp;
 
 enum HoverContext {
@@ -21,7 +20,7 @@ enum HoverContext {
     QualifiedTopic { package: String, topic: String },
 }
 
-fn hover_context(node: Node, context: &CompletionContext) -> Result<Option<HoverContext>> {
+fn hover_context(node: Node, context: &DocumentContext) -> Result<Option<HoverContext>> {
     // if the parent node is a namespace call, use that node instead
     // TODO: What if the user hovers the cursor over 'dplyr' in e.g. 'dplyr::mutate'?
     let mut node = node;
@@ -72,10 +71,7 @@ fn hover_context(node: Node, context: &CompletionContext) -> Result<Option<Hover
 }
 
 /// SAFETY: Requires access to the R runtime.
-pub unsafe fn hover(
-    _document: &Document,
-    context: &CompletionContext,
-) -> Result<Option<MarkupContent>> {
+pub unsafe fn hover(context: &DocumentContext) -> Result<Option<MarkupContent>> {
     // get the node
     let node = &context.node;
 

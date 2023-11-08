@@ -31,9 +31,9 @@ use tower_lsp::lsp_types::MarkupContent;
 use tower_lsp::lsp_types::MarkupKind;
 use tree_sitter::Node;
 
-use crate::lsp::completions::types::CompletionContext;
 use crate::lsp::completions::types::CompletionData;
 use crate::lsp::completions::types::PromiseStrategy;
+use crate::lsp::document_context::DocumentContext;
 
 pub(crate) fn completion_item(
     label: impl AsRef<str>,
@@ -84,7 +84,7 @@ pub(crate) fn completion_item_from_direntry(entry: DirEntry) -> Result<Completio
 
 pub(crate) fn completion_item_from_assignment(
     node: &Node,
-    context: &CompletionContext,
+    context: &DocumentContext,
 ) -> Result<CompletionItem> {
     let lhs = node.child_by_field_name("lhs").into_result()?;
     let rhs = node.child_by_field_name("rhs").into_result()?;
@@ -376,7 +376,7 @@ pub(crate) unsafe fn completion_item_from_symbol(
 // that is considered in-scope at the cursor position.
 pub(crate) fn completion_item_from_scope_parameter(
     parameter: &str,
-    _context: &CompletionContext,
+    _context: &DocumentContext,
 ) -> Result<CompletionItem> {
     let mut item = completion_item(parameter, CompletionData::ScopeParameter {
         name: parameter.to_string(),

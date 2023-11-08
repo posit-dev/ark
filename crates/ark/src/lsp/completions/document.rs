@@ -15,12 +15,12 @@ use tree_sitter::Node;
 
 use crate::lsp::completions::completion_item::completion_item_from_assignment;
 use crate::lsp::completions::completion_item::completion_item_from_scope_parameter;
-use crate::lsp::completions::types::CompletionContext;
+use crate::lsp::document_context::DocumentContext;
 use crate::lsp::traits::cursor::TreeCursorExt;
 use crate::lsp::traits::point::PointExt;
 
 pub fn append_document_completions(
-    context: &CompletionContext,
+    context: &DocumentContext,
     completions: &mut Vec<CompletionItem>,
 ) -> Result<()> {
     // get reference to AST
@@ -67,7 +67,7 @@ pub fn append_document_completions(
 
 fn append_defined_variables(
     node: &Node,
-    context: &CompletionContext,
+    context: &DocumentContext,
     completions: &mut Vec<CompletionItem>,
 ) {
     let visited: HashSet<usize> = HashSet::new();
@@ -126,7 +126,7 @@ fn append_defined_variables(
 // TODO: Pick a name that makes it clear this is a function defined in the associated document.
 fn append_function_parameters(
     node: &Node,
-    context: &CompletionContext,
+    context: &DocumentContext,
     completions: &mut Vec<CompletionItem>,
 ) -> Result<()> {
     // get the parameters node
@@ -157,7 +157,7 @@ fn append_function_parameters(
     Ok(())
 }
 
-fn call_uses_nse(node: &Node, context: &CompletionContext) -> bool {
+fn call_uses_nse(node: &Node, context: &DocumentContext) -> bool {
     let result: Result<()> = local! {
 
         let lhs = node.child(0).into_result()?;

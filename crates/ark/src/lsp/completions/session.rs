@@ -45,9 +45,9 @@ use crate::lsp::completions::completion_item::completion_item_from_namespace;
 use crate::lsp::completions::completion_item::completion_item_from_package;
 use crate::lsp::completions::completion_item::completion_item_from_parameter;
 use crate::lsp::completions::completion_item::completion_item_from_symbol;
-use crate::lsp::completions::types::CompletionContext;
 use crate::lsp::completions::types::CompletionData;
 use crate::lsp::completions::types::PromiseStrategy;
+use crate::lsp::document_context::DocumentContext;
 use crate::lsp::indexer;
 use crate::lsp::signature_help::signature_help;
 use crate::lsp::traits::node::NodeExt;
@@ -55,7 +55,7 @@ use crate::lsp::traits::point::PointExt;
 use crate::lsp::traits::tree::TreeExt;
 
 pub unsafe fn append_session_completions(
-    context: &CompletionContext,
+    context: &DocumentContext,
     completions: &mut Vec<CompletionItem>,
 ) -> Result<()> {
     info!("append_session_completions()");
@@ -224,7 +224,7 @@ unsafe fn append_roxygen_completions(
 }
 
 unsafe fn append_subset_completions(
-    _context: &CompletionContext,
+    _context: &DocumentContext,
     callee: &str,
     enquote: bool,
     completions: &mut Vec<CompletionItem>,
@@ -251,7 +251,7 @@ unsafe fn append_subset_completions(
 }
 
 unsafe fn append_pipe_completions(
-    context: &CompletionContext,
+    context: &DocumentContext,
     node: &Node,
     completions: &mut Vec<CompletionItem>,
 ) -> Result<()> {
@@ -315,7 +315,7 @@ fn is_pipe_operator(node: &Node) -> bool {
 }
 
 unsafe fn append_custom_completions(
-    context: &CompletionContext,
+    context: &DocumentContext,
     completions: &mut Vec<CompletionItem>,
 ) -> Result<bool> {
     // Use the signature help tools to figure out the necessary pieces.
@@ -420,7 +420,7 @@ unsafe fn append_custom_completions(
 }
 
 unsafe fn append_call_completions(
-    context: &CompletionContext,
+    context: &DocumentContext,
     _cursor: &Node,
     node: &Node,
     completions: &mut Vec<CompletionItem>,
@@ -451,7 +451,7 @@ unsafe fn append_call_completions(
 }
 
 unsafe fn append_argument_completions(
-    _context: &CompletionContext,
+    _context: &DocumentContext,
     callable: &str,
     object: Option<&str>,
     completions: &mut Vec<CompletionItem>,
@@ -515,7 +515,7 @@ unsafe fn append_argument_completions(
 }
 
 unsafe fn append_namespace_completions(
-    _context: &CompletionContext,
+    _context: &DocumentContext,
     package: &str,
     exports_only: bool,
     completions: &mut Vec<CompletionItem>,
@@ -599,7 +599,7 @@ unsafe fn list_namespace_symbols(namespace: SEXP) -> RObject {
 }
 
 unsafe fn append_search_path_completions(
-    _context: &CompletionContext,
+    _context: &DocumentContext,
     completions: &mut Vec<CompletionItem>,
 ) -> Result<()> {
     const R_CONTROL_FLOW_KEYWORDS: &[&str] = &[
@@ -710,7 +710,7 @@ fn append_keyword_completions(completions: &mut Vec<CompletionItem>) -> anyhow::
 }
 
 unsafe fn append_file_completions(
-    context: &CompletionContext,
+    context: &DocumentContext,
     completions: &mut Vec<CompletionItem>,
 ) -> Result<()> {
     // Get the contents of the string token.
