@@ -9,10 +9,10 @@ use anyhow::Result;
 use stdext::*;
 use tower_lsp::lsp_types::CompletionParams;
 
-use crate::lsp::completions::types::CompletionContext;
+use crate::lsp::document_context::DocumentContext;
 
 pub fn can_provide_completions(
-    context: &CompletionContext,
+    context: &DocumentContext,
     params: &CompletionParams,
 ) -> Result<bool> {
     // If this completion was triggered by the user typing a ':', then only

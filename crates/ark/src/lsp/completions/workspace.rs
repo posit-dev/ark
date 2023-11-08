@@ -15,13 +15,13 @@ use tower_lsp::lsp_types::MarkupKind;
 
 use crate::lsp::backend::Backend;
 use crate::lsp::completions::completion_item::completion_item_from_function;
-use crate::lsp::completions::types::CompletionContext;
+use crate::lsp::document_context::DocumentContext;
 use crate::lsp::indexer;
 use crate::lsp::traits::string::StringExt;
 
 pub fn append_workspace_completions(
     backend: &Backend,
-    context: &CompletionContext,
+    context: &DocumentContext,
     completions: &mut Vec<CompletionItem>,
 ) -> Result<()> {
     // TODO: Don't provide completions if token is empty in certain contexts
