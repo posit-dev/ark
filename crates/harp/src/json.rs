@@ -199,10 +199,36 @@ impl TryFrom<RObject> for Value {
                             // Consider: do we need to guard against
                             // self-referential lists?
                             for i in 0..n {
-                                map.insert(
-                                    names[i as usize].clone(),
-                                    Value::try_from(obj.vector_elt(i)?)?,
-                                );
+                                // Create the key-value pair to insert into the object
+                                let key = names[i as usize].clone();
+                                let val = Value::try_from(obj.vector_elt(i)?)?;
+
+                                // Do we already have a value for this key? If
+                                // so, we need to convert the existing value to
+                                // an array and append the new value.
+                                match map.get_mut(&key) {
+                                    Some(existing) => match existing {
+                                        Value::Array(arr) => {
+                                            // The value is already an array; just
+                                            // append the new value.
+                                            arr.push(val);
+                                        },
+                                        _ => {
+                                            // The value is not an array; create
+                                            // one and append the new nad
+                                            // existing values.
+                                            let mut arr = Vec::<Value>::new();
+                                            arr.push(existing.clone());
+                                            arr.push(val);
+                                            map.insert(key, Value::Array(arr));
+                                        },
+                                    },
+                                    None => {
+                                        // We don't have a value for this key;
+                                        // just insert the new value.
+                                        map.insert(key, val);
+                                    },
+                                }
                             }
                             Ok(serde_json::Value::Object(map))
                         },
@@ -360,6 +386,19 @@ mod tests {
             test_json_conversion(
                 "list(a = TRUE, b = 'cats')",
                 "{\"a\": true, \"b\": \"cats\"}"
+            );
+        }
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test_json_lists_duplicate() {
+        // Duplicate keys are allowed in R lists, but not JSON objects. They
+        // should be converted to JSON arrays.
+        r_test! {
+            test_json_conversion(
+                "list(a = 1L, a = 2L, a = 3L)",
+                "{\"a\": [1, 2, 3]}"
             );
         }
     }
