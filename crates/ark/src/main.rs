@@ -403,7 +403,10 @@ fn main() {
         r_args.push(String::from("--interactive"));
     }
 
-    // This causes panics on background threads to propagate on the main thread.
+    // This causes panics on background threads to propagate on the main
+    // thread. If we don't propagate a background thread panic, the program
+    // keeps running in an unstable state as all communications with this
+    // thread will error out or panic.
     // https://stackoverflow.com/questions/35988775/how-can-i-cause-a-panic-on-a-thread-to-immediately-end-the-main-thread
     let old_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic_info| {
