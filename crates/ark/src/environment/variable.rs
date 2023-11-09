@@ -170,6 +170,7 @@ impl WorkspaceVariableDisplayValue {
     pub fn from(value: SEXP) -> Self {
         match r_typeof(value) {
             NILSXP => Self::new(String::from("NULL"), false),
+            VECSXP if r_inherits(value, "data.frame") => Self::from_data_frame(value),
             VECSXP if !r_inherits(value, "POSIXlt") => Self::from_list(value),
             LISTSXP => Self::empty(),
             SYMSXP if value == unsafe { R_MissingArg } => {
@@ -181,28 +182,28 @@ impl WorkspaceVariableDisplayValue {
         }
     }
 
-    fn from_list(value: SEXP) -> Self {
-        if r_inherits(value, "data.frame") {
-            let dim = dim_data_frame(value);
-            let class = match r_classes(value) {
+    fn from_data_frame(value: SEXP) -> Self {
+        let dim = dim_data_frame(value);
+        let class = match r_classes(value) {
+            None => String::from(""),
+            Some(classes) => match classes.get_unchecked(0) {
+                Some(class) => format!(" <{}>", class),
                 None => String::from(""),
-                Some(classes) => match classes.get_unchecked(0) {
-                    Some(class) => format!(" <{}>", class),
-                    None => String::from(""),
-                },
-            };
+            },
+        };
 
-            let value = format!(
-                "[{} {} x {} {}]{}",
-                dim.nrow,
-                plural("row", dim.nrow),
-                dim.ncol,
-                plural("column", dim.ncol),
-                class
-            );
-            return Self::new(value, false);
-        }
+        let value = format!(
+            "[{} {} x {} {}]{}",
+            dim.nrow,
+            plural("row", dim.nrow),
+            dim.ncol,
+            plural("column", dim.ncol),
+            class
+        );
+        Self::new(value, false)
+    }
 
+    fn from_list(value: SEXP) -> Self {
         unsafe {
             let n = Rf_xlength(value);
             let mut display_value = String::from("");
