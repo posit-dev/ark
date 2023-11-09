@@ -282,7 +282,7 @@ pub struct RMain {
 
     /// Shared reference to kernel. Currently used by the ark-execution
     /// thread, the R frontend callbacks, and LSP routines called from R
-    pub kernel: Arc<Mutex<Kernel>>,
+    kernel: Arc<Mutex<Kernel>>,
 
     /// Represents whether an error occurred during R code execution.
     pub error_occurred: bool,
@@ -1036,6 +1036,10 @@ impl RMain {
     pub fn get_comm_manager_tx(&self) -> &Sender<CommEvent> {
         // Read only access to `comm_manager_tx`
         &self.comm_manager_tx
+    }
+
+    pub fn get_kernel(&self) -> &Arc<Mutex<Kernel>> {
+        &self.kernel
     }
 }
 

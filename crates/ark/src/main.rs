@@ -63,10 +63,7 @@ fn start_kernel(
     // Create the LSP and DAP clients.
     // Not all Amalthea kernels provide these, but ark does.
     // They must be able to deliver messages to the shell channel directly.
-    let lsp = Arc::new(Mutex::new(lsp::handler::Lsp::new(
-        kernel_request_tx.clone(),
-        kernel_init_tx.add_rx(),
-    )));
+    let lsp = Arc::new(Mutex::new(lsp::handler::Lsp::new(kernel_init_tx.add_rx())));
 
     // DAP needs the `RRequest` channel to communicate with
     // `read_console()` and send commands to the debug interpreter

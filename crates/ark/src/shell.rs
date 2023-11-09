@@ -84,7 +84,7 @@ impl Shell {
         kernel_request_rx: Receiver<KernelRequest>,
     ) -> Self {
         // Start building the kernel object. It is shared by the shell, LSP, and main threads.
-        let kernel = Arc::new(Mutex::new(Kernel::new(iopub_tx.clone())));
+        let kernel = Arc::new(Mutex::new(Kernel::new()));
 
         let kernel_clone = kernel.clone();
         spawn!("ark-shell-thread", move || {
