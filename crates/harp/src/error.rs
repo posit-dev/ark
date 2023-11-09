@@ -5,6 +5,7 @@
 //
 //
 
+use std::backtrace::Backtrace;
 use std::fmt;
 use std::str::Utf8Error;
 
@@ -12,7 +13,6 @@ use crate::utils::r_type2char;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-#[derive(Debug)]
 pub enum Error {
     HelpTopicNotFoundError {
         topic: String,
@@ -41,6 +41,10 @@ pub enum Error {
     },
     TryEvalError {
         message: String,
+    },
+    TopLevelExecError {
+        message: String,
+        backtrace: Backtrace,
     },
     ParseSyntaxError {
         message: String,
@@ -136,6 +140,13 @@ impl fmt::Display for Error {
                 write!(f, "`eval()` error: {}", message)
             },
 
+            Error::TopLevelExecError {
+                message,
+                backtrace: _,
+            } => {
+                write!(f, "`R_topLevelExec()` error: {}", message)
+            },
+
             Error::ParseSyntaxError { message, line } => {
                 write!(f, "Syntax error on line {} when parsing: {}", line, message)
             },
@@ -147,6 +158,23 @@ impl fmt::Display for Error {
             Error::InspectError { path } => {
                 write!(f, "Error inspecting path {}", path.join(" / "))
             },
+        }
+    }
+}
+
+// NOTE: Debug is the same as Display but with backtrace printing.
+// This matches anyhow error formatters and we can still retrieve the
+// struct-style format with `{:#?}`.
+impl fmt::Debug for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)?;
+
+        match self {
+            Error::TopLevelExecError {
+                message: _,
+                backtrace,
+            } => fmt::Display::fmt(backtrace, f),
+            _ => Ok(()),
         }
     }
 }
