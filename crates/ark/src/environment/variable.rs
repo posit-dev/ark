@@ -30,6 +30,7 @@ use harp::utils::r_is_s4;
 use harp::utils::r_is_simple_vector;
 use harp::utils::r_is_unbound;
 use harp::utils::r_typeof;
+use harp::utils::r_vec_is_single_dimension_with_single_value;
 use harp::utils::r_vec_shape;
 use harp::utils::r_vec_type;
 use harp::vector::formatted_vector::FormattedVector;
@@ -372,7 +373,12 @@ impl WorkspaceVariableDisplayType {
         }
 
         if r_is_simple_vector(value) {
-            let display_type = format!("{} [{}]", r_vec_type(value), r_vec_shape(value));
+            let display_type: String;
+            if r_vec_is_single_dimension_with_single_value(value) {
+                display_type = r_vec_type(value);
+            } else {
+                display_type = format!("{} [{}]", r_vec_type(value), r_vec_shape(value));
+            }
 
             let mut type_info = display_type.clone();
             if r_is_altrep(value) {
@@ -466,7 +472,7 @@ fn has_children(value: SEXP) -> bool {
             LISTSXP => true,
             ENVSXP => !Environment::new(RObject::view(value))
                 .is_empty(EnvironmentFilter::ExcludeHiddenBindings),
-            LGLSXP | RAWSXP | STRSXP | INTSXP | REALSXP | CPLXSXP => unsafe { XLENGTH(value) != 0 },
+            LGLSXP | RAWSXP | STRSXP | INTSXP | REALSXP | CPLXSXP => unsafe { XLENGTH(value) > 1 },
             _ => false,
         }
     }

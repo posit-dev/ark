@@ -233,6 +233,10 @@ pub fn pairlist_size(mut pairlist: SEXP) -> Result<isize> {
     Ok(n)
 }
 
+pub fn r_vec_is_single_dimension_with_single_value(value: SEXP) -> bool {
+    unsafe { Rf_getAttrib(value, R_DimSymbol) == R_NilValue && Rf_xlength(value) == 1 }
+}
+
 pub fn r_vec_type(value: SEXP) -> String {
     match r_typeof(value) {
         INTSXP => unsafe {
