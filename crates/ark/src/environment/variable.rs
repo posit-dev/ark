@@ -159,17 +159,6 @@ fn plural(text: &str, n: i32) -> String {
 }
 
 impl WorkspaceVariableDisplayValue {
-    fn new(display_value: String, is_truncated: bool) -> Self {
-        WorkspaceVariableDisplayValue {
-            display_value,
-            is_truncated,
-        }
-    }
-
-    fn empty() -> Self {
-        Self::new(String::from(""), false)
-    }
-
     pub fn from(value: SEXP) -> Self {
         match r_typeof(value) {
             NILSXP => Self::new(String::from("NULL"), false),
@@ -184,6 +173,17 @@ impl WorkspaceVariableDisplayValue {
             _ if r_is_matrix(value) => Self::from_matrix(value),
             _ => Self::from_default(value),
         }
+    }
+
+    fn new(display_value: String, is_truncated: bool) -> Self {
+        WorkspaceVariableDisplayValue {
+            display_value,
+            is_truncated,
+        }
+    }
+
+    fn empty() -> Self {
+        Self::new(String::from(""), false)
     }
 
     fn from_data_frame(value: SEXP) -> Self {
