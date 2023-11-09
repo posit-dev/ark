@@ -62,8 +62,9 @@
     paste(deparse(expr, backtick = TRUE), collapse = "")
 }
 
-# Evaluate expression in positron's namespace. Any features accessible from
-# `.ps.internal()` are subject to change without notice.
+# Evaluate expression in positron's namespace (which includes access to the
+# private modules). Any features accessible from `.ps.internal()` are
+# subject to change without notice.
 .ps.internal <- function(expr) {
     eval(substitute(expr), parent.env(environment()))
 }
