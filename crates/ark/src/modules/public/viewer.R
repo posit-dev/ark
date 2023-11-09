@@ -15,28 +15,3 @@ options("viewer" = function(url, ...) {
         utils::browseURL(url, ...)
     }
 })
-
-.ps.view_html_widget <- function(x, ...) {
-    .ps.Call("ps_html_widget",
-        class(x)[1],
-        htmltools::renderTags(x))
-}
-
-.ps.viewer.addOverrides <- function() {
-    .ps.s3.addS3Override("print.htmlwidget", .ps.view_html_widget)
-}
-
-.ps.viewer.removeOverrides <- function() {
-    .ps.s3.removeS3Override("print.htmlwidget")
-}
-
-# When the htmlwidgets package is loaded, inject/overlay our print method.
-loadEvent <- packageEvent("htmlwidgets", "onLoad")
-setHook(loadEvent, function(...) {
-   .ps.viewer.addOverrides()
-}, action = "append")
-
-unloadEvent <- packageEvent("htmlwidgets", "onUnload")
-setHook(unloadEvent, function(...) {
-   .ps.viewer.removeOverrides()
-}, action = "append")
