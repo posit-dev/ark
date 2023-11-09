@@ -13,21 +13,15 @@ use stdext::spawn;
 
 use super::backend;
 use crate::interface::KernelInfo;
-use crate::request::KernelRequest;
 
 pub struct Lsp {
-    kernel_request_tx: Sender<KernelRequest>,
     kernel_init_rx: BusReader<KernelInfo>,
     kernel_initialized: bool,
 }
 
 impl Lsp {
-    pub fn new(
-        kernel_request_tx: Sender<KernelRequest>,
-        kernel_init_rx: BusReader<KernelInfo>,
-    ) -> Self {
+    pub fn new(kernel_init_rx: BusReader<KernelInfo>) -> Self {
         Self {
-            kernel_request_tx,
             kernel_init_rx,
             kernel_initialized: false,
         }
@@ -53,10 +47,8 @@ impl ServerHandler for Lsp {
             self.kernel_initialized = true;
         }
 
-        let kernel_request_tx = self.kernel_request_tx.clone();
-
         spawn!("ark-lsp", move || {
-            backend::start_lsp(tcp_address, kernel_request_tx, conn_init_tx)
+            backend::start_lsp(tcp_address, conn_init_tx)
         });
         return Ok(());
     }

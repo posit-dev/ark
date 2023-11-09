@@ -158,3 +158,7 @@ positron_option_error_entrace <- function() {
     # TODO: Wire this up to a Positron option for easy toggling?
     isTRUE(getOption("positron.error_entrace", default = TRUE))
 }
+
+rust_backtrace <- function() {
+    .ps.Call("ps_rust_backtrace")
+}

@@ -17,9 +17,7 @@ use log::trace;
 use log::warn;
 
 use crate::error::Error;
-use crate::events::PositronEvent;
 use crate::socket::socket::Socket;
-use crate::wire::client_event::ClientEvent;
 use crate::wire::comm_close::CommClose;
 use crate::wire::comm_msg::CommMsg;
 use crate::wire::comm_open::CommOpen;
@@ -73,7 +71,6 @@ pub enum IOPubMessage {
     ExecuteError(ExecuteError),
     ExecuteInput(ExecuteInput),
     Stream(StreamOutput),
-    Event(PositronEvent),
     CommOpen(CommOpen),
     CommMsgReply(JupyterHeader, CommMsg),
     CommMsgEvent(CommMsg),
@@ -210,7 +207,6 @@ impl IOPub {
                 self.flush_stream();
                 self.send_message_with_context(msg, IOPubContextChannel::Shell)
             },
-            IOPubMessage::Event(msg) => self.send_event(msg),
             IOPubMessage::Wait(msg) => self.process_wait_request(msg),
         }
     }
@@ -252,16 +248,6 @@ impl IOPub {
         content: T,
     ) -> Result<(), Error> {
         let msg = JupyterMessage::<T>::create(content, header, &self.socket.session);
-        msg.send(&self.socket)
-    }
-
-    /// Send an event
-    fn send_event(&self, event: PositronEvent) -> Result<(), Error> {
-        let msg = JupyterMessage::<ClientEvent>::create(
-            ClientEvent::from(event),
-            None,
-            &self.socket.session,
-        );
         msg.send(&self.socket)
     }
 

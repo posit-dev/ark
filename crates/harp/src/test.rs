@@ -21,7 +21,7 @@ use std::sync::Once;
 use libR_sys::*;
 use stdext::cargs;
 
-use crate::exec::r_safely;
+use crate::exec::r_sandbox;
 use crate::R_MAIN_THREAD_ID;
 
 // Escape hatch for unit tests. We need this because the default
@@ -72,9 +72,12 @@ pub fn start_r() {
 
 pub fn r_test_impl<F: FnMut()>(f: F) {
     start_r();
-
     let guard = unsafe { R_RUNTIME_LOCK.lock() };
-    r_safely(f);
+
+    if let Err(err) = r_sandbox(f) {
+        log::error!("While running test: {err:?}");
+    }
+
     drop(guard);
 }
 

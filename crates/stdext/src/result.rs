@@ -23,6 +23,15 @@ macro_rules! log_error {
     };
 }
 
+#[macro_export(local_inner_macros)]
+macro_rules! log_and_panic {
+    ($arg:expr) => {
+        log::error!($arg);
+        log::logger().flush();
+        std::panic!($arg);
+    };
+}
+
 pub trait ResultOrLog<T, E> {
     /// If `self` is an error, log an error, else do nothing and consume self.
     fn or_log_error(self, prefix: &str);

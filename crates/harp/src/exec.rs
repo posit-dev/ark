@@ -7,6 +7,7 @@
 
 use std::ffi::CStr;
 use std::mem;
+use std::mem::take;
 use std::os::raw::c_char;
 use std::os::raw::c_int;
 use std::os::raw::c_void;
@@ -222,22 +223,28 @@ pub fn geterrmessage() -> String {
 /// )
 /// ```
 pub unsafe fn r_try_catch_finally<F, R, S, Finally>(
-    mut fun: F,
+    fun: F,
     classes: S,
-    mut finally: Finally,
+    finally: Finally,
 ) -> Result<R>
 where
-    F: FnMut() -> R,
-    Finally: FnMut(),
+    F: FnOnce() -> R,
+    Finally: FnOnce(),
     S: Into<CharacterVector>,
 {
     // C function that is passed as `body`. The actual closure is passed as
     // void* data, along with the pointer to the result variable.
-    extern "C" fn body_fn<R>(arg: *mut c_void) -> SEXP {
-        let data: &mut ClosureData<R> = unsafe { &mut *(arg as *mut ClosureData<R>) };
+    extern "C" fn body_fn<F, R>(arg: *mut c_void) -> SEXP
+    where
+        F: FnOnce() -> R,
+    {
+        let data: &mut ClosureData<F, R> = unsafe { &mut *(arg as *mut ClosureData<F, R>) };
+
+        // Move closure here so it can be called. Required since that's an `FnOnce`.
+        let closure = take(&mut data.closure).unwrap();
 
         // Move result to its stack space
-        *(data.res) = Some((data.closure)());
+        *(data.res) = Some(closure());
 
         // Return dummy SEXP value expected by `R_tryCatch()`
         unsafe { R_NilValue }
@@ -248,7 +255,7 @@ where
 
     let mut body_data = ClosureData {
         res: &mut res,
-        closure: &mut fun,
+        closure: Some(fun),
     };
 
     // handler just returns the condition and sets success to false
@@ -273,26 +280,30 @@ where
 
     // C function that is passed as `finally`
     // the actual closure is passed as a void* through arg
-    extern "C" fn finally_fn(arg: *mut c_void) {
-        // extract the "closure" from the void*
-        let closure: &mut &mut dyn FnMut() = unsafe { mem::transmute(arg) };
+    extern "C" fn finally_fn<Finally>(arg: *mut c_void)
+    where
+        Finally: FnOnce(),
+    {
+        // Extract the "closure" from the void* and move it here
+        let closure: &mut Option<Finally> = unsafe { mem::transmute(arg) };
+        let closure = take(closure).unwrap();
 
         closure();
     }
 
     // The actual finally closure is passed as a void*
-    let mut finally_data: &mut dyn FnMut() = &mut finally;
+    let mut finally_data: Option<Finally> = Some(finally);
     let finally_data = &mut finally_data;
 
     let classes = classes.into();
 
     let result = R_tryCatch(
-        Some(body_fn::<R>),
+        Some(body_fn::<F, R>),
         &mut body_data as *mut _ as *mut c_void,
         *classes,
         Some(handler_fn),
         success_ptr as *mut c_void,
-        Some(finally_fn),
+        Some(finally_fn::<Finally>),
         finally_data as *mut _ as *mut c_void,
     );
 
@@ -321,9 +332,12 @@ where
     }
 }
 
-struct ClosureData<'a, R> {
-    res: &'a mut Option<R>,
-    closure: &'a mut dyn FnMut() -> R,
+struct ClosureData<'a, F, T>
+where
+    F: FnOnce() -> T + 'a,
+{
+    res: &'a mut Option<T>,
+    closure: Option<F>,
 }
 
 pub unsafe fn r_try_catch<F, R>(fun: F) -> Result<RObject>
@@ -349,6 +363,74 @@ where
     S: Into<CharacterVector>,
 {
     r_try_catch_finally(fun, classes, || {})
+}
+
+/// Run closure inside top-level context
+///
+/// Top-level contexts are insulated from condition handlers (both calling
+/// and exiting) on the R stack. This removes one source of side effects
+/// and long jumps.
+///
+/// If a longjump does occur for any reason (including but not limited to R
+/// errors), the caller is notified, in this case by an `Err` return value
+/// of kind `TopLevelExecError`. The error message contains the contents of
+/// the C-level error buffer. It might or might not be related to the cause
+/// of the longjump. The error also carries a Rust backtrace.
+///
+/// Note that if an unhandled R-level error does occur during a top-level
+/// context, the error message is normally printed in the R console, even
+/// if the calling code recovers from the failure. Since we turn off normal
+/// error printing via the `show.error.messages` global option though, that
+/// isn't normally the case in Ark. That said, if errors are expected, it's
+/// better to catch them with `r_try_catch()`.
+pub fn r_top_level_exec<'env, F, T>(fun: F) -> Result<T>
+where
+    F: FnOnce() -> T,
+    F: 'env,
+{
+    // Allocate stack memory for the result
+    let mut res: Option<T> = None;
+
+    // Because it's an `FnOnce`, the closure needs to be moved inside
+    // `c_fn()` so it can be called. However we must also pass it via a
+    // mutable borrow (void*), which prevents it from being moved. To work
+    // around this, we wrap it in an `Option` that allows us to move it
+    // with `take()`.
+    let mut c_data = ClosureData {
+        res: &mut res,
+        closure: Some(fun),
+    };
+    let p_data = &mut c_data as *mut _ as *mut c_void;
+
+    // C function that is passed as `fun`. The actual closure is passed via
+    // void* data, along with the pointer to the result variable.
+    extern "C" fn c_fn<'env, F, T>(arg: *mut c_void)
+    where
+        F: FnOnce() -> T,
+        F: 'env,
+    {
+        let data: &mut ClosureData<F, T> = unsafe { &mut *(arg as *mut ClosureData<F, T>) };
+
+        // Move closure here so it can be called. Required since that's an `FnOnce`.
+        let closure = take(&mut data.closure).unwrap();
+
+        // Call closure and move the result to its stack space
+        *(data.res) = Some(closure());
+    }
+
+    let success = unsafe { R_ToplevelExec(Some(c_fn::<F, T>), p_data) };
+
+    if success == 1 {
+        Ok(res.unwrap())
+    } else {
+        Err(Error::TopLevelExecError {
+            message: String::from(format!(
+                "Unexpected longjump.\nLikely caused by: {}",
+                geterrmessage()
+            )),
+            backtrace: std::backtrace::Backtrace::capture(),
+        })
+    }
 }
 
 pub enum ParseResult {
@@ -427,11 +509,10 @@ pub fn r_parse(code: &str) -> Result<RObject> {
     }
 }
 
-// TODO: Should probably run in a toplevel-exec. Tasks also need a timeout.
-// This could be implemented with R interrupts but would require to
-// unsafely jump over the Rust stack, unless we wrapped all R API functions
-// to return an Option.
-pub fn r_safely<'env, F, T>(f: F) -> T
+// TODO: Tasks also need a timeout. This could be implemented with R
+// interrupts but would require to unsafely jump over the Rust stack,
+// unless we wrapped all R API functions to return an Option.
+pub fn r_sandbox<'env, F, T>(f: F) -> Result<T>
 where
     F: FnOnce() -> T,
     F: 'env,
@@ -442,18 +523,17 @@ where
     let polled_events = unsafe { R_PolledEvents };
     let interrupts_suspended = unsafe { R_interrupts_suspended };
     unsafe {
-        // Disable polled events in this scope.
+        // Disable polled events in this scope
         R_PolledEvents = Some(r_polled_events_disabled);
 
-        // Disable interrupts in this scope.
+        // Disable interrupts in this scope
         R_interrupts_suspended = 1;
     }
 
-    // Execute the callback.
-    let result = f();
+    // Execute the callback
+    let result = r_top_level_exec(f);
 
     // Restore state
-    // TODO: Needs unwind protection
     unsafe {
         R_interrupts_suspended = interrupts_suspended;
         R_PolledEvents = polled_events;
@@ -572,6 +652,34 @@ mod tests {
                 assert_eq!(classes, ["simpleError", "error", "condition"]);
             });
 
+        }
+    }
+
+    #[test]
+    fn test_top_level_exec() {
+        r_test! {
+            let ok = r_top_level_exec(|| { 42 });
+            assert_match!(ok, Ok(value) => {
+                assert_eq!(value, 42);
+            });
+
+            // SAFETY: Rust allocations out of the top-level-exec context
+            // NOTE: "my message" shows up in the test output. We might
+            // want to quiet that by setting `show.error.messages` to `FALSE`.
+            let msg = CString::new("my message").unwrap();
+            let stop = CString::new("stop").unwrap();
+
+            let out = r_top_level_exec(|| unsafe {
+                let msg = Rf_protect(Rf_cons(Rf_mkString(msg.as_ptr()), R_NilValue));
+                let call = Rf_protect(Rf_lcons(Rf_install(stop.as_ptr()), msg));
+                Rf_eval(call, R_BaseEnv);
+                unreachable!()
+            });
+
+            assert_match!(out, Err(Error::TopLevelExecError { message, backtrace: _ }) => {
+                assert!(message.contains("Unexpected longjump"));
+                assert!(message.contains("my message"));
+            });
         }
     }
 
