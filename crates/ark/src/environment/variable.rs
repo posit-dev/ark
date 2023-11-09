@@ -45,6 +45,7 @@ use libR_sys::*;
 use serde::Deserialize;
 use serde::Serialize;
 use stdext::local;
+use stdext::unwrap;
 
 // Constants.
 const MAX_DISPLAY_VALUE_ENTRIES: usize = 1_000;
@@ -180,6 +181,7 @@ impl WorkspaceVariableDisplayValue {
             },
             CLOSXP => Self::from_closure(value),
             ENVSXP => Self::from_env(value),
+            _ if r_is_matrix(value) => Self::from_matrix(value),
             _ => Self::from_default(value),
         }
     }
@@ -305,66 +307,78 @@ impl WorkspaceVariableDisplayValue {
         Self::new(display_value, is_truncated)
     }
 
-    fn from_default(value: SEXP) -> Self {
-        let formatted = FormattedVector::new(value);
-        match formatted {
-            Ok(formatted) => {
-                let mut first = true;
-                let mut display_value = String::from("");
-                let mut is_truncated = false;
+    // TODO: handle higher dimensional arrays, i.e. expand
+    //       recursively from the higher dimension
+    fn from_matrix(value: SEXP) -> Self {
+        let formatted = unwrap!(FormattedVector::new(value), Err(err) => {
+            return Self::from_error(err);
+        });
 
-                // TODO: handle higher dimensional arrays, i.e. expand
-                //       recursively from the higher dimension
-                if r_is_matrix(value) {
-                    unsafe {
-                        let dim = IntegerVector::new_unchecked(Rf_getAttrib(value, R_DimSymbol));
-                        let n_col = dim.get_unchecked(1).unwrap() as isize;
-                        display_value.push_str("[");
-                        for i in 0..n_col {
-                            if first {
-                                first = false;
-                            } else {
-                                display_value.push_str(", ");
-                            }
+        let mut first = true;
+        let mut display_value = String::from("");
+        let mut is_truncated = false;
 
-                            display_value.push_str("[");
-                            let display_column = formatted.column_iter(i).join(" ");
-                            if display_column.len() > MAX_DISPLAY_VALUE_LENGTH {
-                                is_truncated = true;
-                                // TODO: maybe this should only push_str() a slice
-                                //       of the first n (MAX_WIDTH?) characters in that case ?
-                            }
-                            display_value.push_str(display_column.as_str());
-                            display_value.push_str("]");
-
-                            if display_value.len() > MAX_DISPLAY_VALUE_LENGTH {
-                                is_truncated = true;
-                            }
-                            if is_truncated {
-                                break;
-                            }
-                        }
-                        display_value.push_str("]");
-                    }
+        unsafe {
+            let dim = IntegerVector::new_unchecked(Rf_getAttrib(value, R_DimSymbol));
+            let n_col = dim.get_unchecked(1).unwrap() as isize;
+            display_value.push_str("[");
+            for i in 0..n_col {
+                if first {
+                    first = false;
                 } else {
-                    for x in formatted.iter() {
-                        if first {
-                            first = false;
-                        } else {
-                            display_value.push_str(" ");
-                        }
-                        display_value.push_str(&x);
-                        if display_value.len() > MAX_DISPLAY_VALUE_LENGTH {
-                            is_truncated = true;
-                            break;
-                        }
-                    }
+                    display_value.push_str(", ");
                 }
 
-                Self::new(display_value, is_truncated)
-            },
-            Err(_) => Self::new(String::from("??"), true),
+                display_value.push_str("[");
+                let display_column = formatted.column_iter(i).join(" ");
+                if display_column.len() > MAX_DISPLAY_VALUE_LENGTH {
+                    is_truncated = true;
+                    // TODO: maybe this should only push_str() a slice
+                    //       of the first n (MAX_WIDTH?) characters in that case ?
+                }
+                display_value.push_str(display_column.as_str());
+                display_value.push_str("]");
+
+                if display_value.len() > MAX_DISPLAY_VALUE_LENGTH {
+                    is_truncated = true;
+                }
+                if is_truncated {
+                    break;
+                }
+            }
+            display_value.push_str("]");
         }
+        Self::new(display_value, is_truncated)
+    }
+
+    fn from_default(value: SEXP) -> Self {
+        let formatted = unwrap!(FormattedVector::new(value), Err(err) => {
+            return Self::from_error(err);
+        });
+
+        let mut first = true;
+        let mut display_value = String::from("");
+        let mut is_truncated = false;
+
+        for x in formatted.iter() {
+            if first {
+                first = false;
+            } else {
+                display_value.push_str(" ");
+            }
+            display_value.push_str(&x);
+            if display_value.len() > MAX_DISPLAY_VALUE_LENGTH {
+                is_truncated = true;
+                break;
+            }
+        }
+
+        Self::new(display_value, is_truncated)
+    }
+
+    fn from_error(err: Error) -> Self {
+        log::warn!("Error while formatting variable: {err:?}");
+        Self::new(String::from("??"), true)
     }
 }
 
