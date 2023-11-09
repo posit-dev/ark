@@ -14,9 +14,12 @@
     #
     # then use htmltools::resolveDependencies() to get the list of dependencies
 
+    rendered <- htmltools::as.tags(x, standalone = TRUE)
+    dependencies <- htmltools::resolveDependencies(attr(rendered, "html_dependencies"))
     .ps.Call("ps_html_widget",
         class(x)[1],
-        htmltools::renderTags(x))
+        list(tags = rendered,
+            dependencies = dependencies))
 }
 
 .ps.viewer.addOverrides <- function() {
