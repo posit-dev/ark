@@ -165,7 +165,23 @@ impl TryFrom<RObject> for Value {
                     // See whether the object's values have names. We will try
                     // to convert named values into a JSON object (map); unnamed
                     // values become an array.
-                    let names = obj.names();
+                    let mut names = obj.names();
+
+                    // Check to see if all the names are empty. We want to treat
+                    // this identically to an unnamed list.
+                    let mut all_empty = true;
+                    if let Some(names) = &names {
+                        for name in names {
+                            if !name.is_empty() {
+                                all_empty = false;
+                                break;
+                            }
+                        }
+                    }
+                    if all_empty {
+                        names = None;
+                    }
+
                     match names {
                         Some(names) => {
                             // The object's values have names. Create a map.
@@ -245,6 +261,7 @@ mod tests {
         let evaluated = unsafe {
             RFunction::new("base", "eval")
                 .param("expr", parsed)
+                .param("envir", R_GlobalEnv)
                 .call()
                 .unwrap()
         };
@@ -297,13 +314,23 @@ mod tests {
     fn test_json_lists_unnamed() {
         // We expect lists of unnamed elements to serialize to JSON arrays.
         r_test! {
+
+            // List of integers
             test_json_conversion(
                 "list(1L, 2L, 3L)",
                 "[1,2,3]"
             );
+
+            // List of logical values
             test_json_conversion(
-                "list(TRUE, FALSE, TRUE)",
+                "l <- list(TRUE, FALSE, TRUE); l",
                 "[true, false, true]"
+            );
+
+            // Empty names are ignored and treated as unnamed
+            test_json_conversion(
+                "l <- list('a', 'b', 'c'); names(l) <- c('', '', ''); l",
+                "[\"a\", \"b\", \"c\"]"
             );
         }
     }
