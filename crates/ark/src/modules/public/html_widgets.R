@@ -5,21 +5,21 @@
 #
 #
 .ps.view_html_widget <- function(x, ...) {
-    # todo:
-    #
-    # use htmltools::as.tags(standalone = TRUE) to convert the htmlwidget to a
-    # list of tags
-    #
-    # note this is a list that needs as.character to convert to html
-    #
-    # then use htmltools::resolveDependencies() to get the list of dependencies
-
+    # Render the widget to a tag list.
     rendered <- htmltools::as.tags(x, standalone = TRUE)
-    dependencies <- htmltools::resolveDependencies(attr(rendered, "html_dependencies"))
+
+    # Resolve the dependencies for the widget (scripts, stylesheets, etc.).
+    dependencies <- htmltools::resolveDependencies(
+        attr(rendered, "html_dependencies", exact = TRUE))
+
+    # Pass the widget to the viewer. Positron will assemble the final HTML
+    # document from these components.
     .ps.Call("ps_html_widget",
         class(x)[1],
-        list(tags = rendered,
-            dependencies = dependencies))
+        list(
+            tags = rendered,
+            dependencies = dependencies,
+            sizing_policy = x$sizingPolicy))
 }
 
 .ps.viewer.addOverrides <- function() {
