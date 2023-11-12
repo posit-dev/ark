@@ -25,6 +25,7 @@ use log::error;
 use log::warn;
 use stdext::spawn;
 
+use super::variable::EnvVarState;
 use crate::data_viewer::r_data_viewer::RDataViewer;
 use crate::environment::message::EnvironmentMessage;
 use crate::environment::message::EnvironmentMessageClear;
@@ -50,7 +51,10 @@ use crate::thread::RThreadSafe;
 pub struct REnvironment {
     comm: CommSocket,
     comm_manager_tx: Sender<CommEvent>,
+
     pub env: RThreadSafe<RObject>,
+    state: EnvVarState,
+
     /// `Binding` does not currently protect anything, and therefore doesn't
     /// implement `Drop`, which might use the R API. It assumes that R SYMSXPs
     /// protect themselves, and that the binding value is protected by the
@@ -85,6 +89,8 @@ impl REnvironment {
             );
         }
 
+        let state = EnvVarState::new(env.sexp);
+
         // To be able to `Send` the `env` to the thread, it needs to be made
         // thread safe. To create `current_bindings`, we need to be on the main
         // R thread.
@@ -99,6 +105,7 @@ impl REnvironment {
                 comm,
                 comm_manager_tx,
                 env,
+                state,
                 current_bindings,
                 version: 0,
             };
@@ -245,10 +252,8 @@ impl REnvironment {
         r_task(|| {
             self.update_bindings(self.bindings());
 
-            let current_bindings = self.current_bindings.get();
-
-            for binding in current_bindings {
-                variables.push(EnvironmentVariable::new(binding));
+            for binding in self.current_bindings.get() {
+                variables.push(EnvironmentVariable::new(binding, &self.state));
             }
         });
 
@@ -350,7 +355,7 @@ impl REnvironment {
     fn inspect(&mut self, path: &Vec<String>, request_id: Option<String>) {
         let inspect = r_task(|| {
             let env = self.env.get().clone();
-            EnvironmentVariable::inspect(env, &path)
+            EnvironmentVariable::inspect(env, &path, &self.state)
         });
         let msg = match inspect {
             Ok(children) => {
@@ -432,7 +437,7 @@ impl REnvironment {
                     // No more old, collect last new into added
                     (None, Some(mut new)) => {
                         loop {
-                            assigned.push(EnvironmentVariable::new(&new));
+                            assigned.push(EnvironmentVariable::new(&new, &self.state));
 
                             match new_iter.next() {
                                 Some(x) => {
@@ -463,7 +468,7 @@ impl REnvironment {
                     (Some(old), Some(new)) => {
                         if old.name == new.name {
                             if old.value != new.value {
-                                assigned.push(EnvironmentVariable::new(&new));
+                                assigned.push(EnvironmentVariable::new(&new, &self.state));
                             }
                             old_next = old_iter.next();
                             new_next = new_iter.next();
@@ -471,7 +476,7 @@ impl REnvironment {
                             removed.push(old.name.to_string());
                             old_next = old_iter.next();
                         } else {
-                            assigned.push(EnvironmentVariable::new(&new));
+                            assigned.push(EnvironmentVariable::new(&new, &self.state));
                             new_next = new_iter.next();
                         }
                     },

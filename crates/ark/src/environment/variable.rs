@@ -5,6 +5,8 @@
 //
 //
 
+use std::collections::HashMap;
+
 use harp::call::RCall;
 use harp::environment::Binding;
 use harp::environment::BindingValue;
@@ -126,6 +128,39 @@ pub struct EnvironmentVariable {
     pub has_viewer: bool,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct EnvVarState {
+    seen: HashMap<isize, bool>,
+}
+
+impl EnvVarState {
+    pub fn new(env: SEXP) -> Self {
+        let mut out = Self {
+            seen: HashMap::new(),
+        };
+
+        out.insert(env);
+        out
+    }
+
+    /**
+     * Non destructive insert. Returns a modified clone and
+     * preserves the original data structure.
+     */
+    pub fn clone_and_insert(&self, env: SEXP) -> Self {
+        let mut out = Self {
+            seen: self.seen.clone(),
+        };
+
+        out.insert(env);
+        out
+    }
+
+    fn insert(&mut self, value: SEXP) {
+        self.seen.insert(value as isize, true);
+    }
+}
+
 pub struct WorkspaceVariableDisplayValue {
     pub display_value: String,
     pub is_truncated: bool,
@@ -159,17 +194,17 @@ fn plural(text: &str, n: i32) -> String {
 }
 
 impl WorkspaceVariableDisplayValue {
-    pub fn from(value: SEXP) -> Self {
+    pub fn from(value: SEXP, state: &EnvVarState) -> Self {
         match r_typeof(value) {
             NILSXP => Self::new(String::from("NULL"), false),
             VECSXP if r_inherits(value, "data.frame") => Self::from_data_frame(value),
-            VECSXP if !r_inherits(value, "POSIXlt") => Self::from_list(value),
+            VECSXP if !r_inherits(value, "POSIXlt") => Self::from_list(value, state),
             LISTSXP => Self::empty(),
             SYMSXP if value == unsafe { R_MissingArg } => {
                 Self::new(String::from("<missing>"), false)
             },
             CLOSXP => Self::from_closure(value),
-            ENVSXP => Self::from_env(value),
+            ENVSXP => Self::from_env(value, state),
             _ if r_is_matrix(value) => Self::from_matrix(value),
             _ => Self::from_default(value),
         }
@@ -207,7 +242,7 @@ impl WorkspaceVariableDisplayValue {
         Self::new(value, false)
     }
 
-    fn from_list(value: SEXP) -> Self {
+    fn from_list(value: SEXP, state: &EnvVarState) -> Self {
         let n = r_length(value);
         let mut display_value = String::from("");
         let mut is_truncated = false;
@@ -217,7 +252,7 @@ impl WorkspaceVariableDisplayValue {
             if i > 0 {
                 display_value.push_str(", ");
             }
-            let display_i = Self::from(r_list_get(value, i));
+            let display_i = Self::from(r_list_get(value, i), state);
             let name = names.get_unchecked(i);
             if !name.is_empty() {
                 display_value.push_str(&name);
@@ -249,7 +284,7 @@ impl WorkspaceVariableDisplayValue {
         }
     }
 
-    fn from_env(value: SEXP) -> Self {
+    fn from_env(value: SEXP, parent_state: &EnvVarState) -> Self {
         // Get the environment and its length (excluding hidden bindings)
         let environment = Environment::new(RObject::view(value));
         let environment_length = environment.length(EnvironmentFilter::ExcludeHiddenBindings);
@@ -269,13 +304,17 @@ impl WorkspaceVariableDisplayValue {
             );
         }
 
+        // Clone hashmap because we only want to break recursion within a
+        // given subtree, not in siblings
+        let state = parent_state.clone_and_insert(value);
+
         // Build the detailed display value
         let mut display_value = String::new();
         let mut is_truncated = false;
         for (i, environment_variable) in environment
             .iter()
             .filter(|binding| !binding.is_hidden())
-            .map(|binding| EnvironmentVariable::new(&binding))
+            .map(|binding| EnvironmentVariable::new(&binding, &state))
             .sorted_by(|lhs, rhs| Ord::cmp(&lhs.display_name, &rhs.display_name))
             .enumerate()
         {
@@ -514,26 +553,50 @@ impl EnvironmentVariable {
     /**
      * Create a new EnvironmentVariable from a Binding
      */
-    pub fn new(binding: &Binding) -> Self {
+    pub fn new(binding: &Binding, state: &EnvVarState) -> Self {
+        if let BindingValue::Standard { object, .. } = binding.value {
+            if r_typeof(object) == ENVSXP {
+                if state.seen.contains_key(&(object as isize)) {
+                    return EnvironmentVariable::new_seen(binding.name.to_string());
+                }
+            }
+        }
+
         let display_name = binding.name.to_string();
 
         match binding.value {
             BindingValue::Active { .. } => Self::from_active_binding(display_name),
             BindingValue::Promise { promise } => Self::from_promise(display_name, promise),
             BindingValue::Altrep { object, .. } | BindingValue::Standard { object, .. } => {
-                Self::from(display_name.clone(), display_name, object)
+                Self::from(display_name.clone(), display_name, object, state)
             },
+        }
+    }
+
+    pub fn new_seen(display_name: String) -> Self {
+        Self {
+            access_key: display_name.clone(),
+            display_name,
+            display_value: String::from("(seen)"),
+            display_type: String::from(""),
+            type_info: String::from(""),
+            kind: ValueKind::Other,
+            length: 0,
+            size: 0,
+            has_children: false,
+            is_truncated: false,
+            has_viewer: false,
         }
     }
 
     /**
      * Create a new EnvironmentVariable from an R object
      */
-    fn from(access_key: String, display_name: String, x: SEXP) -> Self {
+    fn from(access_key: String, display_name: String, x: SEXP, state: &EnvVarState) -> Self {
         let WorkspaceVariableDisplayValue {
             display_value,
             is_truncated,
-        } = WorkspaceVariableDisplayValue::from(x);
+        } = WorkspaceVariableDisplayValue::from(x, &state);
         let WorkspaceVariableDisplayType {
             display_type,
             type_info,
@@ -757,7 +820,11 @@ impl EnvironmentVariable {
         }
     }
 
-    pub fn inspect(env: RObject, path: &Vec<String>) -> Result<Vec<Self>, harp::error::Error> {
+    pub fn inspect(
+        env: RObject,
+        path: &Vec<String>,
+        state: &EnvVarState,
+    ) -> Result<Vec<Self>, harp::error::Error> {
         let node = unsafe { Self::resolve_object_from_path(env, &path)? };
 
         match node {
@@ -767,26 +834,26 @@ impl EnvironmentVariable {
                     let enclos = Environment::new(RObject::view(env.find(".__enclos_env__")));
                     let private = RObject::view(enclos.find("private"));
 
-                    Self::inspect_environment(private)
+                    Self::inspect_environment(private, state)
                 },
 
-                "<methods>" => Self::inspect_r6_methods(object),
+                "<methods>" => Self::inspect_r6_methods(object, state),
 
                 _ => Err(harp::error::Error::InspectError { path: path.clone() }),
             },
 
             EnvironmentVariableNode::Concrete { object } => {
                 if object.is_s4() {
-                    Self::inspect_s4(*object)
+                    Self::inspect_s4(*object, state)
                 } else {
                     match r_typeof(*object) {
-                        VECSXP | EXPRSXP => Self::inspect_list(*object),
-                        LISTSXP => Self::inspect_pairlist(*object),
+                        VECSXP | EXPRSXP => Self::inspect_list(*object, state),
+                        LISTSXP => Self::inspect_pairlist(*object, state),
                         ENVSXP => {
                             if r_inherits(*object, "R6") {
-                                Self::inspect_r6(object)
+                                Self::inspect_r6(object, state)
                             } else {
-                                Self::inspect_environment(object)
+                                Self::inspect_environment(object, state)
                             }
                         },
                         LGLSXP | RAWSXP | STRSXP | INTSXP | REALSXP | CPLXSXP => {
@@ -999,16 +1066,20 @@ impl EnvironmentVariable {
         Ok(node)
     }
 
-    fn inspect_list(value: SEXP) -> Result<Vec<Self>, harp::error::Error> {
+    fn inspect_list(value: SEXP, state: &EnvVarState) -> Result<Vec<Self>, harp::error::Error> {
         let mut out: Vec<Self> = vec![];
         let n = unsafe { XLENGTH(value) };
 
         let names = Names::new(value, |i| format!("[[{}]]", i + 1));
 
         for i in 0..n {
-            out.push(Self::from(i.to_string(), names.get_unchecked(i), unsafe {
-                VECTOR_ELT(value, i)
-            }));
+            let obj = unsafe { VECTOR_ELT(value, i) };
+            out.push(Self::from(
+                i.to_string(),
+                names.get_unchecked(i),
+                obj,
+                state,
+            ));
         }
 
         Ok(out)
@@ -1125,7 +1196,7 @@ impl EnvironmentVariable {
         }
     }
 
-    fn inspect_pairlist(value: SEXP) -> Result<Vec<Self>, harp::error::Error> {
+    fn inspect_pairlist(value: SEXP, state: &EnvVarState) -> Result<Vec<Self>, harp::error::Error> {
         let mut out: Vec<Self> = vec![];
 
         let mut pairlist = value;
@@ -1141,7 +1212,12 @@ impl EnvironmentVariable {
                     String::from(RSymbol::new_unchecked(tag))
                 };
 
-                out.push(Self::from(i.to_string(), display_name, CAR(pairlist)));
+                out.push(Self::from(
+                    i.to_string(),
+                    display_name,
+                    CAR(pairlist),
+                    state,
+                ));
 
                 pairlist = CDR(pairlist);
                 i = i + 1;
@@ -1151,11 +1227,13 @@ impl EnvironmentVariable {
         Ok(out)
     }
 
-    fn inspect_r6(value: RObject) -> Result<Vec<Self>, harp::error::Error> {
+    fn inspect_r6(value: RObject, state: &EnvVarState) -> Result<Vec<Self>, harp::error::Error> {
         let mut has_private = false;
         let mut has_methods = false;
 
+        let state = state.clone_and_insert(value.sexp);
         let env = Environment::new(value);
+
         let mut childs: Vec<Self> = env
             .iter()
             .filter(|b: &Binding| {
@@ -1184,7 +1262,7 @@ impl EnvironmentVariable {
                     }
                 }
             })
-            .map(|b| Self::new(&b))
+            .map(|b| Self::new(&b, &state))
             .collect();
 
         childs.sort_by(|a, b| a.display_name.cmp(&b.display_name));
@@ -1224,11 +1302,16 @@ impl EnvironmentVariable {
         Ok(childs)
     }
 
-    fn inspect_environment(value: RObject) -> Result<Vec<Self>, harp::error::Error> {
+    fn inspect_environment(
+        value: RObject,
+        state: &EnvVarState,
+    ) -> Result<Vec<Self>, harp::error::Error> {
+        let state = state.clone_and_insert(value.sexp);
+
         let mut out: Vec<Self> = Environment::new(value)
             .iter()
             .filter(|b: &Binding| !b.is_hidden())
-            .map(|b| Self::new(&b))
+            .map(|b| Self::new(&b, &state))
             .collect();
 
         out.sort_by(|a, b| a.display_name.cmp(&b.display_name));
@@ -1236,7 +1319,7 @@ impl EnvironmentVariable {
         Ok(out)
     }
 
-    fn inspect_s4(value: SEXP) -> Result<Vec<Self>, harp::error::Error> {
+    fn inspect_s4(value: SEXP, state: &EnvVarState) -> Result<Vec<Self>, harp::error::Error> {
         let mut out: Vec<Self> = vec![];
 
         unsafe {
@@ -1248,14 +1331,24 @@ impl EnvironmentVariable {
                 let slot_symbol = r_symbol!(display_name);
                 let slot = r_try_catch(|| R_do_slot(value, slot_symbol))?;
                 let access_key = display_name.clone();
-                out.push(EnvironmentVariable::from(access_key, display_name, *slot));
+                out.push(EnvironmentVariable::from(
+                    access_key,
+                    display_name,
+                    *slot,
+                    state,
+                ));
             }
         }
 
         Ok(out)
     }
 
-    fn inspect_r6_methods(value: RObject) -> Result<Vec<Self>, harp::error::Error> {
+    fn inspect_r6_methods(
+        value: RObject,
+        state: &EnvVarState,
+    ) -> Result<Vec<Self>, harp::error::Error> {
+        let state = state.clone_and_insert(value.sexp);
+
         let mut out: Vec<Self> = Environment::new(value)
             .iter()
             .filter(|b: &Binding| match b.value {
@@ -1263,7 +1356,7 @@ impl EnvironmentVariable {
 
                 _ => false,
             })
-            .map(|b| Self::new(&b))
+            .map(|b| Self::new(&b, &state))
             .collect();
 
         out.sort_by(|a, b| a.display_name.cmp(&b.display_name));
