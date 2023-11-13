@@ -12,13 +12,12 @@ use anyhow::Result;
 use harp::object::RObject;
 use harp::string::r_string_decode;
 use harp::utils::r_normalize_path;
-use regex::Regex;
-use stdext::join;
 use stdext::unwrap;
 use stdext::IntoResult;
 use tower_lsp::lsp_types::CompletionItem;
 
 use crate::lsp::completions::completion_item::completion_item_from_direntry;
+use crate::lsp::completions::sources::utils::set_sort_text_by_words_first;
 use crate::lsp::document_context::DocumentContext;
 
 pub fn completions_from_file_path(
@@ -82,14 +81,7 @@ pub fn completions_from_file_path(
 
     // Push path completions starting with non-word characters to the bottom of
     // the sort list (like those starting with `.`)
-    let pattern = Regex::new(r"^\w").unwrap();
-    for item in &mut completions {
-        if pattern.is_match(&item.label) {
-            item.sort_text = Some(join!["1-", item.label]);
-        } else {
-            item.sort_text = Some(join!["2-", item.label]);
-        }
-    }
+    set_sort_text_by_words_first(&mut completions);
 
     Ok(Some(completions))
 }

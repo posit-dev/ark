@@ -10,12 +10,11 @@ use tower_lsp::lsp_types::CompletionItem;
 
 use crate::lsp::backend::Backend;
 use crate::lsp::completions::sources::completions_from_at;
-use crate::lsp::completions::sources::completions_from_call;
 use crate::lsp::completions::sources::completions_from_comment;
+use crate::lsp::completions::sources::completions_from_composite_sources;
 use crate::lsp::completions::sources::completions_from_custom_source;
 use crate::lsp::completions::sources::completions_from_dollar;
 use crate::lsp::completions::sources::completions_from_file_path;
-use crate::lsp::completions::sources::completions_from_general_sources;
 use crate::lsp::completions::sources::completions_from_namespace;
 use crate::lsp::document_context::DocumentContext;
 
@@ -65,15 +64,10 @@ pub fn provide_completions(
         return Ok(completions);
     }
 
-    // Try call related completions (including pipes, `[`, and `[[`)
-    if let Some(completions) = completions_from_call(context)? {
-        return Ok(completions);
-    }
-
     // At this point we aren't in a "special" completion case, so just return a
     // set of reasonable completions based on loaded packages, the open
-    // document, and the current workspace
-    completions_from_general_sources(backend, context)
+    // document, the current workspace, and any call related arguments
+    completions_from_composite_sources(backend, context)
 }
 
 fn is_single_colon(context: &DocumentContext) -> bool {

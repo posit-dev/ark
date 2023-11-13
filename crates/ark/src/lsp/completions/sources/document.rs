@@ -12,6 +12,7 @@ use tree_sitter::Node;
 
 use crate::lsp::completions::completion_item::completion_item_from_assignment;
 use crate::lsp::completions::completion_item::completion_item_from_scope_parameter;
+use crate::lsp::completions::sources::utils::filter_out_dot_prefixes;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::traits::cursor::TreeCursorExt;
 use crate::lsp::traits::point::PointExt;
@@ -52,6 +53,10 @@ pub(super) fn completions_from_document(
             None => break,
         };
     }
+
+    // Assume that even if they are in the document, we still don't want
+    // to include them without explicit user request
+    filter_out_dot_prefixes(context, &mut completions);
 
     Ok(Some(completions))
 }

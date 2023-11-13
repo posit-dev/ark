@@ -20,6 +20,8 @@ use tower_lsp::lsp_types::CompletionItem;
 
 use crate::lsp::completions::completion_item::completion_item_from_package;
 use crate::lsp::completions::completion_item::completion_item_from_symbol;
+use crate::lsp::completions::sources::utils::filter_out_dot_prefixes;
+use crate::lsp::completions::sources::utils::set_sort_text_by_words_first;
 use crate::lsp::completions::types::PromiseStrategy;
 use crate::lsp::document_context::DocumentContext;
 
@@ -102,16 +104,11 @@ pub(super) fn completions_from_search_path(
         }
     }
 
-    // Remove completions that start with `.` unless the user explicitly requested them
-    let user_requested_dot = context
-        .node
-        .utf8_text(context.source.as_bytes())
-        .and_then(|x| Ok(x.starts_with(".")))
-        .unwrap_or(false);
+    filter_out_dot_prefixes(context, &mut completions);
 
-    if !user_requested_dot {
-        completions.retain(|x| !x.label.starts_with("."));
-    }
+    // Push search path completions starting with non-word characters to the
+    // bottom of the sort list (like those starting with `.`, or `%>%`)
+    set_sort_text_by_words_first(&mut completions);
 
     Ok(completions)
 }

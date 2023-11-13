@@ -15,6 +15,7 @@ use tower_lsp::lsp_types::MarkupKind;
 
 use crate::lsp::backend::Backend;
 use crate::lsp::completions::completion_item::completion_item_from_function;
+use crate::lsp::completions::sources::utils::filter_out_dot_prefixes;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::indexer;
 use crate::lsp::traits::string::StringExt;
@@ -95,6 +96,11 @@ pub(super) fn completions_from_workspace(
             indexer::IndexEntryData::Section { level: _, title: _ } => {},
         }
     });
+
+    // Assume that even if they are in the workspace, we still don't want
+    // to include them without explicit user request.
+    // In particular, public modules in Positron
+    filter_out_dot_prefixes(context, &mut completions);
 
     Ok(Some(completions))
 }

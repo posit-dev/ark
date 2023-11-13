@@ -20,16 +20,18 @@ use tower_lsp::lsp_types::CompletionItem;
 use crate::lsp::completions::completion_item::completion_item;
 use crate::lsp::completions::completion_item::completion_item_from_dataset;
 use crate::lsp::completions::completion_item::completion_item_from_package;
+use crate::lsp::completions::sources::utils::node_call_position_type;
+use crate::lsp::completions::sources::utils::NodeCallPositionType;
 use crate::lsp::completions::types::CompletionData;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::signature_help::signature_help;
-use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::point::PointExt;
-use crate::lsp::traits::tree::TreeExt;
 
 pub fn completions_from_custom_source(
     context: &DocumentContext,
 ) -> Result<Option<Vec<CompletionItem>>> {
+    let node = context.node;
+
     // Use the signature help tools to figure out the necessary pieces.
     let position = context.point.as_position();
 
@@ -71,15 +73,10 @@ pub fn completions_from_custom_source(
     //
     // This is mainly relevant because we might only want to
     // provide certain completions in the 'name' position.
-    let node = context.document.ast.node_at_point(context.point);
-
-    let marker = node.bwd_leaf_iter().find_map(|node| match node.kind() {
-        "(" | "comma" => Some("name"),
-        "=" => Some("value"),
-        _ => None,
-    });
-
-    let position = marker.unwrap_or("value");
+    let position = match node_call_position_type(&node) {
+        NodeCallPositionType::Name => "name",
+        NodeCallPositionType::Value => "value",
+    };
 
     let mut completions = vec![];
 

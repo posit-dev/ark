@@ -19,6 +19,7 @@ use tower_lsp::lsp_types::CompletionItem;
 
 use crate::lsp::completions::completion_item::completion_item_from_lazydata;
 use crate::lsp::completions::completion_item::completion_item_from_namespace;
+use crate::lsp::completions::sources::utils::set_sort_text_by_words_first;
 use crate::lsp::document_context::DocumentContext;
 
 // Handle the case with 'package::prefix', where the user has now
@@ -95,6 +96,8 @@ pub fn completions_from_namespace(
             completions.append(&mut lazydata);
         }
     }
+
+    set_sort_text_by_words_first(&mut completions);
 
     Ok(Some(completions))
 }
