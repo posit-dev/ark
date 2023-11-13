@@ -5,8 +5,6 @@
 //
 //
 
-use std::collections::HashMap;
-
 use harp::call::RCall;
 use harp::environment::Binding;
 use harp::environment::BindingValue;
@@ -128,52 +126,6 @@ pub struct EnvironmentVariable {
     pub has_viewer: bool,
 }
 
-/// State to keep track of recursive environments
-///
-/// Environments can contain themselves, either directly (e.g. `x <-
-/// new.env(); x$x <- x`) or indirectly (e.g. `x <- list(globalenv())` at
-/// top-level). To avoid infinitely recursing through these self-referential
-/// structures, we keep track of seen environments during recursion.
-///
-/// This is implemented with a hashmap that we keep immutable. We don't want
-/// mutability here because a given environment might be bound multiple times
-/// in other subtrees and we still want to represent it in these unrelated
-/// locations. If performance is ever a concern, we could change the internals
-/// to use a proper persistent hashmap that shares internal structures in a more
-/// efficient way, such as https://github.com/orium/rpds#hashtriemap.
-#[derive(Debug, Clone, Default)]
-pub struct RecursionState {
-    seen: HashMap<usize, bool>,
-}
-
-impl RecursionState {
-    pub fn new(env: SEXP) -> Self {
-        let mut out = Self {
-            seen: HashMap::new(),
-        };
-
-        out.insert(env);
-        out
-    }
-
-    /**
-     * Non destructive insert. Returns a modified clone and
-     * preserves the original data structure.
-     */
-    pub fn clone_and_insert(&self, env: SEXP) -> Self {
-        let mut out = Self {
-            seen: self.seen.clone(),
-        };
-
-        out.insert(env);
-        out
-    }
-
-    fn insert(&mut self, value: SEXP) {
-        self.seen.insert(value as usize, true);
-    }
-}
-
 pub struct WorkspaceVariableDisplayValue {
     pub display_value: String,
     pub is_truncated: bool,
@@ -207,17 +159,17 @@ fn plural(text: &str, n: i32) -> String {
 }
 
 impl WorkspaceVariableDisplayValue {
-    pub fn from(value: SEXP, state: &RecursionState) -> Self {
+    pub fn from(value: SEXP) -> Self {
         match r_typeof(value) {
             NILSXP => Self::new(String::from("NULL"), false),
             VECSXP if r_inherits(value, "data.frame") => Self::from_data_frame(value),
-            VECSXP if !r_inherits(value, "POSIXlt") => Self::from_list(value, state),
+            VECSXP if !r_inherits(value, "POSIXlt") => Self::from_list(value),
             LISTSXP => Self::empty(),
             SYMSXP if value == unsafe { R_MissingArg } => {
                 Self::new(String::from("<missing>"), false)
             },
             CLOSXP => Self::from_closure(value),
-            ENVSXP => Self::from_env(value, state),
+            ENVSXP => Self::from_env(value),
             _ if r_is_matrix(value) => Self::from_matrix(value),
             _ => Self::from_default(value),
         }
@@ -234,7 +186,6 @@ impl WorkspaceVariableDisplayValue {
         Self::new(String::from(""), false)
     }
 
-    // When we implement list-column we'll need to pass in `state`
     fn from_data_frame(value: SEXP) -> Self {
         let dim = dim_data_frame(value);
         let class = match r_classes(value) {
@@ -256,7 +207,7 @@ impl WorkspaceVariableDisplayValue {
         Self::new(value, false)
     }
 
-    fn from_list(value: SEXP, state: &RecursionState) -> Self {
+    fn from_list(value: SEXP) -> Self {
         let n = r_length(value);
         let mut display_value = String::from("");
         let mut is_truncated = false;
@@ -266,7 +217,7 @@ impl WorkspaceVariableDisplayValue {
             if i > 0 {
                 display_value.push_str(", ");
             }
-            let display_i = Self::from(r_list_get(value, i), state);
+            let display_i = Self::from(r_list_get(value, i));
             let name = names.get_unchecked(i);
             if !name.is_empty() {
                 display_value.push_str(&name);
@@ -298,9 +249,7 @@ impl WorkspaceVariableDisplayValue {
         }
     }
 
-    fn from_env(value: SEXP, state: &RecursionState) -> Self {
-        let state = state.clone_and_insert(value);
-
+    fn from_env(value: SEXP) -> Self {
         // Get the environment and its length (excluding hidden bindings)
         let environment = Environment::new(RObject::view(value));
         let environment_length = environment.length(EnvironmentFilter::ExcludeHiddenBindings);
@@ -320,14 +269,19 @@ impl WorkspaceVariableDisplayValue {
             );
         }
 
+        // For envirornments we don't display values, only names. So we don't
+        // need to create `EnvironmentVariable` for each bindings as we used
+        // to, and which caused an infinite recursion since environments may
+        // be self-referential (posit-dev/positron#1690).
+        let names = environment.names();
+
         // Build the detailed display value
         let mut display_value = String::new();
         let mut is_truncated = false;
-        for (i, environment_variable) in environment
+        for (i, name) in names
             .iter()
-            .filter(|binding| !binding.is_hidden())
-            .map(|binding| EnvironmentVariable::new(&binding, &state))
-            .sorted_by(|lhs, rhs| Ord::cmp(&lhs.display_name, &rhs.display_name))
+            .filter(|name| !name.starts_with("."))
+            .sorted_by(|lhs, rhs| Ord::cmp(&lhs, &rhs))
             .enumerate()
         {
             // If this isn't the first entry, append a space separator.
@@ -336,7 +290,7 @@ impl WorkspaceVariableDisplayValue {
             }
 
             // Append the environment variable display name.
-            display_value.push_str(&environment_variable.display_name);
+            display_value.push_str(name);
 
             // When the display value becomes too long, mark it as truncated and stop
             // building it.
@@ -565,73 +519,26 @@ impl EnvironmentVariable {
     /**
      * Create a new EnvironmentVariable from a Binding
      */
-    pub fn new(binding: &Binding, state: &RecursionState) -> Self {
-        // First check if this binding is an environment that we have already
-        // seen. If that's the case, we need to break the recursion by
-        // returning a "seen" environment variable.
-        if let BindingValue::Standard { object, .. } = binding.value {
-            if r_typeof(object) == ENVSXP {
-                if state.seen.contains_key(&(object as usize)) {
-                    return EnvironmentVariable::new_seen(object, binding.name.to_string());
-                }
-            }
-        }
-
+    pub fn new(binding: &Binding) -> Self {
         let display_name = binding.name.to_string();
 
         match binding.value {
             BindingValue::Active { .. } => Self::from_active_binding(display_name),
             BindingValue::Promise { promise } => Self::from_promise(display_name, promise),
             BindingValue::Altrep { object, .. } | BindingValue::Standard { object, .. } => {
-                Self::from(display_name.clone(), display_name, object, state)
+                Self::from(display_name.clone(), display_name, object)
             },
-        }
-    }
-
-    /// Returns a seen variable to prevent recursion.
-    ///
-    /// Currently the display value is set to the environment name if it has
-    /// one followed by an "(already seen)" suffix.
-    ///
-    /// Alternatively we could allow recursion for a set amount of times
-    /// and let users figure out they are browsing recursive environments.
-    pub fn new_seen(env: SEXP, display_name: String) -> Self {
-        let env_name = unsafe { Environment::new(RObject::new(env)).name() };
-
-        let display_value = if let Some(name) = env_name {
-            String::from(format!("{name} (already seen)"))
-        } else {
-            String::from("(already seen)")
-        };
-
-        let WorkspaceVariableDisplayType {
-            display_type,
-            type_info,
-        } = WorkspaceVariableDisplayType::from(env);
-
-        Self {
-            access_key: display_name.clone(),
-            display_name,
-            display_value,
-            display_type,
-            type_info,
-            kind: ValueKind::Other,
-            length: 0,
-            size: 0,
-            has_children: false,
-            is_truncated: false,
-            has_viewer: false,
         }
     }
 
     /**
      * Create a new EnvironmentVariable from an R object
      */
-    fn from(access_key: String, display_name: String, x: SEXP, state: &RecursionState) -> Self {
+    fn from(access_key: String, display_name: String, x: SEXP) -> Self {
         let WorkspaceVariableDisplayValue {
             display_value,
             is_truncated,
-        } = WorkspaceVariableDisplayValue::from(x, &state);
+        } = WorkspaceVariableDisplayValue::from(x);
         let WorkspaceVariableDisplayType {
             display_type,
             type_info,
@@ -855,11 +762,7 @@ impl EnvironmentVariable {
         }
     }
 
-    pub fn inspect(
-        env: RObject,
-        path: &Vec<String>,
-        state: &RecursionState,
-    ) -> Result<Vec<Self>, harp::error::Error> {
+    pub fn inspect(env: RObject, path: &Vec<String>) -> Result<Vec<Self>, harp::error::Error> {
         let node = unsafe { Self::resolve_object_from_path(env, &path)? };
 
         match node {
@@ -869,26 +772,26 @@ impl EnvironmentVariable {
                     let enclos = Environment::new(RObject::view(env.find(".__enclos_env__")));
                     let private = RObject::view(enclos.find("private"));
 
-                    Self::inspect_environment(private, state)
+                    Self::inspect_environment(private)
                 },
 
-                "<methods>" => Self::inspect_r6_methods(object, state),
+                "<methods>" => Self::inspect_r6_methods(object),
 
                 _ => Err(harp::error::Error::InspectError { path: path.clone() }),
             },
 
             EnvironmentVariableNode::Concrete { object } => {
                 if object.is_s4() {
-                    Self::inspect_s4(*object, state)
+                    Self::inspect_s4(*object)
                 } else {
                     match r_typeof(*object) {
-                        VECSXP | EXPRSXP => Self::inspect_list(*object, state),
-                        LISTSXP => Self::inspect_pairlist(*object, state),
+                        VECSXP | EXPRSXP => Self::inspect_list(*object),
+                        LISTSXP => Self::inspect_pairlist(*object),
                         ENVSXP => {
                             if r_inherits(*object, "R6") {
-                                Self::inspect_r6(object, state)
+                                Self::inspect_r6(object)
                             } else {
-                                Self::inspect_environment(object, state)
+                                Self::inspect_environment(object)
                             }
                         },
                         LGLSXP | RAWSXP | STRSXP | INTSXP | REALSXP | CPLXSXP => {
@@ -1101,7 +1004,7 @@ impl EnvironmentVariable {
         Ok(node)
     }
 
-    fn inspect_list(value: SEXP, state: &RecursionState) -> Result<Vec<Self>, harp::error::Error> {
+    fn inspect_list(value: SEXP) -> Result<Vec<Self>, harp::error::Error> {
         let mut out: Vec<Self> = vec![];
         let n = unsafe { XLENGTH(value) };
 
@@ -1109,12 +1012,7 @@ impl EnvironmentVariable {
 
         for i in 0..n {
             let obj = unsafe { VECTOR_ELT(value, i) };
-            out.push(Self::from(
-                i.to_string(),
-                names.get_unchecked(i),
-                obj,
-                state,
-            ));
+            out.push(Self::from(i.to_string(), names.get_unchecked(i), obj));
         }
 
         Ok(out)
@@ -1231,10 +1129,7 @@ impl EnvironmentVariable {
         }
     }
 
-    fn inspect_pairlist(
-        value: SEXP,
-        state: &RecursionState,
-    ) -> Result<Vec<Self>, harp::error::Error> {
+    fn inspect_pairlist(value: SEXP) -> Result<Vec<Self>, harp::error::Error> {
         let mut out: Vec<Self> = vec![];
 
         let mut pairlist = value;
@@ -1250,12 +1145,7 @@ impl EnvironmentVariable {
                     String::from(RSymbol::new_unchecked(tag))
                 };
 
-                out.push(Self::from(
-                    i.to_string(),
-                    display_name,
-                    CAR(pairlist),
-                    state,
-                ));
+                out.push(Self::from(i.to_string(), display_name, CAR(pairlist)));
 
                 pairlist = CDR(pairlist);
                 i = i + 1;
@@ -1265,13 +1155,11 @@ impl EnvironmentVariable {
         Ok(out)
     }
 
-    fn inspect_r6(value: RObject, state: &RecursionState) -> Result<Vec<Self>, harp::error::Error> {
+    fn inspect_r6(value: RObject) -> Result<Vec<Self>, harp::error::Error> {
         let mut has_private = false;
         let mut has_methods = false;
 
-        let state = state.clone_and_insert(value.sexp);
         let env = Environment::new(value);
-
         let mut childs: Vec<Self> = env
             .iter()
             .filter(|b: &Binding| {
@@ -1300,7 +1188,7 @@ impl EnvironmentVariable {
                     }
                 }
             })
-            .map(|b| Self::new(&b, &state))
+            .map(|b| Self::new(&b))
             .collect();
 
         childs.sort_by(|a, b| a.display_name.cmp(&b.display_name));
@@ -1340,16 +1228,11 @@ impl EnvironmentVariable {
         Ok(childs)
     }
 
-    fn inspect_environment(
-        value: RObject,
-        state: &RecursionState,
-    ) -> Result<Vec<Self>, harp::error::Error> {
-        let state = state.clone_and_insert(value.sexp);
-
+    fn inspect_environment(value: RObject) -> Result<Vec<Self>, harp::error::Error> {
         let mut out: Vec<Self> = Environment::new(value)
             .iter()
             .filter(|b: &Binding| !b.is_hidden())
-            .map(|b| Self::new(&b, &state))
+            .map(|b| Self::new(&b))
             .collect();
 
         out.sort_by(|a, b| a.display_name.cmp(&b.display_name));
@@ -1357,7 +1240,7 @@ impl EnvironmentVariable {
         Ok(out)
     }
 
-    fn inspect_s4(value: SEXP, state: &RecursionState) -> Result<Vec<Self>, harp::error::Error> {
+    fn inspect_s4(value: SEXP) -> Result<Vec<Self>, harp::error::Error> {
         let mut out: Vec<Self> = vec![];
 
         unsafe {
@@ -1369,24 +1252,14 @@ impl EnvironmentVariable {
                 let slot_symbol = r_symbol!(display_name);
                 let slot = r_try_catch(|| R_do_slot(value, slot_symbol))?;
                 let access_key = display_name.clone();
-                out.push(EnvironmentVariable::from(
-                    access_key,
-                    display_name,
-                    *slot,
-                    state,
-                ));
+                out.push(EnvironmentVariable::from(access_key, display_name, *slot));
             }
         }
 
         Ok(out)
     }
 
-    fn inspect_r6_methods(
-        value: RObject,
-        state: &RecursionState,
-    ) -> Result<Vec<Self>, harp::error::Error> {
-        let state = state.clone_and_insert(value.sexp);
-
+    fn inspect_r6_methods(value: RObject) -> Result<Vec<Self>, harp::error::Error> {
         let mut out: Vec<Self> = Environment::new(value)
             .iter()
             .filter(|b: &Binding| match b.value {
@@ -1394,7 +1267,7 @@ impl EnvironmentVariable {
 
                 _ => false,
             })
-            .map(|b| Self::new(&b, &state))
+            .map(|b| Self::new(&b))
             .collect();
 
         out.sort_by(|a, b| a.display_name.cmp(&b.display_name));

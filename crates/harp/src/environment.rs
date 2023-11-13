@@ -403,6 +403,19 @@ impl Environment {
             None
         }
     }
+
+    /// Returns the names of the bindings of the environment
+    pub fn names(&self) -> Vec<String> {
+        let names = unsafe { RFunction::new("base", "names").add(self.env.sexp).call() };
+        let names = unwrap!(names, Err(_) => return vec![]);
+
+        let names: Result<Vec<String>, crate::error::Error> = names.try_into();
+        if let Ok(names) = names {
+            names
+        } else {
+            vec![]
+        }
+    }
 }
 
 #[cfg(test)]

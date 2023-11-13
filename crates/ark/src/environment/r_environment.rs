@@ -25,7 +25,6 @@ use log::error;
 use log::warn;
 use stdext::spawn;
 
-use super::variable::RecursionState;
 use crate::data_viewer::r_data_viewer::RDataViewer;
 use crate::environment::message::EnvironmentMessage;
 use crate::environment::message::EnvironmentMessageClear;
@@ -245,10 +244,9 @@ impl REnvironment {
 
         r_task(|| {
             self.update_bindings(self.bindings());
-            let state = self.new_recursion_state();
 
             for binding in self.current_bindings.get() {
-                variables.push(EnvironmentVariable::new(binding, &state));
+                variables.push(EnvironmentVariable::new(binding));
             }
         });
 
@@ -350,8 +348,7 @@ impl REnvironment {
     fn inspect(&mut self, path: &Vec<String>, request_id: Option<String>) {
         let inspect = r_task(|| {
             let env = self.env.get().clone();
-            let state = self.new_recursion_state();
-            EnvironmentVariable::inspect(env, &path, &state)
+            EnvironmentVariable::inspect(env, &path)
         });
         let msg = match inspect {
             Ok(children) => {
@@ -417,7 +414,6 @@ impl REnvironment {
         let mut removed: Vec<String> = vec![];
 
         r_task(|| {
-            let state = self.new_recursion_state();
             let new_bindings = self.bindings();
 
             let mut old_iter = self.current_bindings.get().iter();
@@ -434,7 +430,7 @@ impl REnvironment {
                     // No more old, collect last new into added
                     (None, Some(mut new)) => {
                         loop {
-                            assigned.push(EnvironmentVariable::new(&new, &state));
+                            assigned.push(EnvironmentVariable::new(&new));
 
                             match new_iter.next() {
                                 Some(x) => {
@@ -465,7 +461,7 @@ impl REnvironment {
                     (Some(old), Some(new)) => {
                         if old.name == new.name {
                             if old.value != new.value {
-                                assigned.push(EnvironmentVariable::new(&new, &state));
+                                assigned.push(EnvironmentVariable::new(&new));
                             }
                             old_next = old_iter.next();
                             new_next = new_iter.next();
@@ -473,7 +469,7 @@ impl REnvironment {
                             removed.push(old.name.to_string());
                             old_next = old_iter.next();
                         } else {
-                            assigned.push(EnvironmentVariable::new(&new, &state));
+                            assigned.push(EnvironmentVariable::new(&new));
                             new_next = new_iter.next();
                         }
                     },
@@ -507,12 +503,5 @@ impl REnvironment {
         bindings.sort_by(|a, b| a.name.cmp(&b.name));
         let bindings = RThreadSafe::new(bindings);
         bindings
-    }
-
-    /// Used to create a new recursion state to keep track of seen
-    /// environments. We create a fresh one from all top-level methods to
-    /// avoid using possibly outdated state.
-    fn new_recursion_state(&self) -> RecursionState {
-        RecursionState::new(self.env.get().sexp)
     }
 }
