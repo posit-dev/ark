@@ -17,6 +17,7 @@ use harp::utils::r_formals;
 use harp::utils::r_promise_force_with_rollback;
 use harp::utils::r_promise_is_forced;
 use harp::utils::r_promise_is_lazy_load_binding;
+use harp::utils::r_symbol_quote;
 use harp::utils::r_symbol_quote_invalid;
 use harp::utils::r_symbol_valid;
 use harp::utils::r_typeof;
@@ -166,14 +167,11 @@ pub(super) fn completion_item_from_function<T: AsRef<str>>(
     let detail = format!("{}({})", name, parameters.joined(", "));
     item.detail = Some(detail);
 
+    let insert_text = r_symbol_quote_invalid(name);
     item.insert_text_format = Some(InsertTextFormat::SNIPPET);
-    item.insert_text = if r_symbol_valid(name) {
-        Some(format!("{}($0)", name))
-    } else {
-        Some(format!("`{}`($0)", name.replace("`", "\\`")))
-    };
+    item.insert_text = Some(format!("{insert_text}($0)"));
 
-    // provide parameter completions after completiong function
+    // provide parameter completions after completing function
     item.command = Some(Command {
         title: "Trigger Parameter Hints".to_string(),
         command: "editor.action.triggerParameterHints".to_string(),
@@ -202,6 +200,8 @@ pub(super) unsafe fn completion_item_from_data_variable(
 
     if enquote {
         item.insert_text = Some(format!("\"{}\"", name));
+    } else if !r_symbol_valid(name) {
+        item.insert_text = Some(r_symbol_quote(name));
     }
 
     item.detail = Some(owner.to_string());
@@ -242,6 +242,10 @@ pub(super) unsafe fn completion_item_from_object(
     item.detail = Some("(Object)".to_string());
     item.kind = Some(CompletionItemKind::STRUCT);
 
+    if !r_symbol_valid(name) {
+        item.insert_text = Some(r_symbol_quote(name));
+    }
+
     Ok(item)
 }
 
@@ -278,6 +282,10 @@ pub(super) unsafe fn completion_item_from_promise(
     item.detail = Some("Promise".to_string());
     item.kind = Some(CompletionItemKind::STRUCT);
 
+    if !r_symbol_valid(name) {
+        item.insert_text = Some(r_symbol_quote(name));
+    }
+
     Ok(item)
 }
 
@@ -290,6 +298,10 @@ pub(super) fn completion_item_from_active_binding(name: &str) -> Result<Completi
 
     item.detail = Some("Active binding".to_string());
     item.kind = Some(CompletionItemKind::STRUCT);
+
+    if !r_symbol_valid(name) {
+        item.insert_text = Some(r_symbol_quote(name));
+    }
 
     Ok(item)
 }

@@ -405,8 +405,12 @@ pub fn r_symbol_quote_invalid(name: &str) -> String {
     if RE_SYNTACTIC_IDENTIFIER.is_match(name) {
         name.to_string()
     } else {
-        format!("`{}`", name.replace("`", "\\`"))
+        r_symbol_quote(name)
     }
+}
+
+pub fn r_symbol_quote(name: &str) -> String {
+    format!("`{}`", name.replace("`", "\\`"))
 }
 
 pub unsafe fn r_promise_is_forced(x: SEXP) -> bool {
