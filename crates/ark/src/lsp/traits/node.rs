@@ -9,6 +9,8 @@ use tree_sitter::Node;
 use tree_sitter::Point;
 use tree_sitter::TreeCursor;
 
+use crate::lsp::traits::point::PointExt;
+
 fn _dump_impl(cursor: &mut TreeCursor, source: &str, indent: &str, output: &mut String) {
     let node = cursor.node();
 
@@ -112,7 +114,9 @@ impl NodeExt for Node<'_> {
     }
 
     fn contains_point(&self, point: Point) -> bool {
-        self.start_position() <= point && self.end_position() >= point
+        // Right open range to ensure that with `(|)` where the cursor is at `|`,
+        // the `)` node owns the point, not the `(`, with no ambiguity.
+        point.is_after_or_equal(self.start_position()) && point.is_before(self.end_position())
     }
 
     fn prev_leaf(&self) -> Option<Self> {

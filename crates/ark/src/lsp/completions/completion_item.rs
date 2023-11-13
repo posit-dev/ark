@@ -25,15 +25,20 @@ use stdext::*;
 use tower_lsp::lsp_types::Command;
 use tower_lsp::lsp_types::CompletionItem;
 use tower_lsp::lsp_types::CompletionItemKind;
+use tower_lsp::lsp_types::CompletionTextEdit;
 use tower_lsp::lsp_types::Documentation;
 use tower_lsp::lsp_types::InsertTextFormat;
 use tower_lsp::lsp_types::MarkupContent;
 use tower_lsp::lsp_types::MarkupKind;
+use tower_lsp::lsp_types::Range;
+use tower_lsp::lsp_types::TextEdit;
 use tree_sitter::Node;
+use tree_sitter::Point;
 
 use crate::lsp::completions::types::CompletionData;
 use crate::lsp::completions::types::PromiseStrategy;
 use crate::lsp::document_context::DocumentContext;
+use crate::lsp::traits::point::PointExt;
 
 pub(super) fn completion_item(
     label: impl AsRef<str>,
@@ -386,26 +391,66 @@ pub(super) fn completion_item_from_scope_parameter(
     Ok(item)
 }
 
-pub(super) unsafe fn completion_item_from_parameter(
+pub(super) fn completion_item_from_parameter(
     parameter: &str,
     callee: &str,
+    point: &Point,
 ) -> Result<CompletionItem> {
-    let label = r_symbol_quote_invalid(parameter);
-    let mut item = completion_item(label, CompletionData::Parameter {
+    if parameter == "..." {
+        return completion_item_from_dot_dot_dot(callee, point);
+    }
+
+    // `data` captured using original `parameter`, before quoting
+    let data = CompletionData::Parameter {
         name: parameter.to_string(),
+        function: callee.to_string(),
+    };
+
+    let parameter = r_symbol_quote_invalid(parameter);
+
+    // We want to display to the user the name with the `=`
+    let label = parameter.clone() + " = ";
+
+    let mut item = completion_item(label.as_str(), data)?;
+
+    item.kind = Some(CompletionItemKind::FIELD);
+
+    // We want to insert the name with the `=` too
+    item.insert_text = Some(label);
+    item.insert_text_format = Some(InsertTextFormat::SNIPPET);
+
+    // But we filter and sort on the label without the `=`
+    item.filter_text = Some(parameter.clone());
+    item.sort_text = Some(parameter.clone());
+
+    Ok(item)
+}
+
+fn completion_item_from_dot_dot_dot(callee: &str, point: &Point) -> Result<CompletionItem> {
+    // Special behavior for `...` arguments, where we want to show them
+    // in quick suggestions (to show help docs for them), but not actually
+    // insert any text for them if the user selects them. Can't use an
+    // `insert_text` of `""` because Positron treats it like `None`.
+    let label = "...";
+
+    let mut item = completion_item(label, CompletionData::Parameter {
+        name: label.to_string(),
         function: callee.to_string(),
     })?;
 
-    // TODO: It'd be nice if we could be smarter about how '...' completions are handled,
-    // but evidently VSCode doesn't let us set an empty 'insert text' string here.
-    // Might be worth fixing upstream.
     item.kind = Some(CompletionItemKind::FIELD);
-    item.insert_text_format = Some(InsertTextFormat::SNIPPET);
-    item.insert_text = if parameter == "..." {
-        Some("...".to_string())
-    } else {
-        Some(parameter.to_string() + " = ")
+
+    let position = point.as_position();
+    let range = Range {
+        start: position,
+        end: position,
     };
+    let textedit = TextEdit {
+        range,
+        new_text: "".to_string(),
+    };
+    let textedit = CompletionTextEdit::Edit(textedit);
+    item.text_edit = Some(textedit);
 
     Ok(item)
 }

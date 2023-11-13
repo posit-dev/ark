@@ -5,106 +5,75 @@
 //
 //
 
-use std::collections::HashSet;
-
-use regex::Regex;
-use stdext::*;
+use anyhow::Result;
 use tower_lsp::lsp_types::CompletionItem;
-use tower_lsp::lsp_types::CompletionItemKind;
 
 use crate::lsp::backend::Backend;
-use crate::lsp::completions::document::append_document_completions;
-use crate::lsp::completions::session::append_session_completions;
-use crate::lsp::completions::workspace::append_workspace_completions;
+use crate::lsp::completions::sources::completions_from_at;
+use crate::lsp::completions::sources::completions_from_call;
+use crate::lsp::completions::sources::completions_from_comment;
+use crate::lsp::completions::sources::completions_from_custom_source;
+use crate::lsp::completions::sources::completions_from_dollar;
+use crate::lsp::completions::sources::completions_from_file_path;
+use crate::lsp::completions::sources::completions_from_general_sources;
+use crate::lsp::completions::sources::completions_from_namespace;
 use crate::lsp::document_context::DocumentContext;
-use crate::r_task;
 
-// Entry point for completions
-pub fn provide_completions(backend: &Backend, context: &DocumentContext) -> Vec<CompletionItem> {
-    // Start building completions
-    let mut completions: Vec<CompletionItem> = vec![];
+// Entry point for completions.
+// Must be within an `r_task()`.
+pub fn provide_completions(
+    backend: &Backend,
+    context: &DocumentContext,
+) -> Result<Vec<CompletionItem>> {
+    log::info!("provide_completions()");
 
     // Don't provide completions if on a single `:`, which typically precedes
     // a `::` or `:::`. It means we don't provide completions for `1:` but we
     // accept that.
     if is_single_colon(context) {
-        return completions;
+        return Ok(vec![]);
     }
 
-    // TODO: These probably shouldn't be separate methods, because we might get
-    // the same completion from multiple sources, e.g.
-    //
-    // - A completion for a function 'foo' defined in the current document,
-    // - A completion for a function 'foo' defined in the workspace,
-    // - A variable called 'foo' defined in the current R session.
-    //
-    // Really, what's relevant is which of the above should be considered
-    // 'visible' to the user.
-
-    // Add session completions
-    let result = r_task(|| unsafe { append_session_completions(context, &mut completions) });
-    if let Err(err) = result {
-        log::error!("{err:?}");
+    // Try comment / roxygen2 completions
+    if let Some(completions) = completions_from_comment(context)? {
+        return Ok(completions);
     }
 
-    // Add context-relevant completions
-    let result = append_document_completions(context, &mut completions);
-    if let Err(err) = result {
-        log::error!("{err:?}");
+    // Try file completions
+    if let Some(completions) = completions_from_file_path(context)? {
+        return Ok(completions);
     }
 
-    // Add workspace completions
-    let result = append_workspace_completions(backend, context, &mut completions);
-    if let Err(err) = result {
-        log::error!("{err:?}");
+    // Try `package::prefix` (or `:::`) namespace completions
+    if let Some(completions) = completions_from_namespace(context)? {
+        return Ok(completions);
     }
 
-    // Remove duplicates
-    let mut uniques = HashSet::new();
-    completions.retain(|x| uniques.insert(x.label.clone()));
-
-    // Remove completions that start with `.` unless the user explicitly requested them
-    // TODO: This ends up removing function argument completions if they start with `.`,
-    // which is pretty common
-    let user_requested_dot = context
-        .node
-        .utf8_text(context.source.as_bytes())
-        .and_then(|x| Ok(x.starts_with(".")))
-        .unwrap_or(false);
-
-    if !user_requested_dot {
-        completions.retain(|x| !x.label.starts_with("."));
+    // Try specialized custom completions
+    // (Should be before more general ast / call completions)
+    if let Some(completions) = completions_from_custom_source(context)? {
+        return Ok(completions);
     }
 
-    // sort completions by providing custom 'sort' text to be used when
-    // ordering completion results. we use some placeholders at the front
-    // to 'bin' different completion types differently; e.g. we place parameter
-    // completions at the front, and completions starting with non-word
-    // characters at the end (e.g. completions starting with `.`)
-    let pattern = Regex::new(r"^\w").unwrap();
-    for item in &mut completions {
-        case! {
-
-            item.kind == Some(CompletionItemKind::FIELD) => {
-                item.sort_text = Some(join!["1", item.label]);
-            }
-
-            item.kind == Some(CompletionItemKind::VARIABLE) => {
-                item.sort_text = Some(join!["2", item.label]);
-            }
-
-            pattern.is_match(&item.label) => {
-                item.sort_text = Some(join!["3", item.label]);
-            }
-
-            => {
-                item.sort_text = Some(join!["4", item.label]);
-            }
-
-        }
+    // Try `$` completions
+    if let Some(completions) = completions_from_dollar(context)? {
+        return Ok(completions);
     }
 
-    completions
+    // Try `@` completions
+    if let Some(completions) = completions_from_at(context)? {
+        return Ok(completions);
+    }
+
+    // Try call related completions (including pipes, `[`, and `[[`)
+    if let Some(completions) = completions_from_call(context)? {
+        return Ok(completions);
+    }
+
+    // At this point we aren't in a "special" completion case, so just return a
+    // set of reasonable completions based on loaded packages, the open
+    // document, and the current workspace
+    completions_from_general_sources(backend, context)
 }
 
 fn is_single_colon(context: &DocumentContext) -> bool {

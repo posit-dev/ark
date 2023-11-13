@@ -6,12 +6,10 @@
 //
 
 mod completion_item;
-mod document;
 mod provide;
 mod resolve;
-mod session;
+mod sources;
 mod types;
-mod workspace;
 
 pub use provide::provide_completions;
 pub use resolve::resolve_completion;
