@@ -34,13 +34,24 @@ impl TreeExt for Tree {
             break;
         }
 
-        // Next, iterate through the children of this node
+        // Next, recurse through the children of this node
         // (if any) to find the closest child.
-        let mut cursor = node.walk();
-        let children = node.children(&mut cursor);
-        for child in children {
-            if child.start_position() <= point {
-                node = child;
+        loop {
+            let mut cursor = node.walk();
+            let children = node.children(&mut cursor);
+
+            let mut updated = false;
+
+            for child in children {
+                // Exclusive! Matches `contains_point()`.
+                if child.start_position() < point {
+                    node = child;
+                    updated = true;
+                }
+            }
+
+            if !updated {
+                break;
             }
         }
 
