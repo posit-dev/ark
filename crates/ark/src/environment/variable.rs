@@ -143,7 +143,7 @@ pub struct EnvironmentVariable {
 /// efficient way, such as https://github.com/orium/rpds#hashtriemap.
 #[derive(Debug, Clone, Default)]
 pub struct RecursionState {
-    seen: HashMap<isize, bool>,
+    seen: HashMap<usize, bool>,
 }
 
 impl RecursionState {
@@ -170,7 +170,7 @@ impl RecursionState {
     }
 
     fn insert(&mut self, value: SEXP) {
-        self.seen.insert(value as isize, true);
+        self.seen.insert(value as usize, true);
     }
 }
 
@@ -571,7 +571,7 @@ impl EnvironmentVariable {
         // returning a "seen" environment variable.
         if let BindingValue::Standard { object, .. } = binding.value {
             if r_typeof(object) == ENVSXP {
-                if state.seen.contains_key(&(object as isize)) {
+                if state.seen.contains_key(&(object as usize)) {
                     return EnvironmentVariable::new_seen(binding.name.to_string());
                 }
             }
