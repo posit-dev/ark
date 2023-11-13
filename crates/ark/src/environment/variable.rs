@@ -572,7 +572,7 @@ impl EnvironmentVariable {
         if let BindingValue::Standard { object, .. } = binding.value {
             if r_typeof(object) == ENVSXP {
                 if state.seen.contains_key(&(object as usize)) {
-                    return EnvironmentVariable::new_seen(binding.name.to_string());
+                    return EnvironmentVariable::new_seen(object, binding.name.to_string());
                 }
             }
         }
@@ -588,13 +588,33 @@ impl EnvironmentVariable {
         }
     }
 
-    pub fn new_seen(display_name: String) -> Self {
+    /// Returns a seen variable to prevent recursion.
+    ///
+    /// Currently the display value is set to the environment name if it has
+    /// one followed by an "(already seen)" suffix.
+    ///
+    /// Alternatively we could allow recursion for a set amount of times
+    /// and let users figure out they are browsing recursive environments.
+    pub fn new_seen(env: SEXP, display_name: String) -> Self {
+        let env_name = unsafe { Environment::new(RObject::new(env)).name() };
+
+        let display_value = if let Some(name) = env_name {
+            String::from(format!("{name} (already seen)"))
+        } else {
+            String::from("(already seen)")
+        };
+
+        let WorkspaceVariableDisplayType {
+            display_type,
+            type_info,
+        } = WorkspaceVariableDisplayType::from(env);
+
         Self {
             access_key: display_name.clone(),
             display_name,
-            display_value: String::from("(seen)"),
-            display_type: String::from(""),
-            type_info: String::from(""),
+            display_value,
+            display_type,
+            type_info,
             kind: ValueKind::Other,
             length: 0,
             size: 0,

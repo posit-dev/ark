@@ -8,7 +8,10 @@
 use std::ops::Deref;
 
 use libR_sys::*;
+use stdext::unwrap;
 
+use crate::exec::RFunction;
+use crate::exec::RFunctionExt;
 use crate::object::RObject;
 use crate::symbol::RSymbol;
 use crate::utils::r_is_altrep;
@@ -380,6 +383,24 @@ impl Environment {
             EnvironmentFilter::ExcludeHiddenBindings => {
                 self.iter().filter(|b| !b.is_hidden()).count()
             },
+        }
+    }
+
+    /// Returns environment name if it has one. Reproduces the same output as
+    /// `rlang::env_name()`.
+    pub fn name(&self) -> Option<String> {
+        let name = unsafe { RFunction::new("", ".ps.env_name").add(self.env.sexp).call() };
+        let name = unwrap!(name, Err(_) => return None);
+
+        if unsafe { name.sexp == R_NilValue } {
+            return None;
+        }
+
+        let name: Result<String, crate::error::Error> = name.try_into();
+        if let Ok(name) = name {
+            Some(name)
+        } else {
+            None
         }
     }
 }
