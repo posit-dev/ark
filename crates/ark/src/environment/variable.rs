@@ -128,12 +128,25 @@ pub struct EnvironmentVariable {
     pub has_viewer: bool,
 }
 
+/// State to keep track of recursive environments
+///
+/// Environments can contain themselves, either directly (e.g. `x <-
+/// new.env(); x$x <- x`) or indirectly (e.g. `x <- list(globalenv())` at
+/// top-level). To avoid infinitely recursing through these self-referential
+/// structures, we keep track of seen environments during recursion.
+///
+/// This is implemented with a hashmap that we keep immutable. We don't want
+/// mutability here because a given environment might be bound multiple times
+/// in other subtrees and we still want to represent it in these unrelated
+/// locations. If performance is ever a concern, we could change the internals
+/// to use a proper persistent hashmap that shares internal structures in a more
+/// efficient way, such as https://github.com/orium/rpds#hashtriemap.
 #[derive(Debug, Clone, Default)]
-pub struct EnvVarState {
+pub struct RecursionState {
     seen: HashMap<isize, bool>,
 }
 
-impl EnvVarState {
+impl RecursionState {
     pub fn new(env: SEXP) -> Self {
         let mut out = Self {
             seen: HashMap::new(),
@@ -194,7 +207,7 @@ fn plural(text: &str, n: i32) -> String {
 }
 
 impl WorkspaceVariableDisplayValue {
-    pub fn from(value: SEXP, state: &EnvVarState) -> Self {
+    pub fn from(value: SEXP, state: &RecursionState) -> Self {
         match r_typeof(value) {
             NILSXP => Self::new(String::from("NULL"), false),
             VECSXP if r_inherits(value, "data.frame") => Self::from_data_frame(value),
@@ -221,6 +234,7 @@ impl WorkspaceVariableDisplayValue {
         Self::new(String::from(""), false)
     }
 
+    // When we implement list-column we'll need to pass in `state`
     fn from_data_frame(value: SEXP) -> Self {
         let dim = dim_data_frame(value);
         let class = match r_classes(value) {
@@ -242,7 +256,7 @@ impl WorkspaceVariableDisplayValue {
         Self::new(value, false)
     }
 
-    fn from_list(value: SEXP, state: &EnvVarState) -> Self {
+    fn from_list(value: SEXP, state: &RecursionState) -> Self {
         let n = r_length(value);
         let mut display_value = String::from("");
         let mut is_truncated = false;
@@ -284,7 +298,9 @@ impl WorkspaceVariableDisplayValue {
         }
     }
 
-    fn from_env(value: SEXP, parent_state: &EnvVarState) -> Self {
+    fn from_env(value: SEXP, state: &RecursionState) -> Self {
+        let state = state.clone_and_insert(value);
+
         // Get the environment and its length (excluding hidden bindings)
         let environment = Environment::new(RObject::view(value));
         let environment_length = environment.length(EnvironmentFilter::ExcludeHiddenBindings);
@@ -303,10 +319,6 @@ impl WorkspaceVariableDisplayValue {
                 true,
             );
         }
-
-        // Clone hashmap because we only want to break recursion within a
-        // given subtree, not in siblings
-        let state = parent_state.clone_and_insert(value);
 
         // Build the detailed display value
         let mut display_value = String::new();
@@ -553,7 +565,10 @@ impl EnvironmentVariable {
     /**
      * Create a new EnvironmentVariable from a Binding
      */
-    pub fn new(binding: &Binding, state: &EnvVarState) -> Self {
+    pub fn new(binding: &Binding, state: &RecursionState) -> Self {
+        // First check if this binding is an environment that we have already
+        // seen. If that's the case, we need to break the recursion by
+        // returning a "seen" environment variable.
         if let BindingValue::Standard { object, .. } = binding.value {
             if r_typeof(object) == ENVSXP {
                 if state.seen.contains_key(&(object as isize)) {
@@ -592,7 +607,7 @@ impl EnvironmentVariable {
     /**
      * Create a new EnvironmentVariable from an R object
      */
-    fn from(access_key: String, display_name: String, x: SEXP, state: &EnvVarState) -> Self {
+    fn from(access_key: String, display_name: String, x: SEXP, state: &RecursionState) -> Self {
         let WorkspaceVariableDisplayValue {
             display_value,
             is_truncated,
@@ -823,7 +838,7 @@ impl EnvironmentVariable {
     pub fn inspect(
         env: RObject,
         path: &Vec<String>,
-        state: &EnvVarState,
+        state: &RecursionState,
     ) -> Result<Vec<Self>, harp::error::Error> {
         let node = unsafe { Self::resolve_object_from_path(env, &path)? };
 
@@ -1066,7 +1081,7 @@ impl EnvironmentVariable {
         Ok(node)
     }
 
-    fn inspect_list(value: SEXP, state: &EnvVarState) -> Result<Vec<Self>, harp::error::Error> {
+    fn inspect_list(value: SEXP, state: &RecursionState) -> Result<Vec<Self>, harp::error::Error> {
         let mut out: Vec<Self> = vec![];
         let n = unsafe { XLENGTH(value) };
 
@@ -1196,7 +1211,10 @@ impl EnvironmentVariable {
         }
     }
 
-    fn inspect_pairlist(value: SEXP, state: &EnvVarState) -> Result<Vec<Self>, harp::error::Error> {
+    fn inspect_pairlist(
+        value: SEXP,
+        state: &RecursionState,
+    ) -> Result<Vec<Self>, harp::error::Error> {
         let mut out: Vec<Self> = vec![];
 
         let mut pairlist = value;
@@ -1227,7 +1245,7 @@ impl EnvironmentVariable {
         Ok(out)
     }
 
-    fn inspect_r6(value: RObject, state: &EnvVarState) -> Result<Vec<Self>, harp::error::Error> {
+    fn inspect_r6(value: RObject, state: &RecursionState) -> Result<Vec<Self>, harp::error::Error> {
         let mut has_private = false;
         let mut has_methods = false;
 
@@ -1304,7 +1322,7 @@ impl EnvironmentVariable {
 
     fn inspect_environment(
         value: RObject,
-        state: &EnvVarState,
+        state: &RecursionState,
     ) -> Result<Vec<Self>, harp::error::Error> {
         let state = state.clone_and_insert(value.sexp);
 
@@ -1319,7 +1337,7 @@ impl EnvironmentVariable {
         Ok(out)
     }
 
-    fn inspect_s4(value: SEXP, state: &EnvVarState) -> Result<Vec<Self>, harp::error::Error> {
+    fn inspect_s4(value: SEXP, state: &RecursionState) -> Result<Vec<Self>, harp::error::Error> {
         let mut out: Vec<Self> = vec![];
 
         unsafe {
@@ -1345,7 +1363,7 @@ impl EnvironmentVariable {
 
     fn inspect_r6_methods(
         value: RObject,
-        state: &EnvVarState,
+        state: &RecursionState,
     ) -> Result<Vec<Self>, harp::error::Error> {
         let state = state.clone_and_insert(value.sexp);
 
