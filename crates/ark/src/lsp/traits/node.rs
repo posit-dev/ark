@@ -114,9 +114,10 @@ impl NodeExt for Node<'_> {
     }
 
     fn contains_point(&self, point: Point) -> bool {
-        // Right open range to ensure that with `(|)` where the cursor is at `|`,
-        // the `)` node owns the point, not the `(`, with no ambiguity.
-        point.is_after_or_equal(self.start_position()) && point.is_before(self.end_position())
+        // Left open range, like `(]`, to ensure that with `(|)` where the
+        // cursor is at `|`, the `(` node owns the point, not the `)`, with no
+        // ambiguity.
+        point.is_after(self.start_position()) && point.is_before_or_equal(self.end_position())
     }
 
     fn prev_leaf(&self) -> Option<Self> {
