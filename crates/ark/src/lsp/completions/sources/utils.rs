@@ -39,7 +39,12 @@ pub(super) fn set_sort_text_by_first_appearance(completions: &mut Vec<Completion
 }
 
 pub(super) fn set_sort_text_by_words_first(completions: &mut Vec<CompletionItem>) {
-    let pattern = Regex::new(r"^\w").unwrap();
+    // `_` is considered a word character but we typically want those at the end so:
+    // - First `^` for "starts with"
+    // - Second `^` for "not the \W_"
+    // - `\W_` for "non word characters plus `_`"
+    // Result is "starts with any word character except `_`"
+    let pattern = Regex::new(r"^[^\W_]").unwrap();
 
     for item in completions {
         // Start with existing `sort_text` if one exists

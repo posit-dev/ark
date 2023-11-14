@@ -9,6 +9,7 @@ use anyhow::Result;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
+use harp::utils::r_symbol_quote_invalid;
 use harp::utils::r_typeof;
 use libR_sys::R_NilValue;
 use libR_sys::VECSXP;
@@ -21,6 +22,7 @@ use crate::lsp::completions::completion_item::completion_item;
 use crate::lsp::completions::completion_item::completion_item_from_dataset;
 use crate::lsp::completions::completion_item::completion_item_from_package;
 use crate::lsp::completions::sources::utils::node_call_position_type;
+use crate::lsp::completions::sources::utils::set_sort_text_by_words_first;
 use crate::lsp::completions::sources::utils::NodeCallPositionType;
 use crate::lsp::completions::types::CompletionData;
 use crate::lsp::document_context::DocumentContext;
@@ -131,15 +133,24 @@ pub fn completions_from_custom_source(
                 });
 
                 if enquote && node.kind() != "string" {
-                    item.insert_text = Some(format!("\"{}\"", value));
-                } else if !append.is_empty() {
-                    item.insert_text = Some(format!("{}{}", value, append));
+                    item.insert_text = Some(format!("\"{value}\""));
+                } else {
+                    let mut insert_text = r_symbol_quote_invalid(value.as_str());
+
+                    if !append.is_empty() {
+                        insert_text = format!("{insert_text}{append}");
+                    }
+
+                    item.insert_text = Some(insert_text);
                 }
 
                 completions.push(item);
             }
         }
     }
+
+    // In particular, push env vars that start with `_` to the end
+    set_sort_text_by_words_first(&mut completions);
 
     Ok(Some(completions))
 }
