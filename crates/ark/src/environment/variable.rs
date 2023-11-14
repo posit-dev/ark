@@ -209,7 +209,7 @@ impl WorkspaceVariableDisplayValue {
 
     fn from_list(value: SEXP) -> Self {
         let n = r_length(value);
-        let mut display_value = String::from("");
+        let mut display_value = String::from("[");
         let mut is_truncated = false;
         let names = Names::new(value, |_i| String::from(""));
 
@@ -223,15 +223,14 @@ impl WorkspaceVariableDisplayValue {
                 display_value.push_str(&name);
                 display_value.push_str(" = ");
             }
-            display_value.push_str("[");
             display_value.push_str(&display_i.display_value);
-            display_value.push_str("]");
 
             if display_value.len() > MAX_DISPLAY_VALUE_LENGTH || display_i.is_truncated {
                 is_truncated = true;
             }
         }
 
+        display_value.push_str("]");
         Self::new(display_value, is_truncated)
     }
 
