@@ -269,14 +269,19 @@ impl WorkspaceVariableDisplayValue {
             );
         }
 
+        // For environment we don't display values, only names. So we don't
+        // need to create `EnvironmentVariable` for each bindings as we used
+        // to, and which caused an infinite recursion since environments may
+        // be self-referential (posit-dev/positron#1690).
+        let names = environment.names();
+
         // Build the detailed display value
         let mut display_value = String::new();
         let mut is_truncated = false;
-        for (i, environment_variable) in environment
+        for (i, name) in names
             .iter()
-            .filter(|binding| !binding.is_hidden())
-            .map(|binding| EnvironmentVariable::new(&binding))
-            .sorted_by(|lhs, rhs| Ord::cmp(&lhs.display_name, &rhs.display_name))
+            .filter(|name| !name.starts_with("."))
+            .sorted_by(|lhs, rhs| Ord::cmp(&lhs, &rhs))
             .enumerate()
         {
             // If this isn't the first entry, append a space separator.
@@ -285,7 +290,7 @@ impl WorkspaceVariableDisplayValue {
             }
 
             // Append the environment variable display name.
-            display_value.push_str(&environment_variable.display_name);
+            display_value.push_str(name);
 
             // When the display value becomes too long, mark it as truncated and stop
             // building it.
@@ -1006,9 +1011,8 @@ impl EnvironmentVariable {
         let names = Names::new(value, |i| format!("[[{}]]", i + 1));
 
         for i in 0..n {
-            out.push(Self::from(i.to_string(), names.get_unchecked(i), unsafe {
-                VECTOR_ELT(value, i)
-            }));
+            let obj = unsafe { VECTOR_ELT(value, i) };
+            out.push(Self::from(i.to_string(), names.get_unchecked(i), obj));
         }
 
         Ok(out)

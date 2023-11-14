@@ -8,7 +8,10 @@
 use std::ops::Deref;
 
 use libR_sys::*;
+use stdext::unwrap;
 
+use crate::exec::RFunction;
+use crate::exec::RFunctionExt;
 use crate::object::RObject;
 use crate::symbol::RSymbol;
 use crate::utils::r_is_altrep;
@@ -381,6 +384,45 @@ impl Environment {
                 self.iter().filter(|b| !b.is_hidden()).count()
             },
         }
+    }
+
+    /// Returns environment name if it has one. Reproduces the same output as
+    /// `rlang::env_name()`.
+    pub fn name(&self) -> Option<String> {
+        let name = unsafe { RFunction::new("", ".ps.env_name").add(self.env.sexp).call() };
+        let name = unwrap!(name, Err(err) => {
+            log::error!("{err:?}");
+            return None
+        });
+
+        if unsafe { name.sexp == R_NilValue } {
+            return None;
+        }
+
+        let name: Result<String, crate::error::Error> = name.try_into();
+        let name = unwrap!(name, Err(err) => {
+            log::error!("{err:?}");
+            return None;
+        });
+
+        Some(name)
+    }
+
+    /// Returns the names of the bindings of the environment
+    pub fn names(&self) -> Vec<String> {
+        let names = unsafe { RFunction::new("base", "names").add(self.env.sexp).call() };
+        let names = unwrap!(names, Err(err) => {
+            log::error!("{err:?}");
+            return vec![]
+        });
+
+        let names: Result<Vec<String>, crate::error::Error> = names.try_into();
+        let names = unwrap!(names, Err(err) => {
+            log::error!("{err:?}");
+            return vec![];
+        });
+
+        names
     }
 }
 

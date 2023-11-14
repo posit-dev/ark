@@ -58,6 +58,13 @@ pub struct REnvironment {
     /// `RThreadSafe` to ensure that the `drop()` runs on the R main thread.
     /// However, we do need to `Send` the underlying `SEXP` values between
     /// threads, so we still use `RThreadSafe` for that.
+    ///
+    /// NOTE: What if the bindings get out of sync with the environment?
+    /// Outside of R tasks, R will run concurrently with the environment
+    /// thread and the bindings might be updated concurrently. There is a risk
+    /// that the thread is then holding onto dangling pointers. For safety we
+    /// should probably store the bindings in a list owned by the environment
+    /// thread. Tracked in https://github.com/posit-dev/positron/issues/1812
     current_bindings: RThreadSafe<Vec<Binding>>,
     version: u64,
 }
@@ -238,9 +245,7 @@ impl REnvironment {
         r_task(|| {
             self.update_bindings(self.bindings());
 
-            let current_bindings = self.current_bindings.get();
-
-            for binding in current_bindings {
+            for binding in self.current_bindings.get() {
                 variables.push(EnvironmentVariable::new(binding));
             }
         });
@@ -488,8 +493,9 @@ impl REnvironment {
         }
     }
 
+    // SAFETY: The following methods must be called in an `r_task()`
+
     fn bindings(&self) -> RThreadSafe<Vec<Binding>> {
-        // SAFETY: Should be called in an `r_task()`
         let env = self.env.get().clone();
         let env = Environment::new(env);
         let mut bindings: Vec<Binding> =
