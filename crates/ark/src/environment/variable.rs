@@ -14,6 +14,8 @@ use harp::error::Error;
 use harp::exec::r_try_catch;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
+use harp::object::r_length;
+use harp::object::r_list_get;
 use harp::object::RObject;
 use harp::r_symbol;
 use harp::symbol::RSymbol;
@@ -43,6 +45,7 @@ use libR_sys::*;
 use serde::Deserialize;
 use serde::Serialize;
 use stdext::local;
+use stdext::unwrap;
 
 // Constants.
 const MAX_DISPLAY_VALUE_ENTRIES: usize = 1_000;
@@ -156,6 +159,22 @@ fn plural(text: &str, n: i32) -> String {
 }
 
 impl WorkspaceVariableDisplayValue {
+    pub fn from(value: SEXP) -> Self {
+        match r_typeof(value) {
+            NILSXP => Self::new(String::from("NULL"), false),
+            VECSXP if r_inherits(value, "data.frame") => Self::from_data_frame(value),
+            VECSXP if !r_inherits(value, "POSIXlt") => Self::from_list(value),
+            LISTSXP => Self::empty(),
+            SYMSXP if value == unsafe { R_MissingArg } => {
+                Self::new(String::from("<missing>"), false)
+            },
+            CLOSXP => Self::from_closure(value),
+            ENVSXP => Self::from_env(value),
+            _ if r_is_matrix(value) => Self::from_matrix(value),
+            _ => Self::from_default(value),
+        }
+    }
+
     fn new(display_value: String, is_truncated: bool) -> Self {
         WorkspaceVariableDisplayValue {
             display_value,
@@ -167,193 +186,199 @@ impl WorkspaceVariableDisplayValue {
         Self::new(String::from(""), false)
     }
 
-    pub fn from(value: SEXP) -> Self {
-        if r_is_null(value) {
-            return Self::new(String::from("NULL"), false);
+    fn from_data_frame(value: SEXP) -> Self {
+        let dim = dim_data_frame(value);
+        let class = match r_classes(value) {
+            None => String::from(""),
+            Some(classes) => match classes.get_unchecked(0) {
+                Some(class) => format!(" <{}>", class),
+                None => String::from(""),
+            },
+        };
+
+        let value = format!(
+            "[{} {} x {} {}]{}",
+            dim.nrow,
+            plural("row", dim.nrow),
+            dim.ncol,
+            plural("column", dim.ncol),
+            class
+        );
+        Self::new(value, false)
+    }
+
+    fn from_list(value: SEXP) -> Self {
+        let n = r_length(value);
+        let mut display_value = String::from("");
+        let mut is_truncated = false;
+        let names = Names::new(value, |_i| String::from(""));
+
+        for i in 0..n {
+            if i > 0 {
+                display_value.push_str(", ");
+            }
+            let display_i = Self::from(r_list_get(value, i));
+            let name = names.get_unchecked(i);
+            if !name.is_empty() {
+                display_value.push_str(&name);
+                display_value.push_str(" = ");
+            }
+            display_value.push_str("[");
+            display_value.push_str(&display_i.display_value);
+            display_value.push_str("]");
+
+            if display_value.len() > MAX_DISPLAY_VALUE_LENGTH || display_i.is_truncated {
+                is_truncated = true;
+            }
         }
 
-        let rtype = r_typeof(value);
+        Self::new(display_value, is_truncated)
+    }
 
-        if rtype == VECSXP && !r_inherits(value, "POSIXlt") {
-            if r_inherits(value, "data.frame") {
-                let dim = dim_data_frame(value);
-                let class = match r_classes(value) {
-                    None => String::from(""),
-                    Some(classes) => match classes.get_unchecked(0) {
-                        Some(class) => format!(" <{}>", class),
-                        None => String::from(""),
-                    },
-                };
+    fn from_closure(value: SEXP) -> Self {
+        unsafe {
+            let args = RFunction::from("args").add(value).call().unwrap();
+            let formatted = RFunction::from("format").add(*args).call().unwrap();
+            let formatted = CharacterVector::new_unchecked(formatted);
+            let out = formatted
+                .iter()
+                .take(formatted.len() - 1)
+                .map(|o| o.unwrap())
+                .join("");
+            Self::new(out, false)
+        }
+    }
 
-                let value = format!(
-                    "[{} {} x {} {}]{}",
-                    dim.nrow,
-                    plural("row", dim.nrow),
-                    dim.ncol,
-                    plural("column", dim.ncol),
-                    class
-                );
-                return Self::new(value, false);
+    fn from_env(value: SEXP) -> Self {
+        // Get the environment and its length (excluding hidden bindings)
+        let environment = Environment::new(RObject::view(value));
+        let environment_length = environment.length(EnvironmentFilter::ExcludeHiddenBindings);
+
+        // If the environment is empty, return the empty display value. If the environment is
+        // large, return the large display value (because it may be too expensive to sort the
+        // bindings). Otherwise, return a detailed display value that shows some or all of the
+        // bindings in the environment.
+        if environment_length == 0 {
+            return Self::new(String::from("Empty Environment [0 values]"), false);
+        }
+
+        if environment_length > MAX_DISPLAY_VALUE_ENTRIES {
+            return Self::new(
+                format!("Large Environment [{} values]", environment_length),
+                true,
+            );
+        }
+
+        // Build the detailed display value
+        let mut display_value = String::new();
+        let mut is_truncated = false;
+        for (i, environment_variable) in environment
+            .iter()
+            .filter(|binding| !binding.is_hidden())
+            .map(|binding| EnvironmentVariable::new(&binding))
+            .sorted_by(|lhs, rhs| Ord::cmp(&lhs.display_name, &rhs.display_name))
+            .enumerate()
+        {
+            // If this isn't the first entry, append a space separator.
+            if i > 0 {
+                display_value.push_str(" ");
             }
 
-            unsafe {
-                let n = Rf_xlength(value);
-                let mut display_value = String::from("");
-                let mut is_truncated = false;
-                let names = Names::new(value, |_i| String::from(""));
-                for i in 0..n {
-                    if i > 0 {
-                        display_value.push_str(", ");
-                    }
-                    let display_i = Self::from(VECTOR_ELT(value, i));
-                    let name = names.get_unchecked(i);
-                    if !name.is_empty() {
-                        display_value.push_str(&name);
-                        display_value.push_str(" = ");
-                    }
-                    display_value.push_str("[");
-                    display_value.push_str(&display_i.display_value);
-                    display_value.push_str("]");
+            // Append the environment variable display name.
+            display_value.push_str(&environment_variable.display_name);
 
-                    if display_value.len() > MAX_DISPLAY_VALUE_LENGTH || display_i.is_truncated {
-                        is_truncated = true;
-                    }
+            // When the display value becomes too long, mark it as truncated and stop
+            // building it.
+            if i == 10 || display_value.len() > MAX_DISPLAY_VALUE_LENGTH {
+                // If there are remaining entries, set the is_truncated flag and append a
+                // counter of how many more entries there are.
+                let remaining_entries = environment_length - 1 - i;
+                if remaining_entries > 0 {
+                    is_truncated = true;
+                    display_value.push_str(&format!(" [{} more]", remaining_entries));
                 }
 
-                Self::new(display_value, is_truncated)
+                // Stop building the display value.
+                break;
             }
-        } else if rtype == LISTSXP {
-            Self::empty()
-        } else if rtype == SYMSXP && value == unsafe { R_MissingArg } {
-            Self::new(String::from("<missing>"), false)
-        } else if rtype == CLOSXP {
-            unsafe {
-                let args = RFunction::from("args").add(value).call().unwrap();
-                let formatted = RFunction::from("format").add(*args).call().unwrap();
-                let formatted = CharacterVector::new_unchecked(formatted);
-                let out = formatted
-                    .iter()
-                    .take(formatted.len() - 1)
-                    .map(|o| o.unwrap())
-                    .join("");
-                Self::new(out, false)
-            }
-        } else if rtype == ENVSXP {
-            // Get the environment and its length (excluding hidden bindings).
-            let environment = Environment::new(RObject::view(value));
-            let environment_length = environment.length(EnvironmentFilter::ExcludeHiddenBindings);
+        }
 
-            // If the environment is empty, return the empty display value. If the environment is
-            // large, return the large display value (because it may be too expensive to sort the
-            // bindings). Otherwise, return a detailed display value that shows some or all of the
-            // bindings in the environment.
-            if environment_length == 0 {
-                Self::new(String::from("Empty Environment [0 values]"), false)
-            } else if environment_length > MAX_DISPLAY_VALUE_ENTRIES {
-                Self::new(
-                    format!("Large Environment [{} values]", environment_length),
-                    true,
-                )
+        // Return the display value.
+        Self::new(display_value, is_truncated)
+    }
+
+    // TODO: handle higher dimensional arrays, i.e. expand
+    //       recursively from the higher dimension
+    fn from_matrix(value: SEXP) -> Self {
+        let formatted = unwrap!(FormattedVector::new(value), Err(err) => {
+            return Self::from_error(err);
+        });
+
+        let mut first = true;
+        let mut display_value = String::from("");
+        let mut is_truncated = false;
+
+        unsafe {
+            let dim = IntegerVector::new_unchecked(Rf_getAttrib(value, R_DimSymbol));
+            let n_col = dim.get_unchecked(1).unwrap() as isize;
+            display_value.push_str("[");
+            for i in 0..n_col {
+                if first {
+                    first = false;
+                } else {
+                    display_value.push_str(", ");
+                }
+
+                display_value.push_str("[");
+                let display_column = formatted.column_iter(i).join(" ");
+                if display_column.len() > MAX_DISPLAY_VALUE_LENGTH {
+                    is_truncated = true;
+                    // TODO: maybe this should only push_str() a slice
+                    //       of the first n (MAX_WIDTH?) characters in that case ?
+                }
+                display_value.push_str(display_column.as_str());
+                display_value.push_str("]");
+
+                if display_value.len() > MAX_DISPLAY_VALUE_LENGTH {
+                    is_truncated = true;
+                }
+                if is_truncated {
+                    break;
+                }
+            }
+            display_value.push_str("]");
+        }
+        Self::new(display_value, is_truncated)
+    }
+
+    fn from_default(value: SEXP) -> Self {
+        let formatted = unwrap!(FormattedVector::new(value), Err(err) => {
+            return Self::from_error(err);
+        });
+
+        let mut first = true;
+        let mut display_value = String::from("");
+        let mut is_truncated = false;
+
+        for x in formatted.iter() {
+            if first {
+                first = false;
             } else {
-                // Build the detailed display value.
-                let mut display_value = String::new();
-                let mut is_truncated = false;
-                for (i, environment_variable) in environment
-                    .iter()
-                    .filter(|binding| !binding.is_hidden())
-                    .map(|binding| EnvironmentVariable::new(&binding))
-                    .sorted_by(|lhs, rhs| Ord::cmp(&lhs.display_name, &rhs.display_name))
-                    .enumerate()
-                {
-                    // If this isn't the first entry, append a space separator.
-                    if i > 0 {
-                        display_value.push_str(" ");
-                    }
-
-                    // Append the environment variable display name.
-                    display_value.push_str(&environment_variable.display_name);
-
-                    // When the display value becomes too long, mark it as truncated and stop
-                    // building it.
-                    if i == 10 || display_value.len() > MAX_DISPLAY_VALUE_LENGTH {
-                        // If there are remaining entries, set the is_truncated flag and append a
-                        // counter of how many more entries there are.
-                        let remaining_entries = environment_length - 1 - i;
-                        if remaining_entries > 0 {
-                            is_truncated = true;
-                            display_value.push_str(&format!(" [{} more]", remaining_entries));
-                        }
-
-                        // Stop building the display value.
-                        break;
-                    }
-                }
-
-                // Return the display value.
-                Self::new(display_value, is_truncated)
+                display_value.push_str(" ");
             }
-        } else {
-            let formatted = FormattedVector::new(value);
-            match formatted {
-                Ok(formatted) => {
-                    let mut first = true;
-                    let mut display_value = String::from("");
-                    let mut is_truncated = false;
-
-                    // TODO: handle higher dimensional arrays, i.e. expand
-                    //       recursively from the higher dimension
-                    if r_is_matrix(value) {
-                        unsafe {
-                            let dim =
-                                IntegerVector::new_unchecked(Rf_getAttrib(value, R_DimSymbol));
-                            let n_col = dim.get_unchecked(1).unwrap() as isize;
-                            display_value.push_str("[");
-                            for i in 0..n_col {
-                                if first {
-                                    first = false;
-                                } else {
-                                    display_value.push_str(", ");
-                                }
-
-                                display_value.push_str("[");
-                                let display_column = formatted.column_iter(i).join(" ");
-                                if display_column.len() > MAX_DISPLAY_VALUE_LENGTH {
-                                    is_truncated = true;
-                                    // TODO: maybe this should only push_str() a slice
-                                    //       of the first n (MAX_WIDTH?) characters in that case ?
-                                }
-                                display_value.push_str(display_column.as_str());
-                                display_value.push_str("]");
-
-                                if display_value.len() > MAX_DISPLAY_VALUE_LENGTH {
-                                    is_truncated = true;
-                                }
-                                if is_truncated {
-                                    break;
-                                }
-                            }
-                            display_value.push_str("]");
-                        }
-                    } else {
-                        for x in formatted.iter() {
-                            if first {
-                                first = false;
-                            } else {
-                                display_value.push_str(" ");
-                            }
-                            display_value.push_str(&x);
-                            if display_value.len() > MAX_DISPLAY_VALUE_LENGTH {
-                                is_truncated = true;
-                                break;
-                            }
-                        }
-                    }
-
-                    Self::new(display_value, is_truncated)
-                },
-                Err(_) => Self::new(String::from("??"), true),
+            display_value.push_str(&x);
+            if display_value.len() > MAX_DISPLAY_VALUE_LENGTH {
+                is_truncated = true;
+                break;
             }
         }
+
+        Self::new(display_value, is_truncated)
+    }
+
+    fn from_error(err: Error) -> Self {
+        log::warn!("Error while formatting variable: {err:?}");
+        Self::new(String::from("??"), true)
     }
 }
 

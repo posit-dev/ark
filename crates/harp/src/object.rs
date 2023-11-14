@@ -142,8 +142,12 @@ fn r_size(x: SEXP) -> usize {
     }
 }
 
-fn r_length(x: SEXP) -> isize {
+pub fn r_length(x: SEXP) -> isize {
     unsafe { Rf_xlength(x) }
+}
+
+pub fn r_list_get(x: SEXP, i: isize) -> SEXP {
+    unsafe { VECTOR_ELT(x, i) }
 }
 
 impl RObject {
