@@ -277,6 +277,14 @@ impl WorkspaceVariableDisplayValue {
 
         // Build the detailed display value
         let mut display_value = String::new();
+
+        let env_name = environment.name();
+        if let Some(env_name) = env_name {
+            display_value.push_str(format!("{env_name}: ").as_str())
+        }
+
+        display_value.push_str("{");
+
         let mut is_truncated = false;
         for (i, name) in names
             .iter()
@@ -286,7 +294,7 @@ impl WorkspaceVariableDisplayValue {
         {
             // If this isn't the first entry, append a space separator.
             if i > 0 {
-                display_value.push_str(" ");
+                display_value.push_str(", ");
             }
 
             // Append the environment variable display name.
@@ -307,6 +315,8 @@ impl WorkspaceVariableDisplayValue {
                 break;
             }
         }
+
+        display_value.push_str("}");
 
         // Return the display value.
         Self::new(display_value, is_truncated)
