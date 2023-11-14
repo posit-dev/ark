@@ -9,10 +9,13 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
 
+use crossbeam::channel::after;
 use crossbeam::channel::bounded;
 use crossbeam::channel::Sender;
-use harp::exec::r_safely;
+use crossbeam::select;
+use harp::exec::r_sandbox;
 use harp::test::R_TASK_BYPASS;
+use stdext::log_and_panic;
 
 use crate::interface::RMain;
 
@@ -70,8 +73,7 @@ where
     {
         let result = Arc::clone(&result);
         let closure = move || {
-            let res = r_safely(f);
-            *result.lock().unwrap() = Some(res);
+            *result.lock().unwrap() = Some(f());
         };
 
         // Move `f` to heap and erase its lifetime so we can send it to
@@ -83,7 +85,7 @@ where
         let closure: Box<dyn FnOnce() + Send + 'static> = unsafe { std::mem::transmute(closure) };
 
         // Channel to communicate completion status of the task/closure
-        let (status_tx, status_rx) = bounded::<bool>(0);
+        let (status_tx, status_rx) = bounded::<harp::error::Result<()>>(0);
 
         // Send the task to the R thread
         let task = RTaskMain {
@@ -92,8 +94,29 @@ where
         };
         get_tasks_tx().send(task).unwrap();
 
-        // Block until task was completed
-        status_rx.recv().unwrap();
+        let timeout = std::time::Duration::from_secs(5);
+
+        // Block until task was completed or timed out
+        let status = select! {
+            recv(status_rx) -> status => status.unwrap(),
+            recv(after(timeout)) -> _ => {
+                let trace = std::backtrace::Backtrace::capture();
+                log_and_panic!("Timeout while running task.\n\
+                                Backtrace of calling thread:\n\n\
+                                {trace}");
+            },
+        };
+
+        // If the task failed send a backtrace of the current thread to the
+        // main thread
+        if let Err(err) = status {
+            let trace = std::backtrace::Backtrace::capture();
+            log_and_panic!(
+                "While running task: {err:?}\n\
+                 Backtrace of calling thread:\n\n\
+                 {trace}"
+            );
+        }
     }
 
     // Log how long we were stuck waiting.
@@ -132,11 +155,7 @@ where
 
     log::info!("Thread '{thread_name}' ({thread_id:?}) is requesting an async task.");
 
-    let closure = move || {
-        r_safely(f);
-    };
-
-    let closure: Box<dyn FnOnce() + Send + 'static> = Box::new(closure);
+    let closure: Box<dyn FnOnce() + Send + 'static> = Box::new(f);
 
     // Send the async task to the R thread
     let task = RTaskMain {
@@ -151,19 +170,28 @@ where
 
 pub struct RTaskMain {
     pub closure: Option<Box<dyn FnOnce() + Send + 'static>>,
-    pub status_tx: Option<crossbeam::channel::Sender<bool>>,
+    pub status_tx: Option<Sender<harp::error::Result<()>>>,
 }
 
 impl RTaskMain {
     pub fn fulfill(&mut self) {
         // Move closure here and call it
-        self.closure.take().map(|closure| closure());
+        let closure = self.closure.take().unwrap();
+        let result = r_sandbox(closure);
 
-        // Unblock caller if it was a blocking call
         match &self.status_tx {
-            Some(status_tx) => status_tx.send(true).unwrap(),
-            None => return,
-        }
+            Some(status_tx) => {
+                // Unblock caller via the notification channel if it was a
+                // blocking call. Failures are handled by the caller.
+                status_tx.send(result.map(|_| ())).unwrap()
+            },
+            None => {
+                // If task is async panic immediately in case of failure
+                if let Err(err) = result {
+                    log_and_panic!("While running task: {err:?}");
+                }
+            },
+        };
     }
 }
 

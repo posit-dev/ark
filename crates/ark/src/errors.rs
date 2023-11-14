@@ -50,3 +50,10 @@ pub unsafe fn initialize() {
 
     Rf_eval(*call, R_GlobalEnv);
 }
+
+#[harp::register]
+unsafe extern "C" fn ps_rust_backtrace() -> SEXP {
+    let trace = std::backtrace::Backtrace::capture();
+    let trace = format!("{trace}");
+    *RObject::from(trace)
+}

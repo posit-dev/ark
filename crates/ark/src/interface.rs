@@ -50,7 +50,7 @@ use crossbeam::channel::Sender;
 use crossbeam::channel::TryRecvError;
 use crossbeam::select;
 use harp::exec::geterrmessage;
-use harp::exec::r_safely;
+use harp::exec::r_sandbox;
 use harp::exec::r_source;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
@@ -282,7 +282,7 @@ pub struct RMain {
 
     /// Shared reference to kernel. Currently used by the ark-execution
     /// thread, the R frontend callbacks, and LSP routines called from R
-    pub kernel: Arc<Mutex<Kernel>>,
+    kernel: Arc<Mutex<Kernel>>,
 
     /// Represents whether an error occurred during R code execution.
     pub error_occurred: bool,
@@ -903,6 +903,14 @@ impl RMain {
             return;
         }
 
+        // If active execution request is silent don't broadcast
+        // any output
+        if let Some(ref req) = self.active_request {
+            if req.request.silent {
+                return;
+            }
+        }
+
         let buffer = match stream {
             Stream::Stdout => &mut self.stdout,
             Stream::Stderr => &mut self.stderr,
@@ -1028,6 +1036,10 @@ impl RMain {
     pub fn get_comm_manager_tx(&self) -> &Sender<CommEvent> {
         // Read only access to `comm_manager_tx`
         &self.comm_manager_tx
+    }
+
+    pub fn get_kernel(&self) -> &Arc<Mutex<Kernel>> {
+        &self.kernel
     }
 }
 
@@ -1178,7 +1190,11 @@ extern "C" fn r_read_console(
     hist: c_int,
 ) -> i32 {
     let main = RMain::get_mut();
-    let result = r_safely(|| main.read_console(prompt, buf, buflen, hist));
+    let result = r_sandbox(|| main.read_console(prompt, buf, buflen, hist));
+
+    let result = unwrap!(result, Err(err) => {
+        log_and_panic!("Unexpected longjump while reading console: {err:?}");
+    });
 
     // NOTE: Keep this function a "Plain Old Frame" without any
     // destructors. We're longjumping from here in case of interrupt.

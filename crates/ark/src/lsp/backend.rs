@@ -29,15 +29,15 @@ use tower_lsp::LanguageServer;
 use tower_lsp::LspService;
 use tower_lsp::Server;
 
-use crate::lsp::completions::append_document_completions;
-use crate::lsp::completions::append_session_completions;
-use crate::lsp::completions::append_workspace_completions;
-use crate::lsp::completions::can_provide_completions;
-use crate::lsp::completions::completion_context;
-use crate::lsp::completions::resolve_completion_item;
-use crate::lsp::completions::CompletionData;
+use crate::lsp::completions::activate::can_provide_completions;
+use crate::lsp::completions::document::append_document_completions;
+use crate::lsp::completions::resolve::resolve_completion_item;
+use crate::lsp::completions::session::append_session_completions;
+use crate::lsp::completions::types::CompletionData;
+use crate::lsp::completions::workspace::append_workspace_completions;
 use crate::lsp::definitions::goto_definition;
 use crate::lsp::diagnostics;
+use crate::lsp::document_context::DocumentContext;
 use crate::lsp::documents::Document;
 use crate::lsp::documents::DOCUMENT_INDEX;
 use crate::lsp::globals;
@@ -48,7 +48,6 @@ use crate::lsp::signature_help::signature_help;
 use crate::lsp::statement_range;
 use crate::lsp::symbols;
 use crate::r_task;
-use crate::request::KernelRequest;
 
 #[macro_export]
 macro_rules! backend_trace {
@@ -78,8 +77,6 @@ pub struct Backend {
     pub client: Client,
     pub documents: Arc<DashMap<Url, Document>>,
     pub workspace: Arc<Mutex<Workspace>>,
-    #[allow(dead_code)]
-    pub kernel_request_tx: Sender<KernelRequest>,
 }
 
 impl Backend {
@@ -335,15 +332,9 @@ impl LanguageServer for Backend {
             return Ok(None);
         });
 
-        // Build the completion context.
+        // Build the document context.
         let document = document.value_mut();
-        let context = match completion_context(document, &params.text_document_position) {
-            Ok(context) => context,
-            Err(error) => {
-                error!("{:?}", error);
-                return Ok(None);
-            },
-        };
+        let context = DocumentContext::new(document, &params.text_document_position);
 
         // Check whether we can provide completions in this context.
         match can_provide_completions(&context, &params) {
@@ -477,15 +468,11 @@ impl LanguageServer for Backend {
             return Ok(None);
         });
 
-        // build completion context
-        let context = completion_context(&document, &params.text_document_position_params);
-        let context = unwrap!(context, Err(error) => {
-            error!("{:?}", error);
-            return Ok(None);
-        });
+        // build document context
+        let context = DocumentContext::new(&document, &params.text_document_position_params);
 
         // request hover information
-        let result = r_task(|| unsafe { hover(&document, &context) });
+        let result = r_task(|| unsafe { hover(&context) });
 
         // unwrap errors
         let result = unwrap!(result, Err(error) => {
@@ -604,11 +591,7 @@ impl Backend {
 }
 
 #[tokio::main]
-pub async fn start_lsp(
-    address: String,
-    kernel_request_tx: Sender<KernelRequest>,
-    conn_init_tx: Sender<bool>,
-) {
+pub async fn start_lsp(address: String, conn_init_tx: Sender<bool>) {
     #[cfg(feature = "runtime-agnostic")]
     use tokio_util::compat::TokioAsyncReadCompatExt;
     #[cfg(feature = "runtime-agnostic")]
@@ -631,14 +614,13 @@ pub async fn start_lsp(
 
     let init = |client: Client| {
         // initialize shared globals (needed for R callbacks)
-        globals::initialize(client.clone(), kernel_request_tx.clone());
+        globals::initialize(client.clone());
 
         // create backend
         let backend = Backend {
             client,
             documents: DOCUMENT_INDEX.clone(),
             workspace: Arc::new(Mutex::new(Workspace::default())),
-            kernel_request_tx: kernel_request_tx.clone(),
         };
 
         backend

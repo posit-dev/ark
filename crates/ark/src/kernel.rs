@@ -11,7 +11,6 @@ use std::result::Result::Err;
 use amalthea::events::BusyEvent;
 use amalthea::events::PositronEvent;
 use amalthea::events::WorkingDirectoryEvent;
-use amalthea::socket::iopub::IOPubMessage;
 use anyhow::Result;
 use crossbeam::channel::Sender;
 use log::*;
@@ -22,16 +21,14 @@ use crate::request::KernelRequest;
 
 /// Represents the Rust state of the R kernel
 pub struct Kernel {
-    iopub_tx: Sender<IOPubMessage>,
     event_tx: Option<Sender<PositronEvent>>,
     working_directory: PathBuf,
 }
 
 impl Kernel {
     /// Create a new R kernel instance
-    pub fn new(iopub_tx: Sender<IOPubMessage>) -> Self {
+    pub fn new() -> Self {
         Self {
-            iopub_tx,
             event_tx: None,
             working_directory: PathBuf::new(),
         }
@@ -43,14 +40,6 @@ impl Kernel {
             KernelRequest::EstablishEventChannel(sender) => {
                 self.establish_event_handler(sender.clone())
             },
-            KernelRequest::DeliverEvent(event) => self.handle_event(event),
-        }
-    }
-
-    /// Handle an event from the back end to the front end
-    pub fn handle_event(&mut self, event: &PositronEvent) {
-        if let Err(err) = self.iopub_tx.send(IOPubMessage::Event(event.clone())) {
-            warn!("Error attempting to deliver client event: {}", err);
         }
     }
 

@@ -5,10 +5,7 @@
 //
 //
 
-use crossbeam::channel::Sender;
 use tower_lsp::Client;
-
-use crate::request::KernelRequest;
 
 // The global state used by R callbacks.
 //
@@ -19,20 +16,16 @@ pub(super) static mut R_CALLBACK_GLOBALS: Option<RCallbackGlobals> = None;
 
 pub(super) struct RCallbackGlobals {
     pub(super) lsp_client: Client,
-    pub(super) kernel_request_tx: Sender<KernelRequest>,
 }
 
 impl RCallbackGlobals {
-    fn new(lsp_client: Client, kernel_request_tx: Sender<KernelRequest>) -> Self {
-        Self {
-            lsp_client,
-            kernel_request_tx,
-        }
+    fn new(lsp_client: Client) -> Self {
+        Self { lsp_client }
     }
 }
 
-pub fn initialize(lsp_client: Client, kernel_request_tx: Sender<KernelRequest>) {
+pub fn initialize(lsp_client: Client) {
     unsafe {
-        R_CALLBACK_GLOBALS = Some(RCallbackGlobals::new(lsp_client, kernel_request_tx));
+        R_CALLBACK_GLOBALS = Some(RCallbackGlobals::new(lsp_client));
     }
 }

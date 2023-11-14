@@ -63,10 +63,7 @@ fn start_kernel(
     // Create the LSP and DAP clients.
     // Not all Amalthea kernels provide these, but ark does.
     // They must be able to deliver messages to the shell channel directly.
-    let lsp = Arc::new(Mutex::new(lsp::handler::Lsp::new(
-        kernel_request_tx.clone(),
-        kernel_init_tx.add_rx(),
-    )));
+    let lsp = Arc::new(Mutex::new(lsp::handler::Lsp::new(kernel_init_tx.add_rx())));
 
     // DAP needs the `RRequest` channel to communicate with
     // `read_console()` and send commands to the debug interpreter
@@ -402,6 +399,17 @@ fn main() {
     if r_args.is_empty() {
         r_args.push(String::from("--interactive"));
     }
+
+    // This causes panics on background threads to propagate on the main
+    // thread. If we don't propagate a background thread panic, the program
+    // keeps running in an unstable state as all communications with this
+    // thread will error out or panic.
+    // https://stackoverflow.com/questions/35988775/how-can-i-cause-a-panic-on-a-thread-to-immediately-end-the-main-thread
+    let old_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic_info| {
+        old_hook(panic_info);
+        std::process::abort();
+    }));
 
     // Parse the connection file and start the kernel
     if let Some(connection) = connection_file {

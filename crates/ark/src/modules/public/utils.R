@@ -66,3 +66,39 @@
 .ps.to_json <- function(object) {
     .ps.Call("ps_to_json", object)
 }
+
+# Evaluate expression in positron's namespace (which includes access to the
+# private modules). Any features accessible from `.ps.internal()` are
+# subject to change without notice.
+.ps.internal <- function(expr) {
+    eval(substitute(expr), parent.env(environment()))
+}
+
+# From `rlang::env_name()`
+.ps.env_name <- function(env) {
+    if (typeof(env) != "environment") {
+        return(NULL)
+    }
+
+    if (identical(env, globalenv())) {
+        return("global")
+    }
+    if (identical(env, baseenv())) {
+        return("package:base")
+    }
+    if (identical(env, emptyenv())) {
+        return("empty")
+    }
+
+    nm <- environmentName(env)
+
+    if (isNamespace(env)) {
+        return(paste0("namespace:", nm))
+    }
+
+    if (nzchar(nm)) {
+        nm
+    } else {
+        NULL
+    }
+}
