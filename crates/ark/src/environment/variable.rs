@@ -269,7 +269,7 @@ impl WorkspaceVariableDisplayValue {
             );
         }
 
-        // For envirornments we don't display values, only names. So we don't
+        // For environment we don't display values, only names. So we don't
         // need to create `EnvironmentVariable` for each bindings as we used
         // to, and which caused an infinite recursion since environments may
         // be self-referential (posit-dev/positron#1690).
