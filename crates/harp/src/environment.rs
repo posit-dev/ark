@@ -390,31 +390,39 @@ impl Environment {
     /// `rlang::env_name()`.
     pub fn name(&self) -> Option<String> {
         let name = unsafe { RFunction::new("", ".ps.env_name").add(self.env.sexp).call() };
-        let name = unwrap!(name, Err(_) => return None);
+        let name = unwrap!(name, Err(err) => {
+            log::error!("{err:?}");
+            return None
+        });
 
         if unsafe { name.sexp == R_NilValue } {
             return None;
         }
 
         let name: Result<String, crate::error::Error> = name.try_into();
-        if let Ok(name) = name {
-            Some(name)
-        } else {
-            None
-        }
+        let name = unwrap!(name, Err(err) => {
+            log::error!("{err:?}");
+            return None;
+        });
+
+        Some(name)
     }
 
     /// Returns the names of the bindings of the environment
     pub fn names(&self) -> Vec<String> {
         let names = unsafe { RFunction::new("base", "names").add(self.env.sexp).call() };
-        let names = unwrap!(names, Err(_) => return vec![]);
+        let names = unwrap!(names, Err(err) => {
+            log::error!("{err:?}");
+            return vec![]
+        });
 
         let names: Result<Vec<String>, crate::error::Error> = names.try_into();
-        if let Ok(names) = names {
-            names
-        } else {
-            vec![]
-        }
+        let names = unwrap!(names, Err(err) => {
+            log::error!("{err:?}");
+            return vec![];
+        });
+
+        names
     }
 }
 
