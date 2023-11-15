@@ -12,5 +12,4 @@ pub mod position;
 pub mod range;
 pub mod rope;
 pub mod string;
-pub mod tree;
 pub mod url;

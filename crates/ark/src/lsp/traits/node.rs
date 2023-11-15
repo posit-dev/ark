@@ -10,6 +10,7 @@ use tree_sitter::Point;
 use tree_sitter::TreeCursor;
 
 use crate::lsp::traits::point::PointExt;
+use crate::lsp::traits::range::RangeExt;
 
 fn _dump_impl(cursor: &mut TreeCursor, source: &str, indent: &str, output: &mut String) {
     let node = cursor.node();
@@ -79,7 +80,7 @@ pub trait NodeExt: Sized {
 
     fn find_parent(&self, callback: impl Fn(&Self) -> bool) -> Option<Self>;
 
-    fn contains_point(&self, point: Point) -> bool;
+    fn find_closest_node_to_point(&self, point: Point) -> Option<Self>;
 
     fn prev_leaf(&self) -> Option<Self>;
     fn next_leaf(&self) -> Option<Self>;
@@ -113,11 +114,11 @@ impl NodeExt for Node<'_> {
         }
     }
 
-    fn contains_point(&self, point: Point) -> bool {
-        // Left open range, like `(]`, to ensure that with `(|)` where the
-        // cursor is at `|`, the `(` node owns the point, not the `)`, with no
-        // ambiguity.
-        point.is_after(self.start_position()) && point.is_before_or_equal(self.end_position())
+    fn find_closest_node_to_point(&self, point: Point) -> Option<Self> {
+        match _find_smallest_container(&self, point) {
+            Some(node) => _find_closest_child(&node, point),
+            None => None,
+        }
     }
 
     fn prev_leaf(&self) -> Option<Self> {
@@ -209,5 +210,55 @@ impl NodeExt for Node<'_> {
             self.child_by_field_name("operand").is_none()
             self.child_by_field_name("operator").is_some()
         }
+    }
+}
+
+/// First, recurse through children to find the smallest
+/// node that contains the requested point.
+fn _find_smallest_container<'a>(node: &Node<'a>, point: Point) -> Option<Node<'a>> {
+    let mut cursor = node.walk();
+    let children = node.children(&mut cursor);
+
+    for child in children {
+        // Using `(]` left open definition of containment
+        if child.range().contains_point(point) {
+            return _find_smallest_container(&child, point);
+        }
+    }
+
+    // No child contained the `point`, revert back to parent
+    if node.range().contains_point(point) {
+        Some(*node)
+    } else {
+        None
+    }
+}
+
+/// Next, recurse through the children of this node
+/// (if any) to find the closest child.
+fn _find_closest_child<'a>(node: &Node<'a>, point: Point) -> Option<Node<'a>> {
+    let mut cursor = node.walk();
+    let children = node.children(&mut cursor);
+
+    // Node iterators don't implement `rev()`, presumably for performance, but
+    // this is the cleanest way to implement this so we collect into a vector
+    // first.
+    let children: Vec<Node> = children.collect();
+
+    // Loop backwards through children. First time the `start` is before the
+    // `point` corresponds to the last child this is `true` for, which we then
+    // recurse into.
+    for child in children.into_iter().rev() {
+        if child.range().start_point.is_before(point) {
+            return _find_closest_child(&child, point);
+        }
+    }
+
+    // No children start before the `point`, revert back to parent
+    // (probably rare)
+    if node.range().start_point.is_before(point) {
+        Some(*node)
+    } else {
+        None
     }
 }

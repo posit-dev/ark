@@ -12,7 +12,7 @@ use tower_lsp::lsp_types::VersionedTextDocumentIdentifier;
 
 use crate::backend_trace;
 use crate::lsp::backend::Backend;
-use crate::lsp::traits::cursor::TreeCursorExt;
+use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::position::PositionExt;
 
 pub static POSITRON_HELP_TOPIC_REQUEST: &'static str = "positron/textDocument/helpTopic";
@@ -50,8 +50,9 @@ impl Backend {
         let position = params.position;
         let point = position.as_point();
 
-        let mut cursor = root.walk();
-        let mut node = cursor.find_leaf(point);
+        let Some(mut node) = root.find_closest_node_to_point(point) else {
+            return Ok(None);
+        };
 
         // Find the nearest node that is an identifier.
         while node.kind() != "identifier" {

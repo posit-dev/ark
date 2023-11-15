@@ -10,8 +10,8 @@ use tree_sitter::Node;
 use tree_sitter::Point;
 
 use crate::lsp::documents::Document;
+use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::position::PositionExt;
-use crate::lsp::traits::tree::TreeExt;
 
 #[derive(Debug)]
 pub struct DocumentContext<'a> {
@@ -30,7 +30,7 @@ impl<'a> DocumentContext<'a> {
         let ast = &document.ast;
 
         // find node at point
-        let node = ast.node_at_point(point);
+        let node = ast.root_node().find_closest_node_to_point(point).unwrap();
 
         // convert document contents to a string once, to be reused elsewhere
         let source = document.contents.to_string();

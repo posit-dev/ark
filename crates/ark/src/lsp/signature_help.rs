@@ -22,7 +22,7 @@ use tower_lsp::lsp_types::SignatureInformation;
 
 use crate::lsp::documents::Document;
 use crate::lsp::help::RHtmlHelp;
-use crate::lsp::traits::cursor::TreeCursorExt;
+use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::point::PointExt;
 use crate::lsp::traits::position::PositionExt;
 
@@ -37,8 +37,10 @@ pub unsafe fn signature_help(
     let point = position.as_point();
 
     // Find the node closest to the completion point.
-    let mut cursor = ast.walk();
-    let mut node = cursor.find_leaf(point);
+    let node = ast.root_node();
+    let Some(mut node) = node.find_closest_node_to_point(point) else {
+        return Ok(None);
+    };
 
     // If we landed on a comma before the cursor position, move to the next sibling node.
     // We need to check the position as, if the cursor is "on" the comma as in

@@ -15,9 +15,9 @@ use tree_sitter::Node;
 
 use crate::lsp::documents::Document;
 use crate::lsp::indexer;
+use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::point::PointExt;
 use crate::lsp::traits::position::PositionExt;
-use crate::lsp::traits::tree::TreeExt;
 
 pub struct GotoDefinitionContext<'a> {
     pub document: &'a Document,
@@ -35,7 +35,12 @@ pub unsafe fn goto_definition<'a>(
 
     // try to find node at completion position
     let point = params.text_document_position_params.position.as_point();
-    let node = ast.node_at_point(point);
+
+    let Some(node) = ast.root_node().find_closest_node_to_point(point) else {
+        log::warn!("Failed to find the closest node to point {point}.");
+        return Ok(None);
+    };
+
     let range = Range {
         start: node.start_position().as_position(),
         end: node.end_position().as_position(),

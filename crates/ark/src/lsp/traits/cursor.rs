@@ -9,9 +9,6 @@ use tree_sitter::Node;
 use tree_sitter::Point;
 use tree_sitter::TreeCursor;
 
-use crate::lsp::traits::point::PointExt;
-use crate::lsp::traits::range::RangeExt;
-
 fn _recurse_impl<Callback: FnMut(Node) -> bool>(this: &mut TreeCursor, callback: &mut Callback) {
     if !callback(this.node()) {
         return;
@@ -51,24 +48,6 @@ fn _find_impl<Callback: FnMut(Node) -> bool>(
     return true;
 }
 
-fn _find_leaf_impl(mut node: Node, point: Point) -> Node {
-    let mut cursor = node.walk();
-
-    for child in node.children(&mut cursor) {
-        if child.range().contains_point(point) {
-            return _find_leaf_impl(child, point);
-        }
-    }
-
-    for child in node.children(&mut cursor) {
-        if child.start_position().is_before_or_equal(point) {
-            node = child;
-        }
-    }
-
-    node
-}
-
 // Extension trait for the TreeSitter cursor object.
 pub trait TreeCursorExt {
     // Recurse through all nodes in an AST, invoking a callback as those nodes
@@ -83,9 +62,16 @@ pub trait TreeCursorExt {
     // Move the cursor to the parent node satisfying some callback condition.
     fn find_parent<Callback: FnMut(Node) -> bool>(&mut self, callback: Callback) -> bool;
 
-    // Find a leaf node in the AST. The leaf node either at the requested point,
-    // or the leaf node closest (but not after) the requested point, will be returned.
-    fn find_leaf(&mut self, point: Point) -> Node;
+    /// Move this cursor to the node that is at or closest to (but not after)
+    /// the requested point.
+    ///
+    /// Returns `false` if the cursor is after the `point`.
+    ///
+    /// TODO: It would be nice to use this, but there is a bug in tree sitter
+    /// that makes it impossible right now:
+    /// https://github.com/tree-sitter/tree-sitter/issues/2767
+    /// For now, use `node.find_closest_node_for_point()`.
+    // fn goto_closest_node_for_point(&mut self, point: Point) -> bool;
 
     /// Move this cursor to the first child of its current node that extends
     /// beyond or touches the given point. Returns `true` if a child node was found,
@@ -120,10 +106,9 @@ impl TreeCursorExt for TreeCursor<'_> {
         return false;
     }
 
-    fn find_leaf(&mut self, point: Point) -> Node {
-        let node = self.node();
-        _find_leaf_impl(node, point)
-    }
+    // fn goto_closest_node_for_point(&mut self, point: Point) -> bool {
+    //     _find_smallest_container(self, point) && _find_closest_child(self, point)
+    // }
 
     fn goto_first_child_for_point_patched(&mut self, point: Point) -> bool {
         if !self.goto_first_child() {
@@ -148,3 +133,54 @@ impl TreeCursorExt for TreeCursor<'_> {
         return true;
     }
 }
+
+// For eventual use in `goto_closest_node_for_point()`
+//
+// /// First, recurse through children to find the smallest
+// /// node that contains the requested point.
+// fn _find_smallest_container(cursor: &mut TreeCursor, point: Point) -> bool {
+//     if !cursor.goto_first_child() {
+//         return cursor.node().range().contains_point(point);
+//     }
+//
+//     loop {
+//         // Using `(]` left open definition of containment
+//         if cursor.node().range().contains_point(point) {
+//             return _find_smallest_container(cursor, point);
+//         }
+//
+//         if !cursor.goto_next_sibling() {
+//             break;
+//         }
+//     }
+//
+//     // No child contained the `point`, revert back to parent
+//     cursor.goto_parent();
+//     cursor.node().range().contains_point(point)
+// }
+//
+// /// Next, recurse through the children of this node
+// /// (if any) to find the closest child.
+// fn _find_closest_child(cursor: &mut TreeCursor, point: Point) -> bool {
+//     if !cursor.goto_last_child() {
+//         return cursor.node().range().start_point.is_before(point);
+//     }
+//
+//     // Loop backwards through children. First time the `start` is before the
+//     // `point` corresponds to the last child this is `true` for, which we then
+//     // recurse into.
+//     loop {
+//         if cursor.node().range().start_point.is_before(point) {
+//             return _find_closest_child(cursor, point);
+//         }
+//
+//         if !cursor.goto_previous_sibling() {
+//             break;
+//         }
+//     }
+//
+//     // No children start before the `point`, revert back to parent
+//     // (probably rare)
+//     cursor.goto_parent();
+//     cursor.node().range().start_point.is_before(point)
+// }
