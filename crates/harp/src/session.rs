@@ -27,7 +27,6 @@ use crate::vector::Vector;
 static SESSION_INIT: Once = Once::new();
 static mut NFRAME_CALL: Option<SEXP> = None;
 static mut STACK_INFO_CALL: Option<SEXP> = None;
-static mut OPTIONS_FN: Option<SEXP> = None;
 
 pub fn r_n_frame() -> crate::error::Result<i32> {
     SESSION_INIT.call_once(init_interface);
@@ -220,31 +219,6 @@ fn stack_shift(stack: &mut Vec<FrameInfo>, pointer: FrameInfo) {
     }
 }
 
-// Note this might throw if wrong data types are passed in. The C-level
-// implementation of `options()` type-checks some base options.
-pub fn r_poke_option(sym: SEXP, value: SEXP) -> SEXP {
-    unsafe {
-        let mut protect = RProtect::new();
-
-        let call = r_lang!(OPTIONS_FN.unwrap_unchecked(), !!sym = value);
-        protect.add(call);
-
-        // `options()` is guaranteed by R to return a list
-        VECTOR_ELT(Rf_eval(call, R_BaseEnv), 0)
-    }
-}
-
-pub fn r_poke_option_show_error_messages(value: bool) -> bool {
-    unsafe {
-        let value = Rf_ScalarLogical(value as i32);
-        let old = r_poke_option(r_symbol!("show.error.messages"), value);
-
-        // This option is type-checked by R so we can assume a valid
-        // logical value
-        *LOGICAL(old) != 0
-    }
-}
-
 fn init_interface() {
     unsafe {
         let nframe_call = r_lang!(r_symbol!("sys.nframe"));
@@ -254,8 +228,5 @@ fn init_interface() {
         let stack_info_call = *r_parse(".ps.debug.stackInfo()").unwrap();
         R_PreserveObject(stack_info_call);
         STACK_INFO_CALL = Some(stack_info_call);
-
-        let options_fn = Rf_eval(r_symbol!("options"), R_BaseEnv);
-        OPTIONS_FN = Some(options_fn);
     }
 }

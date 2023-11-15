@@ -47,7 +47,6 @@ pub fn start_r() {
         // 'ark' to have undefined symbols, and use the DYLD_INSERT_LIBRARIES
         // trick to insert the right version of R when 'ark' is launched,
         // but for now we just have this comment as a reminder.
-        crate::initialize();
 
         // Set up R_HOME if necessary.
         if let Err(_) = std::env::var("R_HOME") {
@@ -67,10 +66,13 @@ pub fn start_r() {
             R_CStackLimit = usize::MAX;
             setup_Rmainloop();
         }
+
+        // Initialize harp globals
+        crate::initialize();
     });
 }
 
-pub fn r_test_impl<F: FnMut()>(f: F) {
+pub fn r_test_impl<F: FnOnce()>(f: F) {
     start_r();
     let guard = unsafe { R_RUNTIME_LOCK.lock() };
 

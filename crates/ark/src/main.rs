@@ -391,9 +391,6 @@ fn main() {
     // because we set `R_SignalHandlers` to 0 before startup.
     stdext::traps::register_trap_handlers();
 
-    // Initialize harp.
-    harp::initialize();
-
     // If the r_args vector is empty, add `--interactive` to the list of
     // arguments to pass to R.
     if r_args.is_empty() {
