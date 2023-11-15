@@ -77,18 +77,6 @@ ensure_file <- function(path) {
     stop("Can't create the files at: ", path, call. = FALSE)
 }
 
-# Checks if a package is installed without loading it.
-# Could be slow on network drives.
-is_installed <- function(pkg, minimum_version = NULL) {
-    installed <- system.file(package = pkg) != ""
-
-    if (installed && !is.null(minimum_version)) {
-        installed <- packageVersion(pkg) >= minimum_version
-    }
-
-    installed
-}
-
 vec_paste0 <- function(..., collapse = NULL) {
     # Like `paste0()`, but avoids `paste0("prefix:", character())`
     # resulting in `"prefix:"` and instead recycles to size 0.
