@@ -584,6 +584,38 @@ where
     }
 }
 
+/// Check that stack space is sufficient.
+///
+/// Optionally takes a size in bytes, otherwise let R decide if we're too
+/// close to the limit. The latter case is useful for stopping recursive
+/// algorthims from blowing the stack.
+pub fn r_check_stack(size: Option<usize>) -> Result<()> {
+    unsafe {
+        let out = r_top_level_exec(|| {
+            if let Some(size) = size {
+                R_CheckStack2(size);
+            } else {
+                R_CheckStack();
+            }
+        });
+
+        // Reset error buffer because we detect stack overflows by
+        // inspecting this buffer, see `peek_execute_response()`
+        let _ = RFunction::new("base", "stop").call();
+
+        // Convert TopLevelExecError to StackUsageError
+        match out {
+            Ok(_) => Ok(()),
+            Err(err) => match err {
+                Error::TopLevelExecError { message, backtrace } => {
+                    Err(Error::StackUsageError { message, backtrace })
+                },
+                _ => unreachable!(),
+            },
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::ffi::CString;
