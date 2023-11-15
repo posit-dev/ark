@@ -217,10 +217,6 @@ pub fn start_r(
         ptr_R_ShowMessage = Some(r_show_message);
         ptr_R_Busy = Some(r_busy);
 
-        // Listen for polled events
-        R_wait_usec = 10000;
-        R_PolledEvents = Some(r_polled_events);
-
         // Set up main loop
         setup_Rmainloop();
 
@@ -243,6 +239,10 @@ pub fn start_r(
 
         // Set up the global error handler (after support function initialization)
         errors::initialize();
+
+        // Listen for polled events
+        R_wait_usec = 10000;
+        R_PolledEvents = Some(r_polled_events);
 
         // Run the main loop -- does not return
         run_Rmainloop();
