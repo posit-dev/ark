@@ -5,13 +5,11 @@
 //
 //
 
-use tower_lsp::lsp_types::TextDocumentPositionParams;
 use tree_sitter::Node;
 use tree_sitter::Point;
 
 use crate::lsp::documents::Document;
 use crate::lsp::traits::node::NodeExt;
-use crate::lsp::traits::position::PositionExt;
 
 #[derive(Debug)]
 pub struct DocumentContext<'a> {
@@ -22,10 +20,7 @@ pub struct DocumentContext<'a> {
 }
 
 impl<'a> DocumentContext<'a> {
-    pub fn new(document: &'a Document, position: &TextDocumentPositionParams) -> Self {
-        // convert to tree-sitter point
-        let point = position.position.as_point();
-
+    pub fn new(document: &'a Document, point: Point) -> Self {
         // get reference to AST
         let ast = &document.ast;
 
