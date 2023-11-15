@@ -50,6 +50,7 @@ use crossbeam::channel::Sender;
 use crossbeam::channel::TryRecvError;
 use crossbeam::select;
 use harp::exec::geterrmessage;
+use harp::exec::r_check_stack;
 use harp::exec::r_sandbox;
 use harp::exec::r_source;
 use harp::exec::RFunction;
@@ -1004,6 +1005,13 @@ impl RMain {
     }
 
     fn yield_to_tasks(&mut self) {
+        // Skip task if we don't have 128KB of stack space available.  This
+        // is 1/8th of the typical Windows stack space (1MB, whereas macOS
+        // and Linux have 8MB).
+        if let Err(_) = r_check_stack(Some(128 * 1024)) {
+            return;
+        }
+
         loop {
             match self.tasks_rx.try_recv() {
                 Ok(task) => self.pending_tasks.push_back(task),
