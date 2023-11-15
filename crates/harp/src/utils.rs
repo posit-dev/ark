@@ -303,6 +303,10 @@ pub fn r_inherits(object: SEXP, class: &str) -> bool {
     unsafe { Rf_inherits(object, class.as_ptr()) != 0 }
 }
 
+pub fn r_is_function(object: SEXP) -> bool {
+    matches!(r_typeof(object), CLOSXP | BUILTINSXP | SPECIALSXP)
+}
+
 pub unsafe fn r_formals(object: SEXP) -> Result<Vec<RArgument>> {
     // convert primitive functions into equivalent closures
     let mut object = RObject::new(object);
