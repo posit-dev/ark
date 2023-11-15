@@ -972,7 +972,11 @@ impl RMain {
 
     /// Invoked by the R event loop
     fn polled_events(&mut self) {
-        self.yield_to_tasks();
+        let result = r_sandbox(|| self.yield_to_tasks());
+
+        unwrap!(result, Err(err) => {
+            log_and_panic!("Unexpected longjump while polling events: {err:?}");
+        });
     }
 
     unsafe fn process_events() {
