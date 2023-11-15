@@ -32,6 +32,43 @@ use crate::lsp::traits::point::PointExt;
 pub fn completions_from_custom_source(
     context: &DocumentContext,
 ) -> Result<Option<Vec<CompletionItem>>> {
+    log::info!("completions_from_custom_source()");
+
+    let mut node = context.node;
+
+    let mut has_call = false;
+
+    loop {
+        // Try custom call completions
+        if node.kind() == "call" {
+            has_call = true;
+            break;
+        }
+
+        // If we reach a brace list, bail.
+        if node.kind() == "{" {
+            break;
+        }
+
+        // Update the node.
+        node = match node.parent() {
+            Some(node) => node,
+            None => break,
+        };
+    }
+
+    if !has_call {
+        // Didn't detect anything worth completing in this context,
+        // let other sources add their own candidates instead
+        return Ok(None);
+    }
+
+    completions_from_custom_source_impl(context)
+}
+
+pub fn completions_from_custom_source_impl(
+    context: &DocumentContext,
+) -> Result<Option<Vec<CompletionItem>>> {
     let node = context.node;
 
     // Use the signature help tools to figure out the necessary pieces.
