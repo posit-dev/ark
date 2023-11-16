@@ -124,24 +124,6 @@ impl TryFrom<RObject> for Value {
                 },
             },
 
-            // Character values (CHARSXP) ---
-            CHARSXP => match obj.length() {
-                // A length of 0 becomes JSON null
-                0 => Ok(Value::Null),
-
-                // With exactly one value, convert to a string
-                1 => {
-                    let value = unsafe { obj.to::<String>()? };
-                    Ok(Value::String(value))
-                },
-
-                // Don't try to convert multiple values to a string
-                _ => {
-                    warn!("Attempt to serialize R character vector with length > 1");
-                    Ok(Value::Null)
-                },
-            },
-
             // Symbols (SYMSXP) ---
             SYMSXP => {
                 // Try to convert the symbol to a string; this uses PRINTNAME
