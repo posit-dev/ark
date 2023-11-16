@@ -5,13 +5,14 @@
 //
 //
 
-use std::ffi::CString;
+use std::result::Result::Ok;
 
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::display_data::DisplayData;
+use anyhow::*;
+use harp::exec::r_unwrap;
 use harp::object::RObject;
 use libR_sys::R_NilValue;
-use libR_sys::Rf_error;
 use libR_sys::SEXP;
 use log::warn;
 use serde_json::Value;
@@ -29,17 +30,10 @@ pub unsafe extern "C" fn ps_html_widget(kind: SEXP, tags: SEXP) -> SEXP {
     };
 
     // Convert the tags to JSON for display
-    let json = match Value::try_from(RObject::view(tags)) {
-        Ok(val) => val,
-        Err(err) => {
-            let msg = CString::new(format!(
-                "Could not serialize '{}' HTML widget: {:?}",
-                widget_class, err
-            ))
-            .unwrap();
-            Rf_error(msg.as_ptr())
-        },
-    };
+    let json = r_unwrap(|| match Value::try_from(RObject::view(tags)) {
+        Ok(val) => Ok(val),
+        Err(err) => Err(anyhow!(err).context("Failed to convert HTML widget tags to JSON")),
+    });
 
     // Get the IOPub channel
     let main = RMain::get();
@@ -57,9 +51,7 @@ pub unsafe extern "C" fn ps_html_widget(kind: SEXP, tags: SEXP) -> SEXP {
         metadata: serde_json::Value::Null,
         transient: serde_json::Value::Null,
     });
-    if let Err(err) = iopub_tx.send(message) {
-        warn!("Failed to emit '{}' HTML widget: {:?}", widget_class, err);
-    }
+    iopub_tx.send(message).unwrap();
 
     R_NilValue
 }
