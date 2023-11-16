@@ -12,6 +12,7 @@ use log::warn;
 use serde_json::json;
 use serde_json::Value;
 
+use crate::exec::r_check_stack;
 use crate::object::RObject;
 
 /// Conversion to JSON values from an R object.
@@ -43,6 +44,10 @@ use crate::object::RObject;
 impl TryFrom<RObject> for Value {
     type Error = crate::error::Error;
     fn try_from(obj: RObject) -> Result<Self, Self::Error> {
+        // Since this function is recursive, check the stack before we proceed
+        // to make sure we aren't about to overflow it.
+        r_check_stack(None)?;
+
         match obj.kind() {
             // Nil becomes JSON null
             NILSXP => Ok(Value::Null),
