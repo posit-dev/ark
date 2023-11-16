@@ -291,11 +291,11 @@ impl RObject {
 
     /// Gets a vector containing names for the object's values (from the `names`
     /// attribute). Returns `None` if the object's value(s) don't have names.
-    pub fn names(&self) -> Option<Vec<String>> {
+    pub fn names(&self) -> Option<Vec<Option<String>>> {
         let names = unsafe { Rf_getAttrib(self.sexp, R_NamesSymbol) };
         let names = RObject::view(names);
         match names.kind() {
-            STRSXP => Vec::<String>::try_from(names).ok(),
+            STRSXP => Vec::<Option<String>>::try_from(names).ok(),
             _ => None,
         }
     }
@@ -643,15 +643,10 @@ impl TryFrom<RObject> for Vec<Option<String>> {
         unsafe {
             r_assert_type(*value, &[STRSXP, NILSXP])?;
 
-            let mut result: Vec<Option<String>> = Vec::new();
             let n = Rf_length(*value);
+            let mut result: Vec<Option<String>> = Vec::with_capacity(n as usize);
             for i in 0..n {
-                let charsexp = STRING_ELT(*value, i as isize);
-                if charsexp == R_NaString {
-                    result.push(None);
-                } else {
-                    result.push(Some(r_str_to_owned_utf8(charsexp)?));
-                }
+                result.push(value.get_string(i as isize)?);
             }
             return Ok(result);
         }

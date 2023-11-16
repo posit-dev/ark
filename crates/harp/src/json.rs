@@ -181,9 +181,11 @@ impl TryFrom<RObject> for Value {
                     let mut all_empty = true;
                     if let Some(names) = &names {
                         for name in names {
-                            if !name.is_empty() {
-                                all_empty = false;
-                                break;
+                            if let Some(name) = name {
+                                if !name.is_empty() {
+                                    all_empty = false;
+                                    break;
+                                }
                             }
                         }
                     }
@@ -208,8 +210,13 @@ impl TryFrom<RObject> for Value {
                             // Consider: do we need to guard against
                             // self-referential lists?
                             for i in 0..n {
-                                // Create the key-value pair to insert into the object
-                                let key = names[i as usize].clone();
+                                // Create the key-value pair to insert into the
+                                // object; treat a missing name as an empty
+                                // string.
+                                let key = match &names[i as usize] {
+                                    Some(name) => name.clone(),
+                                    None => String::new(),
+                                };
                                 let val = Value::try_from(obj.vector_elt(i)?)?;
 
                                 // Do we already have a value for this key? If
@@ -382,6 +389,12 @@ mod tests {
             // Empty names are ignored and treated as unnamed
             test_json_conversion(
                 "l <- list('a', 'b', 'c'); names(l) <- c('', '', ''); l",
+                "[\"a\", \"b\", \"c\"]"
+            );
+
+            // NA values in the names are ignored and treated as unnamed
+            test_json_conversion(
+                "l <- list('a', 'b', 'c'); names(l) <- c('', NA, ''); l",
                 "[\"a\", \"b\", \"c\"]"
             );
         }
