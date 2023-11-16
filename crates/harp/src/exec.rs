@@ -16,6 +16,7 @@ use libR_sys::*;
 
 use crate::error::Error;
 use crate::error::Result;
+use crate::interrupts::RSandboxScope;
 use crate::object::RObject;
 use crate::protect::RProtect;
 use crate::r_string;
@@ -518,28 +519,8 @@ where
     F: 'env,
     T: 'env,
 {
-    // NOTE: Keep this function a Plain Old Frame without Drop destructors
-
-    let polled_events = unsafe { R_PolledEvents };
-    let interrupts_suspended = unsafe { R_interrupts_suspended };
-    unsafe {
-        // Disable polled events in this scope
-        R_PolledEvents = Some(r_polled_events_disabled);
-
-        // Disable interrupts in this scope
-        R_interrupts_suspended = 1;
-    }
-
-    // Execute the callback
-    let result = r_top_level_exec(f);
-
-    // Restore state
-    unsafe {
-        R_interrupts_suspended = interrupts_suspended;
-        R_PolledEvents = polled_events;
-    }
-
-    result
+    let _scope = RSandboxScope::new();
+    r_top_level_exec(f)
 }
 
 /// Unwrap Rust error and throw as R error
