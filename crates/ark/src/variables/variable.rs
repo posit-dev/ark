@@ -530,11 +530,11 @@ impl Variable {
     pub fn new(binding: &Binding) -> Self {
         let display_name = binding.name.to_string();
 
-        match binding.value {
+        match &binding.value {
             BindingValue::Active { .. } => Self::from_active_binding(display_name),
-            BindingValue::Promise { promise } => Self::from_promise(display_name, promise),
+            BindingValue::Promise { promise } => Self::from_promise(display_name, promise.sexp),
             BindingValue::Altrep { object, .. } | BindingValue::Standard { object, .. } => {
-                Self::from(display_name.clone(), display_name, object)
+                Self::from(display_name.clone(), display_name, object.sexp)
             },
         }
     }
@@ -1171,18 +1171,19 @@ impl Variable {
             .iter()
             .filter(|b: &Binding| {
                 if b.name == ".__enclos_env__" {
-                    if let BindingValue::Standard { object, .. } = b.value {
-                        has_private = Environment::new(RObject::view(object)).exists("private");
+                    if let BindingValue::Standard { object, .. } = &b.value {
+                        has_private =
+                            Environment::new(RObject::view(object.sexp)).exists("private");
                     }
 
                     false
                 } else if b.is_hidden() {
                     false
                 } else {
-                    match b.value {
+                    match &b.value {
                         BindingValue::Standard { object, .. } |
                         BindingValue::Altrep { object, .. } => {
-                            if r_typeof(object) == CLOSXP {
+                            if r_typeof(object.sexp) == CLOSXP {
                                 has_methods = true;
                                 false
                             } else {
@@ -1269,8 +1270,8 @@ impl Variable {
     fn inspect_r6_methods(value: RObject) -> Result<Vec<Self>, harp::error::Error> {
         let mut out: Vec<Self> = Environment::new(value)
             .iter()
-            .filter(|b: &Binding| match b.value {
-                BindingValue::Standard { object, .. } => r_typeof(object) == CLOSXP,
+            .filter(|b: &Binding| match &b.value {
+                BindingValue::Standard { object, .. } => r_typeof(object.sexp) == CLOSXP,
 
                 _ => false,
             })

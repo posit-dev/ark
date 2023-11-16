@@ -112,6 +112,13 @@ pub trait RObjectExt<T> {
     unsafe fn elt(&self, index: T) -> crate::error::Result<RObject>;
 }
 
+impl PartialEq for RObject {
+    fn eq(&self, other: &Self) -> bool {
+        self.sexp == other.sexp
+    }
+}
+impl Eq for RObject {}
+
 impl<T: Into<RObject>> RObjectExt<T> for RObject {
     unsafe fn elt(&self, index: T) -> crate::error::Result<RObject> {
         let index: RObject = index.into();

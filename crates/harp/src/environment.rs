@@ -83,19 +83,19 @@ impl PartialEq for BindingReference {
 #[derive(Eq, PartialEq)]
 pub enum BindingValue {
     Active {
-        fun: SEXP,
+        fun: RObject,
     },
     Promise {
-        promise: SEXP,
+        promise: RObject,
     },
     Altrep {
-        object: SEXP,
-        data1: SEXP,
-        data2: SEXP,
+        object: RObject,
+        data1: RObject,
+        data2: RObject,
         reference: BindingReference,
     },
     Standard {
-        object: SEXP,
+        object: RObject,
         reference: BindingReference,
     },
 }
@@ -120,7 +120,9 @@ impl Binding {
             let mut value = CAR(frame);
 
             if info.is_active() {
-                let value = BindingValue::Active { fun: value };
+                let value = BindingValue::Active {
+                    fun: RObject::from(value),
+                };
                 return Self { name, value };
             }
 
@@ -131,7 +133,9 @@ impl Binding {
                     match r_typeof(code) {
                         // only consider calls and symbols to be promises
                         LANGSXP | SYMSXP => {
-                            let value = BindingValue::Promise { promise: value };
+                            let value = BindingValue::Promise {
+                                promise: RObject::from(value),
+                            };
                             return Self { name, value };
                         },
                         // all other types are not regarded as promises
@@ -147,16 +151,16 @@ impl Binding {
 
             if r_is_altrep(value) {
                 let value = BindingValue::Altrep {
-                    object: value,
-                    data1: R_altrep_data1(value),
-                    data2: R_altrep_data2(value),
+                    object: RObject::from(value),
+                    data1: RObject::from(R_altrep_data1(value)),
+                    data2: RObject::from(R_altrep_data2(value)),
                     reference: BindingReference::new(value),
                 };
                 return Self { name, value };
             }
 
             let value = BindingValue::Standard {
-                object: value,
+                object: RObject::from(value),
                 reference: BindingReference::new(value),
             };
             Self { name, value }
