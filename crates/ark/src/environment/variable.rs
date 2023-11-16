@@ -511,7 +511,6 @@ fn has_children(value: SEXP) -> bool {
             LISTSXP => true,
             ENVSXP => !Environment::new(RObject::view(value))
                 .is_empty(EnvironmentFilter::ExcludeHiddenBindings),
-            LGLSXP | RAWSXP | STRSXP | INTSXP | REALSXP | CPLXSXP => unsafe { XLENGTH(value) > 1 },
             _ => false,
         }
     }
@@ -807,7 +806,7 @@ impl EnvironmentVariable {
                             if r_is_matrix(*object) {
                                 Self::inspect_matrix(*object)
                             } else {
-                                Self::inspect_vector(*object)
+                                Err(harp::error::Error::InspectError { path: path.clone() })
                             }
                         },
                         _ => Ok(vec![]),
@@ -1084,45 +1083,6 @@ impl EnvironmentVariable {
                     access_key: format!("{}", i),
                     display_name: format!("[{}, {}]", i + 1, index + 1),
                     display_value: iter.next().unwrap(),
-                    display_type: String::from(""),
-                    type_info: String::from(""),
-                    kind,
-                    length: 1,
-                    size: 0,
-                    has_children: false,
-                    is_truncated: false,
-                    has_viewer: false,
-                });
-            }
-
-            Ok(out)
-        }
-    }
-
-    fn inspect_vector(vector: SEXP) -> harp::error::Result<Vec<Self>> {
-        unsafe {
-            let vector = RObject::new(vector);
-            let n = XLENGTH(*vector);
-
-            let mut out: Vec<Self> = vec![];
-            let r_type = r_typeof(*vector);
-            let formatted = FormattedVector::new(*vector)?;
-            let names = Names::new(*vector, |i| format!("[{}]", i + 1));
-            let kind = if r_type == STRSXP {
-                ValueKind::String
-            } else if r_type == RAWSXP {
-                ValueKind::Bytes
-            } else if r_type == LGLSXP {
-                ValueKind::Boolean
-            } else {
-                ValueKind::Number
-            };
-
-            for i in 0..n {
-                out.push(Self {
-                    access_key: format!("{}", i),
-                    display_name: names.get_unchecked(i),
-                    display_value: formatted.get_unchecked(i),
                     display_type: String::from(""),
                     type_info: String::from(""),
                     kind,
