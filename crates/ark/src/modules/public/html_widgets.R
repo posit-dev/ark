@@ -23,11 +23,11 @@
 }
 
 .ps.viewer.addOverrides <- function() {
-    .ps.s3.addS3Override("print.htmlwidget", .ps.view_html_widget)
+    add_s3_override("print.htmlwidget", .ps.view_html_widget)
 }
 
 .ps.viewer.removeOverrides <- function() {
-    .ps.s3.removeS3Override("print.htmlwidget")
+    remove_s3_override("print.htmlwidget")
 }
 
 # When the htmlwidgets package is loaded, inject/overlay our print method.
