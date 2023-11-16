@@ -542,6 +542,48 @@ where
     result
 }
 
+/// Unwrap Rust error and throw as R error
+///
+/// Takes a lambda returning a `Result`. On error, converts the Rust error
+/// to a string with `Display` and throw it as an R error.
+///
+/// Safety: This should only be used from within an R context frame such as
+/// `.Call()` or `R_ExecWithCleanup()`.
+pub fn r_unwrap<F, T, E>(f: F) -> T
+where
+    F: FnOnce() -> std::result::Result<T, E>,
+    E: std::fmt::Display,
+{
+    let out = f();
+
+    // Return early on success
+    let msg = match out {
+        Ok(out) => return out,
+        Err(err) => format!("{err:}"),
+    };
+
+    // Move string to the R heap so it's protected there
+    let robj_msg = RObject::from(msg);
+    let sexp_msg = robj_msg.sexp;
+
+    // We're about to drop our Rust wrapper so add the string to the
+    // protection stack. We're relying on automatic unprotection after an
+    // error, which requires `r_unwrap()` to be run within an R context
+    // frame such as `.Call()` or `R_ExecWithCleanup()`.
+    unsafe {
+        Rf_protect(sexp_msg);
+    }
+
+    // Clear the Rust stack. We only need to drop `robj_msg` because `out`
+    // was moved to `msg` and `msg` to `robj_msg` already.
+    drop(robj_msg);
+
+    // Now throw the error over the R stack
+    unsafe {
+        Rf_errorcall(R_NilValue, R_CHAR(STRING_ELT(sexp_msg, 0)));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::ffi::CString;
@@ -759,6 +801,20 @@ mod tests {
             R_DirtyImage = 2;
             r_envir_remove("aaa", R_GlobalEnv);
             assert_eq!(R_DirtyImage, 1);
+        }
+    }
+
+    #[test]
+    fn test_r_unwrap() {
+        r_test! {
+            let out: Result<RObject> = r_try_catch(|| {
+                r_unwrap(|| Err::<RObject, anyhow::Error>(anyhow::anyhow!("ouch")))
+            });
+
+            assert_match!(out, Err(Error::TryCatchError { message, classes }) => {
+                assert_eq!(message, ["ouch"]);
+                assert_eq!(classes, ["simpleError", "error", "condition"]);
+            });
         }
     }
 }
