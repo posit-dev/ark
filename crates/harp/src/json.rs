@@ -278,30 +278,14 @@ impl TryFrom<RObject> for Value {
 mod tests {
 
     use super::*;
-    use crate::exec::RFunction;
-    use crate::exec::RFunctionExt;
+    use crate::eval::r_parse_eval0;
     use crate::r_test;
 
     // Helper that takes an R expression (as a string), parses it, evaluates it,
     // and converts it to a JSON value. We use this extensively in the tests
     // below to ensure that the R objects are serialized to JSON correctly.
     fn r_to_json(expr: &str) -> Value {
-        // Parse the string into an RObject, which represents the parsed
-        // expresion.
-        let parsed = unsafe {
-            RFunction::new("base", "parse")
-                .param("text", expr)
-                .call()
-                .unwrap()
-        };
-        // Evaluate the expression in the global environment
-        let evaluated = unsafe {
-            RFunction::new("base", "eval")
-                .param("expr", parsed)
-                .param("envir", R_GlobalEnv)
-                .call()
-                .unwrap()
-        };
+        let evaluated = unsafe { r_parse_eval0(expr).unwrap() };
 
         // Convert the evaluated expression to a JSON value
         Value::try_from(evaluated).unwrap()
