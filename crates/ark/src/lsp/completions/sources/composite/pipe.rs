@@ -15,7 +15,7 @@ use stdext::IntoOption;
 use tower_lsp::lsp_types::CompletionItem;
 use tree_sitter::Node;
 
-use crate::lsp::completions::sources::names::completions_from_object_names;
+use crate::lsp::completions::sources::utils::completions_from_object_names;
 use crate::lsp::document_context::DocumentContext;
 
 #[derive(Clone)]

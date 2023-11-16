@@ -8,7 +8,7 @@
 use anyhow::Result;
 use tower_lsp::lsp_types::CompletionItem;
 
-use crate::lsp::completions::sources::names::completions_from_evaluated_object_names;
+use crate::lsp::completions::sources::utils::completions_from_evaluated_object_names;
 use crate::lsp::document_context::DocumentContext;
 
 /// Checks for `[` and `[[` completions

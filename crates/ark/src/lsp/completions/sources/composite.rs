@@ -5,28 +5,38 @@
 //
 //
 
+mod call;
+mod document;
+mod keyword;
+mod pipe;
+mod search_path;
+mod subset;
+mod workspace;
+
 use std::collections::HashSet;
 
 use anyhow::Result;
+use call::completions_from_call;
+use document::completions_from_document;
+use keyword::completions_from_keywords;
+use pipe::completions_from_pipe;
+use pipe::find_pipe_root;
+use search_path::completions_from_search_path;
 use stdext::*;
+use subset::completions_from_subset;
 use tower_lsp::lsp_types::CompletionItem;
 use tower_lsp::lsp_types::CompletionItemKind;
+use workspace::completions_from_workspace;
 
 use crate::lsp::backend::Backend;
-use crate::lsp::completions::sources::call::completions_from_call;
-use crate::lsp::completions::sources::document::completions_from_document;
-use crate::lsp::completions::sources::keyword::completions_from_keywords;
-use crate::lsp::completions::sources::pipe::completions_from_pipe;
-use crate::lsp::completions::sources::pipe::find_pipe_root;
-use crate::lsp::completions::sources::search_path::completions_from_search_path;
-use crate::lsp::completions::sources::subset::completions_from_subset;
-use crate::lsp::completions::sources::workspace::completions_from_workspace;
 use crate::lsp::document_context::DocumentContext;
 
 pub fn completions_from_composite_sources(
     backend: &Backend,
     context: &DocumentContext,
 ) -> Result<Vec<CompletionItem>> {
+    log::info!("completions_from_composite_sources()");
+
     let mut completions: Vec<CompletionItem> = vec![];
 
     let root = find_pipe_root(context);

@@ -15,8 +15,8 @@ use harp::object::RObject;
 use tower_lsp::lsp_types::CompletionItem;
 use tree_sitter::Node;
 
+use super::pipe::PipeRoot;
 use crate::lsp::completions::completion_item::completion_item_from_parameter;
-use crate::lsp::completions::sources::pipe::PipeRoot;
 use crate::lsp::completions::sources::utils::node_call_position_type;
 use crate::lsp::completions::sources::utils::set_sort_text_by_first_appearance;
 use crate::lsp::completions::sources::utils::NodeCallPositionType;
