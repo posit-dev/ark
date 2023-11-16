@@ -54,6 +54,10 @@ pub enum Error {
     InspectError {
         path: Vec<String>,
     },
+    StackUsageError {
+        message: String,
+        backtrace: Backtrace,
+    },
 }
 
 // empty implementation required for 'anyhow'
@@ -157,6 +161,10 @@ impl fmt::Display for Error {
 
             Error::InspectError { path } => {
                 write!(f, "Error inspecting path {}", path.join(" / "))
+            },
+
+            Error::StackUsageError { .. } => {
+                write!(f, "C stack usage too close to the limit")
             },
         }
     }

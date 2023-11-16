@@ -16,6 +16,7 @@ use libR_sys::*;
 
 use crate::error::Error;
 use crate::error::Result;
+use crate::interrupts::RSandboxScope;
 use crate::object::RObject;
 use crate::protect::RProtect;
 use crate::r_string;
@@ -518,28 +519,84 @@ where
     F: 'env,
     T: 'env,
 {
-    // NOTE: Keep this function a Plain Old Frame without Drop destructors
+    let _scope = RSandboxScope::new();
+    r_top_level_exec(f)
+}
 
-    let polled_events = unsafe { R_PolledEvents };
-    let interrupts_suspended = unsafe { R_interrupts_suspended };
+/// Unwrap Rust error and throw as R error
+///
+/// Takes a lambda returning a `Result`. On error, converts the Rust error
+/// to a string with `Display` and throw it as an R error.
+///
+/// Safety: This should only be used from within an R context frame such as
+/// `.Call()` or `R_ExecWithCleanup()`.
+pub fn r_unwrap<F, T, E>(f: F) -> T
+where
+    F: FnOnce() -> std::result::Result<T, E>,
+    E: std::fmt::Display,
+{
+    let out = f();
+
+    // Return early on success
+    let msg = match out {
+        Ok(out) => return out,
+        Err(err) => format!("{err:}"),
+    };
+
+    // Move string to the R heap so it's protected there
+    let robj_msg = RObject::from(msg);
+    let sexp_msg = robj_msg.sexp;
+
+    // We're about to drop our Rust wrapper so add the string to the
+    // protection stack. We're relying on automatic unprotection after an
+    // error, which requires `r_unwrap()` to be run within an R context
+    // frame such as `.Call()` or `R_ExecWithCleanup()`.
     unsafe {
-        // Disable polled events in this scope
-        R_PolledEvents = Some(r_polled_events_disabled);
-
-        // Disable interrupts in this scope
-        R_interrupts_suspended = 1;
+        Rf_protect(sexp_msg);
     }
 
-    // Execute the callback
-    let result = r_top_level_exec(f);
+    // Clear the Rust stack. We only need to drop `robj_msg` because `out`
+    // was moved to `msg` and `msg` to `robj_msg` already.
+    drop(robj_msg);
 
-    // Restore state
+    // Now throw the error over the R stack
     unsafe {
-        R_interrupts_suspended = interrupts_suspended;
-        R_PolledEvents = polled_events;
+        Rf_errorcall(R_NilValue, R_CHAR(STRING_ELT(sexp_msg, 0)));
     }
+}
 
-    result
+/// Check that stack space is sufficient.
+///
+/// Optionally takes a size in bytes, otherwise let R decide if we're too
+/// close to the limit. The latter case is useful for stopping recursive
+/// algorithms from blowing the stack.
+pub fn r_check_stack(size: Option<usize>) -> Result<()> {
+    unsafe {
+        let out = r_top_level_exec(|| {
+            if let Some(size) = size {
+                R_CheckStack2(size);
+            } else {
+                R_CheckStack();
+            }
+        });
+
+        match out {
+            Ok(_) => Ok(()),
+            Err(err) => {
+                // Reset error buffer because we detect stack overflows by
+                // inspecting this buffer, see `peek_execute_response()`
+                let _ = RFunction::new("base", "stop").call();
+
+                // Convert TopLevelExecError to StackUsageError
+                match err {
+                    Error::TopLevelExecError { message, backtrace } => {
+                        Err(Error::StackUsageError { message, backtrace })
+                    },
+                    _ => unreachable!(),
+                }
+            },
+        }
+    }
 }
 
 #[cfg(test)]
@@ -759,6 +816,20 @@ mod tests {
             R_DirtyImage = 2;
             r_envir_remove("aaa", R_GlobalEnv);
             assert_eq!(R_DirtyImage, 1);
+        }
+    }
+
+    #[test]
+    fn test_r_unwrap() {
+        r_test! {
+            let out: Result<RObject> = r_try_catch(|| {
+                r_unwrap(|| Err::<RObject, anyhow::Error>(anyhow::anyhow!("ouch")))
+            });
+
+            assert_match!(out, Err(Error::TryCatchError { message, classes }) => {
+                assert_eq!(message, ["ouch"]);
+                assert_eq!(classes, ["simpleError", "error", "condition"]);
+            });
         }
     }
 }
