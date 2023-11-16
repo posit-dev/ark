@@ -103,8 +103,15 @@ pub fn completions_from_composite_sources(
                 item.sort_text = Some(join!["2-", sort_text]);
             }
 
-            => {
+            // Package names generally have higher preference than function
+            // names. Particularly useful for `dev|` to get to `devtools::`,
+            // as that has a lot of base R functions with similar names.
+            item.kind == Some(CompletionItemKind::MODULE) => {
                 item.sort_text = Some(join!["3-", sort_text]);
+            }
+
+            => {
+                item.sort_text = Some(join!["4-", sort_text]);
             }
         }
     }
