@@ -55,6 +55,7 @@ use harp::exec::r_sandbox;
 use harp::exec::r_source;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
+use harp::interrupts::RSandboxScope;
 use harp::object::RObject;
 use harp::r_symbol;
 use harp::routines::r_register_routines;
@@ -972,11 +973,8 @@ impl RMain {
 
     /// Invoked by the R event loop
     fn polled_events(&mut self) {
-        let result = r_sandbox(|| self.yield_to_tasks());
-
-        unwrap!(result, Err(err) => {
-            log_and_panic!("Unexpected longjump while polling events: {err:?}");
-        });
+        let _scope = RSandboxScope::new();
+        self.yield_to_tasks();
     }
 
     unsafe fn process_events() {
