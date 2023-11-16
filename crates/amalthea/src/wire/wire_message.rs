@@ -300,8 +300,8 @@ impl WireMessage {
         if id.contains("frontEnd-") {
             return String::from("frontEnd");
         }
-        if id.contains("environment-") {
-            return String::from("environment");
+        if id.contains("variables-") {
+            return String::from("variables");
         }
         if id.contains("dataViewer-") {
             return String::from("dataViewer");

@@ -75,7 +75,7 @@ pub trait ShellHandler: Send {
     ///
     /// Returns true if the handler handled the request (and opened the comm), false if it did not.
     ///
-    /// * `target` - The target name of the comm, such as `positron.environment`
+    /// * `target` - The target name of the comm, such as `positron.variables`
     /// * `comm` - The comm channel to use to communicate with the front end
     async fn handle_comm_open(&self, target: Comm, comm: CommSocket) -> Result<bool, Exception>;
 

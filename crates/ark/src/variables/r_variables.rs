@@ -1,5 +1,5 @@
 //
-// r_environment.rs
+// r_variables.rs
 //
 // Copyright (C) 2023 by Posit Software, PBC
 //
@@ -26,28 +26,27 @@ use log::warn;
 use stdext::spawn;
 
 use crate::data_viewer::r_data_viewer::RDataViewer;
-use crate::environment::message::EnvironmentMessage;
-use crate::environment::message::EnvironmentMessageClear;
-use crate::environment::message::EnvironmentMessageClipboardFormat;
-use crate::environment::message::EnvironmentMessageDelete;
-use crate::environment::message::EnvironmentMessageDetails;
-use crate::environment::message::EnvironmentMessageError;
-use crate::environment::message::EnvironmentMessageFormattedVariable;
-use crate::environment::message::EnvironmentMessageInspect;
-use crate::environment::message::EnvironmentMessageList;
-use crate::environment::message::EnvironmentMessageUpdate;
-use crate::environment::message::EnvironmentMessageView;
-use crate::environment::variable::EnvironmentVariable;
 use crate::lsp::events::EVENTS;
 use crate::r_task;
 use crate::thread::RThreadSafe;
+use crate::variables::message::VariablesMessage;
+use crate::variables::message::VariablesMessageClear;
+use crate::variables::message::VariablesMessageClipboardFormat;
+use crate::variables::message::VariablesMessageDelete;
+use crate::variables::message::VariablesMessageDetails;
+use crate::variables::message::VariablesMessageError;
+use crate::variables::message::VariablesMessageFormattedVariable;
+use crate::variables::message::VariablesMessageInspect;
+use crate::variables::message::VariablesMessageList;
+use crate::variables::message::VariablesMessageUpdate;
+use crate::variables::message::VariablesMessageView;
+use crate::variables::variable::Variable;
 
 /**
- * The R Environment handler provides the server side of Positron's Environment
- * panel, and is responsible for creating and updating the list of variables in
- * the R environment.
+ * The R Variables handler provides the server side of Positron's Variables panel, and is
+ * responsible for creating and updating the list of variables.
  */
-pub struct REnvironment {
+pub struct RVariables {
     comm: CommSocket,
     comm_manager_tx: Sender<CommEvent>,
     pub env: RThreadSafe<RObject>,
@@ -69,9 +68,9 @@ pub struct REnvironment {
     version: u64,
 }
 
-impl REnvironment {
+impl RVariables {
     /**
-     * Creates a new REnvironment instance.
+     * Creates a new RVariables instance.
      *
      * - `env`: An R environment to scan for variables, typically R_GlobalEnv
      * - `comm`: A channel used to send messages to the front end
@@ -92,7 +91,7 @@ impl REnvironment {
         let current_bindings = RThreadSafe::new(vec![]);
 
         // Start the execution thread and wait for requests from the front end
-        spawn!("ark-environment", move || {
+        spawn!("ark-variables", move || {
             // When `env` and `current_bindings` are dropped, a `r_async_task()`
             // call unprotects them
             let environment = Self {
@@ -165,7 +164,7 @@ impl REnvironment {
 
                     // Process ordinary data messages
                     if let CommChannelMsg::Rpc(id, data) = msg {
-                        let message = match serde_json::from_value::<EnvironmentMessage>(data) {
+                        let message = match serde_json::from_value::<VariablesMessage>(data) {
                             Ok(m) => m,
                             Err(err) => {
                                 error!(
@@ -178,30 +177,29 @@ impl REnvironment {
 
                         // Match on the type of data received.
                         match message {
-                            // This is a request to refresh the environment list, so
-                            // perform a full environment scan and deliver to the
-                            // front end
-                            EnvironmentMessage::Refresh => {
+                            // This is a request to refresh the variables list, so perform a full
+                            // environment scan and deliver to the front end
+                            VariablesMessage::Refresh => {
                                 self.refresh(Some(id));
                             },
 
-                            EnvironmentMessage::Clear(EnvironmentMessageClear{include_hidden_objects}) => {
+                            VariablesMessage::Clear(VariablesMessageClear{include_hidden_objects}) => {
                                 self.clear(include_hidden_objects, Some(id));
                             },
 
-                            EnvironmentMessage::Delete(EnvironmentMessageDelete{variables}) => {
+                            VariablesMessage::Delete(VariablesMessageDelete{variables}) => {
                                 self.delete(variables, Some(id));
                             },
 
-                            EnvironmentMessage::Inspect(EnvironmentMessageInspect{path}) => {
+                            VariablesMessage::Inspect(VariablesMessageInspect{path}) => {
                                 self.inspect(&path, Some(id));
                             },
 
-                            EnvironmentMessage::ClipboardFormat(EnvironmentMessageClipboardFormat{path, format}) => {
+                            VariablesMessage::ClipboardFormat(VariablesMessageClipboardFormat{path, format}) => {
                                 self.clipboard_format(&path, format, Some(id));
                             },
 
-                            EnvironmentMessage::View(EnvironmentMessageView { path }) => {
+                            VariablesMessage::View(VariablesMessageView { path }) => {
                                 self.view(&path, Some(id));
                             },
 
@@ -240,20 +238,20 @@ impl REnvironment {
      * the request ID is passed in as an argument.
      */
     fn refresh(&mut self, request_id: Option<String>) {
-        let mut variables: Vec<EnvironmentVariable> = vec![];
+        let mut variables: Vec<Variable> = vec![];
 
         r_task(|| {
             self.update_bindings(self.bindings());
 
             for binding in self.current_bindings.get() {
-                variables.push(EnvironmentVariable::new(binding));
+                variables.push(Variable::new(binding));
             }
         });
 
         // TODO: Avoid serializing the full list of variables if it exceeds a
         // certain threshold
         let env_size = variables.len();
-        let env_list = EnvironmentMessage::List(EnvironmentMessageList {
+        let env_list = VariablesMessage::List(VariablesMessageList {
             variables,
             length: env_size,
             version: self.version,
@@ -327,18 +325,16 @@ impl REnvironment {
     fn clipboard_format(&mut self, path: &Vec<String>, format: String, request_id: Option<String>) {
         let clipped = r_task(|| {
             let env = self.env.get().clone();
-            EnvironmentVariable::clip(env, &path, &format)
+            Variable::clip(env, &path, &format)
         });
 
         let msg = match clipped {
-            Ok(content) => {
-                EnvironmentMessage::FormattedVariable(EnvironmentMessageFormattedVariable {
-                    format,
-                    content,
-                })
-            },
+            Ok(content) => VariablesMessage::FormattedVariable(VariablesMessageFormattedVariable {
+                format,
+                content,
+            }),
 
-            Err(_) => EnvironmentMessage::Error(EnvironmentMessageError {
+            Err(_) => VariablesMessage::Error(VariablesMessageError {
                 message: String::from("Clipboard Format error"),
             }),
         };
@@ -348,18 +344,18 @@ impl REnvironment {
     fn inspect(&mut self, path: &Vec<String>, request_id: Option<String>) {
         let inspect = r_task(|| {
             let env = self.env.get().clone();
-            EnvironmentVariable::inspect(env, &path)
+            Variable::inspect(env, &path)
         });
         let msg = match inspect {
             Ok(children) => {
                 let length = children.len();
-                EnvironmentMessage::Details(EnvironmentMessageDetails {
+                VariablesMessage::Details(VariablesMessageDetails {
                     path: path.clone(),
                     children,
                     length,
                 })
             },
-            Err(_) => EnvironmentMessage::Error(EnvironmentMessageError {
+            Err(_) => VariablesMessage::Error(VariablesMessageError {
                 message: String::from("Inspection error"),
             }),
         };
@@ -371,16 +367,16 @@ impl REnvironment {
         let message = r_task(|| {
             let env = self.env.get().clone();
 
-            let data = EnvironmentVariable::resolve_data_object(env, &path);
+            let data = Variable::resolve_data_object(env, &path);
 
             match data {
                 Ok(data) => {
                     let name = unsafe { path.get_unchecked(path.len() - 1) };
                     RDataViewer::start(name.clone(), data, self.comm_manager_tx.clone());
-                    EnvironmentMessage::Success
+                    VariablesMessage::Success
                 },
 
-                Err(_) => EnvironmentMessage::Error(EnvironmentMessageError {
+                Err(_) => VariablesMessage::Error(VariablesMessageError {
                     message: String::from("Inspection error"),
                 }),
             }
@@ -389,7 +385,7 @@ impl REnvironment {
         self.send_message(message, request_id);
     }
 
-    fn send_message(&mut self, message: EnvironmentMessage, request_id: Option<String>) {
+    fn send_message(&mut self, message: VariablesMessage, request_id: Option<String>) {
         let data = serde_json::to_value(message);
 
         match data {
@@ -410,7 +406,7 @@ impl REnvironment {
     }
 
     fn update(&mut self, request_id: Option<String>) {
-        let mut assigned: Vec<EnvironmentVariable> = vec![];
+        let mut assigned: Vec<Variable> = vec![];
         let mut removed: Vec<String> = vec![];
 
         r_task(|| {
@@ -430,7 +426,7 @@ impl REnvironment {
                     // No more old, collect last new into added
                     (None, Some(mut new)) => {
                         loop {
-                            assigned.push(EnvironmentVariable::new(&new));
+                            assigned.push(Variable::new(&new));
 
                             match new_iter.next() {
                                 Some(x) => {
@@ -461,7 +457,7 @@ impl REnvironment {
                     (Some(old), Some(new)) => {
                         if old.name == new.name {
                             if old.value != new.value {
-                                assigned.push(EnvironmentVariable::new(&new));
+                                assigned.push(Variable::new(&new));
                             }
                             old_next = old_iter.next();
                             new_next = new_iter.next();
@@ -469,7 +465,7 @@ impl REnvironment {
                             removed.push(old.name.to_string());
                             old_next = old_iter.next();
                         } else {
-                            assigned.push(EnvironmentVariable::new(&new));
+                            assigned.push(Variable::new(&new));
                             new_next = new_iter.next();
                         }
                     },
@@ -484,7 +480,7 @@ impl REnvironment {
 
         if assigned.len() > 0 || removed.len() > 0 || request_id.is_some() {
             // Send the message if anything changed or if this came from a request
-            let message = EnvironmentMessage::Update(EnvironmentMessageUpdate {
+            let message = VariablesMessage::Update(VariablesMessageUpdate {
                 assigned,
                 removed,
                 version: self.version,

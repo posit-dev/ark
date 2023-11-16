@@ -89,25 +89,25 @@ pub enum ValueKind {
     Lazy,
 }
 
-/// Represents the serialized form of an environment variable.
+/// Represents the serialized form of a variable.
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct EnvironmentVariable {
+pub struct Variable {
     /** The access key; not displayed to the user, but used to form path accessors */
     pub access_key: String,
 
-    /** The environment variable's name, formatted for display */
+    /** The variable's name, formatted for display */
     pub display_name: String,
 
-    /** The environment variable's value, formatted for display */
+    /** The variable's value, formatted for display */
     pub display_value: String,
 
-    /** The environment variable's type, formatted for display */
+    /** The variable's type, formatted for display */
     pub display_type: String,
 
     /** Extended type information */
     pub type_info: String,
 
-    /** The environment variable's value kind (string, number, etc.) */
+    /** The variable's value kind (string, number, etc.) */
     pub kind: ValueKind,
 
     /** The number of elements in the variable's value, if applicable */
@@ -268,10 +268,9 @@ impl WorkspaceVariableDisplayValue {
             );
         }
 
-        // For environment we don't display values, only names. So we don't
-        // need to create `EnvironmentVariable` for each bindings as we used
-        // to, and which caused an infinite recursion since environments may
-        // be self-referential (posit-dev/positron#1690).
+        // For environment we don't display values, only names. So we don't need to create a
+        // Variable for each bindings as we used to, and which caused an infinite recursion since
+        // environments may be self-referential (posit-dev/positron#1690).
         let names = environment.names();
 
         // Build the detailed display value
@@ -296,7 +295,7 @@ impl WorkspaceVariableDisplayValue {
                 display_value.push_str(", ");
             }
 
-            // Append the environment variable display name.
+            // Append the variable display name.
             display_value.push_str(name);
 
             // When the display value becomes too long, mark it as truncated and stop
@@ -524,9 +523,9 @@ enum EnvironmentVariableNode {
     VectorElement { object: RObject, index: isize },
 }
 
-impl EnvironmentVariable {
+impl Variable {
     /**
-     * Create a new EnvironmentVariable from a Binding
+     * Create a new Variable from a Binding
      */
     pub fn new(binding: &Binding) -> Self {
         let display_name = binding.name.to_string();
@@ -541,7 +540,7 @@ impl EnvironmentVariable {
     }
 
     /**
-     * Create a new EnvironmentVariable from an R object
+     * Create a new Variable from an R object
      */
     fn from(access_key: String, display_name: String, x: SEXP) -> Self {
         let WorkspaceVariableDisplayValue {
@@ -909,14 +908,13 @@ impl EnvironmentVariable {
                                     let mut x = Rf_findVarInFrame(*object, symbol);
 
                                     if r_typeof(x) == PROMSXP {
-                                        // if we are here, it means the promise is either
-                                        // evaluated already, i.e. PRVALUE() is bound
-                                        // or it is a promise to something that is
-                                        // not a call or a symbol because it would have been handled in
-                                        // Binding::new()
+                                        // if we are here, it means the promise is either evaluated
+                                        // already, i.e. PRVALUE() is bound or it is a promise to
+                                        // something that is not a call or a symbol because it would
+                                        // have been handled in Binding::new()
 
-                                        // Actual promises, i.e. unevaluated promises can't be expanded
-                                        // in the environment pane so we would not get here
+                                        // Actual promises, i.e. unevaluated promises can't be
+                                        // expanded in the variables pane so we would not get here.
 
                                         let value = PRVALUE(x);
                                         if r_is_unbound(value) {
@@ -1261,7 +1259,7 @@ impl EnvironmentVariable {
                 let slot_symbol = r_symbol!(display_name);
                 let slot = r_try_catch(|| R_do_slot(value, slot_symbol))?;
                 let access_key = display_name.clone();
-                out.push(EnvironmentVariable::from(access_key, display_name, *slot));
+                out.push(Variable::from(access_key, display_name, *slot));
             }
         }
 

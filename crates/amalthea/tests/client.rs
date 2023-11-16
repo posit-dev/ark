@@ -303,7 +303,7 @@ fn test_kernel() {
     let comm_id = "A3A6D0EA-1443-4F70-B059-F423E445B8D6";
     frontend.send_shell(CommOpen {
         comm_id: comm_id.to_string(),
-        target_name: "environment".to_string(),
+        target_name: "variables".to_string(),
         data: serde_json::Value::Null,
     });
 
@@ -403,7 +403,7 @@ fn test_kernel() {
     // (it should not be)
     info!("Requesting comm info from the kernel (to test closing)");
     frontend.send_shell(CommInfoRequest {
-        target_name: "environment".to_string(),
+        target_name: "variables".to_string(),
     });
     let reply = frontend.receive_shell();
     match reply {
