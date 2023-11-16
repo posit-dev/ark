@@ -285,7 +285,7 @@ impl RObject {
         unsafe {
             r_assert_type(self.sexp, &[VECSXP])?;
             r_assert_capacity(self.sexp, idx as usize)?;
-            Ok(RObject::view(VECTOR_ELT(self.sexp, idx)))
+            Ok(RObject::new(VECTOR_ELT(self.sexp, idx)))
         }
     }
 
