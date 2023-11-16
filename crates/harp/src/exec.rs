@@ -580,7 +580,7 @@ where
 
     // Now throw the error over the R stack
     unsafe {
-        Rf_error(R_CHAR(STRING_ELT(sexp_msg, 0)));
+        Rf_errorcall(R_NilValue, R_CHAR(STRING_ELT(sexp_msg, 0)));
     }
 }
 
