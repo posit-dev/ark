@@ -16,6 +16,7 @@ use libR_sys::*;
 
 use crate::error::Error;
 use crate::error::Result;
+use crate::interrupts::RSandboxScope;
 use crate::object::RObject;
 use crate::protect::RProtect;
 use crate::r_string;
@@ -518,28 +519,8 @@ where
     F: 'env,
     T: 'env,
 {
-    // NOTE: Keep this function a Plain Old Frame without Drop destructors
-
-    let polled_events = unsafe { R_PolledEvents };
-    let interrupts_suspended = unsafe { R_interrupts_suspended };
-    unsafe {
-        // Disable polled events in this scope
-        R_PolledEvents = Some(r_polled_events_disabled);
-
-        // Disable interrupts in this scope
-        R_interrupts_suspended = 1;
-    }
-
-    // Execute the callback
-    let result = r_top_level_exec(f);
-
-    // Restore state
-    unsafe {
-        R_interrupts_suspended = interrupts_suspended;
-        R_PolledEvents = polled_events;
-    }
-
-    result
+    let _scope = RSandboxScope::new();
+    r_top_level_exec(f)
 }
 
 /// Unwrap Rust error and throw as R error
@@ -581,6 +562,40 @@ where
     // Now throw the error over the R stack
     unsafe {
         Rf_errorcall(R_NilValue, R_CHAR(STRING_ELT(sexp_msg, 0)));
+    }
+}
+
+/// Check that stack space is sufficient.
+///
+/// Optionally takes a size in bytes, otherwise let R decide if we're too
+/// close to the limit. The latter case is useful for stopping recursive
+/// algorithms from blowing the stack.
+pub fn r_check_stack(size: Option<usize>) -> Result<()> {
+    unsafe {
+        let out = r_top_level_exec(|| {
+            if let Some(size) = size {
+                R_CheckStack2(size);
+            } else {
+                R_CheckStack();
+            }
+        });
+
+        match out {
+            Ok(_) => Ok(()),
+            Err(err) => {
+                // Reset error buffer because we detect stack overflows by
+                // inspecting this buffer, see `peek_execute_response()`
+                let _ = RFunction::new("base", "stop").call();
+
+                // Convert TopLevelExecError to StackUsageError
+                match err {
+                    Error::TopLevelExecError { message, backtrace } => {
+                        Err(Error::StackUsageError { message, backtrace })
+                    },
+                    _ => unreachable!(),
+                }
+            },
+        }
     }
 }
 

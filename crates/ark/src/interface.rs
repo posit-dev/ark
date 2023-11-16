@@ -50,10 +50,12 @@ use crossbeam::channel::Sender;
 use crossbeam::channel::TryRecvError;
 use crossbeam::select;
 use harp::exec::geterrmessage;
+use harp::exec::r_check_stack;
 use harp::exec::r_sandbox;
 use harp::exec::r_source;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
+use harp::interrupts::RSandboxScope;
 use harp::object::RObject;
 use harp::r_symbol;
 use harp::routines::r_register_routines;
@@ -216,10 +218,6 @@ pub fn start_r(
         ptr_R_ShowMessage = Some(r_show_message);
         ptr_R_Busy = Some(r_busy);
 
-        // Listen for polled events
-        R_wait_usec = 10000;
-        R_PolledEvents = Some(r_polled_events);
-
         // Set up main loop
         setup_Rmainloop();
 
@@ -242,6 +240,10 @@ pub fn start_r(
 
         // Set up the global error handler (after support function initialization)
         errors::initialize();
+
+        // Listen for polled events
+        R_wait_usec = 10000;
+        R_PolledEvents = Some(r_polled_events);
 
         // Run the main loop -- does not return
         run_Rmainloop();
@@ -971,6 +973,7 @@ impl RMain {
 
     /// Invoked by the R event loop
     fn polled_events(&mut self) {
+        let _scope = RSandboxScope::new();
         self.yield_to_tasks();
     }
 
@@ -1004,6 +1007,13 @@ impl RMain {
     }
 
     fn yield_to_tasks(&mut self) {
+        // Skip task if we don't have 128KB of stack space available.  This
+        // is 1/8th of the typical Windows stack space (1MB, whereas macOS
+        // and Linux have 8MB).
+        if let Err(_) = r_check_stack(Some(128 * 1024)) {
+            return;
+        }
+
         loop {
             match self.tasks_rx.try_recv() {
                 Ok(task) => self.pending_tasks.push_back(task),
