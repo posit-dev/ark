@@ -206,18 +206,16 @@ impl RObject {
     ///
     /// - `idx` - The index of the string to return.
     ///
-    /// Returns the string at the given index, or None if the index is out of
-    /// bounds or the value is NA.
-    pub fn string_elt(&self, idx: isize) -> Option<String> {
+    /// Returns the string at the given index, or None if the string is NA.
+    pub fn get_string(&self, idx: isize) -> crate::error::Result<Option<String>> {
         unsafe {
+            r_assert_type(self.sexp, &[STRSXP])?;
+            r_assert_capacity(self.sexp, idx as usize)?;
             let charsexp = STRING_ELT(self.sexp, idx);
             if charsexp == R_NaString {
-                None
+                Ok(None)
             } else {
-                match RObject::view(charsexp).try_into() {
-                    Ok(x) => Some(x),
-                    Err(_) => None,
-                }
+                Ok(Some(RObject::view(charsexp).try_into()?))
             }
         }
     }
@@ -226,12 +224,17 @@ impl RObject {
     ///
     /// - `idx` - The index of the integer to return.
     ///
-    /// Returns the intger at the given index.
-    pub fn integer_elt(&self, idx: isize) -> crate::error::Result<i32> {
+    /// Returns the intger at the given index, or None if the integer is NA.
+    pub fn get_i32(&self, idx: isize) -> crate::error::Result<Option<i32>> {
         unsafe {
             r_assert_type(self.sexp, &[INTSXP])?;
             r_assert_capacity(self.sexp, idx as usize)?;
-            Ok(INTEGER_ELT(self.sexp, idx))
+            let intval = INTEGER_ELT(self.sexp, idx);
+            if intval == R_NaInt {
+                Ok(None)
+            } else {
+                Ok(Some(intval))
+            }
         }
     }
 
@@ -239,12 +242,17 @@ impl RObject {
     ///
     /// - `idx` - The index of the value to return.
     ///
-    /// Returns the real value at the given index.
-    pub fn real_elt(&self, idx: isize) -> crate::error::Result<f64> {
+    /// Returns the real value at the given index, or None if the value is NA.
+    pub fn get_f64(&self, idx: isize) -> crate::error::Result<Option<f64>> {
         unsafe {
             r_assert_type(self.sexp, &[REALSXP])?;
             r_assert_capacity(self.sexp, idx as usize)?;
-            Ok(REAL_ELT(self.sexp, idx))
+            let f64val = REAL_ELT(self.sexp, idx);
+            if f64val == R_NaReal {
+                Ok(None)
+            } else {
+                Ok(Some(f64val))
+            }
         }
     }
 
@@ -252,12 +260,18 @@ impl RObject {
     ///
     /// - `idx` - The index of the value to return.
     ///
-    /// Returns the logical value at the given index.
-    pub fn logical_elt(&self, idx: isize) -> crate::error::Result<bool> {
+    /// Returns the logical value at the given index, or None if the value is
+    /// NA.
+    pub fn get_bool(&self, idx: isize) -> crate::error::Result<Option<bool>> {
         unsafe {
             r_assert_type(self.sexp, &[LGLSXP])?;
             r_assert_capacity(self.sexp, idx as usize)?;
-            Ok(LOGICAL_ELT(self.sexp, idx) != 0)
+            let boolval = LOGICAL_ELT(self.sexp, idx);
+            if boolval == R_NaInt {
+                Ok(None)
+            } else {
+                Ok(Some(boolval != 0))
+            }
         }
     }
 

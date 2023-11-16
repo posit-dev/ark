@@ -50,7 +50,10 @@ impl TryFrom<RObject> for Value {
                     let mut arr = Vec::<Value>::with_capacity(obj.length().try_into().unwrap());
                     let n = obj.length();
                     for i in 0..n {
-                        arr.push(Value::Number(obj.integer_elt(i)?.into()));
+                        arr.push(match obj.get_i32(i)? {
+                            Some(value) => value.into(),
+                            None => Value::Null,
+                        });
                     }
                     Ok(serde_json::Value::Array(arr))
                 },
@@ -74,7 +77,10 @@ impl TryFrom<RObject> for Value {
                     let mut arr = Vec::<Value>::with_capacity(obj.length().try_into().unwrap());
                     let n = obj.length();
                     for i in 0..n {
-                        arr.push(json!(obj.real_elt(i)?))
+                        arr.push(match obj.get_f64(i)? {
+                            Some(value) => value.into(),
+                            None => Value::Null,
+                        });
                     }
                     Ok(serde_json::Value::Array(arr))
                 },
@@ -96,7 +102,10 @@ impl TryFrom<RObject> for Value {
                     let mut arr = Vec::<Value>::with_capacity(obj.length().try_into().unwrap());
                     let n = obj.length();
                     for i in 0..n {
-                        arr.push(Value::Bool(obj.logical_elt(i)?))
+                        arr.push(match obj.get_bool(i)? {
+                            Some(value) => value.into(),
+                            None => Value::Null,
+                        });
                     }
                     Ok(serde_json::Value::Array(arr))
                 },
@@ -147,7 +156,7 @@ impl TryFrom<RObject> for Value {
                     let mut arr = Vec::<Value>::with_capacity(obj.length().try_into().unwrap());
                     let n = obj.length();
                     for i in 0..n {
-                        arr.push(match obj.string_elt(i) {
+                        arr.push(match obj.get_string(i)? {
                             Some(str) => Value::String(str),
                             None => Value::Null,
                         });
@@ -331,6 +340,23 @@ mod tests {
             test_json_conversion(
                 "c('one', 'two')",
                 "[\"one\", \"two\"]"
+            );
+        }
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test_json_na_vectors() {
+        // We expect vectors containing NA values to serialize to JSON arrays
+        // with nulls.
+        r_test! {
+            test_json_conversion(
+                "c(1L, NA, 3L)",
+                "[1, null, 3]"
+            );
+            test_json_conversion(
+                "c('one', 'two', NA)",
+                "[\"one\", \"two\", null]"
             );
         }
     }
