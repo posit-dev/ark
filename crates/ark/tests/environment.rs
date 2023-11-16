@@ -9,12 +9,12 @@ use amalthea::comm::comm_channel::CommChannelMsg;
 use amalthea::comm::event::CommEvent;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
-use ark::environment::message::EnvironmentMessage;
-use ark::environment::message::EnvironmentMessageClear;
-use ark::environment::message::EnvironmentMessageDelete;
-use ark::environment::message::EnvironmentMessageList;
-use ark::environment::message::EnvironmentMessageUpdate;
-use ark::environment::r_environment::REnvironment;
+use ark::variables::message::VariablesMessage;
+use ark::variables::message::VariablesMessageClear;
+use ark::variables::message::VariablesMessageDelete;
+use ark::variables::message::VariablesMessageList;
+use ark::variables::message::VariablesMessageUpdate;
+use ark::variables::r_variables::RVariables;
 use ark::lsp::events::EVENTS;
 use ark::r_task;
 use ark::thread::RThreadSafe;
@@ -72,7 +72,7 @@ fn test_environment_list() {
     let outgoing_rx = comm.outgoing_rx.clone();
     r_task(|| {
         let test_env = test_env.get().clone();
-        REnvironment::start(test_env, comm.clone(), comm_manager_tx.clone());
+        RVariables::start(test_env, comm.clone(), comm_manager_tx.clone());
     });
 
     // Ensure we get a list of variables after initialization
@@ -84,7 +84,7 @@ fn test_environment_list() {
 
     // Ensure we got a list of variables by unmarshalling the JSON. The list
     // should be empty since we don't have any variables in the R environment.
-    let list: EnvironmentMessageList = serde_json::from_value(data).unwrap();
+    let list: VariablesMessageList = serde_json::from_value(data).unwrap();
     assert!(list.variables.len() == 0);
     assert_eq!(list.version, 1);
 
@@ -97,7 +97,7 @@ fn test_environment_list() {
     });
 
     // Request that the environment be refreshed
-    let refresh = EnvironmentMessage::Refresh;
+    let refresh = VariablesMessage::Refresh;
     let data = serde_json::to_value(refresh).unwrap();
     let request_id = String::from("refresh-id-1234");
     incoming_tx
@@ -117,7 +117,7 @@ fn test_environment_list() {
     };
 
     // Unmarshal the list and check for the variable we created
-    let list: EnvironmentMessageList = serde_json::from_value(data).unwrap();
+    let list: VariablesMessageList = serde_json::from_value(data).unwrap();
     assert!(list.variables.len() == 1);
     let var = &list.variables[0];
     assert_eq!(var.display_name, "everything");
@@ -141,7 +141,7 @@ fn test_environment_list() {
     };
 
     // Unmarshal the list and check for the variable we created
-    let msg: EnvironmentMessageUpdate = serde_json::from_value(data).unwrap();
+    let msg: VariablesMessageUpdate = serde_json::from_value(data).unwrap();
     assert_eq!(msg.assigned.len(), 1);
     assert_eq!(msg.removed.len(), 1);
     assert_eq!(msg.assigned[0].display_name, "nothing");
@@ -149,7 +149,7 @@ fn test_environment_list() {
     assert_eq!(msg.version, 3);
 
     // Request that the environment be cleared
-    let clear = EnvironmentMessage::Clear(EnvironmentMessageClear {
+    let clear = VariablesMessage::Clear(VariablesMessageClear {
         include_hidden_objects: true,
     });
     let data = serde_json::to_value(clear).unwrap();
@@ -171,7 +171,7 @@ fn test_environment_list() {
     };
 
     // Unmarshal the list and check for the variable we created
-    let list: EnvironmentMessageList = serde_json::from_value(data).unwrap();
+    let list: VariablesMessageList = serde_json::from_value(data).unwrap();
     assert!(list.variables.len() == 0);
     assert_eq!(list.version, 4);
 
@@ -202,13 +202,13 @@ fn test_environment_list() {
         _ => panic!("Expected data message, got {:?}", msg),
     };
 
-    let msg: EnvironmentMessageUpdate = serde_json::from_value(data).unwrap();
+    let msg: VariablesMessageUpdate = serde_json::from_value(data).unwrap();
     assert_eq!(msg.assigned.len(), 2);
     assert_eq!(msg.removed.len(), 0);
     assert_eq!(msg.version, 5);
 
     // Request that a environment be deleted
-    let delete = EnvironmentMessage::Delete(EnvironmentMessageDelete {
+    let delete = VariablesMessage::Delete(VariablesMessageDelete {
         variables: vec![String::from("a")],
     });
     let data = serde_json::to_value(delete).unwrap();
@@ -225,7 +225,7 @@ fn test_environment_list() {
         _ => panic!("Expected data message, got {:?}", msg),
     };
 
-    let update: EnvironmentMessageUpdate = serde_json::from_value(data).unwrap();
+    let update: VariablesMessageUpdate = serde_json::from_value(data).unwrap();
     assert!(update.assigned.len() == 0);
     assert_eq!(update.removed, ["a"]);
     assert_eq!(update.version, 6);

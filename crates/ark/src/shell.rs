@@ -47,7 +47,7 @@ use log::*;
 use serde_json::json;
 use stdext::spawn;
 
-use crate::environment::r_environment::REnvironment;
+use crate::variables::r_variables::RVariables;
 use crate::frontend::frontend::PositronFrontend;
 use crate::help::r_help::RHelp;
 use crate::interface::KernelInfo;
@@ -266,9 +266,9 @@ impl ShellHandler for Shell {
     /// Handles a request to open a new comm channel
     async fn handle_comm_open(&self, target: Comm, comm: CommSocket) -> Result<bool, Exception> {
         match target {
-            Comm::Environment => r_task(|| unsafe {
+            Comm::Variables => r_task(|| unsafe {
                 let global_env = RObject::view(R_GlobalEnv);
-                REnvironment::start(global_env, comm.clone(), self.comm_manager_tx.clone());
+                RVariables::start(global_env, comm.clone(), self.comm_manager_tx.clone());
                 Ok(true)
             }),
             Comm::FrontEnd => {

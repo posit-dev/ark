@@ -11,8 +11,8 @@ use strum_macros::EnumString;
 #[derive(EnumString, PartialEq)]
 #[strum(serialize_all = "camelCase")]
 pub enum Comm {
-    /// The Environment pane.
-    Environment,
+    /// A variables pane.
+    Variables,
 
     /// A wrapper for a Language Server Protocol server.
     Lsp,
