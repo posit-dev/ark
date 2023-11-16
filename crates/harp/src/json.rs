@@ -17,16 +17,29 @@ use crate::object::RObject;
 /// Conversion to JSON values from an R object.
 ///
 /// This is a recursive function that converts an R object to a JSON value. It
-/// works with most primitive R data types. Most of the heavy lifting is done by
-/// RObject's conversion functions; this function just handles the recursion and
-/// the conversion of lists.
+/// works with most primitive R data types, but isn't exhaustive and is designed
+/// only to handle the conversion of data intendend for serialization over the
+/// wire.
+///
+///  Most of the heavy lifting is done by RObject's conversion functions;
+/// this function just handles the recursion and the conversion of lists.
 ///
 /// Generally speaking:
 ///
 /// - Zero-length vectors become JSON null values
+///   - e.g.: c() -> null
 /// - Length-one vectors become JSON scalars
+///   - e.g.: 1L -> 1, TRUE -> true, "applesauce" -> "applesauce"
 /// - Vectors of length > 1 become JSON arrays
+///   - e.g.: c(1L, 2L, 3L) -> [1, 2, 3]
+/// - Unnamed lists also become JSON arrays; note that, unlike atomic vectors,
+///   these can contain elements of mixed types
+///   - e.g.: list(1L, TRUE, "applesauce") -> [1, true, "applesauce"]
 /// - Named lists become JSON maps/objects
+///   - e.g.: list(a = 1L, b = TRUE, c = "applesauce") ->
+///           {"a": 1, "b": true, "c": "applesauce"}
+/// - Named lists with duplicate keys have the values combined into an array
+///   - e.g.: list(a = 1L, a = 2L, a = 3L) -> {"a": [1, 2, 3]}
 impl TryFrom<RObject> for Value {
     type Error = crate::error::Error;
     fn try_from(obj: RObject) -> Result<Self, Self::Error> {
