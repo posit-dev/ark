@@ -528,6 +528,16 @@ where
 /// Takes a lambda returning a `Result`. On error, converts the Rust error
 /// to a string with `Display` and throw it as an R error.
 ///
+/// Usage: Call this at the boundary between an R stack and a Rust stack.
+/// The simplest way is to call it first in a Rust function called from R
+/// so that the whole Rust stack is encapsulated in the closure passed to
+/// `r_unwrap()`.
+///
+/// All Rust objects in the current frame must have been dropped because
+/// `r_unwrap()` causes a C longjump that bypasses destructors. UB occurs
+/// if there are any pending drops on the stack (most likely memory leaking
+/// but potentially unstability and panics too).
+///
 /// Safety: This should only be used from within an R context frame such as
 /// `.Call()` or `R_ExecWithCleanup()`.
 pub fn r_unwrap<F, T, E>(f: F) -> T
