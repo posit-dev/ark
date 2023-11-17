@@ -1205,6 +1205,8 @@ dependencies = [
  "parking_lot",
  "regex",
  "semver",
+ "serde",
+ "serde_json",
  "stdext",
 ]
 

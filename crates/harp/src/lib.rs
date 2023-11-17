@@ -1,7 +1,7 @@
 //
 // lib.rs
 //
-// Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023 Posit Software, PBC. All rights reserved.
 //
 //
 pub mod call;
@@ -11,6 +11,7 @@ pub mod eval;
 pub mod exec;
 pub mod external_ptr;
 pub mod interrupts;
+pub mod json;
 pub mod object;
 pub mod protect;
 pub mod r_version;

@@ -19,6 +19,7 @@ use crate::error::Error;
 use crate::exec::RFunction;
 use crate::exec::RFunctionExt;
 use crate::protect::RProtect;
+use crate::utils::r_assert_capacity;
 use crate::utils::r_assert_length;
 use crate::utils::r_assert_type;
 use crate::utils::r_chr_get_owned_utf8;
@@ -202,6 +203,108 @@ impl RObject {
 
     pub fn length(&self) -> isize {
         r_length(self.sexp)
+    }
+
+    pub fn kind(&self) -> u32 {
+        r_typeof(self.sexp)
+    }
+
+    /// String accessor; get a string value from a vector of strings.
+    ///
+    /// - `idx` - The index of the string to return.
+    ///
+    /// Returns the string at the given index, or None if the string is NA.
+    pub fn get_string(&self, idx: isize) -> crate::error::Result<Option<String>> {
+        unsafe {
+            r_assert_type(self.sexp, &[STRSXP])?;
+            r_assert_capacity(self.sexp, idx as usize)?;
+            let charsexp = STRING_ELT(self.sexp, idx);
+            if charsexp == R_NaString {
+                Ok(None)
+            } else {
+                Ok(Some(RObject::view(charsexp).try_into()?))
+            }
+        }
+    }
+
+    /// Integer accessor; get an integer value from a vector of integers.
+    ///
+    /// - `idx` - The index of the integer to return.
+    ///
+    /// Returns the intger at the given index, or None if the integer is NA.
+    pub fn get_i32(&self, idx: isize) -> crate::error::Result<Option<i32>> {
+        unsafe {
+            r_assert_type(self.sexp, &[INTSXP])?;
+            r_assert_capacity(self.sexp, idx as usize)?;
+            let intval = INTEGER_ELT(self.sexp, idx);
+            if intval == R_NaInt {
+                Ok(None)
+            } else {
+                Ok(Some(intval))
+            }
+        }
+    }
+
+    /// Real-value accessor; get an real (floating point) value from a vector.
+    ///
+    /// - `idx` - The index of the value to return.
+    ///
+    /// Returns the real value at the given index, or None if the value is NA.
+    pub fn get_f64(&self, idx: isize) -> crate::error::Result<Option<f64>> {
+        unsafe {
+            r_assert_type(self.sexp, &[REALSXP])?;
+            r_assert_capacity(self.sexp, idx as usize)?;
+            let f64val = REAL_ELT(self.sexp, idx);
+            if f64val == R_NaReal {
+                Ok(None)
+            } else {
+                Ok(Some(f64val))
+            }
+        }
+    }
+
+    /// Logical-value accessor; get a logical (boolean) value from a vector.
+    ///
+    /// - `idx` - The index of the value to return.
+    ///
+    /// Returns the logical value at the given index, or None if the value is
+    /// NA.
+    pub fn get_bool(&self, idx: isize) -> crate::error::Result<Option<bool>> {
+        unsafe {
+            r_assert_type(self.sexp, &[LGLSXP])?;
+            r_assert_capacity(self.sexp, idx as usize)?;
+            let boolval = LOGICAL_ELT(self.sexp, idx);
+            if boolval == R_NaInt {
+                Ok(None)
+            } else {
+                Ok(Some(boolval != 0))
+            }
+        }
+    }
+
+    /// Vector (list) accessor; get a vector value from a list as another
+    /// RObject.
+    ///
+    /// - `idx` - The index of the value to return.
+    ///
+    /// Returns an RObject representing the value at the given index.
+    pub fn vector_elt(&self, idx: isize) -> crate::error::Result<RObject> {
+        unsafe {
+            r_assert_type(self.sexp, &[VECSXP])?;
+            r_assert_capacity(self.sexp, idx as usize)?;
+            Ok(RObject::new(VECTOR_ELT(self.sexp, idx)))
+        }
+    }
+
+    /// Gets a vector containing names for the object's values (from the `names`
+    /// attribute). Returns `None` if the object's value(s) don't have names.
+    pub fn names(&self) -> Option<Vec<Option<String>>> {
+        let names = unsafe { Rf_getAttrib(self.sexp, R_NamesSymbol) };
+        let names = RObject::view(names);
+        match names.kind() {
+            STRSXP => Vec::<Option<String>>::try_from(names).ok(),
+            _ => None,
+        }
     }
 }
 
@@ -547,15 +650,10 @@ impl TryFrom<RObject> for Vec<Option<String>> {
         unsafe {
             r_assert_type(*value, &[STRSXP, NILSXP])?;
 
-            let mut result: Vec<Option<String>> = Vec::new();
             let n = Rf_length(*value);
+            let mut result: Vec<Option<String>> = Vec::with_capacity(n as usize);
             for i in 0..n {
-                let charsexp = STRING_ELT(*value, i as isize);
-                if charsexp == R_NaString {
-                    result.push(None);
-                } else {
-                    result.push(Some(r_str_to_owned_utf8(charsexp)?));
-                }
+                result.push(value.get_string(i as isize)?);
             }
             return Ok(result);
         }

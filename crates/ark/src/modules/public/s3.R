@@ -1,7 +1,7 @@
 #
 # s3.R
 #
-# Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+# Copyright (C) 2023 Posit Software, PBC. All rights reserved.
 #
 #
 

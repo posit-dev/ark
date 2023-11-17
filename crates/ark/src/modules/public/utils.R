@@ -62,6 +62,11 @@
     paste(deparse(expr, backtick = TRUE), collapse = "")
 }
 
+# Converts an R object to JSON (returned as a string)
+.ps.to_json <- function(object) {
+    .ps.Call("ps_to_json", object)
+}
+
 # Evaluate expression in positron's namespace (which includes access to the
 # private modules). Any features accessible from `.ps.internal()` are
 # subject to change without notice.
