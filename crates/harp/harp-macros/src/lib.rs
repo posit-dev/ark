@@ -232,12 +232,27 @@ pub fn register(_attr: TokenStream, item: TokenStream) -> TokenStream {
     // Wrap in `r_unwrap()` to convert Rust errors to R errors. To do this
     // we move the function block into an expanded expression and then
     // replace the block with this expression.
-    let function_block = function.block.clone();
+    let function_block = function.block;
 
     let function_wrapper = quote! {
         // This must be a block so we can parse it back into `function.block`
         {
-            harp::exec::r_unwrap(|| -> std::result::Result<SEXP, anyhow::Error> #function_block)
+
+            // Convert Rust errors to R errors
+            harp::exec::r_unwrap(|| -> std::result::Result<SEXP, anyhow::Error> {
+                // Insulate from condition handlers and detect unexpected
+                // errors/longjumps with a top-level context.
+                //
+                // TODO: This disables interrupts and `r_sandbox()` by
+                // itself does not time out. We will want to do better.
+                let result = harp::exec::r_sandbox(|| {
+                    #function_block
+                });
+
+                result.unwrap_or_else(|err| {
+                    stdext::log_and_panic!("Unexpected longjump while `.Call()`ing back into Ark: {err:?}");
+                })
+            })
         }
     };
 
