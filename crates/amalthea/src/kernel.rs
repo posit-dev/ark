@@ -33,6 +33,7 @@ use crate::socket::iopub::IOPubMessage;
 use crate::socket::shell::Shell;
 use crate::socket::socket::Socket;
 use crate::socket::stdin::Stdin;
+use crate::stream_capture::Listen;
 use crate::wire::input_reply::InputReply;
 use crate::wire::input_request::ShellInputRequest;
 use crate::wire::jupyter_message::Message;
@@ -212,17 +213,10 @@ impl Kernel {
 
         // Create the thread that handles stdout and stderr, if requested
         if stream_behavior == StreamBehavior::Capture {
-            #[cfg(not(windows))]
-            {
-                let iopub_tx = self.create_iopub_tx();
-                spawn!(format!("{}-output-capture", self.name), move || {
-                    Self::output_capture_thread(iopub_tx)
-                });
-            }
-            #[cfg(windows)]
-            {
-                log::error!("Stream capturing is not supported on Windows.");
-            }
+            let iopub_tx = self.create_iopub_tx();
+            spawn!(format!("{}-output-capture", self.name), move || {
+                Self::output_capture_thread(iopub_tx)
+            });
         }
 
         // Create the Control ROUTER/DEALER socket
@@ -492,7 +486,6 @@ impl Kernel {
     }
 
     /// Starts the output capture thread.
-    #[cfg(not(windows))]
     fn output_capture_thread(iopub_tx: Sender<IOPubMessage>) -> Result<(), Error> {
         let output_capture = crate::stream_capture::StreamCapture::new(iopub_tx);
         output_capture.listen();
