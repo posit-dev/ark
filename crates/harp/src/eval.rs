@@ -7,6 +7,7 @@
 
 use libR_sys::*;
 
+use crate::environment::R_ENVS;
 use crate::error::Error;
 use crate::error::Result;
 use crate::exec::geterrmessage;
@@ -22,7 +23,7 @@ impl Default for RParseEvalOptions {
     fn default() -> Self {
         Self {
             forbid_function_calls: false,
-            env: RObject::view(unsafe { R_GlobalEnv }),
+            env: RObject::view(R_ENVS.global),
         }
     }
 }
