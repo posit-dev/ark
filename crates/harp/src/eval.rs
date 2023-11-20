@@ -27,8 +27,9 @@ impl Default for RParseEvalOptions {
     }
 }
 
-pub unsafe fn r_parse_eval0(code: &str) -> Result<RObject> {
+pub unsafe fn r_parse_eval0(code: &str, env: impl Into<RObject>) -> Result<RObject> {
     r_parse_eval(code, RParseEvalOptions {
+        env: env.into(),
         ..Default::default()
     })
 }

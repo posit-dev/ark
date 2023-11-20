@@ -632,12 +632,12 @@ pub fn save_rds(x: SEXP, path: &str) {
     let path = RObject::from(path);
 
     unsafe {
-        let env = Environment::new(r_parse_eval0("new.env()").unwrap());
+        let env = Environment::new(r_parse_eval0("new.env()", RObject::view(R_BaseEnv)).unwrap());
 
         env.bind("x", x);
         env.bind("path", path);
 
-        let _ = r_parse_eval0("base::saveRDS(x, path)").unwrap();
+        let _ = r_parse_eval0("base::saveRDS(x, path)", env).unwrap();
     }
 }
 
