@@ -152,7 +152,7 @@ pub fn vector(_attr: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn register(_attr: TokenStream, item: TokenStream) -> TokenStream {
     // Get metadata about the function being registered.
-    let function: syn::ItemFn = syn::parse(item).unwrap();
+    let mut function: syn::ItemFn = syn::parse(item).unwrap();
 
     // Make sure the function is 'extern "C"'.
     let abi = match function.sig.abi {
@@ -229,7 +229,22 @@ pub fn register(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
     };
 
-    // Put everything together.
+    // Wrap in `r_unwrap()` to convert Rust errors to R errors. To do this
+    // we move the function block into an expanded expression and then
+    // replace the block with this expression.
+    let function_block = function.block.clone();
+
+    let function_wrapper = quote! {
+        // This must be a block so we can parse it back into `function.block`
+        {
+            harp::exec::r_unwrap(|| -> std::result::Result<SEXP, anyhow::Error> #function_block)
+        }
+    };
+
+    // Replace the original block with the expanded one
+    function.block = syn::parse(function_wrapper.into()).unwrap();
+
+    // Put everything together
     let all = quote! { #function #registration };
     all.into()
 }

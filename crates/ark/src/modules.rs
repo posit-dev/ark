@@ -250,5 +250,5 @@ pub unsafe extern "C" fn ps_deep_sleep(secs: SEXP) -> SEXP {
     let secs = std::time::Duration::from_secs(secs as u64);
     std::thread::sleep(secs);
 
-    return R_NilValue;
+    return Ok(R_NilValue);
 }

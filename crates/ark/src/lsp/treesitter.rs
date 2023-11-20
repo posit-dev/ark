@@ -16,12 +16,12 @@ pub unsafe extern "C" fn ps_treesitter_node_text(node_ptr: SEXP, source_ptr: SEX
     let source = ExternalPointer::<&str>::reference(source_ptr);
 
     let text = node.utf8_text(source.as_bytes()).unwrap_or("");
-    *RObject::from(text)
+    Ok(*RObject::from(text))
 }
 
 #[harp::register]
 pub unsafe extern "C" fn ps_treesitter_node_kind(node_ptr: SEXP) -> SEXP {
     let node = ExternalPointer::<Node>::reference(node_ptr);
 
-    *RObject::from(node.kind())
+    Ok(*RObject::from(node.kind()))
 }

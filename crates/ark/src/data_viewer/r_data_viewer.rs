@@ -444,5 +444,5 @@ pub unsafe extern "C" fn ps_view_data_frame(x: SEXP, title: SEXP) -> SEXP {
 
     RDataViewer::start(title, x, comm_manager_tx);
 
-    R_NilValue
+    Ok(R_NilValue)
 }

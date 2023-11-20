@@ -36,7 +36,7 @@ unsafe extern "C" fn ps_record_error(evalue: SEXP, traceback: SEXP) -> SEXP {
     main.error_message = evalue;
     main.error_traceback = traceback;
 
-    R_NilValue
+    Ok(R_NilValue)
 }
 
 pub unsafe fn initialize() {
@@ -55,5 +55,5 @@ pub unsafe fn initialize() {
 unsafe extern "C" fn ps_rust_backtrace() -> SEXP {
     let trace = std::backtrace::Backtrace::capture();
     let trace = format!("{trace}");
-    *RObject::from(trace)
+    Ok(*RObject::from(trace))
 }

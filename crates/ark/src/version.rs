@@ -99,5 +99,5 @@ pub unsafe extern "C" fn ps_ark_version() -> SEXP {
     info.insert(String::from("flavor"), String::from("release"));
 
     let result = RObject::from(info);
-    result.sexp
+    Ok(result.sexp)
 }

@@ -58,6 +58,7 @@ pub unsafe extern "C" fn ps_html_viewer(url: SEXP) -> SEXP {
             log::error!("Attempt to view invalid path {:?}: {:?}", url, err);
         },
     }
+
     // No return value
-    R_NilValue
+    Ok(R_NilValue)
 }

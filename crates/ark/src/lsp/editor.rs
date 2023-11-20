@@ -49,5 +49,5 @@ unsafe extern "C" fn ps_editor(file: SEXP, _title: SEXP) -> SEXP {
         }
     }
 
-    R_NilValue
+    Ok(R_NilValue)
 }

@@ -18,11 +18,11 @@ pub unsafe extern "C" fn ps_log_error(message: SEXP) -> SEXP {
         log::error!("{}", message);
     }
 
-    R_NilValue
+    Ok(R_NilValue)
 }
 
 #[harp::register]
 pub unsafe extern "C" fn ps_object_id(object: SEXP) -> SEXP {
     let value = format!("{:p}", object);
-    return Rf_mkString(value.as_ptr() as *const c_char);
+    return Ok(Rf_mkString(value.as_ptr() as *const c_char));
 }
