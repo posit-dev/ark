@@ -437,6 +437,18 @@ impl Environment {
     }
 }
 
+impl From<Environment> for SEXP {
+    fn from(object: Environment) -> Self {
+        object.env.sexp
+    }
+}
+
+impl From<Environment> for RObject {
+    fn from(object: Environment) -> Self {
+        object.env
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use libR_sys::*;
