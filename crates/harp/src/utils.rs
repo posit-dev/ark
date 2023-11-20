@@ -16,8 +16,10 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use semver::Version;
 
+use crate::environment::Environment;
 use crate::error::Error;
 use crate::error::Result;
+use crate::eval::r_parse_eval0;
 use crate::exec::geterrmessage;
 use crate::exec::RArgument;
 use crate::exec::RFunction;
@@ -623,6 +625,19 @@ pub fn init_utils() {
     unsafe {
         let options_fn = Rf_eval(r_symbol!("options"), R_BaseEnv);
         OPTIONS_FN = Some(options_fn);
+    }
+}
+
+pub fn save_rds(x: SEXP, path: &str) {
+    let path = RObject::from(path);
+
+    unsafe {
+        let env = Environment::new(r_parse_eval0("new.env()").unwrap());
+
+        env.bind("x", x);
+        env.bind("path", path);
+
+        let _ = r_parse_eval0("base::saveRDS(x, path)").unwrap();
     }
 }
 
