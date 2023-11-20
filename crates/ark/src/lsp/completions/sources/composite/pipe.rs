@@ -93,6 +93,7 @@ pub(super) fn find_pipe_root(context: &DocumentContext) -> Option<PipeRoot> {
 fn eval_pipe_root(name: &str) -> Option<RObject> {
     let options = RParseEvalOptions {
         forbid_function_calls: true,
+        ..Default::default()
     };
 
     let value = unsafe { r_parse_eval(name, options) };

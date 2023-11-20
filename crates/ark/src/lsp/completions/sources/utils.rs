@@ -143,6 +143,7 @@ pub(super) fn completions_from_evaluated_object_names(
 
     let options = RParseEvalOptions {
         forbid_function_calls: true,
+        ..Default::default()
     };
 
     // Try to evaluate the object

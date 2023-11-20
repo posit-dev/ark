@@ -155,6 +155,7 @@ pub unsafe fn signature_help(
 
     let object = r_parse_eval(code, RParseEvalOptions {
         forbid_function_calls: true,
+        ..Default::default()
     });
 
     let object = match object {

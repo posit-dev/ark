@@ -125,6 +125,7 @@ fn get_first_argument(context: &DocumentContext, node: &Node) -> Result<Option<R
 
     let options = RParseEvalOptions {
         forbid_function_calls: true,
+        ..Default::default()
     };
 
     // Try to evaluate the first argument
@@ -183,6 +184,7 @@ fn completions_from_arguments(
         // Otherwise, try to retrieve completion names from the object itself.
         let r_callable = r_parse_eval(callable, RParseEvalOptions {
             forbid_function_calls: true,
+            ..Default::default()
         })?;
 
         let strings = RFunction::from(".ps.completions.formalNames")
