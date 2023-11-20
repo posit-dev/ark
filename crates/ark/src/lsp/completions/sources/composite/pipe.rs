@@ -96,7 +96,7 @@ fn eval_pipe_root(name: &str) -> Option<RObject> {
         ..Default::default()
     };
 
-    let value = unsafe { r_parse_eval(name, options) };
+    let value = r_parse_eval(name, options);
 
     // If we get an `UnsafeEvaluationError` here from setting
     // `forbid_function_calls`, we don't want that to prevent

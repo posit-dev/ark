@@ -129,7 +129,7 @@ fn get_first_argument(context: &DocumentContext, node: &Node) -> Result<Option<R
     };
 
     // Try to evaluate the first argument
-    let value = unsafe { r_parse_eval(text, options) };
+    let value = r_parse_eval(text, options);
 
     // If the user is writing pseudocode, this object might not exist yet,
     // in which case we just want to ignore the error from trying to evaluate it
