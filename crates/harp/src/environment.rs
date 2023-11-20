@@ -13,6 +13,7 @@ use stdext::unwrap;
 use crate::exec::RFunction;
 use crate::exec::RFunctionExt;
 use crate::object::RObject;
+use crate::r_symbol;
 use crate::symbol::RSymbol;
 use crate::utils::r_is_altrep;
 use crate::utils::r_is_null;
@@ -342,6 +343,12 @@ impl<'a> Iterator for EnvironmentIter<'a> {
 impl Environment {
     pub fn new(env: RObject) -> Self {
         Self { env }
+    }
+
+    pub fn bind(&self, name: &str, value: impl Into<SEXP>) {
+        unsafe {
+            Rf_defineVar(r_symbol!(name), value.into(), self.env.sexp);
+        }
     }
 
     pub fn iter(&self) -> EnvironmentIter {
