@@ -65,7 +65,7 @@ pub(super) fn completions_from_call(
     // fn(name = value)
     //    ~~~~
     //
-    if node_call_position_type(&context.node) != NodeCallPositionType::Name {
+    if node_call_position_type(&context.node, context.point) != NodeCallPositionType::Name {
         return Ok(None);
     }
 

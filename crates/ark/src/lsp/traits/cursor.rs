@@ -140,12 +140,11 @@ impl TreeCursorExt for TreeCursor<'_> {
 // /// node that contains the requested point.
 // fn _find_smallest_container(cursor: &mut TreeCursor, point: Point) -> bool {
 //     if !cursor.goto_first_child() {
-//         return cursor.node().range().contains_point(point);
+//         return _range_contains_point(cursor.node().range(), point);
 //     }
 //
 //     loop {
-//         // Using `(]` left open definition of containment
-//         if cursor.node().range().contains_point(point) {
+//         if _range_contains_point(cursor.node().range(), point) {
 //             return _find_smallest_container(cursor, point);
 //         }
 //
@@ -156,21 +155,21 @@ impl TreeCursorExt for TreeCursor<'_> {
 //
 //     // No child contained the `point`, revert back to parent
 //     cursor.goto_parent();
-//     cursor.node().range().contains_point(point)
+//     _range_contains_point(cursor.node().range(), point)
 // }
 //
 // /// Next, recurse through the children of this node
 // /// (if any) to find the closest child.
 // fn _find_closest_child(cursor: &mut TreeCursor, point: Point) -> bool {
 //     if !cursor.goto_last_child() {
-//         return cursor.node().range().start_point.is_before(point);
+//         return cursor.node().range().start_point.is_before_or_equal(point);
 //     }
 //
 //     // Loop backwards through children. First time the `start` is before the
 //     // `point` corresponds to the last child this is `true` for, which we then
 //     // recurse into.
 //     loop {
-//         if cursor.node().range().start_point.is_before(point) {
+//         if cursor.node().range().start_point.is_before_or_equal(point) {
 //             return _find_closest_child(cursor, point);
 //         }
 //
@@ -182,5 +181,14 @@ impl TreeCursorExt for TreeCursor<'_> {
 //     // No children start before the `point`, revert back to parent
 //     // (probably rare)
 //     cursor.goto_parent();
-//     cursor.node().range().start_point.is_before(point)
+//     cursor.node().range().start_point.is_before_or_equal(point)
+// }
+//
+// // For "containment", here we use `[]`. Ambiguities between `]` and `[` of
+// // adjacent nodes are solved by taking the first child that "contains" the point.
+// fn _range_contains_point(range: Range, point: Point) -> bool {
+//     all!(
+//         range.start_point.is_before_or_equal(point),
+//         range.end_point.is_after_or_equal(point)
+//     )
 // }

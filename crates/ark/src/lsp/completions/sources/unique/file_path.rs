@@ -31,6 +31,12 @@ pub fn completions_from_file_path(
         return Ok(None);
     }
 
+    // Must actually be "inside" the string, so these places don't count, even
+    // though they are detected as part of the string nodes `|""|`
+    if node.start_position() == context.point || node.end_position() == context.point {
+        return Ok(None);
+    }
+
     let mut completions: Vec<CompletionItem> = vec![];
 
     // Get the contents of the string token.
@@ -84,4 +90,40 @@ pub fn completions_from_file_path(
     set_sort_text_by_words_first(&mut completions);
 
     Ok(Some(completions))
+}
+
+#[test]
+fn test_file_path_outside_quotes() {
+    use tree_sitter::Point;
+
+    use crate::lsp::documents::Document;
+    use crate::test::r_test;
+
+    r_test(|| {
+        // Before or after the `''`, i.e. `|''` or `''|`.
+        // Still considered part of the string node.
+        let point = Point { row: 0, column: 0 };
+        let document = Document::new("''");
+        let context = DocumentContext::new(&document, point);
+
+        assert_eq!(context.node.kind(), "string");
+        assert_eq!(completions_from_file_path(&context).unwrap(), None);
+    })
+}
+
+#[test]
+fn test_file_path_not_string() {
+    use tree_sitter::Point;
+
+    use crate::lsp::documents::Document;
+    use crate::test::r_test;
+
+    r_test(|| {
+        let point = Point { row: 0, column: 0 };
+        let document = Document::new("foo");
+        let context = DocumentContext::new(&document, point);
+
+        assert_eq!(context.node.kind(), "identifier");
+        assert_eq!(completions_from_file_path(&context).unwrap(), None);
+    })
 }

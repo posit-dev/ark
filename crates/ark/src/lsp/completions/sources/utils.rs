@@ -15,10 +15,12 @@ use harp::object::RObject;
 use regex::Regex;
 use tower_lsp::lsp_types::CompletionItem;
 use tree_sitter::Node;
+use tree_sitter::Point;
 
 use crate::lsp::completions::completion_item::completion_item_from_data_variable;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::traits::node::NodeExt;
+use crate::lsp::traits::point::PointExt;
 
 pub(super) fn set_sort_text_by_first_appearance(completions: &mut Vec<CompletionItem>) {
     let size = completions.len();
@@ -89,28 +91,48 @@ pub(super) fn filter_out_dot_prefixes(
 pub(super) enum NodeCallPositionType {
     Name,
     Value,
+    Other,
 }
 
-pub(super) fn node_call_position_type(node: &Node) -> NodeCallPositionType {
-    // First try current node, before beginning to recurse
+pub(super) fn node_call_position_type(node: &Node, point: Point) -> NodeCallPositionType {
     match node.kind() {
-        "(" | "comma" => return NodeCallPositionType::Name,
+        "(" => {
+            if point.is_before_or_equal(node.start_position()) {
+                // Before the `(`
+                return NodeCallPositionType::Other;
+            } else {
+                // Must be a name position
+                return NodeCallPositionType::Name;
+            }
+        },
+        ")" => {
+            if point.is_after_or_equal(node.end_position()) {
+                // After the `)`
+                return NodeCallPositionType::Other;
+            } else {
+                // Let previous leaf determine type (i.e. did the `)`
+                // follow a `=` or a `,`?)
+                match node.prev_leaf() {
+                    Some(node) => return node_call_position_type(&node, point),
+                    None => return NodeCallPositionType::Other,
+                }
+            }
+        },
+        "comma" => return NodeCallPositionType::Name,
         "=" => return NodeCallPositionType::Value,
-        "call" => return NodeCallPositionType::Value,
-        _ => (),
+        _ => {
+            if point == node.start_position() {
+                // For things like `vctrs::vec_sort(x = 1, |2)` where you typed
+                // the argument value but want to go back and fill in the name.
+                match node.prev_leaf() {
+                    Some(node) => return node_call_position_type(&node, point),
+                    None => return NodeCallPositionType::Other,
+                }
+            } else {
+                return NodeCallPositionType::Other;
+            }
+        },
     }
-
-    // Now do a backwards leaf search, looking for a `(` or `,`.
-    // If we hit a `=` that means we were in a `value` position instead
-    // of a `name` position.
-    node.bwd_leaf_iter()
-        .find_map(|node| match node.kind() {
-            "(" | "comma" => Some(NodeCallPositionType::Name),
-            "=" => Some(NodeCallPositionType::Value),
-            "call" => Some(NodeCallPositionType::Value),
-            _ => None,
-        })
-        .unwrap_or(NodeCallPositionType::Value)
 }
 
 pub(super) fn completions_from_evaluated_object_names(

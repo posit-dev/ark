@@ -39,3 +39,24 @@ impl<'a> DocumentContext<'a> {
         }
     }
 }
+
+#[test]
+fn test_document_context_start_of_document() {
+    let point = Point { row: 0, column: 0 };
+
+    // Empty document
+    let document = Document::new("");
+    let context = DocumentContext::new(&document, point);
+    assert_eq!(
+        context.node.utf8_text(context.source.as_bytes()).unwrap(),
+        ""
+    );
+
+    // Start of document with text
+    let document = Document::new("1 + 1");
+    let context = DocumentContext::new(&document, point);
+    assert_eq!(
+        context.node.utf8_text(context.source.as_bytes()).unwrap(),
+        "1"
+    );
+}

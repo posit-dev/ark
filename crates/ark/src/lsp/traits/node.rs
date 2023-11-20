@@ -7,10 +7,10 @@
 use stdext::all;
 use tree_sitter::Node;
 use tree_sitter::Point;
+use tree_sitter::Range;
 use tree_sitter::TreeCursor;
 
 use crate::lsp::traits::point::PointExt;
-use crate::lsp::traits::range::RangeExt;
 
 fn _dump_impl(cursor: &mut TreeCursor, source: &str, indent: &str, output: &mut String) {
     let node = cursor.node();
@@ -220,18 +220,26 @@ fn _find_smallest_container<'a>(node: &Node<'a>, point: Point) -> Option<Node<'a
     let children = node.children(&mut cursor);
 
     for child in children {
-        // Using `(]` left open definition of containment
-        if child.range().contains_point(point) {
+        if _range_contains_point(child.range(), point) {
             return _find_smallest_container(&child, point);
         }
     }
 
     // No child contained the `point`, revert back to parent
-    if node.range().contains_point(point) {
+    if _range_contains_point(node.range(), point) {
         Some(*node)
     } else {
         None
     }
+}
+
+// For "containment", here we use `[]`. Ambiguities between `]` and `[` of
+// adjacent nodes are solved by taking the first child that "contains" the point.
+fn _range_contains_point(range: Range, point: Point) -> bool {
+    all!(
+        range.start_point.is_before_or_equal(point),
+        range.end_point.is_after_or_equal(point)
+    )
 }
 
 /// Next, recurse through the children of this node
@@ -249,14 +257,14 @@ fn _find_closest_child<'a>(node: &Node<'a>, point: Point) -> Option<Node<'a>> {
     // `point` corresponds to the last child this is `true` for, which we then
     // recurse into.
     for child in children.into_iter().rev() {
-        if child.range().start_point.is_before(point) {
+        if child.range().start_point.is_before_or_equal(point) {
             return _find_closest_child(&child, point);
         }
     }
 
     // No children start before the `point`, revert back to parent
     // (probably rare)
-    if node.range().start_point.is_before(point) {
+    if node.range().start_point.is_before_or_equal(point) {
         Some(*node)
     } else {
         None

@@ -69,10 +69,11 @@ pub fn completions_from_custom_source(
 pub fn completions_from_custom_source_impl(
     context: &DocumentContext,
 ) -> Result<Option<Vec<CompletionItem>>> {
+    let point = context.point;
     let node = context.node;
 
     // Use the signature help tools to figure out the necessary pieces.
-    let position = context.point.as_position();
+    let position = point.as_position();
 
     let signatures = unsafe { signature_help(context.document, &position)? };
     let Some(signatures) = signatures else {
@@ -107,14 +108,19 @@ pub fn completions_from_custom_source_impl(
     // For example:
     //
     //    Sys.setenv(EDITOR = "vim")
-    //               ^^^^^^   ^^^^^
-    //                name    value
+    //    ^^^^^^^^^^ ^^^^^^   ^^^^^ ^
+    //    other      name     value other
     //
     // This is mainly relevant because we might only want to
     // provide certain completions in the 'name' position.
-    let position = match node_call_position_type(&node) {
+    let position = match node_call_position_type(&node, point) {
         NodeCallPositionType::Name => "name",
         NodeCallPositionType::Value => "value",
+        NodeCallPositionType::Other => {
+            // Call detected, but possibly on the RHS of a `)` node or the LHS
+            // of a `(` node, i.e. outside the parenthesis.
+            return Ok(None);
+        },
     };
 
     let mut completions = vec![];
