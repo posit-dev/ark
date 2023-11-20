@@ -17,9 +17,9 @@ use tree_sitter::Node;
 
 use super::pipe::PipeRoot;
 use crate::lsp::completions::completion_item::completion_item_from_parameter;
-use crate::lsp::completions::sources::utils::node_call_position_type;
+use crate::lsp::completions::sources::utils::call_node_position_type;
 use crate::lsp::completions::sources::utils::set_sort_text_by_first_appearance;
-use crate::lsp::completions::sources::utils::NodeCallPositionType;
+use crate::lsp::completions::sources::utils::CallNodePositionType;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::indexer;
 
@@ -65,7 +65,7 @@ pub(super) fn completions_from_call(
     // fn(name = value)
     //    ~~~~
     //
-    if node_call_position_type(&context.node, context.point) != NodeCallPositionType::Name {
+    if call_node_position_type(&context.node, context.point) != CallNodePositionType::Name {
         return Ok(None);
     }
 

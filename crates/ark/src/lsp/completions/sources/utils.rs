@@ -88,48 +88,48 @@ pub(super) fn filter_out_dot_prefixes(
 }
 
 #[derive(PartialEq)]
-pub(super) enum NodeCallPositionType {
+pub(super) enum CallNodePositionType {
     Name,
     Value,
     Other,
 }
 
-pub(super) fn node_call_position_type(node: &Node, point: Point) -> NodeCallPositionType {
+pub(super) fn call_node_position_type(node: &Node, point: Point) -> CallNodePositionType {
     match node.kind() {
         "(" => {
             if point.is_before_or_equal(node.start_position()) {
                 // Before the `(`
-                return NodeCallPositionType::Other;
+                return CallNodePositionType::Other;
             } else {
                 // Must be a name position
-                return NodeCallPositionType::Name;
+                return CallNodePositionType::Name;
             }
         },
         ")" => {
             if point.is_after_or_equal(node.end_position()) {
                 // After the `)`
-                return NodeCallPositionType::Other;
+                return CallNodePositionType::Other;
             } else {
                 // Let previous leaf determine type (i.e. did the `)`
                 // follow a `=` or a `,`?)
                 match node.prev_leaf() {
-                    Some(node) => return node_call_position_type(&node, point),
-                    None => return NodeCallPositionType::Other,
+                    Some(node) => return call_node_position_type(&node, point),
+                    None => return CallNodePositionType::Other,
                 }
             }
         },
-        "comma" => return NodeCallPositionType::Name,
-        "=" => return NodeCallPositionType::Value,
+        "comma" => return CallNodePositionType::Name,
+        "=" => return CallNodePositionType::Value,
         _ => {
             if point == node.start_position() {
                 // For things like `vctrs::vec_sort(x = 1, |2)` where you typed
                 // the argument value but want to go back and fill in the name.
                 match node.prev_leaf() {
-                    Some(node) => return node_call_position_type(&node, point),
-                    None => return NodeCallPositionType::Other,
+                    Some(node) => return call_node_position_type(&node, point),
+                    None => return CallNodePositionType::Other,
                 }
             } else {
-                return NodeCallPositionType::Other;
+                return CallNodePositionType::Other;
             }
         },
     }

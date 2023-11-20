@@ -21,9 +21,9 @@ use tower_lsp::lsp_types::CompletionItem;
 use crate::lsp::completions::completion_item::completion_item;
 use crate::lsp::completions::completion_item::completion_item_from_dataset;
 use crate::lsp::completions::completion_item::completion_item_from_package;
-use crate::lsp::completions::sources::utils::node_call_position_type;
+use crate::lsp::completions::sources::utils::call_node_position_type;
 use crate::lsp::completions::sources::utils::set_sort_text_by_words_first;
-use crate::lsp::completions::sources::utils::NodeCallPositionType;
+use crate::lsp::completions::sources::utils::CallNodePositionType;
 use crate::lsp::completions::types::CompletionData;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::signature_help::signature_help;
@@ -113,10 +113,10 @@ pub fn completions_from_custom_source_impl(
     //
     // This is mainly relevant because we might only want to
     // provide certain completions in the 'name' position.
-    let position = match node_call_position_type(&node, point) {
-        NodeCallPositionType::Name => "name",
-        NodeCallPositionType::Value => "value",
-        NodeCallPositionType::Other => {
+    let position = match call_node_position_type(&node, point) {
+        CallNodePositionType::Name => "name",
+        CallNodePositionType::Value => "value",
+        CallNodePositionType::Other => {
             // Call detected, but possibly on the RHS of a `)` node or the LHS
             // of a `(` node, i.e. outside the parenthesis.
             return Ok(None);
