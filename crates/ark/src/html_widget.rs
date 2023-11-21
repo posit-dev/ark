@@ -17,7 +17,7 @@ use serde_json::Value;
 use crate::interface::RMain;
 
 #[harp::register]
-pub unsafe extern "C" fn ps_html_widget(kind: SEXP, tags: SEXP) -> SEXP {
+pub unsafe extern "C" fn ps_html_widget(kind: SEXP, tags: SEXP) -> Result<SEXP, anyhow::Error> {
     // For friendly display: the class/kind of the widget
     let widget_class = String::try_from(RObject::view(kind))?;
 

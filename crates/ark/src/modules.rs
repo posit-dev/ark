@@ -245,7 +245,7 @@ pub unsafe fn import(file: &Path) -> anyhow::Result<()> {
 }
 
 #[harp::register]
-pub unsafe extern "C" fn ps_deep_sleep(secs: SEXP) -> SEXP {
+pub unsafe extern "C" fn ps_deep_sleep(secs: SEXP) -> anyhow::Result<SEXP> {
     let secs = Rf_asInteger(secs);
     let secs = std::time::Duration::from_secs(secs as u64);
     std::thread::sleep(secs);

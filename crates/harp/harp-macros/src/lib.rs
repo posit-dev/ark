@@ -21,13 +21,6 @@ fn invalid_parameter(stream: impl ToTokens) -> ! {
     );
 }
 
-fn invalid_return_type(stream: impl ToTokens) -> ! {
-    panic!(
-        "Invalid return type `{}`: registered routines must return a SEXP.",
-        stream.to_token_stream()
-    );
-}
-
 fn invalid_extern(stream: impl ToTokens) -> ! {
     panic!(
         "Invalid signature `{}`: registered routines must be 'extern \"C\"'.",
@@ -188,17 +181,6 @@ pub fn register(_attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     }
 
-    // Make sure that the function returns a SEXP.
-    let ty = match function.sig.output {
-        syn::ReturnType::Type(_, ref ty) => ty,
-        _ => invalid_return_type(function.sig.output),
-    };
-
-    let stream = ty.into_token_stream();
-    if stream.to_string() != "SEXP" {
-        invalid_return_type(ty);
-    }
-
     // Get the name from the attribute.
     let ident = function.sig.ident.clone();
     let nargs = function.sig.inputs.len() as i32;
@@ -233,13 +215,14 @@ pub fn register(_attr: TokenStream, item: TokenStream) -> TokenStream {
     // we move the function block into an expanded expression and then
     // replace the block with this expression.
     let function_block = function.block;
+    let output_type = function.sig.output.clone();
 
     let function_wrapper = quote! {
         // This must be a block so we can parse it back into `function.block`
         {
 
             // Convert Rust errors to R errors
-            harp::exec::r_unwrap(|| -> std::result::Result<SEXP, anyhow::Error> {
+            harp::exec::r_unwrap(|| #output_type {
                 // Insulate from condition handlers and detect unexpected
                 // errors/longjumps with a top-level context.
                 //
@@ -258,6 +241,14 @@ pub fn register(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
     // Replace the original block with the expanded one
     function.block = syn::parse(function_wrapper.into()).unwrap();
+
+    // Replace literal `Result<SEXP, _>` type by `SEXP` in the function
+    // that we are actually registering. Type checking is performed by
+    // `r_unwrap()` which takes the function body as input, ensuring that
+    // it's a `Result<SEXP, _>` and guaranteeing that the expanded function
+    // body does return a `SEXP` type.
+    let sexp_type: syn::ReturnType = syn::parse(quote! { -> SEXP }.into()).unwrap();
+    function.sig.output = sexp_type;
 
     // Put everything together
     let all = quote! { #function #registration };

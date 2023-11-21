@@ -433,7 +433,7 @@ impl RDataViewer {
 }
 
 #[harp::register]
-pub unsafe extern "C" fn ps_view_data_frame(x: SEXP, title: SEXP) -> SEXP {
+pub unsafe extern "C" fn ps_view_data_frame(x: SEXP, title: SEXP) -> anyhow::Result<SEXP> {
     let x = RObject::new(x);
 
     let title = RObject::new(title);

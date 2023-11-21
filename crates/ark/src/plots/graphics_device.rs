@@ -540,7 +540,7 @@ unsafe fn ps_graphics_device_impl() -> anyhow::Result<SEXP> {
 }
 
 #[harp::register]
-unsafe extern "C" fn ps_graphics_device() -> SEXP {
+unsafe extern "C" fn ps_graphics_device() -> anyhow::Result<SEXP> {
     ps_graphics_device_impl().or_else(|err| {
         log::error!("{}", err);
         Ok(R_NilValue)
@@ -548,7 +548,7 @@ unsafe extern "C" fn ps_graphics_device() -> SEXP {
 }
 
 #[harp::register]
-unsafe extern "C" fn ps_graphics_event(_name: SEXP) -> SEXP {
+unsafe extern "C" fn ps_graphics_event(_name: SEXP) -> anyhow::Result<SEXP> {
     let id = unwrap!(DEVICE_CONTEXT._id.clone(), None => {
         return Ok(Rf_ScalarLogical(0));
     });

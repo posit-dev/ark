@@ -17,7 +17,7 @@ use crate::interface::RMain;
 ///
 /// Test helper for `R_ShowMessage()` support
 #[harp::register]
-pub unsafe extern "C" fn ps_show_message(message: SEXP) -> SEXP {
+pub unsafe extern "C" fn ps_show_message(message: SEXP) -> anyhow::Result<SEXP> {
     // Convert message to a string
     let message = unwrap!(RObject::view(message).to::<String>(), Err(error) => {
         log::error!("Failed to convert `message` to a string: {error:?}.");
