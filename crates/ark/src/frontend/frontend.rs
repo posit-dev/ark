@@ -10,6 +10,7 @@ use amalthea::comm::frontend_comm::FrontendMessage;
 use amalthea::events::PositronEvent;
 use amalthea::socket::comm::CommSocket;
 use amalthea::wire::client_event::ClientEvent;
+use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use stdext::spawn;
 
@@ -17,22 +18,30 @@ use stdext::spawn;
 /// that of the Positron front end. It is used to perform communication with the
 /// front end that isn't scoped to any particular view.
 pub struct PositronFrontend {
-    pub event_tx: Sender<PositronEvent>,
+    comm: CommSocket,
+    event_rx: Receiver<PositronEvent>,
 }
 
 impl PositronFrontend {
-    pub fn new(comm: CommSocket) -> Self {
+    pub fn start(comm: CommSocket) -> Sender<PositronEvent> {
         // Create a sender-receiver pair for Positron global events
         let (event_tx, event_rx) = crossbeam::channel::unbounded::<PositronEvent>();
 
-        // Create a copy of the comm channel into which we will feed events from
-        // the backend
-        let comm_tx = comm.outgoing_tx.clone();
-
-        // Wait for events from the backend and forward them over the channel
         spawn!("ark-comm-frontend", move || loop {
+            let frontend = Self {
+                comm: comm.clone(),
+                event_rx: event_rx.clone(),
+            };
+            frontend.execution_thread();
+        });
+
+        event_tx
+    }
+
+    fn execution_thread(&self) {
+        loop {
             // Read the event from the backend
-            let event = match event_rx.recv() {
+            let event = match self.event_rx.recv() {
                 Ok(event) => event,
                 Err(err) => {
                     log::error!(
@@ -52,10 +61,9 @@ impl PositronFrontend {
             let comm_msg = CommChannelMsg::Data(serde_json::to_value(frontend_evt).unwrap());
 
             // Deliver the event to the front end over the comm channel
-            if let Err(err) = comm_tx.send(comm_msg) {
+            if let Err(err) = self.comm.outgoing_tx.send(comm_msg) {
                 log::error!("Error sending Positron event to front end: {}", err);
             };
-        });
-        Self { event_tx }
+        }
     }
 }
