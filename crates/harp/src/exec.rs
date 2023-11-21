@@ -18,15 +18,15 @@ use crate::environment::R_ENVS;
 use crate::error::Error;
 use crate::error::Result;
 use crate::interrupts::RSandboxScope;
+use crate::line_ending::convert_line_endings;
+use crate::line_ending::LineEnding;
 use crate::object::RObject;
 use crate::protect::RProtect;
 use crate::r_string;
 use crate::r_symbol;
-use crate::utils::convert_line_endings;
 use crate::utils::r_inherits;
 use crate::utils::r_stringify;
 use crate::utils::r_typeof;
-use crate::utils::LineEnding;
 use crate::vector::CharacterVector;
 use crate::vector::Vector;
 

@@ -617,37 +617,6 @@ pub fn r_normalize_path(x: RObject) -> anyhow::Result<String> {
     }
 }
 
-const POSIX_LINE_ENDING: &'static str = "\n";
-const WINDOWS_LINE_ENDING: &'static str = "\r\n";
-
-#[cfg(windows)]
-const NATIVE_LINE_ENDING: &'static str = WINDOWS_LINE_ENDING;
-#[cfg(not(windows))]
-const NATIVE_LINE_ENDING: &'static str = POSIX_LINE_ENDING;
-
-#[derive(Debug)]
-pub enum LineEnding {
-    Windows,
-    Posix,
-    Native,
-}
-
-impl LineEnding {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            LineEnding::Windows => WINDOWS_LINE_ENDING,
-            LineEnding::Posix => POSIX_LINE_ENDING,
-            LineEnding::Native => NATIVE_LINE_ENDING,
-        }
-    }
-}
-
-pub fn convert_line_endings(s: &str, eol_type: LineEnding) -> String {
-    // so far, no demonstrated need to repair anything other than CRLF, hence
-    // the `from` value
-    s.replace("\r\n", eol_type.as_str())
-}
-
 pub fn init_utils() {
     init_modules();
 
@@ -758,40 +727,4 @@ pub fn push_rds(x: SEXP, path: &str, context: &str) {
 
     // This is meant for internal use so report errors loudly
     res.unwrap();
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_convert_line_endings_explicit() {
-        // [\r] [\n]
-        let s = "\r\n";
-
-        let posix = convert_line_endings(s, LineEnding::Posix);
-        assert_eq!(posix, "\n");
-
-        let windows = convert_line_endings(s, LineEnding::Windows);
-        assert_eq!(windows, s);
-
-        // [a] [\] [r] [\] [n] [b]
-        let s2 = r#"a\r\nb"#;
-        let s2_res = convert_line_endings(s2, LineEnding::Posix);
-        assert_eq!(s2_res, s2);
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn test_convert_line_endings_native_windows() {
-        let res = convert_line_endings("\r\n", LineEnding::Native);
-        assert_eq!(res, "\r\n");
-    }
-
-    #[cfg(not(windows))]
-    #[test]
-    fn test_convert_line_endings_native_not_windows() {
-        let res = convert_line_endings("\r\n", LineEnding::Native);
-        assert_eq!(res, "\n");
-    }
 }

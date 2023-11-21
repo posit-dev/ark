@@ -1197,6 +1197,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "c2rust-bitfields",
+ "cfg-if",
  "ctor",
  "harp-macros",
  "itertools",
