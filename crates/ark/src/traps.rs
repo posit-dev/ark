@@ -5,8 +5,6 @@
 //
 //
 
-use crate::sys::traps;
-
 // Call this after initialising the `log` package. Instruments
 // SIGSEGV, SIGILL, and SIGBUS (on Unix) to generate a backtrace with `info`
 // verbosity (lowest level so it's always reported).
@@ -22,9 +20,7 @@ use crate::sys::traps;
 // type of handler (old or new school). We have different implementations for
 // Unix vs Windows (which only supports old style) already, so we could go back
 // and set this up now.
-pub fn register_trap_handlers() {
-    traps::register_trap_handlers()
-}
+pub use crate::sys::traps::register_trap_handlers;
 
 pub extern "C" fn backtrace_handler(signum: libc::c_int) {
     // Prevent infloop into the handler
