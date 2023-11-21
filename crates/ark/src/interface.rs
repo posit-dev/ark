@@ -1,5 +1,5 @@
 //
-// r_interface.rs
+// interface.rs
 //
 // Copyright (C) 2023 Posit Software, PBC. All rights reserved.
 //
@@ -13,7 +13,6 @@
 use std::collections::VecDeque;
 use std::ffi::*;
 use std::os::raw::c_uchar;
-use std::os::raw::c_void;
 use std::result::Result::Ok;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -99,54 +98,16 @@ use crate::r_task::RTaskMain;
 use crate::request::debug_request_command;
 use crate::request::RRequest;
 use crate::signals;
+use crate::sys;
 
 extern "C" {
-    pub static mut R_running_as_main_program: ::std::os::raw::c_int;
     pub static mut R_SignalHandlers: ::std::os::raw::c_int;
-    pub static mut R_Interactive: Rboolean;
     pub static mut R_Consolefile: *mut FILE;
     pub static mut R_Outputfile: *mut FILE;
 
-    pub static mut ptr_R_WriteConsole: ::std::option::Option<
-        unsafe extern "C" fn(arg1: *const ::std::os::raw::c_char, arg2: ::std::os::raw::c_int),
-    >;
+    pub fn run_Rmainloop();
 
-    pub static mut ptr_R_WriteConsoleEx: ::std::option::Option<
-        unsafe extern "C" fn(
-            arg1: *const ::std::os::raw::c_char,
-            arg2: ::std::os::raw::c_int,
-            arg3: ::std::os::raw::c_int,
-        ),
-    >;
-
-    pub static mut ptr_R_ReadConsole: ::std::option::Option<
-        unsafe extern "C" fn(
-            arg1: *const ::std::os::raw::c_char,
-            arg2: *mut ::std::os::raw::c_uchar,
-            arg3: ::std::os::raw::c_int,
-            arg4: ::std::os::raw::c_int,
-        ) -> ::std::os::raw::c_int,
-    >;
-
-    pub static mut ptr_R_ShowMessage:
-        ::std::option::Option<unsafe extern "C" fn(arg1: *const ::std::os::raw::c_char)>;
-
-    pub static mut ptr_R_Busy:
-        ::std::option::Option<unsafe extern "C" fn(arg1: ::std::os::raw::c_int)>;
-
-    pub fn R_HomeDir() -> *mut ::std::os::raw::c_char;
-
-    // NOTE: Some of these routines don't really return (or use) void pointers,
-    // but because we never introspect these values directly and they're always
-    // passed around in R as pointers, it suffices to just use void pointers.
-    fn R_checkActivity(usec: i32, ignore_stdin: i32) -> *const c_void;
-    fn R_runHandlers(handlers: *const c_void, fdset: *const c_void);
     fn R_ProcessEvents();
-    fn run_Rmainloop();
-
-    pub static mut R_wait_usec: i32;
-    pub static mut R_InputHandlers: *const c_void;
-    pub static mut R_PolledEvents: Option<unsafe extern "C" fn()>;
 }
 
 // --- Globals ---
@@ -200,42 +161,17 @@ pub fn start_r(
         ));
     });
 
+    // Build the argument list from the command line arguments. The default
+    // list is `--interactive` unless altered with the `--` passthrough
+    // argument.
+    let mut args = cargs!["ark"];
+    for arg in r_args {
+        args.push(CString::new(arg).unwrap().into_raw());
+    }
+
+    sys::interface::setup_r(args);
+
     unsafe {
-        // Build the argument list from the command line arguments. The default
-        // list is `--interactive` unless altered with the `--` passthrough
-        // argument.
-        let mut args = cargs!["ark"];
-        for arg in r_args {
-            args.push(CString::new(arg).unwrap().into_raw());
-        }
-
-        R_running_as_main_program = 1;
-        R_SignalHandlers = 0;
-        Rf_initialize_R(args.len() as i32, args.as_mut_ptr() as *mut *mut c_char);
-
-        // Initialize the signal handlers (like interrupts)
-        signals::initialize_signal_handlers();
-
-        // Log the value of R_HOME, so we can know if something hairy is afoot
-        let home = CStr::from_ptr(R_HomeDir());
-        trace!("R_HOME: {:?}", home);
-
-        // Mark R session as interactive
-        R_Interactive = 1;
-
-        // Redirect console
-        R_Consolefile = std::ptr::null_mut();
-        R_Outputfile = std::ptr::null_mut();
-
-        ptr_R_WriteConsole = None;
-        ptr_R_WriteConsoleEx = Some(r_write_console);
-        ptr_R_ReadConsole = Some(r_read_console);
-        ptr_R_ShowMessage = Some(r_show_message);
-        ptr_R_Busy = Some(r_busy);
-
-        // Set up main loop
-        setup_Rmainloop();
-
         // Optionally run a user specified R startup script
         if let Some(file) = &startup_file {
             r_source(file).or_log_error(&format!("Failed to source startup file '{file}' due to"));
@@ -258,14 +194,10 @@ pub fn start_r(
 
         // Set up the global error handler (after support function initialization)
         errors::initialize();
-
-        // Listen for polled events
-        R_wait_usec = 10000;
-        R_PolledEvents = Some(r_polled_events);
-
-        // Run the main loop -- does not return
-        run_Rmainloop();
     }
+
+    // Does not return!
+    sys::interface::run_r();
 }
 pub struct RMain {
     initializing: bool,
@@ -982,20 +914,7 @@ impl RMain {
         // events disabled so that won't run here.
         R_ProcessEvents();
 
-        // Run handlers if we have data available. This is necessary
-        // for things like the HTML help server, which will listen
-        // for requests on an open socket() which would then normally
-        // be handled in a select() call when reading input from stdin.
-        //
-        // https://github.com/wch/r-source/blob/4ca6439c1ffc76958592455c44d83f95d5854b2a/src/unix/sys-std.c#L1084-L1086
-        //
-        // We run this in a loop just to make sure the R help server can
-        // be as responsive as possible when rendering help pages.
-        let mut fdset = R_checkActivity(0, 1);
-        while fdset != std::ptr::null_mut() {
-            R_runHandlers(R_InputHandlers, fdset);
-            fdset = R_checkActivity(0, 1);
-        }
+        sys::interface::run_activity_handlers();
 
         // Run pending finalizers. We need to do this eagerly as otherwise finalizers
         // might end up being executed on the LSP thread.
@@ -1191,7 +1110,7 @@ fn to_html(frame: SEXP) -> Result<String> {
 // global `RMain` singleton.
 
 #[no_mangle]
-extern "C" fn r_read_console(
+pub extern "C" fn r_read_console(
     prompt: *const c_char,
     buf: *mut c_uchar,
     buflen: c_int,
@@ -1224,25 +1143,25 @@ extern "C" fn r_read_console(
 }
 
 #[no_mangle]
-extern "C" fn r_write_console(buf: *const c_char, buflen: i32, otype: i32) {
+pub extern "C" fn r_write_console(buf: *const c_char, buflen: i32, otype: i32) {
     let main = RMain::get_mut();
     main.write_console(buf, buflen, otype);
 }
 
 #[no_mangle]
-extern "C" fn r_show_message(buf: *const c_char) {
+pub extern "C" fn r_show_message(buf: *const c_char) {
     let main = RMain::get();
     main.show_message(buf);
 }
 
 #[no_mangle]
-extern "C" fn r_busy(which: i32) {
+pub extern "C" fn r_busy(which: i32) {
     let main = RMain::get_mut();
     main.busy(which);
 }
 
 #[no_mangle]
-unsafe extern "C" fn r_polled_events() {
+pub unsafe extern "C" fn r_polled_events() {
     let main = RMain::get_mut();
     main.polled_events();
 }

@@ -6,5 +6,6 @@
  */
 
 pub mod control;
+pub mod interface;
 pub mod signals;
 pub mod traps;
