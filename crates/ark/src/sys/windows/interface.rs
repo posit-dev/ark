@@ -5,7 +5,9 @@
  *
  */
 
-pub fn setup_r() {
+use std::os::raw::c_char;
+
+pub fn setup_r(mut _args: Vec<*mut c_char>) {
     // TODO: Windows
 }
 

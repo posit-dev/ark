@@ -10,12 +10,14 @@ use crossbeam::channel::Sender;
 use crate::socket::iopub::IOPubMessage;
 
 pub struct StreamCapture {
-    iopub_tx: Sender<IOPubMessage>,
+    _iopub_tx: Sender<IOPubMessage>,
 }
 
 impl StreamCapture {
     pub fn new(iopub_tx: Sender<IOPubMessage>) -> Self {
-        Self { iopub_tx }
+        Self {
+            _iopub_tx: iopub_tx,
+        }
     }
 
     pub fn listen(&self) {
