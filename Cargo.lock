@@ -239,6 +239,7 @@ dependencies = [
  "amalthea-macros",
  "anyhow",
  "async-trait",
+ "cfg-if",
  "chrono",
  "crossbeam",
  "crypto-common",

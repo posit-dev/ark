@@ -5,24 +5,23 @@
  *
  */
 
-mod platform;
-
 use crossbeam::channel::Sender;
 
 use crate::socket::iopub::IOPubMessage;
+use crate::sys::stream_capture;
 
-pub struct StreamCapture {
-    iopub_tx: Sender<IOPubMessage>,
-}
+/// StreamCapture captures the output of a stream and sends it to the IOPub
+/// socket.
+pub struct StreamCapture(stream_capture::StreamCapture);
 
 impl StreamCapture {
     pub fn new(iopub_tx: Sender<IOPubMessage>) -> Self {
-        Self { iopub_tx }
+        StreamCapture(stream_capture::StreamCapture::new(iopub_tx))
     }
-}
 
-pub trait Listen {
     /// Listens to stdout and stderr and sends the output to the IOPub socket.
     /// Does not return.
-    fn listen(&self);
+    pub fn listen(&self) {
+        self.0.listen()
+    }
 }

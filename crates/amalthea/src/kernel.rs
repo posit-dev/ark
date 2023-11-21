@@ -33,7 +33,6 @@ use crate::socket::iopub::IOPubMessage;
 use crate::socket::shell::Shell;
 use crate::socket::socket::Socket;
 use crate::socket::stdin::Stdin;
-use crate::stream_capture::Listen;
 use crate::wire::input_reply::InputReply;
 use crate::wire::input_request::ShellInputRequest;
 use crate::wire::jupyter_message::Message;

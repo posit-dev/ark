@@ -1,5 +1,5 @@
 /*
- * unix.rs
+ * stream_capture.rs
  *
  * Copyright (C) 2023 Posit Software, PBC. All rights reserved.
  *
@@ -13,13 +13,19 @@ use log::warn;
 
 use crate::error::Error;
 use crate::socket::iopub::IOPubMessage;
-use crate::stream_capture::Listen;
-use crate::stream_capture::StreamCapture;
 use crate::wire::stream::Stream;
 use crate::wire::stream::StreamOutput;
 
-impl Listen for StreamCapture {
-    fn listen(&self) {
+pub struct StreamCapture {
+    iopub_tx: Sender<IOPubMessage>,
+}
+
+impl StreamCapture {
+    pub fn new(iopub_tx: Sender<IOPubMessage>) -> Self {
+        Self { iopub_tx }
+    }
+
+    pub fn listen(&self) {
         if let Err(err) = Self::output_capture(self.iopub_tx.clone()) {
             warn!(
                 "Error capturing output; stdout/stderr won't be forwarded: {}",
@@ -27,11 +33,7 @@ impl Listen for StreamCapture {
             );
         };
     }
-}
 
-/// StreamCapture captures the output of a stream and sends it to the IOPub
-/// socket.
-impl StreamCapture {
     /// Captures stdout and stderr streams
     fn output_capture(iopub_tx: Sender<IOPubMessage>) -> Result<(), Error> {
         // Create redirected file descriptors for stdout and stderr. These are
