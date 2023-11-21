@@ -299,8 +299,10 @@ dependencies = [
  "amalthea",
  "anyhow",
  "async-trait",
+ "backtrace",
  "base64",
  "bus",
+ "cfg-if",
  "chrono",
  "crossbeam",
  "ctor",
@@ -2737,7 +2739,6 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 name = "stdext"
 version = "0.1.0"
 dependencies = [
- "backtrace",
  "libc",
  "log",
 ]

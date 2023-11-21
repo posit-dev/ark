@@ -22,6 +22,7 @@ use ark::lsp;
 use ark::request::KernelRequest;
 use ark::request::RRequest;
 use ark::shell::Shell;
+use ark::traps::register_trap_handlers;
 use ark::version::detect_r;
 use bus::Bus;
 use crossbeam::channel::bounded;
@@ -397,7 +398,7 @@ fn main() {
     // Register segfault handler to get a backtrace. Should be after
     // initialising `log!`. Note that R will not override this handler
     // because we set `R_SignalHandlers` to 0 before startup.
-    stdext::traps::register_trap_handlers();
+    register_trap_handlers();
 
     // If the r_args vector is empty, add `--interactive` to the list of
     // arguments to pass to R.
