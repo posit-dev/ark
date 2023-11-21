@@ -22,6 +22,7 @@ use ark::lsp;
 use ark::request::KernelRequest;
 use ark::request::RRequest;
 use ark::shell::Shell;
+use ark::signals;
 use ark::traps::register_trap_handlers;
 use ark::version::detect_r;
 use bus::Bus;
@@ -236,18 +237,7 @@ fn main() {
     }
 
     // Block signals in this thread (and any child threads).
-    //
-    // Any threads that would like to handle signals should explicitly
-    // unblock the signals they want to handle. This allows us to ensure
-    // that interrupts are consistently handled on the same thread.
-    // TODO: Windows
-    #[cfg(not(windows))]
-    {
-        use nix::sys::signal::*;
-        let mut sigset = SigSet::empty();
-        sigset.add(SIGINT);
-        sigprocmask(SigmaskHow::SIG_BLOCK, Some(&sigset), None).unwrap();
-    }
+    signals::initialize_signal_block();
 
     // Get an iterator over all the command-line arguments
     let mut argv = std::env::args();

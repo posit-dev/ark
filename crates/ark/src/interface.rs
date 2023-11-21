@@ -98,6 +98,7 @@ use crate::r_task;
 use crate::r_task::RTaskMain;
 use crate::request::debug_request_command;
 use crate::request::RRequest;
+use crate::signals;
 
 extern "C" {
     pub static mut R_running_as_main_program: ::std::os::raw::c_int;
@@ -212,8 +213,8 @@ pub fn start_r(
         R_SignalHandlers = 0;
         Rf_initialize_R(args.len() as i32, args.as_mut_ptr() as *mut *mut c_char);
 
-        // Initialize the interrupt handler.
-        RMain::initialize_signal_handlers();
+        // Initialize the signal handlers (like interrupts)
+        signals::initialize_signal_handlers();
 
         // Log the value of R_HOME, so we can know if something hairy is afoot
         let home = CStr::from_ptr(R_HomeDir());
@@ -498,45 +499,6 @@ impl RMain {
     /// Provides read-only access to `iopub_tx`
     pub fn get_iopub_tx(&self) -> &Sender<IOPubMessage> {
         &self.iopub_tx
-    }
-
-    fn initialize_signal_handlers() {
-        // Reset the signal block.
-        //
-        // This appears to be necessary on macOS; 'sigprocmask()' specifically
-        // blocks the signals in _all_ threads associated with the process, even
-        // when called from a spawned child thread. See:
-        //
-        // https://github.com/opensource-apple/xnu/blob/0a798f6738bc1db01281fc08ae024145e84df927/bsd/kern/kern_sig.c#L1238-L1285
-        // https://github.com/opensource-apple/xnu/blob/0a798f6738bc1db01281fc08ae024145e84df927/bsd/kern/kern_sig.c#L796-L839
-        //
-        // and note that 'sigprocmask()' uses 'block_procsigmask()' to apply the
-        // requested block to all threads in the process:
-        //
-        // https://github.com/opensource-apple/xnu/blob/0a798f6738bc1db01281fc08ae024145e84df927/bsd/kern/kern_sig.c#L571-L599
-        //
-        // We may need to re-visit this on Linux later on, since 'sigprocmask()' and
-        // 'pthread_sigmask()' may only target the executing thread there.
-        //
-        // The behavior of 'sigprocmask()' is unspecified after all, so we're really
-        // just relying on what the implementation happens to do.
-        #[cfg(not(windows))]
-        {
-            use nix::sys::signal::*;
-
-            let mut sigset = SigSet::empty();
-            sigset.add(SIGINT);
-            sigprocmask(SigmaskHow::SIG_BLOCK, Some(&sigset), None).unwrap();
-
-            // Unblock signals on this thread.
-            pthread_sigmask(SigmaskHow::SIG_UNBLOCK, Some(&sigset), None).unwrap();
-
-            // Install an interrupt handler.
-            unsafe {
-                signal(SIGINT, SigHandler::Handler(handle_interrupt)).unwrap();
-            }
-        }
-        // TODO: Windows.
     }
 
     fn init_execute_request(&mut self, req: &ExecuteRequest) -> (ConsoleInput, u32) {
@@ -982,7 +944,7 @@ impl RMain {
         // However, it seems like this can cause the old interrupt handler to be
         // 'moved' to a separate thread, such that interrupts end up being handled
         // on a thread different from the R execution thread. At least, on macOS.
-        Self::initialize_signal_handlers();
+        signals::initialize_signal_handlers();
 
         // Create an event representing the new busy state
         self.is_busy = which != 0;
@@ -1283,11 +1245,4 @@ extern "C" fn r_busy(which: i32) {
 unsafe extern "C" fn r_polled_events() {
     let main = RMain::get_mut();
     main.polled_events();
-}
-
-// Not really a frontend method but hooked up with `signal()`
-extern "C" fn handle_interrupt(_signal: libc::c_int) {
-    unsafe {
-        R_interrupts_pending = 1;
-    }
 }

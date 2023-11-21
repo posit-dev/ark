@@ -24,6 +24,7 @@ pub mod plots;
 pub mod r_task;
 pub mod request;
 pub mod shell;
+pub mod signals;
 pub mod sys;
 pub mod test;
 pub mod thread;
