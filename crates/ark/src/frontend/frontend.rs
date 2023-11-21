@@ -7,6 +7,7 @@
 
 use amalthea::comm::comm_channel::CommChannelMsg;
 use amalthea::comm::frontend_comm::FrontendMessage;
+use amalthea::comm::frontend_comm::FrontendRpcRequest;
 use amalthea::events::PositronEvent;
 use amalthea::socket::comm::CommSocket;
 use amalthea::wire::client_event::ClientEvent;
@@ -98,9 +99,36 @@ impl PositronFrontend {
      */
     fn handle_comm_message(&self, msg: &CommChannelMsg) -> bool {
         match msg {
-            CommChannelMsg::Data(_data) => true,
-            CommChannelMsg::Close => false,
-            CommChannelMsg::Rpc(_, _) => true,
+            CommChannelMsg::Data(data) => {
+                // We don't really expect to receive data messages from the
+                // front end; they are events
+                log::warn!("Unexpected data message from front end: {:?}", data);
+                true
+            },
+            CommChannelMsg::Close => {
+                // The front end has closed the connection; let the
+                // thread exit.
+                false
+            },
+            CommChannelMsg::Rpc(id, request) => {
+                self.handle_rpc_request(id, request);
+                true
+            },
         }
+    }
+
+    /**
+     * Handles an RPC request from the front end.
+     */
+    fn handle_rpc_request(&self, id: &str, request: &serde_json::Value) {
+        // Parse the request from the front end
+        let request = match serde_json::from_value::<FrontendRpcRequest>(request.clone()) {
+            Ok(request) => request,
+            Err(err) => {
+                log::error!("Invalid RPC request from front end: {:?}", err);
+                return;
+            },
+        };
+        log::info!("RPC request from front end: {:?}", request);
     }
 }
