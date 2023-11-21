@@ -21,13 +21,6 @@ fn invalid_parameter(stream: impl ToTokens) -> ! {
     );
 }
 
-fn invalid_return_type(stream: impl ToTokens) -> ! {
-    panic!(
-        "Invalid return type `{}`: registered routines must return a SEXP.",
-        stream.to_token_stream()
-    );
-}
-
 fn invalid_extern(stream: impl ToTokens) -> ! {
     panic!(
         "Invalid signature `{}`: registered routines must be 'extern \"C\"'.",
@@ -152,7 +145,7 @@ pub fn vector(_attr: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn register(_attr: TokenStream, item: TokenStream) -> TokenStream {
     // Get metadata about the function being registered.
-    let function: syn::ItemFn = syn::parse(item).unwrap();
+    let mut function: syn::ItemFn = syn::parse(item).unwrap();
 
     // Make sure the function is 'extern "C"'.
     let abi = match function.sig.abi {
@@ -188,17 +181,6 @@ pub fn register(_attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     }
 
-    // Make sure that the function returns a SEXP.
-    let ty = match function.sig.output {
-        syn::ReturnType::Type(_, ref ty) => ty,
-        _ => invalid_return_type(function.sig.output),
-    };
-
-    let stream = ty.into_token_stream();
-    if stream.to_string() != "SEXP" {
-        invalid_return_type(ty);
-    }
-
     // Get the name from the attribute.
     let ident = function.sig.ident.clone();
     let nargs = function.sig.inputs.len() as i32;
@@ -229,7 +211,46 @@ pub fn register(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
     };
 
-    // Put everything together.
+    // Wrap in `r_unwrap()` to convert Rust errors to R errors. To do this
+    // we move the function block into an expanded expression and then
+    // replace the block with this expression.
+    let function_block = function.block;
+    let output_type = function.sig.output.clone();
+
+    let function_wrapper = quote! {
+        // This must be a block so we can parse it back into `function.block`
+        {
+
+            // Convert Rust errors to R errors
+            harp::exec::r_unwrap(|| #output_type {
+                // Insulate from condition handlers and detect unexpected
+                // errors/longjumps with a top-level context.
+                //
+                // TODO: This disables interrupts and `r_sandbox()` by
+                // itself does not time out. We will want to do better.
+                let result = harp::exec::r_sandbox(|| {
+                    #function_block
+                });
+
+                result.unwrap_or_else(|err| {
+                    stdext::log_and_panic!("Unexpected longjump while `.Call()`ing back into Ark: {err:?}");
+                })
+            })
+        }
+    };
+
+    // Replace the original block with the expanded one
+    function.block = syn::parse(function_wrapper.into()).unwrap();
+
+    // Replace literal `Result<SEXP, _>` type by `SEXP` in the function
+    // that we are actually registering. Type checking is performed by
+    // `r_unwrap()` which takes the function body as input, ensuring that
+    // it's a `Result<SEXP, _>` and guaranteeing that the expanded function
+    // body does return a `SEXP` type.
+    let sexp_type: syn::ReturnType = syn::parse(quote! { -> SEXP }.into()).unwrap();
+    function.sig.output = sexp_type;
+
+    // Put everything together
     let all = quote! { #function #registration };
     all.into()
 }

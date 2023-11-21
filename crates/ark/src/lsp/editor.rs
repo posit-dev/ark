@@ -16,7 +16,7 @@ use tower_lsp::lsp_types::Url;
 use crate::lsp::globals::R_CALLBACK_GLOBALS;
 
 #[harp::register]
-unsafe extern "C" fn ps_editor(file: SEXP, _title: SEXP) -> SEXP {
+unsafe extern "C" fn ps_editor(file: SEXP, _title: SEXP) -> anyhow::Result<SEXP> {
     let rt = Runtime::new().unwrap();
     let globals = R_CALLBACK_GLOBALS.as_ref().unwrap();
     let files = CharacterVector::new_unchecked(file);
@@ -49,5 +49,5 @@ unsafe extern "C" fn ps_editor(file: SEXP, _title: SEXP) -> SEXP {
         }
     }
 
-    R_NilValue
+    Ok(R_NilValue)
 }

@@ -540,20 +540,17 @@ unsafe fn ps_graphics_device_impl() -> anyhow::Result<SEXP> {
 }
 
 #[harp::register]
-unsafe extern "C" fn ps_graphics_device() -> SEXP {
-    match ps_graphics_device_impl() {
-        Ok(value) => value,
-        Err(error) => {
-            log::error!("{}", error);
-            R_NilValue
-        },
-    }
+unsafe extern "C" fn ps_graphics_device() -> anyhow::Result<SEXP> {
+    ps_graphics_device_impl().or_else(|err| {
+        log::error!("{}", err);
+        Ok(R_NilValue)
+    })
 }
 
 #[harp::register]
-unsafe extern "C" fn ps_graphics_event(_name: SEXP) -> SEXP {
+unsafe extern "C" fn ps_graphics_event(_name: SEXP) -> anyhow::Result<SEXP> {
     let id = unwrap!(DEVICE_CONTEXT._id.clone(), None => {
-        return Rf_ScalarLogical(0);
+        return Ok(Rf_ScalarLogical(0));
     });
 
     let result = RFunction::from(".ps.graphics.createSnapshot")
@@ -562,8 +559,8 @@ unsafe extern "C" fn ps_graphics_event(_name: SEXP) -> SEXP {
 
     if let Err(error) = result {
         log::error!("{}", error);
-        return Rf_ScalarLogical(0);
+        return Ok(Rf_ScalarLogical(0));
     }
 
-    Rf_ScalarLogical(1)
+    Ok(Rf_ScalarLogical(1))
 }
