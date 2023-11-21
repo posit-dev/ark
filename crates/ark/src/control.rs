@@ -16,6 +16,7 @@ use crossbeam::channel::Sender;
 use log::*;
 
 use crate::request::RRequest;
+use crate::sys;
 
 pub struct Control {
     r_request_tx: Sender<RRequest>,
@@ -57,24 +58,7 @@ impl ControlHandler for Control {
 
     async fn handle_interrupt_request(&self) -> Result<InterruptReply, Exception> {
         debug!("Received interrupt request");
-
-        #[cfg(not(windows))]
-        {
-            use nix::sys::signal::Signal;
-            use nix::sys::signal::{self};
-            use nix::unistd::Pid;
-            signal::kill(Pid::this(), Signal::SIGINT).unwrap();
-        }
-        #[cfg(windows)]
-        {
-            log::error!("Interrupts are not supported on Windows yet.");
-            // TODO: Windows.
-            // Look at https://github.com/Detegr/rust-ctrlc for cross platform handling (plus termination handling)
-        }
-
-        // TODO: Needs to send a SIGINT to the whole process group so that
-        // processes started by R will also be interrupted.
-
+        sys::control::handle_interrupt_request();
         Ok(InterruptReply { status: Status::Ok })
     }
 }

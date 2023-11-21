@@ -5,5 +5,6 @@
  *
  */
 
+pub mod control;
 pub mod signals;
 pub mod traps;
