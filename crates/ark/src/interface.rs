@@ -55,7 +55,7 @@ use harp::exec::r_sandbox;
 use harp::exec::r_source;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
-use harp::interrupts::RSandboxScope;
+use harp::exec::RSandboxScope;
 use harp::object::RObject;
 use harp::r_symbol;
 use harp::routines::r_register_routines;

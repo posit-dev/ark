@@ -14,6 +14,7 @@ pub mod interrupts;
 pub mod json;
 pub mod line_ending;
 pub mod object;
+pub mod polled_events;
 pub mod protect;
 pub mod r_version;
 pub mod routines;
