@@ -14,8 +14,12 @@ use amalthea::wire::client_event::ClientEvent;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use crossbeam::select;
+use harp::exec::RFunction;
+use harp::exec::RFunctionExt;
 use log::info;
 use stdext::spawn;
+
+use crate::r_task;
 
 /// PositronFrontend is a wrapper around a comm channel whose lifetime matches
 /// that of the Positron front end. It is used to perform communication with the
@@ -129,6 +133,12 @@ impl PositronFrontend {
                 return;
             },
         };
+        let result = r_task(|| unsafe {
+            let call = RFunction::from(format!(".ps.rpc.{}", request.method));
+            for param in request.params.iter() {
+                // call.add(param);
+            }
+        });
         log::info!("RPC request from front end: {:?}", request);
     }
 }

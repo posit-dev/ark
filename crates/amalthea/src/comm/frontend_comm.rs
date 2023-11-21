@@ -22,9 +22,9 @@ pub enum FrontendMessage {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "msg_type", rename_all = "snake_case")]
-pub enum FrontendRpcRequest {
-    Method(String),
-    Params(Vec<Value>),
+pub struct FrontendRpcRequest {
+    pub method: String,
+    pub params: Vec<Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -35,9 +35,9 @@ pub enum FrontendRpcResult {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "msg_type", rename_all = "snake_case")]
-pub enum FrontendRpcErrorData {
-    Message(String),
-    Code(i32),
+pub struct FrontendRpcErrorData {
+    pub message: String,
+    pub code: i32,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

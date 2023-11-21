@@ -189,6 +189,12 @@ impl From<&str> for RFunction {
     }
 }
 
+impl From<String> for RFunction {
+    fn from(function: String) -> Self {
+        RFunction::new("", function.as_str())
+    }
+}
+
 pub fn geterrmessage() -> String {
     // SAFETY: Returns pointer to static memory buffer owned by R.
     let buffer = unsafe { R_curErrorBuf() };
