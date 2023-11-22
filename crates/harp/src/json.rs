@@ -10,6 +10,7 @@ use std::cmp::min;
 use libR_sys::*;
 use log::warn;
 use serde_json::json;
+use serde_json::Number;
 use serde_json::Value;
 
 use crate::exec::r_check_stack;
@@ -275,6 +276,58 @@ impl TryFrom<RObject> for Value {
                 );
                 Ok(serde_json::Value::Null)
             },
+        }
+    }
+}
+
+/**
+ * Convert a JSON number value to an R object.
+ */
+impl From<Number> for RObject {
+    fn from(value: Number) -> Self {
+        if value.is_i64() {
+            // Prefer conversion to an R integer value if the number can be
+            // represented as an integer.
+            RObject::from(value.as_i64().unwrap())
+        } else {
+            // Otherwise, convert to an R real value.
+            RObject::from(value.as_f64().unwrap())
+        }
+    }
+}
+
+/**
+ * Convert a vector of JSON values to an R object.
+ */
+impl TryFrom<Vec<Value>> for RObject {
+    type Error = crate::error::Error;
+
+    fn try_from(vals: Vec<Value>) -> Result<Self, Self::Error> {
+        // Consider: currently, this creates an unnamed list. It would be
+        // better, presuming that the values are all the same type, to create an
+        // atomic vector of that type.
+        unsafe {
+            let list = Rf_protect(Rf_allocVector(VECSXP, vals.len() as isize));
+            for (i, val) in vals.iter().enumerate() {
+                let val = RObject::try_from(val.clone())?;
+                SET_VECTOR_ELT(list, i as isize, val.sexp);
+            }
+            return Ok(RObject::from(list));
+        }
+    }
+}
+
+impl TryFrom<Value> for RObject {
+    type Error = crate::error::Error;
+
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        match value {
+            Value::Null => Ok(RObject::from(())),
+            Value::Bool(bool) => Ok(RObject::from(bool)),
+            Value::Number(num) => Ok(RObject::from(num)),
+            Value::String(string) => Ok(RObject::from(string)),
+            Value::Array(values) => RObject::try_from(values),
+            Value::Object(_) => todo!(),
         }
     }
 }

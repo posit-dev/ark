@@ -379,6 +379,15 @@ impl From<i32> for RObject {
     }
 }
 
+impl From<i64> for RObject {
+    fn from(value: i64) -> Self {
+        unsafe {
+            let value = Rf_ScalarInteger(value as c_int);
+            return RObject::new(value);
+        }
+    }
+}
+
 impl From<f64> for RObject {
     fn from(value: f64) -> Self {
         unsafe {
