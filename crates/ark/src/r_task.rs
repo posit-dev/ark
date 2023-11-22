@@ -15,7 +15,6 @@ use crossbeam::channel::Sender;
 use crossbeam::select;
 use harp::exec::r_sandbox;
 use harp::test::R_TASK_BYPASS;
-use stdext::log_and_panic;
 
 use crate::interface::RMain;
 
@@ -101,9 +100,9 @@ where
             recv(status_rx) -> status => status.unwrap(),
             recv(after(timeout)) -> _ => {
                 let trace = std::backtrace::Backtrace::capture();
-                log_and_panic!("Timeout while running task.\n\
-                                Backtrace of calling thread:\n\n\
-                                {trace}");
+                panic!("Timeout while running task.\n\
+                        Backtrace of calling thread:\n\n\
+                        {trace}");
             },
         };
 
@@ -111,7 +110,7 @@ where
         // main thread
         if let Err(err) = status {
             let trace = std::backtrace::Backtrace::capture();
-            log_and_panic!(
+            panic!(
                 "While running task: {err:?}\n\
                  Backtrace of calling thread:\n\n\
                  {trace}"
@@ -188,7 +187,7 @@ impl RTaskMain {
             None => {
                 // If task is async panic immediately in case of failure
                 if let Err(err) = result {
-                    log_and_panic!("While running task: {err:?}");
+                    panic!("While running task: {err:?}");
                 }
             },
         };
