@@ -59,10 +59,10 @@ use harp::interrupts::RSandboxScope;
 use harp::object::RObject;
 use harp::r_symbol;
 use harp::routines::r_register_routines;
-use harp::session::r_poke_option_show_error_messages;
 use harp::session::r_traceback;
 use harp::utils::r_get_option;
 use harp::utils::r_is_data_frame;
+use harp::utils::r_poke_option_show_error_messages;
 use harp::R_MAIN_THREAD_ID;
 use libR_sys::*;
 use log::*;
@@ -226,11 +226,14 @@ pub fn start_r(
             r_source(file).or_log_error(&format!("Failed to source startup file '{file}' due to"));
         }
 
+        // Initialize harp.
+        harp::initialize();
+
         // Register embedded routines
         r_register_routines();
 
         // Initialize support functions (after routine registration)
-        modules::initialize().unwrap();
+        modules::initialize(false).unwrap();
 
         // Register all hooks once all modules have been imported
         let hook_result = RFunction::from(".ps.register_all_hooks").call();
@@ -1203,7 +1206,7 @@ extern "C" fn r_read_console(
     let result = r_sandbox(|| main.read_console(prompt, buf, buflen, hist));
 
     let result = unwrap!(result, Err(err) => {
-        log_and_panic!("Unexpected longjump while reading console: {err:?}");
+        panic!("Unexpected longjump while reading console: {err:?}");
     });
 
     // NOTE: Keep this function a "Plain Old Frame" without any

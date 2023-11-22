@@ -39,7 +39,7 @@
         return()
     }
 
-    if (!is_installed("rlang")) {
+    if (!.ps.is_installed("rlang")) {
         # rlang is not installed, no option except to use the base handler
         return(handle_error_base(cnd))
     }

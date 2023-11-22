@@ -303,6 +303,10 @@ pub fn r_inherits(object: SEXP, class: &str) -> bool {
     unsafe { Rf_inherits(object, class.as_ptr()) != 0 }
 }
 
+pub fn r_is_function(object: SEXP) -> bool {
+    matches!(r_typeof(object), CLOSXP | BUILTINSXP | SPECIALSXP)
+}
+
 pub unsafe fn r_formals(object: SEXP) -> Result<Vec<RArgument>> {
     // convert primitive functions into equivalent closures
     let mut object = RObject::new(object);
@@ -405,8 +409,12 @@ pub fn r_symbol_quote_invalid(name: &str) -> String {
     if RE_SYNTACTIC_IDENTIFIER.is_match(name) {
         name.to_string()
     } else {
-        format!("`{}`", name.replace("`", "\\`"))
+        r_symbol_quote(name)
     }
+}
+
+pub fn r_symbol_quote(name: &str) -> String {
+    format!("`{}`", name.replace("`", "\\`"))
 }
 
 pub unsafe fn r_promise_is_forced(x: SEXP) -> bool {
@@ -538,6 +546,33 @@ pub unsafe fn r_try_eval_silent(x: SEXP, env: SEXP) -> Result<SEXP> {
     Ok(x)
 }
 
+static mut OPTIONS_FN: Option<SEXP> = None;
+
+// Note this might throw if wrong data types are passed in. The C-level
+// implementation of `options()` type-checks some base options.
+pub fn r_poke_option(sym: SEXP, value: SEXP) -> SEXP {
+    unsafe {
+        let mut protect = RProtect::new();
+
+        let call = r_lang!(OPTIONS_FN.unwrap_unchecked(), !!sym = value);
+        protect.add(call);
+
+        // `options()` is guaranteed by R to return a list
+        VECTOR_ELT(Rf_eval(call, R_BaseEnv), 0)
+    }
+}
+
+pub fn r_poke_option_show_error_messages(value: bool) -> bool {
+    unsafe {
+        let value = Rf_ScalarLogical(value as i32);
+        let old = r_poke_option(r_symbol!("show.error.messages"), value);
+
+        // This option is type-checked by R so we can assume a valid
+        // logical value
+        *LOGICAL(old) != 0
+    }
+}
+
 pub fn r_normalize_path(x: RObject) -> anyhow::Result<String> {
     if !r_is_string(x.sexp) {
         anyhow::bail!("Expected string for srcfile's filename");
@@ -582,6 +617,13 @@ pub fn convert_line_endings(s: &str, eol_type: LineEnding) -> String {
     // so far, no demonstrated need to repair anything other than CRLF, hence
     // the `from` value
     s.replace("\r\n", eol_type.as_str())
+}
+
+pub fn init_utils() {
+    unsafe {
+        let options_fn = Rf_eval(r_symbol!("options"), R_BaseEnv);
+        OPTIONS_FN = Some(options_fn);
+    }
 }
 
 #[cfg(test)]

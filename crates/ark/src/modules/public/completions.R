@@ -109,6 +109,8 @@
     if (is.function(handler))
         return(handler(position))
 
+    # No specification matched
+    NULL
 }
 
 .ps.completions.formalNamesDefault <- function(callable) {

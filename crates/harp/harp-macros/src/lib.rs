@@ -233,7 +233,7 @@ pub fn register(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 });
 
                 result.unwrap_or_else(|err| {
-                    stdext::log_and_panic!("Unexpected longjump while `.Call()`ing back into Ark: {err:?}");
+                    panic!("Unexpected longjump while `.Call()`ing back into Ark: {err:?}");
                 })
             })
         }

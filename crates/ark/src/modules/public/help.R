@@ -19,7 +19,9 @@ options(help_type = "html")
     results <- help(topic)
 
     # If we found results of any kind, show them.
-    if (length(results) > 0) {
+    # If we are running ark tests, don't show the results as this requires
+    # `ps_browse_url()` which needs a full `RMain` instance.
+    if (length(results) > 0 && !in_ark_tests()) {
         print(results)
     }
 

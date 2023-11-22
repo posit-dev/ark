@@ -9,6 +9,7 @@ use anyhow::Result;
 use harp::eval::r_parse_eval;
 use harp::eval::RParseEvalOptions;
 use harp::utils::r_formals;
+use harp::utils::r_is_function;
 use log::info;
 use stdext::unwrap;
 use stdext::unwrap::IntoResult;
@@ -21,7 +22,7 @@ use tower_lsp::lsp_types::SignatureInformation;
 
 use crate::lsp::documents::Document;
 use crate::lsp::help::RHtmlHelp;
-use crate::lsp::traits::cursor::TreeCursorExt;
+use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::point::PointExt;
 use crate::lsp::traits::position::PositionExt;
 
@@ -36,8 +37,10 @@ pub unsafe fn signature_help(
     let point = position.as_point();
 
     // Find the node closest to the completion point.
-    let mut cursor = ast.walk();
-    let mut node = cursor.find_leaf(point);
+    let node = ast.root_node();
+    let Some(mut node) = node.find_closest_node_to_point(point) else {
+        return Ok(None);
+    };
 
     // If we landed on a comma before the cursor position, move to the next sibling node.
     // We need to check the position as, if the cursor is "on" the comma as in
@@ -149,9 +152,37 @@ pub unsafe fn signature_help(
 
     // Try to figure out what R object it's associated with.
     let code = callee.utf8_text(source.as_bytes())?;
+
     let object = r_parse_eval(code, RParseEvalOptions {
         forbid_function_calls: true,
-    })?;
+    });
+
+    let object = match object {
+        Ok(object) => object,
+        Err(err) => match err {
+            // LHS of the call was too complex to evaluate.
+            harp::error::Error::UnsafeEvaluationError(_) => return Ok(None),
+            // LHS of the call evaluated to an error. Totally possible if the
+            // user is writing pseudocode. Don't want to propagate an error here.
+            _ => return Ok(None),
+        },
+    };
+
+    if !r_is_function(*object) {
+        // Not uncommon for tree-sitter to detect partially written code as a
+        // call, like:
+        // ---
+        // mtcars$
+        // plot(1:5)
+        // ---
+        // Where it detects `mtcars$plot` as the LHS of the call.
+        // That is actually how R would parse this, but the user might be writing
+        // `mtcars$` and requesting completions for the `$` when this occurs.
+        // In these cases the `r_parse_eval()` above either errors or returns
+        // something that isn't a function, so we ensure we have a function
+        // before proceeding here.
+        return Ok(None);
+    }
 
     // Get the formal parameter names associated with this function.
     let formals = r_formals(*object)?;

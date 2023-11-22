@@ -25,6 +25,7 @@ pub mod plots;
 pub mod r_task;
 pub mod request;
 pub mod shell;
+pub mod test;
 pub mod thread;
 pub mod version;
 pub mod viewer;

@@ -391,9 +391,6 @@ fn main() {
     // because we set `R_SignalHandlers` to 0 before startup.
     stdext::traps::register_trap_handlers();
 
-    // Initialize harp.
-    harp::initialize();
-
     // If the r_args vector is empty, add `--interactive` to the list of
     // arguments to pass to R.
     if r_args.is_empty() {
@@ -407,6 +404,18 @@ fn main() {
     // https://stackoverflow.com/questions/35988775/how-can-i-cause-a-panic-on-a-thread-to-immediately-end-the-main-thread
     let old_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic_info| {
+        let info = panic_info.payload();
+
+        // Report panic to the frontend
+        if let Some(info) = info.downcast_ref::<&str>() {
+            log::error!("Panic! {info:}");
+        } else if let Some(info) = info.downcast_ref::<String>() {
+            log::error!("Panic! {info:}");
+        } else {
+            log::error!("Panic! No contextual information.");
+        }
+        log::logger().flush();
+
         old_hook(panic_info);
         std::process::abort();
     }));

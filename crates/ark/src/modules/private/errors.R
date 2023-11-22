@@ -140,7 +140,7 @@ handle_error_rlang <- function(cnd) {
 
     .ps.Call("ps_record_error", evalue, traceback)
 
-    if (!is_installed("rlang", "1.1.1.9000")) {
+    if (!.ps.is_installed("rlang", "1.1.1.9000")) {
         # In older versions of rlang, rlang did not respect `show.error.messages`
         # and there was no way to keep it from printing to the console. To work
         # around this, we throw a dummy base error after recording the rlang information.

@@ -5,55 +5,47 @@
 //
 //
 
-use std::collections::HashSet;
-
 use anyhow::Result;
-use log::*;
 use stdext::*;
 use tower_lsp::lsp_types::CompletionItem;
 use tree_sitter::Node;
 
 use crate::lsp::completions::completion_item::completion_item_from_assignment;
 use crate::lsp::completions::completion_item::completion_item_from_scope_parameter;
+use crate::lsp::completions::sources::utils::filter_out_dot_prefixes;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::traits::cursor::TreeCursorExt;
 use crate::lsp::traits::point::PointExt;
 
-pub fn append_document_completions(
+pub(super) fn completions_from_document(
     context: &DocumentContext,
-    completions: &mut Vec<CompletionItem>,
-) -> Result<()> {
+) -> Result<Option<Vec<CompletionItem>>> {
     // get reference to AST
     let mut node = context.node;
 
-    // skip comments
     if node.kind() == "comment" {
-        trace!("cursor position lies within R comment; not providing document completions");
-        return Ok(());
+        log::error!("Should have been handled by comment completion source.");
+        return Ok(None);
     }
-
-    // don't complete following subset-style operators
     if matches!(node.kind(), "::" | ":::" | "$" | "[" | "[[") {
-        return Ok(());
+        log::error!("Should have been handled by alternative completion source.");
+        return Ok(None);
     }
 
-    let mut visited: HashSet<usize> = HashSet::new();
+    let mut completions = vec![];
+
     loop {
         // If this is a brace list, or the document root, recurse to find identifiers.
         if node.kind() == "{" || node.parent() == None {
-            append_defined_variables(&node, context, completions);
+            completions.append(&mut completions_from_document_variables(&node, context));
         }
 
         // If this is a function definition, add parameter names.
         if node.kind() == "function" {
-            let result = append_function_parameters(&node, context, completions);
-            if let Err(error) = result {
-                error!("{:?}", error);
-            }
+            completions.append(&mut completions_from_document_function_arguments(
+                &node, context,
+            )?);
         }
-
-        // Mark this node as visited.
-        visited.insert(node.id());
 
         // Keep going.
         node = match node.parent() {
@@ -62,25 +54,24 @@ pub fn append_document_completions(
         };
     }
 
-    Ok(())
+    // Assume that even if they are in the document, we still don't want
+    // to include them without explicit user request
+    filter_out_dot_prefixes(context, &mut completions);
+
+    Ok(Some(completions))
 }
 
-fn append_defined_variables(
+fn completions_from_document_variables(
     node: &Node,
     context: &DocumentContext,
-    completions: &mut Vec<CompletionItem>,
-) {
-    let visited: HashSet<usize> = HashSet::new();
+) -> Vec<CompletionItem> {
+    let mut completions = vec![];
 
     let mut cursor = node.walk();
+
     cursor.recurse(|node| {
         // skip nodes that exist beyond the completion position
         if node.start_position().is_after(context.point) {
-            return false;
-        }
-
-        // skip nodes that were already visited
-        if visited.contains(&node.id()) {
             return false;
         }
 
@@ -91,7 +82,7 @@ fn append_defined_variables(
                     if matches!(child.kind(), "identifier" | "string") {
                         match completion_item_from_assignment(&node, context) {
                             Ok(item) => completions.push(item),
-                            Err(error) => error!("{:?}", error),
+                            Err(err) => log::error!("{err:?}"),
                         }
                     }
                 }
@@ -121,19 +112,22 @@ fn append_defined_variables(
             },
         }
     });
+
+    completions
 }
 
-// TODO: Pick a name that makes it clear this is a function defined in the associated document.
-fn append_function_parameters(
+fn completions_from_document_function_arguments(
     node: &Node,
     context: &DocumentContext,
-    completions: &mut Vec<CompletionItem>,
-) -> Result<()> {
+) -> Result<Vec<CompletionItem>> {
+    let mut completions = vec![];
+
     // get the parameters node
     let parameters = node.child_by_field_name("parameters").into_result()?;
 
-    // iterate through the children, looking for parameters with known names
     let mut cursor = parameters.walk();
+
+    // iterate through the children, looking for parameters with known names
     for node in parameters.children(&mut cursor) {
         if node.kind() != "parameter" {
             continue;
@@ -150,11 +144,11 @@ fn append_function_parameters(
         let parameter = node.utf8_text(context.source.as_bytes()).into_result()?;
         match completion_item_from_scope_parameter(parameter, context) {
             Ok(item) => completions.push(item),
-            Err(error) => error!("{:?}", error),
+            Err(err) => log::error!("{err:?}"),
         }
     }
 
-    Ok(())
+    Ok(completions)
 }
 
 fn call_uses_nse(node: &Node, context: &DocumentContext) -> bool {
@@ -167,7 +161,6 @@ fn call_uses_nse(node: &Node, context: &DocumentContext) -> bool {
         matches!(value, "expression" | "local" | "quote" | "enquote" | "substitute" | "with" | "within").into_result()?;
 
         Ok(())
-
     };
 
     result.is_ok()

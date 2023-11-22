@@ -5,6 +5,7 @@
 //
 //
 
+use anyhow::bail;
 use anyhow::Result;
 use stdext::*;
 use tower_lsp::lsp_types::CompletionItem;
@@ -15,27 +16,31 @@ use tower_lsp::lsp_types::MarkupKind;
 use crate::lsp::completions::types::CompletionData;
 use crate::lsp::help::RHtmlHelp;
 
-#[allow(unused_variables)]
-pub unsafe fn resolve_completion_item(
-    item: &mut CompletionItem,
-    data: &CompletionData,
-) -> Result<bool> {
+pub unsafe fn resolve_completion(item: &mut CompletionItem) -> Result<bool> {
+    let Some(data) = item.data.clone() else {
+        bail!("Completion '{}' has no associated data", item.label);
+    };
+
+    let data: CompletionData = unwrap!(serde_json::from_value(data), Err(err) => {
+        bail!("Completion `data` can't be deserialized: {err:?}.");
+    });
+
     match data {
-        CompletionData::DataVariable { name, owner } => Ok(false),
-        CompletionData::Directory { path } => Ok(false),
-        CompletionData::File { path } => Ok(false),
+        CompletionData::DataVariable { name: _, owner: _ } => Ok(false),
+        CompletionData::Directory { path: _ } => Ok(false),
+        CompletionData::File { path: _ } => Ok(false),
         CompletionData::Function { name, package } => {
-            resolve_function_completion_item(item, name, package.as_deref())
+            resolve_function_completion_item(item, name.as_str(), package.as_deref())
         },
-        CompletionData::Package { name } => resolve_package_completion_item(item, name),
+        CompletionData::Package { name } => resolve_package_completion_item(item, name.as_str()),
         CompletionData::Parameter { name, function } => {
-            resolve_parameter_completion_item(item, name, function)
+            resolve_parameter_completion_item(item, name.as_str(), function.as_str())
         },
-        CompletionData::Object { name } => Ok(false),
-        CompletionData::RoxygenTag { tag } => Ok(false),
-        CompletionData::ScopeVariable { name } => Ok(false),
-        CompletionData::ScopeParameter { name } => Ok(false),
-        CompletionData::Snippet { text } => Ok(false),
+        CompletionData::Object { name: _ } => Ok(false),
+        CompletionData::RoxygenTag { tag: _ } => Ok(false),
+        CompletionData::ScopeVariable { name: _ } => Ok(false),
+        CompletionData::ScopeParameter { name: _ } => Ok(false),
+        CompletionData::Snippet { text: _ } => Ok(false),
         CompletionData::Unknown => Ok(false),
     }
 }
