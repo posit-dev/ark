@@ -543,7 +543,47 @@ mod tests {
     fn test_r_to_json_scalars() {
         r_test! {
             test_r_conversion("1", "1L");
+            test_r_conversion("2.5", "2.5");
             test_r_conversion("true", "TRUE");
+        }
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test_r_to_json_lists() {
+        r_test! {
+            test_r_conversion(
+                "[1,2,3]",
+                "list(1L, 2L, 3L)");
+            test_r_conversion(
+                "[\"four\", \"five\", \"six\"]",
+                "list(\"four\", \"five\", \"six\")");
+        }
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test_r_to_json_lists_mixed_types() {
+        r_test! {
+            test_r_conversion(
+                "[1,2,false]",
+                "list(1L, 2L, FALSE)");
+            test_r_conversion(
+                "[\"four\", \"five\", 6]",
+                "list(\"four\", \"five\", 6L)");
+        }
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test_r_to_json_objects() {
+        r_test! {
+            test_r_conversion(
+                "{\"a\": 1, \"b\": 2, \"c\": 3}",
+                "list(a = 1L, b = 2L, c = 3L)");
+            test_r_conversion(
+                "{\"foo\": \"bar\", \"baz\": \"quux\", \"quuux\": false}",
+                "list(foo = \"bar\", baz = \"quux\", quuux = FALSE)");
         }
     }
 }
