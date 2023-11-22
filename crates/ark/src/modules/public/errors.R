@@ -18,7 +18,13 @@
 
     # Inject our global error handler at the end.
     # This allows other existing error handlers to run ahead of us.
-    handlers <- c(handlers, list(error = .ps.errors.globalErrorHandler))
+    handlers <- c(
+        handlers,
+        list(
+            error = .ps.errors.globalErrorHandler,
+            message = .ps.errors.globalMessageHandler
+        )
+    )
     do.call(globalCallingHandlers, handlers)
 
     # Tell rlang and base R not to print the error message, we will do it!
@@ -49,6 +55,22 @@
     handle_error_rlang(cnd)
 }
 
+.ps.errors.globalMessageHandler <- function(cnd) {
+    # Decline to handle if we can't muffle the message (should only happen
+    # in extremely rare cases)
+    if (is.null(findRestart("muffleMessage"))) {
+        return()
+    }
+
+    # Output the condition message to the relevant stream (normally
+    # stdout). Note that for historical reasons, messages include a
+    # trailing newline
+    cat(conditionMessage(cnd), file = default_message_file())
+
+    # Silence default message handling
+    invokeRestart("muffleMessage")
+}
+
 .ps.errors.traceback <- function() {
     traceback <- get0(".Traceback", baseenv(), ifnotfound = list())
 
@@ -58,4 +80,19 @@
     }
 
     format_traceback(traceback)
+}
+
+# If a sink is active (either on output or on messages) messages
+# are always streamed to `stderr`. This follows rlang behaviour
+# and ensures messages can be sinked from stderr consistently.
+#
+# Unlike rlang we don't make an exception for non-interactive sessions
+# since Ark is meant to be run interactively.
+default_message_file <- function() {
+  if (sink.number("output") == 0 &&
+      sink.number("message") == 2) {
+    stdout()
+  } else {
+    stderr()
+  }
 }

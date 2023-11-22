@@ -41,7 +41,7 @@ fn emit_html_output(iopub_tx: Sender<IOPubMessage>, path: String) -> Result<()> 
 }
 
 #[harp::register]
-pub unsafe extern "C" fn ps_html_viewer(url: SEXP) -> SEXP {
+pub unsafe extern "C" fn ps_html_viewer(url: SEXP) -> anyhow::Result<SEXP> {
     // Convert url to a string; note that we are only passed URLs that
     // correspond to files in the temporary directory.
     let path = RObject::view(url).to::<String>();
@@ -58,6 +58,7 @@ pub unsafe extern "C" fn ps_html_viewer(url: SEXP) -> SEXP {
             log::error!("Attempt to view invalid path {:?}: {:?}", url, err);
         },
     }
+
     // No return value
-    R_NilValue
+    Ok(R_NilValue)
 }
