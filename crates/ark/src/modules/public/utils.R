@@ -71,7 +71,13 @@
 # private modules). Any features accessible from `.ps.internal()` are
 # subject to change without notice.
 .ps.internal <- function(expr) {
-    eval(substitute(expr), parent.env(environment()))
+    expr <- substitute(expr)
+
+    # Retrieve function from internal namespace
+    expr[[1]] <- eval(expr[[1]], parent.env(environment()))
+
+    # Evaluate arguments in calling frame
+    eval(expr, parent.frame())
 }
 
 # From `rlang::env_name()`
