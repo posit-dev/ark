@@ -21,20 +21,21 @@ pub enum FrontendMessage {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "msg_type", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
 pub struct FrontendRpcRequest {
     pub method: String,
     pub params: Vec<Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "msg_type", rename_all = "snake_case")]
-pub enum FrontendRpcResult {
-    Result(Value),
+#[serde(rename_all = "snake_case")]
+pub struct FrontendRpcResult {
+    pub id: String,
+    pub result: Value,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "msg_type", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
 pub struct FrontendRpcErrorData {
     pub message: String,
     pub code: i32,
@@ -42,6 +43,7 @@ pub struct FrontendRpcErrorData {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "msg_type", rename_all = "snake_case")]
-pub enum FrontendRpcError {
-    Error(FrontendRpcErrorData),
+pub struct FrontendRpcError {
+    pub id: String,
+    pub error: FrontendRpcErrorData,
 }

@@ -7,7 +7,10 @@
 
 use amalthea::comm::comm_channel::CommChannelMsg;
 use amalthea::comm::frontend_comm::FrontendMessage;
+use amalthea::comm::frontend_comm::FrontendRpcError;
+use amalthea::comm::frontend_comm::FrontendRpcErrorData;
 use amalthea::comm::frontend_comm::FrontendRpcRequest;
+use amalthea::comm::frontend_comm::FrontendRpcResult;
 use amalthea::events::PositronEvent;
 use amalthea::socket::comm::CommSocket;
 use amalthea::wire::client_event::ClientEvent;
@@ -16,7 +19,9 @@ use crossbeam::channel::Sender;
 use crossbeam::select;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
+use harp::object::RObject;
 use log::info;
+use serde_json::Value;
 use stdext::spawn;
 
 use crate::r_task;
@@ -115,7 +120,9 @@ impl PositronFrontend {
                 false
             },
             CommChannelMsg::Rpc(id, request) => {
-                self.handle_rpc_request(id, request);
+                if let Err(err) = self.handle_rpc_request(id, request) {
+                    log::warn!("Error handling RPC request from front end: {:?}", err);
+                }
                 true
             },
         }
@@ -124,21 +131,50 @@ impl PositronFrontend {
     /**
      * Handles an RPC request from the front end.
      */
-    fn handle_rpc_request(&self, id: &str, request: &serde_json::Value) {
+    fn handle_rpc_request(
+        &self,
+        id: &str,
+        request: &serde_json::Value,
+    ) -> Result<(), anyhow::Error> {
         // Parse the request from the front end
-        let request = match serde_json::from_value::<FrontendRpcRequest>(request.clone()) {
-            Ok(request) => request,
-            Err(err) => {
-                log::error!("Invalid RPC request from front end: {:?}", err);
-                return;
-            },
-        };
+        let request = serde_json::from_value::<FrontendRpcRequest>(request.clone())?;
+
+        // Form an R function call from the request
+        //
+        // Consider: In the future, we may want to allow requests to be
+        // fulfilled here on the Rust side, with only some requests
+        // forwarded to R.
         let result = r_task(|| unsafe {
-            let call = RFunction::from(format!(".ps.rpc.{}", request.method));
+            let mut call = RFunction::from(format!(".ps.rpc.{}", request.method));
             for param in request.params.iter() {
-                // call.add(param);
+                let p = RObject::try_from(param.clone())?;
+                call.add(p);
             }
+            let result = call.call()?;
+            Value::try_from(result)
         });
-        log::info!("RPC request from front end: {:?}", request);
+
+        // Convert the reply to a message we can send to the front end
+        let reply = match result {
+            Ok(value) => FrontendMessage::RpcResultResponse(FrontendRpcResult {
+                id: id.to_string(),
+                result: value,
+            }),
+            Err(err) => FrontendMessage::RpcResultError(FrontendRpcError {
+                id: id.to_string(),
+                error: FrontendRpcErrorData {
+                    code: 0,
+                    message: err.to_string(),
+                },
+            }),
+        };
+
+        let comm_msg = CommChannelMsg::Rpc(id.to_string(), serde_json::to_value(reply)?);
+
+        // Deliver the RPC reply to the front end over the comm channel
+        if let Err(err) = self.comm.outgoing_tx.send(comm_msg) {
+            log::error!("Error sending Positron event to front end: {}", err);
+        };
+        Ok(())
     }
 }
