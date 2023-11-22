@@ -17,6 +17,7 @@ use regex::Regex;
 use semver::Version;
 
 use crate::environment::Environment;
+use crate::environment::R_ENVS;
 use crate::error::Error;
 use crate::error::Result;
 use crate::eval::r_parse_eval0;
@@ -637,8 +638,40 @@ pub fn save_rds(x: SEXP, path: &str) {
         env.bind("x", x);
         env.bind("path", path);
 
-        let _ = r_parse_eval0("base::saveRDS(x, path)", env).unwrap();
+        let res = r_parse_eval0("base::saveRDS(x, path)", env);
+
+        // This is meant for internal use so report errors loudly
+        res.unwrap();
     }
+}
+
+/// Meant for debugging inside lldb. Since we can't call C functions reliably
+/// (let me know if you find a way), Inserting `push_rds()` in your code lets
+/// you save objects that you can then inspect from R.
+///
+/// The objects are pushed to a data frame with earlier entries preserved in
+/// earlier rows, with a datetime and optional context attached.
+///
+/// If `path` is empty, saves RDS in the path stored in the
+/// `RUST_PUSH_RDS_PATH` environment variable.
+pub fn push_rds(x: SEXP, path: &str, context: &str) {
+    let path = if path.len() == 0 {
+        RObject::null()
+    } else {
+        RObject::from(path)
+    };
+    let context = RObject::from(context);
+
+    let env = Environment::new(r_parse_eval0("new.env()", R_ENVS.global).unwrap());
+
+    env.bind("x", x);
+    env.bind("path", path);
+    env.bind("context", context);
+
+    let res = r_parse_eval0(".ps.internal(push_rds(x, path, context))", env);
+
+    // This is meant for internal use so report errors loudly
+    res.unwrap();
 }
 
 #[cfg(test)]

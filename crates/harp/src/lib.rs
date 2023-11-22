@@ -211,6 +211,22 @@ macro_rules! assert_match {
     };
 }
 
+#[macro_export(local_inner_macros)]
+macro_rules! push_rds {
+    ($arg:expr) => {
+        harp::utils::push_rds(
+            $arg,
+            "",
+            &std::format!(
+                "{}:{}: {}",
+                std::file!(),
+                std::line!(),
+                std::stringify!($arg)
+            ),
+        );
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use libR_sys::*;
