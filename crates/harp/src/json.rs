@@ -10,6 +10,7 @@ use std::cmp::min;
 use libR_sys::*;
 use log::warn;
 use serde_json::json;
+use serde_json::Map;
 use serde_json::Number;
 use serde_json::Value;
 
@@ -317,6 +318,31 @@ impl TryFrom<Vec<Value>> for RObject {
     }
 }
 
+impl TryFrom<Map<String, Value>> for RObject {
+    type Error = crate::error::Error;
+
+    fn try_from(map: Map<String, Value>) -> Result<Self, Self::Error> {
+        // Convert the map's values into a vector of JSON values, then convert
+        // that to an R object.
+        let vals: Vec<Value> = map.values().cloned().collect();
+        let list = RObject::try_from(vals)?;
+
+        // Convert the map's keys into a vector of strings, then set the names
+        // of the R object to that vector.
+        let keys: Vec<String> = map.keys().cloned().collect();
+        let names = RObject::from(keys);
+        unsafe {
+            Rf_setAttrib(list.sexp, R_NamesSymbol, names.sexp);
+        }
+
+        Ok(list)
+    }
+}
+
+/**
+ * Convert a JSON value to an R Object. Like the `TryFrom` implementation for
+ * R to JSON, this is a recursive function that perfoms a lossy conversion.
+ */
 impl TryFrom<Value> for RObject {
     type Error = crate::error::Error;
 
@@ -327,7 +353,7 @@ impl TryFrom<Value> for RObject {
             Value::Number(num) => Ok(RObject::from(num)),
             Value::String(string) => Ok(RObject::from(string)),
             Value::Array(values) => RObject::try_from(values),
-            Value::Object(_) => todo!(),
+            Value::Object(map) => RObject::try_from(map),
         }
     }
 }
@@ -337,6 +363,8 @@ mod tests {
 
     use super::*;
     use crate::eval::r_parse_eval0;
+    use crate::exec::RFunction;
+    use crate::exec::RFunctionExt;
     use crate::r_test;
 
     // Helper that takes an R expression (as a string), parses it, evaluates it,
@@ -349,6 +377,19 @@ mod tests {
         Value::try_from(evaluated).unwrap()
     }
 
+    // Likewise, but for the reverse conversion.
+    fn json_to_r(expr: &str) -> RObject {
+        let json: Value = serde_json::from_str(expr).unwrap();
+
+        RObject::try_from(json).unwrap()
+    }
+
+    // Deparses an R object to a string.
+    fn deparse(obj: RObject) -> String {
+        let result = unsafe { RFunction::from("deparse").add(obj).call().unwrap() };
+        String::try_from(result).unwrap()
+    }
+
     /// Core worker for JSON conversion tests. Takes an R expression and a JSON
     /// expression (both as strings) and ensures that the R expression converts
     /// to the JSON expression.
@@ -359,6 +400,12 @@ mod tests {
         let r = r_to_json(r_expr);
         let json: Value = serde_json::from_str(json_expr).unwrap();
         assert_eq!(r, json)
+    }
+
+    /// Core worker for R conversion tests.
+    fn test_r_conversion(json_expr: &str, r_expr: &str) {
+        let r = json_to_r(json_expr);
+        assert_eq!(r_expr, deparse(r))
     }
 
     #[test]
@@ -488,6 +535,15 @@ mod tests {
                 "list(a = 1L, b = 2L, c = list(3L, 4L, 5L))",
                 "{\"a\": 1, \"b\": 2, \"c\": [3,4,5]}"
             );
+        }
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test_r_to_json_scalars() {
+        r_test! {
+            test_r_conversion("1", "1L");
+            test_r_conversion("true", "TRUE");
         }
     }
 }

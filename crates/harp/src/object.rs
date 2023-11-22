@@ -419,6 +419,23 @@ impl From<String> for RObject {
     }
 }
 
+impl From<Vec<String>> for RObject {
+    fn from(values: Vec<String>) -> Self {
+        unsafe {
+            let vector = Rf_protect(Rf_allocVector(STRSXP, values.len() as isize));
+            for idx in 1..values.len() {
+                let value_str = Rf_mkCharLenCE(
+                    values[idx].as_ptr() as *mut c_char,
+                    values[idx].len() as i32,
+                    cetype_t_CE_UTF8,
+                );
+                SET_STRING_ELT(vector, idx as isize, value_str);
+            }
+            return RObject::new(vector);
+        }
+    }
+}
+
 // Convert a String -> String HashMap into named character vector.
 impl From<HashMap<String, String>> for RObject {
     fn from(value: HashMap<String, String>) -> Self {
