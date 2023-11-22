@@ -15,33 +15,39 @@ use tower_lsp::lsp_types::MarkupKind;
 
 use crate::lsp::backend::Backend;
 use crate::lsp::completions::completion_item::completion_item_from_function;
+use crate::lsp::completions::sources::utils::filter_out_dot_prefixes;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::indexer;
 use crate::lsp::traits::string::StringExt;
 
-pub fn append_workspace_completions(
+pub(super) fn completions_from_workspace(
     backend: &Backend,
     context: &DocumentContext,
-    completions: &mut Vec<CompletionItem>,
-) -> Result<()> {
-    // TODO: Don't provide completions if token is empty in certain contexts
-    // (e.g. parameter completions or something like that)
-    if matches!(context.node.kind(), "::" | ":::") {
-        return Ok(());
-    }
+) -> Result<Option<Vec<CompletionItem>>> {
+    log::info!("completions_from_workspace()");
 
-    if let Some(parent) = context.node.parent() {
+    let node = context.node;
+
+    if matches!(node.kind(), "::" | ":::") {
+        log::error!("Should have already been handled by namespace completions source");
+        return Ok(None);
+    }
+    if let Some(parent) = node.parent() {
         if matches!(parent.kind(), "::" | ":::") {
-            return Ok(());
+            log::error!("Should have already been handled by namespace completions source");
+            return Ok(None);
         }
     }
 
-    if matches!(context.node.kind(), "string") {
-        return Ok(());
+    if matches!(node.kind(), "string") {
+        log::error!("Should have already been handled by file path completions source");
+        return Ok(None);
     }
 
-    let token = if context.node.kind() == "identifier" {
-        context.node.utf8_text(context.source.as_bytes())?
+    let mut completions = vec![];
+
+    let token = if node.kind() == "identifier" {
+        node.utf8_text(context.source.as_bytes())?
     } else {
         ""
     };
@@ -91,5 +97,10 @@ pub fn append_workspace_completions(
         }
     });
 
-    Ok(())
+    // Assume that even if they are in the workspace, we still don't want
+    // to include them without explicit user request.
+    // In particular, public modules in Positron
+    filter_out_dot_prefixes(context, &mut completions);
+
+    Ok(Some(completions))
 }

@@ -5,13 +5,11 @@
 //
 //
 
-use tower_lsp::lsp_types::TextDocumentPositionParams;
 use tree_sitter::Node;
 use tree_sitter::Point;
 
 use crate::lsp::documents::Document;
-use crate::lsp::traits::position::PositionExt;
-use crate::lsp::traits::tree::TreeExt;
+use crate::lsp::traits::node::NodeExt;
 
 #[derive(Debug)]
 pub struct DocumentContext<'a> {
@@ -22,15 +20,12 @@ pub struct DocumentContext<'a> {
 }
 
 impl<'a> DocumentContext<'a> {
-    pub fn new(document: &'a Document, position: &TextDocumentPositionParams) -> Self {
-        // convert to tree-sitter point
-        let point = position.position.as_point();
-
+    pub fn new(document: &'a Document, point: Point) -> Self {
         // get reference to AST
         let ast = &document.ast;
 
         // find node at point
-        let node = ast.node_at_point(point);
+        let node = ast.root_node().find_closest_node_to_point(point).unwrap();
 
         // convert document contents to a string once, to be reused elsewhere
         let source = document.contents.to_string();
@@ -43,4 +38,25 @@ impl<'a> DocumentContext<'a> {
             point,
         }
     }
+}
+
+#[test]
+fn test_document_context_start_of_document() {
+    let point = Point { row: 0, column: 0 };
+
+    // Empty document
+    let document = Document::new("");
+    let context = DocumentContext::new(&document, point);
+    assert_eq!(
+        context.node.utf8_text(context.source.as_bytes()).unwrap(),
+        ""
+    );
+
+    // Start of document with text
+    let document = Document::new("1 + 1");
+    let context = DocumentContext::new(&document, point);
+    assert_eq!(
+        context.node.utf8_text(context.source.as_bytes()).unwrap(),
+        "1"
+    );
 }

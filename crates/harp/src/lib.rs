@@ -26,7 +26,11 @@ pub mod vector;
 
 pub use harp_macros::register;
 
-pub fn initialize() {}
+use crate::utils::init_utils;
+
+pub fn initialize() {
+    init_utils();
+}
 
 // ID of main thread. This is used to detect whether the current thread is
 // the thread running R, see `RMain::on_main_thread()`. R should normally

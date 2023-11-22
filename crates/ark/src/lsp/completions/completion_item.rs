@@ -17,6 +17,7 @@ use harp::utils::r_formals;
 use harp::utils::r_promise_force_with_rollback;
 use harp::utils::r_promise_is_forced;
 use harp::utils::r_promise_is_lazy_load_binding;
+use harp::utils::r_symbol_quote;
 use harp::utils::r_symbol_quote_invalid;
 use harp::utils::r_symbol_valid;
 use harp::utils::r_typeof;
@@ -25,17 +26,22 @@ use stdext::*;
 use tower_lsp::lsp_types::Command;
 use tower_lsp::lsp_types::CompletionItem;
 use tower_lsp::lsp_types::CompletionItemKind;
+use tower_lsp::lsp_types::CompletionTextEdit;
 use tower_lsp::lsp_types::Documentation;
 use tower_lsp::lsp_types::InsertTextFormat;
 use tower_lsp::lsp_types::MarkupContent;
 use tower_lsp::lsp_types::MarkupKind;
+use tower_lsp::lsp_types::Range;
+use tower_lsp::lsp_types::TextEdit;
 use tree_sitter::Node;
+use tree_sitter::Point;
 
 use crate::lsp::completions::types::CompletionData;
 use crate::lsp::completions::types::PromiseStrategy;
 use crate::lsp::document_context::DocumentContext;
+use crate::lsp::traits::point::PointExt;
 
-pub(crate) fn completion_item(
+pub(super) fn completion_item(
     label: impl AsRef<str>,
     data: CompletionData,
 ) -> Result<CompletionItem> {
@@ -46,7 +52,7 @@ pub(crate) fn completion_item(
     })
 }
 
-pub(crate) fn completion_item_from_file(entry: DirEntry) -> Result<CompletionItem> {
+pub(super) fn completion_item_from_file(entry: DirEntry) -> Result<CompletionItem> {
     let name = entry.file_name().to_string_lossy().to_string();
     let mut item = completion_item(name, CompletionData::File { path: entry.path() })?;
 
@@ -54,7 +60,7 @@ pub(crate) fn completion_item_from_file(entry: DirEntry) -> Result<CompletionIte
     Ok(item)
 }
 
-pub(crate) fn completion_item_from_directory(entry: DirEntry) -> Result<CompletionItem> {
+pub(super) fn completion_item_from_directory(entry: DirEntry) -> Result<CompletionItem> {
     let mut name = entry.file_name().to_string_lossy().to_string();
     name.push_str("/");
 
@@ -70,7 +76,7 @@ pub(crate) fn completion_item_from_directory(entry: DirEntry) -> Result<Completi
     Ok(item)
 }
 
-pub(crate) fn completion_item_from_direntry(entry: DirEntry) -> Result<CompletionItem> {
+pub(super) fn completion_item_from_direntry(entry: DirEntry) -> Result<CompletionItem> {
     let is_dir = entry
         .file_type()
         .map(|value| value.is_dir())
@@ -82,7 +88,7 @@ pub(crate) fn completion_item_from_direntry(entry: DirEntry) -> Result<Completio
     }
 }
 
-pub(crate) fn completion_item_from_assignment(
+pub(super) fn completion_item_from_assignment(
     node: &Node,
     context: &DocumentContext,
 ) -> Result<CompletionItem> {
@@ -122,7 +128,7 @@ pub(crate) fn completion_item_from_assignment(
     return Ok(item);
 }
 
-pub(crate) unsafe fn completion_item_from_package(
+pub(super) unsafe fn completion_item_from_package(
     package: &str,
     append_colons: bool,
 ) -> Result<CompletionItem> {
@@ -145,7 +151,7 @@ pub(crate) unsafe fn completion_item_from_package(
     return Ok(item);
 }
 
-pub(crate) fn completion_item_from_function<T: AsRef<str>>(
+pub(super) fn completion_item_from_function<T: AsRef<str>>(
     name: &str,
     package: Option<&str>,
     parameters: &[T],
@@ -161,14 +167,11 @@ pub(crate) fn completion_item_from_function<T: AsRef<str>>(
     let detail = format!("{}({})", name, parameters.joined(", "));
     item.detail = Some(detail);
 
+    let insert_text = r_symbol_quote_invalid(name);
     item.insert_text_format = Some(InsertTextFormat::SNIPPET);
-    item.insert_text = if r_symbol_valid(name) {
-        Some(format!("{}($0)", name))
-    } else {
-        Some(format!("`{}`($0)", name.replace("`", "\\`")))
-    };
+    item.insert_text = Some(format!("{insert_text}($0)"));
 
-    // provide parameter completions after completiong function
+    // provide parameter completions after completing function
     item.command = Some(Command {
         title: "Trigger Parameter Hints".to_string(),
         command: "editor.action.triggerParameterHints".to_string(),
@@ -179,13 +182,13 @@ pub(crate) fn completion_item_from_function<T: AsRef<str>>(
 }
 
 // TODO
-pub(crate) unsafe fn completion_item_from_dataset(name: &str) -> Result<CompletionItem> {
+pub(super) unsafe fn completion_item_from_dataset(name: &str) -> Result<CompletionItem> {
     let mut item = completion_item(name.to_string(), CompletionData::Unknown)?;
     item.kind = Some(CompletionItemKind::STRUCT);
     Ok(item)
 }
 
-pub(crate) unsafe fn completion_item_from_data_variable(
+pub(super) unsafe fn completion_item_from_data_variable(
     name: &str,
     owner: &str,
     enquote: bool,
@@ -197,6 +200,8 @@ pub(crate) unsafe fn completion_item_from_data_variable(
 
     if enquote {
         item.insert_text = Some(format!("\"{}\"", name));
+    } else if !r_symbol_valid(name) {
+        item.insert_text = Some(r_symbol_quote(name));
     }
 
     item.detail = Some(owner.to_string());
@@ -205,7 +210,7 @@ pub(crate) unsafe fn completion_item_from_data_variable(
     Ok(item)
 }
 
-pub(crate) unsafe fn completion_item_from_object(
+pub(super) unsafe fn completion_item_from_object(
     name: &str,
     object: SEXP,
     envir: SEXP,
@@ -237,10 +242,14 @@ pub(crate) unsafe fn completion_item_from_object(
     item.detail = Some("(Object)".to_string());
     item.kind = Some(CompletionItemKind::STRUCT);
 
+    if !r_symbol_valid(name) {
+        item.insert_text = Some(r_symbol_quote(name));
+    }
+
     Ok(item)
 }
 
-pub(crate) unsafe fn completion_item_from_promise(
+pub(super) unsafe fn completion_item_from_promise(
     name: &str,
     object: SEXP,
     envir: SEXP,
@@ -273,10 +282,14 @@ pub(crate) unsafe fn completion_item_from_promise(
     item.detail = Some("Promise".to_string());
     item.kind = Some(CompletionItemKind::STRUCT);
 
+    if !r_symbol_valid(name) {
+        item.insert_text = Some(r_symbol_quote(name));
+    }
+
     Ok(item)
 }
 
-pub(crate) fn completion_item_from_active_binding(name: &str) -> Result<CompletionItem> {
+pub(super) fn completion_item_from_active_binding(name: &str) -> Result<CompletionItem> {
     // We never want to force active bindings, so we return a fairly
     // generic completion item
     let mut item = completion_item(name, CompletionData::Object {
@@ -286,10 +299,14 @@ pub(crate) fn completion_item_from_active_binding(name: &str) -> Result<Completi
     item.detail = Some("Active binding".to_string());
     item.kind = Some(CompletionItemKind::STRUCT);
 
+    if !r_symbol_valid(name) {
+        item.insert_text = Some(r_symbol_quote(name));
+    }
+
     Ok(item)
 }
 
-pub(crate) unsafe fn completion_item_from_namespace(
+pub(super) unsafe fn completion_item_from_namespace(
     name: &str,
     namespace: SEXP,
     package: &str,
@@ -317,7 +334,7 @@ pub(crate) unsafe fn completion_item_from_namespace(
     )
 }
 
-pub(crate) unsafe fn completion_item_from_lazydata(
+pub(super) unsafe fn completion_item_from_lazydata(
     name: &str,
     env: SEXP,
     package: &str,
@@ -336,7 +353,7 @@ pub(crate) unsafe fn completion_item_from_lazydata(
     }
 }
 
-pub(crate) unsafe fn completion_item_from_symbol(
+pub(super) unsafe fn completion_item_from_symbol(
     name: &str,
     envir: SEXP,
     package: Option<&str>,
@@ -374,7 +391,7 @@ pub(crate) unsafe fn completion_item_from_symbol(
 
 // This is used when providing completions for a parameter in a document
 // that is considered in-scope at the cursor position.
-pub(crate) fn completion_item_from_scope_parameter(
+pub(super) fn completion_item_from_scope_parameter(
     parameter: &str,
     _context: &DocumentContext,
 ) -> Result<CompletionItem> {
@@ -386,26 +403,66 @@ pub(crate) fn completion_item_from_scope_parameter(
     Ok(item)
 }
 
-pub(crate) unsafe fn completion_item_from_parameter(
+pub(super) fn completion_item_from_parameter(
     parameter: &str,
     callee: &str,
+    point: &Point,
 ) -> Result<CompletionItem> {
-    let label = r_symbol_quote_invalid(parameter);
-    let mut item = completion_item(label, CompletionData::Parameter {
+    if parameter == "..." {
+        return completion_item_from_dot_dot_dot(callee, point);
+    }
+
+    // `data` captured using original `parameter`, before quoting
+    let data = CompletionData::Parameter {
         name: parameter.to_string(),
+        function: callee.to_string(),
+    };
+
+    let parameter = r_symbol_quote_invalid(parameter);
+
+    // We want to display to the user the name with the `=`
+    let label = parameter.clone() + " = ";
+
+    let mut item = completion_item(label.as_str(), data)?;
+
+    item.kind = Some(CompletionItemKind::FIELD);
+
+    // We want to insert the name with the `=` too
+    item.insert_text = Some(label);
+    item.insert_text_format = Some(InsertTextFormat::SNIPPET);
+
+    // But we filter and sort on the label without the `=`
+    item.filter_text = Some(parameter.clone());
+    item.sort_text = Some(parameter.clone());
+
+    Ok(item)
+}
+
+fn completion_item_from_dot_dot_dot(callee: &str, point: &Point) -> Result<CompletionItem> {
+    // Special behavior for `...` arguments, where we want to show them
+    // in quick suggestions (to show help docs for them), but not actually
+    // insert any text for them if the user selects them. Can't use an
+    // `insert_text` of `""` because Positron treats it like `None`.
+    let label = "...";
+
+    let mut item = completion_item(label, CompletionData::Parameter {
+        name: label.to_string(),
         function: callee.to_string(),
     })?;
 
-    // TODO: It'd be nice if we could be smarter about how '...' completions are handled,
-    // but evidently VSCode doesn't let us set an empty 'insert text' string here.
-    // Might be worth fixing upstream.
     item.kind = Some(CompletionItemKind::FIELD);
-    item.insert_text_format = Some(InsertTextFormat::SNIPPET);
-    item.insert_text = if parameter == "..." {
-        Some("...".to_string())
-    } else {
-        Some(parameter.to_string() + " = ")
+
+    let position = point.as_position();
+    let range = Range {
+        start: position,
+        end: position,
     };
+    let textedit = TextEdit {
+        range,
+        new_text: "".to_string(),
+    };
+    let textedit = CompletionTextEdit::Edit(textedit);
+    item.text_edit = Some(textedit);
 
     Ok(item)
 }

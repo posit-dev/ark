@@ -16,6 +16,7 @@ use harp::exec::RFunctionExt;
 use harp::protect::RProtect;
 use harp::r_string;
 use harp::r_symbol;
+use harp::utils::r_poke_option;
 use libR_sys::*;
 use stdext::local;
 use stdext::spawn;
@@ -107,7 +108,12 @@ impl RModuleWatcher {
     }
 }
 
-pub unsafe fn initialize() -> anyhow::Result<()> {
+pub unsafe fn initialize(testing: bool) -> anyhow::Result<()> {
+    // If we are `testing`, set the corresponding R level global option
+    if testing {
+        r_poke_option_ark_testing()
+    }
+
     // Create the 'private' Positron environment.
     let private = RFunction::new("base", "new.env")
         .param("parent", R_GlobalEnv)
@@ -242,6 +248,13 @@ pub unsafe fn import(file: &Path) -> anyhow::Result<()> {
         .call()?;
 
     Ok(())
+}
+
+fn r_poke_option_ark_testing() {
+    unsafe {
+        let value = Rf_ScalarLogical(1);
+        r_poke_option(r_symbol!("ark.testing"), value);
+    }
 }
 
 #[harp::register]
