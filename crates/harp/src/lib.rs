@@ -214,7 +214,7 @@ macro_rules! assert_match {
 #[macro_export(local_inner_macros)]
 macro_rules! push_rds {
     ($arg:expr) => {
-        harp::utils::push_rds(
+        $crate::utils::push_rds(
             $arg,
             "",
             &std::format!(
