@@ -11,6 +11,7 @@ use std::os::raw::c_void;
 use std::path::Path;
 
 use c2rust_bitfields::BitfieldStruct;
+use harp_macros::register;
 use itertools::Itertools;
 use libR_sys::*;
 use once_cell::sync::Lazy;
@@ -97,6 +98,27 @@ impl Sxpinfo {
     pub fn is_object(&self) -> bool {
         self.obj() != 0
     }
+}
+
+// Necessary for the `harp` reference in the `register` macro to resolve correctly
+mod harp {
+    pub use crate::*;
+}
+
+#[register]
+pub extern "C" fn harp_log_warning(msg: SEXP) -> crate::error::Result<SEXP> {
+    let msg = String::try_from(RObject::view(msg))?;
+    log::warn!("{msg}");
+
+    unsafe { Ok(R_NilValue) }
+}
+
+#[register]
+pub extern "C" fn harp_log_error(msg: SEXP) -> crate::error::Result<SEXP> {
+    let msg = String::try_from(RObject::view(msg))?;
+    log::error!("{msg}");
+
+    unsafe { Ok(R_NilValue) }
 }
 
 pub fn r_assert_type(object: SEXP, expected: &[u32]) -> Result<u32> {
