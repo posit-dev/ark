@@ -420,7 +420,7 @@ impl Environment {
     /// Returns environment name if it has one. Reproduces the same output as
     /// `rlang::env_name()`.
     pub fn name(&self) -> Option<String> {
-        let name = unsafe { RFunction::new("", ".ps.env_name").add(self.env.sexp).call() };
+        let name = RFunction::new("", ".ps.env_name").add(self.env.sexp).call();
         let name = unwrap!(name, Err(err) => {
             log::error!("{err:?}");
             return None
@@ -441,7 +441,7 @@ impl Environment {
 
     /// Returns the names of the bindings of the environment
     pub fn names(&self) -> Vec<String> {
-        let names = unsafe { RFunction::new("base", "names").add(self.env.sexp).call() };
+        let names = RFunction::new("base", "names").add(self.env.sexp).call();
         let names = unwrap!(names, Err(err) => {
             log::error!("{err:?}");
             return vec![]
