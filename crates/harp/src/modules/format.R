@@ -9,19 +9,27 @@
 # hard to recover from failed assumptions, including by unclassing and
 # reformatting with the default method.
 harp_format <- function(x, ...) {
-    if (is.object(x) && is_matrix(x)) {
-        format_oo_matrix(x, ...)
+    if (is.object(x)) {
+        format_oo(x, ...)
     } else {
         base::format(x, ...)
     }
 }
 
-format_oo_matrix <- function(x, ...) {
+format_oo <- function(x, ...) {
     out <- base::format(x, ...)
 
     if (!is.character(out)) {
         log_warning(sprintf(
             "`format()` method for <%s> should return a character vector.",
+            class_collapsed(x)
+        ))
+        return(format_fallback(x, ...))
+    }
+
+    if (length(x) != length(out)) {
+        log_warning(sprintf(
+            "`format()` method for <%s> should return the same number of elements.",
             class_collapsed(x)
         ))
         return(format_fallback(x, ...))
@@ -34,14 +42,6 @@ format_oo_matrix <- function(x, ...) {
             "`format()` method for <%s> should return conforming dimensions.",
             class_collapsed(x)
         ))
-
-        if (length(x) != length(out)) {
-            log_warning(sprintf(
-                "`format()` method for <%s> should return the same number of elements.",
-                class_collapsed(x)
-            ))
-            return(format_fallback(x, ...))
-        }
 
         dim(out) <- dim(x)
     }
