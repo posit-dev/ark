@@ -68,6 +68,9 @@ pub fn start_r() {
         }
 
         // Initialize harp globals
+        unsafe {
+            crate::routines::r_register_routines();
+        }
         crate::initialize();
     });
 }

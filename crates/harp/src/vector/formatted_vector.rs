@@ -166,3 +166,40 @@ impl FormattedVector {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use itertools::Itertools;
+
+    use crate::environment::Environment;
+    use crate::eval::r_parse_eval0;
+    use crate::test::r_test;
+    use crate::utils::HARP_ENV;
+    use crate::vector::formatted_vector::FormattedVector;
+
+    #[test]
+    fn test_unconforming_format_method() {
+        // Test that we recover from unconforming `format()` methods
+        r_test(|| unsafe {
+            let exp = String::from("\"1\" \"2\"");
+
+            // From src/modules/format.R
+            let objs = Environment::new(r_parse_eval0("init_test_format()", HARP_ENV).unwrap());
+
+            // Unconforming dims (posit-dev/positron#1862)
+            let x = FormattedVector::new(objs.find("unconforming_dims")).unwrap();
+            let out = x.column_iter(0).join(" ");
+            assert_eq!(out, exp);
+
+            // Unconforming length
+            let x = FormattedVector::new(objs.find("unconforming_length")).unwrap();
+            let out = x.iter().join(" ");
+            assert_eq!(out, exp);
+
+            // Unconforming type
+            let x = FormattedVector::new(objs.find("unconforming_type")).unwrap();
+            let out = x.iter().join(" ");
+            assert_eq!(out, exp);
+        })
+    }
+}

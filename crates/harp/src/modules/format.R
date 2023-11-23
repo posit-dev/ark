@@ -66,3 +66,23 @@ format_fallback <- function(x, ...) {
 
     out
 }
+
+# Register unconforming methods for tests
+init_test_format <- function() {
+    format.test_unconforming_dims <- function(x) as.character(x)
+    .S3method("format", "test_unconforming_dims", format.test_unconforming_dims)
+
+    format.test_unconforming_type <- function(x) as.double(x)
+    .S3method("format", "test_unconforming_type", format.test_unconforming_type)
+
+    format.test_unconforming_length <- function(x) as.character(x)[-1]
+    .S3method("format", "test_unconforming_length", format.test_unconforming_length)
+
+    unconforming_dims <- matrix(1:4, 2)
+    class(unconforming_dims) <- "test_unconforming_dims"
+
+    unconforming_type <- structure(1:2, class = "test_unconforming_type")
+    unconforming_length <- structure(1:2, class = "test_unconforming_length")
+
+    environment()
+}
