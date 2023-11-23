@@ -19,7 +19,7 @@ pub fn r_test<F: FnOnce()>(f: F) {
         initialize_ark();
         f()
     };
-    harp::test::r_test_impl(f)
+    harp::test::r_test(f)
 }
 
 static INIT: Once = Once::new();
