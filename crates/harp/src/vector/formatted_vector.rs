@@ -14,6 +14,7 @@ use crate::utils::r_assert_type;
 use crate::utils::r_inherits;
 use crate::utils::r_is_null;
 use crate::utils::r_typeof;
+use crate::utils::HARP_ENV;
 use crate::vector::CharacterVector;
 use crate::vector::ComplexVector;
 use crate::vector::Factor;
@@ -70,7 +71,10 @@ impl FormattedVector {
                         vector: Factor::new_unchecked(vector),
                     })
                 } else {
-                    let formatted = RFunction::new("base", "format").add(vector).call()?;
+                    let formatted = RFunction::new("", "harp_format")
+                        .add(vector)
+                        .call_in(HARP_ENV)?;
+
                     r_assert_type(*formatted, &[STRSXP])?;
                     Ok(Self::FormattedVector {
                         vector: CharacterVector::new_unchecked(formatted),
