@@ -91,6 +91,7 @@ pub(super) fn filter_out_dot_prefixes(
 pub(super) enum CallNodePositionType {
     Name,
     Value,
+    Outside,
     Other,
 }
 
@@ -99,7 +100,7 @@ pub(super) fn call_node_position_type(node: &Node, point: Point) -> CallNodePosi
         "(" => {
             if point.is_before_or_equal(node.start_position()) {
                 // Before the `(`
-                return CallNodePositionType::Other;
+                return CallNodePositionType::Outside;
             } else {
                 // Must be a name position
                 return CallNodePositionType::Name;
@@ -108,7 +109,7 @@ pub(super) fn call_node_position_type(node: &Node, point: Point) -> CallNodePosi
         ")" => {
             if point.is_after_or_equal(node.end_position()) {
                 // After the `)`
-                return CallNodePositionType::Other;
+                return CallNodePositionType::Outside;
             } else {
                 // Let previous leaf determine type (i.e. did the `)`
                 // follow a `=` or a `,`?)
