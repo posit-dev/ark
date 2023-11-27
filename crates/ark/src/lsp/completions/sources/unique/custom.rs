@@ -116,10 +116,13 @@ pub fn completions_from_custom_source_impl(
     let position = match call_node_position_type(&node, point) {
         CallNodePositionType::Name => "name",
         CallNodePositionType::Value => "value",
-        CallNodePositionType::Other => "value",
         CallNodePositionType::Outside => {
-            // Call detected, but possibly on the RHS of a `)` node or the LHS
+            // Call detected, but on the RHS of a `)` node or the LHS
             // of a `(` node, i.e. outside the parenthesis.
+            return Ok(None);
+        },
+        CallNodePositionType::Unknown => {
+            // Call detected, but inside some very odd edge case
             return Ok(None);
         },
     };
