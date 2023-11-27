@@ -120,9 +120,23 @@ impl PositronFrontend {
                 false
             },
             CommChannelMsg::Rpc(id, request) => {
-                if let Err(err) = self.handle_rpc_request(id, request) {
-                    log::warn!("Error handling RPC request from front end: {:?}", err);
-                }
+                let message = match serde_json::from_value::<FrontendMessage>(request.clone()) {
+                    Ok(msg) => msg,
+                    Err(err) => {
+                        log::warn!("Error decoding RPC request from front end: {:?}", err);
+                        return true;
+                    },
+                };
+                match message {
+                    FrontendMessage::RpcRequest(req) => {
+                        if let Err(err) = self.handle_rpc_request(id, &req) {
+                            log::warn!("Error handling RPC request from front end: {:?}", err);
+                        }
+                    },
+                    _ => {
+                        log::warn!("Unexpected RPC message from front end: {:?}", message);
+                    },
+                };
                 true
             },
         }
@@ -134,11 +148,8 @@ impl PositronFrontend {
     fn handle_rpc_request(
         &self,
         id: &str,
-        request: &serde_json::Value,
+        request: &FrontendRpcRequest,
     ) -> Result<(), anyhow::Error> {
-        // Parse the request from the front end
-        let request = serde_json::from_value::<FrontendRpcRequest>(request.clone())?;
-
         // Form an R function call from the request
         //
         // Consider: In the future, we may want to allow requests to be
