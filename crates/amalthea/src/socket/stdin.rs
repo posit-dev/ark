@@ -5,9 +5,6 @@
  *
  */
 
-use std::sync::Arc;
-use std::sync::Mutex;
-
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use crossbeam::select;
@@ -16,7 +13,6 @@ use log::trace;
 use log::warn;
 
 use crate::session::Session;
-use crate::wire::header::JupyterHeader;
 use crate::wire::input_reply::InputReply;
 use crate::wire::input_request::ShellInputRequest;
 use crate::wire::jupyter_message::JupyterMessage;
@@ -29,10 +25,6 @@ pub struct Stdin {
 
     /// Sender connected to the StdIn's ZeroMQ socket
     outbound_tx: Sender<OutboundMessage>,
-
-    // IOPub message context. Updated from StdIn on input replies so that new
-    // output gets attached to the correct input element in the console.
-    msg_context: Arc<Mutex<Option<JupyterHeader>>>,
 
     // 0MQ session, needed to create `JupyterMessage` objects
     session: Session,
@@ -47,13 +39,11 @@ impl Stdin {
     pub fn new(
         inbound_rx: Receiver<Message>,
         outbound_tx: Sender<OutboundMessage>,
-        msg_context: Arc<Mutex<Option<JupyterHeader>>>,
         session: Session,
     ) -> Self {
         Self {
             inbound_rx,
             outbound_tx,
-            msg_context,
             session,
         }
     }
@@ -97,10 +87,6 @@ impl Stdin {
                 };
             }
 
-            if let None = req.originator {
-                warn!("No originator for stdin request");
-            }
-
             // Deliver the message to the front end
             let msg = Message::InputRequest(JupyterMessage::create_with_identity(
                 req.originator,
@@ -142,12 +128,6 @@ impl Stdin {
                 },
             };
             trace!("Received input reply from front-end: {:?}", reply);
-
-            // FIXME: Should not be needed. Update IOPub message context
-            {
-                let mut ctxt = self.msg_context.lock().unwrap();
-                *ctxt = Some(reply.header.clone());
-            }
 
             // Send it to the kernel implementation
             input_reply_tx.send(reply.content).unwrap();

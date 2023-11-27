@@ -207,7 +207,6 @@ impl Kernel {
             None,
             self.connection.endpoint(self.connection.stdin_port),
         )?;
-        let shell_context = self.shell_context.clone();
 
         let (stdin_inbound_tx, stdin_inbound_rx) = unbounded();
         let (stdin_interrupt_tx, stdin_interrupt_rx) = bounded(1);
@@ -217,7 +216,6 @@ impl Kernel {
             Self::stdin_thread(
                 stdin_inbound_rx,
                 outbound_tx,
-                shell_context,
                 input_request_rx,
                 input_reply_tx,
                 stdin_interrupt_rx,
@@ -364,13 +362,12 @@ impl Kernel {
     fn stdin_thread(
         inbound_rx: Receiver<Message>,
         outbound_tx: Sender<OutboundMessage>,
-        msg_context: Arc<Mutex<Option<JupyterHeader>>>,
         input_request_rx: Receiver<ShellInputRequest>,
         input_reply_tx: Sender<InputReply>,
         interrupt_rx: Receiver<bool>,
         session: Session,
     ) -> Result<(), Error> {
-        let stdin = Stdin::new(inbound_rx, outbound_tx, msg_context, session);
+        let stdin = Stdin::new(inbound_rx, outbound_tx, session);
         stdin.listen(input_request_rx, input_reply_tx, interrupt_rx);
         Ok(())
     }
