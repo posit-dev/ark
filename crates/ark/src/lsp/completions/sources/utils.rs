@@ -223,131 +223,128 @@ mod tests {
     use crate::lsp::completions::sources::utils::CallNodePositionType;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
-    use crate::test::r_test;
 
     #[test]
     fn test_call_node_position_type() {
-        r_test(|| {
-            // Before `(`, but on it
-            let point = Point { row: 0, column: 3 };
-            let document = Document::new("fn ()");
-            let context = DocumentContext::new(&document, point);
-            assert_eq!(context.node.kind(), "(");
-            assert_eq!(
-                call_node_position_type(&context.node, context.point),
-                CallNodePositionType::Outside
-            );
+        // Before `(`, but on it
+        let point = Point { row: 0, column: 3 };
+        let document = Document::new("fn ()");
+        let context = DocumentContext::new(&document, point);
+        assert_eq!(context.node.kind(), "(");
+        assert_eq!(
+            call_node_position_type(&context.node, context.point),
+            CallNodePositionType::Outside
+        );
 
-            // After `)`, but on it
-            let point = Point { row: 0, column: 4 };
-            let document = Document::new("fn()");
-            let context = DocumentContext::new(&document, point);
-            assert_eq!(context.node.kind(), ")");
-            assert_eq!(
-                call_node_position_type(&context.node, context.point),
-                CallNodePositionType::Outside
-            );
+        // After `)`, but on it
+        let point = Point { row: 0, column: 4 };
+        let document = Document::new("fn()");
+        let context = DocumentContext::new(&document, point);
+        assert_eq!(context.node.kind(), ")");
+        assert_eq!(
+            call_node_position_type(&context.node, context.point),
+            CallNodePositionType::Outside
+        );
 
-            // After `(`, but on it
-            let point = Point { row: 0, column: 3 };
-            let document = Document::new("fn()");
-            let context = DocumentContext::new(&document, point);
-            assert_eq!(context.node.kind(), "(");
-            assert_eq!(
-                call_node_position_type(&context.node, context.point),
-                CallNodePositionType::Name
-            );
+        // After `(`, but on it
+        let point = Point { row: 0, column: 3 };
+        let document = Document::new("fn()");
+        let context = DocumentContext::new(&document, point);
+        assert_eq!(context.node.kind(), "(");
+        assert_eq!(
+            call_node_position_type(&context.node, context.point),
+            CallNodePositionType::Name
+        );
 
-            // After `x`
-            let point = Point { row: 0, column: 4 };
-            let document = Document::new("fn(x)");
-            let context = DocumentContext::new(&document, point);
-            assert_eq!(
-                call_node_position_type(&context.node, context.point),
-                CallNodePositionType::Name
-            );
+        // After `x`
+        let point = Point { row: 0, column: 4 };
+        let document = Document::new("fn(x)");
+        let context = DocumentContext::new(&document, point);
+        assert_eq!(
+            call_node_position_type(&context.node, context.point),
+            CallNodePositionType::Name
+        );
 
-            // Directly after `,`
-            let point = Point { row: 0, column: 5 };
-            let document = Document::new("fn(x, )");
-            let context = DocumentContext::new(&document, point);
-            assert_eq!(context.node.kind(), "comma");
-            assert_eq!(
-                call_node_position_type(&context.node, context.point),
-                CallNodePositionType::Name
-            );
+        // Directly after `,`
+        let point = Point { row: 0, column: 5 };
+        let document = Document::new("fn(x, )");
+        let context = DocumentContext::new(&document, point);
+        assert_eq!(context.node.kind(), "comma");
+        assert_eq!(
+            call_node_position_type(&context.node, context.point),
+            CallNodePositionType::Name
+        );
 
-            // After `,`, but on `)`
-            let point = Point { row: 0, column: 6 };
-            let document = Document::new("fn(x, )");
-            let context = DocumentContext::new(&document, point);
-            assert_eq!(context.node.kind(), ")");
-            assert_eq!(
-                call_node_position_type(&context.node, context.point),
-                CallNodePositionType::Name
-            );
+        // After `,`, but on `)`
+        let point = Point { row: 0, column: 6 };
+        let document = Document::new("fn(x, )");
+        let context = DocumentContext::new(&document, point);
+        assert_eq!(context.node.kind(), ")");
+        assert_eq!(
+            call_node_position_type(&context.node, context.point),
+            CallNodePositionType::Name
+        );
 
-            // After `=`
-            let point = Point { row: 0, column: 6 };
-            let document = Document::new("fn(x =)");
-            let context = DocumentContext::new(&document, point);
-            assert_eq!(context.node.kind(), "=");
-            assert_eq!(
-                call_node_position_type(&context.node, context.point),
-                CallNodePositionType::Value
-            );
+        // After `=`
+        let point = Point { row: 0, column: 6 };
+        let document = Document::new("fn(x =)");
+        let context = DocumentContext::new(&document, point);
+        assert_eq!(context.node.kind(), "=");
+        assert_eq!(
+            call_node_position_type(&context.node, context.point),
+            CallNodePositionType::Value
+        );
 
-            // In an expression
-            let point = Point { row: 0, column: 4 };
-            let document = Document::new("fn(1 + 1)");
-            let context = DocumentContext::new(&document, point);
-            assert_eq!(context.node.kind(), "float");
-            assert_eq!(
-                call_node_position_type(&context.node, context.point),
-                CallNodePositionType::Value
-            );
+        // In an expression
+        let point = Point { row: 0, column: 4 };
+        let document = Document::new("fn(1 + 1)");
+        let context = DocumentContext::new(&document, point);
+        assert_eq!(context.node.kind(), "float");
+        assert_eq!(
+            call_node_position_type(&context.node, context.point),
+            CallNodePositionType::Value
+        );
 
-            let point = Point { row: 0, column: 8 };
-            let document = Document::new("fn(1 + 1)");
-            let context = DocumentContext::new(&document, point);
-            assert_eq!(context.node.kind(), "float");
-            assert_eq!(
-                call_node_position_type(&context.node, context.point),
-                CallNodePositionType::Value
-            );
+        let point = Point { row: 0, column: 8 };
+        let document = Document::new("fn(1 + 1)");
+        let context = DocumentContext::new(&document, point);
+        assert_eq!(context.node.kind(), "float");
+        assert_eq!(
+            call_node_position_type(&context.node, context.point),
+            CallNodePositionType::Value
+        );
 
-            // Right before an expression
-            // (special case where we still provide argument completions)
-            let point = Point { row: 0, column: 6 };
-            let document = Document::new("fn(1, 1 + 1)");
-            let context = DocumentContext::new(&document, point);
-            assert_eq!(context.node.kind(), "float");
-            assert_eq!(
-                call_node_position_type(&context.node, context.point),
-                CallNodePositionType::Name
-            );
+        // Right before an expression
+        // (special case where we still provide argument completions)
+        let point = Point { row: 0, column: 6 };
+        let document = Document::new("fn(1, 1 + 1)");
+        let context = DocumentContext::new(&document, point);
+        assert_eq!(context.node.kind(), "float");
+        assert_eq!(
+            call_node_position_type(&context.node, context.point),
+            CallNodePositionType::Name
+        );
 
-            // After an identifier, before the `)`, with whitespace between them,
-            // but on the `)`
-            let point = Point { row: 0, column: 5 };
-            let document = Document::new("fn(x )");
-            let context = DocumentContext::new(&document, point);
-            assert_eq!(context.node.kind(), ")");
-            assert_eq!(
-                call_node_position_type(&context.node, context.point),
-                CallNodePositionType::Value
-            );
+        // After an identifier, before the `)`, with whitespace between them,
+        // but on the `)`
+        let point = Point { row: 0, column: 5 };
+        let document = Document::new("fn(x )");
+        let context = DocumentContext::new(&document, point);
+        assert_eq!(context.node.kind(), ")");
+        assert_eq!(
+            call_node_position_type(&context.node, context.point),
+            CallNodePositionType::Value
+        );
 
-            // After an identifier, before the `)`, with whitespace between them,
-            // but on the identifier
-            let point = Point { row: 0, column: 4 };
-            let document = Document::new("fn(x )");
-            let context = DocumentContext::new(&document, point);
-            assert_eq!(context.node.kind(), "identifier");
-            assert_eq!(
-                call_node_position_type(&context.node, context.point),
-                CallNodePositionType::Name
-            );
-        })
+        // After an identifier, before the `)`, with whitespace between them,
+        // but on the identifier
+        let point = Point { row: 0, column: 4 };
+        let document = Document::new("fn(x )");
+        let context = DocumentContext::new(&document, point);
+        assert_eq!(context.node.kind(), "identifier");
+        assert_eq!(
+            call_node_position_type(&context.node, context.point),
+            CallNodePositionType::Name
+        );
     }
 }
