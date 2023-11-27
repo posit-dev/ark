@@ -47,7 +47,6 @@ use log::*;
 use serde_json::json;
 use stdext::spawn;
 
-use crate::variables::r_variables::RVariables;
 use crate::frontend::frontend::PositronFrontend;
 use crate::help::r_help::RHelp;
 use crate::interface::KernelInfo;
@@ -57,6 +56,7 @@ use crate::plots::graphics_device;
 use crate::r_task;
 use crate::request::KernelRequest;
 use crate::request::RRequest;
+use crate::variables::r_variables::RVariables;
 
 pub struct Shell {
     comm_manager_tx: Sender<CommEvent>,
@@ -199,13 +199,14 @@ impl ShellHandler for Shell {
         originator: Option<Originator>,
         req: &ExecuteRequest,
     ) -> Result<ExecuteReply, ExecuteReplyException> {
-        let (sender, receiver) = unbounded::<ExecuteResponse>();
+        let (response_tx, response_rx) = unbounded::<ExecuteResponse>();
         let mut req_clone = req.clone();
         req_clone.code = convert_line_endings(&req_clone.code, LineEnding::Posix);
-        if let Err(err) =
-            self.r_request_tx
-                .send(RRequest::ExecuteCode(req_clone.clone(), originator, sender))
-        {
+        if let Err(err) = self.r_request_tx.send(RRequest::ExecuteCode(
+            req_clone.clone(),
+            originator,
+            response_tx,
+        )) {
             warn!(
                 "Could not deliver execution request to execution thread: {}",
                 err
@@ -213,7 +214,7 @@ impl ShellHandler for Shell {
         }
 
         trace!("Code sent to R: {}", req_clone.code);
-        let result = receiver.recv().unwrap();
+        let result = response_rx.recv().unwrap();
 
         let result = match result {
             ExecuteResponse::Reply(reply) => Ok(reply),
@@ -334,17 +335,17 @@ impl ShellHandler for Shell {
             allow_stdin: false,
             stop_on_error: false,
         };
-        let (sender, receiver) = unbounded::<ExecuteResponse>();
+        let (response_tx, response_rx) = unbounded::<ExecuteResponse>();
         if let Err(err) =
             self.r_request_tx
-                .send(RRequest::ExecuteCode(req.clone(), Some(orig), sender))
+                .send(RRequest::ExecuteCode(req.clone(), Some(orig), response_tx))
         {
             warn!("Could not deliver input reply to execution thread: {}", err)
         }
 
         // Let the shell thread know that we've executed the code.
         trace!("Input reply sent to R: {}", req.code);
-        let result = receiver.recv().unwrap();
+        let result = response_rx.recv().unwrap();
         if let ExecuteResponse::ReplyException(err) = result {
             warn!("Error in input reply: {:?}", err);
         }
