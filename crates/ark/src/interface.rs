@@ -878,7 +878,7 @@ impl RMain {
         // all of the messages in the queue, only that they have been send over.
         // So the input request (sent over the stdin socket) can STILL arrive
         // before all of the IOPub messages have been processed by the frontend.
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        std::thread::sleep(std::time::Duration::from_millis(100));
 
         unwrap!(
             self.input_request_tx
