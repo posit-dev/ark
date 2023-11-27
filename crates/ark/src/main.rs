@@ -406,13 +406,19 @@ fn main() {
     std::panic::set_hook(Box::new(move |panic_info| {
         let info = panic_info.payload();
 
+        let loc = if let Some(location) = panic_info.location() {
+            format!("In file '{}' at line {}:", location.file(), location.line(),)
+        } else {
+            String::from("No location information:")
+        };
+
         // Report panic to the frontend
         if let Some(info) = info.downcast_ref::<&str>() {
-            log::error!("Panic! {info:}");
+            log::error!("Panic! {loc} {info:}");
         } else if let Some(info) = info.downcast_ref::<String>() {
-            log::error!("Panic! {info:}");
+            log::error!("Panic! {loc} {info:}");
         } else {
-            log::error!("Panic! No contextual information.");
+            log::error!("Panic! {loc} No contextual information.");
         }
         log::logger().flush();
 
