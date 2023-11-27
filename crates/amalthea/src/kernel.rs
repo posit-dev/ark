@@ -35,6 +35,7 @@ use crate::socket::socket::Socket;
 use crate::socket::stdin::Stdin;
 use crate::stream_capture::StreamCapture;
 use crate::wire::header::JupyterHeader;
+use crate::wire::input_reply::InputReply;
 use crate::wire::input_request::ShellInputRequest;
 use crate::wire::jupyter_message::Message;
 use crate::wire::jupyter_message::OutboundMessage;
@@ -121,6 +122,8 @@ impl Kernel {
         // deliver it via the `handle_input_reply` method.
         // https://jupyter-client.readthedocs.io/en/stable/messaging.html#messages-on-the-stdin-router-dealer-channel
         input_request_rx: Receiver<ShellInputRequest>,
+        // Transmission channel for `input_reply` handling by StdIn
+        input_reply_tx: Sender<InputReply>,
     ) -> Result<(), Error> {
         let ctx = zmq::Context::new();
 
@@ -204,7 +207,6 @@ impl Kernel {
             None,
             self.connection.endpoint(self.connection.stdin_port),
         )?;
-        let shell_clone = shell_handler.clone();
         let shell_context = self.shell_context.clone();
 
         let (stdin_inbound_tx, stdin_inbound_rx) = unbounded();
@@ -215,9 +217,9 @@ impl Kernel {
             Self::stdin_thread(
                 stdin_inbound_rx,
                 outbound_tx,
-                shell_clone,
                 shell_context,
                 input_request_rx,
+                input_reply_tx,
                 stdin_interrupt_rx,
                 stdin_session,
             )
@@ -362,14 +364,14 @@ impl Kernel {
     fn stdin_thread(
         inbound_rx: Receiver<Message>,
         outbound_tx: Sender<OutboundMessage>,
-        shell_handler: Arc<Mutex<dyn ShellHandler>>,
         msg_context: Arc<Mutex<Option<JupyterHeader>>>,
         input_request_rx: Receiver<ShellInputRequest>,
+        input_reply_tx: Sender<InputReply>,
         interrupt_rx: Receiver<bool>,
         session: Session,
     ) -> Result<(), Error> {
-        let stdin = Stdin::new(inbound_rx, outbound_tx, shell_handler, msg_context, session);
-        stdin.listen(input_request_rx, interrupt_rx);
+        let stdin = Stdin::new(inbound_rx, outbound_tx, msg_context, session);
+        stdin.listen(input_request_rx, input_reply_tx, interrupt_rx);
         Ok(())
     }
 

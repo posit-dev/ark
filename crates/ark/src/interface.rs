@@ -35,6 +35,7 @@ use amalthea::wire::execute_reply_exception::ExecuteReplyException;
 use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::execute_response::ExecuteResponse;
 use amalthea::wire::execute_result::ExecuteResult;
+use amalthea::wire::input_reply::InputReply;
 use amalthea::wire::input_request::InputRequest;
 use amalthea::wire::input_request::ShellInputRequest;
 use amalthea::wire::jupyter_message::Status;
@@ -160,6 +161,7 @@ pub fn start_r(
     comm_manager_tx: Sender<CommEvent>,
     r_request_rx: Receiver<RRequest>,
     input_request_tx: Sender<ShellInputRequest>,
+    input_reply_rx: Receiver<InputReply>,
     iopub_tx: Sender<IOPubMessage>,
     kernel_init_tx: Bus<KernelInfo>,
     dap: Arc<Mutex<Dap>>,
@@ -179,6 +181,7 @@ pub fn start_r(
             comm_manager_tx,
             r_request_rx,
             input_request_tx,
+            input_reply_rx,
             iopub_tx,
             kernel_init_tx,
             dap,
@@ -266,6 +269,9 @@ pub struct RMain {
     /// Input requests to the frontend. Processed from `ReadConsole()`
     /// calls triggered by e.g. `readline()`.
     input_request_tx: Sender<ShellInputRequest>,
+
+    /// Input replies from the frontend. Waited on in `ReadConsole()` after a request.
+    input_reply_rx: Receiver<InputReply>,
 
     /// IOPub channel for broadcasting outputs
     iopub_tx: Sender<IOPubMessage>,
@@ -376,6 +382,7 @@ impl RMain {
         comm_manager_tx: Sender<CommEvent>,
         r_request_rx: Receiver<RRequest>,
         input_request_tx: Sender<ShellInputRequest>,
+        input_reply_rx: Receiver<InputReply>,
         iopub_tx: Sender<IOPubMessage>,
         kernel_init_tx: Bus<KernelInfo>,
         dap: Arc<Mutex<Dap>>,
@@ -385,6 +392,7 @@ impl RMain {
             r_request_rx,
             comm_manager_tx,
             input_request_tx,
+            input_reply_rx,
             iopub_tx,
             kernel_init_tx,
             active_request: None,
@@ -742,6 +750,14 @@ impl RMain {
                         },
                         ConsoleInput::EOF => ConsoleResult::Disconnected,
                     }
+                }
+
+                recv(self.input_reply_rx) -> input => {
+                    // StdIn must remain alive
+                    let input = input.unwrap();
+
+                    Self::on_console_input(buf, buflen, input.value);
+                    return ConsoleResult::NewInput;
                 }
 
                 // A task woke us up, start next loop tick to yield to it

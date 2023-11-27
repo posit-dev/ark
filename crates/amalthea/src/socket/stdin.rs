@@ -11,19 +11,17 @@ use std::sync::Mutex;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use crossbeam::select;
-use futures::executor::block_on;
 use log::error;
 use log::trace;
 use log::warn;
 
-use crate::language::shell_handler::ShellHandler;
 use crate::session::Session;
 use crate::wire::header::JupyterHeader;
+use crate::wire::input_reply::InputReply;
 use crate::wire::input_request::ShellInputRequest;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
 use crate::wire::jupyter_message::OutboundMessage;
-use crate::wire::originator::Originator;
 
 pub struct Stdin {
     /// Receiver connected to the StdIn's ZeroMQ socket
@@ -31,9 +29,6 @@ pub struct Stdin {
 
     /// Sender connected to the StdIn's ZeroMQ socket
     outbound_tx: Sender<OutboundMessage>,
-
-    /// Language-provided shell handler object
-    handler: Arc<Mutex<dyn ShellHandler>>,
 
     // IOPub message context. Updated from StdIn on input replies so that new
     // output gets attached to the correct input element in the console.
@@ -52,14 +47,12 @@ impl Stdin {
     pub fn new(
         inbound_rx: Receiver<Message>,
         outbound_tx: Sender<OutboundMessage>,
-        handler: Arc<Mutex<dyn ShellHandler>>,
         msg_context: Arc<Mutex<Option<JupyterHeader>>>,
         session: Session,
     ) -> Self {
         Self {
             inbound_rx,
             outbound_tx,
-            handler,
             msg_context,
             session,
         }
@@ -71,6 +64,7 @@ impl Stdin {
     pub fn listen(
         &self,
         input_request_rx: Receiver<ShellInputRequest>,
+        input_reply_tx: Sender<InputReply>,
         interrupt_rx: Receiver<bool>,
     ) {
         loop {
@@ -149,18 +143,14 @@ impl Stdin {
             };
             trace!("Received input reply from front-end: {:?}", reply);
 
-            // Update IOPub message context
+            // FIXME: Should not be needed. Update IOPub message context
             {
                 let mut ctxt = self.msg_context.lock().unwrap();
                 *ctxt = Some(reply.header.clone());
             }
 
-            // Send the reply to the shell handler
-            let handler = self.handler.lock().unwrap();
-            let orig = Originator::from(&reply);
-            if let Err(err) = block_on(handler.handle_input_reply(&reply.content, orig)) {
-                warn!("Error handling input reply: {:?}", err);
-            }
+            // Send it to the kernel implementation
+            input_reply_tx.send(reply.content).unwrap();
         }
     }
 }

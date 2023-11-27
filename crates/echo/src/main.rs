@@ -19,6 +19,7 @@ use amalthea::kernel::StreamBehavior;
 use amalthea::kernel_spec::KernelSpec;
 use amalthea::wire::input_request::ShellInputRequest;
 use crossbeam::channel::bounded;
+use crossbeam::channel::unbounded;
 use log::debug;
 use log::error;
 use log::info;
@@ -36,13 +37,26 @@ fn start_kernel(connection_file: ConnectionFile) {
     };
 
     // Communication channel with StdIn
-    let (input_tx, input_rx) = bounded::<ShellInputRequest>(1);
+    let (input_request_tx, input_request_rx) = bounded::<ShellInputRequest>(1);
+    let (input_reply_tx, input_reply_rx) = unbounded();
 
     let shell_tx = kernel.create_iopub_tx();
-    let shell = Arc::new(Mutex::new(Shell::new(shell_tx, input_tx)));
+    let shell = Arc::new(Mutex::new(Shell::new(
+        shell_tx,
+        input_request_tx,
+        input_reply_rx,
+    )));
     let control = Arc::new(Mutex::new(Control {}));
 
-    if let Err(err) = kernel.connect(shell, control, None, None, StreamBehavior::None, input_rx) {
+    if let Err(err) = kernel.connect(
+        shell,
+        control,
+        None,
+        None,
+        StreamBehavior::None,
+        input_request_rx,
+        input_reply_tx,
+    ) {
         panic!("Couldn't connect to front end: {err:?}");
     }
 

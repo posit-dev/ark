@@ -20,7 +20,6 @@ use amalthea::wire::execute_reply::ExecuteReply;
 use amalthea::wire::execute_reply_exception::ExecuteReplyException;
 use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::execute_response::ExecuteResponse;
-use amalthea::wire::input_reply::InputReply;
 use amalthea::wire::inspect_reply::InspectReply;
 use amalthea::wire::inspect_request::InspectRequest;
 use amalthea::wire::is_complete_reply::IsComplete;
@@ -314,42 +313,6 @@ impl ShellHandler for Shell {
             },
             _ => Ok(false),
         }
-    }
-
-    /// Handles a reply to an input_request; forwarded from the Stdin channel
-    async fn handle_input_reply(
-        &self,
-        msg: &InputReply,
-        orig: Originator,
-    ) -> Result<(), Exception> {
-        // Send the input reply to R in the form of an ordinary execution request.
-        let req = ExecuteRequest {
-            code: convert_line_endings(&msg.value, LineEnding::Posix),
-            // Ideally we might want to propagate the current setting for
-            // silent (in `RMain`'s current active request) but we don't
-            // have access to that state here and if we're interacting with
-            // the user this is likely not a silent request.
-            silent: false,
-            store_history: false,
-            user_expressions: json!({}),
-            allow_stdin: false,
-            stop_on_error: false,
-        };
-        let (response_tx, response_rx) = unbounded::<ExecuteResponse>();
-        if let Err(err) =
-            self.r_request_tx
-                .send(RRequest::ExecuteCode(req.clone(), Some(orig), response_tx))
-        {
-            warn!("Could not deliver input reply to execution thread: {}", err)
-        }
-
-        // Let the shell thread know that we've executed the code.
-        trace!("Input reply sent to R: {}", req.code);
-        let result = response_rx.recv().unwrap();
-        if let ExecuteResponse::ReplyException(err) = result {
-            warn!("Error in input reply: {:?}", err);
-        }
-        Ok(())
     }
 }
 

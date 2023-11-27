@@ -15,7 +15,6 @@ use crate::wire::exception::Exception;
 use crate::wire::execute_reply::ExecuteReply;
 use crate::wire::execute_reply_exception::ExecuteReplyException;
 use crate::wire::execute_request::ExecuteRequest;
-use crate::wire::input_reply::InputReply;
 use crate::wire::inspect_reply::InspectReply;
 use crate::wire::inspect_request::InspectRequest;
 use crate::wire::is_complete_reply::IsCompleteReply;
@@ -78,10 +77,4 @@ pub trait ShellHandler: Send {
     /// * `target` - The target name of the comm, such as `positron.variables`
     /// * `comm` - The comm channel to use to communicate with the front end
     async fn handle_comm_open(&self, target: Comm, comm: CommSocket) -> Result<bool, Exception>;
-
-    /// Handles a reply to a request for input from the front end (from stdin socket)
-    ///
-    /// https://jupyter-client.readthedocs.io/en/stable/messaging.html#messages-on-the-stdin-router-dealer-channel
-    async fn handle_input_reply(&self, msg: &InputReply, orig: Originator)
-        -> Result<(), Exception>;
 }
