@@ -41,7 +41,7 @@ pub fn completions_from_file_path(
 
     // Return empty set if we are here due to a trigger character like `$`.
     // See posit-dev/positron#1884.
-    if let Some(_) = context.trigger {
+    if context.trigger.is_some() {
         return Ok(Some(completions));
     }
 
