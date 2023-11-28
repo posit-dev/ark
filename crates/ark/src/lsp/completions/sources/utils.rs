@@ -91,6 +91,7 @@ pub(super) fn filter_out_dot_prefixes(
 pub(super) enum CallNodePositionType {
     Name,
     Value,
+    Ambiguous,
     Outside,
     Unknown,
 }
@@ -113,13 +114,14 @@ pub(super) fn call_node_position_type(node: &Node, point: Point) -> CallNodePosi
             } else {
                 // Let previous leaf determine type (i.e. did the `)`
                 // follow a `=` or a `,`?)
-                return call_prev_leaf_position_type(&node);
+                return call_prev_leaf_position_type(&node, false);
             }
         },
         "comma" => return CallNodePositionType::Name,
         "=" => return CallNodePositionType::Value,
-        // Like `fn(arg<tab>)`, `fn(x = arg<tab>)`, or `fn(x = 1, arg<tab>)`
-        "identifier" => return call_prev_leaf_position_type(&node),
+        // Like `fn(arg<tab>)` or `fn(x = 1, arg<tab>)` (which are ambiguous)
+        // or `fn(x = arg<tab>)` (which is clearly a `Value`)
+        "identifier" => return call_prev_leaf_position_type(&node, true),
         _ => {
             // Probably a complex node inside `()`. Typically a `Value`
             // unless we are at the very beginning of the node.
@@ -127,7 +129,7 @@ pub(super) fn call_node_position_type(node: &Node, point: Point) -> CallNodePosi
             // For things like `vctrs::vec_sort(x = 1, |2)` where you typed
             // the argument value but want to go back and fill in the name.
             if point == node.start_position() {
-                return call_prev_leaf_position_type(&node);
+                return call_prev_leaf_position_type(&node, false);
             }
 
             return CallNodePositionType::Value;
@@ -135,8 +137,8 @@ pub(super) fn call_node_position_type(node: &Node, point: Point) -> CallNodePosi
     }
 }
 
-fn call_prev_leaf_position_type(node: &Node) -> CallNodePositionType {
-    let Some(node) = node.prev_leaf() else {
+fn call_prev_leaf_position_type(node: &Node, allow_ambiguous: bool) -> CallNodePositionType {
+    let Some(previous) = node.prev_leaf() else {
         // We expect a previous leaf to exist anywhere we use this, so if it
         // doesn't exist then we return this marker type that tells us we should
         // probably investigate our heuristics.
@@ -146,9 +148,16 @@ fn call_prev_leaf_position_type(node: &Node) -> CallNodePositionType {
         return CallNodePositionType::Unknown;
     };
 
-    match node.kind() {
-        "(" => return CallNodePositionType::Name,
-        "comma" => return CallNodePositionType::Name,
+    match previous.kind() {
+        "(" | "comma" => {
+            if allow_ambiguous {
+                // i.e. `fn(arg<tab>)` or `fn(x, arg<tab>)` where it can be
+                // ambiguous whether we are on a `Name` or a `Value`.
+                return CallNodePositionType::Ambiguous;
+            } else {
+                return CallNodePositionType::Name;
+            }
+        },
         "=" => return CallNodePositionType::Value,
         _ => return CallNodePositionType::Value,
     }
@@ -262,7 +271,16 @@ mod tests {
         let context = DocumentContext::new(&document, point);
         assert_eq!(
             call_node_position_type(&context.node, context.point),
-            CallNodePositionType::Name
+            CallNodePositionType::Ambiguous
+        );
+
+        // After `x`
+        let point = Point { row: 0, column: 7 };
+        let document = Document::new("fn(1, x)");
+        let context = DocumentContext::new(&document, point);
+        assert_eq!(
+            call_node_position_type(&context.node, context.point),
+            CallNodePositionType::Ambiguous
         );
 
         // Directly after `,`
@@ -344,7 +362,7 @@ mod tests {
         assert_eq!(context.node.kind(), "identifier");
         assert_eq!(
             call_node_position_type(&context.node, context.point),
-            CallNodePositionType::Name
+            CallNodePositionType::Ambiguous
         );
     }
 }

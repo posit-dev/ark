@@ -66,8 +66,11 @@ pub(super) fn completions_from_call(
     //    ~~~~
     //
     match call_node_position_type(&context.node, context.point) {
-        // We should provide argument completions
+        // We should provide argument completions. Ambiguous states like
+        // `fn(arg<tab>)` or `fn(x, arg<tab>)` should still get argument
+        // completions.
         CallNodePositionType::Name => (),
+        CallNodePositionType::Ambiguous => (),
         // We shouldn't provide argument completions, let another source
         // contribute completions
         CallNodePositionType::Value |
@@ -233,6 +236,18 @@ mod tests {
             let completions = completions_from_call(&context, None).unwrap().unwrap();
 
             // We detect this as a `name` position and return all possible completions
+            assert_eq!(completions.len(), 4);
+            assert_eq!(completions.get(0).unwrap().label, "x = ");
+            assert_eq!(completions.get(1).unwrap().label, "table = ");
+
+            // Right after `tab`
+            let point = Point { row: 0, column: 12 };
+            let document = Document::new("match(1, tab)");
+            let context = DocumentContext::new(&document, point);
+            let completions = completions_from_call(&context, None).unwrap().unwrap();
+
+            // We detect this as a `name` position and return all possible completions
+            // (TODO: Should not return `x` as a possible completion)
             assert_eq!(completions.len(), 4);
             assert_eq!(completions.get(0).unwrap().label, "x = ");
             assert_eq!(completions.get(1).unwrap().label, "table = ");
