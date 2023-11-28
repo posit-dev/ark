@@ -61,9 +61,11 @@ use harp::object::RObject;
 use harp::r_symbol;
 use harp::routines::r_register_routines;
 use harp::session::r_traceback;
+use harp::utils::convert_line_endings;
 use harp::utils::r_get_option;
 use harp::utils::r_is_data_frame;
 use harp::utils::r_poke_option_show_error_messages;
+use harp::utils::LineEnding;
 use harp::R_MAIN_THREAD_ID;
 use libR_sys::*;
 use log::*;
@@ -759,8 +761,9 @@ impl RMain {
                 recv(self.input_reply_rx) -> input => {
                     // StdIn must remain alive
                     let input = input.unwrap();
+                    let input = convert_line_endings(&input.value, LineEnding::Posix);
 
-                    Self::on_console_input(buf, buflen, input.value);
+                    Self::on_console_input(buf, buflen, input);
                     return ConsoleResult::NewInput;
                 }
 
