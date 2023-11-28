@@ -30,8 +30,10 @@ use amalthea::wire::jupyter_message::Status;
 use amalthea::wire::kernel_info_request::KernelInfoRequest;
 use amalthea::wire::status::ExecutionState;
 use amalthea::wire::status::KernelStatus;
+use amalthea::wire::stream::StreamOutput;
 use amalthea::wire::wire_message::WireMessage;
 use crossbeam::channel::bounded;
+use crossbeam::channel::unbounded;
 use log::info;
 use serde_json;
 
@@ -47,16 +49,30 @@ fn test_kernel() {
 
     let shell_tx = kernel.create_iopub_tx();
     let comm_manager_tx = kernel.create_comm_manager_tx();
-    let (input_tx, input_rx) = bounded::<ShellInputRequest>(1);
 
-    let shell = Arc::new(Mutex::new(shell::Shell::new(shell_tx, input_tx)));
+    let (input_request_tx, input_request_rx) = bounded::<ShellInputRequest>(1);
+    let (input_reply_tx, input_reply_rx) = unbounded();
+
+    let shell = Arc::new(Mutex::new(shell::Shell::new(
+        shell_tx,
+        input_request_tx,
+        input_reply_rx,
+    )));
     let control = Arc::new(Mutex::new(control::Control {}));
 
     // Initialize logging
     env_logger::init();
     info!("Starting test kernel");
 
-    if let Err(err) = kernel.connect(shell, control, None, None, StreamBehavior::None, input_rx) {
+    if let Err(err) = kernel.connect(
+        shell,
+        control,
+        None,
+        None,
+        StreamBehavior::None,
+        input_request_rx,
+        input_reply_tx,
+    ) {
         panic!("Error connecting kernel: {err:?}");
     };
 
@@ -258,6 +274,13 @@ fn test_kernel() {
             .unwrap()
             .message_type(),
         ExecuteInput::message_type()
+    );
+    assert_eq!(
+        // StreamOutput (echoed input)
+        WireMessage::try_from(&frontend.receive_iopub())
+            .unwrap()
+            .message_type(),
+        StreamOutput::message_type()
     );
     assert_eq!(
         // ExecuteResult

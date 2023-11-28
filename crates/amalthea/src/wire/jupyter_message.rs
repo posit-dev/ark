@@ -9,6 +9,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use super::client_event::ClientEvent;
+use super::stream::StreamOutput;
 use crate::error::Error;
 use crate::session::Session;
 use crate::socket::socket::Socket;
@@ -99,6 +100,7 @@ pub enum Message {
     CommMsg(JupyterMessage<CommMsg>),
     CommClose(JupyterMessage<CommClose>),
     ClientEvent(JupyterMessage<ClientEvent>),
+    StreamOutput(JupyterMessage<StreamOutput>),
 }
 
 /// Associates a `Message` to a 0MQ socket
@@ -147,6 +149,7 @@ impl TryFrom<&Message> for WireMessage {
             Message::CommMsg(msg) => WireMessage::try_from(msg),
             Message::CommClose(msg) => WireMessage::try_from(msg),
             Message::ClientEvent(msg) => WireMessage::try_from(msg),
+            Message::StreamOutput(msg) => WireMessage::try_from(msg),
         }
     }
 }
@@ -208,6 +211,8 @@ impl TryFrom<&WireMessage> for Message {
             return Ok(Message::InputReply(JupyterMessage::try_from(msg)?));
         } else if kind == InputRequest::message_type() {
             return Ok(Message::InputRequest(JupyterMessage::try_from(msg)?));
+        } else if kind == StreamOutput::message_type() {
+            return Ok(Message::StreamOutput(JupyterMessage::try_from(msg)?));
         }
         return Err(Error::UnknownMessageType(kind));
     }

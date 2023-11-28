@@ -118,8 +118,8 @@ impl Kernel {
         stream_behavior: StreamBehavior,
         // Receiver channel for the stdin socket; when input is needed, the
         // language runtime can request it by sending an InputRequest to
-        // this channel. The front end will prompt the user for input and
-        // deliver it via the `handle_input_reply` method.
+        // this channel. The frontend will prompt the user for input and
+        // the reply will be delivered via `input_reply_tx`.
         // https://jupyter-client.readthedocs.io/en/stable/messaging.html#messages-on-the-stdin-router-dealer-channel
         input_request_rx: Receiver<ShellInputRequest>,
         // Transmission channel for `input_reply` handling by StdIn
