@@ -207,6 +207,7 @@ pub fn completions_from_custom_source_impl(
 
 #[cfg(test)]
 mod tests {
+    use harp::environment::R_ENVS;
     use harp::eval::r_parse_eval0;
     use tree_sitter::Point;
 
@@ -218,15 +219,15 @@ mod tests {
     #[test]
     fn test_completion_custom_library() {
         r_test(|| {
-            let n_packages = unsafe {
-                let n = r_parse_eval0("length(base::.packages(TRUE))").unwrap();
+            let n_packages = {
+                let n = r_parse_eval0("length(base::.packages(TRUE))", R_ENVS.global).unwrap();
                 let n = i32::try_from(n).unwrap();
                 usize::try_from(n).unwrap()
             };
 
             let point = Point { row: 0, column: 8 };
             let document = Document::new("library()");
-            let context = DocumentContext::new(&document, point);
+            let context = DocumentContext::new(&document, point, None);
 
             let n_compls = completions_from_custom_source_impl(&context)
                 .unwrap()
@@ -238,7 +239,7 @@ mod tests {
 
             let point = Point { row: 0, column: 11 };
             let document = Document::new("library(uti)");
-            let context = DocumentContext::new(&document, point);
+            let context = DocumentContext::new(&document, point, None);
 
             let compls = completions_from_custom_source_impl(&context)
                 .unwrap()

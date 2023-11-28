@@ -234,7 +234,7 @@ mod tests {
             // Right after `tab`
             let point = Point { row: 0, column: 9 };
             let document = Document::new("match(tab)");
-            let context = DocumentContext::new(&document, point);
+            let context = DocumentContext::new(&document, point, None);
             let completions = completions_from_call(&context, None).unwrap().unwrap();
 
             // We detect this as a `name` position and return all possible completions
@@ -245,7 +245,7 @@ mod tests {
             // Right after `tab`
             let point = Point { row: 0, column: 12 };
             let document = Document::new("match(1, tab)");
-            let context = DocumentContext::new(&document, point);
+            let context = DocumentContext::new(&document, point, None);
             let completions = completions_from_call(&context, None).unwrap().unwrap();
 
             // We detect this as a `name` position and return all possible completions
