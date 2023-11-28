@@ -239,7 +239,7 @@ mod tests {
         // Before `(`, but on it
         let point = Point { row: 0, column: 3 };
         let document = Document::new("fn ()");
-        let context = DocumentContext::new(&document, point);
+        let context = DocumentContext::new(&document, point, None);
         assert_eq!(context.node.kind(), "(");
         assert_eq!(
             call_node_position_type(&context.node, context.point),
@@ -249,7 +249,7 @@ mod tests {
         // After `)`, but on it
         let point = Point { row: 0, column: 4 };
         let document = Document::new("fn()");
-        let context = DocumentContext::new(&document, point);
+        let context = DocumentContext::new(&document, point, None);
         assert_eq!(context.node.kind(), ")");
         assert_eq!(
             call_node_position_type(&context.node, context.point),
@@ -259,7 +259,7 @@ mod tests {
         // After `(`, but on it
         let point = Point { row: 0, column: 3 };
         let document = Document::new("fn()");
-        let context = DocumentContext::new(&document, point);
+        let context = DocumentContext::new(&document, point, None);
         assert_eq!(context.node.kind(), "(");
         assert_eq!(
             call_node_position_type(&context.node, context.point),
@@ -269,7 +269,7 @@ mod tests {
         // After `x`
         let point = Point { row: 0, column: 4 };
         let document = Document::new("fn(x)");
-        let context = DocumentContext::new(&document, point);
+        let context = DocumentContext::new(&document, point, None);
         assert_eq!(
             call_node_position_type(&context.node, context.point),
             CallNodePositionType::Ambiguous
@@ -278,7 +278,7 @@ mod tests {
         // After `x`
         let point = Point { row: 0, column: 7 };
         let document = Document::new("fn(1, x)");
-        let context = DocumentContext::new(&document, point);
+        let context = DocumentContext::new(&document, point, None);
         assert_eq!(
             call_node_position_type(&context.node, context.point),
             CallNodePositionType::Ambiguous
@@ -287,7 +287,7 @@ mod tests {
         // Directly after `,`
         let point = Point { row: 0, column: 5 };
         let document = Document::new("fn(x, )");
-        let context = DocumentContext::new(&document, point);
+        let context = DocumentContext::new(&document, point, None);
         assert_eq!(context.node.kind(), "comma");
         assert_eq!(
             call_node_position_type(&context.node, context.point),
@@ -297,7 +297,7 @@ mod tests {
         // After `,`, but on `)`
         let point = Point { row: 0, column: 6 };
         let document = Document::new("fn(x, )");
-        let context = DocumentContext::new(&document, point);
+        let context = DocumentContext::new(&document, point, None);
         assert_eq!(context.node.kind(), ")");
         assert_eq!(
             call_node_position_type(&context.node, context.point),
@@ -307,7 +307,7 @@ mod tests {
         // After `=`
         let point = Point { row: 0, column: 6 };
         let document = Document::new("fn(x =)");
-        let context = DocumentContext::new(&document, point);
+        let context = DocumentContext::new(&document, point, None);
         assert_eq!(context.node.kind(), "=");
         assert_eq!(
             call_node_position_type(&context.node, context.point),
@@ -317,7 +317,7 @@ mod tests {
         // In an expression
         let point = Point { row: 0, column: 4 };
         let document = Document::new("fn(1 + 1)");
-        let context = DocumentContext::new(&document, point);
+        let context = DocumentContext::new(&document, point, None);
         assert_eq!(context.node.kind(), "float");
         assert_eq!(
             call_node_position_type(&context.node, context.point),
@@ -326,7 +326,7 @@ mod tests {
 
         let point = Point { row: 0, column: 8 };
         let document = Document::new("fn(1 + 1)");
-        let context = DocumentContext::new(&document, point);
+        let context = DocumentContext::new(&document, point, None);
         assert_eq!(context.node.kind(), "float");
         assert_eq!(
             call_node_position_type(&context.node, context.point),
@@ -337,7 +337,7 @@ mod tests {
         // (special case where we still provide argument completions)
         let point = Point { row: 0, column: 6 };
         let document = Document::new("fn(1, 1 + 1)");
-        let context = DocumentContext::new(&document, point);
+        let context = DocumentContext::new(&document, point, None);
         assert_eq!(context.node.kind(), "float");
         assert_eq!(
             call_node_position_type(&context.node, context.point),
@@ -348,7 +348,7 @@ mod tests {
         // but on the `)`
         let point = Point { row: 0, column: 5 };
         let document = Document::new("fn(x )");
-        let context = DocumentContext::new(&document, point);
+        let context = DocumentContext::new(&document, point, None);
         assert_eq!(context.node.kind(), ")");
         assert_eq!(
             call_node_position_type(&context.node, context.point),
@@ -359,7 +359,7 @@ mod tests {
         // but on the identifier
         let point = Point { row: 0, column: 4 };
         let document = Document::new("fn(x )");
-        let context = DocumentContext::new(&document, point);
+        let context = DocumentContext::new(&document, point, None);
         assert_eq!(context.node.kind(), "identifier");
         assert_eq!(
             call_node_position_type(&context.node, context.point),
