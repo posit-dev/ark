@@ -34,7 +34,6 @@ use crate::socket::shell::Shell;
 use crate::socket::socket::Socket;
 use crate::socket::stdin::Stdin;
 use crate::stream_capture::StreamCapture;
-use crate::wire::header::JupyterHeader;
 use crate::wire::input_reply::InputReply;
 use crate::wire::input_request::ShellInputRequest;
 use crate::wire::jupyter_message::Message;
@@ -59,13 +58,6 @@ pub struct Kernel {
 
     /// Receives message sent to the IOPub socket
     iopub_rx: Option<Receiver<IOPubMessage>>,
-
-    /// The current message context; attached to outgoing messages to pair
-    /// outputs with the message that caused them. Normally set and accessed
-    /// by IOPub but `shell_context` can also be set by other threads such as
-    /// StdIn (TODO: We'd like to move these back to being owned by IOPub).
-    shell_context: Arc<Mutex<Option<JupyterHeader>>>,
-    control_context: Arc<Mutex<Option<JupyterHeader>>>,
 
     /// Sends notifications about comm changes and events to the comm manager.
     /// Use `create_comm_manager_tx` to access it.
@@ -101,8 +93,6 @@ impl Kernel {
             session: Session::create(key)?,
             iopub_tx,
             iopub_rx: Some(iopub_rx),
-            shell_context: Arc::new(Mutex::new(None)),
-            control_context: Arc::new(Mutex::new(None)),
             comm_manager_tx,
             comm_manager_rx,
         })
@@ -176,10 +166,8 @@ impl Kernel {
             self.connection.endpoint(self.connection.iopub_port),
         )?;
         let iopub_rx = self.iopub_rx.take().unwrap();
-        let shell_context = self.shell_context.clone();
-        let control_context = self.control_context.clone();
         spawn!(format!("{}-iopub", self.name), move || {
-            Self::iopub_thread(iopub_socket, iopub_rx, shell_context, control_context)
+            Self::iopub_thread(iopub_socket, iopub_rx)
         });
 
         // Create the heartbeat socket and start a thread to listen for
@@ -340,13 +328,8 @@ impl Kernel {
     }
 
     /// Starts the IOPub thread.
-    fn iopub_thread(
-        socket: Socket,
-        receiver: Receiver<IOPubMessage>,
-        shell_context: Arc<Mutex<Option<JupyterHeader>>>,
-        control_context: Arc<Mutex<Option<JupyterHeader>>>,
-    ) -> Result<(), Error> {
-        let mut iopub = IOPub::new(socket, receiver, shell_context, control_context);
+    fn iopub_thread(socket: Socket, receiver: Receiver<IOPubMessage>) -> Result<(), Error> {
+        let mut iopub = IOPub::new(socket, receiver);
         iopub.listen();
         Ok(())
     }
