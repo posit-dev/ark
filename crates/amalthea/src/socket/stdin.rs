@@ -33,9 +33,9 @@ pub struct Stdin {
 impl Stdin {
     /// Create a new Stdin socket
     ///
-    /// * `socket` - The underlying ZeroMQ socket
-    /// * `handler` - The language's shell handler
-    /// * `msg_context` - The IOPub message context
+    /// * `inbound_rx` - Channel relaying replies from frontend
+    /// * `outbound_tx` - Channel relaying requests to frontend
+    /// * `session` - Juptyer session
     pub fn new(
         inbound_rx: Receiver<Message>,
         outbound_tx: Sender<OutboundMessage>,
