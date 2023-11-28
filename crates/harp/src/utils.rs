@@ -649,7 +649,7 @@ pub fn save_rds(x: SEXP, path: &str) {
 /// (let me know if you find a way), Inserting `push_rds()` in your code lets
 /// you save objects that you can then inspect from R.
 ///
-/// The objects are pushed to a data frame with earlier entries preserved in
+/// The objects are pushed to a data frame with newer entries preserved in
 /// earlier rows, with a datetime and optional context attached.
 ///
 /// If `path` is empty, saves RDS in the path stored in the
