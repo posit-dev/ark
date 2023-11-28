@@ -8,13 +8,16 @@
 use std::ffi::CStr;
 use std::ffi::CString;
 use std::os::raw::c_void;
+use std::path::Path;
 
 use c2rust_bitfields::BitfieldStruct;
+use harp_macros::register;
 use itertools::Itertools;
 use libR_sys::*;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use semver::Version;
+use stdext::unwrap;
 
 use crate::environment::Environment;
 use crate::environment::R_ENVS;
@@ -36,6 +39,8 @@ use crate::symbol::RSymbol;
 use crate::vector::CharacterVector;
 use crate::vector::IntegerVector;
 use crate::vector::Vector;
+
+pub static mut HARP_ENV: SEXP = std::ptr::null_mut();
 
 // NOTE: Regex::new() is quite slow to compile, so it's much better to keep
 // a single singleton pattern and use that repeatedly for matches.
@@ -93,6 +98,27 @@ impl Sxpinfo {
     pub fn is_object(&self) -> bool {
         self.obj() != 0
     }
+}
+
+// Necessary for the `harp` reference in the `register` macro to resolve correctly
+mod harp {
+    pub use crate::*;
+}
+
+#[register]
+pub extern "C" fn harp_log_warning(msg: SEXP) -> crate::error::Result<SEXP> {
+    let msg = String::try_from(RObject::view(msg))?;
+    log::warn!("{msg}");
+
+    unsafe { Ok(R_NilValue) }
+}
+
+#[register]
+pub extern "C" fn harp_log_error(msg: SEXP) -> crate::error::Result<SEXP> {
+    let msg = String::try_from(RObject::view(msg))?;
+    log::error!("{msg}");
+
+    unsafe { Ok(R_NilValue) }
 }
 
 pub fn r_assert_type(object: SEXP, expected: &[u32]) -> Result<u32> {
@@ -623,10 +649,73 @@ pub fn convert_line_endings(s: &str, eol_type: LineEnding) -> String {
 }
 
 pub fn init_utils() {
+    init_modules();
+
     unsafe {
         let options_fn = Rf_eval(r_symbol!("options"), R_BaseEnv);
         OPTIONS_FN = Some(options_fn);
     }
+}
+
+// Largely copied from `module.rs` in the Ark crate
+fn init_modules() {
+    unsafe {
+        let ns = r_parse_eval0("new.env()", R_ENVS.base).unwrap();
+        R_PreserveObject(ns.sexp);
+        HARP_ENV = ns.sexp;
+    }
+
+    // Get the path to the 'modules' directory, adjacent to the executable file.
+    // This is where we place the R source files in packaged releases.
+    let mut root = match std::env::current_exe() {
+        Ok(exe_path) => exe_path.parent().unwrap().join("modules"),
+        Err(err) => {
+            log::error!("Failed to get current exe path; can't find harp modules: {err:?}");
+            return;
+        },
+    };
+
+    // If that path doesn't exist, we're probably running from source, so
+    // look in the source tree (found via the 'CARGO_MANIFEST_DIR' environment
+    // variable).
+    if !root.exists() {
+        let source = format!("{}/src/modules", env!("CARGO_MANIFEST_DIR"));
+        root = std::path::Path::new(&source).to_path_buf();
+    }
+
+    log::info!("Loading modules from directory: {}", root.display());
+    let entries = unwrap!(std::fs::read_dir(root), Err(err) => {
+        log::error!("Can't read module directory: {err:?}");
+        return;
+    });
+
+    for entry in entries {
+        let entry = unwrap!(
+            entry,
+            Err(err) => {
+                log::error!("Can't load directory entry due to: {}", err);
+                continue;
+            }
+        );
+
+        let path = entry.path();
+
+        if path.extension().is_some_and(|ext| ext == "R") {
+            source_file(&path).unwrap();
+        }
+    }
+}
+
+fn source_file(file: &Path) -> anyhow::Result<()> {
+    let file = file.to_str().unwrap();
+    unsafe {
+        RFunction::new("base", "sys.source")
+            .param("file", file)
+            .param("envir", HARP_ENV)
+            .call()?;
+    }
+
+    Ok(())
 }
 
 pub fn save_rds(x: SEXP, path: &str) {
