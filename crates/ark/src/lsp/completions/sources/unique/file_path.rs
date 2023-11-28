@@ -39,6 +39,12 @@ pub fn completions_from_file_path(
 
     let mut completions: Vec<CompletionItem> = vec![];
 
+    // Return empty set if we are here due to a trigger character like `$`.
+    // See posit-dev/positron#1884.
+    if context.trigger.is_some() {
+        return Ok(Some(completions));
+    }
+
     // Get the contents of the string token.
     //
     // NOTE: This includes the quotation characters on the string, and so
@@ -92,38 +98,70 @@ pub fn completions_from_file_path(
     Ok(Some(completions))
 }
 
-#[test]
-fn test_file_path_outside_quotes() {
+#[cfg(test)]
+mod tests {
+    use harp::assert_match;
     use tree_sitter::Point;
 
+    use crate::lsp::completions::sources::completions_from_unique_sources;
+    use crate::lsp::completions::sources::unique::file_path::completions_from_file_path;
+    use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
     use crate::test::r_test;
 
-    r_test(|| {
-        // Before or after the `''`, i.e. `|''` or `''|`.
-        // Still considered part of the string node.
-        let point = Point { row: 0, column: 0 };
-        let document = Document::new("''");
-        let context = DocumentContext::new(&document, point);
+    #[test]
+    fn test_file_path_outside_quotes() {
+        r_test(|| {
+            // Before or after the `''`, i.e. `|''` or `''|`.
+            // Still considered part of the string node.
+            let point = Point { row: 0, column: 0 };
+            let document = Document::new("''");
+            let context = DocumentContext::new(&document, point, None);
 
-        assert_eq!(context.node.kind(), "string");
-        assert_eq!(completions_from_file_path(&context).unwrap(), None);
-    })
-}
+            assert_eq!(context.node.kind(), "string");
+            assert_eq!(completions_from_file_path(&context).unwrap(), None);
+        })
+    }
 
-#[test]
-fn test_file_path_not_string() {
-    use tree_sitter::Point;
+    #[test]
+    fn test_file_path_not_string() {
+        r_test(|| {
+            let point = Point { row: 0, column: 0 };
+            let document = Document::new("foo");
+            let context = DocumentContext::new(&document, point, None);
 
-    use crate::lsp::documents::Document;
-    use crate::test::r_test;
+            assert_eq!(context.node.kind(), "identifier");
+            assert_eq!(completions_from_file_path(&context).unwrap(), None);
+        })
+    }
 
-    r_test(|| {
-        let point = Point { row: 0, column: 0 };
-        let document = Document::new("foo");
-        let context = DocumentContext::new(&document, point);
+    #[test]
+    fn test_file_path_trigger() {
+        r_test(|| {
+            // Before or after the `''`, i.e. `|''` or `''|`.
+            // Still considered part of the string node.
+            let point = Point { row: 0, column: 2 };
 
-        assert_eq!(context.node.kind(), "identifier");
-        assert_eq!(completions_from_file_path(&context).unwrap(), None);
-    })
+            // Assume home directory is not empty
+            let document = Document::new("'~/'");
+
+            // `None` trigger -> Return file completions
+            let context = DocumentContext::new(&document, point, None);
+            assert_match!(
+                completions_from_file_path(&context).unwrap(),
+                Some(items) => {
+                    assert!(items.len() > 0)
+                }
+            );
+
+            // `Some` trigger -> Should return empty completion set
+            let context = DocumentContext::new(&document, point, Some(String::from("$")));
+            let res = completions_from_file_path(&context).unwrap();
+            assert_match!(res, Some(items) => { assert!(items.len() == 0) });
+
+            // Check one level up too
+            let res = completions_from_unique_sources(&context).unwrap();
+            assert_match!(res, Some(items) => { assert!(items.len() == 0) });
+        })
+    }
 }

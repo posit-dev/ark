@@ -831,20 +831,16 @@ impl Variable {
         match node {
             EnvironmentVariableNode::Concrete { object } => {
                 if r_is_data_frame(*object) {
-                    unsafe {
-                        let formatted = RFunction::from(".ps.environment.clipboardFormatDataFrame")
-                            .add(object)
-                            .call()?;
+                    let formatted = RFunction::from(".ps.environment.clipboardFormatDataFrame")
+                        .add(object)
+                        .call()?;
 
-                        Ok(FormattedVector::new(*formatted)?.iter().join("\n"))
-                    }
+                    Ok(FormattedVector::new(*formatted)?.iter().join("\n"))
                 } else if r_typeof(*object) == CLOSXP {
-                    unsafe {
-                        let deparsed: Vec<String> =
-                            RFunction::from("deparse").add(*object).call()?.try_into()?;
+                    let deparsed: Vec<String> =
+                        RFunction::from("deparse").add(*object).call()?.try_into()?;
 
-                        Ok(deparsed.join("\n"))
-                    }
+                    Ok(deparsed.join("\n"))
                 } else {
                     Ok(FormattedVector::new(*object)?.iter().join(" "))
                 }

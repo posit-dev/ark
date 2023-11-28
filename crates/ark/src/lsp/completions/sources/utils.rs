@@ -87,11 +87,13 @@ pub(super) fn filter_out_dot_prefixes(
     }
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Debug)]
 pub(super) enum CallNodePositionType {
     Name,
     Value,
-    Other,
+    Ambiguous,
+    Outside,
+    Unknown,
 }
 
 pub(super) fn call_node_position_type(node: &Node, point: Point) -> CallNodePositionType {
@@ -99,7 +101,7 @@ pub(super) fn call_node_position_type(node: &Node, point: Point) -> CallNodePosi
         "(" => {
             if point.is_before_or_equal(node.start_position()) {
                 // Before the `(`
-                return CallNodePositionType::Other;
+                return CallNodePositionType::Outside;
             } else {
                 // Must be a name position
                 return CallNodePositionType::Name;
@@ -108,30 +110,56 @@ pub(super) fn call_node_position_type(node: &Node, point: Point) -> CallNodePosi
         ")" => {
             if point.is_after_or_equal(node.end_position()) {
                 // After the `)`
-                return CallNodePositionType::Other;
+                return CallNodePositionType::Outside;
             } else {
                 // Let previous leaf determine type (i.e. did the `)`
                 // follow a `=` or a `,`?)
-                match node.prev_leaf() {
-                    Some(node) => return call_node_position_type(&node, point),
-                    None => return CallNodePositionType::Other,
-                }
+                return call_prev_leaf_position_type(&node, false);
             }
         },
         "comma" => return CallNodePositionType::Name,
         "=" => return CallNodePositionType::Value,
+        // Like `fn(arg<tab>)` or `fn(x = 1, arg<tab>)` (which are ambiguous)
+        // or `fn(x = arg<tab>)` (which is clearly a `Value`)
+        "identifier" => return call_prev_leaf_position_type(&node, true),
         _ => {
+            // Probably a complex node inside `()`. Typically a `Value`
+            // unless we are at the very beginning of the node.
+
+            // For things like `vctrs::vec_sort(x = 1, |2)` where you typed
+            // the argument value but want to go back and fill in the name.
             if point == node.start_position() {
-                // For things like `vctrs::vec_sort(x = 1, |2)` where you typed
-                // the argument value but want to go back and fill in the name.
-                match node.prev_leaf() {
-                    Some(node) => return call_node_position_type(&node, point),
-                    None => return CallNodePositionType::Other,
-                }
+                return call_prev_leaf_position_type(&node, false);
+            }
+
+            return CallNodePositionType::Value;
+        },
+    }
+}
+
+fn call_prev_leaf_position_type(node: &Node, allow_ambiguous: bool) -> CallNodePositionType {
+    let Some(previous) = node.prev_leaf() else {
+        // We expect a previous leaf to exist anywhere we use this, so if it
+        // doesn't exist then we return this marker type that tells us we should
+        // probably investigate our heuristics.
+        log::warn!(
+            "Expected `node` to have a previous leaf. Is `call_node_position_type()` written correctly?"
+        );
+        return CallNodePositionType::Unknown;
+    };
+
+    match previous.kind() {
+        "(" | "comma" => {
+            if allow_ambiguous {
+                // i.e. `fn(arg<tab>)` or `fn(x, arg<tab>)` where it can be
+                // ambiguous whether we are on a `Name` or a `Value`.
+                return CallNodePositionType::Ambiguous;
             } else {
-                return CallNodePositionType::Other;
+                return CallNodePositionType::Name;
             }
         },
+        "=" => return CallNodePositionType::Value,
+        _ => return CallNodePositionType::Value,
     }
 }
 
@@ -143,10 +171,11 @@ pub(super) fn completions_from_evaluated_object_names(
 
     let options = RParseEvalOptions {
         forbid_function_calls: true,
+        ..Default::default()
     };
 
     // Try to evaluate the object
-    let object = unsafe { r_parse_eval(name, options) };
+    let object = r_parse_eval(name, options);
 
     // If the user is writing pseudocode, this object might not exist yet,
     // in which case we just want to ignore the error from trying to evaluate it
@@ -194,4 +223,147 @@ pub(super) fn completions_from_object_names(
     }
 
     Ok(completions)
+}
+
+#[cfg(test)]
+mod tests {
+    use tree_sitter::Point;
+
+    use crate::lsp::completions::sources::utils::call_node_position_type;
+    use crate::lsp::completions::sources::utils::CallNodePositionType;
+    use crate::lsp::document_context::DocumentContext;
+    use crate::lsp::documents::Document;
+
+    #[test]
+    fn test_call_node_position_type() {
+        // Before `(`, but on it
+        let point = Point { row: 0, column: 3 };
+        let document = Document::new("fn ()");
+        let context = DocumentContext::new(&document, point, None);
+        assert_eq!(context.node.kind(), "(");
+        assert_eq!(
+            call_node_position_type(&context.node, context.point),
+            CallNodePositionType::Outside
+        );
+
+        // After `)`, but on it
+        let point = Point { row: 0, column: 4 };
+        let document = Document::new("fn()");
+        let context = DocumentContext::new(&document, point, None);
+        assert_eq!(context.node.kind(), ")");
+        assert_eq!(
+            call_node_position_type(&context.node, context.point),
+            CallNodePositionType::Outside
+        );
+
+        // After `(`, but on it
+        let point = Point { row: 0, column: 3 };
+        let document = Document::new("fn()");
+        let context = DocumentContext::new(&document, point, None);
+        assert_eq!(context.node.kind(), "(");
+        assert_eq!(
+            call_node_position_type(&context.node, context.point),
+            CallNodePositionType::Name
+        );
+
+        // After `x`
+        let point = Point { row: 0, column: 4 };
+        let document = Document::new("fn(x)");
+        let context = DocumentContext::new(&document, point, None);
+        assert_eq!(
+            call_node_position_type(&context.node, context.point),
+            CallNodePositionType::Ambiguous
+        );
+
+        // After `x`
+        let point = Point { row: 0, column: 7 };
+        let document = Document::new("fn(1, x)");
+        let context = DocumentContext::new(&document, point, None);
+        assert_eq!(
+            call_node_position_type(&context.node, context.point),
+            CallNodePositionType::Ambiguous
+        );
+
+        // Directly after `,`
+        let point = Point { row: 0, column: 5 };
+        let document = Document::new("fn(x, )");
+        let context = DocumentContext::new(&document, point, None);
+        assert_eq!(context.node.kind(), "comma");
+        assert_eq!(
+            call_node_position_type(&context.node, context.point),
+            CallNodePositionType::Name
+        );
+
+        // After `,`, but on `)`
+        let point = Point { row: 0, column: 6 };
+        let document = Document::new("fn(x, )");
+        let context = DocumentContext::new(&document, point, None);
+        assert_eq!(context.node.kind(), ")");
+        assert_eq!(
+            call_node_position_type(&context.node, context.point),
+            CallNodePositionType::Name
+        );
+
+        // After `=`
+        let point = Point { row: 0, column: 6 };
+        let document = Document::new("fn(x =)");
+        let context = DocumentContext::new(&document, point, None);
+        assert_eq!(context.node.kind(), "=");
+        assert_eq!(
+            call_node_position_type(&context.node, context.point),
+            CallNodePositionType::Value
+        );
+
+        // In an expression
+        let point = Point { row: 0, column: 4 };
+        let document = Document::new("fn(1 + 1)");
+        let context = DocumentContext::new(&document, point, None);
+        assert_eq!(context.node.kind(), "float");
+        assert_eq!(
+            call_node_position_type(&context.node, context.point),
+            CallNodePositionType::Value
+        );
+
+        let point = Point { row: 0, column: 8 };
+        let document = Document::new("fn(1 + 1)");
+        let context = DocumentContext::new(&document, point, None);
+        assert_eq!(context.node.kind(), "float");
+        assert_eq!(
+            call_node_position_type(&context.node, context.point),
+            CallNodePositionType::Value
+        );
+
+        // Right before an expression
+        // (special case where we still provide argument completions)
+        let point = Point { row: 0, column: 6 };
+        let document = Document::new("fn(1, 1 + 1)");
+        let context = DocumentContext::new(&document, point, None);
+        assert_eq!(context.node.kind(), "float");
+        assert_eq!(
+            call_node_position_type(&context.node, context.point),
+            CallNodePositionType::Name
+        );
+
+        // After an identifier, before the `)`, with whitespace between them,
+        // but on the `)`
+        let point = Point { row: 0, column: 5 };
+        let document = Document::new("fn(x )");
+        let context = DocumentContext::new(&document, point, None);
+        assert_eq!(context.node.kind(), ")");
+        assert_eq!(
+            call_node_position_type(&context.node, context.point),
+            CallNodePositionType::Value
+        );
+
+        // After an identifier, before the `)`, with whitespace between them,
+        // but on the identifier
+        let point = Point { row: 0, column: 4 };
+        let document = Document::new("fn(x )");
+        let context = DocumentContext::new(&document, point, None);
+        assert_eq!(context.node.kind(), "identifier");
+        assert_eq!(
+            call_node_position_type(&context.node, context.point),
+            CallNodePositionType::Ambiguous
+        );
+    }
 }

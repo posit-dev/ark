@@ -102,6 +102,8 @@ fn start_kernel(
     let kernel_clone = shell.kernel.clone();
     let shell = Arc::new(Mutex::new(shell));
 
+    let (input_reply_tx, input_reply_rx) = unbounded();
+
     let res = kernel.connect(
         shell,
         control,
@@ -109,6 +111,7 @@ fn start_kernel(
         Some(dap.clone()),
         stream_behavior,
         input_request_rx,
+        input_reply_tx,
     );
     if let Err(err) = res {
         panic!("Couldn't connect to front end: {:?}", err);
@@ -122,6 +125,7 @@ fn start_kernel(
         comm_manager_tx,
         r_request_rx,
         input_request_tx,
+        input_reply_rx,
         iopub_tx,
         kernel_init_tx,
         dap,
@@ -406,13 +410,19 @@ fn main() {
     std::panic::set_hook(Box::new(move |panic_info| {
         let info = panic_info.payload();
 
+        let loc = if let Some(location) = panic_info.location() {
+            format!("In file '{}' at line {}:", location.file(), location.line(),)
+        } else {
+            String::from("No location information:")
+        };
+
         // Report panic to the frontend
         if let Some(info) = info.downcast_ref::<&str>() {
-            log::error!("Panic! {info:}");
+            log::error!("Panic! {loc} {info:}");
         } else if let Some(info) = info.downcast_ref::<String>() {
-            log::error!("Panic! {info:}");
+            log::error!("Panic! {loc} {info:}");
         } else {
-            log::error!("Panic! No contextual information.");
+            log::error!("Panic! {loc} No contextual information.");
         }
         log::logger().flush();
 

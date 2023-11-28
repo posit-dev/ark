@@ -85,6 +85,7 @@ fn completions_from_extractor_helper(object: &str, fun: &str) -> Result<Vec<Comp
 
         let value = r_parse_eval(object, RParseEvalOptions {
             forbid_function_calls: true,
+            ..Default::default()
         })?;
 
         let names = RFunction::new("utils", fun).add(value).call()?;

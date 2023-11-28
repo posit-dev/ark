@@ -68,11 +68,14 @@ pub fn start_r() {
         }
 
         // Initialize harp globals
+        unsafe {
+            crate::routines::r_register_routines();
+        }
         crate::initialize();
     });
 }
 
-pub fn r_test_impl<F: FnOnce()>(f: F) {
+pub fn r_test<F: FnOnce()>(f: F) {
     start_r();
     let guard = unsafe { R_RUNTIME_LOCK.lock() };
 
@@ -87,6 +90,6 @@ pub fn r_test_impl<F: FnOnce()>(f: F) {
 macro_rules! r_test {
     ($($expr:tt)*) => {
         #[allow(unused_unsafe)]
-        $crate::test::r_test_impl(|| unsafe { $($expr)* })
+        $crate::test::r_test(|| unsafe { $($expr)* })
     }
 }

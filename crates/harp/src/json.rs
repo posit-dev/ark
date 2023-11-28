@@ -362,6 +362,7 @@ impl TryFrom<Value> for RObject {
 mod tests {
 
     use super::*;
+    use crate::environment::R_ENVS;
     use crate::eval::r_parse_eval0;
     use crate::exec::RFunction;
     use crate::exec::RFunctionExt;
@@ -371,7 +372,7 @@ mod tests {
     // and converts it to a JSON value. We use this extensively in the tests
     // below to ensure that the R objects are serialized to JSON correctly.
     fn r_to_json(expr: &str) -> Value {
-        let evaluated = unsafe { r_parse_eval0(expr).unwrap() };
+        let evaluated = r_parse_eval0(expr, R_ENVS.global).unwrap();
 
         // Convert the evaluated expression to a JSON value
         Value::try_from(evaluated).unwrap()

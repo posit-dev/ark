@@ -139,7 +139,7 @@ fn r_size(x: SEXP) -> usize {
     if r_is_altrep(x) {
         return unsafe { r_size(R_altrep_data1(x)) + r_size(R_altrep_data2(x)) };
     }
-    let size = unsafe { RFunction::new("utils", "object.size").add(x).call() };
+    let size = RFunction::new("utils", "object.size").add(x).call();
 
     match size {
         Err(_) => 0,

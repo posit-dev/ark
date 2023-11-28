@@ -126,14 +126,14 @@ fn test_comment() {
         // If not in a comment, return `None`
         let point = Point { row: 0, column: 1 };
         let document = Document::new("mean()");
-        let context = DocumentContext::new(&document, point);
+        let context = DocumentContext::new(&document, point, None);
         let completions = completions_from_comment(&context).unwrap();
         assert!(completions.is_none());
 
         // If in a comment, return empty vector
         let point = Point { row: 0, column: 1 };
         let document = Document::new("# mean");
-        let context = DocumentContext::new(&document, point);
+        let context = DocumentContext::new(&document, point, None);
         let completions = completions_from_comment(&context).unwrap().unwrap();
         assert!(completions.is_empty());
     });
@@ -161,7 +161,7 @@ fn test_roxygen_comment() {
 
         let point = Point { row: 0, column: 4 };
         let document = Document::new("#' @");
-        let context = DocumentContext::new(&document, point);
+        let context = DocumentContext::new(&document, point, None);
         let completions = completions_from_comment(&context).unwrap().unwrap();
 
         let completions: Vec<CompletionItem> = completions

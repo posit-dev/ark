@@ -31,21 +31,28 @@ use amalthea::wire::kernel_info_request::KernelInfoRequest;
 use amalthea::wire::language_info::LanguageInfo;
 use amalthea::wire::originator::Originator;
 use async_trait::async_trait;
+use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use log::warn;
 use serde_json::json;
 
 pub struct Shell {
     iopub: Sender<IOPubMessage>,
-    _input_tx: Sender<ShellInputRequest>,
+    _input_request_tx: Sender<ShellInputRequest>,
+    _input_reply_rx: Receiver<InputReply>,
     execution_count: u32,
 }
 
 impl Shell {
-    pub fn new(iopub: Sender<IOPubMessage>, input_tx: Sender<ShellInputRequest>) -> Self {
+    pub fn new(
+        iopub: Sender<IOPubMessage>,
+        input_request_tx: Sender<ShellInputRequest>,
+        input_reply_rx: Receiver<InputReply>,
+    ) -> Self {
         Self {
             iopub,
-            _input_tx: input_tx,
+            _input_request_tx: input_request_tx,
+            _input_reply_rx: input_reply_rx,
             execution_count: 0,
         }
     }
@@ -203,14 +210,5 @@ impl ShellHandler for Shell {
     async fn handle_comm_open(&self, _target: Comm, _comm: CommSocket) -> Result<bool, Exception> {
         // No comms in this toy implementation.
         Ok(false)
-    }
-
-    async fn handle_input_reply(
-        &self,
-        _msg: &InputReply,
-        _orig: Originator,
-    ) -> Result<(), Exception> {
-        // NYI
-        Ok(())
     }
 }

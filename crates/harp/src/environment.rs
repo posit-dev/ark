@@ -8,17 +8,38 @@
 use std::ops::Deref;
 
 use libR_sys::*;
+use once_cell::sync::Lazy;
 use stdext::unwrap;
 
 use crate::exec::RFunction;
 use crate::exec::RFunctionExt;
 use crate::object::RObject;
+use crate::r_symbol;
 use crate::symbol::RSymbol;
 use crate::utils::r_is_altrep;
 use crate::utils::r_is_null;
 use crate::utils::r_is_s4;
 use crate::utils::r_typeof;
 use crate::utils::Sxpinfo;
+
+pub struct REnvs {
+    pub global: SEXP,
+    pub base: SEXP,
+    pub empty: SEXP,
+}
+
+// Silences diagnostics when called from `r_task()`. Should only be
+// accessed from the R thread.
+unsafe impl Send for REnvs {}
+unsafe impl Sync for REnvs {}
+
+pub static R_ENVS: Lazy<REnvs> = Lazy::new(|| unsafe {
+    REnvs {
+        global: R_GlobalEnv,
+        base: R_BaseEnv,
+        empty: R_EmptyEnv,
+    }
+});
 
 #[derive(Eq)]
 pub struct BindingReference {
@@ -344,6 +365,12 @@ impl Environment {
         Self { env }
     }
 
+    pub fn bind(&self, name: &str, value: impl Into<SEXP>) {
+        unsafe {
+            Rf_defineVar(r_symbol!(name), value.into(), self.env.sexp);
+        }
+    }
+
     pub fn iter(&self) -> EnvironmentIter {
         EnvironmentIter::new(&self)
     }
@@ -393,7 +420,7 @@ impl Environment {
     /// Returns environment name if it has one. Reproduces the same output as
     /// `rlang::env_name()`.
     pub fn name(&self) -> Option<String> {
-        let name = unsafe { RFunction::new("", ".ps.env_name").add(self.env.sexp).call() };
+        let name = RFunction::new("", ".ps.env_name").add(self.env.sexp).call();
         let name = unwrap!(name, Err(err) => {
             log::error!("{err:?}");
             return None
@@ -414,7 +441,7 @@ impl Environment {
 
     /// Returns the names of the bindings of the environment
     pub fn names(&self) -> Vec<String> {
-        let names = unsafe { RFunction::new("base", "names").add(self.env.sexp).call() };
+        let names = RFunction::new("base", "names").add(self.env.sexp).call();
         let names = unwrap!(names, Err(err) => {
             log::error!("{err:?}");
             return vec![]
@@ -427,6 +454,18 @@ impl Environment {
         });
 
         names
+    }
+}
+
+impl From<Environment> for SEXP {
+    fn from(object: Environment) -> Self {
+        object.env.sexp
+    }
+}
+
+impl From<Environment> for RObject {
+    fn from(object: Environment) -> Self {
+        object.env
     }
 }
 

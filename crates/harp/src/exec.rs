@@ -14,6 +14,7 @@ use std::os::raw::c_void;
 
 use libR_sys::*;
 
+use crate::environment::R_ENVS;
 use crate::error::Error;
 use crate::error::Result;
 use crate::interrupts::RSandboxScope;
@@ -112,74 +113,80 @@ impl RFunction {
         self
     }
 
-    pub unsafe fn call(&mut self) -> Result<RObject> {
-        let mut protect = RProtect::new();
-
-        // start building the call to be evaluated
-        let mut lhs = r_symbol!(self.function);
-        if !self.package.is_empty() {
-            lhs = protect.add(Rf_lang3(r_symbol!(":::"), r_symbol!(self.package), lhs));
-        }
-
-        // now, build the actual call to be evaluated
-        let size = (1 + self.arguments.len()) as R_xlen_t;
-        let call = protect.add(Rf_allocVector(LANGSXP, size));
-        SET_TAG(call, R_NilValue);
-        SETCAR(call, lhs);
-
-        // append arguments to the call
-        let mut slot = CDR(call);
-        for argument in self.arguments.iter() {
-            // quote language objects by default
-            let mut sexp = argument.value.sexp;
-            if matches!(r_typeof(sexp), LANGSXP | SYMSXP | EXPRSXP) {
-                let quote = protect.add(Rf_lang3(
-                    r_symbol!("::"),
-                    r_symbol!("base"),
-                    r_symbol!("quote"),
-                ));
-                sexp = protect.add(Rf_lang2(quote, sexp));
-            }
-
-            SETCAR(slot, sexp);
-            if !argument.name.is_empty() {
-                SET_TAG(slot, r_symbol!(argument.name));
-            }
-
-            slot = CDR(slot);
-        }
-
-        // now, wrap call in tryCatch, so that errors don't longjmp
-        let try_catch = protect.add(Rf_lang3(
-            r_symbol!("::"),
-            r_symbol!("base"),
-            r_symbol!("tryCatch"),
-        ));
-        let call = protect.add(Rf_lang4(
-            try_catch,
-            call,
-            r_symbol!("identity"),
-            r_symbol!("identity"),
-        ));
-        SET_TAG(call, R_NilValue);
-        SET_TAG(CDDR(call), r_symbol!("error"));
-        SET_TAG(CDDDR(call), r_symbol!("interrupt"));
-
-        // evaluate the call
-        let envir = if self.package.is_empty() {
-            R_GlobalEnv
+    pub fn call(&mut self) -> Result<RObject> {
+        let env = if self.package.is_empty() {
+            R_ENVS.global
         } else {
-            R_BaseEnv
+            R_ENVS.base
         };
-        let result = protect.add(Rf_eval(call, envir));
 
-        if r_inherits(result, "error") {
-            let code = r_stringify(call, "\n")?;
-            let message = geterrmessage();
-            return Err(Error::EvaluationError { code, message });
+        self.call_in(env)
+    }
+
+    pub fn call_in(&mut self, env: SEXP) -> Result<RObject> {
+        unsafe {
+            let mut protect = RProtect::new();
+
+            // start building the call to be evaluated
+            let mut lhs = r_symbol!(self.function);
+            if !self.package.is_empty() {
+                lhs = protect.add(Rf_lang3(r_symbol!(":::"), r_symbol!(self.package), lhs));
+            }
+
+            // now, build the actual call to be evaluated
+            let size = (1 + self.arguments.len()) as R_xlen_t;
+            let call = protect.add(Rf_allocVector(LANGSXP, size));
+            SET_TAG(call, R_NilValue);
+            SETCAR(call, lhs);
+
+            // append arguments to the call
+            let mut slot = CDR(call);
+            for argument in self.arguments.iter() {
+                // quote language objects by default
+                let mut sexp = argument.value.sexp;
+                if matches!(r_typeof(sexp), LANGSXP | SYMSXP | EXPRSXP) {
+                    let quote = protect.add(Rf_lang3(
+                        r_symbol!("::"),
+                        r_symbol!("base"),
+                        r_symbol!("quote"),
+                    ));
+                    sexp = protect.add(Rf_lang2(quote, sexp));
+                }
+
+                SETCAR(slot, sexp);
+                if !argument.name.is_empty() {
+                    SET_TAG(slot, r_symbol!(argument.name));
+                }
+
+                slot = CDR(slot);
+            }
+
+            // now, wrap call in tryCatch, so that errors don't longjmp
+            let try_catch = protect.add(Rf_lang3(
+                r_symbol!("::"),
+                r_symbol!("base"),
+                r_symbol!("tryCatch"),
+            ));
+            let call = protect.add(Rf_lang4(
+                try_catch,
+                call,
+                r_symbol!("identity"),
+                r_symbol!("identity"),
+            ));
+            SET_TAG(call, R_NilValue);
+            SET_TAG(CDDR(call), r_symbol!("error"));
+            SET_TAG(CDDDR(call), r_symbol!("interrupt"));
+
+            let result = protect.add(Rf_eval(call, env));
+
+            if r_inherits(result, "error") {
+                let code = r_stringify(call, "\n")?;
+                let message = geterrmessage();
+                return Err(Error::EvaluationError { code, message });
+            }
+
+            return Ok(RObject::new(result));
         }
-
-        return Ok(RObject::new(result));
     }
 }
 
