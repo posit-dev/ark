@@ -65,9 +65,18 @@ pub(super) fn completions_from_call(
     // fn(name = value)
     //    ~~~~
     //
-    if call_node_position_type(&context.node, context.point) != CallNodePositionType::Name {
-        return Ok(None);
-    }
+    match call_node_position_type(&context.node, context.point) {
+        // We should provide argument completions. Ambiguous states like
+        // `fn(arg<tab>)` or `fn(x, arg<tab>)` should still get argument
+        // completions.
+        CallNodePositionType::Name => (),
+        CallNodePositionType::Ambiguous => (),
+        // We shouldn't provide argument completions, let another source
+        // contribute completions
+        CallNodePositionType::Value |
+        CallNodePositionType::Outside |
+        CallNodePositionType::Unknown => return Ok(None),
+    };
 
     // Get the caller text.
     let Some(callee) = node.child(0) else {
@@ -208,4 +217,42 @@ fn completions_from_arguments(
     set_sort_text_by_first_appearance(&mut completions);
 
     Ok(completions)
+}
+
+#[cfg(test)]
+mod tests {
+    use tree_sitter::Point;
+
+    use crate::lsp::completions::sources::composite::call::completions_from_call;
+    use crate::lsp::document_context::DocumentContext;
+    use crate::lsp::documents::Document;
+    use crate::test::r_test;
+
+    #[test]
+    fn test_completions_after_user_types_part_of_an_argument_name() {
+        r_test(|| {
+            // Right after `tab`
+            let point = Point { row: 0, column: 9 };
+            let document = Document::new("match(tab)");
+            let context = DocumentContext::new(&document, point);
+            let completions = completions_from_call(&context, None).unwrap().unwrap();
+
+            // We detect this as a `name` position and return all possible completions
+            assert_eq!(completions.len(), 4);
+            assert_eq!(completions.get(0).unwrap().label, "x = ");
+            assert_eq!(completions.get(1).unwrap().label, "table = ");
+
+            // Right after `tab`
+            let point = Point { row: 0, column: 12 };
+            let document = Document::new("match(1, tab)");
+            let context = DocumentContext::new(&document, point);
+            let completions = completions_from_call(&context, None).unwrap().unwrap();
+
+            // We detect this as a `name` position and return all possible completions
+            // (TODO: Should not return `x` as a possible completion)
+            assert_eq!(completions.len(), 4);
+            assert_eq!(completions.get(0).unwrap().label, "x = ");
+            assert_eq!(completions.get(1).unwrap().label, "table = ");
+        })
+    }
 }

@@ -115,10 +115,17 @@ pub fn completions_from_custom_source_impl(
     // provide certain completions in the 'name' position.
     let position = match call_node_position_type(&node, point) {
         CallNodePositionType::Name => "name",
+        // Currently mapping ambiguous `fn(arg<tab>)` to `"name"`, but we could
+        // return `"ambiguous"` and allow our handlers to handle this individually
+        CallNodePositionType::Ambiguous => "name",
         CallNodePositionType::Value => "value",
-        CallNodePositionType::Other => {
-            // Call detected, but possibly on the RHS of a `)` node or the LHS
+        CallNodePositionType::Outside => {
+            // Call detected, but on the RHS of a `)` node or the LHS
             // of a `(` node, i.e. outside the parenthesis.
+            return Ok(None);
+        },
+        CallNodePositionType::Unknown => {
+            // Call detected, but inside some very odd edge case
             return Ok(None);
         },
     };
@@ -196,4 +203,48 @@ pub fn completions_from_custom_source_impl(
     set_sort_text_by_words_first(&mut completions);
 
     Ok(Some(completions))
+}
+
+#[cfg(test)]
+mod tests {
+    use harp::eval::r_parse_eval0;
+    use tree_sitter::Point;
+
+    use crate::lsp::completions::sources::unique::custom::completions_from_custom_source_impl;
+    use crate::lsp::document_context::DocumentContext;
+    use crate::lsp::documents::Document;
+    use crate::test::r_test;
+
+    #[test]
+    fn test_completion_custom_library() {
+        r_test(|| {
+            let n_packages = unsafe {
+                let n = r_parse_eval0("length(base::.packages(TRUE))").unwrap();
+                let n = i32::try_from(n).unwrap();
+                usize::try_from(n).unwrap()
+            };
+
+            let point = Point { row: 0, column: 8 };
+            let document = Document::new("library()");
+            let context = DocumentContext::new(&document, point);
+
+            let n_compls = completions_from_custom_source_impl(&context)
+                .unwrap()
+                .unwrap()
+                .len();
+
+            // There should be as many matches as installed packages
+            assert_eq!(n_compls, n_packages);
+
+            let point = Point { row: 0, column: 11 };
+            let document = Document::new("library(uti)");
+            let context = DocumentContext::new(&document, point);
+
+            let compls = completions_from_custom_source_impl(&context)
+                .unwrap()
+                .unwrap();
+
+            assert!(compls.iter().any(|c| c.label == "utils"));
+        })
+    }
 }
