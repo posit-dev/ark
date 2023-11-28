@@ -150,13 +150,41 @@ impl PositronFrontend {
         id: &str,
         request: &FrontendRpcRequest,
     ) -> Result<(), anyhow::Error> {
-        // Form an R function call from the request
+        // Today, all RPCs are fulfilled by R directly. Check to see if an R
+        // method of the appropriate name is defined.
         //
         // Consider: In the future, we may want to allow requests to be
-        // fulfilled here on the Rust side, with only some requests
-        // forwarded to R.
+        // fulfilled here on the Rust side, with only some requests forwarded to
+        // R; Rust methods may wish to establish their own RPC handlers.
+
+        // The method name is prefixed with ".ps.rpc.", by convention
+        let method = format!(".ps.rpc.{}", request.method);
+
+        // Use the `exists` function to see if the method exists
+        let exists = r_task(|| unsafe {
+            let exists = RFunction::from("exists")
+                .param("x", method.clone())
+                .call()?;
+            RObject::to::<bool>(exists)
+        })?;
+
+        if !exists {
+            // No such method; return an error
+            let reply = FrontendMessage::RpcResultError(FrontendRpcError {
+                id: id.to_string(),
+                error: FrontendRpcErrorData {
+                    code: -32601, // Method not found
+                    message: format!("No such method: {}", request.method),
+                },
+            });
+            let comm_msg = CommChannelMsg::Rpc(id.to_string(), serde_json::to_value(reply)?);
+            self.comm.outgoing_tx.send(comm_msg)?;
+            return Ok(());
+        }
+
+        // Form an R function call from the request
         let result = r_task(|| unsafe {
-            let mut call = RFunction::from(format!(".ps.rpc.{}", request.method));
+            let mut call = RFunction::from(method);
             for param in request.params.iter() {
                 let p = RObject::try_from(param.clone())?;
                 call.add(p);
@@ -174,7 +202,7 @@ impl PositronFrontend {
             Err(err) => FrontendMessage::RpcResultError(FrontendRpcError {
                 id: id.to_string(),
                 error: FrontendRpcErrorData {
-                    code: 0,
+                    code: -32000,
                     message: err.to_string(),
                 },
             }),
