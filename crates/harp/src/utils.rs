@@ -632,17 +632,14 @@ pub fn init_utils() {
 pub fn save_rds(x: SEXP, path: &str) {
     let path = RObject::from(path);
 
-    unsafe {
-        let env = Environment::new(r_parse_eval0("new.env()", RObject::view(R_BaseEnv)).unwrap());
+    let env = Environment::new(r_parse_eval0("new.env()", R_ENVS.base).unwrap());
+    env.bind("x", x);
+    env.bind("path", path);
 
-        env.bind("x", x);
-        env.bind("path", path);
+    let res = r_parse_eval0("base::saveRDS(x, path)", env);
 
-        let res = r_parse_eval0("base::saveRDS(x, path)", env);
-
-        // This is meant for internal use so report errors loudly
-        res.unwrap();
-    }
+    // This is meant for internal use so report errors loudly
+    res.unwrap();
 }
 
 /// Meant for debugging inside lldb. Since we can't call C functions reliably
