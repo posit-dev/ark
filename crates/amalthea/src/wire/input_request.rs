@@ -8,8 +8,8 @@
 use serde::Deserialize;
 use serde::Serialize;
 
+use super::originator::Originator;
 use crate::wire::jupyter_message::MessageType;
-use crate::wire::originator::Originator;
 
 /// Represents a request from the kernel to the front end to prompt the user for
 /// input

@@ -34,30 +34,39 @@ use amalthea::wire::kernel_info_reply::KernelInfoReply;
 use amalthea::wire::kernel_info_request::KernelInfoRequest;
 use amalthea::wire::language_info::LanguageInfo;
 use amalthea::wire::originator::Originator;
+use amalthea::wire::stream::Stream;
+use amalthea::wire::stream::StreamOutput;
 use async_trait::async_trait;
+use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use log::warn;
 use serde_json::json;
 
 pub struct Shell {
     iopub: Sender<IOPubMessage>,
-    input_tx: Sender<ShellInputRequest>,
+    input_request_tx: Sender<ShellInputRequest>,
+    input_reply_rx: Receiver<InputReply>,
     execution_count: u32,
 }
 
 /// Stub implementation of the shell handler for test harness
 impl Shell {
-    pub fn new(iopub: Sender<IOPubMessage>, input_tx: Sender<ShellInputRequest>) -> Self {
+    pub fn new(
+        iopub: Sender<IOPubMessage>,
+        input_request_tx: Sender<ShellInputRequest>,
+        input_reply_rx: Receiver<InputReply>,
+    ) -> Self {
         Self {
             iopub,
-            input_tx,
+            input_request_tx,
+            input_reply_rx,
             execution_count: 0,
         }
     }
 
     // Simluates an input request
     fn prompt_for_input(&self, originator: Option<Originator>) {
-        if let Err(err) = self.input_tx.send(ShellInputRequest {
+        if let Err(err) = self.input_request_tx.send(ShellInputRequest {
             originator: originator.clone(),
             request: InputRequest {
                 prompt: String::from("Amalthea Echo> "),
@@ -181,21 +190,29 @@ impl ShellHandler for Shell {
         // Create an artificial prompt for input
         if req.code == "prompt" {
             self.prompt_for_input(originator);
+
+            // Block for the reply
+            let reply = self.input_reply_rx.recv().unwrap();
+
+            // Echo the reply
+            self.iopub
+                .send(IOPubMessage::Stream(StreamOutput {
+                    name: Stream::Stdout,
+                    text: reply.value,
+                }))
+                .unwrap();
         }
 
         // For this toy echo language, generate a result that's just the input
         // echoed back.
         let data = json!({"text/plain": req.code });
-        if let Err(err) = self.iopub.send(IOPubMessage::ExecuteResult(ExecuteResult {
-            execution_count: self.execution_count,
-            data,
-            metadata: json!({}),
-        })) {
-            warn!(
-                "Could not publish result of computation {} on iopub: {}",
-                self.execution_count, err
-            );
-        }
+        self.iopub
+            .send(IOPubMessage::ExecuteResult(ExecuteResult {
+                execution_count: self.execution_count,
+                data,
+                metadata: json!({}),
+            }))
+            .unwrap();
 
         // Let the shell thread know that we've successfully executed the code.
         Ok(ExecuteReply {
@@ -250,14 +267,5 @@ impl ShellHandler for Shell {
             }
         });
         Ok(true)
-    }
-
-    async fn handle_input_reply(
-        &self,
-        _msg: &InputReply,
-        _orig: Originator,
-    ) -> Result<(), Exception> {
-        // NYI
-        Ok(())
     }
 }

@@ -5,8 +5,6 @@
  *
  */
 
-use std::sync::Arc;
-use std::sync::Mutex;
 use std::time::Duration;
 
 use crossbeam::channel::tick;
@@ -43,8 +41,8 @@ pub struct IOPub {
 
     /// The current message context; attached to outgoing messages to pair
     /// outputs with the message that caused them.
-    shell_context: Arc<Mutex<Option<JupyterHeader>>>,
-    control_context: Arc<Mutex<Option<JupyterHeader>>>,
+    shell_context: Option<JupyterHeader>,
+    control_context: Option<JupyterHeader>,
 
     /// A buffer for the active stdout/stderr stream to batch stream messages
     /// that we send to the frontend, since this can be extremely high traffic.
@@ -93,19 +91,14 @@ impl IOPub {
     ///   subscribed clients.
     /// * `receiver` - The receiver channel that will receive IOPub
     ///   messages from other threads.
-    pub fn new(
-        socket: Socket,
-        receiver: Receiver<IOPubMessage>,
-        shell_context: Arc<Mutex<Option<JupyterHeader>>>,
-        control_context: Arc<Mutex<Option<JupyterHeader>>>,
-    ) -> Self {
+    pub fn new(socket: Socket, receiver: Receiver<IOPubMessage>) -> Self {
         let buffer = StreamBuffer::new(Stream::Stdout);
 
         Self {
             socket,
             receiver,
-            shell_context,
-            control_context,
+            shell_context: None,
+            control_context: None,
             buffer,
         }
     }
@@ -156,25 +149,21 @@ impl IOPub {
                 // through the stack.
                 match (&context_channel, &msg.execution_state) {
                     (IOPubContextChannel::Control, ExecutionState::Busy) => {
-                        let mut control_context = self.control_context.lock().unwrap();
-                        *control_context = Some(context.clone());
+                        self.control_context = Some(context.clone());
                     },
                     (IOPubContextChannel::Control, ExecutionState::Idle) => {
                         self.flush_stream();
-                        let mut control_context = self.control_context.lock().unwrap();
-                        *control_context = None;
+                        self.control_context = None;
                     },
                     (IOPubContextChannel::Control, ExecutionState::Starting) => {
                         // Nothing to do
                     },
                     (IOPubContextChannel::Shell, ExecutionState::Busy) => {
-                        let mut shell_context = self.shell_context.lock().unwrap();
-                        *shell_context = Some(context.clone());
+                        self.shell_context = Some(context.clone());
                     },
                     (IOPubContextChannel::Shell, ExecutionState::Idle) => {
                         self.flush_stream();
-                        let mut shell_context = self.shell_context.lock().unwrap();
-                        *shell_context = None;
+                        self.shell_context = None;
                     },
                     (IOPubContextChannel::Shell, ExecutionState::Starting) => {
                         // Nothing to do
@@ -225,8 +214,8 @@ impl IOPub {
         context_channel: IOPubContextChannel,
     ) -> Result<(), Error> {
         let context = match context_channel {
-            IOPubContextChannel::Control => self.control_context.lock().unwrap(),
-            IOPubContextChannel::Shell => self.shell_context.lock().unwrap(),
+            IOPubContextChannel::Control => &self.control_context,
+            IOPubContextChannel::Shell => &self.shell_context,
         };
         self.send_message_impl(context.clone(), content)
     }

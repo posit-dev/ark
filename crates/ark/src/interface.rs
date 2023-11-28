@@ -35,6 +35,7 @@ use amalthea::wire::execute_reply_exception::ExecuteReplyException;
 use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::execute_response::ExecuteResponse;
 use amalthea::wire::execute_result::ExecuteResult;
+use amalthea::wire::input_reply::InputReply;
 use amalthea::wire::input_request::InputRequest;
 use amalthea::wire::input_request::ShellInputRequest;
 use amalthea::wire::jupyter_message::Status;
@@ -60,9 +61,11 @@ use harp::object::RObject;
 use harp::r_symbol;
 use harp::routines::r_register_routines;
 use harp::session::r_traceback;
+use harp::utils::convert_line_endings;
 use harp::utils::r_get_option;
 use harp::utils::r_is_data_frame;
 use harp::utils::r_poke_option_show_error_messages;
+use harp::utils::LineEnding;
 use harp::R_MAIN_THREAD_ID;
 use libR_sys::*;
 use log::*;
@@ -160,6 +163,7 @@ pub fn start_r(
     comm_manager_tx: Sender<CommEvent>,
     r_request_rx: Receiver<RRequest>,
     input_request_tx: Sender<ShellInputRequest>,
+    input_reply_rx: Receiver<InputReply>,
     iopub_tx: Sender<IOPubMessage>,
     kernel_init_tx: Bus<KernelInfo>,
     dap: Arc<Mutex<Dap>>,
@@ -179,6 +183,7 @@ pub fn start_r(
             comm_manager_tx,
             r_request_rx,
             input_request_tx,
+            input_reply_rx,
             iopub_tx,
             kernel_init_tx,
             dap,
@@ -266,6 +271,9 @@ pub struct RMain {
     /// Input requests to the frontend. Processed from `ReadConsole()`
     /// calls triggered by e.g. `readline()`.
     input_request_tx: Sender<ShellInputRequest>,
+
+    /// Input replies from the frontend. Waited on in `ReadConsole()` after a request.
+    input_reply_rx: Receiver<InputReply>,
 
     /// IOPub channel for broadcasting outputs
     iopub_tx: Sender<IOPubMessage>,
@@ -376,6 +384,7 @@ impl RMain {
         comm_manager_tx: Sender<CommEvent>,
         r_request_rx: Receiver<RRequest>,
         input_request_tx: Sender<ShellInputRequest>,
+        input_reply_rx: Receiver<InputReply>,
         iopub_tx: Sender<IOPubMessage>,
         kernel_init_tx: Bus<KernelInfo>,
         dap: Arc<Mutex<Dap>>,
@@ -385,6 +394,7 @@ impl RMain {
             r_request_rx,
             comm_manager_tx,
             input_request_tx,
+            input_reply_rx,
             iopub_tx,
             kernel_init_tx,
             active_request: None,
@@ -584,43 +594,43 @@ impl RMain {
             return ConsoleResult::NewInput;
         }
 
-        // We got a prompt request marking the end of the previous
-        // execution. We can now send a reply to unblock the active Shell
-        // request.
         if let Some(req) = &self.active_request {
-            // FIXME: The messages below are involved in a race between the
-            // StdIn and Shell threads and the messages might arrive out of
-            // order on the frontend side. This is generally well handled
-            // (top-level prompt is updated to become a user prompt) except
-            // if a response is sent very quickly before the
-            // `input_request` message arrives. In that case, the elements
-            // in the console are displayed out of order.
             if info.input_request {
-                self.request_input(req, info.input_prompt.to_string());
-            }
+                // Request input. We'll wait for a reply in the `select!` below.
+                self.request_input(req.orig.clone(), info.input_prompt.to_string());
 
-            // FIXME: Race condition between the comm and shell socket threads.
-            //
-            // Send info for the next prompt to frontend. This handles
-            // custom prompts set by users, e.g. `options(prompt = ,
-            // continue = )`, as well as debugging prompts, e.g. after a
-            // call to `browser()`.
-            if !info.input_request {
+                // Note that since we're here due to `readline()` or similar, we
+                // preserve the current active request. While we are requesting
+                // an input and waiting for the reply, the outer
+                // `execute_request` remains active and the shell remains busy.
+            } else {
+                // We got a prompt request marking the end of the previous
+                // execution. We can now send a reply to unblock the active Shell
+                // request.
+
+                // FIXME: Race condition between the comm and shell socket threads.
+                //
+                // Send info for the next prompt to frontend. This handles
+                // custom prompts set by users, e.g. `options(prompt = ,
+                // continue = )`, as well as debugging prompts, e.g. after a
+                // call to `browser()`.
                 let event = PositronEvent::PromptState(PromptStateEvent {
                     input_prompt: info.input_prompt.clone(),
                     continuation_prompt: info.continuation_prompt.clone(),
                 });
                 let kernel = self.kernel.lock().unwrap();
                 kernel.send_event(event);
+
+                // Let frontend know the last request is complete. This turns us
+                // back to Idle.
+                self.reply_execute_request(req, info.clone());
+
+                // Clear active request. This doesn't matter if we return here
+                // after receiving an `ExecuteCode` request (as
+                // `self.active_request` will be set to a fresh request), but
+                // we might also return here after an interrupt.
+                self.active_request = None;
             }
-
-            self.reply_execute_request(req, info.clone());
-
-            // Clear active request. This doesn't matter if we return here
-            // after receiving an `ExecuteCode` request (as
-            // `self.active_request` will be set to a fresh request), but
-            // we might also return here after an interrupt.
-            self.active_request = None;
         }
 
         // Signal prompt
@@ -694,6 +704,10 @@ impl RMain {
                         return ConsoleResult::Disconnected;
                     });
 
+                    if info.input_request {
+                        panic!("Unexpected `execute_request` while waiting for `input_reply`.");
+                    }
+
                     let input = match req {
                         RRequest::ExecuteCode(exec_req, orig, response_tx) => {
                             // Extract input from request
@@ -742,6 +756,15 @@ impl RMain {
                         },
                         ConsoleInput::EOF => ConsoleResult::Disconnected,
                     }
+                }
+
+                recv(self.input_reply_rx) -> input => {
+                    // StdIn must remain alive
+                    let input = input.unwrap();
+                    let input = convert_line_endings(&input.value, LineEnding::Posix);
+
+                    Self::on_console_input(buf, buflen, input);
+                    return ConsoleResult::NewInput;
                 }
 
                 // A task woke us up, start next loop tick to yield to it
@@ -832,11 +855,7 @@ impl RMain {
             trace!("Got prompt {} signaling incomplete request", prompt);
             new_incomplete_response(&req.request, req.exec_count)
         } else if prompt_info.input_request {
-            trace!(
-                "Got input request for prompt {}, waiting for reply...",
-                prompt
-            );
-            new_execute_response(req.exec_count)
+            unreachable!();
         } else {
             trace!("Got R prompt '{}', completing execution", prompt);
             peek_execute_response(req.exec_count)
@@ -865,7 +884,7 @@ impl RMain {
 
     /// Request input from frontend in case code like `readline()` is
     /// waiting for input
-    fn request_input(&self, req: &ActiveReadConsoleRequest, prompt: String) {
+    fn request_input(&self, orig: Option<Originator>, prompt: String) {
         // TODO: We really should not have to wait on IOPub to be cleared, but
         // if an IOPub `'stream'` message arrives on the frontend while an input
         // request is being handled, it currently breaks the Console. We should
@@ -873,6 +892,7 @@ impl RMain {
         // https://github.com/posit-dev/positron/issues/1700
         // https://github.com/posit-dev/amalthea/pull/131
         self.wait_for_empty_iopub();
+
         // TODO: Remove this too. Unfortunately even if we wait for the IOPub
         // queue to clear, that doesn't guarantee the frontend has processed
         // all of the messages in the queue, only that they have been send over.
@@ -883,7 +903,7 @@ impl RMain {
         unwrap!(
             self.input_request_tx
             .send(ShellInputRequest {
-                originator: req.orig.clone(),
+                originator: orig,
                 request: InputRequest {
                     prompt,
                     password: false,
