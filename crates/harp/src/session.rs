@@ -57,7 +57,7 @@ pub fn r_env_is_browsed(env: SEXP) -> anyhow::Result<bool> {
 }
 
 pub fn r_traceback() -> Vec<String> {
-    let trace = unsafe { RFunction::new("", ".ps.errors.traceback").call() };
+    let trace = RFunction::new("", ".ps.errors.traceback").call();
 
     match trace {
         Err(err) => {

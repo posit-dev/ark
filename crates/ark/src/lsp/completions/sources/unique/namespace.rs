@@ -68,7 +68,7 @@ pub fn completions_from_namespace(
     let package = node.utf8_text(context.source.as_bytes())?;
 
     // Get the package namespace.
-    let namespace = unsafe { RFunction::new("base", "getNamespace").add(package).call()? };
+    let namespace = RFunction::new("base", "getNamespace").add(package).call()?;
 
     let symbols = if package == "base" {
         list_namespace_symbols(*namespace)

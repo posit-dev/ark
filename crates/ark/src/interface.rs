@@ -1089,9 +1089,7 @@ fn peek_execute_response(exec_count: u32) -> ExecuteResponse {
 
     // Reset error buffer so we don't display this message again
     if stack_overflow_occurred {
-        unsafe {
-            let _ = RFunction::new("base", "stop").call();
-        };
+        let _ = RFunction::new("base", "stop").call();
     }
 
     // Send the reply to the front end
