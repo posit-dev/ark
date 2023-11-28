@@ -143,10 +143,11 @@ pub(super) fn completions_from_evaluated_object_names(
 
     let options = RParseEvalOptions {
         forbid_function_calls: true,
+        ..Default::default()
     };
 
     // Try to evaluate the object
-    let object = unsafe { r_parse_eval(name, options) };
+    let object = r_parse_eval(name, options);
 
     // If the user is writing pseudocode, this object might not exist yet,
     // in which case we just want to ignore the error from trying to evaluate it

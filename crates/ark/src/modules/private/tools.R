@@ -90,3 +90,39 @@ vec_paste0 <- function(..., collapse = NULL) {
         do.call(paste0, args)
     }
 }
+
+# Meant for debugging inside lldb. See `push_rds()` util on the Rust side.
+push_rds <- function(x, path = NULL, context = "") {
+    if (is.null(path)) {
+        path <- Sys.getenv("RUST_PUSH_RDS_PATH")
+        if (!nzchar(path)) {
+            stop("Must provide path or set `RUST_PUSH_RDS_PATH`")
+        }
+    }
+
+    if (file.exists(path)) {
+        xs <- readRDS(path)
+        stopifnot(
+            is.data.frame(xs),
+            "POSIXct" %in% class(xs$date),
+            is.character(xs$context),
+            is.list(xs$x)
+        )
+    } else {
+        xs <- tibble::tibble(
+            date = as.POSIXct(NULL),
+            context = character(),
+            x = list()
+        )
+    }
+
+    x <- tibble::tibble(
+        date = Sys.time(),
+        context = context,
+        x = list(x)
+    )
+    xs <- rbind(x, xs)
+
+    saveRDS(xs, path)
+    xs
+}

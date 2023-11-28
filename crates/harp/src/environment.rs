@@ -8,17 +8,38 @@
 use std::ops::Deref;
 
 use libR_sys::*;
+use once_cell::sync::Lazy;
 use stdext::unwrap;
 
 use crate::exec::RFunction;
 use crate::exec::RFunctionExt;
 use crate::object::RObject;
+use crate::r_symbol;
 use crate::symbol::RSymbol;
 use crate::utils::r_is_altrep;
 use crate::utils::r_is_null;
 use crate::utils::r_is_s4;
 use crate::utils::r_typeof;
 use crate::utils::Sxpinfo;
+
+pub struct REnvs {
+    pub global: SEXP,
+    pub base: SEXP,
+    pub empty: SEXP,
+}
+
+// Silences diagnostics when called from `r_task()`. Should only be
+// accessed from the R thread.
+unsafe impl Send for REnvs {}
+unsafe impl Sync for REnvs {}
+
+pub static R_ENVS: Lazy<REnvs> = Lazy::new(|| unsafe {
+    REnvs {
+        global: R_GlobalEnv,
+        base: R_BaseEnv,
+        empty: R_EmptyEnv,
+    }
+});
 
 #[derive(Eq)]
 pub struct BindingReference {
@@ -344,6 +365,12 @@ impl Environment {
         Self { env }
     }
 
+    pub fn bind(&self, name: &str, value: impl Into<SEXP>) {
+        unsafe {
+            Rf_defineVar(r_symbol!(name), value.into(), self.env.sexp);
+        }
+    }
+
     pub fn iter(&self) -> EnvironmentIter {
         EnvironmentIter::new(&self)
     }
@@ -427,6 +454,18 @@ impl Environment {
         });
 
         names
+    }
+}
+
+impl From<Environment> for SEXP {
+    fn from(object: Environment) -> Self {
+        object.env.sexp
+    }
+}
+
+impl From<Environment> for RObject {
+    fn from(object: Environment) -> Self {
+        object.env
     }
 }
 
