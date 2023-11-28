@@ -7,6 +7,7 @@
 
 use amalthea::comm::comm_channel::CommChannelMsg;
 use amalthea::comm::frontend_comm::FrontendMessage;
+use amalthea::comm::frontend_comm::FrontendRpcError;
 use amalthea::comm::frontend_comm::FrontendRpcRequest;
 use amalthea::comm::frontend_comm::FrontendRpcResult;
 use amalthea::events::BusyEvent;
@@ -69,8 +70,10 @@ fn test_frontend_comm() {
         match response {
             CommChannelMsg::Rpc(id, result) => {
                 println!("Got RPC result: {:?}", result);
-                serde_json::from_value::<FrontendRpcResult>(result).unwrap();
-                assert_eq!(id, "test-id-1")
+                let result = serde_json::from_value::<FrontendRpcResult>(result).unwrap();
+                assert_eq!(id, "test-id-1");
+                // This RPC should return the old width
+                assert_eq!(result.result, Value::from(old_width));
             },
             _ => panic!("Unexpected response: {:?}", response),
         }
@@ -87,11 +90,11 @@ fn test_frontend_comm() {
         // Assert that the console width changed
         assert_eq!(new_width, 123);
 
-        // Send another message to restore the console width as a test cleanup
+        // Now try to invoke an RPC that doesn't exist
         let id = String::from("test-id-2");
         let request = FrontendMessage::RpcRequest(FrontendRpcRequest {
-            method: String::from("setConsoleWidth"),
-            params: vec![Value::from(old_width)],
+            method: String::from("thisRpcDoesNotExist"),
+            params: vec![],
         });
         comm.incoming_tx
             .send(CommChannelMsg::Rpc(
@@ -99,6 +102,22 @@ fn test_frontend_comm() {
                 serde_json::to_value(request).unwrap(),
             ))
             .unwrap();
+
+        // Wait for the reply
+        let response = comm
+            .outgoing_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap();
+        match response {
+            CommChannelMsg::Rpc(id, result) => {
+                println!("Got RPC result: {:?}", result);
+                let error = serde_json::from_value::<FrontendRpcError>(result).unwrap();
+                // Ensure that the error code is -32601 (method not found)
+                assert_eq!(id, "test-id-2");
+                assert_eq!(error.error.code, -32601);
+            },
+            _ => panic!("Unexpected response: {:?}", response),
+        }
 
         // Mark not busy (this prevents the frontend comm from being closed due to
         // the Sender being dropped)
