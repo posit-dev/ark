@@ -61,8 +61,7 @@ impl PositronFrontend {
                         Ok(event) => self.dispatch_event(&event),
                         Err(err) => {
                             log::error!(
-                                "Error receiving Positron event; closing event listener: {}",
-                                err
+                                "Error receiving Positron event; closing event listener: {err:?}"
                             );
                             // Most likely the channel was closed, so we should stop the thread
                             break;
