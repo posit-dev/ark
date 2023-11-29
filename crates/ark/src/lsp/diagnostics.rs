@@ -7,6 +7,7 @@
 
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::marker::PhantomData;
 use std::time::Duration;
 
 use anyhow::bail;
@@ -23,7 +24,6 @@ use harp::utils::r_symbol_valid;
 use harp::vector::CharacterVector;
 use harp::vector::Vector;
 use libR_sys::*;
-use libc::c_void;
 use stdext::*;
 use tower_lsp::lsp_types::Diagnostic;
 use tower_lsp::lsp_types::DiagnosticSeverity;
@@ -570,9 +570,7 @@ fn recurse_call_arguments_default(
 struct TreeSitterCall<'a> {
     // A call of the form <fun>(list(0L, <ptr>), foo = list(1L, <ptr>))
     call: RObject,
-
-    // holding on to each "value" Node for as long as call lives
-    _value_nodes: Vec<Node<'a>>,
+    node_phantom: PhantomData<&'a Node<'a>>,
 }
 
 impl<'a> From<&TreeSitterCall<'a>> for RObject {
@@ -594,11 +592,6 @@ impl<'a> TreeSitterCall<'a> {
         // then augment it with arguments
         let mut tail = *call;
 
-        // values are stored in the call as external pointers
-        // to Node that are kept alive in this vector and
-        // in TreeSitterCall::_values
-        let mut _value_nodes = vec![];
-
         if let Some(arguments) = node.child_by_field_name("arguments") {
             let mut cursor = arguments.walk();
             let children = arguments.children_by_field_name("argument", &mut cursor);
@@ -614,9 +607,13 @@ impl<'a> TreeSitterCall<'a> {
                 // Set the second element of the list to an external pointer
                 // to the child node.
                 if let Some(value) = child.child_by_field_name("value") {
-                    _value_nodes.push(value);
-                    let value_node_ptr = ExternalPointer::new(_value_nodes.last().into_result()?);
-                    SET_VECTOR_ELT(*arg_list, 1, *value_node_ptr.pointer);
+                    // TODO: Wrap this in a nice constructor
+                    let node_size = std::mem::size_of::<Node>();
+                    let node_storage = Rf_allocVector(RAWSXP, node_size as isize);
+                    SET_VECTOR_ELT(*arg_list, 1, node_storage);
+
+                    let p_node_storage: *mut Node<'a> = RAW(node_storage) as *mut Node<'a>;
+                    std::ptr::copy_nonoverlapping(&value, p_node_storage, 1);
                 }
 
                 SETCDR(tail, Rf_cons(*arg_list, R_NilValue));
@@ -633,7 +630,10 @@ impl<'a> TreeSitterCall<'a> {
             }
         }
 
-        Ok(Self { call, _value_nodes })
+        Ok(Self {
+            call,
+            node_phantom: PhantomData,
+        })
     }
 }
 
@@ -681,7 +681,7 @@ fn recurse_call_arguments_custom(
                 }
 
                 let ptr = VECTOR_ELT(diag, 1);
-                let value = *(R_ExternalPtrAddr(ptr) as *const c_void as *const Node);
+                let value: Node<'static> = *(RAW(ptr) as *mut Node<'static>);
 
                 if kind == "default" {
                     // the R side gives up, so proceed as normal, e.g.
