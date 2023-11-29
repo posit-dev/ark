@@ -13,7 +13,7 @@ use std::net::TcpListener;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use amalthea::comm::comm_channel::CommChannelMsg;
+use amalthea::comm::comm_channel::CommMsg;
 use crossbeam::channel::bounded;
 use crossbeam::channel::unbounded;
 use crossbeam::channel::Receiver;
@@ -43,7 +43,7 @@ pub fn start_dap(
     state: Arc<Mutex<Dap>>,
     conn_init_tx: Sender<bool>,
     r_request_tx: Sender<RRequest>,
-    comm_tx: Sender<CommChannelMsg>,
+    comm_tx: Sender<CommMsg>,
 ) {
     log::trace!("DAP: Thread starting at address {}.", tcp_address);
 
@@ -167,7 +167,7 @@ pub struct DapServer<R: Read, W: Write> {
     pub output: Arc<Mutex<ServerOutput<W>>>,
     state: Arc<Mutex<Dap>>,
     r_request_tx: Sender<RRequest>,
-    comm_tx: Option<Sender<CommChannelMsg>>,
+    comm_tx: Option<Sender<CommMsg>>,
 }
 
 impl<R: Read, W: Write> DapServer<R, W> {
@@ -176,7 +176,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
         writer: BufWriter<W>,
         state: Arc<Mutex<Dap>>,
         r_request_tx: Sender<RRequest>,
-        comm_tx: Sender<CommChannelMsg>,
+        comm_tx: Sender<CommMsg>,
     ) -> Self {
         let server = Server::new(reader, writer);
         let output = server.output.clone();
@@ -288,7 +288,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
         // If connected to Positron, forward the restart command to the
         // frontend. Otherwise ignore it.
         if let Some(tx) = &self.comm_tx {
-            let msg = CommChannelMsg::Data(json!({ "msg_type": "restart" }));
+            let msg = CommMsg::Data(json!({ "msg_type": "restart" }));
             tx.send(msg).unwrap();
         }
 
@@ -364,7 +364,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
             // writing) we are connected to Positron or similar. Send
             // control events so that the IDE can execute these as if they
             // were sent by the user. This ensures prompts are updated.
-            let msg = CommChannelMsg::Data(json!({
+            let msg = CommMsg::Data(json!({
                 "msg_type": "execute",
                 "content": {
                     "command": debug_request_command(cmd)

@@ -5,7 +5,7 @@
 //
 //
 
-use amalthea::comm::comm_channel::CommChannelMsg;
+use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::frontend_comm::FrontendMessage;
 use amalthea::comm::frontend_comm::FrontendRpcError;
 use amalthea::comm::frontend_comm::FrontendRpcErrorData;
@@ -93,7 +93,7 @@ impl PositronFrontend {
 
         // Convert the client event to a message we can send to the front end
         let frontend_evt = FrontendMessage::Event(comm_evt);
-        let comm_msg = CommChannelMsg::Data(serde_json::to_value(frontend_evt).unwrap());
+        let comm_msg = CommMsg::Data(serde_json::to_value(frontend_evt).unwrap());
 
         // Deliver the event to the front end over the comm channel
         if let Err(err) = self.comm.outgoing_tx.send(comm_msg) {
@@ -106,20 +106,20 @@ impl PositronFrontend {
      *
      * Returns true if the thread should continue, false if it should exit.
      */
-    fn handle_comm_message(&self, msg: &CommChannelMsg) -> bool {
+    fn handle_comm_message(&self, msg: &CommMsg) -> bool {
         match msg {
-            CommChannelMsg::Data(data) => {
+            CommMsg::Data(data) => {
                 // We don't really expect to receive data messages from the
                 // front end; they are events
                 log::warn!("Unexpected data message from front end: {:?}", data);
                 true
             },
-            CommChannelMsg::Close => {
+            CommMsg::Close => {
                 // The front end has closed the connection; let the
                 // thread exit.
                 false
             },
-            CommChannelMsg::Rpc(id, request) => {
+            CommMsg::Rpc(id, request) => {
                 let message = match serde_json::from_value::<FrontendMessage>(request.clone()) {
                     Ok(msg) => msg,
                     Err(err) => {
@@ -177,7 +177,7 @@ impl PositronFrontend {
                     message: format!("No such method: {}", request.method),
                 },
             });
-            let comm_msg = CommChannelMsg::Rpc(id.to_string(), serde_json::to_value(reply)?);
+            let comm_msg = CommMsg::Rpc(id.to_string(), serde_json::to_value(reply)?);
             self.comm.outgoing_tx.send(comm_msg)?;
             return Ok(());
         }
@@ -208,7 +208,7 @@ impl PositronFrontend {
             }),
         };
 
-        let comm_msg = CommChannelMsg::Rpc(id.to_string(), serde_json::to_value(reply)?);
+        let comm_msg = CommMsg::Rpc(id.to_string(), serde_json::to_value(reply)?);
 
         // Deliver the RPC reply to the front end over the comm channel
         if let Err(err) = self.comm.outgoing_tx.send(comm_msg) {

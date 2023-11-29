@@ -27,8 +27,8 @@ use std::fs::File;
 use std::io::BufReader;
 use std::io::Read;
 
-use amalthea::comm::comm_channel::CommChannelMsg;
-use amalthea::comm::event::CommEvent;
+use amalthea::comm::comm_channel::CommMsg;
+use amalthea::comm::event::CommManagerEvent;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
 use amalthea::socket::iopub::IOPubMessage;
@@ -124,7 +124,7 @@ impl DeviceContext {
 
     pub fn on_did_execute_request(
         &mut self,
-        comm_manager_tx: Sender<CommEvent>,
+        comm_manager_tx: Sender<CommManagerEvent>,
         iopub_tx: Sender<IOPubMessage>,
         positron_connected: bool,
     ) {
@@ -172,7 +172,7 @@ impl DeviceContext {
         });
 
         // Get the RPC request.
-        if let CommChannelMsg::Rpc(rpc_id, value) = message {
+        if let CommMsg::Rpc(rpc_id, value) = message {
             let input = serde_json::from_value::<PlotMessageInput>(value);
             let input = unwrap!(input, Err(error) => {
                 log::error!("{}", error);
@@ -195,7 +195,7 @@ impl DeviceContext {
 
                     socket
                         .outgoing_tx
-                        .send(CommChannelMsg::Rpc(rpc_id.to_string(), json))
+                        .send(CommMsg::Rpc(rpc_id.to_string(), json))
                         .or_log_error("Failed to send plot due to");
                 },
             }
@@ -204,7 +204,7 @@ impl DeviceContext {
 
     fn process_changes(
         &mut self,
-        comm_manager_tx: Sender<CommEvent>,
+        comm_manager_tx: Sender<CommManagerEvent>,
         iopub_tx: Sender<IOPubMessage>,
         positron_connected: bool,
     ) {
@@ -224,7 +224,7 @@ impl DeviceContext {
     fn process_new_plot(
         &mut self,
         id: &str,
-        comm_manager_tx: Sender<CommEvent>,
+        comm_manager_tx: Sender<CommManagerEvent>,
         iopub_tx: Sender<IOPubMessage>,
         positron_connected: bool,
     ) {
@@ -235,7 +235,7 @@ impl DeviceContext {
         }
     }
 
-    fn process_new_plot_positron(&mut self, id: &str, comm_manager_tx: Sender<CommEvent>) {
+    fn process_new_plot_positron(&mut self, id: &str, comm_manager_tx: Sender<CommManagerEvent>) {
         // Let Positron know that we just created a new plot.
         let socket = CommSocket::new(
             CommInitiator::BackEnd,
@@ -243,7 +243,7 @@ impl DeviceContext {
             POSITRON_PLOT_CHANNEL_ID.to_string(),
         );
 
-        let event = CommEvent::Opened(socket.clone(), serde_json::Value::Null);
+        let event = CommManagerEvent::Opened(socket.clone(), serde_json::Value::Null);
         if let Err(error) = comm_manager_tx.send(event) {
             log::error!("{}", error);
         }
@@ -309,7 +309,7 @@ impl DeviceContext {
         // Tell Positron we have an updated plot that it should request a rerender for
         socket
             .outgoing_tx
-            .send(CommChannelMsg::Data(value))
+            .send(CommMsg::Data(value))
             .or_log_error("Failed to send update message for id {id}.");
     }
 
@@ -426,7 +426,7 @@ pub unsafe fn on_process_events() {
 }
 
 pub unsafe fn on_did_execute_request(
-    comm_manager_tx: Sender<CommEvent>,
+    comm_manager_tx: Sender<CommManagerEvent>,
     iopub_tx: Sender<IOPubMessage>,
     positron_connected: bool,
 ) {

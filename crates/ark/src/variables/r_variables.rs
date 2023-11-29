@@ -5,8 +5,8 @@
 //
 //
 
-use amalthea::comm::comm_channel::CommChannelMsg;
-use amalthea::comm::event::CommEvent;
+use amalthea::comm::comm_channel::CommMsg;
+use amalthea::comm::event::CommManagerEvent;
 use amalthea::socket::comm::CommSocket;
 use crossbeam::channel::select;
 use crossbeam::channel::unbounded;
@@ -48,7 +48,7 @@ use crate::variables::variable::Variable;
  */
 pub struct RVariables {
     comm: CommSocket,
-    comm_manager_tx: Sender<CommEvent>,
+    comm_manager_tx: Sender<CommManagerEvent>,
     pub env: RThreadSafe<RObject>,
     /// `Binding` does not currently protect anything, and therefore doesn't
     /// implement `Drop`, which might use the R API. It assumes that R SYMSXPs
@@ -75,7 +75,7 @@ impl RVariables {
      * - `env`: An R environment to scan for variables, typically R_GlobalEnv
      * - `comm`: A channel used to send messages to the front end
      */
-    pub fn start(env: RObject, comm: CommSocket, comm_manager_tx: Sender<CommEvent>) {
+    pub fn start(env: RObject, comm: CommSocket, comm_manager_tx: Sender<CommManagerEvent>) {
         // Validate that the RObject we were passed is actually an environment
         if let Err(err) = r_assert_type(env.sexp, &[ENVSXP]) {
             warn!(
@@ -153,7 +153,7 @@ impl RVariables {
                     debug!("Environment: Received message from front end: {:?}", msg);
 
                     // Break out of the loop if the front end has closed the channel
-                    if msg == CommChannelMsg::Close {
+                    if msg == CommMsg::Close {
                         debug!("Environment: Closing down after receiving comm_close from front end.");
 
                         // Remember that the user initiated the close so that we can
@@ -163,7 +163,7 @@ impl RVariables {
                     }
 
                     // Process ordinary data messages
-                    if let CommChannelMsg::Rpc(id, data) = msg {
+                    if let CommMsg::Rpc(id, data) = msg {
                         let message = match serde_json::from_value::<VariablesMessage>(data) {
                             Ok(m) => m,
                             Err(err) => {
@@ -220,7 +220,7 @@ impl RVariables {
         if !user_initiated_close {
             // Send a close message to the front end if the front end didn't
             // initiate the close
-            self.comm.outgoing_tx.send(CommChannelMsg::Close).unwrap();
+            self.comm.outgoing_tx.send(CommMsg::Close).unwrap();
         }
     }
 
@@ -393,8 +393,8 @@ impl RVariables {
                 // If we were given a request ID, send the response as an RPC;
                 // otherwise, send it as an event
                 let comm_msg = match request_id {
-                    Some(id) => CommChannelMsg::Rpc(id, data),
-                    None => CommChannelMsg::Data(data),
+                    Some(id) => CommMsg::Rpc(id, data),
+                    None => CommMsg::Data(data),
                 };
 
                 self.comm.outgoing_tx.send(comm_msg).unwrap()

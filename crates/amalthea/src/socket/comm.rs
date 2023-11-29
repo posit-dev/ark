@@ -8,7 +8,7 @@
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 
-use crate::comm::comm_channel::CommChannelMsg;
+use crate::comm::comm_channel::CommMsg;
 
 /**
  * A `CommSocket` is a relay between the back end and the front end of a comm.
@@ -36,19 +36,19 @@ pub struct CommSocket {
     /// The channel receiving messages from the back end that are to be relayed
     /// to the front end (ultimately via IOPub). These messages are freeform
     /// JSON values.
-    pub outgoing_rx: Receiver<CommChannelMsg>,
+    pub outgoing_rx: Receiver<CommMsg>,
 
     /// The other side of the channel receiving messages from the back end. This
     /// `Sender` is passed to the back end of the comm channel so that it can
     /// send messages to the front end.
-    pub outgoing_tx: Sender<CommChannelMsg>,
+    pub outgoing_tx: Sender<CommMsg>,
 
     /// The channel that will accept messages from the front end and relay them
     /// to the back end.
-    pub incoming_tx: Sender<CommChannelMsg>,
+    pub incoming_tx: Sender<CommMsg>,
 
     /// The other side of the channel receiving messages from the front end
-    pub incoming_rx: Receiver<CommChannelMsg>,
+    pub incoming_rx: Receiver<CommMsg>,
 }
 
 /**

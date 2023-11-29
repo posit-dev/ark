@@ -5,7 +5,7 @@
 //
 //
 
-use amalthea::comm::comm_channel::CommChannelMsg;
+use amalthea::comm::comm_channel::CommMsg;
 use amalthea::socket::comm::CommSocket;
 use anyhow::anyhow;
 use anyhow::Result;
@@ -155,13 +155,13 @@ impl RHelp {
      *
      * Returns true if the thread should continue, false if it should exit.
      */
-    fn handle_comm_message(&self, message: CommChannelMsg) -> bool {
-        if let CommChannelMsg::Close = message {
+    fn handle_comm_message(&self, message: CommMsg) -> bool {
+        if let CommMsg::Close = message {
             // The front end has closed the connection; let the
             // thread exit.
             return false;
         }
-        if let CommChannelMsg::Rpc(id, data) = message {
+        if let CommMsg::Rpc(id, data) = message {
             let message = match serde_json::from_value::<HelpMessage>(data) {
                 Ok(m) => m,
                 Err(err) => {
@@ -195,7 +195,7 @@ impl RHelp {
                 // Create and send a reply to the front end.
                 let reply = HelpMessage::ShowHelpTopicReply(ShowTopicReply { found });
                 let json = serde_json::to_value(reply)?;
-                self.comm.outgoing_tx.send(CommChannelMsg::Rpc(id, json))?;
+                self.comm.outgoing_tx.send(CommMsg::Rpc(id, json))?;
                 Ok(())
             },
             _ => Err(anyhow!("Help: Received unexpected message {:?}", message)),
@@ -244,7 +244,7 @@ impl RHelp {
             focus: true,
         });
         let json = serde_json::to_value(msg)?;
-        self.comm.outgoing_tx.send(CommChannelMsg::Data(json))?;
+        self.comm.outgoing_tx.send(CommMsg::Data(json))?;
 
         // The URL was handled.
         Ok(true)

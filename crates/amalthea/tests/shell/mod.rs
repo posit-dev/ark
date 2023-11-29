@@ -8,7 +8,7 @@
 use std::thread;
 
 use amalthea::comm::comm_channel::Comm;
-use amalthea::comm::comm_channel::CommChannelMsg;
+use amalthea::comm::comm_channel::CommMsg;
 use amalthea::language::shell_handler::ShellHandler;
 use amalthea::socket::comm::CommSocket;
 use amalthea::socket::iopub::IOPubMessage;
@@ -250,17 +250,17 @@ impl ShellHandler for Shell {
         // messages it receives.
         thread::spawn(move || loop {
             match comm.incoming_rx.recv().unwrap() {
-                CommChannelMsg::Data(val) => {
+                CommMsg::Data(val) => {
                     // Echo back the data we received on the comm channel to the
                     // sender.
-                    comm.outgoing_tx.send(CommChannelMsg::Data(val)).unwrap();
+                    comm.outgoing_tx.send(CommMsg::Data(val)).unwrap();
                 },
-                CommChannelMsg::Rpc(id, val) => {
+                CommMsg::Rpc(id, val) => {
                     // Echo back the data we received on the comm channel to the
                     // sender as the response to the RPC, using the same ID.
-                    comm.outgoing_tx.send(CommChannelMsg::Rpc(id, val)).unwrap();
+                    comm.outgoing_tx.send(CommMsg::Rpc(id, val)).unwrap();
                 },
-                CommChannelMsg::Close => {
+                CommMsg::Close => {
                     // Close the channel and exit the thread.
                     break;
                 },

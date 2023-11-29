@@ -5,8 +5,8 @@
 //
 //
 
-use amalthea::comm::comm_channel::CommChannelMsg;
-use amalthea::comm::event::CommEvent;
+use amalthea::comm::comm_channel::CommMsg;
+use amalthea::comm::event::CommManagerEvent;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
 use anyhow::bail;
@@ -52,7 +52,7 @@ pub struct RDataViewer {
     title: String,
     dataset: DataSet,
     comm: CommSocket,
-    comm_manager_tx: Sender<CommEvent>,
+    comm_manager_tx: Sender<CommManagerEvent>,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
@@ -260,7 +260,7 @@ impl DataSet {
 }
 
 impl RDataViewer {
-    pub fn start(title: String, data: RObject, comm_manager_tx: Sender<CommEvent>) {
+    pub fn start(title: String, data: RObject, comm_manager_tx: Sender<CommManagerEvent>) {
         let id = Uuid::new_v4().to_string();
 
         let comm = CommSocket::new(
@@ -304,7 +304,7 @@ impl RDataViewer {
             };
             let comm_open_json = serde_json::to_value(metadata)?;
             // Notify frontend that the data viewer comm is open
-            let event = CommEvent::Opened(self.comm.clone(), comm_open_json);
+            let event = CommManagerEvent::Opened(self.comm.clone(), comm_open_json);
             self.comm_manager_tx.send(event)?;
             Ok(())
         };
@@ -326,14 +326,14 @@ impl RDataViewer {
             log::debug!("Data Viewer: Received message from front end: {msg:?}");
 
             // Break out of the loop if the frontend has closed the channel
-            if msg == CommChannelMsg::Close {
+            if msg == CommMsg::Close {
                 log::debug!("Data Viewer: Closing down after receiving comm_close from front end.");
                 user_initiated_close = true;
                 break;
             }
 
             // Process ordinary data messages
-            if let CommChannelMsg::Rpc(id, data) = msg {
+            if let CommMsg::Rpc(id, data) = msg {
                 let message = unwrap!(serde_json::from_value(data), Err(error) => {
                     log::error!("Data Viewer: Received invalid message from front end. {error}");
                     continue;
@@ -375,7 +375,7 @@ impl RDataViewer {
             // initiate the close
             self.comm
                 .outgoing_tx
-                .send(CommChannelMsg::Close)
+                .send(CommMsg::Close)
                 .or_log_error("Data Viewer: Failed to properly close the comm");
         }
     }
@@ -422,8 +422,8 @@ impl RDataViewer {
         });
 
         let comm_msg = match request_id {
-            Some(id) => CommChannelMsg::Rpc(id, message),
-            None => CommChannelMsg::Data(message),
+            Some(id) => CommMsg::Rpc(id, message),
+            None => CommMsg::Data(message),
         };
         self.comm
             .outgoing_tx

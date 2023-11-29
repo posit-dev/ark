@@ -7,6 +7,7 @@
 
 use harp::external_ptr::ExternalPointer;
 use harp::object::RObject;
+use libR_sys::RAW;
 use libR_sys::SEXP;
 use tree_sitter::Node;
 
@@ -15,7 +16,7 @@ pub unsafe extern "C" fn ps_treesitter_node_text(
     node_ptr: SEXP,
     source_ptr: SEXP,
 ) -> anyhow::Result<SEXP> {
-    let node = ExternalPointer::<Node>::reference(node_ptr);
+    let node: Node<'static> = *(RAW(node_ptr) as *mut Node<'static>);
     let source = ExternalPointer::<&str>::reference(source_ptr);
 
     let text = node.utf8_text(source.as_bytes()).unwrap_or("");
@@ -24,7 +25,7 @@ pub unsafe extern "C" fn ps_treesitter_node_text(
 
 #[harp::register]
 pub unsafe extern "C" fn ps_treesitter_node_kind(node_ptr: SEXP) -> anyhow::Result<SEXP> {
-    let node = ExternalPointer::<Node>::reference(node_ptr);
+    let node: Node<'static> = *(RAW(node_ptr) as *mut Node<'static>);
 
     Ok(*RObject::from(node.kind()))
 }

@@ -8,8 +8,8 @@
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use amalthea::comm::comm_channel::CommChannelMsg;
-use amalthea::comm::event::CommEvent;
+use amalthea::comm::comm_channel::CommMsg;
+use amalthea::comm::event::CommManagerEvent;
 use amalthea::kernel::Kernel;
 use amalthea::kernel::StreamBehavior;
 use amalthea::socket::comm::CommInitiator;
@@ -17,7 +17,7 @@ use amalthea::socket::comm::CommSocket;
 use amalthea::wire::comm_close::CommClose;
 use amalthea::wire::comm_info_reply::CommInfoTargetName;
 use amalthea::wire::comm_info_request::CommInfoRequest;
-use amalthea::wire::comm_msg::CommMsg;
+use amalthea::wire::comm_msg::CommWireMsg;
 use amalthea::wire::comm_open::CommOpen;
 use amalthea::wire::execute_input::ExecuteInput;
 use amalthea::wire::execute_request::ExecuteRequest;
@@ -378,7 +378,7 @@ fn test_kernel() {
     }
 
     info!("Sending comm message to the test comm and waiting for a reply");
-    let comm_req_id = frontend.send_shell(CommMsg {
+    let comm_req_id = frontend.send_shell(CommWireMsg {
         comm_id: comm_id.to_string(),
         data: serde_json::Value::Null,
     });
@@ -454,7 +454,7 @@ fn test_kernel() {
         test_comm_name.clone(),
     );
     comm_manager_tx
-        .send(CommEvent::Opened(
+        .send(CommManagerEvent::Opened(
             test_comm.clone(),
             serde_json::Value::Null,
         ))
@@ -512,7 +512,7 @@ fn test_kernel() {
     // created.
     test_comm
         .outgoing_tx
-        .send(CommChannelMsg::Data(serde_json::Value::Null))
+        .send(CommMsg::Data(serde_json::Value::Null))
         .unwrap();
 
     // Wait for the comm data message to be received by the frontend.
@@ -530,7 +530,7 @@ fn test_kernel() {
     }
 
     // Close the test comm from the backend side
-    test_comm.outgoing_tx.send(CommChannelMsg::Close).unwrap();
+    test_comm.outgoing_tx.send(CommMsg::Close).unwrap();
 
     // Ensure that the frontend is notified
     loop {

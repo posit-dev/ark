@@ -16,7 +16,7 @@ use crate::socket::socket::Socket;
 use crate::wire::comm_close::CommClose;
 use crate::wire::comm_info_reply::CommInfoReply;
 use crate::wire::comm_info_request::CommInfoRequest;
-use crate::wire::comm_msg::CommMsg;
+use crate::wire::comm_msg::CommWireMsg;
 use crate::wire::comm_open::CommOpen;
 use crate::wire::complete_reply::CompleteReply;
 use crate::wire::complete_request::CompleteRequest;
@@ -97,7 +97,7 @@ pub enum Message {
     CommInfoReply(JupyterMessage<CommInfoReply>),
     CommInfoRequest(JupyterMessage<CommInfoRequest>),
     CommOpen(JupyterMessage<CommOpen>),
-    CommMsg(JupyterMessage<CommMsg>),
+    CommMsg(JupyterMessage<CommWireMsg>),
     CommClose(JupyterMessage<CommClose>),
     ClientEvent(JupyterMessage<ClientEvent>),
     StreamOutput(JupyterMessage<StreamOutput>),
@@ -199,7 +199,7 @@ impl TryFrom<&WireMessage> for Message {
             return Ok(Message::CommInfoReply(JupyterMessage::try_from(msg)?));
         } else if kind == CommOpen::message_type() {
             return Ok(Message::CommOpen(JupyterMessage::try_from(msg)?));
-        } else if kind == CommMsg::message_type() {
+        } else if kind == CommWireMsg::message_type() {
             return Ok(Message::CommMsg(JupyterMessage::try_from(msg)?));
         } else if kind == CommClose::message_type() {
             return Ok(Message::CommClose(JupyterMessage::try_from(msg)?));

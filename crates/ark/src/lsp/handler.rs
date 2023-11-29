@@ -5,7 +5,7 @@
 //
 //
 
-use amalthea::comm::comm_channel::CommChannelMsg;
+use amalthea::comm::comm_channel::CommMsg;
 use amalthea::language::server_handler::ServerHandler;
 use bus::BusReader;
 use crossbeam::channel::Sender;
@@ -33,7 +33,7 @@ impl ServerHandler for Lsp {
         &mut self,
         tcp_address: String,
         conn_init_tx: Sender<bool>,
-        _comm_tx: Sender<CommChannelMsg>,
+        _comm_tx: Sender<CommMsg>,
     ) -> Result<(), amalthea::error::Error> {
         // If the kernel hasn't been initialized yet, wait for it to finish.
         // This prevents the LSP from attempting to start up before the kernel

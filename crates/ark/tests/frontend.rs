@@ -5,7 +5,7 @@
 //
 //
 
-use amalthea::comm::comm_channel::CommChannelMsg;
+use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::frontend_comm::FrontendMessage;
 use amalthea::comm::frontend_comm::FrontendRpcError;
 use amalthea::comm::frontend_comm::FrontendRpcRequest;
@@ -55,10 +55,7 @@ fn test_frontend_comm() {
             params: vec![Value::from(123)],
         });
         comm.incoming_tx
-            .send(CommChannelMsg::Rpc(
-                id,
-                serde_json::to_value(request).unwrap(),
-            ))
+            .send(CommMsg::Rpc(id, serde_json::to_value(request).unwrap()))
             .unwrap();
 
         // Wait for the reply; this should be a FrontendRpcResult. We don't wait
@@ -69,7 +66,7 @@ fn test_frontend_comm() {
             .recv_timeout(std::time::Duration::from_secs(1))
             .unwrap();
         match response {
-            CommChannelMsg::Rpc(id, result) => {
+            CommMsg::Rpc(id, result) => {
                 println!("Got RPC result: {:?}", result);
                 let result = serde_json::from_value::<FrontendRpcResult>(result).unwrap();
                 assert_eq!(id, "test-id-1");
@@ -98,10 +95,7 @@ fn test_frontend_comm() {
             params: vec![],
         });
         comm.incoming_tx
-            .send(CommChannelMsg::Rpc(
-                id,
-                serde_json::to_value(request).unwrap(),
-            ))
+            .send(CommMsg::Rpc(id, serde_json::to_value(request).unwrap()))
             .unwrap();
 
         // Wait for the reply
@@ -110,7 +104,7 @@ fn test_frontend_comm() {
             .recv_timeout(std::time::Duration::from_secs(1))
             .unwrap();
         match response {
-            CommChannelMsg::Rpc(id, result) => {
+            CommMsg::Rpc(id, result) => {
                 println!("Got RPC result: {:?}", result);
                 let error = serde_json::from_value::<FrontendRpcError>(result).unwrap();
                 // Ensure that the error code is -32601 (method not found)

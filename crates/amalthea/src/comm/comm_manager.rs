@@ -14,21 +14,21 @@ use log::info;
 use log::warn;
 use stdext::spawn;
 
-use crate::comm::comm_channel::CommChannelMsg;
-use crate::comm::event::CommChanged;
-use crate::comm::event::CommEvent;
+use crate::comm::comm_channel::CommMsg;
+use crate::comm::event::CommManagerEvent;
+use crate::comm::event::CommShellEvent;
 use crate::socket::comm::CommInitiator;
 use crate::socket::comm::CommSocket;
 use crate::socket::iopub::IOPubMessage;
-use crate::wire::comm_msg::CommMsg;
+use crate::wire::comm_msg::CommWireMsg;
 use crate::wire::comm_open::CommOpen;
 use crate::wire::header::JupyterHeader;
 
 pub struct CommManager {
     open_comms: Vec<CommSocket>,
     iopub_tx: Sender<IOPubMessage>,
-    comm_event_rx: Receiver<CommEvent>,
-    comm_changed_tx: Sender<CommChanged>,
+    comm_event_rx: Receiver<CommManagerEvent>,
+    comm_shell_tx: Sender<CommShellEvent>,
     pending_rpcs: HashMap<String, JupyterHeader>,
 }
 
@@ -44,8 +44,8 @@ impl CommManager {
      */
     pub fn start(
         iopub_tx: Sender<IOPubMessage>,
-        comm_event_rx: Receiver<CommEvent>,
-    ) -> Receiver<CommChanged> {
+        comm_event_rx: Receiver<CommManagerEvent>,
+    ) -> Receiver<CommShellEvent> {
         let (comm_changed_tx, comm_changed_rx) = crossbeam::channel::unbounded();
         spawn!("comm-manager", move || {
             let mut comm_manager = CommManager::new(iopub_tx, comm_event_rx, comm_changed_tx);
@@ -61,13 +61,13 @@ impl CommManager {
      */
     pub fn new(
         iopub_tx: Sender<IOPubMessage>,
-        comm_event_rx: Receiver<CommEvent>,
-        comm_changed_tx: Sender<CommChanged>,
+        comm_event_rx: Receiver<CommManagerEvent>,
+        comm_shell_tx: Sender<CommShellEvent>,
     ) -> Self {
         Self {
             iopub_tx,
             comm_event_rx,
-            comm_changed_tx,
+            comm_shell_tx,
             open_comms: Vec::<CommSocket>::new(),
             pending_rpcs: HashMap::<String, JupyterHeader>::new(),
         }
@@ -107,11 +107,11 @@ impl CommManager {
             }
             match comm_event.unwrap() {
                 // A Comm was opened; notify everyone
-                CommEvent::Opened(comm_socket, val) => {
+                CommManagerEvent::Opened(comm_socket, val) => {
                     // Notify the shell handler; it maintains a list of open
                     // comms so that the frontend can query for comm state
-                    self.comm_changed_tx
-                        .send(CommChanged::Added(
+                    self.comm_shell_tx
+                        .send(CommShellEvent::Added(
                             comm_socket.comm_id.clone(),
                             comm_socket.comm_name.clone(),
                         ))
@@ -138,12 +138,12 @@ impl CommManager {
                 },
 
                 // An RPC was received; add it to the map of pending RPCs
-                CommEvent::PendingRpc(header) => {
+                CommManagerEvent::PendingRpc(header) => {
                     self.pending_rpcs.insert(header.msg_id.clone(), header);
                 },
 
                 // A message was received from the front end
-                CommEvent::Message(comm_id, msg) => {
+                CommManagerEvent::Message(comm_id, msg) => {
                     // Find the index of the comm in the vector
                     let index = self
                         .open_comms
@@ -167,7 +167,7 @@ impl CommManager {
                 },
 
                 // A Comm was closed; attempt to remove it from the set of open comms
-                CommEvent::Closed(comm_id) => {
+                CommManagerEvent::Closed(comm_id) => {
                     // Find the index of the comm in the vector
                     let index = self
                         .open_comms
@@ -177,8 +177,8 @@ impl CommManager {
                     // If we found it, remove it.
                     if let Some(index) = index {
                         self.open_comms.remove(index);
-                        self.comm_changed_tx
-                            .send(CommChanged::Removed(comm_id))
+                        self.comm_shell_tx
+                            .send(CommShellEvent::Removed(comm_id))
                             .unwrap();
                         info!(
                             "Comm channel closed; there are now {} open comms",
@@ -208,7 +208,7 @@ impl CommManager {
             let msg = match comm_msg {
                 // The comm is emitting data to the front end without being
                 // asked; this is treated like an event.
-                CommChannelMsg::Data(data) => IOPubMessage::CommMsgEvent(CommMsg {
+                CommMsg::Data(data) => IOPubMessage::CommMsgEvent(CommWireMsg {
                     comm_id: comm_socket.comm_id.clone(),
                     data,
                 }),
@@ -216,9 +216,9 @@ impl CommManager {
                 // The comm is replying to a message from the front end; the
                 // first parameter names the ID of the message to which this is
                 // a reply.
-                CommChannelMsg::Rpc(string, data) => {
+                CommMsg::Rpc(string, data) => {
                     // Create the payload to send to the front end
-                    let payload = CommMsg {
+                    let payload = CommWireMsg {
                         comm_id: comm_socket.comm_id.clone(),
                         data,
                     };
@@ -242,7 +242,7 @@ impl CommManager {
                         },
                     }
                 },
-                CommChannelMsg::Close => IOPubMessage::CommClose(comm_socket.comm_id.clone()),
+                CommMsg::Close => IOPubMessage::CommClose(comm_socket.comm_id.clone()),
             };
 
             // Deliver the message to the front end
