@@ -10,6 +10,8 @@ use std::cmp::min;
 use libR_sys::*;
 use log::warn;
 use serde_json::json;
+use serde_json::Map;
+use serde_json::Number;
 use serde_json::Value;
 
 use crate::exec::r_check_stack;
@@ -279,12 +281,92 @@ impl TryFrom<RObject> for Value {
     }
 }
 
+/**
+ * Convert a JSON number value to an R object.
+ */
+impl TryFrom<Number> for RObject {
+    type Error = crate::error::Error;
+    fn try_from(value: Number) -> Result<Self, Self::Error> {
+        if value.is_i64() {
+            // Prefer conversion to an R integer value if the number can be
+            // represented as an integer.
+            RObject::try_from(value.as_i64().unwrap())
+        } else {
+            // Otherwise, convert to an R real value.
+            Ok(RObject::from(value.as_f64().unwrap()))
+        }
+    }
+}
+
+/**
+ * Convert a vector of JSON values to an R object.
+ */
+impl TryFrom<Vec<Value>> for RObject {
+    type Error = crate::error::Error;
+
+    fn try_from(vals: Vec<Value>) -> Result<Self, Self::Error> {
+        // Consider: currently, this creates an unnamed list. It would be
+        // better, presuming that the values are all the same type, to create an
+        // atomic vector of that type.
+        unsafe {
+            let list = RObject::from(Rf_allocVector(VECSXP, vals.len() as isize));
+            for (i, val) in vals.iter().enumerate() {
+                let val = RObject::try_from(val.clone())?;
+                SET_VECTOR_ELT(list.sexp, i as isize, val.sexp);
+            }
+            return Ok(list);
+        }
+    }
+}
+
+impl TryFrom<Map<String, Value>> for RObject {
+    type Error = crate::error::Error;
+
+    fn try_from(map: Map<String, Value>) -> Result<Self, Self::Error> {
+        // Convert the map's values into a vector of JSON values, then convert
+        // that to an R object.
+        let vals: Vec<Value> = map.values().cloned().collect();
+        let list = RObject::try_from(vals)?;
+
+        // Convert the map's keys into a vector of strings, then set the names
+        // of the R object to that vector.
+        let keys: Vec<String> = map.keys().cloned().collect();
+        let names = RObject::from(keys);
+        unsafe {
+            Rf_setAttrib(list.sexp, R_NamesSymbol, names.sexp);
+        }
+
+        Ok(list)
+    }
+}
+
+/**
+ * Convert a JSON value to an R Object. Like the `TryFrom` implementation for
+ * R to JSON, this is a recursive function that perfoms a lossy conversion.
+ */
+impl TryFrom<Value> for RObject {
+    type Error = crate::error::Error;
+
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        match value {
+            Value::Null => Ok(RObject::from(())),
+            Value::Bool(bool) => Ok(RObject::from(bool)),
+            Value::Number(num) => RObject::try_from(num),
+            Value::String(string) => Ok(RObject::from(string)),
+            Value::Array(values) => RObject::try_from(values),
+            Value::Object(map) => RObject::try_from(map),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
     use super::*;
     use crate::environment::R_ENVS;
     use crate::eval::r_parse_eval0;
+    use crate::exec::RFunction;
+    use crate::exec::RFunctionExt;
     use crate::r_test;
 
     // Helper that takes an R expression (as a string), parses it, evaluates it,
@@ -297,16 +379,35 @@ mod tests {
         Value::try_from(evaluated).unwrap()
     }
 
+    // Likewise, but for the reverse conversion.
+    fn json_to_r(expr: &str) -> RObject {
+        let json: Value = serde_json::from_str(expr).unwrap();
+
+        RObject::try_from(json).unwrap()
+    }
+
+    // Deparses an R object to a string.
+    fn deparse(obj: RObject) -> String {
+        let result = RFunction::from("deparse").add(obj).call().unwrap();
+        String::try_from(result).unwrap()
+    }
+
     /// Core worker for JSON conversion tests. Takes an R expression and a JSON
     /// expression (both as strings) and ensures that the R expression converts
     /// to the JSON expression.
     ///
     /// - `r_expr`: The R expression to convert
     /// - `json_expr`: The JSON expression to convert to
-    fn test_json_conversion(r_expr: &str, json_expr: &str) {
+    fn assert_r_matches_json(r_expr: &str, json_expr: &str) {
         let r = r_to_json(r_expr);
         let json: Value = serde_json::from_str(json_expr).unwrap();
         assert_eq!(r, json)
+    }
+
+    /// Core worker for R conversion tests.
+    fn assert_json_matches_r(json_expr: &str, r_expr: &str) {
+        let r = json_to_r(json_expr);
+        assert_eq!(r_expr, deparse(r))
     }
 
     #[test]
@@ -314,9 +415,9 @@ mod tests {
     fn test_json_scalars() {
         // We expect length-one vectors to serialize to simple JSON scalars.
         r_test! {
-            test_json_conversion("TRUE", "true");
-            test_json_conversion("1L", "1");
-            test_json_conversion("'applesauce'", "\"applesauce\"");
+            assert_r_matches_json("TRUE", "true");
+            assert_r_matches_json("1L", "1");
+            assert_r_matches_json("'applesauce'", "\"applesauce\"");
         }
     }
 
@@ -325,11 +426,11 @@ mod tests {
     fn test_json_vectors() {
         // We expect vectors to serialize to JSON arrays.
         r_test! {
-            test_json_conversion(
+            assert_r_matches_json(
                 "c(1L, 2L, 3L)",
                 "[1,2,3]"
             );
-            test_json_conversion(
+            assert_r_matches_json(
                 "c('one', 'two')",
                 "[\"one\", \"two\"]"
             );
@@ -342,11 +443,11 @@ mod tests {
         // We expect vectors containing NA values to serialize to JSON arrays
         // with nulls.
         r_test! {
-            test_json_conversion(
+            assert_r_matches_json(
                 "c(1L, NA, 3L)",
                 "[1, null, 3]"
             );
-            test_json_conversion(
+            assert_r_matches_json(
                 "c('one', 'two', NA)",
                 "[\"one\", \"two\", null]"
             );
@@ -360,25 +461,25 @@ mod tests {
         r_test! {
 
             // List of integers
-            test_json_conversion(
+            assert_r_matches_json(
                 "list(1L, 2L, 3L)",
                 "[1,2,3]"
             );
 
             // List of logical values
-            test_json_conversion(
+            assert_r_matches_json(
                 "l <- list(TRUE, FALSE, TRUE); l",
                 "[true, false, true]"
             );
 
             // Empty names are ignored and treated as unnamed
-            test_json_conversion(
+            assert_r_matches_json(
                 "l <- list('a', 'b', 'c'); names(l) <- c('', '', ''); l",
                 "[\"a\", \"b\", \"c\"]"
             );
 
             // NA values in the names are ignored and treated as unnamed
-            test_json_conversion(
+            assert_r_matches_json(
                 "l <- list('a', 'b', 'c'); names(l) <- c('', NA, ''); l",
                 "[\"a\", \"b\", \"c\"]"
             );
@@ -391,7 +492,7 @@ mod tests {
         // We expect lists of mixed/heterogeneous types to serialize to JSON
         // arrays of mixed type.
         r_test! {
-            test_json_conversion(
+            assert_r_matches_json(
                 "list(1L, FALSE, 'cats')",
                 "[1,false,\"cats\"]"
             );
@@ -403,11 +504,11 @@ mod tests {
     fn test_json_lists_named() {
         // We expect named lists to serialize to JSON maps/objects.
         r_test! {
-            test_json_conversion(
+            assert_r_matches_json(
                 "list(a = 1L, b = 2L)",
                 "{\"a\": 1, \"b\": 2}"
             );
-            test_json_conversion(
+            assert_r_matches_json(
                 "list(a = TRUE, b = 'cats')",
                 "{\"a\": true, \"b\": \"cats\"}"
             );
@@ -420,7 +521,7 @@ mod tests {
         // Duplicate keys are allowed in R lists, but not JSON objects. They
         // should be converted to JSON arrays.
         r_test! {
-            test_json_conversion(
+            assert_r_matches_json(
                 "list(a = 1L, a = 2L, a = 3L)",
                 "{\"a\": [1, 2, 3]}"
             );
@@ -432,10 +533,59 @@ mod tests {
     fn test_json_lists_nested() {
         // When lists are nested, we expect them to serialize to nested JSON
         r_test! {
-            test_json_conversion(
+            assert_r_matches_json(
                 "list(a = 1L, b = 2L, c = list(3L, 4L, 5L))",
                 "{\"a\": 1, \"b\": 2, \"c\": [3,4,5]}"
             );
+        }
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test_r_to_json_scalars() {
+        r_test! {
+            assert_json_matches_r("1", "1L");
+            assert_json_matches_r("2.5", "2.5");
+            assert_json_matches_r("true", "TRUE");
+        }
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test_r_to_json_lists() {
+        r_test! {
+            assert_json_matches_r(
+                "[1,2,3]",
+                "list(1L, 2L, 3L)");
+            assert_json_matches_r(
+                "[\"four\", \"five\", \"six\"]",
+                "list(\"four\", \"five\", \"six\")");
+        }
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test_r_to_json_lists_mixed_types() {
+        r_test! {
+            assert_json_matches_r(
+                "[1,2,false]",
+                "list(1L, 2L, FALSE)");
+            assert_json_matches_r(
+                "[\"four\", \"five\", 6]",
+                "list(\"four\", \"five\", 6L)");
+        }
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test_r_to_json_objects() {
+        r_test! {
+            assert_json_matches_r(
+                "{\"a\": 1, \"b\": 2, \"c\": 3}",
+                "list(a = 1L, b = 2L, c = 3L)");
+            assert_json_matches_r(
+                "{\"foo\": \"bar\", \"baz\": \"quux\", \"quuux\": false}",
+                "list(foo = \"bar\", baz = \"quux\", quuux = FALSE)");
         }
     }
 }

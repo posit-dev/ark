@@ -7,6 +7,7 @@
 
 use std::collections::HashMap;
 use std::convert::TryFrom;
+use std::i32;
 use std::ops::Deref;
 use std::ops::DerefMut;
 use std::os::raw::c_char;
@@ -379,6 +380,24 @@ impl From<i32> for RObject {
     }
 }
 
+impl TryFrom<i64> for RObject {
+    type Error = crate::error::Error;
+    fn try_from(value: i64) -> Result<Self, Error> {
+        unsafe {
+            // Ensure the value is within the range of an i32.
+            if value < i32::MIN as i64 || value > i32::MAX as i64 {
+                return Err(Error::ValueOutOfRange {
+                    value,
+                    min: i32::MIN as i64,
+                    max: i32::MAX as i64,
+                });
+            }
+            let value = Rf_ScalarInteger(value as c_int);
+            return Ok(RObject::new(value));
+        }
+    }
+}
+
 impl From<f64> for RObject {
     fn from(value: f64) -> Self {
         unsafe {
@@ -407,6 +426,23 @@ impl From<&str> for RObject {
 impl From<String> for RObject {
     fn from(value: String) -> Self {
         value.as_str().into()
+    }
+}
+
+impl From<Vec<String>> for RObject {
+    fn from(values: Vec<String>) -> Self {
+        unsafe {
+            let vector = RObject::from(Rf_allocVector(STRSXP, values.len() as isize));
+            for idx in 0..values.len() {
+                let value_str = Rf_mkCharLenCE(
+                    values[idx].as_ptr() as *mut c_char,
+                    values[idx].len() as i32,
+                    cetype_t_CE_UTF8,
+                );
+                SET_STRING_ELT(vector.sexp, (idx + 1) as isize, value_str);
+            }
+            return vector;
+        }
     }
 }
 
