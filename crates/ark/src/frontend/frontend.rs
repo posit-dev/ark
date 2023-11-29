@@ -11,6 +11,7 @@ use amalthea::comm::frontend_comm::FrontendRpcError;
 use amalthea::comm::frontend_comm::FrontendRpcErrorData;
 use amalthea::comm::frontend_comm::FrontendRpcRequest;
 use amalthea::comm::frontend_comm::FrontendRpcResult;
+use amalthea::comm::frontend_comm::JsonRpcErrorCode;
 use amalthea::events::PositronEvent;
 use amalthea::socket::comm::CommSocket;
 use amalthea::wire::client_event::ClientEvent;
@@ -172,7 +173,7 @@ impl PositronFrontend {
             let reply = FrontendMessage::RpcResultError(FrontendRpcError {
                 id: id.to_string(),
                 error: FrontendRpcErrorData {
-                    code: -32601, // Method not found
+                    code: JsonRpcErrorCode::MethodNotFound, // Method not found
                     message: format!("No such method: {}", request.method),
                 },
             });
@@ -182,7 +183,7 @@ impl PositronFrontend {
         }
 
         // Form an R function call from the request
-        let result = r_task(|| unsafe {
+        let result = r_task(|| {
             let mut call = RFunction::from(method);
             for param in request.params.iter() {
                 let p = RObject::try_from(param.clone())?;
@@ -201,7 +202,7 @@ impl PositronFrontend {
             Err(err) => FrontendMessage::RpcResultError(FrontendRpcError {
                 id: id.to_string(),
                 error: FrontendRpcErrorData {
-                    code: -32000,
+                    code: JsonRpcErrorCode::InternalError,
                     message: err.to_string(),
                 },
             }),

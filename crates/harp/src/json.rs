@@ -387,7 +387,7 @@ mod tests {
 
     // Deparses an R object to a string.
     fn deparse(obj: RObject) -> String {
-        let result = unsafe { RFunction::from("deparse").add(obj).call().unwrap() };
+        let result = RFunction::from("deparse").add(obj).call().unwrap();
         String::try_from(result).unwrap()
     }
 

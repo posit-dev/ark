@@ -10,6 +10,7 @@ use amalthea::comm::frontend_comm::FrontendMessage;
 use amalthea::comm::frontend_comm::FrontendRpcError;
 use amalthea::comm::frontend_comm::FrontendRpcRequest;
 use amalthea::comm::frontend_comm::FrontendRpcResult;
+use amalthea::comm::frontend_comm::JsonRpcErrorCode;
 use amalthea::events::BusyEvent;
 use amalthea::events::PositronEvent;
 use amalthea::socket::comm::CommInitiator;
@@ -114,7 +115,7 @@ fn test_frontend_comm() {
                 let error = serde_json::from_value::<FrontendRpcError>(result).unwrap();
                 // Ensure that the error code is -32601 (method not found)
                 assert_eq!(id, "test-id-2");
-                assert_eq!(error.error.code, -32601);
+                assert_eq!(error.error.code, JsonRpcErrorCode::MethodNotFound);
             },
             _ => panic!("Unexpected response: {:?}", response),
         }

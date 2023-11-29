@@ -34,11 +34,22 @@ pub struct FrontendRpcResult {
     pub result: Value,
 }
 
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
+pub enum JsonRpcErrorCode {
+    ParseError = -32700,
+    InvalidRequest = -32600,
+    MethodNotFound = -32601,
+    InvalidParams = -32602,
+    InternalError = -32603,
+    ServerErrorStart = -32099,
+    ServerErrorEnd = -32000,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct FrontendRpcErrorData {
     pub message: String,
-    pub code: i32,
+    pub code: JsonRpcErrorCode,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
