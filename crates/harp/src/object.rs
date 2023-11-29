@@ -422,16 +422,16 @@ impl From<String> for RObject {
 impl From<Vec<String>> for RObject {
     fn from(values: Vec<String>) -> Self {
         unsafe {
-            let vector = Rf_protect(Rf_allocVector(STRSXP, values.len() as isize));
+            let vector = RObject::from(Rf_allocVector(STRSXP, values.len() as isize));
             for idx in 0..values.len() {
                 let value_str = Rf_mkCharLenCE(
                     values[idx].as_ptr() as *mut c_char,
                     values[idx].len() as i32,
                     cetype_t_CE_UTF8,
                 );
-                SET_STRING_ELT(vector, (idx + 1) as isize, value_str);
+                SET_STRING_ELT(vector.sexp, (idx + 1) as isize, value_str);
             }
-            return RObject::new(vector);
+            return vector;
         }
     }
 }

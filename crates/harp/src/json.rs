@@ -308,12 +308,12 @@ impl TryFrom<Vec<Value>> for RObject {
         // better, presuming that the values are all the same type, to create an
         // atomic vector of that type.
         unsafe {
-            let list = Rf_protect(Rf_allocVector(VECSXP, vals.len() as isize));
+            let list = RObject::from(Rf_allocVector(VECSXP, vals.len() as isize));
             for (i, val) in vals.iter().enumerate() {
                 let val = RObject::try_from(val.clone())?;
-                SET_VECTOR_ELT(list, i as isize, val.sexp);
+                SET_VECTOR_ELT(list.sexp, i as isize, val.sexp);
             }
-            return Ok(RObject::from(list));
+            return Ok(list);
         }
     }
 }
