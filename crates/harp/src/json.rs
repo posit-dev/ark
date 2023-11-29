@@ -397,14 +397,14 @@ mod tests {
     ///
     /// - `r_expr`: The R expression to convert
     /// - `json_expr`: The JSON expression to convert to
-    fn test_json_conversion(r_expr: &str, json_expr: &str) {
+    fn assert_r_matches_json(r_expr: &str, json_expr: &str) {
         let r = r_to_json(r_expr);
         let json: Value = serde_json::from_str(json_expr).unwrap();
         assert_eq!(r, json)
     }
 
     /// Core worker for R conversion tests.
-    fn test_r_conversion(json_expr: &str, r_expr: &str) {
+    fn assert_json_matches_r(json_expr: &str, r_expr: &str) {
         let r = json_to_r(json_expr);
         assert_eq!(r_expr, deparse(r))
     }
@@ -414,9 +414,9 @@ mod tests {
     fn test_json_scalars() {
         // We expect length-one vectors to serialize to simple JSON scalars.
         r_test! {
-            test_json_conversion("TRUE", "true");
-            test_json_conversion("1L", "1");
-            test_json_conversion("'applesauce'", "\"applesauce\"");
+            assert_r_matches_json("TRUE", "true");
+            assert_r_matches_json("1L", "1");
+            assert_r_matches_json("'applesauce'", "\"applesauce\"");
         }
     }
 
@@ -425,11 +425,11 @@ mod tests {
     fn test_json_vectors() {
         // We expect vectors to serialize to JSON arrays.
         r_test! {
-            test_json_conversion(
+            assert_r_matches_json(
                 "c(1L, 2L, 3L)",
                 "[1,2,3]"
             );
-            test_json_conversion(
+            assert_r_matches_json(
                 "c('one', 'two')",
                 "[\"one\", \"two\"]"
             );
@@ -442,11 +442,11 @@ mod tests {
         // We expect vectors containing NA values to serialize to JSON arrays
         // with nulls.
         r_test! {
-            test_json_conversion(
+            assert_r_matches_json(
                 "c(1L, NA, 3L)",
                 "[1, null, 3]"
             );
-            test_json_conversion(
+            assert_r_matches_json(
                 "c('one', 'two', NA)",
                 "[\"one\", \"two\", null]"
             );
@@ -460,25 +460,25 @@ mod tests {
         r_test! {
 
             // List of integers
-            test_json_conversion(
+            assert_r_matches_json(
                 "list(1L, 2L, 3L)",
                 "[1,2,3]"
             );
 
             // List of logical values
-            test_json_conversion(
+            assert_r_matches_json(
                 "l <- list(TRUE, FALSE, TRUE); l",
                 "[true, false, true]"
             );
 
             // Empty names are ignored and treated as unnamed
-            test_json_conversion(
+            assert_r_matches_json(
                 "l <- list('a', 'b', 'c'); names(l) <- c('', '', ''); l",
                 "[\"a\", \"b\", \"c\"]"
             );
 
             // NA values in the names are ignored and treated as unnamed
-            test_json_conversion(
+            assert_r_matches_json(
                 "l <- list('a', 'b', 'c'); names(l) <- c('', NA, ''); l",
                 "[\"a\", \"b\", \"c\"]"
             );
@@ -491,7 +491,7 @@ mod tests {
         // We expect lists of mixed/heterogeneous types to serialize to JSON
         // arrays of mixed type.
         r_test! {
-            test_json_conversion(
+            assert_r_matches_json(
                 "list(1L, FALSE, 'cats')",
                 "[1,false,\"cats\"]"
             );
@@ -503,11 +503,11 @@ mod tests {
     fn test_json_lists_named() {
         // We expect named lists to serialize to JSON maps/objects.
         r_test! {
-            test_json_conversion(
+            assert_r_matches_json(
                 "list(a = 1L, b = 2L)",
                 "{\"a\": 1, \"b\": 2}"
             );
-            test_json_conversion(
+            assert_r_matches_json(
                 "list(a = TRUE, b = 'cats')",
                 "{\"a\": true, \"b\": \"cats\"}"
             );
@@ -520,7 +520,7 @@ mod tests {
         // Duplicate keys are allowed in R lists, but not JSON objects. They
         // should be converted to JSON arrays.
         r_test! {
-            test_json_conversion(
+            assert_r_matches_json(
                 "list(a = 1L, a = 2L, a = 3L)",
                 "{\"a\": [1, 2, 3]}"
             );
@@ -532,7 +532,7 @@ mod tests {
     fn test_json_lists_nested() {
         // When lists are nested, we expect them to serialize to nested JSON
         r_test! {
-            test_json_conversion(
+            assert_r_matches_json(
                 "list(a = 1L, b = 2L, c = list(3L, 4L, 5L))",
                 "{\"a\": 1, \"b\": 2, \"c\": [3,4,5]}"
             );
@@ -543,9 +543,9 @@ mod tests {
     #[allow(non_snake_case)]
     fn test_r_to_json_scalars() {
         r_test! {
-            test_r_conversion("1", "1L");
-            test_r_conversion("2.5", "2.5");
-            test_r_conversion("true", "TRUE");
+            assert_json_matches_r("1", "1L");
+            assert_json_matches_r("2.5", "2.5");
+            assert_json_matches_r("true", "TRUE");
         }
     }
 
@@ -553,10 +553,10 @@ mod tests {
     #[allow(non_snake_case)]
     fn test_r_to_json_lists() {
         r_test! {
-            test_r_conversion(
+            assert_json_matches_r(
                 "[1,2,3]",
                 "list(1L, 2L, 3L)");
-            test_r_conversion(
+            assert_json_matches_r(
                 "[\"four\", \"five\", \"six\"]",
                 "list(\"four\", \"five\", \"six\")");
         }
@@ -566,10 +566,10 @@ mod tests {
     #[allow(non_snake_case)]
     fn test_r_to_json_lists_mixed_types() {
         r_test! {
-            test_r_conversion(
+            assert_json_matches_r(
                 "[1,2,false]",
                 "list(1L, 2L, FALSE)");
-            test_r_conversion(
+            assert_json_matches_r(
                 "[\"four\", \"five\", 6]",
                 "list(\"four\", \"five\", 6L)");
         }
@@ -579,10 +579,10 @@ mod tests {
     #[allow(non_snake_case)]
     fn test_r_to_json_objects() {
         r_test! {
-            test_r_conversion(
+            assert_json_matches_r(
                 "{\"a\": 1, \"b\": 2, \"c\": 3}",
                 "list(a = 1L, b = 2L, c = 3L)");
-            test_r_conversion(
+            assert_json_matches_r(
                 "{\"foo\": \"bar\", \"baz\": \"quux\", \"quuux\": false}",
                 "list(foo = \"bar\", baz = \"quux\", quuux = FALSE)");
         }
