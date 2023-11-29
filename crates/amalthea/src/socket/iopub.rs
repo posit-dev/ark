@@ -17,7 +17,7 @@ use log::warn;
 use crate::error::Error;
 use crate::socket::socket::Socket;
 use crate::wire::comm_close::CommClose;
-use crate::wire::comm_msg::CommMsg;
+use crate::wire::comm_msg::CommWireMsg;
 use crate::wire::comm_open::CommOpen;
 use crate::wire::display_data::DisplayData;
 use crate::wire::execute_error::ExecuteError;
@@ -70,8 +70,8 @@ pub enum IOPubMessage {
     ExecuteInput(ExecuteInput),
     Stream(StreamOutput),
     CommOpen(CommOpen),
-    CommMsgReply(JupyterHeader, CommMsg),
-    CommMsgEvent(CommMsg),
+    CommMsgReply(JupyterHeader, CommWireMsg),
+    CommMsgEvent(CommWireMsg),
     CommClose(String),
     DisplayData(DisplayData),
     UpdateDisplayData(UpdateDisplayData),

@@ -7,7 +7,7 @@
 
 use core::panic;
 
-use amalthea::comm::comm_channel::CommChannelMsg;
+use amalthea::comm::comm_channel::CommMsg;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
 use ark::help::message::HelpMessage;
@@ -48,14 +48,14 @@ fn test_help_comm() {
         let data = serde_json::to_value(request).unwrap();
         let request_id = String::from("help-test-id-1");
         incoming_tx
-            .send(CommChannelMsg::Rpc(request_id.clone(), data))
+            .send(CommMsg::Rpc(request_id.clone(), data))
             .unwrap();
 
         // Wait for the response (up to 1 second; this should be fast!)
         let duration = std::time::Duration::from_secs(1);
         let response = outgoing_rx.recv_timeout(duration).unwrap();
         match response {
-            CommChannelMsg::Rpc(id, val) => {
+            CommMsg::Rpc(id, val) => {
                 let response = serde_json::from_value::<HelpMessage>(val).unwrap();
                 match response {
                     HelpMessage::ShowHelpTopicReply(_reply) => {

@@ -20,9 +20,9 @@ use serde_json::json;
 use stdext::result::ResultOrLog;
 
 use crate::comm::comm_channel::Comm;
-use crate::comm::comm_channel::CommChannelMsg;
-use crate::comm::event::CommChanged;
-use crate::comm::event::CommEvent;
+use crate::comm::comm_channel::CommMsg;
+use crate::comm::event::CommManagerEvent;
+use crate::comm::event::CommShellEvent;
 use crate::comm::server_comm::ServerComm;
 use crate::error::Error;
 use crate::language::server_handler::ServerHandler;
@@ -36,7 +36,7 @@ use crate::wire::comm_close::CommClose;
 use crate::wire::comm_info_reply::CommInfoReply;
 use crate::wire::comm_info_reply::CommInfoTargetName;
 use crate::wire::comm_info_request::CommInfoRequest;
-use crate::wire::comm_msg::CommMsg;
+use crate::wire::comm_msg::CommWireMsg;
 use crate::wire::comm_open::CommOpen;
 use crate::wire::complete_reply::CompleteReply;
 use crate::wire::complete_request::CompleteRequest;
@@ -77,10 +77,10 @@ pub struct Shell {
     open_comms: Vec<(String, String)>,
 
     /// Channel used to deliver comm events to the comm manager
-    comm_manager_tx: Sender<CommEvent>,
+    comm_manager_tx: Sender<CommManagerEvent>,
 
     /// Channel used to receive comm events from the comm manager
-    comm_manager_rx: Receiver<CommChanged>,
+    comm_shell_rx: Receiver<CommShellEvent>,
 }
 
 impl Shell {
@@ -95,8 +95,8 @@ impl Shell {
     pub fn new(
         socket: Socket,
         iopub_tx: Sender<IOPubMessage>,
-        comm_manager_tx: Sender<CommEvent>,
-        comm_changed_rx: Receiver<CommChanged>,
+        comm_manager_tx: Sender<CommManagerEvent>,
+        comm_shell_rx: Receiver<CommShellEvent>,
         shell_handler: Arc<Mutex<dyn ShellHandler>>,
         lsp_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
         dap_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
@@ -109,7 +109,7 @@ impl Shell {
             dap_handler,
             open_comms: Vec::new(),
             comm_manager_tx,
-            comm_manager_rx: comm_changed_rx,
+            comm_shell_rx,
         }
     }
 
@@ -334,7 +334,7 @@ impl Shell {
     fn handle_comm_msg(
         &self,
         _handler: &dyn ShellHandler,
-        req: JupyterMessage<CommMsg>,
+        req: JupyterMessage<CommWireMsg>,
     ) -> Result<(), Error> {
         debug!("Received request to send a message on a comm: {:?}", req);
 
@@ -346,13 +346,13 @@ impl Shell {
         // Store this message as a pending RPC request so that when the comm
         // responds, we can match it up
         self.comm_manager_tx
-            .send(CommEvent::PendingRpc(req.header.clone()))
+            .send(CommManagerEvent::PendingRpc(req.header.clone()))
             .unwrap();
 
         // Send the message to the comm
-        let msg = CommChannelMsg::Rpc(req.header.msg_id.clone(), req.content.data.clone());
+        let msg = CommMsg::Rpc(req.header.msg_id.clone(), req.content.data.clone());
         self.comm_manager_tx
-            .send(CommEvent::Message(req.content.comm_id.clone(), msg))
+            .send(CommManagerEvent::Message(req.content.comm_id.clone(), msg))
             .unwrap();
 
         // Return kernel to idle state
@@ -458,7 +458,7 @@ impl Shell {
                         // This is a language evaluation error, so we can send
                         // it back in that form.
                         let errname = err.ename.clone();
-                        req.send_error::<CommMsg>(err, &self.socket)?;
+                        req.send_error::<CommWireMsg>(err, &self.socket)?;
 
                         // Return an error to the caller indicating that the
                         // comm could not be opened due to the invalid open
@@ -477,7 +477,7 @@ impl Shell {
             // Send a notification to the comm message listener thread that a new
             // comm has been opened
             self.comm_manager_tx
-                .send(CommEvent::Opened(comm_socket.clone(), comm_data))
+                .send(CommManagerEvent::Opened(comm_socket.clone(), comm_data))
                 .or_log_warning(&format!(
                     "Failed to send '{}' comm open notification to listener thread",
                     comm_socket.comm_name
@@ -491,7 +491,7 @@ impl Shell {
 
                 comm_socket
                     .outgoing_tx
-                    .send(CommChannelMsg::Data(json!({
+                    .send(CommMsg::Data(json!({
                         "msg_type": "server_started",
                         "content": {}
                     })))
@@ -552,7 +552,7 @@ impl Shell {
         // Send a notification to the comm message listener thread notifying it that
         // the comm has been closed
         self.comm_manager_tx
-            .send(CommEvent::Closed(req.content.comm_id.clone()))
+            .send(CommManagerEvent::Closed(req.content.comm_id.clone()))
             .unwrap();
 
         // Return kernel to idle state
@@ -578,15 +578,15 @@ impl Shell {
 
     // Process changes to open comms
     fn process_comm_changes(&mut self) {
-        if let Ok(comm_changed) = self.comm_manager_rx.try_recv() {
+        if let Ok(comm_changed) = self.comm_shell_rx.try_recv() {
             match comm_changed {
                 // Comm was added; add it to the list of open comms
-                CommChanged::Added(comm_id, target_name) => {
+                CommShellEvent::Added(comm_id, target_name) => {
                     self.open_comms.push((comm_id, target_name));
                 },
 
                 // Comm was removed; remove it from the list of open comms
-                CommChanged::Removed(comm_id) => {
+                CommShellEvent::Removed(comm_id) => {
                     self.open_comms.retain(|(id, _)| id != &comm_id);
                 },
             }

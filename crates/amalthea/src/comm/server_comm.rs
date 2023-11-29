@@ -12,7 +12,7 @@ use crossbeam::channel::Sender;
 use serde::Deserialize;
 use serde::Serialize;
 
-use crate::comm::comm_channel::CommChannelMsg;
+use crate::comm::comm_channel::CommMsg;
 use crate::error::Error;
 use crate::language::server_handler::ServerHandler;
 
@@ -24,7 +24,7 @@ pub struct StartServer {
 
 pub struct ServerComm {
     handler: Arc<Mutex<dyn ServerHandler>>,
-    msg_tx: Sender<CommChannelMsg>,
+    msg_tx: Sender<CommMsg>,
 }
 
 /**
@@ -35,10 +35,7 @@ pub struct ServerComm {
  * - `msg_tx` is the channel that will be used to send messages to the front end.
  */
 impl ServerComm {
-    pub fn new(
-        handler: Arc<Mutex<dyn ServerHandler>>,
-        msg_tx: Sender<CommChannelMsg>,
-    ) -> ServerComm {
+    pub fn new(handler: Arc<Mutex<dyn ServerHandler>>, msg_tx: Sender<CommMsg>) -> ServerComm {
         ServerComm { handler, msg_tx }
     }
 
@@ -61,7 +58,7 @@ impl ServerComm {
      * communicate over their own TCP connection, they do not process
      * messages from the comm, and they are discarded here.
      */
-    pub fn msg_sender(&self) -> Sender<CommChannelMsg> {
+    pub fn msg_sender(&self) -> Sender<CommMsg> {
         let (msg_tx, _msg_rx) = crossbeam::channel::unbounded();
         msg_tx
     }

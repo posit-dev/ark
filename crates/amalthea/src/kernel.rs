@@ -18,8 +18,8 @@ use stdext::spawn;
 use stdext::unwrap;
 
 use crate::comm::comm_manager::CommManager;
-use crate::comm::event::CommChanged;
-use crate::comm::event::CommEvent;
+use crate::comm::event::CommManagerEvent;
+use crate::comm::event::CommShellEvent;
 use crate::connection_file::ConnectionFile;
 use crate::error::Error;
 use crate::language::control_handler::ControlHandler;
@@ -61,10 +61,10 @@ pub struct Kernel {
 
     /// Sends notifications about comm changes and events to the comm manager.
     /// Use `create_comm_manager_tx` to access it.
-    comm_manager_tx: Sender<CommEvent>,
+    comm_manager_tx: Sender<CommManagerEvent>,
 
     /// Receives notifications about comm changes and events
-    comm_manager_rx: Receiver<CommEvent>,
+    comm_manager_rx: Receiver<CommManagerEvent>,
 }
 
 /// Possible behaviors for the stream capture thread. When set to `Capture`,
@@ -85,7 +85,7 @@ impl Kernel {
 
         // Create the pair of channels that will be used to relay messages from
         // the open comms
-        let (comm_manager_tx, comm_manager_rx) = bounded::<CommEvent>(10);
+        let (comm_manager_tx, comm_manager_rx) = bounded::<CommManagerEvent>(10);
 
         Ok(Self {
             name: name.to_string(),
@@ -289,7 +289,7 @@ impl Kernel {
     }
 
     /// Returns a copy of the comm manager sending channel.
-    pub fn create_comm_manager_tx(&self) -> Sender<CommEvent> {
+    pub fn create_comm_manager_tx(&self) -> Sender<CommManagerEvent> {
         self.comm_manager_tx.clone()
     }
 
@@ -308,8 +308,8 @@ impl Kernel {
     fn shell_thread(
         socket: Socket,
         iopub_tx: Sender<IOPubMessage>,
-        comm_manager_tx: Sender<CommEvent>,
-        comm_changed_rx: Receiver<CommChanged>,
+        comm_manager_tx: Sender<CommManagerEvent>,
+        comm_changed_rx: Receiver<CommShellEvent>,
         shell_handler: Arc<Mutex<dyn ShellHandler>>,
         lsp_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
         dap_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
