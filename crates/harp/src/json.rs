@@ -284,15 +284,16 @@ impl TryFrom<RObject> for Value {
 /**
  * Convert a JSON number value to an R object.
  */
-impl From<Number> for RObject {
-    fn from(value: Number) -> Self {
+impl TryFrom<Number> for RObject {
+    type Error = crate::error::Error;
+    fn try_from(value: Number) -> Result<Self, Self::Error> {
         if value.is_i64() {
             // Prefer conversion to an R integer value if the number can be
             // represented as an integer.
-            RObject::from(value.as_i64().unwrap())
+            RObject::try_from(value.as_i64().unwrap())
         } else {
             // Otherwise, convert to an R real value.
-            RObject::from(value.as_f64().unwrap())
+            Ok(RObject::from(value.as_f64().unwrap()))
         }
     }
 }
@@ -350,7 +351,7 @@ impl TryFrom<Value> for RObject {
         match value {
             Value::Null => Ok(RObject::from(())),
             Value::Bool(bool) => Ok(RObject::from(bool)),
-            Value::Number(num) => Ok(RObject::from(num)),
+            Value::Number(num) => RObject::try_from(num),
             Value::String(string) => Ok(RObject::from(string)),
             Value::Array(values) => RObject::try_from(values),
             Value::Object(map) => RObject::try_from(map),

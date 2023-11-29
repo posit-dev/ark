@@ -7,6 +7,7 @@
 
 use std::collections::HashMap;
 use std::convert::TryFrom;
+use std::i32;
 use std::ops::Deref;
 use std::ops::DerefMut;
 use std::os::raw::c_char;
@@ -379,11 +380,20 @@ impl From<i32> for RObject {
     }
 }
 
-impl From<i64> for RObject {
-    fn from(value: i64) -> Self {
+impl TryFrom<i64> for RObject {
+    type Error = crate::error::Error;
+    fn try_from(value: i64) -> Result<Self, Error> {
         unsafe {
+            // Ensure the value is within the range of an i32.
+            if value < i32::MIN as i64 || value > i32::MAX as i64 {
+                return Err(Error::ValueOutOfRange {
+                    value,
+                    min: i32::MIN as i64,
+                    max: i32::MAX as i64,
+                });
+            }
             let value = Rf_ScalarInteger(value as c_int);
-            return RObject::new(value);
+            return Ok(RObject::new(value));
         }
     }
 }
