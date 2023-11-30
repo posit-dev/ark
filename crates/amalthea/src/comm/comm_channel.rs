@@ -6,8 +6,10 @@
  */
 
 use crossbeam::channel::Sender;
+use serde::Serialize;
 use serde_json::Value;
 use strum_macros::EnumString;
+use uuid::Uuid;
 
 #[derive(EnumString, PartialEq)]
 #[strum(serialize_all = "camelCase")]
@@ -55,4 +57,29 @@ pub enum CommMsg {
 
     // A message indicating that the comm channel should be closed.
     Close,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RpcRequest {
+    msg_type: String,
+    id: String,
+    jsonrpc: String,
+    method: String,
+    params: Value,
+}
+
+impl RpcRequest {
+    pub fn new<T>(method: String, params: T) -> anyhow::Result<Value>
+    where
+        T: Serialize,
+    {
+        let request = Self {
+            msg_type: String::from("rpc_request"),
+            id: Uuid::new_v4().to_string(),
+            jsonrpc: String::from("2.0"),
+            method,
+            params: serde_json::to_value(params)?,
+        };
+        Ok(serde_json::to_value(request)?)
+    }
 }

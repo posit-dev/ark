@@ -6,11 +6,14 @@
 //
 
 use amalthea::comm::comm_channel::CommMsg;
+use amalthea::comm::comm_channel::RpcRequest;
 use amalthea::comm::frontend_comm::FrontendEvent;
+use amalthea::comm::frontend_comm::FrontendMessage;
+use amalthea::comm::frontend_comm::FrontendRpcError;
+use amalthea::comm::frontend_comm::FrontendRpcErrorData;
 use amalthea::comm::frontend_comm::FrontendRpcReply;
 use amalthea::comm::frontend_comm::FrontendRpcRequest;
 use amalthea::socket::comm::CommSocket;
-use amalthea::wire::client_event::ClientEvent;
 use crossbeam::channel::bounded;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
@@ -18,6 +21,7 @@ use crossbeam::select;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
+use serde::Serialize;
 use serde_json::Value;
 use stdext::spawn;
 
@@ -167,10 +171,14 @@ impl PositronFrontend {
     }
 
     /// Send request to frontend and block until reply
-    pub fn call_frontend_method(&self, msg: String) -> anyhow::Result<Value> {
+    pub fn call_frontend_method<T>(&self, method: String, params: T) -> anyhow::Result<Value>
+    where
+        T: Serialize,
+    {
         let (tx, rx) = bounded::<Value>(1);
 
-        let comm_msg = CommMsg::ReverseRpc(tx, serde_json::to_value(msg)?);
+        let request = RpcRequest::new(method, params)?;
+        let comm_msg = CommMsg::ReverseRpc(tx, request);
         self.comm.outgoing_tx.send(comm_msg)?;
 
         Ok(rx.recv()?)
