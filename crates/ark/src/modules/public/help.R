@@ -29,6 +29,25 @@ options(help_type = "html")
     length(results) > 0
 }
 
+# Expose the show help topic function as an RPC.
+.ps.rpc.showHelpTopic <- .ps.help.showHelpTopic
+
+# Show a vignette. Returns a logical value indicating whether the vignette
+# was found.
+.ps.rpc.showVignetteTopic <- function(topic) {
+    # Try to find the vignette; suppress warnings so we don't pollute the
+    # console.
+    results <- suppressWarnings(vignette(topic))
+
+    # If we found a vignette, show it.
+    if (is(results, "vignette")) {
+        print(results)
+        TRUE
+    } else {
+        FALSE
+    }
+}
+
 .ps.help.getHtmlHelpContents <- function(topic, package = "") {
 
   # If a package name is encoded into 'topic', split that here.
