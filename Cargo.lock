@@ -338,6 +338,7 @@ dependencies = [
  "url",
  "uuid",
  "walkdir",
+ "winsafe",
  "yaml-rust",
 ]
 
@@ -3573,6 +3574,12 @@ dependencies = [
  "cfg-if",
  "windows-sys 0.48.0",
 ]
+
+[[package]]
+name = "winsafe"
+version = "0.0.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "03caf2c481af7a0a06c80ffb9c18daa3b3d23bd7a41be1284d71d49c59046ba6"
 
 [[package]]
 name = "yaml-rust"

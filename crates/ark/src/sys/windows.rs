@@ -9,4 +9,5 @@ mod bindings;
 pub mod control;
 pub mod interface;
 pub mod signals;
+mod strings;
 pub mod traps;
