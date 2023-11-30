@@ -12,6 +12,7 @@ use std::os::raw::c_void;
 use libR_sys::setup_Rmainloop;
 use libR_sys::Rboolean;
 use libR_sys::Rf_initialize_R;
+use libR_sys::FILE;
 
 use crate::interface::r_busy;
 use crate::interface::r_polled_events;
