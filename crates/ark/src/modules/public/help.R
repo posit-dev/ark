@@ -35,9 +35,17 @@ options(help_type = "html")
 # Show a vignette. Returns a logical value indicating whether the vignette
 # was found.
 .ps.rpc.showVignetteTopic <- function(topic) {
+    # Resolve the package specifier.
+    package <- NULL
+    components <- strsplit(topic, "::")[[1L]]
+    if (length(components) > 1L) {
+        package <- components[[1L]]
+        topic <- components[[2L]]
+    }
+
     # Try to find the vignette; suppress warnings so we don't pollute the
     # console.
-    results <- suppressWarnings(vignette(topic))
+    results <- suppressWarnings(vignette(topic, package = package))
 
     # If we found a vignette, show it.
     if (is(results, "vignette")) {
