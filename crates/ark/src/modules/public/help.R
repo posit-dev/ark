@@ -15,8 +15,17 @@ options(help_type = "html")
 # Show help on a topic. Returns a logical value indicating whether help was
 # found.
 .ps.help.showHelpTopic <- function(topic) {
-    # Try to find help on the topic.
-    results <- help(topic)
+    # Resolve the package specifier.
+    package <- NULL
+    components <- strsplit(topic, "::")[[1L]]
+    if (length(components) > 1L) {
+        package <- components[[1L]]
+        topic <- components[[2L]]
+    }
+
+    # Try to find help on the topic. The package needs to be wrapped in () so it
+    # is not deparsed.
+    results <- help(topic = topic, package = (package))
 
     # If we found results of any kind, show them.
     # If we are running ark tests, don't show the results as this requires
