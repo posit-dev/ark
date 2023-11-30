@@ -72,6 +72,7 @@ pub enum IOPubMessage {
     CommOpen(CommOpen),
     CommMsgReply(JupyterHeader, CommWireMsg),
     CommMsgEvent(CommWireMsg),
+    CommMsgRequest(CommWireMsg),
     CommClose(String),
     DisplayData(DisplayData),
     UpdateDisplayData(UpdateDisplayData),
@@ -187,6 +188,7 @@ impl IOPub {
             IOPubMessage::CommOpen(msg) => self.send_message(msg),
             IOPubMessage::CommMsgEvent(msg) => self.send_message(msg),
             IOPubMessage::CommMsgReply(header, msg) => self.send_message_with_header(header, msg),
+            IOPubMessage::CommMsgRequest(msg) => self.send_message(msg),
             IOPubMessage::CommClose(comm_id) => self.send_message(CommClose { comm_id }),
             IOPubMessage::DisplayData(msg) => {
                 self.flush_stream();
