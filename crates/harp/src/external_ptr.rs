@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 use std::os::raw::c_void;
 
-use libR_sys::*;
+use libR_shim::*;
 
 use crate::object::RObject;
 

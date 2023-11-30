@@ -12,7 +12,7 @@ use std::os::raw::c_char;
 use std::os::raw::c_int;
 use std::os::raw::c_void;
 
-use libR_sys::*;
+use libR_shim::*;
 
 use crate::environment::R_ENVS;
 use crate::error::Error;

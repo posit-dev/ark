@@ -4,7 +4,7 @@
 // Copyright (C) 2023 Posit Software, PBC. All rights reserved.
 //
 //
-use libR_sys::*;
+use libR_shim::*;
 
 use crate::error::Error;
 use crate::error::Result;

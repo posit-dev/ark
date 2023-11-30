@@ -23,7 +23,7 @@ use harp::utils::r_symbol_quote_invalid;
 use harp::utils::r_symbol_valid;
 use harp::vector::CharacterVector;
 use harp::vector::Vector;
-use libR_sys::*;
+use libR_shim::*;
 use stdext::*;
 use tower_lsp::lsp_types::Diagnostic;
 use tower_lsp::lsp_types::DiagnosticSeverity;

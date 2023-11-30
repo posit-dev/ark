@@ -7,7 +7,7 @@
 
 use std::sync::Once;
 
-use libR_sys::*;
+use libR_shim::*;
 use libc::c_int;
 use stdext::unwrap;
 

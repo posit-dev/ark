@@ -5,7 +5,7 @@
 //
 //
 
-use libR_sys::*;
+use libR_shim::*;
 
 use crate::error::Result;
 use crate::utils::r_assert_capacity;
