@@ -9,10 +9,11 @@ use std::ffi::CStr;
 use std::os::raw::c_char;
 use std::os::raw::c_void;
 
-use libR_sys::setup_Rmainloop;
-use libR_sys::Rboolean;
-use libR_sys::Rf_initialize_R;
-use libR_sys::FILE;
+use libR_shim::setup_Rmainloop;
+use libR_shim::R_SignalHandlers;
+use libR_shim::Rboolean;
+use libR_shim::Rf_initialize_R;
+use libR_shim::FILE;
 
 use crate::interface::r_busy;
 use crate::interface::r_polled_events;
@@ -89,7 +90,6 @@ pub fn run_activity_handlers() {
 }
 
 extern "C" {
-    static mut R_SignalHandlers: ::std::os::raw::c_int;
     static mut R_running_as_main_program: ::std::os::raw::c_int;
     static mut R_Interactive: Rboolean;
     static mut R_InputHandlers: *const c_void;

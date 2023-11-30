@@ -5,7 +5,7 @@
  *
  */
 
-use libR_sys::R_interrupts_pending;
+use libR_shim::R_interrupts_pending;
 
 pub use crate::sys::signals::initialize_signal_block;
 pub use crate::sys::signals::initialize_signal_handlers;

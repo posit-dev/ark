@@ -9,8 +9,9 @@ use std::ffi::CStr;
 use std::mem::MaybeUninit;
 use std::os::raw::c_char;
 
-use libR_sys::setup_Rmainloop;
-use libR_sys::SEXP;
+use libR_shim::setup_Rmainloop;
+use libR_shim::R_SignalHandlers;
+use libR_shim::SEXP;
 use stdext::cargs;
 use stdext::cstr;
 
@@ -104,26 +105,6 @@ extern "C" {
     fn R_DefParamsEx(Rp: bindings::Rstart, RstartVersion: i32);
 
     fn R_SetParams(Rp: bindings::Rstart);
-}
-
-// Special declaration for this global variable
-//
-// I don't fully understand this!
-//
-// This is exposed in Rinterface.h, which is not available on Windows:
-// https://github.com/wch/r-source/blob/459492bc14ad5a3ff735d90a70ad71f6d5fe9faa/src/include/Rinterface.h#L176
-// But is defined as a global variable in main.c, so presumably that is what RStudio is yanking out
-// https://github.com/wch/r-source/blob/459492bc14ad5a3ff735d90a70ad71f6d5fe9faa/src/main/main.c#L729
-// It controls whether R level signal handlers are set up, which presumably we don't want
-// https://github.com/wch/r-source/blob/459492bc14ad5a3ff735d90a70ad71f6d5fe9faa/src/main/main.c#L1047
-// RStudio sets this, and I think they access it by using this dllimport
-// https://github.com/rstudio/rstudio/blob/07ef754fc9f27d41b100bb40d83ec3ddf485b47b/src/cpp/r/include/r/RInterface.hpp#L40
-// A normal declaration won't work here, as global variables on Windows seem to require an explicit dllimport to access them,
-// according to this SO post, specifying the `kind` is a way to force that in the generated code
-// https://stackoverflow.com/questions/66181735/rust-how-to-use-global-variable-from-dll-c-equivalent-requires-declspecdl
-#[link(name = "R", kind = "dylib")]
-extern "C" {
-    static mut R_SignalHandlers: ::std::os::raw::c_int;
 }
 
 // It doesn't seem like we can use the binding provided by libR-sys,

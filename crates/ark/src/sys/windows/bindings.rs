@@ -12,7 +12,7 @@
 #![allow(non_snake_case)]
 #![allow(unused)]
 
-use libR_sys::Rboolean;
+use libR_shim::Rboolean;
 
 // Start of copy from libR-sys `bindings.rs`
 
