@@ -11,7 +11,6 @@ use std::os::raw::c_char;
 
 use libR_shim::setup_Rmainloop;
 use libR_shim::R_SignalHandlers;
-use libR_shim::SEXP;
 use stdext::cargs;
 use stdext::cstr;
 
