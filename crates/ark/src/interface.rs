@@ -817,7 +817,13 @@ impl RMain {
 
     /// Invoked by R to write output to the console.
     fn write_console(&mut self, buf: *const c_char, _buflen: i32, otype: i32) {
-        let content = unsafe { CStr::from_ptr(buf).to_str().unwrap() };
+        let buf = unsafe { CStr::from_ptr(buf) };
+
+        let content = match buf.to_str() {
+            Ok(content) => content,
+            Err(err) => panic!("Failed to read from R buffer: {err:?}"),
+        };
+
         let stream = if otype == 0 {
             Stream::Stdout
         } else {
