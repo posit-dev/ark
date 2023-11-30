@@ -101,11 +101,8 @@ use crate::signals;
 use crate::sys;
 
 extern "C" {
-    pub static mut R_SignalHandlers: ::std::os::raw::c_int;
-    pub static mut R_Consolefile: *mut FILE;
-    pub static mut R_Outputfile: *mut FILE;
-
     pub fn run_Rmainloop();
+    pub fn R_HomeDir() -> *mut ::std::os::raw::c_char;
 
     fn R_ProcessEvents();
 }

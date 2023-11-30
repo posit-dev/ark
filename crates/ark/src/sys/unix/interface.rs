@@ -19,9 +19,7 @@ use crate::interface::r_read_console;
 use crate::interface::r_show_message;
 use crate::interface::r_write_console;
 use crate::interface::run_Rmainloop;
-use crate::interface::R_Consolefile;
-use crate::interface::R_Outputfile;
-use crate::interface::R_SignalHandlers;
+use crate::interface::R_HomeDir;
 use crate::signals;
 
 pub fn setup_r(mut args: Vec<*mut c_char>) {
@@ -90,11 +88,12 @@ pub fn run_activity_handlers() {
 }
 
 extern "C" {
+    static mut R_SignalHandlers: ::std::os::raw::c_int;
     static mut R_running_as_main_program: ::std::os::raw::c_int;
     static mut R_Interactive: Rboolean;
     static mut R_InputHandlers: *const c_void;
-
-    fn R_HomeDir() -> *mut ::std::os::raw::c_char;
+    static mut R_Consolefile: *mut FILE;
+    static mut R_Outputfile: *mut FILE;
 
     static mut R_wait_usec: i32;
     static mut R_PolledEvents: Option<unsafe extern "C" fn()>;

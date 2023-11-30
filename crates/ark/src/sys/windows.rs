@@ -5,6 +5,7 @@
  *
  */
 
+mod bindings;
 pub mod control;
 pub mod interface;
 pub mod signals;
