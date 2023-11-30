@@ -159,7 +159,7 @@ impl RVariables {
                     debug!("Environment: Received message from front end: {:?}", msg);
 
                     // Break out of the loop if the front end has closed the channel
-                    if msg == CommMsg::Close {
+                    if let CommMsg::Close = msg {
                         debug!("Environment: Closing down after receiving comm_close from front end.");
 
                         // Remember that the user initiated the close so that we can
