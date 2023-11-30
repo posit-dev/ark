@@ -57,7 +57,7 @@ options(help_type = "html")
     results <- suppressWarnings(vignette(topic, package = package))
 
     # If we found a vignette, show it.
-    if (is(results, "vignette")) {
+    if ("vignette" %in% class(results)) {
         print(results)
         TRUE
     } else {
