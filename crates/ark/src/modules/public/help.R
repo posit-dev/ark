@@ -15,8 +15,17 @@ options(help_type = "html")
 # Show help on a topic. Returns a logical value indicating whether help was
 # found.
 .ps.help.showHelpTopic <- function(topic) {
-    # Try to find help on the topic.
-    results <- help(topic)
+    # Resolve the package specifier.
+    package <- NULL
+    components <- strsplit(topic, "::")[[1L]]
+    if (length(components) > 1L) {
+        package <- components[[1L]]
+        topic <- components[[2L]]
+    }
+
+    # Try to find help on the topic. The package needs to be wrapped in () so it
+    # is not deparsed.
+    results <- help(topic = topic, package = (package))
 
     # If we found results of any kind, show them.
     # If we are running ark tests, don't show the results as this requires
@@ -27,6 +36,33 @@ options(help_type = "html")
 
     # Return whether we found any help.
     length(results) > 0
+}
+
+# Expose the show help topic function as an RPC.
+.ps.rpc.showHelpTopic <- .ps.help.showHelpTopic
+
+# Show a vignette. Returns a logical value indicating whether the vignette
+# was found.
+.ps.rpc.showVignetteTopic <- function(topic) {
+    # Resolve the package specifier.
+    package <- NULL
+    components <- strsplit(topic, "::")[[1L]]
+    if (length(components) > 1L) {
+        package <- components[[1L]]
+        topic <- components[[2L]]
+    }
+
+    # Try to find the vignette; suppress warnings so we don't pollute the
+    # console.
+    results <- suppressWarnings(vignette(topic, package = package))
+
+    # If we found a vignette, show it.
+    if ("vignette" %in% class(results)) {
+        print(results)
+        TRUE
+    } else {
+        FALSE
+    }
 }
 
 .ps.help.getHtmlHelpContents <- function(topic, package = "") {
