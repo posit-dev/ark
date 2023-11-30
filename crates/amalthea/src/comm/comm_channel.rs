@@ -5,6 +5,7 @@
  *
  */
 
+use crossbeam::channel::Sender;
 use serde_json::Value;
 use strum_macros::EnumString;
 
@@ -36,6 +37,7 @@ pub enum Comm {
     Other(String),
 }
 
+// TODO: Rename to Request and Reply?
 #[derive(Clone, Debug)]
 pub enum CommMsg {
     /// A message that is part of a Remote Procedure Call (RPC). The first value
@@ -43,6 +45,9 @@ pub enum CommMsg {
     /// and the second value is the data associated with the RPC (the request or
     /// response).
     Rpc(String, Value),
+
+    // DOCME
+    ReverseRpc(Sender<Value>, Value),
 
     /// A message representing any other data sent on the comm channel; usually
     /// used for events.

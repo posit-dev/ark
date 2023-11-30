@@ -10,6 +10,8 @@ use amalthea::comm::frontend_comm::FrontendEvent;
 use amalthea::comm::frontend_comm::FrontendRpcReply;
 use amalthea::comm::frontend_comm::FrontendRpcRequest;
 use amalthea::socket::comm::CommSocket;
+use amalthea::wire::client_event::ClientEvent;
+use crossbeam::channel::bounded;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use crossbeam::select;
@@ -162,5 +164,15 @@ impl PositronFrontend {
         })?;
 
         Ok(FrontendRpcReply::CallMethodReply(result))
+    }
+
+    /// Send request to frontend and block until reply
+    pub fn call_frontend_method(&self, msg: String) -> anyhow::Result<Value> {
+        let (tx, rx) = bounded::<Value>(1);
+
+        let comm_msg = CommMsg::ReverseRpc(tx, serde_json::to_value(msg)?);
+        self.comm.outgoing_tx.send(comm_msg)?;
+
+        Ok(rx.recv()?)
     }
 }

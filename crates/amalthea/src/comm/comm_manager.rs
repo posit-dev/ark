@@ -12,7 +12,9 @@ use crossbeam::channel::Select;
 use crossbeam::channel::Sender;
 use log::info;
 use log::warn;
+use serde_json::Value;
 use stdext::spawn;
+use uuid::Uuid;
 
 use crate::comm::comm_channel::CommMsg;
 use crate::comm::event::CommManagerEvent;
@@ -30,6 +32,7 @@ pub struct CommManager {
     comm_event_rx: Receiver<CommManagerEvent>,
     comm_shell_tx: Sender<CommShellEvent>,
     pending_rpcs: HashMap<String, JupyterHeader>,
+    pending_reverse_rpcs: HashMap<String, Sender<Value>>,
 }
 
 impl CommManager {
@@ -70,6 +73,7 @@ impl CommManager {
             comm_shell_tx,
             open_comms: Vec::<CommSocket>::new(),
             pending_rpcs: HashMap::<String, JupyterHeader>::new(),
+            pending_reverse_rpcs: HashMap::<String, Sender<Value>>::new(),
         }
     }
 
@@ -236,6 +240,20 @@ impl CommManager {
                         },
                     }
                 },
+
+                CommMsg::ReverseRpc(response_tx, data) => {
+                    // This is a request to the frontend. Create request ID and
+                    // save the response channel for the reply.
+                    let id = Uuid::new_v4().to_string();
+                    self.pending_reverse_rpcs.insert(id, response_tx);
+
+                    let payload = CommWireMsg {
+                        comm_id: comm_socket.comm_id.clone(),
+                        data,
+                    };
+                    IOPubMessage::CommMsgRequest(payload)
+                },
+
                 CommMsg::Close => IOPubMessage::CommClose(comm_socket.comm_id.clone()),
             };
 

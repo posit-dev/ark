@@ -260,6 +260,10 @@ impl ShellHandler for Shell {
                     // sender as the response to the RPC, using the same ID.
                     comm.outgoing_tx.send(CommMsg::Rpc(id, val)).unwrap();
                 },
+                CommMsg::ReverseRpc(tx, val) => {
+                    // Echo back
+                    comm.outgoing_tx.send(CommMsg::ReverseRpc(tx, val)).unwrap();
+                },
                 CommMsg::Close => {
                     // Close the channel and exit the thread.
                     break;
