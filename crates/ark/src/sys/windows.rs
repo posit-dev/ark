@@ -6,6 +6,7 @@
  */
 
 mod bindings;
+pub mod console;
 pub mod control;
 pub mod interface;
 pub mod signals;

@@ -817,9 +817,7 @@ impl RMain {
 
     /// Invoked by R to write output to the console.
     fn write_console(&mut self, buf: *const c_char, _buflen: i32, otype: i32) {
-        let buf = unsafe { CStr::from_ptr(buf) };
-
-        let content = match buf.to_str() {
+        let content = match sys::console::console_to_utf8(buf) {
             Ok(content) => content,
             Err(err) => panic!("Failed to read from R buffer: {err:?}"),
         };
@@ -832,7 +830,7 @@ impl RMain {
 
         if self.initializing {
             // During init, consider all output to be part of the startup banner
-            self.banner.push_str(content);
+            self.banner.push_str(&content);
             return;
         }
 
@@ -850,12 +848,12 @@ impl RMain {
         };
 
         // Append content to buffer.
-        buffer.push_str(content);
+        buffer.push_str(&content);
 
         // Stream output via the IOPub channel.
         let message = IOPubMessage::Stream(StreamOutput {
             name: stream,
-            text: content.to_string(),
+            text: content,
         });
 
         unwrap!(self.iopub_tx.send(message), Err(error) => {
