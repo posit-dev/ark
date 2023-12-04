@@ -115,10 +115,12 @@ pub async fn enqueue_diagnostics(backend: Backend, uri: Url, version: i32) {
         // log::trace!("[diagnostics({version}, {uri})] Generating diagnostics.");
         let diagnostics = generate_diagnostics(&doc);
 
+        log::info!("diagnostic publish: start");
         backend
             .client
             .publish_diagnostics(uri, diagnostics, None)
             .await;
+        log::info!("diagnostic publish: stop");
     });
 }
 
