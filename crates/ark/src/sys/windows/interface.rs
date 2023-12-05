@@ -21,7 +21,7 @@ use crate::interface::r_read_console;
 use crate::interface::r_show_message;
 use crate::interface::r_write_console;
 use crate::signals;
-use crate::sys::windows::bindings;
+use crate::sys::windows::interface_types;
 
 pub fn setup_r(mut _args: Vec<*mut c_char>) {
     unsafe {
@@ -37,13 +37,13 @@ pub fn setup_r(mut _args: Vec<*mut c_char>) {
         cmdlineoptions(rargc, rargv.as_mut_ptr() as *mut *mut c_char);
 
         let mut params_struct = MaybeUninit::uninit();
-        let params: bindings::Rstart = params_struct.as_mut_ptr();
+        let params: interface_types::Rstart = params_struct.as_mut_ptr();
 
-        //R_DefParamsEx(params, bindings::RSTART_VERSION as i32);
+        //R_DefParamsEx(params, interface_types::RSTART_VERSION as i32);
         R_DefParamsEx(params, 0);
 
         (*params).R_Interactive = 1;
-        (*params).CharacterMode = bindings::UImode_RGui;
+        (*params).CharacterMode = interface_types::UImode_RGui;
 
         (*params).WriteConsole = None;
         (*params).WriteConsoleEx = Some(r_write_console);
@@ -101,9 +101,9 @@ extern "C" {
 
     fn readconsolecfg();
 
-    fn R_DefParamsEx(Rp: bindings::Rstart, RstartVersion: i32);
+    fn R_DefParamsEx(Rp: interface_types::Rstart, RstartVersion: i32);
 
-    fn R_SetParams(Rp: bindings::Rstart);
+    fn R_SetParams(Rp: interface_types::Rstart);
 }
 
 // It doesn't seem like we can use the binding provided by libR-sys,
