@@ -9,7 +9,9 @@ use std::ffi::CStr;
 use std::mem::MaybeUninit;
 use std::os::raw::c_char;
 
+use libR_shim::run_Rmainloop;
 use libR_shim::setup_Rmainloop;
+use libR_shim::R_HomeDir;
 use libR_shim::R_SignalHandlers;
 use stdext::cargs;
 use stdext::cstr;
@@ -18,8 +20,6 @@ use crate::interface::r_busy;
 use crate::interface::r_read_console;
 use crate::interface::r_show_message;
 use crate::interface::r_write_console;
-use crate::interface::run_Rmainloop;
-use crate::interface::R_HomeDir;
 use crate::signals;
 use crate::sys::windows::bindings;
 

@@ -68,6 +68,7 @@ use harp::utils::r_poke_option_show_error_messages;
 use harp::R_MAIN_THREAD_ID;
 use libR_shim::R_BaseNamespace;
 use libR_shim::R_GlobalEnv;
+use libR_shim::R_ProcessEvents;
 use libR_shim::R_RunPendingFinalizers;
 use libR_shim::Rf_findVarInFrame;
 use libR_shim::Rf_onintr;
@@ -94,13 +95,6 @@ use crate::request::debug_request_command;
 use crate::request::RRequest;
 use crate::signals;
 use crate::sys;
-
-extern "C" {
-    pub fn run_Rmainloop();
-    pub fn R_HomeDir() -> *mut ::std::os::raw::c_char;
-
-    fn R_ProcessEvents();
-}
 
 // --- Globals ---
 // These values must be global in order for them to be accessible from R

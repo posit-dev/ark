@@ -157,6 +157,14 @@ pub use libR_sys::VECSXP;
 pub use libR_sys::VECTOR_ELT;
 pub use libR_sys::XLENGTH;
 
+// Functions not exported by libR_sys, but we need them as an IDE
+#[link(name = "R", kind = "dylib")]
+extern "C" {
+    pub fn run_Rmainloop();
+    pub fn R_HomeDir() -> *mut ::std::os::raw::c_char;
+    pub fn R_ProcessEvents();
+}
+
 // Global variables not exported by libR_sys, but we need them as an IDE
 #[link(name = "R", kind = "dylib")]
 extern "C" {
