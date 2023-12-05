@@ -96,24 +96,10 @@ pub async fn enqueue_diagnostics(backend: Backend, uri: Url, version: i32) {
         // associated with this task, and toss it away.
         tokio::time::sleep(Duration::from_millis(1000)).await;
 
-        // The document is thread safe to access due to the usage of DashMap
-        let doc = unwrap!(backend.documents.get(&uri), None => {
-            log::error!(
-                "[diagnostics({version}, {uri})] No document associated with uri available."
-            );
+        let Some(diagnostics) = generate_diagnostics(&backend, &uri, version) else {
+            // Document was closed, or `version` changed
             return;
-        });
-
-        let current_version = doc.version.unwrap_or(0);
-
-        if version != current_version {
-            // log::trace!("[diagnostics({version}, {uri})] Aborting diagnostics in favor of version {current_version}.");
-            return;
-        }
-
-        // Okay, it's our chance to provide diagnostics.
-        // log::trace!("[diagnostics({version}, {uri})] Generating diagnostics.");
-        let diagnostics = generate_diagnostics(&doc);
+        };
 
         backend
             .client
@@ -122,7 +108,39 @@ pub async fn enqueue_diagnostics(backend: Backend, uri: Url, version: i32) {
     });
 }
 
-fn generate_diagnostics(doc: &Document) -> Vec<Diagnostic> {
+fn generate_diagnostics(backend: &Backend, uri: &Url, version: i32) -> Option<Vec<Diagnostic>> {
+    // SAFETY: It is absolutely imperative that the `doc` be `Drop`ped outside
+    // of any `await` context. That is why the extraction of `doc` is captured
+    // inside of `generate_diagnostics()`; `doc` is dropped as this exits, before
+    // `publish_diagnostics().await`. If this doesn't happen, then the `await`
+    // could switch us to a different LSP task, which will also try and access
+    // a document, causing a deadlock since it won't be able to access a
+    // document until our mutable `doc` reference is dropped, but we can't drop
+    // until we get control back from the `await`.
+
+    // The document is thread safe to access due to the usage of DashMap
+    let doc = unwrap!(backend.documents.get(&uri), None => {
+        log::error!(
+            "[diagnostics({version}, {uri})] No document associated with uri available."
+        );
+        return None;
+    });
+
+    let current_version = doc.version.unwrap_or(0);
+
+    if version != current_version {
+        // log::trace!("[diagnostics({version}, {uri})] Aborting diagnostics in favor of version {current_version}.");
+        return None;
+    }
+
+    // Okay, it's our chance to provide diagnostics.
+    // log::trace!("[diagnostics({version}, {uri})] Generating diagnostics.");
+    let diagnostics = generate_diagnostics_impl(&doc);
+
+    Some(diagnostics)
+}
+
+fn generate_diagnostics_impl(doc: &Document) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
 
     {
