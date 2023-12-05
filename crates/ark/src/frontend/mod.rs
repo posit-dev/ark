@@ -6,3 +6,4 @@
 //
 
 pub mod frontend;
+pub mod methods;

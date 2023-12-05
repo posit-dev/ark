@@ -25,6 +25,9 @@ pub enum CommManagerEvent {
     /// An RPC was received from the front end
     PendingRpc(JupyterHeader),
 
+    /// An RPC response was received from the front end. The `String` is the message ID.
+    RpcResponse(String, Value),
+
     /// A Comm was closed
     Closed(String),
 }

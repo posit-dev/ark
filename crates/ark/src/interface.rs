@@ -22,8 +22,13 @@ use std::time::Duration;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::comm::frontend_comm::BusyParams;
 use amalthea::comm::frontend_comm::FrontendEvent;
+use amalthea::comm::frontend_comm::FrontendRpcRequest;
 use amalthea::comm::frontend_comm::PromptStateParams;
 use amalthea::comm::frontend_comm::ShowMessageParams;
+use amalthea::events::BusyEvent;
+use amalthea::events::PositronEvent;
+use amalthea::events::PromptStateEvent;
+use amalthea::events::ShowMessageEvent;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::socket::iopub::Wait;
 use amalthea::wire::exception::Exception;
@@ -85,6 +90,7 @@ use tower_lsp::Client;
 use crate::dap::dap::DapBackendEvent;
 use crate::dap::Dap;
 use crate::errors;
+use crate::frontend::frontend::PositronFrontendRpcRequest;
 use crate::help::message::HelpReply;
 use crate::help::message::HelpRequest;
 use crate::kernel::Kernel;
@@ -994,6 +1000,33 @@ impl RMain {
 
     pub fn get_lsp_client(&self) -> &Client {
         &self.lsp_client
+    }
+
+    // Use try_from()?
+
+    pub fn call_frontend_method(
+        &self,
+        method: String,
+        params: Vec<serde_json::Value>,
+    ) -> anyhow::Result<RObject> {
+        let (response_tx, response_rx) = bounded(1);
+
+        let request = PositronFrontendRpcRequest {
+            response_tx,
+            request: FrontendRpcRequest { method, params },
+        };
+
+        {
+            let kernel = self.kernel.lock().unwrap();
+            kernel.send_frontend_request(request);
+        }
+
+        // Create request and block for response
+        let _result = response_rx.recv();
+
+        // TODO: Convert conversion errors to R errors
+        // result.try_into().unwrap()
+        unsafe { Ok(RObject::new(libR_shim::R_NilValue)) }
     }
 }
 

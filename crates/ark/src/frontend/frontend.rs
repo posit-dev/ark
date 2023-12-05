@@ -14,6 +14,7 @@ use amalthea::comm::frontend_comm::FrontendRpcErrorData;
 use amalthea::comm::frontend_comm::FrontendRpcReply;
 use amalthea::comm::frontend_comm::FrontendRpcRequest;
 use amalthea::socket::comm::CommSocket;
+use amalthea::wire::client_event::ClientEvent;
 use crossbeam::channel::bounded;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
@@ -21,6 +22,7 @@ use crossbeam::select;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
+use log::info;
 use serde::Serialize;
 use serde_json::Value;
 use stdext::spawn;
@@ -31,7 +33,13 @@ use crate::r_task;
 #[derive(Debug)]
 pub enum PositronFrontendMessage {
     Event(PositronEvent),
-    Request(FrontendRpcRequest),
+    Request(PositronFrontendRpcRequest),
+}
+
+#[derive(Debug)]
+pub struct PositronFrontendRpcRequest {
+    pub response_tx: Sender<serde_json::Value>,
+    pub request: FrontendRpcRequest,
 }
 
 /// PositronFrontend is a wrapper around a comm channel whose lifetime matches
@@ -74,7 +82,7 @@ impl PositronFrontend {
                     });
                     match msg {
                         PositronFrontendMessage::Event(event) => self.dispatch_event(&event),
-                        PositronFrontendMessage::Request(_) => todo!(),
+                        PositronFrontendMessage::Request(request) => self.call_frontend_method(&request).unwrap(),
                     }
                 },
 
@@ -179,17 +187,14 @@ impl PositronFrontend {
         Ok(FrontendRpcReply::CallMethodReply(result))
     }
 
-    /// Send request to frontend and block until reply
-    pub fn call_frontend_method<T>(&self, method: String, params: T) -> anyhow::Result<Value>
-    where
-        T: Serialize,
-    {
-        let (tx, rx) = bounded::<Value>(1);
-
-        let request = RpcRequest::new(method, params)?;
-        let comm_msg = CommMsg::ReverseRpc(tx, request);
+    fn call_frontend_method(&self, request: &PositronFrontendRpcRequest) -> anyhow::Result<()> {
+        let wire_request = RpcRequest::new(
+            request.request.method.clone(),
+            request.request.params.clone(),
+        )?;
+        let comm_msg = CommMsg::ReverseRpc(request.response_tx.clone(), wire_request);
         self.comm.outgoing_tx.send(comm_msg)?;
 
-        Ok(rx.recv()?)
+        Ok(())
     }
 }
