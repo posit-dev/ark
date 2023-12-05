@@ -5,9 +5,8 @@
  *
  */
 
+use libR_shim::R_interrupts_pending;
 use nix::sys::signal::*;
-
-use crate::signals::handle_interrupt;
 
 /// Reset the signal block.
 ///
@@ -51,4 +50,20 @@ pub fn initialize_signal_block() {
     let mut sigset = SigSet::empty();
     sigset.add(SIGINT);
     sigprocmask(SigmaskHow::SIG_BLOCK, Some(&sigset), None).unwrap();
+}
+
+pub fn interrupts_pending() -> bool {
+    unsafe { R_interrupts_pending == 1 }
+}
+
+pub fn set_interrupts_pending(pending: bool) {
+    if pending {
+        unsafe { R_interrupts_pending = 1 };
+    } else {
+        unsafe { R_interrupts_pending = 0 };
+    }
+}
+
+pub extern "C" fn handle_interrupt(_signal: libc::c_int) {
+    set_interrupts_pending(true);
 }

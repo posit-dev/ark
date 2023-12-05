@@ -69,7 +69,6 @@ use harp::R_MAIN_THREAD_ID;
 use libR_shim::R_BaseNamespace;
 use libR_shim::R_GlobalEnv;
 use libR_shim::R_RunPendingFinalizers;
-use libR_shim::R_interrupts_pending;
 use libR_shim::Rf_findVarInFrame;
 use libR_shim::Rf_onintr;
 use libR_shim::SEXP;
@@ -574,23 +573,26 @@ impl RMain {
         }
 
         loop {
+            // If an interrupt was signaled and we are in a user
+            // request prompt, e.g. `readline()`, we need to propagate
+            // the interrupt to the R stack. This needs to happen before
+            // `process_events()`, particularly on Windows, because it
+            // calls `R_ProcessEvents()`, which checks and resets
+            // `UserBreak`, but won't actually fire the interrupt b/c
+            // we have them disabled, so it would end up swallowing the
+            // user interrupt request.
+            if info.input_request && signals::interrupts_pending() {
+                return ConsoleResult::Interrupt;
+            }
+
+            // Otherwise we are at top level and we can assume the
+            // interrupt was 'handled' on the frontend side and so
+            // reset the flag
+            signals::set_interrupts_pending(false);
+
             // Yield to auxiliary threads and to the R event loop
             self.yield_to_tasks();
             unsafe { Self::process_events() };
-
-            unsafe {
-                // If an interrupt was signaled and we are in a user
-                // request prompt, e.g. `readline()`, we need to propagate
-                // the interrupt to the R stack.
-                if info.input_request && R_interrupts_pending != 0 {
-                    return ConsoleResult::Interrupt;
-                }
-
-                // Otherwise we are at top level and we can assume the
-                // interrupt was 'handled' on the frontend side and so
-                // reset the flag
-                R_interrupts_pending = 0;
-            }
 
             // FIXME: Race between interrupt and new code request. To fix
             // this, we could manage the Shell and Control sockets on the
@@ -908,7 +910,11 @@ impl RMain {
 
     unsafe fn process_events() {
         // Process regular R events. We're normally running with polled
-        // events disabled so that won't run here.
+        // events disabled so that won't run here. We also run with
+        // interrupts disabled, so on Windows those won't get run here
+        // either (i.e. if `UserBreak` is set), but it will reset `UserBreak`
+        // so we need to ensure we handle interrupts right before calling
+        // this.
         R_ProcessEvents();
 
         sys::interface::run_activity_handlers();

@@ -5,7 +5,8 @@
  *
  */
 
+use crate::signals::set_interrupts_pending;
+
 pub fn handle_interrupt_request() {
-    // TODO: Windows.
-    // Look at https://github.com/Detegr/rust-ctrlc for cross platform handling (plus termination handling)
+    set_interrupts_pending(true);
 }

@@ -5,13 +5,7 @@
  *
  */
 
-use libR_shim::R_interrupts_pending;
-
 pub use crate::sys::signals::initialize_signal_block;
 pub use crate::sys::signals::initialize_signal_handlers;
-
-pub extern "C" fn handle_interrupt(_signal: libc::c_int) {
-    unsafe {
-        R_interrupts_pending = 1;
-    }
-}
+pub use crate::sys::signals::interrupts_pending;
+pub use crate::sys::signals::set_interrupts_pending;

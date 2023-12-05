@@ -51,6 +51,7 @@ pub use libR_sys::R_tryCatch;
 pub use libR_sys::R_tryEvalSilent;
 pub use libR_sys::R_xlen_t;
 pub use libR_sys::Rboolean;
+pub use libR_sys::Rboolean_FALSE;
 pub use libR_sys::Rboolean_TRUE;
 pub use libR_sys::Rcomplex;
 pub use libR_sys::Rf_GetOption1;
