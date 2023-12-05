@@ -334,9 +334,7 @@ impl LanguageServer for Backend {
         let context = DocumentContext::new(&document, point, trigger);
         log::info!("Completion context: {:#?}", context);
 
-        log::info!("completion: start");
         let completions = r_task(|| provide_completions(&self, &context));
-        log::info!("completion: stop");
 
         let completions = unwrap!(completions, Err(err) => {
             backend_trace!(self, "completion(): Failed to provide completions: {err:?}.");
@@ -401,8 +399,6 @@ impl LanguageServer for Backend {
     }
 
     async fn signature_help(&self, params: SignatureHelpParams) -> Result<Option<SignatureHelp>> {
-        backend_trace!(self, "signature_help({:?})", params);
-
         // get document reference
         let uri = &params.text_document_position_params.text_document.uri;
         let document = unwrap!(self.documents.get_mut(uri), None => {
@@ -413,9 +409,7 @@ impl LanguageServer for Backend {
         let position = params.text_document_position_params.position;
 
         // request signature help
-        log::info!("signature_help: start");
         let result = r_task(|| unsafe { signature_help(document.value(), &position) });
-        log::info!("signature_help: stop");
 
         // unwrap errors
         let result = unwrap!(result, Err(error) => {
@@ -427,8 +421,6 @@ impl LanguageServer for Backend {
         let result = unwrap!(result, None => {
             return Ok(None);
         });
-
-        std::thread::sleep(std::time::Duration::from_secs(3));
 
         Ok(Some(result))
     }
