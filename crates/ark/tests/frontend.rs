@@ -16,6 +16,7 @@ use amalthea::comm::frontend_comm::FrontendRpcRequest;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
 use ark::frontend::frontend::PositronFrontend;
+use ark::frontend::frontend::PositronFrontendMessage;
 use ark::r_task;
 use ark::test::r_test;
 use harp::exec::RFunction;
@@ -120,7 +121,9 @@ fn test_frontend_comm() {
         // Mark not busy (this prevents the frontend comm from being closed due to
         // the Sender being dropped)
         frontend
-            .send(FrontendEvent::Busy(BusyParams { busy: false }))
+            .send(PositronFrontendMessage::Event(PositronEvent::Busy(
+                BusyParams { busy: false },
+            )))
             .unwrap();
     });
 }

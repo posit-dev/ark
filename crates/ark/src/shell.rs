@@ -274,13 +274,13 @@ impl ShellHandler for Shell {
             Comm::FrontEnd => {
                 // Create a frontend to wrap the comm channel we were just given. This starts
                 // a thread that proxies messages to the frontend.
-                let event_tx = PositronFrontend::start(comm.clone());
+                let message_tx = PositronFrontend::start(comm.clone());
 
                 // Send the frontend event channel to the execution thread so it can emit
                 // events to the frontend.
                 if let Err(err) = self
                     .kernel_request_tx
-                    .send(KernelRequest::EstablishEventChannel(event_tx.clone()))
+                    .send(KernelRequest::EstablishFrontendChannel(message_tx.clone()))
                 {
                     warn!(
                         "Could not deliver frontend event channel to execution thread: {}",

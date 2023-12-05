@@ -5,11 +5,12 @@
 //
 //
 
-use amalthea::comm::frontend_comm::FrontendEvent;
 use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::execute_response::ExecuteResponse;
 use amalthea::wire::originator::Originator;
 use crossbeam::channel::Sender;
+
+use crate::frontend::frontend::PositronFrontendMessage;
 
 /// Represents requests to the primary R execution thread.
 #[derive(Debug, Clone)]
@@ -48,5 +49,5 @@ pub fn debug_request_command(req: DebugRequest) -> String {
 #[derive(Debug, Clone)]
 pub enum KernelRequest {
     /// Establish a channel to the front end to send events
-    EstablishEventChannel(Sender<FrontendEvent>),
+    EstablishFrontendChannel(Sender<PositronFrontendMessage>),
 }
