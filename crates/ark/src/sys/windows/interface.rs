@@ -39,7 +39,12 @@ pub fn setup_r(mut _args: Vec<*mut c_char>) {
         let mut params_struct = MaybeUninit::uninit();
         let params: interface_types::Rstart = params_struct.as_mut_ptr();
 
-        //R_DefParamsEx(params, interface_types::RSTART_VERSION as i32);
+        // TODO: Windows
+        // We eventually need to use `RSTART_VERSION` (i.e., 1). It might just
+        // work as is but will require a little testing. It sets and initializes
+        // some additional useful callbacks, but is only available in newer R
+        // versions.
+        // R_DefParamsEx(params, bindings::RSTART_VERSION as i32);
         R_DefParamsEx(params, 0);
 
         (*params).R_Interactive = 1;
@@ -56,7 +61,9 @@ pub fn setup_r(mut _args: Vec<*mut c_char>) {
         // It gets called unconditionally, so we have to set it to something, even if a no-op.
         (*params).CallBack = Some(r_callback);
 
-        // These need to be set before `R_SetParams()` because it accesses them, but how?
+        // TODO: Windows
+        // These need to be set before `R_SetParams()` because it accesses them,
+        // how can we get the user's information into here?
         let r_home = cstr!("C:\\Program Files\\R\\R-4.3.2");
         let user_home = cstr!("D:\\Users\\davis-vaughan\\Documents");
         (*params).rhome = r_home;
@@ -69,6 +76,10 @@ pub fn setup_r(mut _args: Vec<*mut c_char>) {
         GA_initapp(0, std::ptr::null_mut());
         readconsolecfg();
 
+        // TODO: Windows
+        // This currently doesn't do anything on Windows, do we need it at all?
+        // Is this a Unix specific idea? If so, remove this and cleanup on the
+        // Unix side to make it more private.
         // Initialize the signal handlers (like interrupts)
         signals::initialize_signal_handlers();
 
