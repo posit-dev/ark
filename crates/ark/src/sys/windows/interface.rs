@@ -137,12 +137,7 @@ fn get_r_home() -> String {
         },
     };
 
-    let path = path.to_string();
-
-    // We have an owned copy at this point
-    unsafe { free_R_HOME(r_path) };
-
-    path
+    path.to_string()
 }
 
 fn get_user_home() -> String {
@@ -166,12 +161,7 @@ fn get_user_home() -> String {
         },
     };
 
-    let path = path.to_string();
-
-    // We have an owned copy at this point
-    unsafe { freeRUser(r_path) };
-
-    path
+    path.to_string()
 }
 
 #[no_mangle]
@@ -202,7 +192,6 @@ extern "C" {
     ///
     /// https://github.com/wch/r-source/blob/55cd975c538ad5a086c2085ccb6a3037d5a0cb9a/src/gnuwin32/shext.c#L55
     fn getRUser() -> *mut ::std::os::raw::c_char;
-    fn freeRUser(s: *mut ::std::os::raw::c_char);
 
     /// Get R_HOME from the environment or the registry
     ///
@@ -217,7 +206,12 @@ extern "C" {
     ///
     /// https://github.com/wch/r-source/blob/55cd975c538ad5a086c2085ccb6a3037d5a0cb9a/src/gnuwin32/rhome.c#L152
     fn get_R_HOME() -> *mut ::std::os::raw::c_char;
-    fn free_R_HOME(s: *mut ::std::os::raw::c_char);
+
+    // In theory we should call these, but they are very new, roughly R 4.3.0.
+    // It isn't super harmful if we don't free these.
+    // https://github.com/wch/r-source/commit/9210c59281e7ab93acff9f692c31b83d07a506a6
+    // fn freeRUser(s: *mut ::std::os::raw::c_char);
+    // fn free_R_HOME(s: *mut ::std::os::raw::c_char);
 }
 
 // It doesn't seem like we can use the binding provided by libR-sys,
