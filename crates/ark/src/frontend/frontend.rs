@@ -13,6 +13,9 @@ use amalthea::comm::frontend_comm::FrontendRpcError;
 use amalthea::comm::frontend_comm::FrontendRpcErrorData;
 use amalthea::comm::frontend_comm::FrontendRpcReply;
 use amalthea::comm::frontend_comm::FrontendRpcRequest;
+use amalthea::comm::frontend_comm::FrontendRpcResponse;
+use amalthea::comm::frontend_comm::FrontendRpcResult;
+use amalthea::events::PositronEvent;
 use amalthea::socket::comm::CommSocket;
 use amalthea::wire::client_event::ClientEvent;
 use crossbeam::channel::bounded;
@@ -38,7 +41,7 @@ pub enum PositronFrontendMessage {
 
 #[derive(Debug)]
 pub struct PositronFrontendRpcRequest {
-    pub response_tx: Sender<serde_json::Value>,
+    pub response_tx: Sender<FrontendRpcResponse>,
     pub request: FrontendRpcRequest,
 }
 

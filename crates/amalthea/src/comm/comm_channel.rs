@@ -11,6 +11,8 @@ use serde_json::Value;
 use strum_macros::EnumString;
 use uuid::Uuid;
 
+use super::frontend_comm::FrontendRpcResponse;
+
 #[derive(EnumString, PartialEq)]
 #[strum(serialize_all = "camelCase")]
 pub enum Comm {
@@ -49,7 +51,7 @@ pub enum CommMsg {
     Rpc(String, Value),
 
     // DOCME
-    ReverseRpc(Sender<Value>, Value),
+    ReverseRpc(Sender<FrontendRpcResponse>, Value),
 
     /// A message representing any other data sent on the comm channel; usually
     /// used for events.

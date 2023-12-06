@@ -32,6 +32,12 @@ pub struct BusyParams {
     pub busy: bool,
 }
 
+#[derive(Clone, Debug)]
+pub enum FrontendRpcResponse {
+    Result(FrontendRpcResult),
+    Error(FrontendRpcError),
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct FrontendRpcRequest {
@@ -56,6 +62,19 @@ pub struct OpenEditorParams {
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct ShowMessageParams {
     /// The message to show to the user.
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct FrontendRpcResult {
+    pub id: String,
+    pub result: Value,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct FrontendRpcErrorData {
     pub message: String,
 }
 
@@ -124,4 +143,11 @@ pub enum FrontendEvent {
 
     #[serde(rename = "working_directory")]
     WorkingDirectory(WorkingDirectoryParams),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "msg_type", rename_all = "snake_case")]
+pub struct FrontendRpcError {
+    pub id: String,
+    pub error: FrontendRpcErrorData,
 }

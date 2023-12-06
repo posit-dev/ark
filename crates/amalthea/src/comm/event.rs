@@ -7,6 +7,7 @@
 
 use serde_json::Value;
 
+use super::frontend_comm::FrontendRpcResponse;
 use crate::comm::comm_channel::CommMsg;
 use crate::socket::comm::CommSocket;
 use crate::wire::header::JupyterHeader;
@@ -25,8 +26,8 @@ pub enum CommManagerEvent {
     /// An RPC was received from the front end
     PendingRpc(JupyterHeader),
 
-    /// An RPC response was received from the front end. The `String` is the message ID.
-    RpcResponse(String, Value),
+    /// An RPC response was received from the front end
+    RpcResponse(FrontendRpcResponse),
 
     /// A Comm was closed
     Closed(String),

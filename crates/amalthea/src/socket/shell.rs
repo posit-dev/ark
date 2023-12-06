@@ -19,10 +19,15 @@ use log::warn;
 use serde_json::json;
 use stdext::result::ResultOrLog;
 
+use crate::comm::base_comm::JsonRpcErrorCode;
 use crate::comm::comm_channel::Comm;
 use crate::comm::comm_channel::CommMsg;
 use crate::comm::event::CommManagerEvent;
 use crate::comm::event::CommShellEvent;
+use crate::comm::frontend_comm::FrontendRpcError;
+use crate::comm::frontend_comm::FrontendRpcErrorData;
+use crate::comm::frontend_comm::FrontendRpcResponse;
+use crate::comm::frontend_comm::FrontendRpcResult;
 use crate::comm::server_comm::ServerComm;
 use crate::error::Error;
 use crate::language::server_handler::ServerHandler;
@@ -350,16 +355,32 @@ impl Shell {
         if data.get("method").is_some() {
             panic!("FIXME: Found `method`");
         } else if data.get("result").is_some() {
-            // TODO: error response case
-
             // If there is no method field this is a response from the frontend
             // for an RPC request initiated by the backend. The comm manager is
             // in charge of passing the response to the caller.
             self.comm_manager_tx
-                .send(CommManagerEvent::RpcResponse(
-                    req.header.msg_id.clone(),
-                    data,
-                ))
+                .send(CommManagerEvent::RpcResponse(FrontendRpcResponse::Result(
+                    FrontendRpcResult {
+                        id: req.header.msg_id.clone(),
+                        result: data.get("result").unwrap().clone(),
+                    },
+                )))
+                .unwrap();
+        } else if data.get("error").is_some() {
+            let error = data.get("error").unwrap();
+            let code = error.get("code").unwrap();
+            let code: JsonRpcErrorCode = unsafe { std::mem::transmute(code) };
+
+            self.comm_manager_tx
+                .send(CommManagerEvent::RpcResponse(FrontendRpcResponse::Error(
+                    FrontendRpcError {
+                        id: req.header.msg_id.clone(),
+                        error: FrontendRpcErrorData {
+                            message: error.get("message").unwrap().to_string(),
+                            code,
+                        },
+                    },
+                )))
                 .unwrap();
         } else {
             // Store this message as a pending RPC request so that when the comm

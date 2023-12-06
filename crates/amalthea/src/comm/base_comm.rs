@@ -11,7 +11,8 @@ use serde_json::json;
 use serde_json::Value;
 
 /// JSON-RPC 2.0 error codes
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[repr(i64)]
 pub enum JsonRpcErrorCode {
     ParseError = -32700,
     InvalidRequest = -32600,
