@@ -10,9 +10,9 @@ use std::ffi::CStr;
 
 use once_cell::sync::Lazy;
 use regex::bytes::Regex;
-use winsafe::co::CP;
 
-use super::strings::system_to_utf8;
+use super::strings::code_page_to_utf8;
+use super::strings::get_system_code_page;
 
 // - (?-u) to disable unicode so it matches the bytes exactly
 // - (?s:.) so `.` matches anything INCLUDING new lines
@@ -32,9 +32,7 @@ static RE_EMBEDDED_UTF8: Lazy<Regex> =
 /// behavior is; perhaps there is an extra UTF-8 <-> system conversion
 /// happening somewhere in the pipeline?)
 pub fn console_to_utf8(x: *const c_char) -> anyhow::Result<String> {
-    // Lookup code page that R is using
-    let code_page = unsafe { localeCP } as u16;
-    let code_page = unsafe { CP::from_raw(code_page) };
+    let code_page = get_system_code_page();
 
     let x = unsafe { CStr::from_ptr(x) };
 
@@ -50,7 +48,7 @@ pub fn console_to_utf8(x: *const c_char) -> anyhow::Result<String> {
         if full.start() > 0 {
             // Translate everything up to right before the match
             // and add to the output
-            let slice = system_to_utf8(&x[..full.start()], code_page)?;
+            let slice = code_page_to_utf8(&x[..full.start()], code_page)?;
             out.push_str(&slice);
         }
 
@@ -66,16 +64,9 @@ pub fn console_to_utf8(x: *const c_char) -> anyhow::Result<String> {
 
     if x.len() > 0 {
         // Translate everything that's left and add to the output
-        let slice = system_to_utf8(x, code_page)?;
+        let slice = code_page_to_utf8(x, code_page)?;
         out.push_str(&slice);
     }
 
     Ok(out)
-}
-
-#[link(name = "R", kind = "dylib")]
-extern "C" {
-    /// The codepage that R thinks it should be using for Windows.
-    /// Should map to `winsafe::kernel::co::CP`.
-    static mut localeCP: ::std::os::raw::c_uint;
 }

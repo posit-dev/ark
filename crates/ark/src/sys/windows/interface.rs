@@ -5,16 +5,16 @@
  *
  */
 
+use std::ffi::c_char;
 use std::ffi::CStr;
+use std::ffi::CString;
 use std::mem::MaybeUninit;
-use std::os::raw::c_char;
 
 use libR_shim::run_Rmainloop;
 use libR_shim::setup_Rmainloop;
 use libR_shim::R_HomeDir;
 use libR_shim::R_SignalHandlers;
 use stdext::cargs;
-use stdext::cstr;
 
 use crate::interface::r_busy;
 use crate::interface::r_read_console;
@@ -22,10 +22,24 @@ use crate::interface::r_show_message;
 use crate::interface::r_write_console;
 use crate::signals;
 use crate::sys::windows::interface_types;
+use crate::sys::windows::strings::system_to_utf8;
 
 pub fn setup_r(mut _args: Vec<*mut c_char>) {
     unsafe {
         R_SignalHandlers = 0;
+
+        // - We have to collect these before `cmdlineoptions()` is called, because
+        //   it alters the env vars, which we then reset to our own paths in `R_SetParams()`.
+        // - `rhome` and `home` need to be set before `R_SetParams()` because it accesses them.
+        // - We convert to a `mut` pointer because the R API requires it, but it doesn't modify them.
+        // - `CString::new()` handles adding a nul terminator for us.
+        let r_home = get_r_home();
+        let r_home = CString::new(r_home).unwrap();
+        let r_home = r_home.as_ptr() as *mut c_char;
+
+        let user_home = get_user_home();
+        let user_home = CString::new(user_home).unwrap();
+        let user_home = user_home.as_ptr() as *mut c_char;
 
         // setup command line options
         // note that R does a lot of initialization here that's not accessible
@@ -61,11 +75,6 @@ pub fn setup_r(mut _args: Vec<*mut c_char>) {
         // It gets called unconditionally, so we have to set it to something, even if a no-op.
         (*params).CallBack = Some(r_callback);
 
-        // TODO: Windows
-        // These need to be set before `R_SetParams()` because it accesses them,
-        // how can we get the user's information into here?
-        let r_home = cstr!("C:\\Program Files\\R\\R-4.3.2");
-        let user_home = cstr!("D:\\Users\\davis-vaughan\\Documents");
         (*params).rhome = r_home;
         (*params).home = user_home;
 
@@ -102,6 +111,69 @@ pub fn run_activity_handlers() {
     // Nothing to do on Windows
 }
 
+// TODO: Windows
+// It is possible we will want to use something other than `get_R_HOME()` and `getRUser()` for these.
+// RStudio does use `get_R_HOME()`, but they have a custom helper instead of `getRUser()`.
+// https://github.com/rstudio/rstudio/blob/d9c0b090d49752fe60e7a2ea4be3123cc3feeb6c/src/cpp/r/session/RDiscovery.cpp#L42
+// https://github.com/rstudio/rstudio/blob/d9c0b090d49752fe60e7a2ea4be3123cc3feeb6c/src/cpp/shared_core/system/Win32User.cpp#L164
+fn get_r_home() -> String {
+    let r_path = unsafe { get_R_HOME() };
+
+    if r_path.is_null() {
+        panic!("`get_R_HOME()` failed to report an R home.");
+    }
+
+    let r_path_ctr = unsafe { CStr::from_ptr(r_path) };
+
+    // Removes nul terminator
+    let path = r_path_ctr.to_bytes();
+
+    // Try conversion to UTF-8
+    let path = match system_to_utf8(path) {
+        Ok(path) => path,
+        Err(err) => {
+            let path = r_path_ctr.to_string_lossy().to_string();
+            panic!("Failed to convert R home to UTF-8. Path '{path}'. Error: {err:?}.");
+        },
+    };
+
+    let path = path.to_string();
+
+    // We have an owned copy at this point
+    unsafe { free_R_HOME(r_path) };
+
+    path
+}
+
+fn get_user_home() -> String {
+    let r_path = unsafe { getRUser() };
+
+    if r_path.is_null() {
+        panic!("`getRUser()` failed to report a user home directory.");
+    }
+
+    let r_path_ctr = unsafe { CStr::from_ptr(r_path) };
+
+    // Removes nul terminator
+    let path = r_path_ctr.to_bytes();
+
+    // Try conversion to UTF-8
+    let path = match system_to_utf8(path) {
+        Ok(path) => path,
+        Err(err) => {
+            let path = r_path_ctr.to_string_lossy().to_string();
+            panic!("Failed to convert user home to UTF-8. Path '{path}'. Error: {err:?}.");
+        },
+    };
+
+    let path = path.to_string();
+
+    // We have an owned copy at this point
+    unsafe { freeRUser(r_path) };
+
+    path
+}
+
 #[no_mangle]
 extern "C" fn r_callback() {
     // Do nothing!
@@ -115,6 +187,37 @@ extern "C" {
     fn R_DefParamsEx(Rp: interface_types::Rstart, RstartVersion: i32);
 
     fn R_SetParams(Rp: interface_types::Rstart);
+
+    /// Get user home directory
+    ///
+    /// Checks:
+    /// - C `R_USER` env var
+    /// - C `USER` env var
+    /// - `Documents` folder, if one exists, through `ShellGetPersonalDirectory()`
+    /// - `HOMEDRIVE` + `HOMEPATH`
+    /// - Current directory through `GetCurrentDirectory()`
+    ///
+    /// Probably returns a system encoded result?
+    /// So needs to be converted to UTF-8.
+    ///
+    /// https://github.com/wch/r-source/blob/55cd975c538ad5a086c2085ccb6a3037d5a0cb9a/src/gnuwin32/shext.c#L55
+    fn getRUser() -> *mut ::std::os::raw::c_char;
+    fn freeRUser(s: *mut ::std::os::raw::c_char);
+
+    /// Get R_HOME from the environment or the registry
+    ///
+    /// Checks:
+    /// - C `R_HOME` env var
+    /// - Windows API `R_HOME` environment space
+    /// - Current user registry
+    /// - Local machine registry
+    ///
+    /// Probably returns a system encoded result?
+    /// So needs to be converted to UTF-8.
+    ///
+    /// https://github.com/wch/r-source/blob/55cd975c538ad5a086c2085ccb6a3037d5a0cb9a/src/gnuwin32/rhome.c#L152
+    fn get_R_HOME() -> *mut ::std::os::raw::c_char;
+    fn free_R_HOME(s: *mut ::std::os::raw::c_char);
 }
 
 // It doesn't seem like we can use the binding provided by libR-sys,
