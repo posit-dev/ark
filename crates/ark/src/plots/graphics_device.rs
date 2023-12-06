@@ -29,6 +29,10 @@ use std::io::Read;
 
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::event::CommManagerEvent;
+use amalthea::comm::plot_comm::PlotEvent;
+use amalthea::comm::plot_comm::PlotResult;
+use amalthea::comm::plot_comm::PlotRpcReply;
+use amalthea::comm::plot_comm::PlotRpcRequest;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
 use amalthea::socket::iopub::IOPubMessage;
@@ -42,6 +46,7 @@ use crossbeam::channel::Select;
 use crossbeam::channel::Sender;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
+use harp::object::RObject;
 use libR_sys::*;
 use once_cell::sync::Lazy;
 use serde_json::json;
@@ -49,9 +54,6 @@ use stdext::result::ResultOrLog;
 use stdext::unwrap;
 use uuid::Uuid;
 
-use crate::plots::message::PlotMessageInput;
-use crate::plots::message::PlotMessageOutput;
-use crate::plots::message::PlotMessageOutputImage;
 use crate::r_task;
 
 const POSITRON_PLOT_CHANNEL_ID: &str = "positron.plot";
@@ -173,20 +175,20 @@ impl DeviceContext {
 
         // Get the RPC request.
         if let CommMsg::Rpc(rpc_id, value) = message {
-            let input = serde_json::from_value::<PlotMessageInput>(value);
+            let input = serde_json::from_value::<PlotRpcRequest>(value);
             let input = unwrap!(input, Err(error) => {
                 log::error!("{}", error);
                 return;
             });
 
             match input {
-                PlotMessageInput::Render(plot_meta) => {
+                PlotRpcRequest::Render(plot_meta) => {
                     let data = unwrap!(self.render_plot(plot_id, plot_meta.width, plot_meta.height, plot_meta.pixel_ratio), Err(error) => {
                         log::error!("Failed to render plot with id {plot_id} due to: {error}.");
                         return;
                     });
 
-                    let response = PlotMessageOutput::Image(PlotMessageOutputImage {
+                    let response = PlotRpcReply::RenderReply(PlotResult {
                         data: data.to_string(),
                         mime_type: "image/png".to_string(),
                     });
@@ -304,7 +306,7 @@ impl DeviceContext {
 
         log::info!("Sending plot update message for id: {id}.");
 
-        let value = serde_json::to_value(PlotMessageOutput::Update).unwrap();
+        let value = serde_json::to_value(PlotEvent::Update).unwrap();
 
         // Tell Positron we have an updated plot that it should request a rerender for
         socket
@@ -339,8 +341,8 @@ impl DeviceContext {
 
     fn create_display_data_plot(&mut self, id: &str) -> Result<serde_json::Value, anyhow::Error> {
         // TODO: Take these from R global options? Like `ark.plot.width`?
-        let width = 400.0;
-        let height = 650.0;
+        let width = 400;
+        let height = 650;
         let pixel_ratio = 1.0;
 
         let data = unwrap!(self.render_plot(id, width, height, pixel_ratio), Err(error) => {
@@ -356,8 +358,8 @@ impl DeviceContext {
     fn render_plot(
         &mut self,
         plot_id: &str,
-        width: f64,
-        height: f64,
+        width: i64,
+        height: i64,
         pixel_ratio: f64,
     ) -> anyhow::Result<String> {
         // Render the plot to file.
@@ -367,8 +369,8 @@ impl DeviceContext {
         let image_path = r_task(|| unsafe {
             RFunction::from(".ps.graphics.renderPlot")
                 .param("id", plot_id)
-                .param("width", width)
-                .param("height", height)
+                .param("width", RObject::try_from(width)?)
+                .param("height", RObject::try_from(height)?)
                 .param("dpr", pixel_ratio)
                 .call()?
                 .to::<String>()

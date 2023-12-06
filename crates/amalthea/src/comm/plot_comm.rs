@@ -12,7 +12,7 @@ use serde::Serialize;
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct PlotResult {
 	/// The plot data, as a base64-encoded string
-	pub data: i64,
+	pub data: String,
 
 	/// The MIME type of the plot data
 	pub mime_type: String,
@@ -28,7 +28,7 @@ pub struct RenderParams {
 	pub width: i64,
 
 	/// The pixel ratio of the display device
-	pub pixel_ratio: i64,
+	pub pixel_ratio: f64,
 
 }
 
