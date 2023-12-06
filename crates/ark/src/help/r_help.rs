@@ -6,8 +6,11 @@
 //
 
 use amalthea::comm::comm_channel::CommMsg;
+use amalthea::comm::help_comm::HelpEvent;
+use amalthea::comm::help_comm::HelpRpcReply;
+use amalthea::comm::help_comm::HelpRpcRequest;
+use amalthea::comm::help_comm::ShowHelpParams;
 use amalthea::socket::comm::CommSocket;
-use anyhow::anyhow;
 use anyhow::Result;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
@@ -21,12 +24,8 @@ use log::warn;
 use stdext::spawn;
 
 use crate::browser;
-use crate::help::message::HelpContentKind;
-use crate::help::message::HelpMessage;
 use crate::help::message::HelpReply;
 use crate::help::message::HelpRequest;
-use crate::help::message::ShowHelpContent;
-use crate::help::message::ShowTopicReply;
 use crate::help_proxy;
 use crate::r_task;
 
@@ -162,14 +161,14 @@ impl RHelp {
             return false;
         }
         if let CommMsg::Rpc(id, data) = message {
-            let message = match serde_json::from_value::<HelpMessage>(data) {
+            let message = match serde_json::from_value::<HelpRpcRequest>(data) {
                 Ok(m) => m,
                 Err(err) => {
                     error!("Help: Received invalid message from front end. {:?}", err);
                     return true;
                 },
             };
-            if let Err(err) = self.handle_message(id, message) {
+            if let Err(err) = self.handle_rpc(id, message) {
                 error!("Help: Error handling message from front end: {:?}", err);
                 return true;
             }
@@ -178,13 +177,13 @@ impl RHelp {
         true
     }
 
-    fn handle_message(&self, id: String, message: HelpMessage) -> Result<()> {
+    fn handle_rpc(&self, id: String, message: HelpRpcRequest) -> Result<()> {
         // Match on the type of data received.
         match message {
-            HelpMessage::ShowHelpTopicRequest(topic) => {
+            HelpRpcRequest::ShowHelpTopic(topic) => {
                 // Look up the help topic and attempt to show it; this returns a
                 // boolean indicating whether the topic was found.
-                let found = match self.show_help_topic(topic.topic.clone()) {
+                let _found = match self.show_help_topic(topic.topic.clone()) {
                     Ok(found) => found,
                     Err(err) => {
                         error!("Error looking up help topic {}: {:?}", topic.topic, err);
@@ -193,12 +192,11 @@ impl RHelp {
                 };
 
                 // Create and send a reply to the front end.
-                let reply = HelpMessage::ShowHelpTopicReply(ShowTopicReply { found });
+                let reply = HelpRpcReply::ShowHelpTopicReply(true);
                 let json = serde_json::to_value(reply)?;
                 self.comm.outgoing_tx.send(CommMsg::Rpc(id, json))?;
                 Ok(())
             },
-            _ => Err(anyhow!("Help: Received unexpected message {:?}", message)),
         }
     }
 
@@ -238,9 +236,9 @@ impl RHelp {
         let replacement = format!("http://127.0.0.1:{}/", proxy_port);
 
         let url = url.replace(prefix.as_str(), replacement.as_str());
-        let msg = HelpMessage::ShowHelpEvent(ShowHelpContent {
+        let msg = HelpEvent::ShowHelp(ShowHelpParams {
             content: url,
-            kind: HelpContentKind::Url,
+            kind: String::from("url"),
             focus: true,
         });
         let json = serde_json::to_value(msg)?;
