@@ -39,7 +39,7 @@ pub fn console_to_utf8(x: *const c_char) -> anyhow::Result<String> {
     // Drops trailing nul terminator
     let mut x = x.to_bytes();
 
-    let mut out = String::new();
+    let mut out = Vec::new();
 
     while let Some(capture) = RE_EMBEDDED_UTF8.captures(x) {
         // `get(0)` always returns the full match
@@ -49,14 +49,15 @@ pub fn console_to_utf8(x: *const c_char) -> anyhow::Result<String> {
             // Translate everything up to right before the match
             // and add to the output
             let slice = code_page_to_utf8(&x[..full.start()], code_page)?;
-            out.push_str(&slice);
+            out.push(slice);
         }
 
         // Add everything in the `text` capture group.
         // By definition, this is already UTF-8.
         let text = capture.name("text").unwrap().as_bytes();
         let text = std::str::from_utf8(text).unwrap();
-        out.push_str(text);
+        let text = text.to_string();
+        out.push(text);
 
         // Advance `x`
         x = &x[full.end()..];
@@ -65,8 +66,10 @@ pub fn console_to_utf8(x: *const c_char) -> anyhow::Result<String> {
     if x.len() > 0 {
         // Translate everything that's left and add to the output
         let slice = code_page_to_utf8(x, code_page)?;
-        out.push_str(&slice);
+        out.push(slice);
     }
+
+    let out = out.join("");
 
     Ok(out)
 }
