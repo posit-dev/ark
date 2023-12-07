@@ -212,8 +212,8 @@ jobs:
               id: r_installation
               shell: bash
               run: |
-                  R_HOME="C:\\R\\R-4.3.2"
-                  R_SCRIPT="${R_HOME}\\bin\\x64\\Rscript.exe"
+                  R_HOME="C:\R\R-4.3.2"
+                  R_SCRIPT="${R_HOME}\bin\x64\Rscript.exe"
                   echo "Using R at ${R_HOME}"
                   echo "Using Rscript at ${R_SCRIPT}"
                   # Output the result for consumption in later steps
@@ -223,7 +223,7 @@ jobs:
             - name: Generate LIB from DLL
               shell: bash
               run: |
-                  ${{ steps.r_installation.outputs.r_script }} scripts/windows/dll2lib.R
+                  ${{ steps.r_installation.outputs.r_script }} "scripts\windows\dll2lib.R"
 
             - name: Compile ARK
               env:
