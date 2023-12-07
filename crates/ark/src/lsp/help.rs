@@ -9,7 +9,7 @@ use anyhow::*;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::utils::r_typeof;
-use libR_sys::*;
+use libR_shim::*;
 use regex::Regex;
 use scraper::ElementRef;
 use scraper::Html;

@@ -9,7 +9,7 @@ use std::cmp::Ordering;
 use std::ffi::CStr;
 use std::ops::Deref;
 
-use libR_sys::*;
+use libR_shim::*;
 
 use crate::error::Result;
 use crate::object::r_length;

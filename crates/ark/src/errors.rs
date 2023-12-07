@@ -7,7 +7,7 @@
 
 use harp::object::RObject;
 use harp::r_symbol;
-use libR_sys::*;
+use libR_shim::*;
 use log::info;
 use log::warn;
 use stdext::unwrap;

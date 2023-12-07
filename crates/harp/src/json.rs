@@ -7,7 +7,7 @@
 
 use std::cmp::min;
 
-use libR_sys::*;
+use libR_shim::*;
 use log::warn;
 use serde_json::json;
 use serde_json::Map;

@@ -5,7 +5,7 @@
 //
 //
 
-use libR_sys::*;
+use libR_shim::*;
 use log::error;
 
 static mut R_ROUTINES: Vec<R_CallMethodDef> = vec![];

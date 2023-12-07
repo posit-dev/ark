@@ -9,15 +9,15 @@ use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
+use ark::lsp::events::EVENTS;
+use ark::r_task;
+use ark::thread::RThreadSafe;
 use ark::variables::message::VariablesMessage;
 use ark::variables::message::VariablesMessageClear;
 use ark::variables::message::VariablesMessageDelete;
 use ark::variables::message::VariablesMessageList;
 use ark::variables::message::VariablesMessageUpdate;
 use ark::variables::r_variables::RVariables;
-use ark::lsp::events::EVENTS;
-use ark::r_task;
-use ark::thread::RThreadSafe;
 use crossbeam::channel::bounded;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
@@ -26,7 +26,7 @@ use harp::r_symbol;
 use harp::test::start_r;
 use harp::utils::r_envir_remove;
 use harp::utils::r_envir_set;
-use libR_sys::*;
+use libR_shim::*;
 
 /**
  * Basic test for the R environment list. This test:

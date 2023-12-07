@@ -12,8 +12,10 @@ actix-web = "4.4.0"
 amalthea = { path = "../amalthea" }
 anyhow = { version = "^1.0", features = ["backtrace"] }
 async-trait = "0.1.66"
+backtrace = "0.3.67"
 base64 = "0.21.0"
 bus = "2.3.0"
+cfg-if = "1.0.0"
 chrono = "0.4.23"
 crossbeam = { version = "0.8.2", features = ["crossbeam-channel"] }
 ctor = "0.1.26"
@@ -27,7 +29,7 @@ home = "0.5.5"
 hyper = { version = "0.14.24", features = ["full"] }
 itertools = "0.10.5"
 lazy_static = "1.4.0"
-libR-sys = "0.5.0"
+libR-shim = { path = "../libR-shim" }
 libc = "0.2"
 log = "0.4.17"
 nix = { version = "0.26.2", features = ["signal"] }
@@ -45,20 +47,12 @@ stdext = { path = "../stdext" }
 tokio = { version = "1.26.0", features = ["full"] }
 tower-lsp = "0.19.0"
 tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter" }
-tree-sitter-r = { git = "https://github.com/r-lib/tree-sitter-r", branch = "bugfix/update" }
+tree-sitter-r = { git = "https://github.com/r-lib/tree-sitter-r", branch = "next" }
 uuid = "1.3.0"
 url = "2.4.1"
 walkdir = "2"
 yaml-rust = "0.4.5"
+winsafe = { version = "0.0.18", features = ["kernel"] }
 
 [build-dependencies]
 chrono = "0.4.23"
-
-# The libR-sys package doesn't currently provide bindings for R on aarch64
-# Linux platforms, so on those systems we need to add the use-bingen feature,
-# which causes the package to build its own bindings from scratch.
-#
-# Note that this typically requires the `llvm` and `clang` packages to be
-# installed on the build host.
-[target.'cfg(all(target_os="linux", target_arch="aarch64"))'.dependencies]
-libR-sys = { version = "0.5.0", features = ["use-bindgen"] }

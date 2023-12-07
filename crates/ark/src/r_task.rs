@@ -18,10 +18,6 @@ use harp::test::R_TASK_BYPASS;
 
 use crate::interface::RMain;
 
-extern "C" {
-    pub static mut R_PolledEvents: Option<unsafe extern "C" fn()>;
-}
-
 type SharedOption<T> = Arc<Mutex<Option<T>>>;
 
 // The `Send` bound on `F` is necessary for safety. Although we are not

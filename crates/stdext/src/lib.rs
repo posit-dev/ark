@@ -15,7 +15,6 @@ pub mod ok;
 pub mod push;
 pub mod result;
 pub mod spawn;
-pub mod traps;
 pub mod unwrap;
 
 pub use crate::join::Joined;

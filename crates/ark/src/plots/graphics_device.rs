@@ -42,7 +42,7 @@ use crossbeam::channel::Select;
 use crossbeam::channel::Sender;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
-use libR_sys::*;
+use libR_shim::*;
 use once_cell::sync::Lazy;
 use serde_json::json;
 use stdext::result::ResultOrLog;

@@ -7,7 +7,7 @@
 
 use std::ops::Deref;
 
-use libR_sys::*;
+use libR_shim::*;
 use once_cell::sync::Lazy;
 use stdext::unwrap;
 
@@ -471,7 +471,7 @@ impl From<Environment> for RObject {
 
 #[cfg(test)]
 mod tests {
-    use libR_sys::*;
+    use libR_shim::*;
 
     use super::*;
     use crate::exec::RFunction;
