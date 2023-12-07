@@ -33,6 +33,7 @@ pub struct ShowHelpParams {
  * RPC request types for the help comm
  */
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "method", content = "params")]
 pub enum HelpRpcRequest {
 	/// Look for and, if found, show a help topic.
 	#[serde(rename = "show_help_topic")]

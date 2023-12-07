@@ -5,6 +5,8 @@
 //
 //
 
+use amalthea::comm::base_comm::json_rpc_error;
+use amalthea::comm::base_comm::JsonRpcErrorCode;
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::help_comm::HelpEvent;
 use amalthea::comm::help_comm::HelpRpcReply;
@@ -161,15 +163,33 @@ impl RHelp {
             return false;
         }
         if let CommMsg::Rpc(id, data) = message {
-            let message = match serde_json::from_value::<HelpRpcRequest>(data) {
+            let message = match serde_json::from_value::<HelpRpcRequest>(data.clone()) {
                 Ok(m) => m,
                 Err(err) => {
-                    error!("Help: Received invalid message from front end. {:?}", err);
+                    self.comm
+                        .outgoing_tx
+                        .send(CommMsg::Rpc(
+                            id,
+                            json_rpc_error(
+                                JsonRpcErrorCode::InvalidRequest,
+                                format!("Invalid help request: {err:} (request: {data:})"),
+                            ),
+                        ))
+                        .unwrap();
                     return true;
                 },
             };
-            if let Err(err) = self.handle_rpc(id, message) {
-                error!("Help: Error handling message from front end: {:?}", err);
+            if let Err(err) = self.handle_rpc(id.clone(), message) {
+                self.comm
+                    .outgoing_tx
+                    .send(CommMsg::Rpc(
+                        id,
+                        json_rpc_error(
+                            JsonRpcErrorCode::InternalError,
+                            format!("Failed to process help request: {err:} (request: {data:})"),
+                        ),
+                    ))
+                    .unwrap();
                 return true;
             }
         }

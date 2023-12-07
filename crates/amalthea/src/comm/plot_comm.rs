@@ -40,6 +40,7 @@ pub struct UpdateParams {
  * RPC request types for the plot comm
  */
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "method", content = "params")]
 pub enum PlotRpcRequest {
 	/// Render a plot: Requests a plot to be rendered at a given height and
 	/// width. The plot data is returned in a base64-encoded string.

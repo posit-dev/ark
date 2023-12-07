@@ -5,6 +5,7 @@
  *
  */
 
+pub mod base_comm;
 pub mod comm_channel;
 pub mod comm_manager;
 pub mod event;

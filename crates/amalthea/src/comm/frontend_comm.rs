@@ -9,6 +9,7 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::comm::base_comm::JsonRpcErrorCode;
 use crate::wire::client_event::ClientEvent;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -32,17 +33,6 @@ pub struct FrontendRpcRequest {
 pub struct FrontendRpcResult {
     pub id: String,
     pub result: Value,
-}
-
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
-pub enum JsonRpcErrorCode {
-    ParseError = -32700,
-    InvalidRequest = -32600,
-    MethodNotFound = -32601,
-    InvalidParams = -32602,
-    InternalError = -32603,
-    ServerErrorStart = -32099,
-    ServerErrorEnd = -32000,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
