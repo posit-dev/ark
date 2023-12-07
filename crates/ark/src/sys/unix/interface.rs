@@ -33,7 +33,7 @@ pub fn setup_r(mut args: Vec<*mut c_char>) {
 
         Rf_initialize_R(args.len() as i32, args.as_mut_ptr() as *mut *mut c_char);
 
-        // Initialize the signal handlers (like interrupts)
+        // Initialize the signal blocks and handlers (like interrupts)
         signals::initialize_signal_handlers();
 
         // Mark R session as interactive

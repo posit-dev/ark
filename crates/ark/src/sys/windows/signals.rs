@@ -9,11 +9,11 @@ use libR_shim::Rboolean_FALSE;
 use libR_shim::Rboolean_TRUE;
 
 pub fn initialize_signal_handlers() {
-    // TODO: Windows
+    // Nothing to do on Windows. Signal blocking is POSIX only.
 }
 
 pub fn initialize_signal_block() {
-    // TODO: Windows
+    // Nothing to do on Windows. Signal blocking is POSIX only.
 }
 
 pub fn interrupts_pending() -> bool {

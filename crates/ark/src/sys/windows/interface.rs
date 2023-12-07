@@ -85,13 +85,6 @@ pub fn setup_r(mut _args: Vec<*mut c_char>) {
         GA_initapp(0, std::ptr::null_mut());
         readconsolecfg();
 
-        // TODO: Windows
-        // This currently doesn't do anything on Windows, do we need it at all?
-        // Is this a Unix specific idea? If so, remove this and cleanup on the
-        // Unix side to make it more private.
-        // Initialize the signal handlers (like interrupts)
-        signals::initialize_signal_handlers();
-
         // Log the value of R_HOME, so we can know if something hairy is afoot
         let home = CStr::from_ptr(R_HomeDir());
         log::trace!("R_HOME: {:?}", home);

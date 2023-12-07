@@ -861,6 +861,8 @@ impl RMain {
     fn busy(&mut self, which: i32) {
         // Ensure signal handlers are initialized.
         //
+        // Does nothing on Windows.
+        //
         // We perform this awkward dance because R tries to set and reset
         // the interrupt signal handler here, using 'signal()':
         //
