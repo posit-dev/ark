@@ -23,6 +23,7 @@ use amalthea::comm::event::CommManagerEvent;
 use amalthea::comm::frontend_comm::BusyParams;
 use amalthea::comm::frontend_comm::FrontendEvent;
 use amalthea::comm::frontend_comm::FrontendRpcRequest;
+use amalthea::comm::frontend_comm::FrontendRpcResponse;
 use amalthea::comm::frontend_comm::PromptStateParams;
 use amalthea::comm::frontend_comm::ShowMessageParams;
 use amalthea::events::BusyEvent;
@@ -1009,11 +1010,15 @@ impl RMain {
         method: String,
         params: Vec<serde_json::Value>,
     ) -> anyhow::Result<RObject> {
+        log::trace!("Calling frontend method '{method}'");
         let (response_tx, response_rx) = bounded(1);
 
         let request = PositronFrontendRpcRequest {
             response_tx,
-            request: FrontendRpcRequest { method, params },
+            request: FrontendRpcRequest {
+                method: method.clone(),
+                params,
+            },
         };
 
         {
@@ -1022,11 +1027,20 @@ impl RMain {
         }
 
         // Create request and block for response
-        let _result = response_rx.recv();
+        let response = response_rx.recv().unwrap();
 
-        // TODO: Convert conversion errors to R errors
-        // result.try_into().unwrap()
-        unsafe { Ok(RObject::new(libR_shim::R_NilValue)) }
+        log::trace!("Got response from frontend method '{method}'");
+
+        // TODO
+        match response {
+            FrontendRpcResponse::Result(_result) => {
+                todo!("result");
+                // result.try_into().unwrap()
+            },
+            FrontendRpcResponse::Error(_error) => {
+                todo!("error");
+            },
+        }
     }
 }
 
