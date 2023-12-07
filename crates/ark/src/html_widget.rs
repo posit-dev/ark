@@ -10,8 +10,8 @@ use std::result::Result::Ok;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::display_data::DisplayData;
 use harp::object::RObject;
-use libR_sys::R_NilValue;
-use libR_sys::SEXP;
+use libR_shim::R_NilValue;
+use libR_shim::SEXP;
 use serde_json::Value;
 
 use crate::interface::RMain;

@@ -19,7 +19,7 @@ use harp::object::RObject;
 use harp::utils::r_assert_type;
 use harp::vector::CharacterVector;
 use harp::vector::Vector;
-use libR_sys::*;
+use libR_shim::*;
 use log::debug;
 use log::error;
 use log::warn;

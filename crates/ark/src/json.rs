@@ -6,7 +6,7 @@
 //
 
 use harp::object::RObject;
-use libR_sys::SEXP;
+use libR_shim::SEXP;
 
 /// Convenience method to convert a JSON object to a string
 #[harp::register]

@@ -5,7 +5,7 @@
 //
 //
 
-use libR_sys::*;
+use libR_shim::*;
 
 use crate::exec::r_polled_events_disabled;
 use crate::exec::R_PolledEvents;

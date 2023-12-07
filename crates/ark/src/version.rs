@@ -13,7 +13,7 @@ use std::process::Command;
 use anyhow::Context;
 use harp::object::RObject;
 use itertools::Itertools;
-use libR_sys::*;
+use libR_shim::*;
 
 pub struct RVersion {
     // Major version of the R installation

@@ -10,8 +10,8 @@ use amalthea::wire::display_data::DisplayData;
 use anyhow::Result;
 use crossbeam::channel::Sender;
 use harp::object::RObject;
-use libR_sys::R_NilValue;
-use libR_sys::SEXP;
+use libR_shim::R_NilValue;
+use libR_shim::SEXP;
 
 use crate::interface::RMain;
 

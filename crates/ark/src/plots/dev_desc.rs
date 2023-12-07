@@ -7,7 +7,7 @@
 
 #![allow(non_snake_case)]
 
-use libR_sys::*;
+use libR_shim::*;
 
 // This file captures the device description for the different versions
 // of R graphics engines that we support.

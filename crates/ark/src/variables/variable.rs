@@ -41,7 +41,7 @@ use harp::vector::CharacterVector;
 use harp::vector::IntegerVector;
 use harp::vector::Vector;
 use itertools::Itertools;
-use libR_sys::*;
+use libR_shim::*;
 use serde::Deserialize;
 use serde::Serialize;
 use stdext::local;

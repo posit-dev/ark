@@ -13,7 +13,7 @@ use harp::exec::RFunctionExt;
 use harp::r_symbol;
 use harp::utils::r_env_has;
 use harp::utils::r_typeof;
-use libR_sys::STRSXP;
+use libR_shim::STRSXP;
 use tower_lsp::lsp_types::CompletionItem;
 
 use crate::lsp::completions::completion_item::completion_item_from_data_variable;

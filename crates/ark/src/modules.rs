@@ -17,7 +17,7 @@ use harp::protect::RProtect;
 use harp::r_string;
 use harp::r_symbol;
 use harp::utils::r_poke_option;
-use libR_sys::*;
+use libR_shim::*;
 use stdext::local;
 use stdext::spawn;
 use stdext::unwrap;

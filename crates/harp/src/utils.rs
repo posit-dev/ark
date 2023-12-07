@@ -13,7 +13,7 @@ use std::path::Path;
 use c2rust_bitfields::BitfieldStruct;
 use harp_macros::register;
 use itertools::Itertools;
-use libR_sys::*;
+use libR_shim::*;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use semver::Version;

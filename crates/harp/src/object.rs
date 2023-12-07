@@ -14,7 +14,7 @@ use std::os::raw::c_char;
 use std::os::raw::c_int;
 use std::sync::Once;
 
-use libR_sys::*;
+use libR_shim::*;
 
 use crate::error::Error;
 use crate::exec::RFunction;
@@ -726,7 +726,7 @@ impl TryFrom<RObject> for HashMap<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use libR_sys::*;
+    use libR_shim::*;
 
     use super::*;
     use crate::assert_match;

@@ -5,7 +5,7 @@
 //
 //
 
-use libR_sys::*;
+use libR_shim::*;
 
 use crate::object::RObject;
 use crate::protect::RProtect;
