@@ -22,7 +22,7 @@ use crate::interface::r_polled_events;
 use crate::interface::r_read_console;
 use crate::interface::r_show_message;
 use crate::interface::r_write_console;
-use crate::signals;
+use crate::signals::initialize_signal_handlers;
 
 pub fn setup_r(mut args: Vec<*mut c_char>) {
     unsafe {
@@ -34,7 +34,7 @@ pub fn setup_r(mut args: Vec<*mut c_char>) {
         Rf_initialize_R(args.len() as i32, args.as_mut_ptr() as *mut *mut c_char);
 
         // Initialize the signal blocks and handlers (like interrupts)
-        signals::initialize_signal_handlers();
+        initialize_signal_handlers();
 
         // Mark R session as interactive
         // (Should have also been set by call to `Rf_initialize_R()`)

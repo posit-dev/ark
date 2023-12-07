@@ -93,8 +93,10 @@ use crate::r_task;
 use crate::r_task::RTaskMain;
 use crate::request::debug_request_command;
 use crate::request::RRequest;
-use crate::signals;
-use crate::sys;
+use crate::signals::initialize_signal_handlers;
+use crate::signals::interrupts_pending;
+use crate::signals::set_interrupts_pending;
+use crate::sys::console::console_to_utf8;
 
 // --- Globals ---
 // These values must be global in order for them to be accessible from R
@@ -155,7 +157,7 @@ pub fn start_r(
         args.push(CString::new(arg).unwrap().into_raw());
     }
 
-    sys::interface::setup_r(args);
+    crate::sys::interface::setup_r(args);
 
     unsafe {
         // Optionally run a user specified R startup script
@@ -183,7 +185,7 @@ pub fn start_r(
     }
 
     // Does not return!
-    sys::interface::run_r();
+    crate::sys::interface::run_r();
 }
 pub struct RMain {
     initializing: bool,
@@ -575,14 +577,14 @@ impl RMain {
             // `UserBreak`, but won't actually fire the interrupt b/c
             // we have them disabled, so it would end up swallowing the
             // user interrupt request.
-            if info.input_request && signals::interrupts_pending() {
+            if info.input_request && interrupts_pending() {
                 return ConsoleResult::Interrupt;
             }
 
             // Otherwise we are at top level and we can assume the
             // interrupt was 'handled' on the frontend side and so
             // reset the flag
-            signals::set_interrupts_pending(false);
+            set_interrupts_pending(false);
 
             // Yield to auxiliary threads and to the R event loop
             self.yield_to_tasks();
@@ -813,7 +815,7 @@ impl RMain {
 
     /// Invoked by R to write output to the console.
     fn write_console(&mut self, buf: *const c_char, _buflen: i32, otype: i32) {
-        let content = match sys::console::console_to_utf8(buf) {
+        let content = match console_to_utf8(buf) {
             Ok(content) => content,
             Err(err) => panic!("Failed to read from R buffer: {err:?}"),
         };
@@ -871,7 +873,7 @@ impl RMain {
         // However, it seems like this can cause the old interrupt handler to be
         // 'moved' to a separate thread, such that interrupts end up being handled
         // on a thread different from the R execution thread. At least, on macOS.
-        signals::initialize_signal_handlers();
+        initialize_signal_handlers();
 
         // Create an event representing the new busy state
         self.is_busy = which != 0;
@@ -913,7 +915,7 @@ impl RMain {
         // this.
         R_ProcessEvents();
 
-        sys::interface::run_activity_handlers();
+        crate::sys::interface::run_activity_handlers();
 
         // Run pending finalizers. We need to do this eagerly as otherwise finalizers
         // might end up being executed on the LSP thread.

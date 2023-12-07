@@ -22,8 +22,8 @@ use ark::lsp;
 use ark::request::KernelRequest;
 use ark::request::RRequest;
 use ark::shell::Shell;
-use ark::signals;
-use ark::traps;
+use ark::signals::initialize_signal_block;
+use ark::traps::register_trap_handlers;
 use ark::version::detect_r;
 use bus::Bus;
 use crossbeam::channel::bounded;
@@ -237,7 +237,7 @@ fn main() {
     }
 
     // Block signals in this thread (and any child threads).
-    signals::initialize_signal_block();
+    initialize_signal_block();
 
     // Get an iterator over all the command-line arguments
     let mut argv = std::env::args();
@@ -388,7 +388,7 @@ fn main() {
     // Register segfault handler to get a backtrace. Should be after
     // initialising `log!`. Note that R will not override this handler
     // because we set `R_SignalHandlers` to 0 before startup.
-    traps::register_trap_handlers();
+    register_trap_handlers();
 
     // If the r_args vector is empty, add `--interactive` to the list of
     // arguments to pass to R.

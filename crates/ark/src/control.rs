@@ -16,7 +16,6 @@ use crossbeam::channel::Sender;
 use log::*;
 
 use crate::request::RRequest;
-use crate::sys;
 
 pub struct Control {
     r_request_tx: Sender<RRequest>,
@@ -58,7 +57,7 @@ impl ControlHandler for Control {
 
     async fn handle_interrupt_request(&self) -> Result<InterruptReply, Exception> {
         debug!("Received interrupt request");
-        sys::control::handle_interrupt_request();
+        crate::sys::control::handle_interrupt_request();
         Ok(InterruptReply { status: Status::Ok })
     }
 }
