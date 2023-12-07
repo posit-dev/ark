@@ -1204,7 +1204,6 @@ dependencies = [
  "itertools",
  "lazy_static",
  "libR-shim",
- "libR-sys",
  "libc",
  "log",
  "once_cell",

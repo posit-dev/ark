@@ -25,6 +25,3 @@ semver = "1.0.19"
 stdext = { path = "../stdext" }
 serde = { version = "1.0.183", features = ["derive"] }
 serde_json = "1.0.94"
-
-[target.'cfg(all(target_os="linux", target_arch="aarch64"))'.dependencies]
-libR-sys = { version = "0.5.0", features = ["use-bindgen"] }
