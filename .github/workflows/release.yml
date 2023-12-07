@@ -221,7 +221,7 @@ jobs:
                   echo "r_script=${R_SCRIPT}" >> $GITHUB_OUTPUT
 
             - name: Generate LIB from DLL
-              shell: bash
+              shell: cmd
               run: |
                   ${{ steps.r_installation.outputs.r_script }} "scripts\windows\dll2lib.R"
 
