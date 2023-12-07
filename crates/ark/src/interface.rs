@@ -1,5 +1,5 @@
 //
-// r_interface.rs
+// interface.rs
 //
 // Copyright (C) 2023 Posit Software, PBC. All rights reserved.
 //
@@ -13,7 +13,6 @@
 use std::collections::VecDeque;
 use std::ffi::*;
 use std::os::raw::c_uchar;
-use std::os::raw::c_void;
 use std::result::Result::Ok;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -56,30 +55,25 @@ use harp::exec::r_sandbox;
 use harp::exec::r_source;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
-use harp::interrupts::RSandboxScope;
+use harp::exec::RSandboxScope;
+use harp::line_ending::convert_line_endings;
+use harp::line_ending::LineEnding;
 use harp::object::RObject;
 use harp::r_symbol;
 use harp::routines::r_register_routines;
 use harp::session::r_traceback;
-use harp::utils::convert_line_endings;
 use harp::utils::r_get_option;
 use harp::utils::r_is_data_frame;
 use harp::utils::r_poke_option_show_error_messages;
-use harp::utils::LineEnding;
 use harp::R_MAIN_THREAD_ID;
-use libR_shim::setup_Rmainloop;
 use libR_shim::R_BaseNamespace;
 use libR_shim::R_GlobalEnv;
+use libR_shim::R_ProcessEvents;
 use libR_shim::R_RunPendingFinalizers;
-use libR_shim::R_interrupts_pending;
-use libR_shim::Rboolean;
 use libR_shim::Rf_findVarInFrame;
-use libR_shim::Rf_initialize_R;
 use libR_shim::Rf_onintr;
-use libR_shim::FILE;
 use libR_shim::SEXP;
 use log::*;
-use nix::sys::signal::*;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde_json::json;
@@ -99,55 +93,10 @@ use crate::r_task;
 use crate::r_task::RTaskMain;
 use crate::request::debug_request_command;
 use crate::request::RRequest;
-
-extern "C" {
-    pub static mut R_running_as_main_program: ::std::os::raw::c_int;
-    pub static mut R_SignalHandlers: ::std::os::raw::c_int;
-    pub static mut R_Interactive: Rboolean;
-    pub static mut R_Consolefile: *mut FILE;
-    pub static mut R_Outputfile: *mut FILE;
-
-    pub static mut ptr_R_WriteConsole: ::std::option::Option<
-        unsafe extern "C" fn(arg1: *const ::std::os::raw::c_char, arg2: ::std::os::raw::c_int),
-    >;
-
-    pub static mut ptr_R_WriteConsoleEx: ::std::option::Option<
-        unsafe extern "C" fn(
-            arg1: *const ::std::os::raw::c_char,
-            arg2: ::std::os::raw::c_int,
-            arg3: ::std::os::raw::c_int,
-        ),
-    >;
-
-    pub static mut ptr_R_ReadConsole: ::std::option::Option<
-        unsafe extern "C" fn(
-            arg1: *const ::std::os::raw::c_char,
-            arg2: *mut ::std::os::raw::c_uchar,
-            arg3: ::std::os::raw::c_int,
-            arg4: ::std::os::raw::c_int,
-        ) -> ::std::os::raw::c_int,
-    >;
-
-    pub static mut ptr_R_ShowMessage:
-        ::std::option::Option<unsafe extern "C" fn(arg1: *const ::std::os::raw::c_char)>;
-
-    pub static mut ptr_R_Busy:
-        ::std::option::Option<unsafe extern "C" fn(arg1: ::std::os::raw::c_int)>;
-
-    pub fn R_HomeDir() -> *mut ::std::os::raw::c_char;
-
-    // NOTE: Some of these routines don't really return (or use) void pointers,
-    // but because we never introspect these values directly and they're always
-    // passed around in R as pointers, it suffices to just use void pointers.
-    fn R_checkActivity(usec: i32, ignore_stdin: i32) -> *const c_void;
-    fn R_runHandlers(handlers: *const c_void, fdset: *const c_void);
-    fn R_ProcessEvents();
-    fn run_Rmainloop();
-
-    pub static mut R_wait_usec: i32;
-    pub static mut R_InputHandlers: *const c_void;
-    pub static mut R_PolledEvents: Option<unsafe extern "C" fn()>;
-}
+use crate::signals::initialize_signal_handlers;
+use crate::signals::interrupts_pending;
+use crate::signals::set_interrupts_pending;
+use crate::sys::console::console_to_utf8;
 
 // --- Globals ---
 // These values must be global in order for them to be accessible from R
@@ -200,42 +149,17 @@ pub fn start_r(
         ));
     });
 
+    // Build the argument list from the command line arguments. The default
+    // list is `--interactive` unless altered with the `--` passthrough
+    // argument.
+    let mut args = cargs!["ark"];
+    for arg in r_args {
+        args.push(CString::new(arg).unwrap().into_raw());
+    }
+
+    crate::sys::interface::setup_r(args);
+
     unsafe {
-        // Build the argument list from the command line arguments. The default
-        // list is `--interactive` unless altered with the `--` passthrough
-        // argument.
-        let mut args = cargs!["ark"];
-        for arg in r_args {
-            args.push(CString::new(arg).unwrap().into_raw());
-        }
-
-        R_running_as_main_program = 1;
-        R_SignalHandlers = 0;
-        Rf_initialize_R(args.len() as i32, args.as_mut_ptr() as *mut *mut c_char);
-
-        // Initialize the interrupt handler.
-        RMain::initialize_signal_handlers();
-
-        // Log the value of R_HOME, so we can know if something hairy is afoot
-        let home = CStr::from_ptr(R_HomeDir());
-        trace!("R_HOME: {:?}", home);
-
-        // Mark R session as interactive
-        R_Interactive = 1;
-
-        // Redirect console
-        R_Consolefile = std::ptr::null_mut();
-        R_Outputfile = std::ptr::null_mut();
-
-        ptr_R_WriteConsole = None;
-        ptr_R_WriteConsoleEx = Some(r_write_console);
-        ptr_R_ReadConsole = Some(r_read_console);
-        ptr_R_ShowMessage = Some(r_show_message);
-        ptr_R_Busy = Some(r_busy);
-
-        // Set up main loop
-        setup_Rmainloop();
-
         // Optionally run a user specified R startup script
         if let Some(file) = &startup_file {
             r_source(file).or_log_error(&format!("Failed to source startup file '{file}' due to"));
@@ -258,14 +182,10 @@ pub fn start_r(
 
         // Set up the global error handler (after support function initialization)
         errors::initialize();
-
-        // Listen for polled events
-        R_wait_usec = 10000;
-        R_PolledEvents = Some(r_polled_events);
-
-        // Run the main loop -- does not return
-        run_Rmainloop();
     }
+
+    // Does not return!
+    crate::sys::interface::run_r();
 }
 pub struct RMain {
     initializing: bool,
@@ -501,39 +421,6 @@ impl RMain {
         &self.iopub_tx
     }
 
-    fn initialize_signal_handlers() {
-        // Reset the signal block.
-        //
-        // This appears to be necessary on macOS; 'sigprocmask()' specifically
-        // blocks the signals in _all_ threads associated with the process, even
-        // when called from a spawned child thread. See:
-        //
-        // https://github.com/opensource-apple/xnu/blob/0a798f6738bc1db01281fc08ae024145e84df927/bsd/kern/kern_sig.c#L1238-L1285
-        // https://github.com/opensource-apple/xnu/blob/0a798f6738bc1db01281fc08ae024145e84df927/bsd/kern/kern_sig.c#L796-L839
-        //
-        // and note that 'sigprocmask()' uses 'block_procsigmask()' to apply the
-        // requested block to all threads in the process:
-        //
-        // https://github.com/opensource-apple/xnu/blob/0a798f6738bc1db01281fc08ae024145e84df927/bsd/kern/kern_sig.c#L571-L599
-        //
-        // We may need to re-visit this on Linux later on, since 'sigprocmask()' and
-        // 'pthread_sigmask()' may only target the executing thread there.
-        //
-        // The behavior of 'sigprocmask()' is unspecified after all, so we're really
-        // just relying on what the implementation happens to do.
-        let mut sigset = SigSet::empty();
-        sigset.add(SIGINT);
-        sigprocmask(SigmaskHow::SIG_BLOCK, Some(&sigset), None).unwrap();
-
-        // Unblock signals on this thread.
-        pthread_sigmask(SigmaskHow::SIG_UNBLOCK, Some(&sigset), None).unwrap();
-
-        // Install an interrupt handler.
-        unsafe {
-            signal(SIGINT, SigHandler::Handler(handle_interrupt)).unwrap();
-        }
-    }
-
     fn init_execute_request(&mut self, req: &ExecuteRequest) -> (ConsoleInput, u32) {
         // Initialize stdout, stderr
         self.stdout = String::new();
@@ -682,23 +569,26 @@ impl RMain {
         }
 
         loop {
+            // If an interrupt was signaled and we are in a user
+            // request prompt, e.g. `readline()`, we need to propagate
+            // the interrupt to the R stack. This needs to happen before
+            // `process_events()`, particularly on Windows, because it
+            // calls `R_ProcessEvents()`, which checks and resets
+            // `UserBreak`, but won't actually fire the interrupt b/c
+            // we have them disabled, so it would end up swallowing the
+            // user interrupt request.
+            if info.input_request && interrupts_pending() {
+                return ConsoleResult::Interrupt;
+            }
+
+            // Otherwise we are at top level and we can assume the
+            // interrupt was 'handled' on the frontend side and so
+            // reset the flag
+            set_interrupts_pending(false);
+
             // Yield to auxiliary threads and to the R event loop
             self.yield_to_tasks();
             unsafe { Self::process_events() };
-
-            unsafe {
-                // If an interrupt was signaled and we are in a user
-                // request prompt, e.g. `readline()`, we need to propagate
-                // the interrupt to the R stack.
-                if info.input_request && R_interrupts_pending != 0 {
-                    return ConsoleResult::Interrupt;
-                }
-
-                // Otherwise we are at top level and we can assume the
-                // interrupt was 'handled' on the frontend side and so
-                // reset the flag
-                R_interrupts_pending = 0;
-            }
 
             // FIXME: Race between interrupt and new code request. To fix
             // this, we could manage the Shell and Control sockets on the
@@ -925,7 +815,11 @@ impl RMain {
 
     /// Invoked by R to write output to the console.
     fn write_console(&mut self, buf: *const c_char, _buflen: i32, otype: i32) {
-        let content = unsafe { CStr::from_ptr(buf).to_str().unwrap() };
+        let content = match console_to_utf8(buf) {
+            Ok(content) => content,
+            Err(err) => panic!("Failed to read from R buffer: {err:?}"),
+        };
+
         let stream = if otype == 0 {
             Stream::Stdout
         } else {
@@ -934,7 +828,7 @@ impl RMain {
 
         if self.initializing {
             // During init, consider all output to be part of the startup banner
-            self.banner.push_str(content);
+            self.banner.push_str(&content);
             return;
         }
 
@@ -952,12 +846,12 @@ impl RMain {
         };
 
         // Append content to buffer.
-        buffer.push_str(content);
+        buffer.push_str(&content);
 
         // Stream output via the IOPub channel.
         let message = IOPubMessage::Stream(StreamOutput {
             name: stream,
-            text: content.to_string(),
+            text: content,
         });
 
         unwrap!(self.iopub_tx.send(message), Err(error) => {
@@ -969,6 +863,8 @@ impl RMain {
     fn busy(&mut self, which: i32) {
         // Ensure signal handlers are initialized.
         //
+        // Does nothing on Windows.
+        //
         // We perform this awkward dance because R tries to set and reset
         // the interrupt signal handler here, using 'signal()':
         //
@@ -977,7 +873,7 @@ impl RMain {
         // However, it seems like this can cause the old interrupt handler to be
         // 'moved' to a separate thread, such that interrupts end up being handled
         // on a thread different from the R execution thread. At least, on macOS.
-        Self::initialize_signal_handlers();
+        initialize_signal_handlers();
 
         // Create an event representing the new busy state
         self.is_busy = which != 0;
@@ -1012,23 +908,14 @@ impl RMain {
 
     unsafe fn process_events() {
         // Process regular R events. We're normally running with polled
-        // events disabled so that won't run here.
+        // events disabled so that won't run here. We also run with
+        // interrupts disabled, so on Windows those won't get run here
+        // either (i.e. if `UserBreak` is set), but it will reset `UserBreak`
+        // so we need to ensure we handle interrupts right before calling
+        // this.
         R_ProcessEvents();
 
-        // Run handlers if we have data available. This is necessary
-        // for things like the HTML help server, which will listen
-        // for requests on an open socket() which would then normally
-        // be handled in a select() call when reading input from stdin.
-        //
-        // https://github.com/wch/r-source/blob/4ca6439c1ffc76958592455c44d83f95d5854b2a/src/unix/sys-std.c#L1084-L1086
-        //
-        // We run this in a loop just to make sure the R help server can
-        // be as responsive as possible when rendering help pages.
-        let mut fdset = R_checkActivity(0, 1);
-        while fdset != std::ptr::null_mut() {
-            R_runHandlers(R_InputHandlers, fdset);
-            fdset = R_checkActivity(0, 1);
-        }
+        crate::sys::interface::run_activity_handlers();
 
         // Run pending finalizers. We need to do this eagerly as otherwise finalizers
         // might end up being executed on the LSP thread.
@@ -1224,7 +1111,7 @@ fn to_html(frame: SEXP) -> Result<String> {
 // global `RMain` singleton.
 
 #[no_mangle]
-extern "C" fn r_read_console(
+pub extern "C" fn r_read_console(
     prompt: *const c_char,
     buf: *mut c_uchar,
     buflen: c_int,
@@ -1257,32 +1144,25 @@ extern "C" fn r_read_console(
 }
 
 #[no_mangle]
-extern "C" fn r_write_console(buf: *const c_char, buflen: i32, otype: i32) {
+pub extern "C" fn r_write_console(buf: *const c_char, buflen: i32, otype: i32) {
     let main = RMain::get_mut();
     main.write_console(buf, buflen, otype);
 }
 
 #[no_mangle]
-extern "C" fn r_show_message(buf: *const c_char) {
+pub extern "C" fn r_show_message(buf: *const c_char) {
     let main = RMain::get();
     main.show_message(buf);
 }
 
 #[no_mangle]
-extern "C" fn r_busy(which: i32) {
+pub extern "C" fn r_busy(which: i32) {
     let main = RMain::get_mut();
     main.busy(which);
 }
 
 #[no_mangle]
-unsafe extern "C" fn r_polled_events() {
+pub unsafe extern "C" fn r_polled_events() {
     let main = RMain::get_mut();
     main.polled_events();
-}
-
-// Not really a frontend method but hooked up with `signal()`
-extern "C" fn handle_interrupt(_signal: libc::c_int) {
-    unsafe {
-        R_interrupts_pending = 1;
-    }
 }

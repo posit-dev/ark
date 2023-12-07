@@ -17,25 +17,19 @@ use libR_shim::*;
 use crate::environment::R_ENVS;
 use crate::error::Error;
 use crate::error::Result;
-use crate::interrupts::RSandboxScope;
+use crate::interrupts::RInterruptsSuspendedScope;
+use crate::line_ending::convert_line_endings;
+use crate::line_ending::LineEnding;
 use crate::object::RObject;
+use crate::polled_events::RPolledEventsSuspendedScope;
 use crate::protect::RProtect;
 use crate::r_string;
 use crate::r_symbol;
-use crate::utils::convert_line_endings;
 use crate::utils::r_inherits;
 use crate::utils::r_stringify;
 use crate::utils::r_typeof;
-use crate::utils::LineEnding;
 use crate::vector::CharacterVector;
 use crate::vector::Vector;
-
-extern "C" {
-    pub static mut R_PolledEvents: Option<unsafe extern "C" fn()>;
-}
-
-#[no_mangle]
-pub extern "C" fn r_polled_events_disabled() {}
 
 extern "C" {
     pub static R_ParseError: c_int;
@@ -534,6 +528,20 @@ where
 {
     let _scope = RSandboxScope::new();
     r_top_level_exec(f)
+}
+
+pub struct RSandboxScope {
+    _interrupts_scope: RInterruptsSuspendedScope,
+    _polled_events_scope: RPolledEventsSuspendedScope,
+}
+
+impl RSandboxScope {
+    pub fn new() -> RSandboxScope {
+        RSandboxScope {
+            _interrupts_scope: RInterruptsSuspendedScope::new(),
+            _polled_events_scope: RPolledEventsSuspendedScope::new(),
+        }
+    }
 }
 
 /// Unwrap Rust error and throw as R error

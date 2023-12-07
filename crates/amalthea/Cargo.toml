@@ -7,6 +7,7 @@ rust-version = "1.70.0"
 [dependencies]
 amalthea-macros = { path = "./amalthea-macros" }
 async-trait = "0.1.66"
+cfg-if = "1.0.0"
 chrono = "0.4.23"
 crypto-common = "0.1.6"
 dirs = "4.0.0"
