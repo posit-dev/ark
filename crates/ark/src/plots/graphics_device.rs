@@ -27,6 +27,8 @@ use std::fs::File;
 use std::io::BufReader;
 use std::io::Read;
 
+use amalthea::comm::base_comm::json_rpc_error;
+use amalthea::comm::base_comm::JsonRpcErrorCode;
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::comm::plot_comm::PlotEvent;
@@ -175,18 +177,46 @@ impl DeviceContext {
 
         // Get the RPC request.
         if let CommMsg::Rpc(rpc_id, value) = message {
-            let input = serde_json::from_value::<PlotRpcRequest>(value);
-            let input = unwrap!(input, Err(error) => {
-                log::error!("{}", error);
-                return;
-            });
+            let input = match serde_json::from_value::<PlotRpcRequest>(value.clone()) {
+                Ok(req) => req,
+                Err(err) => {
+                    socket
+                        .outgoing_tx
+                        .send(CommMsg::Rpc(
+                            rpc_id,
+                            json_rpc_error(
+                                JsonRpcErrorCode::InvalidRequest,
+                                format!("Invalid request sent to plot ${plot_id}: {err:} (request: {value:})"),
+                            ),
+                        ))
+                        .unwrap();
+                    return;
+                },
+            };
 
             match input {
                 PlotRpcRequest::Render(plot_meta) => {
-                    let data = unwrap!(self.render_plot(plot_id, plot_meta.width, plot_meta.height, plot_meta.pixel_ratio), Err(error) => {
-                        log::error!("Failed to render plot with id {plot_id} due to: {error}.");
-                        return;
-                    });
+                    let data = match self.render_plot(
+                        plot_id,
+                        plot_meta.width,
+                        plot_meta.height,
+                        plot_meta.pixel_ratio,
+                    ) {
+                        Ok(data) => data,
+                        Err(err) => {
+                            socket
+                        .outgoing_tx
+                        .send(CommMsg::Rpc(
+                            rpc_id,
+                            json_rpc_error(
+                                JsonRpcErrorCode::InternalError,
+                                format!("Plot ${plot_id} failed to render: {err:} (request: {value:})"),
+                            ),
+                        ))
+                        .unwrap();
+                            return;
+                        },
+                    };
 
                     let response = PlotRpcReply::RenderReply(PlotResult {
                         data: data.to_string(),
