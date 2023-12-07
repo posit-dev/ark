@@ -14,6 +14,7 @@ use amalthea::kernel::Kernel;
 use amalthea::kernel::StreamBehavior;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
+use amalthea::socket::stdin::StdInRequest;
 use amalthea::wire::comm_close::CommClose;
 use amalthea::wire::comm_info_reply::CommInfoTargetName;
 use amalthea::wire::comm_info_request::CommInfoRequest;
@@ -23,7 +24,6 @@ use amalthea::wire::execute_input::ExecuteInput;
 use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::execute_result::ExecuteResult;
 use amalthea::wire::input_reply::InputReply;
-use amalthea::wire::input_request::ShellInputRequest;
 use amalthea::wire::jupyter_message::Message;
 use amalthea::wire::jupyter_message::MessageType;
 use amalthea::wire::jupyter_message::Status;
@@ -50,12 +50,12 @@ fn test_kernel() {
     let shell_tx = kernel.create_iopub_tx();
     let comm_manager_tx = kernel.create_comm_manager_tx();
 
-    let (input_request_tx, input_request_rx) = bounded::<ShellInputRequest>(1);
+    let (stdin_request_tx, stdin_request_rx) = bounded::<StdInRequest>(1);
     let (input_reply_tx, input_reply_rx) = unbounded();
 
     let shell = Arc::new(Mutex::new(shell::Shell::new(
         shell_tx,
-        input_request_tx,
+        stdin_request_tx,
         input_reply_rx,
     )));
     let control = Arc::new(Mutex::new(control::Control {}));
@@ -70,7 +70,7 @@ fn test_kernel() {
         None,
         None,
         StreamBehavior::None,
-        input_request_rx,
+        stdin_request_rx,
         input_reply_tx,
     ) {
         panic!("Error connecting kernel: {err:?}");

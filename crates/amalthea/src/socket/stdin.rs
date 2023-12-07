@@ -11,13 +11,20 @@ use crossbeam::select;
 use log::error;
 use log::trace;
 use log::warn;
+use serde_json::Value;
 
+use crate::comm::frontend_comm::FrontendRpcResponse;
 use crate::session::Session;
 use crate::wire::input_reply::InputReply;
 use crate::wire::input_request::ShellInputRequest;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
 use crate::wire::jupyter_message::OutboundMessage;
+
+pub enum StdInRequest {
+    InputRequest(ShellInputRequest),
+    CommRequest(Sender<FrontendRpcResponse>, Value),
+}
 
 pub struct Stdin {
     /// Receiver connected to the StdIn's ZeroMQ socket
@@ -53,7 +60,7 @@ impl Stdin {
     /// 1. Wait for
     pub fn listen(
         &self,
-        input_request_rx: Receiver<ShellInputRequest>,
+        stdin_request_rx: Receiver<StdInRequest>,
         input_reply_tx: Sender<InputReply>,
         interrupt_rx: Receiver<bool>,
     ) {
@@ -66,10 +73,10 @@ impl Stdin {
             // don't need to listen to interrupts at this stage so we'd
             // only subscribe after receiving an input request, and the
             // loop/select below could be removed.
-            let req: ShellInputRequest;
+            let req: StdInRequest;
             loop {
                 select! {
-                    recv(input_request_rx) -> msg => {
+                    recv(stdin_request_rx) -> msg => {
                         match msg {
                             Ok(m) => {
                                 req = m;
@@ -87,13 +94,20 @@ impl Stdin {
                 };
             }
 
-            // Deliver the message to the front end
-            let msg = Message::InputRequest(JupyterMessage::create_with_identity(
-                req.originator,
-                req.request,
-                &self.session,
-            ));
+            let msg = match req {
+                StdInRequest::InputRequest(req) => {
+                    Message::InputRequest(JupyterMessage::create_with_identity(
+                        req.originator,
+                        req.request,
+                        &self.session,
+                    ))
+                },
+                StdInRequest::CommRequest(_response_tx, _value) => {
+                    todo!()
+                },
+            };
 
+            // Deliver the message to the front end
             if let Err(err) = self.outbound_tx.send(OutboundMessage::StdIn(msg)) {
                 error!("Failed to send message to front end: {}", err);
             }

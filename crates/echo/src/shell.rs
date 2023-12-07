@@ -9,6 +9,7 @@ use amalthea::comm::comm_channel::Comm;
 use amalthea::language::shell_handler::ShellHandler;
 use amalthea::socket::comm::CommSocket;
 use amalthea::socket::iopub::IOPubMessage;
+use amalthea::socket::stdin::StdInRequest;
 use amalthea::wire::complete_reply::CompleteReply;
 use amalthea::wire::complete_request::CompleteRequest;
 use amalthea::wire::exception::Exception;
@@ -19,7 +20,6 @@ use amalthea::wire::execute_reply_exception::ExecuteReplyException;
 use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::execute_result::ExecuteResult;
 use amalthea::wire::input_reply::InputReply;
-use amalthea::wire::input_request::ShellInputRequest;
 use amalthea::wire::inspect_reply::InspectReply;
 use amalthea::wire::inspect_request::InspectRequest;
 use amalthea::wire::is_complete_reply::IsComplete;
@@ -38,7 +38,7 @@ use serde_json::json;
 
 pub struct Shell {
     iopub: Sender<IOPubMessage>,
-    _input_request_tx: Sender<ShellInputRequest>,
+    _stdin_request_tx: Sender<StdInRequest>,
     _input_reply_rx: Receiver<InputReply>,
     execution_count: u32,
 }
@@ -46,12 +46,12 @@ pub struct Shell {
 impl Shell {
     pub fn new(
         iopub: Sender<IOPubMessage>,
-        input_request_tx: Sender<ShellInputRequest>,
+        stdin_request_tx: Sender<StdInRequest>,
         input_reply_rx: Receiver<InputReply>,
     ) -> Self {
         Self {
             iopub,
-            _input_request_tx: input_request_tx,
+            _stdin_request_tx: stdin_request_tx,
             _input_reply_rx: input_reply_rx,
             execution_count: 0,
         }

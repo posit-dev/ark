@@ -32,10 +32,10 @@ use crate::socket::iopub::IOPub;
 use crate::socket::iopub::IOPubMessage;
 use crate::socket::shell::Shell;
 use crate::socket::socket::Socket;
+use crate::socket::stdin::StdInRequest;
 use crate::socket::stdin::Stdin;
 use crate::stream_capture::StreamCapture;
 use crate::wire::input_reply::InputReply;
-use crate::wire::input_request::ShellInputRequest;
 use crate::wire::jupyter_message::Message;
 use crate::wire::jupyter_message::OutboundMessage;
 
@@ -111,7 +111,7 @@ impl Kernel {
         // this channel. The frontend will prompt the user for input and
         // the reply will be delivered via `input_reply_tx`.
         // https://jupyter-client.readthedocs.io/en/stable/messaging.html#messages-on-the-stdin-router-dealer-channel
-        input_request_rx: Receiver<ShellInputRequest>,
+        stdin_request_rx: Receiver<StdInRequest>,
         // Transmission channel for `input_reply` handling by StdIn
         input_reply_tx: Sender<InputReply>,
     ) -> Result<(), Error> {
@@ -204,7 +204,7 @@ impl Kernel {
             Self::stdin_thread(
                 stdin_inbound_rx,
                 outbound_tx,
-                input_request_rx,
+                stdin_request_rx,
                 input_reply_tx,
                 stdin_interrupt_rx,
                 stdin_session,
@@ -345,13 +345,13 @@ impl Kernel {
     fn stdin_thread(
         inbound_rx: Receiver<Message>,
         outbound_tx: Sender<OutboundMessage>,
-        input_request_rx: Receiver<ShellInputRequest>,
+        stdin_request_rx: Receiver<StdInRequest>,
         input_reply_tx: Sender<InputReply>,
         interrupt_rx: Receiver<bool>,
         session: Session,
     ) -> Result<(), Error> {
         let stdin = Stdin::new(inbound_rx, outbound_tx, session);
-        stdin.listen(input_request_rx, input_reply_tx, interrupt_rx);
+        stdin.listen(stdin_request_rx, input_reply_tx, interrupt_rx);
         Ok(())
     }
 

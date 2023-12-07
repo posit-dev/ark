@@ -14,7 +14,7 @@ use std::sync::Mutex;
 use amalthea::connection_file::ConnectionFile;
 use amalthea::kernel::Kernel;
 use amalthea::kernel_spec::KernelSpec;
-use amalthea::wire::input_request::ShellInputRequest;
+use amalthea::socket::stdin::StdInRequest;
 use ark::control::Control;
 use ark::dap;
 use ark::logger;
@@ -83,7 +83,7 @@ fn start_kernel(
 
     // Communication channel between the R main thread and the Amalthea
     // StdIn socket thread
-    let (input_request_tx, input_request_rx) = bounded::<ShellInputRequest>(1);
+    let (stdin_request_tx, stdin_request_rx) = bounded::<StdInRequest>(1);
 
     // Communication channel for `CommEvent`
     let comm_manager_tx = kernel.create_comm_manager_tx();
@@ -122,7 +122,7 @@ fn start_kernel(
         Some(lsp),
         Some(dap.clone()),
         stream_behavior,
-        input_request_rx,
+        stdin_request_rx,
         input_reply_tx,
     );
     if let Err(err) = res {
@@ -136,7 +136,7 @@ fn start_kernel(
         kernel_clone,
         comm_manager_tx,
         r_request_rx,
-        input_request_tx,
+        stdin_request_tx,
         input_reply_rx,
         iopub_tx,
         kernel_init_tx,
