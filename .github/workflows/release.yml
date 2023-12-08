@@ -286,19 +286,19 @@ jobs:
                 flavor: [debug, release]
 
         steps:
-            # Download arm64 and x64 binaries
-            - name: Download arm64 kernel (${{ matrix.flavor }})
+            # Download macOS arm64 and x64 binaries
+            - name: Download macOS arm64 kernel (${{ matrix.flavor }})
               uses: actions/download-artifact@v3
               with:
                   name: ark-${{ matrix.flavor }}-darwin-arm64-archive
 
-            - name: Download x64 kernel (${{ matrix.flavor}})
+            - name: Download macOS x64 kernel (${{ matrix.flavor}})
               uses: actions/download-artifact@v3
               with:
                   name: ark-${{ matrix.flavor }}-darwin-x64-archive
 
             # Combine them to a single binary with lipo
-            - name: Create universal binary
+            - name: Create macOS universal binary
               run: |
                   # Decompress x64 builds
                   rm -rf x64 && mkdir x64 && pushd x64
@@ -323,7 +323,7 @@ jobs:
                   zip -Xry $ARCHIVE modules
                   popd
 
-            - name: Upload release artifact (universal)
+            - name: Upload macOS release artifact (universal)
               uses: actions/upload-release-asset@v1
               env:
                   GITHUB_TOKEN: ${{ github.token }}
@@ -331,6 +331,21 @@ jobs:
                   upload_url: ${{ needs.create_release.outputs.upload_url }}
                   asset_path: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-darwin-universal.zip
                   asset_name: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-darwin-universal.zip
+                  asset_content_type: application/octet-stream
+
+            - name: Download Windows x64 kernel (${{ matrix.flavor}})
+              uses: actions/download-artifact@v3
+              with:
+                  name: ark-${{ matrix.flavor }}-windows-x64-archive
+
+            - name: Upload Windows release artifact (x64)
+              uses: actions/upload-release-asset@v1
+              env:
+                  GITHUB_TOKEN: ${{ github.token }}
+              with:
+                  upload_url: ${{ needs.create_release.outputs.upload_url }}
+                  asset_path: ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ matrix.flavor }}-windows-x64.zip
+                  asset_name: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-windows-x64.zip
                   asset_content_type: application/octet-stream
 
     status:
