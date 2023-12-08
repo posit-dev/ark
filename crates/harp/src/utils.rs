@@ -648,8 +648,8 @@ fn init_modules() {
     // look in the source tree (found via the 'CARGO_MANIFEST_DIR' environment
     // variable).
     if !root.exists() {
-        let source = format!("{}/src/modules", env!("CARGO_MANIFEST_DIR"));
-        root = std::path::Path::new(&source).to_path_buf();
+        let source = env!("CARGO_MANIFEST_DIR");
+        root = Path::new(&source).join("src").join("modules").to_path_buf();
     }
 
     log::info!("Loading modules from directory: {}", root.display());
