@@ -17,42 +17,42 @@
 get_visual_studio_tools_directory <- function() {
   # First find `vswhere.exe`, which is supposedly always in the same spot
   vswhere <- file.path("C:", "Program Files (x86)", "Microsoft Visual Studio", "Installer")
-  
+
   if (!dir.exists(vswhere)) {
     stop("Microsoft Visual Studio Installer folder does not exist.")
   }
-  
+
   vswhere <- file.path(vswhere, "vswhere.exe")
   vswhere <- normalizePath(vswhere, mustWork = TRUE)
   vswhere <- shQuote(vswhere)
   vswhere <- paste(vswhere, "-prerelease -latest -property installationPath")
-  
+
   # `vswhere` tells us where Microsoft Visual Studio lives
   visualstudio <- system(vswhere, intern = TRUE)
-  
+
   if (!is.character(visualstudio) && length(visualstudio) != 1L && !is.na(visualstudio) && !dir.exists(visualstudio)) {
     stop("`vswhere` failed to find Microsoft Visual Studio")
   }
-  
+
   # Next we navigate to `vsdevcmd.bat`, which also has a stable path, according
   # to https://github.com/microsoft/vswhere/wiki/Start-Developer-Command-Prompt
   vscmdbat <- file.path(visualstudio, "Common7", "Tools", "VsDevCmd.bat")
   vscmdbat <- normalizePath(vscmdbat, mustWork = TRUE)
   vscmdbat <- shQuote(vscmdbat)
   vscmdbat <- paste(vscmdbat, "-arch=amd64 -startdir=none -host_arch=amd64 -no_logo")
-  
+
   where <- "where dumpbin.exe"
-  
+
   # Running `VsDevCmd.bat` puts tools like `dumpbin.exe` and `link.exe` on the
   # PATH in the current command prompt, so we run that and then ask `where` to
   # find `dumpbin.exe` (finding `link.exe` also finds one from RTools).
   command <- paste(vscmdbat, "&&", where)
   dumpbin <- system(command, intern = TRUE)
-  
+
   if (length(dumpbin) > 1L) {
     warning("Found multiple `dumpbin.exe`. Looking for one tied to Visual Studio.")
     dumpbin <- dumpbin[grepl("Microsoft Visual Studio", dumpbin)]
-    
+
     if (length(dumpbin) > 1L) {
       warning("Still have multiple `dumpbin.exe`. Taking the first.")
       dumpbin <- dumpbin[[1L]]
@@ -61,10 +61,10 @@ get_visual_studio_tools_directory <- function() {
   if (!is.character(dumpbin) && length(dumpbin) != 1L && !is.na(dumpbin) && !file.exists(dumpbin)) {
     stop("`where` failed to find `dumpbin.exe`.")
   }
-  
+
   # Now just look up one level
   path <- normalizePath(file.path(dumpbin, ".."))
-  
+
   path
 }
 
@@ -118,7 +118,7 @@ for (dll in dlls) {
 
   # Call 'lib.exe' to generate the library file.
   outfile <- sub("dll$", "lib", dll)
-  fmt <- "lib.exe /def:%s /out:%s /machine:%s"
+  fmt <- "lib.exe /nologo /def:%s /out:%s /machine:%s"
   cmd <- sprintf(fmt, def, outfile, .Platform$r_arch)
   system(cmd)
 
