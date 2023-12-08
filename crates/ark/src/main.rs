@@ -94,6 +94,7 @@ fn start_kernel(
         comm_manager_tx.clone(),
         iopub_tx.clone(),
         r_request_tx.clone(),
+        stdin_request_tx.clone(),
         kernel_init_rx,
         kernel_request_tx,
         kernel_request_rx,

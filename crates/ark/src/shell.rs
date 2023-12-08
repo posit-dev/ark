@@ -13,6 +13,7 @@ use amalthea::comm::event::CommManagerEvent;
 use amalthea::language::shell_handler::ShellHandler;
 use amalthea::socket::comm::CommSocket;
 use amalthea::socket::iopub::IOPubMessage;
+use amalthea::socket::stdin::StdInRequest;
 use amalthea::wire::complete_reply::CompleteReply;
 use amalthea::wire::complete_request::CompleteRequest;
 use amalthea::wire::exception::Exception;
@@ -61,6 +62,7 @@ pub struct Shell {
     comm_manager_tx: Sender<CommManagerEvent>,
     iopub_tx: Sender<IOPubMessage>,
     r_request_tx: Sender<RRequest>,
+    stdin_request_tx: Sender<StdInRequest>,
     pub kernel: Arc<Mutex<Kernel>>,
     kernel_request_tx: Sender<KernelRequest>,
     kernel_init_rx: BusReader<KernelInfo>,
@@ -78,6 +80,7 @@ impl Shell {
         comm_manager_tx: Sender<CommManagerEvent>,
         iopub_tx: Sender<IOPubMessage>,
         r_request_tx: Sender<RRequest>,
+        stdin_request_tx: Sender<StdInRequest>,
         kernel_init_rx: BusReader<KernelInfo>,
         kernel_request_tx: Sender<KernelRequest>,
         kernel_request_rx: Receiver<KernelRequest>,
@@ -94,6 +97,7 @@ impl Shell {
             comm_manager_tx,
             iopub_tx,
             r_request_tx,
+            stdin_request_tx,
             kernel,
             kernel_request_tx,
             kernel_init_rx,
@@ -274,7 +278,8 @@ impl ShellHandler for Shell {
             Comm::FrontEnd => {
                 // Create a frontend to wrap the comm channel we were just given. This starts
                 // a thread that proxies messages to the frontend.
-                let message_tx = PositronFrontend::start(comm.clone());
+                let message_tx =
+                    PositronFrontend::start(comm.clone(), self.stdin_request_tx.clone());
 
                 // Send the frontend event channel to the execution thread so it can emit
                 // events to the frontend.

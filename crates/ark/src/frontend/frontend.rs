@@ -17,6 +17,7 @@ use amalthea::comm::frontend_comm::FrontendRpcResponse;
 use amalthea::comm::frontend_comm::FrontendRpcResult;
 use amalthea::events::PositronEvent;
 use amalthea::socket::comm::CommSocket;
+use amalthea::socket::stdin::StdInRequest;
 use amalthea::wire::client_event::ClientEvent;
 use crossbeam::channel::bounded;
 use crossbeam::channel::Receiver;
@@ -51,10 +52,14 @@ pub struct PositronFrontendRpcRequest {
 pub struct PositronFrontend {
     comm: CommSocket,
     frontend_rx: Receiver<PositronFrontendMessage>,
+    stdin_request_tx: Sender<StdInRequest>,
 }
 
 impl PositronFrontend {
-    pub fn start(comm: CommSocket) -> Sender<PositronFrontendMessage> {
+    pub fn start(
+        comm: CommSocket,
+        stdin_request_tx: Sender<StdInRequest>,
+    ) -> Sender<PositronFrontendMessage> {
         // Create a sender-receiver pair for Positron global events
         let (frontend_tx, frontend_rx) = crossbeam::channel::unbounded::<PositronFrontendMessage>();
 
@@ -62,6 +67,7 @@ impl PositronFrontend {
             let frontend = Self {
                 comm: comm.clone(),
                 frontend_rx: frontend_rx.clone(),
+                stdin_request_tx: stdin_request_tx.clone(),
             };
             frontend.execution_thread();
         });
@@ -195,8 +201,9 @@ impl PositronFrontend {
             request.request.method.clone(),
             request.request.params.clone(),
         )?;
-        let comm_msg = CommMsg::ReverseRpc(request.response_tx.clone(), wire_request);
-        self.comm.outgoing_tx.send(comm_msg)?;
+
+        let comm_msg = StdInRequest::CommRequest(request.response_tx.clone(), wire_request);
+        self.stdin_request_tx.send(comm_msg)?;
 
         Ok(())
     }

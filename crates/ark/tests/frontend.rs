@@ -15,10 +15,12 @@ use amalthea::comm::frontend_comm::FrontendRpcReply;
 use amalthea::comm::frontend_comm::FrontendRpcRequest;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
+use amalthea::socket::stdin::StdInRequest;
 use ark::frontend::frontend::PositronFrontend;
 use ark::frontend::frontend::PositronFrontendMessage;
 use ark::r_task;
 use ark::test::r_test;
+use crossbeam::channel::bounded;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
@@ -37,8 +39,12 @@ fn test_frontend_comm() {
             String::from("positron.frontend"),
         );
 
+        // Communication channel between the main thread and the Amalthea
+        // StdIn socket thread
+        let (stdin_request_tx, _stdin_request_rx) = bounded::<StdInRequest>(1);
+
         // Create a frontend instance
-        let frontend = PositronFrontend::start(comm.clone());
+        let frontend = PositronFrontend::start(comm.clone(), stdin_request_tx);
 
         // Get the current console width
         let old_width = r_task(|| unsafe {

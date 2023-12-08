@@ -12,6 +12,7 @@ use strum_macros::EnumString;
 use uuid::Uuid;
 
 use super::frontend_comm::FrontendRpcResponse;
+use crate::wire::jupyter_message::MessageType;
 
 #[derive(EnumString, PartialEq)]
 #[strum(serialize_all = "camelCase")]
@@ -61,7 +62,7 @@ pub enum CommMsg {
     Close,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Serialize, Debug)]
 pub struct RpcRequest {
     msg_type: String,
     id: String,
@@ -71,7 +72,7 @@ pub struct RpcRequest {
 }
 
 impl RpcRequest {
-    pub fn new<T>(method: String, params: T) -> anyhow::Result<Value>
+    pub fn new<T>(method: String, params: T) -> anyhow::Result<Self>
     where
         T: Serialize,
     {
@@ -82,6 +83,12 @@ impl RpcRequest {
             method,
             params: serde_json::to_value(params)?,
         };
-        Ok(serde_json::to_value(request)?)
+        Ok(request)
+    }
+}
+
+impl MessageType for RpcRequest {
+    fn message_type() -> String {
+        String::from("comm_request")
     }
 }

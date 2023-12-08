@@ -11,8 +11,8 @@ use crossbeam::select;
 use log::error;
 use log::trace;
 use log::warn;
-use serde_json::Value;
 
+use crate::comm::comm_channel::RpcRequest;
 use crate::comm::frontend_comm::FrontendRpcResponse;
 use crate::session::Session;
 use crate::wire::input_reply::InputReply;
@@ -23,7 +23,7 @@ use crate::wire::jupyter_message::OutboundMessage;
 
 pub enum StdInRequest {
     InputRequest(ShellInputRequest),
-    CommRequest(Sender<FrontendRpcResponse>, Value),
+    CommRequest(Sender<FrontendRpcResponse>, RpcRequest),
 }
 
 pub struct Stdin {
@@ -94,21 +94,28 @@ impl Stdin {
                 };
             }
 
-            let msg = match req {
+            let (request, reply_tx) = match req {
                 StdInRequest::InputRequest(req) => {
-                    Message::InputRequest(JupyterMessage::create_with_identity(
+                    let req = Message::InputRequest(JupyterMessage::create_with_identity(
                         req.originator,
                         req.request,
                         &self.session,
-                    ))
+                    ));
+                    (req, StdInReplySender::Input(input_reply_tx.clone()))
                 },
-                StdInRequest::CommRequest(_response_tx, _value) => {
-                    todo!()
+                StdInRequest::CommRequest(response_tx, req) => {
+                    // This is a request from to the frontend
+                    let req = Message::CommRequest(JupyterMessage::create_with_identity(
+                        None,
+                        req,
+                        &self.session,
+                    ));
+                    (req, StdInReplySender::Comm(response_tx))
                 },
             };
 
             // Deliver the message to the front end
-            if let Err(err) = self.outbound_tx.send(OutboundMessage::StdIn(msg)) {
+            if let Err(err) = self.outbound_tx.send(OutboundMessage::StdIn(request)) {
                 error!("Failed to send message to front end: {}", err);
             }
             trace!("Sent input request to front end, waiting for input reply...");
@@ -133,18 +140,26 @@ impl Stdin {
                 }
             };
 
-            // Only input replies are expected on this socket
-            let reply = match message {
-                Message::InputReply(reply) => reply,
-                _ => {
-                    warn!("Received unexpected message on stdin socket: {:?}", message);
-                    continue;
-                },
-            };
-            trace!("Received input reply from front-end: {:?}", reply);
+            trace!("Received reply from front-end: {:?}", message);
 
-            // Send it to the kernel implementation
-            input_reply_tx.send(reply.content).unwrap();
+            // Only input and comm RPC replies are expected on this socket
+            match message {
+                Message::InputReply(ref reply) => {
+                    if let StdInReplySender::Input(tx) = reply_tx {
+                        tx.send(reply.content.clone()).unwrap();
+                        continue;
+                    }
+                },
+                Message::CommReply(ref reply) => {
+                    if let StdInReplySender::Comm(tx) = reply_tx {
+                        tx.send(reply.content.clone()).unwrap();
+                        continue;
+                    }
+                },
+                _ => {},
+            };
+
+            warn!("Received unexpected message on stdin socket: {:?}", message);
         }
     }
 }
