@@ -36,9 +36,11 @@ jobs:
 
         strategy:
             matrix:
+                arch: [x64]
                 flavor: [debug, release]
                 include:
-                    - rust_target_prefix: x86_64
+                    - arch: x64
+                      rust_target_prefix: x86_64
 
         steps:
             - name: Checkout sources
@@ -71,6 +73,19 @@ jobs:
                   ARK_BUILD_TYPE: ${{ matrix.flavor }}
                   RUST_TARGET: ${{ matrix.rust_target_prefix }}-pc-windows-msvc
                   R_HOME: ${{ steps.r_installation.outputs.r_home }}
+              shell: cmd
               run: |
                   cargo clean
                   cargo build ${{ matrix.flavor == 'release' && '--release' || '' }} --target ${{ matrix.rust_target_prefix }}-pc-windows-msvc
+
+            - name: Create archive
+              shell: pwsh
+              run: |
+                  # Compress the kernel to an archive
+                  Compress-Archive -Path "target\${{ matrix.rust_target_prefix }}-pc-windows-msvc\${{ matrix.flavor }}\ark.exe" -DestinationPath "ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ matrix.flavor }}-windows-${{ matrix.arch }}.zip"
+
+            - name: Upload client archive
+              uses: actions/upload-artifact@v3
+              with:
+                  name: ark-${{ matrix.flavor }}-windows-${{ matrix.arch }}-archive
+                  path: ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ matrix.flavor }}-windows-${{ matrix.arch }}.zip
