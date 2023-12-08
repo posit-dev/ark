@@ -11,55 +11,61 @@
 
 # Typically something like:
 # "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.37.32822\\bin\\Hostx86\\x86"
-# We try to dynamically look up the year (2022) and exact version (14.37.32822)
-# in case they change on us
+# A number of the pieces are unstable (year, Community vs Enterprise, exact version)
+# so we try and use `vswhere.exe` and `vsdevcmd.bat` to find the exact path
+
 get_visual_studio_tools_directory <- function() {
-  path <- file.path("C:", "Program Files", "Microsoft Visual Studio")
-
-  if (!dir.exists(path)) {
-    stop("Microsoft Visual Studio has not been installed.")
+  # First find `vswhere.exe`, which is supposedly always in the same spot
+  vswhere <- file.path("C:", "Program Files (x86)", "Microsoft Visual Studio", "Installer")
+  
+  if (!dir.exists(vswhere)) {
+    stop("Microsoft Visual Studio Installer folder does not exist.")
   }
-
-  # Dynamically look up the next folder, which should be a year like `2022`
-  files <- dir(path)
-  n_files <- length(files)
-
-  if (n_files == 0L) {
-    stop("Expected at least 1 version of Microsoft Visual Studio.")
-  } else if (n_files == 1L) {
-    year <- files
-  } else {
-    warning("Expected exactly 1 version of Microsoft Visual Studio. Using the last (hopefully newest) version.")
-    year <- files[[n_files]]
+  
+  vswhere <- file.path(vswhere, "vswhere.exe")
+  vswhere <- normalizePath(vswhere, mustWork = TRUE)
+  vswhere <- shQuote(vswhere)
+  vswhere <- paste(vswhere, "-prerelease -latest -property installationPath")
+  
+  # `vswhere` tells us where Microsoft Visual Studio lives
+  visualstudio <- system(vswhere, intern = TRUE)
+  
+  if (!is.character(visualstudio) && length(visualstudio) != 1L && !is.na(visualstudio) && !dir.exists(visualstudio)) {
+    stop("`vswhere` failed to find Microsoft Visual Studio")
   }
-
-  path <- file.path(path, year, "Community", "VC", "Tools", "MSVC")
-
-  if (!dir.exists(path)) {
-    stop("Microsoft Visual Studio tools have not been installed.")
+  
+  # Next we navigate to `vsdevcmd.bat`, which also has a stable path, according
+  # to https://github.com/microsoft/vswhere/wiki/Start-Developer-Command-Prompt
+  vscmdbat <- file.path(visualstudio, "Common7", "Tools", "VsDevCmd.bat")
+  vscmdbat <- normalizePath(vscmdbat, mustWork = TRUE)
+  vscmdbat <- shQuote(vscmdbat)
+  vscmdbat <- paste(vscmdbat, "-arch=amd64 -startdir=none -host_arch=amd64 -no_logo")
+  
+  where <- "where dumpbin.exe"
+  
+  # Running `VsDevCmd.bat` puts tools like `dumpbin.exe` and `link.exe` on the
+  # PATH in the current command prompt, so we run that and then ask `where` to
+  # find `dumpbin.exe` (finding `link.exe` also finds one from RTools).
+  command <- paste(vscmdbat, "&&", where)
+  dumpbin <- system(command, intern = TRUE)
+  
+  if (length(dumpbin) > 1L) {
+    warning("Found multiple `dumpbin.exe`. Looking for one tied to Visual Studio.")
+    dumpbin <- dumpbin[grepl("Microsoft Visual Studio", dumpbin)]
+    
+    if (length(dumpbin) > 1L) {
+      warning("Still have multiple `dumpbin.exe`. Taking the first.")
+      dumpbin <- dumpbin[[1L]]
+    }
   }
-
-  # Dynamically look up the next folder, which should be a very specific version
-  # of the tools like `14.38.33130`
-  files <- dir(path)
-  n_files <- length(files)
-
-  if (n_files == 0L) {
-    stop("Expected at least 1 version of the Microsoft Visual Studio tools.")
-  } else if (n_files == 1L) {
-    version <- files
-  } else {
-    warning("Expected exactly 1 version of the Microsoft Visual Studio tools. Using the last (hopefully newest) version.")
-    version <- files[[n_files]]
+  if (!is.character(dumpbin) && length(dumpbin) != 1L && !is.na(dumpbin) && !file.exists(dumpbin)) {
+    stop("`where` failed to find `dumpbin.exe`.")
   }
-
-  path <- file.path(path, version, "bin", "Hostx86", "x86")
-
-  if (!dir.exists(path)) {
-    stop("Microsoft Visual Studio tools directory is incorrect or missing.")
-  }
-
-  normalizePath(path, mustWork = TRUE)
+  
+  # Now just look up one level
+  path <- normalizePath(file.path(dumpbin, ".."))
+  
+  path
 }
 
 # Get the Visual Studio tools directory where `dumpbin.exe` and `lib.exe` live
