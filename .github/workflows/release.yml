@@ -338,6 +338,17 @@ jobs:
               with:
                   name: ark-${{ matrix.flavor }}-windows-x64-archive
 
+            - name: Add Ark R modules
+              shell: pwsh
+              run: |
+                  # Note: These aren't architecture dependent
+                  $params = @{
+                    Path = crates\ark\src\modules,
+                    DestinationPath = "ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ matrix.flavor }}-windows-x64.zip",
+                    Update = $true
+                  }
+                  Compress-Archive @params
+
             - name: Upload Windows release artifact (x64)
               uses: actions/upload-release-asset@v1
               env:
