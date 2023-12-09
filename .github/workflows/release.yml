@@ -286,7 +286,7 @@ jobs:
                 flavor: [debug, release]
 
         steps:
-            # Download macOS arm64 and x64 binaries
+            # Download all binaries
             - name: Download macOS arm64 kernel (${{ matrix.flavor }})
               uses: actions/download-artifact@v3
               with:
@@ -297,7 +297,12 @@ jobs:
               with:
                   name: ark-${{ matrix.flavor }}-darwin-x64-archive
 
-            # Combine them to a single binary with lipo
+            - name: Download Windows x64 kernel (${{ matrix.flavor}})
+              uses: actions/download-artifact@v3
+              with:
+                  name: ark-${{ matrix.flavor }}-windows-x64-archive
+
+            # Combine macOS binaries to a single binary with lipo
             - name: Create macOS universal binary
               run: |
                   # Decompress x64 builds
@@ -317,10 +322,20 @@ jobs:
                   ARCHIVE="$GITHUB_WORKSPACE/ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-darwin-universal.zip"
                   zip -Xry $ARCHIVE ark
 
-                  # Add the R modules (these aren't architecture dependent)
-                  echo "Adding R modules ..."
+            # Add the R modules (these aren't architecture dependent)
+            - name: Add Ark R modules
+              run: |
+                  ARCHIVE_MAC="$GITHUB_WORKSPACE/ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-darwin-universal.zip"
+                  ARCHIVE_WINDOWS="$GITHUB_WORKSPACE/ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ matrix.flavor }}-windows-x64.zip"
+
                   pushd crates/ark/src
-                  zip -Xry $ARCHIVE modules
+
+                  echo "Adding R modules to macOS binary ..."
+                  zip -Xry $ARCHIVE_MAC modules
+
+                  echo "Adding R modules to Windows binary ..."
+                  zip -Xry $ARCHIVE_WINDOWS modules
+
                   popd
 
             - name: Upload macOS release artifact (universal)
@@ -332,22 +347,6 @@ jobs:
                   asset_path: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-darwin-universal.zip
                   asset_name: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-darwin-universal.zip
                   asset_content_type: application/octet-stream
-
-            - name: Download Windows x64 kernel (${{ matrix.flavor}})
-              uses: actions/download-artifact@v3
-              with:
-                  name: ark-${{ matrix.flavor }}-windows-x64-archive
-
-            - name: Add Ark R modules
-              shell: pwsh
-              run: |
-                  # Note: These aren't architecture dependent
-                  $params = @{
-                    Path = crates\ark\src\modules,
-                    DestinationPath = "ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ matrix.flavor }}-windows-x64.zip",
-                    Update = $true
-                  }
-                  Compress-Archive @params
 
             - name: Upload Windows release artifact (x64)
               uses: actions/upload-release-asset@v1
