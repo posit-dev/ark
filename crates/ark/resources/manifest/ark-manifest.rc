@@ -1,2 +1,11 @@
-#define RT_MANIFEST 24
+// This is a C file that embed-resource compiles for us.
+// It helps embed our Windows Application Manifest file.
+// https://learn.microsoft.com/en-us/windows/win32/sbscs/application-manifests
+// https://learn.microsoft.com/en-us/cpp/build/reference/manifest-create-side-by-side-assembly-manifest?view=msvc-170
+
+// This defines `RT_MANIFEST` to `24`. embed-resource should know how to ensure the header is available.
+// https://github.com/nabijaczleweli/rust-embed-resource/issues/11#issuecomment-779295722
+#include <winuser.h>
+
+// The `1` is a `resource_id` that specifies ark as an executable file
 1 RT_MANIFEST "ark.exe.manifest"
