@@ -16,3 +16,5 @@
 
     installed
 }
+
+.ps.rpc.is_installed <- .ps.is_installed
