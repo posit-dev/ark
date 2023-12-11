@@ -56,3 +56,4 @@ winsafe = { version = "0.0.18", features = ["kernel"] }
 
 [build-dependencies]
 chrono = "0.4.23"
+embed-resource = "2.4.0"
