@@ -40,7 +40,7 @@ impl PositronFrontend {
         // Create a sender-receiver pair for Positron global events
         let (event_tx, event_rx) = crossbeam::channel::unbounded::<PositronEvent>();
 
-        spawn!("ark-comm-frontend", move || loop {
+        spawn!("ark-comm-frontend", move || {
             let frontend = Self {
                 comm: comm.clone(),
                 event_rx: event_rx.clone(),
