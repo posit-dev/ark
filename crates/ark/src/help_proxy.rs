@@ -18,9 +18,9 @@ use url::Url;
 
 use crate::browser;
 
-// Embed src/resources which is where replacement resources can be found.
+// Embed `resources/help/` which is where replacement resources can be found.
 #[derive(RustEmbed)]
-#[folder = "src/resources/"]
+#[folder = "resources/help/"]
 struct Asset;
 
 // Starts the help proxy.
