@@ -57,8 +57,6 @@ fn test_help_comm() {
         let response = outgoing_rx.recv_timeout(duration).unwrap();
         match response {
             CommMsg::Rpc(id, val) => {
-                // TODO: Let's send an unsupported method and make sure we get an
-                // error response
                 let response = serde_json::from_value::<HelpRpcReply>(val).unwrap();
                 match response {
                     HelpRpcReply::ShowHelpTopicReply(_reply) => {

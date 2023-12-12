@@ -10,6 +10,7 @@ use serde::Serialize;
 use serde_json::json;
 use serde_json::Value;
 
+/// JSON-RPC 2.0 error codes
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub enum JsonRpcErrorCode {
     ParseError = -32700,
@@ -21,6 +22,14 @@ pub enum JsonRpcErrorCode {
     ServerErrorEnd = -32000,
 }
 
+/**
+ * Create a JSON-RPC 2.0 error response
+ *
+ * - `code` - The error code
+ * - `message` - The error message
+ *
+ * Returns a JSON object representing the error.
+ */
 pub fn json_rpc_error(code: JsonRpcErrorCode, message: String) -> Value {
     json! ({
         "error": {
