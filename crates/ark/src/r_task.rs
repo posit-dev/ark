@@ -79,8 +79,9 @@ where
         let closure: Box<dyn FnOnce() + 'env + Send> = Box::new(closure);
         let closure: Box<dyn FnOnce() + Send + 'static> = unsafe { std::mem::transmute(closure) };
 
-        // Channel to communicate that the timeout clock should be started
-        let (timeout_tx, timeout_rx) = bounded::<()>(0);
+        // Channel to communicate that the task has started, meaning the timeout
+        // clock can now be set up
+        let (started_tx, started_rx) = bounded::<()>(0);
 
         // Channel to communicate completion status of the task/closure
         let (status_tx, status_rx) = bounded::<harp::error::Result<()>>(0);
@@ -88,13 +89,13 @@ where
         // Send the task to the R thread
         let task = RTaskMain {
             closure: Some(closure),
-            timeout_tx: Some(timeout_tx),
+            started_tx: Some(started_tx),
             status_tx: Some(status_tx),
         };
         get_tasks_tx().send(task).unwrap();
 
-        // Block until we get the signal that the task has begun running
-        if let Err(err) = timeout_rx.recv() {
+        // Block until we get the signal that the task has started
+        if let Err(err) = started_rx.recv() {
             let trace = std::backtrace::Backtrace::capture();
             panic!(
                 "Task never started: {err:?}\n\
@@ -170,7 +171,7 @@ where
     // Send the async task to the R thread
     let task = RTaskMain {
         closure: Some(closure),
-        timeout_tx: None,
+        started_tx: None,
         status_tx: None,
     };
     get_tasks_tx().send(task).unwrap();
@@ -181,7 +182,7 @@ where
 
 pub struct RTaskMain {
     pub closure: Option<Box<dyn FnOnce() + Send + 'static>>,
-    pub timeout_tx: Option<Sender<()>>,
+    pub started_tx: Option<Sender<()>>,
     pub status_tx: Option<Sender<harp::error::Result<()>>>,
 }
 
@@ -189,8 +190,8 @@ impl RTaskMain {
     pub fn fulfill(&mut self) {
         // Immediately let caller know we have started so it can set up the
         // timeout
-        match &self.timeout_tx {
-            Some(timeout_tx) => timeout_tx.send(()).unwrap(),
+        match &self.started_tx {
+            Some(started_tx) => started_tx.send(()).unwrap(),
             None => (),
         };
 
