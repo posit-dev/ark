@@ -14,9 +14,6 @@ use amalthea::wire::shutdown_request::ShutdownRequest;
 use async_trait::async_trait;
 use crossbeam::channel::Sender;
 use log::*;
-use nix::sys::signal::Signal;
-use nix::sys::signal::{self};
-use nix::unistd::Pid;
 
 use crate::request::RRequest;
 
@@ -60,10 +57,7 @@ impl ControlHandler for Control {
 
     async fn handle_interrupt_request(&self) -> Result<InterruptReply, Exception> {
         debug!("Received interrupt request");
-        signal::kill(Pid::this(), Signal::SIGINT).unwrap();
-        // TODO: Windows.
-        // TODO: Needs to send a SIGINT to the whole process group so that
-        // processes started by R will also be interrupted.
+        crate::sys::control::handle_interrupt_request();
         Ok(InterruptReply { status: Status::Ok })
     }
 }

@@ -18,7 +18,7 @@ use std::process::Command;
 use std::sync::Mutex;
 use std::sync::Once;
 
-use libR_sys::*;
+use libR_shim::*;
 use stdext::cargs;
 
 use crate::exec::r_sandbox;

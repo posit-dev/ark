@@ -22,12 +22,13 @@ use ark::lsp;
 use ark::request::KernelRequest;
 use ark::request::RRequest;
 use ark::shell::Shell;
+use ark::signals::initialize_signal_block;
+use ark::traps::register_trap_handlers;
 use ark::version::detect_r;
 use bus::Bus;
 use crossbeam::channel::bounded;
 use crossbeam::channel::unbounded;
 use log::*;
-use nix::sys::signal::*;
 use notify::Watcher;
 use stdext::unwrap;
 
@@ -236,13 +237,7 @@ fn main() {
     }
 
     // Block signals in this thread (and any child threads).
-    //
-    // Any threads that would like to handle signals should explicitly
-    // unblock the signals they want to handle. This allows us to ensure
-    // that interrupts are consistently handled on the same thread.
-    let mut sigset = SigSet::empty();
-    sigset.add(SIGINT);
-    sigprocmask(SigmaskHow::SIG_BLOCK, Some(&sigset), None).unwrap();
+    initialize_signal_block();
 
     // Get an iterator over all the command-line arguments
     let mut argv = std::env::args();
@@ -393,7 +388,7 @@ fn main() {
     // Register segfault handler to get a backtrace. Should be after
     // initialising `log!`. Note that R will not override this handler
     // because we set `R_SignalHandlers` to 0 before startup.
-    stdext::traps::register_trap_handlers();
+    register_trap_handlers();
 
     // If the r_args vector is empty, add `--interactive` to the list of
     // arguments to pass to R.
@@ -424,7 +419,10 @@ fn main() {
         } else {
             log::error!("Panic! {loc} No contextual information.");
         }
+
+        // Give some time to flush log
         log::logger().flush();
+        std::thread::sleep(std::time::Duration::from_millis(250));
 
         old_hook(panic_info);
         std::process::abort();

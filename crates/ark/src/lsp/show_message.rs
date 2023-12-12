@@ -8,7 +8,7 @@
 use amalthea::events::PositronEvent;
 use amalthea::events::ShowMessageEvent;
 use harp::object::RObject;
-use libR_sys::*;
+use libR_shim::*;
 use stdext::unwrap;
 
 use crate::interface::RMain;

@@ -8,7 +8,7 @@
 use std::os::raw::c_char;
 
 use harp::object::RObject;
-use libR_sys::*;
+use libR_shim::*;
 
 /// Shows a message in the Positron frontend
 #[harp::register]

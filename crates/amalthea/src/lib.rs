@@ -21,4 +21,5 @@ pub mod language;
 pub mod session;
 pub mod socket;
 pub mod stream_capture;
+pub mod sys;
 pub mod wire;

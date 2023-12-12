@@ -1,4 +1,4 @@
-name: "Build macOS Release"
+name: "Build Ark Release"
 on:
     push:
         branches:
@@ -76,8 +76,8 @@ jobs:
                   echo "Existing ${{ needs.get_version.outputs.ARK_VERSION }} release: ${{steps.check_tag.outputs.exists}}"
                   echo "result=${{steps.check_tag.outputs.exists}}" >> $GITHUB_OUTPUT
 
-    # Build ARK for both arm64 (Apple Silicon) and x64 (Intel) hosts.
-    build_archs:
+    # Build ARK for macOS. Both arm64 (Apple Silicon) and x64 (Intel) hosts.
+    build_macos:
         name: Build macOS
         runs-on: [self-hosted, macos, arm64]
         needs: [revive_agent, get_version]
@@ -183,10 +183,79 @@ jobs:
                   name: ark-${{ matrix.flavor }}-darwin-${{ matrix.arch }}-archive
                   path: ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ matrix.flavor }}-darwin-${{ matrix.arch }}.zip
 
+    build_windows:
+        name: Build Windows
+        runs-on: windows-latest
+        timeout-minutes: 40
+        needs: [get_version]
+
+        env:
+            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+        strategy:
+            matrix:
+                arch: [x64]
+                flavor: [debug, release]
+                include:
+                    - arch: x64
+                      rust_target_prefix: x86_64
+
+        steps:
+            - name: Checkout sources
+              uses: actions/checkout@v4
+
+            - name: Setup R
+              uses: r-lib/actions/setup-r@v2
+              with:
+                  r-version: '4.3.2'
+
+            - name: Find R installation
+              id: r_installation
+              shell: bash
+              run: |
+                  R_HOME="C:\R"
+                  R_SCRIPT="${R_HOME}\bin\x64\Rscript.exe"
+                  echo "Using R at ${R_HOME}"
+                  echo "Using Rscript at ${R_SCRIPT}"
+                  # Output the result for consumption in later steps
+                  echo "r_home=${R_HOME}" >> $GITHUB_OUTPUT
+                  echo "r_script=${R_SCRIPT}" >> $GITHUB_OUTPUT
+
+            - name: Generate LIB from DLL
+              shell: cmd
+              run: |
+                  ${{ steps.r_installation.outputs.r_script }} "scripts\windows\dll2lib.R"
+
+            - name: Compile ARK
+              env:
+                  ARK_BUILD_TYPE: ${{ matrix.flavor }}
+                  RUST_TARGET: ${{ matrix.rust_target_prefix }}-pc-windows-msvc
+                  R_HOME: ${{ steps.r_installation.outputs.r_home }}
+              shell: cmd
+              run: |
+                  cargo clean
+                  cargo build ${{ matrix.flavor == 'release' && '--release' || '' }} --target ${{ matrix.rust_target_prefix }}-pc-windows-msvc
+
+            - name: Create archive
+              shell: pwsh
+              run: |
+                  # Compress the kernel to an archive
+                  $params = @{
+                    Path = "target\${{ matrix.rust_target_prefix }}-pc-windows-msvc\${{ matrix.flavor }}\ark.exe"
+                    DestinationPath = "ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ matrix.flavor }}-windows-${{ matrix.arch }}.zip"
+                  }
+                  Compress-Archive @params
+
+            - name: Upload client archive
+              uses: actions/upload-artifact@v3
+              with:
+                  name: ark-${{ matrix.flavor }}-windows-${{ matrix.arch }}-archive
+                  path: ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ matrix.flavor }}-windows-${{ matrix.arch }}.zip
+
     create_release:
         name: Create Release
         runs-on: [self-hosted, macos, arm64]
-        needs: [get_version, build_archs, check_release]
+        needs: [get_version, build_macos, build_windows, check_release]
         if: ${{ needs.check_release.outputs.EXISTING_RELEASE == 'false' }}
         env:
             GITHUB_TOKEN: ${{ github.token }}
@@ -217,19 +286,24 @@ jobs:
                 flavor: [debug, release]
 
         steps:
-            # Download arm64 and x64 binaries
-            - name: Download arm64 kernel (${{ matrix.flavor }})
+            # Download all binaries
+            - name: Download macOS arm64 kernel (${{ matrix.flavor }})
               uses: actions/download-artifact@v3
               with:
                   name: ark-${{ matrix.flavor }}-darwin-arm64-archive
 
-            - name: Download x64 kernel (${{ matrix.flavor}})
+            - name: Download macOS x64 kernel (${{ matrix.flavor}})
               uses: actions/download-artifact@v3
               with:
                   name: ark-${{ matrix.flavor }}-darwin-x64-archive
 
-            # Combine them to a single binary with lipo
-            - name: Create universal binary
+            - name: Download Windows x64 kernel (${{ matrix.flavor}})
+              uses: actions/download-artifact@v3
+              with:
+                  name: ark-${{ matrix.flavor }}-windows-x64-archive
+
+            # Combine macOS binaries to a single binary with lipo
+            - name: Create macOS universal binary
               run: |
                   # Decompress x64 builds
                   rm -rf x64 && mkdir x64 && pushd x64
@@ -248,13 +322,23 @@ jobs:
                   ARCHIVE="$GITHUB_WORKSPACE/ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-darwin-universal.zip"
                   zip -Xry $ARCHIVE ark
 
-                  # Add the R modules (these aren't architecture dependent)
-                  echo "Adding R modules ..."
+            # Add the R modules (these aren't architecture dependent)
+            - name: Add Ark R modules
+              run: |
+                  ARCHIVE_MAC="$GITHUB_WORKSPACE/ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-darwin-universal.zip"
+                  ARCHIVE_WINDOWS="$GITHUB_WORKSPACE/ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ matrix.flavor }}-windows-x64.zip"
+
                   pushd crates/ark/src
-                  zip -Xry $ARCHIVE modules
+
+                  echo "Adding R modules to macOS binary ..."
+                  zip -Xry $ARCHIVE_MAC modules
+
+                  echo "Adding R modules to Windows binary ..."
+                  zip -Xry $ARCHIVE_WINDOWS modules
+
                   popd
 
-            - name: Upload release artifact (universal)
+            - name: Upload macOS release artifact (universal)
               uses: actions/upload-release-asset@v1
               env:
                   GITHUB_TOKEN: ${{ github.token }}
@@ -264,10 +348,20 @@ jobs:
                   asset_name: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-darwin-universal.zip
                   asset_content_type: application/octet-stream
 
+            - name: Upload Windows release artifact (x64)
+              uses: actions/upload-release-asset@v1
+              env:
+                  GITHUB_TOKEN: ${{ github.token }}
+              with:
+                  upload_url: ${{ needs.create_release.outputs.upload_url }}
+                  asset_path: ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ matrix.flavor }}-windows-x64.zip
+                  asset_name: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-windows-x64.zip
+                  asset_content_type: application/octet-stream
+
     status:
         if: ${{ failure() }}
         runs-on: self-hosted
-        needs: [build_archs, get_version]
+        needs: [build_macos, build_windows, get_version]
         steps:
             - name: Notify slack if build fails
               uses: slackapi/slack-github-action@v1.24.0

@@ -4,7 +4,7 @@
 // Copyright (C) 2022 Posit Software, PBC. All rights reserved.
 //
 //
-use libR_sys::*;
+use libR_shim::*;
 
 use crate::object::RObject;
 use crate::utils::r_is_null;

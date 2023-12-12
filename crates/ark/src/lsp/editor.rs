@@ -7,7 +7,7 @@
 
 use harp::vector::CharacterVector;
 use harp::vector::Vector;
-use libR_sys::*;
+use libR_shim::*;
 use stdext::unwrap;
 use tokio::runtime::Runtime;
 use tower_lsp::lsp_types::ShowDocumentParams;

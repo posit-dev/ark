@@ -17,7 +17,7 @@ use harp::protect::RProtect;
 use harp::r_string;
 use harp::r_symbol;
 use harp::utils::r_poke_option;
-use libR_sys::*;
+use libR_shim::*;
 use stdext::local;
 use stdext::spawn;
 use stdext::unwrap;
@@ -166,8 +166,8 @@ pub unsafe fn initialize(testing: bool) -> anyhow::Result<()> {
     // look in the source tree (found via the 'CARGO_MANIFEST_DIR' environment
     // variable).
     if !root.exists() {
-        let source = format!("{}/src/modules", env!("CARGO_MANIFEST_DIR"));
-        root = Path::new(&source).to_path_buf();
+        let source = env!("CARGO_MANIFEST_DIR");
+        root = Path::new(&source).join("src").join("modules").to_path_buf();
     }
 
     // Import all module files.

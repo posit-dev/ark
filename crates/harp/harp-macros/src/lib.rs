@@ -200,7 +200,7 @@ pub fn register(_attr: TokenStream, item: TokenStream) -> TokenStream {
         fn #register() {
 
             unsafe {
-                harp::routines::add(libR_sys::R_CallMethodDef {
+                harp::routines::add(libR_shim::R_CallMethodDef {
                     name: (#name).as_ptr() as *const std::os::raw::c_char,
                     fun: Some(::std::mem::transmute(#ident as *const ())),
                     numArgs: #nargs
@@ -247,7 +247,7 @@ pub fn register(_attr: TokenStream, item: TokenStream) -> TokenStream {
     // `r_unwrap()` which takes the function body as input, ensuring that
     // it's a `Result<SEXP, _>` and guaranteeing that the expanded function
     // body does return a `SEXP` type.
-    let sexp_type: syn::ReturnType = syn::parse(quote! { -> SEXP }.into()).unwrap();
+    let sexp_type: syn::ReturnType = syn::parse(quote! { -> libR_shim::SEXP }.into()).unwrap();
     function.sig.output = sexp_type;
 
     // Put everything together

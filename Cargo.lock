@@ -239,6 +239,7 @@ dependencies = [
  "amalthea-macros",
  "anyhow",
  "async-trait",
+ "cfg-if",
  "chrono",
  "crossbeam",
  "crypto-common",
@@ -292,14 +293,16 @@ dependencies = [
 
 [[package]]
 name = "ark"
-version = "0.1.29"
+version = "0.1.33"
 dependencies = [
  "actix-web",
  "amalthea",
  "anyhow",
  "async-trait",
+ "backtrace",
  "base64",
  "bus",
+ "cfg-if",
  "chrono",
  "crossbeam",
  "ctor",
@@ -313,7 +316,7 @@ dependencies = [
  "hyper",
  "itertools",
  "lazy_static",
- "libR-sys",
+ "libR-shim",
  "libc",
  "log",
  "nix",
@@ -335,6 +338,7 @@ dependencies = [
  "url",
  "uuid",
  "walkdir",
+ "winsafe",
  "yaml-rust",
 ]
 
@@ -1194,11 +1198,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "c2rust-bitfields",
+ "cfg-if",
  "ctor",
  "harp-macros",
  "itertools",
  "lazy_static",
- "libR-sys",
+ "libR-shim",
  "libc",
  "log",
  "once_cell",
@@ -1540,6 +1545,13 @@ name = "lazycell"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "830d08ce1d1d941e6b30645f1a0eb5643013d835ce3779a5fc208261dbe10f55"
+
+[[package]]
+name = "libR-shim"
+version = "0.1.0"
+dependencies = [
+ "libR-sys",
+]
 
 [[package]]
 name = "libR-sys"
@@ -2728,7 +2740,6 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 name = "stdext"
 version = "0.1.0"
 dependencies = [
- "backtrace",
  "libc",
  "log",
 ]
@@ -3157,7 +3168,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter-r"
 version = "0.20.1"
-source = "git+https://github.com/r-lib/tree-sitter-r?branch=bugfix/update#1932eceedb43d45c4c4d006981cf75797fd490f7"
+source = "git+https://github.com/r-lib/tree-sitter-r?branch=next#2402f051a9605416f2d61eb82740fa0773c35d05"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -3562,6 +3573,12 @@ dependencies = [
  "cfg-if",
  "windows-sys 0.48.0",
 ]
+
+[[package]]
+name = "winsafe"
+version = "0.0.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "03caf2c481af7a0a06c80ffb9c18daa3b3d23bd7a41be1284d71d49c59046ba6"
 
 [[package]]
 name = "yaml-rust"
