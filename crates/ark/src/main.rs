@@ -419,7 +419,10 @@ fn main() {
         } else {
             log::error!("Panic! {loc} No contextual information.");
         }
+
+        // Give some time to flush log
         log::logger().flush();
+        std::thread::sleep(std::time::Duration::from_millis(250));
 
         old_hook(panic_info);
         std::process::abort();
