@@ -1020,10 +1020,10 @@ impl RMain {
             if let Some(orig) = &req.orig {
                 orig
             } else {
-                return Ok(RObject::from("TODO: Error: No active originator"));
+                anyhow::bail!("Error: No active originator");
             }
         } else {
-            return Ok(RObject::from("TODO: Error: No active request"));
+            anyhow::bail!("Error: No active request");
         };
 
         let request = PositronFrontendRpcRequest {
@@ -1043,16 +1043,16 @@ impl RMain {
         // Create request and block for response
         let response = response_rx.recv().unwrap();
 
-        log::trace!("Got response from frontend method '{method}'");
+        log::trace!("Got response from frontend method '{method}': {response:?}");
 
-        // TODO
         match response {
-            FrontendRpcResponse::Result(_result) => {
-                todo!("result");
-                // result.try_into().unwrap()
-            },
-            FrontendRpcResponse::Error(_error) => {
-                todo!("error");
+            FrontendRpcResponse::Result(response) => Ok(RObject::try_from(response.result)?),
+            FrontendRpcResponse::Error(response) => {
+                anyhow::bail!(
+                    "While calling method '{method}':\n\
+                     {}",
+                    response.error.message
+                );
             },
         }
     }
