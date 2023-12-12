@@ -5,13 +5,13 @@
  *
  */
 
-use serde::Deserialize;
-use serde::Serialize;
 use serde_json::json;
 use serde_json::Value;
+use serde_repr::Deserialize_repr;
+use serde_repr::Serialize_repr;
 
 /// JSON-RPC 2.0 error codes
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Copy, Clone, Debug, Serialize_repr, Deserialize_repr, PartialEq)]
 #[repr(i64)]
 pub enum JsonRpcErrorCode {
     ParseError = -32700,

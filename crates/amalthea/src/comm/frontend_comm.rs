@@ -32,7 +32,8 @@ pub struct BusyParams {
     pub busy: bool,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(untagged)]
 pub enum FrontendRpcResponse {
     Result(FrontendRpcResult),
     Error(FrontendRpcError),

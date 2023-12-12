@@ -6,6 +6,7 @@
  */
 
 use crossbeam::channel::Sender;
+use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
 use strum_macros::EnumString;
@@ -62,7 +63,7 @@ pub enum CommMsg {
     Close,
 }
 
-#[derive(Clone, Serialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct RpcRequest {
     msg_type: String,
     id: String,
@@ -89,6 +90,6 @@ impl RpcRequest {
 
 impl MessageType for RpcRequest {
     fn message_type() -> String {
-        String::from("comm_request")
+        String::from("rpc_request")
     }
 }

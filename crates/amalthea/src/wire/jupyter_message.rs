@@ -219,6 +219,10 @@ impl TryFrom<&WireMessage> for Message {
             return Ok(Message::InputRequest(JupyterMessage::try_from(msg)?));
         } else if kind == StreamOutput::message_type() {
             return Ok(Message::StreamOutput(JupyterMessage::try_from(msg)?));
+        } else if kind == RpcRequest::message_type() {
+            return Ok(Message::CommRequest(JupyterMessage::try_from(msg)?));
+        } else if kind == FrontendRpcResponse::message_type() {
+            return Ok(Message::CommReply(JupyterMessage::try_from(msg)?));
         }
         return Err(Error::UnknownMessageType(kind));
     }
