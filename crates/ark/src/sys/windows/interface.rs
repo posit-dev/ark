@@ -10,10 +10,13 @@ use std::ffi::CStr;
 use std::ffi::CString;
 use std::mem::MaybeUninit;
 
+use harp::r_version::r_version;
 use libR_shim::run_Rmainloop;
 use libR_shim::setup_Rmainloop;
 use libR_shim::R_HomeDir;
 use libR_shim::R_SignalHandlers;
+use libloading::Symbol;
+use semver::Version;
 use stdext::cargs;
 
 use crate::interface::r_busy;
@@ -52,13 +55,7 @@ pub fn setup_r(mut _args: Vec<*mut c_char>) {
         let mut params_struct = MaybeUninit::uninit();
         let params: interface_types::Rstart = params_struct.as_mut_ptr();
 
-        // TODO: Windows
-        // We eventually need to use `RSTART_VERSION` (i.e., 1). It might just
-        // work as is but will require a little testing. It sets and initializes
-        // some additional useful callbacks, but is only available in newer R
-        // versions.
-        // R_DefParamsEx(params, bindings::RSTART_VERSION as i32);
-        R_DefParamsEx(params, 0);
+        define_parameters(params);
 
         (*params).R_Interactive = 1;
         (*params).CharacterMode = interface_types::UImode_RGui;
@@ -156,6 +153,41 @@ fn get_user_home() -> String {
     path.to_string()
 }
 
+/// On R >= 4.2.0, we want to use `R_DefParamsEx()` as this
+/// is recommended by R and allows us to set more hooks on
+/// Windows. However, this doesn't exist on older versions
+/// of R, so we have to load it in dynamically. Because
+/// `interface_types::Rstart` is a Windows specific type,
+/// it makes adding it to `RDynamicSymbols` complicated,
+/// so we load it in with a raw call to `load_symbol()`.
+#[allow(non_snake_case)]
+#[allow(non_camel_case_types)]
+fn define_parameters(params: interface_types::Rstart) {
+    let version = r_version();
+    const VERSION_4_2_0: Version = Version::new(4, 2, 0);
+
+    if version < &VERSION_4_2_0 {
+        unsafe { R_DefParams(params) };
+        return;
+    }
+
+    type R_DefParamsEx_t = unsafe extern "C" fn(Rp: interface_types::Rstart, RstartVersion: i32);
+
+    let Ok(R_DefParamsEx): Result<Symbol<R_DefParamsEx_t>, libloading::Error> =
+        harp::dynamic::load_symbol(b"R_DefParamsEx\0")
+    else {
+        panic!("Failed to dynamically load `R_DefParamsEx()`.");
+    };
+
+    // TODO: Windows
+    // We eventually need to use `RSTART_VERSION` (i.e., 1). It might just
+    // work as is but will require a little testing. It sets and initializes
+    // some additional useful callbacks, but is only available in newer R
+    // versions.
+    // R_DefParamsEx(params, bindings::RSTART_VERSION as i32);
+    unsafe { R_DefParamsEx(params, 0) };
+}
+
 #[no_mangle]
 extern "C" fn r_callback() {
     // Do nothing!
@@ -166,8 +198,7 @@ extern "C" {
 
     fn readconsolecfg();
 
-    fn R_DefParamsEx(Rp: interface_types::Rstart, RstartVersion: i32);
-
+    fn R_DefParams(Rp: interface_types::Rstart);
     fn R_SetParams(Rp: interface_types::Rstart);
 
     /// Get user home directory

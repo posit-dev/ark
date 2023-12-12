@@ -40,6 +40,18 @@ static R_DYNAMIC_LIBRARY: Lazy<Library> = Lazy::new(|| unsafe {
     }
 });
 
+/// Raw access to load symbols from `R_DYNAMIC_LIBRARY`
+///
+/// If possible, prefer loading symbols into `RDynamicSymbols` and using them from
+/// there. That is much safer, and ensures that they are only loaded once.
+///
+/// However, in some cases architecture specific functions are required which
+/// would complicate the structure of `RDynamicSymbols`. In that case, you can
+/// use this to load the symbol directly, such as with `R_DefParamsEx()`.
+pub fn load_symbol<'lib, T>(name: &[u8]) -> Result<Symbol<'lib, T>, libloading::Error> {
+    unsafe { R_DYNAMIC_LIBRARY.get(name) }
+}
+
 /// A global instance of the struct that contains the dynamic function pointers
 /// that we use throughout ark
 ///
