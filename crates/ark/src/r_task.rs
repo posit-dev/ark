@@ -79,16 +79,31 @@ where
         let closure: Box<dyn FnOnce() + 'env + Send> = Box::new(closure);
         let closure: Box<dyn FnOnce() + Send + 'static> = unsafe { std::mem::transmute(closure) };
 
+        // Channel to communicate that the timeout clock should be started
+        let (timeout_tx, timeout_rx) = bounded::<()>(0);
+
         // Channel to communicate completion status of the task/closure
         let (status_tx, status_rx) = bounded::<harp::error::Result<()>>(0);
 
         // Send the task to the R thread
         let task = RTaskMain {
             closure: Some(closure),
+            timeout_tx: Some(timeout_tx),
             status_tx: Some(status_tx),
         };
         get_tasks_tx().send(task).unwrap();
 
+        // Block until we get the signal that the task has begun running
+        if let Err(err) = timeout_rx.recv() {
+            let trace = std::backtrace::Backtrace::capture();
+            panic!(
+                "Task never started: {err:?}\n\
+                 Backtrace of calling thread:\n\n
+                 {trace}"
+            );
+        }
+
+        // Now that we know the task has started, set up the timeout
         let timeout = std::time::Duration::from_secs(5);
 
         // Block until task was completed or timed out
@@ -155,6 +170,7 @@ where
     // Send the async task to the R thread
     let task = RTaskMain {
         closure: Some(closure),
+        timeout_tx: None,
         status_tx: None,
     };
     get_tasks_tx().send(task).unwrap();
@@ -165,11 +181,19 @@ where
 
 pub struct RTaskMain {
     pub closure: Option<Box<dyn FnOnce() + Send + 'static>>,
+    pub timeout_tx: Option<Sender<()>>,
     pub status_tx: Option<Sender<harp::error::Result<()>>>,
 }
 
 impl RTaskMain {
     pub fn fulfill(&mut self) {
+        // Immediately let caller know we have started so it can set up the
+        // timeout
+        match &self.timeout_tx {
+            Some(timeout_tx) => timeout_tx.send(()).unwrap(),
+            None => (),
+        };
+
         // Move closure here and call it
         let closure = self.closure.take().unwrap();
         let result = r_sandbox(closure);
