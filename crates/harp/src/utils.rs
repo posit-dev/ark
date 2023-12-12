@@ -16,9 +16,9 @@ use itertools::Itertools;
 use libR_shim::*;
 use once_cell::sync::Lazy;
 use regex::Regex;
-use semver::Version;
 use stdext::unwrap;
 
+use crate::dynamic::RDynamicSymbols;
 use crate::environment::Environment;
 use crate::environment::R_ENVS;
 use crate::error::Error;
@@ -33,7 +33,6 @@ use crate::protect::RProtect;
 use crate::r_char;
 use crate::r_lang;
 use crate::r_symbol;
-use crate::r_version::r_version;
 use crate::string::r_is_string;
 use crate::symbol::RSymbol;
 use crate::vector::CharacterVector;
@@ -490,27 +489,29 @@ pub unsafe fn r_promise_is_lazy_load_binding(x: SEXP) -> bool {
     expr == r_symbol!("lazyLoadDBfetch")
 }
 
+#[allow(non_snake_case)]
 pub unsafe fn r_env_has(env: SEXP, sym: SEXP) -> bool {
-    const R_4_2_0: Version = Version::new(4, 2, 0);
+    let Some(R_existsVarInFrame) = RDynamicSymbols::get_R_existsVarInFrame() else {
+        return r_env_has_fallback(env, sym);
+    };
+    R_existsVarInFrame(env, sym) == Rboolean_TRUE
+}
 
-    if r_version() >= &R_4_2_0 {
-        R_existsVarInFrame(env, sym) == Rboolean_TRUE
-    } else {
-        // Not particularly fast, but seems to be good enough for checking symbol
-        // existance during completion generation
-        let mut protect = RProtect::new();
-        let name = protect.add(PRINTNAME(sym));
-        let name = protect.add(Rf_ScalarString(name));
-        let call = protect.add(r_lang!(
-            r_symbol!("exists"),
-            x = name,
-            envir = env,
-            inherits = false
-        ));
-        let out = Rf_eval(call, R_BaseEnv);
-        // `exists()` is guaranteed to return a logical vector on success
-        LOGICAL_ELT(out, 0) != 0
-    }
+unsafe fn r_env_has_fallback(env: SEXP, sym: SEXP) -> bool {
+    // Not particularly fast, but seems to be good enough for checking symbol
+    // existance during completion generation
+    let mut protect = RProtect::new();
+    let name = protect.add(PRINTNAME(sym));
+    let name = protect.add(Rf_ScalarString(name));
+    let call = protect.add(r_lang!(
+        r_symbol!("exists"),
+        x = name,
+        envir = env,
+        inherits = false
+    ));
+    let out = Rf_eval(call, R_BaseEnv);
+    // `exists()` is guaranteed to return a logical vector on success
+    LOGICAL_ELT(out, 0) != 0
 }
 
 pub unsafe fn r_env_binding_is_active(env: SEXP, sym: SEXP) -> bool {

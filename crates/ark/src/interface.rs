@@ -160,13 +160,14 @@ pub fn start_r(
     crate::sys::interface::setup_r(args);
 
     unsafe {
+        // Initialize harp.
+        harp::initialize();
+
         // Optionally run a user specified R startup script
+        // (Uses harp utilities, so should be after harp is initialized)
         if let Some(file) = &startup_file {
             r_source(file).or_log_error(&format!("Failed to source startup file '{file}' due to"));
         }
-
-        // Initialize harp.
-        harp::initialize();
 
         // Register embedded routines
         r_register_routines();
@@ -389,8 +390,7 @@ impl RMain {
     }
 
     pub fn on_main_thread() -> bool {
-        let thread = std::thread::current();
-        thread.id() == unsafe { R_MAIN_THREAD_ID.unwrap() }
+        harp::on_main_thread()
     }
 
     /// Completes the kernel's initialization

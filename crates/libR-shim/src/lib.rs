@@ -43,7 +43,6 @@ pub use libR_sys::R_altrep_data1;
 pub use libR_sys::R_altrep_data2;
 pub use libR_sys::R_curErrorBuf;
 pub use libR_sys::R_do_slot;
-pub use libR_sys::R_existsVarInFrame;
 pub use libR_sys::R_getEmbeddingDllInfo;
 pub use libR_sys::R_lsInternal;
 pub use libR_sys::R_registerRoutines;

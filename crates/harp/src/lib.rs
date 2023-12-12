@@ -5,6 +5,7 @@
 //
 //
 pub mod call;
+pub mod dynamic;
 pub mod environment;
 pub mod error;
 pub mod eval;
@@ -45,6 +46,11 @@ pub fn initialize() {
 // R starts up. Don't change its value. Since it's effectively read-only it
 // doesn't need synchronisation.
 pub static mut R_MAIN_THREAD_ID: Option<std::thread::ThreadId> = None;
+
+pub fn on_main_thread() -> bool {
+    let thread = std::thread::current();
+    thread.id() == unsafe { R_MAIN_THREAD_ID.unwrap() }
+}
 
 #[macro_export]
 macro_rules! with_vector_impl {
