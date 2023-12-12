@@ -39,7 +39,7 @@ pub enum FrontendRpcResponse {
 }
 
 // FIXME
-impl crate::wire::jupyter_message::MessageType for JsonRpcResponse {
+impl crate::wire::jupyter_message::MessageType for FrontendRpcResponse {
     fn message_type() -> String {
         String::from("rpc_reply")
     }

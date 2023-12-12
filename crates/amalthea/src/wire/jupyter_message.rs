@@ -11,7 +11,7 @@ use serde::Serialize;
 use super::client_event::ClientEvent;
 use super::stream::StreamOutput;
 use crate::comm::comm_channel::RpcRequest;
-use crate::comm::frontend_comm::JsonRpcResponse;
+use crate::comm::frontend_comm::FrontendRpcResponse;
 use crate::error::Error;
 use crate::session::Session;
 use crate::socket::socket::Socket;
@@ -101,7 +101,7 @@ pub enum Message {
     CommOpen(JupyterMessage<CommOpen>),
     CommMsg(JupyterMessage<CommWireMsg>),
     CommRequest(JupyterMessage<RpcRequest>),
-    CommReply(JupyterMessage<JsonRpcResponse>),
+    CommReply(JupyterMessage<FrontendRpcResponse>),
     CommClose(JupyterMessage<CommClose>),
     ClientEvent(JupyterMessage<ClientEvent>),
     StreamOutput(JupyterMessage<StreamOutput>),

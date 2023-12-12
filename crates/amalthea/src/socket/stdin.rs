@@ -20,10 +20,16 @@ use crate::wire::input_request::ShellInputRequest;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
 use crate::wire::jupyter_message::OutboundMessage;
+use crate::wire::originator::Originator;
 
 pub enum StdInRequest {
     InputRequest(ShellInputRequest),
-    CommRequest(Sender<FrontendRpcResponse>, RpcRequest),
+    CommRequest(Originator, Sender<FrontendRpcResponse>, RpcRequest),
+}
+
+enum StdInReplySender {
+    Input(Sender<InputReply>),
+    Comm(Sender<FrontendRpcResponse>),
 }
 
 pub struct Stdin {
@@ -103,10 +109,10 @@ impl Stdin {
                     ));
                     (req, StdInReplySender::Input(input_reply_tx.clone()))
                 },
-                StdInRequest::CommRequest(response_tx, req) => {
+                StdInRequest::CommRequest(orig, response_tx, req) => {
                     // This is a request from to the frontend
                     let req = Message::CommRequest(JupyterMessage::create_with_identity(
-                        None,
+                        Some(orig),
                         req,
                         &self.session,
                     ));

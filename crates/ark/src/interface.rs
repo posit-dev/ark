@@ -1014,7 +1014,20 @@ impl RMain {
         log::trace!("Calling frontend method '{method}'");
         let (response_tx, response_rx) = bounded(1);
 
+        // NOTE: Probably simpler to share the originator through a mutex
+        // than pass it around
+        let orig = if let Some(req) = &self.active_request {
+            if let Some(orig) = &req.orig {
+                orig
+            } else {
+                return Ok(RObject::from("TODO: Error: No active originator"));
+            }
+        } else {
+            return Ok(RObject::from("TODO: Error: No active request"));
+        };
+
         let request = PositronFrontendRpcRequest {
+            orig: orig.clone(),
             response_tx,
             request: FrontendRpcRequest {
                 method: method.clone(),
