@@ -16,7 +16,6 @@ pub struct PlotResult {
 
 	/// The MIME type of the plot data
 	pub mime_type: String,
-
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
@@ -29,11 +28,6 @@ pub struct RenderParams {
 
 	/// The pixel ratio of the display device
 	pub pixel_ratio: f64,
-
-}
-
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
-pub struct UpdateParams {
 }
 
 /**
@@ -42,8 +36,10 @@ pub struct UpdateParams {
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params")]
 pub enum PlotRpcRequest {
-	/// Render a plot: Requests a plot to be rendered at a given height and
-	/// width. The plot data is returned in a base64-encoded string.
+	/// Render a plot
+	///
+	/// Requests a plot to be rendered at a given height and width. The plot
+	/// data is returned in a base64-encoded string.
 	#[serde(rename = "render")]
 	Render(RenderParams),
 }

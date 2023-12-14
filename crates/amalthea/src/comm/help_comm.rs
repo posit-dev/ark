@@ -13,7 +13,6 @@ use serde::Serialize;
 pub struct ShowHelpTopicParams {
 	/// The help topic to show
 	pub topic: String,
-
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
@@ -26,7 +25,6 @@ pub struct ShowHelpParams {
 
 	/// Whether to focus the Help pane when the content is displayed.
 	pub focus: bool,
-
 }
 
 /**
@@ -35,10 +33,12 @@ pub struct ShowHelpParams {
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params")]
 pub enum HelpRpcRequest {
-	/// Look for and, if found, show a help topic.: Requests that the help
-	/// backend look for a help topic and, if found, show it. If the topic is
-	/// found, it will be shown via a Show Help notification. If the topic is
-	/// not found, no notification will be delivered.
+	/// Look for and, if found, show a help topic.
+	///
+	/// Requests that the help backend look for a help topic and, if found,
+	/// show it. If the topic is found, it will be shown via a Show Help
+	/// notification. If the topic is not found, no notification will be
+	/// delivered.
 	#[serde(rename = "show_help_topic")]
 	ShowHelpTopic(ShowHelpTopicParams),
 }
