@@ -9,19 +9,34 @@
 use serde::Deserialize;
 use serde::Serialize;
 
+/// Possible values for the Kind parameter of the ShowHelp method.
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
+pub enum ShowHelpKind {
+	#[serde(rename = "html")]
+	Html,
+
+	#[serde(rename = "markdown")]
+	Markdown,
+
+	#[serde(rename = "url")]
+	Url
+}
+
+/// Parameters for the ShowHelpTopic method.
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct ShowHelpTopicParams {
 	/// The help topic to show
 	pub topic: String,
 }
 
+/// Parameters for the ShowHelp method.
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct ShowHelpParams {
 	/// The help content to show
 	pub content: String,
 
 	/// The type of content to show
-	pub kind: String,
+	pub kind: ShowHelpKind,
 
 	/// Whether to focus the Help pane when the content is displayed.
 	pub focus: bool,

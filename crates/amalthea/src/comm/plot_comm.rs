@@ -18,6 +18,7 @@ pub struct PlotResult {
 	pub mime_type: String,
 }
 
+/// Parameters for the Render method.
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct RenderParams {
 	/// The requested plot height, in pixels

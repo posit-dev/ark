@@ -11,6 +11,7 @@ use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::help_comm::HelpEvent;
 use amalthea::comm::help_comm::HelpRpcReply;
 use amalthea::comm::help_comm::HelpRpcRequest;
+use amalthea::comm::help_comm::ShowHelpKind;
 use amalthea::comm::help_comm::ShowHelpParams;
 use amalthea::socket::comm::CommSocket;
 use anyhow::Result;
@@ -257,7 +258,7 @@ impl RHelp {
         let url = url.replace(prefix.as_str(), replacement.as_str());
         let msg = HelpEvent::ShowHelp(ShowHelpParams {
             content: url,
-            kind: String::from("url"),
+            kind: ShowHelpKind::Url,
             focus: true,
         });
         let json = serde_json::to_value(msg)?;
