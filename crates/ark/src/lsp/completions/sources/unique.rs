@@ -11,6 +11,7 @@ mod custom;
 mod extractor;
 mod file_path;
 mod namespace;
+mod string;
 
 use anyhow::Result;
 use colon::completions_from_single_colon;
@@ -18,8 +19,8 @@ use comment::completions_from_comment;
 use custom::completions_from_custom_source;
 use extractor::completions_from_at;
 use extractor::completions_from_dollar;
-use file_path::completions_from_file_path;
 use namespace::completions_from_namespace;
+use string::completions_from_string;
 use tower_lsp::lsp_types::CompletionItem;
 
 use crate::lsp::document_context::DocumentContext;
@@ -40,8 +41,8 @@ pub fn completions_from_unique_sources(
         return Ok(Some(completions));
     }
 
-    // Try file completions
-    if let Some(completions) = completions_from_file_path(context)? {
+    // Try string (like file path) completions
+    if let Some(completions) = completions_from_string(context)? {
         return Ok(Some(completions));
     }
 
