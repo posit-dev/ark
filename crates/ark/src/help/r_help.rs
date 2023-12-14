@@ -203,16 +203,15 @@ impl RHelp {
             HelpRpcRequest::ShowHelpTopic(topic) => {
                 // Look up the help topic and attempt to show it; this returns a
                 // boolean indicating whether the topic was found.
-                let _found = match self.show_help_topic(topic.topic.clone()) {
+                let found = match self.show_help_topic(topic.topic.clone()) {
                     Ok(found) => found,
                     Err(err) => {
-                        error!("Error looking up help topic {}: {:?}", topic.topic, err);
-                        false
+                        return Err(err);
                     },
                 };
 
                 // Create and send a reply to the front end.
-                let reply = HelpRpcReply::ShowHelpTopicReply(true);
+                let reply = HelpRpcReply::ShowHelpTopicReply(found);
                 let json = serde_json::to_value(reply)?;
                 self.comm.outgoing_tx.send(CommMsg::Rpc(id, json))?;
                 Ok(())
