@@ -439,7 +439,7 @@ impl From<Vec<String>> for RObject {
                     values[idx].len() as i32,
                     cetype_t_CE_UTF8,
                 );
-                SET_STRING_ELT(vector.sexp, (idx + 1) as isize, value_str);
+                SET_STRING_ELT(vector.sexp, idx as isize, value_str);
             }
             return vector;
         }
