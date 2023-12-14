@@ -79,8 +79,8 @@ where
         let closure: Box<dyn FnOnce() + 'env + Send> = Box::new(closure);
         let closure: Box<dyn FnOnce() + Send + 'static> = unsafe { std::mem::transmute(closure) };
 
-        // Channel to communicate completion status of the task/closure
-        let (status_tx, status_rx) = bounded::<harp::error::Result<()>>(0);
+        // Channel to communicate status of the task/closure
+        let (status_tx, status_rx) = bounded::<RTaskStatus>(0);
 
         // Send the task to the R thread
         let task = RTaskMain {
@@ -89,6 +89,19 @@ where
         };
         get_tasks_tx().send(task).unwrap();
 
+        // Block until we get the signal that the task has started
+        let status = status_rx.recv().unwrap();
+
+        let RTaskStatus::Started = status else {
+            let trace = std::backtrace::Backtrace::capture();
+            panic!(
+                "Task `status` value must be `Started`: {status:?}\n\
+                 Backtrace of calling thread:\n\n
+                 {trace}"
+            );
+        };
+
+        // Now that we know the task has started, set up the timeout
         let timeout = std::time::Duration::from_secs(5);
 
         // Block until task was completed or timed out
@@ -100,6 +113,15 @@ where
                         Backtrace of calling thread:\n\n\
                         {trace}");
             },
+        };
+
+        let RTaskStatus::Finished(status) = status else {
+            let trace = std::backtrace::Backtrace::capture();
+            panic!(
+                "Task `status` value must be `Finished`: {status:?}\n\
+                 Backtrace of calling thread:\n\n
+                 {trace}"
+            );
         };
 
         // If the task failed send a backtrace of the current thread to the
@@ -163,13 +185,25 @@ where
     log::info!("Thread '{thread_name}' ({thread_id:?}) has sent the async task.");
 }
 
+#[derive(Debug)]
+pub enum RTaskStatus {
+    Started,
+    Finished(harp::error::Result<()>),
+}
+
 pub struct RTaskMain {
     pub closure: Option<Box<dyn FnOnce() + Send + 'static>>,
-    pub status_tx: Option<Sender<harp::error::Result<()>>>,
+    pub status_tx: Option<Sender<RTaskStatus>>,
 }
 
 impl RTaskMain {
     pub fn fulfill(&mut self) {
+        // Immediately let caller know we have started so it can set up the
+        // timeout
+        if let Some(status_tx) = &self.status_tx {
+            status_tx.send(RTaskStatus::Started).unwrap();
+        }
+
         // Move closure here and call it
         let closure = self.closure.take().unwrap();
         let result = r_sandbox(closure);
@@ -178,7 +212,7 @@ impl RTaskMain {
             Some(status_tx) => {
                 // Unblock caller via the notification channel if it was a
                 // blocking call. Failures are handled by the caller.
-                status_tx.send(result.map(|_| ())).unwrap()
+                status_tx.send(RTaskStatus::Finished(result)).unwrap()
             },
             None => {
                 // If task is async panic immediately in case of failure
