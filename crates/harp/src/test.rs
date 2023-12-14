@@ -80,7 +80,7 @@ pub fn r_test<F: FnOnce()>(f: F) {
     let guard = unsafe { R_RUNTIME_LOCK.lock() };
 
     if let Err(err) = r_sandbox(f) {
-        log::error!("While running test: {err:?}");
+        panic!("While running test: {err:?}");
     }
 
     drop(guard);
