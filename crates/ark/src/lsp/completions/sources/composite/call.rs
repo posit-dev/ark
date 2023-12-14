@@ -12,6 +12,7 @@ use harp::eval::RParseEvalOptions;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
+use harp::utils::r_is_function;
 use tower_lsp::lsp_types::CompletionItem;
 use tree_sitter::Node;
 
@@ -99,9 +100,7 @@ pub(super) fn completions_from_call(
         },
     };
 
-    let completions = completions_from_arguments(context, &callee, object)?;
-
-    Ok(Some(completions))
+    completions_from_arguments(context, &callee, object)
 }
 
 fn get_first_argument(context: &DocumentContext, node: &Node) -> Result<Option<RObject>> {
@@ -164,50 +163,71 @@ fn completions_from_arguments(
     context: &DocumentContext,
     callable: &str,
     object: RObject,
-) -> Result<Vec<CompletionItem>> {
+) -> Result<Option<Vec<CompletionItem>>> {
     log::info!("completions_from_arguments({callable:?})");
+
+    // Try looking up session function first, as the "current state of the world"
+    // will provide the most accurate completions
+    if let Some(completions) = completions_from_session_arguments(context, callable, object)? {
+        return Ok(Some(completions));
+    }
+
+    if let Some(completions) = completions_from_workspace_arguments(context, callable)? {
+        return Ok(Some(completions));
+    }
+
+    Ok(None)
+}
+
+fn completions_from_session_arguments(
+    context: &DocumentContext,
+    callable: &str,
+    object: RObject,
+) -> Result<Option<Vec<CompletionItem>>> {
+    log::info!("completions_from_session_arguments({callable:?})");
 
     let mut completions = vec![];
 
-    // Check for a function defined in the workspace that can provide parameters.
-    if let Some((_path, entry)) = indexer::find(callable) {
-        match entry.data {
-            indexer::IndexEntryData::Function {
-                ref name,
-                ref arguments,
-            } => {
-                for argument in arguments {
-                    match completion_item_from_parameter(argument, name, &context.point) {
-                        Ok(item) => completions.push(item),
-                        Err(err) => log::error!("{err:?}"),
-                    }
-                }
-            },
-            indexer::IndexEntryData::Section { level: _, title: _ } => {
-                // nothing to do
-            },
-        }
+    // Try to retrieve completion names from the object itself.
+    // If we can find it, this is the most accurate way to provide completions,
+    // as it represents the current state of the world and adds completions
+    // for S3 methods based on `object`.
+    let r_callable = r_parse_eval(callable, RParseEvalOptions {
+        forbid_function_calls: true,
+        ..Default::default()
+    });
+
+    let r_callable = match r_callable {
+        Ok(r_callable) => r_callable,
+        Err(err) => match err {
+            // LHS of the call was too complex to evaluate.
+            harp::error::Error::UnsafeEvaluationError(_) => return Ok(None),
+            // LHS of the call evaluated to an error. Totally possible if the
+            // user is writing pseudocode or if they haven't loaded the
+            // package they are working on. Don't want to propagate an error here.
+            _ => return Ok(None),
+        },
+    };
+
+    if !r_is_function(r_callable.sexp) {
+        // Found the `callable` but it isn't a function in the current state
+        // of the world, return an empty completion set.
+        return Ok(Some(completions));
     }
 
-    unsafe {
-        // Otherwise, try to retrieve completion names from the object itself.
-        let r_callable = r_parse_eval(callable, RParseEvalOptions {
-            forbid_function_calls: true,
-            ..Default::default()
-        })?;
-
-        let strings = RFunction::from(".ps.completions.formalNames")
+    let strings = unsafe {
+        RFunction::from(".ps.completions.formalNames")
             .add(r_callable)
             .add(object)
             .call()?
-            .to::<Vec<String>>()?;
+            .to::<Vec<String>>()?
+    };
 
-        // Return the names of these formals.
-        for string in strings.iter() {
-            match completion_item_from_parameter(string, callable, &context.point) {
-                Ok(item) => completions.push(item),
-                Err(err) => log::error!("{err:?}"),
-            }
+    // Return the names of these formals.
+    for string in strings.iter() {
+        match completion_item_from_parameter(string, callable, &context.point) {
+            Ok(item) => completions.push(item),
+            Err(err) => log::error!("{err:?}"),
         }
     }
 
@@ -216,11 +236,55 @@ fn completions_from_arguments(
     // underlying function.
     set_sort_text_by_first_appearance(&mut completions);
 
-    Ok(completions)
+    Ok(Some(completions))
+}
+
+fn completions_from_workspace_arguments(
+    context: &DocumentContext,
+    callable: &str,
+) -> Result<Option<Vec<CompletionItem>>> {
+    log::info!("completions_from_workspace_arguments({callable:?})");
+
+    // Try to find the `callable` in the workspace and use its arguments
+    // if we can
+    let Some((_path, entry)) = indexer::find(callable) else {
+        // Didn't find any workspace object with this name
+        return Ok(None);
+    };
+
+    let mut completions = vec![];
+
+    match entry.data {
+        indexer::IndexEntryData::Function { name, arguments } => {
+            for argument in arguments {
+                match completion_item_from_parameter(
+                    argument.as_str(),
+                    name.as_str(),
+                    &context.point,
+                ) {
+                    Ok(item) => completions.push(item),
+                    Err(err) => log::error!("{err:?}"),
+                }
+            }
+        },
+        indexer::IndexEntryData::Section { level: _, title: _ } => {
+            // Not a function
+            return Ok(None);
+        },
+    }
+
+    // Only 1 call worth of arguments are added to the completion set.
+    // We add a custom sort order to order them based on their position in the
+    // underlying function.
+    set_sort_text_by_first_appearance(&mut completions);
+
+    Ok(Some(completions))
 }
 
 #[cfg(test)]
 mod tests {
+    use harp::eval::r_parse_eval;
+    use harp::eval::RParseEvalOptions;
     use tree_sitter::Point;
 
     use crate::lsp::completions::sources::composite::call::completions_from_call;
@@ -253,6 +317,83 @@ mod tests {
             assert_eq!(completions.len(), 4);
             assert_eq!(completions.get(0).unwrap().label, "x = ");
             assert_eq!(completions.get(1).unwrap().label, "table = ");
+        })
+    }
+
+    #[test]
+    fn test_session_arguments() {
+        // Can't find the function
+        r_test(|| {
+            // Place cursor between `()`
+            let point = Point { row: 0, column: 21 };
+            let document = Document::new("not_a_known_function()");
+            let context = DocumentContext::new(&document, point, None);
+            let completions = completions_from_call(&context, None).unwrap();
+            assert!(completions.is_none());
+        });
+
+        // Basic session argument lookup
+        r_test(|| {
+            let options = RParseEvalOptions {
+                forbid_function_calls: false,
+                ..Default::default()
+            };
+
+            // Set up a function with arguments in the session
+            r_parse_eval("my_fun <- function(y, x) x + y", options.clone()).unwrap();
+
+            // Place cursor between `()`
+            let point = Point { row: 0, column: 7 };
+            let document = Document::new("my_fun()");
+            let context = DocumentContext::new(&document, point, None);
+            let completions = completions_from_call(&context, None).unwrap().unwrap();
+
+            assert_eq!(completions.len(), 2);
+
+            // Retains positional ordering
+            let completion = completions.get(0).unwrap();
+            assert_eq!(completion.label, "y = ");
+
+            let completion = completions.get(1).unwrap();
+            assert_eq!(completion.label, "x = ");
+
+            // Place just before the `()`
+            let point = Point { row: 0, column: 6 };
+            let document = Document::new("my_fun()");
+            let context = DocumentContext::new(&document, point, None);
+            let completions = completions_from_call(&context, None).unwrap();
+            assert!(completions.is_none());
+
+            // Place just after the `()`
+            let point = Point { row: 0, column: 8 };
+            let document = Document::new("my_fun()");
+            let context = DocumentContext::new(&document, point, None);
+            let completions = completions_from_call(&context, None).unwrap();
+            assert!(completions.is_none());
+
+            // Clean up
+            r_parse_eval("my_fun <- NULL", options.clone()).unwrap();
+        });
+
+        // Case where the session object isn't a function
+        r_test(|| {
+            let options = RParseEvalOptions {
+                forbid_function_calls: false,
+                ..Default::default()
+            };
+
+            // Set up an object in the session
+            r_parse_eval("my_fun <- 1", options.clone()).unwrap();
+
+            // Place cursor between `()`
+            let point = Point { row: 0, column: 7 };
+            let document = Document::new("my_fun()");
+            let context = DocumentContext::new(&document, point, None);
+            let completions = completions_from_call(&context, None).unwrap().unwrap();
+            assert_eq!(completions.len(), 0);
+
+            // Clean up
+            r_parse_eval("my_fun <- NULL", options.clone()).unwrap();
         })
     }
 }

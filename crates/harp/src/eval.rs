@@ -14,6 +14,7 @@ use crate::exec::geterrmessage;
 use crate::exec::r_parse_exprs;
 use crate::object::RObject;
 
+#[derive(Clone)]
 pub struct RParseEvalOptions {
     pub forbid_function_calls: bool,
     pub env: RObject,
