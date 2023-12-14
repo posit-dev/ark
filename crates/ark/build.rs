@@ -5,7 +5,9 @@
 //
 //
 
+use std::path::Path;
 use std::process::Command;
+extern crate embed_resource;
 
 fn main() {
     // Attempt to use `git rev-parse HEAD` to get the current git hash. If this
@@ -32,4 +34,11 @@ fn main() {
     // Get the build date as a string
     let build_date = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
     println!("cargo:rustc-env=BUILD_DATE={}", build_date);
+
+    // Embed an Application Manifest file on Windows.
+    // Documented to do nothing on non-Windows.
+    let resource = Path::new("resources")
+        .join("manifest")
+        .join("ark-manifest.rc");
+    embed_resource::compile(resource, embed_resource::NONE);
 }
