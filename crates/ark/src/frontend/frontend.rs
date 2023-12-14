@@ -5,13 +5,13 @@
 //
 //
 
+use amalthea::comm::base_comm::JsonRpcErrorCode;
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::frontend_comm::FrontendMessage;
 use amalthea::comm::frontend_comm::FrontendRpcError;
 use amalthea::comm::frontend_comm::FrontendRpcErrorData;
 use amalthea::comm::frontend_comm::FrontendRpcRequest;
 use amalthea::comm::frontend_comm::FrontendRpcResult;
-use amalthea::comm::frontend_comm::JsonRpcErrorCode;
 use amalthea::events::PositronEvent;
 use amalthea::socket::comm::CommSocket;
 use amalthea::wire::client_event::ClientEvent;
