@@ -90,14 +90,7 @@ where
         get_tasks_tx().send(task).unwrap();
 
         // Block until we get the signal that the task has started
-        let Ok(status) = status_rx.recv() else {
-            let trace = std::backtrace::Backtrace::capture();
-            panic!(
-                "Task never started.\n\
-                 Backtrace of calling thread:\n\n
-                 {trace}"
-            );
-        };
+        let status = status_rx.recv().unwrap();
 
         let RTaskStatus::Started = status else {
             let trace = std::backtrace::Backtrace::capture();
