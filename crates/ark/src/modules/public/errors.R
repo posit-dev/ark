@@ -64,22 +64,13 @@
 
     msg <- conditionMessage(cnd)
 
-    # Add trailing newline if there isn't one, including for the length 0
-    # case. See https://github.com/posit-dev/positron/issues/1878.
-    #
-    # This is to accomodate base message which may or may not have an
-    # explicit trailing newline, see the `appendLF` argument of
-    # `message()`. Because other message emitters might conform to the
-    # behaviour of `warning()` and `stop()` which never add newlines, we
-    # have to account for both possibility.
-    #
-    # Because of this we lose support for constructing messages within a
-    # single line piece by piece with `message(appendLF = FALSE)`, but
-    # that's an esoteric feature. If this is reported, we could do more
-    # specialised behaviour depending on whether the message condition is
-    # inherits from `"simpleMessage"` or not.
-    n <- nchar(msg)
-    if (substr(msg, n, n) != "\n") {
+    if (inherits(cnd, "rlang_message")) {
+        # Special-case for rlang messages which use the implicit trailing
+        # line feed approach of warnings and messages. See
+        # https://github.com/posit-dev/positron/issues/1878 for context and
+        # https://github.com/r-lib/rlang/issues/1677 for a discussion about
+        # making rlang messages consistent with base messages rather than
+        # warnings and errors.
         msg <- paste0(msg, "\n")
     }
 
