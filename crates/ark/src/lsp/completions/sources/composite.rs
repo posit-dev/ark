@@ -10,6 +10,7 @@ mod document;
 mod keyword;
 mod pipe;
 mod search_path;
+mod snippets;
 mod subset;
 mod workspace;
 
@@ -22,6 +23,7 @@ use keyword::completions_from_keywords;
 use pipe::completions_from_pipe;
 use pipe::find_pipe_root;
 use search_path::completions_from_search_path;
+use snippets::completions_from_snippets;
 use stdext::*;
 use subset::completions_from_subset;
 use tower_lsp::lsp_types::CompletionItem;
@@ -63,6 +65,7 @@ pub fn completions_from_composite_sources(
     // anything.
     if context.node.kind() == "identifier" {
         completions.append(&mut completions_from_keywords());
+        completions.append(&mut completions_from_snippets());
         completions.append(&mut completions_from_search_path(context)?);
 
         if let Some(mut additional_completions) = completions_from_document(context)? {
