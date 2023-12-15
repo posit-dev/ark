@@ -66,7 +66,7 @@
 
     if (inherits(cnd, "rlang_message")) {
         # Special-case for rlang messages which use the implicit trailing
-        # line feed approach of warnings and messages. See
+        # line feed approach of warnings and errors. See
         # https://github.com/posit-dev/positron/issues/1878 for context and
         # https://github.com/r-lib/rlang/issues/1677 for a discussion about
         # making rlang messages consistent with base messages rather than
