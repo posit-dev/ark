@@ -6,14 +6,16 @@
 //
 
 use std::collections::HashMap;
-use std::mem::MaybeUninit;
 use std::sync::Once;
 
 use rust_embed::RustEmbed;
 use serde::Deserialize;
 use tower_lsp::lsp_types::CompletionItem;
 use tower_lsp::lsp_types::CompletionItemKind;
+use tower_lsp::lsp_types::Documentation;
 use tower_lsp::lsp_types::InsertTextFormat;
+use tower_lsp::lsp_types::MarkupContent;
+use tower_lsp::lsp_types::MarkupKind;
 
 use crate::lsp::completions::completion_item::completion_item;
 use crate::lsp::completions::types::CompletionData;
@@ -47,16 +49,16 @@ pub(super) fn completions_from_snippets() -> Vec<CompletionItem> {
 
 fn get_completions_from_snippets() -> &'static Vec<CompletionItem> {
     static INIT: Once = Once::new();
-    static mut SNIPPETS: MaybeUninit<Vec<CompletionItem>> = MaybeUninit::uninit();
+    static mut SNIPPETS: Option<Vec<CompletionItem>> = None;
 
     INIT.call_once(|| unsafe {
-        SNIPPETS.write(get_completions_from_snippets_impl());
+        SNIPPETS = Some(init_completions_from_snippets());
     });
 
-    unsafe { SNIPPETS.assume_init_ref() }
+    unsafe { SNIPPETS.as_ref().unwrap() }
 }
 
-fn get_completions_from_snippets_impl() -> Vec<CompletionItem> {
+fn init_completions_from_snippets() -> Vec<CompletionItem> {
     // Load snippets JSON from embedded file
     let file = Asset::get("r.code-snippets").unwrap();
     let snippets: HashMap<String, Snippet> = serde_json::from_slice(&file.data).unwrap();
@@ -72,10 +74,19 @@ fn get_completions_from_snippets_impl() -> Vec<CompletionItem> {
             SnippetBody::Vector(body) => body.join("\n"),
         };
 
+        // Markup shows up in the quick suggestion documentation window,
+        // so you can see what the snippet expands to
+        let markup = vec!["```r", body.as_str(), "```"].join("\n");
+        let markup = MarkupContent {
+            kind: MarkupKind::Markdown,
+            value: markup,
+        };
+
         let mut item =
             completion_item(label, CompletionData::Snippet { text: body.clone() }).unwrap();
 
         item.detail = Some(details);
+        item.documentation = Some(Documentation::MarkupContent(markup));
         item.kind = Some(CompletionItemKind::SNIPPET);
 
         item.insert_text = Some(body);
