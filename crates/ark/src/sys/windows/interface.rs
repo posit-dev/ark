@@ -6,6 +6,7 @@
  */
 
 use std::ffi::c_char;
+use std::ffi::c_int;
 use std::ffi::CStr;
 use std::ffi::CString;
 use std::mem::MaybeUninit;
@@ -67,6 +68,7 @@ pub fn setup_r(mut _args: Vec<*mut c_char>) {
         (*params).WriteConsoleEx = Some(r_write_console);
         (*params).ReadConsole = Some(r_read_console);
         (*params).ShowMessage = Some(r_show_message);
+        (*params).YesNoCancel = Some(r_yes_no_cancel);
         (*params).Busy = Some(r_busy);
 
         // This is assigned to `ptr_ProcessEvents` (which we don't set on Unix),
@@ -159,6 +161,20 @@ fn get_user_home() -> String {
 #[no_mangle]
 extern "C" fn r_callback() {
     // Do nothing!
+}
+
+#[no_mangle]
+extern "C" fn r_yes_no_cancel(question: *const c_char) -> c_int {
+    // This seems to only be used on Windows during R's default `CleanUp` when
+    // `SA_SAVEASK` is used. We should replace `Cleanup` with our own version
+    // that resolves `SA_SAVEASK`, changes `saveact` to the resolved value,
+    // then calls R's default `CleanUp` with the new value. That way this never
+    // gets called (at which point we can make this an error). In the meantime
+    // we simply return `-1` to request "no save" on exit.
+    // https://github.com/wch/r-source/blob/bd5e9741c9b55c481a2e5d4f929cf1597ec08fcc/src/gnuwin32/system.c#L565
+    let question = unsafe { CStr::from_ptr(question).to_str().unwrap() };
+    log::warn!("Ignoring `YesNoCancel` question: '{question}'. Returning `NO`.");
+    return -1;
 }
 
 extern "C" {
