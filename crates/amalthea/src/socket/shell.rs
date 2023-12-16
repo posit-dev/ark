@@ -407,8 +407,12 @@ impl Shell {
         let comm_id = req.content.comm_id.clone();
         let comm_name = req.content.target_name.clone();
         let comm_data = req.content.data.clone();
-        let comm_socket =
-            CommSocket::new(CommInitiator::FrontEnd, comm_id.clone(), comm_name.clone());
+        let comm_socket = CommSocket::new(
+            CommInitiator::FrontEnd,
+            comm_id.clone(),
+            comm_name.clone(),
+            None,
+        );
 
         // Optional notification channel used by server comms to indicate
         // they are ready to accept connections

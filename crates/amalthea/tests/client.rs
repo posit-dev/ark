@@ -452,6 +452,7 @@ fn test_kernel() {
         CommInitiator::BackEnd,
         test_comm_id.clone(),
         test_comm_name.clone(),
+        None,
     );
     comm_manager_tx
         .send(CommManagerEvent::Opened(

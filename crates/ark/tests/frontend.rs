@@ -34,6 +34,7 @@ fn test_frontend_comm() {
             CommInitiator::FrontEnd,
             String::from("test-frontend-comm-id"),
             String::from("positron.frontend"),
+            None,
         );
 
         // Create a frontend instance

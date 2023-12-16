@@ -32,6 +32,7 @@ fn test_help_comm() {
             CommInitiator::FrontEnd,
             String::from("test-help-comm-id"),
             String::from("positron.help"),
+            None,
         );
 
         let incoming_tx = comm.incoming_tx.clone();

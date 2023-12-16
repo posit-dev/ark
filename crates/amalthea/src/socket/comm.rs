@@ -7,6 +7,7 @@
 
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
+use dyn_clone::DynClone;
 
 use crate::comm::comm_channel::CommMsg;
 
@@ -49,6 +50,9 @@ pub struct CommSocket {
 
     /// The other side of the channel receiving messages from the front end
     pub incoming_rx: Receiver<CommMsg>,
+
+    /// DOCME
+    handlers: Option<Box<dyn CommHandling>>,
 }
 
 /**
@@ -79,10 +83,17 @@ impl CommSocket {
      * - `comm_name`: The comm's name. This is a freeform string since comm
      *    names have no restrictions in the Jupyter protocol, but it's typically a
      *    member of the Comm enum.
+     * - `handlers`: DOCME
      */
-    pub fn new(initiator: CommInitiator, comm_id: String, comm_name: String) -> Self {
+    pub fn new(
+        initiator: CommInitiator,
+        comm_id: String,
+        comm_name: String,
+        handlers: Option<Box<dyn CommHandling>>,
+    ) -> Self {
         let (outgoing_tx, outgoing_rx) = crossbeam::channel::unbounded();
         let (incoming_tx, incoming_rx) = crossbeam::channel::unbounded();
+
         Self {
             comm_id,
             comm_name,
@@ -91,6 +102,52 @@ impl CommSocket {
             outgoing_rx,
             incoming_tx,
             incoming_rx,
+            handlers,
         }
+    }
+}
+
+pub trait CommHandling: DynClone + Send + Sync {
+    fn handle_request(&self, message: CommMsg) -> anyhow::Result<bool>;
+}
+
+//  We need `Clone` on the `CommSocket` to send it across threads. We use
+// the `dyn_clone` crate by dtolnay to help make our trait clonable in the
+// dynamic case (e.g. `Box<dyn CommHandling>).
+dyn_clone::clone_trait_object!(CommHandling);
+
+/// DOCME
+#[derive(Clone)]
+pub struct CommHandlers<Evts, Reqs, Reps>
+where
+    Evts: Clone,
+    Reqs: Clone,
+    Reps: Clone,
+{
+    pub request_handler: Option<fn(Reqs) -> anyhow::Result<Reps>>,
+    pub event_handler: Option<fn(Evts) -> anyhow::Result<()>>,
+}
+
+impl<Evts: Clone, Reqs: Clone, Reps: Clone> CommHandlers<Evts, Reqs, Reps> {
+    pub fn new(
+        event_handler: Option<fn(Evts) -> anyhow::Result<()>>,
+        request_handler: Option<fn(Reqs) -> anyhow::Result<Reps>>,
+    ) -> Self {
+        Self {
+            event_handler,
+            request_handler,
+        }
+    }
+}
+
+impl<Evts: Clone, Reqs: Clone, Reps: Clone> CommHandling for CommHandlers<Evts, Reqs, Reps> {
+    fn handle_request(&self, message: CommMsg) -> anyhow::Result<bool> {
+        let (_id, _data) = if let CommMsg::Rpc(id, data) = message {
+            (id, data)
+        } else {
+            return Ok(false);
+        };
+
+        Ok(true)
     }
 }

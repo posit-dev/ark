@@ -59,6 +59,7 @@ fn test_environment_list() {
         CommInitiator::FrontEnd,
         String::from("test-environment-comm-id"),
         String::from("positron.environment"),
+        None,
     );
 
     // Create a dummy comm manager channel that isn't actually used.
