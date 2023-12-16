@@ -5,14 +5,12 @@
  *
  */
 
-use crossbeam::channel::Sender;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
 use strum_macros::EnumString;
 use uuid::Uuid;
 
-use super::frontend_comm::FrontendRpcResponse;
 use crate::wire::jupyter_message::MessageType;
 
 #[derive(EnumString, PartialEq)]
@@ -51,9 +49,6 @@ pub enum CommMsg {
     /// and the second value is the data associated with the RPC (the request or
     /// response).
     Rpc(String, Value),
-
-    // DOCME
-    ReverseRpc(Sender<FrontendRpcResponse>, Value),
 
     /// A message representing any other data sent on the comm channel; usually
     /// used for events.

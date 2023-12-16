@@ -13,7 +13,6 @@ use crossbeam::channel::Sender;
 use log::info;
 use log::warn;
 use stdext::spawn;
-use uuid::Uuid;
 
 use super::frontend_comm::FrontendRpcResponse;
 use crate::comm::comm_channel::CommMsg;
@@ -259,19 +258,6 @@ impl CommManager {
                             IOPubMessage::CommMsgRequest(payload)
                         },
                     }
-                },
-
-                CommMsg::ReverseRpc(response_tx, data) => {
-                    // This is a request to the frontend. Create request ID and
-                    // save the response channel for the reply.
-                    let id = Uuid::new_v4().to_string();
-                    self.pending_reverse_rpcs.insert(id, response_tx);
-
-                    let payload = CommWireMsg {
-                        comm_id: comm_socket.comm_id.clone(),
-                        data,
-                    };
-                    IOPubMessage::CommMsgRequest(payload)
                 },
 
                 CommMsg::Close => IOPubMessage::CommClose(comm_socket.comm_id.clone()),
