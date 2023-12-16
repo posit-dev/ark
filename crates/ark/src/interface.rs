@@ -19,17 +19,13 @@ use std::sync::Mutex;
 use std::sync::Once;
 use std::time::Duration;
 
+use amalthea::comm::base_comm::JsonRpcResponse;
+use amalthea::comm::comm_channel::RpcRequestRaw;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::comm::frontend_comm::BusyParams;
 use amalthea::comm::frontend_comm::FrontendEvent;
-use amalthea::comm::frontend_comm::FrontendRpcRequest;
-use amalthea::comm::frontend_comm::FrontendRpcResponse;
 use amalthea::comm::frontend_comm::PromptStateParams;
 use amalthea::comm::frontend_comm::ShowMessageParams;
-use amalthea::events::BusyEvent;
-use amalthea::events::PositronEvent;
-use amalthea::events::PromptStateEvent;
-use amalthea::events::ShowMessageEvent;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::socket::iopub::Wait;
 use amalthea::socket::stdin::StdInRequest;
@@ -1029,7 +1025,7 @@ impl RMain {
         let request = PositronFrontendRpcRequest {
             orig: orig.clone(),
             response_tx,
-            request: FrontendRpcRequest {
+            request: RpcRequestRaw {
                 method: method.clone(),
                 params,
             },
@@ -1046,12 +1042,12 @@ impl RMain {
         log::trace!("Got response from frontend method '{method}': {response:?}");
 
         match response {
-            FrontendRpcResponse::Result(response) => Ok(RObject::try_from(response.result)?),
-            FrontendRpcResponse::Error(response) => {
+            JsonRpcResponse::Result { result, .. } => Ok(RObject::try_from(result.result)?),
+            JsonRpcResponse::Error { error, .. } => {
                 anyhow::bail!(
                     "While calling method '{method}':\n\
                      {}",
-                    response.error.message
+                    error.error.message
                 );
             },
         }

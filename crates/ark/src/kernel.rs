@@ -10,11 +10,7 @@ use std::result::Result::Err;
 
 use amalthea::comm::frontend_comm::BusyParams;
 use amalthea::comm::frontend_comm::FrontendEvent;
-use amalthea::comm::frontend_comm::FrontendRpcRequest;
 use amalthea::comm::frontend_comm::WorkingDirectoryParams;
-use amalthea::events::BusyEvent;
-use amalthea::events::PositronEvent;
-use amalthea::events::WorkingDirectoryEvent;
 use anyhow::Result;
 use crossbeam::channel::Sender;
 use log::*;

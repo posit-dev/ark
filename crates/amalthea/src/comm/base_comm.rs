@@ -5,10 +5,32 @@
  *
  */
 
+use serde::Deserialize;
+use serde::Serialize;
 use serde_json::json;
 use serde_json::Value;
 use serde_repr::Deserialize_repr;
 use serde_repr::Serialize_repr;
+
+use crate::wire::jupyter_message::MessageType;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum JsonRpcResponse {
+    Result { id: String, result: JsonRpcResult },
+    Error { id: String, error: JsonRpcError },
+}
+
+impl MessageType for JsonRpcResponse {
+    fn message_type() -> String {
+        String::from("rpc_reply")
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct JsonRpcResult {
+    pub result: Value,
+}
 
 /// JSON-RPC 2.0 error codes
 #[derive(Copy, Clone, Debug, Serialize_repr, Deserialize_repr, PartialEq)]
@@ -41,13 +63,13 @@ pub fn json_rpc_error(code: JsonRpcErrorCode, message: String) -> Value {
     })
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct JsonRpcError {
     pub error: JsonRpcErrorData,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct JsonRpcErrorData {
     pub message: String,

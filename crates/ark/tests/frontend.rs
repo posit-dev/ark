@@ -127,7 +127,7 @@ fn test_frontend_comm() {
         // Mark not busy (this prevents the frontend comm from being closed due to
         // the Sender being dropped)
         frontend
-            .send(PositronFrontendMessage::Event(PositronEvent::Busy(
+            .send(PositronFrontendMessage::Event(FrontendEvent::Busy(
                 BusyParams { busy: false },
             )))
             .unwrap();

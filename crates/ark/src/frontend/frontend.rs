@@ -5,32 +5,22 @@
 //
 //
 
+use amalthea::comm::base_comm::JsonRpcResponse;
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::comm_channel::RpcRequest;
+use amalthea::comm::comm_channel::RpcRequestRaw;
 use amalthea::comm::frontend_comm::FrontendBackendRpcReply;
 use amalthea::comm::frontend_comm::FrontendBackendRpcRequest;
 use amalthea::comm::frontend_comm::FrontendEvent;
-use amalthea::comm::frontend_comm::FrontendMessage;
-use amalthea::comm::frontend_comm::FrontendRpcError;
-use amalthea::comm::frontend_comm::FrontendRpcErrorData;
-use amalthea::comm::frontend_comm::FrontendRpcReply;
-use amalthea::comm::frontend_comm::FrontendRpcRequest;
-use amalthea::comm::frontend_comm::FrontendRpcResponse;
-use amalthea::comm::frontend_comm::FrontendRpcResult;
-use amalthea::events::PositronEvent;
 use amalthea::socket::comm::CommSocket;
 use amalthea::socket::stdin::StdInRequest;
-use amalthea::wire::client_event::ClientEvent;
 use amalthea::wire::originator::Originator;
-use crossbeam::channel::bounded;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use crossbeam::select;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
-use log::info;
-use serde::Serialize;
 use serde_json::Value;
 use stdext::spawn;
 use stdext::unwrap;
@@ -39,15 +29,15 @@ use crate::r_task;
 
 #[derive(Debug)]
 pub enum PositronFrontendMessage {
-    Event(PositronEvent),
+    Event(FrontendEvent),
     Request(PositronFrontendRpcRequest),
 }
 
 #[derive(Debug)]
 pub struct PositronFrontendRpcRequest {
     pub orig: Originator,
-    pub response_tx: Sender<FrontendRpcResponse>,
-    pub request: FrontendRpcRequest,
+    pub response_tx: Sender<JsonRpcResponse>,
+    pub request: RpcRequestRaw,
 }
 
 /// PositronFrontend is a wrapper around a comm channel whose lifetime matches
@@ -201,10 +191,7 @@ impl PositronFrontend {
     }
 
     fn call_frontend_method(&self, request: &PositronFrontendRpcRequest) -> anyhow::Result<()> {
-        let wire_request = RpcRequest::new(
-            request.request.method.clone(),
-            request.request.params.clone(),
-        )?;
+        let wire_request = RpcRequest::from_raw(request.request.clone())?;
 
         let comm_msg = StdInRequest::CommRequest(
             request.orig.clone(),

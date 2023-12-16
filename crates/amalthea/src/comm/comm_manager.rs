@@ -14,7 +14,7 @@ use log::info;
 use log::warn;
 use stdext::spawn;
 
-use super::frontend_comm::FrontendRpcResponse;
+use super::base_comm::JsonRpcResponse;
 use crate::comm::comm_channel::CommMsg;
 use crate::comm::event::CommManagerEvent;
 use crate::comm::event::CommShellEvent;
@@ -31,7 +31,7 @@ pub struct CommManager {
     comm_event_rx: Receiver<CommManagerEvent>,
     comm_shell_tx: Sender<CommShellEvent>,
     pending_rpcs: HashMap<String, JupyterHeader>,
-    pending_reverse_rpcs: HashMap<String, Sender<FrontendRpcResponse>>,
+    pending_reverse_rpcs: HashMap<String, Sender<JsonRpcResponse>>,
 }
 
 impl CommManager {
@@ -72,7 +72,7 @@ impl CommManager {
             comm_shell_tx,
             open_comms: Vec::<CommSocket>::new(),
             pending_rpcs: HashMap::<String, JupyterHeader>::new(),
-            pending_reverse_rpcs: HashMap::<String, Sender<FrontendRpcResponse>>::new(),
+            pending_reverse_rpcs: HashMap::<String, Sender<JsonRpcResponse>>::new(),
         }
     }
 
@@ -149,8 +149,8 @@ impl CommManager {
                     log::trace!("Got response from frontend method");
 
                     let id = match response {
-                        FrontendRpcResponse::Result(ref result) => &result.id,
-                        FrontendRpcResponse::Error(ref error) => &error.id,
+                        JsonRpcResponse::Result { ref id, .. } => id,
+                        JsonRpcResponse::Error { ref id, .. } => id,
                     };
                     match self.pending_reverse_rpcs.remove(id) {
                         Some(response_tx) => {

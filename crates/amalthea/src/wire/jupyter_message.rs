@@ -10,8 +10,8 @@ use serde::Serialize;
 
 use super::client_event::ClientEvent;
 use super::stream::StreamOutput;
+use crate::comm::base_comm::JsonRpcResponse;
 use crate::comm::comm_channel::RpcRequest;
-use crate::comm::frontend_comm::FrontendRpcResponse;
 use crate::error::Error;
 use crate::session::Session;
 use crate::socket::socket::Socket;
@@ -101,7 +101,7 @@ pub enum Message {
     CommOpen(JupyterMessage<CommOpen>),
     CommMsg(JupyterMessage<CommWireMsg>),
     CommRequest(JupyterMessage<RpcRequest>),
-    CommReply(JupyterMessage<FrontendRpcResponse>),
+    CommReply(JupyterMessage<JsonRpcResponse>),
     CommClose(JupyterMessage<CommClose>),
     ClientEvent(JupyterMessage<ClientEvent>),
     StreamOutput(JupyterMessage<StreamOutput>),
@@ -221,7 +221,7 @@ impl TryFrom<&WireMessage> for Message {
             return Ok(Message::StreamOutput(JupyterMessage::try_from(msg)?));
         } else if kind == RpcRequest::message_type() {
             return Ok(Message::CommRequest(JupyterMessage::try_from(msg)?));
-        } else if kind == FrontendRpcResponse::message_type() {
+        } else if kind == JsonRpcResponse::message_type() {
             return Ok(Message::CommReply(JupyterMessage::try_from(msg)?));
         }
         return Err(Error::UnknownMessageType(kind));

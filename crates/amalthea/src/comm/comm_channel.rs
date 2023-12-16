@@ -11,6 +11,7 @@ use serde_json::Value;
 use strum_macros::EnumString;
 use uuid::Uuid;
 
+use super::frontend_comm::FrontendFrontendRpcRequest;
 use crate::wire::jupyter_message::MessageType;
 
 #[derive(EnumString, PartialEq)]
@@ -62,22 +63,30 @@ pub enum CommMsg {
 pub struct RpcRequest {
     msg_type: String,
     id: String,
-    jsonrpc: String,
-    method: String,
-    params: Value,
+    request: Value,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct RpcRequestRaw {
+    pub method: String,
+    pub params: Vec<Value>,
 }
 
 impl RpcRequest {
-    pub fn new<T>(method: String, params: T) -> anyhow::Result<Self>
-    where
-        T: Serialize,
-    {
+    pub fn new(request: FrontendFrontendRpcRequest) -> anyhow::Result<Self> {
         let request = Self {
             msg_type: String::from("rpc_request"),
             id: Uuid::new_v4().to_string(),
-            jsonrpc: String::from("2.0"),
-            method,
-            params: serde_json::to_value(params)?,
+            request: serde_json::to_value(request)?,
+        };
+        Ok(request)
+    }
+
+    pub fn from_raw(request: RpcRequestRaw) -> anyhow::Result<Self> {
+        let request = Self {
+            msg_type: String::from("rpc_request"),
+            id: Uuid::new_v4().to_string(),
+            request: serde_json::to_value(request)?,
         };
         Ok(request)
     }
