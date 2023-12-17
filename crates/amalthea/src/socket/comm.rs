@@ -9,6 +9,7 @@ use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use dyn_clone::DynClone;
 use serde::de::DeserializeOwned;
+use serde_json::Value;
 
 use crate::comm::base_comm::json_rpc_error;
 use crate::comm::base_comm::JsonRpcErrorCode;
@@ -108,10 +109,30 @@ impl CommSocket {
             handlers,
         }
     }
+
+    pub fn handle_request(&self, message: CommMsg) -> anyhow::Result<bool> {
+        let handlers = match self.handlers {
+            Some(ref handlers) => handlers,
+            None => {
+                log::warn!("No message handlers defined for this comm");
+                return Ok(false);
+            },
+        };
+
+        let (id, data) = match message {
+            CommMsg::Rpc(id, data) => (id, data),
+            _ => return Ok(false),
+        };
+
+        let response = handlers.handle_request(id, data);
+        self.outgoing_tx.send(response).unwrap();
+
+        Ok(true)
+    }
 }
 
 pub trait CommHandling: DynClone + Send + Sync {
-    fn handle_request(&self, message: CommMsg) -> anyhow::Result<bool>;
+    fn handle_request(&self, id: String, data: Value) -> CommMsg;
 }
 
 //  We need `Clone` on the `CommSocket` to send it across threads. We use
@@ -149,29 +170,21 @@ where
     Reqs: Clone + DeserializeOwned,
     Reps: Clone,
 {
-    fn handle_request(&self, message: CommMsg) -> anyhow::Result<bool> {
-        let (id, data) = if let CommMsg::Rpc(id, data) = message {
-            (id, data)
-        } else {
-            return Ok(false);
-        };
-
-        let message = match serde_json::from_value::<Reqs>(data.clone()) {
+    fn handle_request(&self, id: String, data: Value) -> CommMsg {
+        let _message = match serde_json::from_value::<Reqs>(data.clone()) {
             Ok(m) => m,
             Err(err) => {
-                self.outgoing_tx
-                    .send(CommMsg::Rpc(
-                        id,
-                        json_rpc_error(
-                            JsonRpcErrorCode::InvalidRequest,
-                            format!("Invalid help request: {err:} (request: {data:})"),
-                        ),
-                    ))
-                    .unwrap();
-                return Ok(true);
+                let response = CommMsg::Rpc(
+                    id,
+                    json_rpc_error(
+                        JsonRpcErrorCode::InvalidRequest,
+                        format!("Invalid help request: {err:} (request: {data:})"),
+                    ),
+                );
+                return response;
             },
         };
 
-        Ok(true)
+        todo!()
     }
 }
