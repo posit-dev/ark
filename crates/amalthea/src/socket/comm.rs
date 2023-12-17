@@ -84,7 +84,6 @@ impl CommSocket {
      * - `comm_name`: The comm's name. This is a freeform string since comm
      *    names have no restrictions in the Jupyter protocol, but it's typically a
      *    member of the Comm enum.
-     * - `handlers`: DOCME
      */
     pub fn new(initiator: CommInitiator, comm_id: String, comm_name: String) -> Self {
         let (outgoing_tx, outgoing_rx) = crossbeam::channel::unbounded();
@@ -101,71 +100,46 @@ impl CommSocket {
         }
     }
 
-    pub fn handle_request(
+    /**
+     * Handle `CommMsg::Rpc`.
+     *
+     * - `message`: A message received by the comm.
+     * - `request_handler`: The comm's handler for requests.
+     *
+     * Returns `false` if `message` is not an RPC. Otherwise returns `true`.
+     * Requests that could not be handled cause an RPC error response.
+     */
+    pub fn handle_request<Reqs, Reps>(
         &self,
         message: CommMsg,
-        handlers: impl CommHandling,
-    ) -> anyhow::Result<bool> {
+        request_handler: impl FnOnce(Reqs) -> anyhow::Result<Reps>,
+    ) -> bool
+    where
+        Reqs: DeserializeOwned,
+        Reps: Serialize,
+    {
         let (id, data) = match message {
             CommMsg::Rpc(id, data) => (id, data),
-            _ => return Ok(false),
+            _ => return false,
         };
 
-        let response = handlers.handle_request(id, data);
-        self.outgoing_tx.send(response).unwrap();
-
-        Ok(true)
-    }
-}
-
-pub trait CommHandling {
-    fn handle_request(&self, id: String, data: Value) -> CommMsg;
-}
-
-/// DOCME
-pub struct CommHandlers<Evts, Reqs, Reps> {
-    pub request_handler: fn(Reqs) -> anyhow::Result<Reps>,
-    pub event_handler: fn(Evts) -> anyhow::Result<()>,
-}
-
-impl<Evts: Clone, Reqs: Clone, Reps: Clone> CommHandlers<Evts, Reqs, Reps> {
-    pub fn new(
-        event_handler: fn(Evts) -> anyhow::Result<()>,
-        request_handler: fn(Reqs) -> anyhow::Result<Reps>,
-    ) -> Self {
-        Self {
-            event_handler,
-            request_handler,
-        }
-    }
-}
-
-impl<Evts, Reqs, Reps> CommHandling for CommHandlers<Evts, Reqs, Reps>
-where
-    Evts: Clone,
-    Reqs: Clone + DeserializeOwned,
-    Reps: Clone + Serialize,
-{
-    fn handle_request(&self, id: String, data: Value) -> CommMsg {
-        let message = match serde_json::from_value::<Reqs>(data.clone()) {
-            Ok(m) => m,
-            Err(err) => {
-                let json = json_rpc_error(
-                    JsonRpcErrorCode::InvalidRequest,
-                    format!("Invalid help request: {err:} (request: {data:})"),
-                );
-                return CommMsg::Rpc(id, json);
-            },
-        };
-
-        let json = match (self.request_handler)(message) {
-            Ok(reply) => match serde_json::to_value(reply) {
-                Ok(value) => value,
+        let json = match serde_json::from_value::<Reqs>(data.clone()) {
+            Ok(m) => match request_handler(m) {
+                Ok(reply) => match serde_json::to_value(reply) {
+                    Ok(value) => value,
+                    Err(err) => json_rpc_internal_error(err, data),
+                },
                 Err(err) => json_rpc_internal_error(err, data),
             },
-            Err(err) => json_rpc_internal_error(err, data),
+            Err(err) => json_rpc_error(
+                JsonRpcErrorCode::InvalidRequest,
+                format!("Invalid help request: {err:} (request: {data:})"),
+            ),
         };
-        CommMsg::Rpc(id, json)
+        let response = CommMsg::Rpc(id, json);
+
+        self.outgoing_tx.send(response).unwrap();
+        true
     }
 }
 
