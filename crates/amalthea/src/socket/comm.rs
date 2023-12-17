@@ -7,7 +7,6 @@
 
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
-use dyn_clone::DynClone;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::Value;
@@ -55,9 +54,6 @@ pub struct CommSocket {
 
     /// The other side of the channel receiving messages from the front end
     pub incoming_rx: Receiver<CommMsg>,
-
-    /// DOCME
-    handlers: Option<Box<dyn CommHandling>>,
 }
 
 /**
@@ -90,12 +86,7 @@ impl CommSocket {
      *    member of the Comm enum.
      * - `handlers`: DOCME
      */
-    pub fn new(
-        initiator: CommInitiator,
-        comm_id: String,
-        comm_name: String,
-        handlers: Option<Box<dyn CommHandling>>,
-    ) -> Self {
+    pub fn new(initiator: CommInitiator, comm_id: String, comm_name: String) -> Self {
         let (outgoing_tx, outgoing_rx) = crossbeam::channel::unbounded();
         let (incoming_tx, incoming_rx) = crossbeam::channel::unbounded();
 
@@ -107,19 +98,14 @@ impl CommSocket {
             outgoing_rx,
             incoming_tx,
             incoming_rx,
-            handlers,
         }
     }
 
-    pub fn handle_request(&self, message: CommMsg) -> anyhow::Result<bool> {
-        let handlers = match self.handlers {
-            Some(ref handlers) => handlers,
-            None => {
-                log::warn!("No message handlers defined for this comm");
-                return Ok(false);
-            },
-        };
-
+    pub fn handle_request(
+        &self,
+        message: CommMsg,
+        handlers: impl CommHandling,
+    ) -> anyhow::Result<bool> {
         let (id, data) = match message {
             CommMsg::Rpc(id, data) => (id, data),
             _ => return Ok(false),
@@ -132,23 +118,12 @@ impl CommSocket {
     }
 }
 
-pub trait CommHandling: DynClone + Send + Sync {
+pub trait CommHandling {
     fn handle_request(&self, id: String, data: Value) -> CommMsg;
 }
 
-//  We need `Clone` on the `CommSocket` to send it across threads. We use
-// the `dyn_clone` crate by dtolnay to help make our trait clonable in the
-// dynamic case (e.g. `Box<dyn CommHandling>).
-dyn_clone::clone_trait_object!(CommHandling);
-
 /// DOCME
-#[derive(Clone)]
-pub struct CommHandlers<Evts, Reqs, Reps>
-where
-    Evts: Clone,
-    Reqs: Clone,
-    Reps: Clone,
-{
+pub struct CommHandlers<Evts, Reqs, Reps> {
     pub request_handler: fn(Reqs) -> anyhow::Result<Reps>,
     pub event_handler: fn(Evts) -> anyhow::Result<()>,
 }

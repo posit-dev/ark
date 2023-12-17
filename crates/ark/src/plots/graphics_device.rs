@@ -273,7 +273,6 @@ impl DeviceContext {
             CommInitiator::BackEnd,
             id.to_string(),
             POSITRON_PLOT_CHANNEL_ID.to_string(),
-            None,
         );
 
         let event = CommManagerEvent::Opened(socket.clone(), serde_json::Value::Null);

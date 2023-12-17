@@ -267,7 +267,6 @@ impl RDataViewer {
             CommInitiator::BackEnd,
             id.clone(),
             String::from("positron.dataViewer"),
-            None,
         );
 
         // To be able to `Send` the `data` to the thread to be owned by the data

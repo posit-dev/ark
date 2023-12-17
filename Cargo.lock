@@ -244,7 +244,6 @@ dependencies = [
  "crossbeam",
  "crypto-common",
  "dirs",
- "dyn-clone",
  "env_logger",
  "futures",
  "generic-array",
@@ -879,12 +878,6 @@ checksum = "bde03329ae10e79ede66c9ce4dc930aa8599043b0743008548680f25b91502d6"
 dependencies = [
  "dtoa",
 ]
-
-[[package]]
-name = "dyn-clone"
-version = "1.0.16"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "545b22097d44f8a9581187cdf93de7a71e4722bf51200cfaba810865b49a495d"
 
 [[package]]
 name = "echo"
