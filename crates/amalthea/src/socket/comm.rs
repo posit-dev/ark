@@ -127,13 +127,16 @@ impl CommSocket {
             Ok(m) => match request_handler(m) {
                 Ok(reply) => match serde_json::to_value(reply) {
                     Ok(value) => value,
-                    Err(err) => json_rpc_internal_error(err, data),
+                    Err(err) => self.json_rpc_internal_error(err, data),
                 },
-                Err(err) => json_rpc_internal_error(err, data),
+                Err(err) => self.json_rpc_internal_error(err, data),
             },
             Err(err) => json_rpc_error(
                 JsonRpcErrorCode::InvalidRequest,
-                format!("Invalid help request: {err:} (request: {data:})"),
+                format!(
+                    "Invalid {} request: {err:} (request: {data:})",
+                    self.comm_name
+                ),
             ),
         };
         let response = CommMsg::Rpc(id, json);
@@ -141,14 +144,17 @@ impl CommSocket {
         self.outgoing_tx.send(response).unwrap();
         true
     }
-}
 
-fn json_rpc_internal_error<T>(err: T, data: Value) -> Value
-where
-    T: std::fmt::Display,
-{
-    json_rpc_error(
-        JsonRpcErrorCode::InternalError,
-        format!("Failed to process help request: {err} (request: {data:})"),
-    )
+    fn json_rpc_internal_error<T>(&self, err: T, data: Value) -> Value
+    where
+        T: std::fmt::Display,
+    {
+        json_rpc_error(
+            JsonRpcErrorCode::InternalError,
+            format!(
+                "Failed to process {} request: {err} (request: {data:})",
+                self.comm_name
+            ),
+        )
+    }
 }
