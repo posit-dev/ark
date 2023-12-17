@@ -8,7 +8,10 @@
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use dyn_clone::DynClone;
+use serde::de::DeserializeOwned;
 
+use crate::comm::base_comm::json_rpc_error;
+use crate::comm::base_comm::JsonRpcErrorCode;
 use crate::comm::comm_channel::CommMsg;
 
 /**
@@ -140,12 +143,33 @@ impl<Evts: Clone, Reqs: Clone, Reps: Clone> CommHandlers<Evts, Reqs, Reps> {
     }
 }
 
-impl<Evts: Clone, Reqs: Clone, Reps: Clone> CommHandling for CommHandlers<Evts, Reqs, Reps> {
+impl<Evts, Reqs, Reps> CommHandling for CommHandlers<Evts, Reqs, Reps>
+where
+    Evts: Clone,
+    Reqs: Clone + DeserializeOwned,
+    Reps: Clone,
+{
     fn handle_request(&self, message: CommMsg) -> anyhow::Result<bool> {
-        let (_id, _data) = if let CommMsg::Rpc(id, data) = message {
+        let (id, data) = if let CommMsg::Rpc(id, data) = message {
             (id, data)
         } else {
             return Ok(false);
+        };
+
+        let message = match serde_json::from_value::<Reqs>(data.clone()) {
+            Ok(m) => m,
+            Err(err) => {
+                self.outgoing_tx
+                    .send(CommMsg::Rpc(
+                        id,
+                        json_rpc_error(
+                            JsonRpcErrorCode::InvalidRequest,
+                            format!("Invalid help request: {err:} (request: {data:})"),
+                        ),
+                    ))
+                    .unwrap();
+                return Ok(true);
+            },
         };
 
         Ok(true)
