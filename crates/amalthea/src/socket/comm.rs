@@ -9,6 +9,7 @@ use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use dyn_clone::DynClone;
 use serde::de::DeserializeOwned;
+use serde::Serialize;
 use serde_json::Value;
 
 use crate::comm::base_comm::json_rpc_error;
@@ -148,14 +149,14 @@ where
     Reqs: Clone,
     Reps: Clone,
 {
-    pub request_handler: Option<fn(Reqs) -> anyhow::Result<Reps>>,
-    pub event_handler: Option<fn(Evts) -> anyhow::Result<()>>,
+    pub request_handler: fn(Reqs) -> anyhow::Result<Reps>,
+    pub event_handler: fn(Evts) -> anyhow::Result<()>,
 }
 
 impl<Evts: Clone, Reqs: Clone, Reps: Clone> CommHandlers<Evts, Reqs, Reps> {
     pub fn new(
-        event_handler: Option<fn(Evts) -> anyhow::Result<()>>,
-        request_handler: Option<fn(Reqs) -> anyhow::Result<Reps>>,
+        event_handler: fn(Evts) -> anyhow::Result<()>,
+        request_handler: fn(Reqs) -> anyhow::Result<Reps>,
     ) -> Self {
         Self {
             event_handler,
@@ -168,23 +169,37 @@ impl<Evts, Reqs, Reps> CommHandling for CommHandlers<Evts, Reqs, Reps>
 where
     Evts: Clone,
     Reqs: Clone + DeserializeOwned,
-    Reps: Clone,
+    Reps: Clone + Serialize,
 {
     fn handle_request(&self, id: String, data: Value) -> CommMsg {
-        let _message = match serde_json::from_value::<Reqs>(data.clone()) {
+        let message = match serde_json::from_value::<Reqs>(data.clone()) {
             Ok(m) => m,
             Err(err) => {
-                let response = CommMsg::Rpc(
-                    id,
-                    json_rpc_error(
-                        JsonRpcErrorCode::InvalidRequest,
-                        format!("Invalid help request: {err:} (request: {data:})"),
-                    ),
+                let json = json_rpc_error(
+                    JsonRpcErrorCode::InvalidRequest,
+                    format!("Invalid help request: {err:} (request: {data:})"),
                 );
-                return response;
+                return CommMsg::Rpc(id, json);
             },
         };
 
-        todo!()
+        let json = match (self.request_handler)(message) {
+            Ok(reply) => match serde_json::to_value(reply) {
+                Ok(value) => value,
+                Err(err) => json_rpc_internal_error(err, data),
+            },
+            Err(err) => json_rpc_internal_error(err, data),
+        };
+        CommMsg::Rpc(id, json)
     }
+}
+
+fn json_rpc_internal_error<T>(err: T, data: Value) -> Value
+where
+    T: std::fmt::Display,
+{
+    json_rpc_error(
+        JsonRpcErrorCode::InternalError,
+        format!("Failed to process help request: {err} (request: {data:})"),
+    )
 }
