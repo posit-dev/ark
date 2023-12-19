@@ -27,8 +27,6 @@ use std::fs::File;
 use std::io::BufReader;
 use std::io::Read;
 
-use amalthea::comm::base_comm::json_rpc_error;
-use amalthea::comm::base_comm::JsonRpcErrorCode;
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::comm::plot_comm::PlotEvent;
@@ -176,61 +174,30 @@ impl DeviceContext {
         });
 
         // Get the RPC request.
-        if let CommMsg::Rpc(rpc_id, value) = message {
-            let input = match serde_json::from_value::<PlotRpcRequest>(value.clone()) {
-                Ok(req) => req,
-                Err(err) => {
-                    socket
-                        .outgoing_tx
-                        .send(CommMsg::Rpc(
-                            rpc_id,
-                            json_rpc_error(
-                                JsonRpcErrorCode::InvalidRequest,
-                                format!("Invalid request sent to plot ${plot_id}: {err:} (request: {value:})"),
-                            ),
-                        ))
-                        .unwrap();
-                    return;
-                },
-            };
+        if socket.handle_request(message, |req| self.handle_rpc(req, plot_id)) {
+            return;
+        }
+    }
 
-            match input {
-                PlotRpcRequest::Render(plot_meta) => {
-                    let data = match self.render_plot(
-                        plot_id,
-                        plot_meta.width,
-                        plot_meta.height,
-                        plot_meta.pixel_ratio,
-                    ) {
-                        Ok(data) => data,
-                        Err(err) => {
-                            socket
-                        .outgoing_tx
-                        .send(CommMsg::Rpc(
-                            rpc_id,
-                            json_rpc_error(
-                                JsonRpcErrorCode::InternalError,
-                                format!("Plot ${plot_id} failed to render: {err:} (request: {value:})"),
-                            ),
-                        ))
-                        .unwrap();
-                            return;
-                        },
-                    };
+    fn handle_rpc(
+        &mut self,
+        message: PlotRpcRequest,
+        plot_id: &String,
+    ) -> anyhow::Result<PlotRpcReply> {
+        match message {
+            PlotRpcRequest::Render(plot_meta) => {
+                let data = self.render_plot(
+                    &plot_id,
+                    plot_meta.width,
+                    plot_meta.height,
+                    plot_meta.pixel_ratio,
+                )?;
 
-                    let response = PlotRpcReply::RenderReply(PlotResult {
-                        data: data.to_string(),
-                        mime_type: "image/png".to_string(),
-                    });
-
-                    let json = serde_json::to_value(response).unwrap();
-
-                    socket
-                        .outgoing_tx
-                        .send(CommMsg::Rpc(rpc_id.to_string(), json))
-                        .or_log_error("Failed to send plot due to");
-                },
-            }
+                Ok(PlotRpcReply::RenderReply(PlotResult {
+                    data: data.to_string(),
+                    mime_type: "image/png".to_string(),
+                }))
+            },
         }
     }
 

@@ -7,7 +7,12 @@
 
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
+use serde::de::DeserializeOwned;
+use serde::Serialize;
+use serde_json::Value;
 
+use crate::comm::base_comm::json_rpc_error;
+use crate::comm::base_comm::JsonRpcErrorCode;
 use crate::comm::comm_channel::CommMsg;
 
 /**
@@ -83,6 +88,7 @@ impl CommSocket {
     pub fn new(initiator: CommInitiator, comm_id: String, comm_name: String) -> Self {
         let (outgoing_tx, outgoing_rx) = crossbeam::channel::unbounded();
         let (incoming_tx, incoming_rx) = crossbeam::channel::unbounded();
+
         Self {
             comm_id,
             comm_name,
@@ -92,5 +98,63 @@ impl CommSocket {
             incoming_tx,
             incoming_rx,
         }
+    }
+
+    /**
+     * Handle `CommMsg::Rpc`.
+     *
+     * - `message`: A message received by the comm.
+     * - `request_handler`: The comm's handler for requests.
+     *
+     * Returns `false` if `message` is not an RPC. Otherwise returns `true`.
+     * Requests that could not be handled cause an RPC error response.
+     */
+    pub fn handle_request<Reqs, Reps>(
+        &self,
+        message: CommMsg,
+        request_handler: impl FnOnce(Reqs) -> anyhow::Result<Reps>,
+    ) -> bool
+    where
+        Reqs: DeserializeOwned,
+        Reps: Serialize,
+    {
+        let (id, data) = match message {
+            CommMsg::Rpc(id, data) => (id, data),
+            _ => return false,
+        };
+
+        let json = match serde_json::from_value::<Reqs>(data.clone()) {
+            Ok(m) => match request_handler(m) {
+                Ok(reply) => match serde_json::to_value(reply) {
+                    Ok(value) => value,
+                    Err(err) => self.json_rpc_internal_error(err, data),
+                },
+                Err(err) => self.json_rpc_internal_error(err, data),
+            },
+            Err(err) => json_rpc_error(
+                JsonRpcErrorCode::InvalidRequest,
+                format!(
+                    "Invalid {} request: {err:} (request: {data:})",
+                    self.comm_name
+                ),
+            ),
+        };
+        let response = CommMsg::Rpc(id, json);
+
+        self.outgoing_tx.send(response).unwrap();
+        true
+    }
+
+    fn json_rpc_internal_error<T>(&self, err: T, data: Value) -> Value
+    where
+        T: std::fmt::Display,
+    {
+        json_rpc_error(
+            JsonRpcErrorCode::InternalError,
+            format!(
+                "Failed to process {} request: {err} (request: {data:})",
+                self.comm_name
+            ),
+        )
     }
 }

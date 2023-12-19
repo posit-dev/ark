@@ -5,8 +5,6 @@
 //
 //
 
-use amalthea::comm::base_comm::json_rpc_error;
-use amalthea::comm::base_comm::JsonRpcErrorCode;
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::help_comm::HelpEvent;
 use amalthea::comm::help_comm::HelpRpcReply;
@@ -95,6 +93,7 @@ impl RHelp {
                 help_request_rx,
                 help_reply_tx,
             };
+
             help.execution_thread();
         });
 
@@ -163,59 +162,27 @@ impl RHelp {
             // thread exit.
             return false;
         }
-        if let CommMsg::Rpc(id, data) = message {
-            let message = match serde_json::from_value::<HelpRpcRequest>(data.clone()) {
-                Ok(m) => m,
-                Err(err) => {
-                    self.comm
-                        .outgoing_tx
-                        .send(CommMsg::Rpc(
-                            id,
-                            json_rpc_error(
-                                JsonRpcErrorCode::InvalidRequest,
-                                format!("Invalid help request: {err:} (request: {data:})"),
-                            ),
-                        ))
-                        .unwrap();
-                    return true;
-                },
-            };
-            if let Err(err) = self.handle_rpc(id.clone(), message) {
-                self.comm
-                    .outgoing_tx
-                    .send(CommMsg::Rpc(
-                        id,
-                        json_rpc_error(
-                            JsonRpcErrorCode::InternalError,
-                            format!("Failed to process help request: {err:} (request: {data:})"),
-                        ),
-                    ))
-                    .unwrap();
-                return true;
-            }
+
+        if self
+            .comm
+            .handle_request(message, |req| self.handle_rpc(req))
+        {
+            return true;
         }
 
         true
     }
 
-    fn handle_rpc(&self, id: String, message: HelpRpcRequest) -> Result<()> {
+    fn handle_rpc(&self, message: HelpRpcRequest) -> anyhow::Result<HelpRpcReply> {
         // Match on the type of data received.
         match message {
             HelpRpcRequest::ShowHelpTopic(topic) => {
                 // Look up the help topic and attempt to show it; this returns a
                 // boolean indicating whether the topic was found.
-                let found = match self.show_help_topic(topic.topic.clone()) {
-                    Ok(found) => found,
-                    Err(err) => {
-                        return Err(err);
-                    },
-                };
-
-                // Create and send a reply to the front end.
-                let reply = HelpRpcReply::ShowHelpTopicReply(found);
-                let json = serde_json::to_value(reply)?;
-                self.comm.outgoing_tx.send(CommMsg::Rpc(id, json))?;
-                Ok(())
+                match self.show_help_topic(topic.topic.clone()) {
+                    Ok(found) => Ok(HelpRpcReply::ShowHelpTopicReply(found)),
+                    Err(err) => Err(err),
+                }
             },
         }
     }
