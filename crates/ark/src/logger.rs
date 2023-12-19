@@ -99,7 +99,7 @@ impl Logger {
 
             match file {
                 Ok(file) => self.mutex = Some(Mutex::new(file)),
-                Err(error) => eprintln!("Error initializing log: {}", error),
+                Err(error) => eprintln!("Error initializing log: {error:?}"),
             }
         }
     }
@@ -143,22 +143,22 @@ impl log::Log for Logger {
         let message = annotate(message);
 
         // Generate message to log.
-        let message = format!("{}: {}", prefix, message);
+        let message = format!("{prefix}: {message}");
 
         if let Some(mutex) = self.mutex.as_ref() {
             // Write to log file if one is specified.
             if let Ok(mut file) = mutex.lock() {
                 let status = writeln!(file, "{}", message);
                 if let Err(error) = status {
-                    eprintln!("Error writing to log file: {}", error);
+                    eprintln!("Error writing to log file: {error:?}");
                 }
             }
         } else {
             // If no log file is specified, write to stdout.
             if record.level() == log::Level::Error {
-                eprintln!("{}", message);
+                eprintln!("{message}");
             } else {
-                println!("{}", message);
+                println!("{message}");
             }
         }
     }
@@ -177,7 +177,7 @@ pub fn initialize(file: Option<&str>) {
         let level = unwrap!(
             log::Level::from_str(level_envvar.as_str()),
             Err(error) => {
-                eprintln!("Error parsing RUST_LOG: {}", error);
+                eprintln!("Error parsing RUST_LOG: {error:?}");
                 return;
             }
         );
