@@ -215,14 +215,14 @@ pub enum VariablesRpcRequest {
 #[serde(tag = "method", content = "result")]
 pub enum VariablesRpcReply {
 	/// A list of variables in the session.
-	ListReply(undefined),
+	ListReply(Vec<Variable>),
 
 	/// A list of variables in the session remaining after deletion; usually
 	/// empty.
-	ClearReply(undefined),
+	ClearReply(Vec<Variable>),
 
 	/// The names of the variables that were successfully deleted.
-	DeleteReply(undefined),
+	DeleteReply(Vec<String>),
 
 	/// An inspected variable.
 	InspectReply(InspectedVariable),
@@ -238,9 +238,12 @@ pub enum VariablesRpcReply {
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params")]
 pub enum VariablesEvent {
+	/// Updates the variables in the current session.
 	#[serde(rename = "update")]
 	Update(UpdateParams),
 
+	/// Replace all variables in the current session with the variables from
+	/// the backend.
 	#[serde(rename = "refresh")]
 	Refresh(RefreshParams),
 
