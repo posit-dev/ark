@@ -44,8 +44,6 @@ use harp::vector::IntegerVector;
 use harp::vector::Vector;
 use itertools::Itertools;
 use libR_shim::*;
-use serde::Deserialize;
-use serde::Serialize;
 use stdext::local;
 use stdext::unwrap;
 

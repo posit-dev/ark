@@ -9,6 +9,7 @@ use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::comm::variables_comm::FormattedVariable;
 use amalthea::comm::variables_comm::InspectedVariable;
+use amalthea::comm::variables_comm::RefreshParams;
 use amalthea::comm::variables_comm::UpdateParams;
 use amalthea::comm::variables_comm::Variable;
 use amalthea::comm::variables_comm::VariableList;
@@ -114,7 +115,20 @@ impl RVariables {
         });
 
         // Perform the initial environment scan and deliver to the front end
-        self.refresh(None);
+        match self.refresh() {
+            Ok(variables) => {
+                let length = variables.len() as i64;
+                let event = VariablesEvent::Refresh(RefreshParams {
+                    variables,
+                    length,
+                    version: self.version as i64,
+                });
+                self.send_event(event, None);
+            },
+            Err(err) => {
+                error!("Failed to deliver initial environment: {}", err);
+            },
+        }
 
         // Flag initially set to false, but set to true if the user closes the
         // channel (i.e. the front end is closed)
@@ -232,18 +246,16 @@ impl RVariables {
                 }))
             },
             VariablesRpcRequest::View(params) => {
-                self.view(&params.path, None)?;
+                self.view(&params.path)?;
                 Ok(VariablesRpcReply::ViewReply)
             },
         }
     }
 
     /**
-     * Perform a full environment scan and deliver the results to the front end.
-     * When this message is being sent in reply to a request from the front end,
-     * the request ID is passed in as an argument.
+     * Perform a full environment scan and return the list of variables.
      */
-    fn refresh(&mut self, request_id: Option<String>) -> Result<Vec<Variable>, harp::error::Error> {
+    fn refresh(&mut self) -> Result<Vec<Variable>, harp::error::Error> {
         let mut variables: Vec<Variable> = vec![];
 
         r_task(|| {
@@ -324,11 +336,10 @@ impl RVariables {
         })
     }
 
-    fn view(
-        &mut self,
-        path: &Vec<String>,
-        request_id: Option<String>,
-    ) -> Result<(), harp::error::Error> {
+    /// Open a data viewer for the given variable.
+    ///
+    /// - `path`: The path to the variable to view, as an array of access keys
+    fn view(&mut self, path: &Vec<String>) -> Result<(), harp::error::Error> {
         r_task(|| {
             let env = self.env.get().clone();
             let data = PositronVariable::resolve_data_object(env, &path)?;

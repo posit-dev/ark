@@ -7,6 +7,11 @@
 
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::event::CommManagerEvent;
+use amalthea::comm::variables_comm::ClearParams;
+use amalthea::comm::variables_comm::DeleteParams;
+use amalthea::comm::variables_comm::VariablesEvent;
+use amalthea::comm::variables_comm::VariablesRpcReply;
+use amalthea::comm::variables_comm::VariablesRpcRequest;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
 use ark::lsp::events::EVENTS;
@@ -79,9 +84,14 @@ fn test_environment_list() {
 
     // Ensure we got a list of variables by unmarshalling the JSON. The list
     // should be empty since we don't have any variables in the R environment.
-    let list: VariablesMessageList = serde_json::from_value(data).unwrap();
-    assert!(list.variables.len() == 0);
-    assert_eq!(list.version, 1);
+    let evt: VariablesEvent = serde_json::from_value(data).unwrap();
+    match evt {
+        VariablesEvent::Refresh(params) => {
+            assert!(params.variables.len() == 0);
+            assert_eq!(params.version, 1);
+        },
+        _ => panic!("Expected refresh event"),
+    }
 
     // Now create a variable in the R environment and ensure we get a list of
     // variables with the new variable in it.
@@ -91,9 +101,9 @@ fn test_environment_list() {
         Rf_defineVar(sym, Rf_ScalarInteger(42), *test_env);
     });
 
-    // Request that the environment be refreshed
-    let refresh = VariablesMessage::Refresh;
-    let data = serde_json::to_value(refresh).unwrap();
+    // Request a list of variables
+    let request = VariablesRpcRequest::List;
+    let data = serde_json::to_value(request).unwrap();
     let request_id = String::from("refresh-id-1234");
     incoming_tx
         .send(CommMsg::Rpc(request_id.clone(), data))
@@ -112,11 +122,16 @@ fn test_environment_list() {
     };
 
     // Unmarshal the list and check for the variable we created
-    let list: VariablesMessageList = serde_json::from_value(data).unwrap();
-    assert!(list.variables.len() == 1);
-    let var = &list.variables[0];
-    assert_eq!(var.display_name, "everything");
-    assert_eq!(list.version, 2);
+    let reply: VariablesRpcReply = serde_json::from_value(data).unwrap();
+    match reply {
+        VariablesRpcReply::ListReply(list) => {
+            assert!(list.variables.len() == 1);
+            let var = &list.variables[0];
+            assert_eq!(var.display_name, "everything");
+            assert_eq!(list.version, Some(2));
+        },
+        _ => panic!("Expected list reply"),
+    }
 
     // Create another variable
     r_task(|| unsafe {
@@ -136,15 +151,20 @@ fn test_environment_list() {
     };
 
     // Unmarshal the list and check for the variable we created
-    let msg: VariablesMessageUpdate = serde_json::from_value(data).unwrap();
-    assert_eq!(msg.assigned.len(), 1);
-    assert_eq!(msg.removed.len(), 1);
-    assert_eq!(msg.assigned[0].display_name, "nothing");
-    assert_eq!(msg.removed[0], "everything");
-    assert_eq!(msg.version, 3);
+    let evt: VariablesEvent = serde_json::from_value(data).unwrap();
+    match evt {
+        VariablesEvent::Update(params) => {
+            assert_eq!(params.assigned.len(), 1);
+            assert_eq!(params.removed.len(), 1);
+            assert_eq!(params.assigned[0].display_name, "nothing");
+            assert_eq!(params.removed[0], "everything");
+            assert_eq!(params.version, 3);
+        },
+        _ => panic!("Expected update event"),
+    }
 
     // Request that the environment be cleared
-    let clear = VariablesMessage::Clear(VariablesMessageClear {
+    let clear = VariablesRpcRequest::Clear(ClearParams {
         include_hidden_objects: true,
     });
     let data = serde_json::to_value(clear).unwrap();
@@ -162,13 +182,17 @@ fn test_environment_list() {
 
             data
         },
-        _ => panic!("Expected data message, got {:?}", msg),
+        _ => panic!("Expected RPC message"),
     };
 
     // Unmarshal the list and check for the variable we created
-    let list: VariablesMessageList = serde_json::from_value(data).unwrap();
-    assert!(list.variables.len() == 0);
-    assert_eq!(list.version, 4);
+    let reply: VariablesRpcReply = serde_json::from_value(data).unwrap();
+    match reply {
+        VariablesRpcReply::ClearReply(list) => {
+            assert!(list.len() == 0);
+        },
+        _ => panic!("Expected clear reply"),
+    }
 
     // test the env is now empty
     r_task(|| unsafe {
@@ -197,14 +221,19 @@ fn test_environment_list() {
         _ => panic!("Expected data message, got {:?}", msg),
     };
 
-    let msg: VariablesMessageUpdate = serde_json::from_value(data).unwrap();
-    assert_eq!(msg.assigned.len(), 2);
-    assert_eq!(msg.removed.len(), 0);
-    assert_eq!(msg.version, 5);
+    let evt: VariablesEvent = serde_json::from_value(data).unwrap();
+    match evt {
+        VariablesEvent::Update(params) => {
+            assert_eq!(params.assigned.len(), 2);
+            assert_eq!(params.removed.len(), 0);
+            assert_eq!(params.version, 5);
+        },
+        _ => panic!("Expected update event"),
+    }
 
     // Request that a environment be deleted
-    let delete = VariablesMessage::Delete(VariablesMessageDelete {
-        variables: vec![String::from("a")],
+    let delete = VariablesRpcRequest::Delete(DeleteParams {
+        names: vec![String::from("a")],
     });
     let data = serde_json::to_value(delete).unwrap();
     let request_id = String::from("delete-id-1236");
@@ -217,13 +246,17 @@ fn test_environment_list() {
             assert_eq!(request_id, reply_id);
             data
         },
-        _ => panic!("Expected data message, got {:?}", msg),
+        _ => panic!("Expected RPC message"),
     };
 
-    let update: VariablesMessageUpdate = serde_json::from_value(data).unwrap();
-    assert!(update.assigned.len() == 0);
-    assert_eq!(update.removed, ["a"]);
-    assert_eq!(update.version, 6);
+    let reply: VariablesRpcReply = serde_json::from_value(data).unwrap();
+
+    match reply {
+        VariablesRpcReply::DeleteReply(update) => {
+            assert_eq!(update, ["a"]);
+        },
+        _ => panic!("Expected delete reply"),
+    };
 
     // Close the comm. Otherwise the thread panics
     incoming_tx.send(CommMsg::Close).unwrap();
