@@ -39,3 +39,16 @@ pub fn json_rpc_error(code: JsonRpcErrorCode, message: String) -> Value {
         }
     })
 }
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct JsonRpcError {
+    pub error: JsonRpcErrorData,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct JsonRpcErrorData {
+    pub message: String,
+    pub code: JsonRpcErrorCode,
+}
