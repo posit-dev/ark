@@ -9,8 +9,23 @@
 use serde::Deserialize;
 use serde::Serialize;
 
+/// A view containing a list of variables in the session.
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+pub struct VariableList {
+	/// A list of variables in the session.
+	pub variables: Vec<Variable>,
+
+	/// The total number of variables in the session. This may be greater than
+	/// the number of variables in the 'variables' array if the array is
+	/// truncated.
+	pub length: i64,
+
+	/// The version of the view (incremented with each update)
+	pub version: Option<i64>
+}
+
 /// An inspected variable.
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct InspectedVariable {
 	/// The children of the inspected variable.
 	pub children: Vec<Variable>,
@@ -21,7 +36,7 @@ pub struct InspectedVariable {
 }
 
 /// An object formatted for copying to the clipboard.
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct FormattedVariable {
 	/// The format returned, as a MIME type; matches the MIME type of the
 	/// format named in the request.
@@ -32,7 +47,7 @@ pub struct FormattedVariable {
 }
 
 /// A single variable in the runtime.
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct Variable {
 	/// A key that uniquely identifies the variable within the runtime and can
 	/// be used to access the variable in `inspect` requests
@@ -56,7 +71,7 @@ pub struct Variable {
 
 	/// The kind of value the variable represents, such as 'string' or
 	/// 'number'
-	pub kind: String,
+	pub kind: VariableKind,
 
 	/// The number of elements in the variable, if it is a collection
 	pub length: i64,
@@ -74,7 +89,7 @@ pub struct Variable {
 }
 
 /// Possible values for Kind in Variable
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub enum VariableKind {
 	#[serde(rename = "boolean")]
 	Boolean,
@@ -104,7 +119,10 @@ pub enum VariableKind {
 	String,
 
 	#[serde(rename = "table")]
-	Table
+	Table,
+
+	#[serde(rename = "lazy")]
+	Lazy
 }
 
 /// Parameters for the Clear method.
@@ -153,6 +171,10 @@ pub struct UpdateParams {
 
 	/// An array of variable names that have been removed.
 	pub removed: Vec<String>,
+
+	/// The version of the view (incremented with each update), or 0 if the
+	/// backend doesn't track versions.
+	pub version: i64,
 }
 
 /// Parameters for the Refresh method.
@@ -160,6 +182,13 @@ pub struct UpdateParams {
 pub struct RefreshParams {
 	/// An array listing all the variables in the current session.
 	pub variables: Vec<Variable>,
+
+	/// The number of variables in the current session.
+	pub length: i64,
+
+	/// The version of the view (incremented with each update), or 0 if the
+	/// backend doesn't track versions.
+	pub version: i64,
 }
 
 /**
@@ -214,8 +243,8 @@ pub enum VariablesRpcRequest {
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "result")]
 pub enum VariablesRpcReply {
-	/// A list of variables in the session.
-	ListReply(Vec<Variable>),
+	/// A view containing a list of variables in the session.
+	ListReply(VariableList),
 
 	/// A list of variables in the session remaining after deletion; usually
 	/// empty.
@@ -229,6 +258,9 @@ pub enum VariablesRpcReply {
 
 	/// An object formatted for copying to the clipboard.
 	ClipboardFormatReply(FormattedVariable),
+
+	/// Reply for the view method (no result)
+	ViewReply,
 
 }
 
