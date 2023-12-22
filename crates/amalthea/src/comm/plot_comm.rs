@@ -11,7 +11,6 @@ use serde::Serialize;
 
 /// A rendered plot
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
 pub struct PlotResult {
 	/// The plot data, as a base64-encoded string
 	pub data: String,
@@ -22,7 +21,6 @@ pub struct PlotResult {
 
 /// Parameters for the Render method.
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
 pub struct RenderParams {
 	/// The requested plot height, in pixels
 	pub height: i64,

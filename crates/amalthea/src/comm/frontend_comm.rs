@@ -17,7 +17,6 @@ pub type CallMethodResult = serde_json::Value;
 
 /// Parameters for the CallMethod method.
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
 pub struct CallMethodParams {
 	/// The method to call inside the interpreter
 	pub method: String,
@@ -28,7 +27,6 @@ pub struct CallMethodParams {
 
 /// Parameters for the Busy method.
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
 pub struct BusyParams {
 	/// Whether the backend is busy
 	pub busy: bool,
@@ -36,7 +34,6 @@ pub struct BusyParams {
 
 /// Parameters for the ShowMessage method.
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
 pub struct ShowMessageParams {
 	/// The message to show to the user.
 	pub message: String,
@@ -44,7 +41,6 @@ pub struct ShowMessageParams {
 
 /// Parameters for the PromptState method.
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
 pub struct PromptStateParams {
 	/// Prompt for primary input.
 	pub input_prompt: String,
@@ -55,7 +51,6 @@ pub struct PromptStateParams {
 
 /// Parameters for the WorkingDirectory method.
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
 pub struct WorkingDirectoryParams {
 	/// The new working directory
 	pub directory: String,

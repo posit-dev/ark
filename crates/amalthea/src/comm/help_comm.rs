@@ -24,7 +24,6 @@ pub enum ShowHelpKind {
 
 /// Parameters for the ShowHelpTopic method.
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
 pub struct ShowHelpTopicParams {
 	/// The help topic to show
 	pub topic: String,
@@ -32,7 +31,6 @@ pub struct ShowHelpTopicParams {
 
 /// Parameters for the ShowHelp method.
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
 pub struct ShowHelpParams {
 	/// The help content to show
 	pub content: String,
