@@ -36,7 +36,7 @@ pub enum Comm {
     Other(String),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum CommMsg {
     /// A message that is part of a Remote Procedure Call (RPC). The first value
     /// is the unique ID of the RPC invocation (i.e. the Jupyter message ID),

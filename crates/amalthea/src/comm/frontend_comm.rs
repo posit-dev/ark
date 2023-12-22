@@ -9,6 +9,22 @@
 use serde::Deserialize;
 use serde::Serialize;
 
+/// Items in Params
+pub type Params = serde_json::Value;
+
+/// The method result
+pub type CallMethodResult = serde_json::Value;
+
+/// Parameters for the CallMethod method.
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
+pub struct CallMethodParams {
+	/// The method to call inside the interpreter
+	pub method: String,
+
+	/// The parameters for `method`
+	pub params: Vec<Params>,
+}
+
 /// Parameters for the Busy method.
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct BusyParams {
@@ -46,6 +62,14 @@ pub struct WorkingDirectoryParams {
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params")]
 pub enum FrontendRpcRequest {
+	/// Run a method in the interpreter and return the result to the frontend
+	///
+	/// Unlike other RPC methods, `call_method` calls into methods implemented
+	/// in the interpreter and returns the result back to the frontend using
+	/// an implementation-defined serialization scheme.
+	#[serde(rename = "call_method")]
+	CallMethod(CallMethodParams),
+
 }
 
 /**
@@ -54,6 +78,9 @@ pub enum FrontendRpcRequest {
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "result")]
 pub enum FrontendRpcReply {
+	/// The method result
+	CallMethodReply(CallMethodResult),
+
 }
 
 /**
@@ -64,11 +91,15 @@ pub enum FrontendRpcReply {
 pub enum FrontendEvent {
 	#[serde(rename = "busy")]
 	Busy(BusyParams),
+
 	#[serde(rename = "show_message")]
 	ShowMessage(ShowMessageParams),
+
 	#[serde(rename = "prompt_state")]
 	PromptState(PromptStateParams),
+
 	#[serde(rename = "working_directory")]
 	WorkingDirectory(WorkingDirectoryParams),
+
 }
 

@@ -7,18 +7,19 @@
 
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::frontend_comm::FrontendEvent;
+use amalthea::comm::frontend_comm::FrontendRpcReply;
+use amalthea::comm::frontend_comm::FrontendRpcRequest;
 use amalthea::socket::comm::CommSocket;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use crossbeam::select;
-// use harp::exec::RFunction;
-// use harp::exec::RFunctionExt;
-// use harp::object::RObject;
-use log::info;
-// use serde_json::Value;
+use harp::exec::RFunction;
+use harp::exec::RFunctionExt;
+use harp::object::RObject;
+use serde_json::Value;
 use stdext::spawn;
 
-// use crate::r_task;
+use crate::r_task;
 
 /// PositronFrontend is a wrapper around a comm channel whose lifetime matches
 /// that of the Positron front end. It is used to perform communication with the
@@ -65,8 +66,8 @@ impl PositronFrontend {
                 recv(&self.comm.incoming_rx) -> msg => {
                     match msg {
                         Ok(msg) => {
-                            if !self.handle_comm_message(&msg) {
-                                info!("Frontend comm {} closing by request from front end.", self.comm.comm_id);
+                            if !self.handle_comm_message(msg) {
+                                log::info!("Frontend comm {} closing by request from front end.", self.comm.comm_id);
                                 break;
                             }
                         },
@@ -94,115 +95,72 @@ impl PositronFrontend {
      *
      * Returns true if the thread should continue, false if it should exit.
      */
-    fn handle_comm_message(&self, msg: &CommMsg) -> bool {
-        match msg {
-            CommMsg::Data(data) => {
-                // We don't really expect to receive data messages from the
-                // front end; they are events
-                log::warn!("Unexpected data message from front end: {:?}", data);
-                true
-            },
-            CommMsg::Close => {
-                // The front end has closed the connection; let the
-                // thread exit.
-                false
-            },
-            CommMsg::Rpc(_id, _request) => {
-                todo!();
-                // let message = match serde_json::from_value::<FrontendMessage>(request.clone()) {
-                //     Ok(msg) => msg,
-                //     Err(err) => {
-                //         log::warn!("Error decoding RPC request from front end: {:?}", err);
-                //         return true;
-                //     },
-                // };
-                // match message {
-                //     FrontendMessage::RpcRequest(req) => {
-                //         if let Err(err) = self.handle_rpc_request(id, &req) {
-                //             log::warn!("Error handling RPC request from front end: {:?}", err);
-                //         }
-                //     },
-                //     _ => {
-                //         log::warn!("Unexpected RPC message from front end: {:?}", message);
-                //     },
-                // };
-                // true
-            },
+    fn handle_comm_message(&self, message: CommMsg) -> bool {
+        if let CommMsg::Close = message {
+            // The front end has closed the connection; let the
+            // thread exit.
+            return false;
         }
+
+        if self
+            .comm
+            .handle_request(message.clone(), |req| self.handle_rpc(req))
+        {
+            return true;
+        }
+
+        // We don't really expect to receive data messages from the
+        // front end; they are events
+        log::warn!("Unexpected data message from front end: {message:?}");
+        true
     }
 
-    // /**
-    //  * Handles an RPC request from the front end.
-    //  */
-    // fn handle_rpc_request(
-    //     &self,
-    //     id: &str,
-    //     request: &FrontendRpcRequest,
-    // ) -> Result<(), anyhow::Error> {
-    //     // Today, all RPCs are fulfilled by R directly. Check to see if an R
-    //     // method of the appropriate name is defined.
-    //     //
-    //     // Consider: In the future, we may want to allow requests to be
-    //     // fulfilled here on the Rust side, with only some requests forwarded to
-    //     // R; Rust methods may wish to establish their own RPC handlers.
+    /**
+     * Handles an RPC request from the front end.
+     */
+    fn handle_rpc(
+        &self,
+        request: FrontendRpcRequest,
+    ) -> anyhow::Result<FrontendRpcReply, anyhow::Error> {
+        let request = match request {
+            FrontendRpcRequest::CallMethod(request) => request,
+        };
 
-    //     // The method name is prefixed with ".ps.rpc.", by convention
-    //     let method = format!(".ps.rpc.{}", request.method);
+        log::trace!("Handling '{}' frontend RPC method", request.method);
 
-    //     // Use the `exists` function to see if the method exists
-    //     let exists = r_task(|| unsafe {
-    //         let exists = RFunction::from("exists")
-    //             .param("x", method.clone())
-    //             .call()?;
-    //         RObject::to::<bool>(exists)
-    //     })?;
+        // Today, all RPCs are fulfilled by R directly. Check to see if an R
+        // method of the appropriate name is defined.
+        //
+        // Consider: In the future, we may want to allow requests to be
+        // fulfilled here on the Rust side, with only some requests forwarded to
+        // R; Rust methods may wish to establish their own RPC handlers.
 
-    //     if !exists {
-    //         // No such method; return an error
-    //         let reply = FrontendMessage::RpcResultError(FrontendRpcError {
-    //             id: id.to_string(),
-    //             error: FrontendRpcErrorData {
-    //                 code: JsonRpcErrorCode::MethodNotFound, // Method not found
-    //                 message: format!("No such method: {}", request.method),
-    //             },
-    //         });
-    //         let comm_msg = CommMsg::Rpc(id.to_string(), serde_json::to_value(reply)?);
-    //         self.comm.outgoing_tx.send(comm_msg)?;
-    //         return Ok(());
-    //     }
+        // The method name is prefixed with ".ps.rpc.", by convention
+        let method = format!(".ps.rpc.{}", request.method);
 
-    //     // Form an R function call from the request
-    //     let result = r_task(|| {
-    //         let mut call = RFunction::from(method);
-    //         for param in request.params.iter() {
-    //             let p = RObject::try_from(param.clone())?;
-    //             call.add(p);
-    //         }
-    //         let result = call.call()?;
-    //         Value::try_from(result)
-    //     });
+        // Use the `exists` function to see if the method exists
+        let exists = r_task(|| unsafe {
+            let exists = RFunction::from("exists")
+                .param("x", method.clone())
+                .call()?;
+            RObject::to::<bool>(exists)
+        })?;
 
-    //     // Convert the reply to a message we can send to the front end
-    //     let reply = match result {
-    //         Ok(value) => FrontendMessage::RpcResultResponse(FrontendRpcResult {
-    //             id: id.to_string(),
-    //             result: value,
-    //         }),
-    //         Err(err) => FrontendMessage::RpcResultError(FrontendRpcError {
-    //             id: id.to_string(),
-    //             error: FrontendRpcErrorData {
-    //                 code: JsonRpcErrorCode::InternalError,
-    //                 message: err.to_string(),
-    //             },
-    //         }),
-    //     };
+        if !exists {
+            anyhow::bail!("No such method: {}", request.method);
+        }
 
-    //     let comm_msg = CommMsg::Rpc(id.to_string(), serde_json::to_value(reply)?);
+        // Form an R function call from the request
+        let result = r_task(|| {
+            let mut call = RFunction::from(method);
+            for param in request.params.iter() {
+                let p = RObject::try_from(param.clone())?;
+                call.add(p);
+            }
+            let result = call.call()?;
+            Value::try_from(result)
+        })?;
 
-    //     // Deliver the RPC reply to the front end over the comm channel
-    //     if let Err(err) = self.comm.outgoing_tx.send(comm_msg) {
-    //         log::error!("Error sending Positron event to front end: {}", err);
-    //     };
-    //     Ok(())
-    // }
+        Ok(FrontendRpcReply::CallMethodReply(result))
+    }
 }
