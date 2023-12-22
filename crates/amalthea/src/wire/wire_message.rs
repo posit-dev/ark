@@ -277,12 +277,7 @@ impl WireMessage {
 
     fn comm_msg_type(data: Option<&Value>) -> String {
         if let Some(Value::Object(map)) = data {
-            if let Some(Value::String(msg_type)) = map.get("msg_type") {
-                if msg_type == "event" {
-                    if let Some(Value::String(event_name)) = map.get("name") {
-                        return String::from(format!("{msg_type}/{event_name}"));
-                    }
-                }
+            if let Some(Value::String(msg_type)) = map.get("method") {
                 return msg_type.clone();
             }
         }
