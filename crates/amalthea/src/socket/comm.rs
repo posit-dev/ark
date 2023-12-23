@@ -137,7 +137,7 @@ impl CommSocket {
                 Err(err) => json_rpc_error(
                     JsonRpcErrorCode::MethodNotFound,
                     format!(
-                        "Failed to process {} request: {err:} (request: {data:})",
+                        "No handler for {} request (method not found): {err:} (request: {data:})",
                         self.comm_name
                     ),
                 ),
