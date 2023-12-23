@@ -20,10 +20,10 @@ use std::sync::Once;
 use std::time::Duration;
 
 use amalthea::comm::event::CommManagerEvent;
-use amalthea::events::BusyEvent;
-use amalthea::events::PositronEvent;
-use amalthea::events::PromptStateEvent;
-use amalthea::events::ShowMessageEvent;
+use amalthea::comm::frontend_comm::BusyParams;
+use amalthea::comm::frontend_comm::FrontendEvent;
+use amalthea::comm::frontend_comm::PromptStateParams;
+use amalthea::comm::frontend_comm::ShowMessageParams;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::socket::iopub::Wait;
 use amalthea::wire::exception::Exception;
@@ -511,7 +511,7 @@ impl RMain {
                 // custom prompts set by users, e.g. `options(prompt = ,
                 // continue = )`, as well as debugging prompts, e.g. after a
                 // call to `browser()`.
-                let event = PositronEvent::PromptState(PromptStateEvent {
+                let event = FrontendEvent::PromptState(PromptStateParams {
                     input_prompt: info.input_prompt.clone(),
                     continuation_prompt: info.continuation_prompt.clone(),
                 });
@@ -877,7 +877,7 @@ impl RMain {
 
         // Create an event representing the new busy state
         self.is_busy = which != 0;
-        let event = PositronEvent::Busy(BusyEvent { busy: self.is_busy });
+        let event = FrontendEvent::Busy(BusyParams { busy: self.is_busy });
 
         // Wait for a lock on the kernel and have it deliver the event to
         // the front end
@@ -890,7 +890,7 @@ impl RMain {
         let message = unsafe { CStr::from_ptr(buf) };
 
         // Create an event representing the message
-        let event = PositronEvent::ShowMessage(ShowMessageEvent {
+        let event = FrontendEvent::ShowMessage(ShowMessageParams {
             message: message.to_str().unwrap().to_string(),
         });
 

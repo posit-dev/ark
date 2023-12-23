@@ -152,16 +152,15 @@ impl CommManager {
 
                     // If we found it, send the message to the comm. TODO: Fewer unwraps
                     if let Some(index) = index {
-                        self.open_comms
-                            .get(index)
-                            .unwrap()
-                            .incoming_tx
-                            .send(msg)
-                            .unwrap();
+                        let comm = self.open_comms.get(index).unwrap();
+                        log::trace!("Comm manager: Sending message to comm '{}'", comm.comm_name);
+
+                        comm.incoming_tx.send(msg).unwrap();
                     } else {
-                        warn!(
+                        log::warn!(
                             "Received message for unknown comm channel {}: {:?}",
-                            comm_id, msg
+                            comm_id,
+                            msg
                         );
                     }
                 },

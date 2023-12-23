@@ -9,13 +9,14 @@
 use serde::Deserialize;
 use serde::Serialize;
 
+/// A rendered plot
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct PlotResult {
 	/// The plot data, as a base64-encoded string
 	pub data: String,
 
 	/// The MIME type of the plot data
-	pub mime_type: String,
+	pub mime_type: String
 }
 
 /// Parameters for the Render method.
@@ -43,6 +44,7 @@ pub enum PlotRpcRequest {
 	/// data is returned in a base64-encoded string.
 	#[serde(rename = "render")]
 	Render(RenderParams),
+
 }
 
 /**
@@ -53,6 +55,7 @@ pub enum PlotRpcRequest {
 pub enum PlotRpcReply {
 	/// A rendered plot
 	RenderReply(PlotResult),
+
 }
 
 /**
@@ -63,5 +66,6 @@ pub enum PlotRpcReply {
 pub enum PlotEvent {
 	#[serde(rename = "update")]
 	Update,
+
 }
 

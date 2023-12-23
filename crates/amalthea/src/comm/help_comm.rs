@@ -9,7 +9,7 @@
 use serde::Deserialize;
 use serde::Serialize;
 
-/// Possible values for the Kind parameter of the ShowHelp method.
+/// Possible values for Kind in ShowHelp
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub enum ShowHelpKind {
 	#[serde(rename = "html")]
@@ -56,6 +56,7 @@ pub enum HelpRpcRequest {
 	/// delivered.
 	#[serde(rename = "show_help_topic")]
 	ShowHelpTopic(ShowHelpTopicParams),
+
 }
 
 /**
@@ -67,6 +68,7 @@ pub enum HelpRpcReply {
 	/// Whether the topic was found and shown. Topics are shown via a Show
 	/// Help notification.
 	ShowHelpTopicReply(bool),
+
 }
 
 /**
@@ -77,5 +79,6 @@ pub enum HelpRpcReply {
 pub enum HelpEvent {
 	#[serde(rename = "show_help")]
 	ShowHelp(ShowHelpParams),
+
 }
 

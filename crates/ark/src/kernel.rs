@@ -8,9 +8,9 @@
 use std::path::PathBuf;
 use std::result::Result::Err;
 
-use amalthea::events::BusyEvent;
-use amalthea::events::PositronEvent;
-use amalthea::events::WorkingDirectoryEvent;
+use amalthea::comm::frontend_comm::BusyParams;
+use amalthea::comm::frontend_comm::FrontendEvent;
+use amalthea::comm::frontend_comm::WorkingDirectoryParams;
 use anyhow::Result;
 use crossbeam::channel::Sender;
 use log::*;
@@ -21,7 +21,7 @@ use crate::request::KernelRequest;
 
 /// Represents the Rust state of the R kernel
 pub struct Kernel {
-    event_tx: Option<Sender<PositronEvent>>,
+    event_tx: Option<Sender<FrontendEvent>>,
     working_directory: PathBuf,
 }
 
@@ -47,7 +47,7 @@ impl Kernel {
     /// Positron front end. This event handler is used to send global events
     /// that are not scoped to any particular view. The `Sender` here is a
     /// channel that is connected to a `positron.frontEnd` comm.
-    pub fn establish_event_handler(&mut self, event_tx: Sender<PositronEvent>) {
+    pub fn establish_event_handler(&mut self, event_tx: Sender<FrontendEvent>) {
         self.event_tx = Some(event_tx);
 
         // Clear the current working directory to generate an event for the new
@@ -68,7 +68,7 @@ impl Kernel {
                 false
             }
         });
-        self.send_event(PositronEvent::Busy(BusyEvent { busy }));
+        self.send_event(FrontendEvent::Busy(BusyParams { busy }));
     }
 
     /// Polls for changes to the working directory, and sends an event to the
@@ -91,7 +91,7 @@ impl Kernel {
             }
 
             // Deliver event to client
-            self.send_event(PositronEvent::WorkingDirectory(WorkingDirectoryEvent {
+            self.send_event(FrontendEvent::WorkingDirectory(WorkingDirectoryParams {
                 directory: current_dir.to_string_lossy().to_string(),
             }));
         };
@@ -104,7 +104,7 @@ impl Kernel {
     }
 
     /// Sends an event to the front end (Positron-specific)
-    pub fn send_event(&self, event: PositronEvent) {
+    pub fn send_event(&self, event: FrontendEvent) {
         info!("Sending Positron event: {:?}", event);
         if self.positron_connected() {
             let event_tx = self.event_tx.as_ref().unwrap();
