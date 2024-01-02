@@ -5,6 +5,7 @@
 //
 //
 
+use tokio::runtime::Runtime;
 use tower_lsp::Client;
 
 // The global state used by R callbacks.
@@ -13,9 +14,13 @@ use tower_lsp::Client;
 // not be used elsewhere than from an R frontend callback or an R function
 // invoked by the REPL.
 pub(super) static mut R_CALLBACK_GLOBALS: Option<RCallbackGlobals> = None;
+pub(super) static mut R_CALLBACK_GLOBALS2: Option<RCallbackGlobals2> = None;
 
 pub(super) struct RCallbackGlobals {
     pub(super) lsp_client: Client,
+}
+pub(super) struct RCallbackGlobals2 {
+    pub(super) lsp_runtime: Runtime,
 }
 
 impl RCallbackGlobals {
@@ -24,8 +29,20 @@ impl RCallbackGlobals {
     }
 }
 
+impl RCallbackGlobals2 {
+    fn new(lsp_runtime: Runtime) -> Self {
+        Self { lsp_runtime }
+    }
+}
+
 pub fn initialize(lsp_client: Client) {
     unsafe {
         R_CALLBACK_GLOBALS = Some(RCallbackGlobals::new(lsp_client));
+    }
+}
+
+pub fn initialize2(lsp_runtime: Runtime) {
+    unsafe {
+        R_CALLBACK_GLOBALS2 = Some(RCallbackGlobals2::new(lsp_runtime));
     }
 }

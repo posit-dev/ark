@@ -35,6 +35,7 @@ use crate::lsp::document_context::DocumentContext;
 use crate::lsp::documents::Document;
 use crate::lsp::documents::DOCUMENT_INDEX;
 use crate::lsp::globals;
+use crate::lsp::globals::R_CALLBACK_GLOBALS2;
 use crate::lsp::help_topic;
 use crate::lsp::hover::hover;
 use crate::lsp::indexer;
@@ -496,54 +497,61 @@ impl Backend {
     }
 }
 
-#[tokio::main]
-pub async fn start_lsp(address: String, conn_init_tx: Sender<bool>) {
-    #[cfg(feature = "runtime-agnostic")]
-    use tokio_util::compat::TokioAsyncReadCompatExt;
-    #[cfg(feature = "runtime-agnostic")]
-    use tokio_util::compat::TokioAsyncWriteCompatExt;
+pub fn start_lsp(address: String, conn_init_tx: Sender<bool>) {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    globals::initialize2(runtime);
 
-    debug!("Connecting to LSP at '{}'", &address);
-    let listener = TcpListener::bind(&address).await.unwrap();
+    let globals = unsafe { R_CALLBACK_GLOBALS2.as_ref().unwrap() };
+    let runtime = &globals.lsp_runtime;
 
-    // Notify frontend that we are ready to accept connections
-    conn_init_tx
-        .send(true)
-        .or_log_warning("Couldn't send LSP server init notification");
+    runtime.block_on(async {
+        #[cfg(feature = "runtime-agnostic")]
+        use tokio_util::compat::TokioAsyncReadCompatExt;
+        #[cfg(feature = "runtime-agnostic")]
+        use tokio_util::compat::TokioAsyncWriteCompatExt;
 
-    let (stream, _) = listener.accept().await.unwrap();
-    debug!("Connected to LSP at '{}'", address);
-    let (read, write) = tokio::io::split(stream);
+        debug!("Connecting to LSP at '{}'", &address);
+        let listener = TcpListener::bind(&address).await.unwrap();
 
-    #[cfg(feature = "runtime-agnostic")]
-    let (read, write) = (read.compat(), write.compat_write());
+        // Notify frontend that we are ready to accept connections
+        conn_init_tx
+            .send(true)
+            .or_log_warning("Couldn't send LSP server init notification");
 
-    let init = |client: Client| {
-        // initialize shared globals (needed for R callbacks)
-        globals::initialize(client.clone());
+        let (stream, _) = listener.accept().await.unwrap();
+        debug!("Connected to LSP at '{}'", address);
+        let (read, write) = tokio::io::split(stream);
 
-        // create backend
-        let backend = Backend {
-            client,
-            documents: DOCUMENT_INDEX.clone(),
-            workspace: Arc::new(Mutex::new(Workspace::default())),
+        #[cfg(feature = "runtime-agnostic")]
+        let (read, write) = (read.compat(), write.compat_write());
+
+        let init = |client: Client| {
+            // initialize shared globals (needed for R callbacks)
+            globals::initialize(client.clone());
+
+            // create backend
+            let backend = Backend {
+                client,
+                documents: DOCUMENT_INDEX.clone(),
+                workspace: Arc::new(Mutex::new(Workspace::default())),
+            };
+
+            backend
         };
 
-        backend
-    };
+        let (service, socket) = LspService::build(init)
+            .custom_method(
+                statement_range::POSITRON_STATEMENT_RANGE_REQUEST,
+                Backend::statement_range,
+            )
+            .custom_method(help_topic::POSITRON_HELP_TOPIC_REQUEST, Backend::help_topic)
+            .custom_method("positron/notification", Backend::notification)
+            .finish();
 
-    let (service, socket) = LspService::build(init)
-        .custom_method(
-            statement_range::POSITRON_STATEMENT_RANGE_REQUEST,
-            Backend::statement_range,
-        )
-        .custom_method(help_topic::POSITRON_HELP_TOPIC_REQUEST, Backend::help_topic)
-        .custom_method("positron/notification", Backend::notification)
-        .finish();
-
-    Server::new(read, write, socket).serve(service).await;
-    debug!(
-        "LSP thread exiting gracefully after connection closed ({:?}).",
-        address
-    );
+        Server::new(read, write, socket).serve(service).await;
+        debug!(
+            "LSP thread exiting gracefully after connection closed ({:?}).",
+            address
+        );
+    })
 }
