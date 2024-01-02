@@ -6,9 +6,9 @@
 //
 
 use amalthea::comm::comm_channel::CommMsg;
+use amalthea::comm::help_comm::HelpBackendRpcReply;
+use amalthea::comm::help_comm::HelpBackendRpcRequest;
 use amalthea::comm::help_comm::HelpEvent;
-use amalthea::comm::help_comm::HelpRpcReply;
-use amalthea::comm::help_comm::HelpRpcRequest;
 use amalthea::comm::help_comm::ShowHelpKind;
 use amalthea::comm::help_comm::ShowHelpParams;
 use amalthea::socket::comm::CommSocket;
@@ -173,14 +173,14 @@ impl RHelp {
         true
     }
 
-    fn handle_rpc(&self, message: HelpRpcRequest) -> anyhow::Result<HelpRpcReply> {
+    fn handle_rpc(&self, message: HelpBackendRpcRequest) -> anyhow::Result<HelpBackendRpcReply> {
         // Match on the type of data received.
         match message {
-            HelpRpcRequest::ShowHelpTopic(topic) => {
+            HelpBackendRpcRequest::ShowHelpTopic(topic) => {
                 // Look up the help topic and attempt to show it; this returns a
                 // boolean indicating whether the topic was found.
                 match self.show_help_topic(topic.topic.clone()) {
-                    Ok(found) => Ok(HelpRpcReply::ShowHelpTopicReply(found)),
+                    Ok(found) => Ok(HelpBackendRpcReply::ShowHelpTopicReply(found)),
                     Err(err) => Err(err),
                 }
             },

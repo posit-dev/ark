@@ -7,6 +7,8 @@
 
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::comm_channel::RpcRequest;
+use amalthea::comm::frontend_comm::FrontendBackendRpcReply;
+use amalthea::comm::frontend_comm::FrontendBackendRpcRequest;
 use amalthea::comm::frontend_comm::FrontendEvent;
 use amalthea::comm::frontend_comm::FrontendMessage;
 use amalthea::comm::frontend_comm::FrontendRpcError;
@@ -154,10 +156,10 @@ impl PositronFrontend {
      */
     fn handle_rpc(
         &self,
-        request: FrontendRpcRequest,
-    ) -> anyhow::Result<FrontendRpcReply, anyhow::Error> {
+        request: FrontendBackendRpcRequest,
+    ) -> anyhow::Result<FrontendBackendRpcReply, anyhow::Error> {
         let request = match request {
-            FrontendRpcRequest::CallMethod(request) => request,
+            FrontendBackendRpcRequest::CallMethod(request) => request,
         };
 
         log::trace!("Handling '{}' frontend RPC method", request.method);
@@ -195,7 +197,7 @@ impl PositronFrontend {
             Value::try_from(result)
         })?;
 
-        Ok(FrontendRpcReply::CallMethodReply(result))
+        Ok(FrontendBackendRpcReply::CallMethodReply(result))
     }
 
     fn call_frontend_method(&self, request: &PositronFrontendRpcRequest) -> anyhow::Result<()> {

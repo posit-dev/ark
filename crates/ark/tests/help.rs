@@ -8,8 +8,8 @@
 use core::panic;
 
 use amalthea::comm::comm_channel::CommMsg;
-use amalthea::comm::help_comm::HelpRpcReply;
-use amalthea::comm::help_comm::HelpRpcRequest;
+use amalthea::comm::help_comm::HelpBackendRpcReply;
+use amalthea::comm::help_comm::HelpBackendRpcRequest;
 use amalthea::comm::help_comm::ShowHelpTopicParams;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
@@ -43,7 +43,7 @@ fn test_help_comm() {
         let (help_request_tx, help_reply_rx) = RHelp::start(comm).unwrap();
 
         // Send a request for the help topic 'library'
-        let request = HelpRpcRequest::ShowHelpTopic(ShowHelpTopicParams {
+        let request = HelpBackendRpcRequest::ShowHelpTopic(ShowHelpTopicParams {
             topic: String::from("library"),
         });
         let data = serde_json::to_value(request).unwrap();
@@ -57,9 +57,9 @@ fn test_help_comm() {
         let response = outgoing_rx.recv_timeout(duration).unwrap();
         match response {
             CommMsg::Rpc(id, val) => {
-                let response = serde_json::from_value::<HelpRpcReply>(val).unwrap();
+                let response = serde_json::from_value::<HelpBackendRpcReply>(val).unwrap();
                 match response {
-                    HelpRpcReply::ShowHelpTopicReply(_reply) => {
+                    HelpBackendRpcReply::ShowHelpTopicReply(_reply) => {
                         // Ensure we got a reply with an ID that matches the request
                         assert_eq!(id, request_id);
                     },
