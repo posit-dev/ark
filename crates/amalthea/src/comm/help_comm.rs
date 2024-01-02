@@ -43,11 +43,11 @@ pub struct ShowHelpParams {
 }
 
 /**
- * RPC request types for the help comm
+ * Backend RPC request types for the help comm
  */
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params")]
-pub enum HelpRpcRequest {
+pub enum HelpBackendRpcRequest {
 	/// Look for and, if found, show a help topic.
 	///
 	/// Requests that the help backend look for a help topic and, if found,
@@ -60,11 +60,11 @@ pub enum HelpRpcRequest {
 }
 
 /**
- * RPC Reply types for the help comm
+ * Backend RPC Reply types for the help comm
  */
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "result")]
-pub enum HelpRpcReply {
+pub enum HelpBackendRpcReply {
 	/// Whether the topic was found and shown. Topics are shown via a Show
 	/// Help notification.
 	ShowHelpTopicReply(bool),
@@ -72,7 +72,23 @@ pub enum HelpRpcReply {
 }
 
 /**
- * Front-end events for the help comm
+ * Frontend RPC request types for the help comm
+ */
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "method", content = "params")]
+pub enum HelpFrontendRpcRequest {
+}
+
+/**
+ * Frontend RPC Reply types for the help comm
+ */
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "method", content = "result")]
+pub enum HelpFrontendRpcReply {
+}
+
+/**
+ * Frontend events for the help comm
  */
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params")]
