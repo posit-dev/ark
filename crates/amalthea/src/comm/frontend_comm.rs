@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+ *  Copyright (C) 2024 Posit Software, PBC. All rights reserved.
  *--------------------------------------------------------------------------------------------*/
 
 //
@@ -10,7 +10,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 /// Items in Params
-pub type Params = serde_json::Value;
+pub type Param = serde_json::Value;
 
 /// The method result
 pub type CallMethodResult = serde_json::Value;
@@ -22,7 +22,7 @@ pub struct CallMethodParams {
 	pub method: String,
 
 	/// The parameters for `method`
-	pub params: Vec<Params>,
+	pub params: Vec<Param>,
 }
 
 /// Parameters for the Busy method.
@@ -30,6 +30,19 @@ pub struct CallMethodParams {
 pub struct BusyParams {
 	/// Whether the backend is busy
 	pub busy: bool,
+}
+
+/// Parameters for the OpenEditor method.
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
+pub struct OpenEditorParams {
+	/// The path of the file to open
+	pub file: String,
+
+	/// The line number to jump to
+	pub line: i64,
+
+	/// The column number to jump to
+	pub column: i64,
 }
 
 /// Parameters for the ShowMessage method.
@@ -91,6 +104,12 @@ pub enum FrontendRpcReply {
 pub enum FrontendEvent {
 	#[serde(rename = "busy")]
 	Busy(BusyParams),
+
+	#[serde(rename = "clear_console")]
+	ClearConsole,
+
+	#[serde(rename = "open_editor")]
+	OpenEditor(OpenEditorParams),
 
 	#[serde(rename = "show_message")]
 	ShowMessage(ShowMessageParams),
