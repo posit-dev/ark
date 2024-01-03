@@ -56,10 +56,7 @@ impl Kernel {
         // client (i.e. after a reconnect)
         self.working_directory = PathBuf::new();
         if let Err(err) = self.poll_working_directory() {
-            warn!(
-                "Error establishing working directory for front end: {}",
-                err
-            );
+            log::error!("Error establishing working directory for frontend: {err:?}");
         }
 
         // Get the current busy status

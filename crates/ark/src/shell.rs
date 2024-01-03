@@ -287,7 +287,7 @@ impl ShellHandler for Shell {
                     .kernel_request_tx
                     .send(KernelRequest::EstablishFrontendChannel(message_tx.clone()))
                 {
-                    warn!(
+                    log::error!(
                         "Could not deliver frontend event channel to execution thread: {}",
                         err
                     );
