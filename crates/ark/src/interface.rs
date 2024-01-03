@@ -20,10 +20,10 @@ use std::sync::Once;
 use std::time::Duration;
 
 use amalthea::comm::base_comm::JsonRpcResponse;
-use amalthea::comm::comm_channel::RpcRequestRaw;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::comm::frontend_comm::BusyParams;
 use amalthea::comm::frontend_comm::FrontendEvent;
+use amalthea::comm::frontend_comm::FrontendFrontendRpcRequest;
 use amalthea::comm::frontend_comm::PromptStateParams;
 use amalthea::comm::frontend_comm::ShowMessageParams;
 use amalthea::socket::iopub::IOPubMessage;
@@ -1000,14 +1000,11 @@ impl RMain {
         &self.lsp_client
     }
 
-    // Use try_from()?
-
     pub fn call_frontend_method(
         &self,
-        method: String,
-        params: Vec<serde_json::Value>,
+        request: FrontendFrontendRpcRequest,
     ) -> anyhow::Result<RObject> {
-        log::trace!("Calling frontend method '{method}'");
+        log::trace!("Calling frontend method '{request:?}'");
         let (response_tx, response_rx) = bounded(1);
 
         // NOTE: Probably simpler to share the originator through a mutex
@@ -1025,10 +1022,7 @@ impl RMain {
         let request = PositronFrontendRpcRequest {
             orig: orig.clone(),
             response_tx,
-            request: RpcRequestRaw {
-                method: method.clone(),
-                params,
-            },
+            request,
         };
 
         {
@@ -1039,13 +1033,13 @@ impl RMain {
         // Create request and block for response
         let response = response_rx.recv().unwrap();
 
-        log::trace!("Got response from frontend method '{method}': {response:?}");
+        log::trace!("Got response from frontend method: {response:?}");
 
         match response {
             JsonRpcResponse::Result { result, .. } => Ok(RObject::try_from(result.result)?),
             JsonRpcResponse::Error { error, .. } => {
                 anyhow::bail!(
-                    "While calling method '{method}':\n\
+                    "While calling frontend method':\n\
                      {}",
                     error.error.message
                 );

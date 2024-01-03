@@ -7,11 +7,10 @@
 
 use amalthea::comm::base_comm::JsonRpcResponse;
 use amalthea::comm::comm_channel::CommMsg;
-use amalthea::comm::comm_channel::RpcRequest;
-use amalthea::comm::comm_channel::RpcRequestRaw;
 use amalthea::comm::frontend_comm::FrontendBackendRpcReply;
 use amalthea::comm::frontend_comm::FrontendBackendRpcRequest;
 use amalthea::comm::frontend_comm::FrontendEvent;
+use amalthea::comm::frontend_comm::FrontendFrontendRpcRequest;
 use amalthea::socket::comm::CommSocket;
 use amalthea::socket::stdin::StdInRequest;
 use amalthea::wire::originator::Originator;
@@ -37,7 +36,7 @@ pub enum PositronFrontendMessage {
 pub struct PositronFrontendRpcRequest {
     pub orig: Originator,
     pub response_tx: Sender<JsonRpcResponse>,
-    pub request: RpcRequestRaw,
+    pub request: FrontendFrontendRpcRequest,
 }
 
 /// PositronFrontend is a wrapper around a comm channel whose lifetime matches
@@ -191,12 +190,11 @@ impl PositronFrontend {
     }
 
     fn call_frontend_method(&self, request: &PositronFrontendRpcRequest) -> anyhow::Result<()> {
-        let wire_request = RpcRequest::from_raw(request.request.clone())?;
-
+        // FIXME: Can this simply wrap the `PositronFrontendRpcRequest`?
         let comm_msg = StdInRequest::CommRequest(
             request.orig.clone(),
             request.response_tx.clone(),
-            wire_request,
+            request.request.clone(),
         );
         self.stdin_request_tx.send(comm_msg)?;
 

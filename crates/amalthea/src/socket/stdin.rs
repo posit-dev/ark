@@ -13,7 +13,7 @@ use log::trace;
 use log::warn;
 
 use crate::comm::base_comm::JsonRpcResponse;
-use crate::comm::comm_channel::RpcRequest;
+use crate::comm::frontend_comm::FrontendFrontendRpcRequest;
 use crate::session::Session;
 use crate::wire::input_reply::InputReply;
 use crate::wire::input_request::ShellInputRequest;
@@ -24,7 +24,11 @@ use crate::wire::originator::Originator;
 
 pub enum StdInRequest {
     InputRequest(ShellInputRequest),
-    CommRequest(Originator, Sender<JsonRpcResponse>, RpcRequest),
+    CommRequest(
+        Originator,
+        Sender<JsonRpcResponse>,
+        FrontendFrontendRpcRequest,
+    ),
 }
 
 enum StdInReplySender {

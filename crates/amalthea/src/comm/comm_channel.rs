@@ -5,11 +5,8 @@
  *
  */
 
-use serde::Deserialize;
-use serde::Serialize;
 use serde_json::Value;
 use strum_macros::EnumString;
-use uuid::Uuid;
 
 use super::frontend_comm::FrontendFrontendRpcRequest;
 use crate::wire::jupyter_message::MessageType;
@@ -59,40 +56,7 @@ pub enum CommMsg {
     Close,
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct RpcRequest {
-    msg_type: String,
-    id: String,
-    request: Value,
-}
-
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct RpcRequestRaw {
-    pub method: String,
-    pub params: Vec<Value>,
-}
-
-impl RpcRequest {
-    pub fn new(request: FrontendFrontendRpcRequest) -> anyhow::Result<Self> {
-        let request = Self {
-            msg_type: String::from("rpc_request"),
-            id: Uuid::new_v4().to_string(),
-            request: serde_json::to_value(request)?,
-        };
-        Ok(request)
-    }
-
-    pub fn from_raw(request: RpcRequestRaw) -> anyhow::Result<Self> {
-        let request = Self {
-            msg_type: String::from("rpc_request"),
-            id: Uuid::new_v4().to_string(),
-            request: serde_json::to_value(request)?,
-        };
-        Ok(request)
-    }
-}
-
-impl MessageType for RpcRequest {
+impl MessageType for FrontendFrontendRpcRequest {
     fn message_type() -> String {
         String::from("rpc_request")
     }
