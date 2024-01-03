@@ -244,6 +244,7 @@ pub struct RMain {
 
     // LSP tokio runtime used to spawn LSP tasks on the executor and the
     // corresponding client used to send LSP requests to the frontend.
+    // Used by R callbacks, like `ps_editor()` for `utils::file.edit()`.
     lsp_runtime: Arc<Runtime>,
     lsp_client: Client,
 
