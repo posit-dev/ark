@@ -19,9 +19,6 @@ use log::warn;
 use serde_json::json;
 use stdext::result::ResultOrLog;
 
-use crate::comm::base_comm::JsonRpcErrorCode;
-use crate::comm::base_comm::JsonRpcErrorData;
-use crate::comm::base_comm::JsonRpcResponse;
 use crate::comm::comm_channel::Comm;
 use crate::comm::comm_channel::CommMsg;
 use crate::comm::event::CommManagerEvent;
@@ -346,49 +343,17 @@ impl Shell {
             warn!("Failed to change kernel status to busy: {}", err)
         }
 
-        let data = req.content.data.clone();
+        // Store this message as a pending RPC request so that when the comm
+        // responds, we can match it up
+        self.comm_manager_tx
+            .send(CommManagerEvent::PendingRpc(req.header.clone()))
+            .unwrap();
 
-        // FIXME: More robust RPC detection
-
-        if data.get("method").is_some() {
-            // panic!("FIXME: Found `method`");
-        } else if data.get("result").is_some() {
-            // If there is no method field this is a response from the frontend
-            // for an RPC request initiated by the backend. The comm manager is
-            // in charge of passing the response to the caller.
-            self.comm_manager_tx
-                .send(CommManagerEvent::RpcResponse(JsonRpcResponse::Result {
-                    id: req.header.msg_id.clone(),
-                    result: data.get("result").unwrap().clone(),
-                }))
-                .unwrap();
-        } else if data.get("error").is_some() {
-            let error = data.get("error").unwrap();
-            let code = error.get("code").unwrap();
-            let code: JsonRpcErrorCode = unsafe { std::mem::transmute(code) };
-
-            self.comm_manager_tx
-                .send(CommManagerEvent::RpcResponse(JsonRpcResponse::Error {
-                    id: req.header.msg_id.clone(),
-                    error: JsonRpcErrorData {
-                        message: error.get("message").unwrap().to_string(),
-                        code,
-                    },
-                }))
-                .unwrap();
-        } else {
-            // Store this message as a pending RPC request so that when the comm
-            // responds, we can match it up
-            self.comm_manager_tx
-                .send(CommManagerEvent::PendingRpc(req.header.clone()))
-                .unwrap();
-
-            // Send the message to the comm
-            let msg = CommMsg::Rpc(req.header.msg_id.clone(), data);
-            self.comm_manager_tx
-                .send(CommManagerEvent::Message(req.content.comm_id.clone(), msg))
-                .unwrap();
-        }
+        // Send the message to the comm
+        let msg = CommMsg::Rpc(req.header.msg_id.clone(), req.content.data.clone());
+        self.comm_manager_tx
+            .send(CommManagerEvent::Message(req.content.comm_id.clone(), msg))
+            .unwrap();
 
         // Return kernel to idle state
         if let Err(err) = self.send_state(req, ExecutionState::Idle) {
