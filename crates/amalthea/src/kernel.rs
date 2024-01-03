@@ -410,6 +410,8 @@ impl Kernel {
         // Forwards 0MQ message from the frontend to the corresponding
         // Amalthea channel.
         let forward_inbound = || -> anyhow::Result<()> {
+            // FIXME: Protocol errors are caught here with `?`. We're never
+            // notifying StdIn back, causing R to hang.
             let msg = Message::read_from_socket(&stdin_socket)?;
             stdin_inbound_tx.send(msg)?;
             Ok(())
