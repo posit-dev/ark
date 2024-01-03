@@ -173,6 +173,26 @@ fn test_environment_list() {
         .send(CommMsg::Rpc(request_id.clone(), data))
         .unwrap();
 
+    // Wait up to 1s for the comm to send us an update message
+    let msg = outgoing_rx
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .unwrap();
+    let data = match msg {
+        CommMsg::Data(data) => data,
+        _ => panic!("Expected data message, got {:?}", msg),
+    };
+
+    // Ensure we get an event notifying us of the change
+    let evt: VariablesEvent = serde_json::from_value(data).unwrap();
+    match evt {
+        VariablesEvent::Update(params) => {
+            assert_eq!(params.assigned.len(), 0);
+            assert_eq!(params.removed.len(), 1);
+            assert_eq!(params.version, 4);
+        },
+        _ => panic!("Expected update event"),
+    }
+
     // Wait for the success message to be delivered
     let data = match outgoing_rx.recv().unwrap() {
         CommMsg::Rpc(reply_id, data) => {
@@ -185,12 +205,10 @@ fn test_environment_list() {
         _ => panic!("Expected RPC message"),
     };
 
-    // Unmarshal the list and check for the variable we created
+    // Ensure we get a reply
     let reply: VariablesRpcReply = serde_json::from_value(data).unwrap();
     match reply {
-        VariablesRpcReply::ClearReply(list) => {
-            assert!(list.len() == 0);
-        },
+        VariablesRpcReply::ClearReply => {},
         _ => panic!("Expected clear reply"),
     }
 

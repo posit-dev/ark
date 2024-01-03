@@ -7,6 +7,7 @@
 
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::event::CommManagerEvent;
+use amalthea::comm::variables_comm::ClipboardFormatFormat;
 use amalthea::comm::variables_comm::FormattedVariable;
 use amalthea::comm::variables_comm::InspectedVariable;
 use amalthea::comm::variables_comm::RefreshParams;
@@ -223,7 +224,8 @@ impl RVariables {
             },
             VariablesRpcRequest::Clear(params) => {
                 self.clear(params.include_hidden_objects)?;
-                Ok(VariablesRpcReply::ClearReply(self.list_variables()))
+                self.update(None);
+                Ok(VariablesRpcReply::ClearReply)
             },
             VariablesRpcRequest::Delete(params) => {
                 self.delete(params.names.clone())?;
@@ -239,10 +241,8 @@ impl RVariables {
             },
             VariablesRpcRequest::ClipboardFormat(params) => {
                 let content = self.clipboard_format(&params.path, params.format.clone())?;
-                let format = params.format;
                 Ok(VariablesRpcReply::ClipboardFormatReply(FormattedVariable {
                     content,
-                    format,
                 }))
             },
             VariablesRpcRequest::View(params) => {
@@ -321,7 +321,7 @@ impl RVariables {
     fn clipboard_format(
         &mut self,
         path: &Vec<String>,
-        format: String,
+        format: ClipboardFormatFormat,
     ) -> Result<String, harp::error::Error> {
         r_task(|| {
             let env = self.env.get().clone();

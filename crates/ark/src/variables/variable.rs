@@ -5,6 +5,7 @@
 //
 //
 
+use amalthea::comm::variables_comm::ClipboardFormatFormat;
 use amalthea::comm::variables_comm::Variable;
 use amalthea::comm::variables_comm::VariableKind;
 use harp::call::RCall;
@@ -763,7 +764,7 @@ impl PositronVariable {
     pub fn clip(
         env: RObject,
         path: &Vec<String>,
-        _format: &String,
+        _format: &ClipboardFormatFormat,
     ) -> Result<String, harp::error::Error> {
         let node = unsafe { Self::resolve_object_from_path(env, &path)? };
 

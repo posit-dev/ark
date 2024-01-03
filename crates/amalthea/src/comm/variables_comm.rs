@@ -38,10 +38,6 @@ pub struct InspectedVariable {
 /// An object formatted for copying to the clipboard.
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct FormattedVariable {
-	/// The format returned, as a MIME type; matches the MIME type of the
-	/// format named in the request.
-	pub format: String,
-
 	/// The formatted content of the variable.
 	pub content: String
 }
