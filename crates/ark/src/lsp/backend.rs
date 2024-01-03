@@ -18,6 +18,7 @@ use serde_json::Value;
 use stdext::result::ResultOrLog;
 use stdext::*;
 use tokio::net::TcpListener;
+use tokio::runtime::Runtime;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::request::GotoImplementationParams;
 use tower_lsp::lsp_types::request::GotoImplementationResponse;
@@ -35,7 +36,6 @@ use crate::lsp::document_context::DocumentContext;
 use crate::lsp::documents::Document;
 use crate::lsp::documents::DOCUMENT_INDEX;
 use crate::lsp::globals;
-use crate::lsp::globals::R_CALLBACK_GLOBALS2;
 use crate::lsp::help_topic;
 use crate::lsp::hover::hover;
 use crate::lsp::indexer;
@@ -497,13 +497,7 @@ impl Backend {
     }
 }
 
-pub fn start_lsp(address: String, conn_init_tx: Sender<bool>) {
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    globals::initialize2(runtime);
-
-    let globals = unsafe { R_CALLBACK_GLOBALS2.as_ref().unwrap() };
-    let runtime = &globals.lsp_runtime;
-
+pub fn start_lsp(runtime: Arc<Runtime>, address: String, conn_init_tx: Sender<bool>) {
     runtime.block_on(async {
         #[cfg(feature = "runtime-agnostic")]
         use tokio_util::compat::TokioAsyncReadCompatExt;

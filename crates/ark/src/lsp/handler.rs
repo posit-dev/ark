@@ -5,23 +5,28 @@
 //
 //
 
+use std::sync::Arc;
+
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::language::server_handler::ServerHandler;
 use bus::BusReader;
 use crossbeam::channel::Sender;
 use stdext::spawn;
+use tokio::runtime::Runtime;
 
 use super::backend;
 use crate::interface::KernelInfo;
 
 pub struct Lsp {
+    runtime: Arc<Runtime>,
     kernel_init_rx: BusReader<KernelInfo>,
     kernel_initialized: bool,
 }
 
 impl Lsp {
-    pub fn new(kernel_init_rx: BusReader<KernelInfo>) -> Self {
+    pub fn new(runtime: Arc<Runtime>, kernel_init_rx: BusReader<KernelInfo>) -> Self {
         Self {
+            runtime,
             kernel_init_rx,
             kernel_initialized: false,
         }
@@ -47,8 +52,10 @@ impl ServerHandler for Lsp {
             self.kernel_initialized = true;
         }
 
+        let runtime = self.runtime.clone();
+
         spawn!("ark-lsp", move || {
-            backend::start_lsp(tcp_address, conn_init_tx)
+            backend::start_lsp(runtime, tcp_address, conn_init_tx)
         });
         return Ok(());
     }

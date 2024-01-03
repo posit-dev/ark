@@ -12,8 +12,8 @@ use stdext::unwrap;
 use tower_lsp::lsp_types::ShowDocumentParams;
 use tower_lsp::lsp_types::Url;
 
+use crate::interface::RMain;
 use crate::lsp::globals::R_CALLBACK_GLOBALS;
-use crate::lsp::globals::R_CALLBACK_GLOBALS2;
 
 #[harp::register]
 unsafe extern "C" fn ps_editor(file: SEXP, _title: SEXP) -> anyhow::Result<SEXP> {
@@ -21,8 +21,8 @@ unsafe extern "C" fn ps_editor(file: SEXP, _title: SEXP) -> anyhow::Result<SEXP>
     let client = &globals.lsp_client;
     let files = CharacterVector::new_unchecked(file);
 
-    let globals2 = R_CALLBACK_GLOBALS2.as_ref().unwrap();
-    let runtime = &globals2.lsp_runtime;
+    let main = RMain::get();
+    let runtime = main.get_lsp_runtime();
 
     let mut uris = Vec::new();
 
