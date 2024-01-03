@@ -13,14 +13,13 @@ use amalthea::socket::comm::CommSocket;
 use amalthea::socket::stdin::StdInRequest;
 use amalthea::wire::input_request::CommRequest;
 use crossbeam::channel::Receiver;
+use crossbeam::channel::Select;
 use crossbeam::channel::Sender;
-use crossbeam::select;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
 use serde_json::Value;
 use stdext::spawn;
-use stdext::unwrap;
 
 use crate::r_task;
 
@@ -60,39 +59,56 @@ impl PositronFrontend {
     }
 
     fn execution_thread(&self) {
+        // We select dynamically so we can close event sources individually when
+        // there is an error instead of shutting down the whole frontend thread
+        let mut sel = Select::new();
+        let main_idx = sel.recv(&self.frontend_rx);
+        let comm_idx = sel.recv(&self.comm.incoming_rx);
+        let mut n_ok = 2;
+
+        let error_handler = |i, name, err, sel: &mut Select, n_ok: &mut i32| {
+            log::error!(
+                "Error receiving frontend message on {name} source; closing event listener\n{err:?}"
+            );
+            sel.remove(i);
+            *n_ok = *n_ok - 1;
+        };
+
         loop {
+            // Close threads if all event sources have been closed
+            if n_ok == 0 {
+                break;
+            }
+
             // Wait for an event on either the event channel (which forwards
-            // Positron events to the frontend) or the comm channel (which
-            // receives requests from the frontend)
-            select! {
-                recv(&self.frontend_rx) -> msg => {
-                    let msg = unwrap!(msg, Err(err) => {
-                        log::error!(
-                            "Error receiving Positron event; closing event listener: {err:?}"
-                        );
-                        // Most likely the channel was closed, so we should stop the thread
-                        break;
-                    });
-                    match msg {
+            // Positron events or requests to the frontend) or the comm channel
+            // (which receives requests from the frontend)
+            let op = sel.select();
+            match op.index() {
+                i if i == main_idx => match op.recv(&self.frontend_rx) {
+                    Ok(msg) => match msg {
                         PositronFrontendMessage::Event(event) => self.dispatch_event(&event),
-                        PositronFrontendMessage::Request(request) => self.call_frontend_method(request).unwrap(),
-                    }
+                        PositronFrontendMessage::Request(request) => {
+                            self.call_frontend_method(request).unwrap()
+                        },
+                    },
+                    Err(err) => error_handler(i, "internal", err, &mut sel, &mut n_ok),
                 },
 
-                recv(&self.comm.incoming_rx) -> msg => {
-                    match msg {
-                        Ok(msg) => {
-                            if !self.handle_comm_message(msg) {
-                                log::info!("Frontend comm {} closing by request from front end.", self.comm.comm_id);
-                                break;
-                            }
-                        },
-                        Err(err) => {
-                            log::error!("Error receiving message from front end: {:?}", err);
+                i if i == comm_idx => match op.recv(&self.comm.incoming_rx) {
+                    Ok(msg) => {
+                        if !self.handle_comm_message(msg) {
+                            log::info!(
+                                "Frontend comm {} closing by request from front end.",
+                                self.comm.comm_id
+                            );
                             break;
-                        },
-                    }
+                        }
+                    },
+                    Err(err) => error_handler(i, "external", err, &mut sel, &mut n_ok),
                 },
+
+                _ => unreachable!(),
             }
         }
     }
