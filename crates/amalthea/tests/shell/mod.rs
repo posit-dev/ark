@@ -67,15 +67,15 @@ impl Shell {
 
     // Simluates an input request
     fn prompt_for_input(&self, originator: Option<Originator>) {
-        if let Err(err) =
-            self.stdin_request_tx
-                .send(StdInRequest::InputRequest(ShellInputRequest {
-                    originator: originator.clone(),
-                    request: InputRequest {
-                        prompt: String::from("Amalthea Echo> "),
-                        password: false,
-                    },
-                }))
+        if let Err(err) = self
+            .stdin_request_tx
+            .send(StdInRequest::Input(ShellInputRequest {
+                originator: originator.clone(),
+                request: InputRequest {
+                    prompt: String::from("Amalthea Echo> "),
+                    password: false,
+                },
+            }))
         {
             warn!("Could not prompt for input: {}", err);
         }

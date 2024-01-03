@@ -5,10 +5,13 @@
  *
  */
 
+use crossbeam::channel::Sender;
 use serde::Deserialize;
 use serde::Serialize;
 
 use super::originator::Originator;
+use crate::comm::base_comm::JsonRpcResponse;
+use crate::comm::frontend_comm::FrontendFrontendRpcRequest;
 use crate::wire::jupyter_message::MessageType;
 
 /// Represents a request from the kernel to the front end to prompt the user for
@@ -36,4 +39,18 @@ impl MessageType for InputRequest {
     fn message_type() -> String {
         String::from("input_request")
     }
+}
+
+/// A Comm request for StdIn
+#[derive(Debug, Clone)]
+pub struct CommRequest {
+    /// The identity of the currently active `execute_request` that caused this
+    /// comm request
+    pub originator: Option<Originator>,
+
+    /// The response channel for the request
+    pub response_tx: Sender<JsonRpcResponse>,
+
+    /// The actual comm request
+    pub request: FrontendFrontendRpcRequest,
 }

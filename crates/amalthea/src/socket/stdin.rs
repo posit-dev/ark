@@ -13,22 +13,17 @@ use log::trace;
 use log::warn;
 
 use crate::comm::base_comm::JsonRpcResponse;
-use crate::comm::frontend_comm::FrontendFrontendRpcRequest;
 use crate::session::Session;
 use crate::wire::input_reply::InputReply;
+use crate::wire::input_request::CommRequest;
 use crate::wire::input_request::ShellInputRequest;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
 use crate::wire::jupyter_message::OutboundMessage;
-use crate::wire::originator::Originator;
 
 pub enum StdInRequest {
-    InputRequest(ShellInputRequest),
-    CommRequest(
-        Originator,
-        Sender<JsonRpcResponse>,
-        FrontendFrontendRpcRequest,
-    ),
+    Input(ShellInputRequest),
+    Comm(CommRequest),
 }
 
 enum StdInReplySender {
@@ -105,7 +100,7 @@ impl Stdin {
             }
 
             let (request, reply_tx) = match req {
-                StdInRequest::InputRequest(req) => {
+                StdInRequest::Input(req) => {
                     let req = Message::InputRequest(JupyterMessage::create_with_identity(
                         req.originator,
                         req.request,
@@ -113,14 +108,14 @@ impl Stdin {
                     ));
                     (req, StdInReplySender::Input(input_reply_tx.clone()))
                 },
-                StdInRequest::CommRequest(orig, response_tx, req) => {
+                StdInRequest::Comm(comm_req) => {
                     // This is a request from to the frontend
                     let req = Message::CommRequest(JupyterMessage::create_with_identity(
-                        Some(orig),
-                        req,
+                        comm_req.originator,
+                        comm_req.request,
                         &self.session,
                     ));
-                    (req, StdInReplySender::Comm(response_tx))
+                    (req, StdInReplySender::Comm(comm_req.response_tx))
                 },
             };
 

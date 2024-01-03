@@ -38,6 +38,7 @@ use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::execute_response::ExecuteResponse;
 use amalthea::wire::execute_result::ExecuteResult;
 use amalthea::wire::input_reply::InputReply;
+use amalthea::wire::input_request::CommRequest;
 use amalthea::wire::input_request::InputRequest;
 use amalthea::wire::input_request::ShellInputRequest;
 use amalthea::wire::jupyter_message::Status;
@@ -88,7 +89,6 @@ use tower_lsp::Client;
 use crate::dap::dap::DapBackendEvent;
 use crate::dap::Dap;
 use crate::errors;
-use crate::frontend::frontend::PositronFrontendRpcRequest;
 use crate::help::message::HelpReply;
 use crate::help::message::HelpRequest;
 use crate::kernel::Kernel;
@@ -822,7 +822,7 @@ impl RMain {
 
         unwrap!(
             self.stdin_request_tx
-            .send(StdInRequest::InputRequest(ShellInputRequest {
+            .send(StdInRequest::Input(ShellInputRequest {
                 originator: orig,
                 request: InputRequest {
                     prompt,
@@ -1019,8 +1019,8 @@ impl RMain {
             anyhow::bail!("Error: No active request");
         };
 
-        let request = PositronFrontendRpcRequest {
-            orig: orig.clone(),
+        let request = CommRequest {
+            originator: Some(orig.clone()),
             response_tx,
             request,
         };

@@ -11,12 +11,12 @@ use std::result::Result::Err;
 use amalthea::comm::frontend_comm::BusyParams;
 use amalthea::comm::frontend_comm::FrontendEvent;
 use amalthea::comm::frontend_comm::WorkingDirectoryParams;
+use amalthea::wire::input_request::CommRequest;
 use anyhow::Result;
 use crossbeam::channel::Sender;
 use log::*;
 
 use crate::frontend::frontend::PositronFrontendMessage;
-use crate::frontend::frontend::PositronFrontendRpcRequest;
 use crate::interface::RMain;
 use crate::r_task;
 use crate::request::KernelRequest;
@@ -109,7 +109,7 @@ impl Kernel {
     pub fn send_frontend_event(&self, event: FrontendEvent) {
         self.send_frontend(PositronFrontendMessage::Event(event))
     }
-    pub fn send_frontend_request(&self, request: PositronFrontendRpcRequest) {
+    pub fn send_frontend_request(&self, request: CommRequest) {
         self.send_frontend(PositronFrontendMessage::Request(request))
     }
 

@@ -5,15 +5,13 @@
 //
 //
 
-use amalthea::comm::base_comm::JsonRpcResponse;
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::frontend_comm::FrontendBackendRpcReply;
 use amalthea::comm::frontend_comm::FrontendBackendRpcRequest;
 use amalthea::comm::frontend_comm::FrontendEvent;
-use amalthea::comm::frontend_comm::FrontendFrontendRpcRequest;
 use amalthea::socket::comm::CommSocket;
 use amalthea::socket::stdin::StdInRequest;
-use amalthea::wire::originator::Originator;
+use amalthea::wire::input_request::CommRequest;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use crossbeam::select;
@@ -29,14 +27,7 @@ use crate::r_task;
 #[derive(Debug)]
 pub enum PositronFrontendMessage {
     Event(FrontendEvent),
-    Request(PositronFrontendRpcRequest),
-}
-
-#[derive(Debug)]
-pub struct PositronFrontendRpcRequest {
-    pub orig: Originator,
-    pub response_tx: Sender<JsonRpcResponse>,
-    pub request: FrontendFrontendRpcRequest,
+    Request(CommRequest),
 }
 
 /// PositronFrontend is a wrapper around a comm channel whose lifetime matches
@@ -84,7 +75,7 @@ impl PositronFrontend {
                     });
                     match msg {
                         PositronFrontendMessage::Event(event) => self.dispatch_event(&event),
-                        PositronFrontendMessage::Request(request) => self.call_frontend_method(&request).unwrap(),
+                        PositronFrontendMessage::Request(request) => self.call_frontend_method(request).unwrap(),
                     }
                 },
 
@@ -189,13 +180,8 @@ impl PositronFrontend {
         Ok(FrontendBackendRpcReply::CallMethodReply(result))
     }
 
-    fn call_frontend_method(&self, request: &PositronFrontendRpcRequest) -> anyhow::Result<()> {
-        // FIXME: Can this simply wrap the `PositronFrontendRpcRequest`?
-        let comm_msg = StdInRequest::CommRequest(
-            request.orig.clone(),
-            request.response_tx.clone(),
-            request.request.clone(),
-        );
+    fn call_frontend_method(&self, request: CommRequest) -> anyhow::Result<()> {
+        let comm_msg = StdInRequest::Comm(request);
         self.stdin_request_tx.send(comm_msg)?;
 
         Ok(())
