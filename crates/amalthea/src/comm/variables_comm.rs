@@ -1,5 +1,5 @@
 /*---------------------------------------------------------------------------------------------
- *  Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+ *  Copyright (C) 2024 Posit Software, PBC. All rights reserved.
  *--------------------------------------------------------------------------------------------*/
 
 //
@@ -83,9 +83,19 @@ pub struct Variable {
 	/// runtime can handle a 'view' request for this variable)
 	pub has_viewer: bool,
 
-	/// True the 'value' field is a truncated representation of the variable's
-	/// value
+	/// True if the 'value' field is a truncated representation of the
+	/// variable's value
 	pub is_truncated: bool
+}
+
+/// Possible values for Format in ClipboardFormat
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+pub enum ClipboardFormatFormat {
+	#[serde(rename = "text/html")]
+	TextHtml,
+
+	#[serde(rename = "text/plain")]
+	TextPlain
 }
 
 /// Possible values for Kind in Variable
@@ -153,7 +163,7 @@ pub struct ClipboardFormatParams {
 	pub path: Vec<String>,
 
 	/// The requested format for the variable, as a MIME type
-	pub format: String,
+	pub format: ClipboardFormatFormat,
 }
 
 /// Parameters for the View method.
@@ -246,9 +256,8 @@ pub enum VariablesRpcReply {
 	/// A view containing a list of variables in the session.
 	ListReply(VariableList),
 
-	/// A list of variables in the session remaining after deletion; usually
-	/// empty.
-	ClearReply(Vec<Variable>),
+	/// Reply for the clear method (no result)
+	ClearReply,
 
 	/// The names of the variables that were successfully deleted.
 	DeleteReply(Vec<String>),

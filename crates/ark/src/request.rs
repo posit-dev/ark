@@ -5,7 +5,7 @@
 //
 //
 
-use amalthea::events::PositronEvent;
+use amalthea::comm::frontend_comm::FrontendEvent;
 use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::execute_response::ExecuteResponse;
 use amalthea::wire::originator::Originator;
@@ -48,5 +48,5 @@ pub fn debug_request_command(req: DebugRequest) -> String {
 #[derive(Debug, Clone)]
 pub enum KernelRequest {
     /// Establish a channel to the front end to send events
-    EstablishEventChannel(Sender<PositronEvent>),
+    EstablishEventChannel(Sender<FrontendEvent>),
 }
