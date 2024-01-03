@@ -85,7 +85,7 @@ impl<'a> DiagnosticContext<'a> {
     }
 }
 
-pub async fn enqueue_diagnostics(backend: Backend, uri: Url, version: i32) {
+pub fn enqueue_diagnostics(backend: Backend, uri: Url, version: i32) {
     // log::trace!("[diagnostics({version}, {uri})] Spawning task to enqueue diagnostics.");
 
     // Spawn a task to enqueue diagnostics.
