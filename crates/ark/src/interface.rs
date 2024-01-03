@@ -1,7 +1,7 @@
 //
 // interface.rs
 //
-// Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2024 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -80,6 +80,7 @@ use serde_json::json;
 use stdext::result::ResultOrLog;
 use stdext::*;
 use tokio::runtime::Runtime;
+use tower_lsp::Client;
 
 use crate::dap::dap::DapBackendEvent;
 use crate::dap::Dap;
@@ -127,6 +128,7 @@ pub fn start_r(
     iopub_tx: Sender<IOPubMessage>,
     kernel_init_tx: Bus<KernelInfo>,
     lsp_runtime: Arc<Runtime>,
+    lsp_client: Client,
     dap: Arc<Mutex<Dap>>,
 ) {
     // Initialize global state (ensure we only do this once!)
@@ -148,6 +150,7 @@ pub fn start_r(
             iopub_tx,
             kernel_init_tx,
             lsp_runtime,
+            lsp_client,
             dap,
         ));
     });
@@ -239,8 +242,10 @@ pub struct RMain {
     pub help_tx: Option<Sender<HelpRequest>>,
     pub help_rx: Option<Receiver<HelpReply>>,
 
-    // LSP tokio runtime used to spawn LSP tasks on the executor
+    // LSP tokio runtime used to spawn LSP tasks on the executor and the
+    // corresponding client used to send LSP requests to the frontend.
     lsp_runtime: Arc<Runtime>,
+    lsp_client: Client,
 
     dap: Arc<Mutex<Dap>>,
     is_debugging: bool,
@@ -324,6 +329,7 @@ impl RMain {
         iopub_tx: Sender<IOPubMessage>,
         kernel_init_tx: Bus<KernelInfo>,
         lsp_runtime: Arc<Runtime>,
+        lsp_client: Client,
         dap: Arc<Mutex<Dap>>,
     ) -> Self {
         Self {
@@ -346,6 +352,7 @@ impl RMain {
             help_tx: None,
             help_rx: None,
             lsp_runtime,
+            lsp_client,
             dap,
             is_debugging: false,
             is_busy: false,
@@ -982,6 +989,10 @@ impl RMain {
 
     pub fn get_lsp_runtime(&self) -> &Arc<Runtime> {
         &self.lsp_runtime
+    }
+
+    pub fn get_lsp_client(&self) -> &Client {
+        &self.lsp_client
     }
 }
 

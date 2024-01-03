@@ -1,7 +1,7 @@
 //
 // editor.rs
 //
-// Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2022-2024 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -13,16 +13,14 @@ use tower_lsp::lsp_types::ShowDocumentParams;
 use tower_lsp::lsp_types::Url;
 
 use crate::interface::RMain;
-use crate::lsp::globals::R_CALLBACK_GLOBALS;
 
 #[harp::register]
 unsafe extern "C" fn ps_editor(file: SEXP, _title: SEXP) -> anyhow::Result<SEXP> {
-    let globals = R_CALLBACK_GLOBALS.as_ref().unwrap();
-    let client = &globals.lsp_client;
-    let files = CharacterVector::new_unchecked(file);
-
     let main = RMain::get();
     let runtime = main.get_lsp_runtime();
+    let client = main.get_lsp_client();
+
+    let files = CharacterVector::new_unchecked(file);
 
     let mut uris = Vec::new();
 
@@ -58,15 +56,21 @@ unsafe extern "C" fn ps_editor(file: SEXP, _title: SEXP) -> anyhow::Result<SEXP>
     // https://github.com/posit-dev/positron/issues/1885
     for uri in uris.into_iter() {
         runtime.spawn(async move {
-            client
+            let result = client
                 .show_document(ShowDocumentParams {
-                    uri,
+                    uri: uri.clone(),
                     external: Some(false),
                     take_focus: Some(true),
                     selection: None,
                 })
-                .await
-                .unwrap();
+                .await;
+
+            if let Err(err) = result {
+                // In the unlikely event that the LSP `client` hasn't been
+                // initialized yet, or has shut down, we probably don't want
+                // to crash ark.
+                log::error!("Failed to open '{uri}' due to {err:?}");
+            }
         });
     }
 

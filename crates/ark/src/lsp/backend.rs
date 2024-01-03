@@ -1,7 +1,7 @@
 //
 // backend.rs
 //
-// Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2022-2024 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -24,6 +24,7 @@ use tower_lsp::lsp_types::request::GotoImplementationParams;
 use tower_lsp::lsp_types::request::GotoImplementationResponse;
 use tower_lsp::lsp_types::*;
 use tower_lsp::Client;
+use tower_lsp::ClientSocket;
 use tower_lsp::LanguageServer;
 use tower_lsp::LspService;
 use tower_lsp::Server;
@@ -35,7 +36,6 @@ use crate::lsp::diagnostics;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::documents::Document;
 use crate::lsp::documents::DOCUMENT_INDEX;
-use crate::lsp::globals;
 use crate::lsp::help_topic;
 use crate::lsp::hover::hover;
 use crate::lsp::indexer;
@@ -497,7 +497,13 @@ impl Backend {
     }
 }
 
-pub fn start_lsp(runtime: Arc<Runtime>, address: String, conn_init_tx: Sender<bool>) {
+pub fn start_lsp(
+    runtime: Arc<Runtime>,
+    service: LspService<Backend>,
+    socket: ClientSocket,
+    address: String,
+    conn_init_tx: Sender<bool>,
+) {
     runtime.block_on(async {
         #[cfg(feature = "runtime-agnostic")]
         use tokio_util::compat::TokioAsyncReadCompatExt;
@@ -519,33 +525,40 @@ pub fn start_lsp(runtime: Arc<Runtime>, address: String, conn_init_tx: Sender<bo
         #[cfg(feature = "runtime-agnostic")]
         let (read, write) = (read.compat(), write.compat_write());
 
-        let init = |client: Client| {
-            // initialize shared globals (needed for R callbacks)
-            globals::initialize(client.clone());
-
-            // create backend
-            let backend = Backend {
-                client,
-                documents: DOCUMENT_INDEX.clone(),
-                workspace: Arc::new(Mutex::new(Workspace::default())),
-            };
-
-            backend
-        };
-
-        let (service, socket) = LspService::build(init)
-            .custom_method(
-                statement_range::POSITRON_STATEMENT_RANGE_REQUEST,
-                Backend::statement_range,
-            )
-            .custom_method(help_topic::POSITRON_HELP_TOPIC_REQUEST, Backend::help_topic)
-            .custom_method("positron/notification", Backend::notification)
-            .finish();
-
         Server::new(read, write, socket).serve(service).await;
         debug!(
             "LSP thread exiting gracefully after connection closed ({:?}).",
             address
         );
     })
+}
+
+pub fn build_lsp_service() -> (LspService<Backend>, ClientSocket, Client) {
+    let mut client = None;
+
+    let init = |client_callback: Client| {
+        client = Some(client_callback.clone());
+
+        // create backend
+        let backend = Backend {
+            client: client_callback,
+            documents: DOCUMENT_INDEX.clone(),
+            workspace: Arc::new(Mutex::new(Workspace::default())),
+        };
+
+        backend
+    };
+
+    let (service, socket) = LspService::build(init)
+        .custom_method(
+            statement_range::POSITRON_STATEMENT_RANGE_REQUEST,
+            Backend::statement_range,
+        )
+        .custom_method(help_topic::POSITRON_HELP_TOPIC_REQUEST, Backend::help_topic)
+        .custom_method("positron/notification", Backend::notification)
+        .finish();
+
+    let client = client.expect("`Client` should be initialized by the `build()` callback.");
+
+    (service, socket, client)
 }
