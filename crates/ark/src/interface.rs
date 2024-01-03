@@ -1036,12 +1036,12 @@ impl RMain {
         log::trace!("Got response from frontend method: {response:?}");
 
         match response {
-            JsonRpcResponse::Result { result, .. } => Ok(RObject::try_from(result.result)?),
+            JsonRpcResponse::Result { result, .. } => Ok(RObject::try_from(result)?),
             JsonRpcResponse::Error { error, .. } => {
                 anyhow::bail!(
                     "While calling frontend method':\n\
                      {}",
-                    error.error.message
+                    error.message
                 );
             },
         }

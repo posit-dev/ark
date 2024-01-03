@@ -19,11 +19,9 @@ use log::warn;
 use serde_json::json;
 use stdext::result::ResultOrLog;
 
-use crate::comm::base_comm::JsonRpcError;
 use crate::comm::base_comm::JsonRpcErrorCode;
 use crate::comm::base_comm::JsonRpcErrorData;
 use crate::comm::base_comm::JsonRpcResponse;
-use crate::comm::base_comm::JsonRpcResult;
 use crate::comm::comm_channel::Comm;
 use crate::comm::comm_channel::CommMsg;
 use crate::comm::event::CommManagerEvent;
@@ -361,9 +359,7 @@ impl Shell {
             self.comm_manager_tx
                 .send(CommManagerEvent::RpcResponse(JsonRpcResponse::Result {
                     id: req.header.msg_id.clone(),
-                    result: JsonRpcResult {
-                        result: data.get("result").unwrap().clone(),
-                    },
+                    result: data.get("result").unwrap().clone(),
                 }))
                 .unwrap();
         } else if data.get("error").is_some() {
@@ -374,11 +370,9 @@ impl Shell {
             self.comm_manager_tx
                 .send(CommManagerEvent::RpcResponse(JsonRpcResponse::Error {
                     id: req.header.msg_id.clone(),
-                    error: JsonRpcError {
-                        error: JsonRpcErrorData {
-                            message: error.get("message").unwrap().to_string(),
-                            code,
-                        },
+                    error: JsonRpcErrorData {
+                        message: error.get("message").unwrap().to_string(),
+                        code,
                     },
                 }))
                 .unwrap();
