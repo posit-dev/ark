@@ -349,7 +349,10 @@ fn main() {
                 .with_poll_interval(std::time::Duration::from_millis(2))
                 .with_compare_contents(false);
 
-            let mut watcher = notify::RecommendedWatcher::new(tx, config).unwrap();
+            let handler = move |x| {
+                let _ = tx.send(x);
+            };
+            let mut watcher = notify::RecommendedWatcher::new(handler, config).unwrap();
             watcher.watch(path, notify::RecursiveMode::NonRecursive)?;
 
             loop {
