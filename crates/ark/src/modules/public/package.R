@@ -18,3 +18,11 @@
 }
 
 .ps.rpc.is_installed <- .ps.is_installed
+
+.ps.rpc.isPackageAttached <- function(pkg) {
+    if (!is_string(pkg)) {
+        stop("`pkg` must be a string.")
+    }
+
+    pkg %in% .packages()
+}
