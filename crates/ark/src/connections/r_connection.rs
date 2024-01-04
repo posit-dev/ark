@@ -96,6 +96,76 @@ impl RConnection {
         Ok(())
     }
 
+    fn process_rpc_message(
+        &self,
+        id: String,
+        message: ConnectionRequest,
+    ) -> Result<(), anyhow::Error> {
+        match message {
+            ConnectionRequest::TablesRequest => {
+                let tables = r_task(|| unsafe {
+                    // returns a data.frame with columns name and type
+                    let tables = RFunction::from(".ps.connection_list_objects")
+                        .add(RObject::from(self.comm.comm_id.clone()))
+                        .param("catalog", "SQLiteConnection")
+                        .param("schema", "Default")
+                        .call()?;
+
+                    // for now we only need the name column
+                    let names = RFunction::from("[[")
+                        .add(tables)
+                        .add(RObject::from("name"))
+                        .call()?;
+
+                    RObject::to::<Vec<String>>(names)
+                })?;
+
+                let msg = ConnectionResponse::TablesResponse {
+                    name: self.name.clone(),
+                    tables,
+                };
+                self.send_message(msg, Some(id));
+            },
+            ConnectionRequest::FieldsRequest { table } => {
+                let fields = r_task(|| unsafe {
+                    let fields = RFunction::from(".ps.connection_list_fields")
+                        .add(RObject::from(self.comm.comm_id.clone()))
+                        .param("catalog", "SQLiteConnection")
+                        .param("schema", "Default")
+                        .param("table", table)
+                        .call()?;
+
+                    // for now we only need the name column
+                    let names = RFunction::from("[[")
+                        .add(fields)
+                        .add(RObject::from("name"))
+                        .call()?;
+
+                    RObject::to::<Vec<String>>(names)
+                })?;
+
+                let msg = ConnectionResponse::FieldsResponse {
+                    name: self.name.clone(),
+                    fields,
+                };
+                self.send_message(msg, Some(id));
+            },
+            ConnectionRequest::PreviewTable { table } => {
+                // Calls back into R to get the preview data.
+                r_task(|| -> Result<(), anyhow::Error> {
+                    RFunction::from(".ps.connection_preview_object")
+                        .add(RObject::from(self.comm.comm_id.clone()))
+                        .param("catalog", "SQLiteConnection")
+                        .param("schema", "Default")
+                        .param("table", table)
+                        .call()?;
+                    Ok(())
+                })?;
+            },
+        }
+        Ok(())
+    }
+
     fn handle_messages(&self) -> Result<(), anyhow::Error> {
         loop {
             let msg = unwrap!(self.comm.incoming_rx.recv(), Err(e) => {
@@ -115,69 +185,8 @@ impl RConnection {
                     log::error!("Connection Pane: Received invalid message from front end. {error}");
                     continue;
                 });
-
-                match message {
-                    ConnectionRequest::TablesRequest => {
-                        let tables = r_task(|| unsafe {
-                            // returns a data.frame with columns name and type
-                            let tables = RFunction::from(".ps.connection_list_objects")
-                                .add(RObject::from(self.comm.comm_id.clone()))
-                                .param("catalog", "SQLiteConnection")
-                                .param("schema", "Default")
-                                .call()?;
-
-                            // for now we only need the name column
-                            let names = RFunction::from("[[")
-                                .add(tables)
-                                .add(RObject::from("name"))
-                                .call()?;
-
-                            RObject::to::<Vec<String>>(names)
-                        })?;
-
-                        let msg = ConnectionResponse::TablesResponse {
-                            name: self.name.clone(),
-                            tables,
-                        };
-                        self.send_message(msg, Some(id));
-                    },
-                    ConnectionRequest::FieldsRequest { table } => {
-                        let fields = r_task(|| unsafe {
-                            let fields = RFunction::from(".ps.connection_list_fields")
-                                .add(RObject::from(self.comm.comm_id.clone()))
-                                .param("catalog", "SQLiteConnection")
-                                .param("schema", "Default")
-                                .param("table", table)
-                                .call()?;
-
-                            // for now we only need the name column
-                            let names = RFunction::from("[[")
-                                .add(fields)
-                                .add(RObject::from("name"))
-                                .call()?;
-
-                            RObject::to::<Vec<String>>(names)
-                        })?;
-
-                        let msg = ConnectionResponse::FieldsResponse {
-                            name: self.name.clone(),
-                            fields,
-                        };
-                        self.send_message(msg, Some(id));
-                    },
-                    ConnectionRequest::PreviewTable { table } => {
-                        // Calls back into R to get the preview data.
-                        r_task(|| -> Result<(), anyhow::Error> {
-                            RFunction::from(".ps.connection_preview_object")
-                                .add(RObject::from(self.comm.comm_id.clone()))
-                                .param("catalog", "SQLiteConnection")
-                                .param("schema", "Default")
-                                .param("table", table)
-                                .call()?;
-                            Ok(())
-                        })?;
-                    },
-                }
+                self.process_rpc_message(id, message)
+                    .or_log_error("Connection Pane: Failed to process RPC message.");
             }
         }
 
