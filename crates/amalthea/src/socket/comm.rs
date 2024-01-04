@@ -125,7 +125,24 @@ impl CommSocket {
         let json = match serde_json::from_value::<Reqs>(data.clone()) {
             Ok(m) => match request_handler(m) {
                 Ok(reply) => match serde_json::to_value(reply) {
-                    Ok(value) => value,
+                    Ok(value) => {
+                        // JSON-RPC requires that we specify a result key for all non-error RPC
+                        // responses.
+                        if value.is_object() {
+                            let mut result = value.as_object().unwrap().clone();
+                            if result.contains_key("result") {
+                                // The handler already specified a result key, so we don't need to
+                                // add one.
+                                value
+                            } else {
+                                // The handler didn't specify a result key, so we need to add one.
+                                result.insert("result".to_string(), serde_json::Value::Null);
+                                serde_json::to_value(result).unwrap()
+                            }
+                        } else {
+                            value
+                        }
+                    },
                     Err(err) => json_rpc_error(
                         JsonRpcErrorCode::InternalError,
                         format!(
@@ -150,6 +167,7 @@ impl CommSocket {
                 ),
             ),
         };
+
         let response = CommMsg::Rpc(id, json);
 
         self.outgoing_tx.send(response).unwrap();
