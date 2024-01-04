@@ -176,24 +176,7 @@ pub unsafe fn initialize(testing: bool) -> anyhow::Result<()> {
     let private = root.join("private");
 
     for directory in [public, private] {
-        log::info!("Loading modules from directory: {}", directory.display());
-        let entries = std::fs::read_dir(directory)?;
-
-        for entry in entries {
-            let entry = unwrap!(
-                entry,
-                Err(err) => {
-                    log::error!("Can't load directory entry due to: {}", err);
-                    continue;
-                }
-            );
-
-            let path = entry.path();
-
-            if path.extension().is_some_and(|ext| ext == "R") {
-                import(&path).unwrap();
-            }
-        }
+        walk_directory(&directory, |path| import(&path))?;
     }
 
     // Create a directory watcher that reloads module files as they are changed.
@@ -208,7 +191,46 @@ pub unsafe fn initialize(testing: bool) -> anyhow::Result<()> {
         }
     });
 
+    // Load the rstudioapi environment
+    let rstudioapi_path = root.join("rstudioapi");
+
+    walk_directory(&rstudioapi_path, |path| {
+        let path = path.display().to_string();
+
+        RFunction::new("", "import_rstudioapi_shims")
+            .param("path", path)
+            .call_in(POSITRON_PRIVATE_ENVIRONMENT)?;
+
+        Ok(())
+    })?;
+
     return Ok(());
+}
+
+pub fn walk_directory(
+    directory: &Path,
+    fun: impl Fn(&Path) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    log::info!("Loading modules from directory: {}", directory.display());
+    let entries = std::fs::read_dir(directory)?;
+
+    for entry in entries {
+        let entry = unwrap!(
+            entry,
+            Err(err) => {
+                log::error!("Can't load directory entry due to: {}", err);
+                continue;
+            }
+        );
+
+        let path = entry.path();
+
+        if path.extension().is_some_and(|ext| ext == "R") {
+            fun(&path)?;
+        }
+    }
+
+    Ok(())
 }
 
 pub unsafe fn import(file: &Path) -> anyhow::Result<()> {

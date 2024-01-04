@@ -5,6 +5,9 @@
 #
 #
 
+# Environment for singletons
+the <- new.env()
+
 `%||%` <- function(x, y) {
     if (length(x) || is.environment(x)) x else y
 }

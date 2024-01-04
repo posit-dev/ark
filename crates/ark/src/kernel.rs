@@ -14,7 +14,6 @@ use amalthea::comm::frontend_comm::WorkingDirectoryParams;
 use amalthea::wire::input_request::CommRequest;
 use anyhow::Result;
 use crossbeam::channel::Sender;
-use log::*;
 
 use crate::frontend::frontend::PositronFrontendMessage;
 use crate::interface::RMain;
