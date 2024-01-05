@@ -1015,34 +1015,19 @@ impl RMain {
         &self,
         request: FrontendFrontendRpcRequest,
     ) -> anyhow::Result<RObject> {
-        // If an interrupt was signalled, returns `NULL`. This should not be
-        // visible to the caller since `r_unwrap()` (called e.g. by
-        // `harp::register`) will trigger an interrupt jump right away.
-        match self.call_frontend_method_safe(request) {
-            Some(result) => result,
-            None => Ok(RObject::null()),
-        }
-    }
-
-    // If returns `None`, it means the request was interrupted and we need to
-    // propagate the interrupt to R
-    fn call_frontend_method_safe(
-        &self,
-        request: FrontendFrontendRpcRequest,
-    ) -> Option<anyhow::Result<RObject>> {
         log::trace!("Calling frontend method '{request:?}'");
         let (response_tx, response_rx) = bounded(1);
 
         // NOTE: Probably simpler to share the originator through a mutex
-        // than pass it around
+        // than pass it around?
         let orig = if let Some(req) = &self.active_request {
             if let Some(orig) = &req.orig {
                 orig
             } else {
-                return Some(Err(anyhow::anyhow!("Error: No active originator")));
+                anyhow::bail!("Error: No active originator");
             }
         } else {
-            return Some(Err(anyhow::anyhow!("Error: No active request")));
+            anyhow::bail!("Error: No active request");
         };
 
         let request = CommRequest {
@@ -1063,16 +1048,17 @@ impl RMain {
 
         match response {
             StdInRpcReply::Response(response) => match response {
-                JsonRpcReply::Result(response) => {
-                    Some(RObject::try_from(response.result).map_err(|err| anyhow::anyhow!("{err}")))
-                },
-                JsonRpcReply::Error(response) => Some(Err(anyhow::anyhow!(
+                JsonRpcReply::Result(response) => Ok(RObject::try_from(response.result)?),
+                JsonRpcReply::Error(response) => anyhow::bail!(
                     "While calling frontend method':\n\
                      {}",
                     response.error.message
-                ))),
+                ),
             },
-            StdInRpcReply::Interrupt => None,
+            // If an interrupt was signalled, return `NULL`. This should not be
+            // visible to the caller since `r_unwrap()` (called e.g. by
+            // `harp::register`) will trigger an interrupt jump right away.
+            StdInRpcReply::Interrupt => Ok(RObject::null()),
         }
     }
 }
