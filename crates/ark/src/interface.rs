@@ -1018,30 +1018,25 @@ impl RMain {
         log::trace!("Calling frontend method '{request:?}'");
         let (response_tx, response_rx) = bounded(1);
 
-        // NOTE: Probably simpler to share the originator through a mutex
-        // than pass it around?
-        let orig = if let Some(req) = &self.active_request {
-            if let Some(orig) = &req.orig {
-                orig
-            } else {
-                anyhow::bail!("Error: No active originator");
-            }
+        let originator = if let Some(req) = &self.active_request {
+            req.orig.clone()
         } else {
             anyhow::bail!("Error: No active request");
         };
 
         let request = CommRequest {
-            originator: Some(orig.clone()),
+            originator,
             response_tx,
             request,
         };
 
+        // Send request via Kernel
         {
             let kernel = self.kernel.lock().unwrap();
             kernel.send_frontend_request(request);
         }
 
-        // Create request and block for response
+        // Block for response
         let response = response_rx.recv().unwrap();
 
         log::trace!("Got response from frontend method: {response:?}");
