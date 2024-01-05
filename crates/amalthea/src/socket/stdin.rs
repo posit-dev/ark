@@ -12,6 +12,8 @@ use log::error;
 use log::trace;
 use log::warn;
 
+use crate::comm::base_comm::JsonRpcErrorCode;
+use crate::comm::base_comm::JsonRpcErrorData;
 use crate::comm::base_comm::JsonRpcResponse;
 use crate::session::Session;
 use crate::wire::input_reply::InputReply;
@@ -27,13 +29,13 @@ pub enum StdInRequest {
 }
 
 enum StdInReplySender {
-    Input(Sender<InputReply>),
+    Input(Sender<crate::Result<InputReply>>),
     Comm(Sender<JsonRpcResponse>),
 }
 
 pub struct Stdin {
     /// Receiver connected to the StdIn's ZeroMQ socket
-    inbound_rx: Receiver<Message>,
+    inbound_rx: Receiver<crate::Result<Message>>,
 
     /// Sender connected to the StdIn's ZeroMQ socket
     outbound_tx: Sender<OutboundMessage>,
@@ -49,7 +51,7 @@ impl Stdin {
     /// * `outbound_tx` - Channel relaying requests to frontend
     /// * `session` - Juptyer session
     pub fn new(
-        inbound_rx: Receiver<Message>,
+        inbound_rx: Receiver<crate::Result<Message>>,
         outbound_tx: Sender<OutboundMessage>,
         session: Session,
     ) -> Self {
@@ -66,7 +68,7 @@ impl Stdin {
     pub fn listen(
         &self,
         stdin_request_rx: Receiver<StdInRequest>,
-        input_reply_tx: Sender<InputReply>,
+        input_reply_tx: Sender<crate::Result<InputReply>>,
         interrupt_rx: Receiver<bool>,
     ) {
         loop {
@@ -149,19 +151,45 @@ impl Stdin {
 
             // Only input and comm RPC replies are expected on this socket
             match message {
-                Message::InputReply(ref reply) => {
-                    if let StdInReplySender::Input(tx) = reply_tx {
-                        tx.send(reply.content.clone()).unwrap();
+                Ok(ref message) => match message {
+                    Message::InputReply(ref reply) => {
+                        if let StdInReplySender::Input(tx) = reply_tx {
+                            tx.send(Ok(reply.content.clone())).unwrap();
+                            continue;
+                        }
+                    },
+                    Message::CommReply(ref reply) => {
+                        if let StdInReplySender::Comm(tx) = reply_tx {
+                            tx.send(reply.content.clone()).unwrap();
+                            continue;
+                        }
+                    },
+                    _ => {
+                        log::warn!("Unexpected message type on StdIn");
                         continue;
-                    }
+                    },
                 },
-                Message::CommReply(ref reply) => {
-                    if let StdInReplySender::Comm(tx) = reply_tx {
-                        tx.send(reply.content.clone()).unwrap();
-                        continue;
+                Err(err) => {
+                    // Might be an unserialisation error. Propagate the error to R.
+                    match reply_tx {
+                        StdInReplySender::Input(_tx) => {
+                            todo!("forward serialisation error back to R");
+                        },
+                        StdInReplySender::Comm(tx) => {
+                            let resp = JsonRpcResponse::Error {
+                                id: String::from(""), // Synchronous so not needed
+                                error: JsonRpcErrorData {
+                                    message: format!(
+                                        "Error while receiving frontend response: {err}"
+                                    ),
+                                    code: JsonRpcErrorCode::InternalError,
+                                },
+                            };
+                            tx.send(resp).unwrap();
+                        },
                     }
+                    continue;
                 },
-                _ => {},
             };
 
             warn!("Received unexpected message on stdin socket: {:?}", message);

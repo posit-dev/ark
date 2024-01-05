@@ -113,7 +113,7 @@ impl Kernel {
         // https://jupyter-client.readthedocs.io/en/stable/messaging.html#messages-on-the-stdin-router-dealer-channel
         stdin_request_rx: Receiver<StdInRequest>,
         // Transmission channel for `input_reply` handling by StdIn
-        input_reply_tx: Sender<InputReply>,
+        input_reply_tx: Sender<crate::Result<InputReply>>,
     ) -> Result<(), Error> {
         let ctx = zmq::Context::new();
 
@@ -343,10 +343,10 @@ impl Kernel {
 
     /// Starts the stdin thread.
     fn stdin_thread(
-        inbound_rx: Receiver<Message>,
+        inbound_rx: Receiver<crate::Result<Message>>,
         outbound_tx: Sender<OutboundMessage>,
         stdin_request_rx: Receiver<StdInRequest>,
-        input_reply_tx: Sender<InputReply>,
+        input_reply_tx: Sender<crate::Result<InputReply>>,
         interrupt_rx: Receiver<bool>,
         session: Session,
     ) -> Result<(), Error> {
@@ -360,7 +360,7 @@ impl Kernel {
     fn zmq_forwarding_thread(
         outbound_notif_socket: Socket,
         stdin_socket: Socket,
-        stdin_inbound_tx: Sender<Message>,
+        stdin_inbound_tx: Sender<crate::Result<Message>>,
         outbound_rx: Receiver<OutboundMessage>,
     ) {
         // This function checks for notifications that an outgoing message
@@ -410,9 +410,7 @@ impl Kernel {
         // Forwards 0MQ message from the frontend to the corresponding
         // Amalthea channel.
         let forward_inbound = || -> anyhow::Result<()> {
-            // FIXME: Protocol errors are caught here with `?`. We're never
-            // notifying StdIn back, causing R to hang.
-            let msg = Message::read_from_socket(&stdin_socket)?;
+            let msg = Message::read_from_socket(&stdin_socket);
             stdin_inbound_tx.send(msg)?;
             Ok(())
         };

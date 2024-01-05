@@ -46,7 +46,7 @@ use serde_json::json;
 pub struct Shell {
     iopub: Sender<IOPubMessage>,
     stdin_request_tx: Sender<StdInRequest>,
-    input_reply_rx: Receiver<InputReply>,
+    input_reply_rx: Receiver<amalthea::Result<InputReply>>,
     execution_count: u32,
 }
 
@@ -55,7 +55,7 @@ impl Shell {
     pub fn new(
         iopub: Sender<IOPubMessage>,
         stdin_request_tx: Sender<StdInRequest>,
-        input_reply_rx: Receiver<InputReply>,
+        input_reply_rx: Receiver<amalthea::Result<InputReply>>,
     ) -> Self {
         Self {
             iopub,
@@ -202,7 +202,7 @@ impl ShellHandler for Shell {
             self.iopub
                 .send(IOPubMessage::Stream(StreamOutput {
                     name: Stream::Stdout,
-                    text: reply.value,
+                    text: reply.unwrap().value,
                 }))
                 .unwrap();
         }

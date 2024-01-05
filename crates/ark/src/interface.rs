@@ -74,6 +74,7 @@ use libR_shim::R_BaseNamespace;
 use libR_shim::R_GlobalEnv;
 use libR_shim::R_ProcessEvents;
 use libR_shim::R_RunPendingFinalizers;
+use libR_shim::Rf_error;
 use libR_shim::Rf_findVarInFrame;
 use libR_shim::Rf_onintr;
 use libR_shim::SEXP;
@@ -128,7 +129,7 @@ pub fn start_r(
     comm_manager_tx: Sender<CommManagerEvent>,
     r_request_rx: Receiver<RRequest>,
     stdin_request_tx: Sender<StdInRequest>,
-    input_reply_rx: Receiver<InputReply>,
+    input_reply_rx: Receiver<amalthea::Result<InputReply>>,
     iopub_tx: Sender<IOPubMessage>,
     kernel_init_tx: Bus<KernelInfo>,
     lsp_runtime: Arc<Runtime>,
@@ -213,7 +214,7 @@ pub struct RMain {
     stdin_request_tx: Sender<StdInRequest>,
 
     /// Input replies from the frontend. Waited on in `ReadConsole()` after a request.
-    input_reply_rx: Receiver<InputReply>,
+    input_reply_rx: Receiver<amalthea::Result<InputReply>>,
 
     /// IOPub channel for broadcasting outputs
     iopub_tx: Sender<IOPubMessage>,
@@ -321,6 +322,7 @@ pub enum ConsoleResult {
     NewInput,
     Interrupt,
     Disconnected,
+    Error(amalthea::Error),
 }
 
 impl RMain {
@@ -330,7 +332,7 @@ impl RMain {
         comm_manager_tx: Sender<CommManagerEvent>,
         r_request_rx: Receiver<RRequest>,
         stdin_request_tx: Sender<StdInRequest>,
-        input_reply_rx: Receiver<InputReply>,
+        input_reply_rx: Receiver<amalthea::Result<InputReply>>,
         iopub_tx: Sender<IOPubMessage>,
         kernel_init_tx: Bus<KernelInfo>,
         lsp_runtime: Arc<Runtime>,
@@ -678,13 +680,21 @@ impl RMain {
                     }
                 }
 
-                recv(self.input_reply_rx) -> input => {
+                recv(self.input_reply_rx) -> chan_result => {
                     // StdIn must remain alive
-                    let input = input.unwrap();
-                    let input = convert_line_endings(&input.value, LineEnding::Posix);
+                    let result = chan_result.unwrap();
 
-                    Self::on_console_input(buf, buflen, input);
-                    return ConsoleResult::NewInput;
+                    match result {
+                        Ok(input) => {
+                            let input = convert_line_endings(&input.value, LineEnding::Posix);
+
+                            Self::on_console_input(buf, buflen, input);
+                            return ConsoleResult::NewInput;
+                        },
+                        Err(err) => {
+                            return ConsoleResult::Error(err);
+                        }
+                    }
                 }
 
                 // A task woke us up, start next loop tick to yield to it
@@ -1215,7 +1225,33 @@ pub extern "C" fn r_read_console(
             log::error!("`Rf_onintr()` did not longjump");
             return 0;
         },
+        ConsoleResult::Error(err) => {
+            // Save error message to a global buffer to avoid leaking memory
+            // when `Rf_error()` jumps. Some gymnastics are required to deal
+            // with the possibility of `CString` conversion failure since the
+            // error message comes from the frontend and might be corrupted.
+            static mut ERROR_BUF: Option<CString> = None;
+
+            {
+                let err_cstring = new_cstring(format!("{err:?}"));
+                unsafe {
+                    ERROR_BUF = Some(
+                        CString::new(format!(
+                            "Error while reading input: {}",
+                            err_cstring.into_string().unwrap()
+                        ))
+                        .unwrap(),
+                    );
+                }
+            }
+
+            unsafe { Rf_error(ERROR_BUF.as_ref().unwrap().as_ptr()) };
+        },
     };
+}
+
+fn new_cstring(x: String) -> CString {
+    CString::new(x).unwrap_or(CString::new("Can't create CString").unwrap())
 }
 
 #[no_mangle]
