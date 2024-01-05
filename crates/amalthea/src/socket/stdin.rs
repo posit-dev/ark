@@ -14,12 +14,12 @@ use log::trace;
 use crate::comm::base_comm::JsonRpcError;
 use crate::comm::base_comm::JsonRpcErrorCode;
 use crate::comm::base_comm::JsonRpcErrorData;
-use crate::comm::base_comm::JsonRpcResponse;
+use crate::comm::base_comm::JsonRpcReply;
 use crate::session::Session;
 use crate::wire::input_reply::InputReply;
 use crate::wire::input_request::CommRequest;
 use crate::wire::input_request::ShellInputRequest;
-use crate::wire::input_request::StdInRpcResponse;
+use crate::wire::input_request::StdInRpcReply;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
 use crate::wire::jupyter_message::OutboundMessage;
@@ -31,7 +31,7 @@ pub enum StdInRequest {
 
 enum StdInReplySender {
     Input(Sender<crate::Result<InputReply>>),
-    Comm(Sender<StdInRpcResponse>),
+    Comm(Sender<StdInRpcReply>),
 }
 
 pub struct Stdin {
@@ -153,7 +153,7 @@ impl Stdin {
                             // the interrupt independently. Fall through.
                         },
                         StdInReplySender::Comm(tx) => {
-                            tx.send(StdInRpcResponse::Interrupt).unwrap();
+                            tx.send(StdInRpcReply::Interrupt).unwrap();
                         },
                     }
 
@@ -174,7 +174,7 @@ impl Stdin {
                     },
                     Message::CommReply(ref reply) => {
                         if let StdInReplySender::Comm(tx) = reply_tx {
-                            let resp = StdInRpcResponse::Response(reply.content.clone());
+                            let resp = StdInRpcReply::Response(reply.content.clone());
                             tx.send(resp).unwrap();
                             continue;
                         }
@@ -191,15 +191,14 @@ impl Stdin {
                             todo!("forward serialisation error back to R");
                         },
                         StdInReplySender::Comm(tx) => {
-                            let resp =
-                                StdInRpcResponse::Response(JsonRpcResponse::Error(JsonRpcError {
-                                    error: JsonRpcErrorData {
-                                        message: format!(
-                                            "Error while receiving frontend response: {err}"
-                                        ),
-                                        code: JsonRpcErrorCode::InternalError,
-                                    },
-                                }));
+                            let resp = StdInRpcReply::Response(JsonRpcReply::Error(JsonRpcError {
+                                error: JsonRpcErrorData {
+                                    message: format!(
+                                        "Error while receiving frontend response: {err}"
+                                    ),
+                                    code: JsonRpcErrorCode::InternalError,
+                                },
+                            }));
                             tx.send(resp).unwrap();
                         },
                     }

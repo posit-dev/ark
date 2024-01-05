@@ -19,7 +19,7 @@ use std::sync::Mutex;
 use std::sync::Once;
 use std::time::Duration;
 
-use amalthea::comm::base_comm::JsonRpcResponse;
+use amalthea::comm::base_comm::JsonRpcReply;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::comm::frontend_comm::BusyParams;
 use amalthea::comm::frontend_comm::FrontendEvent;
@@ -41,7 +41,7 @@ use amalthea::wire::input_reply::InputReply;
 use amalthea::wire::input_request::CommRequest;
 use amalthea::wire::input_request::InputRequest;
 use amalthea::wire::input_request::ShellInputRequest;
-use amalthea::wire::input_request::StdInRpcResponse;
+use amalthea::wire::input_request::StdInRpcReply;
 use amalthea::wire::jupyter_message::Status;
 use amalthea::wire::originator::Originator;
 use amalthea::wire::stream::Stream;
@@ -1062,17 +1062,17 @@ impl RMain {
         log::trace!("Got response from frontend method: {response:?}");
 
         match response {
-            StdInRpcResponse::Response(response) => match response {
-                JsonRpcResponse::Result(response) => {
+            StdInRpcReply::Response(response) => match response {
+                JsonRpcReply::Result(response) => {
                     Some(RObject::try_from(response.result).map_err(|err| anyhow::anyhow!("{err}")))
                 },
-                JsonRpcResponse::Error(response) => Some(Err(anyhow::anyhow!(
+                JsonRpcReply::Error(response) => Some(Err(anyhow::anyhow!(
                     "While calling frontend method':\n\
                      {}",
                     response.error.message
                 ))),
             },
-            StdInRpcResponse::Interrupt => None,
+            StdInRpcReply::Interrupt => None,
         }
     }
 }

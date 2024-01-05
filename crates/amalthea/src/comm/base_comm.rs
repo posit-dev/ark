@@ -16,12 +16,12 @@ use crate::wire::jupyter_message::MessageType;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(untagged)]
-pub enum JsonRpcResponse {
+pub enum JsonRpcReply {
     Result(JsonRpcResult),
     Error(JsonRpcError),
 }
 
-impl MessageType for JsonRpcResponse {
+impl MessageType for JsonRpcReply {
     fn message_type() -> String {
         String::from("rpc_reply")
     }

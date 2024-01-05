@@ -10,7 +10,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use super::originator::Originator;
-use crate::comm::base_comm::JsonRpcResponse;
+use crate::comm::base_comm::JsonRpcReply;
 use crate::comm::frontend_comm::FrontendFrontendRpcRequest;
 use crate::wire::jupyter_message::MessageType;
 
@@ -49,14 +49,14 @@ pub struct CommRequest {
     pub originator: Option<Originator>,
 
     /// The response channel for the request
-    pub response_tx: Sender<StdInRpcResponse>,
+    pub response_tx: Sender<StdInRpcReply>,
 
     /// The actual comm request
     pub request: FrontendFrontendRpcRequest,
 }
 
 #[derive(Debug, Clone)]
-pub enum StdInRpcResponse {
-    Response(JsonRpcResponse),
+pub enum StdInRpcReply {
+    Response(JsonRpcReply),
     Interrupt,
 }
