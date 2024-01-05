@@ -127,7 +127,7 @@ impl RVariables {
                 self.send_event(event, None);
             },
             Err(err) => {
-                error!("Failed to deliver initial environment: {}", err);
+                error!("Failed to deliver initial environment: {err:?}");
             },
         }
 
