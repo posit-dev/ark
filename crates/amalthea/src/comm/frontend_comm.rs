@@ -76,6 +76,13 @@ pub struct WorkingDirectoryParams {
 	pub directory: String,
 }
 
+/// Parameters for the DebugSleep method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct DebugSleepParams {
+	/// Duration in milliseconds
+	pub ms: f64,
+}
+
 /**
  * Backend RPC request types for the frontend comm
  */
@@ -115,6 +122,12 @@ pub enum FrontendFrontendRpcRequest {
 	/// user. The result may be undefined if there are no active editors.
 	#[serde(rename = "last_active_editor_context")]
 	LastActiveEditorContext,
+
+	/// Sleep for n seconds
+	///
+	/// Useful for testing in the backend a long running frontend method
+	#[serde(rename = "debug_sleep")]
+	DebugSleep(DebugSleepParams),
 
 }
 
