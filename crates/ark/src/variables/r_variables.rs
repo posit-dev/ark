@@ -1,7 +1,7 @@
 //
 // r_variables.rs
 //
-// Copyright (C) 2023 by Posit Software, PBC
+// Copyright (C) 2023-2024 by Posit Software, PBC
 //
 //
 
@@ -116,20 +116,14 @@ impl RVariables {
         });
 
         // Perform the initial environment scan and deliver to the front end
-        match self.refresh() {
-            Ok(variables) => {
-                let length = variables.len() as i64;
-                let event = VariablesEvent::Refresh(RefreshParams {
-                    variables,
-                    length,
-                    version: self.version as i64,
-                });
-                self.send_event(event, None);
-            },
-            Err(err) => {
-                error!("Failed to deliver initial environment: {err:?}");
-            },
-        }
+        let variables = self.list_variables();
+        let length = variables.len() as i64;
+        let event = VariablesEvent::Refresh(RefreshParams {
+            variables,
+            length,
+            version: self.version as i64,
+        });
+        self.send_event(event, None);
 
         // Flag initially set to false, but set to true if the user closes the
         // channel (i.e. the front end is closed)
@@ -250,23 +244,6 @@ impl RVariables {
                 Ok(VariablesRpcReply::ViewReply())
             },
         }
-    }
-
-    /**
-     * Perform a full environment scan and return the list of variables.
-     */
-    fn refresh(&mut self) -> Result<Vec<Variable>, harp::error::Error> {
-        let mut variables: Vec<Variable> = vec![];
-
-        r_task(|| {
-            self.update_bindings(self.bindings());
-
-            for binding in self.current_bindings.get() {
-                variables.push(PositronVariable::new(binding).var());
-            }
-        });
-
-        Ok(variables)
     }
 
     /**
