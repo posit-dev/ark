@@ -225,7 +225,7 @@ impl RVariables {
             VariablesRpcRequest::Clear(params) => {
                 self.clear(params.include_hidden_objects)?;
                 self.update(None);
-                Ok(VariablesRpcReply::ClearReply)
+                Ok(VariablesRpcReply::ClearReply())
             },
             VariablesRpcRequest::Delete(params) => {
                 self.delete(params.names.clone())?;
@@ -247,7 +247,7 @@ impl RVariables {
             },
             VariablesRpcRequest::View(params) => {
                 self.view(&params.path)?;
-                Ok(VariablesRpcReply::ViewReply)
+                Ok(VariablesRpcReply::ViewReply())
             },
         }
     }
