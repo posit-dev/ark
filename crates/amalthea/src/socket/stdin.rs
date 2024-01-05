@@ -177,7 +177,6 @@ impl Stdin {
                         },
                         StdInReplySender::Comm(tx) => {
                             let resp = JsonRpcResponse::Error {
-                                id: String::from(""), // Synchronous so not needed
                                 error: JsonRpcErrorData {
                                     message: format!(
                                         "Error while receiving frontend response: {err}"

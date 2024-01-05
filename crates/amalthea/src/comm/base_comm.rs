@@ -19,8 +19,8 @@ use crate::wire::jupyter_message::MessageType;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum JsonRpcResponse {
-    Result { id: String, result: Value },
-    Error { id: String, error: JsonRpcErrorData },
+    Result { result: Value },
+    Error { error: JsonRpcErrorData },
 }
 
 impl MessageType for JsonRpcResponse {

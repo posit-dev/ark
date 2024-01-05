@@ -14,7 +14,6 @@ use log::info;
 use log::warn;
 use stdext::spawn;
 
-use super::base_comm::JsonRpcResponse;
 use crate::comm::comm_channel::CommMsg;
 use crate::comm::event::CommManagerEvent;
 use crate::comm::event::CommShellEvent;
@@ -31,7 +30,6 @@ pub struct CommManager {
     comm_event_rx: Receiver<CommManagerEvent>,
     comm_shell_tx: Sender<CommShellEvent>,
     pending_rpcs: HashMap<String, JupyterHeader>,
-    pending_reverse_rpcs: HashMap<String, Sender<JsonRpcResponse>>,
 }
 
 impl CommManager {
@@ -72,7 +70,6 @@ impl CommManager {
             comm_shell_tx,
             open_comms: Vec::<CommSocket>::new(),
             pending_rpcs: HashMap::<String, JupyterHeader>::new(),
-            pending_reverse_rpcs: HashMap::<String, Sender<JsonRpcResponse>>::new(),
         }
     }
 
@@ -143,26 +140,6 @@ impl CommManager {
                 // An RPC was received; add it to the map of pending RPCs
                 CommManagerEvent::PendingRpc(header) => {
                     self.pending_rpcs.insert(header.msg_id.clone(), header);
-                },
-
-                CommManagerEvent::RpcResponse(response) => {
-                    log::trace!("Got response from frontend method");
-
-                    let id = match response {
-                        JsonRpcResponse::Result { ref id, .. } => id,
-                        JsonRpcResponse::Error { ref id, .. } => id,
-                    };
-                    match self.pending_reverse_rpcs.remove(id) {
-                        Some(response_tx) => {
-                            // Send result to caller
-                            if let Err(err) = response_tx.send(response.clone()) {
-                                log::error!("Can't reply to RPC caller: {err:?}");
-                            }
-                        },
-                        None => {
-                            log::error!("Unknown recipient for RPC response");
-                        },
-                    }
                 },
 
                 // A message was received from the front end

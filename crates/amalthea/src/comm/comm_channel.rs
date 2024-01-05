@@ -39,7 +39,6 @@ pub enum Comm {
     Other(String),
 }
 
-// TODO: Rename to Request and Reply?
 #[derive(Clone, Debug)]
 pub enum CommMsg {
     /// A message that is part of a Remote Procedure Call (RPC). The first value
