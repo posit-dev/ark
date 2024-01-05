@@ -208,7 +208,7 @@ fn test_environment_list() {
     // Ensure we get a reply
     let reply: VariablesRpcReply = serde_json::from_value(data).unwrap();
     match reply {
-        VariablesRpcReply::ClearReply => {},
+        VariablesRpcReply::ClearReply() => {},
         _ => panic!("Expected clear reply"),
     }
 
