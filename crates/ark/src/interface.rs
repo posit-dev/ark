@@ -1063,13 +1063,13 @@ impl RMain {
 
         match response {
             StdInRpcResponse::Response(response) => match response {
-                JsonRpcResponse::Result { result, .. } => {
-                    Some(RObject::try_from(result).map_err(|err| anyhow::anyhow!("{err}")))
+                JsonRpcResponse::Result(response) => {
+                    Some(RObject::try_from(response.result).map_err(|err| anyhow::anyhow!("{err}")))
                 },
-                JsonRpcResponse::Error { error, .. } => Some(Err(anyhow::anyhow!(
+                JsonRpcResponse::Error(response) => Some(Err(anyhow::anyhow!(
                     "While calling frontend method':\n\
-                         {}",
-                    error.message
+                     {}",
+                    response.error.message
                 ))),
             },
             StdInRpcResponse::Interrupt => None,

@@ -11,6 +11,7 @@ use crossbeam::select;
 use log::error;
 use log::trace;
 
+use crate::comm::base_comm::JsonRpcError;
 use crate::comm::base_comm::JsonRpcErrorCode;
 use crate::comm::base_comm::JsonRpcErrorData;
 use crate::comm::base_comm::JsonRpcResponse;
@@ -190,14 +191,15 @@ impl Stdin {
                             todo!("forward serialisation error back to R");
                         },
                         StdInReplySender::Comm(tx) => {
-                            let resp = StdInRpcResponse::Response(JsonRpcResponse::Error {
-                                error: JsonRpcErrorData {
-                                    message: format!(
-                                        "Error while receiving frontend response: {err}"
-                                    ),
-                                    code: JsonRpcErrorCode::InternalError,
-                                },
-                            });
+                            let resp =
+                                StdInRpcResponse::Response(JsonRpcResponse::Error(JsonRpcError {
+                                    error: JsonRpcErrorData {
+                                        message: format!(
+                                            "Error while receiving frontend response: {err}"
+                                        ),
+                                        code: JsonRpcErrorCode::InternalError,
+                                    },
+                                }));
                             tx.send(resp).unwrap();
                         },
                     }

@@ -14,13 +14,11 @@ use serde_repr::Serialize_repr;
 
 use crate::wire::jupyter_message::MessageType;
 
-// TODO: Do we require `id` fields for comm replies over StdIn?
-// Or can we use the Jupyter parent header easily instead?
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum JsonRpcResponse {
-    Result { result: Value },
-    Error { error: JsonRpcErrorData },
+    Result(JsonRpcResult),
+    Error(JsonRpcError),
 }
 
 impl MessageType for JsonRpcResponse {
