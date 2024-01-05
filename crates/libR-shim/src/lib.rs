@@ -27,6 +27,7 @@ pub use libR_sys::R_BindingIsActive;
 pub use libR_sys::R_CallMethodDef;
 pub use libR_sys::R_CheckStack;
 pub use libR_sys::R_CheckStack2;
+pub use libR_sys::R_CheckUserInterrupt;
 pub use libR_sys::R_ExternalPtrAddr;
 pub use libR_sys::R_GE_getVersion;
 pub use libR_sys::R_IsNA;

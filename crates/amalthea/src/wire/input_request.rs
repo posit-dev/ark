@@ -49,8 +49,14 @@ pub struct CommRequest {
     pub originator: Option<Originator>,
 
     /// The response channel for the request
-    pub response_tx: Sender<JsonRpcResponse>,
+    pub response_tx: Sender<StdInRpcResponse>,
 
     /// The actual comm request
     pub request: FrontendFrontendRpcRequest,
+}
+
+#[derive(Debug, Clone)]
+pub enum StdInRpcResponse {
+    Response(JsonRpcResponse),
+    Interrupt,
 }

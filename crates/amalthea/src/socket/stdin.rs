@@ -10,7 +10,6 @@ use crossbeam::channel::Sender;
 use crossbeam::select;
 use log::error;
 use log::trace;
-use log::warn;
 
 use crate::comm::base_comm::JsonRpcErrorCode;
 use crate::comm::base_comm::JsonRpcErrorData;
@@ -19,6 +18,7 @@ use crate::session::Session;
 use crate::wire::input_reply::InputReply;
 use crate::wire::input_request::CommRequest;
 use crate::wire::input_request::ShellInputRequest;
+use crate::wire::input_request::StdInRpcResponse;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
 use crate::wire::jupyter_message::OutboundMessage;
@@ -30,7 +30,7 @@ pub enum StdInRequest {
 
 enum StdInReplySender {
     Input(Sender<crate::Result<InputReply>>),
-    Comm(Sender<JsonRpcResponse>),
+    Comm(Sender<StdInRpcResponse>),
 }
 
 pub struct Stdin {
@@ -132,7 +132,7 @@ impl Stdin {
                 recv(self.inbound_rx) -> msg => match msg {
                     Ok(m) => m,
                     Err(err) => {
-                        error!("Could not read message from stdin socket: {}", err);
+                        log::error!("Could not read message from stdin socket: {err:?}");
                         continue;
                     }
                 },
@@ -140,14 +140,27 @@ impl Stdin {
                 // signaled. We're no longer waiting for an `input_reply`
                 // but for an `input_request`.
                 recv(interrupt_rx) -> msg => {
+                    log::trace!("Received interrupt signal in StdIn");
+
                     if let Err(err) = msg {
-                        error!("Could not read interrupt message: {}", err);
+                        log::error!("Could not read interrupt message: {err:?}");
                     }
+
+                    match reply_tx {
+                        StdInReplySender::Input(_tx) => {
+                            // Nothing to do since `read_console()` will detect
+                            // the interrupt independently. Fall through.
+                        },
+                        StdInReplySender::Comm(tx) => {
+                            tx.send(StdInRpcResponse::Interrupt).unwrap();
+                        },
+                    }
+
                     continue;
                 }
             };
 
-            trace!("Received reply from front-end: {:?}", message);
+            log::trace!("Received reply from front-end: {message:?}");
 
             // Only input and comm RPC replies are expected on this socket
             match message {
@@ -160,7 +173,8 @@ impl Stdin {
                     },
                     Message::CommReply(ref reply) => {
                         if let StdInReplySender::Comm(tx) = reply_tx {
-                            tx.send(reply.content.clone()).unwrap();
+                            let resp = StdInRpcResponse::Response(reply.content.clone());
+                            tx.send(resp).unwrap();
                             continue;
                         }
                     },
@@ -176,14 +190,14 @@ impl Stdin {
                             todo!("forward serialisation error back to R");
                         },
                         StdInReplySender::Comm(tx) => {
-                            let resp = JsonRpcResponse::Error {
+                            let resp = StdInRpcResponse::Response(JsonRpcResponse::Error {
                                 error: JsonRpcErrorData {
                                     message: format!(
                                         "Error while receiving frontend response: {err}"
                                     ),
                                     code: JsonRpcErrorCode::InternalError,
                                 },
-                            };
+                            });
                             tx.send(resp).unwrap();
                         },
                     }
@@ -191,7 +205,7 @@ impl Stdin {
                 },
             };
 
-            warn!("Received unexpected message on stdin socket: {:?}", message);
+            log::warn!("Received unexpected message on stdin socket: {message:?}");
         }
     }
 }

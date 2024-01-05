@@ -41,6 +41,7 @@ use amalthea::wire::input_reply::InputReply;
 use amalthea::wire::input_request::CommRequest;
 use amalthea::wire::input_request::InputRequest;
 use amalthea::wire::input_request::ShellInputRequest;
+use amalthea::wire::input_request::StdInRpcResponse;
 use amalthea::wire::jupyter_message::Status;
 use amalthea::wire::originator::Originator;
 use amalthea::wire::stream::Stream;
@@ -1014,6 +1015,21 @@ impl RMain {
         &self,
         request: FrontendFrontendRpcRequest,
     ) -> anyhow::Result<RObject> {
+        // If an interrupt was signalled, returns `NULL`. This should not be
+        // visible to the caller since `r_unwrap()` (called e.g. by
+        // `harp::register`) will trigger an interrupt jump right away.
+        match self.call_frontend_method_safe(request) {
+            Some(result) => result,
+            None => Ok(RObject::null()),
+        }
+    }
+
+    // If returns `None`, it means the request was interrupted and we need to
+    // propagate the interrupt to R
+    fn call_frontend_method_safe(
+        &self,
+        request: FrontendFrontendRpcRequest,
+    ) -> Option<anyhow::Result<RObject>> {
         log::trace!("Calling frontend method '{request:?}'");
         let (response_tx, response_rx) = bounded(1);
 
@@ -1023,10 +1039,10 @@ impl RMain {
             if let Some(orig) = &req.orig {
                 orig
             } else {
-                anyhow::bail!("Error: No active originator");
+                return Some(Err(anyhow::anyhow!("Error: No active originator")));
             }
         } else {
-            anyhow::bail!("Error: No active request");
+            return Some(Err(anyhow::anyhow!("Error: No active request")));
         };
 
         let request = CommRequest {
@@ -1046,14 +1062,17 @@ impl RMain {
         log::trace!("Got response from frontend method: {response:?}");
 
         match response {
-            JsonRpcResponse::Result { result, .. } => Ok(RObject::try_from(result)?),
-            JsonRpcResponse::Error { error, .. } => {
-                anyhow::bail!(
+            StdInRpcResponse::Response(response) => match response {
+                JsonRpcResponse::Result { result, .. } => {
+                    Some(RObject::try_from(result).map_err(|err| anyhow::anyhow!("{err}")))
+                },
+                JsonRpcResponse::Error { error, .. } => Some(Err(anyhow::anyhow!(
                     "While calling frontend method':\n\
-                     {}",
+                         {}",
                     error.message
-                );
+                ))),
             },
+            StdInRpcResponse::Interrupt => None,
         }
     }
 }
