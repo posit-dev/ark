@@ -253,7 +253,7 @@ pub enum VariablesRpcReply {
 	ListReply(VariableList),
 
 	/// Reply for the clear method (no result)
-	ClearReply,
+	ClearReply(),
 
 	/// The names of the variables that were successfully deleted.
 	DeleteReply(Vec<String>),
@@ -265,7 +265,7 @@ pub enum VariablesRpcReply {
 	ClipboardFormatReply(FormattedVariable),
 
 	/// Reply for the view method (no result)
-	ViewReply,
+	ViewReply(),
 
 }
 
