@@ -13,3 +13,4 @@ pub mod frontend_comm;
 pub mod help_comm;
 pub mod plot_comm;
 pub mod server_comm;
+pub mod variables_comm;

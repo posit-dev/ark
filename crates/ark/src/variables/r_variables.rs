@@ -1,12 +1,22 @@
 //
 // r_variables.rs
 //
-// Copyright (C) 2023 by Posit Software, PBC
+// Copyright (C) 2023-2024 by Posit Software, PBC
 //
 //
 
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::event::CommManagerEvent;
+use amalthea::comm::variables_comm::ClipboardFormatFormat;
+use amalthea::comm::variables_comm::FormattedVariable;
+use amalthea::comm::variables_comm::InspectedVariable;
+use amalthea::comm::variables_comm::RefreshParams;
+use amalthea::comm::variables_comm::UpdateParams;
+use amalthea::comm::variables_comm::Variable;
+use amalthea::comm::variables_comm::VariableList;
+use amalthea::comm::variables_comm::VariablesEvent;
+use amalthea::comm::variables_comm::VariablesRpcReply;
+use amalthea::comm::variables_comm::VariablesRpcRequest;
 use amalthea::socket::comm::CommSocket;
 use crossbeam::channel::select;
 use crossbeam::channel::unbounded;
@@ -29,18 +39,7 @@ use crate::data_viewer::r_data_viewer::RDataViewer;
 use crate::lsp::events::EVENTS;
 use crate::r_task;
 use crate::thread::RThreadSafe;
-use crate::variables::message::VariablesMessage;
-use crate::variables::message::VariablesMessageClear;
-use crate::variables::message::VariablesMessageClipboardFormat;
-use crate::variables::message::VariablesMessageDelete;
-use crate::variables::message::VariablesMessageDetails;
-use crate::variables::message::VariablesMessageError;
-use crate::variables::message::VariablesMessageFormattedVariable;
-use crate::variables::message::VariablesMessageInspect;
-use crate::variables::message::VariablesMessageList;
-use crate::variables::message::VariablesMessageUpdate;
-use crate::variables::message::VariablesMessageView;
-use crate::variables::variable::Variable;
+use crate::variables::variable::PositronVariable;
 
 /**
  * The R Variables handler provides the server side of Positron's Variables panel, and is
@@ -117,7 +116,14 @@ impl RVariables {
         });
 
         // Perform the initial environment scan and deliver to the front end
-        self.refresh(None);
+        let variables = self.list_variables();
+        let length = variables.len() as i64;
+        let event = VariablesEvent::Refresh(RefreshParams {
+            variables,
+            length,
+            version: self.version as i64,
+        });
+        self.send_event(event, None);
 
         // Flag initially set to false, but set to true if the user closes the
         // channel (i.e. the front end is closed)
@@ -162,55 +168,8 @@ impl RVariables {
                         break;
                     }
 
-                    // Process ordinary data messages
-                    if let CommMsg::Rpc(id, data) = msg {
-                        let message = match serde_json::from_value::<VariablesMessage>(data) {
-                            Ok(m) => m,
-                            Err(err) => {
-                                error!(
-                                    "Environment: Received invalid message from front end. {}",
-                                    err
-                                );
-                                continue;
-                            },
-                        };
-
-                        // Match on the type of data received.
-                        match message {
-                            // This is a request to refresh the variables list, so perform a full
-                            // environment scan and deliver to the front end
-                            VariablesMessage::Refresh => {
-                                self.refresh(Some(id));
-                            },
-
-                            VariablesMessage::Clear(VariablesMessageClear{include_hidden_objects}) => {
-                                self.clear(include_hidden_objects, Some(id));
-                            },
-
-                            VariablesMessage::Delete(VariablesMessageDelete{variables}) => {
-                                self.delete(variables, Some(id));
-                            },
-
-                            VariablesMessage::Inspect(VariablesMessageInspect{path}) => {
-                                self.inspect(&path, Some(id));
-                            },
-
-                            VariablesMessage::ClipboardFormat(VariablesMessageClipboardFormat{path, format}) => {
-                                self.clipboard_format(&path, format, Some(id));
-                            },
-
-                            VariablesMessage::View(VariablesMessageView { path }) => {
-                                self.view(&path, Some(id));
-                            },
-
-                            _ => {
-                                error!(
-                                    "Environment: Don't know how to handle message type '{:?}'",
-                                    message
-                                );
-                            },
-                        }
-                    }
+                    let comm = self.comm.clone();
+                    comm.handle_request(msg, |req| self.handle_rpc(req));
                 }
             }
         }
@@ -232,40 +191,66 @@ impl RVariables {
         self.version
     }
 
-    /**
-     * Perform a full environment scan and deliver the results to the front end.
-     * When this message is being sent in reply to a request from the front end,
-     * the request ID is passed in as an argument.
-     */
-    fn refresh(&mut self, request_id: Option<String>) {
+    fn list_variables(&mut self) -> Vec<Variable> {
         let mut variables: Vec<Variable> = vec![];
 
         r_task(|| {
             self.update_bindings(self.bindings());
 
             for binding in self.current_bindings.get() {
-                variables.push(Variable::new(binding));
+                variables.push(PositronVariable::new(binding).var());
             }
         });
 
-        // TODO: Avoid serializing the full list of variables if it exceeds a
-        // certain threshold
-        let env_size = variables.len();
-        let env_list = VariablesMessage::List(VariablesMessageList {
-            variables,
-            length: env_size,
-            version: self.version,
-        });
+        variables
+    }
 
-        self.send_message(env_list, request_id);
+    fn handle_rpc(&mut self, req: VariablesRpcRequest) -> anyhow::Result<VariablesRpcReply> {
+        match req {
+            VariablesRpcRequest::List => {
+                let list = self.list_variables();
+                let count = list.len() as i64;
+                Ok(VariablesRpcReply::ListReply(VariableList {
+                    variables: list,
+                    length: count,
+                    version: Some(self.version as i64),
+                }))
+            },
+            VariablesRpcRequest::Clear(params) => {
+                self.clear(params.include_hidden_objects)?;
+                self.update(None);
+                Ok(VariablesRpcReply::ClearReply())
+            },
+            VariablesRpcRequest::Delete(params) => {
+                self.delete(params.names.clone())?;
+                Ok(VariablesRpcReply::DeleteReply(params.names))
+            },
+            VariablesRpcRequest::Inspect(params) => {
+                let children = self.inspect(&params.path)?;
+                let count = children.len() as i64;
+                Ok(VariablesRpcReply::InspectReply(InspectedVariable {
+                    children,
+                    length: count,
+                }))
+            },
+            VariablesRpcRequest::ClipboardFormat(params) => {
+                let content = self.clipboard_format(&params.path, params.format.clone())?;
+                Ok(VariablesRpcReply::ClipboardFormatReply(FormattedVariable {
+                    content,
+                }))
+            },
+            VariablesRpcRequest::View(params) => {
+                self.view(&params.path)?;
+                Ok(VariablesRpcReply::ViewReply())
+            },
+        }
     }
 
     /**
      * Clear the environment. Uses rm(envir = <env>, list = ls(<env>, all.names = TRUE))
      */
-    fn clear(&mut self, include_hidden_objects: bool, request_id: Option<String>) {
-        // try to rm(<env>, list = ls(envir = <env>, all.names = TRUE)))
-        let result: Result<(), harp::error::Error> = r_task(|| unsafe {
+    fn clear(&mut self, include_hidden_objects: bool) -> Result<(), harp::error::Error> {
+        r_task(|| unsafe {
             let env = self.env.get().clone();
 
             let mut list = RFunction::new("base", "ls")
@@ -286,23 +271,13 @@ impl RVariables {
                 .call()?;
 
             Ok(())
-        });
-
-        if let Err(_err) = result {
-            error!("Failed to clear the environment");
-        }
-
-        // and then refresh anyway
-        //
-        // it is possible (is it ?) that in case of an error some variables
-        // were removed and some were not
-        self.refresh(request_id);
+        })
     }
 
     /**
      * Clear the environment. Uses rm(envir = <env>, list = ls(<env>, all.names = TRUE))
      */
-    fn delete(&mut self, variables: Vec<String>, request_id: Option<String>) {
+    fn delete(&mut self, variables: Vec<String>) -> Result<(), harp::error::Error> {
         r_task(|| unsafe {
             let variables: Vec<&str> = variables.iter().map(|s| s as &str).collect();
 
@@ -313,79 +288,45 @@ impl RVariables {
                 .param("envir", env)
                 .call();
 
-            if let Err(_) = result {
-                error!("Failed to delete variables from the environment");
+            if let Err(err) = result {
+                return Err(err);
             }
-        });
-
-        // and then update
-        self.update(request_id);
+            Ok(())
+        })
     }
 
-    fn clipboard_format(&mut self, path: &Vec<String>, format: String, request_id: Option<String>) {
-        let clipped = r_task(|| {
+    fn clipboard_format(
+        &mut self,
+        path: &Vec<String>,
+        format: ClipboardFormatFormat,
+    ) -> Result<String, harp::error::Error> {
+        r_task(|| {
             let env = self.env.get().clone();
-            Variable::clip(env, &path, &format)
-        });
-
-        let msg = match clipped {
-            Ok(content) => VariablesMessage::FormattedVariable(VariablesMessageFormattedVariable {
-                format,
-                content,
-            }),
-
-            Err(_) => VariablesMessage::Error(VariablesMessageError {
-                message: String::from("Clipboard Format error"),
-            }),
-        };
-        self.send_message(msg, request_id);
+            PositronVariable::clip(env, &path, &format)
+        })
     }
 
-    fn inspect(&mut self, path: &Vec<String>, request_id: Option<String>) {
-        let inspect = r_task(|| {
+    fn inspect(&mut self, path: &Vec<String>) -> Result<Vec<Variable>, harp::error::Error> {
+        r_task(|| {
             let env = self.env.get().clone();
-            Variable::inspect(env, &path)
-        });
-        let msg = match inspect {
-            Ok(children) => {
-                let length = children.len();
-                VariablesMessage::Details(VariablesMessageDetails {
-                    path: path.clone(),
-                    children,
-                    length,
-                })
-            },
-            Err(_) => VariablesMessage::Error(VariablesMessageError {
-                message: String::from("Inspection error"),
-            }),
-        };
-
-        self.send_message(msg, request_id);
+            PositronVariable::inspect(env, &path)
+        })
     }
 
-    fn view(&mut self, path: &Vec<String>, request_id: Option<String>) {
-        let message = r_task(|| {
+    /// Open a data viewer for the given variable.
+    ///
+    /// - `path`: The path to the variable to view, as an array of access keys
+    fn view(&mut self, path: &Vec<String>) -> Result<(), harp::error::Error> {
+        r_task(|| {
             let env = self.env.get().clone();
-
-            let data = Variable::resolve_data_object(env, &path);
-
-            match data {
-                Ok(data) => {
-                    let name = unsafe { path.get_unchecked(path.len() - 1) };
-                    RDataViewer::start(name.clone(), data, self.comm_manager_tx.clone());
-                    VariablesMessage::Success
-                },
-
-                Err(_) => VariablesMessage::Error(VariablesMessageError {
-                    message: String::from("Inspection error"),
-                }),
-            }
-        });
-
-        self.send_message(message, request_id);
+            let data = PositronVariable::resolve_data_object(env, &path)?;
+            let name = unsafe { path.get_unchecked(path.len() - 1) };
+            RDataViewer::start(name.clone(), data, self.comm_manager_tx.clone());
+            Ok(())
+        })
     }
 
-    fn send_message(&mut self, message: VariablesMessage, request_id: Option<String>) {
+    fn send_event(&mut self, message: VariablesEvent, request_id: Option<String>) {
         let data = serde_json::to_value(message);
 
         match data {
@@ -426,7 +367,7 @@ impl RVariables {
                     // No more old, collect last new into added
                     (None, Some(mut new)) => {
                         loop {
-                            assigned.push(Variable::new(&new));
+                            assigned.push(PositronVariable::new(&new).var());
 
                             match new_iter.next() {
                                 Some(x) => {
@@ -457,7 +398,7 @@ impl RVariables {
                     (Some(old), Some(new)) => {
                         if old.name == new.name {
                             if old.value != new.value {
-                                assigned.push(Variable::new(&new));
+                                assigned.push(PositronVariable::new(&new).var());
                             }
                             old_next = old_iter.next();
                             new_next = new_iter.next();
@@ -465,7 +406,7 @@ impl RVariables {
                             removed.push(old.name.to_string());
                             old_next = old_iter.next();
                         } else {
-                            assigned.push(Variable::new(&new));
+                            assigned.push(PositronVariable::new(&new).var());
                             new_next = new_iter.next();
                         }
                     },
@@ -480,12 +421,12 @@ impl RVariables {
 
         if assigned.len() > 0 || removed.len() > 0 || request_id.is_some() {
             // Send the message if anything changed or if this came from a request
-            let message = VariablesMessage::Update(VariablesMessageUpdate {
+            let event = VariablesEvent::Update(UpdateParams {
                 assigned,
                 removed,
-                version: self.version,
+                version: self.version as i64,
             });
-            self.send_message(message, request_id);
+            self.send_event(event, request_id);
         }
     }
 

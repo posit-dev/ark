@@ -10,7 +10,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 /// A rendered plot
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct PlotResult {
 	/// The plot data, as a base64-encoded string
 	pub data: String,

@@ -150,6 +150,7 @@ impl CommSocket {
                 ),
             ),
         };
+
         let response = CommMsg::Rpc(id, json);
 
         self.outgoing_tx.send(response).unwrap();

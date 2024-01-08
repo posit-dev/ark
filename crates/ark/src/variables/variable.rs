@@ -5,6 +5,9 @@
 //
 //
 
+use amalthea::comm::variables_comm::ClipboardFormatFormat;
+use amalthea::comm::variables_comm::Variable;
+use amalthea::comm::variables_comm::VariableKind;
 use harp::call::RCall;
 use harp::environment::Binding;
 use harp::environment::BindingValue;
@@ -42,89 +45,12 @@ use harp::vector::IntegerVector;
 use harp::vector::Vector;
 use itertools::Itertools;
 use libR_shim::*;
-use serde::Deserialize;
-use serde::Serialize;
 use stdext::local;
 use stdext::unwrap;
 
 // Constants.
 const MAX_DISPLAY_VALUE_ENTRIES: usize = 1_000;
 const MAX_DISPLAY_VALUE_LENGTH: usize = 100;
-
-/// Represents the supported kinds of variable values.
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Copy)]
-#[serde(rename_all = "snake_case")]
-pub enum ValueKind {
-    /// A length-1 logical vector
-    Boolean,
-
-    /// A raw byte array
-    Bytes,
-
-    /// A collection of unnamed values; usually a vector
-    Collection,
-
-    /// Empty/missing values such as NULL, NA, or missing
-    Empty,
-
-    /// A function, method, closure, or other callable object
-    Function,
-
-    /// Named lists of values, such as lists and (hashed) environments
-    Map,
-
-    /// A number, such as an integer or floating-point value
-    Number,
-
-    /// A value of an unknown or unspecified type
-    Other,
-
-    /// A character string
-    String,
-
-    /// A table, dataframe, 2D matrix, or other two-dimensional data structure
-    Table,
-
-    /// Lazy: promise code
-    Lazy,
-}
-
-/// Represents the serialized form of a variable.
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Variable {
-    /** The access key; not displayed to the user, but used to form path accessors */
-    pub access_key: String,
-
-    /** The variable's name, formatted for display */
-    pub display_name: String,
-
-    /** The variable's value, formatted for display */
-    pub display_value: String,
-
-    /** The variable's type, formatted for display */
-    pub display_type: String,
-
-    /** Extended type information */
-    pub type_info: String,
-
-    /** The variable's value kind (string, number, etc.) */
-    pub kind: ValueKind,
-
-    /** The number of elements in the variable's value, if applicable */
-    pub length: usize,
-
-    /** The size of the variable's value, in bytes */
-    pub size: usize,
-
-    /** True if the variable contains other variables */
-    pub has_children: bool,
-
-    /** True if the 'value' field was truncated to fit in the message */
-    pub is_truncated: bool,
-
-    /** True for things that can be View()ed */
-    pub has_viewer: bool,
-}
 
 pub struct WorkspaceVariableDisplayValue {
     pub display_value: String,
@@ -523,7 +449,11 @@ enum EnvironmentVariableNode {
     VectorElement { object: RObject, index: isize },
 }
 
-impl Variable {
+pub struct PositronVariable {
+    var: Variable,
+}
+
+impl PositronVariable {
     /**
      * Create a new Variable from a Binding
      */
@@ -555,18 +485,24 @@ impl Variable {
         let kind = Self::variable_kind(x);
 
         Self {
-            access_key,
-            display_name,
-            display_value,
-            display_type,
-            type_info,
-            kind,
-            length: Self::variable_length(x),
-            size: RObject::view(x).size(),
-            has_children: has_children(x),
-            is_truncated,
-            has_viewer: r_is_data_frame(x) || r_is_matrix(x),
+            var: Variable {
+                access_key,
+                display_name,
+                display_value,
+                display_type,
+                type_info,
+                kind,
+                length: Self::variable_length(x) as i64,
+                size: RObject::view(x).size() as i64,
+                has_children: has_children(x),
+                is_truncated,
+                has_viewer: r_is_data_frame(x) || r_is_matrix(x),
+            },
         }
+    }
+
+    pub fn var(&self) -> Variable {
+        self.var.clone()
     }
 
     fn from_promise(display_name: String, promise: SEXP) -> Self {
@@ -595,33 +531,37 @@ impl Variable {
         };
 
         Self {
-            access_key: display_name.clone(),
-            display_name,
-            display_value: display_value.unwrap_or(String::from("(unevaluated)")),
-            display_type: String::from("promise"),
-            type_info: String::from("promise"),
-            kind: ValueKind::Lazy,
-            length: 0,
-            size: 0,
-            has_children: false,
-            is_truncated: false,
-            has_viewer: false,
+            var: Variable {
+                access_key: display_name.clone(),
+                display_name,
+                display_value: display_value.unwrap_or(String::from("(unevaluated)")),
+                display_type: String::from("promise"),
+                type_info: String::from("promise"),
+                kind: VariableKind::Lazy,
+                length: 0,
+                size: 0,
+                has_children: false,
+                is_truncated: false,
+                has_viewer: false,
+            },
         }
     }
 
     fn from_active_binding(display_name: String) -> Self {
         Self {
-            access_key: display_name.clone(),
-            display_name,
-            display_value: String::from(""),
-            display_type: String::from("active binding"),
-            type_info: String::from("active binding"),
-            kind: ValueKind::Other,
-            length: 0,
-            size: 0,
-            has_children: false,
-            is_truncated: false,
-            has_viewer: false,
+            var: Variable {
+                access_key: display_name.clone(),
+                display_name,
+                display_value: String::from(""),
+                display_type: String::from("active binding"),
+                type_info: String::from("active binding"),
+                kind: VariableKind::Other,
+                length: 0,
+                size: 0,
+                has_children: false,
+                is_truncated: false,
+                has_viewer: false,
+            },
         }
     }
 
@@ -651,126 +591,126 @@ impl Variable {
         }
     }
 
-    fn variable_kind(x: SEXP) -> ValueKind {
+    fn variable_kind(x: SEXP) -> VariableKind {
         if x == unsafe { R_NilValue } {
-            return ValueKind::Empty;
+            return VariableKind::Empty;
         }
 
         let obj = RObject::view(x);
 
         if obj.is_s4() {
-            return ValueKind::Map;
+            return VariableKind::Map;
         }
 
         if r_inherits(x, "factor") {
-            return ValueKind::Other;
+            return VariableKind::Other;
         }
 
         if r_is_data_frame(x) {
-            return ValueKind::Table;
+            return VariableKind::Table;
         }
 
         // TODO: generic S3 object, not sure what it should be
 
         match r_typeof(x) {
-            CLOSXP => ValueKind::Function,
+            CLOSXP => VariableKind::Function,
 
             ENVSXP => {
                 // this includes R6 objects
-                ValueKind::Map
+                VariableKind::Map
             },
 
             VECSXP => unsafe {
                 let dim = Rf_getAttrib(x, R_DimSymbol);
                 if dim != R_NilValue && XLENGTH(dim) == 2 {
-                    ValueKind::Table
+                    VariableKind::Table
                 } else {
-                    ValueKind::Map
+                    VariableKind::Map
                 }
             },
 
             LGLSXP => unsafe {
                 let dim = Rf_getAttrib(x, R_DimSymbol);
                 if dim != R_NilValue && XLENGTH(dim) == 2 {
-                    ValueKind::Table
+                    VariableKind::Table
                 } else if XLENGTH(x) == 1 {
                     if LOGICAL_ELT(x, 0) == R_NaInt {
-                        ValueKind::Empty
+                        VariableKind::Empty
                     } else {
-                        ValueKind::Boolean
+                        VariableKind::Boolean
                     }
                 } else {
-                    ValueKind::Collection
+                    VariableKind::Collection
                 }
             },
 
             INTSXP => unsafe {
                 let dim = Rf_getAttrib(x, R_DimSymbol);
                 if dim != R_NilValue && XLENGTH(dim) == 2 {
-                    ValueKind::Table
+                    VariableKind::Table
                 } else if XLENGTH(x) == 1 {
                     if INTEGER_ELT(x, 0) == R_NaInt {
-                        ValueKind::Empty
+                        VariableKind::Empty
                     } else {
-                        ValueKind::Number
+                        VariableKind::Number
                     }
                 } else {
-                    ValueKind::Collection
+                    VariableKind::Collection
                 }
             },
 
             REALSXP => unsafe {
                 let dim = Rf_getAttrib(x, R_DimSymbol);
                 if dim != R_NilValue && XLENGTH(dim) == 2 {
-                    ValueKind::Table
+                    VariableKind::Table
                 } else if XLENGTH(x) == 1 {
                     if R_IsNA(REAL_ELT(x, 0)) == 1 {
-                        ValueKind::Empty
+                        VariableKind::Empty
                     } else {
-                        ValueKind::Number
+                        VariableKind::Number
                     }
                 } else {
-                    ValueKind::Collection
+                    VariableKind::Collection
                 }
             },
 
             CPLXSXP => unsafe {
                 let dim = Rf_getAttrib(x, R_DimSymbol);
                 if dim != R_NilValue && XLENGTH(dim) == 2 {
-                    ValueKind::Table
+                    VariableKind::Table
                 } else if XLENGTH(x) == 1 {
                     let value = COMPLEX_ELT(x, 0);
                     if R_IsNA(value.r) == 1 || R_IsNA(value.i) == 1 {
-                        ValueKind::Empty
+                        VariableKind::Empty
                     } else {
-                        ValueKind::Number
+                        VariableKind::Number
                     }
                 } else {
-                    ValueKind::Collection
+                    VariableKind::Collection
                 }
             },
 
             STRSXP => unsafe {
                 let dim = Rf_getAttrib(x, R_DimSymbol);
                 if dim != R_NilValue && XLENGTH(dim) == 2 {
-                    ValueKind::Table
+                    VariableKind::Table
                 } else if XLENGTH(x) == 1 {
                     if STRING_ELT(x, 0) == R_NaString {
-                        ValueKind::Empty
+                        VariableKind::Empty
                     } else {
-                        ValueKind::String
+                        VariableKind::String
                     }
                 } else {
-                    ValueKind::Collection
+                    VariableKind::Collection
                 }
             },
 
-            RAWSXP => ValueKind::Bytes,
-            _ => ValueKind::Other,
+            RAWSXP => VariableKind::Bytes,
+            _ => VariableKind::Other,
         }
     }
 
-    pub fn inspect(env: RObject, path: &Vec<String>) -> Result<Vec<Self>, harp::error::Error> {
+    pub fn inspect(env: RObject, path: &Vec<String>) -> Result<Vec<Variable>, harp::error::Error> {
         let node = unsafe { Self::resolve_object_from_path(env, &path)? };
 
         match node {
@@ -824,7 +764,7 @@ impl Variable {
     pub fn clip(
         env: RObject,
         path: &Vec<String>,
-        _format: &String,
+        _format: &ClipboardFormatFormat,
     ) -> Result<String, harp::error::Error> {
         let node = unsafe { Self::resolve_object_from_path(env, &path)? };
 
@@ -1007,39 +947,39 @@ impl Variable {
         Ok(node)
     }
 
-    fn inspect_list(value: SEXP) -> Result<Vec<Self>, harp::error::Error> {
-        let mut out: Vec<Self> = vec![];
+    fn inspect_list(value: SEXP) -> Result<Vec<Variable>, harp::error::Error> {
+        let mut out: Vec<Variable> = vec![];
         let n = unsafe { XLENGTH(value) };
 
         let names = Names::new(value, |i| format!("[[{}]]", i + 1));
 
         for i in 0..n {
             let obj = unsafe { VECTOR_ELT(value, i) };
-            out.push(Self::from(i.to_string(), names.get_unchecked(i), obj));
+            out.push(Self::from(i.to_string(), names.get_unchecked(i), obj).var());
         }
 
         Ok(out)
     }
 
-    fn inspect_matrix(matrix: SEXP) -> harp::error::Result<Vec<Self>> {
+    fn inspect_matrix(matrix: SEXP) -> harp::error::Result<Vec<Variable>> {
         unsafe {
             let matrix = RObject::new(matrix);
             let dim = IntegerVector::new(Rf_getAttrib(*matrix, R_DimSymbol))?;
 
             let n_col = dim.get_unchecked(1).unwrap();
 
-            let mut out: Vec<Self> = vec![];
+            let mut out: Vec<Variable> = vec![];
             let formatted = FormattedVector::new(*matrix)?;
 
             for i in 0..n_col {
                 let display_value = format!("[{}]", formatted.column_iter(i as isize).join(", "));
-                out.push(Self {
+                out.push(Variable {
                     access_key: format!("{}", i),
                     display_name: format!("[, {}]", i + 1),
                     display_value,
                     display_type: String::from(""),
                     type_info: String::from(""),
-                    kind: ValueKind::Collection,
+                    kind: VariableKind::Collection,
                     length: 1,
                     size: 0,
                     has_children: true,
@@ -1052,35 +992,35 @@ impl Variable {
         }
     }
 
-    fn inspect_matrix_column(matrix: SEXP, index: isize) -> harp::error::Result<Vec<Self>> {
+    fn inspect_matrix_column(matrix: SEXP, index: isize) -> harp::error::Result<Vec<Variable>> {
         unsafe {
             let matrix = RObject::new(matrix);
             let dim = IntegerVector::new(Rf_getAttrib(*matrix, R_DimSymbol))?;
 
             let n_row = dim.get_unchecked(0).unwrap();
 
-            let mut out: Vec<Self> = vec![];
+            let mut out: Vec<Variable> = vec![];
             let formatted = FormattedVector::new(*matrix)?;
             let mut iter = formatted.column_iter(index);
             let r_type = r_typeof(*matrix);
             let kind = if r_type == STRSXP {
-                ValueKind::String
+                VariableKind::String
             } else if r_type == RAWSXP {
-                ValueKind::Bytes
+                VariableKind::Bytes
             } else if r_type == LGLSXP {
-                ValueKind::Boolean
+                VariableKind::Boolean
             } else {
-                ValueKind::Number
+                VariableKind::Number
             };
 
             for i in 0..n_row {
-                out.push(Self {
+                out.push(Variable {
                     access_key: format!("{}", i),
                     display_name: format!("[{}, {}]", i + 1, index + 1),
                     display_value: iter.next().unwrap(),
                     display_type: String::from(""),
                     type_info: String::from(""),
-                    kind,
+                    kind: kind.clone(),
                     length: 1,
                     size: 0,
                     has_children: false,
@@ -1093,33 +1033,33 @@ impl Variable {
         }
     }
 
-    fn inspect_vector(vector: SEXP) -> harp::error::Result<Vec<Self>> {
+    fn inspect_vector(vector: SEXP) -> harp::error::Result<Vec<Variable>> {
         unsafe {
             let vector = RObject::new(vector);
             let n = XLENGTH(*vector);
 
-            let mut out: Vec<Self> = vec![];
+            let mut out: Vec<Variable> = vec![];
             let r_type = r_typeof(*vector);
             let formatted = FormattedVector::new(*vector)?;
             let names = Names::new(*vector, |i| format!("[{}]", i + 1));
             let kind = if r_type == STRSXP {
-                ValueKind::String
+                VariableKind::String
             } else if r_type == RAWSXP {
-                ValueKind::Bytes
+                VariableKind::Bytes
             } else if r_type == LGLSXP {
-                ValueKind::Boolean
+                VariableKind::Boolean
             } else {
-                ValueKind::Number
+                VariableKind::Number
             };
 
             for i in 0..n {
-                out.push(Self {
+                out.push(Variable {
                     access_key: format!("{}", i),
                     display_name: names.get_unchecked(i),
                     display_value: formatted.get_unchecked(i),
                     display_type: String::from(""),
                     type_info: String::from(""),
-                    kind,
+                    kind: kind.clone(),
                     length: 1,
                     size: 0,
                     has_children: false,
@@ -1132,8 +1072,8 @@ impl Variable {
         }
     }
 
-    fn inspect_pairlist(value: SEXP) -> Result<Vec<Self>, harp::error::Error> {
-        let mut out: Vec<Self> = vec![];
+    fn inspect_pairlist(value: SEXP) -> Result<Vec<Variable>, harp::error::Error> {
+        let mut out: Vec<Variable> = vec![];
 
         let mut pairlist = value;
         unsafe {
@@ -1148,7 +1088,7 @@ impl Variable {
                     String::from(RSymbol::new_unchecked(tag))
                 };
 
-                out.push(Self::from(i.to_string(), display_name, CAR(pairlist)));
+                out.push(Self::from(i.to_string(), display_name, CAR(pairlist)).var());
 
                 pairlist = CDR(pairlist);
                 i = i + 1;
@@ -1158,12 +1098,12 @@ impl Variable {
         Ok(out)
     }
 
-    fn inspect_r6(value: RObject) -> Result<Vec<Self>, harp::error::Error> {
+    fn inspect_r6(value: RObject) -> Result<Vec<Variable>, harp::error::Error> {
         let mut has_private = false;
         let mut has_methods = false;
 
         let env = Environment::new(value);
-        let mut childs: Vec<Self> = env
+        let mut childs: Vec<Variable> = env
             .iter()
             .filter(|b: &Binding| {
                 if b.name == ".__enclos_env__" {
@@ -1192,19 +1132,19 @@ impl Variable {
                     }
                 }
             })
-            .map(|b| Self::new(&b))
+            .map(|b| Self::new(&b).var())
             .collect();
 
         childs.sort_by(|a, b| a.display_name.cmp(&b.display_name));
 
         if has_private {
-            childs.push(Self {
+            childs.push(Variable {
                 access_key: String::from("<private>"),
                 display_name: String::from("private"),
                 display_value: String::from("Private fields and methods"),
                 display_type: String::from(""),
                 type_info: String::from(""),
-                kind: ValueKind::Other,
+                kind: VariableKind::Other,
                 length: 0,
                 size: 0,
                 has_children: true,
@@ -1214,13 +1154,13 @@ impl Variable {
         }
 
         if has_methods {
-            childs.push(Self {
+            childs.push(Variable {
                 access_key: String::from("<methods>"),
                 display_name: String::from("methods"),
                 display_value: String::from("Methods"),
                 display_type: String::from(""),
                 type_info: String::from(""),
-                kind: ValueKind::Other,
+                kind: VariableKind::Other,
                 length: 0,
                 size: 0,
                 has_children: true,
@@ -1232,11 +1172,11 @@ impl Variable {
         Ok(childs)
     }
 
-    fn inspect_environment(value: RObject) -> Result<Vec<Self>, harp::error::Error> {
-        let mut out: Vec<Self> = Environment::new(value)
+    fn inspect_environment(value: RObject) -> Result<Vec<Variable>, harp::error::Error> {
+        let mut out: Vec<Variable> = Environment::new(value)
             .iter()
             .filter(|b: &Binding| !b.is_hidden())
-            .map(|b| Self::new(&b))
+            .map(|b| Self::new(&b).var())
             .collect();
 
         out.sort_by(|a, b| a.display_name.cmp(&b.display_name));
@@ -1244,8 +1184,8 @@ impl Variable {
         Ok(out)
     }
 
-    fn inspect_s4(value: SEXP) -> Result<Vec<Self>, harp::error::Error> {
-        let mut out: Vec<Self> = vec![];
+    fn inspect_s4(value: SEXP) -> Result<Vec<Variable>, harp::error::Error> {
+        let mut out: Vec<Variable> = vec![];
 
         unsafe {
             let slot_names = RFunction::new("methods", ".slotNames").add(value).call()?;
@@ -1256,22 +1196,22 @@ impl Variable {
                 let slot_symbol = r_symbol!(display_name);
                 let slot = r_try_catch(|| R_do_slot(value, slot_symbol))?;
                 let access_key = display_name.clone();
-                out.push(Variable::from(access_key, display_name, *slot));
+                out.push(PositronVariable::from(access_key, display_name, *slot).var());
             }
         }
 
         Ok(out)
     }
 
-    fn inspect_r6_methods(value: RObject) -> Result<Vec<Self>, harp::error::Error> {
-        let mut out: Vec<Self> = Environment::new(value)
+    fn inspect_r6_methods(value: RObject) -> Result<Vec<Variable>, harp::error::Error> {
+        let mut out: Vec<Variable> = Environment::new(value)
             .iter()
             .filter(|b: &Binding| match &b.value {
                 BindingValue::Standard { object, .. } => r_typeof(object.sexp) == CLOSXP,
 
                 _ => false,
             })
-            .map(|b| Self::new(&b))
+            .map(|b| Self::new(&b).var())
             .collect();
 
         out.sort_by(|a, b| a.display_name.cmp(&b.display_name));
