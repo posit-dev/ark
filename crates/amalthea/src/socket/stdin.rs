@@ -112,7 +112,7 @@ impl Stdin {
                     (req, StdInReplySender::Input(stdin_reply_tx.clone()))
                 },
                 StdInRequest::Comm(comm_req) => {
-                    // This is a request from to the frontend
+                    // This is a request to the frontend
                     let req = Message::CommRequest(JupyterMessage::create_with_identity(
                         comm_req.originator,
                         comm_req.request,
