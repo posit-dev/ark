@@ -1045,7 +1045,7 @@ impl RMain {
             StdInRpcReply::Response(response) => match response {
                 JsonRpcReply::Result(response) => Ok(RObject::try_from(response.result)?),
                 JsonRpcReply::Error(response) => anyhow::bail!(
-                    "While calling frontend method':\n\
+                    "While calling frontend method:\n\
                      {}",
                     response.error.message
                 ),
