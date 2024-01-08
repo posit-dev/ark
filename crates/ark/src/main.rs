@@ -1,7 +1,7 @@
 //
 // main.rs
 //
-// Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2022-2024 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -61,10 +61,21 @@ fn start_kernel(
     let (r_request_tx, r_request_rx) = bounded::<RRequest>(1);
     let (kernel_request_tx, kernel_request_rx) = bounded::<KernelRequest>(1);
 
+    // The tokio runtime used to manage LSP task execution.
+    // Used in the main LSP thread and from R callbacks.
+    // Not wrapped in a `Mutex` since none of the methods require a mutable reference.
+    let lsp_runtime = Arc::new(tokio::runtime::Runtime::new().unwrap());
+    let (lsp_service, lsp_socket, lsp_client) = lsp::backend::build_lsp_service();
+
     // Create the LSP and DAP clients.
     // Not all Amalthea kernels provide these, but ark does.
     // They must be able to deliver messages to the shell channel directly.
-    let lsp = Arc::new(Mutex::new(lsp::handler::Lsp::new(kernel_init_tx.add_rx())));
+    let lsp = Arc::new(Mutex::new(lsp::handler::Lsp::new(
+        Arc::clone(&lsp_runtime),
+        lsp_service,
+        lsp_socket,
+        kernel_init_tx.add_rx(),
+    )));
 
     // DAP needs the `RRequest` channel to communicate with
     // `read_console()` and send commands to the debug interpreter
@@ -129,6 +140,8 @@ fn start_kernel(
         input_reply_rx,
         iopub_tx,
         kernel_init_tx,
+        lsp_runtime,
+        lsp_client,
         dap,
     )
 }
