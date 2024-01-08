@@ -28,6 +28,7 @@ use crate::r_task;
 pub enum ConnectionResponse {
     TablesResponse { name: String, tables: Vec<String> },
     FieldsResponse { name: String, fields: Vec<String> },
+    PreviewResponse,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -75,8 +76,8 @@ impl RConnection {
         connection.open_and_register_comm()?;
 
         spawn!(format!("ark-connection-{}", id), move || {
-            unwrap!(connection.handle_messages(), Err(e) => {
-                log::error!("Connection Pane: Error while handling messages: {e:?}");
+            unwrap!(connection.handle_messages(), Err(err) => {
+                log::error!("Connection Pane: Error while handling messages: {err:?}");
             });
         });
 
@@ -96,11 +97,7 @@ impl RConnection {
         Ok(())
     }
 
-    fn process_rpc_message(
-        &self,
-        id: String,
-        message: ConnectionRequest,
-    ) -> Result<(), anyhow::Error> {
+    fn handle_rpc(&self, message: ConnectionRequest) -> Result<ConnectionResponse, anyhow::Error> {
         match message {
             ConnectionRequest::TablesRequest => {
                 let tables = r_task(|| unsafe {
@@ -120,11 +117,10 @@ impl RConnection {
                     RObject::to::<Vec<String>>(names)
                 })?;
 
-                let msg = ConnectionResponse::TablesResponse {
+                Ok(ConnectionResponse::TablesResponse {
                     name: self.name.clone(),
                     tables,
-                };
-                self.send_message(msg, Some(id));
+                })
             },
             ConnectionRequest::FieldsRequest { table } => {
                 let fields = r_task(|| unsafe {
@@ -144,11 +140,10 @@ impl RConnection {
                     RObject::to::<Vec<String>>(names)
                 })?;
 
-                let msg = ConnectionResponse::FieldsResponse {
+                Ok(ConnectionResponse::FieldsResponse {
                     name: self.name.clone(),
                     fields,
-                };
-                self.send_message(msg, Some(id));
+                })
             },
             ConnectionRequest::PreviewTable { table } => {
                 // Calls back into R to get the preview data.
@@ -161,57 +156,34 @@ impl RConnection {
                         .call()?;
                     Ok(())
                 })?;
+                Ok(ConnectionResponse::PreviewResponse)
             },
         }
-        Ok(())
     }
 
     fn handle_messages(&self) -> Result<(), anyhow::Error> {
         loop {
-            let msg = unwrap!(self.comm.incoming_rx.recv(), Err(e) => {
-                log::error!("Connection Pane: Error while receiving message from frontend: {e:?}");
-                break; // TODO: Should we continue here? What if the frontend is still alive?
+            let msg = unwrap!(self.comm.incoming_rx.recv(), Err(err) => {
+                log::error!("Connection Pane: Error while receiving message from frontend: {err:?}");
+                break;
             });
 
-            log::debug!("Connection Pane: Received message from front end: {msg:?}");
+            log::trace!("Connection Pane: Received message from front end: {msg:?}");
 
             if msg == CommMsg::Close {
-                log::debug!("Connection Pane: Received a close message.");
+                log::trace!("Connection Pane: Received a close message.");
                 break;
             }
 
-            if let CommMsg::Rpc(id, data) = msg {
-                let message = unwrap!(serde_json::from_value(data), Err(error) => {
-                    log::error!("Connection Pane: Received invalid message from front end. {error}");
-                    continue;
-                });
-                self.process_rpc_message(id, message)
-                    .or_log_error("Connection Pane: Failed to process RPC message.");
-            }
+            self.comm.handle_request(msg, |req| self.handle_rpc(req));
         }
 
         // before finalizing the thread we make sure to send a close message to the front end
-        if let Err(e) = self.comm.outgoing_tx.send(CommMsg::Close) {
-            log::error!("Connection Pane: Error while sending comm_close to front end: {e:?}");
+        if let Err(err) = self.comm.outgoing_tx.send(CommMsg::Close) {
+            log::error!("Connection Pane: Error while sending comm_close to front end: {err:?}");
         }
 
         Ok(())
-    }
-
-    fn send_message(&self, message: ConnectionResponse, request_id: Option<String>) {
-        let message = unwrap!(serde_json::to_value(message), Err(err) => {
-            log::error!("Connection Pane: Failed to serialize data: {}", err);
-            return;
-        });
-
-        let comm_msg = match request_id {
-            Some(id) => CommMsg::Rpc(id, message),
-            None => CommMsg::Data(message),
-        };
-        self.comm
-            .outgoing_tx
-            .send(comm_msg)
-            .or_log_error("Connection Pane: Failed to send message to front end.");
     }
 }
 
@@ -220,9 +192,9 @@ pub unsafe extern "C" fn ps_connection_opened(name: SEXP) -> Result<SEXP, anyhow
     let main = RMain::get();
     let nm = RObject::view(name).to::<String>()?;
 
-    let id = unwrap! (RConnection::start(nm, main.get_comm_manager_tx().clone()), Err(e) => {
-        log::error!("Connection Pane: Failed to start connection: {e:?}");
-        return Ok(R_NilValue);
+    let id = unwrap! (RConnection::start(nm, main.get_comm_manager_tx().clone()), Err(err) => {
+        log::error!("Connection Pane: Failed to start connection: {err:?}");
+        return Err(err);
     });
 
     Ok(RObject::from(id).into())
