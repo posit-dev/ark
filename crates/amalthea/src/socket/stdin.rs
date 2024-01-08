@@ -8,8 +8,6 @@
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use crossbeam::select;
-use log::error;
-use log::trace;
 
 use crate::comm::base_comm::JsonRpcError;
 use crate::comm::base_comm::JsonRpcErrorCode;
@@ -91,7 +89,7 @@ impl Stdin {
                                 break;
                             },
                             Err(err) => {
-                                error!("Could not read input request: {}", err);
+                                log::error!("Could not read input request: {}", err);
                                 continue;
                             }
                         }
@@ -124,9 +122,9 @@ impl Stdin {
 
             // Deliver the message to the front end
             if let Err(err) = self.outbound_tx.send(OutboundMessage::StdIn(request)) {
-                error!("Failed to send message to front end: {}", err);
+                log::error!("Failed to send message to front end: {}", err);
             }
-            trace!("Sent input request to front end, waiting for input reply...");
+            log::trace!("Sent input request to front end, waiting for input reply...");
 
             // Wait for the front end's reply message from the ZeroMQ socket.
             let message = select! {
