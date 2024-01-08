@@ -4,6 +4,14 @@
         {
             "type": "shell",
             "command": "cargo build && scripts/post-install.sh",
+            "windows": {
+                "command": "cargo build",
+                "options": {
+                    "env": {
+                        "R_HOME": "C:\\Program Files\\R\\R-4.3.2"
+                    }
+                }
+            },
             "problemMatcher": [
                 "$rustc"
             ],
