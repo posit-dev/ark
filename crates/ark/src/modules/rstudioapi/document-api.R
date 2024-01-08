@@ -1,7 +1,9 @@
+#' @export
 .rs.api.getActiveDocumentContext <- function() {
-    getSourceEditorContext(NULL)
+    .rs.api.getSourceEditorContext(NULL)
 }
 
+#' @export
 .rs.api.getSourceEditorContext <- function(id = NULL) {
     # TODO: Support document IDs
     stopifnot(is.null(id))

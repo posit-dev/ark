@@ -1,3 +1,4 @@
+#' @export
 .rs.api.versionInfo <- list(
     citation = NULL,
     mode = "desktop",
