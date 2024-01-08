@@ -185,8 +185,8 @@ impl Stdin {
                 Err(err) => {
                     // Might be an unserialisation error. Propagate the error to R.
                     match reply_tx {
-                        StdInReplySender::Input(_tx) => {
-                            todo!("forward serialisation error back to R");
+                        StdInReplySender::Input(tx) => {
+                            tx.send(Err(err)).unwrap();
                         },
                         StdInReplySender::Comm(tx) => {
                             let resp = StdInRpcReply::Response(JsonRpcReply::Error(JsonRpcError {
