@@ -1,7 +1,7 @@
 //
 // mod.rs
 //
-// Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2022-2024 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -14,7 +14,6 @@ pub mod document_context;
 pub mod documents;
 pub mod editor;
 pub mod events;
-pub mod globals;
 pub mod handler;
 pub mod help;
 pub mod help_topic;
