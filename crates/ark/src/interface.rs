@@ -21,6 +21,7 @@ use std::time::Duration;
 
 use amalthea::comm::base_comm::JsonRpcReply;
 use amalthea::comm::event::CommManagerEvent;
+use amalthea::comm::frontend_comm::frontend_frontend_reply_from_value;
 use amalthea::comm::frontend_comm::BusyParams;
 use amalthea::comm::frontend_comm::FrontendEvent;
 use amalthea::comm::frontend_comm::FrontendFrontendRpcRequest;
@@ -1024,16 +1025,16 @@ impl RMain {
             anyhow::bail!("Error: No active request");
         };
 
-        let request = CommRequest {
+        let comm_request = CommRequest {
             originator,
             response_tx,
-            request,
+            request: request.clone(),
         };
 
         // Send request via Kernel
         {
             let kernel = self.kernel.lock().unwrap();
-            kernel.send_frontend_request(request);
+            kernel.send_frontend_request(comm_request);
         }
 
         // Block for response
@@ -1043,7 +1044,18 @@ impl RMain {
 
         match response {
             StdInRpcReply::Response(response) => match response {
-                JsonRpcReply::Result(response) => Ok(RObject::try_from(response.result)?),
+                JsonRpcReply::Result(response) => {
+                    // Deserialize to Rust first to verify the OpenRPC contract.
+                    // Errors are propagated to R.
+                    if let Err(err) =
+                        frontend_frontend_reply_from_value(response.result.clone(), &request)
+                    {
+                        anyhow::bail!("Can't deserialize RPC response for {request:?}:\n{err:?}");
+                    }
+
+                    // Now deserialize to an R object
+                    Ok(RObject::try_from(response.result)?)
+                },
                 JsonRpcReply::Error(response) => anyhow::bail!(
                     "While calling frontend method:\n\
                      {}",

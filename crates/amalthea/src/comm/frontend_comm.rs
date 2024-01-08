@@ -140,6 +140,8 @@ pub enum FrontendFrontendRpcReply {
 	/// Editor metadata
 	LastActiveEditorContextReply(Option<EditorContextResult>),
 
+	DebugSleepReply,
+
 }
 
 /**
@@ -166,5 +168,18 @@ pub enum FrontendEvent {
 	#[serde(rename = "working_directory")]
 	WorkingDirectory(WorkingDirectoryParams),
 
+}
+
+/**
+* Conversion of JSON values to frontend RPC Reply types
+*/
+pub fn frontend_frontend_reply_from_value(
+	reply: serde_json::Value,
+	request: &FrontendFrontendRpcRequest,
+) -> anyhow::Result<FrontendFrontendRpcReply> {
+	match request {
+		FrontendFrontendRpcRequest::LastActiveEditorContext => Ok(FrontendFrontendRpcReply::LastActiveEditorContextReply(serde_json::from_value(reply)?)),
+		FrontendFrontendRpcRequest::DebugSleep(_) => Ok(FrontendFrontendRpcReply::DebugSleepReply),
+	}
 }
 
