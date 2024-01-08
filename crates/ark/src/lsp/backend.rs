@@ -12,7 +12,6 @@ use std::sync::Arc;
 
 use crossbeam::channel::Sender;
 use dashmap::DashMap;
-use log::*;
 use parking_lot::Mutex;
 use serde_json::Value;
 use stdext::result::ResultOrLog;
@@ -90,12 +89,12 @@ impl Backend {
         // then use that; otherwise, try to read the document from the provided
         // path and use that instead.
         let uri = unwrap!(Url::from_file_path(path), Err(_) => {
-            info!("couldn't construct uri from {}; reading from disk instead", path.display());
+            log::info!("couldn't construct uri from {}; reading from disk instead", path.display());
             return fallback();
         });
 
         let document = unwrap!(self.documents.get(&uri), None => {
-            info!("no document for uri {}; reading from disk instead", uri);
+            log::info!("no document for uri {}; reading from disk instead", uri);
             return fallback();
         });
 
@@ -215,7 +214,7 @@ impl LanguageServer for Backend {
         backend_trace!(self, "symbol({:?})", params);
 
         let response = unwrap!(symbols::symbols(self, &params), Err(error) => {
-            error!("{:?}", error);
+            log::error!("{:?}", error);
             return Ok(None);
         });
 
@@ -229,7 +228,7 @@ impl LanguageServer for Backend {
         backend_trace!(self, "document_symbols({})", params.text_document.uri);
 
         let response = unwrap!(symbols::document_symbols(self, &params), Err(error) => {
-            error!("{:?}", error);
+            log::error!("{:?}", error);
             return Ok(None);
         });
 
@@ -281,7 +280,7 @@ impl LanguageServer for Backend {
         if let Ok(path) = uri.to_file_path() {
             let path = Path::new(&path);
             if let Err(error) = indexer::update(&doc, &path) {
-                error!("{:?}", error);
+                log::error!("{:?}", error);
             }
         }
 
@@ -383,7 +382,7 @@ impl LanguageServer for Backend {
 
         // unwrap errors
         let result = unwrap!(result, Err(error) => {
-            error!("{:?}", error);
+            log::error!("{:?}", error);
             return Ok(None);
         });
 
@@ -414,7 +413,7 @@ impl LanguageServer for Backend {
 
         // unwrap errors
         let result = unwrap!(result, Err(error) => {
-            error!("{:?}", error);
+            log::error!("{:?}", error);
             return Ok(None);
         });
 
@@ -441,7 +440,7 @@ impl LanguageServer for Backend {
 
         // build goto definition context
         let result = unwrap!(unsafe { goto_definition(&document, params) }, Err(error) => {
-            error!("{}", error);
+            log::error!("{}", error);
             return Ok(None);
         });
 
@@ -454,7 +453,7 @@ impl LanguageServer for Backend {
     ) -> Result<Option<GotoImplementationResponse>> {
         backend_trace!(self, "goto_implementation({:?})", params);
         let _ = params;
-        error!("Got a textDocument/implementation request, but it is not implemented");
+        log::error!("Got a textDocument/implementation request, but it is not implemented");
         return Ok(None);
     }
 
@@ -493,7 +492,7 @@ impl LanguageServer for Backend {
 // https://github.com/Microsoft/vscode-languageserver-node/blob/18fad46b0e8085bb72e1b76f9ea23a379569231a/client/src/common/client.ts#L701-L752
 impl Backend {
     async fn notification(&self, params: Option<Value>) {
-        info!("Received Positron notification: {:?}", params);
+        log::info!("Received Positron notification: {:?}", params);
     }
 }
 
@@ -510,7 +509,7 @@ pub fn start_lsp(
         #[cfg(feature = "runtime-agnostic")]
         use tokio_util::compat::TokioAsyncWriteCompatExt;
 
-        debug!("Connecting to LSP at '{}'", &address);
+        log::trace!("Connecting to LSP at '{}'", &address);
         let listener = TcpListener::bind(&address).await.unwrap();
 
         // Notify frontend that we are ready to accept connections
@@ -519,14 +518,14 @@ pub fn start_lsp(
             .or_log_warning("Couldn't send LSP server init notification");
 
         let (stream, _) = listener.accept().await.unwrap();
-        debug!("Connected to LSP at '{}'", address);
+        log::trace!("Connected to LSP at '{}'", address);
         let (read, write) = tokio::io::split(stream);
 
         #[cfg(feature = "runtime-agnostic")]
         let (read, write) = (read.compat(), write.compat_write());
 
         Server::new(read, write, socket).serve(service).await;
-        debug!(
+        log::trace!(
             "LSP thread exiting gracefully after connection closed ({:?}).",
             address
         );
