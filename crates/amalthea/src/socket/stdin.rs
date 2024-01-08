@@ -178,7 +178,7 @@ impl Stdin {
                         }
                     },
                     _ => {
-                        log::warn!("Unexpected message type on StdIn");
+                        log::warn!("Unexpected message type {message:?} on StdIn",);
                         continue;
                     },
                 },
