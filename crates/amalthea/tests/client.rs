@@ -51,12 +51,12 @@ fn test_kernel() {
     let comm_manager_tx = kernel.create_comm_manager_tx();
 
     let (stdin_request_tx, stdin_request_rx) = bounded::<StdInRequest>(1);
-    let (input_reply_tx, input_reply_rx) = unbounded();
+    let (stdin_reply_tx, stdin_reply_rx) = unbounded();
 
     let shell = Arc::new(Mutex::new(shell::Shell::new(
         shell_tx,
         stdin_request_tx,
-        input_reply_rx,
+        stdin_reply_rx,
     )));
     let control = Arc::new(Mutex::new(control::Control {}));
 
@@ -71,7 +71,7 @@ fn test_kernel() {
         None,
         StreamBehavior::None,
         stdin_request_rx,
-        input_reply_tx,
+        stdin_reply_tx,
     ) {
         panic!("Error connecting kernel: {err:?}");
     };

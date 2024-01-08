@@ -131,7 +131,7 @@ pub fn start_r(
     comm_manager_tx: Sender<CommManagerEvent>,
     r_request_rx: Receiver<RRequest>,
     stdin_request_tx: Sender<StdInRequest>,
-    input_reply_rx: Receiver<amalthea::Result<InputReply>>,
+    stdin_reply_rx: Receiver<amalthea::Result<InputReply>>,
     iopub_tx: Sender<IOPubMessage>,
     kernel_init_tx: Bus<KernelInfo>,
     lsp_runtime: Arc<Runtime>,
@@ -153,7 +153,7 @@ pub fn start_r(
             comm_manager_tx,
             r_request_rx,
             stdin_request_tx,
-            input_reply_rx,
+            stdin_reply_rx,
             iopub_tx,
             kernel_init_tx,
             lsp_runtime,
@@ -216,7 +216,7 @@ pub struct RMain {
     stdin_request_tx: Sender<StdInRequest>,
 
     /// Input replies from the frontend. Waited on in `ReadConsole()` after a request.
-    input_reply_rx: Receiver<amalthea::Result<InputReply>>,
+    stdin_reply_rx: Receiver<amalthea::Result<InputReply>>,
 
     /// IOPub channel for broadcasting outputs
     iopub_tx: Sender<IOPubMessage>,
@@ -334,7 +334,7 @@ impl RMain {
         comm_manager_tx: Sender<CommManagerEvent>,
         r_request_rx: Receiver<RRequest>,
         stdin_request_tx: Sender<StdInRequest>,
-        input_reply_rx: Receiver<amalthea::Result<InputReply>>,
+        stdin_reply_rx: Receiver<amalthea::Result<InputReply>>,
         iopub_tx: Sender<IOPubMessage>,
         kernel_init_tx: Bus<KernelInfo>,
         lsp_runtime: Arc<Runtime>,
@@ -346,7 +346,7 @@ impl RMain {
             r_request_rx,
             comm_manager_tx,
             stdin_request_tx,
-            input_reply_rx,
+            stdin_reply_rx,
             iopub_tx,
             kernel_init_tx,
             active_request: None,
@@ -682,7 +682,7 @@ impl RMain {
                     }
                 }
 
-                recv(self.input_reply_rx) -> chan_result => {
+                recv(self.stdin_reply_rx) -> chan_result => {
                     // StdIn must remain alive
                     let result = chan_result.unwrap();
 

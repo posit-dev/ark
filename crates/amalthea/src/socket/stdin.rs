@@ -69,7 +69,7 @@ impl Stdin {
     pub fn listen(
         &self,
         stdin_request_rx: Receiver<StdInRequest>,
-        input_reply_tx: Sender<crate::Result<InputReply>>,
+        stdin_reply_tx: Sender<crate::Result<InputReply>>,
         interrupt_rx: Receiver<bool>,
     ) {
         loop {
@@ -109,7 +109,7 @@ impl Stdin {
                         req.request,
                         &self.session,
                     ));
-                    (req, StdInReplySender::Input(input_reply_tx.clone()))
+                    (req, StdInReplySender::Input(stdin_reply_tx.clone()))
                 },
                 StdInRequest::Comm(comm_req) => {
                     // This is a request from to the frontend

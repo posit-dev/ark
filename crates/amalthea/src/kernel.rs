@@ -109,13 +109,13 @@ impl Kernel {
         // Receiver channel for the stdin socket; when input is needed, the
         // language runtime can request it by sending an StdInRequest::Input to
         // this channel. The frontend will prompt the user for input and
-        // the reply will be delivered via `input_reply_tx`.
+        // the reply will be delivered via `stdin_reply_tx`.
         // https://jupyter-client.readthedocs.io/en/stable/messaging.html#messages-on-the-stdin-router-dealer-channel.
         // Note that we've extended the StdIn socket to support synchronous requests
         // from a comm, see `StdInRequest::Comm`.
         stdin_request_rx: Receiver<StdInRequest>,
-        // Transmission channel for `input_reply` handling by StdIn
-        input_reply_tx: Sender<crate::Result<InputReply>>,
+        // Transmission channel for StdIn replies
+        stdin_reply_tx: Sender<crate::Result<InputReply>>,
     ) -> Result<(), Error> {
         let ctx = zmq::Context::new();
 
@@ -207,7 +207,7 @@ impl Kernel {
                 stdin_inbound_rx,
                 outbound_tx,
                 stdin_request_rx,
-                input_reply_tx,
+                stdin_reply_tx,
                 stdin_interrupt_rx,
                 stdin_session,
             )
@@ -348,12 +348,12 @@ impl Kernel {
         inbound_rx: Receiver<crate::Result<Message>>,
         outbound_tx: Sender<OutboundMessage>,
         stdin_request_rx: Receiver<StdInRequest>,
-        input_reply_tx: Sender<crate::Result<InputReply>>,
+        stdin_reply_tx: Sender<crate::Result<InputReply>>,
         interrupt_rx: Receiver<bool>,
         session: Session,
     ) -> Result<(), Error> {
         let stdin = Stdin::new(inbound_rx, outbound_tx, session);
-        stdin.listen(stdin_request_rx, input_reply_tx, interrupt_rx);
+        stdin.listen(stdin_request_rx, stdin_reply_tx, interrupt_rx);
         Ok(())
     }
 

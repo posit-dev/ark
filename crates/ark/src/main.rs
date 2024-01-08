@@ -115,7 +115,7 @@ fn start_kernel(
     let kernel_clone = shell.kernel.clone();
     let shell = Arc::new(Mutex::new(shell));
 
-    let (input_reply_tx, input_reply_rx) = unbounded();
+    let (stdin_reply_tx, stdin_reply_rx) = unbounded();
 
     let res = kernel.connect(
         shell,
@@ -124,7 +124,7 @@ fn start_kernel(
         Some(dap.clone()),
         stream_behavior,
         stdin_request_rx,
-        input_reply_tx,
+        stdin_reply_tx,
     );
     if let Err(err) = res {
         panic!("Couldn't connect to front end: {:?}", err);
@@ -138,7 +138,7 @@ fn start_kernel(
         comm_manager_tx,
         r_request_rx,
         stdin_request_tx,
-        input_reply_rx,
+        stdin_reply_rx,
         iopub_tx,
         kernel_init_tx,
         lsp_runtime,

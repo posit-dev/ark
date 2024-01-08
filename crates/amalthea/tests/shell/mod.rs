@@ -46,7 +46,7 @@ use serde_json::json;
 pub struct Shell {
     iopub: Sender<IOPubMessage>,
     stdin_request_tx: Sender<StdInRequest>,
-    input_reply_rx: Receiver<amalthea::Result<InputReply>>,
+    stdin_reply_rx: Receiver<amalthea::Result<InputReply>>,
     execution_count: u32,
 }
 
@@ -55,12 +55,12 @@ impl Shell {
     pub fn new(
         iopub: Sender<IOPubMessage>,
         stdin_request_tx: Sender<StdInRequest>,
-        input_reply_rx: Receiver<amalthea::Result<InputReply>>,
+        stdin_reply_rx: Receiver<amalthea::Result<InputReply>>,
     ) -> Self {
         Self {
             iopub,
             stdin_request_tx,
-            input_reply_rx,
+            stdin_reply_rx,
             execution_count: 0,
         }
     }
@@ -196,7 +196,7 @@ impl ShellHandler for Shell {
             self.prompt_for_input(originator);
 
             // Block for the reply
-            let reply = self.input_reply_rx.recv().unwrap();
+            let reply = self.stdin_reply_rx.recv().unwrap();
 
             // Echo the reply
             self.iopub
