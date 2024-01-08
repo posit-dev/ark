@@ -107,10 +107,12 @@ impl Kernel {
         dap_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
         stream_behavior: StreamBehavior,
         // Receiver channel for the stdin socket; when input is needed, the
-        // language runtime can request it by sending an InputRequest to
+        // language runtime can request it by sending an StdInRequest::Input to
         // this channel. The frontend will prompt the user for input and
         // the reply will be delivered via `input_reply_tx`.
-        // https://jupyter-client.readthedocs.io/en/stable/messaging.html#messages-on-the-stdin-router-dealer-channel
+        // https://jupyter-client.readthedocs.io/en/stable/messaging.html#messages-on-the-stdin-router-dealer-channel.
+        // Note that we've extended the StdIn socket to support synchronous requests
+        // from a comm, see `StdInRequest::Comm`.
         stdin_request_rx: Receiver<StdInRequest>,
         // Transmission channel for `input_reply` handling by StdIn
         input_reply_tx: Sender<crate::Result<InputReply>>,
