@@ -524,7 +524,9 @@ pub fn start_lsp(
         #[cfg(feature = "runtime-agnostic")]
         let (read, write) = (read.compat(), write.compat_write());
 
-        Server::new(read, write, socket).serve(service).await;
+        let server = Server::new(read, write, socket);
+        server.serve(service).await;
+
         log::trace!(
             "LSP thread exiting gracefully after connection closed ({:?}).",
             address
