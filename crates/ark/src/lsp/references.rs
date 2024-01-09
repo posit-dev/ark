@@ -111,7 +111,7 @@ impl Backend {
             // can't just subtract 1 from the position column since that would then fail to
             // resolve the correct identifier when the cursor is located at the start of the
             // identifier.
-            if node.kind() != "identifier" {
+            if node.kind() != "identifier" && point.column > 0 {
                 let point = Point::new(point.row, point.column - 1);
                 node = ast
                     .root_node()
