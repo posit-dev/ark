@@ -28,6 +28,7 @@ use stdext::*;
 use subset::completions_from_subset;
 use tower_lsp::lsp_types::CompletionItem;
 use tower_lsp::lsp_types::CompletionItemKind;
+use tree_sitter::Node;
 use workspace::completions_from_workspace;
 
 use crate::lsp::backend::Backend;
@@ -63,7 +64,7 @@ pub fn completions_from_composite_sources(
     // completions effectively without typing anything). For the rest of the
     // general completions, we require an identifier to begin showing
     // anything.
-    if context.node.kind() == "identifier" {
+    if is_identifier_like(context.node) {
         completions.append(&mut completions_from_keywords());
         completions.append(&mut completions_from_snippets());
         completions.append(&mut completions_from_search_path(context)?);
@@ -120,4 +121,55 @@ pub fn completions_from_composite_sources(
     }
 
     Ok(completions)
+}
+
+fn is_identifier_like(x: Node) -> bool {
+    let kind = x.kind();
+
+    if kind == "identifier" {
+        // Obvious case
+        return true;
+    }
+
+    // If the user exactly types these keywords, then they end up matching
+    // anonymous nodes in the tree-sitter grammar, so they show up as
+    // non-`identifier` kinds. However, we do still want to provide completions
+    // here, especially in two cases:
+    // - `for<tab>` should provide completions for things like `forcats`
+    // - `for<tab>` should provide snippet completions for the `for` snippet
+    // We want to be sure that we only provide completions on the unnamed
+    // (anonymous) versions of these keywords, not on "real" conditional
+    // statements.
+    // The keywords here come from matching snippets in `r.code-snippets`.
+    if matches!(kind, "if" | "for" | "while") && !x.is_named() {
+        return true;
+    }
+
+    return false;
+}
+
+#[cfg(test)]
+mod tests {
+    use tree_sitter::Point;
+
+    use crate::lsp::completions::sources::composite::is_identifier_like;
+    use crate::lsp::document_context::DocumentContext;
+    use crate::lsp::documents::Document;
+    use crate::test::r_test;
+
+    #[test]
+    fn test_completions_on_anonymous_node_keywords() {
+        r_test(|| {
+            // `if`, `for`, and `while` in particular are both tree-sitter
+            // anonymous nodes and snippet keywords, so they need to look like
+            // identifiers that we provide completions for
+            for keyword in ["if", "for", "while"] {
+                let point = Point { row: 0, column: 0 };
+                let document = Document::new(keyword);
+                let context = DocumentContext::new(&document, point, None);
+                assert!(is_identifier_like(context.node));
+                assert_eq!(context.node.kind(), keyword);
+            }
+        })
+    }
 }
