@@ -21,8 +21,9 @@ pub unsafe extern "C" fn ps_frontend_last_active_editor_context() -> anyhow::Res
 
 #[harp::register]
 pub unsafe extern "C" fn ps_frontend_debug_sleep(ms: SEXP) -> anyhow::Result<SEXP> {
-    let ms: f64 = RObject::view(ms).try_into()?;
-    let params = DebugSleepParams { ms };
+    let params = DebugSleepParams {
+        ms: RObject::view(ms).try_into()?,
+    };
 
     let main = RMain::get();
     let out = main.call_frontend_method(FrontendFrontendRpcRequest::DebugSleep(params))?;
