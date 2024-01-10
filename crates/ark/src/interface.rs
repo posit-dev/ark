@@ -764,17 +764,44 @@ impl RMain {
         };
     }
 
+    /// Copy console input into R's internal input buffer
+    ///
+    /// Supposedly `buflen` is "the maximum length, in bytes, including the
+    /// terminator". In practice it seems like R adds 1 extra byte on top of
+    /// this when allocating the buffer, but we don't abuse that.
+    /// https://github.com/wch/r-source/blob/20c9590fd05c54dba6c9a1047fb0ba7822ba8ba2/src/include/Defn.h#L1863-L1865
+    ///
+    /// In the case of receiving too much input, we simply trim the string and
+    /// log the issue, executing the rest. Ideally the front end will break up
+    /// large inputs, preventing this from being necessary. The important thing
+    /// is to avoid a crash, and it seems that we need to copy something into
+    /// R's buffer to keep the REPL in a good state.
+    /// https://github.com/posit-dev/positron/issues/1326#issuecomment-1745389921
     fn on_console_input(buf: *mut c_uchar, buflen: c_int, mut input: String) {
-        // TODO: What if the input is too large for the buffer?
-        input.push_str("\n");
-        if input.len() > buflen as usize {
-            info!("Error: input too large for buffer.");
-            return;
+        let buflen = buflen as usize;
+
+        if buflen < 2 {
+            // Pathological case. A user wouldn't be able to do anything useful anyways.
+            panic!("Console input `buflen` must be >=2.");
         }
 
-        let src = CString::new(input).unwrap();
+        // Leave room for final `\n` and `\0` terminator
+        let buflen = buflen - 2;
+
+        if input.len() > buflen {
+            let dropped = &input[buflen..input.len()];
+            log::error!("Console input too large for buffer. Input has been trimmed, dropping: '{dropped}'.");
+            input = input[..buflen].to_string();
+        }
+
+        // Push `\n`
+        input.push_str("\n");
+
+        // Push `\0` (automatically, as it converts to a C string)
+        let input = CString::new(input).unwrap();
+
         unsafe {
-            libc::strcpy(buf as *mut c_char, src.as_ptr());
+            libc::strcpy(buf as *mut c_char, input.as_ptr());
         }
     }
 
