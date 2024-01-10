@@ -29,10 +29,10 @@ use std::io::Read;
 
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::event::CommManagerEvent;
+use amalthea::comm::plot_comm::PlotBackendRpcReply;
+use amalthea::comm::plot_comm::PlotBackendRpcRequest;
 use amalthea::comm::plot_comm::PlotEvent;
 use amalthea::comm::plot_comm::PlotResult;
-use amalthea::comm::plot_comm::PlotRpcReply;
-use amalthea::comm::plot_comm::PlotRpcRequest;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
 use amalthea::socket::iopub::IOPubMessage;
@@ -181,11 +181,11 @@ impl DeviceContext {
 
     fn handle_rpc(
         &mut self,
-        message: PlotRpcRequest,
+        message: PlotBackendRpcRequest,
         plot_id: &String,
-    ) -> anyhow::Result<PlotRpcReply> {
+    ) -> anyhow::Result<PlotBackendRpcReply> {
         match message {
-            PlotRpcRequest::Render(plot_meta) => {
+            PlotBackendRpcRequest::Render(plot_meta) => {
                 let data = self.render_plot(
                     &plot_id,
                     plot_meta.width,
@@ -193,7 +193,7 @@ impl DeviceContext {
                     plot_meta.pixel_ratio,
                 )?;
 
-                Ok(PlotRpcReply::RenderReply(PlotResult {
+                Ok(PlotBackendRpcReply::RenderReply(PlotResult {
                     data: data.to_string(),
                     mime_type: "image/png".to_string(),
                 }))

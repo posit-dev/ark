@@ -233,14 +233,13 @@ impl CommManager {
                             // Didn't find it; log a warning and treat it like
                             // an event so that the front end still gets the
                             // data.
-                            warn!(
-                                "Received RPC response '{:?}' for unknown message ID {}",
-                                payload, string
-                            );
+                            log::warn!(
+                                "Received RPC response '{payload:?}' for unknown message ID {string}");
                             IOPubMessage::CommMsgEvent(payload)
                         },
                     }
                 },
+
                 CommMsg::Close => IOPubMessage::CommClose(comm_socket.comm_id.clone()),
             };
 

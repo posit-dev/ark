@@ -15,8 +15,15 @@ pub type Param = serde_json::Value;
 /// The method result
 pub type CallMethodResult = serde_json::Value;
 
+/// Editor metadata
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct EditorContextResult {
+	/// URI of the resource viewed in the editor
+	pub path: String
+}
+
 /// Parameters for the CallMethod method.
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct CallMethodParams {
 	/// The method to call inside the interpreter
 	pub method: String,
@@ -26,14 +33,14 @@ pub struct CallMethodParams {
 }
 
 /// Parameters for the Busy method.
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct BusyParams {
 	/// Whether the backend is busy
 	pub busy: bool,
 }
 
 /// Parameters for the OpenEditor method.
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct OpenEditorParams {
 	/// The path of the file to open
 	pub file: String,
@@ -46,14 +53,14 @@ pub struct OpenEditorParams {
 }
 
 /// Parameters for the ShowMessage method.
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ShowMessageParams {
 	/// The message to show to the user.
 	pub message: String,
 }
 
 /// Parameters for the PromptState method.
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct PromptStateParams {
 	/// Prompt for primary input.
 	pub input_prompt: String,
@@ -63,18 +70,25 @@ pub struct PromptStateParams {
 }
 
 /// Parameters for the WorkingDirectory method.
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct WorkingDirectoryParams {
 	/// The new working directory
 	pub directory: String,
 }
 
+/// Parameters for the DebugSleep method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct DebugSleepParams {
+	/// Duration in milliseconds
+	pub ms: f64,
+}
+
 /**
- * RPC request types for the frontend comm
+ * Backend RPC request types for the frontend comm
  */
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params")]
-pub enum FrontendRpcRequest {
+pub enum FrontendBackendRpcRequest {
 	/// Run a method in the interpreter and return the result to the frontend
 	///
 	/// Unlike other RPC methods, `call_method` calls into methods implemented
@@ -86,20 +100,54 @@ pub enum FrontendRpcRequest {
 }
 
 /**
- * RPC Reply types for the frontend comm
+ * Backend RPC Reply types for the frontend comm
  */
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "result")]
-pub enum FrontendRpcReply {
+pub enum FrontendBackendRpcReply {
 	/// The method result
 	CallMethodReply(CallMethodResult),
 
 }
 
 /**
- * Front-end events for the frontend comm
+ * Frontend RPC request types for the frontend comm
  */
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "method", content = "params")]
+pub enum FrontendFrontendRpcRequest {
+	/// Context metadata for the last editor
+	///
+	/// Returns metadata such as file path for the last editor selected by the
+	/// user. The result may be undefined if there are no active editors.
+	#[serde(rename = "last_active_editor_context")]
+	LastActiveEditorContext,
+
+	/// Sleep for n seconds
+	///
+	/// Useful for testing in the backend a long running frontend method
+	#[serde(rename = "debug_sleep")]
+	DebugSleep(DebugSleepParams),
+
+}
+
+/**
+ * Frontend RPC Reply types for the frontend comm
+ */
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "method", content = "result")]
+pub enum FrontendFrontendRpcReply {
+	/// Editor metadata
+	LastActiveEditorContextReply(Option<EditorContextResult>),
+
+	DebugSleepReply(),
+
+}
+
+/**
+ * Frontend events for the frontend comm
+ */
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params")]
 pub enum FrontendEvent {
 	/// This represents the busy state of the underlying computation engine,
@@ -131,5 +179,18 @@ pub enum FrontendEvent {
 	#[serde(rename = "working_directory")]
 	WorkingDirectory(WorkingDirectoryParams),
 
+}
+
+/**
+* Conversion of JSON values to frontend RPC Reply types
+*/
+pub fn frontend_frontend_reply_from_value(
+	reply: serde_json::Value,
+	request: &FrontendFrontendRpcRequest,
+) -> anyhow::Result<FrontendFrontendRpcReply> {
+	match request {
+		FrontendFrontendRpcRequest::LastActiveEditorContext => Ok(FrontendFrontendRpcReply::LastActiveEditorContextReply(serde_json::from_value(reply)?)),
+		FrontendFrontendRpcRequest::DebugSleep(_) => Ok(FrontendFrontendRpcReply::DebugSleepReply()),
+	}
 }
 

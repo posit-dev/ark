@@ -11,17 +11,18 @@ use std::result::Result::Err;
 use amalthea::comm::frontend_comm::BusyParams;
 use amalthea::comm::frontend_comm::FrontendEvent;
 use amalthea::comm::frontend_comm::WorkingDirectoryParams;
+use amalthea::wire::input_request::CommRequest;
 use anyhow::Result;
 use crossbeam::channel::Sender;
-use log::*;
 
+use crate::frontend::frontend::PositronFrontendMessage;
 use crate::interface::RMain;
 use crate::r_task;
 use crate::request::KernelRequest;
 
 /// Represents the Rust state of the R kernel
 pub struct Kernel {
-    event_tx: Option<Sender<FrontendEvent>>,
+    frontend_tx: Option<Sender<PositronFrontendMessage>>,
     working_directory: PathBuf,
 }
 
@@ -29,7 +30,7 @@ impl Kernel {
     /// Create a new R kernel instance
     pub fn new() -> Self {
         Self {
-            event_tx: None,
+            frontend_tx: None,
             working_directory: PathBuf::new(),
         }
     }
@@ -37,7 +38,7 @@ impl Kernel {
     /// Service an execution request from the front end
     pub fn fulfill_request(&mut self, req: &KernelRequest) {
         match req {
-            KernelRequest::EstablishEventChannel(sender) => {
+            KernelRequest::EstablishFrontendChannel(sender) => {
                 self.establish_event_handler(sender.clone())
             },
         }
@@ -47,17 +48,14 @@ impl Kernel {
     /// Positron front end. This event handler is used to send global events
     /// that are not scoped to any particular view. The `Sender` here is a
     /// channel that is connected to a `positron.frontEnd` comm.
-    pub fn establish_event_handler(&mut self, event_tx: Sender<FrontendEvent>) {
-        self.event_tx = Some(event_tx);
+    pub fn establish_event_handler(&mut self, frontend_tx: Sender<PositronFrontendMessage>) {
+        self.frontend_tx = Some(frontend_tx);
 
         // Clear the current working directory to generate an event for the new
         // client (i.e. after a reconnect)
         self.working_directory = PathBuf::new();
         if let Err(err) = self.poll_working_directory() {
-            warn!(
-                "Error establishing working directory for front end: {}",
-                err
-            );
+            log::error!("Error establishing working directory for frontend: {err:?}");
         }
 
         // Get the current busy status
@@ -68,7 +66,7 @@ impl Kernel {
                 false
             }
         });
-        self.send_event(FrontendEvent::Busy(BusyParams { busy }));
+        self.send_frontend_event(FrontendEvent::Busy(BusyParams { busy }));
     }
 
     /// Polls for changes to the working directory, and sends an event to the
@@ -91,7 +89,7 @@ impl Kernel {
             }
 
             // Deliver event to client
-            self.send_event(FrontendEvent::WorkingDirectory(WorkingDirectoryParams {
+            self.send_frontend_event(FrontendEvent::WorkingDirectory(WorkingDirectoryParams {
                 directory: current_dir.to_string_lossy().to_string(),
             }));
         };
@@ -100,22 +98,33 @@ impl Kernel {
 
     /// Check if the Positron front end is connected
     pub fn positron_connected(&self) -> bool {
-        self.event_tx.is_some()
+        self.frontend_tx.is_some()
     }
 
-    /// Sends an event to the front end (Positron-specific)
-    pub fn send_event(&self, event: FrontendEvent) {
-        info!("Sending Positron event: {:?}", event);
-        if self.positron_connected() {
-            let event_tx = self.event_tx.as_ref().unwrap();
-            if let Err(err) = event_tx.send(event) {
-                warn!("Error sending event to front end: {}", err);
-            }
-        } else {
-            info!(
-                "Discarding event {:?}; no Positron front end connected",
-                event
-            );
+    /// Send events or requests to the frontend (Positron-specific)
+    pub fn send_frontend_event(&self, event: FrontendEvent) {
+        self.send_frontend(PositronFrontendMessage::Event(event))
+    }
+    pub fn send_frontend_request(&self, request: CommRequest) {
+        self.send_frontend(PositronFrontendMessage::Request(request))
+    }
+
+    fn send_frontend(&self, msg: PositronFrontendMessage) {
+        log::info!("Sending frontend message: {msg:?}");
+
+        if !self.positron_connected() {
+            log::info!("Discarding message {msg:?}; no Positron front end connected");
+            return;
+        }
+
+        let frontend_tx = self.frontend_tx.as_ref().unwrap();
+
+        if let Err(err) = frontend_tx.send(msg) {
+            log::error!("Error sending message to frontend: {err:?}");
+
+            // TODO: Something is wrong with the frontend thread, we should
+            // disconnect to avoid more errors but then we need a mutable self
+            // self.frontend_tx = None;
         }
     }
 }

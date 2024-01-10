@@ -32,10 +32,10 @@ use crate::socket::iopub::IOPub;
 use crate::socket::iopub::IOPubMessage;
 use crate::socket::shell::Shell;
 use crate::socket::socket::Socket;
+use crate::socket::stdin::StdInRequest;
 use crate::socket::stdin::Stdin;
 use crate::stream_capture::StreamCapture;
 use crate::wire::input_reply::InputReply;
-use crate::wire::input_request::ShellInputRequest;
 use crate::wire::jupyter_message::Message;
 use crate::wire::jupyter_message::OutboundMessage;
 
@@ -107,13 +107,15 @@ impl Kernel {
         dap_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
         stream_behavior: StreamBehavior,
         // Receiver channel for the stdin socket; when input is needed, the
-        // language runtime can request it by sending an InputRequest to
+        // language runtime can request it by sending an StdInRequest::Input to
         // this channel. The frontend will prompt the user for input and
-        // the reply will be delivered via `input_reply_tx`.
-        // https://jupyter-client.readthedocs.io/en/stable/messaging.html#messages-on-the-stdin-router-dealer-channel
-        input_request_rx: Receiver<ShellInputRequest>,
-        // Transmission channel for `input_reply` handling by StdIn
-        input_reply_tx: Sender<InputReply>,
+        // the reply will be delivered via `stdin_reply_tx`.
+        // https://jupyter-client.readthedocs.io/en/stable/messaging.html#messages-on-the-stdin-router-dealer-channel.
+        // Note that we've extended the StdIn socket to support synchronous requests
+        // from a comm, see `StdInRequest::Comm`.
+        stdin_request_rx: Receiver<StdInRequest>,
+        // Transmission channel for StdIn replies
+        stdin_reply_tx: Sender<crate::Result<InputReply>>,
     ) -> Result<(), Error> {
         let ctx = zmq::Context::new();
 
@@ -204,8 +206,8 @@ impl Kernel {
             Self::stdin_thread(
                 stdin_inbound_rx,
                 outbound_tx,
-                input_request_rx,
-                input_reply_tx,
+                stdin_request_rx,
+                stdin_reply_tx,
                 stdin_interrupt_rx,
                 stdin_session,
             )
@@ -343,15 +345,15 @@ impl Kernel {
 
     /// Starts the stdin thread.
     fn stdin_thread(
-        inbound_rx: Receiver<Message>,
+        inbound_rx: Receiver<crate::Result<Message>>,
         outbound_tx: Sender<OutboundMessage>,
-        input_request_rx: Receiver<ShellInputRequest>,
-        input_reply_tx: Sender<InputReply>,
+        stdin_request_rx: Receiver<StdInRequest>,
+        stdin_reply_tx: Sender<crate::Result<InputReply>>,
         interrupt_rx: Receiver<bool>,
         session: Session,
     ) -> Result<(), Error> {
         let stdin = Stdin::new(inbound_rx, outbound_tx, session);
-        stdin.listen(input_request_rx, input_reply_tx, interrupt_rx);
+        stdin.listen(stdin_request_rx, stdin_reply_tx, interrupt_rx);
         Ok(())
     }
 
@@ -360,7 +362,7 @@ impl Kernel {
     fn zmq_forwarding_thread(
         outbound_notif_socket: Socket,
         stdin_socket: Socket,
-        stdin_inbound_tx: Sender<Message>,
+        stdin_inbound_tx: Sender<crate::Result<Message>>,
         outbound_rx: Receiver<OutboundMessage>,
     ) {
         // This function checks for notifications that an outgoing message
@@ -410,7 +412,7 @@ impl Kernel {
         // Forwards 0MQ message from the frontend to the corresponding
         // Amalthea channel.
         let forward_inbound = || -> anyhow::Result<()> {
-            let msg = Message::read_from_socket(&stdin_socket)?;
+            let msg = Message::read_from_socket(&stdin_socket);
             stdin_inbound_tx.send(msg)?;
             Ok(())
         };

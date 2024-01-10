@@ -8,20 +8,33 @@
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use crossbeam::select;
-use log::error;
-use log::trace;
-use log::warn;
 
+use crate::comm::base_comm::JsonRpcError;
+use crate::comm::base_comm::JsonRpcErrorCode;
+use crate::comm::base_comm::JsonRpcErrorData;
+use crate::comm::base_comm::JsonRpcReply;
 use crate::session::Session;
 use crate::wire::input_reply::InputReply;
+use crate::wire::input_request::CommRequest;
 use crate::wire::input_request::ShellInputRequest;
+use crate::wire::input_request::StdInRpcReply;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
 use crate::wire::jupyter_message::OutboundMessage;
 
+pub enum StdInRequest {
+    Input(ShellInputRequest),
+    Comm(CommRequest),
+}
+
+enum StdInReplySender {
+    Input(Sender<crate::Result<InputReply>>),
+    Comm(Sender<StdInRpcReply>),
+}
+
 pub struct Stdin {
     /// Receiver connected to the StdIn's ZeroMQ socket
-    inbound_rx: Receiver<Message>,
+    inbound_rx: Receiver<crate::Result<Message>>,
 
     /// Sender connected to the StdIn's ZeroMQ socket
     outbound_tx: Sender<OutboundMessage>,
@@ -37,7 +50,7 @@ impl Stdin {
     /// * `outbound_tx` - Channel relaying requests to frontend
     /// * `session` - Juptyer session
     pub fn new(
-        inbound_rx: Receiver<Message>,
+        inbound_rx: Receiver<crate::Result<Message>>,
         outbound_tx: Sender<OutboundMessage>,
         session: Session,
     ) -> Self {
@@ -53,8 +66,8 @@ impl Stdin {
     /// 1. Wait for
     pub fn listen(
         &self,
-        input_request_rx: Receiver<ShellInputRequest>,
-        input_reply_tx: Sender<InputReply>,
+        stdin_request_rx: Receiver<StdInRequest>,
+        stdin_reply_tx: Sender<crate::Result<InputReply>>,
         interrupt_rx: Receiver<bool>,
     ) {
         loop {
@@ -66,17 +79,17 @@ impl Stdin {
             // don't need to listen to interrupts at this stage so we'd
             // only subscribe after receiving an input request, and the
             // loop/select below could be removed.
-            let req: ShellInputRequest;
+            let req: StdInRequest;
             loop {
                 select! {
-                    recv(input_request_rx) -> msg => {
+                    recv(stdin_request_rx) -> msg => {
                         match msg {
                             Ok(m) => {
                                 req = m;
                                 break;
                             },
                             Err(err) => {
-                                error!("Could not read input request: {}", err);
+                                log::error!("Could not read input request: {}", err);
                                 continue;
                             }
                         }
@@ -87,24 +100,38 @@ impl Stdin {
                 };
             }
 
-            // Deliver the message to the front end
-            let msg = Message::InputRequest(JupyterMessage::create_with_identity(
-                req.originator,
-                req.request,
-                &self.session,
-            ));
+            let (request, reply_tx) = match req {
+                StdInRequest::Input(req) => {
+                    let req = Message::InputRequest(JupyterMessage::create_with_identity(
+                        req.originator,
+                        req.request,
+                        &self.session,
+                    ));
+                    (req, StdInReplySender::Input(stdin_reply_tx.clone()))
+                },
+                StdInRequest::Comm(comm_req) => {
+                    // This is a request to the frontend
+                    let req = Message::CommRequest(JupyterMessage::create_with_identity(
+                        comm_req.originator,
+                        comm_req.request,
+                        &self.session,
+                    ));
+                    (req, StdInReplySender::Comm(comm_req.response_tx))
+                },
+            };
 
-            if let Err(err) = self.outbound_tx.send(OutboundMessage::StdIn(msg)) {
-                error!("Failed to send message to front end: {}", err);
+            // Deliver the message to the front end
+            if let Err(err) = self.outbound_tx.send(OutboundMessage::StdIn(request)) {
+                log::error!("Failed to send message to front end: {}", err);
             }
-            trace!("Sent input request to front end, waiting for input reply...");
+            log::trace!("Sent input request to front end, waiting for input reply...");
 
             // Wait for the front end's reply message from the ZeroMQ socket.
             let message = select! {
                 recv(self.inbound_rx) -> msg => match msg {
                     Ok(m) => m,
                     Err(err) => {
-                        error!("Could not read message from stdin socket: {}", err);
+                        log::error!("Could not read message from stdin socket: {err:?}");
                         continue;
                     }
                 },
@@ -112,25 +139,72 @@ impl Stdin {
                 // signaled. We're no longer waiting for an `input_reply`
                 // but for an `input_request`.
                 recv(interrupt_rx) -> msg => {
+                    log::trace!("Received interrupt signal in StdIn");
+
                     if let Err(err) = msg {
-                        error!("Could not read interrupt message: {}", err);
+                        log::error!("Could not read interrupt message: {err:?}");
                     }
+
+                    match reply_tx {
+                        StdInReplySender::Input(_tx) => {
+                            // Nothing to do since `read_console()` will detect
+                            // the interrupt independently. Fall through.
+                        },
+                        StdInReplySender::Comm(tx) => {
+                            tx.send(StdInRpcReply::Interrupt).unwrap();
+                        },
+                    }
+
                     continue;
                 }
             };
 
-            // Only input replies are expected on this socket
-            let reply = match message {
-                Message::InputReply(reply) => reply,
-                _ => {
-                    warn!("Received unexpected message on stdin socket: {:?}", message);
+            log::trace!("Received reply from front-end: {message:?}");
+
+            // Only input and comm RPC replies are expected on this socket
+            match message {
+                Ok(ref message) => match message {
+                    Message::InputReply(ref reply) => {
+                        if let StdInReplySender::Input(tx) = reply_tx {
+                            tx.send(Ok(reply.content.clone())).unwrap();
+                            continue;
+                        }
+                    },
+                    Message::CommReply(ref reply) => {
+                        if let StdInReplySender::Comm(tx) = reply_tx {
+                            let resp = StdInRpcReply::Response(reply.content.clone());
+                            tx.send(resp).unwrap();
+                            continue;
+                        }
+                    },
+                    _ => {
+                        log::warn!("Unexpected message type {message:?} on StdIn",);
+                        continue;
+                    },
+                },
+                Err(err) => {
+                    // Might be an unserialisation error. Propagate the error to R.
+                    match reply_tx {
+                        StdInReplySender::Input(tx) => {
+                            tx.send(Err(err)).unwrap();
+                        },
+                        StdInReplySender::Comm(tx) => {
+                            let resp = StdInRpcReply::Response(JsonRpcReply::Error(JsonRpcError {
+                                error: JsonRpcErrorData {
+                                    message: format!(
+                                        "Error while receiving frontend response: {err}"
+                                    ),
+                                    code: JsonRpcErrorCode::InternalError,
+                                },
+                            }));
+                            tx.send(resp).unwrap();
+                        },
+                    }
                     continue;
                 },
             };
-            trace!("Received input reply from front-end: {:?}", reply);
 
-            // Send it to the kernel implementation
-            input_reply_tx.send(reply.content).unwrap();
+            log::warn!("Received unexpected message on stdin socket: {message:?}");
         }
     }
 }

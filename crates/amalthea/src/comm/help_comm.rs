@@ -10,7 +10,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 /// Possible values for Kind in ShowHelp
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum ShowHelpKind {
 	#[serde(rename = "html")]
 	Html,
@@ -23,14 +23,14 @@ pub enum ShowHelpKind {
 }
 
 /// Parameters for the ShowHelpTopic method.
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ShowHelpTopicParams {
 	/// The help topic to show
 	pub topic: String,
 }
 
 /// Parameters for the ShowHelp method.
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ShowHelpParams {
 	/// The help content to show
 	pub content: String,
@@ -43,11 +43,11 @@ pub struct ShowHelpParams {
 }
 
 /**
- * RPC request types for the help comm
+ * Backend RPC request types for the help comm
  */
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params")]
-pub enum HelpRpcRequest {
+pub enum HelpBackendRpcRequest {
 	/// Look for and, if found, show a help topic.
 	///
 	/// Requests that the help backend look for a help topic and, if found,
@@ -60,11 +60,11 @@ pub enum HelpRpcRequest {
 }
 
 /**
- * RPC Reply types for the help comm
+ * Backend RPC Reply types for the help comm
  */
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "result")]
-pub enum HelpRpcReply {
+pub enum HelpBackendRpcReply {
 	/// Whether the topic was found and shown. Topics are shown via a Show
 	/// Help notification.
 	ShowHelpTopicReply(bool),
@@ -72,9 +72,25 @@ pub enum HelpRpcReply {
 }
 
 /**
- * Front-end events for the help comm
+ * Frontend RPC request types for the help comm
  */
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "method", content = "params")]
+pub enum HelpFrontendRpcRequest {
+}
+
+/**
+ * Frontend RPC Reply types for the help comm
+ */
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "method", content = "result")]
+pub enum HelpFrontendRpcReply {
+}
+
+/**
+ * Frontend events for the help comm
+ */
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params")]
 pub enum HelpEvent {
 	#[serde(rename = "show_help")]

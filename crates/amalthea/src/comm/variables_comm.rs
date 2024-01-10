@@ -10,7 +10,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 /// A view containing a list of variables in the session.
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct VariableList {
 	/// A list of variables in the session.
 	pub variables: Vec<Variable>,
@@ -25,7 +25,7 @@ pub struct VariableList {
 }
 
 /// An inspected variable.
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct InspectedVariable {
 	/// The children of the inspected variable.
 	pub children: Vec<Variable>,
@@ -36,14 +36,14 @@ pub struct InspectedVariable {
 }
 
 /// An object formatted for copying to the clipboard.
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct FormattedVariable {
 	/// The formatted content of the variable.
 	pub content: String
 }
 
 /// A single variable in the runtime.
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Variable {
 	/// A key that uniquely identifies the variable within the runtime and can
 	/// be used to access the variable in `inspect` requests
@@ -85,7 +85,7 @@ pub struct Variable {
 }
 
 /// Possible values for Format in ClipboardFormat
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum ClipboardFormatFormat {
 	#[serde(rename = "text/html")]
 	TextHtml,
@@ -95,7 +95,7 @@ pub enum ClipboardFormatFormat {
 }
 
 /// Possible values for Kind in Variable
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum VariableKind {
 	#[serde(rename = "boolean")]
 	Boolean,
@@ -132,28 +132,28 @@ pub enum VariableKind {
 }
 
 /// Parameters for the Clear method.
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ClearParams {
 	/// Whether to clear hidden objects in addition to normal variables
 	pub include_hidden_objects: bool,
 }
 
 /// Parameters for the Delete method.
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct DeleteParams {
 	/// The names of the variables to delete.
 	pub names: Vec<String>,
 }
 
 /// Parameters for the Inspect method.
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct InspectParams {
 	/// The path to the variable to inspect, as an array of access keys.
 	pub path: Vec<String>,
 }
 
 /// Parameters for the ClipboardFormat method.
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ClipboardFormatParams {
 	/// The path to the variable to format, as an array of access keys.
 	pub path: Vec<String>,
@@ -163,14 +163,14 @@ pub struct ClipboardFormatParams {
 }
 
 /// Parameters for the View method.
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ViewParams {
 	/// The path to the variable to view, as an array of access keys.
 	pub path: Vec<String>,
 }
 
 /// Parameters for the Update method.
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct UpdateParams {
 	/// An array of variables that have been newly assigned.
 	pub assigned: Vec<Variable>,
@@ -184,7 +184,7 @@ pub struct UpdateParams {
 }
 
 /// Parameters for the Refresh method.
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct RefreshParams {
 	/// An array listing all the variables in the current session.
 	pub variables: Vec<Variable>,
@@ -198,11 +198,11 @@ pub struct RefreshParams {
 }
 
 /**
- * RPC request types for the variables comm
+ * Backend RPC request types for the variables comm
  */
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params")]
-pub enum VariablesRpcRequest {
+pub enum VariablesBackendRpcRequest {
 	/// List all variables
 	///
 	/// Returns a list of all the variables in the current session.
@@ -244,11 +244,11 @@ pub enum VariablesRpcRequest {
 }
 
 /**
- * RPC Reply types for the variables comm
+ * Backend RPC Reply types for the variables comm
  */
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "result")]
-pub enum VariablesRpcReply {
+pub enum VariablesBackendRpcReply {
 	/// A view containing a list of variables in the session.
 	ListReply(VariableList),
 
@@ -270,9 +270,25 @@ pub enum VariablesRpcReply {
 }
 
 /**
- * Front-end events for the variables comm
+ * Frontend RPC request types for the variables comm
  */
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "method", content = "params")]
+pub enum VariablesFrontendRpcRequest {
+}
+
+/**
+ * Frontend RPC Reply types for the variables comm
+ */
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "method", content = "result")]
+pub enum VariablesFrontendRpcReply {
+}
+
+/**
+ * Frontend events for the variables comm
+ */
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params")]
 pub enum VariablesEvent {
 	/// Updates the variables in the current session.

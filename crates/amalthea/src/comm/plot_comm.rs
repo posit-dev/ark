@@ -10,7 +10,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 /// A rendered plot
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct PlotResult {
 	/// The plot data, as a base64-encoded string
 	pub data: String,
@@ -20,7 +20,7 @@ pub struct PlotResult {
 }
 
 /// Parameters for the Render method.
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct RenderParams {
 	/// The requested plot height, in pixels
 	pub height: i64,
@@ -33,11 +33,11 @@ pub struct RenderParams {
 }
 
 /**
- * RPC request types for the plot comm
+ * Backend RPC request types for the plot comm
  */
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params")]
-pub enum PlotRpcRequest {
+pub enum PlotBackendRpcRequest {
 	/// Render a plot
 	///
 	/// Requests a plot to be rendered at a given height and width. The plot
@@ -48,20 +48,36 @@ pub enum PlotRpcRequest {
 }
 
 /**
- * RPC Reply types for the plot comm
+ * Backend RPC Reply types for the plot comm
  */
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "result")]
-pub enum PlotRpcReply {
+pub enum PlotBackendRpcReply {
 	/// A rendered plot
 	RenderReply(PlotResult),
 
 }
 
 /**
- * Front-end events for the plot comm
+ * Frontend RPC request types for the plot comm
  */
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "method", content = "params")]
+pub enum PlotFrontendRpcRequest {
+}
+
+/**
+ * Frontend RPC Reply types for the plot comm
+ */
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "method", content = "result")]
+pub enum PlotFrontendRpcReply {
+}
+
+/**
+ * Frontend events for the plot comm
+ */
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params")]
 pub enum PlotEvent {
 	#[serde(rename = "update")]

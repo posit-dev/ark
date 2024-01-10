@@ -6,10 +6,12 @@
 //
 
 use amalthea::comm::comm_channel::CommMsg;
+use amalthea::comm::frontend_comm::FrontendBackendRpcReply;
+use amalthea::comm::frontend_comm::FrontendBackendRpcRequest;
 use amalthea::comm::frontend_comm::FrontendEvent;
-use amalthea::comm::frontend_comm::FrontendRpcReply;
-use amalthea::comm::frontend_comm::FrontendRpcRequest;
 use amalthea::socket::comm::CommSocket;
+use amalthea::socket::stdin::StdInRequest;
+use amalthea::wire::input_request::CommRequest;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use crossbeam::select;
@@ -18,31 +20,43 @@ use harp::exec::RFunctionExt;
 use harp::object::RObject;
 use serde_json::Value;
 use stdext::spawn;
+use stdext::unwrap;
 
 use crate::r_task;
+
+#[derive(Debug)]
+pub enum PositronFrontendMessage {
+    Event(FrontendEvent),
+    Request(CommRequest),
+}
 
 /// PositronFrontend is a wrapper around a comm channel whose lifetime matches
 /// that of the Positron front end. It is used to perform communication with the
 /// front end that isn't scoped to any particular view.
 pub struct PositronFrontend {
     comm: CommSocket,
-    event_rx: Receiver<FrontendEvent>,
+    frontend_rx: Receiver<PositronFrontendMessage>,
+    stdin_request_tx: Sender<StdInRequest>,
 }
 
 impl PositronFrontend {
-    pub fn start(comm: CommSocket) -> Sender<FrontendEvent> {
+    pub fn start(
+        comm: CommSocket,
+        stdin_request_tx: Sender<StdInRequest>,
+    ) -> Sender<PositronFrontendMessage> {
         // Create a sender-receiver pair for Positron global events
-        let (event_tx, event_rx) = crossbeam::channel::unbounded::<FrontendEvent>();
+        let (frontend_tx, frontend_rx) = crossbeam::channel::unbounded::<PositronFrontendMessage>();
 
         spawn!("ark-comm-frontend", move || {
             let frontend = Self {
                 comm: comm.clone(),
-                event_rx: event_rx.clone(),
+                frontend_rx: frontend_rx.clone(),
+                stdin_request_tx: stdin_request_tx.clone(),
             };
             frontend.execution_thread();
         });
 
-        event_tx
+        frontend_tx
     }
 
     fn execution_thread(&self) {
@@ -51,18 +65,20 @@ impl PositronFrontend {
             // Positron events to the frontend) or the comm channel (which
             // receives requests from the frontend)
             select! {
-                recv(&self.event_rx) -> event => {
-                    match event {
-                        Ok(event) => self.dispatch_event(&event),
-                        Err(err) => {
-                            log::error!(
-                                "Error receiving Positron event; closing event listener: {err:?}"
-                            );
-                            // Most likely the channel was closed, so we should stop the thread
-                            break;
-                        },
+                recv(&self.frontend_rx) -> msg => {
+                    let msg = unwrap!(msg, Err(err) => {
+                        log::error!(
+                            "Error receiving Positron event; closing event listener: {err:?}"
+                        );
+                        // Most likely the channel was closed, so we should stop the thread
+                        break;
+                    });
+                    match msg {
+                        PositronFrontendMessage::Event(event) => self.dispatch_event(&event),
+                        PositronFrontendMessage::Request(request) => self.call_frontend_method(request).unwrap(),
                     }
                 },
+
                 recv(&self.comm.incoming_rx) -> msg => {
                     match msg {
                         Ok(msg) => {
@@ -120,10 +136,10 @@ impl PositronFrontend {
      */
     fn handle_rpc(
         &self,
-        request: FrontendRpcRequest,
-    ) -> anyhow::Result<FrontendRpcReply, anyhow::Error> {
+        request: FrontendBackendRpcRequest,
+    ) -> anyhow::Result<FrontendBackendRpcReply, anyhow::Error> {
         let request = match request {
-            FrontendRpcRequest::CallMethod(request) => request,
+            FrontendBackendRpcRequest::CallMethod(request) => request,
         };
 
         log::trace!("Handling '{}' frontend RPC method", request.method);
@@ -161,6 +177,13 @@ impl PositronFrontend {
             Value::try_from(result)
         })?;
 
-        Ok(FrontendRpcReply::CallMethodReply(result))
+        Ok(FrontendBackendRpcReply::CallMethodReply(result))
+    }
+
+    fn call_frontend_method(&self, request: CommRequest) -> anyhow::Result<()> {
+        let comm_msg = StdInRequest::Comm(request);
+        self.stdin_request_tx.send(comm_msg)?;
+
+        Ok(())
     }
 }

@@ -19,13 +19,17 @@ use std::sync::Mutex;
 use std::sync::Once;
 use std::time::Duration;
 
+use amalthea::comm::base_comm::JsonRpcReply;
 use amalthea::comm::event::CommManagerEvent;
+use amalthea::comm::frontend_comm::frontend_frontend_reply_from_value;
 use amalthea::comm::frontend_comm::BusyParams;
 use amalthea::comm::frontend_comm::FrontendEvent;
+use amalthea::comm::frontend_comm::FrontendFrontendRpcRequest;
 use amalthea::comm::frontend_comm::PromptStateParams;
 use amalthea::comm::frontend_comm::ShowMessageParams;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::socket::iopub::Wait;
+use amalthea::socket::stdin::StdInRequest;
 use amalthea::wire::exception::Exception;
 use amalthea::wire::execute_error::ExecuteError;
 use amalthea::wire::execute_input::ExecuteInput;
@@ -35,8 +39,10 @@ use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::execute_response::ExecuteResponse;
 use amalthea::wire::execute_result::ExecuteResult;
 use amalthea::wire::input_reply::InputReply;
+use amalthea::wire::input_request::CommRequest;
 use amalthea::wire::input_request::InputRequest;
 use amalthea::wire::input_request::ShellInputRequest;
+use amalthea::wire::input_request::StdInRpcReply;
 use amalthea::wire::jupyter_message::Status;
 use amalthea::wire::originator::Originator;
 use amalthea::wire::stream::Stream;
@@ -70,6 +76,7 @@ use libR_shim::R_BaseNamespace;
 use libR_shim::R_GlobalEnv;
 use libR_shim::R_ProcessEvents;
 use libR_shim::R_RunPendingFinalizers;
+use libR_shim::Rf_error;
 use libR_shim::Rf_findVarInFrame;
 use libR_shim::Rf_onintr;
 use libR_shim::SEXP;
@@ -123,8 +130,8 @@ pub fn start_r(
     kernel_mutex: Arc<Mutex<Kernel>>,
     comm_manager_tx: Sender<CommManagerEvent>,
     r_request_rx: Receiver<RRequest>,
-    input_request_tx: Sender<ShellInputRequest>,
-    input_reply_rx: Receiver<InputReply>,
+    stdin_request_tx: Sender<StdInRequest>,
+    stdin_reply_rx: Receiver<amalthea::Result<InputReply>>,
     iopub_tx: Sender<IOPubMessage>,
     kernel_init_tx: Bus<KernelInfo>,
     lsp_runtime: Arc<Runtime>,
@@ -145,8 +152,8 @@ pub fn start_r(
             tasks_rx,
             comm_manager_tx,
             r_request_rx,
-            input_request_tx,
-            input_reply_rx,
+            stdin_request_tx,
+            stdin_reply_rx,
             iopub_tx,
             kernel_init_tx,
             lsp_runtime,
@@ -206,10 +213,10 @@ pub struct RMain {
 
     /// Input requests to the frontend. Processed from `ReadConsole()`
     /// calls triggered by e.g. `readline()`.
-    input_request_tx: Sender<ShellInputRequest>,
+    stdin_request_tx: Sender<StdInRequest>,
 
     /// Input replies from the frontend. Waited on in `ReadConsole()` after a request.
-    input_reply_rx: Receiver<InputReply>,
+    stdin_reply_rx: Receiver<amalthea::Result<InputReply>>,
 
     /// IOPub channel for broadcasting outputs
     iopub_tx: Sender<IOPubMessage>,
@@ -317,6 +324,7 @@ pub enum ConsoleResult {
     NewInput,
     Interrupt,
     Disconnected,
+    Error(amalthea::Error),
 }
 
 impl RMain {
@@ -325,8 +333,8 @@ impl RMain {
         tasks_rx: Receiver<RTaskMain>,
         comm_manager_tx: Sender<CommManagerEvent>,
         r_request_rx: Receiver<RRequest>,
-        input_request_tx: Sender<ShellInputRequest>,
-        input_reply_rx: Receiver<InputReply>,
+        stdin_request_tx: Sender<StdInRequest>,
+        stdin_reply_rx: Receiver<amalthea::Result<InputReply>>,
         iopub_tx: Sender<IOPubMessage>,
         kernel_init_tx: Bus<KernelInfo>,
         lsp_runtime: Arc<Runtime>,
@@ -337,8 +345,8 @@ impl RMain {
             initializing: true,
             r_request_rx,
             comm_manager_tx,
-            input_request_tx,
-            input_reply_rx,
+            stdin_request_tx,
+            stdin_reply_rx,
             iopub_tx,
             kernel_init_tx,
             active_request: None,
@@ -532,7 +540,7 @@ impl RMain {
                     continuation_prompt: info.continuation_prompt.clone(),
                 });
                 let kernel = self.kernel.lock().unwrap();
-                kernel.send_event(event);
+                kernel.send_frontend_event(event);
 
                 // Let frontend know the last request is complete. This turns us
                 // back to Idle.
@@ -674,13 +682,21 @@ impl RMain {
                     }
                 }
 
-                recv(self.input_reply_rx) -> input => {
+                recv(self.stdin_reply_rx) -> chan_result => {
                     // StdIn must remain alive
-                    let input = input.unwrap();
-                    let input = convert_line_endings(&input.value, LineEnding::Posix);
+                    let result = chan_result.unwrap();
 
-                    Self::on_console_input(buf, buflen, input);
-                    return ConsoleResult::NewInput;
+                    match result {
+                        Ok(input) => {
+                            let input = convert_line_endings(&input.value, LineEnding::Posix);
+
+                            Self::on_console_input(buf, buflen, input);
+                            return ConsoleResult::NewInput;
+                        },
+                        Err(err) => {
+                            return ConsoleResult::Error(err);
+                        }
+                    }
                 }
 
                 // A task woke us up, start next loop tick to yield to it
@@ -817,14 +833,14 @@ impl RMain {
         std::thread::sleep(std::time::Duration::from_millis(100));
 
         unwrap!(
-            self.input_request_tx
-            .send(ShellInputRequest {
+            self.stdin_request_tx
+            .send(StdInRequest::Input(ShellInputRequest {
                 originator: orig,
                 request: InputRequest {
                     prompt,
                     password: false,
                 },
-            }),
+            })),
             Err(err) => panic!("Could not send input request: {}", err)
         )
     }
@@ -898,7 +914,7 @@ impl RMain {
         // Wait for a lock on the kernel and have it deliver the event to
         // the front end
         let kernel = self.kernel.lock().unwrap();
-        kernel.send_event(event);
+        kernel.send_frontend_event(event);
     }
 
     /// Invoked by R to show a message to the user.
@@ -913,7 +929,7 @@ impl RMain {
         // Wait for a lock on the kernel and have the kernel deliver the
         // event to the front end
         let kernel = self.kernel.lock().unwrap();
-        kernel.send_event(event);
+        kernel.send_frontend_event(event);
     }
 
     /// Invoked by the R event loop
@@ -994,6 +1010,63 @@ impl RMain {
 
     pub fn get_lsp_client(&self) -> &Client {
         &self.lsp_client
+    }
+
+    pub fn call_frontend_method(
+        &self,
+        request: FrontendFrontendRpcRequest,
+    ) -> anyhow::Result<RObject> {
+        log::trace!("Calling frontend method '{request:?}'");
+        let (response_tx, response_rx) = bounded(1);
+
+        let originator = if let Some(req) = &self.active_request {
+            req.orig.clone()
+        } else {
+            anyhow::bail!("Error: No active request");
+        };
+
+        let comm_request = CommRequest {
+            originator,
+            response_tx,
+            request: request.clone(),
+        };
+
+        // Send request via Kernel
+        {
+            let kernel = self.kernel.lock().unwrap();
+            kernel.send_frontend_request(comm_request);
+        }
+
+        // Block for response
+        let response = response_rx.recv().unwrap();
+
+        log::trace!("Got response from frontend method: {response:?}");
+
+        match response {
+            StdInRpcReply::Response(response) => match response {
+                JsonRpcReply::Result(response) => {
+                    // Deserialize to Rust first to verify the OpenRPC contract.
+                    // Errors are propagated to R.
+                    if let Err(err) =
+                        frontend_frontend_reply_from_value(response.result.clone(), &request)
+                    {
+                        anyhow::bail!("Can't deserialize RPC response for {request:?}:\n{err:?}");
+                    }
+
+                    // Now deserialize to an R object
+                    Ok(RObject::try_from(response.result)?)
+                },
+                JsonRpcReply::Error(response) => anyhow::bail!(
+                    "While calling frontend method:\n\
+                     {}",
+                    response.error.message
+                ),
+            },
+            // If an interrupt was signalled, return `NULL`. This should not be
+            // visible to the caller since `r_unwrap()` (called e.g. by
+            // `harp::register`) will trigger an interrupt jump right away.
+            StdInRpcReply::Interrupt => Ok(RObject::null()),
+        }
     }
 }
 
@@ -1164,7 +1237,33 @@ pub extern "C" fn r_read_console(
             log::error!("`Rf_onintr()` did not longjump");
             return 0;
         },
+        ConsoleResult::Error(err) => {
+            // Save error message to a global buffer to avoid leaking memory
+            // when `Rf_error()` jumps. Some gymnastics are required to deal
+            // with the possibility of `CString` conversion failure since the
+            // error message comes from the frontend and might be corrupted.
+            static mut ERROR_BUF: Option<CString> = None;
+
+            {
+                let err_cstring = new_cstring(format!("{err:?}"));
+                unsafe {
+                    ERROR_BUF = Some(
+                        CString::new(format!(
+                            "Error while reading input: {}",
+                            err_cstring.into_string().unwrap()
+                        ))
+                        .unwrap(),
+                    );
+                }
+            }
+
+            unsafe { Rf_error(ERROR_BUF.as_ref().unwrap().as_ptr()) };
+        },
     };
+}
+
+fn new_cstring(x: String) -> CString {
+    CString::new(x).unwrap_or(CString::new("Can't create CString").unwrap())
 }
 
 #[no_mangle]

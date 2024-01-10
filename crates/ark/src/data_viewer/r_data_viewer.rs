@@ -326,7 +326,7 @@ impl RDataViewer {
             log::debug!("Data Viewer: Received message from front end: {msg:?}");
 
             // Break out of the loop if the frontend has closed the channel
-            if msg == CommMsg::Close {
+            if let CommMsg::Close = msg {
                 log::debug!("Data Viewer: Closing down after receiving comm_close from front end.");
                 user_initiated_close = true;
                 break;

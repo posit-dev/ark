@@ -28,6 +28,7 @@ strum_macros = "0.24"
 crossbeam = { version = "0.8.2", features = ["crossbeam-channel"] }
 anyhow = "1.0.71"
 serde_with = "3.0.0"
+serde_repr = "0.1.17"
 
 [dev-dependencies]
 rand = "0.8.5"

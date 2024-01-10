@@ -12,6 +12,7 @@ use amalthea::comm::comm_channel::CommMsg;
 use amalthea::language::shell_handler::ShellHandler;
 use amalthea::socket::comm::CommSocket;
 use amalthea::socket::iopub::IOPubMessage;
+use amalthea::socket::stdin::StdInRequest;
 use amalthea::wire::complete_reply::CompleteReply;
 use amalthea::wire::complete_request::CompleteRequest;
 use amalthea::wire::exception::Exception;
@@ -44,8 +45,8 @@ use serde_json::json;
 
 pub struct Shell {
     iopub: Sender<IOPubMessage>,
-    input_request_tx: Sender<ShellInputRequest>,
-    input_reply_rx: Receiver<InputReply>,
+    stdin_request_tx: Sender<StdInRequest>,
+    stdin_reply_rx: Receiver<amalthea::Result<InputReply>>,
     execution_count: u32,
 }
 
@@ -53,26 +54,29 @@ pub struct Shell {
 impl Shell {
     pub fn new(
         iopub: Sender<IOPubMessage>,
-        input_request_tx: Sender<ShellInputRequest>,
-        input_reply_rx: Receiver<InputReply>,
+        stdin_request_tx: Sender<StdInRequest>,
+        stdin_reply_rx: Receiver<amalthea::Result<InputReply>>,
     ) -> Self {
         Self {
             iopub,
-            input_request_tx,
-            input_reply_rx,
+            stdin_request_tx,
+            stdin_reply_rx,
             execution_count: 0,
         }
     }
 
     // Simluates an input request
     fn prompt_for_input(&self, originator: Option<Originator>) {
-        if let Err(err) = self.input_request_tx.send(ShellInputRequest {
-            originator: originator.clone(),
-            request: InputRequest {
-                prompt: String::from("Amalthea Echo> "),
-                password: false,
-            },
-        }) {
+        if let Err(err) = self
+            .stdin_request_tx
+            .send(StdInRequest::Input(ShellInputRequest {
+                originator: originator.clone(),
+                request: InputRequest {
+                    prompt: String::from("Amalthea Echo> "),
+                    password: false,
+                },
+            }))
+        {
             warn!("Could not prompt for input: {}", err);
         }
     }
@@ -192,13 +196,13 @@ impl ShellHandler for Shell {
             self.prompt_for_input(originator);
 
             // Block for the reply
-            let reply = self.input_reply_rx.recv().unwrap();
+            let reply = self.stdin_reply_rx.recv().unwrap();
 
             // Echo the reply
             self.iopub
                 .send(IOPubMessage::Stream(StreamOutput {
                     name: Stream::Stdout,
-                    text: reply.value,
+                    text: reply.unwrap().value,
                 }))
                 .unwrap();
         }

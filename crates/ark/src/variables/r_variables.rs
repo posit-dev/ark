@@ -14,9 +14,9 @@ use amalthea::comm::variables_comm::RefreshParams;
 use amalthea::comm::variables_comm::UpdateParams;
 use amalthea::comm::variables_comm::Variable;
 use amalthea::comm::variables_comm::VariableList;
+use amalthea::comm::variables_comm::VariablesBackendRpcReply;
+use amalthea::comm::variables_comm::VariablesBackendRpcRequest;
 use amalthea::comm::variables_comm::VariablesEvent;
-use amalthea::comm::variables_comm::VariablesRpcReply;
-use amalthea::comm::variables_comm::VariablesRpcRequest;
 use amalthea::socket::comm::CommSocket;
 use crossbeam::channel::select;
 use crossbeam::channel::unbounded;
@@ -159,7 +159,7 @@ impl RVariables {
                     debug!("Environment: Received message from front end: {:?}", msg);
 
                     // Break out of the loop if the front end has closed the channel
-                    if msg == CommMsg::Close {
+                    if let CommMsg::Close = msg {
                         debug!("Environment: Closing down after receiving comm_close from front end.");
 
                         // Remember that the user initiated the close so that we can
@@ -205,43 +205,46 @@ impl RVariables {
         variables
     }
 
-    fn handle_rpc(&mut self, req: VariablesRpcRequest) -> anyhow::Result<VariablesRpcReply> {
+    fn handle_rpc(
+        &mut self,
+        req: VariablesBackendRpcRequest,
+    ) -> anyhow::Result<VariablesBackendRpcReply> {
         match req {
-            VariablesRpcRequest::List => {
+            VariablesBackendRpcRequest::List => {
                 let list = self.list_variables();
                 let count = list.len() as i64;
-                Ok(VariablesRpcReply::ListReply(VariableList {
+                Ok(VariablesBackendRpcReply::ListReply(VariableList {
                     variables: list,
                     length: count,
                     version: Some(self.version as i64),
                 }))
             },
-            VariablesRpcRequest::Clear(params) => {
+            VariablesBackendRpcRequest::Clear(params) => {
                 self.clear(params.include_hidden_objects)?;
                 self.update(None);
-                Ok(VariablesRpcReply::ClearReply())
+                Ok(VariablesBackendRpcReply::ClearReply())
             },
-            VariablesRpcRequest::Delete(params) => {
+            VariablesBackendRpcRequest::Delete(params) => {
                 self.delete(params.names.clone())?;
-                Ok(VariablesRpcReply::DeleteReply(params.names))
+                Ok(VariablesBackendRpcReply::DeleteReply(params.names))
             },
-            VariablesRpcRequest::Inspect(params) => {
+            VariablesBackendRpcRequest::Inspect(params) => {
                 let children = self.inspect(&params.path)?;
                 let count = children.len() as i64;
-                Ok(VariablesRpcReply::InspectReply(InspectedVariable {
+                Ok(VariablesBackendRpcReply::InspectReply(InspectedVariable {
                     children,
                     length: count,
                 }))
             },
-            VariablesRpcRequest::ClipboardFormat(params) => {
+            VariablesBackendRpcRequest::ClipboardFormat(params) => {
                 let content = self.clipboard_format(&params.path, params.format.clone())?;
-                Ok(VariablesRpcReply::ClipboardFormatReply(FormattedVariable {
-                    content,
-                }))
+                Ok(VariablesBackendRpcReply::ClipboardFormatReply(
+                    FormattedVariable { content },
+                ))
             },
-            VariablesRpcRequest::View(params) => {
+            VariablesBackendRpcRequest::View(params) => {
                 self.view(&params.path)?;
-                Ok(VariablesRpcReply::ViewReply())
+                Ok(VariablesBackendRpcReply::ViewReply())
             },
         }
     }

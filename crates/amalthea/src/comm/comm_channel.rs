@@ -8,6 +8,9 @@
 use serde_json::Value;
 use strum_macros::EnumString;
 
+use super::frontend_comm::FrontendFrontendRpcRequest;
+use crate::wire::jupyter_message::MessageType;
+
 #[derive(EnumString, PartialEq)]
 #[strum(serialize_all = "camelCase")]
 pub enum Comm {
@@ -36,7 +39,7 @@ pub enum Comm {
     Other(String),
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum CommMsg {
     /// A message that is part of a Remote Procedure Call (RPC). The first value
     /// is the unique ID of the RPC invocation (i.e. the Jupyter message ID),
@@ -50,4 +53,10 @@ pub enum CommMsg {
 
     // A message indicating that the comm channel should be closed.
     Close,
+}
+
+impl MessageType for FrontendFrontendRpcRequest {
+    fn message_type() -> String {
+        String::from("rpc_request")
+    }
 }

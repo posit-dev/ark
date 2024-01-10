@@ -255,6 +255,7 @@ dependencies = [
  "rand 0.8.5",
  "serde",
  "serde_json",
+ "serde_repr",
  "serde_with",
  "sha2",
  "stdext",
@@ -293,7 +294,7 @@ dependencies = [
 
 [[package]]
 name = "ark"
-version = "0.1.42"
+version = "0.1.43"
 dependencies = [
  "actix-web",
  "amalthea",
@@ -2615,9 +2616,9 @@ dependencies = [
 
 [[package]]
 name = "serde_repr"
-version = "0.1.12"
+version = "0.1.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bcec881020c684085e55a25f7fd888954d56609ef363479dc5a1305eb0d40cab"
+checksum = "3081f5ffbb02284dda55132aa26daecedd7372a42417bbbab6f14ab7d6bb9145"
 dependencies = [
  "proc-macro2",
  "quote",

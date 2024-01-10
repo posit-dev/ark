@@ -9,9 +9,9 @@ use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::comm::variables_comm::ClearParams;
 use amalthea::comm::variables_comm::DeleteParams;
+use amalthea::comm::variables_comm::VariablesBackendRpcReply;
+use amalthea::comm::variables_comm::VariablesBackendRpcRequest;
 use amalthea::comm::variables_comm::VariablesEvent;
-use amalthea::comm::variables_comm::VariablesRpcReply;
-use amalthea::comm::variables_comm::VariablesRpcRequest;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
 use ark::lsp::events::EVENTS;
@@ -102,7 +102,7 @@ fn test_environment_list() {
     });
 
     // Request a list of variables
-    let request = VariablesRpcRequest::List;
+    let request = VariablesBackendRpcRequest::List;
     let data = serde_json::to_value(request).unwrap();
     let request_id = String::from("refresh-id-1234");
     incoming_tx
@@ -122,9 +122,9 @@ fn test_environment_list() {
     };
 
     // Unmarshal the list and check for the variable we created
-    let reply: VariablesRpcReply = serde_json::from_value(data).unwrap();
+    let reply: VariablesBackendRpcReply = serde_json::from_value(data).unwrap();
     match reply {
-        VariablesRpcReply::ListReply(list) => {
+        VariablesBackendRpcReply::ListReply(list) => {
             assert!(list.variables.len() == 1);
             let var = &list.variables[0];
             assert_eq!(var.display_name, "everything");
@@ -164,7 +164,7 @@ fn test_environment_list() {
     }
 
     // Request that the environment be cleared
-    let clear = VariablesRpcRequest::Clear(ClearParams {
+    let clear = VariablesBackendRpcRequest::Clear(ClearParams {
         include_hidden_objects: true,
     });
     let data = serde_json::to_value(clear).unwrap();
@@ -206,9 +206,9 @@ fn test_environment_list() {
     };
 
     // Ensure we get a reply
-    let reply: VariablesRpcReply = serde_json::from_value(data).unwrap();
+    let reply: VariablesBackendRpcReply = serde_json::from_value(data).unwrap();
     match reply {
-        VariablesRpcReply::ClearReply() => {},
+        VariablesBackendRpcReply::ClearReply() => {},
         _ => panic!("Expected clear reply"),
     }
 
@@ -250,7 +250,7 @@ fn test_environment_list() {
     }
 
     // Request that a environment be deleted
-    let delete = VariablesRpcRequest::Delete(DeleteParams {
+    let delete = VariablesBackendRpcRequest::Delete(DeleteParams {
         names: vec![String::from("a")],
     });
     let data = serde_json::to_value(delete).unwrap();
@@ -267,10 +267,10 @@ fn test_environment_list() {
         _ => panic!("Expected RPC message"),
     };
 
-    let reply: VariablesRpcReply = serde_json::from_value(data).unwrap();
+    let reply: VariablesBackendRpcReply = serde_json::from_value(data).unwrap();
 
     match reply {
-        VariablesRpcReply::DeleteReply(update) => {
+        VariablesBackendRpcReply::DeleteReply(update) => {
             assert_eq!(update, ["a"]);
         },
         _ => panic!("Expected delete reply"),

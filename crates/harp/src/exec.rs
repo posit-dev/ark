@@ -570,7 +570,14 @@ where
 
     // Return early on success
     let msg = match out {
-        Ok(out) => return out,
+        Ok(out) => {
+            // First check for interrupts since we might just have spent some
+            // time in a sandbox
+            unsafe {
+                R_CheckUserInterrupt();
+            }
+            return out;
+        },
         Err(err) => format!("{err:}"),
     };
 
@@ -590,8 +597,8 @@ where
     // was moved to `msg` and `msg` to `robj_msg` already.
     drop(robj_msg);
 
-    // Now throw the error over the R stack
     unsafe {
+        // Now throw the error over the R stack
         Rf_errorcall(R_NilValue, R_CHAR(STRING_ELT(sexp_msg, 0)));
     }
 }
