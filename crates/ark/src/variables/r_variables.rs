@@ -210,7 +210,7 @@ impl RVariables {
         req: VariablesBackendRpcRequest,
     ) -> anyhow::Result<VariablesBackendRpcReply> {
         match req {
-            VariablesBackendRpcRequest::List() => {
+            VariablesBackendRpcRequest::List => {
                 let list = self.list_variables();
                 let count = list.len() as i64;
                 Ok(VariablesBackendRpcReply::ListReply(VariableList {

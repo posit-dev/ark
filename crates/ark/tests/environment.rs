@@ -102,7 +102,7 @@ fn test_environment_list() {
     });
 
     // Request a list of variables
-    let request = VariablesBackendRpcRequest::List();
+    let request = VariablesBackendRpcRequest::List;
     let data = serde_json::to_value(request).unwrap();
     let request_id = String::from("refresh-id-1234");
     incoming_tx

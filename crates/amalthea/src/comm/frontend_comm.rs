@@ -121,7 +121,7 @@ pub enum FrontendFrontendRpcRequest {
 	/// Returns metadata such as file path for the last editor selected by the
 	/// user. The result may be undefined if there are no active editors.
 	#[serde(rename = "last_active_editor_context")]
-	LastActiveEditorContext(),
+	LastActiveEditorContext,
 
 	/// Sleep for n seconds
 	///
@@ -189,7 +189,7 @@ pub fn frontend_frontend_reply_from_value(
 	request: &FrontendFrontendRpcRequest,
 ) -> anyhow::Result<FrontendFrontendRpcReply> {
 	match request {
-		FrontendFrontendRpcRequest::LastActiveEditorContext() => Ok(FrontendFrontendRpcReply::LastActiveEditorContextReply(serde_json::from_value(reply)?)),
+		FrontendFrontendRpcRequest::LastActiveEditorContext => Ok(FrontendFrontendRpcReply::LastActiveEditorContextReply(serde_json::from_value(reply)?)),
 		FrontendFrontendRpcRequest::DebugSleep(_) => Ok(FrontendFrontendRpcReply::DebugSleepReply()),
 	}
 }
