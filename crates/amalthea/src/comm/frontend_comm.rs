@@ -140,7 +140,7 @@ pub enum FrontendFrontendRpcReply {
 	/// Editor metadata
 	LastActiveEditorContextReply(Option<EditorContextResult>),
 
-	DebugSleepReply,
+	DebugSleepReply(),
 
 }
 
@@ -150,21 +150,32 @@ pub enum FrontendFrontendRpcReply {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params")]
 pub enum FrontendEvent {
+	/// This represents the busy state of the underlying computation engine,
+	/// not the busy state of the kernel. The kernel is busy when it is
+	/// processing a request, but the runtime is busy only when a computation
+	/// is running.
 	#[serde(rename = "busy")]
 	Busy(BusyParams),
 
+	/// Use this to clear the console.
 	#[serde(rename = "clear_console")]
 	ClearConsole,
 
+	/// This event is used to open an editor with a given file and selection.
 	#[serde(rename = "open_editor")]
 	OpenEditor(OpenEditorParams),
 
+	/// Use this for messages that require immediate attention from the user
 	#[serde(rename = "show_message")]
 	ShowMessage(ShowMessageParams),
 
+	/// Languages like R allow users to change the way their prompts look.
+	/// This event signals a change in the prompt configuration.
 	#[serde(rename = "prompt_state")]
 	PromptState(PromptStateParams),
 
+	/// This event signals a change in the working direcotry of the
+	/// interpreter
 	#[serde(rename = "working_directory")]
 	WorkingDirectory(WorkingDirectoryParams),
 
@@ -179,7 +190,7 @@ pub fn frontend_frontend_reply_from_value(
 ) -> anyhow::Result<FrontendFrontendRpcReply> {
 	match request {
 		FrontendFrontendRpcRequest::LastActiveEditorContext => Ok(FrontendFrontendRpcReply::LastActiveEditorContextReply(serde_json::from_value(reply)?)),
-		FrontendFrontendRpcRequest::DebugSleep(_) => Ok(FrontendFrontendRpcReply::DebugSleepReply),
+		FrontendFrontendRpcRequest::DebugSleep(_) => Ok(FrontendFrontendRpcReply::DebugSleepReply()),
 	}
 }
 

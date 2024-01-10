@@ -12,24 +12,24 @@ use serde::Serialize;
 /// A rendered plot
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct PlotResult {
-    /// The plot data, as a base64-encoded string
-    pub data: String,
+	/// The plot data, as a base64-encoded string
+	pub data: String,
 
-    /// The MIME type of the plot data
-    pub mime_type: String,
+	/// The MIME type of the plot data
+	pub mime_type: String
 }
 
 /// Parameters for the Render method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct RenderParams {
-    /// The requested plot height, in pixels
-    pub height: i64,
+	/// The requested plot height, in pixels
+	pub height: i64,
 
-    /// The requested plot width, in pixels
-    pub width: i64,
+	/// The requested plot width, in pixels
+	pub width: i64,
 
-    /// The pixel ratio of the display device
-    pub pixel_ratio: f64,
+	/// The pixel ratio of the display device
+	pub pixel_ratio: f64,
 }
 
 /**
@@ -38,12 +38,13 @@ pub struct RenderParams {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params")]
 pub enum PlotBackendRpcRequest {
-    /// Render a plot
-    ///
-    /// Requests a plot to be rendered at a given height and width. The plot
-    /// data is returned in a base64-encoded string.
-    #[serde(rename = "render")]
-    Render(RenderParams),
+	/// Render a plot
+	///
+	/// Requests a plot to be rendered at a given height and width. The plot
+	/// data is returned in a base64-encoded string.
+	#[serde(rename = "render")]
+	Render(RenderParams),
+
 }
 
 /**
@@ -52,8 +53,9 @@ pub enum PlotBackendRpcRequest {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "result")]
 pub enum PlotBackendRpcReply {
-    /// A rendered plot
-    RenderReply(PlotResult),
+	/// A rendered plot
+	RenderReply(PlotResult),
+
 }
 
 /**
@@ -61,14 +63,16 @@ pub enum PlotBackendRpcReply {
  */
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params")]
-pub enum PlotFrontendRpcRequest {}
+pub enum PlotFrontendRpcRequest {
+}
 
 /**
  * Frontend RPC Reply types for the plot comm
  */
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "result")]
-pub enum PlotFrontendRpcReply {}
+pub enum PlotFrontendRpcReply {
+}
 
 /**
  * Frontend events for the plot comm
@@ -76,6 +80,8 @@ pub enum PlotFrontendRpcReply {}
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params")]
 pub enum PlotEvent {
-    #[serde(rename = "update")]
-    Update,
+	#[serde(rename = "update")]
+	Update,
+
 }
+
