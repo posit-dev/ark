@@ -135,7 +135,6 @@ pub fn start_r(
     iopub_tx: Sender<IOPubMessage>,
     kernel_init_tx: Bus<KernelInfo>,
     lsp_runtime: Arc<Runtime>,
-    lsp_client: Client,
     dap: Arc<Mutex<Dap>>,
 ) {
     // Initialize global state (ensure we only do this once!)
@@ -157,7 +156,6 @@ pub fn start_r(
             iopub_tx,
             kernel_init_tx,
             lsp_runtime,
-            lsp_client,
             dap,
         ));
     });
@@ -252,8 +250,10 @@ pub struct RMain {
     // LSP tokio runtime used to spawn LSP tasks on the executor and the
     // corresponding client used to send LSP requests to the frontend.
     // Used by R callbacks, like `ps_editor()` for `utils::file.edit()`.
+    // The client is initialized on LSP start up, and is refreshed after a
+    // frontend reconnect.
     lsp_runtime: Arc<Runtime>,
-    lsp_client: Client,
+    lsp_client: Option<Client>,
 
     dap: Arc<Mutex<Dap>>,
     is_debugging: bool,
@@ -338,7 +338,6 @@ impl RMain {
         iopub_tx: Sender<IOPubMessage>,
         kernel_init_tx: Bus<KernelInfo>,
         lsp_runtime: Arc<Runtime>,
-        lsp_client: Client,
         dap: Arc<Mutex<Dap>>,
     ) -> Self {
         Self {
@@ -361,7 +360,7 @@ impl RMain {
             help_tx: None,
             help_rx: None,
             lsp_runtime,
-            lsp_client,
+            lsp_client: None,
             dap,
             is_debugging: false,
             is_busy: false,
@@ -1008,8 +1007,12 @@ impl RMain {
         &self.lsp_runtime
     }
 
-    pub fn get_lsp_client(&self) -> &Client {
-        &self.lsp_client
+    pub fn get_lsp_client(&self) -> Option<&Client> {
+        self.lsp_client.as_ref()
+    }
+
+    pub fn set_lsp_client(&mut self, client: Client) {
+        self.lsp_client = Some(client);
     }
 
     pub fn call_frontend_method(

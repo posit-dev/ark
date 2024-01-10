@@ -250,12 +250,14 @@ fn get_tasks_tx() -> Sender<RTaskMain> {
         // and set `R_MAIN_TASKS_TX`
         drop(guard);
 
+        log::info!("`tasks_tx` not yet initialized, going to sleep for 100ms.");
+
         std::thread::sleep(Duration::from_millis(100));
 
         let elapsed = now.elapsed().unwrap().as_secs();
 
         if elapsed > 50 {
-            panic!("Can't acquire `tasks_tx`.");
+            panic!("Can't acquire `tasks_tx` after 50 seconds.");
         }
     }
 }
