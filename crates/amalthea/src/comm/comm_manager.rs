@@ -230,9 +230,12 @@ impl CommManager {
                             IOPubMessage::CommMsgReply(header, payload)
                         },
                         None => {
-                            // If this is not a known request from the frontend this means this is a
-                            // new request _to_ the frontend
-                            IOPubMessage::CommMsgRequest(payload)
+                            // Didn't find it; log a warning and treat it like
+                            // an event so that the front end still gets the
+                            // data.
+                            log::warn!(
+                                "Received RPC response '{payload:?}' for unknown message ID {string}");
+                            IOPubMessage::CommMsgEvent(payload)
                         },
                     }
                 },
