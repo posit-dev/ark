@@ -207,7 +207,7 @@ pub enum VariablesBackendRpcRequest {
 	///
 	/// Returns a list of all the variables in the current session.
 	#[serde(rename = "list")]
-	List,
+	List(),
 
 	/// Clear all variables
 	///
