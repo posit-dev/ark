@@ -24,10 +24,22 @@ use crate::interface::RMain;
 use crate::r_task;
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct ConnectionTable {
+    name: String,
+    r#type: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "msg_type", rename_all = "snake_case")]
 pub enum ConnectionResponse {
-    TablesResponse { name: String, tables: Vec<String> },
-    FieldsResponse { name: String, fields: Vec<String> },
+    TablesResponse {
+        name: String,
+        tables: Vec<ConnectionTable>,
+    },
+    FieldsResponse {
+        name: String,
+        fields: Vec<String>,
+    },
     PreviewResponse,
 }
 
@@ -35,11 +47,11 @@ pub enum ConnectionResponse {
 #[serde(tag = "msg_type", rename_all = "snake_case")]
 pub enum ConnectionRequest {
     // The UI is asking for the list of tables in the connection.
-    TablesRequest,
+    TablesRequest { path: Vec<ConnectionTable> },
     // The UI is asking for the list of fields in a table.
-    FieldsRequest { table: String },
+    FieldsRequest { path: Vec<ConnectionTable> },
     // The UI asks for a DataViewer preview of the table.
-    PreviewTable { table: String },
+    PreviewTable { path: Vec<ConnectionTable> },
 }
 
 #[derive(Deserialize, Serialize)]
@@ -99,22 +111,41 @@ impl RConnection {
 
     fn handle_rpc(&self, message: ConnectionRequest) -> Result<ConnectionResponse, anyhow::Error> {
         match message {
-            ConnectionRequest::TablesRequest => {
-                let tables = r_task(|| unsafe {
-                    // returns a data.frame with columns name and type
-                    let tables = RFunction::from(".ps.connection_list_objects")
-                        .add(RObject::from(self.comm.comm_id.clone()))
-                        .param("catalog", "SQLiteConnection")
-                        .param("schema", "Default")
-                        .call()?;
+            ConnectionRequest::TablesRequest { path } => {
+                let tables = r_task(|| -> Result<_, anyhow::Error> {
+                    unsafe {
+                        let mut call = RFunction::from(".ps.connection_list_objects");
 
-                    // for now we only need the name column
-                    let names = RFunction::from("[[")
-                        .add(tables)
-                        .add(RObject::from("name"))
-                        .call()?;
+                        // returns a data.frame with columns name and type
+                        call.add(RObject::from(self.comm.comm_id.clone()));
 
-                    RObject::to::<Vec<String>>(names)
+                        for obj in path {
+                            call.param(obj.r#type.as_str(), obj.name);
+                        }
+
+                        let tables = call.call()?;
+
+                        let names = RFunction::from("[[")
+                            .add(tables.clone())
+                            .add(RObject::from("name"))
+                            .call()?;
+
+                        let types = RFunction::from("[[")
+                            .add(tables)
+                            .add(RObject::from("type"))
+                            .call()?;
+
+                        let resulting = RObject::to::<Vec<String>>(names)?
+                            .iter()
+                            .zip(RObject::to::<Vec<String>>(types)?.iter())
+                            .map(|(name, r#type)| ConnectionTable {
+                                name: name.clone(),
+                                r#type: r#type.clone(),
+                            })
+                            .collect::<Vec<_>>();
+
+                        Ok(resulting)
+                    }
                 })?;
 
                 Ok(ConnectionResponse::TablesResponse {
@@ -122,14 +153,14 @@ impl RConnection {
                     tables,
                 })
             },
-            ConnectionRequest::FieldsRequest { table } => {
+            ConnectionRequest::FieldsRequest { path } => {
                 let fields = r_task(|| unsafe {
-                    let fields = RFunction::from(".ps.connection_list_fields")
-                        .add(RObject::from(self.comm.comm_id.clone()))
-                        .param("catalog", "SQLiteConnection")
-                        .param("schema", "Default")
-                        .param("table", table)
-                        .call()?;
+                    let mut call = RFunction::from(".ps.connection_list_fields");
+                    call.add(RObject::from(self.comm.comm_id.clone()));
+                    for obj in path {
+                        call.param(obj.r#type.as_str(), obj.name);
+                    }
+                    let fields = call.call()?;
 
                     // for now we only need the name column
                     let names = RFunction::from("[[")
@@ -145,15 +176,15 @@ impl RConnection {
                     fields,
                 })
             },
-            ConnectionRequest::PreviewTable { table } => {
+            ConnectionRequest::PreviewTable { path } => {
                 // Calls back into R to get the preview data.
                 r_task(|| -> Result<(), anyhow::Error> {
-                    RFunction::from(".ps.connection_preview_object")
-                        .add(RObject::from(self.comm.comm_id.clone()))
-                        .param("catalog", "SQLiteConnection")
-                        .param("schema", "Default")
-                        .param("table", table)
-                        .call()?;
+                    let mut call = RFunction::from(".ps.connection_preview_object");
+                    call.add(RObject::from(self.comm.comm_id.clone()));
+                    for obj in path {
+                        call.param(obj.r#type.as_str(), obj.name);
+                    }
+                    call.call()?;
                     Ok(())
                 })?;
                 Ok(ConnectionResponse::PreviewResponse)
