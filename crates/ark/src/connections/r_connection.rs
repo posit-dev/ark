@@ -170,7 +170,7 @@ impl RConnection {
 
             log::trace!("Connection Pane: Received message from front end: {msg:?}");
 
-            if msg == CommMsg::Close {
+            if let CommMsg::Close = msg {
                 log::trace!("Connection Pane: Received a close message.");
                 break;
             }
