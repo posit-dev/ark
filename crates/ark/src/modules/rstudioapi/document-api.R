@@ -8,7 +8,7 @@
     # TODO: Support document IDs
     stopifnot(is.null(id))
 
-    context <- .ps.getActiveDocumentContext()
+    context <- .ps.frontend.LastActiveEditorContext()
 
     list(
         path = context$path,

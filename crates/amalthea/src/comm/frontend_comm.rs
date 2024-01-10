@@ -140,6 +140,7 @@ pub enum FrontendFrontendRpcReply {
 	/// Editor metadata
 	LastActiveEditorContextReply(Option<EditorContextResult>),
 
+	/// Reply for the debug_sleep method (no result)
 	DebugSleepReply(),
 
 }

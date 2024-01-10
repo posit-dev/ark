@@ -5,6 +5,6 @@
 #
 #
 
-.ps.getActiveDocumentContext <- function() {
-    .ps.Call("ps_get_context_active_document")
+.ps.frontend.LastActiveEditorContext <- function() {
+    .ps.Call("ps_frontend_last_active_editor_context")
 }
