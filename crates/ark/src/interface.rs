@@ -26,7 +26,7 @@ use amalthea::comm::ui_comm::BusyParams;
 use amalthea::comm::ui_comm::PromptStateParams;
 use amalthea::comm::ui_comm::ShowMessageParams;
 use amalthea::comm::ui_comm::UiFrontendEvent;
-use amalthea::comm::ui_comm::UiFrontendRpcRequest;
+use amalthea::comm::ui_comm::UiFrontendRequest;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::socket::iopub::Wait;
 use amalthea::socket::stdin::StdInRequest;
@@ -1042,7 +1042,7 @@ impl RMain {
         self.lsp_client = Some(client);
     }
 
-    pub fn call_frontend_method(&self, request: UiFrontendRpcRequest) -> anyhow::Result<RObject> {
+    pub fn call_frontend_method(&self, request: UiFrontendRequest) -> anyhow::Result<RObject> {
         log::trace!("Calling frontend method '{request:?}'");
         let (response_tx, response_rx) = bounded(1);
 

@@ -37,7 +37,7 @@ pub struct RenderParams {
  */
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params")]
-pub enum PlotBackendRpcRequest {
+pub enum PlotBackendRequest {
 	/// Render a plot
 	///
 	/// Requests a plot to be rendered at a given height and width. The plot
@@ -52,7 +52,7 @@ pub enum PlotBackendRpcRequest {
  */
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "result")]
-pub enum PlotBackendRpcReply {
+pub enum PlotBackendReply {
 	/// A rendered plot
 	RenderReply(PlotResult),
 
@@ -63,7 +63,7 @@ pub enum PlotBackendRpcReply {
  */
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params")]
-pub enum PlotFrontendRpcRequest {
+pub enum PlotFrontendRequest {
 }
 
 /**
@@ -71,7 +71,7 @@ pub enum PlotFrontendRpcRequest {
  */
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "result")]
-pub enum PlotFrontendRpcReply {
+pub enum PlotFrontendReply {
 }
 
 /**

@@ -8,7 +8,7 @@
 use serde_json::Value;
 use strum_macros::EnumString;
 
-use super::ui_comm::UiFrontendRpcRequest;
+use super::ui_comm::UiFrontendRequest;
 use crate::wire::jupyter_message::MessageType;
 
 #[derive(EnumString, PartialEq)]
@@ -55,7 +55,7 @@ pub enum CommMsg {
     Close,
 }
 
-impl MessageType for UiFrontendRpcRequest {
+impl MessageType for UiFrontendRequest {
     fn message_type() -> String {
         String::from("rpc_request")
     }

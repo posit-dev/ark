@@ -14,8 +14,8 @@ use amalthea::comm::variables_comm::RefreshParams;
 use amalthea::comm::variables_comm::UpdateParams;
 use amalthea::comm::variables_comm::Variable;
 use amalthea::comm::variables_comm::VariableList;
-use amalthea::comm::variables_comm::VariablesBackendRpcReply;
-use amalthea::comm::variables_comm::VariablesBackendRpcRequest;
+use amalthea::comm::variables_comm::VariablesBackendReply;
+use amalthea::comm::variables_comm::VariablesBackendRequest;
 use amalthea::comm::variables_comm::VariablesFrontendEvent;
 use amalthea::socket::comm::CommSocket;
 use crossbeam::channel::select;
@@ -207,44 +207,44 @@ impl RVariables {
 
     fn handle_rpc(
         &mut self,
-        req: VariablesBackendRpcRequest,
-    ) -> anyhow::Result<VariablesBackendRpcReply> {
+        req: VariablesBackendRequest,
+    ) -> anyhow::Result<VariablesBackendReply> {
         match req {
-            VariablesBackendRpcRequest::List => {
+            VariablesBackendRequest::List => {
                 let list = self.list_variables();
                 let count = list.len() as i64;
-                Ok(VariablesBackendRpcReply::ListReply(VariableList {
+                Ok(VariablesBackendReply::ListReply(VariableList {
                     variables: list,
                     length: count,
                     version: Some(self.version as i64),
                 }))
             },
-            VariablesBackendRpcRequest::Clear(params) => {
+            VariablesBackendRequest::Clear(params) => {
                 self.clear(params.include_hidden_objects)?;
                 self.update(None);
-                Ok(VariablesBackendRpcReply::ClearReply())
+                Ok(VariablesBackendReply::ClearReply())
             },
-            VariablesBackendRpcRequest::Delete(params) => {
+            VariablesBackendRequest::Delete(params) => {
                 self.delete(params.names.clone())?;
-                Ok(VariablesBackendRpcReply::DeleteReply(params.names))
+                Ok(VariablesBackendReply::DeleteReply(params.names))
             },
-            VariablesBackendRpcRequest::Inspect(params) => {
+            VariablesBackendRequest::Inspect(params) => {
                 let children = self.inspect(&params.path)?;
                 let count = children.len() as i64;
-                Ok(VariablesBackendRpcReply::InspectReply(InspectedVariable {
+                Ok(VariablesBackendReply::InspectReply(InspectedVariable {
                     children,
                     length: count,
                 }))
             },
-            VariablesBackendRpcRequest::ClipboardFormat(params) => {
+            VariablesBackendRequest::ClipboardFormat(params) => {
                 let content = self.clipboard_format(&params.path, params.format.clone())?;
-                Ok(VariablesBackendRpcReply::ClipboardFormatReply(
+                Ok(VariablesBackendReply::ClipboardFormatReply(
                     FormattedVariable { content },
                 ))
             },
-            VariablesBackendRpcRequest::View(params) => {
+            VariablesBackendRequest::View(params) => {
                 self.view(&params.path)?;
-                Ok(VariablesBackendRpcReply::ViewReply())
+                Ok(VariablesBackendReply::ViewReply())
             },
         }
     }

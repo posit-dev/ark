@@ -10,8 +10,8 @@ use amalthea::comm::base_comm::JsonRpcErrorCode;
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::ui_comm::BusyParams;
 use amalthea::comm::ui_comm::CallMethodParams;
-use amalthea::comm::ui_comm::UiBackendRpcReply;
-use amalthea::comm::ui_comm::UiBackendRpcRequest;
+use amalthea::comm::ui_comm::UiBackendReply;
+use amalthea::comm::ui_comm::UiBackendRequest;
 use amalthea::comm::ui_comm::UiFrontendEvent;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
@@ -57,7 +57,7 @@ fn test_ui_comm() {
 
         // Send a message to the frontend
         let id = String::from("test-id-1");
-        let request = UiBackendRpcRequest::CallMethod(CallMethodParams {
+        let request = UiBackendRequest::CallMethod(CallMethodParams {
             method: String::from("setConsoleWidth"),
             params: vec![Value::from(123)],
         });
@@ -75,12 +75,12 @@ fn test_ui_comm() {
         match response {
             CommMsg::Rpc(id, result) => {
                 println!("Got RPC result: {:?}", result);
-                let result = serde_json::from_value::<UiBackendRpcReply>(result).unwrap();
+                let result = serde_json::from_value::<UiBackendReply>(result).unwrap();
                 assert_eq!(id, "test-id-1");
                 // This RPC should return the old width
                 assert_eq!(
                     result,
-                    UiBackendRpcReply::CallMethodReply(Value::from(old_width))
+                    UiBackendReply::CallMethodReply(Value::from(old_width))
                 );
             },
             _ => panic!("Unexpected response: {:?}", response),
@@ -100,7 +100,7 @@ fn test_ui_comm() {
 
         // Now try to invoke an RPC that doesn't exist
         let id = String::from("test-id-2");
-        let request = UiBackendRpcRequest::CallMethod(CallMethodParams {
+        let request = UiBackendRequest::CallMethod(CallMethodParams {
             method: String::from("thisRpcDoesNotExist"),
             params: vec![],
         });

@@ -29,8 +29,8 @@ use std::io::Read;
 
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::event::CommManagerEvent;
-use amalthea::comm::plot_comm::PlotBackendRpcReply;
-use amalthea::comm::plot_comm::PlotBackendRpcRequest;
+use amalthea::comm::plot_comm::PlotBackendReply;
+use amalthea::comm::plot_comm::PlotBackendRequest;
 use amalthea::comm::plot_comm::PlotFrontendEvent;
 use amalthea::comm::plot_comm::PlotResult;
 use amalthea::socket::comm::CommInitiator;
@@ -181,11 +181,11 @@ impl DeviceContext {
 
     fn handle_rpc(
         &mut self,
-        message: PlotBackendRpcRequest,
+        message: PlotBackendRequest,
         plot_id: &String,
-    ) -> anyhow::Result<PlotBackendRpcReply> {
+    ) -> anyhow::Result<PlotBackendReply> {
         match message {
-            PlotBackendRpcRequest::Render(plot_meta) => {
+            PlotBackendRequest::Render(plot_meta) => {
                 let data = self.render_plot(
                     &plot_id,
                     plot_meta.width,
@@ -193,7 +193,7 @@ impl DeviceContext {
                     plot_meta.pixel_ratio,
                 )?;
 
-                Ok(PlotBackendRpcReply::RenderReply(PlotResult {
+                Ok(PlotBackendReply::RenderReply(PlotResult {
                     data: data.to_string(),
                     mime_type: "image/png".to_string(),
                 }))

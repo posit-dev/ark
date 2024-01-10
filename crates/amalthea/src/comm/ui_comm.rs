@@ -88,7 +88,7 @@ pub struct DebugSleepParams {
  */
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params")]
-pub enum UiBackendRpcRequest {
+pub enum UiBackendRequest {
 	/// Run a method in the interpreter and return the result to the frontend
 	///
 	/// Unlike other RPC methods, `call_method` calls into methods implemented
@@ -104,7 +104,7 @@ pub enum UiBackendRpcRequest {
  */
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "result")]
-pub enum UiBackendRpcReply {
+pub enum UiBackendReply {
 	/// The method result
 	CallMethodReply(CallMethodResult),
 
@@ -115,7 +115,7 @@ pub enum UiBackendRpcReply {
  */
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params")]
-pub enum UiFrontendRpcRequest {
+pub enum UiFrontendRequest {
 	/// Context metadata for the last editor
 	///
 	/// Returns metadata such as file path for the last editor selected by the
@@ -136,7 +136,7 @@ pub enum UiFrontendRpcRequest {
  */
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "result")]
-pub enum UiFrontendRpcReply {
+pub enum UiFrontendReply {
 	/// Editor metadata
 	LastActiveEditorContextReply(Option<EditorContextResult>),
 
@@ -187,11 +187,11 @@ pub enum UiFrontendEvent {
 */
 pub fn ui_frontend_reply_from_value(
 	reply: serde_json::Value,
-	request: &UiFrontendRpcRequest,
-) -> anyhow::Result<UiFrontendRpcReply> {
+	request: &UiFrontendRequest,
+) -> anyhow::Result<UiFrontendReply> {
 	match request {
-		UiFrontendRpcRequest::LastActiveEditorContext => Ok(UiFrontendRpcReply::LastActiveEditorContextReply(serde_json::from_value(reply)?)),
-		UiFrontendRpcRequest::DebugSleep(_) => Ok(UiFrontendRpcReply::DebugSleepReply()),
+		UiFrontendRequest::LastActiveEditorContext => Ok(UiFrontendReply::LastActiveEditorContextReply(serde_json::from_value(reply)?)),
+		UiFrontendRequest::DebugSleep(_) => Ok(UiFrontendReply::DebugSleepReply()),
 	}
 }
 
