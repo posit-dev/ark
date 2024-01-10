@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::result::Result::Err;
 
 use amalthea::comm::ui_comm::BusyParams;
-use amalthea::comm::ui_comm::UiEvent;
+use amalthea::comm::ui_comm::UiFrontendEvent;
 use amalthea::comm::ui_comm::WorkingDirectoryParams;
 use amalthea::wire::input_request::CommRequest;
 use anyhow::Result;
@@ -66,7 +66,7 @@ impl Kernel {
                 false
             }
         });
-        self.send_frontend_event(UiEvent::Busy(BusyParams { busy }));
+        self.send_frontend_event(UiFrontendEvent::Busy(BusyParams { busy }));
     }
 
     /// Polls for changes to the working directory, and sends an event to the
@@ -89,7 +89,7 @@ impl Kernel {
             }
 
             // Deliver event to client
-            self.send_frontend_event(UiEvent::WorkingDirectory(WorkingDirectoryParams {
+            self.send_frontend_event(UiFrontendEvent::WorkingDirectory(WorkingDirectoryParams {
                 directory: current_dir.to_string_lossy().to_string(),
             }));
         };
@@ -102,7 +102,7 @@ impl Kernel {
     }
 
     /// Send events or requests to the frontend (Positron-specific)
-    pub fn send_frontend_event(&self, event: UiEvent) {
+    pub fn send_frontend_event(&self, event: UiFrontendEvent) {
         self.send_frontend(PositronFrontendMessage::Event(event))
     }
     pub fn send_frontend_request(&self, request: CommRequest) {

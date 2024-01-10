@@ -8,7 +8,7 @@
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::ui_comm::UiBackendRpcReply;
 use amalthea::comm::ui_comm::UiBackendRpcRequest;
-use amalthea::comm::ui_comm::UiEvent;
+use amalthea::comm::ui_comm::UiFrontendEvent;
 use amalthea::socket::comm::CommSocket;
 use amalthea::socket::stdin::StdInRequest;
 use amalthea::wire::input_request::CommRequest;
@@ -26,7 +26,7 @@ use crate::r_task;
 
 #[derive(Debug)]
 pub enum PositronFrontendMessage {
-    Event(UiEvent),
+    Event(UiFrontendEvent),
     Request(CommRequest),
 }
 
@@ -97,7 +97,7 @@ impl PositronFrontend {
         }
     }
 
-    fn dispatch_event(&self, event: &UiEvent) {
+    fn dispatch_event(&self, event: &UiFrontendEvent) {
         let json = serde_json::to_value(event).unwrap();
 
         // Deliver the event to the front end over the comm channel

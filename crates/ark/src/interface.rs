@@ -25,7 +25,7 @@ use amalthea::comm::ui_comm::ui_frontend_reply_from_value;
 use amalthea::comm::ui_comm::BusyParams;
 use amalthea::comm::ui_comm::PromptStateParams;
 use amalthea::comm::ui_comm::ShowMessageParams;
-use amalthea::comm::ui_comm::UiEvent;
+use amalthea::comm::ui_comm::UiFrontendEvent;
 use amalthea::comm::ui_comm::UiFrontendRpcRequest;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::socket::iopub::Wait;
@@ -534,7 +534,7 @@ impl RMain {
                 // custom prompts set by users, e.g. `options(prompt = ,
                 // continue = )`, as well as debugging prompts, e.g. after a
                 // call to `browser()`.
-                let event = UiEvent::PromptState(PromptStateParams {
+                let event = UiFrontendEvent::PromptState(PromptStateParams {
                     input_prompt: info.input_prompt.clone(),
                     continuation_prompt: info.continuation_prompt.clone(),
                 });
@@ -935,7 +935,7 @@ impl RMain {
 
         // Create an event representing the new busy state
         self.is_busy = which != 0;
-        let event = UiEvent::Busy(BusyParams { busy: self.is_busy });
+        let event = UiFrontendEvent::Busy(BusyParams { busy: self.is_busy });
 
         // Wait for a lock on the kernel and have it deliver the event to
         // the front end
@@ -948,7 +948,7 @@ impl RMain {
         let message = unsafe { CStr::from_ptr(buf) };
 
         // Create an event representing the message
-        let event = UiEvent::ShowMessage(ShowMessageParams {
+        let event = UiFrontendEvent::ShowMessage(ShowMessageParams {
             message: message.to_str().unwrap().to_string(),
         });
 

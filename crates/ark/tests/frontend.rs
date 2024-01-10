@@ -12,7 +12,7 @@ use amalthea::comm::ui_comm::BusyParams;
 use amalthea::comm::ui_comm::CallMethodParams;
 use amalthea::comm::ui_comm::UiBackendRpcReply;
 use amalthea::comm::ui_comm::UiBackendRpcRequest;
-use amalthea::comm::ui_comm::UiEvent;
+use amalthea::comm::ui_comm::UiFrontendEvent;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
 use amalthea::socket::stdin::StdInRequest;
@@ -127,9 +127,9 @@ fn test_ui_comm() {
         // Mark not busy (this prevents the frontend comm from being closed due to
         // the Sender being dropped)
         frontend
-            .send(PositronFrontendMessage::Event(UiEvent::Busy(BusyParams {
-                busy: false,
-            })))
+            .send(PositronFrontendMessage::Event(UiFrontendEvent::Busy(
+                BusyParams { busy: false },
+            )))
             .unwrap();
     });
 }

@@ -11,7 +11,7 @@ use amalthea::comm::variables_comm::ClearParams;
 use amalthea::comm::variables_comm::DeleteParams;
 use amalthea::comm::variables_comm::VariablesBackendRpcReply;
 use amalthea::comm::variables_comm::VariablesBackendRpcRequest;
-use amalthea::comm::variables_comm::VariablesEvent;
+use amalthea::comm::variables_comm::VariablesFrontendEvent;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
 use ark::lsp::events::EVENTS;
@@ -84,9 +84,9 @@ fn test_environment_list() {
 
     // Ensure we got a list of variables by unmarshalling the JSON. The list
     // should be empty since we don't have any variables in the R environment.
-    let evt: VariablesEvent = serde_json::from_value(data).unwrap();
+    let evt: VariablesFrontendEvent = serde_json::from_value(data).unwrap();
     match evt {
-        VariablesEvent::Refresh(params) => {
+        VariablesFrontendEvent::Refresh(params) => {
             assert!(params.variables.len() == 0);
             assert_eq!(params.version, 1);
         },
@@ -151,9 +151,9 @@ fn test_environment_list() {
     };
 
     // Unmarshal the list and check for the variable we created
-    let evt: VariablesEvent = serde_json::from_value(data).unwrap();
+    let evt: VariablesFrontendEvent = serde_json::from_value(data).unwrap();
     match evt {
-        VariablesEvent::Update(params) => {
+        VariablesFrontendEvent::Update(params) => {
             assert_eq!(params.assigned.len(), 1);
             assert_eq!(params.removed.len(), 1);
             assert_eq!(params.assigned[0].display_name, "nothing");
@@ -183,9 +183,9 @@ fn test_environment_list() {
     };
 
     // Ensure we get an event notifying us of the change
-    let evt: VariablesEvent = serde_json::from_value(data).unwrap();
+    let evt: VariablesFrontendEvent = serde_json::from_value(data).unwrap();
     match evt {
-        VariablesEvent::Update(params) => {
+        VariablesFrontendEvent::Update(params) => {
             assert_eq!(params.assigned.len(), 0);
             assert_eq!(params.removed.len(), 1);
             assert_eq!(params.version, 4);
@@ -239,9 +239,9 @@ fn test_environment_list() {
         _ => panic!("Expected data message, got {:?}", msg),
     };
 
-    let evt: VariablesEvent = serde_json::from_value(data).unwrap();
+    let evt: VariablesFrontendEvent = serde_json::from_value(data).unwrap();
     match evt {
-        VariablesEvent::Update(params) => {
+        VariablesFrontendEvent::Update(params) => {
             assert_eq!(params.assigned.len(), 2);
             assert_eq!(params.removed.len(), 0);
             assert_eq!(params.version, 5);

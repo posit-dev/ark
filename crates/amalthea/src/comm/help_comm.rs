@@ -92,7 +92,7 @@ pub enum HelpFrontendRpcReply {
  */
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params")]
-pub enum HelpEvent {
+pub enum HelpFrontendEvent {
 	#[serde(rename = "show_help")]
 	ShowHelp(ShowHelpParams),
 

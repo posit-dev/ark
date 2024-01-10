@@ -290,7 +290,7 @@ pub enum VariablesFrontendRpcReply {
  */
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params")]
-pub enum VariablesEvent {
+pub enum VariablesFrontendEvent {
 	/// Updates the variables in the current session.
 	#[serde(rename = "update")]
 	Update(UpdateParams),

@@ -16,7 +16,7 @@ use amalthea::comm::variables_comm::Variable;
 use amalthea::comm::variables_comm::VariableList;
 use amalthea::comm::variables_comm::VariablesBackendRpcReply;
 use amalthea::comm::variables_comm::VariablesBackendRpcRequest;
-use amalthea::comm::variables_comm::VariablesEvent;
+use amalthea::comm::variables_comm::VariablesFrontendEvent;
 use amalthea::socket::comm::CommSocket;
 use crossbeam::channel::select;
 use crossbeam::channel::unbounded;
@@ -118,7 +118,7 @@ impl RVariables {
         // Perform the initial environment scan and deliver to the front end
         let variables = self.list_variables();
         let length = variables.len() as i64;
-        let event = VariablesEvent::Refresh(RefreshParams {
+        let event = VariablesFrontendEvent::Refresh(RefreshParams {
             variables,
             length,
             version: self.version as i64,
@@ -329,7 +329,7 @@ impl RVariables {
         })
     }
 
-    fn send_event(&mut self, message: VariablesEvent, request_id: Option<String>) {
+    fn send_event(&mut self, message: VariablesFrontendEvent, request_id: Option<String>) {
         let data = serde_json::to_value(message);
 
         match data {
@@ -424,7 +424,7 @@ impl RVariables {
 
         if assigned.len() > 0 || removed.len() > 0 || request_id.is_some() {
             // Send the message if anything changed or if this came from a request
-            let event = VariablesEvent::Update(UpdateParams {
+            let event = VariablesFrontendEvent::Update(UpdateParams {
                 assigned,
                 removed,
                 version: self.version as i64,

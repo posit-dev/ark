@@ -79,7 +79,7 @@ pub enum PlotFrontendRpcReply {
  */
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params")]
-pub enum PlotEvent {
+pub enum PlotFrontendEvent {
 	#[serde(rename = "update")]
 	Update,
 

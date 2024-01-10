@@ -31,7 +31,7 @@ use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::comm::plot_comm::PlotBackendRpcReply;
 use amalthea::comm::plot_comm::PlotBackendRpcRequest;
-use amalthea::comm::plot_comm::PlotEvent;
+use amalthea::comm::plot_comm::PlotFrontendEvent;
 use amalthea::comm::plot_comm::PlotResult;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
@@ -303,7 +303,7 @@ impl DeviceContext {
 
         log::info!("Sending plot update message for id: {id}.");
 
-        let value = serde_json::to_value(PlotEvent::Update).unwrap();
+        let value = serde_json::to_value(PlotFrontendEvent::Update).unwrap();
 
         // Tell Positron we have an updated plot that it should request a rerender for
         socket

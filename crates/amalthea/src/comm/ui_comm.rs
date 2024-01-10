@@ -150,7 +150,7 @@ pub enum UiFrontendRpcReply {
  */
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params")]
-pub enum UiEvent {
+pub enum UiFrontendEvent {
 	/// This represents the busy state of the underlying computation engine,
 	/// not the busy state of the kernel. The kernel is busy when it is
 	/// processing a request, but the runtime is busy only when a computation

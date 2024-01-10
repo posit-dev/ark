@@ -8,7 +8,7 @@
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::help_comm::HelpBackendRpcReply;
 use amalthea::comm::help_comm::HelpBackendRpcRequest;
-use amalthea::comm::help_comm::HelpEvent;
+use amalthea::comm::help_comm::HelpFrontendEvent;
 use amalthea::comm::help_comm::ShowHelpKind;
 use amalthea::comm::help_comm::ShowHelpParams;
 use amalthea::socket::comm::CommSocket;
@@ -223,7 +223,7 @@ impl RHelp {
         let replacement = format!("http://127.0.0.1:{}/", proxy_port);
 
         let url = url.replace(prefix.as_str(), replacement.as_str());
-        let msg = HelpEvent::ShowHelp(ShowHelpParams {
+        let msg = HelpFrontendEvent::ShowHelp(ShowHelpParams {
             content: url,
             kind: ShowHelpKind::Url,
             focus: true,
