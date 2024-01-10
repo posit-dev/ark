@@ -15,8 +15,8 @@ use crate::interface::RMain;
 #[harp::register]
 pub unsafe extern "C" fn ps_frontend_last_active_editor_context() -> anyhow::Result<SEXP> {
     let main = RMain::get();
-    let result = main.call_frontend_method(FrontendFrontendRpcRequest::LastActiveEditorContext)?;
-    Ok(result.sexp)
+    let out = main.call_frontend_method(FrontendFrontendRpcRequest::LastActiveEditorContext)?;
+    Ok(out.sexp)
 }
 
 #[harp::register]
@@ -25,7 +25,6 @@ pub unsafe extern "C" fn ps_frontend_debug_sleep(ms: SEXP) -> anyhow::Result<SEX
     let params = DebugSleepParams { ms };
 
     let main = RMain::get();
-    let _ = main.call_frontend_method(FrontendFrontendRpcRequest::DebugSleep(params))?;
-
-    Ok(RObject::null().sexp)
+    let out = main.call_frontend_method(FrontendFrontendRpcRequest::DebugSleep(params))?;
+    Ok(out.sexp)
 }
