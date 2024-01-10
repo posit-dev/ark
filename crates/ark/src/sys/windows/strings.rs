@@ -27,31 +27,13 @@ pub fn code_page_to_utf8(x: &[u8], code_page: CP) -> anyhow::Result<String> {
 
     let x = MultiByteToWideChar(code_page, flags, x)?;
 
-    // TODO: Windows
-    // winsafe currently adds an extra byte for safety, but that makes the strings too long
-    // and in our experience it has never been necessary. Remove this if it gets fixed.
-    // https://github.com/rodrigocfd/winsafe/issues/111
-    let size = x.len() - 1;
-    let x = &x[..size];
-
-    // `WC::NoValue` doesn't exist, so we make it unsafely:
-    // https://github.com/rodrigocfd/winsafe/issues/110
-    let flags = unsafe { WC::from_raw(0) };
+    let flags = WC::NoValue;
     let default_char = None;
     let used_default_char = None;
 
-    let x = WideCharToMultiByte(CP::UTF8, flags, x, default_char, used_default_char)?;
+    let x = WideCharToMultiByte(CP::UTF8, flags, &x, default_char, used_default_char)?;
 
-    // TODO: Windows
-    // winsafe currently adds an extra byte for safety, but that makes the strings too long
-    // and in our experience it has never been necessary. Remove this if it gets fixed.
-    // https://github.com/rodrigocfd/winsafe/issues/111
-    let size = x.len() - 1;
-    let x = &x[..size];
-
-    let x = std::str::from_utf8(x)?;
-
-    let x = x.to_string();
+    let x = String::from_utf8(x)?;
 
     Ok(x)
 }
