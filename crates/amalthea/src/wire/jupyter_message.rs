@@ -11,7 +11,7 @@ use serde::Serialize;
 use super::client_event::ClientEvent;
 use super::stream::StreamOutput;
 use crate::comm::base_comm::JsonRpcReply;
-use crate::comm::frontend_comm::FrontendFrontendRpcRequest;
+use crate::comm::ui_comm::UiFrontendRpcRequest;
 use crate::error::Error;
 use crate::session::Session;
 use crate::socket::socket::Socket;
@@ -100,7 +100,7 @@ pub enum Message {
     CommInfoRequest(JupyterMessage<CommInfoRequest>),
     CommOpen(JupyterMessage<CommOpen>),
     CommMsg(JupyterMessage<CommWireMsg>),
-    CommRequest(JupyterMessage<FrontendFrontendRpcRequest>),
+    CommRequest(JupyterMessage<UiFrontendRpcRequest>),
     CommReply(JupyterMessage<JsonRpcReply>),
     CommClose(JupyterMessage<CommClose>),
     ClientEvent(JupyterMessage<ClientEvent>),
@@ -219,7 +219,7 @@ impl TryFrom<&WireMessage> for Message {
             return Ok(Message::InputRequest(JupyterMessage::try_from(msg)?));
         } else if kind == StreamOutput::message_type() {
             return Ok(Message::StreamOutput(JupyterMessage::try_from(msg)?));
-        } else if kind == FrontendFrontendRpcRequest::message_type() {
+        } else if kind == UiFrontendRpcRequest::message_type() {
             return Ok(Message::CommRequest(JupyterMessage::try_from(msg)?));
         } else if kind == JsonRpcReply::message_type() {
             return Ok(Message::CommReply(JupyterMessage::try_from(msg)?));

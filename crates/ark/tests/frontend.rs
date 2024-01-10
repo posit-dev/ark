@@ -8,11 +8,11 @@
 use amalthea::comm::base_comm::JsonRpcError;
 use amalthea::comm::base_comm::JsonRpcErrorCode;
 use amalthea::comm::comm_channel::CommMsg;
-use amalthea::comm::frontend_comm::BusyParams;
-use amalthea::comm::frontend_comm::CallMethodParams;
-use amalthea::comm::frontend_comm::FrontendBackendRpcReply;
-use amalthea::comm::frontend_comm::FrontendBackendRpcRequest;
-use amalthea::comm::frontend_comm::FrontendEvent;
+use amalthea::comm::ui_comm::BusyParams;
+use amalthea::comm::ui_comm::CallMethodParams;
+use amalthea::comm::ui_comm::UiBackendRpcReply;
+use amalthea::comm::ui_comm::UiBackendRpcRequest;
+use amalthea::comm::ui_comm::UiEvent;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
 use amalthea::socket::stdin::StdInRequest;
@@ -30,7 +30,7 @@ use serde_json::Value;
  * Basic test for the frontend comm.
  */
 #[test]
-fn test_frontend_comm() {
+fn test_ui_comm() {
     r_test(|| {
         // Create a sender/receiver pair for the comm channel.
         let comm = CommSocket::new(
@@ -57,7 +57,7 @@ fn test_frontend_comm() {
 
         // Send a message to the frontend
         let id = String::from("test-id-1");
-        let request = FrontendBackendRpcRequest::CallMethod(CallMethodParams {
+        let request = UiBackendRpcRequest::CallMethod(CallMethodParams {
             method: String::from("setConsoleWidth"),
             params: vec![Value::from(123)],
         });
@@ -75,12 +75,12 @@ fn test_frontend_comm() {
         match response {
             CommMsg::Rpc(id, result) => {
                 println!("Got RPC result: {:?}", result);
-                let result = serde_json::from_value::<FrontendBackendRpcReply>(result).unwrap();
+                let result = serde_json::from_value::<UiBackendRpcReply>(result).unwrap();
                 assert_eq!(id, "test-id-1");
                 // This RPC should return the old width
                 assert_eq!(
                     result,
-                    FrontendBackendRpcReply::CallMethodReply(Value::from(old_width))
+                    UiBackendRpcReply::CallMethodReply(Value::from(old_width))
                 );
             },
             _ => panic!("Unexpected response: {:?}", response),
@@ -100,7 +100,7 @@ fn test_frontend_comm() {
 
         // Now try to invoke an RPC that doesn't exist
         let id = String::from("test-id-2");
-        let request = FrontendBackendRpcRequest::CallMethod(CallMethodParams {
+        let request = UiBackendRpcRequest::CallMethod(CallMethodParams {
             method: String::from("thisRpcDoesNotExist"),
             params: vec![],
         });
@@ -127,9 +127,9 @@ fn test_frontend_comm() {
         // Mark not busy (this prevents the frontend comm from being closed due to
         // the Sender being dropped)
         frontend
-            .send(PositronFrontendMessage::Event(FrontendEvent::Busy(
-                BusyParams { busy: false },
-            )))
+            .send(PositronFrontendMessage::Event(UiEvent::Busy(BusyParams {
+                busy: false,
+            })))
             .unwrap();
     });
 }

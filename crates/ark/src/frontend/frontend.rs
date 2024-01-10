@@ -6,9 +6,9 @@
 //
 
 use amalthea::comm::comm_channel::CommMsg;
-use amalthea::comm::frontend_comm::FrontendBackendRpcReply;
-use amalthea::comm::frontend_comm::FrontendBackendRpcRequest;
-use amalthea::comm::frontend_comm::FrontendEvent;
+use amalthea::comm::ui_comm::UiBackendRpcReply;
+use amalthea::comm::ui_comm::UiBackendRpcRequest;
+use amalthea::comm::ui_comm::UiEvent;
 use amalthea::socket::comm::CommSocket;
 use amalthea::socket::stdin::StdInRequest;
 use amalthea::wire::input_request::CommRequest;
@@ -26,7 +26,7 @@ use crate::r_task;
 
 #[derive(Debug)]
 pub enum PositronFrontendMessage {
-    Event(FrontendEvent),
+    Event(UiEvent),
     Request(CommRequest),
 }
 
@@ -97,7 +97,7 @@ impl PositronFrontend {
         }
     }
 
-    fn dispatch_event(&self, event: &FrontendEvent) {
+    fn dispatch_event(&self, event: &UiEvent) {
         let json = serde_json::to_value(event).unwrap();
 
         // Deliver the event to the front end over the comm channel
@@ -136,10 +136,10 @@ impl PositronFrontend {
      */
     fn handle_rpc(
         &self,
-        request: FrontendBackendRpcRequest,
-    ) -> anyhow::Result<FrontendBackendRpcReply, anyhow::Error> {
+        request: UiBackendRpcRequest,
+    ) -> anyhow::Result<UiBackendRpcReply, anyhow::Error> {
         let request = match request {
-            FrontendBackendRpcRequest::CallMethod(request) => request,
+            UiBackendRpcRequest::CallMethod(request) => request,
         };
 
         log::trace!("Handling '{}' frontend RPC method", request.method);
@@ -177,7 +177,7 @@ impl PositronFrontend {
             Value::try_from(result)
         })?;
 
-        Ok(FrontendBackendRpcReply::CallMethodReply(result))
+        Ok(UiBackendRpcReply::CallMethodReply(result))
     }
 
     fn call_frontend_method(&self, request: CommRequest) -> anyhow::Result<()> {

@@ -11,7 +11,7 @@ use serde::Serialize;
 
 use super::originator::Originator;
 use crate::comm::base_comm::JsonRpcReply;
-use crate::comm::frontend_comm::FrontendFrontendRpcRequest;
+use crate::comm::ui_comm::UiFrontendRpcRequest;
 use crate::wire::jupyter_message::MessageType;
 
 /// Represents a request from the kernel to the front end to prompt the user for
@@ -52,7 +52,7 @@ pub struct CommRequest {
     pub response_tx: Sender<StdInRpcReply>,
 
     /// The actual comm request
-    pub request: FrontendFrontendRpcRequest,
+    pub request: UiFrontendRpcRequest,
 }
 
 #[derive(Debug, Clone)]

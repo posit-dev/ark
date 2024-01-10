@@ -21,12 +21,12 @@ use std::time::Duration;
 
 use amalthea::comm::base_comm::JsonRpcReply;
 use amalthea::comm::event::CommManagerEvent;
-use amalthea::comm::frontend_comm::frontend_frontend_reply_from_value;
-use amalthea::comm::frontend_comm::BusyParams;
-use amalthea::comm::frontend_comm::FrontendEvent;
-use amalthea::comm::frontend_comm::FrontendFrontendRpcRequest;
-use amalthea::comm::frontend_comm::PromptStateParams;
-use amalthea::comm::frontend_comm::ShowMessageParams;
+use amalthea::comm::ui_comm::ui_frontend_reply_from_value;
+use amalthea::comm::ui_comm::BusyParams;
+use amalthea::comm::ui_comm::PromptStateParams;
+use amalthea::comm::ui_comm::ShowMessageParams;
+use amalthea::comm::ui_comm::UiEvent;
+use amalthea::comm::ui_comm::UiFrontendRpcRequest;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::socket::iopub::Wait;
 use amalthea::socket::stdin::StdInRequest;
@@ -534,7 +534,7 @@ impl RMain {
                 // custom prompts set by users, e.g. `options(prompt = ,
                 // continue = )`, as well as debugging prompts, e.g. after a
                 // call to `browser()`.
-                let event = FrontendEvent::PromptState(PromptStateParams {
+                let event = UiEvent::PromptState(PromptStateParams {
                     input_prompt: info.input_prompt.clone(),
                     continuation_prompt: info.continuation_prompt.clone(),
                 });
@@ -935,7 +935,7 @@ impl RMain {
 
         // Create an event representing the new busy state
         self.is_busy = which != 0;
-        let event = FrontendEvent::Busy(BusyParams { busy: self.is_busy });
+        let event = UiEvent::Busy(BusyParams { busy: self.is_busy });
 
         // Wait for a lock on the kernel and have it deliver the event to
         // the front end
@@ -948,7 +948,7 @@ impl RMain {
         let message = unsafe { CStr::from_ptr(buf) };
 
         // Create an event representing the message
-        let event = FrontendEvent::ShowMessage(ShowMessageParams {
+        let event = UiEvent::ShowMessage(ShowMessageParams {
             message: message.to_str().unwrap().to_string(),
         });
 
@@ -1042,10 +1042,7 @@ impl RMain {
         self.lsp_client = Some(client);
     }
 
-    pub fn call_frontend_method(
-        &self,
-        request: FrontendFrontendRpcRequest,
-    ) -> anyhow::Result<RObject> {
+    pub fn call_frontend_method(&self, request: UiFrontendRpcRequest) -> anyhow::Result<RObject> {
         log::trace!("Calling frontend method '{request:?}'");
         let (response_tx, response_rx) = bounded(1);
 
@@ -1078,7 +1075,7 @@ impl RMain {
                     // Deserialize to Rust first to verify the OpenRPC contract.
                     // Errors are propagated to R.
                     if let Err(err) =
-                        frontend_frontend_reply_from_value(response.result.clone(), &request)
+                        ui_frontend_reply_from_value(response.result.clone(), &request)
                     {
                         anyhow::bail!("Can't deserialize RPC response for {request:?}:\n{err:?}");
                     }

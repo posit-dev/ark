@@ -3,7 +3,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 //
-// AUTO-GENERATED from frontend.json; do not edit.
+// AUTO-GENERATED from ui.json; do not edit.
 //
 
 use serde::Deserialize;
@@ -84,11 +84,11 @@ pub struct DebugSleepParams {
 }
 
 /**
- * Backend RPC request types for the frontend comm
+ * Backend RPC request types for the ui comm
  */
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params")]
-pub enum FrontendBackendRpcRequest {
+pub enum UiBackendRpcRequest {
 	/// Run a method in the interpreter and return the result to the frontend
 	///
 	/// Unlike other RPC methods, `call_method` calls into methods implemented
@@ -100,22 +100,22 @@ pub enum FrontendBackendRpcRequest {
 }
 
 /**
- * Backend RPC Reply types for the frontend comm
+ * Backend RPC Reply types for the ui comm
  */
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "result")]
-pub enum FrontendBackendRpcReply {
+pub enum UiBackendRpcReply {
 	/// The method result
 	CallMethodReply(CallMethodResult),
 
 }
 
 /**
- * Frontend RPC request types for the frontend comm
+ * Frontend RPC request types for the ui comm
  */
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params")]
-pub enum FrontendFrontendRpcRequest {
+pub enum UiFrontendRpcRequest {
 	/// Context metadata for the last editor
 	///
 	/// Returns metadata such as file path for the last editor selected by the
@@ -132,11 +132,11 @@ pub enum FrontendFrontendRpcRequest {
 }
 
 /**
- * Frontend RPC Reply types for the frontend comm
+ * Frontend RPC Reply types for the ui comm
  */
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "result")]
-pub enum FrontendFrontendRpcReply {
+pub enum UiFrontendRpcReply {
 	/// Editor metadata
 	LastActiveEditorContextReply(Option<EditorContextResult>),
 
@@ -146,11 +146,11 @@ pub enum FrontendFrontendRpcReply {
 }
 
 /**
- * Frontend events for the frontend comm
+ * Frontend events for the ui comm
  */
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params")]
-pub enum FrontendEvent {
+pub enum UiEvent {
 	/// This represents the busy state of the underlying computation engine,
 	/// not the busy state of the kernel. The kernel is busy when it is
 	/// processing a request, but the runtime is busy only when a computation
@@ -185,13 +185,13 @@ pub enum FrontendEvent {
 /**
 * Conversion of JSON values to frontend RPC Reply types
 */
-pub fn frontend_frontend_reply_from_value(
+pub fn ui_frontend_reply_from_value(
 	reply: serde_json::Value,
-	request: &FrontendFrontendRpcRequest,
-) -> anyhow::Result<FrontendFrontendRpcReply> {
+	request: &UiFrontendRpcRequest,
+) -> anyhow::Result<UiFrontendRpcReply> {
 	match request {
-		FrontendFrontendRpcRequest::LastActiveEditorContext => Ok(FrontendFrontendRpcReply::LastActiveEditorContextReply(serde_json::from_value(reply)?)),
-		FrontendFrontendRpcRequest::DebugSleep(_) => Ok(FrontendFrontendRpcReply::DebugSleepReply()),
+		UiFrontendRpcRequest::LastActiveEditorContext => Ok(UiFrontendRpcReply::LastActiveEditorContextReply(serde_json::from_value(reply)?)),
+		UiFrontendRpcRequest::DebugSleep(_) => Ok(UiFrontendRpcReply::DebugSleepReply()),
 	}
 }
 

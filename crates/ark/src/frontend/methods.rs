@@ -5,8 +5,8 @@
 //
 //
 
-use amalthea::comm::frontend_comm::DebugSleepParams;
-use amalthea::comm::frontend_comm::FrontendFrontendRpcRequest;
+use amalthea::comm::ui_comm::DebugSleepParams;
+use amalthea::comm::ui_comm::UiFrontendRpcRequest;
 use harp::object::RObject;
 use libR_shim::SEXP;
 
@@ -15,7 +15,7 @@ use crate::interface::RMain;
 #[harp::register]
 pub unsafe extern "C" fn ps_frontend_last_active_editor_context() -> anyhow::Result<SEXP> {
     let main = RMain::get();
-    let out = main.call_frontend_method(FrontendFrontendRpcRequest::LastActiveEditorContext)?;
+    let out = main.call_frontend_method(UiFrontendRpcRequest::LastActiveEditorContext)?;
     Ok(out.sexp)
 }
 
@@ -26,6 +26,6 @@ pub unsafe extern "C" fn ps_frontend_debug_sleep(ms: SEXP) -> anyhow::Result<SEX
     };
 
     let main = RMain::get();
-    let out = main.call_frontend_method(FrontendFrontendRpcRequest::DebugSleep(params))?;
+    let out = main.call_frontend_method(UiFrontendRpcRequest::DebugSleep(params))?;
     Ok(out.sexp)
 }
