@@ -108,8 +108,3 @@
         NULL
     }
 }
-
-.ps.frontend.debugSleep <- function(ms) {
-    stopifnot(is.numeric(ms) && length(ms) == 1 && !is.na(ms))
-    .ps.Call("ps_frontend_debug_sleep", ms)
-}
