@@ -120,7 +120,7 @@ impl UiComm {
 
         if self
             .comm
-            .handle_request(message.clone(), |req| self.handle_rpc(req))
+            .handle_request(message.clone(), |req| self.handle_backend_method(req))
         {
             return true;
         }
@@ -134,7 +134,7 @@ impl UiComm {
     /**
      * Handles an RPC request from the frontend.
      */
-    fn handle_rpc(
+    fn handle_backend_method(
         &self,
         request: UiBackendRequest,
     ) -> anyhow::Result<UiBackendReply, anyhow::Error> {
@@ -180,6 +180,9 @@ impl UiComm {
         Ok(UiBackendReply::CallMethodReply(result))
     }
 
+    /**
+     * Send an RPC request to the frontend.
+     */
     fn call_frontend_method(&self, request: UiCommFrontendRequest) -> anyhow::Result<()> {
         let comm_msg = StdInRequest::Comm(request);
         self.stdin_request_tx.send(comm_msg)?;
