@@ -43,7 +43,7 @@ impl MessageType for InputRequest {
 
 /// A Comm request for StdIn
 #[derive(Debug, Clone)]
-pub struct CommRequest {
+pub struct UiCommFrontendRequest {
     /// The identity of the currently active `execute_request` that caused this
     /// comm request
     pub originator: Option<Originator>,

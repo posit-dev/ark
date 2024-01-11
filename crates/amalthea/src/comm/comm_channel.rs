@@ -33,7 +33,7 @@ pub enum Comm {
     Help,
 
     /// The Positron frontend.
-    FrontEnd,
+    Ui,
 
     /// Some other comm with a custom name.
     Other(String),

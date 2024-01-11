@@ -15,16 +15,16 @@ use crate::comm::base_comm::JsonRpcErrorData;
 use crate::comm::base_comm::JsonRpcReply;
 use crate::session::Session;
 use crate::wire::input_reply::InputReply;
-use crate::wire::input_request::CommRequest;
 use crate::wire::input_request::ShellInputRequest;
 use crate::wire::input_request::StdInRpcReply;
+use crate::wire::input_request::UiCommFrontendRequest;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
 use crate::wire::jupyter_message::OutboundMessage;
 
 pub enum StdInRequest {
     Input(ShellInputRequest),
-    Comm(CommRequest),
+    Comm(UiCommFrontendRequest),
 }
 
 enum StdInReplySender {

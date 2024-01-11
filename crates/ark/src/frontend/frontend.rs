@@ -1,5 +1,5 @@
 //
-// frontend.rs
+// ui.rs
 //
 // Copyright (C) 2023 by Posit Software, PBC
 //
@@ -11,7 +11,7 @@ use amalthea::comm::ui_comm::UiBackendRequest;
 use amalthea::comm::ui_comm::UiFrontendEvent;
 use amalthea::socket::comm::CommSocket;
 use amalthea::socket::stdin::StdInRequest;
-use amalthea::wire::input_request::CommRequest;
+use amalthea::wire::input_request::UiCommFrontendRequest;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use crossbeam::select;
@@ -25,29 +25,29 @@ use stdext::unwrap;
 use crate::r_task;
 
 #[derive(Debug)]
-pub enum PositronFrontendMessage {
+pub enum UiCommMessage {
     Event(UiFrontendEvent),
-    Request(CommRequest),
+    Request(UiCommFrontendRequest),
 }
 
-/// PositronFrontend is a wrapper around a comm channel whose lifetime matches
-/// that of the Positron frontend. It is used to perform communication with the
+/// UiComm is a wrapper around a comm channel whose lifetime matches
+/// that of the Positron UI frontend. It is used to perform communication with the
 /// frontend that isn't scoped to any particular view.
-pub struct PositronFrontend {
+pub struct UiComm {
     comm: CommSocket,
-    frontend_rx: Receiver<PositronFrontendMessage>,
+    frontend_rx: Receiver<UiCommMessage>,
     stdin_request_tx: Sender<StdInRequest>,
 }
 
-impl PositronFrontend {
+impl UiComm {
     pub fn start(
         comm: CommSocket,
         stdin_request_tx: Sender<StdInRequest>,
-    ) -> Sender<PositronFrontendMessage> {
+    ) -> Sender<UiCommMessage> {
         // Create a sender-receiver pair for Positron global events
-        let (frontend_tx, frontend_rx) = crossbeam::channel::unbounded::<PositronFrontendMessage>();
+        let (frontend_tx, frontend_rx) = crossbeam::channel::unbounded::<UiCommMessage>();
 
-        spawn!("ark-comm-frontend", move || {
+        spawn!("ark-comm-ui", move || {
             let frontend = Self {
                 comm: comm.clone(),
                 frontend_rx: frontend_rx.clone(),
@@ -74,8 +74,8 @@ impl PositronFrontend {
                         break;
                     });
                     match msg {
-                        PositronFrontendMessage::Event(event) => self.dispatch_event(&event),
-                        PositronFrontendMessage::Request(request) => self.call_frontend_method(request).unwrap(),
+                        UiCommMessage::Event(event) => self.dispatch_event(&event),
+                        UiCommMessage::Request(request) => self.call_frontend_method(request).unwrap(),
                     }
                 },
 
@@ -83,7 +83,7 @@ impl PositronFrontend {
                     match msg {
                         Ok(msg) => {
                             if !self.handle_comm_message(msg) {
-                                log::info!("Frontend comm {} closing by request from frontend.", self.comm.comm_id);
+                                log::info!("UI comm {} closing by request from frontend.", self.comm.comm_id);
                                 break;
                             }
                         },
@@ -102,7 +102,7 @@ impl PositronFrontend {
 
         // Deliver the event to the frontend over the comm channel
         if let Err(err) = self.comm.outgoing_tx.send(CommMsg::Data(json)) {
-            log::error!("Error sending Positron event to frontend: {}", err);
+            log::error!("Error sending UI event to frontend: {}", err);
         };
     }
 
@@ -180,7 +180,7 @@ impl PositronFrontend {
         Ok(UiBackendReply::CallMethodReply(result))
     }
 
-    fn call_frontend_method(&self, request: CommRequest) -> anyhow::Result<()> {
+    fn call_frontend_method(&self, request: UiCommFrontendRequest) -> anyhow::Result<()> {
         let comm_msg = StdInRequest::Comm(request);
         self.stdin_request_tx.send(comm_msg)?;
 

@@ -47,7 +47,7 @@ use log::*;
 use serde_json::json;
 use stdext::spawn;
 
-use crate::frontend::frontend::PositronFrontend;
+use crate::frontend::frontend::UiComm;
 use crate::help::r_help::RHelp;
 use crate::interface::KernelInfo;
 use crate::interface::RMain;
@@ -275,22 +275,18 @@ impl ShellHandler for Shell {
                 RVariables::start(global_env, comm.clone(), self.comm_manager_tx.clone());
                 Ok(true)
             }),
-            Comm::FrontEnd => {
+            Comm::Ui => {
                 // Create a frontend to wrap the comm channel we were just given. This starts
                 // a thread that proxies messages to the frontend.
-                let message_tx =
-                    PositronFrontend::start(comm.clone(), self.stdin_request_tx.clone());
+                let ui_comm_tx = UiComm::start(comm.clone(), self.stdin_request_tx.clone());
 
                 // Send the frontend event channel to the execution thread so it can emit
                 // events to the frontend.
                 if let Err(err) = self
                     .kernel_request_tx
-                    .send(KernelRequest::EstablishFrontendChannel(message_tx.clone()))
+                    .send(KernelRequest::EstablishUiCommChannel(ui_comm_tx.clone()))
                 {
-                    log::error!(
-                        "Could not deliver frontend event channel to execution thread: {}",
-                        err
-                    );
+                    log::error!("Could not deliver UI comm channel to execution thread: {err:?}");
                 };
                 Ok(true)
             },

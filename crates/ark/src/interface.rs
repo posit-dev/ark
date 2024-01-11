@@ -39,10 +39,10 @@ use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::execute_response::ExecuteResponse;
 use amalthea::wire::execute_result::ExecuteResult;
 use amalthea::wire::input_reply::InputReply;
-use amalthea::wire::input_request::CommRequest;
 use amalthea::wire::input_request::InputRequest;
 use amalthea::wire::input_request::ShellInputRequest;
 use amalthea::wire::input_request::StdInRpcReply;
+use amalthea::wire::input_request::UiCommFrontendRequest;
 use amalthea::wire::jupyter_message::Status;
 use amalthea::wire::originator::Originator;
 use amalthea::wire::stream::Stream;
@@ -1052,7 +1052,7 @@ impl RMain {
             anyhow::bail!("Error: No active request");
         };
 
-        let comm_request = CommRequest {
+        let comm_request = UiCommFrontendRequest {
             originator,
             response_tx,
             request: request.clone(),

@@ -1,7 +1,7 @@
 //
-// frontend.rs
+// ui.rs
 //
-// Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2024 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -16,8 +16,8 @@ use amalthea::comm::ui_comm::UiFrontendEvent;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
 use amalthea::socket::stdin::StdInRequest;
-use ark::frontend::frontend::PositronFrontend;
-use ark::frontend::frontend::PositronFrontendMessage;
+use ark::frontend::frontend::UiComm;
+use ark::frontend::frontend::UiCommMessage;
 use ark::r_task;
 use ark::test::r_test;
 use crossbeam::channel::bounded;
@@ -27,16 +27,16 @@ use harp::object::RObject;
 use serde_json::Value;
 
 /**
- * Basic test for the frontend comm.
+ * Basic tests for the UI comm.
  */
 #[test]
 fn test_ui_comm() {
     r_test(|| {
         // Create a sender/receiver pair for the comm channel.
-        let comm = CommSocket::new(
+        let comm_socket = CommSocket::new(
             CommInitiator::FrontEnd,
-            String::from("test-frontend-comm-id"),
-            String::from("positron.frontend"),
+            String::from("test-ui-comm-id"),
+            String::from("positron.UI"),
         );
 
         // Communication channel between the main thread and the Amalthea
@@ -44,7 +44,7 @@ fn test_ui_comm() {
         let (stdin_request_tx, _stdin_request_rx) = bounded::<StdInRequest>(1);
 
         // Create a frontend instance
-        let frontend = PositronFrontend::start(comm.clone(), stdin_request_tx);
+        let ui_comm = UiComm::start(comm_socket.clone(), stdin_request_tx);
 
         // Get the current console width
         let old_width = r_task(|| unsafe {
@@ -61,14 +61,15 @@ fn test_ui_comm() {
             method: String::from("setConsoleWidth"),
             params: vec![Value::from(123)],
         });
-        comm.incoming_tx
+        comm_socket
+            .incoming_tx
             .send(CommMsg::Rpc(id, serde_json::to_value(request).unwrap()))
             .unwrap();
 
         // Wait for the reply; this should be a FrontendRpcResult. We don't wait
         // more than a second since this should be quite fast and we don't want to
         // hang the test suite if it doesn't return.
-        let response = comm
+        let response = comm_socket
             .outgoing_rx
             .recv_timeout(std::time::Duration::from_secs(1))
             .unwrap();
@@ -104,12 +105,13 @@ fn test_ui_comm() {
             method: String::from("thisRpcDoesNotExist"),
             params: vec![],
         });
-        comm.incoming_tx
+        comm_socket
+            .incoming_tx
             .send(CommMsg::Rpc(id, serde_json::to_value(request).unwrap()))
             .unwrap();
 
         // Wait for the reply
-        let response = comm
+        let response = comm_socket
             .outgoing_rx
             .recv_timeout(std::time::Duration::from_secs(1))
             .unwrap();
@@ -126,10 +128,10 @@ fn test_ui_comm() {
 
         // Mark not busy (this prevents the frontend comm from being closed due to
         // the Sender being dropped)
-        frontend
-            .send(PositronFrontendMessage::Event(UiFrontendEvent::Busy(
-                BusyParams { busy: false },
-            )))
+        ui_comm
+            .send(UiCommMessage::Event(UiFrontendEvent::Busy(BusyParams {
+                busy: false,
+            })))
             .unwrap();
     });
 }
