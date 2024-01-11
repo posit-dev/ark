@@ -1,19 +1,21 @@
 #
 # help.R
 #
-# Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+# Copyright (C) 2023-2024 Posit Software, PBC. All rights reserved.
 #
 #
 
 options(help_type = "html")
 
 # Start R's dynamic HTTP help server; returns the chosen port (invisibly)
+#' @export
 .ps.help.startHelpServer <- function() {
     suppressMessages(tools::startDynamicHelp(start = NA))
 }
 
 # Show help on a topic. Returns a logical value indicating whether help was
 # found.
+#' @export
 .ps.help.showHelpTopic <- function(topic) {
     # Resolve the package specifier.
     package <- NULL
@@ -25,7 +27,7 @@ options(help_type = "html")
 
     # Try to find help on the topic. The package needs to be wrapped in () so it
     # is not deparsed.
-    results <- help(topic = topic, package = (package))
+    results <- utils::help(topic = topic, package = (package))
 
     # If we found results of any kind, show them.
     # If we are running ark tests, don't show the results as this requires
@@ -39,10 +41,12 @@ options(help_type = "html")
 }
 
 # Expose the show help topic function as an RPC.
+#' @export
 .ps.rpc.showHelpTopic <- .ps.help.showHelpTopic
 
 # Show a vignette. Returns a logical value indicating whether the vignette
 # was found.
+#' @export
 .ps.rpc.showVignetteTopic <- function(topic) {
     # Resolve the package specifier.
     package <- NULL
@@ -65,6 +69,7 @@ options(help_type = "html")
     }
 }
 
+#' @export
 .ps.help.getHtmlHelpContents <- function(topic, package = "") {
 
   # If a package name is encoded into 'topic', split that here.

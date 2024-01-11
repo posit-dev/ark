@@ -1,9 +1,10 @@
 #
 # html_widgets.R
 #
-# Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+# Copyright (C) 2023-2024 Posit Software, PBC. All rights reserved.
 #
 #
+#' @export
 .ps.view_html_widget <- function(x, ...) {
     # Render the widget to a tag list.
     rendered <- htmltools::as.tags(x, standalone = TRUE)
@@ -22,10 +23,12 @@
             sizing_policy = x$sizingPolicy))
 }
 
+#' @export
 .ps.viewer.addOverrides <- function() {
     add_s3_override("print.htmlwidget", .ps.view_html_widget)
 }
 
+#' @export
 .ps.viewer.removeOverrides <- function() {
     remove_s3_override("print.htmlwidget")
 }

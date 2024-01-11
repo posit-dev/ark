@@ -1,7 +1,7 @@
 #
 # options.R
 #
-# Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+# Copyright (C) 2022-2024 Posit Software, PBC. All rights reserved.
 #
 #
 
@@ -27,21 +27,19 @@ options(device = function() {
 })
 
 # Set cran mirror
-local({
-    repos <- getOption("repos")
-    rstudio_cran <- "https://cran.rstudio.com/"
+repos <- getOption("repos")
+rstudio_cran <- "https://cran.rstudio.com/"
 
-    if (is.null(repos) || !is.character(repos)) {
-        options(repos = c(CRAN = rstudio_cran))
-    } else {
-        if ("CRAN" %in% names(repos)) {
-            if (identical(repos[["CRAN"]], "@CRAN@")) {
-                repos[["CRAN"]] <- rstudio_cran
-                options(repos = repos)
-            }
-        } else {
-            repos <- c(CRAN = rstudio_cran, repos)
+if (is.null(repos) || !is.character(repos)) {
+    options(repos = c(CRAN = rstudio_cran))
+} else {
+    if ("CRAN" %in% names(repos)) {
+        if (identical(repos[["CRAN"]], "@CRAN@")) {
+            repos[["CRAN"]] <- rstudio_cran
             options(repos = repos)
         }
+    } else {
+        repos <- c(CRAN = rstudio_cran, repos)
+        options(repos = repos)
     }
-})
+}

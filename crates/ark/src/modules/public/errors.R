@@ -1,10 +1,11 @@
 #
 # errors.R
 #
-# Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+# Copyright (C) 2023-2024 Posit Software, PBC. All rights reserved.
 #
 #
 
+#' @export
 .ps.errors.initializeGlobalErrorHandler <- function() {
     if (getRversion() < "4.0.0") {
         # `globalCallingHandlers()` didn't exist here.
@@ -33,6 +34,7 @@
     invisible(NULL)
 }
 
+#' @export
 .ps.errors.globalErrorHandler <- function(cnd) {
     # Don't instrument errors if the option has been switched back on
     if (isTRUE(getOption("show.error.messages", TRUE))) {
@@ -55,6 +57,7 @@
     handle_error_rlang(cnd)
 }
 
+#' @export
 .ps.errors.globalMessageHandler <- function(cnd) {
     # Decline to handle if we can't muffle the message (should only happen
     # in extremely rare cases)
@@ -83,6 +86,7 @@
     invokeRestart("muffleMessage")
 }
 
+#' @export
 .ps.errors.traceback <- function() {
     traceback <- get0(".Traceback", baseenv(), ifnotfound = list())
 

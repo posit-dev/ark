@@ -1,10 +1,11 @@
 #
 # r_data_viewer.R
 #
-# Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+# Copyright (C) 2023-2024 Posit Software, PBC. All rights reserved.
 #
 #
 
+#' @export
 .ps.view_data_frame <- function(x, title) {
     if (missing(title)) {
         title <- .ps.as_label(substitute(x))

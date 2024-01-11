@@ -1,3 +1,11 @@
+#
+# debug.R
+#
+# Copyright (C) 2023-2024 Posit Software, PBC. All rights reserved.
+#
+#
+
+#' @export
 .ps.debug.stackInfo <- function() {
     stack <- sys.calls()
     stack <- stack[-length(stack)]
@@ -5,6 +13,7 @@
     lapply(stack, .ps.debug.frameInfo)
 }
 
+#' @export
 .ps.debug.frameInfo <- function(call) {
   srcref <- attr(call, "srcref")
 

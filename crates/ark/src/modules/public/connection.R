@@ -1,18 +1,21 @@
 #
 # connection.R
 #
-# Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+# Copyright (C) 2023-2024 Posit Software, PBC. All rights reserved.
 #
 #
 
+#' @export
 .ps.connection_opened <- function(name) {
     .ps.Call("ps_connection_opened", name)
 }
 
+#' @export
 .ps.connection_closed <- function(id) {
     .ps.Call("ps_connection_closed", id)
 }
 
+#' @export
 .ps.connection_observer <- function() {
 
     connections <- new.env(parent = emptyenv())
@@ -65,6 +68,7 @@
 
 options("connectionObserver" = .ps.connection_observer())
 
+#' @export
 .ps.connection_list_objects <- function(id, ...) {
     con <- get(id, getOption("connectionObserver")$.connections)
     if (is.null(con)) {
@@ -73,6 +77,7 @@ options("connectionObserver" = .ps.connection_observer())
     con$listObjects(...)
 }
 
+#' @export
 .ps.connection_list_fields <- function(id, ...) {
     con <- get(id, getOption("connectionObserver")$.connections)
     if (is.null(con)) {
@@ -81,6 +86,7 @@ options("connectionObserver" = .ps.connection_observer())
     con$listColumns(...)
 }
 
+#' @export
 .ps.connection_preview_object <- function(id, ..., table) {
     con <- get(id, getOption("connectionObserver")$.connections)
     if (is.null(con)) {

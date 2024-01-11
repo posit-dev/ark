@@ -1,12 +1,13 @@
 #
 # completions.R
 #
-# Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+# Copyright (C) 2022-2024 Posit Software, PBC. All rights reserved.
 #
 #
 
-.ps.completions.customCompletionHandlers <- new.env(parent = emptyenv())
+customCompletionHandlers <- new.env(parent = emptyenv())
 
+#' @export
 .ps.completions.registerCustomCompletionHandler <- function(package,
                                                             name,
                                                             argument,
@@ -20,11 +21,12 @@
 
     for (name in allNames) {
         spec <- paste(name, argument)
-        .ps.completions.customCompletionHandlers[[spec]] <- callback
+        customCompletionHandlers[[spec]] <- callback
     }
 
 }
 
+#' @export
 .ps.completions.createCustomCompletions <- function(values,
                                                     kind = "unknown",
                                                     enquote = FALSE,
@@ -93,6 +95,7 @@
     )
 })
 
+#' @export
 .ps.completions.getCustomCallCompletions <- function(name, argument, position) {
 
     # If this is a qualified name, make sure the package is loaded.
@@ -105,7 +108,7 @@
 
     # Search for a completion handler for this specification.
     spec <- paste(name, argument)
-    handler <- .ps.completions.customCompletionHandlers[[spec]]
+    handler <- customCompletionHandlers[[spec]]
     if (is.function(handler))
         return(handler(position))
 
@@ -113,6 +116,7 @@
     NULL
 }
 
+#' @export
 .ps.completions.formalNamesDefault <- function(callable) {
 
     # NOTE: Some primitive R functions used for control flow
@@ -123,9 +127,9 @@
         return(character())
 
     names(formals(args))
-
 }
 
+#' @export
 .ps.completions.formalNamesS3 <- function(generic, object) {
 
     classes <- c(class(object), "default")
@@ -141,11 +145,10 @@
         method <- eval(call, envir = globalenv())
         if (is.function(method))
             return(.ps.completions.formalNamesDefault(method))
-
     }
-
 }
 
+#' @export
 .ps.completions.formalNames <- function(callable, object) {
 
     # If object is NULL, just use the formals from the callable as-is.
@@ -159,5 +162,4 @@
 
     # Fall back to default implementation.
     .ps.completions.formalNamesDefault(callable)
-
 }

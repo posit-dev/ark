@@ -1,14 +1,16 @@
 #
 # completions.R
 #
-# Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+# Copyright (C) 2022-2024 Posit Software, PBC. All rights reserved.
 #
 #
 
+#' @export
 .ps.diagnostics.diagnostic <- function(kind = "skip", node = NULL, message = NULL) {
     list(kind, node, message)
 }
 
+#' @export
 .ps.diagnostics.custom.library <- function(call, contents, fun = base::library) {
     # TODO: it could be interesting to have a diagnostic
     #       when this will fail on wrong argument, e.g.
@@ -98,6 +100,7 @@
     out
 }
 
+#' @export
 .ps.diagnostics.custom.require <- function(call, contents, fun = base::require) {
     .ps.diagnostics.custom.library(call, contents, fun)
 }

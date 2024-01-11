@@ -5,9 +5,35 @@
 #
 #
 
+import_positron <- function(path) {
+    init_positron()
+
+    # Namespace is created by the sourcer of this file
+    ns <- parent.env(environment())
+    source(path, local = ns)
+
+    export(path, from = ns, to = as.environment("tools:positron"))
+}
+
+init_positron <- function() {
+    # Already initialised if we're on the search path
+    if ("tools:positron" %in% search()) {
+        return()
+    }
+
+    # Create environment for functions exported on the search path
+    attach(list(), name = "tools:positron")
+}
+
+export <- function(path, from, to) {
+    for (name in exported_names(path)) {
+        to[[name]] <- from[[name]]
+    }
+}
+
 exported_names <- function(path) {
     ast <- parse(path, keep.source = TRUE)
-    data <- getParseData(ast)
+    data <- utils::getParseData(ast)
 
     exported <- character()
     exported_locs <- which(data$text == "#' @export")
@@ -27,13 +53,12 @@ exported_names <- function(path) {
 }
 
 import_rstudioapi_shims <- function(path) {
+    init_rstudioapi()
+
     env <- rstudioapi_shims_env()
     source(path, local = env)
 
-    attached_env <- as.environment("tools:rstudio")
-    for (name in exported_names(path)) {
-        attached_env[[name]] <- env[[name]]
-    }
+    export(path, from = env, to = as.environment("tools:rstudio"))
 }
 
 init_rstudioapi <- function() {
@@ -66,6 +91,5 @@ init_rstudioapi <- function() {
 }
 
 rstudioapi_shims_env <- function() {
-    init_rstudioapi()
     the$rstudioapi_shims_env
 }

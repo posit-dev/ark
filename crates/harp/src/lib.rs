@@ -36,6 +36,9 @@ pub fn initialize() {
     init_utils();
 }
 
+pub use error::Error;
+pub type Result<T> = std::result::Result<T, error::Error>;
+
 // ID of main thread. This is used to detect whether the current thread is
 // the thread running R, see `RMain::on_main_thread()`. R should normally
 // live on the main thread but detecting the main thread in a

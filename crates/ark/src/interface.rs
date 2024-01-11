@@ -196,12 +196,14 @@ pub fn start_r(
         r_register_routines();
 
         // Initialize support functions (after routine registration)
-        modules::initialize(false).unwrap();
+        if let Err(err) = modules::initialize(false) {
+            log::error!("Can't load R modules: {err:?}");
+        }
 
         // Register all hooks once all modules have been imported
         let hook_result = RFunction::from(".ps.register_all_hooks").call();
         if let Err(err) = hook_result {
-            warn!("Error registering some hooks: {}", err);
+            log::error!("Error registering some hooks: {err:?}");
         }
 
         // Set up the global error handler (after support function initialization)

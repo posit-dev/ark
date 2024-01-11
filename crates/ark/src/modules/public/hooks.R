@@ -1,10 +1,11 @@
 #
 # hooks.R
 #
-# Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+# Copyright (C) 2023-2024 Posit Software, PBC. All rights reserved.
 #
 #
 
+#' @export
 .ps.register_utils_hook <- function(name, hook, namespace = FALSE) {
     package_name <- "package:utils"
     # check if function exists
@@ -29,6 +30,7 @@
 }
 
 # Wrapper to contain the definition of all hooks we want to register
+#' @export
 .ps.register_all_hooks <- function() {
     .ps.register_utils_hook("View", .ps.view_data_frame, namespace = TRUE)
 }
