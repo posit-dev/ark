@@ -55,7 +55,7 @@ use crate::plots::graphics_device;
 use crate::r_task;
 use crate::request::KernelRequest;
 use crate::request::RRequest;
-use crate::ui::ui::UiComm;
+use crate::ui::UiComm;
 use crate::variables::r_variables::RVariables;
 
 pub struct Shell {

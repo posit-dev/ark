@@ -6,4 +6,6 @@
 //
 
 pub mod methods;
-pub mod ui;
+
+mod ui;
+pub use ui::*;

@@ -10,7 +10,7 @@ use amalthea::wire::execute_response::ExecuteResponse;
 use amalthea::wire::originator::Originator;
 use crossbeam::channel::Sender;
 
-use crate::ui::ui::UiCommMessage;
+use crate::ui::UiCommMessage;
 
 /// Represents requests to the primary R execution thread.
 #[derive(Debug, Clone)]

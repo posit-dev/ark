@@ -18,7 +18,7 @@ use crossbeam::channel::Sender;
 use crate::interface::RMain;
 use crate::r_task;
 use crate::request::KernelRequest;
-use crate::ui::ui::UiCommMessage;
+use crate::ui::UiCommMessage;
 
 /// Represents the Rust state of the R kernel
 pub struct Kernel {
