@@ -233,7 +233,7 @@ impl ShellHandler for Shell {
             graphics_device::on_did_execute_request(
                 self.comm_manager_tx.clone(),
                 self.iopub_tx.clone(),
-                kernel.positron_connected(),
+                kernel.ui_connected(),
             )
         };
 

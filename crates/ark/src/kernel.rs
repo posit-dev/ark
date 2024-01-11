@@ -97,32 +97,32 @@ impl Kernel {
     }
 
     /// Check if the Positron frontend is connected
-    pub fn positron_connected(&self) -> bool {
+    pub fn ui_connected(&self) -> bool {
         self.ui_comm_tx.is_some()
     }
 
     /// Send events or requests to the frontend (Positron-specific)
     pub fn send_ui_event(&self, event: UiFrontendEvent) {
-        self.send_frontend(UiCommMessage::Event(event))
+        self.send_ui(UiCommMessage::Event(event))
     }
-    pub fn send_frontend_request(&self, request: UiCommFrontendRequest) {
-        self.send_frontend(UiCommMessage::Request(request))
+    pub fn send_ui_request(&self, request: UiCommFrontendRequest) {
+        self.send_ui(UiCommMessage::Request(request))
     }
 
-    fn send_frontend(&self, msg: UiCommMessage) {
-        log::info!("Sending frontend message: {msg:?}");
+    fn send_ui(&self, msg: UiCommMessage) {
+        log::info!("Sending UI message to frontend: {msg:?}");
 
-        if !self.positron_connected() {
-            log::info!("Discarding message {msg:?}; no Positron frontend connected");
+        if !self.ui_connected() {
+            log::info!("Discarding message {msg:?}; no frontend UI comm connected");
             return;
         }
 
-        let frontend_tx = self.ui_comm_tx.as_ref().unwrap();
+        let ui_comm_tx = self.ui_comm_tx.as_ref().unwrap();
 
-        if let Err(err) = frontend_tx.send(msg) {
-            log::error!("Error sending message to frontend: {err:?}");
+        if let Err(err) = ui_comm_tx.send(msg) {
+            log::error!("Error sending message to frontend UI comm: {err:?}");
 
-            // TODO: Something is wrong with the frontend thread, we should
+            // TODO: Something is wrong with the UI thread, we should
             // disconnect to avoid more errors but then we need a mutable self
             // self.frontend_tx = None;
         }

@@ -1061,7 +1061,7 @@ impl RMain {
         // Send request via Kernel
         {
             let kernel = self.kernel.lock().unwrap();
-            kernel.send_frontend_request(comm_request);
+            kernel.send_ui_request(comm_request);
         }
 
         // Block for response
