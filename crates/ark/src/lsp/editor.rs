@@ -18,7 +18,11 @@ use crate::interface::RMain;
 unsafe extern "C" fn ps_editor(file: SEXP, _title: SEXP) -> anyhow::Result<SEXP> {
     let main = RMain::get();
     let runtime = main.get_lsp_runtime();
-    let client = main.get_lsp_client();
+
+    let client = unwrap!(main.get_lsp_client(), None => {
+        log::error!("Failed to open file. LSP client has not been initialized.");
+        return Ok(R_NilValue);
+    });
 
     let files = CharacterVector::new_unchecked(file);
 

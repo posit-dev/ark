@@ -13,36 +13,20 @@ use bus::BusReader;
 use crossbeam::channel::Sender;
 use stdext::spawn;
 use tokio::runtime::Runtime;
-use tower_lsp::ClientSocket;
-use tower_lsp::LspService;
 
 use super::backend;
 use crate::interface::KernelInfo;
-use crate::lsp::backend::Backend;
 
 pub struct Lsp {
-    runtime: Option<Arc<Runtime>>,
-    service: Option<LspService<Backend>>,
-    socket: Option<ClientSocket>,
+    runtime: Arc<Runtime>,
     kernel_init_rx: BusReader<KernelInfo>,
     kernel_initialized: bool,
 }
 
 impl Lsp {
-    pub fn new(
-        runtime: Arc<Runtime>,
-        service: LspService<Backend>,
-        socket: ClientSocket,
-        kernel_init_rx: BusReader<KernelInfo>,
-    ) -> Self {
-        let runtime = Some(runtime);
-        let service = Some(service);
-        let socket = Some(socket);
-
+    pub fn new(runtime: Arc<Runtime>, kernel_init_rx: BusReader<KernelInfo>) -> Self {
         Self {
             runtime,
-            service,
-            socket,
             kernel_init_rx,
             kernel_initialized: false,
         }
@@ -68,13 +52,12 @@ impl ServerHandler for Lsp {
             self.kernel_initialized = true;
         }
 
-        // Transfer field ownership to the thread
-        let runtime = self.runtime.take().unwrap();
-        let service = self.service.take().unwrap();
-        let socket = self.socket.take().unwrap();
+        // Retain ownership of the tokio `runtime` inside the `Lsp` to
+        // account for potential reconnects
+        let runtime = self.runtime.clone();
 
         spawn!("ark-lsp", move || {
-            backend::start_lsp(runtime, service, socket, tcp_address, conn_init_tx)
+            backend::start_lsp(runtime, tcp_address, conn_init_tx)
         });
         return Ok(());
     }
