@@ -3678,9 +3678,9 @@ dependencies = [
 
 [[package]]
 name = "winsafe"
-version = "0.0.18"
+version = "0.0.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03caf2c481af7a0a06c80ffb9c18daa3b3d23bd7a41be1284d71d49c59046ba6"
+checksum = "d135d17ab770252ad95e9a872d365cf3090e3be864a34ab46f48555993efc904"
 
 [[package]]
 name = "yaml-rust"

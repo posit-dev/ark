@@ -52,7 +52,7 @@ uuid = "1.3.0"
 url = "2.4.1"
 walkdir = "2"
 yaml-rust = "0.4.5"
-winsafe = { version = "0.0.18", features = ["kernel"] }
+winsafe = { version = "0.0.19", features = ["kernel"] }
 
 [build-dependencies]
 chrono = "0.4.23"
