@@ -5,5 +5,5 @@
 //
 //
 
-pub mod frontend;
 pub mod methods;
+pub mod ui;

@@ -47,7 +47,6 @@ use log::*;
 use serde_json::json;
 use stdext::spawn;
 
-use crate::frontend::frontend::UiComm;
 use crate::help::r_help::RHelp;
 use crate::interface::KernelInfo;
 use crate::interface::RMain;
@@ -56,6 +55,7 @@ use crate::plots::graphics_device;
 use crate::r_task;
 use crate::request::KernelRequest;
 use crate::request::RRequest;
+use crate::ui::ui::UiComm;
 use crate::variables::r_variables::RVariables;
 
 pub struct Shell {

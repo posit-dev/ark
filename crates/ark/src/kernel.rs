@@ -15,10 +15,10 @@ use amalthea::wire::input_request::UiCommFrontendRequest;
 use anyhow::Result;
 use crossbeam::channel::Sender;
 
-use crate::frontend::frontend::UiCommMessage;
 use crate::interface::RMain;
 use crate::r_task;
 use crate::request::KernelRequest;
+use crate::ui::ui::UiCommMessage;
 
 /// Represents the Rust state of the R kernel
 pub struct Kernel {
