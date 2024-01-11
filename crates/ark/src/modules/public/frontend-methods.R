@@ -5,11 +5,11 @@
 #
 #
 
-.ps.frontend.LastActiveEditorContext <- function() {
-    .ps.Call("ps_frontend_last_active_editor_context")
+.ps.ui.LastActiveEditorContext <- function() {
+    .ps.Call("ps_ui_last_active_editor_context")
 }
 
-.ps.frontend.debugSleep <- function(ms) {
-    stopifnot(is.numeric(ms) && length(ms) == 1 && !is.na(ms))
-    .ps.Call("ps_frontend_debug_sleep", ms)
+.ps.ui.debugSleep <- function(ms) {
+    # stopifnot(is.numeric(ms) && length(ms) == 1 && !is.na(ms))
+    .ps.Call("ps_ui_debug_sleep", ms)
 }
