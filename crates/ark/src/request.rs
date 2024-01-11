@@ -15,7 +15,7 @@ use crate::frontend::frontend::PositronFrontendMessage;
 /// Represents requests to the primary R execution thread.
 #[derive(Debug, Clone)]
 pub enum RRequest {
-    /// Fulfill an execution request from the front end, producing either a
+    /// Fulfill an execution request from the frontend, producing either a
     /// Reply or an Exception
     ExecuteCode(ExecuteRequest, Option<Originator>, Sender<ExecuteResponse>),
 
@@ -48,6 +48,6 @@ pub fn debug_request_command(req: DebugRequest) -> String {
 /// Represents requests to the kernel.
 #[derive(Debug, Clone)]
 pub enum KernelRequest {
-    /// Establish a channel to the front end to send events
+    /// Establish a channel to the frontend to send events
     EstablishFrontendChannel(Sender<PositronFrontendMessage>),
 }

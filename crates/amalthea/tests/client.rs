@@ -335,7 +335,7 @@ fn test_kernel() {
     frontend.receive_iopub(); // Busy
     frontend.receive_iopub(); // Idle
 
-    info!("Requesting comm info from the kernel (to test opening from the front end)");
+    info!("Requesting comm info from the kernel (to test opening from the frontend)");
     frontend.send_shell(CommInfoRequest {
         target_name: "".to_string(),
     });

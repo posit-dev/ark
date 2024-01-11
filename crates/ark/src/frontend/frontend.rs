@@ -31,8 +31,8 @@ pub enum PositronFrontendMessage {
 }
 
 /// PositronFrontend is a wrapper around a comm channel whose lifetime matches
-/// that of the Positron front end. It is used to perform communication with the
-/// front end that isn't scoped to any particular view.
+/// that of the Positron frontend. It is used to perform communication with the
+/// frontend that isn't scoped to any particular view.
 pub struct PositronFrontend {
     comm: CommSocket,
     frontend_rx: Receiver<PositronFrontendMessage>,
@@ -83,12 +83,12 @@ impl PositronFrontend {
                     match msg {
                         Ok(msg) => {
                             if !self.handle_comm_message(msg) {
-                                log::info!("Frontend comm {} closing by request from front end.", self.comm.comm_id);
+                                log::info!("Frontend comm {} closing by request from frontend.", self.comm.comm_id);
                                 break;
                             }
                         },
                         Err(err) => {
-                            log::error!("Error receiving message from front end: {:?}", err);
+                            log::error!("Error receiving message from frontend: {:?}", err);
                             break;
                         },
                     }
@@ -100,20 +100,20 @@ impl PositronFrontend {
     fn dispatch_event(&self, event: &UiFrontendEvent) {
         let json = serde_json::to_value(event).unwrap();
 
-        // Deliver the event to the front end over the comm channel
+        // Deliver the event to the frontend over the comm channel
         if let Err(err) = self.comm.outgoing_tx.send(CommMsg::Data(json)) {
-            log::error!("Error sending Positron event to front end: {}", err);
+            log::error!("Error sending Positron event to frontend: {}", err);
         };
     }
 
     /**
-     * Handles a comm message from the front end.
+     * Handles a comm message from the frontend.
      *
      * Returns true if the thread should continue, false if it should exit.
      */
     fn handle_comm_message(&self, message: CommMsg) -> bool {
         if let CommMsg::Close = message {
-            // The front end has closed the connection; let the
+            // The frontend has closed the connection; let the
             // thread exit.
             return false;
         }
@@ -126,13 +126,13 @@ impl PositronFrontend {
         }
 
         // We don't really expect to receive data messages from the
-        // front end; they are events
-        log::warn!("Unexpected data message from front end: {message:?}");
+        // frontend; they are events
+        log::warn!("Unexpected data message from frontend: {message:?}");
         true
     }
 
     /**
-     * Handles an RPC request from the front end.
+     * Handles an RPC request from the frontend.
      */
     fn handle_rpc(
         &self,

@@ -100,7 +100,7 @@ struct DeviceContext {
     pub _id: Option<String>,
 
     // A map, mapping plot IDs to the communication channels used
-    // for communicating their rendered results to the front-end.
+    // for communicating their rendered results to the frontend.
     pub _channels: HashMap<String, CommSocket>,
 
     // The device callbacks, which are patched into the device.

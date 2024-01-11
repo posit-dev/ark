@@ -168,7 +168,7 @@ impl TryFrom<&WireMessage> for Message {
     /// structure.
     ///
     /// Note that not all message types are supported here; this handles only
-    /// messages that are received from the front end.
+    /// messages that are received from the frontend.
     fn try_from(msg: &WireMessage) -> Result<Self, Error> {
         let kind = msg.header.msg_type.clone();
         if kind == KernelInfoRequest::message_type() {

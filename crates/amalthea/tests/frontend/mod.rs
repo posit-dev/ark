@@ -115,7 +115,7 @@ impl Frontend {
         }
     }
 
-    /// Completes initialization of the front end (usually done after the kernel
+    /// Completes initialization of the frontend (usually done after the kernel
     /// is ready and connected)
     pub fn complete_intialization(&self) {
         self.iopub_socket.subscribe().unwrap();
@@ -164,7 +164,7 @@ impl Frontend {
     }
 
     /// Gets a connection file for the Amalthea kernel that will connect it to
-    /// this synthetic front end.
+    /// this synthetic frontend.
     pub fn get_connection_file(&self) -> ConnectionFile {
         ConnectionFile {
             control_port: self.control_port,

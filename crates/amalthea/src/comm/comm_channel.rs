@@ -32,7 +32,7 @@ pub enum Comm {
     /// The Positron help pane.
     Help,
 
-    /// The Positron front end.
+    /// The Positron frontend.
     FrontEnd,
 
     /// Some other comm with a custom name.

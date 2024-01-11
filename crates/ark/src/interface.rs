@@ -462,7 +462,7 @@ impl RMain {
                 execution_count: self.execution_count,
             })) {
                 warn!(
-                    "Could not broadcast execution input {} to all front ends: {}",
+                    "Could not broadcast execution input {} to all frontends: {}",
                     self.execution_count, err
                 );
             }
@@ -620,7 +620,7 @@ impl RMain {
             // notified before the next incoming message is processed.
 
             select! {
-                // Wait for an execution request from the front end.
+                // Wait for an execution request from the frontend.
                 recv(self.r_request_rx) -> req => {
                     let req = unwrap!(req, Err(_) => {
                         // The channel is disconnected and empty
@@ -938,7 +938,7 @@ impl RMain {
         let event = UiFrontendEvent::Busy(BusyParams { busy: self.is_busy });
 
         // Wait for a lock on the kernel and have it deliver the event to
-        // the front end
+        // the frontend
         let kernel = self.kernel.lock().unwrap();
         kernel.send_frontend_event(event);
     }
@@ -953,7 +953,7 @@ impl RMain {
         });
 
         // Wait for a lock on the kernel and have the kernel deliver the
-        // event to the front end
+        // event to the frontend
         let kernel = self.kernel.lock().unwrap();
         kernel.send_frontend_event(event);
     }
@@ -1097,7 +1097,7 @@ impl RMain {
     }
 }
 
-/// Report an incomplete request to the front end
+/// Report an incomplete request to the frontend
 fn new_incomplete_response(req: &ExecuteRequest, exec_count: u32) -> ExecuteResponse {
     ExecuteResponse::ReplyException(ExecuteReplyException {
         status: Status::Error,
@@ -1133,7 +1133,7 @@ fn peek_execute_response(exec_count: u32) -> ExecuteResponse {
         let _ = RFunction::new("base", "stop").call();
     }
 
-    // Send the reply to the front end
+    // Send the reply to the frontend
     if error_occurred || stack_overflow_occurred {
         // We don't fill out `ename` with anything meaningful because typically
         // R errors don't have names. We could consider using the condition class

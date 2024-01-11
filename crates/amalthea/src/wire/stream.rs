@@ -10,7 +10,7 @@ use serde::Serialize;
 
 use crate::wire::jupyter_message::MessageType;
 
-/// Represents a message from the front end to indicate stream output
+/// Represents a message from the frontend to indicate stream output
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct StreamOutput {
     /// The name of the stream for which output is being emitted

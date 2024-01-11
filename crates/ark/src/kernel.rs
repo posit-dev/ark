@@ -35,7 +35,7 @@ impl Kernel {
         }
     }
 
-    /// Service an execution request from the front end
+    /// Service an execution request from the frontend
     pub fn fulfill_request(&mut self, req: &KernelRequest) {
         match req {
             KernelRequest::EstablishFrontendChannel(sender) => {
@@ -45,7 +45,7 @@ impl Kernel {
     }
 
     /// Establishes the event handler for the kernel to send events to the
-    /// Positron front end. This event handler is used to send global events
+    /// Positron frontend. This event handler is used to send global events
     /// that are not scoped to any particular view. The `Sender` here is a
     /// channel that is connected to a `positron.frontEnd` comm.
     pub fn establish_event_handler(&mut self, frontend_tx: Sender<PositronFrontendMessage>) {
@@ -70,7 +70,7 @@ impl Kernel {
     }
 
     /// Polls for changes to the working directory, and sends an event to the
-    /// front end if the working directory has changed.
+    /// frontend if the working directory has changed.
     pub fn poll_working_directory(&mut self) -> Result<()> {
         // Get the current working directory
         let mut current_dir = std::env::current_dir()?;
@@ -96,7 +96,7 @@ impl Kernel {
         Ok(())
     }
 
-    /// Check if the Positron front end is connected
+    /// Check if the Positron frontend is connected
     pub fn positron_connected(&self) -> bool {
         self.frontend_tx.is_some()
     }
@@ -113,7 +113,7 @@ impl Kernel {
         log::info!("Sending frontend message: {msg:?}");
 
         if !self.positron_connected() {
-            log::info!("Discarding message {msg:?}; no Positron front end connected");
+            log::info!("Discarding message {msg:?}; no Positron frontend connected");
             return;
         }
 

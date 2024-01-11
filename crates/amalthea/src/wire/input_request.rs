@@ -14,7 +14,7 @@ use crate::comm::base_comm::JsonRpcReply;
 use crate::comm::ui_comm::UiFrontendRequest;
 use crate::wire::jupyter_message::MessageType;
 
-/// Represents a request from the kernel to the front end to prompt the user for
+/// Represents a request from the kernel to the frontend to prompt the user for
 /// input
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct InputRequest {

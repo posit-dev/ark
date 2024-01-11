@@ -9,7 +9,7 @@ Experimental kernel framework and R kernel for Jupyter and Positron, written in 
 This repository contains five individual projects, which are evolving together.
 
 - **Amalthea**, a Rust framework for building Jupyter and Positron kernels.
-- **ARK**, the Amalthea R Kernel. ARK is a native kernel for R built on the Amalthea framework that interacts with the R interpreter in the same way RStudio does (it's a real front end). It also implements the Language Server Protocol, using [tower-lsp](https://github.com/ebkalderon/tower-lsp).
+- **ARK**, the Amalthea R Kernel. ARK is a native kernel for R built on the Amalthea framework that interacts with the R interpreter in the same way RStudio does (it's a real frontend). It also implements the Language Server Protocol, using [tower-lsp](https://github.com/ebkalderon/tower-lsp).
 - **echo**, a toy kernel for a fictional language that can be used to experiment with the kernel framework without the nuisance of getting language bindings working. As the name implies, it is a language that just echoes its input back as output.
 - **harp**, safe Rust wrappers for R objects and interfaces.
 - **stdext**, extensions to Rust's standard library for utility use in the other four projects.
@@ -17,7 +17,7 @@ This repository contains five individual projects, which are evolving together.
 ```mermaid
 flowchart TD
 a[Amalthea] <--Message Handlers--> ark(((Amalthea R Kernel - ark)))
-a <--ZeroMQ--> jf[Jupyter Front End]
+a <--ZeroMQ--> jf[Jupyter Frontend]
 ark <--> lsp[Language Protocol Server]
 ark <--> h[harp R wrapper]
 ark <--> libr[libR-sys bindings]
@@ -90,7 +90,7 @@ powers the R experience in Positron.
 
 [EvCxR Kernel](https://github.com/google/evcxr/tree/main/evcxr_jupyter), a kernel for Rust written in Rust
 
-[Myriac Console](https://github.com/rstudio/myriac-console), an experimental Jupyter front end
+[Myriac Console](https://github.com/rstudio/myriac-console), an experimental Jupyter frontend
 
 [tower-lsp](https://github.com/ebkalderon/tower-lsp), an LSP framework built on [Tower](https://github.com/tower-rs/tower), which is itself built on [tokio](https://tokio.rs/).
 

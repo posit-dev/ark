@@ -38,7 +38,7 @@ impl CommManager {
      * open comms, attaching appropriate metadata, and relaying them to the front
      * end. It is meant to be called on a dedicated thread, and it does not return.
      *
-     * - `iopub_tx`: The channel to send messages to the front end.
+     * - `iopub_tx`: The channel to send messages to the frontend.
      * - `comm_event_rx`: The channel to receive messages about changes to the set
      *   (or state) of open comms.
      */
@@ -82,7 +82,7 @@ impl CommManager {
         let mut sel = Select::new();
 
         // Listen for messages from each of the open comms that are destined for
-        // the front end
+        // the frontend
         for comm_socket in &self.open_comms {
             sel.recv(&comm_socket.outgoing_rx);
         }
@@ -117,7 +117,7 @@ impl CommManager {
                         ))
                         .unwrap();
 
-                    // Notify the front end, if this request originated from the back end
+                    // Notify the frontend, if this request originated from the back end
                     if comm_socket.initiator == CommInitiator::BackEnd {
                         self.iopub_tx
                             .send(IOPubMessage::CommOpen(CommOpen {
@@ -142,7 +142,7 @@ impl CommManager {
                     self.pending_rpcs.insert(header.msg_id.clone(), header);
                 },
 
-                // A message was received from the front end
+                // A message was received from the frontend
                 CommManagerEvent::Message(comm_id, msg) => {
                     // Find the index of the comm in the vector
                     let index = self
@@ -203,20 +203,20 @@ impl CommManager {
             };
 
             // Amend the message with the comm's ID, convert it to an
-            // IOPub message, and send it to the front end
+            // IOPub message, and send it to the frontend
             let msg = match comm_msg {
-                // The comm is emitting data to the front end without being
+                // The comm is emitting data to the frontend without being
                 // asked; this is treated like an event.
                 CommMsg::Data(data) => IOPubMessage::CommMsgEvent(CommWireMsg {
                     comm_id: comm_socket.comm_id.clone(),
                     data,
                 }),
 
-                // The comm is replying to a message from the front end; the
+                // The comm is replying to a message from the frontend; the
                 // first parameter names the ID of the message to which this is
                 // a reply.
                 CommMsg::Rpc(string, data) => {
-                    // Create the payload to send to the front end
+                    // Create the payload to send to the frontend
                     let payload = CommWireMsg {
                         comm_id: comm_socket.comm_id.clone(),
                         data,
@@ -231,7 +231,7 @@ impl CommManager {
                         },
                         None => {
                             // Didn't find it; log a warning and treat it like
-                            // an event so that the front end still gets the
+                            // an event so that the frontend still gets the
                             // data.
                             log::warn!(
                                 "Received RPC response '{payload:?}' for unknown message ID {string}");
@@ -243,7 +243,7 @@ impl CommManager {
                 CommMsg::Close => IOPubMessage::CommClose(comm_socket.comm_id.clone()),
             };
 
-            // Deliver the message to the front end
+            // Deliver the message to the frontend
             self.iopub_tx.send(msg).unwrap();
         }
     }

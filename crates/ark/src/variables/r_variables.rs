@@ -72,7 +72,7 @@ impl RVariables {
      * Creates a new RVariables instance.
      *
      * - `env`: An R environment to scan for variables, typically R_GlobalEnv
-     * - `comm`: A channel used to send messages to the front end
+     * - `comm`: A channel used to send messages to the frontend
      */
     pub fn start(env: RObject, comm: CommSocket, comm_manager_tx: Sender<CommManagerEvent>) {
         // Validate that the RObject we were passed is actually an environment
@@ -89,7 +89,7 @@ impl RVariables {
         let env = RThreadSafe::new(env);
         let current_bindings = RThreadSafe::new(vec![]);
 
-        // Start the execution thread and wait for requests from the front end
+        // Start the execution thread and wait for requests from the frontend
         spawn!("ark-variables", move || {
             // When `env` and `current_bindings` are dropped, a `r_async_task()`
             // call unprotects them
@@ -115,7 +115,7 @@ impl RVariables {
             }
         });
 
-        // Perform the initial environment scan and deliver to the front end
+        // Perform the initial environment scan and deliver to the frontend
         let variables = self.list_variables();
         let length = variables.len() as i64;
         let event = VariablesFrontendEvent::Refresh(RefreshParams {
@@ -126,11 +126,11 @@ impl RVariables {
         self.send_event(event, None);
 
         // Flag initially set to false, but set to true if the user closes the
-        // channel (i.e. the front end is closed)
+        // channel (i.e. the frontend is closed)
         let mut user_initiated_close = false;
 
         // Main message processing loop; we wait here for messages from the
-        // front end and loop as long as the channel is open
+        // frontend and loop as long as the channel is open
         loop {
             select! {
                 recv(&prompt_signal_rx) -> msg => {
@@ -143,24 +143,24 @@ impl RVariables {
                     let msg = match msg {
                         Ok(msg) => msg,
                         Err(e) => {
-                            // We failed to receive a message from the front end. This
+                            // We failed to receive a message from the frontend. This
                             // is usually not a transient issue and indicates that the
                             // channel is closed, so allowing the thread to exit is
                             // appropriate. Retrying is likely to just lead to a busy
                             // loop.
                             error!(
-                                "Environment: Error receiving message from front end: {:?}",
+                                "Environment: Error receiving message from frontend: {:?}",
                                 e
                             );
 
                             break;
                         },
                     };
-                    debug!("Environment: Received message from front end: {:?}", msg);
+                    debug!("Environment: Received message from frontend: {:?}", msg);
 
-                    // Break out of the loop if the front end has closed the channel
+                    // Break out of the loop if the frontend has closed the channel
                     if let CommMsg::Close = msg {
-                        debug!("Environment: Closing down after receiving comm_close from front end.");
+                        debug!("Environment: Closing down after receiving comm_close from frontend.");
 
                         // Remember that the user initiated the close so that we can
                         // avoid sending a duplicate close message from the back end
@@ -177,7 +177,7 @@ impl RVariables {
         EVENTS.console_prompt.remove(listen_id);
 
         if !user_initiated_close {
-            // Send a close message to the front end if the front end didn't
+            // Send a close message to the frontend if the frontend didn't
             // initiate the close
             self.comm.outgoing_tx.send(CommMsg::Close).unwrap();
         }

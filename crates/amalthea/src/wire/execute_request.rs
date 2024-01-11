@@ -11,7 +11,7 @@ use serde_json::Value;
 
 use crate::wire::jupyter_message::MessageType;
 
-/// Represents a request from the front end to execute code
+/// Represents a request from the frontend to execute code
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ExecuteRequest {
     /// The code to be executed

@@ -120,13 +120,13 @@ impl Stdin {
                 },
             };
 
-            // Deliver the message to the front end
+            // Deliver the message to the frontend
             if let Err(err) = self.outbound_tx.send(OutboundMessage::StdIn(request)) {
-                log::error!("Failed to send message to front end: {}", err);
+                log::error!("Failed to send message to frontend: {}", err);
             }
-            log::trace!("Sent input request to front end, waiting for input reply...");
+            log::trace!("Sent input request to frontend, waiting for input reply...");
 
-            // Wait for the front end's reply message from the ZeroMQ socket.
+            // Wait for the frontend's reply message from the ZeroMQ socket.
             let message = select! {
                 recv(self.inbound_rx) -> msg => match msg {
                     Ok(m) => m,

@@ -57,7 +57,7 @@ fn start_kernel(connection_file: ConnectionFile) {
         stdin_request_rx,
         stdin_reply_tx,
     ) {
-        panic!("Couldn't connect to front end: {err:?}");
+        panic!("Couldn't connect to frontend: {err:?}");
     }
 
     let mut s = String::new();

@@ -110,7 +110,7 @@ impl Control {
         let result = handler(req.clone());
 
         // Return to idle -- we always do this, even if the message generated an
-        // error, since many front ends won't submit additional messages until
+        // error, since many frontends won't submit additional messages until
         // the kernel is marked idle.
         if let Err(err) = self.send_state(req, ExecutionState::Idle) {
             warn!("Failed to restore kernel status to idle: {err}");

@@ -129,7 +129,7 @@ impl ShellHandler for Shell {
                 execution_count: self.execution_count,
             })) {
                 warn!(
-                    "Could not broadcast execution input {} to all front ends: {}",
+                    "Could not broadcast execution input {} to all frontends: {}",
                     self.execution_count, err
                 );
             }
