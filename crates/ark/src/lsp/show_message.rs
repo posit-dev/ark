@@ -30,7 +30,7 @@ pub unsafe extern "C" fn ps_show_message(message: SEXP) -> anyhow::Result<SEXP> 
     let event = UiFrontendEvent::ShowMessage(ShowMessageParams { message });
 
     let kernel = main.get_kernel().lock().unwrap();
-    kernel.send_frontend_event(event);
+    kernel.send_ui_event(event);
 
     Ok(R_NilValue)
 }

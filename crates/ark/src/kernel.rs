@@ -66,7 +66,7 @@ impl Kernel {
                 false
             }
         });
-        self.send_frontend_event(UiFrontendEvent::Busy(BusyParams { busy }));
+        self.send_ui_event(UiFrontendEvent::Busy(BusyParams { busy }));
     }
 
     /// Polls for changes to the working directory, and sends an event to the
@@ -89,7 +89,7 @@ impl Kernel {
             }
 
             // Deliver event to client
-            self.send_frontend_event(UiFrontendEvent::WorkingDirectory(WorkingDirectoryParams {
+            self.send_ui_event(UiFrontendEvent::WorkingDirectory(WorkingDirectoryParams {
                 directory: current_dir.to_string_lossy().to_string(),
             }));
         };
@@ -102,7 +102,7 @@ impl Kernel {
     }
 
     /// Send events or requests to the frontend (Positron-specific)
-    pub fn send_frontend_event(&self, event: UiFrontendEvent) {
+    pub fn send_ui_event(&self, event: UiFrontendEvent) {
         self.send_frontend(PositronFrontendMessage::Event(event))
     }
     pub fn send_frontend_request(&self, request: CommRequest) {
