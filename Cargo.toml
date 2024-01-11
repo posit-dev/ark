@@ -11,6 +11,7 @@ members = [
     "crates/echo",
     "crates/harp",
     "crates/libR-shim",
+    "crates/libr",
     "crates/stdext"
 ]
 

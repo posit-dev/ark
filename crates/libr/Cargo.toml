@@ -1,0 +1,12 @@
+[package]
+name = "libr"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.70.0"
+description = """
+Bindings to R's C API, resolved dynamically at runtime.
+"""
+
+[dependencies]
+libloading = "0.8.1"
+libR-shim = { path = "../libR-shim" }
