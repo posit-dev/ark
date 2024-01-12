@@ -47,7 +47,6 @@ use log::*;
 use serde_json::json;
 use stdext::spawn;
 
-use crate::frontend::frontend::PositronFrontend;
 use crate::help::r_help::RHelp;
 use crate::interface::KernelInfo;
 use crate::interface::RMain;
@@ -56,6 +55,7 @@ use crate::plots::graphics_device;
 use crate::r_task;
 use crate::request::KernelRequest;
 use crate::request::RRequest;
+use crate::ui::UiComm;
 use crate::variables::r_variables::RVariables;
 
 pub struct Shell {
@@ -138,7 +138,7 @@ impl ShellHandler for Shell {
         //
         // 1. The kernel info response must include the startup banner, which is
         //    not emitted until R is done starting up.
-        // 2. Jupyter front ends typically wait for the kernel info response to
+        // 2. Jupyter frontends typically wait for the kernel info response to
         //    be sent before they signal that the kernel as ready for use, so
         //    blocking here ensures that it doesn't try to execute code before R is
         //    ready.
@@ -233,7 +233,7 @@ impl ShellHandler for Shell {
             graphics_device::on_did_execute_request(
                 self.comm_manager_tx.clone(),
                 self.iopub_tx.clone(),
-                kernel.positron_connected(),
+                kernel.ui_connected(),
             )
         };
 
@@ -275,22 +275,18 @@ impl ShellHandler for Shell {
                 RVariables::start(global_env, comm.clone(), self.comm_manager_tx.clone());
                 Ok(true)
             }),
-            Comm::FrontEnd => {
+            Comm::Ui => {
                 // Create a frontend to wrap the comm channel we were just given. This starts
                 // a thread that proxies messages to the frontend.
-                let message_tx =
-                    PositronFrontend::start(comm.clone(), self.stdin_request_tx.clone());
+                let ui_comm_tx = UiComm::start(comm.clone(), self.stdin_request_tx.clone());
 
                 // Send the frontend event channel to the execution thread so it can emit
                 // events to the frontend.
                 if let Err(err) = self
                     .kernel_request_tx
-                    .send(KernelRequest::EstablishFrontendChannel(message_tx.clone()))
+                    .send(KernelRequest::EstablishUiCommChannel(ui_comm_tx.clone()))
                 {
-                    log::error!(
-                        "Could not deliver frontend event channel to execution thread: {}",
-                        err
-                    );
+                    log::error!("Could not deliver UI comm channel to execution thread: {err:?}");
                 };
                 Ok(true)
             },
@@ -322,7 +318,7 @@ impl ShellHandler for Shell {
 // Kernel is shared with the main R thread
 fn listen(kernel_mutex: Arc<Mutex<Kernel>>, kernel_request_rx: Receiver<KernelRequest>) {
     loop {
-        // Wait for an execution request from the front end.
+        // Wait for an execution request from the frontend.
         match kernel_request_rx.recv() {
             Ok(req) => {
                 let mut kernel = kernel_mutex.lock().unwrap();

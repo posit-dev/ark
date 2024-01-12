@@ -56,7 +56,7 @@ use crate::wire::status::ExecutionState;
 use crate::wire::status::KernelStatus;
 
 /// Wrapper for the Shell socket; receives requests for execution, etc. from the
-/// front end and handles them or dispatches them to the execution thread.
+/// frontend and handles them or dispatches them to the execution thread.
 pub struct Shell {
     /// The ZeroMQ Shell socket
     socket: Socket,
@@ -199,7 +199,7 @@ impl Shell {
         let result = handler(shell_handler.deref_mut(), req.clone());
 
         // Return to idle -- we always do this, even if the message generated an
-        // error, since many front ends won't submit additional messages until
+        // error, since many frontends won't submit additional messages until
         // the kernel is marked idle.
         if let Err(err) = self.send_state(req, ExecutionState::Idle) {
             warn!("Failed to restore kernel status to idle: {}", err)
@@ -231,7 +231,7 @@ impl Shell {
         let originator = Originator::from(&req);
         match block_on(handler.handle_execute_request(Some(originator), &req.content)) {
             Ok(reply) => {
-                trace!("Got execution reply, delivering to front end: {:?}", reply);
+                trace!("Got execution reply, delivering to frontend: {:?}", reply);
                 let r = req.send_reply(reply, &self.socket);
                 r
             },
@@ -328,8 +328,8 @@ impl Shell {
         result
     }
 
-    /// Deliver a request from the front end to a comm. Specifically, this is a
-    /// request from the front end to deliver a message to a backend, often as
+    /// Deliver a request from the frontend to a comm. Specifically, this is a
+    /// request from the frontend to deliver a message to a backend, often as
     /// the request side of a request/response pair.
     fn handle_comm_msg(
         &self,
@@ -403,7 +403,7 @@ impl Shell {
         })?;
 
         // Create a comm socket for this comm. The initiator is FrontEnd here
-        // because we're processing a request from the front end to open a comm.
+        // because we're processing a request from the frontend to open a comm.
         let comm_id = req.content.comm_id.clone();
         let comm_name = req.content.target_name.clone();
         let comm_data = req.content.data.clone();
@@ -414,9 +414,9 @@ impl Shell {
         // they are ready to accept connections
         let mut conn_init_rx: Option<Receiver<bool>> = None;
 
-        // Create a routine to send messages to the front end over the IOPub
+        // Create a routine to send messages to the frontend over the IOPub
         // channel. This routine will be passed to the comm channel so it can
-        // deliver messages to the front end without having to store its own
+        // deliver messages to the frontend without having to store its own
         // internal ID or a reference to the IOPub channel.
 
         let opened = match comm {

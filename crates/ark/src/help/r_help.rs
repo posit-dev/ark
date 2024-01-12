@@ -6,9 +6,9 @@
 //
 
 use amalthea::comm::comm_channel::CommMsg;
-use amalthea::comm::help_comm::HelpBackendRpcReply;
-use amalthea::comm::help_comm::HelpBackendRpcRequest;
-use amalthea::comm::help_comm::HelpEvent;
+use amalthea::comm::help_comm::HelpBackendReply;
+use amalthea::comm::help_comm::HelpBackendRequest;
+use amalthea::comm::help_comm::HelpFrontendEvent;
 use amalthea::comm::help_comm::ShowHelpKind;
 use amalthea::comm::help_comm::ShowHelpParams;
 use amalthea::socket::comm::CommSocket;
@@ -46,7 +46,7 @@ impl RHelp {
      * Start the help handler. Returns a channel for sending help requests to
      * the help thread.
      *
-     * - `comm`: The socket for communicating with the front end.
+     * - `comm`: The socket for communicating with the frontend.
      */
     pub fn start(comm: CommSocket) -> Result<(Sender<HelpRequest>, Receiver<HelpReply>)> {
         // Check to see whether the help server has started. We set the port
@@ -107,23 +107,23 @@ impl RHelp {
      */
     pub fn execution_thread(&self) {
         loop {
-            // Wait for either a message from the front end or a help request
+            // Wait for either a message from the frontend or a help request
             // from another thread.
             select! {
-                // A message from the front end; typically a request to show
+                // A message from the frontend; typically a request to show
                 // help for a specific topic.
                 recv(&self.comm.incoming_rx) -> msg => {
                     match msg {
                         Ok(msg) => {
                             if !self.handle_comm_message(msg) {
-                                info!("Help comm {} closing by request from front end.", self.comm.comm_id);
+                                info!("Help comm {} closing by request from frontend.", self.comm.comm_id);
                                 break;
                             }
                         },
                         Err(err) => {
-                            // The connection with the front end has been closed; let
+                            // The connection with the frontend has been closed; let
                             // the thread exit.
-                            warn!("Error receiving message from front end: {:?}", err);
+                            warn!("Error receiving message from frontend: {:?}", err);
                             break;
                         },
                     }
@@ -139,7 +139,7 @@ impl RHelp {
                             }
                         },
                         Err(err) => {
-                            // The connection with the front end has been closed; let
+                            // The connection with the frontend has been closed; let
                             // the thread exit.
                             warn!("Error receiving internal Help message: {:?}", err);
                             break;
@@ -152,13 +152,13 @@ impl RHelp {
     }
 
     /**
-     * Handles a comm message from the front end.
+     * Handles a comm message from the frontend.
      *
      * Returns true if the thread should continue, false if it should exit.
      */
     fn handle_comm_message(&self, message: CommMsg) -> bool {
         if let CommMsg::Close = message {
-            // The front end has closed the connection; let the
+            // The frontend has closed the connection; let the
             // thread exit.
             return false;
         }
@@ -173,14 +173,14 @@ impl RHelp {
         true
     }
 
-    fn handle_rpc(&self, message: HelpBackendRpcRequest) -> anyhow::Result<HelpBackendRpcReply> {
+    fn handle_rpc(&self, message: HelpBackendRequest) -> anyhow::Result<HelpBackendReply> {
         // Match on the type of data received.
         match message {
-            HelpBackendRpcRequest::ShowHelpTopic(topic) => {
+            HelpBackendRequest::ShowHelpTopic(topic) => {
                 // Look up the help topic and attempt to show it; this returns a
                 // boolean indicating whether the topic was found.
                 match self.show_help_topic(topic.topic.clone()) {
-                    Ok(found) => Ok(HelpBackendRpcReply::ShowHelpTopicReply(found)),
+                    Ok(found) => Ok(HelpBackendReply::ShowHelpTopicReply(found)),
                     Err(err) => Err(err),
                 }
             },
@@ -204,7 +204,7 @@ impl RHelp {
         Ok(())
     }
 
-    /// Shows a help URL by sending a message to the front end. Returns
+    /// Shows a help URL by sending a message to the frontend. Returns
     /// `Ok(true)` if the URL was handled, `Ok(false)` if it wasn't.
     fn show_help_url(&self, url: &str) -> Result<bool> {
         // Check for help URLs. If this is an R help URL, we'll re-direct it to
@@ -223,7 +223,7 @@ impl RHelp {
         let replacement = format!("http://127.0.0.1:{}/", proxy_port);
 
         let url = url.replace(prefix.as_str(), replacement.as_str());
-        let msg = HelpEvent::ShowHelp(ShowHelpParams {
+        let msg = HelpFrontendEvent::ShowHelp(ShowHelpParams {
             content: url,
             kind: ShowHelpKind::Url,
             focus: true,

@@ -52,7 +52,7 @@ pub struct Kernel {
     session: Session,
 
     /// Sends messages to the IOPub socket. This field is used throughout the
-    /// kernel codebase to send events to the front end; use `create_iopub_tx`
+    /// kernel codebase to send events to the frontend; use `create_iopub_tx`
     /// to access it.
     iopub_tx: Sender<IOPubMessage>,
 
@@ -77,7 +77,7 @@ pub enum StreamBehavior {
 }
 
 impl Kernel {
-    /// Create a new Kernel, given a connection file from a front end.
+    /// Create a new Kernel, given a connection file from a frontend.
     pub fn new(name: &str, file: ConnectionFile) -> Result<Kernel, Error> {
         let key = file.key.clone();
 
@@ -98,7 +98,7 @@ impl Kernel {
         })
     }
 
-    /// Connects the Kernel to the front end
+    /// Connects the Kernel to the frontend
     pub fn connect(
         &mut self,
         shell_handler: Arc<Mutex<dyn ShellHandler>>,

@@ -5,5 +5,7 @@
 //
 //
 
-pub mod frontend;
 pub mod methods;
+
+mod ui;
+pub use ui::*;

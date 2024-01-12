@@ -8,7 +8,7 @@
 use serde_json::Value;
 use strum_macros::EnumString;
 
-use super::frontend_comm::FrontendFrontendRpcRequest;
+use super::ui_comm::UiFrontendRequest;
 use crate::wire::jupyter_message::MessageType;
 
 #[derive(EnumString, PartialEq)]
@@ -32,8 +32,8 @@ pub enum Comm {
     /// The Positron help pane.
     Help,
 
-    /// The Positron front end.
-    FrontEnd,
+    /// The Positron frontend.
+    Ui,
 
     /// Some other comm with a custom name.
     Other(String),
@@ -55,7 +55,7 @@ pub enum CommMsg {
     Close,
 }
 
-impl MessageType for FrontendFrontendRpcRequest {
+impl MessageType for UiFrontendRequest {
     fn message_type() -> String {
         String::from("rpc_request")
     }

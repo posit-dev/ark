@@ -10,7 +10,7 @@ use serde::Serialize;
 
 use crate::wire::jupyter_message::MessageType;
 
-/// Represents request from the front end to the kernel to get information
+/// Represents request from the frontend to the kernel to get information
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct InterruptRequest {}
 

@@ -102,7 +102,7 @@ fn start_kernel(
     let control = Arc::new(Mutex::new(Control::new(r_request_tx.clone())));
 
     // Create the stream behavior; this determines whether the kernel should
-    // capture stdout/stderr and send them to the front end as IOPub messages
+    // capture stdout/stderr and send them to the frontend as IOPub messages
     let stream_behavior = match capture_streams {
         true => amalthea::kernel::StreamBehavior::Capture,
         false => amalthea::kernel::StreamBehavior::None,
@@ -124,7 +124,7 @@ fn start_kernel(
         stdin_reply_tx,
     );
     if let Err(err) = res {
-        panic!("Couldn't connect to front end: {:?}", err);
+        panic!("Couldn't connect to frontend: {err:?}");
     }
 
     // Start the R REPL (does not return for the duration of the session)
@@ -201,7 +201,7 @@ fn parse_file(
     match ConnectionFile::from_file(connection_file) {
         Ok(connection) => {
             info!(
-                "Loaded connection information from front-end in {}",
+                "Loaded connection information from frontend in {}",
                 connection_file
             );
             debug!("Connection data: {:?}", connection);

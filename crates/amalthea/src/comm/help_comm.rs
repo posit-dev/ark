@@ -47,7 +47,7 @@ pub struct ShowHelpParams {
  */
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params")]
-pub enum HelpBackendRpcRequest {
+pub enum HelpBackendRequest {
 	/// Look for and, if found, show a help topic.
 	///
 	/// Requests that the help backend look for a help topic and, if found,
@@ -64,7 +64,7 @@ pub enum HelpBackendRpcRequest {
  */
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "result")]
-pub enum HelpBackendRpcReply {
+pub enum HelpBackendReply {
 	/// Whether the topic was found and shown. Topics are shown via a Show
 	/// Help notification.
 	ShowHelpTopicReply(bool),
@@ -76,7 +76,7 @@ pub enum HelpBackendRpcReply {
  */
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params")]
-pub enum HelpFrontendRpcRequest {
+pub enum HelpFrontendRequest {
 }
 
 /**
@@ -84,7 +84,7 @@ pub enum HelpFrontendRpcRequest {
  */
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "result")]
-pub enum HelpFrontendRpcReply {
+pub enum HelpFrontendReply {
 }
 
 /**
@@ -92,7 +92,7 @@ pub enum HelpFrontendRpcReply {
  */
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params")]
-pub enum HelpEvent {
+pub enum HelpFrontendEvent {
 	#[serde(rename = "show_help")]
 	ShowHelp(ShowHelpParams),
 

@@ -15,16 +15,16 @@ use crate::comm::base_comm::JsonRpcErrorData;
 use crate::comm::base_comm::JsonRpcReply;
 use crate::session::Session;
 use crate::wire::input_reply::InputReply;
-use crate::wire::input_request::CommRequest;
 use crate::wire::input_request::ShellInputRequest;
 use crate::wire::input_request::StdInRpcReply;
+use crate::wire::input_request::UiCommFrontendRequest;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
 use crate::wire::jupyter_message::OutboundMessage;
 
 pub enum StdInRequest {
     Input(ShellInputRequest),
-    Comm(CommRequest),
+    Comm(UiCommFrontendRequest),
 }
 
 enum StdInReplySender {
@@ -120,13 +120,13 @@ impl Stdin {
                 },
             };
 
-            // Deliver the message to the front end
+            // Deliver the message to the frontend
             if let Err(err) = self.outbound_tx.send(OutboundMessage::StdIn(request)) {
-                log::error!("Failed to send message to front end: {}", err);
+                log::error!("Failed to send message to frontend: {}", err);
             }
-            log::trace!("Sent input request to front end, waiting for input reply...");
+            log::trace!("Sent input request to frontend, waiting for input reply...");
 
-            // Wait for the front end's reply message from the ZeroMQ socket.
+            // Wait for the frontend's reply message from the ZeroMQ socket.
             let message = select! {
                 recv(self.inbound_rx) -> msg => match msg {
                     Ok(m) => m,

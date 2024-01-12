@@ -11,7 +11,7 @@ use serde::Serialize;
 use super::client_event::ClientEvent;
 use super::stream::StreamOutput;
 use crate::comm::base_comm::JsonRpcReply;
-use crate::comm::frontend_comm::FrontendFrontendRpcRequest;
+use crate::comm::ui_comm::UiFrontendRequest;
 use crate::error::Error;
 use crate::session::Session;
 use crate::socket::socket::Socket;
@@ -100,7 +100,7 @@ pub enum Message {
     CommInfoRequest(JupyterMessage<CommInfoRequest>),
     CommOpen(JupyterMessage<CommOpen>),
     CommMsg(JupyterMessage<CommWireMsg>),
-    CommRequest(JupyterMessage<FrontendFrontendRpcRequest>),
+    CommRequest(JupyterMessage<UiFrontendRequest>),
     CommReply(JupyterMessage<JsonRpcReply>),
     CommClose(JupyterMessage<CommClose>),
     ClientEvent(JupyterMessage<ClientEvent>),
@@ -168,7 +168,7 @@ impl TryFrom<&WireMessage> for Message {
     /// structure.
     ///
     /// Note that not all message types are supported here; this handles only
-    /// messages that are received from the front end.
+    /// messages that are received from the frontend.
     fn try_from(msg: &WireMessage) -> Result<Self, Error> {
         let kind = msg.header.msg_type.clone();
         if kind == KernelInfoRequest::message_type() {
@@ -219,7 +219,7 @@ impl TryFrom<&WireMessage> for Message {
             return Ok(Message::InputRequest(JupyterMessage::try_from(msg)?));
         } else if kind == StreamOutput::message_type() {
             return Ok(Message::StreamOutput(JupyterMessage::try_from(msg)?));
-        } else if kind == FrontendFrontendRpcRequest::message_type() {
+        } else if kind == UiFrontendRequest::message_type() {
             return Ok(Message::CommRequest(JupyterMessage::try_from(msg)?));
         } else if kind == JsonRpcReply::message_type() {
             return Ok(Message::CommReply(JupyterMessage::try_from(msg)?));

@@ -202,7 +202,7 @@ pub struct RefreshParams {
  */
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params")]
-pub enum VariablesBackendRpcRequest {
+pub enum VariablesBackendRequest {
 	/// List all variables
 	///
 	/// Returns a list of all the variables in the current session.
@@ -248,7 +248,7 @@ pub enum VariablesBackendRpcRequest {
  */
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "result")]
-pub enum VariablesBackendRpcReply {
+pub enum VariablesBackendReply {
 	/// A view containing a list of variables in the session.
 	ListReply(VariableList),
 
@@ -274,7 +274,7 @@ pub enum VariablesBackendRpcReply {
  */
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params")]
-pub enum VariablesFrontendRpcRequest {
+pub enum VariablesFrontendRequest {
 }
 
 /**
@@ -282,7 +282,7 @@ pub enum VariablesFrontendRpcRequest {
  */
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "result")]
-pub enum VariablesFrontendRpcReply {
+pub enum VariablesFrontendReply {
 }
 
 /**
@@ -290,7 +290,7 @@ pub enum VariablesFrontendRpcReply {
  */
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params")]
-pub enum VariablesEvent {
+pub enum VariablesFrontendEvent {
 	/// Updates the variables in the current session.
 	#[serde(rename = "update")]
 	Update(UpdateParams),

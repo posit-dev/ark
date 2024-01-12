@@ -10,7 +10,7 @@ use serde::Serialize;
 
 use crate::wire::jupyter_message::MessageType;
 
-/// Represents a request from the front end to inspect code
+/// Represents a request from the frontend to inspect code
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct InspectRequest {
     /// The code context in which introspection is requested

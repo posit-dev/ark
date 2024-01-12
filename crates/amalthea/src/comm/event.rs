@@ -22,7 +22,7 @@ pub enum CommManagerEvent {
     /// second value is the message.
     Message(String, CommMsg),
 
-    /// An RPC was received from the front end
+    /// An RPC was received from the frontend
     PendingRpc(JupyterHeader),
 
     /// A Comm was closed

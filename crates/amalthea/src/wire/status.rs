@@ -10,7 +10,7 @@ use serde::Serialize;
 
 use crate::wire::jupyter_message::MessageType;
 
-/// Represents a message the front end to communicate kernel status. These
+/// Represents a message the frontend to communicate kernel status. These
 /// messages are sent before/after handling every request.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct KernelStatus {

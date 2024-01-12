@@ -8,21 +8,21 @@
 use std::path::PathBuf;
 use std::result::Result::Err;
 
-use amalthea::comm::frontend_comm::BusyParams;
-use amalthea::comm::frontend_comm::FrontendEvent;
-use amalthea::comm::frontend_comm::WorkingDirectoryParams;
-use amalthea::wire::input_request::CommRequest;
+use amalthea::comm::ui_comm::BusyParams;
+use amalthea::comm::ui_comm::UiFrontendEvent;
+use amalthea::comm::ui_comm::WorkingDirectoryParams;
+use amalthea::wire::input_request::UiCommFrontendRequest;
 use anyhow::Result;
 use crossbeam::channel::Sender;
 
-use crate::frontend::frontend::PositronFrontendMessage;
 use crate::interface::RMain;
 use crate::r_task;
 use crate::request::KernelRequest;
+use crate::ui::UiCommMessage;
 
 /// Represents the Rust state of the R kernel
 pub struct Kernel {
-    frontend_tx: Option<Sender<PositronFrontendMessage>>,
+    ui_comm_tx: Option<Sender<UiCommMessage>>,
     working_directory: PathBuf,
 }
 
@@ -30,26 +30,26 @@ impl Kernel {
     /// Create a new R kernel instance
     pub fn new() -> Self {
         Self {
-            frontend_tx: None,
+            ui_comm_tx: None,
             working_directory: PathBuf::new(),
         }
     }
 
-    /// Service an execution request from the front end
+    /// Service an execution request from the frontend
     pub fn fulfill_request(&mut self, req: &KernelRequest) {
         match req {
-            KernelRequest::EstablishFrontendChannel(sender) => {
-                self.establish_event_handler(sender.clone())
+            KernelRequest::EstablishUiCommChannel(sender) => {
+                self.establish_ui_comm_channel(sender.clone())
             },
         }
     }
 
-    /// Establishes the event handler for the kernel to send events to the
-    /// Positron front end. This event handler is used to send global events
+    /// Establishes the event handler for the kernel to send UI events to the
+    /// Positron frontend. This event handler is used to send global events
     /// that are not scoped to any particular view. The `Sender` here is a
     /// channel that is connected to a `positron.frontEnd` comm.
-    pub fn establish_event_handler(&mut self, frontend_tx: Sender<PositronFrontendMessage>) {
-        self.frontend_tx = Some(frontend_tx);
+    pub fn establish_ui_comm_channel(&mut self, ui_comm_tx: Sender<UiCommMessage>) {
+        self.ui_comm_tx = Some(ui_comm_tx);
 
         // Clear the current working directory to generate an event for the new
         // client (i.e. after a reconnect)
@@ -66,11 +66,11 @@ impl Kernel {
                 false
             }
         });
-        self.send_frontend_event(FrontendEvent::Busy(BusyParams { busy }));
+        self.send_ui_event(UiFrontendEvent::Busy(BusyParams { busy }));
     }
 
     /// Polls for changes to the working directory, and sends an event to the
-    /// front end if the working directory has changed.
+    /// frontend if the working directory has changed.
     pub fn poll_working_directory(&mut self) -> Result<()> {
         // Get the current working directory
         let mut current_dir = std::env::current_dir()?;
@@ -89,40 +89,40 @@ impl Kernel {
             }
 
             // Deliver event to client
-            self.send_frontend_event(FrontendEvent::WorkingDirectory(WorkingDirectoryParams {
+            self.send_ui_event(UiFrontendEvent::WorkingDirectory(WorkingDirectoryParams {
                 directory: current_dir.to_string_lossy().to_string(),
             }));
         };
         Ok(())
     }
 
-    /// Check if the Positron front end is connected
-    pub fn positron_connected(&self) -> bool {
-        self.frontend_tx.is_some()
+    /// Check if the Positron frontend is connected
+    pub fn ui_connected(&self) -> bool {
+        self.ui_comm_tx.is_some()
     }
 
     /// Send events or requests to the frontend (Positron-specific)
-    pub fn send_frontend_event(&self, event: FrontendEvent) {
-        self.send_frontend(PositronFrontendMessage::Event(event))
+    pub fn send_ui_event(&self, event: UiFrontendEvent) {
+        self.send_ui(UiCommMessage::Event(event))
     }
-    pub fn send_frontend_request(&self, request: CommRequest) {
-        self.send_frontend(PositronFrontendMessage::Request(request))
+    pub fn send_ui_request(&self, request: UiCommFrontendRequest) {
+        self.send_ui(UiCommMessage::Request(request))
     }
 
-    fn send_frontend(&self, msg: PositronFrontendMessage) {
-        log::info!("Sending frontend message: {msg:?}");
+    fn send_ui(&self, msg: UiCommMessage) {
+        log::info!("Sending UI message to frontend: {msg:?}");
 
-        if !self.positron_connected() {
-            log::info!("Discarding message {msg:?}; no Positron front end connected");
+        if !self.ui_connected() {
+            log::info!("Discarding message {msg:?}; no frontend UI comm connected");
             return;
         }
 
-        let frontend_tx = self.frontend_tx.as_ref().unwrap();
+        let ui_comm_tx = self.ui_comm_tx.as_ref().unwrap();
 
-        if let Err(err) = frontend_tx.send(msg) {
-            log::error!("Error sending message to frontend: {err:?}");
+        if let Err(err) = ui_comm_tx.send(msg) {
+            log::error!("Error sending message to frontend UI comm: {err:?}");
 
-            // TODO: Something is wrong with the frontend thread, we should
+            // TODO: Something is wrong with the UI thread, we should
             // disconnect to avoid more errors but then we need a mutable self
             // self.frontend_tx = None;
         }

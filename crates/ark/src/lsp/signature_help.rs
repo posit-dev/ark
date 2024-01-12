@@ -272,7 +272,7 @@ pub unsafe fn signature_help(
         }
     }
 
-    // NOTE: It seems like the front-end still tries to highlight the first
+    // NOTE: It seems like the frontend still tries to highlight the first
     // parameter when the offset is set to none, so here we just force it to
     // match no available argument.
     if offset.is_none() {

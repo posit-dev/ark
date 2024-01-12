@@ -314,7 +314,7 @@ impl RDataViewer {
         };
 
         // Flag initially set to false, but set to true if the user closes the
-        // channel (i.e. the front end is closed)
+        // channel (i.e. the frontend is closed)
         let mut user_initiated_close = false;
 
         // Set up event loop to listen for incoming messages from the frontend
@@ -323,11 +323,11 @@ impl RDataViewer {
                 log::error!("Data Viewer: Error while receiving message from frontend: {e:?}");
                 break;
             });
-            log::debug!("Data Viewer: Received message from front end: {msg:?}");
+            log::debug!("Data Viewer: Received message from frontend: {msg:?}");
 
             // Break out of the loop if the frontend has closed the channel
             if let CommMsg::Close = msg {
-                log::debug!("Data Viewer: Closing down after receiving comm_close from front end.");
+                log::debug!("Data Viewer: Closing down after receiving comm_close from frontend.");
                 user_initiated_close = true;
                 break;
             }
@@ -335,7 +335,7 @@ impl RDataViewer {
             // Process ordinary data messages
             if let CommMsg::Rpc(id, data) = msg {
                 let message = unwrap!(serde_json::from_value(data), Err(error) => {
-                    log::error!("Data Viewer: Received invalid message from front end. {error}");
+                    log::error!("Data Viewer: Received invalid message from frontend. {error}");
                     continue;
                 });
 
@@ -371,7 +371,7 @@ impl RDataViewer {
         }
 
         if !user_initiated_close {
-            // Send a close message to the front end if the front end didn't
+            // Send a close message to the frontend if the frontend didn't
             // initiate the close
             self.comm
                 .outgoing_tx

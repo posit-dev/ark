@@ -10,7 +10,7 @@ use serde::Serialize;
 
 use crate::wire::jupyter_message::MessageType;
 
-/// Represents a request from the front end to show open comms
+/// Represents a request from the frontend to show open comms
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CommInfoRequest {
     pub target_name: String,

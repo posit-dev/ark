@@ -10,7 +10,7 @@ use serde::Serialize;
 
 use crate::wire::jupyter_message::MessageType;
 
-/// Represents a request from the front end to show possibilities for completing
+/// Represents a request from the frontend to show possibilities for completing
 /// a code fragment.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CompleteRequest {

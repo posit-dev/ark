@@ -32,7 +32,7 @@ pub struct ServerComm {
  * to start the LSP or DAP and track the server thread.
  *
  * - `handler` is the handler that will be used to start the server.
- * - `msg_tx` is the channel that will be used to send messages to the front end.
+ * - `msg_tx` is the channel that will be used to send messages to the frontend.
  */
 impl ServerComm {
     pub fn new(handler: Arc<Mutex<dyn ServerHandler>>, msg_tx: Sender<CommMsg>) -> ServerComm {

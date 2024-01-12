@@ -5,8 +5,8 @@
 //
 //
 
-use amalthea::comm::frontend_comm::FrontendEvent;
-use amalthea::comm::frontend_comm::ShowMessageParams;
+use amalthea::comm::ui_comm::ShowMessageParams;
+use amalthea::comm::ui_comm::UiFrontendEvent;
 use harp::object::RObject;
 use libR_shim::*;
 use stdext::unwrap;
@@ -27,10 +27,10 @@ pub unsafe extern "C" fn ps_show_message(message: SEXP) -> anyhow::Result<SEXP> 
     let main = RMain::get();
 
     // Send a request to show the message
-    let event = FrontendEvent::ShowMessage(ShowMessageParams { message });
+    let event = UiFrontendEvent::ShowMessage(ShowMessageParams { message });
 
     let kernel = main.get_kernel().lock().unwrap();
-    kernel.send_frontend_event(event);
+    kernel.send_ui_event(event);
 
     Ok(R_NilValue)
 }

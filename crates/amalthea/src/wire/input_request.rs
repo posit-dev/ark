@@ -11,10 +11,10 @@ use serde::Serialize;
 
 use super::originator::Originator;
 use crate::comm::base_comm::JsonRpcReply;
-use crate::comm::frontend_comm::FrontendFrontendRpcRequest;
+use crate::comm::ui_comm::UiFrontendRequest;
 use crate::wire::jupyter_message::MessageType;
 
-/// Represents a request from the kernel to the front end to prompt the user for
+/// Represents a request from the kernel to the frontend to prompt the user for
 /// input
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct InputRequest {
@@ -43,7 +43,7 @@ impl MessageType for InputRequest {
 
 /// A Comm request for StdIn
 #[derive(Debug, Clone)]
-pub struct CommRequest {
+pub struct UiCommFrontendRequest {
     /// The identity of the currently active `execute_request` that caused this
     /// comm request
     pub originator: Option<Originator>,
@@ -52,7 +52,7 @@ pub struct CommRequest {
     pub response_tx: Sender<StdInRpcReply>,
 
     /// The actual comm request
-    pub request: FrontendFrontendRpcRequest,
+    pub request: UiFrontendRequest,
 }
 
 #[derive(Debug, Clone)]

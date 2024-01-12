@@ -21,12 +21,12 @@ use std::time::Duration;
 
 use amalthea::comm::base_comm::JsonRpcReply;
 use amalthea::comm::event::CommManagerEvent;
-use amalthea::comm::frontend_comm::frontend_frontend_reply_from_value;
-use amalthea::comm::frontend_comm::BusyParams;
-use amalthea::comm::frontend_comm::FrontendEvent;
-use amalthea::comm::frontend_comm::FrontendFrontendRpcRequest;
-use amalthea::comm::frontend_comm::PromptStateParams;
-use amalthea::comm::frontend_comm::ShowMessageParams;
+use amalthea::comm::ui_comm::ui_frontend_reply_from_value;
+use amalthea::comm::ui_comm::BusyParams;
+use amalthea::comm::ui_comm::PromptStateParams;
+use amalthea::comm::ui_comm::ShowMessageParams;
+use amalthea::comm::ui_comm::UiFrontendEvent;
+use amalthea::comm::ui_comm::UiFrontendRequest;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::socket::iopub::Wait;
 use amalthea::socket::stdin::StdInRequest;
@@ -39,10 +39,10 @@ use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::execute_response::ExecuteResponse;
 use amalthea::wire::execute_result::ExecuteResult;
 use amalthea::wire::input_reply::InputReply;
-use amalthea::wire::input_request::CommRequest;
 use amalthea::wire::input_request::InputRequest;
 use amalthea::wire::input_request::ShellInputRequest;
 use amalthea::wire::input_request::StdInRpcReply;
+use amalthea::wire::input_request::UiCommFrontendRequest;
 use amalthea::wire::jupyter_message::Status;
 use amalthea::wire::originator::Originator;
 use amalthea::wire::stream::Stream;
@@ -462,7 +462,7 @@ impl RMain {
                 execution_count: self.execution_count,
             })) {
                 warn!(
-                    "Could not broadcast execution input {} to all front ends: {}",
+                    "Could not broadcast execution input {} to all frontends: {}",
                     self.execution_count, err
                 );
             }
@@ -534,12 +534,12 @@ impl RMain {
                 // custom prompts set by users, e.g. `options(prompt = ,
                 // continue = )`, as well as debugging prompts, e.g. after a
                 // call to `browser()`.
-                let event = FrontendEvent::PromptState(PromptStateParams {
+                let event = UiFrontendEvent::PromptState(PromptStateParams {
                     input_prompt: info.input_prompt.clone(),
                     continuation_prompt: info.continuation_prompt.clone(),
                 });
                 let kernel = self.kernel.lock().unwrap();
-                kernel.send_frontend_event(event);
+                kernel.send_ui_event(event);
 
                 // Let frontend know the last request is complete. This turns us
                 // back to Idle.
@@ -620,7 +620,7 @@ impl RMain {
             // notified before the next incoming message is processed.
 
             select! {
-                // Wait for an execution request from the front end.
+                // Wait for an execution request from the frontend.
                 recv(self.r_request_rx) -> req => {
                     let req = unwrap!(req, Err(_) => {
                         // The channel is disconnected and empty
@@ -935,12 +935,12 @@ impl RMain {
 
         // Create an event representing the new busy state
         self.is_busy = which != 0;
-        let event = FrontendEvent::Busy(BusyParams { busy: self.is_busy });
+        let event = UiFrontendEvent::Busy(BusyParams { busy: self.is_busy });
 
         // Wait for a lock on the kernel and have it deliver the event to
-        // the front end
+        // the frontend
         let kernel = self.kernel.lock().unwrap();
-        kernel.send_frontend_event(event);
+        kernel.send_ui_event(event);
     }
 
     /// Invoked by R to show a message to the user.
@@ -948,14 +948,14 @@ impl RMain {
         let message = unsafe { CStr::from_ptr(buf) };
 
         // Create an event representing the message
-        let event = FrontendEvent::ShowMessage(ShowMessageParams {
+        let event = UiFrontendEvent::ShowMessage(ShowMessageParams {
             message: message.to_str().unwrap().to_string(),
         });
 
         // Wait for a lock on the kernel and have the kernel deliver the
-        // event to the front end
+        // event to the frontend
         let kernel = self.kernel.lock().unwrap();
-        kernel.send_frontend_event(event);
+        kernel.send_ui_event(event);
     }
 
     /// Invoked by the R event loop
@@ -1042,10 +1042,7 @@ impl RMain {
         self.lsp_client = Some(client);
     }
 
-    pub fn call_frontend_method(
-        &self,
-        request: FrontendFrontendRpcRequest,
-    ) -> anyhow::Result<RObject> {
+    pub fn call_frontend_method(&self, request: UiFrontendRequest) -> anyhow::Result<RObject> {
         log::trace!("Calling frontend method '{request:?}'");
         let (response_tx, response_rx) = bounded(1);
 
@@ -1055,7 +1052,7 @@ impl RMain {
             anyhow::bail!("Error: No active request");
         };
 
-        let comm_request = CommRequest {
+        let comm_request = UiCommFrontendRequest {
             originator,
             response_tx,
             request: request.clone(),
@@ -1064,7 +1061,7 @@ impl RMain {
         // Send request via Kernel
         {
             let kernel = self.kernel.lock().unwrap();
-            kernel.send_frontend_request(comm_request);
+            kernel.send_ui_request(comm_request);
         }
 
         // Block for response
@@ -1078,7 +1075,7 @@ impl RMain {
                     // Deserialize to Rust first to verify the OpenRPC contract.
                     // Errors are propagated to R.
                     if let Err(err) =
-                        frontend_frontend_reply_from_value(response.result.clone(), &request)
+                        ui_frontend_reply_from_value(response.result.clone(), &request)
                     {
                         anyhow::bail!("Can't deserialize RPC response for {request:?}:\n{err:?}");
                     }
@@ -1100,7 +1097,7 @@ impl RMain {
     }
 }
 
-/// Report an incomplete request to the front end
+/// Report an incomplete request to the frontend
 fn new_incomplete_response(req: &ExecuteRequest, exec_count: u32) -> ExecuteResponse {
     ExecuteResponse::ReplyException(ExecuteReplyException {
         status: Status::Error,
@@ -1136,7 +1133,7 @@ fn peek_execute_response(exec_count: u32) -> ExecuteResponse {
         let _ = RFunction::new("base", "stop").call();
     }
 
-    // Send the reply to the front end
+    // Send the reply to the frontend
     if error_occurred || stack_overflow_occurred {
         // We don't fill out `ename` with anything meaningful because typically
         // R errors don't have names. We could consider using the condition class

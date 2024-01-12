@@ -12,7 +12,7 @@ use serde_json::Value;
 use crate::wire::jupyter_message::MessageType;
 use crate::wire::jupyter_message::Status;
 
-/// Represents completion possibilities for a code fragment supplied by the front end.
+/// Represents completion possibilities for a code fragment supplied by the frontend.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CompleteReply {
     /// The status of the completion request.
