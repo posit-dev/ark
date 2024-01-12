@@ -21,6 +21,11 @@ pub fn initialize(library: &libloading::Library) {
     self::constant_globals_initializer::initialize(library);
 }
 
+pub mod has {
+    pub use crate::constant_globals_has::*;
+    pub use crate::functions_has::*;
+}
+
 // ---------------------------------------------------------------------------------------
 // Types
 

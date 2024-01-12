@@ -32,26 +32,40 @@ macro_rules! generate {
             }
         )+
 
+        // Make `has::` helpers for each function.
+        // i.e. `libr::has::Rf_error()`.
+        mod functions_has {
+            use super::*;
+
+            $(
+                paste::paste! {
+                    $(#[doc=$doc])*
+                    $(#[cfg($cfg)])*
+                    pub unsafe fn $name() -> bool {
+                        [<$name _opt>].is_some()
+                    }
+                }
+            )+
+        }
+
         mod functions_initializer {
+            use super::*;
+
             /// Initialize library functions
             ///
             /// If we can't find it in the library, the `Option` wrapper remains `None`.
             /// This indicates that this version of R doesn't have that function.
             pub fn initialize(library: &libloading::Library) {
                 $(
-                    {
-                        paste::paste! {
-                            use crate::[<$name _opt>];
+                    paste::paste! {
+                        let symbol = unsafe { library.get(stringify!($name).as_bytes()) };
 
-                            let symbol = unsafe { library.get(stringify!($name).as_bytes()) };
+                        let pointer = match symbol {
+                            Ok(symbol) => Some(*symbol),
+                            Err(_) => None
+                        };
 
-                            let pointer = match symbol {
-                                Ok(symbol) => Some(*symbol),
-                                Err(_) => None
-                            };
-
-                            unsafe { [<$name _opt>] = pointer };
-                        }
+                        unsafe { [<$name _opt>] = pointer };
                     }
                 )+
             }

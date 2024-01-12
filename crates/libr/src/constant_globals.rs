@@ -21,31 +21,52 @@ macro_rules! generate {
             pub static mut $name: $ty = $default;
         )+
 
+        // Define `has::` booleans
+        $(
+            paste::paste! {
+                static mut [<$name _has>]: bool = false;
+            }
+        )+
+
+        // Make `has::` helpers for each function.
+        // i.e. `libr::has::Rf_error()`.
+        mod constant_globals_has {
+            use super::*;
+
+            $(
+                paste::paste! {
+                    $(#[doc=$doc])*
+                    $(#[cfg($cfg)])*
+                    pub unsafe fn $name() -> bool {
+                        [<$name _has>]
+                    }
+                }
+            )+
+        }
+
         mod constant_globals_initializer {
+            use super::*;
+
             /// Initialize library constant globals
             pub fn initialize(library: &libloading::Library) {
                 $(
-                    {
-                        use crate::$name;
-                        paste::paste! {
-                            // All of our types are also idents, we paste to generate the
-                            // ident for import purposes
-                            use crate::[<$ty>];
-                        }
-
+                    paste::paste! {
                         let symbol = unsafe { library.get(stringify!($name).as_bytes()) };
 
-                        // TODO: Handle missing case
+                        // If the symbol doesn't exist in the library, assume it simply
+                        // isn't available in this version of R.
+                        if let Ok(symbol) = symbol {
+                            // Pull into Rust as a constant pointer
+                            let pointer: *const $ty = *symbol;
 
-                        // Pull into Rust as a constant pointer
-                        let pointer: *const $ty = match symbol {
-                            Ok(symbol) => *symbol,
-                            Err(_) => panic!("Missing constant global")
-                        };
+                            // Assume global has been initialized on the R side, and is
+                            // otherwise constant, so deref to copy it over and assign it
+                            // once.
+                            unsafe { $name = *pointer };
 
-                        // Assume global has been initialized on the R side, and is
-                        // otherwise constant, so deref to copy it over and assign it once.
-                        unsafe { $name = *pointer };
+                            // Update our `has::` marker
+                            unsafe { [<$name _has>] = true };
+                        }
                     }
                 )+
             }

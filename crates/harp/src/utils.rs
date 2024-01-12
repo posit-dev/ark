@@ -16,7 +16,6 @@ use itertools::Itertools;
 use libR_shim::*;
 use once_cell::sync::Lazy;
 use regex::Regex;
-use semver::Version;
 use stdext::unwrap;
 
 use crate::environment::Environment;
@@ -33,7 +32,6 @@ use crate::protect::RProtect;
 use crate::r_char;
 use crate::r_lang;
 use crate::r_symbol;
-use crate::r_version::r_version;
 use crate::string::r_is_string;
 use crate::symbol::RSymbol;
 use crate::vector::CharacterVector;
@@ -491,9 +489,7 @@ pub unsafe fn r_promise_is_lazy_load_binding(x: SEXP) -> bool {
 }
 
 pub unsafe fn r_env_has(env: SEXP, sym: SEXP) -> bool {
-    const R_4_2_0: Version = Version::new(4, 2, 0);
-
-    if r_version() >= &R_4_2_0 {
+    if libr::has::R_existsVarInFrame() {
         libr::R_existsVarInFrame(env, sym) == libr::Rboolean_TRUE
     } else {
         // Not particularly fast, but seems to be good enough for checking symbol
