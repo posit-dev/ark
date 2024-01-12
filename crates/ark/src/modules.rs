@@ -40,7 +40,7 @@ pub fn initialize(testing: bool) -> anyhow::Result<()> {
     }
 
     let positron_path = root.join("positron");
-    let rstudioapi_path = root.join("rstudioapi");
+    let rstudio_path = root.join("rstudio");
 
     // Create the private Positron namespace.
     let namespace = RFunction::new("base", "new.env")
@@ -55,7 +55,7 @@ pub fn initialize(testing: bool) -> anyhow::Result<()> {
     walk_directory(&positron_path, "import_positron", namespace.sexp)?;
 
     // Load the rstudio namespace and exported functions
-    walk_directory(&rstudioapi_path, "import_rstudioapi_shims", namespace.sexp)?;
+    walk_directory(&rstudio_path, "import_rstudio", namespace.sexp)?;
 
     return Ok(());
 }

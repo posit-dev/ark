@@ -52,25 +52,25 @@ exported_names <- function(path) {
     exported
 }
 
-import_rstudioapi_shims <- function(path) {
-    init_rstudioapi()
+import_rstudio <- function(path) {
+    init_rstudio()
 
-    env <- rstudioapi_shims_env()
+    env <- rstudio_ns()
     source(path, local = env)
 
     export(path, from = env, to = as.environment("tools:rstudio"))
 }
 
-init_rstudioapi <- function() {
+init_rstudio <- function() {
     # Already initialised if we're on the search path
     if ("tools:rstudio" %in% search()) {
         return()
     }
 
-    # Create environment for the rstudioapi shims.
-    # It inherits from Ark's namespace.
+    # Create environment for the rstudio namespace.
+    # It inherits from the positron namespace.
     parent <- parent.env(environment())
-    the$rstudioapi_shims_env <- new.env(parent = parent)
+    the$rstudio_ns <- new.env(parent = parent)
 
     # Create environment for functions exported on the search path
     attach(list(), name = "tools:rstudio")
@@ -90,6 +90,6 @@ init_rstudioapi <- function() {
     )
 }
 
-rstudioapi_shims_env <- function() {
-    the$rstudioapi_shims_env
+rstudio_ns <- function() {
+    the$rstudio_ns
 }
