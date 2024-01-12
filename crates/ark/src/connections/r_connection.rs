@@ -26,7 +26,7 @@ use crate::r_task;
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ConnectionTable {
     name: String,
-    r#type: String,
+    kind: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -115,14 +115,11 @@ impl RConnection {
                 let tables = r_task(|| -> Result<_, anyhow::Error> {
                     unsafe {
                         let mut call = RFunction::from(".ps.connection_list_objects");
-
-                        // returns a data.frame with columns name and type
                         call.add(RObject::from(self.comm.comm_id.clone()));
-
                         for obj in path {
-                            call.param(obj.r#type.as_str(), obj.name);
+                            call.param(obj.kind.as_str(), obj.name);
                         }
-
+                        // returns a data.frame with columns name and type
                         let tables = call.call()?;
 
                         let names = RFunction::from("[[")
@@ -138,9 +135,9 @@ impl RConnection {
                         let resulting = RObject::to::<Vec<String>>(names)?
                             .iter()
                             .zip(RObject::to::<Vec<String>>(types)?.iter())
-                            .map(|(name, r#type)| ConnectionTable {
+                            .map(|(name, kind)| ConnectionTable {
                                 name: name.clone(),
-                                r#type: r#type.clone(),
+                                kind: kind.clone(),
                             })
                             .collect::<Vec<_>>();
 
@@ -158,7 +155,7 @@ impl RConnection {
                     let mut call = RFunction::from(".ps.connection_list_fields");
                     call.add(RObject::from(self.comm.comm_id.clone()));
                     for obj in path {
-                        call.param(obj.r#type.as_str(), obj.name);
+                        call.param(obj.kind.as_str(), obj.name);
                     }
                     let fields = call.call()?;
 
@@ -182,7 +179,7 @@ impl RConnection {
                     let mut call = RFunction::from(".ps.connection_preview_object");
                     call.add(RObject::from(self.comm.comm_id.clone()));
                     for obj in path {
-                        call.param(obj.r#type.as_str(), obj.name);
+                        call.param(obj.kind.as_str(), obj.name);
                     }
                     call.call()?;
                     Ok(())
