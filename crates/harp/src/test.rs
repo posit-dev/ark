@@ -24,7 +24,6 @@ use libr::R_CStackLimit;
 use libr::Rf_initialize_R;
 use stdext::cargs;
 
-use crate::exec::r_sandbox;
 use crate::library::RLibraries;
 use crate::R_MAIN_THREAD_ID;
 
@@ -87,12 +86,10 @@ fn setup_r() {
 }
 
 pub fn r_test<F: FnOnce()>(f: F) {
-    start_r();
     let guard = unsafe { R_RUNTIME_LOCK.lock() };
 
-    if let Err(err) = r_sandbox(f) {
-        panic!("While running test: {err:?}");
-    }
+    start_r();
+    f();
 
     drop(guard);
 }
