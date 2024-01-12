@@ -135,7 +135,7 @@ fn get_r_home() -> String {
 }
 
 fn get_user_home() -> String {
-    let r_path = unsafe { getRUser() };
+    let r_path = unsafe { libr::getRUser() };
 
     if r_path.is_null() {
         panic!("`getRUser()` failed to report a user home directory.");
@@ -185,21 +185,6 @@ extern "C" {
     fn R_DefParamsEx(Rp: interface_types::Rstart, RstartVersion: i32);
 
     fn R_SetParams(Rp: interface_types::Rstart);
-
-    /// Get user home directory
-    ///
-    /// Checks:
-    /// - C `R_USER` env var
-    /// - C `USER` env var
-    /// - `Documents` folder, if one exists, through `ShellGetPersonalDirectory()`
-    /// - `HOMEDRIVE` + `HOMEPATH`
-    /// - Current directory through `GetCurrentDirectory()`
-    ///
-    /// Probably returns a system encoded result?
-    /// So needs to be converted to UTF-8.
-    ///
-    /// https://github.com/wch/r-source/blob/55cd975c538ad5a086c2085ccb6a3037d5a0cb9a/src/gnuwin32/shext.c#L55
-    fn getRUser() -> *mut ::std::os::raw::c_char;
 
     /// Get R_HOME from the environment or the registry
     ///

@@ -57,6 +57,22 @@ pub use libR_shim::SEXP;
 functions::generate! {
     /// R >= 4.2.0
     pub fn R_existsVarInFrame(rho: SEXP, symbol: SEXP) -> Rboolean;
+
+    /// Get user home directory
+    ///
+    /// Checks:
+    /// - C `R_USER` env var
+    /// - C `USER` env var
+    /// - `Documents` folder, if one exists, through `ShellGetPersonalDirectory()`
+    /// - `HOMEDRIVE` + `HOMEPATH`
+    /// - Current directory through `GetCurrentDirectory()`
+    ///
+    /// Probably returns a system encoded result?
+    /// So needs to be converted to UTF-8.
+    ///
+    /// https://github.com/wch/r-source/blob/55cd975c538ad5a086c2085ccb6a3037d5a0cb9a/src/gnuwin32/shext.c#L55
+    #[cfg(windows)]
+    pub fn getRUser() -> *mut std::ffi::c_char;
 }
 
 constant_globals::generate! {
