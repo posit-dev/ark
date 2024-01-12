@@ -14,12 +14,9 @@ use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::r_symbol;
 use harp::utils::r_poke_option;
-use libr::R_GlobalEnv;
 use libr::R_NilValue;
-use libr::R_PreserveObject;
 use libr::Rf_ScalarLogical;
 use libr::Rf_asInteger;
-use libr::Rf_setAttrib;
 use libr::SEXP;
 use stdext::unwrap;
 
@@ -42,49 +39,28 @@ pub fn initialize(testing: bool) -> anyhow::Result<()> {
         root = Path::new(&source).join("src").join("modules").to_path_buf();
     }
 
+    let positron_path = root.join("positron");
+    let rstudioapi_path = root.join("rstudioapi");
+
     // Create the private Positron namespace.
     let namespace = RFunction::new("base", "new.env")
         .param("parent", R_ENVS.base)
         .call()?;
 
-    let init_file = root.join("private").join("init.R");
+    // Load initial utils into the namespace
+    let init_file = positron_path.join("init.R");
     r_source_in(init_file.to_str().unwrap(), namespace.sexp)?;
 
-    // Import all module files.
-    // TODO: Need to select appropriate path for package builds.
-    let public = root.join("public");
-    let private = root.join("private");
+    // Load the positron namespace and exported functions
+    walk_directory(&positron_path, "import_positron", namespace.sexp)?;
 
-    let source_positron = |path: String| {
-        RFunction::new("", "import_positron")
-            .param("path", path)
-            .call_in(namespace.sexp)?;
-        Ok(())
-    };
-
-    for directory in [public, private] {
-        walk_directory(&directory, |path| source_positron(path))?;
-    }
-
-    // Load the rstudioapi environment
-    let rstudioapi_path = root.join("rstudioapi");
-
-    let source_rstudio_api = |path: String| {
-        RFunction::new("", "import_rstudioapi_shims")
-            .param("path", path)
-            .call_in(namespace.sexp)?;
-        Ok(())
-    };
-
-    walk_directory(&rstudioapi_path, |path| source_rstudio_api(path))?;
+    // Load the rstudio namespace and exported functions
+    walk_directory(&rstudioapi_path, "import_rstudioapi_shims", namespace.sexp)?;
 
     return Ok(());
 }
 
-pub fn walk_directory(
-    directory: &Path,
-    fun: impl Fn(String) -> anyhow::Result<()>,
-) -> anyhow::Result<()> {
+pub fn walk_directory(directory: &Path, fun: &str, env: SEXP) -> anyhow::Result<()> {
     log::info!("Loading modules from directory: {}", directory.display());
     let entries = std::fs::read_dir(directory)?;
 
@@ -100,7 +76,10 @@ pub fn walk_directory(
         let path = entry.path();
 
         if path.extension().is_some_and(|ext| ext == "R") {
-            fun(path.display().to_string())?;
+            let path_string = path.display().to_string();
+            RFunction::new("", fun)
+                .param("path", path_string)
+                .call_in(env)?;
         }
     }
 
