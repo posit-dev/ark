@@ -35,9 +35,12 @@ pub use libR_shim::SEXP;
 // pub const Rboolean_TRUE: Rboolean = 1;
 
 // ---------------------------------------------------------------------------------------
-// Functions
+// Functions and globals
 
 link! {
     /// R >= 4.2.0
     pub fn R_existsVarInFrame(rho: SEXP, symbol: SEXP) -> Rboolean;
+
+    pub static mut R_NilValue: SEXP;
+    pub static mut R_interrupts_suspended: Rboolean;
 }

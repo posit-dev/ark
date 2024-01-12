@@ -108,7 +108,7 @@ pub extern "C" fn harp_log_warning(msg: SEXP) -> crate::error::Result<SEXP> {
     let msg = String::try_from(RObject::view(msg))?;
     log::warn!("{msg}");
 
-    unsafe { Ok(R_NilValue) }
+    unsafe { Ok(*libr::R_NilValue()) }
 }
 
 #[register]
@@ -116,7 +116,7 @@ pub extern "C" fn harp_log_error(msg: SEXP) -> crate::error::Result<SEXP> {
     let msg = String::try_from(RObject::view(msg))?;
     log::error!("{msg}");
 
-    unsafe { Ok(R_NilValue) }
+    unsafe { Ok(*libr::R_NilValue()) }
 }
 
 pub fn r_assert_type(object: SEXP, expected: &[u32]) -> Result<u32> {
@@ -152,7 +152,7 @@ pub fn r_is_data_frame(object: SEXP) -> bool {
 }
 
 pub fn r_is_null(object: SEXP) -> bool {
-    unsafe { object == R_NilValue }
+    unsafe { object == *libr::R_NilValue() }
 }
 
 pub fn r_is_altrep(object: SEXP) -> bool {
@@ -192,7 +192,7 @@ pub fn r_classes(value: SEXP) -> Option<CharacterVector> {
     unsafe {
         let classes = RObject::from(Rf_getAttrib(value, R_ClassSymbol));
 
-        if *classes == R_NilValue {
+        if *classes == *libr::R_NilValue() {
             None
         } else {
             Some(CharacterVector::new_unchecked(classes))
@@ -250,7 +250,7 @@ pub fn r_str_to_owned_utf8_unchecked(x: SEXP) -> String {
 pub fn pairlist_size(mut pairlist: SEXP) -> Result<isize> {
     let mut n = 0;
     unsafe {
-        while pairlist != R_NilValue {
+        while pairlist != *libr::R_NilValue() {
             r_assert_type(pairlist, &[LISTSXP])?;
 
             pairlist = CDR(pairlist);
@@ -261,7 +261,7 @@ pub fn pairlist_size(mut pairlist: SEXP) -> Result<isize> {
 }
 
 pub fn r_vec_is_single_dimension_with_single_value(value: SEXP) -> bool {
-    unsafe { Rf_getAttrib(value, R_DimSymbol) == R_NilValue && Rf_xlength(value) == 1 }
+    unsafe { Rf_getAttrib(value, R_DimSymbol) == *libr::R_NilValue() && Rf_xlength(value) == 1 }
 }
 
 pub fn r_vec_type(value: SEXP) -> String {
@@ -353,7 +353,7 @@ pub unsafe fn r_formals(object: SEXP) -> Result<Vec<RArgument>> {
     // iterate through the entries
     let mut arguments = Vec::new();
 
-    while formals != R_NilValue {
+    while formals != *libr::R_NilValue() {
         let name = RObject::from(TAG(formals)).to::<String>()?;
         let value = CAR(formals);
         arguments.push(RArgument::new(name.as_str(), RObject::new(value)));
@@ -526,7 +526,7 @@ pub unsafe fn r_pkg_env_name(env: SEXP) -> SEXP {
 
     let name = R_PackageEnvName(env);
 
-    if name == R_NilValue {
+    if name == *libr::R_NilValue() {
         // Should be very unlikely, but `NULL` can be returned
         return r_char!("");
     }
@@ -547,7 +547,7 @@ pub unsafe fn r_ns_env_name(env: SEXP) -> SEXP {
 
     let spec = protect.add(R_NamespaceEnvSpec(env));
 
-    if spec == R_NilValue {
+    if spec == *libr::R_NilValue() {
         // Should be very unlikely, but `NULL` can be returned
         return r_char!("");
     }

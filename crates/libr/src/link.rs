@@ -6,19 +6,34 @@
 //
 
 macro_rules! link {
-    // `@LOAD` internal entry point
-    // Generates the one time loading function for a particular library entry
+    // `@LOAD_FUNCTION` internal entry point
+    // Generates the one time loading function for a particular library function entry
     (
-        @LOAD:
-        $(#[doc=$doc:expr])*
+        @LOAD_FUNCTION:
         $(#[cfg($cfg:meta)])*
         fn $name:ident($($pname:ident: $pty:ty), *) $(-> $ret:ty)*
     ) => (
-        $(#[doc=$doc])*
         $(#[cfg($cfg)])*
         pub fn $name(library: &mut super::SharedLibrary) {
             let symbol = unsafe { library.library.get(stringify!($name).as_bytes()) }.ok();
             library.functions.$name = match symbol {
+                Some(s) => *s,
+                None => None,
+            };
+        }
+    );
+
+    // `@LOAD_GLOBAL` internal entry point
+    // Generates the one time loading function for a particular library global entry
+    (
+        @LOAD_GLOBAL:
+        $(#[cfg($gcfg:meta)])*
+        static mut $gname:ident: $gty:ty
+    ) => (
+        $(#[cfg($gcfg)])*
+        pub fn $gname(library: &mut super::SharedLibrary) {
+            let symbol = unsafe { library.library.get(stringify!($gname).as_bytes()) }.ok();
+            library.globals.$gname = match symbol {
                 Some(s) => *s,
                 None => None,
             };
@@ -31,6 +46,11 @@ macro_rules! link {
             $(#[doc=$doc:expr])*
             $(#[cfg($cfg:meta)])*
             pub fn $name:ident($($pname:ident: $pty:ty), *) $(-> $ret:ty)*;
+        )+
+        $(
+            $(#[doc=$gdoc:expr])*
+            $(#[cfg($gcfg:meta)])*
+            pub static mut $gname:ident: $gty:ty;
         )+
     ) => (
         use std::cell::{RefCell};
@@ -47,17 +67,28 @@ macro_rules! link {
             )+
         }
 
+        /// The set of globals loaded dynamically.
+        #[derive(Debug, Default)]
+        pub struct Globals {
+            $(
+                $(#[doc=$gdoc])*
+                $(#[cfg($gcfg)])*
+                pub $gname: Option<*mut $gty>,
+            )+
+        }
+
         /// A dynamically loaded instance of the `R` library.
         #[derive(Debug)]
         pub struct SharedLibrary {
             library: libloading::Library,
             path: PathBuf,
             functions: Functions,
+            globals: Globals,
         }
 
         impl SharedLibrary {
             fn new(library: libloading::Library, path: PathBuf) -> Self {
-                Self { library, path, functions: Functions::default() }
+                Self { library, path, functions: Functions::default(), globals: Globals::default() }
             }
 
             /// Returns the path to this `R` shared library.
@@ -117,8 +148,45 @@ Check the OS platform you are using against this function.
             }
         )+
 
-        mod load {
-            $(link!(@LOAD: $(#[cfg($cfg)])* fn $name($($pname: $pty), *) $(-> $ret)*);)+
+        $(
+            #[cfg_attr(feature="cargo-clippy", allow(clippy::missing_safety_doc))]
+            #[cfg_attr(feature="cargo-clippy", allow(clippy::too_many_arguments))]
+            $(#[doc=$gdoc])*
+            $(#[cfg($gcfg)])*
+            pub unsafe fn $gname() -> *mut $gty {
+                with_library(|library| {
+                    if let Some(global) = library.globals.$gname {
+                        global
+                    } else {
+                        panic!(
+                            r#"
+An `R` global was called that is not supported by the loaded `R` instance.
+
+    called global = `{0}`
+
+Check the `R` version you are running against this global.
+Check the OS platform you are using against this global.
+"#,
+                            stringify!($gname),
+                        );
+                    }
+                }).expect("an `R` shared library is not loaded on this thread")
+            }
+
+            $(#[doc=$gdoc])*
+            $(#[cfg($gcfg)])*
+            pub mod $gname {
+                pub fn is_loaded() -> bool {
+                    super::with_library(|l| l.globals.$gname.is_some()).unwrap_or(false)
+                }
+            }
+        )+
+
+        mod load_function {
+            $(link!(@LOAD_FUNCTION: $(#[cfg($cfg)])* fn $name($($pname: $pty), *) $(-> $ret)*);)+
+        }
+        mod load_global {
+            $(link!(@LOAD_GLOBAL: $(#[cfg($gcfg)])* static mut $gname: $gty);)+
         }
 
         /// Loads an `R` shared library and returns the library instance.
@@ -139,14 +207,15 @@ Check the OS platform you are using against this function.
 
                 let mut library = SharedLibrary::new(library?, path);
 
-                // Perform initial loading of all functions
-                $(load::$name(&mut library);)+
+                // Perform initial loading of all functions and globals
+                $(load_function::$name(&mut library);)+
+                $(load_global::$gname(&mut library);)+
 
                 Ok(library)
             }
         }
 
-        /// Loads a `libclang` shared library for use in the current thread.
+        /// Loads an `R` shared library for use in the current thread.
         ///
         /// This functions attempts to load all the functions in the shared library. Whether a
         /// function has been loaded can be tested by calling the `is_loaded` function on the
