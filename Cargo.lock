@@ -320,6 +320,7 @@ dependencies = [
  "lazy_static",
  "libR-shim",
  "libc",
+ "libloading 0.8.1",
  "libr",
  "log",
  "nix",
@@ -1634,6 +1635,7 @@ version = "0.1.0"
 dependencies = [
  "libR-shim",
  "libloading 0.8.1",
+ "paste",
 ]
 
 [[package]]

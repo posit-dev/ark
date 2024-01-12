@@ -9,8 +9,17 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-#[macro_use]
-mod link;
+mod constant_globals;
+mod functions;
+
+// ---------------------------------------------------------------------------------------
+
+/// Initialization function that must be called before using any functions or globals
+/// exported by the crate
+pub fn initialize(library: &libloading::Library) {
+    self::functions_initializer::initialize(library);
+    self::constant_globals_initializer::initialize(library);
+}
 
 // ---------------------------------------------------------------------------------------
 // Types
@@ -37,10 +46,12 @@ pub use libR_shim::SEXP;
 // ---------------------------------------------------------------------------------------
 // Functions and globals
 
-link! {
+functions::generate! {
     /// R >= 4.2.0
     pub fn R_existsVarInFrame(rho: SEXP, symbol: SEXP) -> Rboolean;
+}
 
-    pub static mut R_NilValue: SEXP;
-    pub static mut R_interrupts_suspended: Rboolean;
+constant_globals::generate! {
+    pub static mut R_NilValue: SEXP = std::ptr::null_mut();
+    pub static mut R_interrupts_suspended: Rboolean = Rboolean_FALSE;
 }

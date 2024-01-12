@@ -9,7 +9,6 @@
 
 use core::panic;
 use std::env;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -442,17 +441,6 @@ fn main() {
         old_hook(panic_info);
         std::process::abort();
     }));
-
-    // TODO: Let Positron pass this down somehow
-    let r_shared_library = PathBuf::from(
-        "/Library/Frameworks/R.framework/Versions/4.3-arm64/Resources/lib/libR.dylib",
-    );
-
-    // Initialize dynamically loaded R API
-    match libr::load(r_shared_library) {
-        Ok(_) => log::info!("Successfully initialized R shared library."),
-        Err(err) => panic!("Failed to initialize dynamically loaded R library: {err:?}"),
-    }
 
     // Parse the connection file and start the kernel
     if let Some(connection) = connection_file {

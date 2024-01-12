@@ -10,3 +10,4 @@ Bindings to R's C API, resolved dynamically at runtime.
 [dependencies]
 libloading = "0.8.1"
 libR-shim = { path = "../libR-shim" }
+paste = "1.0.14"
