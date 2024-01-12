@@ -191,7 +191,6 @@ extern "C" {
 // so they don't work on Windows
 #[link(name = "R", kind = "dylib")]
 extern "C" {
-    pub static mut R_interrupts_suspended: Rboolean;
     pub static mut R_interrupts_pending: ::std::os::raw::c_int;
 
     #[doc = "IEEE NaN"]

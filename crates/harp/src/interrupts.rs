@@ -6,6 +6,9 @@
 //
 
 use libR_shim::*;
+use libr::R_interrupts_suspended_get;
+use libr::R_interrupts_suspended_set;
+use libr::Rboolean_TRUE;
 
 static mut R_INTERRUPTS_SUSPENDED: i32 = 0;
 
@@ -16,8 +19,8 @@ pub struct RInterruptsSuspendedScope {
 impl RInterruptsSuspendedScope {
     pub fn new() -> RInterruptsSuspendedScope {
         unsafe {
-            let suspended = R_interrupts_suspended;
-            R_interrupts_suspended = 1;
+            let suspended = R_interrupts_suspended_get();
+            R_interrupts_suspended_set(Rboolean_TRUE);
             R_INTERRUPTS_SUSPENDED += 1;
 
             RInterruptsSuspendedScope { suspended }
@@ -30,7 +33,7 @@ impl Drop for RInterruptsSuspendedScope {
         unsafe {
             R_INTERRUPTS_SUSPENDED -= 1;
             if R_INTERRUPTS_SUSPENDED == 0 {
-                R_interrupts_suspended = self.suspended;
+                R_interrupts_suspended_set(self.suspended);
             }
         }
     }

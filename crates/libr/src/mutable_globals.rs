@@ -1,5 +1,5 @@
 //
-// constant_globals.rs
+// mutable_globals.rs
 //
 // Copyright (C) 2024 Posit Software, PBC. All rights reserved.
 //
@@ -10,44 +10,49 @@ macro_rules! generate {
         $(
             $(#[doc=$doc:expr])*
             $(#[cfg($cfg:meta)])*
-            pub static mut $name:ident: $ty:ty = $default:expr;
+            pub static mut $name:ident: $ty:ty;
         )+
     ) => (
-        // Define globals, initialized to a default value
-        // (otherwise we can't make them static mut)
+        // Define internal global pointers, initialized to null pointer
         $(
-            $(#[doc=$doc])*
-            $(#[cfg($cfg)])*
-            pub static mut $name: $ty = $default;
+            static mut $name: *mut $ty = std::ptr::null_mut();
         )+
 
-        // Define `has::` booleans
+        // Define getter and setter pairs
         $(
             paste::paste! {
-                static mut [<$name _has>]: bool = false;
+                $(#[doc=$doc])*
+                $(#[cfg($cfg)])*
+                pub unsafe fn [<$name _get>]() -> $ty {
+                    *$name
+                }
+
+                $(#[doc=$doc])*
+                $(#[cfg($cfg)])*
+                pub unsafe fn [<$name _set>](x: $ty) {
+                    *$name = x;
+                }
             }
         )+
 
         // Make `has::` helpers for each global.
         // i.e. `libr::has::Rf_error()`.
-        mod constant_globals_has {
-            use super::*;
-
+        mod mutable_globals_has {
             $(
                 paste::paste! {
                     $(#[doc=$doc])*
                     $(#[cfg($cfg)])*
                     pub unsafe fn $name() -> bool {
-                        [<$name _has>]
+                        super::$name.is_null()
                     }
                 }
             )+
         }
 
-        mod constant_globals_initializer {
+        mod mutable_globals_initializer {
             use super::*;
 
-            /// Initialize library constant globals
+            /// Initialize library mutable globals
             pub fn initialize(library: &libloading::Library) {
                 $(
                     paste::paste! {
@@ -56,16 +61,8 @@ macro_rules! generate {
                         // If the symbol doesn't exist in the library, assume it simply
                         // isn't available in this version of R.
                         if let Ok(symbol) = symbol {
-                            // Pull into Rust as a constant pointer
-                            let pointer: *const $ty = *symbol;
-
-                            // Assume global has been initialized on the R side, and is
-                            // otherwise constant, so deref to copy it over and assign it
-                            // once.
-                            unsafe { $name = *pointer };
-
-                            // Update our `has::` marker
-                            unsafe { [<$name _has>] = true };
+                            // Pull into Rust as a mutable pointer
+                            unsafe { $name = *symbol };
                         }
                     }
                 )+

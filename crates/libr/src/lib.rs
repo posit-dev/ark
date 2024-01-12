@@ -11,19 +11,22 @@
 
 mod constant_globals;
 mod functions;
+mod mutable_globals;
 
 // ---------------------------------------------------------------------------------------
 
 /// Initialization function that must be called before using any functions or globals
 /// exported by the crate
 pub fn initialize(library: &libloading::Library) {
-    self::functions_initializer::initialize(library);
     self::constant_globals_initializer::initialize(library);
+    self::functions_initializer::initialize(library);
+    self::mutable_globals_initializer::initialize(library);
 }
 
 pub mod has {
     pub use crate::constant_globals_has::*;
     pub use crate::functions_has::*;
+    pub use crate::mutable_globals_has::*;
 }
 
 // ---------------------------------------------------------------------------------------
@@ -58,5 +61,8 @@ functions::generate! {
 
 constant_globals::generate! {
     pub static mut R_NilValue: SEXP = std::ptr::null_mut();
-    pub static mut R_interrupts_suspended: Rboolean = Rboolean_FALSE;
+}
+
+mutable_globals::generate! {
+    pub static mut R_interrupts_suspended: Rboolean;
 }
