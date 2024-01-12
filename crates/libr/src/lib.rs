@@ -60,7 +60,8 @@ functions::generate! {
 }
 
 constant_globals::generate! {
-    pub static mut R_NilValue: SEXP = std::ptr::null_mut();
+    #[default = std::ptr::null_mut()]
+    pub static R_NilValue: SEXP;
 }
 
 mutable_globals::generate! {

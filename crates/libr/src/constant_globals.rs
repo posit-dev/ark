@@ -10,11 +10,14 @@ macro_rules! generate {
         $(
             $(#[doc=$doc:expr])*
             $(#[cfg($cfg:meta)])*
-            pub static mut $name:ident: $ty:ty = $default:expr;
+            #[default=$default:expr]
+            pub static $name:ident: $ty:ty;
         )+
     ) => (
-        // Define globals, initialized to a default value
-        // (otherwise we can't make them static mut)
+        // Define globals
+        // The macro signature doesn't use `mut` so that we convey that they are meant
+        // to be constant, but really they have to be mutable because we need to define
+        // them to their initial value
         $(
             $(#[doc=$doc])*
             $(#[cfg($cfg)])*
