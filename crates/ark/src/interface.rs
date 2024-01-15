@@ -169,17 +169,26 @@ pub fn start_r(
         args.push(CString::new(arg).unwrap().into_raw());
     }
 
-    crate::sys::interface::setup_r(args);
-
     // TODO: Let Positron pass this down somehow
     let r_shared_library = PathBuf::from(
         "/Library/Frameworks/R.framework/Versions/4.3-arm64/Resources/lib/libR.dylib",
     );
 
-    // Now that `setup_r()` has run (in particular, `setup_Rmainloop()`, which initializes
-    // R's global variables, like `R_NilValue`), we can open and initialize our R shared
-    // library bindings
-    initialize_r_shared_library(&r_shared_library);
+    // This `library` MUST live for the entirety of the time that we call the R API.
+    // Currently this is managed by the fact that `run_r()` never returns.
+    // However, we could also `Box::leak()` it if we wanted to be explicit about this.
+    let library = open_r_shared_library(&r_shared_library);
+
+    // Initialize dynamic bindings to functions and mutable globals. These are required
+    // to even start R (for things like `Rf_initialize_R()` and `R_running_as_main_program`).
+    libr::initialize::functions(&library);
+    libr::initialize::mutable_globals(&library);
+
+    crate::sys::interface::setup_r(args);
+
+    // Now that `setup_r()` has run `setup_Rmainloop()`, which initializes R's "constant"
+    // global variables, we can initialize our own.
+    libr::initialize::constant_globals(&library);
 
     unsafe {
         // Optionally run a user specified R startup script
@@ -1241,7 +1250,7 @@ fn to_html(frame: SEXP) -> Result<String> {
     }
 }
 
-fn initialize_r_shared_library(path: &PathBuf) {
+fn open_r_shared_library(path: &PathBuf) -> libloading::Library {
     let library = unsafe { libloading::Library::new(&path) };
 
     let library = match library {
@@ -1254,18 +1263,11 @@ fn initialize_r_shared_library(path: &PathBuf) {
     };
 
     log::info!(
-        "Successfully loaded R shared library at '{}'.",
+        "Successfully opened R shared library at '{}'.",
         path.display()
     );
 
-    libr::initialize(&library);
-
-    log::info!("Successfully initialized R shared library bindings.");
-
-    // Box the library, and leak it, to ensure that it lives for the program's lifetime.
-    // The shared library MUST remain open to be able to access the R API dynamically.
-    let library = Box::new(library);
-    Box::leak(library);
+    library
 }
 
 // --- Frontend methods ---

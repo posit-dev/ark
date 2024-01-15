@@ -15,12 +15,12 @@ mod mutable_globals;
 
 // ---------------------------------------------------------------------------------------
 
-/// Initialization function that must be called before using any functions or globals
+/// Initialization functions that must be called before using any functions or globals
 /// exported by the crate
-pub fn initialize(library: &libloading::Library) {
-    self::constant_globals_initializer::initialize(library);
-    self::functions_initializer::initialize(library);
-    self::mutable_globals_initializer::initialize(library);
+pub mod initialize {
+    pub use crate::constant_globals_initializer::constant_globals;
+    pub use crate::functions_initializer::functions;
+    pub use crate::mutable_globals_initializer::mutable_globals;
 }
 
 pub mod has {

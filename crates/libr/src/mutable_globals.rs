@@ -53,7 +53,7 @@ macro_rules! generate {
             use super::*;
 
             /// Initialize library mutable globals
-            pub fn initialize(library: &libloading::Library) {
+            pub fn mutable_globals(library: &libloading::Library) {
                 $(
                     paste::paste! {
                         let symbol = unsafe { library.get(stringify!($name).as_bytes()) };

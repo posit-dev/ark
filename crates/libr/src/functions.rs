@@ -55,7 +55,7 @@ macro_rules! generate {
             ///
             /// If we can't find it in the library, the `Option` wrapper remains `None`.
             /// This indicates that this version of R doesn't have that function.
-            pub fn initialize(library: &libloading::Library) {
+            pub fn functions(library: &libloading::Library) {
                 $(
                     paste::paste! {
                         let symbol = unsafe { library.get(stringify!($name).as_bytes()) };
