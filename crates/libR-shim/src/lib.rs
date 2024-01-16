@@ -10,43 +10,18 @@
 #![allow(non_snake_case)]
 #![allow(improper_ctypes)]
 
-pub use libR_sys::cetype_t_CE_UTF8;
 pub use libR_sys::pDevDesc;
 pub use libR_sys::pGEcontext;
-pub use libR_sys::vmaxget;
-pub use libR_sys::vmaxset;
 pub use libR_sys::GEcurrentDevice;
 pub use libR_sys::GEinitDisplayList;
-pub use libR_sys::ParseStatus;
-pub use libR_sys::ParseStatus_PARSE_ERROR;
-pub use libR_sys::ParseStatus_PARSE_INCOMPLETE;
-pub use libR_sys::ParseStatus_PARSE_NULL;
-pub use libR_sys::ParseStatus_PARSE_OK;
-pub use libR_sys::R_BindingIsActive;
-pub use libR_sys::R_CallMethodDef;
-pub use libR_sys::R_CheckStack;
-pub use libR_sys::R_CheckStack2;
-pub use libR_sys::R_CheckUserInterrupt;
-pub use libR_sys::R_ExternalPtrAddr;
 pub use libR_sys::R_GE_getVersion;
-pub use libR_sys::R_IsNA;
-pub use libR_sys::R_IsNamespaceEnv;
-pub use libR_sys::R_IsPackageEnv;
-pub use libR_sys::R_MakeExternalPtr;
-pub use libR_sys::R_NamespaceEnvSpec;
-pub use libR_sys::R_PackageEnvName;
-pub use libR_sys::R_ParseVector;
-pub use libR_sys::R_PreserveObject;
-pub use libR_sys::R_RunPendingFinalizers;
 pub use libR_sys::R_ToplevelExec;
 pub use libR_sys::R_altrep_data1;
 pub use libR_sys::R_altrep_data2;
 pub use libR_sys::R_curErrorBuf;
 pub use libR_sys::R_do_slot;
 pub use libR_sys::R_existsVarInFrame;
-pub use libR_sys::R_getEmbeddingDllInfo;
 pub use libR_sys::R_lsInternal;
-pub use libR_sys::R_registerRoutines;
 pub use libR_sys::R_tryCatch;
 pub use libR_sys::R_tryEvalSilent;
 pub use libR_sys::R_xlen_t;

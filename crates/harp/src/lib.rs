@@ -111,7 +111,7 @@ macro_rules! r_char {
         Rf_mkCharLenCE(
             value.as_ptr() as *mut c_char,
             value.len() as i32,
-            cetype_t_CE_UTF8,
+            libr::cetype_t_CE_UTF8,
         )
     }};
 }

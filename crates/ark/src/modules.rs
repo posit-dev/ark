@@ -20,6 +20,7 @@ use harp::utils::r_poke_option;
 use libR_shim::*;
 use libr::R_GlobalEnv;
 use libr::R_NilValue;
+use libr::R_PreserveObject;
 use stdext::local;
 use stdext::spawn;
 use stdext::unwrap;

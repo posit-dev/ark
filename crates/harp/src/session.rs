@@ -11,6 +11,7 @@ use libR_shim::*;
 use libr::R_BaseEnv;
 use libr::R_GlobalEnv;
 use libr::R_NilValue;
+use libr::R_PreserveObject;
 use libr::R_Srcref;
 use stdext::unwrap;
 

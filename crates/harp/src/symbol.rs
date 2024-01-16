@@ -10,6 +10,8 @@ use std::ffi::CStr;
 use std::ops::Deref;
 
 use libR_shim::*;
+use libr::vmaxget;
+use libr::vmaxset;
 
 use crate::error::Result;
 use crate::object::r_length;

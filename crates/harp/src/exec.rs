@@ -11,11 +11,20 @@ use std::mem::take;
 use std::os::raw::c_void;
 
 use libR_shim::*;
+use libr::ParseStatus;
+use libr::ParseStatus_PARSE_ERROR;
+use libr::ParseStatus_PARSE_INCOMPLETE;
+use libr::ParseStatus_PARSE_NULL;
+use libr::ParseStatus_PARSE_OK;
 use libr::R_BaseEnv;
+use libr::R_CheckStack;
+use libr::R_CheckStack2;
+use libr::R_CheckUserInterrupt;
 use libr::R_ClassSymbol;
 use libr::R_NilValue;
 use libr::R_ParseErrorMsg_get;
 use libr::R_ParseError_get;
+use libr::R_ParseVector;
 
 use crate::environment::R_ENVS;
 use crate::error::Error;

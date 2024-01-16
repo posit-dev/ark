@@ -6,6 +6,7 @@
 //
 
 use libR_shim::*;
+use libr::R_IsNA;
 
 use crate::object::RObject;
 use crate::vector::Vector;
