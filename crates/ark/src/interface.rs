@@ -63,6 +63,7 @@ use harp::exec::r_source;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::exec::RSandboxScope;
+use harp::library;
 use harp::line_ending::convert_line_endings;
 use harp::line_ending::LineEnding;
 use harp::object::RObject;
@@ -169,12 +170,13 @@ pub fn start_r(
         args.push(CString::new(arg).unwrap().into_raw());
     }
 
-    // TODO: Let Positron pass this down somehow
-    let r_shared_library = PathBuf::from(
-        "/Library/Frameworks/R.framework/Versions/4.3-arm64/Resources/lib/libR.dylib",
-    );
-
-    let library = harp::library::open_r_shared_library(&r_shared_library);
+    // Get `R_HOME`, set by Positron / CI / kernel specification
+    let r_home = match std::env::var("R_HOME") {
+        Ok(home) => PathBuf::from(home),
+        Err(err) => panic!("Can't find `R_HOME`: {err:?}"),
+    };
+    let r_shared_library = library::find_r_shared_library(&r_home);
+    let library = library::open_r_shared_library(&r_shared_library);
 
     // Initialize dynamic bindings to functions and mutable globals. These are required
     // to even start R (for things like `Rf_initialize_R()` and `R_running_as_main_program`).

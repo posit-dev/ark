@@ -26,6 +26,7 @@ use stdext::cargs;
 
 use crate::exec::r_sandbox;
 use crate::library;
+use crate::library::find_r_shared_library;
 use crate::R_MAIN_THREAD_ID;
 
 // Escape hatch for unit tests. We need this because the default
@@ -54,25 +55,18 @@ pub fn start_r() {
 
         // Set up R_HOME if necessary.
         let home = match std::env::var("R_HOME") {
-            Ok(home) => home,
+            Ok(home) => PathBuf::from(home),
             Err(_) => {
                 let result = Command::new("R").arg("RHOME").output().unwrap();
                 let home = String::from_utf8(result.stdout).unwrap();
                 let home = home.trim();
                 std::env::set_var("R_HOME", home);
-                home.to_string()
+                PathBuf::from(home)
             },
         };
 
         // Find shared library from `R_HOME`
-        // (Typically this is passed down from Positron itself)
-        let r_shared_library = match std::env::consts::OS {
-            "macos" => PathBuf::from(home).join("lib").join("libR.dylib"),
-            "windows" => PathBuf::from(home).join("bin").join("x64").join("R.dll"),
-            // This is a guess
-            "linux" => PathBuf::from(home).join("lib").join("libR.so"),
-            _ => panic!("Unknown OS used for R testing: '{}'.", std::env::consts::OS),
-        };
+        let r_shared_library = find_r_shared_library(&home);
 
         let library = library::open_r_shared_library(&r_shared_library);
 
