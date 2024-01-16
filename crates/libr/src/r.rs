@@ -32,6 +32,8 @@ functions::generate! {
 
     pub fn R_HomeDir() -> *mut std::ffi::c_char;
 
+    pub fn R_ProcessEvents();
+
     pub fn R_removeVarFromFrame(symbol: SEXP, envir: SEXP);
 
     /// R >= 4.2.0

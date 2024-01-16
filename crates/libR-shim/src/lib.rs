@@ -155,12 +155,6 @@ pub use libR_sys::VECSXP;
 pub use libR_sys::VECTOR_ELT;
 pub use libR_sys::XLENGTH;
 
-// Functions not exported by libR_sys, but we need them as an IDE
-#[link(name = "R", kind = "dylib")]
-extern "C" {
-    pub fn R_ProcessEvents();
-}
-
 // Global variables exported by libR_sys, but without the `#[link]` attribute,
 // so they don't work on Windows
 #[link(name = "R", kind = "dylib")]
