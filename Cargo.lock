@@ -1633,6 +1633,7 @@ dependencies = [
 name = "libr"
 version = "0.1.0"
 dependencies = [
+ "cfg-if",
  "libR-shim",
  "libc",
  "libloading 0.8.1",

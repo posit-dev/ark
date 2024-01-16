@@ -11,9 +11,14 @@ use std::ffi::CStr;
 use std::ffi::CString;
 use std::mem::MaybeUninit;
 
+use libr::cmdlineoptions;
+use libr::get_R_HOME;
+use libr::readconsolecfg;
 use libr::run_Rmainloop;
 use libr::setup_Rmainloop;
+use libr::R_DefParamsEx;
 use libr::R_HomeDir;
+use libr::R_SetParams;
 use libr::R_SignalHandlers_set;
 use stdext::cargs;
 
@@ -21,7 +26,6 @@ use crate::interface::r_busy;
 use crate::interface::r_read_console;
 use crate::interface::r_show_message;
 use crate::interface::r_write_console;
-use crate::sys::windows::interface_types;
 use crate::sys::windows::strings::system_to_utf8;
 
 pub fn setup_r(mut _args: Vec<*mut c_char>) {
@@ -51,7 +55,7 @@ pub fn setup_r(mut _args: Vec<*mut c_char>) {
         cmdlineoptions(rargc, rargv.as_mut_ptr() as *mut *mut c_char);
 
         let mut params_struct = MaybeUninit::uninit();
-        let params: interface_types::Rstart = params_struct.as_mut_ptr();
+        let params: libr::Rstart = params_struct.as_mut_ptr();
 
         // TODO: Windows
         // We eventually need to use `RSTART_VERSION` (i.e., 1). It might just
@@ -62,7 +66,7 @@ pub fn setup_r(mut _args: Vec<*mut c_char>) {
         R_DefParamsEx(params, 0);
 
         (*params).R_Interactive = 1;
-        (*params).CharacterMode = interface_types::UImode_RGui;
+        (*params).CharacterMode = libr::UImode_RGui;
 
         (*params).WriteConsole = None;
         (*params).WriteConsoleEx = Some(r_write_console);
@@ -175,36 +179,6 @@ extern "C" fn r_yes_no_cancel(question: *const c_char) -> c_int {
     let question = unsafe { CStr::from_ptr(question).to_str().unwrap() };
     log::warn!("Ignoring `YesNoCancel` question: '{question}'. Returning `NO`.");
     return -1;
-}
-
-extern "C" {
-    fn cmdlineoptions(ac: i32, av: *mut *mut ::std::os::raw::c_char);
-
-    fn readconsolecfg();
-
-    fn R_DefParamsEx(Rp: interface_types::Rstart, RstartVersion: i32);
-
-    fn R_SetParams(Rp: interface_types::Rstart);
-
-    /// Get R_HOME from the environment or the registry
-    ///
-    /// Checks:
-    /// - C `R_HOME` env var
-    /// - Windows API `R_HOME` environment space
-    /// - Current user registry
-    /// - Local machine registry
-    ///
-    /// Probably returns a system encoded result?
-    /// So needs to be converted to UTF-8.
-    ///
-    /// https://github.com/wch/r-source/blob/55cd975c538ad5a086c2085ccb6a3037d5a0cb9a/src/gnuwin32/rhome.c#L152
-    fn get_R_HOME() -> *mut ::std::os::raw::c_char;
-
-    // In theory we should call these, but they are very new, roughly R 4.3.0.
-    // It isn't super harmful if we don't free these.
-    // https://github.com/wch/r-source/commit/9210c59281e7ab93acff9f692c31b83d07a506a6
-    // fn freeRUser(s: *mut ::std::os::raw::c_char);
-    // fn free_R_HOME(s: *mut ::std::os::raw::c_char);
 }
 
 // It doesn't seem like we can use the binding provided by libR-sys,

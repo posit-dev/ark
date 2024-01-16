@@ -12,6 +12,7 @@
 mod constant_globals;
 mod functions;
 mod mutable_globals;
+mod sys;
 
 // ---------------------------------------------------------------------------------------
 
@@ -37,6 +38,8 @@ pub use libR_shim::Rboolean;
 pub use libR_shim::Rboolean_FALSE;
 pub use libR_shim::Rboolean_TRUE;
 pub use libR_shim::SEXP;
+// Reexport all system specific types
+pub use sys::types::*;
 
 // ---------------------------------------------------------------------------------------
 // Functions and globals
@@ -70,6 +73,34 @@ functions::generate! {
     // -----------------------------------------------------------------------------------
     // Windows
 
+    #[cfg(target_family = "windows")]
+    pub fn cmdlineoptions(ac: i32, av: *mut *mut std::ffi::c_char);
+
+    #[cfg(target_family = "windows")]
+    pub fn readconsolecfg();
+
+    /// R >= 4.2.0
+    #[cfg(target_family = "windows")]
+    pub fn R_DefParamsEx(Rp: Rstart, RstartVersion: i32);
+
+    #[cfg(target_family = "windows")]
+    pub fn R_SetParams(Rp: Rstart);
+
+    /// Get R_HOME from the environment or the registry
+    ///
+    /// Checks:
+    /// - C `R_HOME` env var
+    /// - Windows API `R_HOME` environment space
+    /// - Current user registry
+    /// - Local machine registry
+    ///
+    /// Probably returns a system encoded result?
+    /// So needs to be converted to UTF-8.
+    ///
+    /// https://github.com/wch/r-source/blob/55cd975c538ad5a086c2085ccb6a3037d5a0cb9a/src/gnuwin32/rhome.c#L152
+    #[cfg(target_family = "windows")]
+    pub fn get_R_HOME() -> *mut std::ffi::c_char;
+
     /// Get user home directory
     ///
     /// Checks:
@@ -85,6 +116,12 @@ functions::generate! {
     /// https://github.com/wch/r-source/blob/55cd975c538ad5a086c2085ccb6a3037d5a0cb9a/src/gnuwin32/shext.c#L55
     #[cfg(target_family = "windows")]
     pub fn getRUser() -> *mut std::ffi::c_char;
+
+    // In theory we should call these, but they are very new, roughly R 4.3.0.
+    // It isn't super harmful if we don't free these.
+    // https://github.com/wch/r-source/commit/9210c59281e7ab93acff9f692c31b83d07a506a6
+    // pub fn freeRUser(s: *mut ::std::os::raw::c_char);
+    // pub fn free_R_HOME(s: *mut ::std::os::raw::c_char);
 }
 
 constant_globals::generate! {
