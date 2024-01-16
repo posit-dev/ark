@@ -167,7 +167,7 @@ macro_rules! r_pairlist {
 
     // Empty pairlist.
     () => {
-        R_NilValue
+        libr::R_NilValue
     };
 
 }

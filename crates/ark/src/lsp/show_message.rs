@@ -9,6 +9,7 @@ use amalthea::comm::ui_comm::ShowMessageParams;
 use amalthea::comm::ui_comm::UiFrontendEvent;
 use harp::object::RObject;
 use libR_shim::*;
+use libr::R_NilValue;
 use stdext::unwrap;
 
 use crate::interface::RMain;

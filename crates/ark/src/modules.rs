@@ -18,6 +18,8 @@ use harp::r_string;
 use harp::r_symbol;
 use harp::utils::r_poke_option;
 use libR_shim::*;
+use libr::R_GlobalEnv;
+use libr::R_NilValue;
 use stdext::local;
 use stdext::spawn;
 use stdext::unwrap;

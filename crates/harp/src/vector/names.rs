@@ -5,6 +5,7 @@
 //
 //
 use libR_shim::*;
+use libr::R_NamesSymbol;
 
 use crate::object::RObject;
 use crate::utils::r_is_null;

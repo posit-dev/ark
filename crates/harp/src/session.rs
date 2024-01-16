@@ -8,7 +8,10 @@
 use std::sync::Once;
 
 use libR_shim::*;
-use libc::c_int;
+use libr::R_BaseEnv;
+use libr::R_GlobalEnv;
+use libr::R_NilValue;
+use libr::R_Srcref;
 use stdext::unwrap;
 
 use crate::exec::r_parse;
@@ -38,7 +41,7 @@ pub fn r_n_frame() -> crate::error::Result<i32> {
     }
 }
 
-pub fn r_sys_frame(n: c_int) -> crate::error::Result<SEXP> {
+pub fn r_sys_frame(n: std::ffi::c_int) -> crate::error::Result<SEXP> {
     unsafe {
         let mut protect = RProtect::new();
         let n = protect.add(Rf_ScalarInteger(n));

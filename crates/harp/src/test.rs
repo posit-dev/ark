@@ -19,8 +19,8 @@ use std::process::Command;
 use std::sync::Mutex;
 use std::sync::Once;
 
-use libR_shim::R_CStackLimit;
 use libr::setup_Rmainloop;
+use libr::R_CStackLimit;
 use libr::Rf_initialize_R;
 use stdext::cargs;
 

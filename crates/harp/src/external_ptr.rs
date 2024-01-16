@@ -2,6 +2,7 @@ use std::marker::PhantomData;
 use std::os::raw::c_void;
 
 use libR_shim::*;
+use libr::R_NilValue;
 
 use crate::object::RObject;
 

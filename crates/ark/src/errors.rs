@@ -8,6 +8,8 @@
 use harp::object::RObject;
 use harp::r_symbol;
 use libR_shim::*;
+use libr::R_GlobalEnv;
+use libr::R_NilValue;
 use log::info;
 use log::warn;
 use stdext::unwrap;

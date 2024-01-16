@@ -6,6 +6,7 @@
 //
 
 use libR_shim::*;
+use libr::R_NaInt;
 
 use crate::object::RObject;
 use crate::r_symbol;

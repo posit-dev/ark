@@ -6,6 +6,7 @@
 //
 
 use libR_shim::*;
+use libr::R_NilValue;
 
 use crate::environment::R_ENVS;
 use crate::error::Error;

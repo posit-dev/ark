@@ -9,6 +9,7 @@ use std::os::raw::c_char;
 
 use harp::object::RObject;
 use libR_shim::*;
+use libr::R_NilValue;
 
 /// Shows a message in the Positron frontend
 #[harp::register]

@@ -12,10 +12,10 @@ use harp::utils::r_env_is_pkg_env;
 use harp::utils::r_envir_name;
 use harp::vector::CharacterVector;
 use harp::vector::Vector;
-use libR_shim::R_EmptyEnv;
-use libR_shim::R_GlobalEnv;
 use libR_shim::R_lsInternal;
 use libR_shim::ENCLOS;
+use libr::R_EmptyEnv;
+use libr::R_GlobalEnv;
 use tower_lsp::lsp_types::CompletionItem;
 
 use crate::lsp::completions::completion_item::completion_item_from_package;

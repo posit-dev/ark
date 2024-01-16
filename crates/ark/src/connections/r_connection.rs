@@ -13,6 +13,7 @@ use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
 use libR_shim::*;
+use libr::R_NilValue;
 use serde::Deserialize;
 use serde::Serialize;
 use stdext::result::ResultOrLog;

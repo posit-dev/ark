@@ -11,8 +11,11 @@ use std::mem::take;
 use std::os::raw::c_void;
 
 use libR_shim::*;
-use libr::R_ParseError;
-use libr::R_ParseErrorMsg;
+use libr::R_BaseEnv;
+use libr::R_ClassSymbol;
+use libr::R_NilValue;
+use libr::R_ParseErrorMsg_get;
+use libr::R_ParseError_get;
 
 use crate::environment::R_ENVS;
 use crate::error::Error;
@@ -451,10 +454,10 @@ pub unsafe fn r_parse_vector(code: &str) -> Result<ParseResult> {
         ParseStatus_PARSE_OK => Ok(ParseResult::Complete(*result)),
         ParseStatus_PARSE_INCOMPLETE => Ok(ParseResult::Incomplete()),
         ParseStatus_PARSE_ERROR => Err(Error::ParseSyntaxError {
-            message: CStr::from_ptr(R_ParseErrorMsg.as_ptr())
+            message: CStr::from_ptr(R_ParseErrorMsg_get().as_ptr())
                 .to_string_lossy()
                 .to_string(),
-            line: R_ParseError as i32,
+            line: R_ParseError_get() as i32,
         }),
         _ => {
             // should not get here
@@ -636,6 +639,7 @@ mod tests {
 
     use libr::R_DirtyImage_get;
     use libr::R_DirtyImage_set;
+    use libr::R_GlobalEnv;
 
     use super::*;
     use crate::assert_match;

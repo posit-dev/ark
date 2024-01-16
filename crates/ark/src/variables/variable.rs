@@ -45,6 +45,11 @@ use harp::vector::IntegerVector;
 use harp::vector::Vector;
 use itertools::Itertools;
 use libR_shim::*;
+use libr::R_DimSymbol;
+use libr::R_MissingArg;
+use libr::R_NaInt;
+use libr::R_NaString;
+use libr::R_NilValue;
 use stdext::local;
 use stdext::unwrap;
 

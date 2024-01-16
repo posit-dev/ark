@@ -48,6 +48,7 @@ use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
 use libR_shim::*;
+use libr::R_NilValue;
 use once_cell::sync::Lazy;
 use serde_json::json;
 use stdext::result::ResultOrLog;

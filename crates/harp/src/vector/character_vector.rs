@@ -8,6 +8,7 @@
 use std::os::raw::c_char;
 
 use libR_shim::*;
+use libr::R_NaString;
 
 use crate::object::RObject;
 use crate::utils::r_str_to_owned_utf8_unchecked;

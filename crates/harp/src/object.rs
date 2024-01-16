@@ -15,6 +15,11 @@ use std::os::raw::c_int;
 use std::sync::Once;
 
 use libR_shim::*;
+use libr::R_NaInt;
+use libr::R_NaReal;
+use libr::R_NaString;
+use libr::R_NamesSymbol;
+use libr::R_NilValue;
 
 use crate::error::Error;
 use crate::exec::RFunction;

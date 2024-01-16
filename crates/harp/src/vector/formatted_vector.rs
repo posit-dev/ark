@@ -5,6 +5,8 @@
 //
 //
 use libR_shim::*;
+use libr::R_ClassSymbol;
+use libr::R_DimSymbol;
 
 use crate::error::Error;
 use crate::error::Result;

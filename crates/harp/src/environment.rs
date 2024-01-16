@@ -8,6 +8,11 @@
 use std::ops::Deref;
 
 use libR_shim::*;
+use libr::R_BaseEnv;
+use libr::R_EmptyEnv;
+use libr::R_GlobalEnv;
+use libr::R_NilValue;
+use libr::R_UnboundValue;
 use once_cell::sync::Lazy;
 use stdext::unwrap;
 

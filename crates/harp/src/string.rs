@@ -6,6 +6,8 @@
 //
 
 use libR_shim::*;
+use libr::R_NaString;
+use libr::R_NilValue;
 
 use crate::object::RObject;
 use crate::protect::RProtect;
