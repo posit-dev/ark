@@ -35,7 +35,7 @@ macro_rules! generate {
 
         // Make `has::` helpers for each function.
         // i.e. `libr::has::Rf_error()`.
-        mod functions_has {
+        pub(super) mod functions_has {
             use super::*;
 
             $(
@@ -49,7 +49,7 @@ macro_rules! generate {
             )+
         }
 
-        mod functions_initializer {
+        pub(super) mod functions_initializer {
             use super::*;
 
             /// Initialize library functions

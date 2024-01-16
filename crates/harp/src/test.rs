@@ -66,13 +66,20 @@ pub fn start_r() {
         };
 
         // Find shared library from `R_HOME`
-        let r_shared_library = find_r_shared_library(&home);
+        let r_library_path = find_r_shared_library(&home, "R");
+        let r_library = library::open_r_shared_library(&r_library_path);
 
-        let library = library::open_r_shared_library(&r_shared_library);
+        #[cfg(target_family = "windows")]
+        let rgraphapp_library_path = library::find_r_shared_library(&r_home, "Rgraphapp");
+        #[cfg(target_family = "windows")]
+        let rgraphapp_library = library::open_r_shared_library(&rgraphapp_library_path);
 
         // Initialize functions and mutable globals so we can call the R setup functions
-        libr::initialize::functions(&library);
-        libr::initialize::mutable_globals(&library);
+        libr::initialize::functions(&r_library);
+        libr::initialize::mutable_globals(&r_library);
+
+        #[cfg(target_family = "windows")]
+        libr::graphapp::initialize::functions(&rgraphapp_library);
 
         // Build the argument list for Rf_initialize_R
         let mut arguments = cargs!["R", "--slave", "--no-save", "--no-restore"];
@@ -87,12 +94,17 @@ pub fn start_r() {
         }
 
         // Now we can initialize constant globals since `setup_Rmainloop()` has run
-        libr::initialize::constant_globals(&library);
+        libr::initialize::constant_globals(&r_library);
 
         // Leak the library so it lives for the process lifetime, because unlike in our
         // normal setup, this function returns and will otherwise drop (and close) the library
-        let library = Box::new(library);
-        Box::leak(library);
+        let r_library = Box::new(r_library);
+        Box::leak(r_library);
+
+        #[cfg(target_family = "windows")]
+        let rgraphapp_library = Box::new(rgraphapp_library);
+        #[cfg(target_family = "windows")]
+        Box::leak(rgraphapp_library);
 
         // Initialize harp globals
         unsafe {

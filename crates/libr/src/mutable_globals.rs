@@ -38,7 +38,7 @@ macro_rules! generate {
 
         // Make `has::` helpers for each global.
         // i.e. `libr::has::Rf_error()`.
-        mod mutable_globals_has {
+        pub(super) mod mutable_globals_has {
             $(
                 paste::paste! {
                     $(#[doc=$doc])*
@@ -50,7 +50,7 @@ macro_rules! generate {
             )+
         }
 
-        mod mutable_globals_initializer {
+        pub(super) mod mutable_globals_initializer {
             use super::*;
 
             /// Initialize library mutable globals

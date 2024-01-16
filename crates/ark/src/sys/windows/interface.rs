@@ -87,7 +87,7 @@ pub fn setup_r(mut _args: Vec<*mut c_char>) {
         R_SetParams(params);
 
         // R global ui initialization
-        GA_initapp(0, std::ptr::null_mut());
+        libr::graphapp::GA_initapp(0, std::ptr::null_mut());
         readconsolecfg();
 
         // Log the value of R_HOME, so we can know if something hairy is afoot
@@ -179,15 +179,4 @@ extern "C" fn r_yes_no_cancel(question: *const c_char) -> c_int {
     let question = unsafe { CStr::from_ptr(question).to_str().unwrap() };
     log::warn!("Ignoring `YesNoCancel` question: '{question}'. Returning `NO`.");
     return -1;
-}
-
-// It doesn't seem like we can use the binding provided by libR-sys,
-// as that doesn't link to Rgraphapp so it becomes an unresolved
-// external symbol.
-#[link(name = "Rgraphapp", kind = "dylib")]
-extern "C" {
-    pub fn GA_initapp(
-        arg1: ::std::os::raw::c_int,
-        arg2: *mut *mut ::std::os::raw::c_char,
-    ) -> ::std::os::raw::c_int;
 }

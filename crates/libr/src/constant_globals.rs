@@ -34,7 +34,7 @@ macro_rules! generate {
 
         // Make `has::` helpers for each global.
         // i.e. `libr::has::Rf_error()`.
-        mod constant_globals_has {
+        pub(super) mod constant_globals_has {
             use super::*;
 
             $(
@@ -48,7 +48,7 @@ macro_rules! generate {
             )+
         }
 
-        mod constant_globals_initializer {
+        pub(super) mod constant_globals_initializer {
             use super::*;
 
             /// Initialize library constant globals

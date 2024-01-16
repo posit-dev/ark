@@ -175,19 +175,29 @@ pub fn start_r(
         Ok(home) => PathBuf::from(home),
         Err(err) => panic!("Can't find `R_HOME`: {err:?}"),
     };
-    let r_shared_library = library::find_r_shared_library(&r_home);
-    let library = library::open_r_shared_library(&r_shared_library);
+
+    let r_library_path = library::find_r_shared_library(&r_home, "R");
+    let r_library = library::open_r_shared_library(&r_library_path);
+
+    #[cfg(target_family = "windows")]
+    let rgraphapp_library_path = library::find_r_shared_library(&r_home, "Rgraphapp");
+    #[cfg(target_family = "windows")]
+    let rgraphapp_library = library::open_r_shared_library(&rgraphapp_library_path);
 
     // Initialize dynamic bindings to functions and mutable globals. These are required
     // to even start R (for things like `Rf_initialize_R()` and `R_running_as_main_program`).
-    libr::initialize::functions(&library);
-    libr::initialize::mutable_globals(&library);
+    libr::initialize::functions(&r_library);
+    libr::initialize::mutable_globals(&r_library);
+
+    // Required for `GA_initapp()`, called during setup
+    #[cfg(target_family = "windows")]
+    libr::graphapp::initialize::functions(&rgraphapp_library);
 
     crate::sys::interface::setup_r(args);
 
     // Now that `setup_r()` has run `setup_Rmainloop()`, which initializes R's "constant"
     // global variables, we can initialize our own.
-    libr::initialize::constant_globals(&library);
+    libr::initialize::constant_globals(&r_library);
 
     unsafe {
         // Optionally run a user specified R startup script
