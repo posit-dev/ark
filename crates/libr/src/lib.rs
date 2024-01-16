@@ -7,12 +7,12 @@
 
 mod constant_globals;
 mod functions;
-#[cfg(target_family = "windows")]
-#[path = "graphapp.rs"]
-mod graphapp_impl;
 mod mutable_globals;
 mod r;
 mod sys;
+#[cfg(target_family = "windows")]
+#[path = "graphapp.rs"]
+mod windows_graphapp;
 
 // ---------------------------------------------------------------------------------------
 
@@ -38,12 +38,12 @@ pub mod graphapp {
     /// Initialization functions that must be called before using any functions or globals
     /// exported by the crate
     pub mod initialize {
-        pub use crate::graphapp_impl::functions_initializer::functions;
+        pub use crate::windows_graphapp::functions_initializer::functions;
     }
 
     pub mod has {
-        pub use crate::graphapp_impl::functions_has::*;
+        pub use crate::windows_graphapp::functions_has::*;
     }
 
-    pub use crate::graphapp_impl::*;
+    pub use crate::windows_graphapp::*;
 }
