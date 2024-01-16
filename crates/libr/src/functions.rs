@@ -16,6 +16,7 @@ macro_rules! generate {
         // Make `Option` wrappers around the function pointers, initialized to `None`
         $(
             paste::paste! {
+                $(#[cfg($cfg)])*
                 static mut [<$name _opt>]: Option<unsafe extern "C" fn ($($pty), *) $(-> $ret)*> = None;
             }
         )+
@@ -57,6 +58,7 @@ macro_rules! generate {
             /// This indicates that this version of R doesn't have that function.
             pub fn functions(library: &libloading::Library) {
                 $(
+                    $(#[cfg($cfg)])*
                     paste::paste! {
                         let symbol = unsafe { library.get(stringify!($name).as_bytes()) };
 

@@ -15,6 +15,7 @@ macro_rules! generate {
     ) => (
         // Define internal global pointers, initialized to null pointer
         $(
+            $(#[cfg($cfg)])*
             static mut $name: *mut $ty = std::ptr::null_mut();
         )+
 
@@ -55,6 +56,7 @@ macro_rules! generate {
             /// Initialize library mutable globals
             pub fn mutable_globals(library: &libloading::Library) {
                 $(
+                    $(#[cfg($cfg)])*
                     paste::paste! {
                         let symbol = unsafe { library.get(stringify!($name).as_bytes()) };
 

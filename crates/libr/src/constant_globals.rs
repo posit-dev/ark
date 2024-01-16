@@ -27,6 +27,7 @@ macro_rules! generate {
         // Define `has::` booleans
         $(
             paste::paste! {
+                $(#[cfg($cfg)])*
                 static mut [<$name _has>]: bool = false;
             }
         )+
@@ -53,6 +54,7 @@ macro_rules! generate {
             /// Initialize library constant globals
             pub fn constant_globals(library: &libloading::Library) {
                 $(
+                    $(#[cfg($cfg)])*
                     paste::paste! {
                         let symbol = unsafe { library.get(stringify!($name).as_bytes()) };
 
