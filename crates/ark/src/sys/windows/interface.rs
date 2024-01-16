@@ -11,10 +11,10 @@ use std::ffi::CStr;
 use std::ffi::CString;
 use std::mem::MaybeUninit;
 
-use libR_shim::run_Rmainloop;
-use libR_shim::setup_Rmainloop;
-use libR_shim::R_HomeDir;
-use libR_shim::R_SignalHandlers;
+use libr::run_Rmainloop;
+use libr::setup_Rmainloop;
+use libr::R_HomeDir;
+use libr::R_SignalHandlers_set;
 use stdext::cargs;
 
 use crate::interface::r_busy;
@@ -26,7 +26,7 @@ use crate::sys::windows::strings::system_to_utf8;
 
 pub fn setup_r(mut _args: Vec<*mut c_char>) {
     unsafe {
-        R_SignalHandlers = 0;
+        R_SignalHandlers_set(0);
 
         // - We have to collect these before `cmdlineoptions()` is called, because
         //   it alters the env vars, which we then reset to our own paths in `R_SetParams()`.

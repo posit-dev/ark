@@ -13,7 +13,6 @@
 pub use libR_sys::cetype_t_CE_UTF8;
 pub use libR_sys::pDevDesc;
 pub use libR_sys::pGEcontext;
-pub use libR_sys::setup_Rmainloop;
 pub use libR_sys::vmaxget;
 pub use libR_sys::vmaxset;
 pub use libR_sys::GEcurrentDevice;
@@ -72,7 +71,6 @@ pub use libR_sys::Rf_findVar;
 pub use libR_sys::Rf_findVarInFrame;
 pub use libR_sys::Rf_getAttrib;
 pub use libR_sys::Rf_inherits;
-pub use libR_sys::Rf_initialize_R;
 pub use libR_sys::Rf_install;
 pub use libR_sys::Rf_isFunction;
 pub use libR_sys::Rf_isInteger;
@@ -114,7 +112,6 @@ pub use libR_sys::DATAPTR;
 pub use libR_sys::ENCLOS;
 pub use libR_sys::ENVSXP;
 pub use libR_sys::EXPRSXP;
-pub use libR_sys::FILE;
 pub use libR_sys::FORMALS;
 pub use libR_sys::FRAME;
 pub use libR_sys::HASHTAB;
@@ -161,30 +158,7 @@ pub use libR_sys::XLENGTH;
 // Functions not exported by libR_sys, but we need them as an IDE
 #[link(name = "R", kind = "dylib")]
 extern "C" {
-    pub fn run_Rmainloop();
-    pub fn R_HomeDir() -> *mut ::std::os::raw::c_char;
     pub fn R_ProcessEvents();
-}
-
-// Global variables not exported by libR_sys, but we need them as an IDE
-#[link(name = "R", kind = "dylib")]
-extern "C" {
-    // Special declaration for this global variable
-    //
-    // I don't fully understand this!
-    //
-    // This is exposed in Rinterface.h, which is not available on Windows:
-    // https://github.com/wch/r-source/blob/459492bc14ad5a3ff735d90a70ad71f6d5fe9faa/src/include/Rinterface.h#L176
-    // But is defined as a global variable in main.c, so presumably that is what RStudio is yanking out
-    // https://github.com/wch/r-source/blob/459492bc14ad5a3ff735d90a70ad71f6d5fe9faa/src/main/main.c#L729
-    // It controls whether R level signal handlers are set up, which presumably we don't want
-    // https://github.com/wch/r-source/blob/459492bc14ad5a3ff735d90a70ad71f6d5fe9faa/src/main/main.c#L1047
-    // RStudio sets this, and I think they access it by using this dllimport
-    // https://github.com/rstudio/rstudio/blob/07ef754fc9f27d41b100bb40d83ec3ddf485b47b/src/cpp/r/include/r/RInterface.hpp#L40
-    // A normal declaration won't work here, as global variables on Windows seem to require an explicit dllimport to access them,
-    // according to this SO post, specifying the `kind` is a way to force that in the generated code
-    // https://stackoverflow.com/questions/66181735/rust-how-to-use-global-variable-from-dll-c-equivalent-requires-declspecdl
-    pub static mut R_SignalHandlers: ::std::os::raw::c_int;
 }
 
 // Global variables exported by libR_sys, but without the `#[link]` attribute,

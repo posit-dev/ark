@@ -1605,9 +1605,9 @@ dependencies = [
 
 [[package]]
 name = "libc"
-version = "0.2.146"
+version = "0.2.152"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f92be4933c13fd498862a9e02a3055f8a8d9c039ce33db97306fd5a6caa7f29b"
+checksum = "13e3bf6590cbc649f4d1a3eefc9d5d6eb746f5200ffb04e5e142700b8faa56e7"
 
 [[package]]
 name = "libloading"
@@ -1634,6 +1634,7 @@ name = "libr"
 version = "0.1.0"
 dependencies = [
  "libR-shim",
+ "libc",
  "libloading 0.8.1",
  "paste",
 ]
