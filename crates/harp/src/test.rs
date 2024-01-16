@@ -70,7 +70,7 @@ pub fn start_r() {
         let r_library = library::open_r_shared_library(&r_library_path);
 
         #[cfg(target_family = "windows")]
-        let rgraphapp_library_path = library::find_r_shared_library(&r_home, "Rgraphapp");
+        let rgraphapp_library_path = library::find_r_shared_library(&home, "Rgraphapp");
         #[cfg(target_family = "windows")]
         let rgraphapp_library = library::open_r_shared_library(&rgraphapp_library_path);
 

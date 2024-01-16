@@ -7,7 +7,7 @@
 
 mod constant_globals;
 mod functions;
-#[cfg(all(target_family = "windows", path = "graphapp.rs"))]
+#[cfg_attr(target_family = "windows", path = "graphapp.rs")]
 mod graphapp_impl;
 mod mutable_globals;
 mod r;
