@@ -7,13 +7,13 @@
 
 use std::ffi::CStr;
 use std::ffi::CString;
-use std::os::raw::c_void;
 use std::path::Path;
 
 use c2rust_bitfields::BitfieldStruct;
 use harp_macros::register;
 use itertools::Itertools;
 use libR_shim::*;
+use libr::R_removeVarFromFrame;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use stdext::unwrap;
@@ -44,10 +44,6 @@ pub static mut HARP_ENV: SEXP = std::ptr::null_mut();
 // a single singleton pattern and use that repeatedly for matches.
 static RE_SYNTACTIC_IDENTIFIER: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^[\p{L}\p{Nl}.][\p{L}\p{Nl}\p{Mn}\p{Mc}\p{Nd}\p{Pc}.]*$").unwrap());
-
-extern "C" {
-    fn R_removeVarFromFrame(symbol: SEXP, envir: SEXP) -> c_void;
-}
 
 #[derive(Copy, Clone, BitfieldStruct)]
 #[repr(C)]

@@ -32,6 +32,8 @@ functions::generate! {
 
     pub fn R_HomeDir() -> *mut std::ffi::c_char;
 
+    pub fn R_removeVarFromFrame(symbol: SEXP, envir: SEXP);
+
     /// R >= 4.2.0
     pub fn R_existsVarInFrame(rho: SEXP, symbol: SEXP) -> Rboolean;
 
@@ -107,6 +109,13 @@ functions::generate! {
 constant_globals::generate! {
     #[default = std::ptr::null_mut()]
     pub static R_NilValue: SEXP;
+
+    #[default = 0]
+    pub static R_ParseError: std::ffi::c_int;
+
+    /// 256 comes from R's `PARSE_ERROR_SIZE` define
+    #[default = [0; 256usize]]
+    pub static R_ParseErrorMsg: [std::ffi::c_char; 256usize];
 }
 
 mutable_globals::generate! {
@@ -125,6 +134,8 @@ mutable_globals::generate! {
     /// RStudio sets this, and I think they access it by using this dllimport
     /// https://github.com/rstudio/rstudio/blob/07ef754fc9f27d41b100bb40d83ec3ddf485b47b/src/cpp/r/include/r/RInterface.hpp#L40
     pub static mut R_SignalHandlers: std::ffi::c_int;
+
+    pub static mut R_DirtyImage: std::ffi::c_int;
 
     // -----------------------------------------------------------------------------------
     // Unix
@@ -179,4 +190,15 @@ mutable_globals::generate! {
 
     #[cfg(target_family = "unix")]
     pub static mut ptr_R_Busy: Option<unsafe extern "C" fn(arg1: std::ffi::c_int)>;
+
+    // -----------------------------------------------------------------------------------
+    // Windows
+
+    #[cfg(target_family = "windows")]
+    pub static mut UserBreak: Rboolean;
+
+    /// The codepage that R thinks it should be using for Windows.
+    /// Should map to `winsafe::kernel::co::CP`.
+    #[cfg(target_family = "windows")]
+    pub static mut localeCP: std::ffi::c_uint;
 }

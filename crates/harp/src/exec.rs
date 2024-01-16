@@ -8,11 +8,11 @@
 use std::ffi::CStr;
 use std::mem;
 use std::mem::take;
-use std::os::raw::c_char;
-use std::os::raw::c_int;
 use std::os::raw::c_void;
 
 use libR_shim::*;
+use libr::R_ParseError;
+use libr::R_ParseErrorMsg;
 
 use crate::environment::R_ENVS;
 use crate::error::Error;
@@ -30,13 +30,6 @@ use crate::utils::r_stringify;
 use crate::utils::r_typeof;
 use crate::vector::CharacterVector;
 use crate::vector::Vector;
-
-extern "C" {
-    pub static R_ParseError: c_int;
-    pub static R_ParseErrorMsg: [c_char; 256usize];
-    pub static mut R_DirtyImage: ::std::os::raw::c_int;
-}
-
 pub struct RArgument {
     pub name: String,
     pub value: RObject,
@@ -641,6 +634,9 @@ pub fn r_check_stack(size: Option<usize>) -> Result<()> {
 mod tests {
     use std::ffi::CString;
 
+    use libr::R_DirtyImage_get;
+    use libr::R_DirtyImage_set;
+
     use super::*;
     use crate::assert_match;
     use crate::r_test;
@@ -842,18 +838,18 @@ mod tests {
     #[test]
     fn test_dirty_image() {
         r_test! {
-            R_DirtyImage = 2;
+            R_DirtyImage_set(2);
             let sym = r_symbol!("aaa");
             Rf_defineVar(sym, Rf_ScalarInteger(42), R_GlobalEnv);
-            assert_eq!(R_DirtyImage, 1);
+            assert_eq!(R_DirtyImage_get(), 1);
 
-            R_DirtyImage = 2;
+            R_DirtyImage_set(2);
             Rf_setVar(sym, Rf_ScalarInteger(43), R_GlobalEnv);
-            assert_eq!(R_DirtyImage, 1);
+            assert_eq!(R_DirtyImage_get(), 1);
 
-            R_DirtyImage = 2;
+            R_DirtyImage_set(2);
             r_envir_remove("aaa", R_GlobalEnv);
-            assert_eq!(R_DirtyImage, 1);
+            assert_eq!(R_DirtyImage_get(), 1);
         }
     }
 
