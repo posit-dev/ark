@@ -13,6 +13,8 @@ use libr::R_EmptyEnv;
 use libr::R_GlobalEnv;
 use libr::R_NilValue;
 use libr::R_UnboundValue;
+use libr::R_altrep_data1;
+use libr::R_altrep_data2;
 use once_cell::sync::Lazy;
 use stdext::unwrap;
 

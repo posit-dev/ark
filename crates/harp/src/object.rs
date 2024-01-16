@@ -23,6 +23,8 @@ use libr::R_NaString;
 use libr::R_NamesSymbol;
 use libr::R_NilValue;
 use libr::R_PreserveObject;
+use libr::R_altrep_data1;
+use libr::R_altrep_data2;
 
 use crate::error::Error;
 use crate::exec::RFunction;

@@ -25,6 +25,9 @@ use libr::R_NilValue;
 use libr::R_ParseErrorMsg_get;
 use libr::R_ParseError_get;
 use libr::R_ParseVector;
+use libr::R_ToplevelExec;
+use libr::R_curErrorBuf;
+use libr::R_tryCatch;
 
 use crate::environment::R_ENVS;
 use crate::error::Error;

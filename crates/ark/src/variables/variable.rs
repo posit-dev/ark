@@ -51,6 +51,7 @@ use libr::R_MissingArg;
 use libr::R_NaInt;
 use libr::R_NaString;
 use libr::R_NilValue;
+use libr::R_do_slot;
 use stdext::local;
 use stdext::unwrap;
 

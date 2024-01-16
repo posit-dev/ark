@@ -29,6 +29,7 @@ use libr::R_PackageEnvName;
 use libr::R_PreserveObject;
 use libr::R_UnboundValue;
 use libr::R_removeVarFromFrame;
+use libr::R_tryEvalSilent;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use stdext::unwrap;

@@ -182,6 +182,33 @@ functions::generate! {
 
     pub fn R_RunPendingFinalizers();
 
+    pub fn R_ToplevelExec(
+        fun: Option<unsafe extern "C" fn(arg1: *mut std::ffi::c_void)>,
+        data: *mut std::ffi::c_void
+    ) -> Rboolean;
+
+    pub fn R_altrep_data1(x: SEXP) -> SEXP;
+
+    pub fn R_altrep_data2(x: SEXP) -> SEXP;
+
+    pub fn R_curErrorBuf() -> *const std::ffi::c_char;
+
+    pub fn R_do_slot(obj: SEXP, name: SEXP) -> SEXP;
+
+    pub fn R_lsInternal(arg1: SEXP, arg2: Rboolean) -> SEXP;
+
+    pub fn R_tryCatch(
+        arg1: Option<unsafe extern "C" fn(arg1: *mut std::ffi::c_void) -> SEXP>,
+        arg2: *mut std::ffi::c_void,
+        arg3: SEXP,
+        arg4: Option<unsafe extern "C" fn(arg1: SEXP, arg2: *mut std::ffi::c_void) -> SEXP>,
+        arg5: *mut std::ffi::c_void,
+        arg6: Option<unsafe extern "C" fn(arg1: *mut std::ffi::c_void)>,
+        arg7: *mut std::ffi::c_void
+    ) -> SEXP;
+
+    pub fn R_tryEvalSilent(arg1: SEXP, arg2: SEXP, arg3: *mut std::ffi::c_int) -> SEXP;
+
     /// R >= 4.2.0
     pub fn R_existsVarInFrame(rho: SEXP, symbol: SEXP) -> Rboolean;
 
@@ -250,8 +277,8 @@ functions::generate! {
     // In theory we should call these, but they are very new, roughly R 4.3.0.
     // It isn't super harmful if we don't free these.
     // https://github.com/wch/r-source/commit/9210c59281e7ab93acff9f692c31b83d07a506a6
-    // pub fn freeRUser(s: *mut ::std::os::raw::c_char);
-    // pub fn free_R_HOME(s: *mut ::std::os::raw::c_char);
+    // pub fn freeRUser(s: *mut std::ffi::c_char);
+    // pub fn free_R_HOME(s: *mut std::ffi::c_char);
 }
 
 constant_globals::generate! {
@@ -273,7 +300,7 @@ constant_globals::generate! {
 
     #[doc = "NA_INTEGER:= INT_MIN currently"]
     #[default = 0]
-    pub static R_NaInt: ::std::os::raw::c_int;
+    pub static R_NaInt: std::ffi::c_int;
 
     #[doc = "C stack limit"]
     #[default = 0]

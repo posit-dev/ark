@@ -10,11 +10,11 @@ use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
 use harp::r_symbol;
-use libR_shim::R_lsInternal;
 use libR_shim::Rboolean_TRUE;
 use libR_shim::Rf_findVarInFrame;
 use libR_shim::SEXP;
 use libr::R_UnboundValue;
+use libr::R_lsInternal;
 use tower_lsp::lsp_types::CompletionItem;
 
 use crate::lsp::completions::completion_item::completion_item_from_lazydata;

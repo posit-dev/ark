@@ -28,6 +28,7 @@ use harp::utils::r_envir_remove;
 use harp::utils::r_envir_set;
 use libR_shim::*;
 use libr::R_EmptyEnv;
+use libr::R_lsInternal;
 
 /**
  * Basic test for the R environment list. This test:

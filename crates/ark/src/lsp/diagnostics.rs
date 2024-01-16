@@ -27,6 +27,7 @@ use libR_shim::*;
 use libr::R_EmptyEnv;
 use libr::R_GlobalEnv;
 use libr::R_NilValue;
+use libr::R_lsInternal;
 use stdext::*;
 use tower_lsp::lsp_types::Diagnostic;
 use tower_lsp::lsp_types::DiagnosticSeverity;

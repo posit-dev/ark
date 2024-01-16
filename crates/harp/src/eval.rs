@@ -7,6 +7,7 @@
 
 use libR_shim::*;
 use libr::R_NilValue;
+use libr::R_tryEvalSilent;
 
 use crate::environment::R_ENVS;
 use crate::error::Error;
