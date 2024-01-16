@@ -14,6 +14,7 @@
 #![allow(dead_code)]
 
 use std::os::raw::c_char;
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Mutex;
 use std::sync::Once;
@@ -24,6 +25,7 @@ use libr::Rf_initialize_R;
 use stdext::cargs;
 
 use crate::exec::r_sandbox;
+use crate::library;
 use crate::R_MAIN_THREAD_ID;
 
 // Escape hatch for unit tests. We need this because the default
@@ -51,11 +53,32 @@ pub fn start_r() {
         // but for now we just have this comment as a reminder.
 
         // Set up R_HOME if necessary.
-        if let Err(_) = std::env::var("R_HOME") {
-            let result = Command::new("R").arg("RHOME").output().unwrap();
-            let home = String::from_utf8(result.stdout).unwrap();
-            std::env::set_var("R_HOME", home.trim());
-        }
+        let home = match std::env::var("R_HOME") {
+            Ok(home) => home,
+            Err(_) => {
+                let result = Command::new("R").arg("RHOME").output().unwrap();
+                let home = String::from_utf8(result.stdout).unwrap();
+                let home = home.trim();
+                std::env::set_var("R_HOME", home);
+                home.to_string()
+            },
+        };
+
+        // Find shared library from `R_HOME`
+        // (Typically this is passed down from Positron itself)
+        let r_shared_library = match std::env::consts::OS {
+            "macos" => PathBuf::from(home).join("lib").join("libR.dylib"),
+            "windows" => PathBuf::from(home).join("bin").join("x64").join("R.dll"),
+            // This is a guess
+            "linux" => PathBuf::from(home).join("lib").join("libR.so"),
+            _ => panic!("Unknown OS used for R testing: '{}'.", std::env::consts::OS),
+        };
+
+        let library = library::open_r_shared_library(&r_shared_library);
+
+        // Initialize functions and mutable globals so we can call the R setup functions
+        libr::initialize::functions(&library);
+        libr::initialize::mutable_globals(&library);
 
         // Build the argument list for Rf_initialize_R
         let mut arguments = cargs!["R", "--slave", "--no-save", "--no-restore"];
@@ -68,6 +91,14 @@ pub fn start_r() {
             R_CStackLimit = usize::MAX;
             setup_Rmainloop();
         }
+
+        // Now we can initialize constant globals since `setup_Rmainloop()` has run
+        libr::initialize::constant_globals(&library);
+
+        // Leak the library so it lives for the process lifetime, because unlike in our
+        // normal setup, this function returns and will otherwise drop (and close) the library
+        let library = Box::new(library);
+        Box::leak(library);
 
         // Initialize harp globals
         unsafe {

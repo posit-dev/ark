@@ -12,6 +12,7 @@ pub mod exec;
 pub mod external_ptr;
 pub mod interrupts;
 pub mod json;
+pub mod library;
 pub mod line_ending;
 pub mod object;
 pub mod polled_events;

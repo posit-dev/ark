@@ -174,10 +174,7 @@ pub fn start_r(
         "/Library/Frameworks/R.framework/Versions/4.3-arm64/Resources/lib/libR.dylib",
     );
 
-    // This `library` MUST live for the entirety of the time that we call the R API.
-    // Currently this is managed by the fact that `run_r()` never returns.
-    // However, we could also `Box::leak()` it if we wanted to be explicit about this.
-    let library = open_r_shared_library(&r_shared_library);
+    let library = harp::library::open_r_shared_library(&r_shared_library);
 
     // Initialize dynamic bindings to functions and mutable globals. These are required
     // to even start R (for things like `Rf_initialize_R()` and `R_running_as_main_program`).
@@ -1248,26 +1245,6 @@ fn to_html(frame: SEXP) -> Result<String> {
             .to::<String>()?;
         Ok(result)
     }
-}
-
-fn open_r_shared_library(path: &PathBuf) -> libloading::Library {
-    let library = unsafe { libloading::Library::new(&path) };
-
-    let library = match library {
-        Ok(library) => library,
-        Err(err) => panic!(
-            "The `R` shared library at '{}' could not be opened: {}",
-            path.display(),
-            err,
-        ),
-    };
-
-    log::info!(
-        "Successfully opened R shared library at '{}'.",
-        path.display()
-    );
-
-    library
 }
 
 // --- Frontend methods ---
