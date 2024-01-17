@@ -50,8 +50,8 @@ pub fn r_parse_eval(code: &str, options: RParseEvalOptions) -> Result<RObject> {
 
         // Evaluate the provided code.
         let mut value = R_NilValue;
-        for i in 0..Rf_length(*parsed_sexp) {
-            let expr = VECTOR_ELT(*parsed_sexp, i as isize);
+        for i in 0..Rf_xlength(*parsed_sexp) {
+            let expr = VECTOR_ELT(*parsed_sexp, i);
             let mut errc: i32 = 0;
             value = R_tryEvalSilent(expr, options.env.sexp, &mut errc);
             if errc != 0 {

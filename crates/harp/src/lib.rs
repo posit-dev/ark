@@ -90,13 +90,13 @@ macro_rules! r_symbol {
     ($id:literal) => {{
         use std::os::raw::c_char;
         let value = concat!($id, "\0");
-        libR_shim::Rf_install(value.as_ptr() as *const c_char)
+        libr::Rf_install(value.as_ptr() as *const c_char)
     }};
 
     ($id:expr) => {{
         use std::os::raw::c_char;
         let cstr = [&*$id, "\0"].concat();
-        libR_shim::Rf_install(cstr.as_ptr() as *const c_char)
+        libr::Rf_install(cstr.as_ptr() as *const c_char)
     }};
 }
 
@@ -121,7 +121,7 @@ macro_rules! r_string {
     ($id:expr, $protect:expr) => {{
         use libR_shim::*;
 
-        let string_sexp = $protect.add(Rf_allocVector(STRSXP, 1));
+        let string_sexp = $protect.add(libr::Rf_allocVector(STRSXP, 1));
         SET_STRING_ELT(string_sexp, 0, $crate::r_char!($id));
         string_sexp
     }};
@@ -130,7 +130,7 @@ macro_rules! r_string {
 #[macro_export]
 macro_rules! r_double {
     ($id:expr) => {
-        libR_shim::Rf_ScalarReal($id)
+        libr::Rf_ScalarReal($id)
     };
 }
 
@@ -139,7 +139,7 @@ macro_rules! r_pairlist_impl {
     ($head:expr, $tail:expr) => {{
         let head = $crate::object::RObject::from($head);
         let tail = $crate::object::RObject::from($tail);
-        libR_shim::Rf_cons(*head, *tail)
+        libr::Rf_cons(*head, *tail)
     }};
 }
 
@@ -269,7 +269,7 @@ mod tests {
                 r_double!(42.0),
             });
 
-            assert!(Rf_length(*value) == 3);
+            assert!(Rf_xlength(*value) == 3);
 
             let e1 = CAR(*value);
             assert!(r_typeof(e1) == SYMSXP);
@@ -283,7 +283,7 @@ mod tests {
             assert!(RObject::view(e3).to::<f64>().unwrap() == 42.0);
 
             let value = RObject::new(r_pairlist! {});
-            assert!(Rf_length(*value) == 0);
+            assert!(Rf_xlength(*value) == 0);
 
             let value = RObject::new(r_pairlist! { "a", 12, 42.0 });
 

@@ -25,6 +25,13 @@ use libr::R_NilValue;
 use libr::R_PreserveObject;
 use libr::R_altrep_data1;
 use libr::R_altrep_data2;
+use libr::Rf_ScalarInteger;
+use libr::Rf_ScalarLogical;
+use libr::Rf_ScalarReal;
+use libr::Rf_allocVector;
+use libr::Rf_coerceVector;
+use libr::Rf_cons;
+use libr::Rf_getAttrib;
 
 use crate::error::Error;
 use crate::exec::RFunction;
@@ -679,7 +686,7 @@ impl TryFrom<RObject> for Vec<String> {
             r_assert_type(*value, &[STRSXP, NILSXP])?;
 
             let mut result: Vec<String> = Vec::new();
-            let n = Rf_length(*value) as isize;
+            let n = Rf_xlength(*value);
             for i in 0..n {
                 let res = r_chr_get_owned_utf8(*value, i)?;
                 result.push(res);
@@ -696,7 +703,7 @@ impl TryFrom<RObject> for Vec<Option<String>> {
         unsafe {
             r_assert_type(*value, &[STRSXP, NILSXP])?;
 
-            let n = Rf_length(*value);
+            let n = Rf_xlength(*value);
             let mut result: Vec<Option<String>> = Vec::with_capacity(n as usize);
             for i in 0..n {
                 result.push(value.get_string(i as isize)?);
@@ -718,13 +725,13 @@ impl TryFrom<RObject> for HashMap<String, String> {
             let mut protect = RProtect::new();
             let value = protect.add(Rf_coerceVector(*value, STRSXP));
 
-            let n = Rf_length(names);
+            let n = Rf_xlength(names);
             let mut map = HashMap::<String, String>::with_capacity(n as usize);
 
-            for i in 0..Rf_length(names) {
+            for i in 0..Rf_xlength(names) {
                 // Translate the name and value into Rust strings.
-                let lhs = r_chr_get_owned_utf8(names, i as isize)?;
-                let rhs = r_chr_get_owned_utf8(value, i as isize)?;
+                let lhs = r_chr_get_owned_utf8(names, i)?;
+                let rhs = r_chr_get_owned_utf8(value, i)?;
 
                 map.insert(lhs, rhs);
             }

@@ -9,6 +9,7 @@ use std::cmp::min;
 
 use libR_shim::*;
 use libr::R_NamesSymbol;
+use libr::Rf_allocVector;
 use log::warn;
 use serde_json::json;
 use serde_json::Map;

@@ -31,6 +31,7 @@ use harp::vector::CharacterVector;
 use harp::vector::Vector;
 use libR_shim::*;
 use libr::R_GlobalEnv;
+use libr::Rf_ScalarLogical;
 use log::debug;
 use log::error;
 use log::warn;

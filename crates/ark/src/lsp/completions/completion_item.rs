@@ -23,6 +23,8 @@ use harp::utils::r_symbol_valid;
 use harp::utils::r_typeof;
 use libR_shim::*;
 use libr::R_UnboundValue;
+use libr::Rf_findVarInFrame;
+use libr::Rf_isFunction;
 use stdext::*;
 use tower_lsp::lsp_types::Command;
 use tower_lsp::lsp_types::CompletionItem;

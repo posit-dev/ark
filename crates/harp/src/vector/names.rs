@@ -6,6 +6,7 @@
 //
 use libR_shim::*;
 use libr::R_NamesSymbol;
+use libr::Rf_getAttrib;
 
 use crate::object::RObject;
 use crate::utils::r_is_null;

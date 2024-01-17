@@ -21,6 +21,8 @@ use libR_shim::*;
 use libr::R_GlobalEnv;
 use libr::R_NilValue;
 use libr::R_PreserveObject;
+use libr::Rf_ScalarLogical;
+use libr::Rf_asInteger;
 use stdext::local;
 use stdext::spawn;
 use stdext::unwrap;

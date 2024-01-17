@@ -52,6 +52,8 @@ use libr::R_NaInt;
 use libr::R_NaString;
 use libr::R_NilValue;
 use libr::R_do_slot;
+use libr::Rf_findVarInFrame;
+use libr::Rf_getAttrib;
 use stdext::local;
 use stdext::unwrap;
 

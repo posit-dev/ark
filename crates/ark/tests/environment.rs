@@ -29,6 +29,8 @@ use harp::utils::r_envir_set;
 use libR_shim::*;
 use libr::R_EmptyEnv;
 use libr::R_lsInternal;
+use libr::Rf_ScalarInteger;
+use libr::Rf_defineVar;
 
 /**
  * Basic test for the R environment list. This test:
@@ -218,7 +220,7 @@ fn test_environment_list() {
     r_task(|| unsafe {
         let test_env = test_env.get().clone();
         let contents = RObject::new(R_lsInternal(*test_env, Rboolean_TRUE));
-        assert_eq!(Rf_length(*contents), 0);
+        assert_eq!(Rf_xlength(*contents), 0);
     });
 
     // Create some more variables

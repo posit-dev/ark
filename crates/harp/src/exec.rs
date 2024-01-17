@@ -28,6 +28,12 @@ use libr::R_ParseVector;
 use libr::R_ToplevelExec;
 use libr::R_curErrorBuf;
 use libr::R_tryCatch;
+use libr::Rf_allocVector;
+use libr::Rf_eval;
+use libr::Rf_getAttrib;
+use libr::Rf_lang2;
+use libr::Rf_lang3;
+use libr::Rf_lang4;
 
 use crate::environment::R_ENVS;
 use crate::error::Error;
@@ -512,7 +518,7 @@ pub fn r_parse(code: &str) -> Result<RObject> {
     unsafe {
         let exprs = r_parse_exprs(code)?;
 
-        let n = Rf_length(*exprs);
+        let n = Rf_xlength(*exprs);
         if n != 1 {
             return Err(Error::ParseError {
                 code: code.to_string(),
@@ -652,6 +658,15 @@ mod tests {
     use libr::R_DirtyImage_get;
     use libr::R_DirtyImage_set;
     use libr::R_GlobalEnv;
+    use libr::Rf_ScalarInteger;
+    use libr::Rf_asInteger;
+    use libr::Rf_cons;
+    use libr::Rf_defineVar;
+    use libr::Rf_install;
+    use libr::Rf_isInteger;
+    use libr::Rf_isNumeric;
+    use libr::Rf_isString;
+    use libr::Rf_lcons;
 
     use super::*;
     use crate::assert_match;
@@ -801,7 +816,7 @@ mod tests {
 
                     let call = VECTOR_ELT(out, 0);
                     assert_eq!(r_typeof(call), LANGSXP as u32);
-                    assert_eq!(Rf_length(call), 2);
+                    assert_eq!(Rf_xlength(call), 2);
                     assert_eq!(CAR(call), r_symbol!("force"));
 
                     let arg = CADR(call);

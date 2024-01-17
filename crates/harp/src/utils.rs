@@ -30,6 +30,16 @@ use libr::R_PreserveObject;
 use libr::R_UnboundValue;
 use libr::R_removeVarFromFrame;
 use libr::R_tryEvalSilent;
+use libr::Rf_GetOption1;
+use libr::Rf_ScalarLogical;
+use libr::Rf_ScalarString;
+use libr::Rf_defineVar;
+use libr::Rf_eval;
+use libr::Rf_findVar;
+use libr::Rf_getAttrib;
+use libr::Rf_inherits;
+use libr::Rf_isMatrix;
+use libr::Rf_lang2;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use stdext::unwrap;
@@ -142,7 +152,7 @@ pub fn r_assert_type(object: SEXP, expected: &[u32]) -> Result<u32> {
 }
 
 pub unsafe fn r_assert_capacity(object: SEXP, required: usize) -> Result<usize> {
-    let actual = Rf_length(object) as usize;
+    let actual = Rf_xlength(object) as usize;
     if actual < required {
         return Err(Error::UnexpectedLength(actual, required));
     }

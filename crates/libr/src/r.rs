@@ -10,6 +10,7 @@
 #![allow(non_snake_case)]
 
 // Currently just using libR for the _types_, otherwise we conflict with it
+pub use libR_shim::R_xlen_t;
 pub use libR_shim::Rboolean;
 pub use libR_shim::Rboolean_FALSE;
 pub use libR_shim::Rboolean_TRUE;
@@ -24,8 +25,9 @@ pub use crate::sys::types::*;
 // ---------------------------------------------------------------------------------------
 // Types
 
-#[doc = "R_xlen_t is defined as int on 32-bit platforms, and that confuses Rust. Keeping it always as ptrdiff_t works fine even on 32-bit."]
-pub type R_xlen_t = isize;
+// TODO:
+// #[doc = "R_xlen_t is defined as int on 32-bit platforms, and that confuses Rust. Keeping it always as ptrdiff_t works fine even on 32-bit."]
+// pub type R_xlen_t = isize;
 
 pub const NILSXP: u32 = 0;
 pub const SYMSXP: u32 = 1;
@@ -208,6 +210,58 @@ functions::generate! {
     ) -> SEXP;
 
     pub fn R_tryEvalSilent(arg1: SEXP, arg2: SEXP, arg3: *mut std::ffi::c_int) -> SEXP;
+
+    pub fn Rf_GetOption1(arg1: SEXP) -> SEXP;
+
+    pub fn Rf_ScalarInteger(arg1: std::ffi::c_int) -> SEXP;
+
+    pub fn Rf_ScalarLogical(arg1: std::ffi::c_int) -> SEXP;
+
+    pub fn Rf_ScalarReal(arg1: f64) -> SEXP;
+
+    pub fn Rf_ScalarString(arg1: SEXP) -> SEXP;
+
+    pub fn Rf_allocVector(arg1: SEXPTYPE, arg2: R_xlen_t) -> SEXP;
+
+    pub fn Rf_asInteger(x: SEXP) -> std::ffi::c_int;
+
+    pub fn Rf_coerceVector(arg1: SEXP, arg2: SEXPTYPE) -> SEXP;
+
+    pub fn Rf_cons(arg1: SEXP, arg2: SEXP) -> SEXP;
+
+    pub fn Rf_defineVar(arg1: SEXP, arg2: SEXP, arg3: SEXP);
+
+    pub fn Rf_eval(arg1: SEXP, arg2: SEXP) -> SEXP;
+
+    pub fn Rf_findVar(arg1: SEXP, arg2: SEXP) -> SEXP;
+
+    pub fn Rf_findVarInFrame(arg1: SEXP, arg2: SEXP) -> SEXP;
+
+    pub fn Rf_getAttrib(arg1: SEXP, arg2: SEXP) -> SEXP;
+
+    pub fn Rf_inherits(arg1: SEXP, arg2: *const std::ffi::c_char) -> Rboolean;
+
+    pub fn Rf_install(arg1: *const std::ffi::c_char) -> SEXP;
+
+    pub fn Rf_isFunction(arg1: SEXP) -> Rboolean;
+
+    pub fn Rf_isInteger(arg1: SEXP) -> Rboolean;
+
+    pub fn Rf_isMatrix(arg1: SEXP) -> Rboolean;
+
+    pub fn Rf_isNumeric(arg1: SEXP) -> Rboolean;
+
+    pub fn Rf_isString(s: SEXP) -> Rboolean;
+
+    pub fn Rf_lang1(arg1: SEXP) -> SEXP;
+
+    pub fn Rf_lang2(arg1: SEXP, arg2: SEXP) -> SEXP;
+
+    pub fn Rf_lang3(arg1: SEXP, arg2: SEXP, arg3: SEXP) -> SEXP;
+
+    pub fn Rf_lang4(arg1: SEXP, arg2: SEXP, arg3: SEXP, arg4: SEXP) -> SEXP;
+
+    pub fn Rf_lcons(arg1: SEXP, arg2: SEXP) -> SEXP;
 
     /// R >= 4.2.0
     pub fn R_existsVarInFrame(rho: SEXP, symbol: SEXP) -> Rboolean;

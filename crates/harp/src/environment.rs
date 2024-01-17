@@ -15,6 +15,8 @@ use libr::R_NilValue;
 use libr::R_UnboundValue;
 use libr::R_altrep_data1;
 use libr::R_altrep_data2;
+use libr::Rf_defineVar;
+use libr::Rf_findVarInFrame;
 use once_cell::sync::Lazy;
 use stdext::unwrap;
 
@@ -479,6 +481,8 @@ impl From<Environment> for RObject {
 #[cfg(test)]
 mod tests {
     use libR_shim::*;
+    use libr::Rf_ScalarInteger;
+    use libr::Rf_defineVar;
 
     use super::*;
     use crate::exec::RFunction;

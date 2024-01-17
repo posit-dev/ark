@@ -6,6 +6,7 @@
 //
 
 use libR_shim::*;
+use libr::Rf_allocVector;
 
 use crate::error::Result;
 use crate::utils::r_assert_capacity;

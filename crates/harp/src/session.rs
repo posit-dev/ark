@@ -13,6 +13,9 @@ use libr::R_GlobalEnv;
 use libr::R_NilValue;
 use libr::R_PreserveObject;
 use libr::R_Srcref;
+use libr::Rf_ScalarInteger;
+use libr::Rf_findVar;
+use libr::Rf_getAttrib;
 use stdext::unwrap;
 
 use crate::exec::r_parse;
@@ -126,7 +129,7 @@ pub fn r_stack_info() -> anyhow::Result<Vec<FrameInfo>> {
             let info = r_try_eval_silent(STACK_INFO_CALL.unwrap(), R_GlobalEnv)?;
             Rf_protect(info);
 
-            let n: isize = Rf_length(info).try_into()?;
+            let n: isize = Rf_xlength(info).try_into()?;
 
             for i in (0..n).rev() {
                 let frame = VECTOR_ELT(info, i);
@@ -162,7 +165,7 @@ fn stack_pointer_frame() -> anyhow::Result<FrameInfo> {
             srcref = VECTOR_ELT(srcref, 0);
         }
 
-        let n = Rf_length(srcref);
+        let n = Rf_xlength(srcref);
         if r_typeof(srcref) != INTSXP || n < 4 {
             anyhow::bail!("Expected integer vector for srcref");
         }

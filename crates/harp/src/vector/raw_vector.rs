@@ -6,6 +6,7 @@
 //
 
 use libR_shim::*;
+use libr::Rf_allocVector;
 
 use crate::object::RObject;
 use crate::vector::Vector;

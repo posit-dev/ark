@@ -7,6 +7,8 @@
 
 use libR_shim::*;
 use libr::R_NaInt;
+use libr::Rf_allocVector;
+use libr::Rf_getAttrib;
 
 use crate::object::RObject;
 use crate::r_symbol;
