@@ -10,6 +10,8 @@ use std::cmp::min;
 use libR_shim::*;
 use libr::R_NamesSymbol;
 use libr::Rf_allocVector;
+use libr::Rf_setAttrib;
+use libr::SET_VECTOR_ELT;
 use log::warn;
 use serde_json::json;
 use serde_json::Map;

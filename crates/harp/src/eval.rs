@@ -5,9 +5,10 @@
 //
 //
 
-use libR_shim::*;
 use libr::R_NilValue;
 use libr::R_tryEvalSilent;
+use libr::Rf_xlength;
+use libr::VECTOR_ELT;
 
 use crate::environment::R_ENVS;
 use crate::error::Error;

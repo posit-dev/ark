@@ -23,6 +23,7 @@ use libr::R_NilValue;
 use libr::R_PreserveObject;
 use libr::Rf_ScalarLogical;
 use libr::Rf_asInteger;
+use libr::Rf_setAttrib;
 use stdext::local;
 use stdext::spawn;
 use stdext::unwrap;

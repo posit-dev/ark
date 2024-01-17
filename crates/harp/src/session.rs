@@ -16,6 +16,12 @@ use libr::R_Srcref;
 use libr::Rf_ScalarInteger;
 use libr::Rf_findVar;
 use libr::Rf_getAttrib;
+use libr::Rf_protect;
+use libr::Rf_unprotect;
+use libr::Rf_xlength;
+use libr::INTEGER_ELT;
+use libr::RDEBUG;
+use libr::VECTOR_ELT;
 use stdext::unwrap;
 
 use crate::exec::r_parse;

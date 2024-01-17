@@ -40,6 +40,26 @@ use libr::Rf_getAttrib;
 use libr::Rf_inherits;
 use libr::Rf_isMatrix;
 use libr::Rf_lang2;
+use libr::Rf_translateCharUTF8;
+use libr::Rf_type2char;
+use libr::Rf_xlength;
+use libr::ALTREP_CLASS;
+use libr::ATTRIB;
+use libr::CADR;
+use libr::CAR;
+use libr::CDR;
+use libr::FORMALS;
+use libr::LOGICAL;
+use libr::LOGICAL_ELT;
+use libr::PRCODE;
+use libr::PRENV;
+use libr::PRINTNAME;
+use libr::PRVALUE;
+use libr::SET_PRVALUE;
+use libr::STRING_ELT;
+use libr::TAG;
+use libr::TYPEOF;
+use libr::VECTOR_ELT;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use stdext::unwrap;
@@ -291,7 +311,7 @@ pub fn r_vec_type(value: SEXP) -> String {
         INTSXP => unsafe {
             if r_inherits(value, "factor") {
                 let levels = Rf_getAttrib(value, R_LevelsSymbol);
-                format!("fct({})", XLENGTH(levels))
+                format!("fct({})", Rf_xlength(levels))
             } else {
                 String::from("int")
             }

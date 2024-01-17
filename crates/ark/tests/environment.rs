@@ -31,6 +31,7 @@ use libr::R_EmptyEnv;
 use libr::R_lsInternal;
 use libr::Rf_ScalarInteger;
 use libr::Rf_defineVar;
+use libr::Rf_xlength;
 
 /**
  * Basic test for the R environment list. This test:

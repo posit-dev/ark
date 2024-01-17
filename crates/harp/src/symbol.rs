@@ -12,6 +12,9 @@ use std::ops::Deref;
 use libR_shim::*;
 use libr::vmaxget;
 use libr::vmaxset;
+use libr::Rf_translateCharUTF8;
+use libr::PRINTNAME;
+use libr::R_CHAR;
 
 use crate::error::Result;
 use crate::object::r_length;

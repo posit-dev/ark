@@ -7,6 +7,8 @@
 
 use libR_shim::*;
 use libr::Rf_allocVector;
+use libr::DATAPTR;
+use libr::RAW_ELT;
 
 use crate::object::RObject;
 use crate::vector::Vector;

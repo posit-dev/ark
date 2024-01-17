@@ -34,6 +34,16 @@ use libr::Rf_getAttrib;
 use libr::Rf_lang2;
 use libr::Rf_lang3;
 use libr::Rf_lang4;
+use libr::Rf_protect;
+use libr::Rf_xlength;
+use libr::CDDDR;
+use libr::CDDR;
+use libr::CDR;
+use libr::R_CHAR;
+use libr::SETCAR;
+use libr::SET_TAG;
+use libr::STRING_ELT;
+use libr::VECTOR_ELT;
 
 use crate::environment::R_ENVS;
 use crate::error::Error;
@@ -667,6 +677,12 @@ mod tests {
     use libr::Rf_isNumeric;
     use libr::Rf_isString;
     use libr::Rf_lcons;
+    use libr::Rf_mkString;
+    use libr::Rf_setVar;
+    use libr::CADR;
+    use libr::CAR;
+    use libr::INTEGER_ELT;
+    use libr::REAL;
 
     use super::*;
     use crate::assert_match;

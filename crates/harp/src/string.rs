@@ -10,6 +10,8 @@ use libr::ParseStatus;
 use libr::R_NaString;
 use libr::R_NilValue;
 use libr::R_ParseVector;
+use libr::Rf_xlength;
+use libr::VECTOR_ELT;
 
 use crate::object::RObject;
 use crate::protect::RProtect;

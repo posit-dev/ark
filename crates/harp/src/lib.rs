@@ -105,10 +105,8 @@ macro_rules! r_char {
     ($id:expr) => {{
         use std::os::raw::c_char;
 
-        use libR_shim::*;
-
         let value = &*$id;
-        Rf_mkCharLenCE(
+        libr::Rf_mkCharLenCE(
             value.as_ptr() as *mut c_char,
             value.len() as i32,
             libr::cetype_t_CE_UTF8,
@@ -122,7 +120,7 @@ macro_rules! r_string {
         use libR_shim::*;
 
         let string_sexp = $protect.add(libr::Rf_allocVector(STRSXP, 1));
-        SET_STRING_ELT(string_sexp, 0, $crate::r_char!($id));
+        libr::SET_STRING_ELT(string_sexp, 0, $crate::r_char!($id));
         string_sexp
     }};
 }
@@ -149,14 +147,14 @@ macro_rules! r_pairlist {
     // Dotted pairlist entry with injected name.
     (!!$name:ident = $value:expr $(, $($tts:tt)*)?) => {{
         let value = $crate::r_pairlist_impl!($value, $crate::r_pairlist!($($($tts)*)?));
-        libR_shim::SET_TAG(value, $name);
+        libr::SET_TAG(value, $name);
         value
     }};
 
     // Dotted pairlist entry.
     ($name:pat = $value:expr $(, $($tts:tt)*)?) => {{
         let value = $crate::r_pairlist_impl!($value, $crate::r_pairlist!($($($tts)*)?));
-        libR_shim::SET_TAG(value, r_symbol!(stringify!($name)));
+        libr::SET_TAG(value, r_symbol!(stringify!($name)));
         value
     }};
 
@@ -177,7 +175,7 @@ macro_rules! r_lang {
 
     ($($tts:tt)*) => {{
         let value = $crate::r_pairlist!($($tts)*);
-        libR_shim::SET_TYPEOF(value, LANGSXP as i32);
+        libr::SET_TYPEOF(value, LANGSXP as i32);
         value
     }}
 
@@ -234,6 +232,14 @@ macro_rules! push_rds {
 #[cfg(test)]
 mod tests {
     use libR_shim::*;
+    use libr::Rf_xlength;
+    use libr::CADDDR;
+    use libr::CADDR;
+    use libr::CADR;
+    use libr::CAR;
+    use libr::CDDR;
+    use libr::CDR;
+    use libr::TAG;
 
     use super::*;
     use crate::object::RObject;

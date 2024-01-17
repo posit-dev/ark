@@ -10,6 +10,9 @@ use std::os::raw::c_char;
 use libR_shim::*;
 use libr::cetype_t_CE_UTF8;
 use libr::R_NaString;
+use libr::Rf_mkCharLenCE;
+use libr::SET_STRING_ELT;
+use libr::STRING_ELT;
 
 use crate::object::RObject;
 use crate::utils::r_str_to_owned_utf8_unchecked;

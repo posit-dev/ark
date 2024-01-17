@@ -8,6 +8,8 @@
 use libR_shim::*;
 use libr::R_IsNA;
 use libr::Rf_allocVector;
+use libr::COMPLEX_ELT;
+use libr::DATAPTR;
 
 use crate::object::RObject;
 use crate::vector::Vector;

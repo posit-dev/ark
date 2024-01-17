@@ -32,6 +32,24 @@ use libr::Rf_allocVector;
 use libr::Rf_coerceVector;
 use libr::Rf_cons;
 use libr::Rf_getAttrib;
+use libr::Rf_mkCharLenCE;
+use libr::Rf_protect;
+use libr::Rf_setAttrib;
+use libr::Rf_unprotect;
+use libr::Rf_xlength;
+use libr::CAR;
+use libr::CDR;
+use libr::INTEGER_ELT;
+use libr::LOGICAL;
+use libr::LOGICAL_ELT;
+use libr::PRINTNAME;
+use libr::REAL_ELT;
+use libr::SETCAR;
+use libr::SETCDR;
+use libr::SET_STRING_ELT;
+use libr::SET_TAG;
+use libr::STRING_ELT;
+use libr::VECTOR_ELT;
 
 use crate::error::Error;
 use crate::exec::RFunction;
@@ -744,6 +762,7 @@ impl TryFrom<RObject> for HashMap<String, String> {
 #[cfg(test)]
 mod tests {
     use libR_shim::*;
+    use libr::SET_STRING_ELT;
 
     use super::*;
     use crate::assert_match;

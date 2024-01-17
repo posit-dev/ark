@@ -25,6 +25,8 @@ use libR_shim::*;
 use libr::R_UnboundValue;
 use libr::Rf_findVarInFrame;
 use libr::Rf_isFunction;
+use libr::ENCLOS;
+use libr::PRVALUE;
 use stdext::*;
 use tower_lsp::lsp_types::Command;
 use tower_lsp::lsp_types::CompletionItem;

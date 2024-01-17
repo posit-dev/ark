@@ -14,6 +14,8 @@ pub use libR_shim::R_xlen_t;
 pub use libR_shim::Rboolean;
 pub use libR_shim::Rboolean_FALSE;
 pub use libR_shim::Rboolean_TRUE;
+pub use libR_shim::Rbyte;
+pub use libR_shim::Rcomplex;
 pub use libR_shim::SEXP;
 
 use crate::constant_globals;
@@ -67,13 +69,14 @@ pub struct SEXPREC {
 // TODO: Uncomment me
 // pub type SEXP = *mut SEXPREC;
 
-#[doc = "R 4.3 redefined `Rcomplex` to a union for compatibility with Fortran.\n But the old definition is compatible both the union version\n and the struct version.\n See: https://github.com/extendr/extendr/issues/524"]
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
-pub struct Rcomplex {
-    pub r: f64,
-    pub i: f64,
-}
+// TODO:
+// #[doc = "R 4.3 redefined `Rcomplex` to a union for compatibility with Fortran.\n But the old definition is compatible both the union version\n and the struct version.\n See: https://github.com/extendr/extendr/issues/524"]
+// #[repr(C)]
+// #[derive(Debug, Copy, Clone)]
+// pub struct Rcomplex {
+//     pub r: f64,
+//     pub i: f64,
+// }
 
 pub type cetype_t = u32;
 pub const cetype_t_CE_NATIVE: cetype_t = 0;
@@ -262,6 +265,110 @@ functions::generate! {
     pub fn Rf_lang4(arg1: SEXP, arg2: SEXP, arg3: SEXP, arg4: SEXP) -> SEXP;
 
     pub fn Rf_lcons(arg1: SEXP, arg2: SEXP) -> SEXP;
+
+    pub fn Rf_mkCharLenCE(
+        arg1: *const std::ffi::c_char,
+        arg2: std::ffi::c_int,
+        arg3: cetype_t
+    ) -> SEXP;
+
+    pub fn Rf_mkString(arg1: *const std::ffi::c_char) -> SEXP;
+
+    pub fn Rf_onintr();
+
+    pub fn Rf_protect(arg1: SEXP) -> SEXP;
+
+    pub fn Rf_setAttrib(arg1: SEXP, arg2: SEXP, arg3: SEXP) -> SEXP;
+
+    pub fn Rf_setVar(arg1: SEXP, arg2: SEXP, arg3: SEXP);
+
+    pub fn Rf_translateCharUTF8(arg1: SEXP) -> *const std::ffi::c_char;
+
+    pub fn Rf_type2char(arg1: SEXPTYPE) -> *const std::ffi::c_char;
+
+    pub fn Rf_unprotect(arg1: std::ffi::c_int);
+
+    pub fn Rf_xlength(arg1: SEXP) -> R_xlen_t;
+
+    pub fn ALTREP(x: SEXP) -> std::ffi::c_int;
+
+    pub fn ALTREP_CLASS(x: SEXP) -> SEXP;
+
+    pub fn ATTRIB(x: SEXP) -> SEXP;
+
+    pub fn CADDDR(e: SEXP) -> SEXP;
+
+    pub fn CADDR(e: SEXP) -> SEXP;
+
+    pub fn CADR(e: SEXP) -> SEXP;
+
+    pub fn CAR(e: SEXP) -> SEXP;
+
+    pub fn CDDDR(e: SEXP) -> SEXP;
+
+    pub fn CDDR(e: SEXP) -> SEXP;
+
+    pub fn CDR(e: SEXP) -> SEXP;
+
+    pub fn COMPLEX_ELT(x: SEXP, i: R_xlen_t) -> Rcomplex;
+
+    pub fn DATAPTR(x: SEXP) -> *mut std::ffi::c_void;
+
+    pub fn ENCLOS(x: SEXP) -> SEXP;
+
+    pub fn FORMALS(x: SEXP) -> SEXP;
+
+    pub fn FRAME(x: SEXP) -> SEXP;
+
+    pub fn HASHTAB(x: SEXP) -> SEXP;
+
+    pub fn INTEGER_ELT(x: SEXP, i: R_xlen_t) -> std::ffi::c_int;
+
+    pub fn LOGICAL(x: SEXP) -> *mut std::ffi::c_int;
+
+    pub fn LOGICAL_ELT(x: SEXP, i: R_xlen_t) -> std::ffi::c_int;
+
+    pub fn PRCODE(x: SEXP) -> SEXP;
+
+    pub fn PRENV(x: SEXP) -> SEXP;
+
+    pub fn PRINTNAME(x: SEXP) -> SEXP;
+
+    pub fn PRVALUE(x: SEXP) -> SEXP;
+
+    pub fn RAW(x: SEXP) -> *mut Rbyte;
+
+    pub fn RAW_ELT(x: SEXP, i: R_xlen_t) -> Rbyte;
+
+    pub fn RDEBUG(x: SEXP) -> std::ffi::c_int;
+
+    pub fn REAL(x: SEXP) -> *mut f64;
+
+    pub fn REAL_ELT(x: SEXP, i: R_xlen_t) -> f64;
+
+    pub fn R_CHAR(x: SEXP) -> *const std::ffi::c_char;
+
+    pub fn SETCAR(x: SEXP, y: SEXP) -> SEXP;
+
+    pub fn SETCDR(x: SEXP, y: SEXP) -> SEXP;
+
+    pub fn SET_PRVALUE(x: SEXP, v: SEXP);
+
+    pub fn SET_STRING_ELT(x: SEXP, i: R_xlen_t, v: SEXP);
+
+    pub fn SET_TAG(x: SEXP, y: SEXP);
+
+    pub fn SET_TYPEOF(x: SEXP, v: std::ffi::c_int);
+
+    pub fn SET_VECTOR_ELT(x: SEXP, i: R_xlen_t, v: SEXP) -> SEXP;
+
+    pub fn STRING_ELT(x: SEXP, i: R_xlen_t) -> SEXP;
+
+    pub fn TAG(e: SEXP) -> SEXP;
+
+    pub fn TYPEOF(x: SEXP) -> std::ffi::c_int;
+
+    pub fn VECTOR_ELT(x: SEXP, i: R_xlen_t) -> SEXP;
 
     /// R >= 4.2.0
     pub fn R_existsVarInFrame(rho: SEXP, symbol: SEXP) -> Rboolean;
