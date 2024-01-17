@@ -10,7 +10,6 @@
 #![allow(non_snake_case)]
 
 // Currently just using libR for the _types_, otherwise we conflict with it
-pub use libR_shim::R_xlen_t;
 pub use libR_shim::Rbyte;
 pub use libR_shim::Rcomplex;
 pub use libR_shim::SEXP;
@@ -24,9 +23,8 @@ pub use crate::sys::types::*;
 // ---------------------------------------------------------------------------------------
 // Types
 
-// TODO:
-// #[doc = "R_xlen_t is defined as int on 32-bit platforms, and that confuses Rust. Keeping it always as ptrdiff_t works fine even on 32-bit."]
-// pub type R_xlen_t = isize;
+#[doc = "R_xlen_t is defined as int on 32-bit platforms, and that confuses Rust. Keeping it always as ptrdiff_t works fine even on 32-bit."]
+pub type R_xlen_t = isize;
 
 pub const NILSXP: u32 = 0;
 pub const SYMSXP: u32 = 1;

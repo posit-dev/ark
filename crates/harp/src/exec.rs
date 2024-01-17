@@ -28,6 +28,7 @@ use libr::R_ParseVector;
 use libr::R_ToplevelExec;
 use libr::R_curErrorBuf;
 use libr::R_tryCatch;
+use libr::R_xlen_t;
 use libr::Rf_allocVector;
 use libr::Rf_eval;
 use libr::Rf_getAttrib;

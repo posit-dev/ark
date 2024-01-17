@@ -6,6 +6,7 @@
 //
 
 use libR_shim::*;
+use libr::R_xlen_t;
 use libr::Rf_allocVector;
 use libr::DATAPTR;
 use libr::RAWSXP;

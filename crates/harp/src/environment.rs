@@ -15,6 +15,7 @@ use libr::R_NilValue;
 use libr::R_UnboundValue;
 use libr::R_altrep_data1;
 use libr::R_altrep_data2;
+use libr::R_xlen_t;
 use libr::Rf_defineVar;
 use libr::Rf_findVarInFrame;
 use libr::Rf_xlength;
