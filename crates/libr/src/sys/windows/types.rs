@@ -21,7 +21,7 @@
 #![allow(non_snake_case)]
 #![allow(unused)]
 
-use libr::Rboolean;
+use crate::Rboolean;
 
 // Start of copy from libR-sys `bindings.rs`
 
