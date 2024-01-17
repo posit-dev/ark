@@ -9,6 +9,7 @@ use libR_shim::*;
 use libr::R_IsNA;
 use libr::Rf_allocVector;
 use libr::DATAPTR;
+use libr::REALSXP;
 use libr::REAL_ELT;
 
 use crate::object::RObject;

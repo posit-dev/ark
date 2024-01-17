@@ -15,6 +15,7 @@ use libr::vmaxset;
 use libr::Rf_translateCharUTF8;
 use libr::PRINTNAME;
 use libr::R_CHAR;
+use libr::SYMSXP;
 
 use crate::error::Result;
 use crate::object::r_length;

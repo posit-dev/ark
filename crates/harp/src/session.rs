@@ -19,8 +19,11 @@ use libr::Rf_getAttrib;
 use libr::Rf_protect;
 use libr::Rf_unprotect;
 use libr::Rf_xlength;
+use libr::ENVSXP;
 use libr::INTEGER_ELT;
+use libr::INTSXP;
 use libr::RDEBUG;
+use libr::VECSXP;
 use libr::VECTOR_ELT;
 use stdext::unwrap;
 

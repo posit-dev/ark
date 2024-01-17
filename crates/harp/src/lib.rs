@@ -117,9 +117,7 @@ macro_rules! r_char {
 #[macro_export]
 macro_rules! r_string {
     ($id:expr, $protect:expr) => {{
-        use libR_shim::*;
-
-        let string_sexp = $protect.add(libr::Rf_allocVector(STRSXP, 1));
+        let string_sexp = $protect.add(libr::Rf_allocVector(libr::STRSXP, 1));
         libr::SET_STRING_ELT(string_sexp, 0, $crate::r_char!($id));
         string_sexp
     }};
@@ -175,7 +173,7 @@ macro_rules! r_lang {
 
     ($($tts:tt)*) => {{
         let value = $crate::r_pairlist!($($tts)*);
-        libr::SET_TYPEOF(value, LANGSXP as i32);
+        libr::SET_TYPEOF(value, libr::LANGSXP as i32);
         value
     }}
 
@@ -231,7 +229,6 @@ macro_rules! push_rds {
 
 #[cfg(test)]
 mod tests {
-    use libR_shim::*;
     use libr::Rf_xlength;
     use libr::CADDDR;
     use libr::CADDR;
@@ -239,6 +236,11 @@ mod tests {
     use libr::CAR;
     use libr::CDDR;
     use libr::CDR;
+    use libr::INTSXP;
+    use libr::LANGSXP;
+    use libr::REALSXP;
+    use libr::STRSXP;
+    use libr::SYMSXP;
     use libr::TAG;
 
     use super::*;

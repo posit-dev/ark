@@ -10,6 +10,7 @@ use libr::R_NaInt;
 use libr::Rf_allocVector;
 use libr::DATAPTR;
 use libr::INTEGER_ELT;
+use libr::INTSXP;
 
 use crate::object::RObject;
 use crate::vector::Vector;

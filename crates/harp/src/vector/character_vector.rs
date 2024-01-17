@@ -13,6 +13,7 @@ use libr::R_NaString;
 use libr::Rf_mkCharLenCE;
 use libr::SET_STRING_ELT;
 use libr::STRING_ELT;
+use libr::STRSXP;
 
 use crate::object::RObject;
 use crate::utils::r_str_to_owned_utf8_unchecked;
@@ -85,6 +86,8 @@ impl Vector for CharacterVector {
 
 #[cfg(test)]
 mod test {
+    use libr::STRSXP;
+
     use crate::r_test;
     use crate::utils::r_typeof;
     use crate::vector::*;

@@ -39,10 +39,13 @@ use libr::Rf_xlength;
 use libr::CDDDR;
 use libr::CDDR;
 use libr::CDR;
+use libr::EXPRSXP;
+use libr::LANGSXP;
 use libr::R_CHAR;
 use libr::SETCAR;
 use libr::SET_TAG;
 use libr::STRING_ELT;
+use libr::SYMSXP;
 use libr::VECTOR_ELT;
 
 use crate::environment::R_ENVS;
@@ -681,8 +684,13 @@ mod tests {
     use libr::Rf_setVar;
     use libr::CADR;
     use libr::CAR;
+    use libr::EXPRSXP;
     use libr::INTEGER_ELT;
+    use libr::INTSXP;
+    use libr::LANGSXP;
     use libr::REAL;
+    use libr::REALSXP;
+    use libr::STRSXP;
 
     use super::*;
     use crate::assert_match;

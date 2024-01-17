@@ -39,16 +39,24 @@ use libr::Rf_unprotect;
 use libr::Rf_xlength;
 use libr::CAR;
 use libr::CDR;
+use libr::CHARSXP;
 use libr::INTEGER_ELT;
+use libr::INTSXP;
+use libr::LGLSXP;
 use libr::LOGICAL;
 use libr::LOGICAL_ELT;
+use libr::NILSXP;
 use libr::PRINTNAME;
+use libr::REALSXP;
 use libr::REAL_ELT;
 use libr::SETCAR;
 use libr::SETCDR;
 use libr::SET_STRING_ELT;
 use libr::SET_TAG;
 use libr::STRING_ELT;
+use libr::STRSXP;
+use libr::SYMSXP;
+use libr::VECSXP;
 use libr::VECTOR_ELT;
 
 use crate::error::Error;
@@ -761,7 +769,6 @@ impl TryFrom<RObject> for HashMap<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use libR_shim::*;
     use libr::SET_STRING_ELT;
 
     use super::*;
