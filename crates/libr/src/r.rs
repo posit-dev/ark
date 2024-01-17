@@ -11,6 +11,7 @@
 
 use crate::constant_globals;
 use crate::functions;
+use crate::functions_variadic;
 use crate::mutable_globals;
 // Reexport all system specific R types
 pub use crate::sys::types::*;
@@ -434,6 +435,12 @@ functions::generate! {
     // https://github.com/wch/r-source/commit/9210c59281e7ab93acff9f692c31b83d07a506a6
     // pub fn freeRUser(s: *mut std::ffi::c_char);
     // pub fn free_R_HOME(s: *mut std::ffi::c_char);
+}
+
+functions_variadic::generate! {
+    pub fn Rf_error(arg1: *const std::ffi::c_char, ...) -> !;
+
+    pub fn Rf_errorcall(arg1: SEXP, arg2: *const std::ffi::c_char, ...) -> !;
 }
 
 constant_globals::generate! {

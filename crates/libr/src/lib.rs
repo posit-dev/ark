@@ -7,6 +7,7 @@
 
 mod constant_globals;
 mod functions;
+mod functions_variadic;
 mod mutable_globals;
 mod r;
 mod sys;
@@ -21,12 +22,14 @@ mod windows_graphapp;
 pub mod initialize {
     pub use crate::r::constant_globals_initializer::constant_globals;
     pub use crate::r::functions_initializer::functions;
+    pub use crate::r::functions_variadic_initializer::functions_variadic;
     pub use crate::r::mutable_globals_initializer::mutable_globals;
 }
 
 pub mod has {
     pub use crate::r::constant_globals_has::*;
     pub use crate::r::functions_has::*;
+    pub use crate::r::functions_variadic_has::*;
     pub use crate::r::mutable_globals_has::*;
 }
 

@@ -29,6 +29,7 @@ use libr::R_curErrorBuf;
 use libr::R_tryCatch;
 use libr::R_xlen_t;
 use libr::Rf_allocVector;
+use libr::Rf_errorcall;
 use libr::Rf_eval;
 use libr::Rf_getAttrib;
 use libr::Rf_lang2;
@@ -627,7 +628,7 @@ where
 
     unsafe {
         // Now throw the error over the R stack
-        libR_shim::Rf_errorcall(libR_shim::R_NilValue, R_CHAR(STRING_ELT(sexp_msg, 0)));
+        Rf_errorcall(R_NilValue, R_CHAR(STRING_ELT(sexp_msg, 0)));
     }
 }
 
@@ -676,6 +677,7 @@ mod tests {
     use libr::Rf_asInteger;
     use libr::Rf_cons;
     use libr::Rf_defineVar;
+    use libr::Rf_error;
     use libr::Rf_install;
     use libr::Rf_isInteger;
     use libr::Rf_isNumeric;
@@ -791,7 +793,7 @@ mod tests {
             // error
             let out = r_try_catch(|| unsafe {
                 let msg = CString::new("ouch").unwrap();
-                libR_shim::Rf_error(msg.as_ptr());
+                Rf_error(msg.as_ptr());
             });
 
             assert_match!(out, Err(Error::TryCatchError { message, classes }) => {

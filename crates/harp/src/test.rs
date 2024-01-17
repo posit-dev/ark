@@ -76,6 +76,7 @@ pub fn start_r() {
 
         // Initialize functions and mutable globals so we can call the R setup functions
         libr::initialize::functions(&r_library);
+        libr::initialize::functions_variadic(&r_library);
         libr::initialize::mutable_globals(&r_library);
 
         #[cfg(target_family = "windows")]

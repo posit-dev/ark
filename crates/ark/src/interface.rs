@@ -74,11 +74,11 @@ use harp::utils::r_get_option;
 use harp::utils::r_is_data_frame;
 use harp::utils::r_poke_option_show_error_messages;
 use harp::R_MAIN_THREAD_ID;
-use libR_shim::Rf_error;
 use libr::R_BaseNamespace;
 use libr::R_GlobalEnv;
 use libr::R_ProcessEvents;
 use libr::R_RunPendingFinalizers;
+use libr::Rf_error;
 use libr::Rf_findVarInFrame;
 use libr::Rf_onintr;
 use libr::SEXP;
@@ -187,6 +187,7 @@ pub fn start_r(
     // Initialize dynamic bindings to functions and mutable globals. These are required
     // to even start R (for things like `Rf_initialize_R()` and `R_running_as_main_program`).
     libr::initialize::functions(&r_library);
+    libr::initialize::functions_variadic(&r_library);
     libr::initialize::mutable_globals(&r_library);
 
     // Required for `GA_initapp()`, called during setup
