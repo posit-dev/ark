@@ -3,18 +3,7 @@
     "tasks": [
         {
             "type": "shell",
-            "osx": {
-                "command": "cargo build && scripts/post-install.sh"
-            },
-            "windows": {
-                // Note that the environment variable, R_HOME, must be set prior to `cargo build`
-                // in order to build the ark dependency libR-sys. Once libR-sys is built,
-                // R_HOME is not required for subsequent runs of `cargo build`.
-                // Prior to running `cargo build`, execute something like this:
-                // PowerShell:    $env:R_HOME = "C:\\Program Files\\R\\R-4.3.2"
-                // bash:          export R_HOME="C:\\Program Files\\R\\R-4.3.2"
-                "command": "cargo build"
-            },
+            "command": "cargo build",
             "problemMatcher": [
                 "$rustc"
             ],

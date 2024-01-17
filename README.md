@@ -45,10 +45,10 @@ $ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 $ source $HOME/.cargo/env
 ```
 
-Assuming you have a working Rust toolchain, you can just run `cargo build` followed by the post-install script:
+Assuming you have a working Rust toolchain, you can just run `cargo build`:
 
 ```bash
-$ cargo build && scripts/post-install.sh
+$ cargo build
 ```
 
 #### Standalone
