@@ -11,11 +11,13 @@ mod functions_variadic;
 mod mutable_globals;
 mod r;
 mod sys;
+mod types;
 #[cfg(target_family = "windows")]
 #[path = "graphapp.rs"]
 mod windows_graphapp;
 
 // ---------------------------------------------------------------------------------------
+// R
 
 /// Initialization functions that must be called before using any functions or globals
 /// exported by the crate
@@ -33,8 +35,12 @@ pub mod has {
     pub use crate::r::mutable_globals_has::*;
 }
 
-// Expose all of the R API at the top level
-pub use crate::r::*;
+// Expose all R types, API functions, and API globals at the top level
+pub use r::*;
+pub use types::*;
+
+// ---------------------------------------------------------------------------------------
+// graphapp
 
 #[cfg(target_family = "windows")]
 pub mod graphapp {
