@@ -15,7 +15,6 @@ pub use libR_sys::pGEcontext;
 pub use libR_sys::GEcurrentDevice;
 pub use libR_sys::GEinitDisplayList;
 pub use libR_sys::R_GE_getVersion;
-pub use libR_sys::Rbyte;
 pub use libR_sys::Rcomplex;
 pub use libR_sys::Rf_error;
 pub use libR_sys::Rf_errorcall;
