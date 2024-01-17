@@ -11,6 +11,7 @@
 use crate::constant_globals;
 use crate::functions;
 use crate::functions_variadic;
+use crate::graphics::pGEDevDesc;
 use crate::mutable_globals;
 use crate::types::*;
 
@@ -259,6 +260,12 @@ functions::generate! {
     pub fn TYPEOF(x: SEXP) -> std::ffi::c_int;
 
     pub fn VECTOR_ELT(x: SEXP, i: R_xlen_t) -> SEXP;
+
+    pub fn R_GE_getVersion() -> std::ffi::c_int;
+
+    pub fn GEcurrentDevice() -> pGEDevDesc;
+
+    pub fn GEinitDisplayList(dd: pGEDevDesc);
 
     /// R >= 4.2.0
     pub fn R_existsVarInFrame(rho: SEXP, symbol: SEXP) -> Rboolean;

@@ -9,9 +9,3 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 #![allow(improper_ctypes)]
-
-pub use libR_sys::pDevDesc;
-pub use libR_sys::pGEcontext;
-pub use libR_sys::GEcurrentDevice;
-pub use libR_sys::GEinitDisplayList;
-pub use libR_sys::R_GE_getVersion;

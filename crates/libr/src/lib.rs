@@ -8,6 +8,7 @@
 mod constant_globals;
 mod functions;
 mod functions_variadic;
+mod graphics;
 mod mutable_globals;
 mod r;
 mod sys;
@@ -36,6 +37,7 @@ pub mod has {
 }
 
 // Expose all R types, API functions, and API globals at the top level
+pub use graphics::*;
 pub use r::*;
 pub use types::*;
 

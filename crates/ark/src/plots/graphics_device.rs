@@ -47,7 +47,8 @@ use crossbeam::channel::Sender;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
-use libR_shim::*;
+use libr::pDevDesc;
+use libr::pGEcontext;
 use libr::R_NilValue;
 use libr::Rf_ScalarLogical;
 use libr::SEXP;
@@ -400,19 +401,23 @@ static mut DEVICE_CONTEXT: Lazy<DeviceContext> = Lazy::new(|| DeviceContext::def
 // TODO: This macro needs to be updated every time we introduce support
 // for a new graphics device. Is there a better way?
 macro_rules! with_device {
-    ($value:expr, | $name:ident | $block:block) => {{
-        let version = R_GE_getVersion();
+    ($ge_value:expr, | $ge_name:ident, $name:ident | $block:block) => {{
+        let version = libr::R_GE_getVersion();
         if version == 13 {
-            let $name = $value as *mut $crate::plots::dev_desc::DevDescVersion13;
+            let $ge_name = $ge_value as *mut libr::GEDevDescVersion13;
+            let $name = (*$ge_name).dev;
             $block;
         } else if version == 14 {
-            let $name = $value as *mut $crate::plots::dev_desc::DevDescVersion14;
+            let $ge_name = $ge_value as *mut libr::GEDevDescVersion14;
+            let $name = (*$ge_name).dev;
             $block;
         } else if version == 15 {
-            let $name = $value as *mut $crate::plots::dev_desc::DevDescVersion15;
+            let $ge_name = $ge_value as *mut libr::GEDevDescVersion15;
+            let $name = (*$ge_name).dev;
             $block;
         } else if version == 16 {
-            let $name = $value as *mut $crate::plots::dev_desc::DevDescVersion16;
+            let $ge_name = $ge_value as *mut libr::GEDevDescVersion16;
+            let $name = (*$ge_name).dev;
             $block;
         } else {
             panic!(
@@ -508,16 +513,19 @@ unsafe fn ps_graphics_device_impl() -> anyhow::Result<SEXP> {
         .param("res", res)
         .call()?;
 
-    // get reference to current device
-    let dd = GEcurrentDevice();
+    // Get reference to current device (opaque pointer)
+    let ge_device = libr::GEcurrentDevice();
 
-    // initialize our _callbacks
-    let device = (*dd).dev;
-    with_device!(device, |device| {
-        // initialize display list (needed for copying of plots)
-        GEinitDisplayList(dd);
-        (*dd).displayListOn = 1;
-        // (*dd).recordGraphics = 1;
+    // Initialize display list (needed for copying of plots)
+    // (Called on opaque pointer, because that matches the function signature.
+    // Pointer specialization is done below, at which point we can access and set
+    // `displayListOn` too)
+    libr::GEinitDisplayList(ge_device);
+
+    // Get a specialized versioned pointer from our opaque one so we can initialize our _callbacks
+    with_device!(ge_device, |ge_device, device| {
+        (*ge_device).displayListOn = 1;
+        // (*ge_device).recordGraphics = 1;
 
         // device description struct
         let callbacks = &mut DEVICE_CONTEXT._callbacks;
