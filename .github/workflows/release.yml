@@ -158,22 +158,10 @@ jobs:
                   # Enter the build directory
                   pushd target/${{ matrix.rust_target_prefix }}-apple-darwin/${{ matrix.flavor }}
 
-                  # On macOS, we use install_name_tool to fix up the link to libR.dylib.
-                  #
-                  # Note that we still try to link with '-undefined dynamic_lookup', just to ensure that
-                  # linking succeeds when we compile against a version of R compiled for a different
-                  # architecture. This is mostly relevant when producing x86_64 builds of ark on an arm64
-                  # machine.
-                  #
-                  # However, because using libR-sys still implies that the path to the R library ends up in
-                  # the library load list, we have to modify that after the fact anyhow.
-                  OLD_LIBR_PATH=$(otool -L ark | grep libR.dylib | cut -c2- | cut -d ' ' -f1)
-                  echo "Fixing path to shared R library at ${OLD_LIBR_PATH}..."
-                  install_name_tool -change "${OLD_LIBR_PATH}" "@rpath/libR.dylib" ark
-
                   # Compress the kernel to an archive
                   ARCHIVE="$GITHUB_WORKSPACE/ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ matrix.flavor }}-darwin-${{ matrix.arch }}.zip"
                   zip -Xry $ARCHIVE ark
+
                   popd
 
             # Create build artifact
