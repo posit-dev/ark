@@ -20,7 +20,7 @@ a[Amalthea] <--Message Handlers--> ark(((Amalthea R Kernel - ark)))
 a <--ZeroMQ--> jf[Jupyter Frontend]
 ark <--> lsp[Language Protocol Server]
 ark <--> h[harp R wrapper]
-ark <--> libr[libR-sys bindings]
+ark <--> libr[Rust R bindings]
 h <--> libr
 libr <--> r[R Shared Library]
 lsp <--> h

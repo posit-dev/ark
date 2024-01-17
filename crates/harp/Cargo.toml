@@ -15,7 +15,6 @@ ctor = "0.1.26"
 harp-macros = { path = "./harp-macros" }
 itertools = "0.10.5"
 lazy_static = "1.4.0"
-libR-shim = { path = "../libR-shim" }
 libc = "0.2.140"
 libloading = "0.8.1"
 libr = { path = "../libr" }

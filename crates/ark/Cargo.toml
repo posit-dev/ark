@@ -29,7 +29,6 @@ home = "0.5.5"
 hyper = { version = "0.14.24", features = ["full"] }
 itertools = "0.10.5"
 lazy_static = "1.4.0"
-libR-shim = { path = "../libR-shim" }
 libc = "0.2"
 libr = { path = "../libr" }
 log = "0.4.17"

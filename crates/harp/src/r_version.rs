@@ -17,11 +17,9 @@ use crate::exec::RFunctionExt;
 /// Determine the running R version
 ///
 /// Determining the running R version from within ark
-/// is complicated by the fact that there is no C _function_
-/// in the R API that returns the version dynamically. Instead,
-/// there is an `R_VERSION` macro, but this reflects the R version
-/// at libR-sys build time, not at runtime. To determine the running
-/// R version, we call out to R once and store the result.
+/// is complicated by the fact that there is no C function
+/// in the R API that returns the version dynamically. To determine the
+/// running R version, we call out to R once and store the result.
 pub unsafe fn r_version() -> &'static Version {
     static INIT_R_VERSION: Once = Once::new();
     static mut R_VERSION: MaybeUninit<Version> = MaybeUninit::uninit();
