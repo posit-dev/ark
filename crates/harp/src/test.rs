@@ -20,7 +20,7 @@ use std::sync::Mutex;
 use std::sync::Once;
 
 use libr::setup_Rmainloop;
-use libr::R_CStackLimit;
+use libr::R_CStackLimit_set;
 use libr::Rf_initialize_R;
 use stdext::cargs;
 
@@ -89,7 +89,7 @@ pub fn start_r() {
                 arguments.len() as i32,
                 arguments.as_mut_ptr() as *mut *mut c_char,
             );
-            R_CStackLimit = usize::MAX;
+            R_CStackLimit_set(usize::MAX);
             setup_Rmainloop();
         }
 

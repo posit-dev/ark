@@ -302,10 +302,6 @@ constant_globals::generate! {
     #[default = 0]
     pub static R_NaInt: std::ffi::c_int;
 
-    #[doc = "C stack limit"]
-    #[default = 0]
-    pub static R_CStackLimit: usize;
-
     #[doc = "The \"global\" environment"]
     #[default = std::ptr::null_mut()]
     pub static R_GlobalEnv: SEXP;
@@ -544,6 +540,8 @@ mutable_globals::generate! {
     pub static mut R_ParseErrorMsg: [std::ffi::c_char; 256usize];
 
     pub static mut R_DirtyImage: std::ffi::c_int;
+
+    pub static mut R_CStackLimit: usize;
 
     // -----------------------------------------------------------------------------------
     // Unix
