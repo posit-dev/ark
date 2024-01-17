@@ -14,7 +14,6 @@ use std::os::raw::c_char;
 use std::os::raw::c_int;
 use std::sync::Once;
 
-use libR_shim::*;
 use libr::cetype_t_CE_UTF8;
 use libr::R_IsNA;
 use libr::R_NaInt;
@@ -53,6 +52,7 @@ use libr::SETCAR;
 use libr::SETCDR;
 use libr::SET_STRING_ELT;
 use libr::SET_TAG;
+use libr::SEXP;
 use libr::STRING_ELT;
 use libr::STRSXP;
 use libr::SYMSXP;

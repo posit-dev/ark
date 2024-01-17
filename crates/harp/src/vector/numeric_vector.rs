@@ -5,13 +5,13 @@
 //
 //
 
-use libR_shim::*;
 use libr::R_IsNA;
 use libr::R_xlen_t;
 use libr::Rf_allocVector;
 use libr::DATAPTR;
 use libr::REALSXP;
 use libr::REAL_ELT;
+use libr::SEXP;
 
 use crate::object::RObject;
 use crate::vector::Vector;

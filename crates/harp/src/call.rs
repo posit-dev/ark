@@ -7,8 +7,8 @@
 
 use std::ops::Deref;
 
-use libR_shim::*;
 use libr::LANGSXP;
+use libr::SEXP;
 
 use crate::error::Result;
 use crate::object::RObject;

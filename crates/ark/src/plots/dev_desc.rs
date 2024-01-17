@@ -9,6 +9,7 @@
 
 use libR_shim::*;
 use libr::Rboolean;
+use libr::SEXP;
 
 // This file captures the device description for the different versions
 // of R graphics engines that we support.

@@ -8,9 +8,9 @@
 use std::os::raw::c_char;
 
 use harp::object::RObject;
-use libR_shim::*;
 use libr::R_NilValue;
 use libr::Rf_mkString;
+use libr::SEXP;
 
 /// Shows a message in the Positron frontend
 #[harp::register]

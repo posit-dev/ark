@@ -7,7 +7,6 @@
 
 use std::sync::Once;
 
-use libR_shim::*;
 use libr::R_BaseEnv;
 use libr::R_GlobalEnv;
 use libr::R_NilValue;
@@ -23,6 +22,7 @@ use libr::ENVSXP;
 use libr::INTEGER_ELT;
 use libr::INTSXP;
 use libr::RDEBUG;
+use libr::SEXP;
 use libr::VECSXP;
 use libr::VECTOR_ELT;
 use stdext::unwrap;

@@ -9,9 +9,6 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-// Currently just using libR for the _types_, otherwise we conflict with it
-pub use libR_shim::SEXP;
-
 use crate::constant_globals;
 use crate::functions;
 use crate::mutable_globals;
@@ -59,8 +56,7 @@ pub type SEXPTYPE = std::ffi::c_uint;
 pub struct SEXPREC {
     _unused: [u8; 0],
 }
-// TODO: Uncomment me
-// pub type SEXP = *mut SEXPREC;
+pub type SEXP = *mut SEXPREC;
 
 #[doc = "R 4.3 redefined `Rcomplex` to a union for compatibility with Fortran.\n But the old definition is compatible both the union version\n and the struct version.\n See: https://github.com/extendr/extendr/issues/524"]
 #[repr(C)]

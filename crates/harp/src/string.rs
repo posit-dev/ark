@@ -5,13 +5,13 @@
 //
 //
 
-use libR_shim::*;
 use libr::ParseStatus;
 use libr::R_NaString;
 use libr::R_NilValue;
 use libr::R_ParseVector;
 use libr::Rf_xlength;
 use libr::EXPRSXP;
+use libr::SEXP;
 use libr::STRSXP;
 use libr::VECTOR_ELT;
 

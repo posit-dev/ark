@@ -50,6 +50,7 @@ use harp::object::RObject;
 use libR_shim::*;
 use libr::R_NilValue;
 use libr::Rf_ScalarLogical;
+use libr::SEXP;
 use once_cell::sync::Lazy;
 use serde_json::json;
 use stdext::result::ResultOrLog;

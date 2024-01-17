@@ -5,9 +5,9 @@
 //
 //
 
-use libR_shim::*;
 use libr::Rf_allocVector;
 use libr::Rf_xlength;
+use libr::SEXP;
 
 use crate::error::Result;
 use crate::utils::r_assert_capacity;

@@ -8,7 +8,7 @@
 use amalthea::comm::ui_comm::DebugSleepParams;
 use amalthea::comm::ui_comm::UiFrontendRequest;
 use harp::object::RObject;
-use libR_shim::SEXP;
+use libr::SEXP;
 
 use crate::interface::RMain;
 

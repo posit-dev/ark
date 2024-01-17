@@ -4,7 +4,6 @@
 // Copyright (C) 2023 Posit Software, PBC. All rights reserved.
 //
 //
-use libR_shim::*;
 use libr::R_ClassSymbol;
 use libr::R_DimSymbol;
 use libr::Rf_getAttrib;
@@ -14,6 +13,7 @@ use libr::INTSXP;
 use libr::LGLSXP;
 use libr::RAWSXP;
 use libr::REALSXP;
+use libr::SEXP;
 use libr::STRSXP;
 
 use crate::error::Error;

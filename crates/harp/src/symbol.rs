@@ -9,12 +9,12 @@ use std::cmp::Ordering;
 use std::ffi::CStr;
 use std::ops::Deref;
 
-use libR_shim::*;
 use libr::vmaxget;
 use libr::vmaxset;
 use libr::Rf_translateCharUTF8;
 use libr::PRINTNAME;
 use libr::R_CHAR;
+use libr::SEXP;
 use libr::SYMSXP;
 
 use crate::error::Result;

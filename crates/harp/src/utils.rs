@@ -12,7 +12,6 @@ use std::path::Path;
 use c2rust_bitfields::BitfieldStruct;
 use harp_macros::register;
 use itertools::Itertools;
-use libR_shim::*;
 use libr::vmaxget;
 use libr::vmaxset;
 use libr::R_BaseEnv;
@@ -67,6 +66,7 @@ use libr::PRVALUE;
 use libr::RAWSXP;
 use libr::REALSXP;
 use libr::SET_PRVALUE;
+use libr::SEXP;
 use libr::SPECIALSXP;
 use libr::STRING_ELT;
 use libr::STRSXP;
@@ -261,7 +261,7 @@ pub fn r_classes(value: SEXP) -> Option<CharacterVector> {
 ///
 /// - `x` is the R vector to translate from.
 /// - `i` is the index in the vector of the string to translate.
-pub fn r_chr_get_owned_utf8(x: *mut SEXPREC, i: isize) -> Result<String> {
+pub fn r_chr_get_owned_utf8(x: SEXP, i: isize) -> Result<String> {
     unsafe { r_str_to_owned_utf8(STRING_ELT(x, i)) }
 }
 

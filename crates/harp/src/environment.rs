@@ -7,7 +7,6 @@
 
 use std::ops::Deref;
 
-use libR_shim::*;
 use libr::R_BaseEnv;
 use libr::R_EmptyEnv;
 use libr::R_GlobalEnv;
@@ -31,6 +30,7 @@ use libr::LISTSXP;
 use libr::PRCODE;
 use libr::PROMSXP;
 use libr::PRVALUE;
+use libr::SEXP;
 use libr::SYMSXP;
 use libr::TAG;
 use libr::VECSXP;

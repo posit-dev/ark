@@ -10,7 +10,6 @@ use std::mem;
 use std::mem::take;
 use std::os::raw::c_void;
 
-use libR_shim::*;
 use libr::ParseStatus;
 use libr::ParseStatus_PARSE_ERROR;
 use libr::ParseStatus_PARSE_INCOMPLETE;
@@ -45,6 +44,7 @@ use libr::LANGSXP;
 use libr::R_CHAR;
 use libr::SETCAR;
 use libr::SET_TAG;
+use libr::SEXP;
 use libr::STRING_ELT;
 use libr::SYMSXP;
 use libr::VECTOR_ELT;
@@ -627,7 +627,7 @@ where
 
     unsafe {
         // Now throw the error over the R stack
-        Rf_errorcall(R_NilValue, R_CHAR(STRING_ELT(sexp_msg, 0)));
+        libR_shim::Rf_errorcall(libR_shim::R_NilValue, R_CHAR(STRING_ELT(sexp_msg, 0)));
     }
 }
 
@@ -791,7 +791,7 @@ mod tests {
             // error
             let out = r_try_catch(|| unsafe {
                 let msg = CString::new("ouch").unwrap();
-                Rf_error(msg.as_ptr());
+                libR_shim::Rf_error(msg.as_ptr());
             });
 
             assert_match!(out, Err(Error::TryCatchError { message, classes }) => {
