@@ -11,9 +11,6 @@
 
 // Currently just using libR for the _types_, otherwise we conflict with it
 pub use libR_shim::R_xlen_t;
-pub use libR_shim::Rboolean;
-pub use libR_shim::Rboolean_FALSE;
-pub use libR_shim::Rboolean_TRUE;
 pub use libR_shim::Rbyte;
 pub use libR_shim::Rcomplex;
 pub use libR_shim::SEXP;
@@ -77,6 +74,10 @@ pub struct SEXPREC {
 //     pub r: f64,
 //     pub i: f64,
 // }
+
+pub type Rboolean = u32;
+pub const Rboolean_FALSE: Rboolean = 0;
+pub const Rboolean_TRUE: Rboolean = 1;
 
 pub type cetype_t = u32;
 pub const cetype_t_CE_NATIVE: cetype_t = 0;

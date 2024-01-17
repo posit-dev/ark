@@ -5,9 +5,9 @@
 //
 //
 
-use libR_shim::*;
 use libr::R_interrupts_suspended_get;
 use libr::R_interrupts_suspended_set;
+use libr::Rboolean;
 use libr::Rboolean_TRUE;
 
 static mut R_INTERRUPTS_SUSPENDED: i32 = 0;

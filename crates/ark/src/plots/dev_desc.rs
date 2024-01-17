@@ -8,6 +8,7 @@
 #![allow(non_snake_case)]
 
 use libR_shim::*;
+use libr::Rboolean;
 
 // This file captures the device description for the different versions
 // of R graphics engines that we support.
