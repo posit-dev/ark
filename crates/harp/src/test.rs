@@ -25,8 +25,8 @@ use libr::Rf_initialize_R;
 use stdext::cargs;
 
 use crate::exec::r_sandbox;
-use crate::library;
 use crate::library::find_r_shared_library;
+use crate::library::open_r_shared_library;
 use crate::R_MAIN_THREAD_ID;
 
 // Escape hatch for unit tests. We need this because the default
@@ -60,12 +60,12 @@ pub fn start_r() {
 
         // Find shared library from `R_HOME`
         let r_library_path = find_r_shared_library(&home, "R");
-        let r_library = library::open_r_shared_library(&r_library_path);
+        let r_library = open_r_shared_library(&r_library_path);
 
         #[cfg(target_family = "windows")]
-        let rgraphapp_library_path = library::find_r_shared_library(&home, "Rgraphapp");
+        let rgraphapp_library_path = find_r_shared_library(&home, "Rgraphapp");
         #[cfg(target_family = "windows")]
-        let rgraphapp_library = library::open_r_shared_library(&rgraphapp_library_path);
+        let rgraphapp_library = open_r_shared_library(&rgraphapp_library_path);
 
         // Initialize functions and mutable globals so we can call the R setup functions
         libr::initialize::functions(&r_library);
