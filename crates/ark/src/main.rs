@@ -7,7 +7,6 @@
 
 #![allow(unused_unsafe)]
 
-use core::panic;
 use std::env;
 use std::sync::Arc;
 use std::sync::Mutex;
