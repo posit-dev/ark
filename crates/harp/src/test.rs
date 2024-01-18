@@ -26,7 +26,7 @@ use stdext::cargs;
 
 use crate::exec::r_sandbox;
 use crate::library::find_r_shared_library;
-use crate::library::open_r_shared_library;
+use crate::library::open_and_leak_r_shared_library;
 use crate::R_MAIN_THREAD_ID;
 
 // Escape hatch for unit tests. We need this because the default
@@ -47,33 +47,41 @@ pub fn start_r() {
         }
 
         // Set up R_HOME if necessary.
-        let home = match std::env::var("R_HOME") {
-            Ok(home) => PathBuf::from(home),
+        let r_home = match std::env::var("R_HOME") {
+            Ok(r_home) => PathBuf::from(r_home),
             Err(_) => {
                 let result = Command::new("R").arg("RHOME").output().unwrap();
-                let home = String::from_utf8(result.stdout).unwrap();
-                let home = home.trim();
-                std::env::set_var("R_HOME", home);
-                PathBuf::from(home)
+                let r_home = String::from_utf8(result.stdout).unwrap();
+                let r_home = r_home.trim();
+                std::env::set_var("R_HOME", r_home);
+                PathBuf::from(r_home)
             },
         };
 
-        // Find shared library from `R_HOME`
-        let r_library_path = find_r_shared_library(&home, "R");
-        let r_library = open_r_shared_library(&r_library_path);
+        // See notes in the "real" `start_r()` about why we do this
+        #[cfg(target_family = "windows")]
+        {
+            let path = find_r_shared_library(&r_home, "Rlapack");
+            open_and_leak_r_shared_library(&path);
 
-        #[cfg(target_family = "windows")]
-        let rgraphapp_library_path = find_r_shared_library(&home, "Rgraphapp");
-        #[cfg(target_family = "windows")]
-        let rgraphapp_library = open_r_shared_library(&rgraphapp_library_path);
+            let path = find_r_shared_library(&r_home, "Riconv");
+            open_and_leak_r_shared_library(&path);
+
+            let path = find_r_shared_library(&r_home, "Rblas");
+            open_and_leak_r_shared_library(&path);
+
+            let path = find_r_shared_library(&r_home, "Rgraphapp");
+            open_and_leak_r_shared_library(&path);
+        }
+
+        // Find shared library from `R_HOME`
+        let r_library_path = find_r_shared_library(&r_home, "R");
+        let r_library = open_and_leak_r_shared_library(&r_library_path);
 
         // Initialize functions and mutable globals so we can call the R setup functions
-        libr::initialize::functions(&r_library);
-        libr::initialize::functions_variadic(&r_library);
-        libr::initialize::mutable_globals(&r_library);
-
-        #[cfg(target_family = "windows")]
-        libr::graphapp::initialize::functions(&rgraphapp_library);
+        libr::initialize::functions(r_library);
+        libr::initialize::functions_variadic(r_library);
+        libr::initialize::mutable_globals(r_library);
 
         // Build the argument list for Rf_initialize_R
         let mut arguments = cargs!["R", "--slave", "--no-save", "--no-restore"];
@@ -88,17 +96,7 @@ pub fn start_r() {
         }
 
         // Now we can initialize constant globals since `setup_Rmainloop()` has run
-        libr::initialize::constant_globals(&r_library);
-
-        // Leak the library so it lives for the process lifetime, because unlike in our
-        // normal setup, this function returns and will otherwise drop (and close) the library
-        let r_library = Box::new(r_library);
-        Box::leak(r_library);
-
-        #[cfg(target_family = "windows")]
-        let rgraphapp_library = Box::new(rgraphapp_library);
-        #[cfg(target_family = "windows")]
-        Box::leak(rgraphapp_library);
+        libr::initialize::constant_globals(r_library);
 
         // Initialize harp globals
         unsafe {

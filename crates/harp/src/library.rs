@@ -10,18 +10,27 @@ use std::env::consts::DLL_SUFFIX;
 use std::env::consts::OS;
 use std::path::PathBuf;
 
+use crate::sys;
+
+pub fn open_and_leak_r_shared_library(path: &PathBuf) -> &mut libloading::Library {
+    let library = open_r_shared_library(path);
+
+    // Leak the `Library` to ensure that it lives for the lifetime of the program (ark).
+    // Otherwise, if the library closes then we can't safely access the functions inside it.
+    let library = Box::new(library);
+    let library = Box::leak(library);
+
+    library
+}
+
 /// Open an R shared library located at the specified `path`
-///
-/// The returned `Library` MUST stay open for the entirety of the time that we call the
-/// R API. Currently this is managed by the fact that `run_r()` never returns.
-/// However, we could also `Box::leak()` it if we wanted to be explicit about this.
-pub fn open_r_shared_library(path: &PathBuf) -> libloading::Library {
-    let library = unsafe { libloading::Library::new(&path) };
+fn open_r_shared_library(path: &PathBuf) -> libloading::Library {
+    let library = sys::library::open_r_shared_library(path);
 
     let library = match library {
         Ok(library) => library,
         Err(err) => panic!(
-            "The R shared library at '{}' could not be opened: {}",
+            "The R shared library at '{}' could not be opened: {:?}",
             path.display(),
             err,
         ),
