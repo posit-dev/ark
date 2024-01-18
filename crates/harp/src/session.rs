@@ -7,24 +7,7 @@
 
 use std::sync::Once;
 
-use libr::R_BaseEnv;
-use libr::R_GlobalEnv;
-use libr::R_NilValue;
-use libr::R_PreserveObject;
-use libr::R_Srcref;
-use libr::Rf_ScalarInteger;
-use libr::Rf_findVar;
-use libr::Rf_getAttrib;
-use libr::Rf_protect;
-use libr::Rf_unprotect;
-use libr::Rf_xlength;
-use libr::ENVSXP;
-use libr::INTEGER_ELT;
-use libr::INTSXP;
-use libr::RDEBUG;
-use libr::SEXP;
-use libr::VECSXP;
-use libr::VECTOR_ELT;
+use libr::*;
 use stdext::unwrap;
 
 use crate::exec::r_parse;

@@ -10,45 +10,7 @@ use std::mem;
 use std::mem::take;
 use std::os::raw::c_void;
 
-use libr::ParseStatus;
-use libr::ParseStatus_PARSE_ERROR;
-use libr::ParseStatus_PARSE_INCOMPLETE;
-use libr::ParseStatus_PARSE_NULL;
-use libr::ParseStatus_PARSE_OK;
-use libr::R_BaseEnv;
-use libr::R_CheckStack;
-use libr::R_CheckStack2;
-use libr::R_CheckUserInterrupt;
-use libr::R_ClassSymbol;
-use libr::R_NilValue;
-use libr::R_ParseErrorMsg_get;
-use libr::R_ParseError_get;
-use libr::R_ParseVector;
-use libr::R_ToplevelExec;
-use libr::R_curErrorBuf;
-use libr::R_tryCatch;
-use libr::R_xlen_t;
-use libr::Rf_allocVector;
-use libr::Rf_errorcall;
-use libr::Rf_eval;
-use libr::Rf_getAttrib;
-use libr::Rf_lang2;
-use libr::Rf_lang3;
-use libr::Rf_lang4;
-use libr::Rf_protect;
-use libr::Rf_xlength;
-use libr::CDDDR;
-use libr::CDDR;
-use libr::CDR;
-use libr::EXPRSXP;
-use libr::LANGSXP;
-use libr::R_CHAR;
-use libr::SETCAR;
-use libr::SET_TAG;
-use libr::SEXP;
-use libr::STRING_ELT;
-use libr::SYMSXP;
-use libr::VECTOR_ELT;
+use libr::*;
 
 use crate::environment::R_ENVS;
 use crate::error::Error;
@@ -669,31 +631,6 @@ pub fn r_check_stack(size: Option<usize>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use std::ffi::CString;
-
-    use libr::R_DirtyImage_get;
-    use libr::R_DirtyImage_set;
-    use libr::R_GlobalEnv;
-    use libr::Rf_ScalarInteger;
-    use libr::Rf_asInteger;
-    use libr::Rf_cons;
-    use libr::Rf_defineVar;
-    use libr::Rf_error;
-    use libr::Rf_install;
-    use libr::Rf_isInteger;
-    use libr::Rf_isNumeric;
-    use libr::Rf_isString;
-    use libr::Rf_lcons;
-    use libr::Rf_mkString;
-    use libr::Rf_setVar;
-    use libr::CADR;
-    use libr::CAR;
-    use libr::EXPRSXP;
-    use libr::INTEGER_ELT;
-    use libr::INTSXP;
-    use libr::LANGSXP;
-    use libr::REAL;
-    use libr::REALSXP;
-    use libr::STRSXP;
 
     use super::*;
     use crate::assert_match;

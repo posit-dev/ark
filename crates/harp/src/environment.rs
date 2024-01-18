@@ -7,34 +7,7 @@
 
 use std::ops::Deref;
 
-use libr::R_BaseEnv;
-use libr::R_EmptyEnv;
-use libr::R_GlobalEnv;
-use libr::R_NilValue;
-use libr::R_UnboundValue;
-use libr::R_altrep_data1;
-use libr::R_altrep_data2;
-use libr::R_xlen_t;
-use libr::Rf_defineVar;
-use libr::Rf_findVarInFrame;
-use libr::Rf_xlength;
-use libr::ATTRIB;
-use libr::CAR;
-use libr::CDR;
-use libr::ENVSXP;
-use libr::EXPRSXP;
-use libr::FRAME;
-use libr::HASHTAB;
-use libr::LANGSXP;
-use libr::LISTSXP;
-use libr::PRCODE;
-use libr::PROMSXP;
-use libr::PRVALUE;
-use libr::SEXP;
-use libr::SYMSXP;
-use libr::TAG;
-use libr::VECSXP;
-use libr::VECTOR_ELT;
+use libr::*;
 use once_cell::sync::Lazy;
 use stdext::unwrap;
 

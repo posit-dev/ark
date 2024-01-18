@@ -229,19 +229,7 @@ macro_rules! push_rds {
 
 #[cfg(test)]
 mod tests {
-    use libr::Rf_xlength;
-    use libr::CADDDR;
-    use libr::CADDR;
-    use libr::CADR;
-    use libr::CAR;
-    use libr::CDDR;
-    use libr::CDR;
-    use libr::INTSXP;
-    use libr::LANGSXP;
-    use libr::REALSXP;
-    use libr::STRSXP;
-    use libr::SYMSXP;
-    use libr::TAG;
+    use libr::*;
 
     use super::*;
     use crate::object::RObject;
