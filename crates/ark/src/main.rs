@@ -241,12 +241,6 @@ Available options:
 }
 
 fn main() {
-    #[cfg(target_os = "macos")]
-    {
-        // Unset DYLD_INSERT_LIBRARIES if it was passed down
-        std::env::remove_var("DYLD_INSERT_LIBRARIES");
-    }
-
     // Block signals in this thread (and any child threads).
     initialize_signal_block();
 
