@@ -27,6 +27,9 @@ jobs:
         run: |
             cargo build --verbose
 
+      # Ubuntu runners already have a version of R installed.
+      # Unit tests "automatically" find and set `R_HOME` if it isn't set by
+      # calling `R RHOME`. See the testing version of `start_r()` for this.
       - name: Run Unit Tests
         id: amalthea-test
         run: |
