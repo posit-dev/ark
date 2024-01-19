@@ -13,7 +13,3 @@ members = [
     "crates/libr",
     "crates/stdext"
 ]
-
-# For https://github.com/Amanieu/parking_lot/pull/390
-[patch.crates-io]
-parking_lot = { git = 'https://github.com/Amanieu/parking_lot', branch = 'master' }
