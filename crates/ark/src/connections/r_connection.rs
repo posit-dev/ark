@@ -31,6 +31,12 @@ pub struct ConnectionTable {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct ConnectionTableField {
+    name: String,
+    dtype: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "msg_type", rename_all = "snake_case")]
 pub enum ConnectionResponse {
     TablesResponse {
@@ -39,7 +45,7 @@ pub enum ConnectionResponse {
     },
     FieldsResponse {
         name: String,
-        fields: Vec<String>,
+        fields: Vec<ConnectionTableField>,
     },
     PreviewResponse,
 }
@@ -152,21 +158,37 @@ impl RConnection {
                 })
             },
             ConnectionRequest::FieldsRequest { path } => {
-                let fields = r_task(|| unsafe {
-                    let mut call = RFunction::from(".ps.connection_list_fields");
-                    call.add(RObject::from(self.comm.comm_id.clone()));
-                    for obj in path {
-                        call.param(obj.kind.as_str(), obj.name);
+                let fields = r_task(|| -> Result<_, anyhow::Error> {
+                    unsafe {
+                        let mut call = RFunction::from(".ps.connection_list_fields");
+                        call.add(RObject::from(self.comm.comm_id.clone()));
+                        for obj in path {
+                            call.param(obj.kind.as_str(), obj.name);
+                        }
+                        let fields = call.call()?;
+
+                        // for now we only need the name column
+                        let names = RFunction::from("[[")
+                            .add(fields.clone())
+                            .add(RObject::from("name"))
+                            .call()?;
+
+                        let dtypes = RFunction::from("[[")
+                            .add(fields)
+                            .add(RObject::from("type"))
+                            .call()?;
+
+                        let resulting = RObject::to::<Vec<String>>(names)?
+                            .iter()
+                            .zip(RObject::to::<Vec<String>>(dtypes)?.iter())
+                            .map(|(name, dtype)| ConnectionTableField {
+                                name: name.clone(),
+                                dtype: dtype.clone(),
+                            })
+                            .collect::<Vec<_>>();
+
+                        Ok(resulting)
                     }
-                    let fields = call.call()?;
-
-                    // for now we only need the name column
-                    let names = RFunction::from("[[")
-                        .add(fields)
-                        .add(RObject::from("name"))
-                        .call()?;
-
-                    RObject::to::<Vec<String>>(names)
                 })?;
 
                 Ok(ConnectionResponse::FieldsResponse {
