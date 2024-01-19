@@ -19,7 +19,7 @@ use tree_sitter::Parser;
 use tree_sitter::Point;
 use tree_sitter::Tree;
 
-use crate::lsp::traits::position::PositionExt;
+use crate::lsp::encoding::convert_position_to_point;
 use crate::lsp::traits::rope::RopeExt;
 
 lazy_static! {
@@ -192,37 +192,35 @@ impl Document {
         // offsets can be computed correctly.
         let ast = &mut self.ast;
 
-        let start_byte = self.contents.position_to_byte(range.start);
-        let start_position = range.start.as_point();
+        let start_point = convert_position_to_point(&self.contents, range.start);
+        let start_byte = self.contents.point_to_byte(start_point);
 
-        let old_end_byte = self.contents.position_to_byte(range.end);
+        let old_end_point = convert_position_to_point(&self.contents, range.end);
+        let old_end_byte = self.contents.point_to_byte(old_end_point);
+
+        let new_end_point = compute_point(start_point, &change.text);
         let new_end_byte = start_byte + change.text.as_bytes().len();
 
-        let old_end_position = range.end.as_point();
-        let new_end_position = compute_point(start_position, &change.text);
-
+        // Confusing tree sitter names, the `start_position` is really a `Point`
         let edit = InputEdit {
             start_byte,
             old_end_byte,
             new_end_byte,
-            start_position,
-            old_end_position,
-            new_end_position,
+            start_position: start_point,
+            old_end_position: old_end_point,
+            new_end_position: new_end_point,
         };
 
         ast.edit(&edit);
 
         // Now, apply edits to the underlying document.
-        let lhs = self.contents.position_to_byte(range.start);
-        let rhs = self.contents.position_to_byte(range.end);
-
-        // Now, convert from byte offsets to character offsets.
-        let lhs = self.contents.byte_to_char(lhs);
-        let rhs = self.contents.byte_to_char(rhs);
+        // Convert from byte offsets to character offsets.
+        let start_character = self.contents.byte_to_char(start_byte);
+        let old_end_character = self.contents.byte_to_char(old_end_byte);
 
         // Remove the old slice of text, and insert the new slice of text.
-        self.contents.remove(lhs..rhs);
-        self.contents.insert(lhs, change.text.as_str());
+        self.contents.remove(start_character..old_end_character);
+        self.contents.insert(start_character, change.text.as_str());
 
         // We've edited the AST, and updated the document. We can now re-parse.
         let contents = &self.contents;

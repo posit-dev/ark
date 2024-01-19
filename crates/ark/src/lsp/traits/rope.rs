@@ -7,17 +7,17 @@
 
 use ropey::Rope;
 use ropey::RopeSlice;
-use tower_lsp::lsp_types::Position;
 use tree_sitter::Node;
+use tree_sitter::Point;
 
 pub trait RopeExt<'a> {
-    fn position_to_byte(&self, position: Position) -> usize;
+    fn point_to_byte(&self, point: Point) -> usize;
     fn node_slice(&'a self, node: &Node) -> std::result::Result<RopeSlice<'a>, anyhow::Error>;
 }
 
 impl<'a> RopeExt<'a> for Rope {
-    fn position_to_byte(&self, position: Position) -> usize {
-        self.line_to_byte(position.line as usize) + position.character as usize
+    fn point_to_byte(&self, point: Point) -> usize {
+        self.line_to_byte(point.row) + point.column
     }
 
     fn node_slice(&'a self, node: &Node) -> std::result::Result<RopeSlice<'a>, anyhow::Error> {
