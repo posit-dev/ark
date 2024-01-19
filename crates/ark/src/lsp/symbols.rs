@@ -24,9 +24,9 @@ use tower_lsp::lsp_types::WorkspaceSymbolParams;
 use tree_sitter::Node;
 
 use crate::lsp::backend::Backend;
+use crate::lsp::encoding::convert_point_to_position;
 use crate::lsp::indexer;
 use crate::lsp::indexer::IndexEntryData;
-use crate::lsp::traits::point::PointExt;
 use crate::lsp::traits::rope::RopeExt;
 use crate::lsp::traits::string::StringExt;
 
@@ -89,6 +89,9 @@ pub fn document_symbols(
 
     let node = ast.root_node();
 
+    let start = convert_point_to_position(contents, node.start_position());
+    let end = convert_point_to_position(contents, node.end_position());
+
     // construct a root symbol, so we always have something to append to
     let mut root = DocumentSymbol {
         name: "<root>".to_string(),
@@ -97,14 +100,8 @@ pub fn document_symbols(
         deprecated: None,
         tags: None,
         detail: None,
-        range: Range {
-            start: node.start_position().as_position(),
-            end: node.end_position().as_position(),
-        },
-        selection_range: Range {
-            start: node.start_position().as_position(),
-            end: node.end_position().as_position(),
-        },
+        range: Range { start, end },
+        selection_range: Range { start, end },
     };
 
     // index from the root
@@ -178,6 +175,10 @@ fn index_assignment(
 
     // otherwise, just index as generic object
     let name = contents.node_slice(&lhs)?.to_string();
+
+    let start = convert_point_to_position(contents, lhs.start_position());
+    let end = convert_point_to_position(contents, lhs.end_position());
+
     let symbol = DocumentSymbol {
         name,
         kind: SymbolKind::OBJECT,
@@ -185,14 +186,8 @@ fn index_assignment(
         children: Some(Vec::new()),
         deprecated: None,
         tags: None,
-        range: Range {
-            start: lhs.start_position().as_position(),
-            end: lhs.end_position().as_position(),
-        },
-        selection_range: Range {
-            start: lhs.start_position().as_position(),
-            end: lhs.end_position().as_position(),
-        },
+        range: Range::new(start, end),
+        selection_range: Range::new(start, end),
     };
 
     // add this symbol to the parent node
@@ -234,12 +229,12 @@ fn index_function(
         deprecated: None,
         tags: None,
         range: Range {
-            start: lhs.start_position().as_position(),
-            end: rhs.end_position().as_position(),
+            start: convert_point_to_position(contents, lhs.start_position()),
+            end: convert_point_to_position(contents, rhs.end_position()),
         },
         selection_range: Range {
-            start: lhs.start_position().as_position(),
-            end: lhs.end_position().as_position(),
+            start: convert_point_to_position(contents, lhs.start_position()),
+            end: convert_point_to_position(contents, lhs.end_position()),
         },
     };
 

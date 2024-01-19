@@ -226,7 +226,7 @@ fn completions_from_session_arguments(
 
     // Return the names of these formals.
     for string in strings.iter() {
-        match completion_item_from_parameter(string, callable, &context.point) {
+        match completion_item_from_parameter(string, callable, context) {
             Ok(item) => completions.push(item),
             Err(err) => log::error!("{err:?}"),
         }
@@ -258,11 +258,7 @@ fn completions_from_workspace_arguments(
     match entry.data {
         indexer::IndexEntryData::Function { name, arguments } => {
             for argument in arguments {
-                match completion_item_from_parameter(
-                    argument.as_str(),
-                    name.as_str(),
-                    &context.point,
-                ) {
+                match completion_item_from_parameter(argument.as_str(), name.as_str(), context) {
                     Ok(item) => completions.push(item),
                     Err(err) => log::error!("{err:?}"),
                 }

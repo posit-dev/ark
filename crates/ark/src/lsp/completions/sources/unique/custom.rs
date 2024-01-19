@@ -27,7 +27,6 @@ use crate::lsp::completions::sources::utils::CallNodePositionType;
 use crate::lsp::completions::types::CompletionData;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::signature_help::signature_help;
-use crate::lsp::traits::point::PointExt;
 
 pub fn completions_from_custom_source(
     context: &DocumentContext,
@@ -73,9 +72,7 @@ pub fn completions_from_custom_source_impl(
     let node = context.node;
 
     // Use the signature help tools to figure out the necessary pieces.
-    let position = point.as_position();
-
-    let signatures = unsafe { signature_help(context.document, &position)? };
+    let signatures = unsafe { signature_help(context)? };
     let Some(signatures) = signatures else {
         return Ok(None);
     };

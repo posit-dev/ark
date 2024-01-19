@@ -27,7 +27,7 @@ use walkdir::WalkDir;
 
 use crate::lsp::documents::Document;
 use crate::lsp::documents::DOCUMENT_INDEX;
-use crate::lsp::traits::point::PointExt;
+use crate::lsp::encoding::convert_point_to_position;
 use crate::lsp::traits::rope::RopeExt;
 
 #[derive(Clone, Debug)]
@@ -240,12 +240,12 @@ fn index_function(_path: &Path, contents: &Rope, node: &Node) -> Result<Option<I
         }
     }
 
+    let start = convert_point_to_position(contents, lhs.start_position());
+    let end = convert_point_to_position(contents, lhs.end_position());
+
     Ok(Some(IndexEntry {
         key: name.clone(),
-        range: Range {
-            start: lhs.start_position().as_position(),
-            end: lhs.end_position().as_position(),
-        },
+        range: Range { start, end },
         data: IndexEntryData::Function {
             name: name.clone(),
             arguments,
@@ -274,12 +274,12 @@ fn index_comment(_path: &Path, contents: &Rope, node: &Node) -> Result<Option<In
         return Ok(None);
     }
 
+    let start = convert_point_to_position(contents, node.start_position());
+    let end = convert_point_to_position(contents, node.end_position());
+
     Ok(Some(IndexEntry {
         key: title.clone(),
-        range: Range {
-            start: node.start_position().as_position(),
-            end: node.end_position().as_position(),
-        },
+        range: Range::new(start, end),
         data: IndexEntryData::Section { level, title },
     }))
 }

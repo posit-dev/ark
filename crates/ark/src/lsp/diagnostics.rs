@@ -47,13 +47,14 @@ use tower_lsp::lsp_types::Diagnostic;
 use tower_lsp::lsp_types::DiagnosticSeverity;
 use tower_lsp::lsp_types::Url;
 use tree_sitter::Node;
+use tree_sitter::Range;
 
 use crate::lsp::backend::Backend;
 use crate::lsp::documents::Document;
+use crate::lsp::encoding::convert_tree_sitter_range_to_lsp_range;
 use crate::lsp::indexer;
 use crate::lsp::traits::rope::RopeExt;
 use crate::r_task;
-use crate::Range;
 
 #[derive(Clone)]
 pub struct DiagnosticContext<'a> {
@@ -313,8 +314,8 @@ fn recurse_for(
 
     if variable.kind() == "identifier" {
         let name = context.contents.node_slice(&variable)?.to_string();
-        let range: Range = variable.range().into();
-        context.add_defined_variable(name.as_str(), range.into());
+        let range = variable.range();
+        context.add_defined_variable(name.as_str(), range);
     }
 
     // Now, scan the body, if it exists
@@ -422,8 +423,8 @@ fn recurse_assignment(
     if let Some(lhs) = node.child_by_field_name("lhs") {
         if matches!(lhs.kind(), "identifier" | "string") {
             let name = context.contents.node_slice(&lhs)?.to_string();
-            let range: Range = lhs.range().into();
-            context.add_defined_variable(name.as_str(), range.into());
+            let range = lhs.range();
+            context.add_defined_variable(name.as_str(), range);
         }
     }
 
@@ -447,9 +448,10 @@ fn recurse_namespace(
     // Check for a valid package name.
     let package = context.contents.node_slice(&lhs)?.to_string();
     if !context.installed_packages.contains(package.as_str()) {
-        let range: Range = lhs.range().into();
+        let range = lhs.range();
+        let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
         let message = format!("package '{}' is not installed", package);
-        let diagnostic = Diagnostic::new_simple(range.into(), message);
+        let diagnostic = Diagnostic::new_simple(range, message);
         diagnostics.push(diagnostic);
     }
 
@@ -530,9 +532,10 @@ fn recurse_paren(
     if n > 1 {
         // The tree-sitter grammar allows multiple `body` statements, but we warn
         // the user about this as it is not allowed by the R parser.
-        let range: Range = node.range().into();
+        let range = node.range();
+        let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
         let message = format!("expected at most 1 statement within parentheses, not {n}");
-        let diagnostic = Diagnostic::new_simple(range.into(), message);
+        let diagnostic = Diagnostic::new_simple(range, message);
         diagnostics.push(diagnostic);
     }
 
@@ -541,14 +544,15 @@ fn recurse_paren(
 
 fn check_call_next_sibling(
     child: Node,
-    _context: &mut DiagnosticContext,
+    context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<()> {
     if let Some(next) = child.next_sibling() {
         if !matches!(next.kind(), "comma" | ")") {
-            let range: Range = child.range().into();
+            let range = child.range();
+            let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
             let message = "expected ',' after expression";
-            let diagnostic = Diagnostic::new_simple(range.into(), message.into());
+            let diagnostic = Diagnostic::new_simple(range, message.into());
             diagnostics.push(diagnostic);
         }
     }
@@ -558,14 +562,15 @@ fn check_call_next_sibling(
 
 fn check_subset_next_sibling(
     child: Node,
-    _context: &mut DiagnosticContext,
+    context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<()> {
     if let Some(next) = child.next_sibling() {
         if !matches!(next.kind(), "comma" | "]" | "]]") {
-            let range: Range = child.range().into();
+            let range = child.range();
+            let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
             let message = "expected ',' after expression";
-            let diagnostic = Diagnostic::new_simple(range.into(), message.into());
+            let diagnostic = Diagnostic::new_simple(range, message.into());
             diagnostics.push(diagnostic);
         }
     }
@@ -730,8 +735,9 @@ fn recurse_call_arguments_custom(
                     // library("ggplot3")
                     //          ^^^^^^^   Package 'ggplot3' is not installed
                     let message: String = RObject::view(VECTOR_ELT(diag, 2)).try_into()?;
-                    let range: Range = value.range().into();
-                    let diagnostic = Diagnostic::new_simple(range.into(), message.into());
+                    let range = value.range();
+                    let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
+                    let diagnostic = Diagnostic::new_simple(range, message.into());
                     diagnostics.push(diagnostic);
                 }
             }
@@ -854,7 +860,7 @@ fn dispatch(node: Node, context: &mut DiagnosticContext, diagnostics: &mut Vec<D
 
 fn check_unmatched_closing_token(
     node: Node,
-    _context: &mut DiagnosticContext,
+    context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<bool> {
     // TODO: Can we figure out a way to match on the `kind_id()` instead without
@@ -874,9 +880,10 @@ fn check_unmatched_closing_token(
         _ => return false.ok(),
     };
 
-    let range: Range = node.range().into();
+    let range = node.range();
+    let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
     let message = format!("unmatched closing {token} '{kind}'");
-    let diagnostic = Diagnostic::new_simple(range.into(), message.into());
+    let diagnostic = Diagnostic::new_simple(range, message.into());
     diagnostics.push(diagnostic);
 
     true.ok()
@@ -884,7 +891,7 @@ fn check_unmatched_closing_token(
 
 fn check_unmatched_opening_brace(
     node: Node,
-    _context: &mut DiagnosticContext,
+    context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<bool> {
     let n = node.child_count();
@@ -897,9 +904,10 @@ fn check_unmatched_opening_brace(
     let rhs = node.child(n - 1).unwrap();
 
     if lhs.kind() == "{" && rhs.kind() != "}" {
-        let range: Range = lhs.range().into();
+        let range = lhs.range();
+        let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
         let message = "unmatched opening brace '{'";
-        let diagnostic = Diagnostic::new_simple(range.into(), message.into());
+        let diagnostic = Diagnostic::new_simple(range, message.into());
         diagnostics.push(diagnostic);
     }
 
@@ -908,7 +916,7 @@ fn check_unmatched_opening_brace(
 
 fn check_unmatched_opening_paren(
     node: Node,
-    _context: &mut DiagnosticContext,
+    context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<bool> {
     let n = node.child_count();
@@ -921,9 +929,10 @@ fn check_unmatched_opening_paren(
     let rhs = node.child(n - 1).unwrap();
 
     if lhs.kind() == "(" && rhs.kind() != ")" {
-        let range: Range = lhs.range().into();
+        let range = lhs.range();
+        let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
         let message = "unmatched opening parenthesis '('";
-        let diagnostic = Diagnostic::new_simple(range.into(), message.into());
+        let diagnostic = Diagnostic::new_simple(range, message.into());
         diagnostics.push(diagnostic);
     }
 
@@ -956,8 +965,9 @@ fn check_invalid_na_comparison(
                 "NULL" => "consider using `is.null()` to check NULL values",
                 _ => continue,
             };
-            let range: Range = child.range().into();
-            let mut diagnostic = Diagnostic::new_simple(range.into(), message.into());
+            let range = child.range();
+            let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
+            let mut diagnostic = Diagnostic::new_simple(range, message.into());
             diagnostic.severity = Some(DiagnosticSeverity::INFORMATION);
             diagnostics.push(diagnostic);
         }
@@ -975,10 +985,11 @@ fn check_syntax_error(
         return false.ok();
     }
 
-    let range: Range = node.range().into();
+    let range = node.range();
+    let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
     let text = context.contents.node_slice(&node)?.to_string();
     let message = format!("Syntax error: unexpected token '{}'", text);
-    let diagnostic = Diagnostic::new_simple(range.into(), message.into());
+    let diagnostic = Diagnostic::new_simple(range, message.into());
     diagnostics.push(diagnostic);
 
     true.ok()
@@ -986,7 +997,7 @@ fn check_syntax_error(
 
 fn check_unclosed_arguments(
     node: Node,
-    _context: &mut DiagnosticContext,
+    context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<bool> {
     let arguments = unwrap!(node.child_by_field_name("arguments"), None => {
@@ -1009,9 +1020,10 @@ fn check_unclosed_arguments(
         return false.ok();
     }
 
-    let range: Range = lhs.range().into();
+    let range = lhs.range();
+    let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
     let message = format!("unmatched opening bracket '{}'", lhs.kind());
-    let diagnostic = Diagnostic::new_simple(range.into(), message.into());
+    let diagnostic = Diagnostic::new_simple(range, message.into());
     diagnostics.push(diagnostic);
 
     true.ok()
@@ -1019,7 +1031,7 @@ fn check_unclosed_arguments(
 
 fn check_unexpected_assignment_in_if_conditional(
     node: Node,
-    _context: &mut DiagnosticContext,
+    context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<bool> {
     let n = node.child_count();
@@ -1040,9 +1052,10 @@ fn check_unexpected_assignment_in_if_conditional(
         return false.ok();
     }
 
-    let range: Range = condition.range().into();
+    let range = condition.range();
+    let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
     let message = "unexpected '='; use '==' to compare values for equality";
-    let diagnostic = Diagnostic::new_simple(range.into(), message.into());
+    let diagnostic = Diagnostic::new_simple(range, message.into());
     diagnostics.push(diagnostic);
 
     true.ok()
@@ -1086,10 +1099,11 @@ fn check_symbol_in_scope(
     }
 
     // No symbol in scope; provide a diagnostic.
-    let range: Range = node.range().into();
+    let range = node.range();
+    let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
     let identifier = context.contents.node_slice(&node)?.to_string();
     let message = format!("no symbol named '{}' in scope", identifier);
-    let mut diagnostic = Diagnostic::new_simple(range.into(), message.into());
+    let mut diagnostic = Diagnostic::new_simple(range, message.into());
     diagnostic.severity = Some(DiagnosticSeverity::WARNING);
     diagnostics.push(diagnostic);
 

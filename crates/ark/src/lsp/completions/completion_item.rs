@@ -40,12 +40,11 @@ use tower_lsp::lsp_types::MarkupKind;
 use tower_lsp::lsp_types::Range;
 use tower_lsp::lsp_types::TextEdit;
 use tree_sitter::Node;
-use tree_sitter::Point;
 
 use crate::lsp::completions::types::CompletionData;
 use crate::lsp::completions::types::PromiseStrategy;
 use crate::lsp::document_context::DocumentContext;
-use crate::lsp::traits::point::PointExt;
+use crate::lsp::encoding::convert_point_to_position;
 use crate::lsp::traits::rope::RopeExt;
 
 pub(super) fn completion_item(
@@ -417,10 +416,10 @@ pub(super) fn completion_item_from_scope_parameter(
 pub(super) fn completion_item_from_parameter(
     parameter: &str,
     callee: &str,
-    point: &Point,
+    context: &DocumentContext,
 ) -> Result<CompletionItem> {
     if parameter == "..." {
-        return completion_item_from_dot_dot_dot(callee, point);
+        return completion_item_from_dot_dot_dot(callee, context);
     }
 
     // `data` captured using original `parameter`, before quoting
@@ -449,7 +448,10 @@ pub(super) fn completion_item_from_parameter(
     Ok(item)
 }
 
-fn completion_item_from_dot_dot_dot(callee: &str, point: &Point) -> Result<CompletionItem> {
+fn completion_item_from_dot_dot_dot(
+    callee: &str,
+    context: &DocumentContext,
+) -> Result<CompletionItem> {
     // Special behavior for `...` arguments, where we want to show them
     // in quick suggestions (to show help docs for them), but not actually
     // insert any text for them if the user selects them. Can't use an
@@ -463,7 +465,8 @@ fn completion_item_from_dot_dot_dot(callee: &str, point: &Point) -> Result<Compl
 
     item.kind = Some(CompletionItemKind::FIELD);
 
-    let position = point.as_position();
+    let position = convert_point_to_position(&context.document.contents, context.point);
+
     let range = Range {
         start: position,
         end: position,
