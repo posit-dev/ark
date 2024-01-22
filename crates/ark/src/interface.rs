@@ -63,8 +63,7 @@ use harp::exec::r_source;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::exec::RSandboxScope;
-use harp::library::find_r_shared_library;
-use harp::library::open_and_leak_r_shared_library;
+use harp::library::RLibraries;
 use harp::line_ending::convert_line_endings;
 use harp::line_ending::LineEnding;
 use harp::object::RObject;
@@ -177,46 +176,12 @@ pub fn start_r(
         Err(err) => panic!("Can't find `R_HOME`: {err:?}"),
     };
 
-    // On Windows, we preemptively open the supporting R DLLs that live in
-    // `bin/x64/` before starting R. R packages are allowed to link to these
-    // DLLs, like stats, and they must be able to find them when the packages
-    // are loaded. Because we don't add the `bin/x64` folder to the `PATH`,
-    // we instead open these 4 DLLs preemptively and rely on the fact that the
-    // "Loaded-module list" is part of the standard search path for dynamic link
-    // library searching.
-    // https://learn.microsoft.com/en-us/windows/win32/dlls/dynamic-link-library-search-order
-    #[cfg(target_family = "windows")]
-    {
-        let path = find_r_shared_library(&r_home, "Rlapack");
-        open_and_leak_r_shared_library(&path);
-
-        let path = find_r_shared_library(&r_home, "Riconv");
-        open_and_leak_r_shared_library(&path);
-
-        let path = find_r_shared_library(&r_home, "Rblas");
-        open_and_leak_r_shared_library(&path);
-
-        // We do actually save the `Rgraphapp` library object,
-        // because we need to initialize `GA_initapp()`, called during setup
-        let path = find_r_shared_library(&r_home, "Rgraphapp");
-        let library = open_and_leak_r_shared_library(&path);
-        libr::graphapp::initialize::functions(library);
-    }
-
-    let r_library_path = find_r_shared_library(&r_home, "R");
-    let r_library = open_and_leak_r_shared_library(&r_library_path);
-
-    // Initialize dynamic bindings to functions and mutable globals. These are required
-    // to even start R (for things like `Rf_initialize_R()` and `R_running_as_main_program`).
-    libr::initialize::functions(r_library);
-    libr::initialize::functions_variadic(r_library);
-    libr::initialize::mutable_globals(r_library);
+    let libraries = RLibraries::from_r_home_path(&r_home);
+    libraries.initialize_pre_setup_r();
 
     crate::sys::interface::setup_r(args);
 
-    // Now that `setup_r()` has run `setup_Rmainloop()`, which initializes R's "constant"
-    // global variables, we can initialize our own.
-    libr::initialize::constant_globals(r_library);
+    libraries.initialize_post_setup_r();
 
     unsafe {
         // Optionally run a user specified R startup script

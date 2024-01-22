@@ -25,8 +25,7 @@ use libr::Rf_initialize_R;
 use stdext::cargs;
 
 use crate::exec::r_sandbox;
-use crate::library::find_r_shared_library;
-use crate::library::open_and_leak_r_shared_library;
+use crate::library::RLibraries;
 use crate::R_MAIN_THREAD_ID;
 
 // Escape hatch for unit tests. We need this because the default
@@ -58,45 +57,12 @@ pub fn start_r() {
             },
         };
 
-        // See notes in the "real" `start_r()` about why we do this
-        #[cfg(target_family = "windows")]
-        {
-            let path = find_r_shared_library(&r_home, "Rlapack");
-            open_and_leak_r_shared_library(&path);
+        let libraries = RLibraries::from_r_home_path(&r_home);
+        libraries.initialize_pre_setup_r();
 
-            let path = find_r_shared_library(&r_home, "Riconv");
-            open_and_leak_r_shared_library(&path);
+        setup_r();
 
-            let path = find_r_shared_library(&r_home, "Rblas");
-            open_and_leak_r_shared_library(&path);
-
-            let path = find_r_shared_library(&r_home, "Rgraphapp");
-            open_and_leak_r_shared_library(&path);
-        }
-
-        // Find shared library from `R_HOME`
-        let r_library_path = find_r_shared_library(&r_home, "R");
-        let r_library = open_and_leak_r_shared_library(&r_library_path);
-
-        // Initialize functions and mutable globals so we can call the R setup functions
-        libr::initialize::functions(r_library);
-        libr::initialize::functions_variadic(r_library);
-        libr::initialize::mutable_globals(r_library);
-
-        // Build the argument list for Rf_initialize_R
-        let mut arguments = cargs!["R", "--slave", "--no-save", "--no-restore"];
-
-        unsafe {
-            Rf_initialize_R(
-                arguments.len() as i32,
-                arguments.as_mut_ptr() as *mut *mut c_char,
-            );
-            R_CStackLimit_set(usize::MAX);
-            setup_Rmainloop();
-        }
-
-        // Now we can initialize constant globals since `setup_Rmainloop()` has run
-        libr::initialize::constant_globals(r_library);
+        libraries.initialize_post_setup_r();
 
         // Initialize harp globals
         unsafe {
@@ -104,6 +70,20 @@ pub fn start_r() {
         }
         crate::initialize();
     });
+}
+
+fn setup_r() {
+    // Build the argument list for Rf_initialize_R
+    let mut arguments = cargs!["R", "--slave", "--no-save", "--no-restore"];
+
+    unsafe {
+        Rf_initialize_R(
+            arguments.len() as i32,
+            arguments.as_mut_ptr() as *mut *mut c_char,
+        );
+        R_CStackLimit_set(usize::MAX);
+        setup_Rmainloop();
+    }
 }
 
 pub fn r_test<F: FnOnce()>(f: F) {
