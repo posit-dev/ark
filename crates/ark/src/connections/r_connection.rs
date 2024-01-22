@@ -250,7 +250,6 @@ impl RConnection {
         if let Err(err) = self.comm.outgoing_tx.send(CommMsg::Close) {
             log::error!("Connection Pane: Error while sending comm_close to front end: {err:?}");
         }
-        self.disconnect()?;
 
         Ok(())
     }
