@@ -36,6 +36,7 @@ use crate::lsp::document_context::DocumentContext;
 use crate::lsp::documents::Document;
 use crate::lsp::documents::DOCUMENT_INDEX;
 use crate::lsp::encoding::convert_position_to_point;
+use crate::lsp::encoding::get_position_encoding_kind;
 use crate::lsp::help_topic;
 use crate::lsp::hover::hover;
 use crate::lsp::indexer;
@@ -132,12 +133,7 @@ impl LanguageServer for Backend {
                 version: Some(env!("CARGO_PKG_VERSION").to_string()),
             }),
             capabilities: ServerCapabilities {
-                // We don't really want to do this, but the languageserver
-                // middleware forcibly sets the client capabilities to ONLY
-                // UTF-16 `Position` encodings, and errors if anything else
-                // is passed through. We can track support for UTF-8 here:
-                // https://github.com/microsoft/vscode-languageserver-node/issues/1224
-                position_encoding: Some(PositionEncodingKind::UTF16),
+                position_encoding: Some(get_position_encoding_kind()),
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
                     TextDocumentSyncKind::INCREMENTAL,
                 )),
