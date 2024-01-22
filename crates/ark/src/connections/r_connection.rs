@@ -48,6 +48,7 @@ pub enum ConnectionResponse {
         fields: Vec<ConnectionTableField>,
     },
     PreviewResponse,
+    DisconnectResponse,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -59,6 +60,8 @@ pub enum ConnectionRequest {
     FieldsRequest { path: Vec<ConnectionTable> },
     // The UI asks for a DataViewer preview of the table.
     PreviewTable { path: Vec<ConnectionTable> },
+    // The UI asks to close the connection
+    Disconnect,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -209,7 +212,18 @@ impl RConnection {
                 })?;
                 Ok(ConnectionResponse::PreviewResponse)
             },
+            ConnectionRequest::Disconnect => Ok(ConnectionResponse::DisconnectResponse),
         }
+    }
+
+    fn disconnect(&self) -> std::result::Result<(), anyhow::Error> {
+        // Execute database side disconnect method.
+        r_task(|| -> Result<(), anyhow::Error> {
+            let mut call = RFunction::from(".ps.connection_close");
+            call.add(RObject::from(self.comm.comm_id.clone()));
+            call.call()?;
+            Ok(())
+        })
     }
 
     fn handle_messages(&self) -> Result<(), anyhow::Error> {
@@ -233,6 +247,7 @@ impl RConnection {
         if let Err(err) = self.comm.outgoing_tx.send(CommMsg::Close) {
             log::error!("Connection Pane: Error while sending comm_close to front end: {err:?}");
         }
+        self.disconnect()?;
 
         Ok(())
     }
