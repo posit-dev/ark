@@ -17,9 +17,11 @@ use crate::library::open_and_leak_r_shared_library;
 pub struct RLibraries {
     r: &'static libloading::Library,
     r_graphapp: &'static libloading::Library,
-    r_lapack: &'static libloading::Library,
-    r_iconv: &'static libloading::Library,
-    r_blas: &'static libloading::Library,
+    // We don't currently initialize bindings from these three,
+    // but keep them around for consistency
+    _r_lapack: &'static libloading::Library,
+    _r_iconv: &'static libloading::Library,
+    _r_blas: &'static libloading::Library,
 }
 
 impl RLibraries {
@@ -50,9 +52,9 @@ impl RLibraries {
         Self {
             r,
             r_graphapp,
-            r_lapack,
-            r_iconv,
-            r_blas,
+            _r_lapack: r_lapack,
+            _r_iconv: r_iconv,
+            _r_blas: r_blas,
         }
     }
 
