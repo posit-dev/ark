@@ -235,6 +235,9 @@ impl RConnection {
 
             log::trace!("Connection Pane: Received message from front end: {msg:?}");
 
+            // The CommMsg::Close is not really always received when the front-ent disposes the
+            // client, thus we should make sure the front-end fires the `Disconnect` method before
+            // disposing the client.
             if let CommMsg::Close = msg {
                 log::trace!("Connection Pane: Received a close message.");
                 break;
