@@ -46,6 +46,7 @@ use crate::lsp::completions::types::CompletionData;
 use crate::lsp::completions::types::PromiseStrategy;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::traits::point::PointExt;
+use crate::lsp::traits::rope::RopeExt;
 
 pub(super) fn completion_item(
     label: impl AsRef<str>,
@@ -101,11 +102,11 @@ pub(super) fn completion_item_from_assignment(
     let lhs = node.child_by_field_name("lhs").into_result()?;
     let rhs = node.child_by_field_name("rhs").into_result()?;
 
-    let label = lhs.utf8_text(context.source.as_bytes())?;
+    let label = context.document.contents.node_slice(&lhs)?.to_string();
 
     // TODO: Resolve functions that exist in-document here.
-    let mut item = completion_item(label, CompletionData::ScopeVariable {
-        name: label.to_string(),
+    let mut item = completion_item(label.clone(), CompletionData::ScopeVariable {
+        name: label.clone(),
     })?;
 
     let markup = MarkupContent {
@@ -116,13 +117,17 @@ pub(super) fn completion_item_from_assignment(
         ),
     };
 
-    item.detail = Some(label.to_string());
+    item.detail = Some(label.clone());
     item.documentation = Some(Documentation::MarkupContent(markup));
     item.kind = Some(CompletionItemKind::VARIABLE);
 
     if rhs.kind() == "function" {
         if let Some(parameters) = rhs.child_by_field_name("parameters") {
-            let parameters = parameters.utf8_text(context.source.as_bytes())?;
+            let parameters = context
+                .document
+                .contents
+                .node_slice(&parameters)?
+                .to_string();
             item.detail = Some(join!(label, parameters));
         }
 

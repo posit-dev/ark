@@ -41,6 +41,7 @@ use libr::SET_TAG;
 use libr::SET_VECTOR_ELT;
 use libr::VECSXP;
 use libr::VECTOR_ELT;
+use ropey::Rope;
 use stdext::*;
 use tower_lsp::lsp_types::Diagnostic;
 use tower_lsp::lsp_types::DiagnosticSeverity;
@@ -50,13 +51,14 @@ use tree_sitter::Node;
 use crate::lsp::backend::Backend;
 use crate::lsp::documents::Document;
 use crate::lsp::indexer;
+use crate::lsp::traits::rope::RopeExt;
 use crate::r_task;
 use crate::Range;
 
 #[derive(Clone)]
 pub struct DiagnosticContext<'a> {
     /// The contents of the source document.
-    pub source: &'a str,
+    pub contents: &'a Rope,
 
     /// The symbols currently defined and available in the session.
     pub session_symbols: HashSet<String>,
@@ -161,9 +163,8 @@ fn generate_diagnostics_impl(doc: &Document) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
 
     {
-        let source = doc.contents.to_string();
         let mut context = DiagnosticContext {
-            source: source.as_str(),
+            contents: &doc.contents,
             document_symbols: Vec::new(),
             session_symbols: HashSet::new(),
             workspace_symbols: HashSet::new(),
@@ -311,9 +312,9 @@ fn recurse_for(
     });
 
     if variable.kind() == "identifier" {
-        let name = variable.utf8_text(context.source.as_bytes())?;
+        let name = context.contents.node_slice(&variable)?.to_string();
         let range: Range = variable.range().into();
-        context.add_defined_variable(name.into(), range.into());
+        context.add_defined_variable(name.as_str(), range.into());
     }
 
     // Now, scan the body, if it exists
@@ -420,9 +421,9 @@ fn recurse_assignment(
     // Check for newly-defined variable.
     if let Some(lhs) = node.child_by_field_name("lhs") {
         if matches!(lhs.kind(), "identifier" | "string") {
-            let name = lhs.utf8_text(context.source.as_bytes())?;
+            let name = context.contents.node_slice(&lhs)?.to_string();
             let range: Range = lhs.range().into();
-            context.add_defined_variable(name, range.into());
+            context.add_defined_variable(name.as_str(), range.into());
         }
     }
 
@@ -444,8 +445,8 @@ fn recurse_namespace(
     });
 
     // Check for a valid package name.
-    let package = lhs.utf8_text(context.source.as_bytes())?;
-    if !context.installed_packages.contains(package) {
+    let package = context.contents.node_slice(&lhs)?.to_string();
+    if !context.installed_packages.contains(package.as_str()) {
         let range: Range = lhs.range().into();
         let message = format!("package '{}' is not installed", package);
         let diagnostic = Diagnostic::new_simple(range.into(), message);
@@ -479,13 +480,14 @@ fn recurse_parameters(
             bail!("Missing a `name` field in a `parameter` node.");
         });
 
-        let symbol = unwrap!(name.utf8_text(context.source.as_bytes()), Err(error) => {
+        let symbol = unwrap!(context.contents.node_slice(&name), Err(error) => {
             bail!("Failed to convert `name` node to a string due to: {error}");
         });
+        let symbol = symbol.to_string();
 
         let location = name.range();
 
-        context.add_defined_variable(symbol, location.into());
+        context.add_defined_variable(symbol.as_str(), location.into());
     }
 
     ().ok()
@@ -656,7 +658,7 @@ impl<'a> TreeSitterCall<'a> {
 
                 // potentially add the argument name
                 if let Some(name) = child.child_by_field_name("name") {
-                    let name = name.utf8_text(context.source.as_bytes())?;
+                    let name = context.contents.node_slice(&name)?.to_string();
                     let sym_name = r_symbol!(name);
                     SET_TAG(tail, sym_name);
                 }
@@ -694,7 +696,7 @@ fn recurse_call_arguments_custom(
 
         let custom_diagnostics = RFunction::from(diagnostic_function)
             .add(&call)
-            .add(ExternalPointer::new(&context.source))
+            .add(ExternalPointer::new(context.contents))
             .call()?;
 
         if !r_is_null(*custom_diagnostics) {
@@ -755,7 +757,9 @@ fn recurse_call(
     //
     // TODO: Handle certain 'scope-generating' function calls, e.g.
     // things like 'local({ ... })'.
-    let fun = callee.utf8_text(context.source.as_bytes())?;
+    let fun = context.contents.node_slice(&callee)?.to_string();
+    let fun = fun.as_str();
+
     match fun {
         // TODO: there should be some sort of registration mechanism so
         //       that functions can declare that they know how to generate
@@ -942,7 +946,9 @@ fn check_invalid_na_comparison(
 
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        let contents = child.utf8_text(context.source.as_bytes()).unwrap();
+        let contents = context.contents.node_slice(&child)?.to_string();
+        let contents = contents.as_str();
+
         if matches!(contents, "NA" | "NaN" | "NULL") {
             let message = match contents {
                 "NA" => "consider using `is.na()` to check NA values",
@@ -970,7 +976,7 @@ fn check_syntax_error(
     }
 
     let range: Range = node.range().into();
-    let text = node.utf8_text(context.source.as_bytes())?;
+    let text = context.contents.node_slice(&node)?.to_string();
     let message = format!("Syntax error: unexpected token '{}'", text);
     let diagnostic = Diagnostic::new_simple(range.into(), message.into());
     diagnostics.push(diagnostic);
@@ -1074,14 +1080,14 @@ fn check_symbol_in_scope(
     }
 
     // Skip if a symbol with this name is in scope.
-    let name = node.utf8_text(context.source.as_bytes())?;
-    if context.has_definition(name) {
+    let name = context.contents.node_slice(&node)?.to_string();
+    if context.has_definition(name.as_str()) {
         return false.ok();
     }
 
     // No symbol in scope; provide a diagnostic.
     let range: Range = node.range().into();
-    let identifier = node.utf8_text(context.source.as_bytes())?;
+    let identifier = context.contents.node_slice(&node)?.to_string();
     let message = format!("no symbol named '{}' in scope", identifier);
     let mut diagnostic = Diagnostic::new_simple(range.into(), message.into());
     diagnostic.severity = Some(DiagnosticSeverity::WARNING);

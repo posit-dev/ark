@@ -9,7 +9,10 @@ use harp::external_ptr::ExternalPointer;
 use harp::object::RObject;
 use libr::RAW;
 use libr::SEXP;
+use ropey::Rope;
 use tree_sitter::Node;
+
+use crate::lsp::traits::rope::RopeExt;
 
 #[harp::register]
 pub unsafe extern "C" fn ps_treesitter_node_text(
@@ -17,9 +20,13 @@ pub unsafe extern "C" fn ps_treesitter_node_text(
     source_ptr: SEXP,
 ) -> anyhow::Result<SEXP> {
     let node: Node<'static> = *(RAW(node_ptr) as *mut Node<'static>);
-    let source = ExternalPointer::<&str>::reference(source_ptr);
+    let source = ExternalPointer::<Rope>::reference(source_ptr);
 
-    let text = node.utf8_text(source.as_bytes()).unwrap_or("");
+    let text = source
+        .node_slice(&node)
+        .map(|slice| slice.to_string())
+        .unwrap_or(String::from(""));
+
     Ok(*RObject::from(text))
 }
 

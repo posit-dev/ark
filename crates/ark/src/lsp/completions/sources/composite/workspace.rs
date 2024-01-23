@@ -18,6 +18,7 @@ use crate::lsp::completions::completion_item::completion_item_from_function;
 use crate::lsp::completions::sources::utils::filter_out_dot_prefixes;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::indexer;
+use crate::lsp::traits::rope::RopeExt;
 use crate::lsp::traits::string::StringExt;
 
 pub(super) fn completions_from_workspace(
@@ -47,10 +48,11 @@ pub(super) fn completions_from_workspace(
     let mut completions = vec![];
 
     let token = if node.kind() == "identifier" {
-        node.utf8_text(context.source.as_bytes())?
+        context.document.contents.node_slice(&node)?.to_string()
     } else {
-        ""
+        "".to_string()
     };
+    let token = token.as_str();
 
     // get entries from the index
     indexer::map(|path, symbol, entry| {

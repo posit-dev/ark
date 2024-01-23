@@ -24,6 +24,7 @@ use crate::lsp::backend::Backend;
 use crate::lsp::traits::cursor::TreeCursorExt;
 use crate::lsp::traits::point::PointExt;
 use crate::lsp::traits::position::PositionExt;
+use crate::lsp::traits::rope::RopeExt;
 
 pub static POSITRON_STATEMENT_RANGE_REQUEST: &'static str = "positron/textDocument/statementRange";
 
@@ -67,7 +68,7 @@ impl Backend {
         };
 
         let root = document.ast.root_node();
-        let contents = document.contents.clone();
+        let contents = &document.contents;
 
         let position = params.position;
         let point = position.as_point();
@@ -77,19 +78,19 @@ impl Backend {
         // we exit immediately, returning that line as the `range` and possibly
         // with `code` stripped of the leading `#' ` if we detect that we are in
         // `@examples`.
-        if let Some((node, code)) = find_roxygen_comment_at_point(root, contents, point) {
-            return Ok(Some(new_statement_range_response(node, code)));
+        if let Some((node, code)) = find_roxygen_comment_at_point(&root, contents, point) {
+            return Ok(Some(new_statement_range_response(&node, code)));
         }
 
-        if let Some(node) = find_statement_range_node(root, row) {
-            return Ok(Some(new_statement_range_response(node, None)));
+        if let Some(node) = find_statement_range_node(&root, row) {
+            return Ok(Some(new_statement_range_response(&node, None)));
         };
 
         Ok(None)
     }
 }
 
-fn new_statement_range_response(node: Node, code: Option<String>) -> StatementRangeResponse {
+fn new_statement_range_response(node: &Node, code: Option<String>) -> StatementRangeResponse {
     // Tree-sitter `Point`s
     let start_point = node.start_position();
     let end_point = node.end_position();
@@ -106,11 +107,11 @@ fn new_statement_range_response(node: Node, code: Option<String>) -> StatementRa
     StatementRangeResponse { range, code }
 }
 
-fn find_roxygen_comment_at_point(
-    root: Node,
-    contents: Rope,
+fn find_roxygen_comment_at_point<'tree>(
+    root: &'tree Node,
+    contents: &Rope,
     point: Point,
-) -> Option<(Node, Option<String>)> {
+) -> Option<(Node<'tree>, Option<String>)> {
     let mut cursor = root.walk();
 
     // Move cursor to first node that is at or extends past the `point`
@@ -126,8 +127,8 @@ fn find_roxygen_comment_at_point(
         return None;
     }
 
-    let source = contents.to_string();
-    let text = node.utf8_text(source.as_bytes()).unwrap();
+    let text = contents.node_slice(&node).unwrap().to_string();
+    let text = text.as_str();
 
     // Does the roxygen2 prefix exist?
     if !RE_ROXYGEN2_COMMENT.is_match(text) {
@@ -173,7 +174,8 @@ fn find_roxygen_comment_at_point(
             break;
         }
 
-        let sibling = sibling.utf8_text(source.as_bytes()).unwrap();
+        let sibling = contents.node_slice(&sibling).unwrap().to_string();
+        let sibling = sibling.as_str();
 
         // Have we exited roxygen comments specifically?
         if !RE_ROXYGEN2_COMMENT.is_match(sibling) {
@@ -200,7 +202,7 @@ fn find_roxygen_comment_at_point(
     return Some((node, code));
 }
 
-fn find_statement_range_node(root: Node, row: usize) -> Option<Node> {
+fn find_statement_range_node<'tree>(root: &'tree Node, row: usize) -> Option<Node<'tree>> {
     let mut cursor = root.walk();
 
     let children = root.children(&mut cursor);
@@ -668,7 +670,7 @@ fn test_statement_range() {
 
         let root = ast.root_node();
 
-        let node = find_statement_range_node(root, cursor.unwrap().row).unwrap();
+        let node = find_statement_range_node(&root, cursor.unwrap().row).unwrap();
 
         assert_eq!(node.start_position(), sel_start.unwrap());
         assert_eq!(node.end_position(), sel_end.unwrap());
@@ -1223,7 +1225,7 @@ test_that('stuff', {
         .expect("Failed to create parser");
     let ast = parser.parse(contents, None).unwrap();
     let root = ast.root_node();
-    assert_eq!(find_statement_range_node(root, row), None);
+    assert_eq!(find_statement_range_node(&root, row), None);
 
     // Will return `None` when there is no block level statement
     let row = 3;
@@ -1240,7 +1242,7 @@ test_that('stuff', {
         .expect("Failed to create parser");
     let ast = parser.parse(contents, None).unwrap();
     let root = ast.root_node();
-    assert_eq!(find_statement_range_node(root, row), None);
+    assert_eq!(find_statement_range_node(&root, row), None);
 }
 
 #[test]
@@ -1263,46 +1265,40 @@ fn test_statement_range_roxygen() {
 
     let document = Document::new(text);
     let root = document.ast.root_node();
-    let contents = document.contents.clone();
+    let contents = &document.contents;
 
     fn get_text(node: &Node, contents: &Rope) -> String {
-        let source = contents.to_string();
-        node.utf8_text(source.as_bytes()).unwrap().to_string()
+        contents.node_slice(node).unwrap().to_string()
     }
 
     // Outside of `@examples`, sends whole line as a comment
     let point = Point { row: 1, column: 2 };
-    let (node, code) =
-        find_roxygen_comment_at_point(root.clone(), contents.clone(), point).unwrap();
+    let (node, code) = find_roxygen_comment_at_point(&root, contents, point).unwrap();
     assert_eq!(get_text(&node, &contents), String::from("#' Hi"));
     assert!(code.is_none());
 
     // On `@examples` line, sends whole line as a comment
     let point = Point { row: 3, column: 2 };
-    let (node, code) =
-        find_roxygen_comment_at_point(root.clone(), contents.clone(), point).unwrap();
+    let (node, code) = find_roxygen_comment_at_point(&root, contents, point).unwrap();
     assert_eq!(get_text(&node, &contents), String::from("#' @examples"));
     assert!(code.is_none());
 
     // At `1 + 1`
     let point = Point { row: 4, column: 2 };
-    let (node, code) =
-        find_roxygen_comment_at_point(root.clone(), contents.clone(), point).unwrap();
+    let (node, code) = find_roxygen_comment_at_point(&root, contents, point).unwrap();
     assert_eq!(get_text(&node, &contents), String::from("#' 1 + 1"));
     assert_eq!(code.unwrap(), String::from("1 + 1"));
 
     // At empty string line after `1 + 1`
     // (we want Positron to trust us and execute this as is)
     let point = Point { row: 5, column: 1 };
-    let (node, code) =
-        find_roxygen_comment_at_point(root.clone(), contents.clone(), point).unwrap();
+    let (node, code) = find_roxygen_comment_at_point(&root, contents, point).unwrap();
     assert_eq!(get_text(&node, &contents), String::from("#'"));
     assert_eq!(code.unwrap(), String::from(""));
 
     // At `fn <-` line, note we only return that line
     let point = Point { row: 6, column: 1 };
-    let (node, code) =
-        find_roxygen_comment_at_point(root.clone(), contents.clone(), point).unwrap();
+    let (node, code) = find_roxygen_comment_at_point(&root, contents, point).unwrap();
     assert_eq!(
         get_text(&node, &contents),
         String::from("#' fn <- function() {")
@@ -1311,22 +1307,19 @@ fn test_statement_range_roxygen() {
 
     // At comment line
     let point = Point { row: 9, column: 1 };
-    let (node, code) =
-        find_roxygen_comment_at_point(root.clone(), contents.clone(), point).unwrap();
+    let (node, code) = find_roxygen_comment_at_point(&root, contents, point).unwrap();
     assert_eq!(get_text(&node, &contents), String::from("#' # Comment"));
     assert_eq!(code.unwrap(), String::from("# Comment"));
 
     // Missing the typical leading space
     let point = Point { row: 10, column: 1 };
-    let (node, code) =
-        find_roxygen_comment_at_point(root.clone(), contents.clone(), point).unwrap();
+    let (node, code) = find_roxygen_comment_at_point(&root, contents, point).unwrap();
     assert_eq!(get_text(&node, &contents), String::from("#'2 + 2"));
     assert_eq!(code.unwrap(), String::from("2 + 2"));
 
     // At next roxygen tag
     let point = Point { row: 11, column: 1 };
-    let (node, code) =
-        find_roxygen_comment_at_point(root.clone(), contents.clone(), point).unwrap();
+    let (node, code) = find_roxygen_comment_at_point(&root, contents, point).unwrap();
     assert_eq!(get_text(&node, &contents), String::from("#' @returns"));
     assert!(code.is_none());
 
@@ -1341,31 +1334,27 @@ fn test_statement_range_roxygen() {
 
     let document = Document::new(text);
     let root = document.ast.root_node();
-    let contents = document.contents.clone();
+    let contents = &document.contents;
 
     // With multiple leading `#` followed by code
     let point = Point { row: 4, column: 1 };
-    let (node, code) =
-        find_roxygen_comment_at_point(root.clone(), contents.clone(), point).unwrap();
+    let (node, code) = find_roxygen_comment_at_point(&root, contents, point).unwrap();
     assert_eq!(get_text(&node, &contents), String::from("##' 1 + 1"));
     assert_eq!(code.unwrap(), String::from("1 + 1"));
 
     let point = Point { row: 5, column: 1 };
-    let (node, code) =
-        find_roxygen_comment_at_point(root.clone(), contents.clone(), point).unwrap();
+    let (node, code) = find_roxygen_comment_at_point(&root, contents, point).unwrap();
     assert_eq!(get_text(&node, &contents), String::from("###' 2 + 2"));
     assert_eq!(code.unwrap(), String::from("2 + 2"));
 
     // With multiple leading `#` followed by non-code
     let point = Point { row: 3, column: 1 };
-    let (node, code) =
-        find_roxygen_comment_at_point(root.clone(), contents.clone(), point).unwrap();
+    let (node, code) = find_roxygen_comment_at_point(&root, contents, point).unwrap();
     assert_eq!(get_text(&node, &contents), String::from("##' @examples"));
     assert!(code.is_none());
 
     let point = Point { row: 6, column: 1 };
-    let (node, code) =
-        find_roxygen_comment_at_point(root.clone(), contents.clone(), point).unwrap();
+    let (node, code) = find_roxygen_comment_at_point(&root, contents, point).unwrap();
     assert_eq!(get_text(&node, &contents), String::from("###' @returns"));
     assert!(code.is_none());
 }

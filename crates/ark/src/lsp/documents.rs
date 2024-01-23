@@ -225,11 +225,46 @@ impl Document {
         self.contents.insert(lhs, change.text.as_str());
 
         // We've edited the AST, and updated the document. We can now re-parse.
-        let contents = self.contents.to_string();
-        let ast = self.parser.parse(&contents, Some(&self.ast));
+        let contents = &self.contents;
+        let callback = &mut |byte, point| Self::parse_callback(contents, byte, point);
+
+        let ast = self.parser.parse_with(callback, Some(&self.ast));
         self.ast = ast.unwrap();
 
         Ok(())
+    }
+
+    /// A tree-sitter `parse_with()` callback to efficiently return a slice of the
+    /// document in the `Rope` that tree-sitter can reparse with.
+    ///
+    /// According to the tree-sitter docs:
+    /// * `callback` A function that takes a byte offset and position and
+    ///   returns a slice of UTF8-encoded text starting at that byte offset
+    ///   and position. The slices can be of any length. If the given position
+    ///   is at the end of the text, the callback should return an empty slice.
+    ///
+    /// We expect that tree-sitter will call the callback again with an updated `byte`
+    /// if the chunk doesn't contain enough text to fully reparse.
+    fn parse_callback(contents: &Rope, byte: usize, point: Point) -> &[u8] {
+        // Get Rope "chunk" that lines up with this `byte`
+        let Some((chunk, chunk_byte_idx, _chunk_char_idx, _chunk_line_idx)) =
+            contents.get_chunk_at_byte(byte)
+        else {
+            let contents = contents.to_string();
+            log::error!(
+                "Failed to get Rope chunk at byte {byte}, point {point}. Text '{contents}'.",
+            );
+            return "\n".as_bytes();
+        };
+
+        // How far into this chunk are we?
+        let byte = byte - chunk_byte_idx;
+
+        // Now return the slice from that `byte` to the end of the chunk.
+        // SAFETY: This should never panic, since `get_chunk_at_byte()` worked.
+        let slice = &chunk[byte..];
+
+        slice.as_bytes()
     }
 }
 
