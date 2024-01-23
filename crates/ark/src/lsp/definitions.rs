@@ -18,6 +18,7 @@ use crate::lsp::indexer;
 use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::point::PointExt;
 use crate::lsp::traits::position::PositionExt;
+use crate::lsp::traits::rope::RopeExt;
 
 pub struct GotoDefinitionContext<'a> {
     pub document: &'a Document,
@@ -56,9 +57,12 @@ pub unsafe fn goto_definition<'a>(
 
     // search for a reference in the document index
     if matches!(context.node.kind(), "identifier") {
-        let source = context.document.contents.to_string();
-        let symbol = context.node.utf8_text(source.as_bytes()).unwrap();
-        if let Some((path, entry)) = indexer::find(symbol) {
+        let symbol = context
+            .document
+            .contents
+            .node_slice(&context.node)?
+            .to_string();
+        if let Some((path, entry)) = indexer::find(symbol.as_str()) {
             let link = LocationLink {
                 origin_selection_range: None,
                 target_uri: Url::from_file_path(path).unwrap(),

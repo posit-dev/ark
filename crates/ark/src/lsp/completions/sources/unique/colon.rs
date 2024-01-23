@@ -8,6 +8,7 @@
 use tower_lsp::lsp_types::CompletionItem;
 
 use crate::lsp::document_context::DocumentContext;
+use crate::lsp::traits::rope::RopeExt;
 
 // Don't provide completions if on a single `:`, which typically precedes
 // a `::` or `:::`. It means we don't provide completions for `1:` but we
@@ -23,9 +24,8 @@ pub fn completions_from_single_colon(context: &DocumentContext) -> Option<Vec<Co
 }
 
 fn is_single_colon(context: &DocumentContext) -> bool {
-    context
-        .node
-        .utf8_text(context.source.as_bytes())
-        .unwrap_or("")
-        .eq(":")
+    let Ok(slice) = context.document.contents.node_slice(&context.node) else {
+        return false;
+    };
+    slice.eq(":")
 }

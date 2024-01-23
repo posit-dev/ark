@@ -10,6 +10,7 @@ use tower_lsp::lsp_types::CompletionItem;
 
 use crate::lsp::completions::sources::utils::completions_from_evaluated_object_names;
 use crate::lsp::document_context::DocumentContext;
+use crate::lsp::traits::rope::RopeExt;
 
 /// Checks for `[` and `[[` completions
 ///
@@ -61,7 +62,7 @@ pub(super) fn completions_from_subset(
         return Ok(Some(vec![]));
     };
 
-    let text = child.utf8_text(context.source.as_bytes())?;
+    let text = context.document.contents.node_slice(&child)?.to_string();
 
     completions_from_evaluated_object_names(&text, ENQUOTE)
 }

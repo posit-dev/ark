@@ -19,6 +19,7 @@ use tower_lsp::lsp_types::CompletionItem;
 use crate::lsp::completions::completion_item::completion_item_from_data_variable;
 use crate::lsp::completions::sources::utils::set_sort_text_by_first_appearance;
 use crate::lsp::document_context::DocumentContext;
+use crate::lsp::traits::rope::RopeExt;
 
 pub fn completions_from_dollar(context: &DocumentContext) -> Result<Option<Vec<CompletionItem>>> {
     completions_from_extractor(context, "$", ".DollarNames")
@@ -60,9 +61,9 @@ fn completions_from_extractor(
         return Ok(Some(completions));
     };
 
-    let text = child.utf8_text(context.source.as_bytes())?;
+    let text = context.document.contents.node_slice(&child)?.to_string();
 
-    completions.append(&mut completions_from_extractor_helper(&text, fun)?);
+    completions.append(&mut completions_from_extractor_helper(text.as_str(), fun)?);
 
     Ok(Some(completions))
 }

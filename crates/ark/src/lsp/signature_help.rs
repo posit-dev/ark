@@ -25,6 +25,7 @@ use crate::lsp::help::RHtmlHelp;
 use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::point::PointExt;
 use crate::lsp::traits::position::PositionExt;
+use crate::lsp::traits::rope::RopeExt;
 
 /// SAFETY: Requires access to the R runtime.
 pub unsafe fn signature_help(
@@ -33,7 +34,6 @@ pub unsafe fn signature_help(
 ) -> Result<Option<SignatureHelp>> {
     // Get document AST + completion position.
     let ast = &document.ast;
-    let source = document.contents.to_string();
     let point = position.as_point();
 
     // Find the node closest to the completion point.
@@ -100,7 +100,8 @@ pub unsafe fn signature_help(
         if parent.kind() == "arguments" {
             // If the cursor lies upon a named argument, use that as an override.
             if let Some(name) = node.child_by_field_name("name") {
-                active_argument = Some(name.utf8_text(source.as_bytes())?);
+                let name = document.contents.node_slice(&name)?.to_string();
+                active_argument = Some(name);
             }
 
             let mut cursor = parent.walk();
@@ -108,7 +109,7 @@ pub unsafe fn signature_help(
             for child in children {
                 if let Some(name) = child.child_by_field_name("name") {
                     // If this is a named argument, add it to the list.
-                    let name = name.utf8_text(source.as_bytes())?;
+                    let name = document.contents.node_slice(&name)?.to_string();
                     explicit_parameters.push(name);
 
                     // Subtract 1 from the number of unnamed arguments, as
@@ -151,9 +152,9 @@ pub unsafe fn signature_help(
     // before asking the R session for a definition? Which should take precedence?
 
     // Try to figure out what R object it's associated with.
-    let code = callee.utf8_text(source.as_bytes())?;
+    let code = document.contents.node_slice(&callee)?.to_string();
 
-    let object = r_parse_eval(code, RParseEvalOptions {
+    let object = r_parse_eval(code.as_str(), RParseEvalOptions {
         forbid_function_calls: true,
         ..Default::default()
     });
@@ -190,22 +191,22 @@ pub unsafe fn signature_help(
 
     // Get the help documentation associated with this function.
     let help = if matches!(callee.kind(), "::" | ":::") {
-        let lhs = callee.child_by_field_name("lhs").into_result()?;
-        let package = lhs.utf8_text(source.as_bytes())?;
+        let package = callee.child_by_field_name("lhs").into_result()?;
+        let package = document.contents.node_slice(&package)?.to_string();
 
-        let rhs = callee.child_by_field_name("rhs").into_result()?;
-        let topic = rhs.utf8_text(source.as_bytes())?;
+        let topic = callee.child_by_field_name("rhs").into_result()?;
+        let topic = document.contents.node_slice(&topic)?.to_string();
 
-        RHtmlHelp::new(topic, Some(package))
+        RHtmlHelp::new(topic.as_str(), Some(package.as_str()))
     } else {
-        let topic = callee.utf8_text(source.as_bytes())?;
-        RHtmlHelp::new(topic, None)
+        let topic = document.contents.node_slice(&callee)?.to_string();
+        RHtmlHelp::new(topic.as_str(), None)
     };
 
     // The signature label. We generate this as we walk through the
     // parameters, so we can more easily record offsets.
     let mut label = String::new();
-    label.push_str(code);
+    label.push_str(code.as_str());
     label.push_str("(");
 
     // Get the available parameters.
@@ -223,7 +224,7 @@ pub unsafe fn signature_help(
 
         // If we had an explicit name, and this name matches the argument,
         // then update the offset now.
-        if active_argument == Some(argument.name.as_str()) {
+        if active_argument.as_ref() == Some(&argument.name) {
             offset = Some(index as u32);
         }
 
@@ -256,7 +257,7 @@ pub unsafe fn signature_help(
     if offset.is_none() {
         for (index, argument) in formals.iter().enumerate() {
             // Was this argument explicitly provided? If so, skip it.
-            if explicit_parameters.contains(&argument.name.as_str()) {
+            if explicit_parameters.contains(&argument.name) {
                 continue;
             }
 
