@@ -9,7 +9,7 @@
     list(kind, node, message)
 }
 
-.ps.diagnostics.custom.library <- function(call, source, fun = base::library) {
+.ps.diagnostics.custom.library <- function(call, contents, fun = base::library) {
     # TODO: it could be interesting to have a diagnostic
     #       when this will fail on wrong argument, e.g.
     #       library(pkg = ggplot2)
@@ -28,21 +28,21 @@
 
     # identify if character.only was set, so that we can
     # adapt the diagnostic appropriately
-    is_character_only <- function(matched_call, source) {
+    is_character_only <- function(matched_call, contents) {
         character_only <- matched_call[["character.only"]]
 
         if (is.null(character_only)) {
             FALSE
         } else {
             ptr <- character_only[[2L]]
-            text <- .ps.treesitter.node.text(ptr, source)
+            text <- .ps.treesitter.node.text(ptr, contents)
             !identical(text, "FALSE")
         }
     }
 
     # deal with arguments `package` and `help` which use
     # non standard evaluation, e.g. library(ggplot2)
-    diagnostic_package <- function(arg, source, character_only) {
+    diagnostic_package <- function(arg, contents, character_only) {
         index <- arg[[1L]]
         node <- arg[[2L]]
 
@@ -55,7 +55,7 @@
 
         if (kind %in% c("string", "identifier")) {
             # library("foo") or library(foo)
-            pkg <- .ps.treesitter.node.text(node, source)
+            pkg <- .ps.treesitter.node.text(node, contents)
 
             if (kind == "string") {
                 pkg <- gsub("^(['\"])(.*)\\1$", "\\2", pkg)
@@ -76,7 +76,7 @@
     # Before scanning all arguments, we need to check if
     # character.only is set, so that we can adapt how the
     # package and help arguments are handled
-    character_only <- is_character_only(matched_call, source)
+    character_only <- is_character_only(matched_call, contents)
 
     # Scan the given arguments and make diagnostics for each
     n <- length(matched_call)
@@ -87,7 +87,7 @@
         name <- names[[i + 1L]]
 
         diagnostic <- if (name %in% c("package", "help")) {
-            diagnostic_package(arg, source, character_only)
+            diagnostic_package(arg, contents, character_only)
         } else {
             .ps.diagnostics.diagnostic("default", node = arg[[2L]])
         }
@@ -98,6 +98,6 @@
     out
 }
 
-.ps.diagnostics.custom.require <- function(call, source, fun = base::require) {
-    .ps.diagnostics.custom.library(call, source, fun)
+.ps.diagnostics.custom.require <- function(call, contents, fun = base::require) {
+    .ps.diagnostics.custom.library(call, contents, fun)
 }
