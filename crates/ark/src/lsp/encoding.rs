@@ -77,14 +77,6 @@ fn with_line<F>(x: &Rope, line: usize, character: usize, f: F) -> usize
 where
     F: FnOnce(&str, usize) -> usize,
 {
-    // Empty documents come through as an empty string, which looks like 0 lines (TODO: Confirm this?)
-    if x.len_lines() == 0 {
-        if line != 0 || character != 0 {
-            log::error!("Document is empty, but using position: ({line}, {character})");
-        }
-        return 0;
-    }
-
     let Some(x) = x.get_line(line) else {
         let n = x.len_lines();
         let x = x.to_string();
