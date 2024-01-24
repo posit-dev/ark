@@ -5,8 +5,6 @@
  *
  */
 
-use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -14,7 +12,6 @@ use anyhow::anyhow;
 use libloading::os::unix::Library;
 use libloading::os::unix::RTLD_GLOBAL;
 use libloading::os::unix::RTLD_LAZY;
-use rust_embed::RustEmbed;
 
 use crate::library::find_r_shared_library;
 use crate::library::open_and_leak_r_shared_library;
@@ -82,10 +79,6 @@ pub fn find_r_shared_library_folder(path: &PathBuf) -> PathBuf {
     path.join("lib")
 }
 
-#[derive(RustEmbed)]
-#[folder = "resources/"]
-struct Asset;
-
 #[cfg(target_os = "macos")]
 const LIBRARY_PATH_ENVVAR: &'static str = "DYLD_FALLBACK_LIBRARY_PATH";
 #[cfg(target_os = "linux")]
@@ -104,11 +97,16 @@ fn set_library_path_env_var(path: &PathBuf) {
         Err(err) => log::error!("Failed to source `ldpaths` script: {err:?}."),
     }
 
-    if !paths.is_empty() {
-        // Only set if we have something
-        let path = paths.join(":");
-        std::env::set_var(LIBRARY_PATH_ENVVAR, path);
+    // Only set if we have something
+    if paths.is_empty() {
+        return;
     }
+
+    let paths = paths.join(":");
+
+    log::info!("Setting '{LIBRARY_PATH_ENVVAR}' env var to '{paths}'.");
+
+    std::env::set_var(LIBRARY_PATH_ENVVAR, paths);
 }
 
 /// Source `{R_HOME}/etc/ldpaths`
@@ -125,36 +123,36 @@ fn set_library_path_env_var(path: &PathBuf) {
 /// in that `lib/` folder that other packages might link to, and having the `lib/` folder
 /// included in `LD_LIBRARY_PATH` is how those packages will find those libs.
 fn source_ldpaths_script(path: &PathBuf) -> anyhow::Result<String> {
-    // Load `source-ldpaths` which we embedded in the binary (to be able to access it from
-    // anywhere), and write it to a temp file so we can run it
-    let Some(source) = Asset::get("source-ldpaths") else {
-        return Err(anyhow!("Failed to locate `source-ldpaths` helper."));
+    let ldpaths = path.join("etc").join("ldpaths");
+
+    let Some(ldpaths) = ldpaths.to_str() else {
+        let ldpaths = ldpaths.to_string_lossy();
+        return Err(anyhow!(
+            "Failed to convert `ldpaths` path to UTF-8 string: '{ldpaths}'"
+        ));
     };
 
-    // Cleaned up when `Drop`ped
-    let dir = tempfile::tempdir()?;
-    let file = dir.path().join("source-ldpaths");
-
-    // Create file and write `source-ldpaths` contents to it
-    std::fs::write(&file, &source.data)?;
-
-    // This `mode` corresponds to "readable and executable" for all 3 of the
-    // User, Group, and Others classes
-    const MODE: u32 = 0o555;
-
-    // Make it executable
-    let mut permissions = fs::metadata(&file)?.permissions();
-    permissions.set_mode(MODE);
-    fs::set_permissions(&file, permissions)?;
+    // Source (i.e. `.`) the `ldpaths` file into the current bash session, and then
+    // echo out the relevant env var that it set. Using `-n` to avoid a trailing new line.
+    let command = format!(". {ldpaths} && echo -n ${LIBRARY_PATH_ENVVAR}");
 
     // Need to ensure `R_HOME` is set, as `ldpaths` references it.
-    // Expect that `ldpaths` appends to an existing env var if there is one, rather than
-    // overwriting it, so we don't have to do that.
-    let output = Command::new(&file)
+    // Expect that `ldpaths` appends to an existing env var if there is one,
+    // rather than overwriting it, so we don't have to do that.
+    let output = Command::new("bash")
         .env("R_HOME", &path)
-        .arg(&path)
-        .arg(LIBRARY_PATH_ENVVAR)
+        .arg("-c")
+        .arg(command)
         .output()?;
+
+    if !output.status.success() {
+        let status = output.status;
+        return Err(anyhow!("Failed with status: {status}"));
+    }
+    if !output.stderr.is_empty() {
+        let stderr = String::from_utf8(output.stderr)?;
+        return Err(anyhow!("Unexpected output on stderr: '{stderr}'"));
+    }
 
     let value = String::from_utf8(output.stdout)?;
 

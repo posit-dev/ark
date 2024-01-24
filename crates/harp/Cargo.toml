@@ -22,9 +22,7 @@ log = "0.4.17"
 once_cell = "1.17.1"
 parking_lot = "0.12.1"
 regex = "1.7.3"
-rust-embed = "8.0.0"
 semver = "1.0.19"
 stdext = { path = "../stdext" }
 serde = { version = "1.0.183", features = ["derive"] }
 serde_json = { version = "1.0.94", features = ["preserve_order"]}
-tempfile = "3.9.0"

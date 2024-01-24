@@ -1162,12 +1162,10 @@ dependencies = [
  "once_cell",
  "parking_lot",
  "regex",
- "rust-embed",
  "semver",
  "serde",
  "serde_json",
  "stdext",
- "tempfile",
 ]
 
 [[package]]
