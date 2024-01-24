@@ -7,6 +7,10 @@
 
 use std::path::PathBuf;
 
+use libloading::os::unix::Library;
+use libloading::os::unix::RTLD_GLOBAL;
+use libloading::os::unix::RTLD_LAZY;
+
 use crate::library::find_r_shared_library;
 use crate::library::open_and_leak_r_shared_library;
 
@@ -38,7 +42,31 @@ impl RLibraries {
 }
 
 pub fn open_r_shared_library(path: &PathBuf) -> Result<libloading::Library, libloading::Error> {
-    unsafe { libloading::Library::new(&path) }
+    // Default behavior of `Library` is `RTLD_LAZY | RTLD_LOCAL`.
+    // In general this makes sense, where you want to isolate modules as much as possible.
+    // However, for us `libR` is like our main application.
+    //
+    // Setting `RTLD_GLOBAL` means that the symbols of the opened library (and its
+    // dependencies) become available for subsequently loaded libraries WITHOUT them
+    // needing to use `dlsym()`. Subsequent libraries here can correspond to R packages,
+    // like `utils.so` or any R package with compiled code.
+    //
+    // The main reason we do this is that we believe this most closely reproduces what
+    // happens when you link your application to `libR.so` at load time rather than
+    // runtime (i.e. RStudio's `rsession` does load time linking). We believe load time
+    // linking makes the libR library (and therefore its symbols) available globally to
+    // downstream loaded libraries.
+    //
+    // More discussion in:
+    // https://github.com/posit-dev/amalthea/pull/205
+    let flags = RTLD_LAZY | RTLD_GLOBAL;
+
+    let library = unsafe { Library::open(Some(&path), flags) };
+
+    // Map from the OS specific `Library` into the cross platform `Library`
+    let library = library.map(|library| library.into());
+
+    library
 }
 
 pub fn find_r_shared_library_folder(path: &PathBuf) -> PathBuf {
