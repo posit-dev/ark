@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+
+#
+# source-ldpaths
+#
+# Copyright (C) 2024 Posit Software, PBC. All rights reserved.
+#
+
+# Since `$R_HOME/etc/ldpaths` doesn't include a shebang at the top, we wrap it in this
+# file which does and source it from here.
+
+R_HOME=$1
+LIBRARY_PATH_ENVVAR=$2
+
+# Source `ldpaths` script, which will `export` the corresponding env var
+. $R_HOME/etc/ldpaths
+
+# Print the env var to stdout
+# - `-n` to request that no new line is appended to the end
+# - Crazy `${!}` for parameter indirection since we pass an env var name as an argument
+echo -n ${!LIBRARY_PATH_ENVVAR}

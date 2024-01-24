@@ -5,11 +5,16 @@
  *
  */
 
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
+use std::process::Command;
 
+use anyhow::anyhow;
 use libloading::os::unix::Library;
 use libloading::os::unix::RTLD_GLOBAL;
 use libloading::os::unix::RTLD_LAZY;
+use rust_embed::RustEmbed;
 
 use crate::library::find_r_shared_library;
 use crate::library::open_and_leak_r_shared_library;
@@ -20,6 +25,10 @@ pub struct RLibraries {
 
 impl RLibraries {
     pub fn from_r_home_path(path: &PathBuf) -> Self {
+        // Before we open the libraries, set `DYLD_FALLBACK_LIBRARY_PATH` or
+        // `LD_LIBRARY_PATH` as needed
+        set_library_path_env_var(path);
+
         let r_path = find_r_shared_library(&path, "R");
         let r = open_and_leak_r_shared_library(&r_path);
 
@@ -71,4 +80,89 @@ pub fn open_r_shared_library(path: &PathBuf) -> Result<libloading::Library, libl
 
 pub fn find_r_shared_library_folder(path: &PathBuf) -> PathBuf {
     path.join("lib")
+}
+
+#[derive(RustEmbed)]
+#[folder = "resources/"]
+struct Asset;
+
+#[cfg(target_os = "macos")]
+const LIBRARY_PATH_ENVVAR: &'static str = "DYLD_FALLBACK_LIBRARY_PATH";
+#[cfg(target_os = "linux")]
+const LIBRARY_PATH_ENVVAR: &'static str = "LD_LIBRARY_PATH";
+
+fn set_library_path_env_var(path: &PathBuf) {
+    // In the future, we may add additional paths to the env var beyond just what R
+    // gives us, like RStudio does.
+    // https://github.com/rstudio/rstudio/blob/50d1a034a04188b42cf7560a86a268a95e62d129/src/cpp/core/r_util/REnvironmentPosix.cpp#L817
+
+    let mut paths = Vec::new();
+
+    // Expect that this includes the existing env var value, if there was one
+    match source_ldpaths_script(path) {
+        Ok(path) => paths.push(path),
+        Err(err) => log::error!("Failed to source `ldpaths` script: {err:?}."),
+    }
+
+    if !paths.is_empty() {
+        // Only set if we have something
+        let path = paths.join(":");
+        std::env::set_var(LIBRARY_PATH_ENVVAR, path);
+    }
+}
+
+/// Source `{R_HOME}/etc/ldpaths`
+///
+/// - On macOS, this is for `DYLD_FALLBACK_LIBRARY_PATH`
+/// - On linux, this is for `LD_LIBRARY_PATH`
+///
+/// This is a file that R provides which adds the `{R_HOME}/lib/` directory and a Java
+/// related directory (relevant for rJava, apparently) to the relevant library path env
+/// var.
+///
+/// Adding R's `lib/` directory to the front of `LD_LIBRARY_PATH` is particularly
+/// important. We open `libR` with `RTLD_GLOBAL`, but there are other libs shipped by R
+/// in that `lib/` folder that other packages might link to, and having the `lib/` folder
+/// included in `LD_LIBRARY_PATH` is how those packages will find those libs.
+fn source_ldpaths_script(path: &PathBuf) -> anyhow::Result<String> {
+    // Load `source-ldpaths` which we embedded in the binary (to be able to access it from
+    // anywhere), and write it to a temp file so we can run it
+    let Some(source) = Asset::get("source-ldpaths") else {
+        return Err(anyhow!("Failed to locate `source-ldpaths` helper."));
+    };
+
+    // Cleaned up when `Drop`ped
+    let dir = tempfile::tempdir()?;
+    let file = dir.path().join("source-ldpaths");
+
+    // Create file and write `source-ldpaths` contents to it
+    std::fs::write(&file, &source.data)?;
+
+    // This `mode` corresponds to "readable and executable" for all 3 of the
+    // User, Group, and Others classes
+    const MODE: u32 = 0o555;
+
+    // Make it executable
+    let mut permissions = fs::metadata(&file)?.permissions();
+    permissions.set_mode(MODE);
+    fs::set_permissions(&file, permissions)?;
+
+    // Need to ensure `R_HOME` is set, as `ldpaths` references it.
+    // Expect that `ldpaths` appends to an existing env var if there is one, rather than
+    // overwriting it, so we don't have to do that.
+    let output = Command::new(&file)
+        .env("R_HOME", &path)
+        .arg(&path)
+        .arg(LIBRARY_PATH_ENVVAR)
+        .output()?;
+
+    let value = String::from_utf8(output.stdout)?;
+
+    if value.is_empty() {
+        return Err(anyhow!(
+            "Empty string returned for '{LIBRARY_PATH_ENVVAR}'. Expected at least one path."
+        ));
+    }
+
+    Ok(value)
 }
