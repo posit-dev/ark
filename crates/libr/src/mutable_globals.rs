@@ -13,27 +13,11 @@ macro_rules! generate {
             pub static mut $name:ident: $ty:ty;
         )+
     ) => (
-        // Define internal global pointers, initialized to null pointer
+        // Define global pointers, initialized to null pointer
         $(
+            $(#[doc=$doc])*
             $(#[cfg($cfg)])*
-            static mut $name: *mut $ty = std::ptr::null_mut();
-        )+
-
-        // Define getter and setter pairs
-        $(
-            paste::paste! {
-                $(#[doc=$doc])*
-                $(#[cfg($cfg)])*
-                pub unsafe fn [<$name _get>]() -> $ty {
-                    *$name
-                }
-
-                $(#[doc=$doc])*
-                $(#[cfg($cfg)])*
-                pub unsafe fn [<$name _set>](x: $ty) {
-                    *$name = x;
-                }
-            }
+            pub static mut $name: *mut $ty = std::ptr::null_mut();
         )+
 
         // Make `has::` helpers for each global.

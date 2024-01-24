@@ -5,7 +5,7 @@
  *
  */
 
-use libr::localeCP_get;
+use libr::localeCP;
 use winsafe::co::CP;
 use winsafe::co::MBC;
 use winsafe::co::WC;
@@ -41,7 +41,7 @@ pub fn code_page_to_utf8(x: &[u8], code_page: CP) -> anyhow::Result<String> {
 
 pub fn get_system_code_page() -> CP {
     // Lookup code page that R is using
-    let code_page = unsafe { localeCP_get() } as u16;
+    let code_page = unsafe { libr::get(localeCP) } as u16;
     let code_page = unsafe { CP::from_raw(code_page) };
     code_page
 }

@@ -7,8 +7,7 @@
 
 use libr::Rboolean_FALSE;
 use libr::Rboolean_TRUE;
-use libr::UserBreak_get;
-use libr::UserBreak_set;
+use libr::UserBreak;
 
 pub fn initialize_signal_handlers() {
     // Nothing to do on Windows. Signal blocking is POSIX only.
@@ -19,13 +18,13 @@ pub fn initialize_signal_block() {
 }
 
 pub fn interrupts_pending() -> bool {
-    unsafe { UserBreak_get() == Rboolean_TRUE }
+    unsafe { libr::get(UserBreak) == Rboolean_TRUE }
 }
 
 pub fn set_interrupts_pending(pending: bool) {
     if pending {
-        unsafe { UserBreak_set(Rboolean_TRUE) };
+        unsafe { libr::set(UserBreak, Rboolean_TRUE) };
     } else {
-        unsafe { UserBreak_set(Rboolean_FALSE) };
+        unsafe { libr::set(UserBreak, Rboolean_FALSE) };
     }
 }

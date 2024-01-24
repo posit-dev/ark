@@ -449,10 +449,10 @@ pub unsafe fn r_parse_vector(code: &str) -> Result<ParseResult> {
         ParseStatus_PARSE_OK => Ok(ParseResult::Complete(*result)),
         ParseStatus_PARSE_INCOMPLETE => Ok(ParseResult::Incomplete()),
         ParseStatus_PARSE_ERROR => Err(Error::ParseSyntaxError {
-            message: CStr::from_ptr(R_ParseErrorMsg_get().as_ptr())
+            message: CStr::from_ptr(libr::get(R_ParseErrorMsg).as_ptr())
                 .to_string_lossy()
                 .to_string(),
-            line: R_ParseError_get() as i32,
+            line: libr::get(R_ParseError) as i32,
         }),
         _ => {
             // should not get here
@@ -833,18 +833,18 @@ mod tests {
     #[test]
     fn test_dirty_image() {
         r_test! {
-            R_DirtyImage_set(2);
+            libr::set(R_DirtyImage, 2);
             let sym = r_symbol!("aaa");
             Rf_defineVar(sym, Rf_ScalarInteger(42), R_GlobalEnv);
-            assert_eq!(R_DirtyImage_get(), 1);
+            assert_eq!(libr::get(R_DirtyImage), 1);
 
-            R_DirtyImage_set(2);
+            libr::set(R_DirtyImage, 2);
             Rf_setVar(sym, Rf_ScalarInteger(43), R_GlobalEnv);
-            assert_eq!(R_DirtyImage_get(), 1);
+            assert_eq!(libr::get(R_DirtyImage), 1);
 
-            R_DirtyImage_set(2);
+            libr::set(R_DirtyImage, 2);
             r_envir_remove("aaa", R_GlobalEnv);
-            assert_eq!(R_DirtyImage_get(), 1);
+            assert_eq!(libr::get(R_DirtyImage), 1);
         }
     }
 

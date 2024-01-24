@@ -5,8 +5,7 @@
  *
  */
 
-use libr::R_interrupts_pending_get;
-use libr::R_interrupts_pending_set;
+use libr::R_interrupts_pending;
 use nix::sys::signal::*;
 
 /// Reset the signal block.
@@ -54,14 +53,14 @@ pub fn initialize_signal_block() {
 }
 
 pub fn interrupts_pending() -> bool {
-    unsafe { R_interrupts_pending_get() == 1 }
+    unsafe { libr::get(R_interrupts_pending) == 1 }
 }
 
 pub fn set_interrupts_pending(pending: bool) {
     if pending {
-        unsafe { R_interrupts_pending_set(1) };
+        unsafe { libr::set(R_interrupts_pending, 1) };
     } else {
-        unsafe { R_interrupts_pending_set(0) };
+        unsafe { libr::set(R_interrupts_pending, 0) };
     }
 }
 
