@@ -175,6 +175,10 @@ impl CommManager {
 
                     // If we found it, remove it.
                     if let Some(index) = index {
+                        // Notify the comm that it's been closed
+                        let comm = self.open_comms.get(index).unwrap();
+                        comm.incoming_tx.send(CommMsg::Close).unwrap();
+
                         self.open_comms.remove(index);
                         self.comm_shell_tx
                             .send(CommShellEvent::Removed(comm_id))
