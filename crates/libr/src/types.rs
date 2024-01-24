@@ -10,6 +10,7 @@
 #![allow(non_upper_case_globals)]
 
 // Reexport all system specific R types
+#[cfg_attr(target_family = "unix", allow(unused_imports))]
 pub use crate::sys::types::*;
 
 #[doc = "R_xlen_t is defined as int on 32-bit platforms, and that confuses Rust. Keeping it always as ptrdiff_t works fine even on 32-bit."]
