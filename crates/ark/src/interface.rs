@@ -394,8 +394,8 @@ impl RMain {
     /// Indicate whether RMain has been created and is initialized.
     pub fn initialized() -> bool {
         unsafe {
-            match &R_MAIN {
-                Some(main) => !main.initializing,
+            match R_MAIN {
+                Some(ref main) => !main.initializing,
                 None => false,
             }
         }
