@@ -7,7 +7,7 @@
 
 use std::ops::Deref;
 
-use libR_shim::*;
+use libr::*;
 use once_cell::sync::Lazy;
 use stdext::unwrap;
 
@@ -72,7 +72,7 @@ fn has_reference(value: SEXP) -> bool {
         LISTSXP | LANGSXP => unsafe { has_reference(CAR(value)) || has_reference(CDR(value)) },
 
         VECSXP | EXPRSXP => unsafe {
-            let n = XLENGTH(value);
+            let n = Rf_xlength(value);
             let mut has_ref = false;
             for i in 0..n {
                 if has_reference(VECTOR_ELT(value, i)) {
@@ -224,7 +224,7 @@ impl<'a> HashedEnvironmentIter<'a> {
     pub fn new(env: &'a Environment) -> Self {
         unsafe {
             let hashtab = HASHTAB(**env);
-            let hashtab_len = XLENGTH(hashtab);
+            let hashtab_len = Rf_xlength(hashtab);
             let mut hashtab_index = 0;
             let mut frame = R_NilValue;
 
@@ -269,7 +269,7 @@ impl<'a> Iterator for HashedEnvironmentIter<'a> {
 
             if self.frame == R_NilValue {
                 // end of frame: move to the next non empty frame
-                let hashtab_len = XLENGTH(self.hashtab);
+                let hashtab_len = Rf_xlength(self.hashtab);
                 loop {
                     // move to the next frame
                     self.hashtab_index = self.hashtab_index + 1;
@@ -471,7 +471,8 @@ impl From<Environment> for RObject {
 
 #[cfg(test)]
 mod tests {
-    use libR_shim::*;
+    use libr::Rf_ScalarInteger;
+    use libr::Rf_defineVar;
 
     use super::*;
     use crate::exec::RFunction;

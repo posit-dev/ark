@@ -5,7 +5,14 @@
 //
 //
 
-use libR_shim::*;
+use libr::R_IsNA;
+use libr::R_xlen_t;
+use libr::Rcomplex;
+use libr::Rf_allocVector;
+use libr::COMPLEX_ELT;
+use libr::CPLXSXP;
+use libr::DATAPTR;
+use libr::SEXP;
 
 use crate::object::RObject;
 use crate::vector::Vector;

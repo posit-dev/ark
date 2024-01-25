@@ -7,8 +7,7 @@
 
 use std::sync::Once;
 
-use libR_shim::*;
-use libc::c_int;
+use libr::*;
 use stdext::unwrap;
 
 use crate::exec::r_parse;
@@ -38,7 +37,7 @@ pub fn r_n_frame() -> crate::error::Result<i32> {
     }
 }
 
-pub fn r_sys_frame(n: c_int) -> crate::error::Result<SEXP> {
+pub fn r_sys_frame(n: std::ffi::c_int) -> crate::error::Result<SEXP> {
     unsafe {
         let mut protect = RProtect::new();
         let n = protect.add(Rf_ScalarInteger(n));
@@ -122,7 +121,7 @@ pub fn r_stack_info() -> anyhow::Result<Vec<FrameInfo>> {
             let info = r_try_eval_silent(STACK_INFO_CALL.unwrap(), R_GlobalEnv)?;
             Rf_protect(info);
 
-            let n: isize = Rf_length(info).try_into()?;
+            let n: isize = Rf_xlength(info).try_into()?;
 
             for i in (0..n).rev() {
                 let frame = VECTOR_ELT(info, i);
@@ -158,7 +157,7 @@ fn stack_pointer_frame() -> anyhow::Result<FrameInfo> {
             srcref = VECTOR_ELT(srcref, 0);
         }
 
-        let n = Rf_length(srcref);
+        let n = Rf_xlength(srcref);
         if r_typeof(srcref) != INTSXP || n < 4 {
             anyhow::bail!("Expected integer vector for srcref");
         }

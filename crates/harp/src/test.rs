@@ -14,14 +14,18 @@
 #![allow(dead_code)]
 
 use std::os::raw::c_char;
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Mutex;
 use std::sync::Once;
 
-use libR_shim::*;
+use libr::setup_Rmainloop;
+use libr::R_CStackLimit;
+use libr::Rf_initialize_R;
 use stdext::cargs;
 
 use crate::exec::r_sandbox;
+use crate::library::RLibraries;
 use crate::R_MAIN_THREAD_ID;
 
 // Escape hatch for unit tests. We need this because the default
@@ -41,31 +45,24 @@ pub fn start_r() {
             R_MAIN_THREAD_ID = Some(std::thread::current().id());
         }
 
-        // TODO: Right now, tests can fail if the version of R discovered
-        // on the PATH, and the version of R that 'ark' linked to at compile
-        // time, do not match. We could relax this requirement by allowing
-        // 'ark' to have undefined symbols, and use the DYLD_INSERT_LIBRARIES
-        // trick to insert the right version of R when 'ark' is launched,
-        // but for now we just have this comment as a reminder.
-
         // Set up R_HOME if necessary.
-        if let Err(_) = std::env::var("R_HOME") {
-            let result = Command::new("R").arg("RHOME").output().unwrap();
-            let home = String::from_utf8(result.stdout).unwrap();
-            std::env::set_var("R_HOME", home.trim());
-        }
+        let r_home = match std::env::var("R_HOME") {
+            Ok(r_home) => PathBuf::from(r_home),
+            Err(_) => {
+                let result = Command::new("R").arg("RHOME").output().unwrap();
+                let r_home = String::from_utf8(result.stdout).unwrap();
+                let r_home = r_home.trim();
+                std::env::set_var("R_HOME", r_home);
+                PathBuf::from(r_home)
+            },
+        };
 
-        // Build the argument list for Rf_initialize_R
-        let mut arguments = cargs!["R", "--slave", "--no-save", "--no-restore"];
+        let libraries = RLibraries::from_r_home_path(&r_home);
+        libraries.initialize_pre_setup_r();
 
-        unsafe {
-            Rf_initialize_R(
-                arguments.len() as i32,
-                arguments.as_mut_ptr() as *mut *mut c_char,
-            );
-            R_CStackLimit = usize::MAX;
-            setup_Rmainloop();
-        }
+        setup_r();
+
+        libraries.initialize_post_setup_r();
 
         // Initialize harp globals
         unsafe {
@@ -73,6 +70,20 @@ pub fn start_r() {
         }
         crate::initialize();
     });
+}
+
+fn setup_r() {
+    // Build the argument list for Rf_initialize_R
+    let mut arguments = cargs!["R", "--slave", "--no-save", "--no-restore"];
+
+    unsafe {
+        Rf_initialize_R(
+            arguments.len() as i32,
+            arguments.as_mut_ptr() as *mut *mut c_char,
+        );
+        libr::set(R_CStackLimit, usize::MAX);
+        setup_Rmainloop();
+    }
 }
 
 pub fn r_test<F: FnOnce()>(f: F) {

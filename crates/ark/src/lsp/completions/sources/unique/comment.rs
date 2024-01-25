@@ -141,7 +141,7 @@ fn test_comment() {
 
 #[test]
 fn test_roxygen_comment() {
-    use libR_shim::LOGICAL_ELT;
+    use libr::LOGICAL_ELT;
     use tree_sitter::Point;
 
     use crate::lsp::documents::Document;

@@ -5,7 +5,9 @@
 //
 //
 
-use libR_shim::*;
+use libr::Rf_protect;
+use libr::Rf_unprotect;
+use libr::SEXP;
 
 // NOTE: The RProtect struct uses R's stack-based object protection, and so is
 // only appropriate for R objects with 'automatic' lifetime. In general, this

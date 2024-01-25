@@ -45,7 +45,7 @@ pub fn vector(_attr: TokenStream, item: TokenStream) -> TokenStream {
         #data
 
         impl std::ops::Deref for #ident {
-            type Target = SEXP;
+            type Target = libr::SEXP;
 
             fn deref(&self) -> &Self::Target {
                 &self.object.sexp
@@ -58,9 +58,9 @@ pub fn vector(_attr: TokenStream, item: TokenStream) -> TokenStream {
             }
         }
 
-        impl std::convert::TryFrom<SEXP> for #ident {
+        impl std::convert::TryFrom<libr::SEXP> for #ident {
             type Error = crate::error::Error;
-            fn try_from(value: SEXP) -> Result<Self, Self::Error> {
+            fn try_from(value: libr::SEXP) -> Result<Self, Self::Error> {
                 unsafe { Self::new(value) }
             }
         }
@@ -200,7 +200,7 @@ pub fn register(_attr: TokenStream, item: TokenStream) -> TokenStream {
         fn #register() {
 
             unsafe {
-                harp::routines::add(libR_shim::R_CallMethodDef {
+                harp::routines::add(libr::R_CallMethodDef {
                     name: (#name).as_ptr() as *const std::os::raw::c_char,
                     fun: Some(::std::mem::transmute(#ident as *const ())),
                     numArgs: #nargs
@@ -247,7 +247,7 @@ pub fn register(_attr: TokenStream, item: TokenStream) -> TokenStream {
     // `r_unwrap()` which takes the function body as input, ensuring that
     // it's a `Result<SEXP, _>` and guaranteeing that the expanded function
     // body does return a `SEXP` type.
-    let sexp_type: syn::ReturnType = syn::parse(quote! { -> libR_shim::SEXP }.into()).unwrap();
+    let sexp_type: syn::ReturnType = syn::parse(quote! { -> libr::SEXP }.into()).unwrap();
     function.sig.output = sexp_type;
 
     // Put everything together

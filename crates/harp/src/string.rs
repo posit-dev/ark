@@ -5,7 +5,15 @@
 //
 //
 
-use libR_shim::*;
+use libr::ParseStatus;
+use libr::R_NaString;
+use libr::R_NilValue;
+use libr::R_ParseVector;
+use libr::Rf_xlength;
+use libr::EXPRSXP;
+use libr::SEXP;
+use libr::STRSXP;
+use libr::VECTOR_ELT;
 
 use crate::object::RObject;
 use crate::protect::RProtect;
@@ -24,7 +32,7 @@ pub unsafe fn r_string_decode(code: &str) -> Option<String> {
 
     // check for string in result
     if r_typeof(result) == EXPRSXP {
-        if Rf_length(result) != 0 {
+        if Rf_xlength(result) != 0 {
             let value = VECTOR_ELT(result, 0);
             if r_typeof(value) == STRSXP {
                 return RObject::view(value).to::<String>().ok();
@@ -36,5 +44,5 @@ pub unsafe fn r_string_decode(code: &str) -> Option<String> {
 }
 
 pub fn r_is_string(x: SEXP) -> bool {
-    unsafe { r_typeof(x) == STRSXP && Rf_length(x) == 1 && x != R_NaString }
+    unsafe { r_typeof(x) == STRSXP && Rf_xlength(x) == 1 && x != R_NaString }
 }

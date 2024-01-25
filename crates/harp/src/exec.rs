@@ -8,11 +8,9 @@
 use std::ffi::CStr;
 use std::mem;
 use std::mem::take;
-use std::os::raw::c_char;
-use std::os::raw::c_int;
 use std::os::raw::c_void;
 
-use libR_shim::*;
+use libr::*;
 
 use crate::environment::R_ENVS;
 use crate::error::Error;
@@ -30,13 +28,6 @@ use crate::utils::r_stringify;
 use crate::utils::r_typeof;
 use crate::vector::CharacterVector;
 use crate::vector::Vector;
-
-extern "C" {
-    pub static R_ParseError: c_int;
-    pub static R_ParseErrorMsg: [c_char; 256usize];
-    pub static mut R_DirtyImage: ::std::os::raw::c_int;
-}
-
 pub struct RArgument {
     pub name: String,
     pub value: RObject,
@@ -458,10 +449,10 @@ pub unsafe fn r_parse_vector(code: &str) -> Result<ParseResult> {
         ParseStatus_PARSE_OK => Ok(ParseResult::Complete(*result)),
         ParseStatus_PARSE_INCOMPLETE => Ok(ParseResult::Incomplete()),
         ParseStatus_PARSE_ERROR => Err(Error::ParseSyntaxError {
-            message: CStr::from_ptr(R_ParseErrorMsg.as_ptr())
+            message: CStr::from_ptr(libr::get(R_ParseErrorMsg).as_ptr())
                 .to_string_lossy()
                 .to_string(),
-            line: R_ParseError as i32,
+            line: libr::get(R_ParseError) as i32,
         }),
         _ => {
             // should not get here
@@ -504,7 +495,7 @@ pub fn r_parse(code: &str) -> Result<RObject> {
     unsafe {
         let exprs = r_parse_exprs(code)?;
 
-        let n = Rf_length(*exprs);
+        let n = Rf_xlength(*exprs);
         if n != 1 {
             return Err(Error::ParseError {
                 code: code.to_string(),
@@ -789,7 +780,7 @@ mod tests {
 
                     let call = VECTOR_ELT(out, 0);
                     assert_eq!(r_typeof(call), LANGSXP as u32);
-                    assert_eq!(Rf_length(call), 2);
+                    assert_eq!(Rf_xlength(call), 2);
                     assert_eq!(CAR(call), r_symbol!("force"));
 
                     let arg = CADR(call);
@@ -842,18 +833,18 @@ mod tests {
     #[test]
     fn test_dirty_image() {
         r_test! {
-            R_DirtyImage = 2;
+            libr::set(R_DirtyImage, 2);
             let sym = r_symbol!("aaa");
             Rf_defineVar(sym, Rf_ScalarInteger(42), R_GlobalEnv);
-            assert_eq!(R_DirtyImage, 1);
+            assert_eq!(libr::get(R_DirtyImage), 1);
 
-            R_DirtyImage = 2;
+            libr::set(R_DirtyImage, 2);
             Rf_setVar(sym, Rf_ScalarInteger(43), R_GlobalEnv);
-            assert_eq!(R_DirtyImage, 1);
+            assert_eq!(libr::get(R_DirtyImage), 1);
 
-            R_DirtyImage = 2;
+            libr::set(R_DirtyImage, 2);
             r_envir_remove("aaa", R_GlobalEnv);
-            assert_eq!(R_DirtyImage, 1);
+            assert_eq!(libr::get(R_DirtyImage), 1);
         }
     }
 

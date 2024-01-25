@@ -20,7 +20,7 @@ a[Amalthea] <--Message Handlers--> ark(((Amalthea R Kernel - ark)))
 a <--ZeroMQ--> jf[Jupyter Frontend]
 ark <--> lsp[Language Protocol Server]
 ark <--> h[harp R wrapper]
-ark <--> libr[libR-sys bindings]
+ark <--> libr[Rust R bindings]
 h <--> libr
 libr <--> r[R Shared Library]
 lsp <--> h
@@ -45,10 +45,10 @@ $ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 $ source $HOME/.cargo/env
 ```
 
-Assuming you have a working Rust toolchain, you can just run `cargo build` followed by the post-install script:
+Assuming you have a working Rust toolchain, you can just run `cargo build`:
 
 ```bash
-$ cargo build && scripts/post-install.sh
+$ cargo build
 ```
 
 #### Standalone

@@ -23,7 +23,24 @@ use harp::utils::r_symbol_quote_invalid;
 use harp::utils::r_symbol_valid;
 use harp::vector::CharacterVector;
 use harp::vector::Vector;
-use libR_shim::*;
+use libr::R_EmptyEnv;
+use libr::R_GlobalEnv;
+use libr::R_NilValue;
+use libr::R_lsInternal;
+use libr::Rf_ScalarInteger;
+use libr::Rf_allocVector;
+use libr::Rf_cons;
+use libr::Rf_lang1;
+use libr::Rf_xlength;
+use libr::CDR;
+use libr::ENCLOS;
+use libr::RAW;
+use libr::RAWSXP;
+use libr::SETCDR;
+use libr::SET_TAG;
+use libr::SET_VECTOR_ELT;
+use libr::VECSXP;
+use libr::VECTOR_ELT;
 use stdext::*;
 use tower_lsp::lsp_types::Diagnostic;
 use tower_lsp::lsp_types::DiagnosticSeverity;
@@ -681,7 +698,7 @@ fn recurse_call_arguments_custom(
             .call()?;
 
         if !r_is_null(*custom_diagnostics) {
-            let n = XLENGTH(*custom_diagnostics);
+            let n = Rf_xlength(*custom_diagnostics);
             for i in 0..n {
                 // diag is a list with:
                 //   - The kind of diagnostic: skip, default, simple

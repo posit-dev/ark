@@ -44,7 +44,7 @@ use harp::vector::CharacterVector;
 use harp::vector::IntegerVector;
 use harp::vector::Vector;
 use itertools::Itertools;
-use libR_shim::*;
+use libr::*;
 use stdext::local;
 use stdext::unwrap;
 
@@ -355,7 +355,7 @@ impl WorkspaceVariableDisplayType {
         let rtype = r_typeof(value);
         match rtype {
             EXPRSXP => {
-                let default = format!("expression [{}]", unsafe { XLENGTH(value) });
+                let default = format!("expression [{}]", unsafe { Rf_xlength(value) });
                 Self::from_class(value, default)
             },
             LANGSXP => Self::from_class(value, String::from("language")),
@@ -387,7 +387,7 @@ impl WorkspaceVariableDisplayType {
                     let display_type = format!("{} [{}]", dfclass, shape);
                     Self::simple(display_type)
                 } else {
-                    let default = format!("list [{}]", XLENGTH(value));
+                    let default = format!("list [{}]", Rf_xlength(value));
                     Self::from_class(value, default)
                 }
             },
@@ -432,11 +432,13 @@ fn has_children(value: SEXP) -> bool {
         }
     } else {
         match r_typeof(value) {
-            VECSXP | EXPRSXP => unsafe { XLENGTH(value) != 0 },
+            VECSXP | EXPRSXP => unsafe { Rf_xlength(value) != 0 },
             LISTSXP => true,
             ENVSXP => !Environment::new(RObject::view(value))
                 .is_empty(EnvironmentFilter::ExcludeHiddenBindings),
-            LGLSXP | RAWSXP | STRSXP | INTSXP | REALSXP | CPLXSXP => unsafe { XLENGTH(value) > 1 },
+            LGLSXP | RAWSXP | STRSXP | INTSXP | REALSXP | CPLXSXP => unsafe {
+                Rf_xlength(value) > 1
+            },
             _ => false,
         }
     }
@@ -568,10 +570,12 @@ impl PositronVariable {
     fn variable_length(x: SEXP) -> usize {
         let rtype = r_typeof(x);
         match rtype {
-            LGLSXP | RAWSXP | INTSXP | REALSXP | CPLXSXP | STRSXP => unsafe { XLENGTH(x) as usize },
+            LGLSXP | RAWSXP | INTSXP | REALSXP | CPLXSXP | STRSXP => unsafe {
+                Rf_xlength(x) as usize
+            },
             VECSXP => unsafe {
                 if r_inherits(x, "POSIXlt") {
-                    XLENGTH(VECTOR_ELT(x, 0)) as usize
+                    Rf_xlength(VECTOR_ELT(x, 0)) as usize
                 } else if r_is_data_frame(x) {
                     let dim = RFunction::new("base", "dim.data.frame")
                         .add(x)
@@ -580,7 +584,7 @@ impl PositronVariable {
 
                     INTEGER_ELT(*dim, 0) as usize
                 } else {
-                    XLENGTH(x) as usize
+                    Rf_xlength(x) as usize
                 }
             },
             LISTSXP => match pairlist_size(x) {
@@ -622,7 +626,7 @@ impl PositronVariable {
 
             VECSXP => unsafe {
                 let dim = Rf_getAttrib(x, R_DimSymbol);
-                if dim != R_NilValue && XLENGTH(dim) == 2 {
+                if dim != R_NilValue && Rf_xlength(dim) == 2 {
                     VariableKind::Table
                 } else {
                     VariableKind::Map
@@ -631,9 +635,9 @@ impl PositronVariable {
 
             LGLSXP => unsafe {
                 let dim = Rf_getAttrib(x, R_DimSymbol);
-                if dim != R_NilValue && XLENGTH(dim) == 2 {
+                if dim != R_NilValue && Rf_xlength(dim) == 2 {
                     VariableKind::Table
-                } else if XLENGTH(x) == 1 {
+                } else if Rf_xlength(x) == 1 {
                     if LOGICAL_ELT(x, 0) == R_NaInt {
                         VariableKind::Empty
                     } else {
@@ -646,9 +650,9 @@ impl PositronVariable {
 
             INTSXP => unsafe {
                 let dim = Rf_getAttrib(x, R_DimSymbol);
-                if dim != R_NilValue && XLENGTH(dim) == 2 {
+                if dim != R_NilValue && Rf_xlength(dim) == 2 {
                     VariableKind::Table
-                } else if XLENGTH(x) == 1 {
+                } else if Rf_xlength(x) == 1 {
                     if INTEGER_ELT(x, 0) == R_NaInt {
                         VariableKind::Empty
                     } else {
@@ -661,9 +665,9 @@ impl PositronVariable {
 
             REALSXP => unsafe {
                 let dim = Rf_getAttrib(x, R_DimSymbol);
-                if dim != R_NilValue && XLENGTH(dim) == 2 {
+                if dim != R_NilValue && Rf_xlength(dim) == 2 {
                     VariableKind::Table
-                } else if XLENGTH(x) == 1 {
+                } else if Rf_xlength(x) == 1 {
                     if R_IsNA(REAL_ELT(x, 0)) == 1 {
                         VariableKind::Empty
                     } else {
@@ -676,9 +680,9 @@ impl PositronVariable {
 
             CPLXSXP => unsafe {
                 let dim = Rf_getAttrib(x, R_DimSymbol);
-                if dim != R_NilValue && XLENGTH(dim) == 2 {
+                if dim != R_NilValue && Rf_xlength(dim) == 2 {
                     VariableKind::Table
-                } else if XLENGTH(x) == 1 {
+                } else if Rf_xlength(x) == 1 {
                     let value = COMPLEX_ELT(x, 0);
                     if R_IsNA(value.r) == 1 || R_IsNA(value.i) == 1 {
                         VariableKind::Empty
@@ -692,9 +696,9 @@ impl PositronVariable {
 
             STRSXP => unsafe {
                 let dim = Rf_getAttrib(x, R_DimSymbol);
-                if dim != R_NilValue && XLENGTH(dim) == 2 {
+                if dim != R_NilValue && Rf_xlength(dim) == 2 {
                     VariableKind::Table
-                } else if XLENGTH(x) == 1 {
+                } else if Rf_xlength(x) == 1 {
                     if STRING_ELT(x, 0) == R_NaString {
                         VariableKind::Empty
                     } else {
@@ -949,7 +953,7 @@ impl PositronVariable {
 
     fn inspect_list(value: SEXP) -> Result<Vec<Variable>, harp::error::Error> {
         let mut out: Vec<Variable> = vec![];
-        let n = unsafe { XLENGTH(value) };
+        let n = unsafe { Rf_xlength(value) };
 
         let names = Names::new(value, |i| format!("[[{}]]", i + 1));
 
@@ -1036,7 +1040,7 @@ impl PositronVariable {
     fn inspect_vector(vector: SEXP) -> harp::error::Result<Vec<Variable>> {
         unsafe {
             let vector = RObject::new(vector);
-            let n = XLENGTH(*vector);
+            let n = Rf_xlength(*vector);
 
             let mut out: Vec<Variable> = vec![];
             let r_type = r_typeof(*vector);

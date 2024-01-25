@@ -7,7 +7,14 @@
 
 use std::os::raw::c_char;
 
-use libR_shim::*;
+use libr::cetype_t_CE_UTF8;
+use libr::R_NaString;
+use libr::R_xlen_t;
+use libr::Rf_mkCharLenCE;
+use libr::SET_STRING_ELT;
+use libr::SEXP;
+use libr::STRING_ELT;
+use libr::STRSXP;
 
 use crate::object::RObject;
 use crate::utils::r_str_to_owned_utf8_unchecked;
@@ -80,6 +87,8 @@ impl Vector for CharacterVector {
 
 #[cfg(test)]
 mod test {
+    use libr::STRSXP;
+
     use crate::r_test;
     use crate::utils::r_typeof;
     use crate::vector::*;

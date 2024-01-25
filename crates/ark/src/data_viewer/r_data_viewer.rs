@@ -21,17 +21,17 @@ use harp::utils::r_typeof;
 use harp::vector::formatted_vector::FormattedVector;
 use harp::vector::CharacterVector;
 use harp::vector::Vector;
-use libR_shim::R_DimSymbol;
-use libR_shim::R_MissingArg;
-use libR_shim::R_NamesSymbol;
-use libR_shim::R_NilValue;
-use libR_shim::R_RowNamesSymbol;
-use libR_shim::Rf_getAttrib;
-use libR_shim::INTEGER_ELT;
-use libR_shim::SEXP;
-use libR_shim::STRSXP;
-use libR_shim::VECTOR_ELT;
-use libR_shim::XLENGTH;
+use libr::R_DimSymbol;
+use libr::R_MissingArg;
+use libr::R_NamesSymbol;
+use libr::R_NilValue;
+use libr::R_RowNamesSymbol;
+use libr::Rf_getAttrib;
+use libr::Rf_xlength;
+use libr::INTEGER_ELT;
+use libr::SEXP;
+use libr::STRSXP;
+use libr::VECTOR_ELT;
 use serde::Deserialize;
 use serde::Serialize;
 use stdext::local;
@@ -125,7 +125,7 @@ impl DataSet {
             unsafe {
                 let names = ColumnNames::new(Rf_getAttrib(object, R_NamesSymbol));
 
-                let n_columns = XLENGTH(object);
+                let n_columns = Rf_xlength(object);
                 for i in 0..n_columns {
                     let col_name = names.get_unchecked(i);
 
@@ -205,7 +205,7 @@ impl DataSet {
         let row_count = {
             if r_is_data_frame(*object) {
                 let row_names = Rf_getAttrib(*object, R_RowNamesSymbol);
-                XLENGTH(row_names) as usize
+                Rf_xlength(row_names) as usize
             } else if r_is_matrix(*object) {
                 let dim = Rf_getAttrib(*object, R_DimSymbol);
                 INTEGER_ELT(dim, 0) as usize

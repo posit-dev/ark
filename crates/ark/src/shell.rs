@@ -42,7 +42,7 @@ use harp::exec::ParseResult;
 use harp::line_ending::convert_line_endings;
 use harp::line_ending::LineEnding;
 use harp::object::RObject;
-use libR_shim::*;
+use libr::R_GlobalEnv;
 use log::*;
 use serde_json::json;
 use stdext::spawn;

@@ -5,7 +5,9 @@
 //
 //
 
-use libR_shim::*;
+use libr::R_CallMethodDef;
+use libr::R_getEmbeddingDllInfo;
+use libr::R_registerRoutines;
 use log::error;
 
 static mut R_ROUTINES: Vec<R_CallMethodDef> = vec![];

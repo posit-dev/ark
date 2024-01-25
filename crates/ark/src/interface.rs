@@ -13,6 +13,7 @@
 use std::collections::VecDeque;
 use std::ffi::*;
 use std::os::raw::c_uchar;
+use std::path::PathBuf;
 use std::result::Result::Ok;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -62,6 +63,7 @@ use harp::exec::r_source;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::exec::RSandboxScope;
+use harp::library::RLibraries;
 use harp::line_ending::convert_line_endings;
 use harp::line_ending::LineEnding;
 use harp::object::RObject;
@@ -72,14 +74,14 @@ use harp::utils::r_get_option;
 use harp::utils::r_is_data_frame;
 use harp::utils::r_poke_option_show_error_messages;
 use harp::R_MAIN_THREAD_ID;
-use libR_shim::R_BaseNamespace;
-use libR_shim::R_GlobalEnv;
-use libR_shim::R_ProcessEvents;
-use libR_shim::R_RunPendingFinalizers;
-use libR_shim::Rf_error;
-use libR_shim::Rf_findVarInFrame;
-use libR_shim::Rf_onintr;
-use libR_shim::SEXP;
+use libr::R_BaseNamespace;
+use libr::R_GlobalEnv;
+use libr::R_ProcessEvents;
+use libr::R_RunPendingFinalizers;
+use libr::Rf_error;
+use libr::Rf_findVarInFrame;
+use libr::Rf_onintr;
+use libr::SEXP;
 use log::*;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -168,7 +170,18 @@ pub fn start_r(
         args.push(CString::new(arg).unwrap().into_raw());
     }
 
+    // Get `R_HOME`, set by Positron / CI / kernel specification
+    let r_home = match std::env::var("R_HOME") {
+        Ok(home) => PathBuf::from(home),
+        Err(err) => panic!("Can't find `R_HOME`: {err:?}"),
+    };
+
+    let libraries = RLibraries::from_r_home_path(&r_home);
+    libraries.initialize_pre_setup_r();
+
     crate::sys::interface::setup_r(args);
+
+    libraries.initialize_post_setup_r();
 
     unsafe {
         // Optionally run a user specified R startup script

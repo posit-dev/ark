@@ -4,7 +4,9 @@
 // Copyright (C) 2022 Posit Software, PBC. All rights reserved.
 //
 //
-use libR_shim::*;
+use libr::R_NamesSymbol;
+use libr::Rf_getAttrib;
+use libr::SEXP;
 
 use crate::object::RObject;
 use crate::utils::r_is_null;

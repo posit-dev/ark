@@ -9,7 +9,8 @@ use std::process::Command;
 
 use anyhow::Result;
 use harp::object::RObject;
-use libR_shim::*;
+use libr::Rf_ScalarLogical;
+use libr::SEXP;
 
 use crate::help::message::HelpReply;
 use crate::help::message::HelpRequest;

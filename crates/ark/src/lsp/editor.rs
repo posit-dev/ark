@@ -7,7 +7,8 @@
 
 use harp::vector::CharacterVector;
 use harp::vector::Vector;
-use libR_shim::*;
+use libr::R_NilValue;
+use libr::SEXP;
 use stdext::unwrap;
 use tower_lsp::lsp_types::ShowDocumentParams;
 use tower_lsp::lsp_types::Url;
