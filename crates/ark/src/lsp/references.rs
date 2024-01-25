@@ -9,9 +9,11 @@ use std::path::Path;
 
 use anyhow::bail;
 use log::info;
+use ropey::Rope;
 use stdext::unwrap::IntoResult;
 use stdext::*;
 use tower_lsp::lsp_types::Location;
+use tower_lsp::lsp_types::Position;
 use tower_lsp::lsp_types::Range;
 use tower_lsp::lsp_types::ReferenceParams;
 use tower_lsp::lsp_types::Url;
@@ -21,10 +23,11 @@ use walkdir::WalkDir;
 
 use crate::lsp::backend::Backend;
 use crate::lsp::documents::Document;
+use crate::lsp::encoding::convert_point_to_position;
+use crate::lsp::encoding::convert_position_to_point;
 use crate::lsp::indexer::filter_entry;
 use crate::lsp::traits::cursor::TreeCursorExt;
-use crate::lsp::traits::point::PointExt;
-use crate::lsp::traits::position::PositionExt;
+use crate::lsp::traits::rope::RopeExt;
 use crate::lsp::traits::url::UrlExt;
 
 enum ReferenceKind {
@@ -38,23 +41,23 @@ struct Context {
     symbol: String,
 }
 
-fn add_reference(node: &Node, path: &Path, locations: &mut Vec<Location>) {
+fn add_reference(node: &Node, contents: &Rope, path: &Path, locations: &mut Vec<Location>) {
+    let start = convert_point_to_position(contents, node.start_position());
+    let end = convert_point_to_position(contents, node.end_position());
+
     let location = Location::new(
         Url::from_file_path(path).expect("valid path"),
-        Range::new(
-            node.start_position().as_position(),
-            node.end_position().as_position(),
-        ),
+        Range::new(start, end),
     );
     locations.push(location);
 }
 
-fn found_match(node: &Node, contents: &str, context: &Context) -> bool {
+fn found_match(node: &Node, contents: &Rope, context: &Context) -> bool {
     if node.kind() != "identifier" {
         return false;
     }
 
-    let symbol = node.utf8_text(contents.as_bytes()).expect("contents");
+    let symbol = contents.node_slice(node).unwrap().to_string();
     if symbol != context.symbol {
         return false;
     }
@@ -91,13 +94,16 @@ fn found_match(node: &Node, contents: &str, context: &Context) -> bool {
 }
 
 impl Backend {
-    fn build_context(&self, uri: &Url, point: Point) -> anyhow::Result<Context> {
+    fn build_context(&self, uri: &Url, position: Position) -> anyhow::Result<Context> {
         // Unwrap the URL.
         let path = uri.file_path()?;
 
         // Figure out the identifier we're looking for.
         let context = self.with_document(path.as_path(), |document| {
             let ast = &document.ast;
+            let contents = &document.contents;
+            let point = convert_position_to_point(contents, position);
+
             let mut node = ast
                 .root_node()
                 .descendant_for_point_range(point, point)
@@ -146,13 +152,9 @@ impl Backend {
             };
 
             // return identifier text contents
-            let contents = document.contents.to_string();
-            let symbol = node.utf8_text(contents.as_bytes())?;
+            let symbol = document.contents.node_slice(&node)?.to_string();
 
-            Ok(Context {
-                kind,
-                symbol: symbol.to_string(),
-            })
+            Ok(Context { kind, symbol })
         });
 
         return context;
@@ -197,12 +199,12 @@ impl Backend {
         locations: &mut Vec<Location>,
     ) {
         let ast = &document.ast;
-        let contents = document.contents.to_string();
+        let contents = &document.contents;
 
         let mut cursor = ast.walk();
         cursor.recurse(|node| {
-            if found_match(&node, &contents, &context) {
-                add_reference(&node, path, locations);
+            if found_match(&node, contents, &context) {
+                add_reference(&node, contents, path, locations);
             }
 
             return true;
@@ -215,11 +217,11 @@ impl Backend {
 
         // Extract relevant parameters.
         let uri = params.text_document_position.text_document.uri;
-        let point = params.text_document_position.position.as_point();
+        let position = params.text_document_position.position;
 
         // Figure out what we're looking for.
-        let context = unwrap!(self.build_context(&uri, point), Err(_) => {
-            info!("failed to find build context at point {}", point);
+        let context = unwrap!(self.build_context(&uri, position), Err(_) => {
+            info!("failed to find build context at position {:?}", position);
             return Err(());
         });
 

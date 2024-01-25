@@ -5,7 +5,6 @@
 //
 //
 
-use tower_lsp::lsp_types::Position;
 use tree_sitter::Point;
 
 fn compare(lhs: Point, rhs: Point) -> i32 {
@@ -23,7 +22,6 @@ fn compare(lhs: Point, rhs: Point) -> i32 {
 }
 
 pub trait PointExt {
-    fn as_position(self) -> Position;
     fn is_before(self, other: Point) -> bool;
     fn is_before_or_equal(self, other: Point) -> bool;
     fn is_equal(self, other: Point) -> bool;
@@ -32,13 +30,6 @@ pub trait PointExt {
 }
 
 impl PointExt for Point {
-    fn as_position(self) -> Position {
-        Position {
-            line: self.row as u32,
-            character: self.column as u32,
-        }
-    }
-
     fn is_before(self, other: Point) -> bool {
         return compare(self, other) < 0;
     }

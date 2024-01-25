@@ -23,6 +23,7 @@ use crate::lsp::completions::sources::utils::set_sort_text_by_first_appearance;
 use crate::lsp::completions::sources::utils::CallNodePositionType;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::indexer;
+use crate::lsp::traits::rope::RopeExt;
 
 pub(super) fn completions_from_call(
     context: &DocumentContext,
@@ -84,7 +85,7 @@ pub(super) fn completions_from_call(
         return Ok(None);
     };
 
-    let callee = callee.utf8_text(context.source.as_bytes())?;
+    let callee = context.document.contents.node_slice(&callee)?.to_string();
 
     // - Prefer `root` as the first argument if it exists
     // - Then fall back to looking it up, if possible
@@ -129,7 +130,7 @@ fn get_first_argument(context: &DocumentContext, node: &Node) -> Result<Option<R
         return Ok(None);
     };
 
-    let text = value.utf8_text(context.source.as_bytes())?;
+    let text = context.document.contents.node_slice(&value)?.to_string();
 
     let options = RParseEvalOptions {
         forbid_function_calls: true,
@@ -137,7 +138,7 @@ fn get_first_argument(context: &DocumentContext, node: &Node) -> Result<Option<R
     };
 
     // Try to evaluate the first argument
-    let value = r_parse_eval(text, options);
+    let value = r_parse_eval(text.as_str(), options);
 
     // If the user is writing pseudocode, this object might not exist yet,
     // in which case we just want to ignore the error from trying to evaluate it
@@ -225,7 +226,7 @@ fn completions_from_session_arguments(
 
     // Return the names of these formals.
     for string in strings.iter() {
-        match completion_item_from_parameter(string, callable, &context.point) {
+        match completion_item_from_parameter(string, callable, context) {
             Ok(item) => completions.push(item),
             Err(err) => log::error!("{err:?}"),
         }
@@ -257,11 +258,7 @@ fn completions_from_workspace_arguments(
     match entry.data {
         indexer::IndexEntryData::Function { name, arguments } => {
             for argument in arguments {
-                match completion_item_from_parameter(
-                    argument.as_str(),
-                    name.as_str(),
-                    &context.point,
-                ) {
+                match completion_item_from_parameter(argument.as_str(), name.as_str(), context) {
                     Ok(item) => completions.push(item),
                     Err(err) => log::error!("{err:?}"),
                 }

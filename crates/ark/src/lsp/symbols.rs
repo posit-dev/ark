@@ -11,6 +11,7 @@ use std::result::Result::Ok;
 
 use anyhow::*;
 use log::*;
+use ropey::Rope;
 use stdext::unwrap::IntoResult;
 use tower_lsp::lsp_types::DocumentSymbol;
 use tower_lsp::lsp_types::DocumentSymbolParams;
@@ -23,9 +24,10 @@ use tower_lsp::lsp_types::WorkspaceSymbolParams;
 use tree_sitter::Node;
 
 use crate::lsp::backend::Backend;
+use crate::lsp::encoding::convert_point_to_position;
 use crate::lsp::indexer;
 use crate::lsp::indexer::IndexEntryData;
-use crate::lsp::traits::point::PointExt;
+use crate::lsp::traits::rope::RopeExt;
 use crate::lsp::traits::string::StringExt;
 
 pub fn symbols(
@@ -83,9 +85,12 @@ pub fn document_symbols(
     let uri = &params.text_document.uri;
     let document = backend.documents.get(uri).into_result()?;
     let ast = &document.ast;
-    let contents = document.contents.to_string();
+    let contents = &document.contents;
 
     let node = ast.root_node();
+
+    let start = convert_point_to_position(contents, node.start_position());
+    let end = convert_point_to_position(contents, node.end_position());
 
     // construct a root symbol, so we always have something to append to
     let mut root = DocumentSymbol {
@@ -95,14 +100,8 @@ pub fn document_symbols(
         deprecated: None,
         tags: None,
         detail: None,
-        range: Range {
-            start: node.start_position().as_position(),
-            end: node.end_position().as_position(),
-        },
-        selection_range: Range {
-            start: node.start_position().as_position(),
-            end: node.end_position().as_position(),
-        },
+        range: Range { start, end },
+        selection_range: Range { start, end },
     };
 
     // index from the root
@@ -123,7 +122,7 @@ fn is_indexable(node: &Node) -> bool {
 
 fn index_node(
     node: &Node,
-    contents: &String,
+    contents: &Rope,
     parent: &mut DocumentSymbol,
     symbols: &mut Vec<DocumentSymbol>,
 ) -> Result<bool> {
@@ -155,7 +154,7 @@ fn index_node(
 
 fn index_assignment(
     node: &Node,
-    contents: &String,
+    contents: &Rope,
     parent: &mut DocumentSymbol,
     symbols: &mut Vec<DocumentSymbol>,
 ) -> Result<bool> {
@@ -175,22 +174,20 @@ fn index_assignment(
     }
 
     // otherwise, just index as generic object
-    let name = lhs.utf8_text(contents.as_bytes())?;
+    let name = contents.node_slice(&lhs)?.to_string();
+
+    let start = convert_point_to_position(contents, lhs.start_position());
+    let end = convert_point_to_position(contents, lhs.end_position());
+
     let symbol = DocumentSymbol {
-        name: name.to_string(),
+        name,
         kind: SymbolKind::OBJECT,
         detail: None,
         children: Some(Vec::new()),
         deprecated: None,
         tags: None,
-        range: Range {
-            start: lhs.start_position().as_position(),
-            end: lhs.end_position().as_position(),
-        },
-        selection_range: Range {
-            start: lhs.start_position().as_position(),
-            end: lhs.end_position().as_position(),
-        },
+        range: Range::new(start, end),
+        selection_range: Range::new(start, end),
     };
 
     // add this symbol to the parent node
@@ -201,7 +198,7 @@ fn index_assignment(
 
 fn index_function(
     node: &Node,
-    contents: &String,
+    contents: &Rope,
     parent: &mut DocumentSymbol,
     symbols: &mut Vec<DocumentSymbol>,
 ) -> Result<bool> {
@@ -216,28 +213,28 @@ fn index_function(
     let mut cursor = parameters.walk();
     for parameter in parameters.children_by_field_name("parameter", &mut cursor) {
         let name = parameter.child_by_field_name("name").into_result()?;
-        let name = name.utf8_text(contents.as_bytes())?;
-        arguments.push(name.to_string());
+        let name = contents.node_slice(&name)?.to_string();
+        arguments.push(name);
     }
 
-    let name = lhs.utf8_text(contents.as_bytes())?;
+    let name = contents.node_slice(&lhs)?.to_string();
     let detail = format!("function({})", arguments.join(", "));
 
     // build the document symbol
     let symbol = DocumentSymbol {
-        name: name.to_string(),
+        name,
         kind: SymbolKind::FUNCTION,
         detail: Some(detail),
         children: Some(Vec::new()),
         deprecated: None,
         tags: None,
         range: Range {
-            start: lhs.start_position().as_position(),
-            end: rhs.end_position().as_position(),
+            start: convert_point_to_position(contents, lhs.start_position()),
+            end: convert_point_to_position(contents, rhs.end_position()),
         },
         selection_range: Range {
-            start: lhs.start_position().as_position(),
-            end: lhs.end_position().as_position(),
+            start: convert_point_to_position(contents, lhs.start_position()),
+            end: convert_point_to_position(contents, lhs.end_position()),
         },
     };
 

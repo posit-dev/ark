@@ -17,6 +17,7 @@ use tree_sitter::Node;
 
 use crate::lsp::completions::sources::utils::completions_from_object_names;
 use crate::lsp::document_context::DocumentContext;
+use crate::lsp::traits::rope::RopeExt;
 
 #[derive(Clone)]
 pub(super) struct PipeRoot {
@@ -129,7 +130,7 @@ fn find_pipe_root_name(context: &DocumentContext, node: &Node) -> Option<String>
         }
 
         // Try to evaluate the left-hand side
-        let root = lhs.utf8_text(context.source.as_bytes()).ok()?;
+        let root = context.document.contents.node_slice(&lhs).ok()?.to_string();
         Some(root)
 
     };

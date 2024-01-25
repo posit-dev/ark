@@ -9,23 +9,30 @@ use harp::external_ptr::ExternalPointer;
 use harp::object::RObject;
 use libr::RAW;
 use libr::SEXP;
+use ropey::Rope;
 use tree_sitter::Node;
+
+use crate::lsp::traits::rope::RopeExt;
 
 #[harp::register]
 pub unsafe extern "C" fn ps_treesitter_node_text(
-    node_ptr: SEXP,
-    source_ptr: SEXP,
+    ffi_node: SEXP,
+    ffi_contents: SEXP,
 ) -> anyhow::Result<SEXP> {
-    let node: Node<'static> = *(RAW(node_ptr) as *mut Node<'static>);
-    let source = ExternalPointer::<&str>::reference(source_ptr);
+    let node: Node<'static> = *(RAW(ffi_node) as *mut Node<'static>);
+    let contents = ExternalPointer::<Rope>::reference(ffi_contents);
 
-    let text = node.utf8_text(source.as_bytes()).unwrap_or("");
+    let text = contents
+        .node_slice(&node)
+        .map(|slice| slice.to_string())
+        .unwrap_or(String::from(""));
+
     Ok(*RObject::from(text))
 }
 
 #[harp::register]
-pub unsafe extern "C" fn ps_treesitter_node_kind(node_ptr: SEXP) -> anyhow::Result<SEXP> {
-    let node: Node<'static> = *(RAW(node_ptr) as *mut Node<'static>);
+pub unsafe extern "C" fn ps_treesitter_node_kind(ffi_node: SEXP) -> anyhow::Result<SEXP> {
+    let node: Node<'static> = *(RAW(ffi_node) as *mut Node<'static>);
 
     Ok(*RObject::from(node.kind()))
 }

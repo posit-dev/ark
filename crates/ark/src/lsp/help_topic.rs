@@ -12,8 +12,9 @@ use tower_lsp::lsp_types::VersionedTextDocumentIdentifier;
 
 use crate::backend_trace;
 use crate::lsp::backend::Backend;
+use crate::lsp::encoding::convert_position_to_point;
 use crate::lsp::traits::node::NodeExt;
-use crate::lsp::traits::position::PositionExt;
+use crate::lsp::traits::rope::RopeExt;
 
 pub static POSITRON_HELP_TOPIC_REQUEST: &'static str = "positron/textDocument/helpTopic";
 
@@ -47,8 +48,10 @@ impl Backend {
         };
 
         let root = document.ast.root_node();
+        let contents = &document.contents;
+
         let position = params.position;
-        let point = position.as_point();
+        let point = convert_position_to_point(contents, position);
 
         let Some(mut node) = root.find_closest_node_to_point(point) else {
             return Ok(None);
@@ -69,17 +72,16 @@ impl Backend {
         }
 
         // Get the text of the node
-        let source = document.contents.to_string();
-        let text = node.utf8_text(source.as_bytes()).unwrap();
+        let text = document.contents.node_slice(&node).unwrap().to_string();
 
         // Form the response
-        let response = HelpTopicResponse {
-            topic: String::from(text),
-        };
+        let response = HelpTopicResponse { topic: text };
 
         backend_trace!(
             self,
-            "help_topic(): Using help topic '{text}' at position {point}"
+            "help_topic(): Using help topic '{}' at position {}",
+            response.topic,
+            point
         );
 
         Ok(Some(response))

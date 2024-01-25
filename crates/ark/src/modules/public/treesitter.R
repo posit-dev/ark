@@ -6,8 +6,8 @@
 #
 #
 
-.ps.treesitter.node.text <- function(node, source) {
-    .ps.Call("ps_treesitter_node_text", node, source)
+.ps.treesitter.node.text <- function(node, contents) {
+    .ps.Call("ps_treesitter_node_text", node, contents)
 }
 
 .ps.treesitter.node.kind <- function(node) {

@@ -16,6 +16,7 @@ use anyhow::*;
 use lazy_static::lazy_static;
 use log::*;
 use regex::Regex;
+use ropey::Rope;
 use stdext::unwrap;
 use stdext::unwrap::IntoResult;
 use tower_lsp::lsp_types::Range;
@@ -26,7 +27,8 @@ use walkdir::WalkDir;
 
 use crate::lsp::documents::Document;
 use crate::lsp::documents::DOCUMENT_INDEX;
-use crate::lsp::traits::point::PointExt;
+use crate::lsp::encoding::convert_point_to_position;
+use crate::lsp::traits::rope::RopeExt;
 
 #[derive(Clone, Debug)]
 pub enum IndexEntryData {
@@ -183,12 +185,12 @@ fn index_file(path: &Path) -> Result<bool> {
 
 fn index_document(document: &Document, path: &Path) -> Result<bool> {
     let ast = &document.ast;
-    let source = document.contents.to_string();
+    let contents = &document.contents;
 
     let root = ast.root_node();
     let mut cursor = root.walk();
     for node in root.children(&mut cursor) {
-        match index_node(path, &source, &node) {
+        match index_node(path, contents, &node) {
             Ok(Some(entry)) => insert(path, entry),
             Ok(None) => {},
             Err(error) => error!("{:?}", error),
@@ -198,19 +200,19 @@ fn index_document(document: &Document, path: &Path) -> Result<bool> {
     Ok(true)
 }
 
-fn index_node(path: &Path, source: &str, node: &Node) -> Result<Option<IndexEntry>> {
-    if let Ok(Some(entry)) = index_function(path, source, node) {
+fn index_node(path: &Path, contents: &Rope, node: &Node) -> Result<Option<IndexEntry>> {
+    if let Ok(Some(entry)) = index_function(path, contents, node) {
         return Ok(Some(entry));
     }
 
-    if let Ok(Some(entry)) = index_comment(path, source, node) {
+    if let Ok(Some(entry)) = index_comment(path, contents, node) {
         return Ok(Some(entry));
     }
 
     Ok(None)
 }
 
-fn index_function(_path: &Path, source: &str, node: &Node) -> Result<Option<IndexEntry>> {
+fn index_function(_path: &Path, contents: &Rope, node: &Node) -> Result<Option<IndexEntry>> {
     // Check for assignment.
     matches!(node.kind(), "<-" | "=").into_result()?;
 
@@ -222,7 +224,7 @@ fn index_function(_path: &Path, source: &str, node: &Node) -> Result<Option<Inde
     let rhs = node.child_by_field_name("rhs").into_result()?;
     matches!(rhs.kind(), "function").into_result()?;
 
-    let name = lhs.utf8_text(source.as_bytes())?;
+    let name = contents.node_slice(&lhs)?.to_string();
     let mut arguments = Vec::new();
 
     // Get the parameters node.
@@ -233,31 +235,33 @@ fn index_function(_path: &Path, source: &str, node: &Node) -> Result<Option<Inde
     for child in parameters.children(&mut cursor) {
         let name = unwrap!(child.child_by_field_name("name"), None => continue);
         if matches!(name.kind(), "identifier") {
-            let name = name.utf8_text(source.as_bytes())?;
-            arguments.push(name.to_string());
+            let name = contents.node_slice(&name)?.to_string();
+            arguments.push(name);
         }
     }
 
+    let start = convert_point_to_position(contents, lhs.start_position());
+    let end = convert_point_to_position(contents, lhs.end_position());
+
     Ok(Some(IndexEntry {
-        key: name.to_string(),
-        range: Range {
-            start: lhs.start_position().as_position(),
-            end: lhs.end_position().as_position(),
-        },
+        key: name.clone(),
+        range: Range { start, end },
         data: IndexEntryData::Function {
-            name: name.to_string(),
+            name: name.clone(),
             arguments,
         },
     }))
 }
 
-fn index_comment(_path: &Path, source: &str, node: &Node) -> Result<Option<IndexEntry>> {
+fn index_comment(_path: &Path, contents: &Rope, node: &Node) -> Result<Option<IndexEntry>> {
     // check for comment
     matches!(node.kind(), "comment").into_result()?;
 
     // see if it looks like a section
-    let comment = node.utf8_text(source.as_bytes())?;
-    let matches = RE_COMMENT_SECTION.captures(comment).into_result()?;
+    let comment = contents.node_slice(node)?.to_string();
+    let matches = RE_COMMENT_SECTION
+        .captures(comment.as_str())
+        .into_result()?;
 
     let level = matches.get(1).into_result()?;
     let title = matches.get(2).into_result()?;
@@ -270,12 +274,12 @@ fn index_comment(_path: &Path, source: &str, node: &Node) -> Result<Option<Index
         return Ok(None);
     }
 
+    let start = convert_point_to_position(contents, node.start_position());
+    let end = convert_point_to_position(contents, node.end_position());
+
     Ok(Some(IndexEntry {
         key: title.clone(),
-        range: Range {
-            start: node.start_position().as_position(),
-            end: node.end_position().as_position(),
-        },
+        range: Range::new(start, end),
         data: IndexEntryData::Section { level, title },
     }))
 }

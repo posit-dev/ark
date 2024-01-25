@@ -21,6 +21,7 @@ use crate::lsp::completions::completion_item::completion_item_from_lazydata;
 use crate::lsp::completions::completion_item::completion_item_from_namespace;
 use crate::lsp::completions::sources::utils::set_sort_text_by_words_first;
 use crate::lsp::document_context::DocumentContext;
+use crate::lsp::traits::rope::RopeExt;
 
 // Handle the case with 'package::prefix', where the user has now
 // started typing the prefix of the symbol they would like completions for.
@@ -65,7 +66,8 @@ pub fn completions_from_namespace(
         return Ok(Some(completions));
     };
 
-    let package = node.utf8_text(context.source.as_bytes())?;
+    let package = context.document.contents.node_slice(&node)?.to_string();
+    let package = package.as_str();
 
     // Get the package namespace.
     let namespace = RFunction::new("base", "getNamespace").add(package).call()?;

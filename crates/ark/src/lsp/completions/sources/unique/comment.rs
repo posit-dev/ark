@@ -21,6 +21,7 @@ use yaml_rust::YamlLoader;
 use crate::lsp::completions::completion_item::completion_item;
 use crate::lsp::completions::types::CompletionData;
 use crate::lsp::document_context::DocumentContext;
+use crate::lsp::traits::rope::RopeExt;
 
 pub fn completions_from_comment(context: &DocumentContext) -> Result<Option<Vec<CompletionItem>>> {
     log::info!("completions_from_comment()");
@@ -33,8 +34,8 @@ pub fn completions_from_comment(context: &DocumentContext) -> Result<Option<Vec<
 
     let pattern = Regex::new(r"^.*\s")?;
 
-    let contents = node.utf8_text(context.source.as_bytes())?;
-    let token = pattern.replace(contents, "");
+    let contents = context.document.contents.node_slice(&node)?.to_string();
+    let token = pattern.replace(contents.as_str(), "");
 
     let mut completions: Vec<CompletionItem> = vec![];
 

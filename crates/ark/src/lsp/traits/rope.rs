@@ -6,14 +6,36 @@
 //
 
 use ropey::Rope;
-use tower_lsp::lsp_types::Position;
+use ropey::RopeSlice;
+use tree_sitter::Node;
+use tree_sitter::Point;
 
-pub trait RopeExt {
-    fn position_to_byte(&self, position: Position) -> usize;
+pub trait RopeExt<'a> {
+    fn point_to_byte(&self, point: Point) -> usize;
+    fn node_slice(&'a self, node: &Node) -> std::result::Result<RopeSlice<'a>, anyhow::Error>;
 }
 
-impl RopeExt for Rope {
-    fn position_to_byte(&self, position: Position) -> usize {
-        self.line_to_byte(position.line as usize) + position.character as usize
+impl<'a> RopeExt<'a> for Rope {
+    fn point_to_byte(&self, point: Point) -> usize {
+        self.line_to_byte(point.row) + point.column
+    }
+
+    fn node_slice(&'a self, node: &Node) -> std::result::Result<RopeSlice<'a>, anyhow::Error> {
+        // For some reason Ropey returns an Option and hides the Result which includes
+        // the actual Error reason. We convert `None` back to an error so we can propagate it.
+        let range = node.start_byte()..node.end_byte();
+
+        if let Some(slice) = self.get_byte_slice(range) {
+            return Ok(slice);
+        }
+
+        let message = anyhow::anyhow!(
+            "Failed to slice Rope at byte range {}-{}. Text: '{}'.",
+            node.start_byte(),
+            node.end_byte(),
+            self.to_string()
+        );
+
+        Err(message)
     }
 }

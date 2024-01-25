@@ -14,6 +14,7 @@ use tree_sitter::Node;
 
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::help::RHtmlHelp;
+use crate::lsp::traits::rope::RopeExt;
 
 enum HoverContext {
     Topic { topic: String },
@@ -42,12 +43,9 @@ fn hover_context(node: Node, context: &DocumentContext) -> Result<Option<HoverCo
             return Ok(None);
         }
 
-        let package = lhs.utf8_text(context.source.as_bytes())?;
-        let topic = rhs.utf8_text(context.source.as_bytes())?;
-        return Ok(Some(HoverContext::QualifiedTopic {
-            package: package.to_string(),
-            topic: topic.to_string(),
-        }));
+        let package = context.document.contents.node_slice(&lhs)?.to_string();
+        let topic = context.document.contents.node_slice(&rhs)?.to_string();
+        return Ok(Some(HoverContext::QualifiedTopic { package, topic }));
     }
 
     // otherwise, check for an identifier or a string
@@ -61,10 +59,8 @@ fn hover_context(node: Node, context: &DocumentContext) -> Result<Option<HoverCo
         }
 
         // otherwise, use it
-        let topic = node.utf8_text(context.source.as_bytes())?;
-        return Ok(Some(HoverContext::Topic {
-            topic: topic.to_string(),
-        }));
+        let topic = context.document.contents.node_slice(&node)?.to_string();
+        return Ok(Some(HoverContext::Topic { topic }));
     }
 
     Ok(None)
