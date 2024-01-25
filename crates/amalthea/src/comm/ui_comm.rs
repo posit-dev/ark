@@ -18,8 +18,68 @@ pub type CallMethodResult = serde_json::Value;
 /// Editor metadata
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct EditorContextResult {
+	/// Document metadata
+	pub document: UiTextDocument,
+
+	/// The primary selection, i.e. selections[0]
+	pub selection: UiSelection,
+
+	/// The selections in this text editor.
+	pub selections: Vec<UiSelection>
+}
+
+/// Document metadata
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct UiTextDocument {
 	/// URI of the resource viewed in the editor
-	pub path: String
+	pub path: String,
+
+	/// End of line character
+	pub eol: i64,
+
+	/// Whether the document has been closed
+	pub isClosed: bool,
+
+	/// Whether the document has been modified
+	pub isDirty: bool,
+
+	/// Whether the document is untitled
+	pub isUntitled: bool,
+
+	/// Language identifier
+	pub languageId: String,
+
+	/// Number of lines in the document
+	pub lineCount: i64,
+
+	/// Version number of the document
+	pub version: i64
+}
+
+/// A line and character position, such as the position of the cursor.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct UiPosition {
+	/// The zero-based character value.
+	pub character: i64,
+
+	/// The zero-based line value.
+	pub line: i64
+}
+
+/// Selection metadata
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct UiSelection {
+	/// Position of the cursor.
+	pub active: UiPosition,
+
+	/// Start position of the selection
+	pub start: UiPosition,
+
+	/// End position of the selection
+	pub end: UiPosition,
+
+	/// Text of the selection
+	pub text: String
 }
 
 /// Parameters for the CallMethod method.
@@ -116,18 +176,18 @@ pub enum UiBackendReply {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params")]
 pub enum UiFrontendRequest {
+	/// Sleep for n seconds
+	///
+	/// Useful for testing in the backend a long running frontend method
+	#[serde(rename = "debug_sleep")]
+	DebugSleep(DebugSleepParams),
+
 	/// Context metadata for the last editor
 	///
 	/// Returns metadata such as file path for the last editor selected by the
 	/// user. The result may be undefined if there are no active editors.
 	#[serde(rename = "last_active_editor_context")]
 	LastActiveEditorContext,
-
-	/// Sleep for n seconds
-	///
-	/// Useful for testing in the backend a long running frontend method
-	#[serde(rename = "debug_sleep")]
-	DebugSleep(DebugSleepParams),
 
 }
 
@@ -137,11 +197,11 @@ pub enum UiFrontendRequest {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "result")]
 pub enum UiFrontendReply {
-	/// Editor metadata
-	LastActiveEditorContextReply(Option<EditorContextResult>),
-
 	/// Reply for the debug_sleep method (no result)
 	DebugSleepReply(),
+
+	/// Editor metadata
+	LastActiveEditorContextReply(Option<EditorContextResult>),
 
 }
 
@@ -190,8 +250,8 @@ pub fn ui_frontend_reply_from_value(
 	request: &UiFrontendRequest,
 ) -> anyhow::Result<UiFrontendReply> {
 	match request {
-		UiFrontendRequest::LastActiveEditorContext => Ok(UiFrontendReply::LastActiveEditorContextReply(serde_json::from_value(reply)?)),
 		UiFrontendRequest::DebugSleep(_) => Ok(UiFrontendReply::DebugSleepReply()),
+		UiFrontendRequest::LastActiveEditorContext => Ok(UiFrontendReply::LastActiveEditorContextReply(serde_json::from_value(reply)?)),
 	}
 }
 
