@@ -48,7 +48,6 @@ pub enum ConnectionResponse {
         fields: Vec<ConnectionTableField>,
     },
     PreviewResponse,
-    DisconnectResponse,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -60,8 +59,6 @@ pub enum ConnectionRequest {
     FieldsRequest { path: Vec<ConnectionTable> },
     // The UI asks for a DataViewer preview of the table.
     PreviewTable { path: Vec<ConnectionTable> },
-    // The UI asks to close the connection
-    Disconnect,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -212,7 +209,6 @@ impl RConnection {
                 })?;
                 Ok(ConnectionResponse::PreviewResponse)
             },
-            ConnectionRequest::Disconnect => Ok(ConnectionResponse::DisconnectResponse),
         }
     }
 
@@ -235,11 +231,9 @@ impl RConnection {
 
             log::trace!("Connection Pane: Received message from front end: {msg:?}");
 
-            // The CommMsg::Close is not really always received when the front-ent disposes the
-            // client, thus we should make sure the front-end fires the `Disconnect` method before
-            // disposing the client.
             if let CommMsg::Close = msg {
                 log::trace!("Connection Pane: Received a close message.");
+                self.disconnect()?;
                 break;
             }
 
