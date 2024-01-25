@@ -27,8 +27,7 @@ pub unsafe fn r_register_routines() {
     }
 
     // Make sure we have an "empty" routine at the end.
-    let routines = &mut R_ROUTINES;
-    routines.push(R_CallMethodDef {
+    R_ROUTINES.push(R_CallMethodDef {
         name: std::ptr::null(),
         fun: None,
         numArgs: 0,
@@ -37,7 +36,7 @@ pub unsafe fn r_register_routines() {
     R_registerRoutines(
         info,
         std::ptr::null(),
-        routines.as_ptr(),
+        R_ROUTINES.as_ptr(),
         std::ptr::null(),
         std::ptr::null(),
     );
