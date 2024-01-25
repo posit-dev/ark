@@ -133,13 +133,13 @@ fn source_ldpaths_script(path: &PathBuf) -> anyhow::Result<String> {
     };
 
     // Source (i.e. `.`) the `ldpaths` file into the current bash session, and then
-    // echo out the relevant env var that it set. Using `-n` to avoid a trailing new line.
-    let command = format!(". {ldpaths} && echo -n ${LIBRARY_PATH_ENVVAR}");
+    // print out the relevant env var that it set. `printf` is more portable than `echo -n`.
+    let command = format!(". {ldpaths} && printf '%s' \"${LIBRARY_PATH_ENVVAR}\"");
 
     // Need to ensure `R_HOME` is set, as `ldpaths` references it.
     // Expect that `ldpaths` appends to an existing env var if there is one,
     // rather than overwriting it, so we don't have to do that.
-    let output = Command::new("bash")
+    let output = Command::new("sh")
         .env("R_HOME", &path)
         .arg("-c")
         .arg(command)
