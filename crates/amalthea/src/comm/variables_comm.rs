@@ -103,6 +103,9 @@ pub enum VariableKind {
 	#[serde(rename = "bytes")]
 	Bytes,
 
+	#[serde(rename = "class")]
+	Class,
+
 	#[serde(rename = "collection")]
 	Collection,
 
