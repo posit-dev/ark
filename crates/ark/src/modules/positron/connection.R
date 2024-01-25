@@ -100,6 +100,7 @@ options("connectionObserver" = .ps.connection_observer())
     if (is.null(con)) {
         return(NULL)
     }
+    # disconnect is resposible for calling connectionClosed that
+    # will remove the connection from the list of connections
     con$disconnect(...)
-    rm(list = id, envir = getOption("connectionObserver")$.connections)
 }
