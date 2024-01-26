@@ -22,7 +22,6 @@ use libr::R_NilValue;
 use libr::Rf_ScalarLogical;
 use libr::Rf_asInteger;
 use libr::SEXP;
-use stdext::local;
 use stdext::spawn;
 use stdext::unwrap;
 
@@ -167,27 +166,28 @@ impl RModuleWatcher {
         loop {
             std::thread::sleep(Duration::from_secs(1));
 
-            let status = local! {
-                for (path, (old_modified, src)) in self.cache.iter_mut() {
-                    let new_modified = path.metadata()?.modified()?;
-                    if *old_modified == new_modified {
-                        continue;
-                    }
-
-                    r_task(|| {
-                        if let Err(err) = import_file(&path, *src, *self.ns.get())  {
-                            log::error!("{err:?}");
-                        }
-                    });
-                    *old_modified = new_modified;
-                }
-                anyhow::Ok(())
-            };
-
-            if let Err(err) = status {
+            if let Err(err) = self.update() {
                 log::error!("[watcher] error detecting changes: {err:?}");
             }
         }
+    }
+
+    pub fn update(&mut self) -> anyhow::Result<()> {
+        for (path, (old_modified, src)) in self.cache.iter_mut() {
+            let new_modified = path.metadata()?.modified()?;
+            if *old_modified == new_modified {
+                continue;
+            }
+
+            r_task(|| {
+                if let Err(err) = import_file(&path, *src, *self.ns.get()) {
+                    log::error!("{err:?}");
+                }
+            });
+            *old_modified = new_modified;
+        }
+
+        Ok(())
     }
 }
 
