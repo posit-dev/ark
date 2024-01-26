@@ -546,20 +546,6 @@ pub fn start_lsp(runtime: Arc<Runtime>, address: String, conn_init_tx: Sender<bo
         let (read, write) = (read.compat(), write.compat_write());
 
         let init = |client: Client| {
-            // Forward `client` along to `RMain`.
-            // This also updates an outdated `client` after a reconnect.
-            // `RMain` should be initialized by now, since the caller of this
-            // function waits to receive the init notification sent on
-            // `kernel_init_rx`. Even if it isn't, this should be okay because
-            // `r_task()` defensively blocks until its sender is initialized.
-            r_task({
-                let client = client.clone();
-                move || {
-                    let main = RMain::get_mut();
-                    main.set_lsp_client(client);
-                }
-            });
-
             // Create backend.
             // Note that DashMap uses synchronization primitives internally, so we
             // don't guard access to the map via a mutex.
@@ -568,6 +554,20 @@ pub fn start_lsp(runtime: Arc<Runtime>, address: String, conn_init_tx: Sender<bo
                 documents: Arc::new(DashMap::new()),
                 workspace: Arc::new(Mutex::new(Workspace::default())),
             };
+
+            // Forward `backend` along to `RMain`.
+            // This also updates an outdated `backend` after a reconnect.
+            // `RMain` should be initialized by now, since the caller of this
+            // function waits to receive the init notification sent on
+            // `kernel_init_rx`. Even if it isn't, this should be okay because
+            // `r_task()` defensively blocks until its sender is initialized.
+            r_task({
+                let backend = backend.clone();
+                move || {
+                    let main = RMain::get_mut();
+                    main.set_lsp_backend(backend);
+                }
+            });
 
             backend
         };

@@ -57,12 +57,14 @@ use tree_sitter::Node;
 use tree_sitter::Range;
 
 use crate::backend_trace;
+use crate::interface::RMain;
 use crate::lsp::backend::Backend;
 use crate::lsp::documents::Document;
 use crate::lsp::encoding::convert_tree_sitter_range_to_lsp_range;
 use crate::lsp::indexer;
 use crate::lsp::traits::rope::RopeExt;
 use crate::r_task;
+use crate::r_task::r_async_task;
 
 #[derive(Clone)]
 struct DiagnosticContext<'a> {
@@ -141,6 +143,51 @@ pub async fn handle_diagnostic(
         DocumentDiagnosticReportResult::Report(document_diagnostic_report);
 
     Ok(document_diagnostic_report_result)
+}
+
+/// Request a full diagnostic refresh on all open documents
+///
+/// Called after each R console execution so diagnostics are dynamic to code sent to the
+/// console.
+///
+/// Still goes through `request_diagnostics()` with its 1 second delay before actually
+/// generating diagnostics. This avoids being too aggressive with the refresh, since
+/// generating diagnostics does require R.
+pub fn refresh_all_diagnostics() {
+    r_async_task(|| {
+        let main = RMain::get();
+
+        let Some(backend) = main.get_lsp_backend() else {
+            log::error!("No LSP `backend` to request a diagnostic refresh with.");
+            return;
+        };
+
+        let runtime = main.get_lsp_runtime();
+
+        for document in backend.documents.iter() {
+            let uri = document.key().clone();
+            let version = document.version.clone();
+
+            // Explicit `drop()` before we request diagnostics, which requires `get()`ting
+            // this document again on the thread. Likely not needed, but better to be safe.
+            drop(document);
+
+            runtime.spawn(async move {
+                // TODO: This currently reports server cancellation errors (like when the
+                // document changes) as "real" errors in the log, but we don't want to do that
+                // as that adds a lot of noise for something that is normal behavior.
+                let diagnostics = unwrap!(request_diagnostics(&backend, &uri).await, Err(err) => {
+                    log::error!("Failed to refresh diagnostics for uri: '{uri}': {err:?}");
+                    return;
+                });
+
+                backend
+                    .client
+                    .publish_diagnostics(uri, diagnostics, version)
+                    .await
+            });
+        }
+    });
 }
 
 async fn request_diagnostics(
