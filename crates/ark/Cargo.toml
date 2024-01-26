@@ -6,6 +6,7 @@ rust-version = "1.75.0"
 description = """
 The Amalthea R Kernel.
 """
+authors = ["Posit, PBC"]
 
 [dependencies]
 actix-web = "4.4.0"
