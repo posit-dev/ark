@@ -7,6 +7,7 @@
 
 use std::ops::Deref;
 
+use harp_macros::register;
 use libr::*;
 use once_cell::sync::Lazy;
 use stdext::unwrap;
@@ -367,6 +368,12 @@ impl Environment {
         Self { env }
     }
 
+    pub fn view(env: SEXP) -> Self {
+        Self {
+            env: RObject::view(env),
+        }
+    }
+
     pub fn bind(&self, name: &str, value: impl Into<SEXP>) {
         unsafe {
             Rf_defineVar(r_symbol!(name), value.into(), self.env.sexp);
@@ -487,6 +494,22 @@ impl From<Environment> for SEXP {
 impl From<Environment> for RObject {
     fn from(object: Environment) -> Self {
         object.env
+    }
+}
+
+// Necessary for the `harp` reference in the `register` macro to resolve correctly
+mod harp {
+    pub use crate::*;
+}
+
+#[register]
+pub extern "C" fn ark_env_unlock(env: SEXP) -> crate::error::Result<SEXP> {
+    unsafe {
+        if libr::TYPEOF(env) as u32 != libr::ENVSXP {
+            return crate::anyhow!("Must be an environment");
+        }
+        Environment::view(env).unlock();
+        Ok(libr::R_NilValue)
     }
 }
 

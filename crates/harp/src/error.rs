@@ -58,6 +58,9 @@ pub enum Error {
         message: String,
         backtrace: Backtrace,
     },
+    AnyhowError {
+        message: String,
+    },
 }
 
 // empty implementation required for 'anyhow'
@@ -166,8 +169,22 @@ impl fmt::Display for Error {
             Error::StackUsageError { .. } => {
                 write!(f, "C stack usage too close to the limit")
             },
+
+            Error::AnyhowError { message } => {
+                write!(f, "{message}")
+            },
         }
     }
+}
+
+#[macro_export]
+macro_rules! anyhow {
+    ($($rest: expr),*) => {{
+        let message = format!($($rest, )*);
+        Err(crate::error::Error::AnyhowError {
+            message,
+        })
+    }}
 }
 
 // NOTE: Debug is the same as Display but with backtrace printing.
