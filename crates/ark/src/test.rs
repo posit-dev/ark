@@ -29,7 +29,7 @@ fn initialize_ark() {
         // Register routines so they are callable from the modules
         r_register_routines();
 
-        // Initialize the public/private R function modules so tests can use them.
+        // Initialize the positron module so tests can use them.
         modules::initialize(true).unwrap();
     });
 }

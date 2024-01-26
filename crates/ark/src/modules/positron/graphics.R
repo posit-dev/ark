@@ -1,7 +1,7 @@
 #
 # graphics.R
 #
-# Copyright (C) 2022 by Posit Software, PBC
+# Copyright (C) 2022-2024 by Posit Software, PBC
 #
 #
 
@@ -14,24 +14,29 @@ setHook("before.grid.newpage", function(...) {
     .Call("ps_graphics_event", "before.grid.newpage", PACKAGE = "(embedding)")
 }, action = "replace")
 
+#' @export
 .ps.graphics.defaultResolution <- if (Sys.info()[["sysname"]] == "Darwin") 96L else 72L
 
+#' @export
 .ps.graphics.plotSnapshotRoot <- function(...) {
     file.path(tempdir(), "positron-snapshots", ...)
 }
 
+#' @export
 .ps.graphics.plotSnapshotPath <- function(id) {
     root <- .ps.graphics.plotSnapshotRoot(id)
     ensure_directory(root)
     file.path(root, "snapshot.rds")
 }
 
+#' @export
 .ps.graphics.plotOutputPath <- function(id) {
     root <- .ps.graphics.plotSnapshotRoot(id)
     ensure_directory(root)
     file.path(root, "snapshot.png")
 }
 
+#' @export
 .ps.graphics.createDevice <- function(name, type, res) {
 
     # Get path where plots will be generated.
@@ -76,6 +81,7 @@ setHook("before.grid.newpage", function(...) {
 #
 # This saves the plot's display list, so it can be used
 # to re-render plots as necessary.
+#' @export
 .ps.graphics.createSnapshot <- function(id) {
 
     # Flush any pending plot actions.
@@ -93,9 +99,9 @@ setHook("before.grid.newpage", function(...) {
 
     # Return the path to that snapshot file.
     snapshotPath
-
 }
 
+#' @export
 .ps.graphics.renderPlot <- function(id, width, height, dpr) {
 
     # If we have an existing snapshot, render from that file.
@@ -104,9 +110,9 @@ setHook("before.grid.newpage", function(...) {
         .ps.graphics.renderPlotFromSnapshot(id, width, height, dpr)
     else
         .ps.graphics.renderPlotFromCurrentDevice(id, width, height, dpr)
-
 }
 
+#' @export
 .ps.graphics.renderPlotFromSnapshot <- function(id, width, height, dpr) {
 
     # Get path to snapshot file + output path.
@@ -142,6 +148,7 @@ setHook("before.grid.newpage", function(...) {
 
 }
 
+#' @export
 .ps.graphics.renderPlotFromCurrentDevice <- function(id, width, height, dpr) {
 
     # Try and force the graphics device to sync changes.

@@ -1,16 +1,18 @@
 #
 # s3.R
 #
-# Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+# Copyright (C) 2023-2024 Posit Software, PBC. All rights reserved.
 #
 #
 
+#' @export
 .ps.s3.genericNameCache <- new.env(parent = emptyenv())
 
+#' @export
 .ps.s3.genericNameFromFunction <- function(callable) {
 
     # Check whether we can safely cache the result.
-    isCacheable <- !is.null(packageName(environment(callable)))
+    isCacheable <- !is.null(utils::packageName(environment(callable)))
     if (!isCacheable)
         return(.ps.s3.genericNameFromFunctionImpl(callable))
 
@@ -18,9 +20,9 @@
     .ps.s3.genericNameCache[[id]] <-
         .ps.s3.genericNameCache[[id]] %??%
         .ps.s3.genericNameFromFunctionImpl(callable)
-
 }
 
+#' @export
 .ps.s3.genericNameFromFunctionImpl <- function(callable) {
 
     useMethodSym <- as.name("UseMethod")
@@ -35,5 +37,4 @@
     })
 
     as.character(value)
-
 }

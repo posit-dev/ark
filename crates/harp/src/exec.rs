@@ -464,15 +464,17 @@ pub unsafe fn r_parse_vector(code: &str) -> Result<ParseResult> {
     }
 }
 
-pub unsafe fn r_source(file: &str) -> Result<()> {
-    let mut func = RFunction::new("base", "source");
-    func.param("file", file);
+pub fn r_source(file: &str) -> crate::Result<()> {
+    r_source_in(file, R_ENVS.base)
+}
 
-    match func.call() {
-        // Return value isn't meaningful here
-        Ok(_) => Ok(()),
-        Err(error) => Err(error),
-    }
+pub fn r_source_in(file: &str, env: SEXP) -> crate::Result<()> {
+    RFunction::new("base", "sys.source")
+        .param("file", file)
+        .param("envir", env)
+        .call()?;
+
+    Ok(())
 }
 
 /// Returns an EXPRSXP vector
