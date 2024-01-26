@@ -273,6 +273,8 @@ functions::generate! {
 
     pub fn R_LockEnvironment(env: SEXP, bindings: Rboolean);
 
+    pub fn R_EnvironmentIsLocked(env: SEXP) -> Rboolean;
+
     /// R >= 4.2.0
     pub fn R_existsVarInFrame(rho: SEXP, symbol: SEXP) -> Rboolean;
 

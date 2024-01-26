@@ -470,7 +470,7 @@ impl Environment {
     }
 
     pub fn is_locked(&self) -> bool {
-        (self.flags() & FRAME_LOCK_MASK) != 0
+        unsafe { libr::R_EnvironmentIsLocked(self.env.sexp) != 0 }
     }
 
     fn flags(&self) -> std::ffi::c_int {
