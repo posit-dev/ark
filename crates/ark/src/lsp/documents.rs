@@ -86,7 +86,7 @@ impl Document {
         }
     }
 
-    pub fn on_did_change(&mut self, params: &DidChangeTextDocumentParams) -> Result<i32> {
+    pub fn on_did_change(&mut self, params: &DidChangeTextDocumentParams) -> Result<()> {
         // Add pending changes.
         self.pending.push(params.clone());
 
@@ -102,7 +102,7 @@ impl Document {
             let new_version = params.text_document.version;
             if new_version > old_version + 1 {
                 log::info!("on_did_change(): received out-of-order document changes; currently at {}; deferring {}", old_version, new_version);
-                return Ok(old_version);
+                return Ok(());
             }
         }
 
@@ -159,7 +159,7 @@ impl Document {
         // Updates successfully applied; update cached document version.
         self.version = Some(version);
 
-        Ok(version)
+        Ok(())
     }
 
     fn update(&mut self, change: &TextDocumentContentChangeEvent) -> Result<()> {

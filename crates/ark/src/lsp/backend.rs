@@ -170,6 +170,25 @@ impl LanguageServer for Backend {
                     commands: vec![],
                     work_done_progress_options: Default::default(),
                 }),
+                diagnostic_provider: Some(DiagnosticServerCapabilities::RegistrationOptions(
+                    DiagnosticRegistrationOptions {
+                        text_document_registration_options: TextDocumentRegistrationOptions {
+                            // Use Client's document selector
+                            // (i.e. Server supports diagnostics for all files Client cares about)
+                            document_selector: None,
+                        },
+                        diagnostic_options: DiagnosticOptions {
+                            identifier: Some("ark-diagnostics".to_string()),
+                            inter_file_dependencies: true,
+                            // This is for longer running `workspace_diagnostic()`s
+                            workspace_diagnostics: false,
+                            work_done_progress_options: WorkDoneProgressOptions {
+                                work_done_progress: None,
+                            },
+                        },
+                        static_registration_options: StaticRegistrationOptions { id: None },
+                    },
+                )),
                 workspace: Some(WorkspaceServerCapabilities {
                     workspace_folders: Some(WorkspaceFoldersServerCapabilities {
                         supported: Some(true),
@@ -262,19 +281,21 @@ impl LanguageServer for Backend {
         // get reference to document
         let uri = &params.text_document.uri;
         let mut doc = unwrap!(self.documents.get_mut(uri), None => {
-            backend_trace!(self, "did_change(): unexpected document uri '{}'", uri);
+            backend_trace!(self, "did_change(): unexpected document uri '{uri}'");
             return;
         });
 
         // respond to document updates
-        let version = unwrap!(doc.on_did_change(&params), Err(error) => {
+        if let Err(err) = doc.on_did_change(&params) {
+            // SAFETY: Drop `doc` before the trace's `await` to allow other LSP methods to
+            // access the `doc` if we switch to them at the `await`.
+            drop(doc);
             backend_trace!(
                 self,
-                "did_change(): unexpected error applying updates {}",
-                error
+                "did_change(): unexpected error applying updates {err:?}"
             );
             return;
-        });
+        }
 
         // update index
         if let Ok(path) = uri.to_file_path() {
@@ -282,13 +303,6 @@ impl LanguageServer for Backend {
             if let Err(error) = indexer::update(&doc, &path) {
                 log::error!("{:?}", error);
             }
-        }
-
-        // publish diagnostics - but only publish them if the version of
-        // the document now matches the version of the change after applying
-        // it in `on_did_change()`
-        if params.text_document.version == version {
-            diagnostics::enqueue_diagnostics(self.clone(), uri.clone(), version);
         }
     }
 
@@ -399,6 +413,13 @@ impl LanguageServer for Backend {
             contents: HoverContents::Markup(result),
             range: None,
         }))
+    }
+
+    async fn diagnostic(
+        &self,
+        params: DocumentDiagnosticParams,
+    ) -> Result<DocumentDiagnosticReportResult> {
+        diagnostics::handle_diagnostic(self, params).await
     }
 
     async fn signature_help(&self, params: SignatureHelpParams) -> Result<Option<SignatureHelp>> {

@@ -5,6 +5,7 @@
 //
 //
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::marker::PhantomData;
@@ -44,11 +45,18 @@ use libr::VECTOR_ELT;
 use ropey::Rope;
 use stdext::*;
 use tower_lsp::lsp_types::Diagnostic;
+use tower_lsp::lsp_types::DiagnosticServerCancellationData;
 use tower_lsp::lsp_types::DiagnosticSeverity;
+use tower_lsp::lsp_types::DocumentDiagnosticParams;
+use tower_lsp::lsp_types::DocumentDiagnosticReport;
+use tower_lsp::lsp_types::DocumentDiagnosticReportResult;
+use tower_lsp::lsp_types::FullDocumentDiagnosticReport;
+use tower_lsp::lsp_types::RelatedFullDocumentDiagnosticReport;
 use tower_lsp::lsp_types::Url;
 use tree_sitter::Node;
 use tree_sitter::Range;
 
+use crate::backend_trace;
 use crate::lsp::backend::Backend;
 use crate::lsp::documents::Document;
 use crate::lsp::encoding::convert_tree_sitter_range_to_lsp_range;
@@ -105,62 +113,129 @@ impl<'a> DiagnosticContext<'a> {
     }
 }
 
-pub fn enqueue_diagnostics(backend: Backend, uri: Url, version: i32) {
-    // log::trace!("[diagnostics({version}, {uri})] Spawning task to enqueue diagnostics.");
+pub async fn handle_diagnostic(
+    backend: &Backend,
+    params: DocumentDiagnosticParams,
+) -> tower_lsp::jsonrpc::Result<DocumentDiagnosticReportResult> {
+    backend_trace!(backend, "diagnostic({:?})", params);
 
-    // Spawn a task to enqueue diagnostics.
-    tokio::spawn(async move {
-        // Wait some amount of time. Note that the document version is updated on
-        // every document change, so if the document changes while this task is waiting,
-        // we'll see that the current document version is now out-of-sync with the version
-        // associated with this task, and toss it away.
-        tokio::time::sleep(Duration::from_millis(1000)).await;
+    let uri = &params.text_document.uri;
 
-        let Some(diagnostics) = generate_diagnostics(&backend, &uri, version) else {
-            // Document was closed, or `version` changed
-            return;
-        };
+    let diagnostics = request_diagnostics(backend, uri).await?;
 
-        backend
-            .client
-            .publish_diagnostics(uri, diagnostics, None)
-            .await;
-    });
+    // Do the crazy amount of wrapping into a real diagnostic result
+    let full_document_diagnostic_report = FullDocumentDiagnosticReport {
+        result_id: None,
+        items: diagnostics,
+    };
+
+    let related_full_document_diagnostic_report = RelatedFullDocumentDiagnosticReport {
+        related_documents: None,
+        full_document_diagnostic_report,
+    };
+
+    let document_diagnostic_report =
+        DocumentDiagnosticReport::Full(related_full_document_diagnostic_report);
+
+    let document_diagnostic_report_result =
+        DocumentDiagnosticReportResult::Report(document_diagnostic_report);
+
+    Ok(document_diagnostic_report_result)
 }
 
-fn generate_diagnostics(backend: &Backend, uri: &Url, version: i32) -> Option<Vec<Diagnostic>> {
+async fn request_diagnostics(
+    backend: &Backend,
+    uri: &Url,
+) -> tower_lsp::jsonrpc::Result<Vec<Diagnostic>> {
     // SAFETY: It is absolutely imperative that the `doc` be `Drop`ped outside
     // of any `await` context. That is why the extraction of `doc` is captured
-    // inside of `generate_diagnostics()`; `doc` is dropped as this exits, before
-    // `publish_diagnostics().await`. If this doesn't happen, then the `await`
-    // could switch us to a different LSP task, which will also try and access
-    // a document, causing a deadlock since it won't be able to access a
-    // document until our mutable `doc` reference is dropped, but we can't drop
-    // until we get control back from the `await`.
+    // inside of `check_known_document()` and `try_generate_diagnostics()`; `doc` is
+    // dropped as these exit, before `sleep().await`. If this doesn't happen, then the
+    // `await` could switch us to a different LSP task, which will also try and access
+    // a document, causing a deadlock since it won't be able to access a document until
+    // our `doc` reference is dropped, but we can't drop until we get control back from
+    // the `await`.
 
-    // The document is thread safe to access due to the usage of DashMap
-    let doc = unwrap!(backend.documents.get(&uri), None => {
-        log::error!(
-            "[diagnostics({version}, {uri})] No document associated with uri available."
-        );
-        return None;
-    });
+    // Before doing anything, check that we know about this file and get its version
+    let version = check_known_document(backend, uri)?;
+
+    // Wait some amount of time. Note that the document version is updated on
+    // every document change, so if the document changes while this task is waiting,
+    // we'll see that the current document version is now out-of-sync with the version
+    // associated with this task, and toss it away.
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+
+    // Get reference to document.
+    // Before sleeping
+    try_generate_diagnostics(backend, uri, version)
+}
+
+fn try_generate_diagnostics(
+    backend: &Backend,
+    uri: &Url,
+    version: i32,
+) -> tower_lsp::jsonrpc::Result<Vec<Diagnostic>> {
+    // Get reference to document.
+    // At this point we already know this document existed before we slept, so if it
+    // doesn't exist now, that is because it must have been closed, so if that occurs
+    // then we "refuse to generate diagnostics at this time" and tell the client NOT
+    // to try again
+    let Some(doc) = backend.documents.get(uri) else {
+        let message = Cow::from(format!("Document with uri '{uri}' no longer exists after diagnostics delay. It was likely closed."));
+        return Err(new_server_cancelled_error(message, false));
+    };
 
     let current_version = doc.version.unwrap_or(0);
 
     if version != current_version {
         // log::trace!("[diagnostics({version}, {uri})] Aborting diagnostics in favor of version {current_version}.");
-        return None;
+        let message = Cow::from(format!("Document with uri '{uri}' has changed. Cancelling diagnostics in favor of newer version."));
+        return Err(new_server_cancelled_error(message, false));
     }
 
-    // Okay, it's our chance to provide diagnostics.
-    // log::trace!("[diagnostics({version}, {uri})] Generating diagnostics.");
-    let diagnostics = generate_diagnostics_impl(&doc);
-
-    Some(diagnostics)
+    Ok(generate_diagnostics(&doc))
 }
 
-fn generate_diagnostics_impl(doc: &Document) -> Vec<Diagnostic> {
+fn new_server_cancelled_error(
+    message: Cow<'static, str>,
+    retrigger_request: bool,
+) -> tower_lsp::jsonrpc::Error {
+    // Hoping to have this officially included
+    // https://github.com/ebkalderon/tower-lsp/issues/411
+    let code = tower_lsp::jsonrpc::ErrorCode::from(-32802);
+
+    let data = DiagnosticServerCancellationData { retrigger_request };
+    let data = serde_json::to_value(data).unwrap();
+    let data = Some(data);
+
+    tower_lsp::jsonrpc::Error {
+        code,
+        message,
+        data,
+    }
+}
+
+fn check_known_document(backend: &Backend, uri: &Url) -> tower_lsp::jsonrpc::Result<i32> {
+    let doc = backend.documents.get(uri);
+
+    if doc.is_some() {
+        // If we have a document, return its version immediately
+        let version = doc.unwrap().version.unwrap_or(0);
+        return Ok(version);
+    }
+
+    // Otherwise, return unexpected document error
+    let code = tower_lsp::jsonrpc::ErrorCode::ServerError(1);
+    let message = Cow::from(format!("Unexpected document URI '{uri}'."));
+
+    return Err(tower_lsp::jsonrpc::Error {
+        code,
+        message,
+        data: None,
+    });
+}
+
+pub fn generate_diagnostics(doc: &Document) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
 
     {
