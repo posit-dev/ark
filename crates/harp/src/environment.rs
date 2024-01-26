@@ -22,6 +22,8 @@ use crate::utils::r_is_s4;
 use crate::utils::r_typeof;
 use crate::utils::Sxpinfo;
 
+const FRAME_LOCK_MASK: std::ffi::c_int = 1 << 14;
+
 pub struct REnvs {
     pub global: SEXP,
     pub base: SEXP,
@@ -454,6 +456,25 @@ impl Environment {
         });
 
         names
+    }
+
+    pub fn lock(&mut self, bindings: bool) {
+        unsafe {
+            libr::R_LockEnvironment(self.env.sexp, bindings.into());
+        }
+    }
+
+    pub fn unlock(&mut self) {
+        let unlocked_mask = self.flags() & !FRAME_LOCK_MASK;
+        unsafe { libr::SET_ENVFLAGS(self.env.sexp, unlocked_mask) }
+    }
+
+    pub fn is_locked(&self) -> bool {
+        (self.flags() & FRAME_LOCK_MASK) != 0
+    }
+
+    fn flags(&self) -> std::ffi::c_int {
+        unsafe { libr::ENVFLAGS(self.env.sexp) }
     }
 }
 
