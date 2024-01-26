@@ -10,8 +10,9 @@ import_positron <- function(path) {
 
     # Namespace is created by the sourcer of this file
     ns <- parent.env(environment())
-    source(path, local = ns)
+    local_unlock(ns)
 
+    source(path, local = ns)
     export(path, from = ns, to = as.environment("tools:positron"))
 }
 
@@ -26,6 +27,8 @@ init_positron <- function() {
 }
 
 export <- function(path, from, to) {
+    local_unlock(to)
+
     for (name in exported_names(path)) {
         to[[name]] <- from[[name]]
     }
@@ -56,8 +59,9 @@ import_rstudio <- function(path) {
     init_rstudio()
 
     env <- rstudio_ns()
-    source(path, local = env)
+    local_unlock(env)
 
+    source(path, local = env)
     export(path, from = env, to = as.environment("tools:rstudio"))
 }
 
@@ -92,4 +96,30 @@ init_rstudio <- function() {
 
 rstudio_ns <- function() {
     the$rstudio_ns
+}
+
+
+# Tools used in this file. Must stay here to be self-contained.
+
+.ps.Call <- function(.NAME, ...) {
+    .Call(.NAME, ..., PACKAGE = "(embedding)")
+}
+
+env_unlock <- function(env) {
+    .ps.Call("ark_env_unlock", env)
+}
+
+defer <- function(expr, envir = parent.frame(), after = FALSE) {
+  thunk <- as.call(list(function() expr))
+  do.call(
+    on.exit,
+    list(thunk, add = TRUE, after = after),
+    envir = envir
+  )
+}
+
+# This intentionally locks unlocked environments on exit
+local_unlock <- function(env, frame = parent.frame()) {
+    env_unlock(env)
+    defer(lockEnvironment(env), envir = frame)
 }
