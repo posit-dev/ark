@@ -65,7 +65,7 @@ use crate::lsp::traits::rope::RopeExt;
 use crate::r_task;
 
 #[derive(Clone)]
-pub struct DiagnosticContext<'a> {
+struct DiagnosticContext<'a> {
     /// The contents of the source document.
     pub contents: &'a Rope,
 
@@ -235,7 +235,7 @@ fn check_known_document(backend: &Backend, uri: &Url) -> tower_lsp::jsonrpc::Res
     });
 }
 
-pub fn generate_diagnostics(doc: &Document) -> Vec<Diagnostic> {
+fn generate_diagnostics(doc: &Document) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
 
     {
