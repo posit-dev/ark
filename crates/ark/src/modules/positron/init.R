@@ -24,6 +24,9 @@ init_positron <- function() {
 
     # Create environment for functions exported on the search path
     attach(list(), name = "tools:positron")
+
+    # Lock it, we'll unlock when updating
+    lockEnvironment(as.environment("tools:positron"))
 }
 
 export <- function(path, from, to) {
@@ -79,6 +82,10 @@ init_rstudio <- function() {
     # Create environment for functions exported on the search path
     attach(list(), name = "tools:rstudio")
 
+    # Lock environments, we'll unlock them before updating
+    lockEnvironment(the$rstudio_ns)
+    lockEnvironment(as.environment("tools:rstudio"))
+
     # Override `rstudioapi::isAvailable()` so it thinks it's running under RStudio
     setHook(
         packageEvent("rstudioapi", "onLoad"),
@@ -118,8 +125,9 @@ defer <- function(expr, envir = parent.frame(), after = FALSE) {
   )
 }
 
-# This intentionally locks unlocked environments on exit
 local_unlock <- function(env, frame = parent.frame()) {
-    env_unlock(env)
-    defer(lockEnvironment(env), envir = frame)
+    if (environmentIsLocked(env)) {
+        env_unlock(env)
+        defer(lockEnvironment(env), envir = frame)
+    }
 }

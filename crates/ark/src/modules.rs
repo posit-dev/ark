@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 use std::time::SystemTime;
 
+use harp::environment::Environment;
 use harp::environment::R_ENVS;
 use harp::exec::r_source_in;
 use harp::exec::RFunction;
@@ -64,6 +65,10 @@ pub fn initialize(testing: bool) -> anyhow::Result<()> {
     // Load initial utils into the namespace
     let init_file = positron_path.join("init.R");
     r_source_in(init_file.to_str().unwrap(), namespace.sexp)?;
+
+    // Lock the environment. It will be unlocked automatically when updating.
+    // Needs to happen after the `r_source_in()` above.
+    Environment::view(namespace.sexp).lock(false);
 
     // Load the positron and rstudio namespaces and their exported functions
     import_directory(&positron_path, RModuleSource::Positron, namespace.sexp)?;
