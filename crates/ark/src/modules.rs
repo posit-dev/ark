@@ -67,7 +67,9 @@ pub fn initialize(testing: bool) -> anyhow::Result<()> {
     r_source_in(init_file.to_str().unwrap(), namespace.sexp)?;
 
     // Lock the environment. It will be unlocked automatically when updating.
-    // Needs to happen after the `r_source_in()` above.
+    // Needs to happen after the `r_source_in()` above. We don't lock the
+    // bindings to make it easy to make updates by `source()`ing inside the
+    // temporarily unlocked environment.
     Environment::view(namespace.sexp).lock(false);
 
     // Load the positron and rstudio namespaces and their exported functions
