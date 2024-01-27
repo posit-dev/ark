@@ -7,6 +7,16 @@
 
 options(help_type = "html")
 
+# Pick up `help()` from the search path. Should hit either the devtools shim or
+# `utils::help()`. There is no chance of recursion since it's not exported in
+# the `tools:positron` environment.
+help <- function(...) {
+  help <- get("help", envir = globalenv(), mode = "function")
+
+  # Passing arguments with `...` avoids issues of NSE interpretation
+  help(...)
+}
+
 # Start R's dynamic HTTP help server; returns the chosen port (invisibly)
 #' @export
 .ps.help.startHelpServer <- function() {
@@ -27,7 +37,7 @@ options(help_type = "html")
 
     # Try to find help on the topic. The package needs to be wrapped in () so it
     # is not deparsed.
-    results <- utils::help(topic = topic, package = (package))
+    results <- help(topic = topic, package = (package))
 
     # If we found results of any kind, show them.
     # If we are running ark tests, don't show the results as this requires
