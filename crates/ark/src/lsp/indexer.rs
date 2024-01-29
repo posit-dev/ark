@@ -167,7 +167,7 @@ fn index_file(path: &Path) -> Result<bool> {
     // TODO: Check if there's an up-to-date buffer to be used.
     let contents = std::fs::read(path)?;
     let contents = String::from_utf8(contents)?;
-    let document = Document::new(contents.as_str());
+    let document = Document::new(contents.as_str(), None);
 
     index_document(&document, path)?;
 

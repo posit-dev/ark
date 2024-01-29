@@ -240,7 +240,7 @@ mod tests {
     fn test_call_node_position_type() {
         // Before `(`, but on it
         let point = Point { row: 0, column: 3 };
-        let document = Document::new("fn ()");
+        let document = Document::new("fn ()", None);
         let context = DocumentContext::new(&document, point, None);
         assert_eq!(context.node.kind(), "(");
         assert_eq!(
@@ -250,7 +250,7 @@ mod tests {
 
         // After `)`, but on it
         let point = Point { row: 0, column: 4 };
-        let document = Document::new("fn()");
+        let document = Document::new("fn()", None);
         let context = DocumentContext::new(&document, point, None);
         assert_eq!(context.node.kind(), ")");
         assert_eq!(
@@ -260,7 +260,7 @@ mod tests {
 
         // After `(`, but on it
         let point = Point { row: 0, column: 3 };
-        let document = Document::new("fn()");
+        let document = Document::new("fn()", None);
         let context = DocumentContext::new(&document, point, None);
         assert_eq!(context.node.kind(), "(");
         assert_eq!(
@@ -270,7 +270,7 @@ mod tests {
 
         // After `x`
         let point = Point { row: 0, column: 4 };
-        let document = Document::new("fn(x)");
+        let document = Document::new("fn(x)", None);
         let context = DocumentContext::new(&document, point, None);
         assert_eq!(
             call_node_position_type(&context.node, context.point),
@@ -279,7 +279,7 @@ mod tests {
 
         // After `x`
         let point = Point { row: 0, column: 7 };
-        let document = Document::new("fn(1, x)");
+        let document = Document::new("fn(1, x)", None);
         let context = DocumentContext::new(&document, point, None);
         assert_eq!(
             call_node_position_type(&context.node, context.point),
@@ -288,7 +288,7 @@ mod tests {
 
         // Directly after `,`
         let point = Point { row: 0, column: 5 };
-        let document = Document::new("fn(x, )");
+        let document = Document::new("fn(x, )", None);
         let context = DocumentContext::new(&document, point, None);
         assert_eq!(context.node.kind(), "comma");
         assert_eq!(
@@ -298,7 +298,7 @@ mod tests {
 
         // After `,`, but on `)`
         let point = Point { row: 0, column: 6 };
-        let document = Document::new("fn(x, )");
+        let document = Document::new("fn(x, )", None);
         let context = DocumentContext::new(&document, point, None);
         assert_eq!(context.node.kind(), ")");
         assert_eq!(
@@ -308,7 +308,7 @@ mod tests {
 
         // After `=`
         let point = Point { row: 0, column: 6 };
-        let document = Document::new("fn(x =)");
+        let document = Document::new("fn(x =)", None);
         let context = DocumentContext::new(&document, point, None);
         assert_eq!(context.node.kind(), "=");
         assert_eq!(
@@ -318,7 +318,7 @@ mod tests {
 
         // In an expression
         let point = Point { row: 0, column: 4 };
-        let document = Document::new("fn(1 + 1)");
+        let document = Document::new("fn(1 + 1)", None);
         let context = DocumentContext::new(&document, point, None);
         assert_eq!(context.node.kind(), "float");
         assert_eq!(
@@ -327,7 +327,7 @@ mod tests {
         );
 
         let point = Point { row: 0, column: 8 };
-        let document = Document::new("fn(1 + 1)");
+        let document = Document::new("fn(1 + 1)", None);
         let context = DocumentContext::new(&document, point, None);
         assert_eq!(context.node.kind(), "float");
         assert_eq!(
@@ -338,7 +338,7 @@ mod tests {
         // Right before an expression
         // (special case where we still provide argument completions)
         let point = Point { row: 0, column: 6 };
-        let document = Document::new("fn(1, 1 + 1)");
+        let document = Document::new("fn(1, 1 + 1)", None);
         let context = DocumentContext::new(&document, point, None);
         assert_eq!(context.node.kind(), "float");
         assert_eq!(
@@ -349,7 +349,7 @@ mod tests {
         // After an identifier, before the `)`, with whitespace between them,
         // but on the `)`
         let point = Point { row: 0, column: 5 };
-        let document = Document::new("fn(x )");
+        let document = Document::new("fn(x )", None);
         let context = DocumentContext::new(&document, point, None);
         assert_eq!(context.node.kind(), ")");
         assert_eq!(
@@ -360,7 +360,7 @@ mod tests {
         // After an identifier, before the `)`, with whitespace between them,
         // but on the identifier
         let point = Point { row: 0, column: 4 };
-        let document = Document::new("fn(x )");
+        let document = Document::new("fn(x )", None);
         let context = DocumentContext::new(&document, point, None);
         assert_eq!(context.node.kind(), "identifier");
         assert_eq!(

@@ -1265,7 +1265,7 @@ fn test_statement_range_roxygen() {
 #' @returns
 ";
 
-    let document = Document::new(text);
+    let document = Document::new(text, None);
     let root = document.ast.root_node();
     let contents = &document.contents;
 
@@ -1334,7 +1334,7 @@ fn test_statement_range_roxygen() {
 ###' @returns
 ";
 
-    let document = Document::new(text);
+    let document = Document::new(text, None);
     let root = document.ast.root_node();
     let contents = &document.contents;
 

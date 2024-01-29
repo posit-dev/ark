@@ -47,7 +47,7 @@ mod tests {
         let point = Point { row: 0, column: 0 };
 
         // Empty document
-        let document = Document::new("");
+        let document = Document::new("", None);
         let context = DocumentContext::new(&document, point, None);
         assert_eq!(
             context
@@ -60,7 +60,7 @@ mod tests {
         );
 
         // Start of document with text
-        let document = Document::new("1 + 1");
+        let document = Document::new("1 + 1", None);
         let context = DocumentContext::new(&document, point, None);
         assert_eq!(
             context
