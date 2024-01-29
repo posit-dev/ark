@@ -21,6 +21,9 @@ pub struct EditorContextResult {
 	/// Document metadata
 	pub document: UiTextDocument,
 
+	/// Document contents
+	pub contents: Vec<String>,
+
 	/// The primary selection, i.e. selections[0]
 	pub selection: UiSelection,
 
@@ -34,8 +37,8 @@ pub struct UiTextDocument {
 	/// URI of the resource viewed in the editor
 	pub path: String,
 
-	/// End of line character
-	pub eol: i64,
+	/// End of line sequence
+	pub eol: String,
 
 	/// Whether the document has been closed
 	pub isClosed: bool,
@@ -59,7 +62,7 @@ pub struct UiTextDocument {
 /// A line and character position, such as the position of the cursor.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct UiPosition {
-	/// The zero-based character value.
+	/// The zero-based character value, as a Unicode code point offset.
 	pub character: i64,
 
 	/// The zero-based line value.

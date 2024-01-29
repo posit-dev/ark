@@ -12,11 +12,7 @@
 
     list(
         path = context$document$path,
-
-        # TODO: This field is an empty stub for now to make
-        # `getSourceEditorContext()` work without erroring
-        contents = character(),
-
+        contents = unlist(context$contents),
         selection = convert_selection(context$selections)
     )
 }
