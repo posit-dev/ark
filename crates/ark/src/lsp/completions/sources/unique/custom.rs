@@ -223,7 +223,7 @@ mod tests {
             };
 
             let point = Point { row: 0, column: 8 };
-            let document = Document::new("library()");
+            let document = Document::new("library()", None);
             let context = DocumentContext::new(&document, point, None);
 
             let n_compls = completions_from_custom_source_impl(&context)
@@ -235,7 +235,7 @@ mod tests {
             assert_eq!(n_compls, n_packages);
 
             let point = Point { row: 0, column: 11 };
-            let document = Document::new("library(uti)");
+            let document = Document::new("library(uti)", None);
             let context = DocumentContext::new(&document, point, None);
 
             let compls = completions_from_custom_source_impl(&context)

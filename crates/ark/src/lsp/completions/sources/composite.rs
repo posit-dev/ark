@@ -165,7 +165,7 @@ mod tests {
             // identifiers that we provide completions for
             for keyword in ["if", "for", "while"] {
                 let point = Point { row: 0, column: 0 };
-                let document = Document::new(keyword);
+                let document = Document::new(keyword, None);
                 let context = DocumentContext::new(&document, point, None);
                 assert!(is_identifier_like(context.node));
                 assert_eq!(context.node.kind(), keyword);

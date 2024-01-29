@@ -294,7 +294,7 @@ mod tests {
         r_test(|| {
             // Right after `tab`
             let point = Point { row: 0, column: 9 };
-            let document = Document::new("match(tab)");
+            let document = Document::new("match(tab)", None);
             let context = DocumentContext::new(&document, point, None);
             let completions = completions_from_call(&context, None).unwrap().unwrap();
 
@@ -305,7 +305,7 @@ mod tests {
 
             // Right after `tab`
             let point = Point { row: 0, column: 12 };
-            let document = Document::new("match(1, tab)");
+            let document = Document::new("match(1, tab)", None);
             let context = DocumentContext::new(&document, point, None);
             let completions = completions_from_call(&context, None).unwrap().unwrap();
 
@@ -323,7 +323,7 @@ mod tests {
         r_test(|| {
             // Place cursor between `()`
             let point = Point { row: 0, column: 21 };
-            let document = Document::new("not_a_known_function()");
+            let document = Document::new("not_a_known_function()", None);
             let context = DocumentContext::new(&document, point, None);
             let completions = completions_from_call(&context, None).unwrap();
             assert!(completions.is_none());
@@ -341,7 +341,7 @@ mod tests {
 
             // Place cursor between `()`
             let point = Point { row: 0, column: 7 };
-            let document = Document::new("my_fun()");
+            let document = Document::new("my_fun()", None);
             let context = DocumentContext::new(&document, point, None);
             let completions = completions_from_call(&context, None).unwrap().unwrap();
 
@@ -356,14 +356,14 @@ mod tests {
 
             // Place just before the `()`
             let point = Point { row: 0, column: 6 };
-            let document = Document::new("my_fun()");
+            let document = Document::new("my_fun()", None);
             let context = DocumentContext::new(&document, point, None);
             let completions = completions_from_call(&context, None).unwrap();
             assert!(completions.is_none());
 
             // Place just after the `()`
             let point = Point { row: 0, column: 8 };
-            let document = Document::new("my_fun()");
+            let document = Document::new("my_fun()", None);
             let context = DocumentContext::new(&document, point, None);
             let completions = completions_from_call(&context, None).unwrap();
             assert!(completions.is_none());
@@ -384,7 +384,7 @@ mod tests {
 
             // Place cursor between `()`
             let point = Point { row: 0, column: 7 };
-            let document = Document::new("my_fun()");
+            let document = Document::new("my_fun()", None);
             let context = DocumentContext::new(&document, point, None);
             let completions = completions_from_call(&context, None).unwrap().unwrap();
             assert_eq!(completions.len(), 0);

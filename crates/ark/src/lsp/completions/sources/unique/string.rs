@@ -60,7 +60,7 @@ mod tests {
             // Before or after the `''`, i.e. `|''` or `''|`.
             // Still considered part of the string node.
             let point = Point { row: 0, column: 0 };
-            let document = Document::new("''");
+            let document = Document::new("''", None);
             let context = DocumentContext::new(&document, point, None);
 
             assert_eq!(context.node.kind(), "string");
@@ -72,7 +72,7 @@ mod tests {
     fn test_not_string() {
         r_test(|| {
             let point = Point { row: 0, column: 0 };
-            let document = Document::new("foo");
+            let document = Document::new("foo", None);
             let context = DocumentContext::new(&document, point, None);
 
             assert_eq!(context.node.kind(), "identifier");
@@ -88,7 +88,7 @@ mod tests {
             let point = Point { row: 0, column: 2 };
 
             // Assume home directory is not empty
-            let document = Document::new("'~/'");
+            let document = Document::new("'~/'", None);
 
             // `None` trigger -> Return file completions
             let context = DocumentContext::new(&document, point, None);
