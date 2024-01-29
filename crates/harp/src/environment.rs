@@ -13,7 +13,6 @@ use stdext::unwrap;
 
 use crate::exec::RFunction;
 use crate::exec::RFunctionExt;
-use crate::harp;
 use crate::object::RObject;
 use crate::r_symbol;
 use crate::symbol::RSymbol;

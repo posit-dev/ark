@@ -30,9 +30,7 @@ pub mod vector;
 
 // Necessary for the `harp::` references in macros, e.g. `harp::register`, to
 // resolve to the correct symbols
-pub mod harp {
-    pub use crate::*;
-}
+extern crate self as harp;
 
 pub use harp_macros::register;
 
