@@ -7,7 +7,6 @@
 
 use std::ops::Deref;
 
-use harp_macros::register;
 use libr::*;
 use once_cell::sync::Lazy;
 use stdext::unwrap;
@@ -498,7 +497,7 @@ impl From<Environment> for RObject {
     }
 }
 
-#[register]
+#[harp::register]
 pub extern "C" fn ark_env_unlock(env: SEXP) -> crate::error::Result<SEXP> {
     unsafe {
         if libr::TYPEOF(env) as u32 != libr::ENVSXP {
