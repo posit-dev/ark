@@ -499,9 +499,7 @@ impl From<Environment> for RObject {
 #[harp::register]
 pub extern "C" fn ark_env_unlock(env: SEXP) -> crate::error::Result<SEXP> {
     unsafe {
-        if libr::TYPEOF(env) as u32 != libr::ENVSXP {
-            return crate::anyhow!("Must be an environment");
-        }
+        crate::check_env(env)?;
         Environment::view(env).unlock();
         Ok(libr::R_NilValue)
     }

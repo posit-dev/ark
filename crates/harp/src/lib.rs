@@ -34,7 +34,9 @@ extern crate self as harp;
 
 pub use harp_macros::register;
 
-use crate::utils::init_utils;
+// Allow `crate::` references within the crate
+use crate::error::*;
+use crate::utils::*;
 
 pub fn initialize() {
     init_utils();
