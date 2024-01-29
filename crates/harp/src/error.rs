@@ -187,18 +187,23 @@ macro_rules! anyhow {
     }}
 }
 
-// TODO: Macro variant that records function name, see `function_name` in
-// https://docs.rs/stdext/latest/src/stdext/macros.rs.html
-pub fn check_env(x: impl Into<libr::SEXP>) -> crate::Result<()> {
+// TODO: Macro variants of `check_` helpers that record function name, see
+// `function_name` in https://docs.rs/stdext/latest/src/stdext/macros.rs.html
+
+fn check(x: impl Into<libr::SEXP>, expected: libr::SEXPTYPE) -> crate::Result<()> {
     let x = x.into();
     let typ = crate::r_typeof(x);
 
-    if typ != libr::ENVSXP {
-        let err = Error::UnexpectedType(typ, vec![libr::ENVSXP]);
+    if typ != expected {
+        let err = Error::UnexpectedType(typ, vec![expected]);
         return Err(err);
     }
 
     Ok(())
+}
+
+pub fn check_env(x: impl Into<libr::SEXP>) -> crate::Result<()> {
+    check(x, libr::ENVSXP)
 }
 
 // NOTE: Debug is the same as Display but with backtrace printing.
