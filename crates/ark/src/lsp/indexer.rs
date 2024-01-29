@@ -20,13 +20,11 @@ use ropey::Rope;
 use stdext::unwrap;
 use stdext::unwrap::IntoResult;
 use tower_lsp::lsp_types::Range;
-use tower_lsp::lsp_types::Url;
 use tree_sitter::Node;
 use walkdir::DirEntry;
 use walkdir::WalkDir;
 
 use crate::lsp::documents::Document;
-use crate::lsp::documents::DOCUMENT_INDEX;
 use crate::lsp::encoding::convert_point_to_position;
 use crate::lsp::traits::rope::RopeExt;
 
@@ -172,13 +170,6 @@ fn index_file(path: &Path) -> Result<bool> {
     let document = Document::new(contents.as_str());
 
     index_document(&document, path)?;
-
-    if let Ok(url) = Url::from_file_path(path) {
-        let index = DOCUMENT_INDEX.clone();
-        if !index.contains_key(&url) {
-            index.insert(url, document);
-        }
-    }
 
     Ok(true)
 }
