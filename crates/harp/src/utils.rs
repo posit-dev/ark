@@ -26,6 +26,7 @@ use crate::exec::geterrmessage;
 use crate::exec::RArgument;
 use crate::exec::RFunction;
 use crate::exec::RFunctionExt;
+use crate::harp;
 use crate::object::RObject;
 use crate::protect::RProtect;
 use crate::r_char;
@@ -91,11 +92,6 @@ impl Sxpinfo {
     pub fn is_object(&self) -> bool {
         self.obj() != 0
     }
-}
-
-// Necessary for the `harp` reference in the `register` macro to resolve correctly
-mod harp {
-    pub use crate::*;
 }
 
 #[register]

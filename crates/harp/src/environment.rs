@@ -14,6 +14,7 @@ use stdext::unwrap;
 
 use crate::exec::RFunction;
 use crate::exec::RFunctionExt;
+use crate::harp;
 use crate::object::RObject;
 use crate::r_symbol;
 use crate::symbol::RSymbol;
@@ -495,11 +496,6 @@ impl From<Environment> for RObject {
     fn from(object: Environment) -> Self {
         object.env
     }
-}
-
-// Necessary for the `harp` reference in the `register` macro to resolve correctly
-mod harp {
-    pub use crate::*;
 }
 
 #[register]

@@ -28,6 +28,12 @@ pub mod traits;
 pub mod utils;
 pub mod vector;
 
+// Necessary for the `harp::` references in macros, e.g. `harp::register`, to
+// resolve to the correct symbols
+pub mod harp {
+    pub use crate::*;
+}
+
 pub use harp_macros::register;
 
 use crate::utils::init_utils;
