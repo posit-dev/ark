@@ -58,7 +58,7 @@ pub enum Error {
         message: String,
         backtrace: Backtrace,
     },
-    AnyhowError {
+    Anyhow {
         message: String,
     },
 }
@@ -170,7 +170,7 @@ impl fmt::Display for Error {
                 write!(f, "C stack usage too close to the limit")
             },
 
-            Error::AnyhowError { message } => {
+            Error::Anyhow { message } => {
                 write!(f, "{message}")
             },
         }
@@ -181,7 +181,7 @@ impl fmt::Display for Error {
 macro_rules! anyhow {
     ($($rest: expr),*) => {{
         let message = format!($($rest, )*);
-        Err(crate::error::Error::AnyhowError {
+        Err(crate::error::Error::Anyhow {
             message,
         })
     }}
