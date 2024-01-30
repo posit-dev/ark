@@ -90,7 +90,7 @@ import_rstudio_path <- function(path) {
     local_unlock(env)
 
     source(path, local = env)
-    export_path(path, from = ns, to = as.environment("tools:rstudio"))
+    export_path(path, from = env, to = as.environment("tools:rstudio"))
 }
 
 init_rstudio <- function() {
@@ -102,13 +102,15 @@ init_rstudio <- function() {
     # Create environment for the rstudio namespace.
     # It inherits from the positron namespace.
     parent <- parent.env(environment())
-    the$rstudio_ns <- new.env(parent = parent)
+    rstudio_ns <- new.env(parent = parent)
 
-    # Create environment for functions exported on the search path
-    attach(list(), name = "tools:rstudio")
+    # Create environment for functions exported on the search path.
+    # Store the namespace there for convenience, so it survives sourcing
+    # the modules file again.
+    attach(list(.__rstudio_ns__. = rstudio_ns), name = "tools:rstudio")
 
     # Lock environments, we'll unlock them before updating
-    lockEnvironment(the$rstudio_ns)
+    lockEnvironment(rstudio_ns)
     lockEnvironment(as.environment("tools:rstudio"))
 
     # Override `rstudioapi::isAvailable()` so it thinks it's running under RStudio
@@ -127,7 +129,7 @@ init_rstudio <- function() {
 }
 
 rstudio_ns <- function() {
-    the$rstudio_ns
+    as.environment("tools:rstudio")[[".__rstudio_ns__."]]
 }
 
 
