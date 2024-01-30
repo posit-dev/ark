@@ -260,20 +260,20 @@ impl RDataTool {
                 // that handles prefixes. is it possible that this
                 // column is also a data frame?
 
-                let type_name: String;
-								if is_data_frame {
-										let col_type = CharacterVector::new(VECTOR_ELT(*column_types, i))?;
-										// TODO: some columns (e.g. temporal columns) can have multiple types
-										type_name = match col_type.get_unchecked(0) {
-												Some(value) => value,
-												None => "unknown".to_string()
-										};
-								} else {
-										type_name = match CharacterVector::new(*column_types)?.get_unchecked(0) {
-												Some(value) => value,
-												None => "unknown".to_string()
-										};
-								}
+                // let type_name: String;
+								// if is_data_frame {
+								// 		let col_type = CharacterVector::new(VECTOR_ELT(*column_types, i))?;
+								// 		// TODO: some columns (e.g. temporal columns) can have multiple types
+								// 		type_name = match col_type.get_unchecked(0) {
+								// 				Some(value) => value,
+								// 				None => "unknown".to_string()
+								// 		};
+								// } else {
+								// 		type_name = match CharacterVector::new(*column_types)?.get_unchecked(0) {
+								// 				Some(value) => value,
+								// 				None => "unknown".to_string()
+								// 		};
+								// }
 
 								let type_name = "unknown".to_string();
 
