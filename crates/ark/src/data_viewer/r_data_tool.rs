@@ -224,7 +224,7 @@ impl RDataTool {
             let total_num_columns: i32;
             let column_names: ColumnNames;
             let is_data_frame = r_is_data_frame(object);
-						let column_types: RObject;
+            let column_types: RObject;
             if is_data_frame {
                 let dims = dim_data_frame(object);
                 num_rows = dims.nrow as i64;
@@ -261,21 +261,21 @@ impl RDataTool {
                 // column is also a data frame?
 
                 // let type_name: String;
-								// if is_data_frame {
-								// 		let col_type = CharacterVector::new(VECTOR_ELT(*column_types, i))?;
-								// 		// TODO: some columns (e.g. temporal columns) can have multiple types
-								// 		type_name = match col_type.get_unchecked(0) {
-								// 				Some(value) => value,
-								// 				None => "unknown".to_string()
-								// 		};
-								// } else {
-								// 		type_name = match CharacterVector::new(*column_types)?.get_unchecked(0) {
-								// 				Some(value) => value,
-								// 				None => "unknown".to_string()
-								// 		};
-								// }
+                // if is_data_frame {
+                //    let col_type = CharacterVector::new(VECTOR_ELT(*column_types, i))?;
+                //    // TODO: some columns (e.g. temporal columns) can have multiple types
+                //    type_name = match col_type.get_unchecked(0) {
+                //        Some(value) => value,
+                //        None => "unknown".to_string()
+                //    };
+                // } else {
+                //    type_name = match CharacterVector::new(*column_types)?.get_unchecked(0) {
+                //        Some(value) => value,
+                //        None => "unknown".to_string()
+                //    };
+                // }
 
-								let type_name = "unknown".to_string();
+                let type_name = "unknown".to_string();
 
                 let type_display = match column_name.as_str() {
                     "character" => ColumnSchemaTypeDisplay::String,
@@ -285,7 +285,7 @@ impl RDataTool {
                     "list" => ColumnSchemaTypeDisplay::Array,
                     "logical" => ColumnSchemaTypeDisplay::Boolean,
                     "Date" => ColumnSchemaTypeDisplay::Date,
-										"POSIXct" => ColumnSchemaTypeDisplay::Datetime,
+                    "POSIXct" => ColumnSchemaTypeDisplay::Datetime,
                     _ => ColumnSchemaTypeDisplay::Unknown,
                 };
 
@@ -344,7 +344,7 @@ impl RDataTool {
             let upper_bound = cmp::min(row_start_index + num_rows, total_num_rows) as isize;
             let mut column_data: Vec<Vec<String>> = Vec::new();
             for column_index in column_indices {
-								let column_index = column_index as i32;
+                let column_index = column_index as i32;
                 if column_index >= total_num_columns {
                     // For now we skip any columns requested beyond last one
                     break;
