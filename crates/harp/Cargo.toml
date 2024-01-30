@@ -27,3 +27,4 @@ semver = "1.0.19"
 stdext = { path = "../stdext" }
 serde = { version = "1.0.183", features = ["derive"] }
 serde_json = { version = "1.0.94", features = ["preserve_order"]}
+rust-embed = "8.2.0"

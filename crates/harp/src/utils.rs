@@ -7,14 +7,12 @@
 
 use std::ffi::CStr;
 use std::ffi::CString;
-use std::path::Path;
 
 use c2rust_bitfields::BitfieldStruct;
 use itertools::Itertools;
 use libr::*;
 use once_cell::sync::Lazy;
 use regex::Regex;
-use stdext::unwrap;
 
 use crate::environment::Environment;
 use crate::environment::R_ENVS;
@@ -36,7 +34,12 @@ use crate::vector::CharacterVector;
 use crate::vector::IntegerVector;
 use crate::vector::Vector;
 
-pub static mut HARP_ENV: SEXP = std::ptr::null_mut();
+pub fn init_utils() {
+    unsafe {
+        let options_fn = Rf_eval(r_symbol!("options"), R_BaseEnv);
+        OPTIONS_FN = Some(options_fn);
+    }
+}
 
 // NOTE: Regex::new() is quite slow to compile, so it's much better to keep
 // a single singleton pattern and use that repeatedly for matches.
@@ -600,76 +603,6 @@ pub fn r_normalize_path(x: RObject) -> anyhow::Result<String> {
             .to::<String>()?;
         Ok(path)
     }
-}
-
-pub fn init_utils() {
-    init_modules();
-
-    unsafe {
-        let options_fn = Rf_eval(r_symbol!("options"), R_BaseEnv);
-        OPTIONS_FN = Some(options_fn);
-    }
-}
-
-// Largely copied from `module.rs` in the Ark crate
-fn init_modules() {
-    unsafe {
-        let ns = r_parse_eval0("new.env()", R_ENVS.base).unwrap();
-        R_PreserveObject(ns.sexp);
-        HARP_ENV = ns.sexp;
-    }
-
-    // Get the path to the 'modules' directory, adjacent to the executable file.
-    // This is where we place the R source files in packaged releases.
-    let mut root = match std::env::current_exe() {
-        Ok(exe_path) => exe_path.parent().unwrap().join("modules"),
-        Err(err) => {
-            log::error!("Failed to get current exe path; can't find harp modules: {err:?}");
-            return;
-        },
-    };
-
-    // If that path doesn't exist, we're probably running from source, so
-    // look in the source tree (found via the 'CARGO_MANIFEST_DIR' environment
-    // variable).
-    if !root.exists() {
-        let source = env!("CARGO_MANIFEST_DIR");
-        root = Path::new(&source).join("src").join("modules").to_path_buf();
-    }
-
-    log::info!("Loading modules from directory: {}", root.display());
-    let entries = unwrap!(std::fs::read_dir(root), Err(err) => {
-        log::error!("Can't read module directory: {err:?}");
-        return;
-    });
-
-    for entry in entries {
-        let entry = unwrap!(
-            entry,
-            Err(err) => {
-                log::error!("Can't load directory entry due to: {}", err);
-                continue;
-            }
-        );
-
-        let path = entry.path();
-
-        if path.extension().is_some_and(|ext| ext == "R") {
-            source_file(&path).unwrap();
-        }
-    }
-}
-
-fn source_file(file: &Path) -> anyhow::Result<()> {
-    let file = file.to_str().unwrap();
-    unsafe {
-        RFunction::new("base", "sys.source")
-            .param("file", file)
-            .param("envir", HARP_ENV)
-            .call()?;
-    }
-
-    Ok(())
 }
 
 pub fn save_rds(x: SEXP, path: &str) {
