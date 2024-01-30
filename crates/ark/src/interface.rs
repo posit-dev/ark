@@ -89,7 +89,6 @@ use serde_json::json;
 use stdext::result::ResultOrLog;
 use stdext::*;
 use tokio::runtime::Runtime;
-use tower_lsp::Client;
 
 use crate::dap::dap::DapBackendEvent;
 use crate::dap::Dap;
@@ -97,6 +96,7 @@ use crate::errors;
 use crate::help::message::HelpReply;
 use crate::help::message::HelpRequest;
 use crate::kernel::Kernel;
+use crate::lsp::backend::Backend;
 use crate::lsp::events::EVENTS;
 use crate::modules;
 use crate::plots::graphics_device;
@@ -263,12 +263,12 @@ pub struct RMain {
     pub help_rx: Option<Receiver<HelpReply>>,
 
     // LSP tokio runtime used to spawn LSP tasks on the executor and the
-    // corresponding client used to send LSP requests to the frontend.
+    // corresponding backend used to send LSP requests to the frontend.
     // Used by R callbacks, like `ps_editor()` for `utils::file.edit()`.
-    // The client is initialized on LSP start up, and is refreshed after a
+    // The backend is initialized on LSP start up, and is refreshed after a
     // frontend reconnect.
     lsp_runtime: Arc<Runtime>,
-    lsp_client: Option<Client>,
+    lsp_backend: Option<Backend>,
 
     dap: Arc<Mutex<Dap>>,
     is_debugging: bool,
@@ -375,7 +375,7 @@ impl RMain {
             help_tx: None,
             help_rx: None,
             lsp_runtime,
-            lsp_client: None,
+            lsp_backend: None,
             dap,
             is_debugging: false,
             is_busy: false,
@@ -1049,12 +1049,12 @@ impl RMain {
         &self.lsp_runtime
     }
 
-    pub fn get_lsp_client(&self) -> Option<&Client> {
-        self.lsp_client.as_ref()
+    pub fn get_lsp_backend(&self) -> Option<&Backend> {
+        self.lsp_backend.as_ref()
     }
 
-    pub fn set_lsp_client(&mut self, client: Client) {
-        self.lsp_client = Some(client);
+    pub fn set_lsp_backend(&mut self, backend: Backend) {
+        self.lsp_backend = Some(backend);
     }
 
     pub fn call_frontend_method(&self, request: UiFrontendRequest) -> anyhow::Result<RObject> {
