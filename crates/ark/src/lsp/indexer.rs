@@ -139,7 +139,7 @@ pub fn filter_entry(entry: &DirEntry) -> bool {
     let name = entry.file_name();
 
     // skip common ignores
-    for ignore in [".git", ".Rproj.user", "node_modules"] {
+    for ignore in [".git", ".Rproj.user", "node_modules", "revdep"] {
         if name == ignore {
             return false;
         }
