@@ -236,7 +236,6 @@ dependencies = [
 name = "amalthea"
 version = "0.1.0"
 dependencies = [
- "amalthea-macros",
  "anyhow",
  "async-trait",
  "cfg-if",
@@ -263,15 +262,6 @@ dependencies = [
  "strum_macros",
  "uuid",
  "zmq",
-]
-
-[[package]]
-name = "amalthea-macros"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.29",
 ]
 
 [[package]]

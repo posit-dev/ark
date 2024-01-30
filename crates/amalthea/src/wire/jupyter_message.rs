@@ -8,7 +8,6 @@
 use serde::Deserialize;
 use serde::Serialize;
 
-use super::client_event::ClientEvent;
 use super::stream::StreamOutput;
 use crate::comm::base_comm::JsonRpcReply;
 use crate::comm::ui_comm::UiFrontendRequest;
@@ -103,7 +102,6 @@ pub enum Message {
     CommRequest(JupyterMessage<UiFrontendRequest>),
     CommReply(JupyterMessage<JsonRpcReply>),
     CommClose(JupyterMessage<CommClose>),
-    ClientEvent(JupyterMessage<ClientEvent>),
     StreamOutput(JupyterMessage<StreamOutput>),
 }
 
@@ -154,7 +152,6 @@ impl TryFrom<&Message> for WireMessage {
             Message::CommClose(msg) => WireMessage::try_from(msg),
             Message::CommRequest(msg) => WireMessage::try_from(msg),
             Message::CommReply(msg) => WireMessage::try_from(msg),
-            Message::ClientEvent(msg) => WireMessage::try_from(msg),
             Message::StreamOutput(msg) => WireMessage::try_from(msg),
         }
     }
