@@ -57,12 +57,12 @@ pub struct WorkspaceVariableDisplayValue {
     pub is_truncated: bool,
 }
 
-struct DimDataFrame {
-    nrow: i32,
-    ncol: i32,
+pub struct DimDataFrame {
+    pub nrow: i32,
+    pub ncol: i32,
 }
 
-fn dim_data_frame(data: SEXP) -> DimDataFrame {
+pub fn dim_data_frame(data: SEXP) -> DimDataFrame {
     unsafe {
         let dim = RFunction::new("base", "dim.data.frame")
             .add(data)
