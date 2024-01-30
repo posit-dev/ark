@@ -103,6 +103,20 @@ pub fn initialize(testing: bool) -> anyhow::Result<()> {
         let root = Path::new(&source).join("src").join("modules").to_path_buf();
 
         if root.exists() {
+            // First reload all modules from source to reflect new changes that have
+            // not been built into the binary yet.
+            log::trace!("Loading R modules from sources via cargo manifest");
+            import_directory(
+                &root.join("positron"),
+                RModuleSource::Positron,
+                namespace.sexp,
+            )?;
+            import_directory(
+                &root.join("rstudio"),
+                RModuleSource::RStudio,
+                namespace.sexp,
+            )?;
+
             log::info!("Watching R modules from sources via cargo manifest");
             spawn_watcher_thread(root, namespace.sexp);
         } else {
@@ -207,10 +221,24 @@ impl RModuleWatcher {
     }
 }
 
+fn import_directory(directory: &Path, src: RModuleSource, env: SEXP) -> anyhow::Result<()> {
+    log::info!("Loading modules from directory: {}", directory.display());
+    let entries = std::fs::read_dir(directory)?;
+
+    for entry in entries {
+        match entry {
+            Ok(entry) => import_file(&entry.path(), src, env)?,
+            Err(err) => log::error!("Can't load modules from file: {err:?}"),
+        };
+    }
+
+    Ok(())
+}
+
 fn import_file(path: &PathBuf, src: RModuleSource, env: SEXP) -> anyhow::Result<()> {
     let fun = match src {
-        RModuleSource::Positron => "import_positron",
-        RModuleSource::RStudio => "import_rstudio",
+        RModuleSource::Positron => "import_positron_path",
+        RModuleSource::RStudio => "import_rstudio_path",
     };
 
     if path.extension().is_some_and(|ext| ext == "R") {

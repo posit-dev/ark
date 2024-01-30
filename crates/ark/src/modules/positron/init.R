@@ -16,6 +16,14 @@ import_positron <- function(exprs) {
     export(exprs, from = ns, to = as.environment("tools:positron"))
 }
 
+import_positron_path <- function(path) {
+    ns <- parent.env(environment())
+    local_unlock(ns)
+
+    source(path, local = ns)
+    export_path(path, from = ns, to = as.environment("tools:positron"))
+}
+
 init_positron <- function() {
     # Already initialised if we're on the search path
     if ("tools:positron" %in% search()) {
@@ -35,6 +43,11 @@ export <- function(exprs, from, to) {
     for (name in exported_names(exprs)) {
         to[[name]] <- from[[name]]
     }
+}
+
+export_path <- function(path, from, to) {
+    exprs <- parse(path, keep.source = TRUE)
+    export(exprs, from, to)
 }
 
 exported_names <- function(exprs) {
@@ -70,6 +83,14 @@ import_rstudio <- function(exprs) {
 
     source(exprs = exprs, local = env)
     export(exprs, from = env, to = as.environment("tools:rstudio"))
+}
+
+import_rstudio_path <- function(path) {
+    env <- rstudio_ns()
+    local_unlock(env)
+
+    source(path, local = env)
+    export_path(path, from = ns, to = as.environment("tools:rstudio"))
 }
 
 init_rstudio <- function() {
