@@ -250,13 +250,14 @@ impl LanguageServer for Backend {
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         backend_trace!(self, "did_open({}", params.text_document.uri);
 
-        self.documents.insert(
-            params.text_document.uri,
-            Document::new(
-                params.text_document.text.as_str(),
-                Some(params.text_document.version),
-            ),
-        );
+        let contents = params.text_document.text.as_str();
+        let uri = params.text_document.uri;
+        let version = params.text_document.version;
+
+        self.documents
+            .insert(uri.clone(), Document::new(contents, Some(version)));
+
+        diagnostics::refresh_diagnostics(self.clone(), uri.clone(), Some(version));
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
@@ -289,9 +290,9 @@ impl LanguageServer for Backend {
 
         // publish diagnostics - but only publish them if the version of
         // the document now matches the version of the change after applying
-        // it in `on_did_change()`
+        // it in `on_did_change()` (i.e. no changes left in the out of order queue)
         if params.text_document.version == version {
-            diagnostics::enqueue_diagnostics(self.clone(), uri.clone(), version);
+            diagnostics::refresh_diagnostics(self.clone(), uri.clone(), Some(version));
         }
     }
 
@@ -302,19 +303,18 @@ impl LanguageServer for Backend {
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         backend_trace!(self, "did_close({:?}", params);
 
-        match self.documents.remove(&params.text_document.uri) {
+        let uri = params.text_document.uri;
+
+        diagnostics::clear_diagnostics(self.clone(), uri.clone(), None);
+
+        match self.documents.remove(&uri) {
             Some(_) => {
-                backend_trace!(
-                    self,
-                    "did_close(): closed document with URI: '{}'.",
-                    params.text_document.uri
-                );
+                backend_trace!(self, "did_close(): closed document with URI: '{uri}'.");
             },
             None => {
                 backend_trace!(
                     self,
-                    "did_close(): failed to remove document with unknown URI: '{}'.",
-                    params.text_document.uri
+                    "did_close(): failed to remove document with unknown URI: '{uri}'."
                 );
             },
         };

@@ -10,6 +10,7 @@ use std::collections::HashSet;
 use std::marker::PhantomData;
 use std::time::Duration;
 
+use anyhow::anyhow;
 use anyhow::bail;
 use anyhow::Result;
 use harp::exec::RFunction;
@@ -49,12 +50,14 @@ use tower_lsp::lsp_types::Url;
 use tree_sitter::Node;
 use tree_sitter::Range;
 
+use crate::interface::RMain;
 use crate::lsp::backend::Backend;
 use crate::lsp::documents::Document;
 use crate::lsp::encoding::convert_tree_sitter_range_to_lsp_range;
 use crate::lsp::indexer;
 use crate::lsp::traits::rope::RopeExt;
 use crate::r_task;
+use crate::r_task::r_async_task;
 
 #[derive(Clone)]
 pub struct DiagnosticContext<'a> {
@@ -105,62 +108,144 @@ impl<'a> DiagnosticContext<'a> {
     }
 }
 
-pub fn enqueue_diagnostics(backend: Backend, uri: Url, version: i32) {
-    // log::trace!("[diagnostics({version}, {uri})] Spawning task to enqueue diagnostics.");
-
-    // Spawn a task to enqueue diagnostics.
+/// Clear the diagnostics of a single file
+///
+/// Note that we don't reference the `document` in the DashMap in any way,
+/// in case it has already been removed by the time the thread runs.
+///
+/// Must be called from an LSP method so it runs on the LSP tokio `Runtime`
+pub fn clear_diagnostics(backend: Backend, uri: Url, version: Option<i32>) {
     tokio::spawn(async move {
-        // Wait some amount of time. Note that the document version is updated on
-        // every document change, so if the document changes while this task is waiting,
-        // we'll see that the current document version is now out-of-sync with the version
-        // associated with this task, and toss it away.
-        tokio::time::sleep(Duration::from_millis(1000)).await;
-
-        let Some(diagnostics) = generate_diagnostics(&backend, &uri, version) else {
-            // Document was closed, or `version` changed
-            return;
-        };
+        // Empty set to clear them
+        let diagnostics = Vec::new();
 
         backend
             .client
-            .publish_diagnostics(uri, diagnostics, None)
-            .await;
+            .publish_diagnostics(uri.clone(), diagnostics, version)
+            .await
     });
 }
 
-fn generate_diagnostics(backend: &Backend, uri: &Url, version: i32) -> Option<Vec<Diagnostic>> {
+/// Refresh the diagnostics of a single file
+///
+/// Must be called from an LSP method so it runs on the LSP tokio `Runtime`
+pub fn refresh_diagnostics(backend: Backend, uri: Url, version: Option<i32>) {
+    tokio::spawn(async move {
+        refresh_diagnostics_impl(backend, uri, version).await;
+    });
+}
+
+/// Request a full diagnostic refresh on all open documents
+///
+/// Called after each R console execution so diagnostics are dynamic to code sent to the
+/// console.
+///
+/// Still goes through `request_diagnostics()` with its 1 second delay before actually
+/// generating diagnostics. This avoids being too aggressive with the refresh, since
+/// generating diagnostics does require R.
+pub fn refresh_all_open_file_diagnostics() {
+    r_async_task(|| {
+        let main = RMain::get();
+
+        let Some(backend) = main.get_lsp_backend() else {
+            log::error!("No LSP `backend` to request a diagnostic refresh with.");
+            return;
+        };
+
+        let runtime = main.get_lsp_runtime();
+
+        for document in backend.documents.iter() {
+            let backend = backend.clone();
+            let uri = document.key().clone();
+            let version = document.version.clone();
+
+            // Explicit `drop()` before we request diagnostics, which requires `get()`ting
+            // this document again on the thread. Likely not needed, but better to be safe.
+            drop(document);
+
+            runtime.spawn(async move {
+                refresh_diagnostics_impl(backend, uri, version).await;
+            });
+        }
+    });
+}
+
+async fn refresh_diagnostics_impl(backend: Backend, uri: Url, version: Option<i32>) {
+    let diagnostics = match request_diagnostics(&backend, &uri, version).await {
+        Ok(diagnostics) => diagnostics,
+        Err(err) => {
+            log::error!("While refreshing diagnostics for '{uri}': {err:?}");
+            return;
+        },
+    };
+
+    let Some(diagnostics) = diagnostics else {
+        // File was closed or `version` changed. Not an error, just a side effect
+        // of delaying diagnostics.
+        return;
+    };
+
+    backend
+        .client
+        .publish_diagnostics(uri.clone(), diagnostics, version)
+        .await
+}
+
+async fn request_diagnostics(
+    backend: &Backend,
+    uri: &Url,
+    version: Option<i32>,
+) -> anyhow::Result<Option<Vec<Diagnostic>>> {
     // SAFETY: It is absolutely imperative that the `doc` be `Drop`ped outside
     // of any `await` context. That is why the extraction of `doc` is captured
-    // inside of `generate_diagnostics()`; `doc` is dropped as this exits, before
-    // `publish_diagnostics().await`. If this doesn't happen, then the `await`
-    // could switch us to a different LSP task, which will also try and access
-    // a document, causing a deadlock since it won't be able to access a
-    // document until our mutable `doc` reference is dropped, but we can't drop
-    // until we get control back from the `await`.
+    // inside of `try_generate_diagnostics()` and is why we use `contains_key()` rather
+    // than `get()` when checking the version; this ensures that any `doc` is `Drop`ped
+    // before the `sleep().await` call. If this doesn't happen, then the `await` could
+    // switch us to a different LSP task, which will also try and access a document,
+    // causing a deadlock since it won't be able to access a document until
+    // our `doc` reference is dropped, but we can't drop until we get control back from
+    // the `await`.
 
-    // The document is thread safe to access due to the usage of DashMap
-    let doc = unwrap!(backend.documents.get(&uri), None => {
-        log::error!(
-            "[diagnostics({version}, {uri})] No document associated with uri available."
-        );
+    // Before doing anything, check that we know about this file
+    if !backend.documents.contains_key(uri) {
+        return Err(anyhow!("Unknown document URI '{uri}'."));
+    }
+
+    // Wait some amount of time. Note that the document version is updated on
+    // every document change, so if the document changes while this task is waiting,
+    // we'll see that the current document version is now out-of-sync with the version
+    // associated with this task, and toss it away.
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+
+    Ok(try_generate_diagnostics(backend, uri, version))
+}
+
+fn try_generate_diagnostics(
+    backend: &Backend,
+    uri: &Url,
+    version: Option<i32>,
+) -> Option<Vec<Diagnostic>> {
+    // Get reference to document.
+    // At this point we already know this document existed before we slept, so if it
+    // doesn't exist now, that is because it must have been closed, so if that occurs
+    // then simply return.
+    let Some(doc) = backend.documents.get(uri) else {
+        log::info!("Document with uri '{uri}' no longer exists after diagnostics delay. It was likely closed.");
         return None;
-    });
+    };
 
+    let version = version.unwrap_or(0);
     let current_version = doc.version.unwrap_or(0);
 
     if version != current_version {
-        // log::trace!("[diagnostics({version}, {uri})] Aborting diagnostics in favor of version {current_version}.");
+        // log::info!("[diagnostics({version}, {uri})] Aborting diagnostics in favor of version {current_version}.");
         return None;
     }
 
-    // Okay, it's our chance to provide diagnostics.
-    // log::trace!("[diagnostics({version}, {uri})] Generating diagnostics.");
-    let diagnostics = generate_diagnostics_impl(&doc);
-
-    Some(diagnostics)
+    Some(generate_diagnostics(&doc))
 }
 
-fn generate_diagnostics_impl(doc: &Document) -> Vec<Diagnostic> {
+fn generate_diagnostics(doc: &Document) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
 
     {

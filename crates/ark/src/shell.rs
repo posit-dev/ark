@@ -51,6 +51,7 @@ use crate::help::r_help::RHelp;
 use crate::interface::KernelInfo;
 use crate::interface::RMain;
 use crate::kernel::Kernel;
+use crate::lsp::diagnostics;
 use crate::plots::graphics_device;
 use crate::r_task;
 use crate::request::KernelRequest;
@@ -236,6 +237,8 @@ impl ShellHandler for Shell {
                 kernel.ui_connected(),
             )
         };
+
+        diagnostics::refresh_all_open_file_diagnostics();
 
         // Check for changes to the working directory
         if let Err(err) = kernel.poll_working_directory() {
