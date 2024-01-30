@@ -12,6 +12,7 @@ use crossbeam::channel::Sender;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
+use harp::utils::r_is_null;
 use libr::R_NilValue;
 use libr::SEXP;
 use serde::Deserialize;
@@ -48,6 +49,9 @@ pub enum ConnectionResponse {
         fields: Vec<ConnectionTableField>,
     },
     PreviewResponse,
+    IconResponse {
+        icon: Option<String>,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -59,6 +63,8 @@ pub enum ConnectionRequest {
     FieldsRequest { path: Vec<ConnectionTable> },
     // The UI asks for a DataViewer preview of the table.
     PreviewTable { path: Vec<ConnectionTable> },
+    // The UI asks for an icon for a given element
+    IconRequest { path: Vec<ConnectionTable> },
 }
 
 #[derive(Deserialize, Serialize)]
@@ -112,7 +118,6 @@ impl RConnection {
         // Notify the frontend that a new connection has been opened.
         let event = CommManagerEvent::Opened(self.comm.clone(), comm_open_json);
         self.comm_manager_tx.send(event)?;
-
         Ok(())
     }
 
@@ -208,6 +213,27 @@ impl RConnection {
                     Ok(())
                 })?;
                 Ok(ConnectionResponse::PreviewResponse)
+            },
+            ConnectionRequest::IconRequest { path } => {
+                // Calls back into R to get the icon.
+                let icon_path = r_task(|| -> Result<_, anyhow::Error> {
+                    unsafe {
+                        let mut call = RFunction::from(".ps.connection_icon");
+                        call.add(RObject::from(self.comm.comm_id.clone()));
+                        for obj in path {
+                            call.param(obj.kind.as_str(), obj.name);
+                        }
+
+                        let icon = call.call()?;
+
+                        if r_is_null(*icon) {
+                            Ok(None)
+                        } else {
+                            Ok(Some(RObject::to::<String>(icon)?))
+                        }
+                    }
+                })?;
+                Ok(ConnectionResponse::IconResponse { icon: icon_path })
             },
         }
     }
