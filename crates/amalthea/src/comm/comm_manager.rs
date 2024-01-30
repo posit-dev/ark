@@ -12,6 +12,7 @@ use crossbeam::channel::Select;
 use crossbeam::channel::Sender;
 use log::info;
 use log::warn;
+use stdext::result::ResultOrLog;
 use stdext::spawn;
 
 use crate::comm::comm_channel::CommMsg;
@@ -175,6 +176,12 @@ impl CommManager {
 
                     // If we found it, remove it.
                     if let Some(index) = index {
+                        // Notify the comm that it's been closed
+                        let comm = self.open_comms.get(index).unwrap();
+                        comm.incoming_tx
+                            .send(CommMsg::Close)
+                            .or_log_error("Failed to send comm_close to comm.");
+
                         self.open_comms.remove(index);
                         self.comm_shell_tx
                             .send(CommShellEvent::Removed(comm_id))

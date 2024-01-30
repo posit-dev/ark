@@ -212,6 +212,16 @@ impl RConnection {
         }
     }
 
+    fn disconnect(&self) -> std::result::Result<(), anyhow::Error> {
+        // Execute database side disconnect method.
+        r_task(|| -> Result<(), anyhow::Error> {
+            let mut call = RFunction::from(".ps.connection_close");
+            call.add(RObject::from(self.comm.comm_id.clone()));
+            call.call()?;
+            Ok(())
+        })
+    }
+
     fn handle_messages(&self) -> Result<(), anyhow::Error> {
         loop {
             let msg = unwrap!(self.comm.incoming_rx.recv(), Err(err) => {
@@ -223,6 +233,7 @@ impl RConnection {
 
             if let CommMsg::Close = msg {
                 log::trace!("Connection Pane: Received a close message.");
+                self.disconnect()?;
                 break;
             }
 

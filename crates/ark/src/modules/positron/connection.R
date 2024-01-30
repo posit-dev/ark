@@ -94,3 +94,13 @@ options("connectionObserver" = .ps.connection_observer())
     }
     View(con$previewObject(table = table, ..., limit = 100), title = table)
 }
+
+.ps.connection_close <- function(id, ...) {
+    con <- get(id, getOption("connectionObserver")$.connections)
+    if (is.null(con)) {
+        return(NULL)
+    }
+    # disconnect is resposible for calling connectionClosed that
+    # will remove the connection from the list of connections
+    con$disconnect(...)
+}
