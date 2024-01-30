@@ -98,10 +98,24 @@ pub fn initialize(testing: bool) -> anyhow::Result<()> {
 
     // Create a directory watcher that reloads module files as they are changed.
     #[cfg(debug_assertions)]
-    spawn!("ark-watcher", {
+    {
         let source = env!("CARGO_MANIFEST_DIR");
         let root = Path::new(&source).join("src").join("modules").to_path_buf();
-        let ns = RThreadSafe::new(namespace.sexp);
+
+        if root.exists() {
+            log::info!("Watching R modules from sources via cargo manifest");
+            spawn_watcher_thread(root, namespace.sexp);
+        } else {
+            log::error!("Can't find ark R modules from sources");
+        }
+    }
+
+    return Ok(());
+}
+
+fn spawn_watcher_thread(root: PathBuf, namespace: SEXP) {
+    spawn!("ark-modules-watcher", {
+        let ns = RThreadSafe::new(namespace);
         move || {
             let mut watcher = RModuleWatcher::new(root, ns);
             match watcher.watch() {
@@ -110,8 +124,6 @@ pub fn initialize(testing: bool) -> anyhow::Result<()> {
             }
         }
     });
-
-    return Ok(());
 }
 
 // NOTE(kevin): We use a custom watcher implementation here to detect changes
