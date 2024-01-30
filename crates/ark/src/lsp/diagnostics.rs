@@ -242,6 +242,13 @@ fn try_generate_diagnostics(
         return None;
     }
 
+    // If we've made it this far, we really do want diagnostics, and we want them to
+    // be accurate. The indexer is a very important part of our diagnostics, so we need
+    // it to finish an initial run before we generate any diagnostics, otherwise they
+    // can be pretty bad and annoying. Importantly, we place this check after the 1 sec
+    // timeout delay and version check to ensure that the `lock()` doesn't run needlessly.
+    backend.indexer_state_manager.wait_until_initialized();
+
     Some(generate_diagnostics(&doc))
 }
 

@@ -39,6 +39,7 @@ use crate::lsp::encoding::get_position_encoding_kind;
 use crate::lsp::help_topic;
 use crate::lsp::hover::hover;
 use crate::lsp::indexer;
+use crate::lsp::indexer::IndexerStateManager;
 use crate::lsp::signature_help::signature_help;
 use crate::lsp::statement_range;
 use crate::lsp::symbols;
@@ -72,6 +73,7 @@ pub struct Backend {
     pub client: Client,
     pub documents: Arc<DashMap<Url, Document>>,
     pub workspace: Arc<Mutex<Workspace>>,
+    pub indexer_state_manager: IndexerStateManager,
 }
 
 impl Backend {
@@ -124,7 +126,7 @@ impl LanguageServer for Backend {
         }
 
         // start indexing
-        indexer::start(folders);
+        indexer::start(folders, self.indexer_state_manager.clone());
 
         Ok(InitializeResult {
             server_info: Some(ServerInfo {
@@ -535,6 +537,7 @@ pub fn start_lsp(runtime: Arc<Runtime>, address: String, conn_init_tx: Sender<bo
                 client,
                 documents: Arc::new(DashMap::new()),
                 workspace: Arc::new(Mutex::new(Workspace::default())),
+                indexer_state_manager: IndexerStateManager::new(),
             };
 
             // Forward `backend` along to `RMain`.
