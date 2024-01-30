@@ -477,9 +477,35 @@ pub fn r_source_in(file: &str, env: SEXP) -> crate::Result<()> {
     Ok(())
 }
 
+pub fn r_source_str(code: &str) -> crate::Result<()> {
+    r_source_str_in(code, R_ENVS.base)
+}
+
+pub fn r_source_str_in(code: &str, env: impl Into<SEXP>) -> crate::Result<()> {
+    let exprs = r_parse_exprs(code)?;
+    harp::exec::r_source_exprs_in(exprs, env)?;
+    Ok(())
+}
+
+pub fn r_source_exprs(exprs: impl Into<SEXP>) -> crate::Result<()> {
+    r_source_exprs_in(exprs, R_ENVS.base)
+}
+
+pub fn r_source_exprs_in(exprs: impl Into<SEXP>, env: impl Into<SEXP>) -> crate::Result<()> {
+    let exprs = exprs.into();
+    let env = env.into();
+
+    RFunction::new("base", "source")
+        .param("exprs", exprs)
+        .param("local", env)
+        .call()?;
+
+    Ok(())
+}
+
 /// Returns an EXPRSXP vector
-pub unsafe fn r_parse_exprs(code: &str) -> Result<RObject> {
-    match r_parse_vector(code)? {
+pub fn r_parse_exprs(code: &str) -> Result<RObject> {
+    match unsafe { r_parse_vector(code)? } {
         ParseResult::Complete(x) => {
             return Ok(RObject::from(x));
         },
@@ -490,6 +516,19 @@ pub unsafe fn r_parse_exprs(code: &str) -> Result<RObject> {
             });
         },
     };
+}
+
+/// This uses the R-level function `parse()` to create the srcrefs
+pub fn r_parse_exprs_with_srcrefs(code: &str) -> Result<RObject> {
+    unsafe {
+        let mut protect = RProtect::new();
+        let code = r_string!(code, protect);
+
+        RFunction::new("base", "parse")
+            .param("text", code)
+            .param("keep.source", true)
+            .call()
+    }
 }
 
 /// Returns a single expression

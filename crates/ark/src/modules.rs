@@ -12,9 +12,11 @@ use std::path::PathBuf;
 use std::time::Duration;
 use std::time::SystemTime;
 
+use anyhow::anyhow;
 use harp::environment::Environment;
 use harp::environment::R_ENVS;
-use harp::exec::r_source_in;
+use harp::exec::r_parse_exprs_with_srcrefs;
+use harp::exec::r_source_str_in;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::r_symbol;
@@ -23,16 +25,46 @@ use libr::R_NilValue;
 use libr::Rf_ScalarLogical;
 use libr::Rf_asInteger;
 use libr::SEXP;
+use rust_embed::RustEmbed;
 use stdext::spawn;
-use stdext::unwrap;
 
 use crate::r_task;
 use crate::thread::RThreadSafe;
 
-#[derive(Copy, Clone)]
-enum RModuleSource {
-    Positron,
-    RStudio,
+#[derive(RustEmbed)]
+#[folder = "src/modules/positron"]
+struct PositronModuleAsset;
+
+#[derive(RustEmbed)]
+#[folder = "src/modules/rstudio"]
+struct RStudioModuleAsset;
+
+use std::ops::Deref;
+
+pub fn source_asset<T: RustEmbed>(file: &str, fun: &str, env: SEXP) -> anyhow::Result<()> {
+    let source = get_asset::<T>(file)?;
+
+    let exprs = r_parse_exprs_with_srcrefs(&source)?;
+    RFunction::new("", fun).param("exprs", exprs).call_in(env)?;
+
+    Ok(())
+}
+
+/// Get the asset data as an owned string.
+///
+/// In principle we should be able to get a static ref into the data.  However
+/// it's hidden behind a `Cow<'static, str>` that comes out as owned rather than
+/// borrowed. There doesn't seem to be a way for us to get the actual static data.
+///
+/// Returns a `String` rather than a `CString` to make it easy to interface with
+/// functions taking `&str`.
+pub fn get_asset<T: RustEmbed>(file: &str) -> anyhow::Result<String> {
+    let asset = T::get(&file).ok_or(anyhow!("can't open asset {file}"))?;
+
+    let u8_slice = asset.data.deref();
+    let str_slice = std::str::from_utf8(u8_slice)?;
+
+    Ok(str_slice.to_owned())
 }
 
 pub fn initialize(testing: bool) -> anyhow::Result<()> {
@@ -41,30 +73,14 @@ pub fn initialize(testing: bool) -> anyhow::Result<()> {
         r_poke_option_ark_testing()
     }
 
-    // Get the path to the 'modules' directory, adjacent to the executable file.
-    // This is where we place the R source files in packaged releases.
-    let exe_path = env::current_exe()?;
-    let mut root = exe_path.parent().unwrap().join("modules");
-
-    // If that path doesn't exist, we're probably running from source, so
-    // look in the source tree (found via the 'CARGO_MANIFEST_DIR' environment
-    // variable).
-    if !root.exists() {
-        let source = env!("CARGO_MANIFEST_DIR");
-        root = Path::new(&source).join("src").join("modules").to_path_buf();
-    }
-
-    let positron_path = root.join("positron");
-    let rstudio_path = root.join("rstudio");
-
     // Create the private Positron namespace.
     let namespace = RFunction::new("base", "new.env")
         .param("parent", R_ENVS.base)
         .call()?;
 
     // Load initial utils into the namespace
-    let init_file = positron_path.join("init.R");
-    r_source_in(init_file.to_str().unwrap(), namespace.sexp)?;
+    let init_code = get_asset::<PositronModuleAsset>("init.R")?;
+    r_source_str_in(&init_code, namespace.sexp)?;
 
     // Lock the environment. It will be unlocked automatically when updating.
     // Needs to happen after the `r_source_in()` above. We don't lock the
@@ -73,12 +89,18 @@ pub fn initialize(testing: bool) -> anyhow::Result<()> {
     Environment::view(namespace.sexp).lock(false);
 
     // Load the positron and rstudio namespaces and their exported functions
-    import_directory(&positron_path, RModuleSource::Positron, namespace.sexp)?;
-    import_directory(&rstudio_path, RModuleSource::RStudio, namespace.sexp)?;
+    for file in PositronModuleAsset::iter() {
+        source_asset::<PositronModuleAsset>(&file, "import_positron", namespace.sexp)?;
+    }
+    for file in RStudioModuleAsset::iter() {
+        source_asset::<RStudioModuleAsset>(&file, "import_rstudio", namespace.sexp)?;
+    }
 
     // Create a directory watcher that reloads module files as they are changed.
+    #[cfg(debug_assertions)]
     spawn!("ark-watcher", {
-        let root = root.clone();
+        let source = env!("CARGO_MANIFEST_DIR");
+        let root = Path::new(&source).join("src").join("modules").to_path_buf();
         let ns = RThreadSafe::new(namespace.sexp);
         move || {
             let mut watcher = RModuleWatcher::new(root, ns);
@@ -90,37 +112,6 @@ pub fn initialize(testing: bool) -> anyhow::Result<()> {
     });
 
     return Ok(());
-}
-
-fn import_directory(directory: &Path, src: RModuleSource, env: SEXP) -> anyhow::Result<()> {
-    log::info!("Loading modules from directory: {}", directory.display());
-    let entries = std::fs::read_dir(directory)?;
-
-    for entry in entries {
-        let entry = unwrap!(entry, Err(err) => {
-            log::error!("Can't load modules from file: {err:?}");
-            continue;
-        });
-
-        import_file(&entry.path(), src, env)?;
-    }
-
-    Ok(())
-}
-
-fn import_file(path: &PathBuf, src: RModuleSource, env: SEXP) -> anyhow::Result<()> {
-    let fun = match src {
-        RModuleSource::Positron => "import_positron",
-        RModuleSource::RStudio => "import_rstudio",
-    };
-
-    if path.extension().is_some_and(|ext| ext == "R") {
-        let path_string = path.display().to_string();
-        RFunction::new("", fun)
-            .param("path", path_string)
-            .call_in(env)?;
-    }
-    Ok(())
 }
 
 // NOTE(kevin): We use a custom watcher implementation here to detect changes
@@ -137,6 +128,12 @@ struct RModuleWatcher {
     path: PathBuf,
     cache: HashMap<PathBuf, (SystemTime, RModuleSource)>,
     ns: RThreadSafe<SEXP>,
+}
+
+#[derive(Copy, Clone)]
+enum RModuleSource {
+    Positron,
+    RStudio,
 }
 
 impl RModuleWatcher {
@@ -196,6 +193,21 @@ impl RModuleWatcher {
 
         Ok(())
     }
+}
+
+fn import_file(path: &PathBuf, src: RModuleSource, env: SEXP) -> anyhow::Result<()> {
+    let fun = match src {
+        RModuleSource::Positron => "import_positron",
+        RModuleSource::RStudio => "import_rstudio",
+    };
+
+    if path.extension().is_some_and(|ext| ext == "R") {
+        let path_string = path.display().to_string();
+        RFunction::new("", fun)
+            .param("path", path_string)
+            .call_in(env)?;
+    }
+    Ok(())
 }
 
 fn r_poke_option_ark_testing() {

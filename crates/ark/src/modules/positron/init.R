@@ -5,15 +5,15 @@
 #
 #
 
-import_positron <- function(path) {
+import_positron <- function(exprs) {
     init_positron()
 
     # Namespace is created by the sourcer of this file
     ns <- parent.env(environment())
     local_unlock(ns)
 
-    source(path, local = ns)
-    export(path, from = ns, to = as.environment("tools:positron"))
+    source(exprs = exprs, local = ns)
+    export(exprs, from = ns, to = as.environment("tools:positron"))
 }
 
 init_positron <- function() {
@@ -29,17 +29,21 @@ init_positron <- function() {
     lockEnvironment(as.environment("tools:positron"))
 }
 
-export <- function(path, from, to) {
+export <- function(exprs, from, to) {
     local_unlock(to)
 
-    for (name in exported_names(path)) {
+    for (name in exported_names(exprs)) {
         to[[name]] <- from[[name]]
     }
 }
 
-exported_names <- function(path) {
-    ast <- parse(path, keep.source = TRUE)
-    data <- utils::getParseData(ast)
+exported_names <- function(exprs) {
+    data <- utils::getParseData(exprs)
+
+    # If `keep.source` was `FALSE`
+    if (is.null(data)) {
+        return(character())
+    }
 
     exported <- character()
     exported_locs <- which(data$text == "#' @export")
@@ -58,14 +62,14 @@ exported_names <- function(path) {
     exported
 }
 
-import_rstudio <- function(path) {
+import_rstudio <- function(exprs) {
     init_rstudio()
 
     env <- rstudio_ns()
     local_unlock(env)
 
-    source(path, local = env)
-    export(path, from = env, to = as.environment("tools:rstudio"))
+    source(exprs = exprs, local = env)
+    export(exprs, from = env, to = as.environment("tools:rstudio"))
 }
 
 init_rstudio <- function() {
