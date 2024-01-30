@@ -22,6 +22,8 @@ use crate::utils::r_is_s4;
 use crate::utils::r_typeof;
 use crate::utils::Sxpinfo;
 
+const FRAME_LOCK_MASK: std::ffi::c_int = 1 << 14;
+
 pub struct REnvs {
     pub global: SEXP,
     pub base: SEXP,
@@ -365,6 +367,12 @@ impl Environment {
         Self { env }
     }
 
+    pub fn view(env: SEXP) -> Self {
+        Self {
+            env: RObject::view(env),
+        }
+    }
+
     pub fn bind(&self, name: &str, value: impl Into<SEXP>) {
         unsafe {
             Rf_defineVar(r_symbol!(name), value.into(), self.env.sexp);
@@ -455,6 +463,25 @@ impl Environment {
 
         names
     }
+
+    pub fn lock(&mut self, bindings: bool) {
+        unsafe {
+            libr::R_LockEnvironment(self.env.sexp, bindings.into());
+        }
+    }
+
+    pub fn unlock(&mut self) {
+        let unlocked_mask = self.flags() & !FRAME_LOCK_MASK;
+        unsafe { libr::SET_ENVFLAGS(self.env.sexp, unlocked_mask) }
+    }
+
+    pub fn is_locked(&self) -> bool {
+        unsafe { libr::R_EnvironmentIsLocked(self.env.sexp) != 0 }
+    }
+
+    fn flags(&self) -> std::ffi::c_int {
+        unsafe { libr::ENVFLAGS(self.env.sexp) }
+    }
 }
 
 impl From<Environment> for SEXP {
@@ -466,6 +493,15 @@ impl From<Environment> for SEXP {
 impl From<Environment> for RObject {
     fn from(object: Environment) -> Self {
         object.env
+    }
+}
+
+#[harp::register]
+pub extern "C" fn ark_env_unlock(env: SEXP) -> crate::error::Result<SEXP> {
+    unsafe {
+        crate::check_env(env)?;
+        Environment::view(env).unlock();
+        Ok(libr::R_NilValue)
     }
 }
 

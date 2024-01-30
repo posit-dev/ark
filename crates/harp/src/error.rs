@@ -58,6 +58,9 @@ pub enum Error {
         message: String,
         backtrace: Backtrace,
     },
+    Anyhow {
+        message: String,
+    },
 }
 
 // empty implementation required for 'anyhow'
@@ -166,8 +169,41 @@ impl fmt::Display for Error {
             Error::StackUsageError { .. } => {
                 write!(f, "C stack usage too close to the limit")
             },
+
+            Error::Anyhow { message } => {
+                write!(f, "{message}")
+            },
         }
     }
+}
+
+#[macro_export]
+macro_rules! anyhow {
+    ($($rest: expr),*) => {{
+        let message = format!($($rest, )*);
+        Err(crate::error::Error::Anyhow {
+            message,
+        })
+    }}
+}
+
+// TODO: Macro variants of `check_` helpers that record function name, see
+// `function_name` in https://docs.rs/stdext/latest/src/stdext/macros.rs.html
+
+fn check(x: impl Into<libr::SEXP>, expected: libr::SEXPTYPE) -> crate::Result<()> {
+    let x = x.into();
+    let typ = crate::r_typeof(x);
+
+    if typ != expected {
+        let err = Error::UnexpectedType(typ, vec![expected]);
+        return Err(err);
+    }
+
+    Ok(())
+}
+
+pub fn check_env(x: impl Into<libr::SEXP>) -> crate::Result<()> {
+    check(x, libr::ENVSXP)
 }
 
 // NOTE: Debug is the same as Display but with backtrace printing.

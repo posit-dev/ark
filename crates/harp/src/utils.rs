@@ -10,7 +10,6 @@ use std::ffi::CString;
 use std::path::Path;
 
 use c2rust_bitfields::BitfieldStruct;
-use harp_macros::register;
 use itertools::Itertools;
 use libr::*;
 use once_cell::sync::Lazy;
@@ -93,12 +92,7 @@ impl Sxpinfo {
     }
 }
 
-// Necessary for the `harp` reference in the `register` macro to resolve correctly
-mod harp {
-    pub use crate::*;
-}
-
-#[register]
+#[harp::register]
 pub extern "C" fn harp_log_warning(msg: SEXP) -> crate::error::Result<SEXP> {
     let msg = String::try_from(RObject::view(msg))?;
     log::warn!("{msg}");
@@ -106,7 +100,7 @@ pub extern "C" fn harp_log_warning(msg: SEXP) -> crate::error::Result<SEXP> {
     unsafe { Ok(libr::R_NilValue) }
 }
 
-#[register]
+#[harp::register]
 pub extern "C" fn harp_log_error(msg: SEXP) -> crate::error::Result<SEXP> {
     let msg = String::try_from(RObject::view(msg))?;
     log::error!("{msg}");

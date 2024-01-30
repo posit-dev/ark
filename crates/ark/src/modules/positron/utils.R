@@ -6,11 +6,6 @@
 #
 
 #' @export
-.ps.Call <- function(.NAME, ...) {
-    .Call(.NAME, ..., PACKAGE = "(embedding)")
-}
-
-#' @export
 .ps.inspect <- function(item) {
     .Internal(inspect(item))
 }

@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 use std::time::SystemTime;
 
+use harp::environment::Environment;
 use harp::environment::R_ENVS;
 use harp::exec::r_source_in;
 use harp::exec::RFunction;
@@ -64,6 +65,12 @@ pub fn initialize(testing: bool) -> anyhow::Result<()> {
     // Load initial utils into the namespace
     let init_file = positron_path.join("init.R");
     r_source_in(init_file.to_str().unwrap(), namespace.sexp)?;
+
+    // Lock the environment. It will be unlocked automatically when updating.
+    // Needs to happen after the `r_source_in()` above. We don't lock the
+    // bindings to make it easy to make updates by `source()`ing inside the
+    // temporarily unlocked environment.
+    Environment::view(namespace.sexp).lock(false);
 
     // Load the positron and rstudio namespaces and their exported functions
     import_directory(&positron_path, RModuleSource::Positron, namespace.sexp)?;
@@ -205,4 +212,42 @@ pub unsafe extern "C" fn ps_deep_sleep(secs: SEXP) -> anyhow::Result<SEXP> {
     std::thread::sleep(secs);
 
     return Ok(R_NilValue);
+}
+
+#[cfg(test)]
+mod tests {
+    use harp::environment::Environment;
+    use harp::environment::R_ENVS;
+    use harp::eval::r_parse_eval0;
+    use libr::CLOENV;
+
+    use crate::test::r_test;
+
+    fn get_namespace(exports: Environment, fun: &str) -> Environment {
+        let fun = exports.find(fun);
+        let ns = unsafe { CLOENV(fun) };
+        Environment::view(ns)
+    }
+
+    #[test]
+    fn test_environments_are_locked() {
+        r_test(|| {
+            let positron_exports =
+                r_parse_eval0("as.environment('tools:positron')", R_ENVS.base).unwrap();
+            let rstudio_exports =
+                r_parse_eval0("as.environment('tools:rstudio')", R_ENVS.base).unwrap();
+
+            let positron_exports = Environment::new(positron_exports);
+            let rstudio_exports = Environment::new(rstudio_exports);
+
+            assert!(positron_exports.is_locked());
+            assert!(rstudio_exports.is_locked());
+
+            let positron_ns = get_namespace(positron_exports, ".ps.ark.version");
+            let rstudio_ns = get_namespace(rstudio_exports, ".rs.api.versionInfo");
+
+            assert!(positron_ns.is_locked());
+            assert!(rstudio_ns.is_locked());
+        })
+    }
 }

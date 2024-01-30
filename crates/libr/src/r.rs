@@ -267,6 +267,18 @@ functions::generate! {
 
     pub fn GEinitDisplayList(dd: pGEDevDesc);
 
+    pub fn ENVFLAGS(x: SEXP) -> std::ffi::c_int;
+
+    pub fn SET_ENVFLAGS(x: SEXP, v: std::ffi::c_int);
+
+    pub fn R_LockEnvironment(env: SEXP, bindings: Rboolean);
+
+    pub fn R_EnvironmentIsLocked(env: SEXP) -> Rboolean;
+
+    pub fn CLOENV(x: SEXP) -> SEXP;
+
+    pub fn Rf_PrintValue(x: SEXP);
+
     /// R >= 4.2.0
     pub fn R_existsVarInFrame(rho: SEXP, symbol: SEXP) -> Rboolean;
 
