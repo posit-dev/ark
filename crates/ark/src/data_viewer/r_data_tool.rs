@@ -42,8 +42,6 @@ use libr::INTEGER_ELT;
 use libr::SEXP;
 use libr::STRSXP;
 use libr::VECTOR_ELT;
-use log::debug;
-use log::error;
 use serde::Deserialize;
 use serde::Serialize;
 use stdext::local;
@@ -55,6 +53,7 @@ use crate::interface::RMain;
 use crate::r_task;
 use crate::thread::RThreadSafe;
 use crate::variables::variable::dim_data_frame;
+use crate::variables::variable::WorkspaceVariableDisplayType;
 
 pub struct RDataTool {
     title: String,
@@ -140,7 +139,7 @@ impl RDataTool {
         };
 
         if let Err(error) = execute {
-            error!("Error while viewing object '{}': {}", self.title, error);
+            log::error!("Error while viewing object '{}': {}", self.title, error);
         };
 
         // Flag initially set to false, but set to true if the user closes the
@@ -150,14 +149,14 @@ impl RDataTool {
         // Set up event loop to listen for incoming messages from the frontend
         loop {
             let msg = unwrap!(self.comm.incoming_rx.recv(), Err(e) => {
-                error!("Data Viewer: Error while receiving message from frontend: {e:?}");
+                log::trace!("Data Viewer: Error while receiving message from frontend: {e:?}");
                 break;
             });
-            debug!("Data Viewer: Received message from frontend: {msg:?}");
+            log::info!("Data Viewer: Received message from frontend: {msg:?}");
 
             // Break out of the loop if the frontend has closed the channel
             if let CommMsg::Close = msg {
-                debug!("Data Viewer: Closing down after receiving comm_close from frontend.");
+                log::trace!("Data Viewer: Closing down after receiving comm_close from frontend.");
 
                 // Remember that the user initiated the close so that we can
                 // avoid sending a duplicate close message from the back end
@@ -224,23 +223,17 @@ impl RDataTool {
             let total_num_columns: i32;
             let column_names: ColumnNames;
             let is_data_frame = r_is_data_frame(object);
-            let column_types: RObject;
             if is_data_frame {
                 let dims = dim_data_frame(object);
                 num_rows = dims.nrow as i64;
                 total_num_columns = dims.ncol;
                 column_names = ColumnNames::new(Rf_getAttrib(object, R_NamesSymbol));
-                column_types = RFunction::from("sapply")
-                    .add(object)
-                    .add("class")
-                    .call()?;
             } else if r_is_matrix(object) {
                 let dim = Rf_getAttrib(object, R_DimSymbol);
                 num_rows = INTEGER_ELT(dim, 0) as i64;
                 total_num_columns = INTEGER_ELT(dim, 1);
                 let colnames = RFunction::from("colnames").add(object).call()?;
                 column_names = ColumnNames::new(*colnames);
-                column_types = RFunction::from("typeof").add(object).call()?;
             } else {
                 // TODO: better error message
                 bail!("Unsupported type for data viewer");
@@ -256,28 +249,19 @@ impl RDataTool {
                     None => format!("[, {}]", i + 1),
                 };
 
-                // TODO: r_data_viewer.rs has some recursion code
-                // that handles prefixes. is it possible that this
-                // column is also a data frame?
+								// TODO: handling for nested data frame columns
 
-                // let type_name: String;
-                // if is_data_frame {
-                //    let col_type = CharacterVector::new(VECTOR_ELT(*column_types, i))?;
-                //    // TODO: some columns (e.g. temporal columns) can have multiple types
-                //    type_name = match col_type.get_unchecked(0) {
-                //        Some(value) => value,
-                //        None => "unknown".to_string()
-                //    };
-                // } else {
-                //    type_name = match CharacterVector::new(*column_types)?.get_unchecked(0) {
-                //        Some(value) => value,
-                //        None => "unknown".to_string()
-                //    };
-                // }
+                let col_type;
+                if is_data_frame {
+										col_type = WorkspaceVariableDisplayType::from(VECTOR_ELT(object, i));
+                } else {
+										col_type = WorkspaceVariableDisplayType::from(object);
+                }
 
-                let type_name = "unknown".to_string();
+								// TODO: this doesn't work because display_type has
+								// the size added to it, like str [4]
 
-                let type_display = match column_name.as_str() {
+                let type_display = match col_type.display_type.as_str() {
                     "character" => ColumnSchemaTypeDisplay::String,
                     "complex" => ColumnSchemaTypeDisplay::Number,
                     "integer" => ColumnSchemaTypeDisplay::Number,
@@ -291,7 +275,7 @@ impl RDataTool {
 
                 column_schemas.push(ColumnSchema {
                     column_name,
-                    type_name,
+                    type_name: col_type.display_type,
                     type_display,
                     description: None,
                     children: None,
