@@ -19,21 +19,21 @@ pub type CallMethodResult = serde_json::Value;
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct EditorContextResult {
 	/// Document metadata
-	pub document: UiTextDocument,
+	pub document: TextDocument,
 
 	/// Document contents
 	pub contents: Vec<String>,
 
 	/// The primary selection, i.e. selections[0]
-	pub selection: UiSelection,
+	pub selection: Selection,
 
 	/// The selections in this text editor.
-	pub selections: Vec<UiSelection>
+	pub selections: Vec<Selection>
 }
 
 /// Document metadata
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct UiTextDocument {
+pub struct TextDocument {
 	/// URI of the resource viewed in the editor
 	pub path: String,
 
@@ -61,7 +61,7 @@ pub struct UiTextDocument {
 
 /// A line and character position, such as the position of the cursor.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct UiPosition {
+pub struct Position {
 	/// The zero-based character value, as a Unicode code point offset.
 	pub character: i64,
 
@@ -71,15 +71,15 @@ pub struct UiPosition {
 
 /// Selection metadata
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct UiSelection {
+pub struct Selection {
 	/// Position of the cursor.
-	pub active: UiPosition,
+	pub active: Position,
 
 	/// Start position of the selection
-	pub start: UiPosition,
+	pub start: Position,
 
 	/// End position of the selection
-	pub end: UiPosition,
+	pub end: Position,
 
 	/// Text of the selection
 	pub text: String
