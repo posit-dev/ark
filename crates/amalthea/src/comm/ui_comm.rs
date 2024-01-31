@@ -17,7 +17,7 @@ pub type CallMethodResult = serde_json::Value;
 
 /// Editor metadata
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct EditorContextResult {
+pub struct EditorContext {
 	/// Document metadata
 	pub document: TextDocument,
 
@@ -204,7 +204,7 @@ pub enum UiFrontendReply {
 	DebugSleepReply(),
 
 	/// Editor metadata
-	LastActiveEditorContextReply(Option<EditorContextResult>),
+	LastActiveEditorContextReply(Option<EditorContext>),
 
 }
 
