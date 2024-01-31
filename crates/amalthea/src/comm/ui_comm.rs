@@ -41,19 +41,19 @@ pub struct TextDocument {
 	pub eol: String,
 
 	/// Whether the document has been closed
-	pub isClosed: bool,
+	pub is_closed: bool,
 
 	/// Whether the document has been modified
-	pub isDirty: bool,
+	pub is_dirty: bool,
 
 	/// Whether the document is untitled
-	pub isUntitled: bool,
+	pub is_untitled: bool,
 
 	/// Language identifier
-	pub languageId: String,
+	pub language_id: String,
 
 	/// Number of lines in the document
-	pub lineCount: i64,
+	pub line_count: i64,
 
 	/// Version number of the document
 	pub version: i64
