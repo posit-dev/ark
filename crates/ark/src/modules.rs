@@ -5,13 +5,6 @@
 //
 //
 
-use std::collections::HashMap;
-use std::env;
-use std::path::Path;
-use std::path::PathBuf;
-use std::time::Duration;
-use std::time::SystemTime;
-
 use anyhow::anyhow;
 use harp::environment::Environment;
 use harp::environment::R_ENVS;
@@ -26,10 +19,6 @@ use libr::Rf_ScalarLogical;
 use libr::Rf_asInteger;
 use libr::SEXP;
 use rust_embed::RustEmbed;
-use stdext::spawn;
-
-use crate::r_task;
-use crate::thread::RThreadSafe;
 
 #[derive(RustEmbed)]
 #[folder = "src/modules/positron"]
@@ -99,7 +88,11 @@ pub fn initialize(testing: bool) -> anyhow::Result<()> {
     // Create a directory watcher that reloads module files as they are changed.
     #[cfg(debug_assertions)]
     {
-        let source = env!("CARGO_MANIFEST_DIR");
+        use std::path::Path;
+
+        use debug::*;
+
+        let source = std::env!("CARGO_MANIFEST_DIR");
         let root = Path::new(&source).join("src").join("modules").to_path_buf();
 
         if root.exists() {
@@ -113,7 +106,7 @@ pub fn initialize(testing: bool) -> anyhow::Result<()> {
             )?;
             import_directory(
                 &root.join("rstudio"),
-                RModuleSource::RStudio,
+                debug::RModuleSource::RStudio,
                 namespace.sexp,
             )?;
 
@@ -127,127 +120,144 @@ pub fn initialize(testing: bool) -> anyhow::Result<()> {
     return Ok(());
 }
 
-fn spawn_watcher_thread(root: PathBuf, namespace: SEXP) {
-    spawn!("ark-modules-watcher", {
-        let ns = RThreadSafe::new(namespace);
-        move || {
-            let mut watcher = RModuleWatcher::new(root, ns);
-            match watcher.watch() {
-                Ok(_) => {},
-                Err(err) => log::error!("[watcher] Error watching files: {err:?}"),
-            }
-        }
-    });
-}
+#[cfg(debug_assertions)]
+mod debug {
+    use std::collections::HashMap;
+    use std::path::Path;
+    use std::path::PathBuf;
+    use std::time::Duration;
+    use std::time::SystemTime;
 
-// NOTE(kevin): We use a custom watcher implementation here to detect changes
-// to module files, and automatically source those files when they change.
-//
-// The intention here is to make it easy to iterate and develop R modules
-// within Positron; files are automatically sourced when they change and
-// so any changes should appear live within Positrion immediately.
-//
-// We can't use a crate like 'notify' here as the file watchers they try
-// to add seem to conflict with the ones added by VSCode; at least, that's
-// what I observed on macOS.
-struct RModuleWatcher {
-    path: PathBuf,
-    cache: HashMap<PathBuf, (SystemTime, RModuleSource)>,
-    ns: RThreadSafe<SEXP>,
-}
+    use harp::exec::RFunction;
+    use harp::exec::RFunctionExt;
+    use libr::SEXP;
+    use stdext::spawn;
 
-#[derive(Copy, Clone)]
-enum RModuleSource {
-    Positron,
-    RStudio,
-}
+    use crate::r_task;
+    use crate::thread::RThreadSafe;
 
-impl RModuleWatcher {
-    pub fn new(path: PathBuf, ns: RThreadSafe<SEXP>) -> Self {
-        Self {
-            path,
-            cache: HashMap::new(),
-            ns,
-        }
-    }
-
-    pub fn init(&mut self, path: PathBuf, src: RModuleSource) -> anyhow::Result<()> {
-        let entries = std::fs::read_dir(path)?;
-
-        for entry in entries.into_iter() {
-            if let Ok(entry) = entry {
-                let path = entry.path();
-                let modified = path.metadata()?.modified()?;
-                self.cache.insert(path, (modified, src));
-            }
-        }
-
-        Ok(())
-    }
-
-    pub fn watch(&mut self) -> anyhow::Result<()> {
-        let positron = self.path.join("positron");
-        let rstudio = self.path.join("rstudio");
-
-        self.init(positron, RModuleSource::Positron)?;
-        self.init(rstudio, RModuleSource::RStudio)?;
-
-        // Start looking for changes
-        loop {
-            std::thread::sleep(Duration::from_secs(1));
-
-            if let Err(err) = self.update() {
-                log::error!("[watcher] error detecting changes: {err:?}");
-            }
-        }
-    }
-
-    pub fn update(&mut self) -> anyhow::Result<()> {
-        for (path, (old_modified, src)) in self.cache.iter_mut() {
-            let new_modified = path.metadata()?.modified()?;
-            if *old_modified == new_modified {
-                continue;
-            }
-
-            r_task(|| {
-                if let Err(err) = import_file(&path, *src, *self.ns.get()) {
-                    log::error!("{err:?}");
+    pub fn spawn_watcher_thread(root: PathBuf, namespace: SEXP) {
+        spawn!("ark-modules-watcher", {
+            let ns = RThreadSafe::new(namespace);
+            move || {
+                let mut watcher = RModuleWatcher::new(root, ns);
+                match watcher.watch() {
+                    Ok(_) => {},
+                    Err(err) => log::error!("[watcher] Error watching files: {err:?}"),
                 }
-            });
-            *old_modified = new_modified;
+            }
+        });
+    }
+
+    // NOTE(kevin): We use a custom watcher implementation here to detect changes
+    // to module files, and automatically source those files when they change.
+    //
+    // The intention here is to make it easy to iterate and develop R modules
+    // within Positron; files are automatically sourced when they change and
+    // so any changes should appear live within Positrion immediately.
+    //
+    // We can't use a crate like 'notify' here as the file watchers they try
+    // to add seem to conflict with the ones added by VSCode; at least, that's
+    // what I observed on macOS.
+    pub struct RModuleWatcher {
+        path: PathBuf,
+        cache: HashMap<PathBuf, (SystemTime, RModuleSource)>,
+        ns: RThreadSafe<SEXP>,
+    }
+
+    #[derive(Copy, Clone)]
+    pub enum RModuleSource {
+        Positron,
+        RStudio,
+    }
+
+    impl RModuleWatcher {
+        pub fn new(path: PathBuf, ns: RThreadSafe<SEXP>) -> Self {
+            Self {
+                path,
+                cache: HashMap::new(),
+                ns,
+            }
+        }
+
+        pub fn init(&mut self, path: PathBuf, src: RModuleSource) -> anyhow::Result<()> {
+            let entries = std::fs::read_dir(path)?;
+
+            for entry in entries.into_iter() {
+                if let Ok(entry) = entry {
+                    let path = entry.path();
+                    let modified = path.metadata()?.modified()?;
+                    self.cache.insert(path, (modified, src));
+                }
+            }
+
+            Ok(())
+        }
+
+        pub fn watch(&mut self) -> anyhow::Result<()> {
+            let positron = self.path.join("positron");
+            let rstudio = self.path.join("rstudio");
+
+            self.init(positron, RModuleSource::Positron)?;
+            self.init(rstudio, RModuleSource::RStudio)?;
+
+            // Start looking for changes
+            loop {
+                std::thread::sleep(Duration::from_secs(1));
+
+                if let Err(err) = self.update() {
+                    log::error!("[watcher] error detecting changes: {err:?}");
+                }
+            }
+        }
+
+        pub fn update(&mut self) -> anyhow::Result<()> {
+            for (path, (old_modified, src)) in self.cache.iter_mut() {
+                let new_modified = path.metadata()?.modified()?;
+                if *old_modified == new_modified {
+                    continue;
+                }
+
+                r_task(|| {
+                    if let Err(err) = import_file(&path, *src, *self.ns.get()) {
+                        log::error!("{err:?}");
+                    }
+                });
+                *old_modified = new_modified;
+            }
+
+            Ok(())
+        }
+    }
+
+    pub fn import_directory(directory: &Path, src: RModuleSource, env: SEXP) -> anyhow::Result<()> {
+        log::info!("Loading modules from directory: {}", directory.display());
+        let entries = std::fs::read_dir(directory)?;
+
+        for entry in entries {
+            match entry {
+                Ok(entry) => import_file(&entry.path(), src, env)?,
+                Err(err) => log::error!("Can't load modules from file: {err:?}"),
+            };
         }
 
         Ok(())
     }
-}
 
-fn import_directory(directory: &Path, src: RModuleSource, env: SEXP) -> anyhow::Result<()> {
-    log::info!("Loading modules from directory: {}", directory.display());
-    let entries = std::fs::read_dir(directory)?;
-
-    for entry in entries {
-        match entry {
-            Ok(entry) => import_file(&entry.path(), src, env)?,
-            Err(err) => log::error!("Can't load modules from file: {err:?}"),
+    pub fn import_file(path: &PathBuf, src: RModuleSource, env: SEXP) -> anyhow::Result<()> {
+        let fun = match src {
+            RModuleSource::Positron => "import_positron_path",
+            RModuleSource::RStudio => "import_rstudio_path",
         };
+
+        if path.extension().is_some_and(|ext| ext == "R") {
+            let path_string = path.display().to_string();
+            RFunction::new("", fun)
+                .param("path", path_string)
+                .call_in(env)?;
+        }
+        Ok(())
     }
-
-    Ok(())
-}
-
-fn import_file(path: &PathBuf, src: RModuleSource, env: SEXP) -> anyhow::Result<()> {
-    let fun = match src {
-        RModuleSource::Positron => "import_positron_path",
-        RModuleSource::RStudio => "import_rstudio_path",
-    };
-
-    if path.extension().is_some_and(|ext| ext == "R") {
-        let path_string = path.display().to_string();
-        RFunction::new("", fun)
-            .param("path", path_string)
-            .call_in(env)?;
-    }
-    Ok(())
 }
 
 fn r_poke_option_ark_testing() {
