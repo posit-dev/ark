@@ -11,18 +11,34 @@
     context <- .ps.ui.LastActiveEditorContext()
 
     list(
-        path = context$path,
-
-        # TODO: These fields are empty stubs just to make
-        # `getSourceEditorContext()` work without erroring
-        contents = character(),
-        selection = selection()
+        path = context$document$path,
+        contents = unlist(context$contents),
+        selection = convert_selection(context$selections)
     )
 }
 
-# Creates an empty selection
-selection <- function() {
-    rstudioapi:::as.document_selection(
-        list(list(range = c(0, 0, 0, 0), text = ""))
+# Positron selection --> RStudio selection
+convert_selection <- function(ps_sels) {
+    convert_one <- function(ps_sel) {
+        list(
+            range = rstudioapi::document_range(
+                start = convert_position(ps_sel$start),
+                end = convert_position(ps_sel$end)
+            ),
+            text = ps_sel$text
+        )
+    }
+    out <- lapply(ps_sels, convert_one)
+    rstudioapi:::as.document_selection(out)
+}
+
+# Positron position --> RStudio position
+convert_position <- function(ps_pos) {
+    with(
+        ps_pos,
+        rstudioapi::document_position(
+            row = line + 1,
+            column = character + 1
+        )
     )
 }
