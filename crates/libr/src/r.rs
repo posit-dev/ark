@@ -398,10 +398,6 @@ constant_globals::generate! {
     #[default = std::ptr::null_mut()]
     pub static R_NamespaceRegistry: SEXP;
 
-    #[doc = "Current srcref, for debuggers"]
-    #[default = std::ptr::null_mut()]
-    pub static R_Srcref: SEXP;
-
     #[doc = "The nil object"]
     #[default = std::ptr::null_mut()]
     pub static R_NilValue: SEXP;
@@ -618,6 +614,8 @@ mutable_globals::generate! {
     pub static mut R_DirtyImage: std::ffi::c_int;
 
     pub static mut R_CStackLimit: usize;
+
+    pub static mut R_Srcref: SEXP;
 
     // -----------------------------------------------------------------------------------
     // Unix
