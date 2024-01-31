@@ -1,0 +1,62 @@
+name: "Ark: Build Linux Releases"
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: false
+        description: "The Ark version"
+        default: ${{ github.sha }}
+        type: string
+  workflow_dispatch:
+
+jobs:
+    build_linux:
+        name: Build Linux packages
+        runs-on: ubuntu-latest
+        timeout-minutes: 60
+
+        env:
+            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            DEBUG_FLAG: ${{ matrix.flavor == 'debug' && '-debug' || '' }}
+
+        strategy:
+            matrix:
+                arch: [x64]
+                flavor: [debug, release]
+
+        steps:
+            - name: Checkout sources
+              uses: actions/checkout@v4
+
+            - name: Setup Build Environment
+              run: |
+                  sudo apt-get update
+                  sudo apt-get install -y cargo
+
+            - name: Compile ARK (${{ matrix.flavor }})
+              run: |
+                  cargo clean
+                  cargo build ${{ matrix.flavor == 'release' && '--release' || '' }}
+
+            - name: Create .deb package
+              run: |
+                  cargo install cargo-deb
+                  cargo deb -p ark --separate-debug-symbols --output ark-${{ inputs.version }}${{ env.DEBUG_FLAG }}-x64.deb
+
+            - name: Create .rpm package
+              run: |
+                  cargo install cargo-generate-rpm
+                  cargo generate-rpm -p crates/ark -o ark-${{ inputs.version }}${{ env.DEBUG_FLAG }}-x64.rpm
+
+            - name: Upload .deb package
+              uses: actions/upload-artifact@v3
+              with:
+                  name: ark-${{ inputs.version }}${{ env.DEBUG_FLAG }}-x64.deb
+                  path: ark-${{ inputs.version }}${{ env.DEBUG_FLAG }}-x64.deb
+
+            - name: Upload .rpm package
+              uses: actions/upload-artifact@v3
+              with:
+                  name: ark-${{ inputs.version }}${{ env.DEBUG_FLAG }}-x64.rpm
+                  path: ark-${{ inputs.version }}${{ env.DEBUG_FLAG }}-x64.rpm
