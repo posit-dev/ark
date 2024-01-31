@@ -1,5 +1,3 @@
-use std::ops::Deref;
-
 use anyhow::anyhow;
 use libr::SEXP;
 use rust_embed::RustEmbed;
@@ -17,13 +15,14 @@ pub static mut HARP_ENV: SEXP = std::ptr::null_mut();
 #[folder = "src/modules"]
 struct HarpModuleAsset;
 
-pub fn get_asset<T: RustEmbed>(file: &str) -> anyhow::Result<String> {
-    let asset = T::get(&file).ok_or(anyhow!("can't open asset {file}"))?;
-
-    let u8_slice = asset.data.deref();
-    let str_slice = std::str::from_utf8(u8_slice)?;
-
-    Ok(str_slice.to_owned())
+fn with_asset<T, F>(file: &str, f: F) -> anyhow::Result<()>
+where
+    T: RustEmbed,
+    F: FnOnce(&str) -> anyhow::Result<()>,
+{
+    let asset = T::get(file).ok_or(anyhow!("can't open asset {file}"))?;
+    let data = std::str::from_utf8(&asset.data)?;
+    f(data)
 }
 
 pub fn init_modules() -> anyhow::Result<()> {
@@ -36,8 +35,9 @@ pub fn init_modules() -> anyhow::Result<()> {
     }
 
     for file in HarpModuleAsset::iter() {
-        let code = get_asset::<HarpModuleAsset>(&file)?;
-        r_source_str_in(&code, namespace.sexp)?;
+        with_asset::<HarpModuleAsset, _>(&file, |source| {
+            Ok(r_source_str_in(source, namespace.sexp)?)
+        })?;
     }
 
     Ok(())
