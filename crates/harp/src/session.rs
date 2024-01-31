@@ -150,7 +150,7 @@ pub fn r_stack_info() -> anyhow::Result<Vec<FrameInfo>> {
 
 fn stack_pointer_frame() -> anyhow::Result<FrameInfo> {
     unsafe {
-        let mut srcref = R_Srcref;
+        let mut srcref = libr::get(R_Srcref);
 
         // Shouldn't happen but just to be safe
         if r_typeof(srcref) == VECSXP {
