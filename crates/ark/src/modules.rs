@@ -28,32 +28,22 @@ struct PositronModuleAsset;
 #[folder = "src/modules/rstudio"]
 struct RStudioModuleAsset;
 
-use std::ops::Deref;
-
-pub fn source_asset<T: RustEmbed>(file: &str, fun: &str, env: SEXP) -> anyhow::Result<()> {
-    let source = get_asset::<T>(file)?;
-
-    let exprs = r_parse_exprs_with_srcrefs(&source)?;
-    RFunction::new("", fun).param("exprs", exprs).call_in(env)?;
-
-    Ok(())
+fn source_asset<T: RustEmbed>(file: &str, fun: &str, env: SEXP) -> anyhow::Result<()> {
+    with_asset::<T, _>(file, |source| {
+        let exprs = r_parse_exprs_with_srcrefs(source)?;
+        RFunction::new("", fun).param("exprs", exprs).call_in(env)?;
+        Ok(())
+    })
 }
 
-/// Get the asset data as an owned string.
-///
-/// In principle we should be able to get a static ref into the data.  However
-/// it's hidden behind a `Cow<'static, str>` that comes out as owned rather than
-/// borrowed. There doesn't seem to be a way for us to get the actual static data.
-///
-/// Returns a `String` rather than a `CString` to make it easy to interface with
-/// functions taking `&str`.
-pub fn get_asset<T: RustEmbed>(file: &str) -> anyhow::Result<String> {
-    let asset = T::get(&file).ok_or(anyhow!("can't open asset {file}"))?;
-
-    let u8_slice = asset.data.deref();
-    let str_slice = std::str::from_utf8(u8_slice)?;
-
-    Ok(str_slice.to_owned())
+fn with_asset<T, F>(file: &str, f: F) -> anyhow::Result<()>
+where
+    T: RustEmbed,
+    F: FnOnce(&str) -> anyhow::Result<()>,
+{
+    let asset = T::get(file).ok_or(anyhow!("can't open asset {file}"))?;
+    let data = std::str::from_utf8(&asset.data)?;
+    f(data)
 }
 
 pub fn initialize(testing: bool) -> anyhow::Result<()> {
@@ -68,8 +58,9 @@ pub fn initialize(testing: bool) -> anyhow::Result<()> {
         .call()?;
 
     // Load initial utils into the namespace
-    let init_code = get_asset::<PositronModuleAsset>("init.R")?;
-    r_source_str_in(&init_code, namespace.sexp)?;
+    with_asset::<PositronModuleAsset, _>("init.R", |source| {
+        Ok(r_source_str_in(source, namespace.sexp)?)
+    })?;
 
     // Lock the environment. It will be unlocked automatically when updating.
     // Needs to happen after the `r_source_in()` above. We don't lock the
