@@ -5,15 +5,23 @@
 #
 #
 
-import_positron <- function(path) {
+import_positron <- function(exprs) {
     init_positron()
 
     # Namespace is created by the sourcer of this file
     ns <- parent.env(environment())
     local_unlock(ns)
 
+    source(exprs = exprs, local = ns)
+    export(exprs, from = ns, to = as.environment("tools:positron"))
+}
+
+import_positron_path <- function(path) {
+    ns <- parent.env(environment())
+    local_unlock(ns)
+
     source(path, local = ns)
-    export(path, from = ns, to = as.environment("tools:positron"))
+    export_path(path, from = ns, to = as.environment("tools:positron"))
 }
 
 init_positron <- function() {
@@ -29,17 +37,26 @@ init_positron <- function() {
     lockEnvironment(as.environment("tools:positron"))
 }
 
-export <- function(path, from, to) {
+export <- function(exprs, from, to) {
     local_unlock(to)
 
-    for (name in exported_names(path)) {
+    for (name in exported_names(exprs)) {
         to[[name]] <- from[[name]]
     }
 }
 
-exported_names <- function(path) {
-    ast <- parse(path, keep.source = TRUE)
-    data <- utils::getParseData(ast)
+export_path <- function(path, from, to) {
+    exprs <- parse(path, keep.source = TRUE)
+    export(exprs, from, to)
+}
+
+exported_names <- function(exprs) {
+    data <- utils::getParseData(exprs)
+
+    # If `keep.source` was `FALSE`
+    if (is.null(data)) {
+        return(character())
+    }
 
     exported <- character()
     exported_locs <- which(data$text == "#' @export")
@@ -58,14 +75,22 @@ exported_names <- function(path) {
     exported
 }
 
-import_rstudio <- function(path) {
+import_rstudio <- function(exprs) {
     init_rstudio()
 
     env <- rstudio_ns()
     local_unlock(env)
 
+    source(exprs = exprs, local = env)
+    export(exprs, from = env, to = as.environment("tools:rstudio"))
+}
+
+import_rstudio_path <- function(path) {
+    env <- rstudio_ns()
+    local_unlock(env)
+
     source(path, local = env)
-    export(path, from = env, to = as.environment("tools:rstudio"))
+    export_path(path, from = env, to = as.environment("tools:rstudio"))
 }
 
 init_rstudio <- function() {
@@ -77,13 +102,15 @@ init_rstudio <- function() {
     # Create environment for the rstudio namespace.
     # It inherits from the positron namespace.
     parent <- parent.env(environment())
-    the$rstudio_ns <- new.env(parent = parent)
+    rstudio_ns <- new.env(parent = parent)
 
-    # Create environment for functions exported on the search path
-    attach(list(), name = "tools:rstudio")
+    # Create environment for functions exported on the search path.
+    # Store the namespace there for convenience, so it survives sourcing
+    # the modules file again.
+    attach(list(.__rstudio_ns__. = rstudio_ns), name = "tools:rstudio")
 
     # Lock environments, we'll unlock them before updating
-    lockEnvironment(the$rstudio_ns)
+    lockEnvironment(rstudio_ns)
     lockEnvironment(as.environment("tools:rstudio"))
 
     # Override `rstudioapi::isAvailable()` so it thinks it's running under RStudio
@@ -102,7 +129,7 @@ init_rstudio <- function() {
 }
 
 rstudio_ns <- function() {
-    the$rstudio_ns
+    as.environment("tools:rstudio")[[".__rstudio_ns__."]]
 }
 
 

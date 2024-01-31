@@ -20,11 +20,11 @@ use crate::error::Error;
 use crate::error::Result;
 use crate::exec::RFunction;
 use crate::exec::RFunctionExt;
+use crate::modules::HARP_ENV;
 use crate::utils::r_assert_type;
 use crate::utils::r_inherits;
 use crate::utils::r_is_null;
 use crate::utils::r_typeof;
-use crate::utils::HARP_ENV;
 use crate::vector::CharacterVector;
 use crate::vector::ComplexVector;
 use crate::vector::Factor;
@@ -183,8 +183,8 @@ mod tests {
 
     use crate::environment::Environment;
     use crate::eval::r_parse_eval0;
+    use crate::modules::HARP_ENV;
     use crate::test::r_test;
-    use crate::utils::HARP_ENV;
     use crate::vector::formatted_vector::FormattedVector;
 
     #[test]

@@ -14,6 +14,7 @@ pub mod interrupts;
 pub mod json;
 pub mod library;
 pub mod line_ending;
+pub mod modules;
 pub mod object;
 pub mod polled_events;
 pub mod protect;
@@ -39,6 +40,7 @@ use crate::error::*;
 use crate::utils::*;
 
 pub fn initialize() {
+    modules::init_modules().unwrap();
     init_utils();
 }
 
