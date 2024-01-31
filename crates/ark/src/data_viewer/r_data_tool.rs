@@ -249,17 +249,17 @@ impl RDataTool {
                     None => format!("[, {}]", i + 1),
                 };
 
-								// TODO: handling for nested data frame columns
+                // TODO: handling for nested data frame columns
 
                 let col_type;
                 if is_data_frame {
-										col_type = WorkspaceVariableDisplayType::from(VECTOR_ELT(object, i));
+                    col_type = WorkspaceVariableDisplayType::from(VECTOR_ELT(object, i));
                 } else {
-										col_type = WorkspaceVariableDisplayType::from(object);
+                    col_type = WorkspaceVariableDisplayType::from(object);
                 }
 
-								// TODO: this doesn't work because display_type has
-								// the size added to it, like str [4]
+                // TODO: this doesn't work because display_type has
+                // the size added to it, like str [4]
 
                 let type_display = match col_type.display_type.as_str() {
                     "character" => ColumnSchemaTypeDisplay::String,
