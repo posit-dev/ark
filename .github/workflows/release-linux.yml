@@ -1,14 +1,14 @@
 name: "Ark: Build Linux Releases"
 
 on:
-  workflow_call:
-    inputs:
-      version:
-        required: false
-        description: "The Ark version"
-        default: ${{ github.sha }}
-        type: string
-  workflow_dispatch:
+    workflow_call:
+      inputs:
+        version:
+          required: false
+          description: "The Ark version"
+          default: ${{ github.sha }}
+          type: string
+    workflow_dispatch:
 
 jobs:
     build_linux:
@@ -39,24 +39,20 @@ jobs:
                   cargo clean
                   cargo build ${{ matrix.flavor == 'release' && '--release' || '' }}
 
-            - name: Create .deb package
+            # Compress kernel to a zip file
+            - name: Create archive
               run: |
-                  cargo install cargo-deb
-                  cargo deb -p ark --separate-debug-symbols --output ark-${{ inputs.version }}${{ env.DEBUG_FLAG }}-x64.deb
+                  # Enter the build directory
+                  pushd target/${{ matrix.flavor }}
 
-            - name: Create .rpm package
-              run: |
-                  cargo install cargo-generate-rpm
-                  cargo generate-rpm -p crates/ark -o ark-${{ inputs.version }}${{ env.DEBUG_FLAG }}-x64.rpm
+                  # Compress the kernel to an archive
+                  ARCHIVE="$GITHUB_WORKSPACE/ark-${{ inputs.version }}-${{ matrix.flavor }}-linux-x64.zip"
+                  zip -Xry $ARCHIVE ark
 
-            - name: Upload .deb package
+                  popd
+
+            - name: Upload archive
               uses: actions/upload-artifact@v3
               with:
-                  name: ark-${{ inputs.version }}${{ env.DEBUG_FLAG }}-x64.deb
-                  path: ark-${{ inputs.version }}${{ env.DEBUG_FLAG }}-x64.deb
-
-            - name: Upload .rpm package
-              uses: actions/upload-artifact@v3
-              with:
-                  name: ark-${{ inputs.version }}${{ env.DEBUG_FLAG }}-x64.rpm
-                  path: ark-${{ inputs.version }}${{ env.DEBUG_FLAG }}-x64.rpm
+                  name: ark-${{ matrix.flavor }}-linux-x64-archive
+                  path: ark-${{ inputs.version }}-${{ matrix.flavor }}-linux-x64.zip
