@@ -83,7 +83,7 @@ impl FormattedVector {
                 } else {
                     let formatted = RFunction::new("", "harp_format")
                         .add(vector)
-                        .call_in(HARP_ENV)?;
+                        .call_in(HARP_ENV.unwrap())?;
 
                     r_assert_type(*formatted, &[STRSXP])?;
                     Ok(Self::FormattedVector {
@@ -194,7 +194,8 @@ mod tests {
             let exp = String::from("\"1\" \"2\"");
 
             // From src/modules/format.R
-            let objs = Environment::new(r_parse_eval0("init_test_format()", HARP_ENV).unwrap());
+            let objs =
+                Environment::new(r_parse_eval0("init_test_format()", HARP_ENV.unwrap()).unwrap());
 
             // Unconforming dims (posit-dev/positron#1862)
             let x = FormattedVector::new(objs.find("unconforming_dims")).unwrap();

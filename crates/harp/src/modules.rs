@@ -1,4 +1,5 @@
 use anyhow::anyhow;
+use libr::R_PreserveObject;
 use libr::SEXP;
 use rust_embed::RustEmbed;
 
@@ -7,7 +8,7 @@ use crate::exec::r_source_str_in;
 use crate::exec::RFunction;
 use crate::exec::RFunctionExt;
 
-pub static mut HARP_ENV: SEXP = std::ptr::null_mut();
+pub static mut HARP_ENV: Option<SEXP> = None;
 
 // Largely copied from `module.rs` in the Ark crate
 
@@ -31,7 +32,8 @@ pub fn init_modules() -> anyhow::Result<()> {
         .call()?;
 
     unsafe {
-        HARP_ENV = namespace.sexp;
+        R_PreserveObject(namespace.sexp);
+        HARP_ENV = Some(namespace.sexp);
     }
 
     for file in HarpModuleAsset::iter() {
