@@ -1,4 +1,4 @@
-name: "Ark: Build Linux Releases"
+name: "Build Ark Linux Release"
 
 on:
     workflow_call:
