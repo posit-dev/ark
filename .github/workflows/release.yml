@@ -292,22 +292,6 @@ jobs:
                   ARCHIVE="$GITHUB_WORKSPACE/ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-darwin-universal.zip"
                   zip -Xry $ARCHIVE ark
 
-            # Add the R modules (these aren't architecture dependent)
-            - name: Add Ark R modules
-              run: |
-                  ARCHIVE_MAC="$GITHUB_WORKSPACE/ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-darwin-universal.zip"
-                  ARCHIVE_WINDOWS="$GITHUB_WORKSPACE/ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ matrix.flavor }}-windows-x64.zip"
-
-                  pushd crates/ark/src
-
-                  echo "Adding R modules to macOS binary ..."
-                  zip -Xry $ARCHIVE_MAC modules
-
-                  echo "Adding R modules to Windows binary ..."
-                  zip -Xry $ARCHIVE_WINDOWS modules
-
-                  popd
-
             - name: Upload macOS release artifact (universal)
               uses: actions/upload-release-asset@v1
               env:
