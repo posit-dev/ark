@@ -189,11 +189,11 @@ pub fn start_r(
             r_source(file).or_log_error(&format!("Failed to source startup file '{file}' due to"));
         }
 
-        // Initialize harp.
-        harp::initialize();
-
         // Register embedded routines
         r_register_routines();
+
+        // Initialize harp (after routine registration)
+        harp::initialize();
 
         // Initialize support functions (after routine registration)
         if let Err(err) = modules::initialize(false) {

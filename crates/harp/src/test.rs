@@ -67,6 +67,7 @@ pub fn start_r() {
         unsafe {
             crate::routines::r_register_routines();
         }
+        // After routine registration
         crate::initialize();
     });
 }
