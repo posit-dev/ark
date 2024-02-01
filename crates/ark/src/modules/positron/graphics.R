@@ -43,6 +43,12 @@ setHook("before.grid.newpage", action = "replace", function(...) {
     plotsPath <- .ps.graphics.plotSnapshotRoot("current-plot.png")
     ensure_parent_directory(plotsPath)
 
+    if (is.null(type) && has_aqua()) {
+        type <- "quartz"
+    } else {
+        type <- "cairo"
+    }
+
     # Create the graphics device.
     # TODO: Use 'ragg' if available?
     withCallingHandlers(
