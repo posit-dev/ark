@@ -210,6 +210,7 @@ jobs:
                   path: ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ matrix.flavor }}-windows-${{ matrix.arch }}.zip
 
     build_linux:
+        name: "Build Linux"
         uses: ./.github/workflows/release-linux.yml
         needs: [do_release, get_version]
         secrets: inherit
