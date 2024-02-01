@@ -338,20 +338,20 @@ jobs:
                   asset_name: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-linux-x64.zip
                   asset_content_type: application/octet-stream
 
-    # status:
-    #     if: ${{ failure() }}
-    #     runs-on: self-hosted
-    #     needs: [build_macos, build_windows, get_version]
-    #     steps:
-    #         - name: Notify slack if build fails
-    #           uses: slackapi/slack-github-action@v1.24.0
-    #           id: slack-failure
-    #           with:
-    #               payload: |
-    #                   {
-    #                     "message": "Positron build ${{ needs.get_version.outputs.ARK_VERSION }} failed",
-    #                     "status": "Failure",
-    #                     "run_url": "https://github.com/posit-dev/positron/actions/runs/${{ github.run_id }}"
-    #                   }
-    #           env:
-    #               SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+    status:
+        if: ${{ failure() }}
+        runs-on: self-hosted
+        needs: [build_macos, build_windows, get_version]
+        steps:
+            - name: Notify slack if build fails
+              uses: slackapi/slack-github-action@v1.24.0
+              id: slack-failure
+              with:
+                  payload: |
+                      {
+                        "message": "Positron build ${{ needs.get_version.outputs.ARK_VERSION }} failed",
+                        "status": "Failure",
+                        "run_url": "https://github.com/posit-dev/positron/actions/runs/${{ github.run_id }}"
+                      }
+              env:
+                  SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
