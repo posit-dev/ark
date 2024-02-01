@@ -266,15 +266,11 @@ jobs:
               with:
                   name: ark-${{ matrix.flavor }}-windows-x64-archive
 
-            - name: Download .deb package (${{ matrix.flavor}})
+            - name: Download Linux x64 kernel (${{ matrix.flavor}})
               uses: actions/download-artifact@v3
               with:
-                  name: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-x64.deb
+                  name: ark-${{ matrix.flavor }}-linux-x64-archive
 
-            - name: Download .rpm package (${{ matrix.flavor}})
-              uses: actions/download-artifact@v3
-              with:
-                  name: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-x64.rpm
 
             # Combine macOS binaries to a single binary with lipo
             - name: Create macOS universal binary
@@ -332,24 +328,14 @@ jobs:
                   asset_name: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-windows-x64.zip
                   asset_content_type: application/octet-stream
 
-            - name: Upload Linux .deb release artifacts (x64)
+            - name: Upload Linux release artifacts (x64)
               uses: actions/upload-release-asset@v1
               env:
                   GITHUB_TOKEN: ${{ github.token }}
               with:
                   upload_url: ${{ needs.create_release.outputs.upload_url }}
-                  asset_path: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-x64.deb
-                  asset_name: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-x64.deb
-                  asset_content_type: application/octet-stream
-
-            - name: Upload Linux .rpm release artifacts (x64)
-              uses: actions/upload-release-asset@v1
-              env:
-                  GITHUB_TOKEN: ${{ github.token }}
-              with:
-                  upload_url: ${{ needs.create_release.outputs.upload_url }}
-                  asset_path: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-x64.rpm
-                  asset_name: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-x64.rpm
+                  asset_path: ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ matrix.flavor }}-linux-x64.zip
+                  asset_name: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-linux-x64.zip
                   asset_content_type: application/octet-stream
 
     # status:
