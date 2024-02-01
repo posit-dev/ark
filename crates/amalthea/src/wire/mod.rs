@@ -5,7 +5,6 @@
  *
  */
 
-pub mod client_event;
 pub mod comm_close;
 pub mod comm_info_reply;
 pub mod comm_info_request;

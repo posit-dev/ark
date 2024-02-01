@@ -5,7 +5,6 @@ edition = "2021"
 rust-version = "1.75.0"
 
 [dependencies]
-amalthea-macros = { path = "./amalthea-macros" }
 async-trait = "0.1.66"
 cfg-if = "1.0.0"
 chrono = "0.4.23"
