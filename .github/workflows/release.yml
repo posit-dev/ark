@@ -76,11 +76,20 @@ jobs:
                   echo "Existing ${{ needs.get_version.outputs.ARK_VERSION }} release: ${{steps.check_tag.outputs.exists}}"
                   echo "result=${{steps.check_tag.outputs.exists}}" >> $GITHUB_OUTPUT
 
+    do_release:
+        name: Trigger a new release
+        if: ${{ needs.check_release.outputs.EXISTING_RELEASE == 'false' }}
+        runs-on: ubuntu-latest
+        needs: [check_release]
+        steps:
+            - name: Dummy step
+              run: echo ""
+
     # Build ARK for macOS. Both arm64 (Apple Silicon) and x64 (Intel) hosts.
     build_macos:
         name: Build macOS
         runs-on: [self-hosted, macos, arm64]
-        needs: [revive_agent, get_version]
+        needs: [do_release, revive_agent, get_version]
         timeout-minutes: 40
 
         env:
@@ -158,7 +167,7 @@ jobs:
         name: Build Windows
         runs-on: windows-latest
         timeout-minutes: 40
-        needs: [get_version]
+        needs: [do_release, get_version]
 
         env:
             GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -202,7 +211,7 @@ jobs:
 
     build_linux:
         uses: ./.github/workflows/release-linux.yml
-        needs: [get_version]
+        needs: [do_release, get_version]
         secrets: inherit
         with:
             version: ${{ needs.get_version.outputs.ARK_VERSION }}
@@ -210,8 +219,7 @@ jobs:
     create_release:
         name: Create Release
         runs-on: [self-hosted, macos, arm64]
-        needs: [get_version, build_macos, build_windows, build_linux, check_release]
-        if: ${{ needs.check_release.outputs.EXISTING_RELEASE == 'false' }}
+        needs: [do_release, get_version, build_macos, build_windows, build_linux]
         env:
             GITHUB_TOKEN: ${{ github.token }}
         outputs:
