@@ -522,6 +522,9 @@ pub fn r_parse_exprs(code: &str) -> Result<RObject> {
 pub fn r_parse_exprs_with_srcrefs(code: &str) -> Result<RObject> {
     unsafe {
         let mut protect = RProtect::new();
+
+        // Because `parse(text =)` doesn't allow `\r\n` even on Windows
+        let code = convert_line_endings(code, LineEnding::Posix);
         let code = r_string!(code, protect);
 
         RFunction::new("base", "parse")
