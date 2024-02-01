@@ -200,10 +200,17 @@ jobs:
                   name: ark-${{ matrix.flavor }}-windows-${{ matrix.arch }}-archive
                   path: ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ matrix.flavor }}-windows-${{ matrix.arch }}.zip
 
+    build_linux:
+        uses: ./.github/workflows/release-linux.yml
+        needs: [get_version]
+        secrets: inherit
+        with:
+            version: ${{ needs.get_version.outputs.ARK_VERSION }}
+
     create_release:
         name: Create Release
         runs-on: [self-hosted, macos, arm64]
-        needs: [get_version, build_macos, build_windows, check_release]
+        needs: [get_version, build_macos, build_windows, build_linux, check_release]
         if: ${{ needs.check_release.outputs.EXISTING_RELEASE == 'false' }}
         env:
             GITHUB_TOKEN: ${{ github.token }}
@@ -249,6 +256,16 @@ jobs:
               uses: actions/download-artifact@v3
               with:
                   name: ark-${{ matrix.flavor }}-windows-x64-archive
+
+            - name: Download .deb package (${{ matrix.flavor}})
+              uses: actions/download-artifact@v3
+              with:
+                  name: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-x64.deb
+
+            - name: Download .rpm package (${{ matrix.flavor}})
+              uses: actions/download-artifact@v3
+              with:
+                  name: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-x64.rpm
 
             # Combine macOS binaries to a single binary with lipo
             - name: Create macOS universal binary
@@ -306,20 +323,40 @@ jobs:
                   asset_name: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-windows-x64.zip
                   asset_content_type: application/octet-stream
 
-    status:
-        if: ${{ failure() }}
-        runs-on: self-hosted
-        needs: [build_macos, build_windows, get_version]
-        steps:
-            - name: Notify slack if build fails
-              uses: slackapi/slack-github-action@v1.24.0
-              id: slack-failure
-              with:
-                  payload: |
-                      {
-                        "message": "Positron build ${{ needs.get_version.outputs.ARK_VERSION }} failed",
-                        "status": "Failure",
-                        "run_url": "https://github.com/posit-dev/positron/actions/runs/${{ github.run_id }}"
-                      }
+            - name: Upload Linux .deb release artifacts (x64)
+              uses: actions/upload-release-asset@v1
               env:
-                  SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+                  GITHUB_TOKEN: ${{ github.token }}
+              with:
+                  upload_url: ${{ needs.create_release.outputs.upload_url }}
+                  asset_path: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-x64.deb
+                  asset_name: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-x64.deb
+                  asset_content_type: application/octet-stream
+
+            - name: Upload Linux .rpm release artifacts (x64)
+              uses: actions/upload-release-asset@v1
+              env:
+                  GITHUB_TOKEN: ${{ github.token }}
+              with:
+                  upload_url: ${{ needs.create_release.outputs.upload_url }}
+                  asset_path: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-x64.rpm
+                  asset_name: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-x64.rpm
+                  asset_content_type: application/octet-stream
+
+    # status:
+    #     if: ${{ failure() }}
+    #     runs-on: self-hosted
+    #     needs: [build_macos, build_windows, get_version]
+    #     steps:
+    #         - name: Notify slack if build fails
+    #           uses: slackapi/slack-github-action@v1.24.0
+    #           id: slack-failure
+    #           with:
+    #               payload: |
+    #                   {
+    #                     "message": "Positron build ${{ needs.get_version.outputs.ARK_VERSION }} failed",
+    #                     "status": "Failure",
+    #                     "run_url": "https://github.com/posit-dev/positron/actions/runs/${{ github.run_id }}"
+    #                   }
+    #           env:
+    #               SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
