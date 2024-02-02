@@ -27,9 +27,9 @@ get_help <- function(topic, package = NULL) {
   # dev help https://github.com/r-lib/pkgload/pull/267.
   # The `topic` and `package` are wrapped in `()` so they are evaluated rather than deparsed.
   if (is.null(package)) {
-    help(topic = (topic), package = NULL)
+    help(topic = (topic), package = NULL, help_type = "html")
   } else {
-    help(topic = (topic), package = (package))
+    help(topic = (topic), package = (package), help_type = "html")
   }
 }
 
@@ -96,7 +96,6 @@ get_help <- function(topic, package = NULL) {
 
 #' @export
 .ps.help.getHtmlHelpContents <- function(topic, package = NULL) {
-
   # If a package name is encoded into 'topic', split that here.
   if (grepl(":{2,3}", topic)) {
     parts <- strsplit(topic, ":{2,3}")[[1L]]
@@ -160,14 +159,16 @@ getHtmlHelpContentsDev <- function(x) {
     return(NULL)
   }
 
-  dir <- file.path(tempdir(), ".R", "doc", "html")
-  dir.create(dir, recursive = TRUE, showWarnings = FALSE)
+  # Let pkgload "print" the HTML in the topic to file, which it then
+  # calls `browseURL()` on. Intercept that, and return the file path for us
+  # to read from.
+  local_options(browser = function(url) url)
 
-  path <- file.path(dir, sprintf("%s.html", x$topic))
-
-  # Use pkgload to write out topic html. Calls `tools::Rd2HTML()` with
-  # some extra features.
-  pkgload:::topic_write_html(x, path = path)
+  # Suppress the `Rendering development documentation for ...` message
+  suppressMessages(
+    path <- print(x),
+    classes = "rlang_message"
+  )
 
   contents <- readLines(path, warn = FALSE)
   paste(contents, collapse = "\n")
