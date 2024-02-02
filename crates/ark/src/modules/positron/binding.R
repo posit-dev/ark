@@ -7,14 +7,16 @@
 
 #' @export
 .ps.binding.replace <- function(symbol, replacement, envir) {
-
-    if (bindingIsLocked(symbol, envir)) {
-        unlockBinding(symbol, envir)
-        on.exit(lockBinding(symbol, envir), add = TRUE)
-    }
+    local_unlock_binding(envir, symbol)
 
     original <- envir[[symbol]]
     assign(symbol, replacement, envir = envir)
     invisible(original)
+}
 
+local_unlock_binding <- function(env, sym, frame = parent.frame()) {
+    if (bindingIsLocked(sym, env)) {
+        unlockBinding(sym, env)
+        defer(lockBinding(sym, env), envir = frame)
+    }
 }
