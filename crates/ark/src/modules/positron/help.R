@@ -7,7 +7,9 @@
 
 options(help_type = "html")
 
-# Pick up `help()` devtools if the shim is on the search path
+# Pick up `help()` devtools if the shim is on the search path.
+# Internally, we should be using `get_help()` to work around a pkgload bug
+# consistently.
 help <- function(...) {
     if ("devtools_shims" %in% search()) {
         help <- as.environment("devtools_shims")[["help"]]
@@ -17,6 +19,18 @@ help <- function(...) {
 
   # Passing arguments with `...` avoids issues of NSE interpretation
   help(...)
+}
+
+# Expect that `topic` and `package` don't require NSE and are just strings or `NULL`.
+get_help <- function(topic, package = NULL) {
+  # Due to a pkgload NSE bug, we use an explicit `NULL` to ensure this always works with
+  # dev help https://github.com/r-lib/pkgload/pull/267.
+  # The `topic` and `package` are wrapped in `()` so they are evaluated rather than deparsed.
+  if (is.null(package)) {
+    help(topic = (topic), package = NULL)
+  } else {
+    help(topic = (topic), package = (package))
+  }
 }
 
 # Start R's dynamic HTTP help server; returns the chosen port (invisibly)
@@ -37,9 +51,8 @@ help <- function(...) {
         topic <- components[[2L]]
     }
 
-    # Try to find help on the topic. The package needs to be wrapped in () so it
-    # is not deparsed.
-    results <- help(topic = topic, package = (package))
+    # Try to find help on the topic.
+    results <- get_help(topic, package)
 
     # If we found results of any kind, show them.
     # If we are running ark tests, don't show the results as this requires
@@ -82,7 +95,7 @@ help <- function(...) {
 }
 
 #' @export
-.ps.help.getHtmlHelpContents <- function(topic, package = "") {
+.ps.help.getHtmlHelpContents <- function(topic, package = NULL) {
 
   # If a package name is encoded into 'topic', split that here.
   if (grepl(":{2,3}", topic)) {
@@ -92,21 +105,36 @@ help <- function(...) {
   }
 
   # Get the help file associated with this topic.
-  helpFiles <- help(topic = (topic), package = if (nzchar(package)) package)
-  if (length(helpFiles) == 0)
-    return(NULL)
+  helpFiles <- get_help(topic, package)
 
-  # Get the help documentation.
+  if (inherits(helpFiles, "dev_topic")) {
+    tryGetHtmlHelpContentsDev(helpFiles)
+  } else {
+    getHtmlHelpContentsInstalled(helpFiles, package)
+  }
+}
+
+getHtmlHelpContentsInstalled <- function(helpFiles, package) {
+  if (length(helpFiles) == 0) {
+    return(NULL)
+  }
+
   helpFile <- helpFiles[[1L]]
+
   rd <- utils:::.getHelpFile(helpFile)
 
   # Set 'package' now if it was unknown.
-  if (identical(package, "")) {
+  if (is.null(package)) {
     pattern <- "/library/([^/]+)/"
     m <- regexec(pattern, helpFile, perl = TRUE)
     matches <- regmatches(helpFile, m)
     if (length(matches) && length(matches[[1L]] == 2L))
       package <- matches[[1L]][[2L]]
+  }
+
+  # If still unknown, set to `""` for `Rd2HTML()`
+  if (is.null(package)) {
+    package <- ""
   }
 
   # Convert to html.
@@ -115,5 +143,32 @@ help <- function(...) {
   tools::Rd2HTML(rd, out = htmlFile, package = package)
   contents <- readLines(htmlFile, warn = FALSE)
   paste(contents, collapse = "\n")
+}
 
+tryGetHtmlHelpContentsDev <- function(x) {
+  tryCatch(
+    getHtmlHelpContentsDev(x),
+    error = function(e) NULL
+  )
+}
+
+# pkgload specific dev help when looking up help for an internal function
+# while working on a package
+getHtmlHelpContentsDev <- function(x) {
+  if (!"pkgload" %in% loadedNamespaces()) {
+    # Refuse if we somehow get a dev topic but pkgload isn't loaded
+    return(NULL)
+  }
+
+  dir <- file.path(tempdir(), ".R", "doc", "html")
+  dir.create(dir, recursive = TRUE, showWarnings = FALSE)
+
+  path <- file.path(dir, sprintf("%s.html", x$topic))
+
+  # Use pkgload to write out topic html. Calls `tools::Rd2HTML()` with
+  # some extra features.
+  pkgload:::topic_write_html(x, path = path)
+
+  contents <- readLines(path, warn = FALSE)
+  paste(contents, collapse = "\n")
 }
