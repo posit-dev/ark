@@ -58,6 +58,13 @@ impl Kernel {
             log::error!("Error establishing working directory for frontend: {err:?}");
         }
 
+        // TODO: Even though we now expect R to be fully started up before
+        // this task runs (because R starts up before the UI comm opens), we
+        // should really do more to protect against deadlocks where if R isn't
+        // started yet, then our `busy()` hook won't be able to finish once it
+        // does start up because it requires a lock on the `kernel`, but it
+        // can't acquire one until this r-task finishes and unlocks the `kernel`
+        // in `listen()`, and this r-task can't finish until R starts up.
         // Get the current busy status
         let busy = r_task(|| {
             if RMain::initialized() {

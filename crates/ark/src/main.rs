@@ -52,8 +52,12 @@ fn start_kernel(
     let iopub_tx = kernel.create_iopub_tx();
 
     // A broadcast channel (bus) used to notify clients when the kernel
-    // has finished initialization.
+    // has finished initialization. And a channel used to notify the heartbeat
+    // socket that the kernel has finished initialization, allowing it to send
+    // its first heartbeat back, freeing the frontend to believe that we are
+    // "ready" for messages.
     let mut kernel_init_tx = Bus::new(1);
+    let (kernel_heartbeat_tx, kernel_heartbeat_rx) = bounded::<()>(1);
 
     // A channel pair used for shell requests.
     // These events are used to manage the runtime state, and also to
@@ -122,6 +126,7 @@ fn start_kernel(
         stream_behavior,
         stdin_request_rx,
         stdin_reply_tx,
+        kernel_heartbeat_rx,
     );
     if let Err(err) = res {
         panic!("Couldn't connect to frontend: {err:?}");
@@ -137,6 +142,7 @@ fn start_kernel(
         stdin_request_tx,
         stdin_reply_rx,
         iopub_tx,
+        kernel_heartbeat_tx,
         kernel_init_tx,
         lsp_runtime,
         dap,

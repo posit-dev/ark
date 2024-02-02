@@ -60,6 +60,8 @@ fn test_kernel() {
     )));
     let control = Arc::new(Mutex::new(control::Control {}));
 
+    let (kernel_heartbeat_tx, kernel_heartbeat_rx) = bounded::<()>(1);
+
     // Initialize logging
     env_logger::init();
     info!("Starting test kernel");
@@ -72,9 +74,13 @@ fn test_kernel() {
         StreamBehavior::None,
         stdin_request_rx,
         stdin_reply_tx,
+        kernel_heartbeat_rx,
     ) {
         panic!("Error connecting kernel: {err:?}");
     };
+
+    // Tell the kernel that R is "ready", so it can respond to an initial heartbeat
+    kernel_heartbeat_tx.send(()).unwrap();
 
     // Give the kernel a little time to start up
     info!("Waiting 500ms for kernel startup to complete");

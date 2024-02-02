@@ -116,6 +116,7 @@ impl Kernel {
         stdin_request_rx: Receiver<StdInRequest>,
         // Transmission channel for StdIn replies
         stdin_reply_tx: Sender<crate::Result<InputReply>>,
+        kernel_heartbeat_rx: Receiver<()>,
     ) -> Result<(), Error> {
         let ctx = zmq::Context::new();
 
@@ -183,7 +184,7 @@ impl Kernel {
             self.connection.endpoint(self.connection.hb_port),
         )?;
         spawn!(format!("{}-heartbeat", self.name), move || {
-            Self::heartbeat_thread(heartbeat_socket)
+            Self::heartbeat_thread(heartbeat_socket, kernel_heartbeat_rx)
         });
 
         // Create the stdin socket and start a thread to listen for stdin
@@ -337,8 +338,8 @@ impl Kernel {
     }
 
     /// Starts the heartbeat thread.
-    fn heartbeat_thread(socket: Socket) -> Result<(), Error> {
-        let heartbeat = Heartbeat::new(socket);
+    fn heartbeat_thread(socket: Socket, kernel_heartbeat_rx: Receiver<()>) -> Result<(), Error> {
+        let mut heartbeat = Heartbeat::new(socket, kernel_heartbeat_rx);
         heartbeat.listen();
         Ok(())
     }

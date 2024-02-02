@@ -135,6 +135,7 @@ pub fn start_r(
     stdin_request_tx: Sender<StdInRequest>,
     stdin_reply_rx: Receiver<amalthea::Result<InputReply>>,
     iopub_tx: Sender<IOPubMessage>,
+    kernel_heartbeat_tx: Sender<()>,
     kernel_init_tx: Bus<KernelInfo>,
     lsp_runtime: Arc<Runtime>,
     dap: Arc<Mutex<Dap>>,
@@ -156,6 +157,7 @@ pub fn start_r(
             stdin_request_tx,
             stdin_reply_rx,
             iopub_tx,
+            kernel_heartbeat_tx,
             kernel_init_tx,
             lsp_runtime,
             dap,
@@ -215,6 +217,7 @@ pub fn start_r(
 }
 pub struct RMain {
     initializing: bool,
+    kernel_heartbeat_tx: Sender<()>,
     kernel_init_tx: Bus<KernelInfo>,
 
     /// Channel used to send along messages relayed on the open comms.
@@ -351,6 +354,7 @@ impl RMain {
         stdin_request_tx: Sender<StdInRequest>,
         stdin_reply_rx: Receiver<amalthea::Result<InputReply>>,
         iopub_tx: Sender<IOPubMessage>,
+        kernel_heartbeat_tx: Sender<()>,
         kernel_init_tx: Bus<KernelInfo>,
         lsp_runtime: Arc<Runtime>,
         dap: Arc<Mutex<Dap>>,
@@ -362,6 +366,7 @@ impl RMain {
             stdin_request_tx,
             stdin_reply_rx,
             iopub_tx,
+            kernel_heartbeat_tx,
             kernel_init_tx,
             active_request: None,
             execution_count: 0,
@@ -446,6 +451,8 @@ impl RMain {
                 continuation_prompt: Some(prompt_info.continuation_prompt.clone()),
             };
 
+            debug!("Sending heartbeat socket an initialization notification");
+            self.kernel_heartbeat_tx.send(()).unwrap();
             debug!("Sending kernel info: {}", version);
             self.kernel_init_tx.broadcast(kernel_info);
             self.initializing = false;

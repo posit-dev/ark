@@ -48,6 +48,8 @@ fn start_kernel(connection_file: ConnectionFile) {
     )));
     let control = Arc::new(Mutex::new(Control {}));
 
+    let (kernel_heartbeat_tx, kernel_heartbeat_rx) = bounded::<()>(1);
+
     if let Err(err) = kernel.connect(
         shell,
         control,
@@ -56,9 +58,13 @@ fn start_kernel(connection_file: ConnectionFile) {
         StreamBehavior::None,
         stdin_request_rx,
         stdin_reply_tx,
+        kernel_heartbeat_rx,
     ) {
         panic!("Couldn't connect to frontend: {err:?}");
     }
+
+    // Tell the kernel that R is "ready", so it can respond to an initial heartbeat
+    kernel_heartbeat_tx.send(()).unwrap();
 
     let mut s = String::new();
     println!("Kernel activated, press Ctrl+C to end ");

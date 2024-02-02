@@ -5,6 +5,7 @@
  *
  */
 
+use crossbeam::channel::Receiver;
 use log::debug;
 use log::trace;
 use log::warn;
@@ -14,16 +15,22 @@ use crate::socket::socket::Socket;
 /// Structure used for heartbeat messages
 pub struct Heartbeat {
     socket: Socket,
+    kernel_heartbeat_rx: Receiver<()>,
+    kernel_initialized: bool,
 }
 
 impl Heartbeat {
     /// Create a new heartbeat handler from the given heartbeat socket
-    pub fn new(socket: Socket) -> Self {
-        Self { socket }
+    pub fn new(socket: Socket, kernel_heartbeat_rx: Receiver<()>) -> Self {
+        Self {
+            socket,
+            kernel_heartbeat_rx,
+            kernel_initialized: false,
+        }
     }
 
     /// Listen for heartbeats; does not return
-    pub fn listen(&self) {
+    pub fn listen(&mut self) {
         loop {
             debug!("Listening for heartbeats");
             let mut msg = zmq::Message::new();
@@ -36,6 +43,19 @@ impl Heartbeat {
                 continue;
             } else {
                 trace!("Heartbeat message: {:?}", msg);
+            }
+
+            if !self.kernel_initialized {
+                // We've received an initial heartbeat message from the frontend.
+                // The frontend uses our first response to set the runtime state
+                // to "ready", so we delay our response until the kernel is
+                // fully initialized (i.e. until R has fully started up and
+                // called our `read_console()` hook at least once).
+                match self.kernel_heartbeat_rx.recv() {
+                    Ok(_) => log::info!("Received kernel initialization notification. Responding to initial heartbeat."),
+                    Err(err) => panic!("Failed to receive kernel initialization notification: {err:?}.")
+                }
+                self.kernel_initialized = true;
             }
 
             // Echo the message right back!
