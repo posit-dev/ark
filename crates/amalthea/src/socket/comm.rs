@@ -129,23 +129,23 @@ impl CommSocket {
                     Err(err) => json_rpc_error(
                         JsonRpcErrorCode::InternalError,
                         format!(
-                            "Failed to process {} request: {err} (request: {data:})",
+                            "Failed to serialise reply for {} request: {err} (request: {data:})",
                             self.comm_name
                         ),
                     ),
                 },
                 Err(err) => json_rpc_error(
-                    JsonRpcErrorCode::MethodNotFound,
+                    JsonRpcErrorCode::InternalError,
                     format!(
-                        "No handler for {} request (method not found): {err:} (request: {data:})",
+                        "Failed to process {} request: {err} (request: {data:})",
                         self.comm_name
                     ),
                 ),
             },
             Err(err) => json_rpc_error(
-                JsonRpcErrorCode::InvalidRequest,
+                JsonRpcErrorCode::MethodNotFound,
                 format!(
-                    "Invalid {} request: {err:} (request: {data:})",
+                    "No handler for {} request (method not found): {err:} (request: {data:})",
                     self.comm_name
                 ),
             ),
