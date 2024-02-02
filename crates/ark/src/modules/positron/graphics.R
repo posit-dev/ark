@@ -14,6 +14,18 @@ setHook("before.grid.newpage", action = "replace", function(...) {
     .ps.call("ps_graphics_event", "before.grid.newpage")
 })
 
+default_device_type <- function() {
+    if (has_aqua()) {
+        "quartz"
+    } else if (has_cairo()) {
+        "cairo"
+    } else if (has_x11()) {
+        "Xlib"
+    } else {
+        stop("This version of R wasn't built with plotting capabilities")
+    }
+}
+
 #' @export
 .ps.graphics.defaultResolution <- if (Sys.info()[["sysname"]] == "Darwin") 96L else 72L
 
@@ -43,10 +55,8 @@ setHook("before.grid.newpage", action = "replace", function(...) {
     plotsPath <- .ps.graphics.plotSnapshotRoot("current-plot.png")
     ensure_parent_directory(plotsPath)
 
-    if (is.null(type) && has_aqua()) {
-        type <- "quartz"
-    } else {
-        type <- "cairo"
+    if (is.null(type)) {
+        type <- default_device_type()
     }
 
     # Create the graphics device.
@@ -128,7 +138,7 @@ setHook("before.grid.newpage", action = "replace", function(...) {
     recordedPlot <- readRDS(snapshotPath)
 
     # Get device attributes to be passed along.
-    type <- "cairo"
+    type <- default_device_type()
     res <- .ps.graphics.defaultResolution * dpr
     width <- width * dpr
     height <- height * dpr
@@ -164,7 +174,7 @@ setHook("before.grid.newpage", action = "replace", function(...) {
     device <- .Devices[[grDevices::dev.cur()]]
 
     # Get device attributes to be passed along.
-    type <- attr(device, "type") %??% "cairo"
+    type <- attr(device, "type") %??% default_device_type()
     res <- .ps.graphics.defaultResolution * dpr
     width <- width * dpr
     height <- height * dpr

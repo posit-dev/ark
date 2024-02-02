@@ -5,3 +5,9 @@ is_macos <- function() {
 has_aqua <- function() {
     is_macos() && capabilities("aqua")
 }
+has_cairo <- function() {
+    capabilities("cairo")
+}
+has_x11 <- function() {
+    capabilities("X11")
+}
