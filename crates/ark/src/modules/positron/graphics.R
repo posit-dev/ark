@@ -57,7 +57,7 @@ setHook("before.grid.newpage", action = "replace", function(...) {
     )
 
     # Update the device name + description in the base environment.
-    index <- dev.cur()
+    index <- grDevices::dev.cur()
     oldDevice <- .Devices[[index]]
     newDevice <- name
 
@@ -84,11 +84,11 @@ setHook("before.grid.newpage", action = "replace", function(...) {
 .ps.graphics.createSnapshot <- function(id) {
 
     # Flush any pending plot actions.
-    dev.set(dev.cur())
-    dev.flush()
+    grDevices::dev.set(grDevices::dev.cur())
+    grDevices::dev.flush()
 
     # Create the plot snapshot.
-    recordedPlot <- recordPlot()
+    recordedPlot <- grDevices::recordPlot()
 
     # Get the path to the plot snapshot file.
     snapshotPath <- .ps.graphics.plotSnapshotPath(id)
@@ -140,7 +140,7 @@ setHook("before.grid.newpage", action = "replace", function(...) {
     suppressWarnings(grDevices::replayPlot(recordedPlot))
 
     # Turn off the device (commit the plot to disk)
-    dev.off()
+    grDevices::dev.off()
 
     # Return path to generated plot file.
     invisible(outputPath)
@@ -151,11 +151,11 @@ setHook("before.grid.newpage", action = "replace", function(...) {
 .ps.graphics.renderPlotFromCurrentDevice <- function(id, width, height, dpr) {
 
     # Try and force the graphics device to sync changes.
-    dev.set(dev.cur())
-    dev.flush()
+    grDevices::dev.set(grDevices::dev.cur())
+    grDevices::dev.flush()
 
     # Get the file name associated with the current graphics device.
-    device <- .Devices[[dev.cur()]]
+    device <- .Devices[[grDevices::dev.cur()]]
 
     # Get device attributes to be passed along.
     type <- attr(device, "type") %??% "cairo"
@@ -166,7 +166,7 @@ setHook("before.grid.newpage", action = "replace", function(...) {
     # Copy to a new graphics device.
     # TODO: We'll want some indirection around which graphics device is selected here.
     filepath <- attr(device, "filepath")
-    dev.copy(function() {
+    grDevices::dev.copy(function() {
         grDevices::png(
             filename = filepath,
             width    = width,
@@ -177,7 +177,7 @@ setHook("before.grid.newpage", action = "replace", function(...) {
     })
 
     # Turn off the graphics device.
-    dev.off()
+    grDevices::dev.off()
 
     # Return path to the generated file.
     invisible(filepath)
