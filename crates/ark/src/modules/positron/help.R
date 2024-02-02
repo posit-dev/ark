@@ -7,11 +7,13 @@
 
 options(help_type = "html")
 
-# Pick up `help()` from the search path. Should hit either the devtools shim or
-# `utils::help()`. There is no chance of recursion since it's not exported in
-# the `tools:positron` environment.
+# Pick up `help()` devtools if the shim is on the search path
 help <- function(...) {
-  help <- get("help", envir = globalenv(), mode = "function")
+    if ("devtools_shims" %in% search()) {
+        help <- as.environment("devtools_shims")[["help"]]
+    } else {
+        help <- utils::help
+    }
 
   # Passing arguments with `...` avoids issues of NSE interpretation
   help(...)
