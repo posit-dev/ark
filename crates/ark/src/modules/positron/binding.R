@@ -5,18 +5,19 @@
 #
 #
 
-#' @export
-.ps.binding.replace <- function(symbol, replacement, envir) {
-    local_unlock_binding(envir, symbol)
+env_bind_force <- function(env, name, value) {
+    name <- as.character(name)
 
-    original <- envir[[symbol]]
-    assign(symbol, replacement, envir = envir)
+    local_unlock_binding(env, name)
+
+    original <- env[[name]]
+    assign(name, value, envir = env)
     invisible(original)
 }
 
-local_unlock_binding <- function(env, sym, frame = parent.frame()) {
-    if (bindingIsLocked(sym, env)) {
-        unlockBinding(sym, env)
-        defer(lockBinding(sym, env), envir = frame)
+local_unlock_binding <- function(env, name, frame = parent.frame()) {
+    if (name %in% names(env) && bindingIsLocked(name, env)) {
+        unlockBinding(name, env)
+        defer(lockBinding(name, env), envir = frame)
     }
 }

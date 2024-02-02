@@ -15,7 +15,7 @@
     }
     # replaces the unnamespaced, attached version of the function
     utils_env <- as.environment(package_name)
-    .ps.binding.replace(name, hook, utils_env)
+    env_bind_force(utils_env, name, hook)
 
     # if namespace = TRUE, we try to replace the binding for `utils::name` as well
     if (namespace) {
@@ -24,7 +24,7 @@
             msg <- sprintf("Could not replace `%s` in the `utils` namespace", name)
             warning(msg, call. = FALSE)
         } else {
-            .ps.binding.replace(name, hook, utils_ns)
+            env_bind_force(utils_ns, name, hook)
         }
     }
 }

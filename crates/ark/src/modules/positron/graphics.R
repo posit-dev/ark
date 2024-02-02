@@ -72,9 +72,8 @@ setHook("before.grid.newpage", action = "replace", function(...) {
     .Devices[[index]] <- newDevice
 
     # Replace bindings.
-    .ps.binding.replace(".Devices", .Devices, envir = baseenv())
-    .ps.binding.replace(".Device", newDevice, envir = baseenv())
-
+    env_bind_force(baseenv(), ".Devices", .Devices)
+    env_bind_force(baseenv(), ".Device", newDevice)
 }
 
 # Create a snapshot of the current plot.
