@@ -6,13 +6,13 @@
 #
 
 # Set up plot hooks.
-setHook("before.plot.new", function(...) {
-    .Call("ps_graphics_event", "before.plot.new", PACKAGE = "(embedding)")
-}, action = "replace")
+setHook("before.plot.new", action = "replace", function(...) {
+    .ps.call("ps_graphics_event", "before.plot.new")
+})
 
-setHook("before.grid.newpage", function(...) {
-    .Call("ps_graphics_event", "before.grid.newpage", PACKAGE = "(embedding)")
-}, action = "replace")
+setHook("before.grid.newpage", action = "replace", function(...) {
+    .ps.call("ps_graphics_event", "before.grid.newpage")
+})
 
 #' @export
 .ps.graphics.defaultResolution <- if (Sys.info()[["sysname"]] == "Darwin") 96L else 72L
