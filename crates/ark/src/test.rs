@@ -10,8 +10,6 @@
 
 use std::sync::Once;
 
-use harp::routines::r_register_routines;
-
 use crate::modules;
 
 pub fn r_test<F: FnOnce()>(f: F) {
@@ -25,11 +23,9 @@ pub fn r_test<F: FnOnce()>(f: F) {
 static INIT: Once = Once::new();
 
 fn initialize_ark() {
-    INIT.call_once(|| unsafe {
-        // Register routines so they are callable from the modules
-        r_register_routines();
-
+    INIT.call_once(|| {
         // Initialize the positron module so tests can use them.
+        // Routines are already registered by `harp::test::r_test()`.
         modules::initialize(true).unwrap();
     });
 }
