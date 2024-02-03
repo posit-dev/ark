@@ -7,6 +7,8 @@
 
 use std::path::PathBuf;
 use std::result::Result::Err;
+use std::sync::Arc;
+use std::sync::Mutex;
 
 use amalthea::comm::ui_comm::BusyParams;
 use amalthea::comm::ui_comm::UiFrontendEvent;
@@ -16,7 +18,7 @@ use anyhow::Result;
 use crossbeam::channel::Sender;
 
 use crate::interface::RMain;
-use crate::r_task;
+use crate::r_task::r_async_task;
 use crate::request::KernelRequest;
 use crate::ui::UiCommMessage;
 
@@ -24,15 +26,26 @@ use crate::ui::UiCommMessage;
 pub struct Kernel {
     ui_comm_tx: Option<Sender<UiCommMessage>>,
     working_directory: PathBuf,
+    mutex: Option<Arc<Mutex<Kernel>>>,
 }
 
 impl Kernel {
     /// Create a new R kernel instance
-    pub fn new() -> Self {
-        Self {
+    pub fn new() -> Arc<Mutex<Kernel>> {
+        let kernel = Self {
             ui_comm_tx: None,
             working_directory: PathBuf::new(),
-        }
+            mutex: None,
+        };
+
+        let mutex = Arc::new(Mutex::new(kernel));
+        mutex.lock().unwrap().mutex = Some(mutex.clone());
+
+        mutex
+    }
+
+    pub fn init(&mut self, mutex: Arc<Mutex<Kernel>>) {
+        self.mutex = Some(mutex);
     }
 
     /// Service an execution request from the frontend
@@ -58,15 +71,23 @@ impl Kernel {
             log::error!("Error establishing working directory for frontend: {err:?}");
         }
 
-        // Get the current busy status
-        let busy = r_task(|| {
-            if RMain::initialized() {
+        // We shouldn't block with an `r_task()` while holding the kernel lock.
+        // So check for status in an async task and send event from there.
+        let mutex = self.mutex.as_ref().unwrap().clone();
+
+        r_async_task(move || {
+            // Get the current busy status
+            let busy = if RMain::initialized() {
                 RMain::get().is_busy
             } else {
                 false
-            }
+            };
+
+            mutex
+                .lock()
+                .unwrap()
+                .send_ui_event(UiFrontendEvent::Busy(BusyParams { busy }));
         });
-        self.send_ui_event(UiFrontendEvent::Busy(BusyParams { busy }));
     }
 
     /// Polls for changes to the working directory, and sends an event to the
