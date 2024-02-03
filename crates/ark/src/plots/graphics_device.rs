@@ -504,7 +504,7 @@ unsafe fn ps_graphics_device_impl() -> anyhow::Result<SEXP> {
     let res = 144;
 
     // TODO: allow customization of device type.
-    let r#type = "cairo";
+    let r#type = RObject::null();
 
     // Create the graphics device.
     RFunction::from(".ps.graphics.createDevice")
