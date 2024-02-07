@@ -19,6 +19,7 @@ pub mod handlers;
 pub mod help;
 pub mod help_topic;
 pub mod hover;
+pub mod indent;
 pub mod indexer;
 pub mod main_loop;
 pub mod markdown;
