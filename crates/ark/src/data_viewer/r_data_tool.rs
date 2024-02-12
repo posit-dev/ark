@@ -221,25 +221,13 @@ impl RDataTool {
         unsafe {
             let table = self.table.get().clone();
             let object = *table;
-            let num_rows: i64;
-            let total_num_columns: i32;
-            let column_names: ColumnNames;
-            let is_data_frame = r_is_data_frame(object);
-            if is_data_frame {
-                let dims = dim_data_frame(object);
-                num_rows = dims.nrow as i64;
-                total_num_columns = dims.ncol;
-                column_names = ColumnNames::new(Rf_getAttrib(object, R_NamesSymbol));
-            } else if r_is_matrix(object) {
-                let dim = Rf_getAttrib(object, R_DimSymbol);
-                num_rows = INTEGER_ELT(dim, 0) as i64;
-                total_num_columns = INTEGER_ELT(dim, 1);
-                let colnames = RFunction::from("colnames").add(object).call()?;
-                column_names = ColumnNames::new(*colnames);
-            } else {
-                // TODO: better error message
-                bail!("Unsupported type for data viewer");
-            }
+
+            let TableInfo {
+                kind,
+                num_rows,
+                num_cols: total_num_columns,
+                col_names: column_names,
+            } = table_info(object)?;
 
             let lower_bound = cmp::min(start_index, total_num_columns) as isize;
             let upper_bound = cmp::min(total_num_columns, start_index + num_columns) as isize;
@@ -254,7 +242,7 @@ impl RDataTool {
                 // TODO: handling for nested data frame columns
 
                 let col_type;
-                if is_data_frame {
+                if let TableKind::Dataframe = kind {
                     col_type = WorkspaceVariableDisplayType::from(VECTOR_ELT(object, i));
                 } else {
                     col_type = WorkspaceVariableDisplayType::from(object);
@@ -305,26 +293,15 @@ impl RDataTool {
         column_indices: Vec<i64>,
     ) -> anyhow::Result<DataToolBackendReply> {
         unsafe {
-            // TODO: Support for data frames with over 2B rows
             let table = self.table.get().clone();
             let object = *table;
-            let total_num_rows: i64;
-            let total_num_columns: i32;
 
-            let is_data_frame = r_is_data_frame(object);
-
-            if is_data_frame {
-                let dims = dim_data_frame(object);
-                total_num_rows = dims.nrow as i64;
-                total_num_columns = dims.ncol;
-            } else if r_is_matrix(object) {
-                let dim = Rf_getAttrib(object, R_DimSymbol);
-                total_num_rows = INTEGER_ELT(dim, 0) as i64;
-                total_num_columns = INTEGER_ELT(dim, 1);
-            } else {
-                // TODO: better error message
-                bail!("Unsupported type for data viewer");
-            }
+            let TableInfo {
+                kind,
+                num_rows: total_num_rows,
+                num_cols: total_num_columns,
+                ..
+            } = table_info(object)?;
 
             let lower_bound = cmp::min(row_start_index, total_num_rows) as isize;
             let upper_bound = cmp::min(row_start_index + num_rows, total_num_rows) as isize;
@@ -338,7 +315,8 @@ impl RDataTool {
 
                 let formatter: FormattedVector;
                 let column: RObject;
-                if is_data_frame {
+
+                if let TableKind::Dataframe = kind {
                     column = RObject::from(VECTOR_ELT(object, column_index as isize));
                 } else {
                     column = RFunction::from("[")
@@ -363,6 +341,65 @@ impl RDataTool {
 
             Ok(DataToolBackendReply::GetDataValuesReply(response))
         }
+    }
+}
+
+enum TableKind {
+    Dataframe,
+    Matrix,
+}
+
+struct TableInfo {
+    kind: TableKind,
+    num_rows: i64,
+    num_cols: i32,
+    col_names: ColumnNames,
+}
+
+fn table_info(x: SEXP) -> anyhow::Result<TableInfo> {
+    if r_is_data_frame(x) {
+        return df_info(x);
+    }
+
+    if r_is_matrix(x) {
+        return mat_info(x);
+    }
+
+    // TODO: better error message
+    bail!("Unsupported type for data viewer");
+}
+
+fn df_info(x: SEXP) -> anyhow::Result<TableInfo> {
+    unsafe {
+        let dims = dim_data_frame(x);
+
+        let col_names = RObject::new(Rf_getAttrib(x, R_NamesSymbol));
+        let col_names = ColumnNames::new(col_names.sexp);
+
+        Ok(TableInfo {
+            kind: TableKind::Dataframe,
+            num_rows: dims.nrow as i64,
+            num_cols: dims.ncol,
+            col_names,
+        })
+    }
+}
+
+fn mat_info(x: SEXP) -> anyhow::Result<TableInfo> {
+    unsafe {
+        let dims = RObject::new(Rf_getAttrib(x, R_DimSymbol));
+        let num_rows = INTEGER_ELT(dims.sexp, 0) as i64;
+        let num_cols = INTEGER_ELT(dims.sexp, 1);
+
+        let col_names = RFunction::from("colnames").add(x).call()?;
+        let col_names = ColumnNames::new(col_names.sexp);
+
+        Ok(TableInfo {
+            kind: TableKind::Matrix,
+            num_rows,
+            num_cols,
+            col_names,
+        })
     }
 }
 
