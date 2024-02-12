@@ -26,7 +26,8 @@ use crate::ui::UiCommMessage;
 pub struct Kernel {
     ui_comm_tx: Option<Sender<UiCommMessage>>,
     working_directory: PathBuf,
-    mutex: Option<Arc<Mutex<Kernel>>>,
+    /// A self reference to send the kernel across threads
+    kernel: Option<Arc<Mutex<Kernel>>>,
 }
 
 impl Kernel {
@@ -35,17 +36,14 @@ impl Kernel {
         let kernel = Self {
             ui_comm_tx: None,
             working_directory: PathBuf::new(),
-            mutex: None,
+            kernel: None,
         };
 
-        let mutex = Arc::new(Mutex::new(kernel));
-        mutex.lock().unwrap().mutex = Some(mutex.clone());
+        // Initialize self reference
+        let kernel = Arc::new(Mutex::new(kernel));
+        kernel.lock().unwrap().kernel = Some(kernel.clone());
 
-        mutex
-    }
-
-    pub fn init(&mut self, mutex: Arc<Mutex<Kernel>>) {
-        self.mutex = Some(mutex);
+        kernel
     }
 
     /// Service an execution request from the frontend
@@ -73,7 +71,7 @@ impl Kernel {
 
         // We shouldn't block with an `r_task()` while holding the kernel lock.
         // So check for status in an async task and send event from there.
-        let mutex = self.mutex.as_ref().unwrap().clone();
+        let kernel = self.kernel.as_ref().unwrap().clone();
 
         r_async_task(move || {
             // Get the current busy status
@@ -83,7 +81,7 @@ impl Kernel {
                 false
             };
 
-            mutex
+            kernel
                 .lock()
                 .unwrap()
                 .send_ui_event(UiFrontendEvent::Busy(BusyParams { busy }));
