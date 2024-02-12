@@ -10,7 +10,7 @@
 
     context <- .ps.ui.LastActiveEditorContext()
 
-    if(is.null(context)) {
+    if (is.null(context)) {
       return()
     }
 
