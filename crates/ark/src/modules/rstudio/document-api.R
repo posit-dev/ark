@@ -10,6 +10,10 @@
 
     context <- .ps.ui.LastActiveEditorContext()
 
+    if (is.null(context)) {
+      return()
+    }
+
     list(
         path = context$document$path,
         contents = unlist(context$contents),
