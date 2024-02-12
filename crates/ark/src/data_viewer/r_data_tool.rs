@@ -179,18 +179,14 @@ impl RDataTool {
             DataToolBackendRequest::GetSchema(GetSchemaParams {
                 start_index,
                 num_columns,
-            }) => {
-                let result = self.get_schema(start_index as i32, num_columns as i32)?;
-                Ok(result)
-            },
+            }) => self.get_schema(start_index as i32, num_columns as i32),
             DataToolBackendRequest::GetDataValues(GetDataValuesParams {
                 row_start_index,
                 num_rows,
                 column_indices,
             }) => {
                 // Fetch stringified data values and return
-                let result = self.get_data_values(row_start_index, num_rows, column_indices)?;
-                Ok(result)
+                self.get_data_values(row_start_index, num_rows, column_indices)
             },
             DataToolBackendRequest::SetSortColumns(SetSortColumnsParams { sort_keys: _ }) => {
                 bail!("Data Viewer: Not yet implemented")
