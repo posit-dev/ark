@@ -179,14 +179,18 @@ impl RDataTool {
             DataToolBackendRequest::GetSchema(GetSchemaParams {
                 start_index,
                 num_columns,
-            }) => self.get_schema(start_index as i32, num_columns as i32),
+            }) => {
+                // TODO: Support for data frames with over 2B rows
+                // TODO: Check bounds
+                r_task(|| self.r_get_schema(start_index as i32, num_columns as i32))
+            },
             DataToolBackendRequest::GetDataValues(GetDataValuesParams {
                 row_start_index,
                 num_rows,
                 column_indices,
             }) => {
                 // Fetch stringified data values and return
-                self.get_data_values(row_start_index, num_rows, column_indices)
+                r_task(|| self.r_get_data_values(row_start_index, num_rows, column_indices))
             },
             DataToolBackendRequest::SetSortColumns(SetSortColumnsParams { sort_keys: _ }) => {
                 bail!("Data Viewer: Not yet implemented")
@@ -205,14 +209,16 @@ impl RDataTool {
             },
         }
     }
+}
 
-    fn get_schema(
+// Methods that must be run on the main R thread
+impl RDataTool {
+    fn r_get_schema(
         &self,
         start_index: i32,
         num_columns: i32,
     ) -> anyhow::Result<DataToolBackendReply> {
-        r_task(|| unsafe {
-            // TODO: Support for data frames with over 2B rows
+        unsafe {
             let table = self.table.get().clone();
             let object = *table;
             let num_rows: i64;
@@ -289,16 +295,16 @@ impl RDataTool {
             };
 
             Ok(DataToolBackendReply::GetSchemaReply(response))
-        })
+        }
     }
 
-    fn get_data_values(
+    fn r_get_data_values(
         &self,
         row_start_index: i64,
         num_rows: i64,
         column_indices: Vec<i64>,
     ) -> anyhow::Result<DataToolBackendReply> {
-        r_task(|| unsafe {
+        unsafe {
             // TODO: Support for data frames with over 2B rows
             let table = self.table.get().clone();
             let object = *table;
@@ -356,7 +362,7 @@ impl RDataTool {
             };
 
             Ok(DataToolBackendReply::GetDataValuesReply(response))
-        })
+        }
     }
 }
 
