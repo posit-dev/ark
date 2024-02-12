@@ -100,7 +100,7 @@ impl RDataTool {
         title: String,
         data: RObject,
         comm_manager_tx: Sender<CommManagerEvent>,
-    ) -> Result<(), harp::error::Error> {
+    ) -> harp::Result<()> {
         let id = Uuid::new_v4().to_string();
 
         let comm = CommSocket::new(
@@ -127,7 +127,7 @@ impl RDataTool {
     }
 
     pub fn execution_thread(self) {
-        let execute: Result<(), anyhow::Error> = local! {
+        let execute: anyhow::Result<()> = local! {
             let metadata = Metadata {
                 title: self.title.clone(),
             };
@@ -138,8 +138,8 @@ impl RDataTool {
             Ok(())
         };
 
-        if let Err(error) = execute {
-            log::error!("Error while viewing object '{}': {}", self.title, error);
+        if let Err(err) = execute {
+            log::error!("Error while viewing object '{}': {}", self.title, err);
         };
 
         // Flag initially set to false, but set to true if the user closes the
@@ -214,7 +214,7 @@ impl RDataTool {
         &self,
         start_index: i32,
         num_columns: i32,
-    ) -> Result<DataToolBackendReply, anyhow::Error> {
+    ) -> anyhow::Result<DataToolBackendReply> {
         r_task(|| unsafe {
             // TODO: Support for data frames with over 2B rows
             let table = self.table.get().clone();
@@ -301,7 +301,7 @@ impl RDataTool {
         row_start_index: i64,
         num_rows: i64,
         column_indices: Vec<i64>,
-    ) -> Result<DataToolBackendReply, anyhow::Error> {
+    ) -> anyhow::Result<DataToolBackendReply> {
         r_task(|| unsafe {
             // TODO: Support for data frames with over 2B rows
             let table = self.table.get().clone();
