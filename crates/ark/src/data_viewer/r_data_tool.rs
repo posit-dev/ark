@@ -262,6 +262,7 @@ impl RDataTool {
 
             let lower_bound = cmp::min(row_start_index, total_num_rows) as isize;
             let upper_bound = cmp::min(row_start_index + num_rows, total_num_rows) as isize;
+
             let mut column_data: Vec<Vec<String>> = Vec::new();
             for column_index in column_indices {
                 let column_index = column_index as i32;
@@ -270,19 +271,16 @@ impl RDataTool {
                     break;
                 }
 
-                let formatter: FormattedVector;
-                let column: RObject;
-
-                if let harp::TableKind::Dataframe = kind {
-                    column = RObject::from(VECTOR_ELT(object, column_index as isize));
+                let column = if let harp::TableKind::Dataframe = kind {
+                    RObject::from(VECTOR_ELT(object, column_index as isize))
                 } else {
-                    column = RFunction::from("[")
+                    RFunction::from("[")
                         .add(object)
                         .param("i", R_MissingArg)
                         .param("j", column_index + 1)
-                        .call()?;
-                }
-                formatter = FormattedVector::new(*column)?;
+                        .call()?
+                };
+                let formatter = FormattedVector::new(*column)?;
 
                 let mut formatted_data = Vec::new();
                 for i in lower_bound..upper_bound {
