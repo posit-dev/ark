@@ -185,8 +185,11 @@ impl RDataTool {
 
             let harp::TableInfo {
                 kind,
-                num_rows,
-                num_cols: total_num_columns,
+                dims:
+                    harp::TableDim {
+                        num_rows,
+                        num_cols: total_num_columns,
+                    },
                 col_names: column_names,
             } = harp::table_info(object)?;
 
@@ -259,10 +262,15 @@ impl RDataTool {
 
             let harp::TableInfo {
                 kind,
-                num_rows: total_num_rows,
-                num_cols: total_num_columns,
+                dims:
+                    harp::TableDim {
+                        num_rows: total_num_rows,
+                        num_cols: total_num_columns,
+                    },
                 ..
             } = harp::table_info(object)?;
+
+            let total_num_rows = total_num_rows as i64;
 
             let lower_bound = cmp::min(row_start_index, total_num_rows) as isize;
             let upper_bound = cmp::min(row_start_index + num_rows, total_num_rows) as isize;

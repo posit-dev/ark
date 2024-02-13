@@ -105,10 +105,10 @@ impl WorkspaceVariableDisplayValue {
 
         let value = format!(
             "[{} {} x {} {}]{}",
-            dim.nrow,
-            plural("row", dim.nrow),
-            dim.ncol,
-            plural("column", dim.ncol),
+            dim.num_rows,
+            plural("row", dim.num_rows),
+            dim.num_cols,
+            plural("column", dim.num_cols),
             class
         );
         Self::new(value, false)

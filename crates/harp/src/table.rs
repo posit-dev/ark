@@ -2,7 +2,6 @@ use libr::*;
 
 use crate::exec::RFunction;
 use crate::exec::RFunctionExt;
-use crate::object::RObject;
 use crate::utils::r_is_data_frame;
 use crate::utils::r_is_matrix;
 use crate::utils::r_typeof;
@@ -16,8 +15,7 @@ pub enum TableKind {
 
 pub struct TableInfo {
     pub kind: TableKind,
-    pub num_rows: i64,
-    pub num_cols: i32,
+    pub dims: TableDim,
     pub col_names: ColumnNames,
 }
 
@@ -37,52 +35,55 @@ pub fn table_info(x: SEXP) -> anyhow::Result<TableInfo> {
 pub fn df_info(x: SEXP) -> anyhow::Result<TableInfo> {
     unsafe {
         let dims = df_dim(x);
-
-        let col_names = RObject::new(Rf_getAttrib(x, R_NamesSymbol));
-        let col_names = ColumnNames::new(col_names.sexp);
+        let col_names = ColumnNames::new(Rf_getAttrib(x, R_NamesSymbol));
 
         Ok(TableInfo {
             kind: TableKind::Dataframe,
-            num_rows: dims.nrow as i64,
-            num_cols: dims.ncol,
+            dims,
             col_names,
         })
     }
 }
 
 pub fn mat_info(x: SEXP) -> anyhow::Result<TableInfo> {
-    unsafe {
-        let dims = RObject::new(Rf_getAttrib(x, R_DimSymbol));
-        let num_rows = INTEGER_ELT(dims.sexp, 0) as i64;
-        let num_cols = INTEGER_ELT(dims.sexp, 1);
+    let dims = mat_dim(x);
 
-        let col_names = RFunction::from("colnames").add(x).call()?;
-        let col_names = ColumnNames::new(col_names.sexp);
+    let col_names = RFunction::from("colnames").add(x).call()?;
+    let col_names = ColumnNames::new(col_names.sexp);
 
-        Ok(TableInfo {
-            kind: TableKind::Matrix,
-            num_rows,
-            num_cols,
-            col_names,
-        })
-    }
+    Ok(TableInfo {
+        kind: TableKind::Matrix,
+        dims,
+        col_names,
+    })
 }
 
-pub struct DataFrameDim {
-    pub nrow: i32,
-    pub ncol: i32,
+pub struct TableDim {
+    pub num_rows: i32,
+    pub num_cols: i32,
 }
 
-pub fn df_dim(data: SEXP) -> DataFrameDim {
+pub fn df_dim(data: SEXP) -> TableDim {
     unsafe {
-        let dim = RFunction::new("base", "dim.data.frame")
+        let dims = RFunction::new("base", "dim.data.frame")
             .add(data)
             .call()
             .unwrap();
 
-        DataFrameDim {
-            nrow: INTEGER_ELT(*dim, 0),
-            ncol: INTEGER_ELT(*dim, 1),
+        TableDim {
+            num_rows: INTEGER_ELT(dims.sexp, 0),
+            num_cols: INTEGER_ELT(dims.sexp, 1),
+        }
+    }
+}
+
+pub fn mat_dim(x: SEXP) -> TableDim {
+    unsafe {
+        let dims = Rf_getAttrib(x, R_DimSymbol);
+
+        TableDim {
+            num_rows: INTEGER_ELT(dims, 0),
+            num_cols: INTEGER_ELT(dims, 1),
         }
     }
 }
