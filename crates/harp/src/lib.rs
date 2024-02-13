@@ -24,10 +24,14 @@ pub mod session;
 pub mod string;
 pub mod symbol;
 pub mod sys;
+pub mod table;
 pub mod test;
 pub mod traits;
 pub mod utils;
 pub mod vector;
+
+// Reexport API
+pub use table::*;
 
 // Necessary for the `harp::` references in macros, e.g. `harp::register`, to
 // resolve to the correct symbols
