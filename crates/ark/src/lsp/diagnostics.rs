@@ -171,7 +171,7 @@ pub fn refresh_all_open_file_diagnostics() {
 }
 
 async fn refresh_diagnostics_impl(backend: Backend, uri: Url, version: Option<i32>) {
-    let diagnostics = match request_diagnostics(&backend, &uri, version).await {
+    let diagnostics = match request_diagnostics(&backend, &uri).await {
         Ok(diagnostics) => diagnostics,
         Err(err) => {
             log::error!("While refreshing diagnostics for '{uri}': {err:?}");
@@ -194,36 +194,44 @@ async fn refresh_diagnostics_impl(backend: Backend, uri: Url, version: Option<i3
 async fn request_diagnostics(
     backend: &Backend,
     uri: &Url,
-    version: Option<i32>,
 ) -> anyhow::Result<Option<Vec<Diagnostic>>> {
     // SAFETY: It is absolutely imperative that the `doc` be `Drop`ped outside
     // of any `await` context. That is why the extraction of `doc` is captured
-    // inside of `try_generate_diagnostics()` and is why we use `contains_key()` rather
-    // than `get()` when checking the version; this ensures that any `doc` is `Drop`ped
-    // before the `sleep().await` call. If this doesn't happen, then the `await` could
-    // switch us to a different LSP task, which will also try and access a document,
-    // causing a deadlock since it won't be able to access a document until
-    // our `doc` reference is dropped, but we can't drop until we get control back from
-    // the `await`.
+    // inside of `try_generate_diagnostics()` and `get_diagnostics_id()`; this ensures
+    // that any `doc` is `Drop`ped before the `sleep().await` call. If this doesn't
+    // happen, then the `await` could switch us to a different LSP task, which will also
+    // try and access a document, causing a deadlock since it won't be able to access a
+    // document until our `doc` reference is dropped, but we can't drop until we get
+    // control back from the `await`.
 
-    // Before doing anything, check that we know about this file
-    if !backend.documents.contains_key(uri) {
-        return Err(anyhow!("Unknown document URI '{uri}'."));
-    }
+    // Get the `diagnostics_id` for this request, before sleeping
+    let diagnostics_id = get_diagnostics_id(backend, uri)?;
 
-    // Wait some amount of time. Note that the document version is updated on
-    // every document change, so if the document changes while this task is waiting,
-    // we'll see that the current document version is now out-of-sync with the version
-    // associated with this task, and toss it away.
+    // Wait some amount of time. Note that the `diagnostics_id` is updated on every
+    // diagnostic request, so if another request comes in while this task is waiting,
+    // we'll see that the current `diagnostics_id` is now past the id associated with this
+    // request and toss it away.
     tokio::time::sleep(Duration::from_millis(1000)).await;
 
-    Ok(try_generate_diagnostics(backend, uri, version))
+    Ok(try_generate_diagnostics(backend, uri, diagnostics_id))
+}
+
+fn get_diagnostics_id(backend: &Backend, uri: &Url) -> anyhow::Result<i64> {
+    let Some(mut document) = backend.documents.get_mut(uri) else {
+        return Err(anyhow!("Unknown document URI '{uri}'."));
+    };
+
+    // First, bump the id to correspond to this request
+    document.diagnostics_id += 1;
+
+    // Return the bumped id
+    Ok(document.diagnostics_id)
 }
 
 fn try_generate_diagnostics(
     backend: &Backend,
     uri: &Url,
-    version: Option<i32>,
+    diagnostics_id: i64,
 ) -> Option<Vec<Diagnostic>> {
     // Get reference to document.
     // At this point we already know this document existed before we slept, so if it
@@ -234,11 +242,11 @@ fn try_generate_diagnostics(
         return None;
     };
 
-    let version = version.unwrap_or(0);
-    let current_version = doc.version.unwrap_or(0);
-
-    if version != current_version {
-        // log::info!("[diagnostics({version}, {uri})] Aborting diagnostics in favor of version {current_version}.");
+    // Check if the `diagnostics_id` has been bumped by another diagnostics request while
+    // we were asleep
+    let current_diagnostics_id = doc.diagnostics_id;
+    if diagnostics_id != current_diagnostics_id {
+        // log::info!("[diagnostics({diagnostics_id}, {uri})] Aborting diagnostics in favor of id {current_diagnostics_id}.");
         return None;
     }
 
