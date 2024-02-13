@@ -27,6 +27,7 @@ use crossbeam::channel::Sender;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
+use harp::variable::WorkspaceVariableDisplayType;
 use harp::vector::formatted_vector::FormattedVector;
 use libr::R_MissingArg;
 use libr::R_NilValue;
@@ -42,7 +43,6 @@ use uuid::Uuid;
 use crate::interface::RMain;
 use crate::r_task;
 use crate::thread::RThreadSafe;
-use crate::variables::variable::WorkspaceVariableDisplayType;
 
 pub struct RDataTool {
     title: String,
