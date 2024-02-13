@@ -20,8 +20,8 @@ unsafe extern "C" fn ps_editor(file: SEXP, _title: SEXP) -> anyhow::Result<SEXP>
     let main = RMain::get();
     let runtime = main.get_lsp_runtime();
 
-    let client = unwrap!(main.get_lsp_client(), None => {
-        log::error!("Failed to open file. LSP client has not been initialized.");
+    let backend = unwrap!(main.get_lsp_backend(), None => {
+        log::error!("Failed to open file. LSP backend has not been initialized.");
         return Ok(R_NilValue);
     });
 
@@ -61,7 +61,8 @@ unsafe extern "C" fn ps_editor(file: SEXP, _title: SEXP) -> anyhow::Result<SEXP>
     // https://github.com/posit-dev/positron/issues/1885
     for uri in uris.into_iter() {
         runtime.spawn(async move {
-            let result = client
+            let result = backend
+                .client
                 .show_document(ShowDocumentParams {
                     uri: uri.clone(),
                     external: Some(false),
