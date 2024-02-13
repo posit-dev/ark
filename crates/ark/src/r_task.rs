@@ -15,6 +15,7 @@ use crossbeam::channel::Sender;
 use crossbeam::select;
 use harp::exec::r_sandbox;
 use harp::test::R_TASK_BYPASS;
+use libr::R_Interactive;
 
 use crate::interface::RMain;
 
@@ -206,7 +207,12 @@ impl RTaskMain {
 
         // Move closure here and call it
         let closure = self.closure.take().unwrap();
+
+        // Background tasks can't take any user input, so we set R_Interactive
+        // to 0 to prevent `readline()` from blocking the task.
+        unsafe { libr::set(R_Interactive, 0) };
         let result = r_sandbox(closure);
+        unsafe { libr::set(R_Interactive, 1) };
 
         match &self.status_tx {
             Some(status_tx) => {
