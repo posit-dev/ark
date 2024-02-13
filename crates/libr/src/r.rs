@@ -588,6 +588,8 @@ constant_globals::generate! {
 }
 
 mutable_globals::generate! {
+    pub static mut R_Interactive: Rboolean;
+
     pub static mut R_interrupts_pending: std::ffi::c_int;
 
     pub static mut R_interrupts_suspended: Rboolean;
@@ -622,9 +624,6 @@ mutable_globals::generate! {
 
     #[cfg(target_family = "unix")]
     pub static mut R_running_as_main_program: std::ffi::c_int;
-
-    #[cfg(target_family = "unix")]
-    pub static mut R_Interactive: Rboolean;
 
     #[cfg(target_family = "unix")]
     pub static mut R_InputHandlers: *const std::ffi::c_void;
