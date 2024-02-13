@@ -27,11 +27,12 @@ use crossbeam::channel::Sender;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
+use harp::utils::r_inherits;
+use harp::utils::r_is_object;
+use harp::utils::r_is_s4;
+use harp::utils::r_typeof;
 use harp::vector::formatted_vector::FormattedVector;
-use libr::R_MissingArg;
-use libr::R_NilValue;
-use libr::SEXP;
-use libr::VECTOR_ELT;
+use libr::*;
 use serde::Deserialize;
 use serde::Serialize;
 use stdext::local;
@@ -206,31 +207,17 @@ impl RDataTool {
 
                 // TODO: handling for nested data frame columns
 
-                let col_type;
-                if let harp::TableKind::Dataframe = kind {
-                    col_type = WorkspaceVariableDisplayType::from(VECTOR_ELT(object, i));
-                } else {
-                    col_type = WorkspaceVariableDisplayType::from(object);
-                }
-
-                // TODO: this doesn't work because display_type has
-                // the size added to it, like str [4]
-
-                let type_display = match col_type.display_type.as_str() {
-                    "character" => ColumnSchemaTypeDisplay::String,
-                    "complex" => ColumnSchemaTypeDisplay::Number,
-                    "integer" => ColumnSchemaTypeDisplay::Number,
-                    "numeric" => ColumnSchemaTypeDisplay::Number,
-                    "list" => ColumnSchemaTypeDisplay::Array,
-                    "logical" => ColumnSchemaTypeDisplay::Boolean,
-                    "Date" => ColumnSchemaTypeDisplay::Date,
-                    "POSIXct" => ColumnSchemaTypeDisplay::Datetime,
-                    _ => ColumnSchemaTypeDisplay::Unknown,
+                let col = match kind {
+                    harp::TableKind::Dataframe => VECTOR_ELT(object, i),
+                    harp::TableKind::Matrix => object,
                 };
+
+                let type_name = WorkspaceVariableDisplayType::from(col).display_type;
+                let type_display = display_type(col);
 
                 column_schemas.push(ColumnSchema {
                     column_name,
-                    type_name: col_type.display_type,
+                    type_name,
                     type_display,
                     description: None,
                     children: None,
@@ -311,6 +298,67 @@ impl RDataTool {
 
             Ok(DataToolBackendReply::GetDataValuesReply(response))
         }
+    }
+}
+
+// This returns the type of an _element_ of the column. In R atomic
+// vectors do not have a distinct internal type but we pretend that they
+// do for the purpose of integrating with Positron types.
+fn display_type(x: SEXP) -> ColumnSchemaTypeDisplay {
+    if r_is_s4(x) {
+        return ColumnSchemaTypeDisplay::Unknown;
+    }
+
+    if r_is_object(x) {
+        if r_inherits(x, "logical") {
+            return ColumnSchemaTypeDisplay::Boolean;
+        }
+
+        if r_inherits(x, "integer") {
+            return ColumnSchemaTypeDisplay::Number;
+        }
+        if r_inherits(x, "double") {
+            return ColumnSchemaTypeDisplay::Number;
+        }
+        if r_inherits(x, "complex") {
+            return ColumnSchemaTypeDisplay::Number;
+        }
+        if r_inherits(x, "numeric") {
+            return ColumnSchemaTypeDisplay::Number;
+        }
+
+        if r_inherits(x, "character") {
+            return ColumnSchemaTypeDisplay::String;
+        }
+        if r_inherits(x, "factor") {
+            return ColumnSchemaTypeDisplay::String;
+        }
+
+        if r_inherits(x, "Date") {
+            return ColumnSchemaTypeDisplay::Date;
+        }
+        if r_inherits(x, "POSIXct") {
+            return ColumnSchemaTypeDisplay::Datetime;
+        }
+        if r_inherits(x, "POSIXlt") {
+            return ColumnSchemaTypeDisplay::Datetime;
+        }
+
+        // TODO: vctrs's list_of
+        if r_inherits(x, "list") {
+            return ColumnSchemaTypeDisplay::Unknown;
+        }
+
+        // Catch-all, including for data frame
+        return ColumnSchemaTypeDisplay::Unknown;
+    }
+
+    match r_typeof(x) {
+        LGLSXP => return ColumnSchemaTypeDisplay::Boolean,
+        INTSXP | REALSXP | CPLXSXP => return ColumnSchemaTypeDisplay::Number,
+        STRSXP => return ColumnSchemaTypeDisplay::String,
+        VECSXP => return ColumnSchemaTypeDisplay::Unknown,
+        _ => return ColumnSchemaTypeDisplay::Unknown,
     }
 }
 
