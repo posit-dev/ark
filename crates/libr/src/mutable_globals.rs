@@ -28,7 +28,7 @@ macro_rules! generate {
                     $(#[doc=$doc])*
                     $(#[cfg($cfg)])*
                     pub unsafe fn $name() -> bool {
-                        super::$name.is_null()
+                        !super::$name.is_null()
                     }
                 }
             )+
