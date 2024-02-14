@@ -229,7 +229,7 @@ impl RDataTool {
 
             let response = TableSchema {
                 columns: column_schemas,
-                num_rows,
+                num_rows: num_rows.into(),
                 total_num_columns: total_num_columns as i64,
             };
 
@@ -273,7 +273,7 @@ impl RDataTool {
                 let column = if let harp::TableKind::Dataframe = kind {
                     RObject::from(VECTOR_ELT(object, column_index as isize))
                 } else {
-                    RFunction::from("[")
+                    RFunction::new("base", "[")
                         .add(object)
                         .param("i", R_MissingArg)
                         .param("j", column_index + 1)
@@ -288,9 +288,13 @@ impl RDataTool {
                 column_data.push(formatted_data);
             }
 
+            let row_names = RFunction::new("base", "row.names").add(object).call()?;
+            let row_labels = RFunction::new("base", "format").add(row_names).call()?;
+            let row_labels: Vec<String> = row_labels.try_into()?;
+
             let response = TableData {
                 columns: column_data,
-                row_labels: Some(vec![]),
+                row_labels: Some(vec![row_labels]),
             };
 
             Ok(DataToolBackendReply::GetDataValuesReply(response))
