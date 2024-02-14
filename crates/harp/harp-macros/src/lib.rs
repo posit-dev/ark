@@ -41,7 +41,7 @@ pub fn vector(_attr: TokenStream, item: TokenStream) -> TokenStream {
     // Include a bunch of derives.
     let all = quote! {
 
-        #[derive(Debug, Clone)]
+        #[derive(Debug)]
         #data
 
         impl std::ops::Deref for #ident {

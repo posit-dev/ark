@@ -192,7 +192,6 @@ impl RDataTool {
                         num_cols: total_num_columns,
                     },
                 col_names: column_names,
-                ..
             } = harp::table_info(object)?;
 
             let lower_bound = cmp::min(start_index, total_num_columns) as isize;
@@ -230,7 +229,7 @@ impl RDataTool {
 
             let response = TableSchema {
                 columns: column_schemas,
-                num_rows: num_rows.into(),
+                num_rows,
                 total_num_columns: total_num_columns as i64,
             };
 
