@@ -57,25 +57,6 @@ pub struct WorkspaceVariableDisplayValue {
     pub is_truncated: bool,
 }
 
-struct DimDataFrame {
-    nrow: i32,
-    ncol: i32,
-}
-
-fn dim_data_frame(data: SEXP) -> DimDataFrame {
-    unsafe {
-        let dim = RFunction::new("base", "dim.data.frame")
-            .add(data)
-            .call()
-            .unwrap();
-
-        DimDataFrame {
-            nrow: INTEGER_ELT(*dim, 0),
-            ncol: INTEGER_ELT(*dim, 1),
-        }
-    }
-}
-
 fn plural(text: &str, n: i32) -> String {
     if n == 1 {
         String::from(text)
@@ -113,7 +94,7 @@ impl WorkspaceVariableDisplayValue {
     }
 
     fn from_data_frame(value: SEXP) -> Self {
-        let dim = dim_data_frame(value);
+        let dim = harp::df_dim(value);
         let class = match r_classes(value) {
             None => String::from(""),
             Some(classes) => match classes.get_unchecked(0) {
@@ -124,10 +105,10 @@ impl WorkspaceVariableDisplayValue {
 
         let value = format!(
             "[{} {} x {} {}]{}",
-            dim.nrow,
-            plural("row", dim.nrow),
-            dim.ncol,
-            plural("column", dim.ncol),
+            dim.num_rows,
+            plural("row", dim.num_rows),
+            dim.num_cols,
+            plural("column", dim.num_cols),
             class
         );
         Self::new(value, false)
