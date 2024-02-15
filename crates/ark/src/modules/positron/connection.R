@@ -111,12 +111,8 @@ options("connectionObserver" = .ps.connection_observer())
     path <- names(list(...))
 
     object_types <- con$listObjectTypes()
-
-    if (length(path) == 0) {
-        return(NULL)
-    }
-
     object_types <- object_types[[1]] # root is always element 1
+
     for (p in path) {
         object_types <- object_types$contains[[p]]
     }
