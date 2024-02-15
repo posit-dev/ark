@@ -5,6 +5,4 @@
 //
 //
 
-pub mod message;
 pub mod r_data_tool;
-pub mod r_data_viewer;
