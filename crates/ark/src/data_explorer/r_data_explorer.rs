@@ -8,17 +8,17 @@
 use std::cmp;
 
 use amalthea::comm::comm_channel::CommMsg;
-use amalthea::comm::data_tool_comm::ColumnSchema;
-use amalthea::comm::data_tool_comm::ColumnSchemaTypeDisplay;
-use amalthea::comm::data_tool_comm::DataToolBackendReply;
-use amalthea::comm::data_tool_comm::DataToolBackendRequest;
-use amalthea::comm::data_tool_comm::GetColumnProfileParams;
-use amalthea::comm::data_tool_comm::GetDataValuesParams;
-use amalthea::comm::data_tool_comm::GetSchemaParams;
-use amalthea::comm::data_tool_comm::SetColumnFiltersParams;
-use amalthea::comm::data_tool_comm::SetSortColumnsParams;
-use amalthea::comm::data_tool_comm::TableData;
-use amalthea::comm::data_tool_comm::TableSchema;
+use amalthea::comm::data_explorer_comm::ColumnSchema;
+use amalthea::comm::data_explorer_comm::ColumnSchemaTypeDisplay;
+use amalthea::comm::data_explorer_comm::DataExplorerBackendReply;
+use amalthea::comm::data_explorer_comm::DataExplorerBackendRequest;
+use amalthea::comm::data_explorer_comm::GetColumnProfileParams;
+use amalthea::comm::data_explorer_comm::GetDataValuesParams;
+use amalthea::comm::data_explorer_comm::GetSchemaParams;
+use amalthea::comm::data_explorer_comm::SetColumnFiltersParams;
+use amalthea::comm::data_explorer_comm::SetSortColumnsParams;
+use amalthea::comm::data_explorer_comm::TableData;
+use amalthea::comm::data_explorer_comm::TableSchema;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
@@ -45,7 +45,7 @@ use crate::r_task;
 use crate::thread::RThreadSafe;
 use crate::variables::variable::WorkspaceVariableDisplayType;
 
-pub struct RDataTool {
+pub struct RDataExplorer {
     title: String,
     table: RThreadSafe<RObject>,
     comm: CommSocket,
@@ -57,7 +57,7 @@ struct Metadata {
     title: String,
 }
 
-impl RDataTool {
+impl RDataExplorer {
     pub fn start(
         title: String,
         data: RObject,
@@ -68,7 +68,7 @@ impl RDataTool {
         let comm = CommSocket::new(
             CommInitiator::BackEnd,
             id.clone(),
-            String::from("positron.dataTool"),
+            String::from("positron.dataExplorer"),
         );
 
         // To be able to `Send` the `data` to the thread to be owned by the data
@@ -136,9 +136,9 @@ impl RDataTool {
         }
     }
 
-    fn handle_rpc(&self, req: DataToolBackendRequest) -> anyhow::Result<DataToolBackendReply> {
+    fn handle_rpc(&self, req: DataExplorerBackendRequest) -> anyhow::Result<DataExplorerBackendReply> {
         match req {
-            DataToolBackendRequest::GetSchema(GetSchemaParams {
+            DataExplorerBackendRequest::GetSchema(GetSchemaParams {
                 start_index,
                 num_columns,
             }) => {
@@ -146,7 +146,7 @@ impl RDataTool {
                 // TODO: Check bounds
                 r_task(|| self.r_get_schema(start_index as i32, num_columns as i32))
             },
-            DataToolBackendRequest::GetDataValues(GetDataValuesParams {
+            DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
                 row_start_index,
                 num_rows,
                 column_indices,
@@ -154,19 +154,19 @@ impl RDataTool {
                 // Fetch stringified data values and return
                 r_task(|| self.r_get_data_values(row_start_index, num_rows, column_indices))
             },
-            DataToolBackendRequest::SetSortColumns(SetSortColumnsParams { sort_keys: _ }) => {
+            DataExplorerBackendRequest::SetSortColumns(SetSortColumnsParams { sort_keys: _ }) => {
                 bail!("Data Viewer: Not yet implemented")
             },
-            DataToolBackendRequest::SetColumnFilters(SetColumnFiltersParams { filters: _ }) => {
+            DataExplorerBackendRequest::SetColumnFilters(SetColumnFiltersParams { filters: _ }) => {
                 bail!("Data Viewer: Not yet implemented")
             },
-            DataToolBackendRequest::GetColumnProfile(GetColumnProfileParams {
+            DataExplorerBackendRequest::GetColumnProfile(GetColumnProfileParams {
                 profile_type: _,
                 column_index: _,
             }) => {
                 bail!("Data Viewer: Not yet implemented")
             },
-            DataToolBackendRequest::GetState => {
+            DataExplorerBackendRequest::GetState => {
                 bail!("Data Viewer: Not yet implemented")
             },
         }
@@ -174,12 +174,12 @@ impl RDataTool {
 }
 
 // Methods that must be run on the main R thread
-impl RDataTool {
+impl RDataExplorer {
     fn r_get_schema(
         &self,
         start_index: i32,
         num_columns: i32,
-    ) -> anyhow::Result<DataToolBackendReply> {
+    ) -> anyhow::Result<DataExplorerBackendReply> {
         unsafe {
             let table = self.table.get().clone();
             let object = *table;
@@ -233,7 +233,7 @@ impl RDataTool {
                 total_num_columns: total_num_columns as i64,
             };
 
-            Ok(DataToolBackendReply::GetSchemaReply(response))
+            Ok(DataExplorerBackendReply::GetSchemaReply(response))
         }
     }
 
@@ -242,7 +242,7 @@ impl RDataTool {
         row_start_index: i64,
         num_rows: i64,
         column_indices: Vec<i64>,
-    ) -> anyhow::Result<DataToolBackendReply> {
+    ) -> anyhow::Result<DataExplorerBackendReply> {
         unsafe {
             let table = self.table.get().clone();
             let object = *table;
@@ -297,7 +297,7 @@ impl RDataTool {
                 row_labels: Some(vec![row_labels]),
             };
 
-            Ok(DataToolBackendReply::GetDataValuesReply(response))
+            Ok(DataExplorerBackendReply::GetDataValuesReply(response))
         }
     }
 }
@@ -373,7 +373,7 @@ pub unsafe extern "C" fn ps_view_data_frame(x: SEXP, title: SEXP) -> anyhow::Res
     let main = RMain::get();
     let comm_manager_tx = main.get_comm_manager_tx().clone();
 
-    RDataTool::start(title, x, comm_manager_tx)?;
+    RDataExplorer::start(title, x, comm_manager_tx)?;
 
     Ok(R_NilValue)
 }

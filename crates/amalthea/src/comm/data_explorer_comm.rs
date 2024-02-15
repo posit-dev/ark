@@ -3,7 +3,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 //
-// AUTO-GENERATED from data_tool.json; do not edit.
+// AUTO-GENERATED from data_explorer.json; do not edit.
 //
 
 use serde::Deserialize;
@@ -29,10 +29,10 @@ pub struct TableSchema {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct TableData {
     /// The columns of data
-    pub columns: Vec<ColumnFormattedData>,
+    pub columns: Vec<Vec<String>>,
 
     /// Zero or more arrays of row labels
-    pub row_labels: Option<Vec<ColumnFormattedData>>,
+    pub row_labels: Option<Vec<Vec<String>>>,
 }
 
 /// The result of applying filters to a table
@@ -331,11 +331,11 @@ pub struct GetColumnProfileParams {
 }
 
 /**
- * Backend RPC request types for the data_tool comm
+ * Backend RPC request types for the data_explorer comm
  */
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params")]
-pub enum DataToolBackendRequest {
+pub enum DataExplorerBackendRequest {
     /// Request schema
     ///
     /// Request full schema for a table-like object
@@ -375,11 +375,11 @@ pub enum DataToolBackendRequest {
 }
 
 /**
- * Backend RPC Reply types for the data_tool comm
+ * Backend RPC Reply types for the data_explorer comm
  */
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "result")]
-pub enum DataToolBackendReply {
+pub enum DataExplorerBackendReply {
     /// The schema for a table-like object
     GetSchemaReply(TableSchema),
 
