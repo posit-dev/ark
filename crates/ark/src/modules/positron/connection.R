@@ -110,6 +110,11 @@ options("connectionObserver" = .ps.connection_observer())
     con <- get(id, getOption("connectionObserver")$.connections)
     path <- names(list(...))
 
+    if (length(path) == 0) {
+        # we are at the root of the connection
+        return(con$icon)
+    }
+
     object_types <- con$listObjectTypes()
 
     if (length(path) == 0) {
