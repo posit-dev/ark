@@ -9,7 +9,7 @@ pub mod browser;
 pub mod connections;
 pub mod control;
 pub mod dap;
-pub mod data_viewer;
+pub mod data_explorer;
 pub mod errors;
 pub mod help;
 pub mod help_proxy;
