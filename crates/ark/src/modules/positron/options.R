@@ -43,3 +43,11 @@ if (is.null(repos) || !is.character(repos)) {
         options(repos = repos)
     }
 }
+
+# Make sure source references are enabled for the debugger
+options(
+    # Also set in system Rprofile for interactive sessions, but just in case
+    keep.source = TRUE,
+    # Used by `base::sys.source()`, `base::install.packages()`, and `devtools::install()`
+    keep.source.pkgs = TRUE
+)
