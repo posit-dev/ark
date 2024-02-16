@@ -136,22 +136,33 @@ impl RDataExplorer {
         }
     }
 
-    fn handle_rpc(&self, req: DataExplorerBackendRequest) -> anyhow::Result<DataExplorerBackendReply> {
+    fn handle_rpc(
+        &self,
+        req: DataExplorerBackendRequest,
+    ) -> anyhow::Result<DataExplorerBackendReply> {
         match req {
             DataExplorerBackendRequest::GetSchema(GetSchemaParams {
                 start_index,
                 num_columns,
             }) => {
-                // TODO: Support for data frames with over 2B rows
-                // TODO: Check bounds
-                r_task(|| self.r_get_schema(start_index as i32, num_columns as i32))
+                // TODO: Support for data frames with over 2B rows. Note that neither base R nor
+                // tidyverse support long vectors in data frames, but data.table does.
+                let num_columns: i32 = num_columns.try_into()?;
+                let start_index: i32 = start_index.try_into()?;
+                r_task(|| self.r_get_schema(start_index, num_columns))
             },
             DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
                 row_start_index,
                 num_rows,
                 column_indices,
             }) => {
-                // Fetch stringified data values and return
+                // TODO: Support for data frames with over 2B rows
+                let row_start_index: i32 = row_start_index.try_into()?;
+                let num_rows: i32 = num_rows.try_into()?;
+                let column_indices: Vec<i32> = column_indices
+                    .into_iter()
+                    .map(i32::try_from)
+                    .collect::<Result<Vec<i32>, _>>()?;
                 r_task(|| self.r_get_data_values(row_start_index, num_rows, column_indices))
             },
             DataExplorerBackendRequest::SetSortColumns(SetSortColumnsParams { sort_keys: _ }) => {
@@ -239,9 +250,9 @@ impl RDataExplorer {
 
     fn r_get_data_values(
         &self,
-        row_start_index: i64,
-        num_rows: i64,
-        column_indices: Vec<i64>,
+        row_start_index: i32,
+        num_rows: i32,
+        column_indices: Vec<i32>,
     ) -> anyhow::Result<DataExplorerBackendReply> {
         unsafe {
             let table = self.table.get().clone();
@@ -257,14 +268,11 @@ impl RDataExplorer {
                 ..
             } = harp::table_info(object)?;
 
-            let total_num_rows = total_num_rows as i64;
-
             let lower_bound = cmp::min(row_start_index, total_num_rows) as isize;
             let upper_bound = cmp::min(row_start_index + num_rows, total_num_rows) as isize;
 
             let mut column_data: Vec<Vec<String>> = Vec::new();
             for column_index in column_indices {
-                let column_index = column_index as i32;
                 if column_index >= total_num_columns {
                     // For now we skip any columns requested beyond last one
                     break;
