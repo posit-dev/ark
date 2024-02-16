@@ -289,8 +289,8 @@ impl RDataExplorer {
         // Supports dispatch and should be vectorised in most implementations.
         let object = RFunction::new("base", "[")
             .add(object)
-            .param("i", rows_r_idx.sexp)
-            .param("j", cols_r_idx.sexp)
+            .add(rows_r_idx.sexp)
+            .add(cols_r_idx.sexp)
             .param("drop", false)
             .call()?;
 
@@ -298,8 +298,8 @@ impl RDataExplorer {
         for i in 0..num_cols {
             let column = RFunction::new("base", "[")
                 .add(object.clone())
-                .param("i", unsafe { R_MissingArg })
-                .param("j", i + 1)
+                .add(unsafe { R_MissingArg })
+                .add(i + 1)
                 .param("drop", true)
                 .call()?;
 
