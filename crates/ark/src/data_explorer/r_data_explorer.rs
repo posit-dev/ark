@@ -254,59 +254,70 @@ impl RDataExplorer {
         num_rows: i32,
         column_indices: Vec<i32>,
     ) -> anyhow::Result<DataExplorerBackendReply> {
-        unsafe {
-            let table = self.table.get().clone();
-            let object = *table;
+        let table = self.table.get().clone();
+        let object = *table;
 
-            let harp::TableInfo {
-                kind,
-                dims:
-                    harp::TableDim {
-                        num_rows: total_num_rows,
-                        num_cols: total_num_columns,
-                    },
-                ..
-            } = harp::table_info(object)?;
+        let harp::TableInfo {
+            dims:
+                harp::TableDim {
+                    num_rows: total_num_rows,
+                    num_cols: total_num_cols,
+                },
+            ..
+        } = harp::table_info(object)?;
 
-            let lower_bound = cmp::min(row_start_index, total_num_rows) as isize;
-            let upper_bound = cmp::min(row_start_index + num_rows, total_num_rows) as isize;
+        let lower_bound = cmp::min(row_start_index, total_num_rows) as isize;
+        let upper_bound = cmp::min(row_start_index + num_rows, total_num_rows) as isize;
 
-            let mut column_data: Vec<Vec<String>> = Vec::new();
-            for column_index in column_indices {
-                if column_index >= total_num_columns {
-                    // For now we skip any columns requested beyond last one
-                    break;
-                }
+        // Create R indices
+        let cols_r_idx: Vec<i32> = column_indices
+            .into_iter()
+            // For now we skip any columns requested beyond last one
+            .filter(|x| *x < total_num_cols)
+            .map(|x| x + 1)
+            .collect();
+        let cols_r_idx: RObject = cols_r_idx.try_into()?;
+        let num_cols = cols_r_idx.length() as i32;
 
-                let column = if let harp::TableKind::Dataframe = kind {
-                    RObject::from(VECTOR_ELT(object, column_index as isize))
-                } else {
-                    RFunction::new("base", "[")
-                        .add(object)
-                        .param("i", R_MissingArg)
-                        .param("j", column_index + 1)
-                        .call()?
-                };
-                let formatter = FormattedVector::new(*column)?;
+        let rows_r_idx = RFunction::new("base", ":")
+            .add((lower_bound + 1) as i32)
+            .add((upper_bound + 1) as i32)
+            .call()?;
 
-                let mut formatted_data = Vec::new();
-                for i in lower_bound..upper_bound {
-                    formatted_data.push(formatter.get_unchecked(i));
-                }
-                column_data.push(formatted_data);
-            }
+        // Subset rows in advance, including unmaterialized row names. Also
+        // subset spend time creating subsetting columns that we don't need.
+        // Supports dispatch and should be vectorised in most implementations.
+        let object = RFunction::new("base", "[")
+            .add(object)
+            .param("i", rows_r_idx.sexp)
+            .param("j", cols_r_idx.sexp)
+            .param("drop", false)
+            .call()?;
 
-            let row_names = RFunction::new("base", "row.names").add(object).call()?;
-            let row_labels = RFunction::new("base", "format").add(row_names).call()?;
-            let row_labels: Vec<String> = row_labels.try_into()?;
+        let mut column_data: Vec<Vec<String>> = Vec::new();
+        for i in 0..num_cols {
+            let column = RFunction::new("base", "[")
+                .add(object.clone())
+                .param("i", unsafe { R_MissingArg })
+                .param("j", i + 1)
+                .param("drop", true)
+                .call()?;
 
-            let response = TableData {
-                columns: column_data,
-                row_labels: Some(vec![row_labels]),
-            };
+            let formatter = FormattedVector::new(*column)?;
+            let formatted = formatter.iter().collect();
 
-            Ok(DataExplorerBackendReply::GetDataValuesReply(response))
+            column_data.push(formatted);
         }
+
+        let row_names = RFunction::new("base", "row.names").add(object).call()?;
+        let row_labels: Vec<String> = row_names.try_into()?;
+
+        let response = TableData {
+            columns: column_data,
+            row_labels: Some(vec![row_labels]),
+        };
+
+        Ok(DataExplorerBackendReply::GetDataValuesReply(response))
     }
 }
 
