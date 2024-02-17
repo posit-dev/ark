@@ -696,6 +696,29 @@ impl TryFrom<RObject> for Vec<Option<String>> {
     }
 }
 
+impl TryFrom<Vec<i32>> for RObject {
+    type Error = crate::error::Error;
+    fn try_from(value: Vec<i32>) -> Result<Self, Self::Error> {
+        unsafe {
+            let n = value.len();
+
+            let out_raw = Rf_allocVector(INTSXP, n as R_xlen_t);
+            let out = RObject::new(out_raw);
+            let v_out = DATAPTR(out_raw) as *mut i32;
+
+            for i in 0..n {
+                let x = value[i];
+                if x == R_NaInt {
+                    return Err(crate::Error::MissingValueError);
+                }
+                *(v_out.offset(i as isize)) = x;
+            }
+
+            return Ok(out);
+        }
+    }
+}
+
 impl TryFrom<RObject> for HashMap<String, String> {
     type Error = crate::error::Error;
     fn try_from(value: RObject) -> Result<Self, Self::Error> {
