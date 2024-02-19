@@ -8,6 +8,7 @@
 use anyhow::anyhow;
 use harp::environment::Environment;
 use harp::environment::R_ENVS;
+use harp::eval::r_parse_eval;
 use harp::exec::r_parse_exprs_with_srcrefs;
 use harp::exec::r_source_str_in;
 use harp::exec::RFunction;
@@ -18,6 +19,7 @@ use libr::R_NilValue;
 use libr::Rf_ScalarLogical;
 use libr::Rf_asInteger;
 use libr::SEXP;
+use once_cell::sync::Lazy;
 use rust_embed::RustEmbed;
 
 #[derive(RustEmbed)]
@@ -44,6 +46,37 @@ where
     let asset = T::get(file).ok_or(anyhow!("can't open asset {file}"))?;
     let data = std::str::from_utf8(&asset.data)?;
     f(data)
+}
+
+pub static ARK_ENVS: Lazy<ArkEnvs> = Lazy::new(|| {
+    let positron_ns = r_parse_eval(
+        "environment(as.environment('tools:positron')$.ps.internal)",
+        Default::default(),
+    )
+    .unwrap()
+    .sexp;
+
+    let rstudio_ns = r_parse_eval(
+        "as.environment('tools:rstudio')$.__rstudio_ns__.",
+        Default::default(),
+    )
+    .unwrap()
+    .sexp;
+
+    ArkEnvs {
+        positron_ns,
+        rstudio_ns,
+    }
+});
+
+// Silences diagnostics when called from `r_task()`. Should only be
+// accessed from the R thread.
+unsafe impl Send for ArkEnvs {}
+unsafe impl Sync for ArkEnvs {}
+
+pub struct ArkEnvs {
+    pub positron_ns: SEXP,
+    pub rstudio_ns: SEXP,
 }
 
 pub fn initialize(testing: bool) -> anyhow::Result<()> {
