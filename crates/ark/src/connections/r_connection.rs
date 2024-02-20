@@ -52,6 +52,9 @@ pub enum ConnectionResponse {
     IconResponse {
         icon: Option<String>,
     },
+    ContainsDataResponse {
+        contains_data: bool,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -65,6 +68,8 @@ pub enum ConnectionRequest {
     PreviewTable { path: Vec<ConnectionTable> },
     // The UI asks for an icon for a given element
     IconRequest { path: Vec<ConnectionTable> },
+    // The UI asks if the object contains data
+    ContainsDataRequest { path: Vec<ConnectionTable> },
 }
 
 #[derive(Deserialize, Serialize)]
@@ -234,6 +239,21 @@ impl RConnection {
                     }
                 })?;
                 Ok(ConnectionResponse::IconResponse { icon: icon_path })
+            },
+            ConnectionRequest::ContainsDataRequest { path } => {
+                // Calls back into R to check if the object contains data.
+                let contains_data = r_task(|| -> Result<_, anyhow::Error> {
+                    unsafe {
+                        let mut call = RFunction::from(".ps.connection_contains_data");
+                        call.add(RObject::from(self.comm.comm_id.clone()));
+                        for obj in path {
+                            call.param(obj.kind.as_str(), obj.name);
+                        }
+                        let contains_data = call.call()?;
+                        Ok(RObject::to::<bool>(contains_data)?)
+                    }
+                })?;
+                Ok(ConnectionResponse::ContainsDataResponse { contains_data })
             },
         }
     }
