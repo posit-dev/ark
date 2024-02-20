@@ -37,7 +37,10 @@
                 listColumns = listColumns,
                 previewObject = previewObject,
                 connectionObject = connectionObject,
-                actions = actions
+                actions = actions,
+                # objectTypes are computed only once when creating the connection and are assumed to be static
+                # until the end of the connection.
+                objectTypes = connection_flatten_object_types(listObjectTypes())
             )
         invisible(id)
     }
@@ -68,6 +71,48 @@
 
 options("connectionObserver" = .ps.connection_observer())
 
+connection_flatten_object_types <- function(object_tree) {
+    # RStudio actually flattens the objectTree to make it easier to find metadata for an object type.
+    # See link below for the original implementation, which we copied here with small modifications.
+    # https://github.com/rstudio/rstudio/blob/fac89e1c4179fd23f47ff218bb106fd4e5cf2917/src/cpp/session/modules/SessionConnections.R#L165
+    # function to flatten the tree of object types for more convenient storage
+    promote <- function(name, l) {
+
+        if (length(l) == 0) return(list())
+
+        if (is.null(l$contains) || identical(l$contains, "data")) {
+            # plain data
+            return(list(list(
+                name = name,
+                icon = l$icon,
+                contains = "data"
+            )))
+        }
+
+        # subtypes
+        unlist(
+            append(
+                list(list(list(
+                    name = name,
+                    icon = l$icon,
+                    contains = names(l$contains)
+                ))),
+                lapply(names(l$contains), function(name) {
+                    promote(name, l$contains[[name]])
+                })
+            ),
+            recursive = FALSE
+        )
+    }
+
+    # apply tree flattener to provided object tree
+    objectTypes <- lapply(names(object_tree), function(name) {
+        promote(name, object_tree[[name]])
+    })[[1]]
+    names(objectTypes) <- sapply(objectTypes, function(x) x$name)
+    objectTypes
+}
+
 #' @export
 .ps.connection_list_objects <- function(id, ...) {
     con <- get(id, getOption("connectionObserver")$.connections)
@@ -87,12 +132,14 @@ options("connectionObserver" = .ps.connection_observer())
 }
 
 #' @export
-.ps.connection_preview_object <- function(id, ..., table) {
+.ps.connection_preview_object <- function(id, ...) {
+    path <- list(...)
     con <- get(id, getOption("connectionObserver")$.connections)
     if (is.null(con)) {
         return(NULL)
     }
-    View(con$previewObject(table = table, ..., limit = 100), title = table)
+    table <- con$previewObject(..., rowLimit = 1000)
+    utils::View(table, title = utils::tail(path, 1)[[1]])
 }
 
 .ps.connection_close <- function(id, ...) {
@@ -115,16 +162,20 @@ options("connectionObserver" = .ps.connection_observer())
         return(con$icon)
     }
 
-    object_types <- con$listObjectTypes()
+    object_types <- con$objectTypes[[utils::tail(path, 1)]]
+    object_types$icon
+}
+
+#' @export
+.ps.connection_contains_data <- function(id, ...) {
+    con <- get(id, getOption("connectionObserver")$.connections)
+    path <- names(list(...))
 
     if (length(path) == 0) {
-        return(NULL)
+        # we are at the root of the connection, so must not contain data.
+        return(FALSE)
     }
 
-    object_types <- object_types[[1]] # root is always element 1
-    for (p in path) {
-        object_types <- object_types$contains[[p]]
-    }
-
-    object_types$icon
+    object_types <- con$objectTypes[[utils::tail(path, 1)]]
+    identical(object$contains, "data")
 }
