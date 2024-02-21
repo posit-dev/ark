@@ -138,7 +138,10 @@ connection_flatten_object_types <- function(object_tree) {
     if (is.null(con)) {
         return(NULL)
     }
-    table <- con$previewObject(..., rowLimit = 1000)
+    # we assume the first unnamed argument refers to the number of rows that
+    # will be collected; this is basically what RStudio does here:
+    # https://github.com/rstudio/rstudio/blob/018ea143118a15d46a5eaef16a43aef28ac03fb9/src/cpp/session/modules/connections/SessionConnections.cpp#L477-L480
+    table <- con$previewObject(1000, ...)
     utils::View(table, title = utils::tail(path, 1)[[1]])
 }
 
@@ -177,5 +180,5 @@ connection_flatten_object_types <- function(object_tree) {
     }
 
     object_types <- con$objectTypes[[utils::tail(path, 1)]]
-    identical(object$contains, "data")
+    identical(object_types$contains, "data")
 }
