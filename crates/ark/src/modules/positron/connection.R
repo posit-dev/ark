@@ -104,3 +104,23 @@ options("connectionObserver" = .ps.connection_observer())
     # will remove the connection from the list of connections
     con$disconnect(...)
 }
+
+#' @export
+.ps.connection_icon <- function(id, ...) {
+    con <- get(id, getOption("connectionObserver")$.connections)
+    path <- names(list(...))
+
+    if (length(path) == 0) {
+        # we are at the root of the connection
+        return(con$icon)
+    }
+
+    object_types <- con$listObjectTypes()
+    object_types <- object_types[[1]] # root is always element 1
+
+    for (p in path) {
+        object_types <- object_types$contains[[p]]
+    }
+
+    object_types$icon
+}
