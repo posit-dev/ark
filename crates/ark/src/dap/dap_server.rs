@@ -5,6 +5,7 @@
 //
 //
 
+use std::collections::HashMap;
 use std::io::BufReader;
 use std::io::BufWriter;
 use std::io::Read;
@@ -25,13 +26,14 @@ use dap::requests::*;
 use dap::responses::*;
 use dap::server::ServerOutput;
 use dap::types::*;
-use harp::session::FrameInfo;
 use serde_json::json;
 use stdext::result::ResultOrLog;
 use stdext::spawn;
 
 use super::dap::Dap;
 use super::dap::DapBackendEvent;
+use crate::dap::dap_r_main::FrameInfo;
+use crate::dap::dap_r_main::FrameSource;
 use crate::request::debug_request_command;
 use crate::request::DebugRequest;
 use crate::request::RRequest;
@@ -221,6 +223,9 @@ impl<R: Read, W: Write> DapServer<R, W> {
             Command::StackTrace(args) => {
                 self.handle_stacktrace(req, args);
             },
+            Command::Source(args) => {
+                self.handle_source(req, args);
+            },
             Command::Continue(args) => {
                 let resp = ResponseBody::Continue(ContinueResponse {
                     all_threads_continued: Some(true),
@@ -322,10 +327,15 @@ impl<R: Read, W: Write> DapServer<R, W> {
     }
 
     fn handle_stacktrace(&mut self, req: Request, args: StackTraceArguments) {
-        let stack = { self.state.lock().unwrap().stack.clone() };
+        let state = self.state.lock().unwrap();
+        let stack = state.stack.clone();
+        let sources = &state.sources;
 
         let stack = match stack {
-            Some(s) => s.into_iter().map(into_dap_frame).collect(),
+            Some(stack) => stack
+                .into_iter()
+                .map(|frame| into_dap_frame(frame, sources))
+                .collect(),
             _ => vec![],
         };
 
@@ -350,6 +360,39 @@ impl<R: Read, W: Write> DapServer<R, W> {
         }));
 
         self.server.respond(rsp).unwrap();
+    }
+
+    fn handle_source(&mut self, req: Request, args: SourceArguments) {
+        // We fully expect a `source` argument to exist, it is only for backwards
+        // compatibility that it could be `None`
+        let source = args.source.unwrap();
+
+        // We expect a `source_reference`. If the client had a `path` then it would
+        // not have asked us for the source content.
+        let source_reference = source.source_reference.unwrap();
+        let content = self.find_source_content(source_reference);
+
+        let rsp = req.success(ResponseBody::Source(SourceResponse {
+            content,
+            mime_type: None,
+        }));
+
+        self.server.respond(rsp).unwrap();
+    }
+
+    fn find_source_content(&self, source_reference: i32) -> String {
+        let state = self.state.lock().unwrap();
+        let sources = &state.sources;
+
+        // Match up the requested `source_reference` with one in our `sources`
+        for (current_source, current_source_reference) in sources.iter() {
+            if &source_reference == current_source_reference {
+                return current_source.clone();
+            }
+        }
+
+        log::error!("Failed to locate `source_reference` {source_reference}.");
+        "".to_string()
     }
 
     fn handle_step<A>(&mut self, req: Request, _args: A, cmd: DebugRequest, resp: ResponseBody) {
@@ -378,16 +421,33 @@ impl<R: Read, W: Write> DapServer<R, W> {
     }
 }
 
-fn into_dap_frame(frame: FrameInfo) -> StackFrame {
-    let name = frame.name.clone();
-    let path = frame.file.clone();
-    let line = frame.line;
-    let column = frame.column;
+fn into_dap_frame(frame: FrameInfo, sources: &HashMap<String, i32>) -> StackFrame {
+    let source_name = frame.source_name;
+    let frame_name = frame.frame_name;
+    let source = frame.source;
+    let start_line = frame.start_line;
+    let start_column = frame.start_column;
+    let end_line = frame.end_line;
+    let end_column = frame.end_column;
+
+    // Retrieve either `path` or `source_reference` depending on the `source` type.
+    // In the `Text` case, a `source_reference` should always exist because we loaded
+    // the map with all possible text values in `start_debug()`.
+    let (path, source_reference) = match source {
+        FrameSource::File(path) => (Some(path), None),
+        FrameSource::Text(source) => {
+            let source_reference = sources.get(&source).cloned().or_else(|| {
+                log::error!("Failed to find a source reference for source text: '{source}'");
+                None
+            });
+            (None, source_reference)
+        },
+    };
 
     let src = Source {
-        name: None,
-        path: Some(path),
-        source_reference: None,
+        name: Some(source_name),
+        path,
+        source_reference,
         presentation_hint: None,
         origin: None,
         sources: None,
@@ -397,12 +457,12 @@ fn into_dap_frame(frame: FrameInfo) -> StackFrame {
 
     StackFrame {
         id: THREAD_ID,
-        name,
+        name: frame_name,
         source: Some(src),
-        line,
-        column,
-        end_line: None,
-        end_column: None,
+        line: start_line,
+        column: start_column,
+        end_line: Some(end_line),
+        end_column: Some(end_column),
         can_restart: None,
         instruction_pointer_reference: None,
         module_id: None,

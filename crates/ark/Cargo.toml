@@ -20,7 +20,7 @@ cfg-if = "1.0.0"
 chrono = "0.4.23"
 crossbeam = { version = "0.8.2", features = ["crossbeam-channel"] }
 ctor = "0.1.26"
-dap = { git = "https://github.com/lionel-/dap-rs", branch = "feature/all" }
+dap = { git = "https://github.com/sztomi/dap-rs", branch = "main" }
 dashmap = "5.4.0"
 ego-tree = "0.6.2"
 harp = { path = "../harp" }

@@ -91,6 +91,7 @@ use stdext::*;
 use tokio::runtime::Runtime;
 
 use crate::dap::dap::DapBackendEvent;
+use crate::dap::dap_r_main::RMainDap;
 use crate::dap::Dap;
 use crate::errors;
 use crate::help::message::HelpReply;
@@ -270,8 +271,7 @@ pub struct RMain {
     lsp_runtime: Arc<Runtime>,
     lsp_backend: Option<Backend>,
 
-    dap: Arc<Mutex<Dap>>,
-    is_debugging: bool,
+    dap: RMainDap,
 
     /// Whether or not R itself is actively busy.
     /// This does not represent the busy state of the kernel.
@@ -376,8 +376,7 @@ impl RMain {
             help_rx: None,
             lsp_runtime,
             lsp_backend: None,
-            dap,
-            is_debugging: false,
+            dap: RMainDap::new(dap),
             is_busy: false,
             old_show_error_messages: None,
             tasks_rx,
@@ -516,6 +515,12 @@ impl RMain {
             );
         });
 
+        // Upon entering read-console, finalize any debug call text that we were capturing.
+        // At this point, the user can either advance the debugger, causing us to capture
+        // a new expression, or execute arbitrary code, where we will reuse a finalized
+        // debug call text to maintain the debug state.
+        self.dap.finalize_call_text();
+
         // TODO: Can we remove this below code?
         // If the prompt begins with "Save workspace", respond with (n)
         //
@@ -581,11 +586,9 @@ impl RMain {
                 self.old_show_error_messages = Some(old);
             }
 
-            let mut dap = self.dap.lock().unwrap();
-            match harp::session::r_stack_info() {
+            match self.dap.stack_info() {
                 Ok(stack) => {
-                    self.is_debugging = true;
-                    dap.start_debug(stack)
+                    self.dap.start_debug(stack);
                 },
                 Err(err) => error!("ReadConsole: Can't get stack info: {err}"),
             };
@@ -598,11 +601,9 @@ impl RMain {
                 self.old_show_error_messages = None;
             }
 
-            if self.is_debugging {
+            if self.dap.is_debugging() {
                 // Terminate debugging session
-                let mut dap = self.dap.lock().unwrap();
-                dap.stop_debug();
-                self.is_debugging = false;
+                self.dap.stop_debug();
             }
         }
 
@@ -666,7 +667,7 @@ impl RMain {
 
                         RRequest::DebugCommand(cmd) => {
                             // Just ignore command in case we left the debugging state already
-                            if !self.is_debugging {
+                            if !self.dap.is_debugging() {
                                 continue;
                             }
 
@@ -682,10 +683,10 @@ impl RMain {
                     return match input {
                         ConsoleInput::Input(code) => {
                             // Handle commands for the debug interpreter
-                            if self.is_debugging {
+                            if self.dap.is_debugging() {
                                 let continue_cmds = vec!["n", "f", "c", "cont"];
                                 if continue_cmds.contains(&&code[..]) {
-                                    self.send_dap(DapBackendEvent::Continued);
+                                    self.dap.send_dap(DapBackendEvent::Continued);
                                 }
                             }
 
@@ -893,6 +894,8 @@ impl RMain {
             Err(err) => panic!("Failed to read from R buffer: {err:?}"),
         };
 
+        self.dap.handle_stdout(&content);
+
         let stream = if otype == 0 {
             Stream::Stdout
         } else {
@@ -1026,13 +1029,6 @@ impl RMain {
             } else {
                 return;
             }
-        }
-    }
-
-    fn send_dap(&self, event: DapBackendEvent) {
-        let dap = self.dap.lock().unwrap();
-        if let Some(tx) = &dap.backend_events_tx {
-            log_error!(tx.send(event));
         }
     }
 

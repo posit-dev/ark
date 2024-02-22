@@ -5,17 +5,19 @@
 //
 //
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
 
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::language::server_handler::ServerHandler;
 use crossbeam::channel::Sender;
-use harp::session::FrameInfo;
 use serde_json::json;
 use stdext::log_error;
 use stdext::spawn;
 
+use crate::dap::dap_r_main::FrameInfo;
+use crate::dap::dap_r_main::FrameSource;
 use crate::dap::dap_server;
 use crate::request::RRequest;
 
@@ -47,6 +49,13 @@ pub struct Dap {
     /// Current call stack
     pub stack: Option<Vec<FrameInfo>>,
 
+    /// Map of `source` -> `source_reference` used for frames that don't have
+    /// associated files (i.e. no `srcref` attribute). The `source` is the key to
+    /// ensure that we don't insert the same function multiple times, which would result
+    /// in duplicate virtual editors being opened on the client side.
+    pub sources: HashMap<String, i32>,
+    current_source_reference: i32,
+
     /// Channel for sending events to the comm frontend.
     comm_tx: Option<Sender<CommMsg>>,
 
@@ -65,6 +74,8 @@ impl Dap {
             is_connected: false,
             backend_events_tx: None,
             stack: None,
+            sources: HashMap::new(),
+            current_source_reference: 1,
             comm_tx: None,
             r_request_tx,
             shared_self: None,
@@ -82,6 +93,24 @@ impl Dap {
     }
 
     pub fn start_debug(&mut self, stack: Vec<FrameInfo>) {
+        // Load `sources` with this stack's text sources
+        for frame in stack.iter() {
+            let source = &frame.source;
+
+            match source {
+                FrameSource::File(_) => continue,
+                FrameSource::Text(source) => {
+                    if self.sources.contains_key(source) {
+                        // Already in `sources`, associated with an existing `source_reference`
+                        continue;
+                    }
+                    self.sources
+                        .insert(source.clone(), self.current_source_reference);
+                    self.current_source_reference += 1;
+                },
+            }
+        }
+
         self.stack = Some(stack);
 
         if self.is_debugging {
@@ -106,6 +135,8 @@ impl Dap {
     pub fn stop_debug(&mut self) {
         // Reset state
         self.stack = None;
+        self.sources.clear();
+        self.current_source_reference = 1;
         self.is_debugging = false;
 
         if self.is_connected {
