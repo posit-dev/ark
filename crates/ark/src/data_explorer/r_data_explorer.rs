@@ -24,6 +24,7 @@ use amalthea::comm::data_explorer_comm::TableState;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
+use anyhow::anyhow;
 use anyhow::bail;
 use crossbeam::channel::Sender;
 use harp::exec::RFunction;
@@ -195,6 +196,9 @@ impl RDataExplorer {
             let table = self.table.get().clone();
             let object = *table;
 
+            let info =
+                harp::table_info(object).ok_or(anyhow!("Unsupported type for data viewer"))?;
+
             let harp::TableInfo {
                 kind,
                 dims:
@@ -203,7 +207,7 @@ impl RDataExplorer {
                         num_cols: total_num_columns,
                     },
                 col_names: column_names,
-            } = harp::table_info(object)?;
+            } = info;
 
             let lower_bound = cmp::min(start_index, total_num_columns) as isize;
             let upper_bound = cmp::min(total_num_columns, start_index + num_columns) as isize;
@@ -258,7 +262,7 @@ impl RDataExplorer {
                     num_cols: num_columns,
                 },
             col_names: _,
-        } = harp::table_info(object)?;
+        } = harp::table_info(object).ok_or(anyhow!("Unsupported type for data viewer"))?;
 
         let state = TableState {
             table_shape: TableShape {
@@ -280,6 +284,8 @@ impl RDataExplorer {
         let table = self.table.get().clone();
         let object = *table;
 
+        let info = harp::table_info(object).ok_or(anyhow!("Unsupported type for data viewer"))?;
+
         let harp::TableInfo {
             dims:
                 harp::TableDim {
@@ -287,7 +293,7 @@ impl RDataExplorer {
                     num_cols: total_num_cols,
                 },
             ..
-        } = harp::table_info(object)?;
+        } = info;
 
         let lower_bound = cmp::min(row_start_index, total_num_rows) as isize;
         let upper_bound = cmp::min(row_start_index + num_rows, total_num_rows) as isize;
