@@ -21,7 +21,8 @@ pub struct TableInfo {
 }
 
 // TODO: Might want to encode as types with methods so that we can make
-// assumptions about memory layout more safely
+// assumptions about memory layout more safely. Also makes it possible
+// to compute properties more lazily.
 pub fn table_info(x: SEXP) -> Option<TableInfo> {
     if r_is_data_frame(x) {
         return df_info(x).ok();

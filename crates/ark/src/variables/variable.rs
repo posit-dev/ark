@@ -547,28 +547,24 @@ impl PositronVariable {
     }
 
     fn variable_length(x: SEXP) -> usize {
+        // Check for tabular data
+        if let Some(info) = harp::table_info(x) {
+            return info.dims.num_cols as usize;
+        }
+
+        // Otherwise treat as vector
         let rtype = r_typeof(x);
         match rtype {
-            LGLSXP | RAWSXP | INTSXP | REALSXP | CPLXSXP | STRSXP => unsafe {
+            LGLSXP | RAWSXP | INTSXP | REALSXP | CPLXSXP | STRSXP | LISTSXP => unsafe {
                 Rf_xlength(x) as usize
             },
             VECSXP => unsafe {
-                if r_inherits(x, "POSIXlt") {
+                // TODO: Support vctrs types like record vectors
+                if r_inherits(x, "POSIXlt") && r_typeof(x) == VECSXP && r_length(x) > 0 {
                     Rf_xlength(VECTOR_ELT(x, 0)) as usize
-                } else if r_is_data_frame(x) {
-                    let dim = RFunction::new("base", "dim.data.frame")
-                        .add(x)
-                        .call()
-                        .unwrap();
-
-                    INTEGER_ELT(*dim, 0) as usize
                 } else {
                     Rf_xlength(x) as usize
                 }
-            },
-            LISTSXP => match pairlist_size(x) {
-                Ok(n) => n as usize,
-                Err(_) => 0,
             },
             _ => 0,
         }
