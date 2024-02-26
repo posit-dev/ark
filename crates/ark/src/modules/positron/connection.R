@@ -73,44 +73,23 @@ options("connectionObserver" = .ps.connection_observer())
 
 connection_flatten_object_types <- function(object_tree) {
     # RStudio actually flattens the objectTree to make it easier to find metadata for an object type.
-    # See link below for the original implementation, which we copied here with small modifications.
+    # See link below for the original implementation
     # https://github.com/rstudio/rstudio/blob/fac89e1c4179fd23f47ff218bb106fd4e5cf2917/src/cpp/session/modules/SessionConnections.R#L165
-    # function to flatten the tree of object types for more convenient storage
-    promote <- function(name, l) {
+    object_types <- list()
+    while (length(object_tree) != 0) {
+        object <- object_tree[[1]]
+        name <- names(object_tree)[1]
+        object_types[[name]] <- object
 
-        if (length(l) == 0) return(list())
-
-        if (is.null(l$contains) || identical(l$contains, "data")) {
-            # plain data
-            return(list(list(
-                name = name,
-                icon = l$icon,
-                contains = "data"
-            )))
+        object_tree <- object_tree[-1]
+        if (!is.null(object$contains) && !identical(object$contains, "data")) {
+            contains <- object$contains[sapply(names(object$contains), function(nm) {
+                !nm %in% names(object_types)
+            })]
+            object_tree <- c(object_tree, contains)
         }
-
-        # subtypes
-        unlist(
-            append(
-                list(list(list(
-                    name = name,
-                    icon = l$icon,
-                    contains = names(l$contains)
-                ))),
-                lapply(names(l$contains), function(name) {
-                    promote(name, l$contains[[name]])
-                })
-            ),
-            recursive = FALSE
-        )
     }
-
-    # apply tree flattener to provided object tree
-    objectTypes <- lapply(names(object_tree), function(name) {
-        promote(name, object_tree[[name]])
-    })[[1]]
-    names(objectTypes) <- sapply(objectTypes, function(x) x$name)
-    objectTypes
+    object_types
 }
 
 #' @export
