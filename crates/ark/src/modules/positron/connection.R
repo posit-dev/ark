@@ -84,7 +84,7 @@ connection_flatten_object_types <- function(object_tree) {
         object_tree <- object_tree[-1]
         if (!is.null(object$contains) && !identical(object$contains, "data")) {
             contains <- object$contains[!names(object$contains) %in% names(object_types)]
-            object_tree <- c(object_tree, contains)
+            object_tree <- c(contains, object_tree)
         }
     }
     object_types
