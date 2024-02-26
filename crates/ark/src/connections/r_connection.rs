@@ -244,12 +244,13 @@ impl RConnection {
                 // Calls back into R to check if the object contains data.
                 let contains_data = r_task(|| -> Result<_, anyhow::Error> {
                     unsafe {
-                        let mut call = RFunction::from(".ps.connection_contains_data");
-                        call.add(RObject::from(self.comm.comm_id.clone()));
+                        let mut contains_data_call: RFunction =
+                            RFunction::from(".ps.connection_contains_data");
+                        contains_data_call.add(RObject::from(self.comm.comm_id.clone()));
                         for obj in path {
-                            call.param(obj.kind.as_str(), obj.name);
+                            contains_data_call.param(obj.kind.as_str(), obj.name);
                         }
-                        let contains_data = call.call()?;
+                        let contains_data = contains_data_call.call()?;
                         Ok(RObject::to::<bool>(contains_data)?)
                     }
                 })?;
