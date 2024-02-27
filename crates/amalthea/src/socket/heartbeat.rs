@@ -5,10 +5,6 @@
  *
  */
 
-use log::debug;
-use log::trace;
-use log::warn;
-
 use crate::socket::socket::Socket;
 
 /// Structure used for heartbeat messages
@@ -24,25 +20,34 @@ impl Heartbeat {
 
     /// Listen for heartbeats; does not return
     pub fn listen(&self) {
+        // Should we make it quiet by default in debug builds?
+        let quiet = std::env::var("ARK_HEARTBEAT_QUIET").is_ok();
+
         loop {
-            debug!("Listening for heartbeats");
+            if !quiet {
+                log::trace!("Listening for heartbeats");
+            }
+
             let mut msg = zmq::Message::new();
             if let Err(err) = self.socket.recv(&mut msg) {
-                warn!("Error receiving heartbeat: {}", err);
+                log::warn!("Error receiving heartbeat: {}", err);
 
                 // Wait 1s before trying to receive another heartbeat. This
                 // keeps us from flooding the logs when recv() isn't working.
                 std::thread::sleep(std::time::Duration::from_secs(1));
                 continue;
-            } else {
-                trace!("Heartbeat message: {:?}", msg);
+            }
+            if !quiet {
+                log::trace!("Heartbeat message: {:?}", msg);
             }
 
             // Echo the message right back!
             if let Err(err) = self.socket.send(msg) {
-                warn!("Error replying to heartbeat: {}", err);
-            } else {
-                trace!("Heartbeat message replied");
+                log::warn!("Error replying to heartbeat: {}", err);
+                continue;
+            }
+            if !quiet {
+                log::trace!("Heartbeat message replied");
             }
         }
     }
