@@ -3089,7 +3089,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter-r"
 version = "0.20.1"
-source = "git+https://github.com/r-lib/tree-sitter-r?branch=next#2402f051a9605416f2d61eb82740fa0773c35d05"
+source = "git+https://github.com/DavisVaughan/tree-sitter-r?branch=fix/newlines#3a20e06e6a62ee5382d9c69e1f88c11ecafc9766"
 dependencies = [
  "cc",
  "tree-sitter",
