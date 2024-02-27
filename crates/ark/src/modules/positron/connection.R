@@ -37,7 +37,10 @@
                 listColumns = listColumns,
                 previewObject = previewObject,
                 connectionObject = connectionObject,
-                actions = actions
+                actions = actions,
+                # objectTypes are computed only once when creating the connection and are assumed to be static
+                # until the end of the connection.
+                objectTypes = connection_flatten_object_types(listObjectTypes())
             )
         invisible(id)
     }
@@ -68,6 +71,25 @@
 
 options("connectionObserver" = .ps.connection_observer())
 
+connection_flatten_object_types <- function(object_tree) {
+    # RStudio actually flattens the objectTree to make it easier to find metadata for an object type.
+    # See link below for the original implementation
+    # https://github.com/rstudio/rstudio/blob/fac89e1c4179fd23f47ff218bb106fd4e5cf2917/src/cpp/session/modules/SessionConnections.R#L165
+    object_types <- list()
+    while (length(object_tree) != 0) {
+        object <- object_tree[[1]]
+        name <- names(object_tree)[1]
+        object_types[[name]] <- object
+
+        object_tree <- object_tree[-1]
+        if (!is.null(object$contains) && !identical(object$contains, "data")) {
+            contains <- object$contains[!names(object$contains) %in% names(object_types)]
+            object_tree <- c(contains, object_tree)
+        }
+    }
+    object_types
+}
+
 #' @export
 .ps.connection_list_objects <- function(id, ...) {
     con <- get(id, getOption("connectionObserver")$.connections)
@@ -87,12 +109,17 @@ options("connectionObserver" = .ps.connection_observer())
 }
 
 #' @export
-.ps.connection_preview_object <- function(id, ..., table) {
+.ps.connection_preview_object <- function(id, ...) {
+    path <- list(...)
     con <- get(id, getOption("connectionObserver")$.connections)
     if (is.null(con)) {
         return(NULL)
     }
-    View(con$previewObject(table = table, ..., limit = 100), title = table)
+    # we assume the first unnamed argument refers to the number of rows that
+    # will be collected; this is basically what RStudio does here:
+    # https://github.com/rstudio/rstudio/blob/018ea143118a15d46a5eaef16a43aef28ac03fb9/src/cpp/session/modules/connections/SessionConnections.cpp#L477-L480
+    table <- con$previewObject(1000, ...)
+    utils::View(table, title = utils::tail(path, 1)[[1]])
 }
 
 .ps.connection_close <- function(id, ...) {
@@ -115,12 +142,20 @@ options("connectionObserver" = .ps.connection_observer())
         return(con$icon)
     }
 
-    object_types <- con$listObjectTypes()
-    object_types <- object_types[[1]] # root is always element 1
+    object_types <- con$objectTypes[[utils::tail(path, 1)]]
+    object_types$icon
+}
 
-    for (p in path) {
-        object_types <- object_types$contains[[p]]
+#' @export
+.ps.connection_contains_data <- function(id, ...) {
+    con <- get(id, getOption("connectionObserver")$.connections)
+    path <- names(list(...))
+
+    if (length(path) == 0) {
+        # we are at the root of the connection, so must not contain data.
+        return(FALSE)
     }
 
-    object_types$icon
+    object_types <- con$objectTypes[[utils::tail(path, 1)]]
+    identical(object_types$contains, "data")
 }
