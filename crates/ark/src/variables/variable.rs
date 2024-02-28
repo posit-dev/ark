@@ -8,7 +8,6 @@
 use amalthea::comm::variables_comm::ClipboardFormatFormat;
 use amalthea::comm::variables_comm::Variable;
 use amalthea::comm::variables_comm::VariableKind;
-use harp::call::RCall;
 use harp::environment::Binding;
 use harp::environment::BindingValue;
 use harp::environment::Environment;
@@ -497,8 +496,7 @@ impl PositronVariable {
                         Ok(RSymbol::new_unchecked(code).to_string())
                     },
                     LANGSXP => {
-                        let code = RCall::new(code)?;
-                        let fun = RSymbol::new(CAR(*code))?;
+                        let fun = RSymbol::new(CAR(code))?;
                         if fun == "lazyLoadDBfetch" {
                             return Ok(String::from("(unevaluated)"))
                         }
