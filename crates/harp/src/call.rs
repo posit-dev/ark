@@ -7,8 +7,9 @@
 
 use libr::*;
 
+use crate::exec::RFunction;
+use crate::exec::RFunctionExt;
 use crate::object::RObject;
-use crate::protect::RProtect;
 use crate::r_symbol;
 use crate::utils::r_typeof;
 
@@ -39,39 +40,29 @@ impl RCall {
 
     pub fn build(&self) -> RObject {
         unsafe {
-            let mut protect = RProtect::new();
-
-            // Now, build the actual call to be evaluated
-            let size = (1 + self.arguments.len()) as R_xlen_t;
-            let call = protect.add(Rf_allocVector(LANGSXP, size));
-            SET_TAG(call, R_NilValue);
-            SETCAR(call, self.function.sexp);
+            let call = RObject::new(Rf_lcons(self.function.sexp, R_NilValue));
+            let mut tail = call.sexp;
 
             // Append arguments to the call
-            let mut slot = CDR(call);
             for argument in self.arguments.iter() {
-                // Quote language objects by default
-                // FIXME: Shouldn't this be done by the caller?
-                let mut sexp = argument.value.sexp;
-                if matches!(r_typeof(sexp), LANGSXP | SYMSXP | EXPRSXP) {
-                    let quote = protect.add(Rf_lang3(
-                        r_symbol!("::"),
-                        r_symbol!("base"),
-                        r_symbol!("quote"),
-                    ));
-                    sexp = protect.add(Rf_lang2(quote, sexp));
-                }
+                SETCDR(tail, Rf_cons(argument.value.sexp, R_NilValue));
 
-                SETCAR(slot, sexp);
+                tail = CDR(tail);
                 if !argument.name.is_empty() {
-                    SET_TAG(slot, r_symbol!(argument.name));
+                    SET_TAG(tail, r_symbol!(argument.name));
                 }
-
-                slot = CDR(slot);
             }
 
-            RObject::new(call)
+            call
         }
+    }
+}
+
+pub fn r_expr_quote(x: impl Into<SEXP>) -> RObject {
+    let x = x.into();
+    match r_typeof(x) {
+        SYMSXP | LANGSXP => return RFunction::new("base", "quote").add(x).call.build(),
+        _ => return x.into(),
     }
 }
 
