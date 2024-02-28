@@ -30,16 +30,14 @@ use crate::vector::CharacterVector;
 use crate::vector::Vector;
 
 pub struct RCall {
-    package: String,
-    function: String,
+    function: RObject,
     arguments: Vec<RArgument>,
 }
 
 impl RCall {
-    pub fn new(package: &str, function: &str) -> Self {
+    pub fn new(function: impl Into<RObject>) -> Self {
         Self {
-            package: package.to_string(),
-            function: function.to_string(),
+            function: function.into(),
             arguments: Vec::new(),
         }
     }
@@ -60,22 +58,11 @@ impl RCall {
         unsafe {
             let mut protect = RProtect::new();
 
-            let fun = if self.package.is_empty() {
-                r_symbol!(self.function)
-            } else {
-                Rf_lang3(
-                    r_symbol!("::"),
-                    r_symbol!(self.package),
-                    r_symbol!(self.function),
-                )
-            };
-            protect.add(fun);
-
             // Now, build the actual call to be evaluated
             let size = (1 + self.arguments.len()) as R_xlen_t;
             let call = protect.add(Rf_allocVector(LANGSXP, size));
             SET_TAG(call, R_NilValue);
-            SETCAR(call, fun);
+            SETCAR(call, self.function.sexp);
 
             // Append arguments to the call
             let mut slot = CDR(call);
@@ -103,15 +90,63 @@ impl RCall {
             RObject::new(call)
         }
     }
+}
+
+pub struct RArgument {
+    pub name: String,
+    pub value: RObject,
+}
+
+impl RArgument {
+    pub fn new(name: &str, value: RObject) -> Self {
+        Self {
+            name: name.to_string(),
+            value,
+        }
+    }
+}
+
+pub struct RFunction {
+    pub call: RCall,
+    is_namespaced: bool,
+}
+
+impl RFunction {
+    pub fn new(package: &str, function: &str) -> Self {
+        Self::new_ext(package, function, false)
+    }
+
+    pub fn new_internal(package: &str, function: &str) -> Self {
+        Self::new_ext(package, function, true)
+    }
+
+    fn new_ext(package: &str, function: &str, internal: bool) -> Self {
+        unsafe {
+            let is_namespaced = !package.is_empty();
+
+            let fun = if is_namespaced {
+                let op = if internal { ":::" } else { "::" };
+                Rf_lang3(r_symbol!(op), r_symbol!(package), r_symbol!(function))
+            } else {
+                r_symbol!(function)
+            };
+            let fun = RObject::new(fun);
+
+            RFunction {
+                call: RCall::new(fun),
+                is_namespaced,
+            }
+        }
+    }
 
     pub fn call(&mut self) -> Result<RObject> {
         // FIXME: Once we have ArkFunction (see
         // https://github.com/posit-dev/positron/issues/2324), we no longer need
         // this logic to call in global. This probably shouldn't be the default?
-        let env = if self.package.is_empty() {
-            R_ENVS.global
-        } else {
+        let env = if self.is_namespaced {
             R_ENVS.base
+        } else {
+            R_ENVS.global
         };
 
         self.call_in(env)
@@ -119,7 +154,7 @@ impl RCall {
 
     pub fn call_in(&mut self, env: SEXP) -> Result<RObject> {
         unsafe {
-            let call = self.build();
+            let call = self.call.build();
 
             let mut protect = RProtect::new();
 
@@ -149,43 +184,6 @@ impl RCall {
 
             return Ok(RObject::new(result));
         }
-    }
-}
-
-pub struct RArgument {
-    pub name: String,
-    pub value: RObject,
-}
-
-impl RArgument {
-    pub fn new(name: &str, value: RObject) -> Self {
-        Self {
-            name: name.to_string(),
-            value,
-        }
-    }
-}
-
-pub struct RFunction {
-    call: RCall,
-}
-
-// TODO: Should be replaced by RCall. Then RFunction could become an enum
-// representation of LANGSXP's CAR (with symbolic and inline variants?),
-// consistently with RArgument being a representation of a LISTSXP's CAR/TAG.
-impl RFunction {
-    pub fn new(package: &str, function: &str) -> Self {
-        RFunction {
-            call: RCall::new(package, function),
-        }
-    }
-
-    pub fn call_in(&mut self, env: SEXP) -> Result<RObject> {
-        self.call.call_in(env)
-    }
-
-    pub fn call(&mut self) -> Result<RObject> {
-        self.call.call()
     }
 }
 
