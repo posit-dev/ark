@@ -649,3 +649,16 @@ pub fn push_rds(x: SEXP, path: &str, context: &str) {
     // This is meant for internal use so report errors loudly
     res.unwrap();
 }
+
+pub fn r_print(x: impl Into<SEXP>) {
+    unsafe {
+        Rf_PrintValue(x.into());
+    }
+}
+
+pub fn r_printf(x: &str) {
+    let c_str = std::ffi::CString::new(x).unwrap();
+    unsafe {
+        libr::Rprintf(c_str.as_ptr());
+    }
+}
