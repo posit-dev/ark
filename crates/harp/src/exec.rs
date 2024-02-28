@@ -120,6 +120,13 @@ impl RFunction {
         Self::new_ext(package, function, true)
     }
 
+    pub fn new_inlined(function: impl Into<RObject>) -> Self {
+        RFunction {
+            call: RCall::new(function),
+            is_namespaced: false,
+        }
+    }
+
     fn new_ext(package: &str, function: &str, internal: bool) -> Self {
         unsafe {
             let is_namespaced = !package.is_empty();
