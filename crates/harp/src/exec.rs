@@ -19,12 +19,14 @@ use crate::error::Result;
 use crate::interrupts::RInterruptsSuspendedScope;
 use crate::line_ending::convert_line_endings;
 use crate::line_ending::LineEnding;
+use crate::modules::HARP_ENV;
+use crate::object::r_list_get;
 use crate::object::RObject;
 use crate::polled_events::RPolledEventsSuspendedScope;
 use crate::protect::RProtect;
+use crate::r_null;
 use crate::r_string;
 use crate::r_symbol;
-use crate::utils::r_inherits;
 use crate::utils::r_stringify;
 use crate::vector::CharacterVector;
 use crate::vector::Vector;
@@ -84,35 +86,36 @@ impl RFunction {
 
     pub fn call_in(&mut self, env: SEXP) -> Result<RObject> {
         unsafe {
-            let call = self.call.build();
+            let user_call = self.call.build();
+            let eval_call = RCall::new(r_symbol!("safe_evalq"))
+                .add(user_call.sexp)
+                .add(env)
+                .build();
 
-            let mut protect = RProtect::new();
+            let result = RObject::new(Rf_eval(eval_call.sexp, HARP_ENV.unwrap()));
 
-            // now, wrap call in tryCatch, so that errors don't longjmp
-            let try_catch = protect.add(Rf_lang3(
-                r_symbol!("::"),
-                r_symbol!("base"),
-                r_symbol!("tryCatch"),
-            ));
-            let call = protect.add(Rf_lang4(
-                try_catch,
-                call.sexp,
-                r_symbol!("identity"),
-                r_symbol!("identity"),
-            ));
-            SET_TAG(call, R_NilValue);
-            SET_TAG(CDDR(call), r_symbol!("error"));
-            SET_TAG(CDDDR(call), r_symbol!("interrupt"));
+            // Invariant of return value: List of length 2 [output, error].
+            // These are exclusive.
+            let out = r_list_get(result.sexp, 0);
+            let err = r_list_get(result.sexp, 1);
 
-            let result = protect.add(Rf_eval(call, env));
+            if err != r_null() {
+                let code = r_stringify(user_call.sexp, "\n")?;
 
-            if r_inherits(result, "error") {
-                let code = r_stringify(call, "\n")?;
-                let message = geterrmessage();
-                return Err(Error::EvaluationError { code, message });
+                // Invariant of error slot: Character vector of length 2 [message, trace],
+                // with `trace` possibly an empty string.
+                let err = CharacterVector::new(err)?;
+
+                let message = err.get_value(0)?;
+                let trace = err.get_value(1)?;
+
+                return Err(Error::EvaluationError {
+                    code,
+                    message: message + "\nTrace:\n" + &trace,
+                });
             }
 
-            return Ok(RObject::new(result));
+            return Ok(RObject::new(out));
         }
     }
 }
@@ -678,6 +681,22 @@ mod tests {
             assert!(Rf_isInteger(*result) != 0);
             assert!(Rf_asInteger(*result) == 4);
 
+        }
+    }
+
+    #[test]
+    fn test_basic_function_error() {
+        r_test! {
+            let result = RFunction::from("+")
+                .add(1)
+                .add("")
+                .call();
+
+            assert_match!(result, Err(err) => {
+                let msg = format!("{err}");
+                let re = regex::Regex::new("Trace:\n(.|\n)*1L [+] \"\"").unwrap();
+                assert!(re.is_match(&msg));
+            });
         }
     }
 

@@ -65,6 +65,14 @@ pub trait Vector {
         Ok(self.get_unchecked(index))
     }
 
+    // Better name?
+    fn get_value(&self, index: isize) -> Result<Self::Type> {
+        let value = self
+            .get(index)?
+            .ok_or(crate::error::Error::MissingValueError)?;
+        Ok(value)
+    }
+
     unsafe fn new(object: impl Into<SEXP>) -> Result<Self>
     where
         Self: Sized,

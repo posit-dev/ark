@@ -62,6 +62,10 @@ pub type Result<T> = std::result::Result<T, error::Error>;
 // doesn't need synchronisation.
 pub static mut R_MAIN_THREAD_ID: Option<std::thread::ThreadId> = None;
 
+pub fn r_null() -> libr::SEXP {
+    unsafe { libr::R_NilValue }
+}
+
 #[macro_export]
 macro_rules! with_vector_impl {
     ($x:expr, $class:ident, $variable:ident, $($code:tt)*) => {{
