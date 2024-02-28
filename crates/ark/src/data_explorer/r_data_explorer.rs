@@ -19,6 +19,8 @@ use amalthea::comm::data_explorer_comm::SetColumnFiltersParams;
 use amalthea::comm::data_explorer_comm::SetSortColumnsParams;
 use amalthea::comm::data_explorer_comm::TableData;
 use amalthea::comm::data_explorer_comm::TableSchema;
+use amalthea::comm::data_explorer_comm::TableShape;
+use amalthea::comm::data_explorer_comm::TableState;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
@@ -177,9 +179,7 @@ impl RDataExplorer {
             }) => {
                 bail!("Data Viewer: Not yet implemented")
             },
-            DataExplorerBackendRequest::GetState => {
-                bail!("Data Viewer: Not yet implemented")
-            },
+            DataExplorerBackendRequest::GetState => r_task(|| self.r_get_state()),
         }
     }
 }
@@ -199,7 +199,7 @@ impl RDataExplorer {
                 kind,
                 dims:
                     harp::TableDim {
-                        num_rows,
+                        num_rows: _,
                         num_cols: total_num_columns,
                     },
                 col_names: column_names,
@@ -240,12 +240,35 @@ impl RDataExplorer {
 
             let response = TableSchema {
                 columns: column_schemas,
-                num_rows: num_rows.into(),
-                total_num_columns: total_num_columns as i64,
             };
 
             Ok(DataExplorerBackendReply::GetSchemaReply(response))
         }
+    }
+
+    fn r_get_state(&self) -> anyhow::Result<DataExplorerBackendReply> {
+        let table = self.table.get().clone();
+        let object = *table;
+
+        let harp::TableInfo {
+            kind: _,
+            dims:
+                harp::TableDim {
+                    num_rows,
+                    num_cols: num_columns,
+                },
+            col_names: _,
+        } = harp::table_info(object)?;
+
+        let state = TableState {
+            table_shape: TableShape {
+                num_rows: num_rows.into(),
+                num_columns: num_columns as i64,
+            },
+            filters: vec![],
+            sort_keys: vec![],
+        };
+        Ok(DataExplorerBackendReply::GetStateReply(state))
     }
 
     fn r_get_data_values(
