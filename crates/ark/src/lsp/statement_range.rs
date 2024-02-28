@@ -992,12 +992,10 @@ if (a > b) {
     );
 
     // `if` statements without braces can run individual expressions
-    // TODO: This is a tree-sitter bug! It should only go to row: 2, column: 7.
     statement_range_test(
 "
 <<if (@a > b)
-    1 + 1
->>",
+    1 + 1>>",
     );
     statement_range_test(
 "
@@ -1006,79 +1004,158 @@ if (a > b)
 ",
     );
 
-    // `if`-else statements without braces can run individual expressions
+    // Top level `if`-else statements without braces can run individual expressions if
+    // the `else` is in a valid location
     statement_range_test(
 "
 <<if @(a > b)
-  1 + 1
-else if (b > c)
-  2 + 2
-else
-  4 + 4>>
+  1 + 1 else if (b > c)
+  2 + 2 else 4 + 4>>
 ",
     );
     statement_range_test(
 "
 if (a > b)
-  <<@1 + 1>>
-else if (b > c)
-  2 + 2
-else
-  4 + 4
+  <<@1 + 1>> else if (b > c)
+  2 + 2 else 4 + 4
 ",
     );
+    // TODO: I'm not exactly sure what this should run, but this seems strange
     statement_range_test(
 "
-<<if (a > b)
-  1 + 1
-else if @(b > c)
-  2 + 2
-else
-  4 + 4>>
+if (a > b)
+  <<1 + 1>> else if @(b > c)
+  2 + 2 else 4 + 4
 ",
     );
     statement_range_test(
 "
 if (a > b)
-  1 + 1
-else if (b > c)
-  <<2 + @2>>
-else
-  4 + 4
+  1 + 1 else if (b > c)
+  <<2 + @2>> else 4 + 4
 ",
     );
-    statement_range_test(
-"
-<<if (a > b)
-  1 + 1
-else if (b > c)
-  2 + 2
-else@
-  4 + 4>>
-",
-    );
+    // TODO: I'm not exactly sure what this should run, but this seems strange
     statement_range_test(
 "
 if (a > b)
-  1 + 1
-else if (b > c)
-  2 + 2
-else
-  <<4 @+ 4>>
+  1 + 1 else if (b > c)
+  <<2 + 2>> else@ 4 + 4
+",
+    );
+    // TODO: I'm not exactly sure what this should run, but this seems strange
+    statement_range_test(
+"
+if (a > b)
+  1 + 1 else if (b > c)
+  <<2 + 2>> else 4 @+ 4
 ",
     );
 
-    // TODO: This test should fail once we fix the tree-sitter bug.
-    // TODO: It should only go to row: 3, column: 1.
+    // `if`-else statements without braces but inside an outer `{` scope is recognized
+    // as valid R code
+    statement_range_test(
+"
+{
+    <<if @(a > b)
+      1 + 1
+    else if (b > c)
+      2 + 2
+    else
+      4 + 4>>
+}
+",
+    );
+    statement_range_test(
+"
+{
+    if (a > b)
+      <<@1 + 1>>
+    else if (b > c)
+      2 + 2
+    else
+      4 + 4
+}
+",
+    );
+    statement_range_test(
+"
+{
+    <<if (a > b)
+      1 + 1
+    else if @(b > c)
+      2 + 2
+    else
+      4 + 4>>
+}
+",
+    );
+    statement_range_test(
+"
+{
+    if (a > b)
+      1 + 1
+    else if (b > c)
+      <<2 + @2>>
+    else
+      4 + 4
+}
+",
+    );
+    statement_range_test(
+"
+{
+    <<if (a > b)
+      1 + 1
+    else if (b > c)
+      2 + 2
+    else@
+      4 + 4>>
+}
+",
+    );
+    statement_range_test(
+"
+{
+    if (a > b)
+      1 + 1
+    else if (b > c)
+      2 + 2
+    else
+      <<4 @+ 4>>
+}
+",
+    );
+
     // `if` statements without an `else` don't consume newlines
+    // https://github.com/posit-dev/positron/issues/1464
+    statement_range_test(
+"
+<<if @(a > b)
+    1 + 1>>
+
+
+",
+    );
     statement_range_test(
 "
 <<if @(a > b) {
     1 + 1
-}
+}>>
 
 
->>",
+",
+    );
+    statement_range_test(
+"
+<<if @(a > b) {
+    1 + 1
+}>>
+
+
+if (b > c) {
+    2 + 2
+}",
     );
 
     // Subsetting runs whole expression
