@@ -85,38 +85,42 @@ impl RFunction {
     }
 
     pub fn call_in(&mut self, env: SEXP) -> Result<RObject> {
-        unsafe {
-            let user_call = self.call.build();
-            let eval_call = RCall::new(r_symbol!("safe_evalq"))
-                .add(user_call.sexp)
-                .add(env)
-                .build();
+        let user_call = self.call.build();
+        r_safe_eval(user_call, env.into())
+    }
+}
 
-            let result = RObject::new(Rf_eval(eval_call.sexp, HARP_ENV.unwrap()));
+pub fn r_safe_eval(expr: RObject, env: RObject) -> crate::Result<RObject> {
+    unsafe {
+        let eval_call = RCall::new(r_symbol!("safe_evalq"))
+            .add(expr.sexp)
+            .add(env)
+            .build();
 
-            // Invariant of return value: List of length 2 [output, error].
-            // These are exclusive.
-            let out = r_list_get(result.sexp, 0);
-            let err = r_list_get(result.sexp, 1);
+        let result = RObject::new(Rf_eval(eval_call.sexp, HARP_ENV.unwrap()));
 
-            if err != r_null() {
-                let code = r_stringify(user_call.sexp, "\n")?;
+        // Invariant of return value: List of length 2 [output, error].
+        // These are exclusive.
+        let out = r_list_get(result.sexp, 0);
+        let err = r_list_get(result.sexp, 1);
 
-                // Invariant of error slot: Character vector of length 2 [message, trace],
-                // with `trace` possibly an empty string.
-                let err = CharacterVector::new(err)?;
+        if err != r_null() {
+            let code = r_stringify(expr.sexp, "\n")?;
 
-                let message = err.get_value(0)?;
-                let trace = err.get_value(1)?;
+            // Invariant of error slot: Character vector of length 2 [message, trace],
+            // with `trace` possibly an empty string.
+            let err = CharacterVector::new(err)?;
 
-                return Err(Error::EvaluationError {
-                    code,
-                    message: message + "\nTrace:\n" + &trace,
-                });
-            }
+            let message = err.get_value(0)?;
+            let trace = err.get_value(1)?;
 
-            return Ok(RObject::new(out));
+            return Err(Error::EvaluationError {
+                code,
+                message: message + "\nTrace:\n" + &trace,
+            });
         }
+
+        return Ok(RObject::new(out));
     }
 }
 
