@@ -120,7 +120,8 @@ pub fn r_safe_eval(expr: RObject, env: RObject) -> crate::Result<RObject> {
 
             return Err(Error::EvaluationError {
                 code,
-                message: message + "\nTrace:\n" + &trace,
+                message,
+                trace,
             });
         }
 
@@ -689,7 +690,7 @@ mod tests {
 
             assert_match!(result, Err(err) => {
                 let msg = format!("{err}");
-                let re = regex::Regex::new("Trace:\n(.|\n)*1L [+] \"\"").unwrap();
+                let re = regex::Regex::new("R backtrace:\n(.|\n)*1L [+] \"\"").unwrap();
                 assert!(re.is_match(&msg));
             });
         }
