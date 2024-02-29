@@ -663,9 +663,11 @@ fn test_statement_range() {
         let x = x.replace("@", "");
         let x = x.replace(">>", "");
 
+        let language = tree_sitter_r::language();
+
         let mut parser = Parser::new();
         parser
-            .set_language(tree_sitter_r::language())
+            .set_language(&language)
             .expect("Failed to create parser");
 
         let ast = parser.parse(x, None).unwrap();
@@ -1298,9 +1300,10 @@ test_that('stuff', {
 
 
 ";
+    let language = tree_sitter_r::language();
     let mut parser = Parser::new();
     parser
-        .set_language(tree_sitter_r::language())
+        .set_language(&language)
         .expect("Failed to create parser");
     let ast = parser.parse(contents, None).unwrap();
     let root = ast.root_node();
@@ -1315,9 +1318,10 @@ test_that('stuff', {
 
 }
 ";
+    let language = tree_sitter_r::language();
     let mut parser = Parser::new();
     parser
-        .set_language(tree_sitter_r::language())
+        .set_language(&language)
         .expect("Failed to create parser");
     let ast = parser.parse(contents, None).unwrap();
     let root = ast.root_node();
