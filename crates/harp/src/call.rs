@@ -5,42 +5,77 @@
 //
 //
 
-use std::ops::Deref;
+use libr::*;
 
-use libr::LANGSXP;
-use libr::SEXP;
-
-use crate::error::Result;
+use crate::exec::RFunction;
+use crate::exec::RFunctionExt;
 use crate::object::RObject;
-use crate::utils::r_assert_type;
+use crate::r_symbol;
+use crate::utils::r_typeof;
 
 pub struct RCall {
-    pub object: RObject,
+    function: RObject,
+    arguments: Vec<RArgument>,
 }
 
 impl RCall {
-    pub fn new_unchecked(object: impl Into<RObject>) -> Self {
+    pub fn new(function: impl Into<RObject>) -> Self {
         Self {
-            object: object.into(),
+            function: function.into(),
+            arguments: Vec::new(),
         }
     }
 
-    pub fn new(object: impl Into<RObject>) -> Result<Self> {
-        let object = object.into();
-        r_assert_type(*object, &[LANGSXP])?;
-        Ok(Self::new_unchecked(object))
+    pub fn param(&mut self, name: &str, value: impl Into<RObject>) -> &mut Self {
+        self.arguments.push(RArgument {
+            name: name.to_string(),
+            value: value.into(),
+        });
+        self
+    }
+
+    pub fn add(&mut self, value: impl Into<RObject>) -> &mut Self {
+        self.param("", value)
+    }
+
+    pub fn build(&self) -> RObject {
+        unsafe {
+            let call = RObject::new(Rf_lcons(self.function.sexp, R_NilValue));
+            let mut tail = call.sexp;
+
+            // Append arguments to the call
+            for argument in self.arguments.iter() {
+                SETCDR(tail, Rf_cons(argument.value.sexp, R_NilValue));
+
+                tail = CDR(tail);
+                if !argument.name.is_empty() {
+                    SET_TAG(tail, r_symbol!(argument.name));
+                }
+            }
+
+            call
+        }
     }
 }
 
-impl Deref for RCall {
-    type Target = SEXP;
-    fn deref(&self) -> &Self::Target {
-        &self.object
+pub fn r_expr_quote(x: impl Into<SEXP>) -> RObject {
+    let x = x.into();
+    match r_typeof(x) {
+        SYMSXP | LANGSXP => return RFunction::new("base", "quote").add(x).call.build(),
+        _ => return x.into(),
     }
 }
 
-impl From<RCall> for RObject {
-    fn from(value: RCall) -> Self {
-        value.object
+pub struct RArgument {
+    pub name: String,
+    pub value: RObject,
+}
+
+impl RArgument {
+    pub fn new(name: &str, value: RObject) -> Self {
+        Self {
+            name: name.to_string(),
+            value,
+        }
     }
 }

@@ -14,13 +14,14 @@ use libr::*;
 use once_cell::sync::Lazy;
 use regex::Regex;
 
+use crate::call::r_expr_quote;
+use crate::call::RArgument;
 use crate::environment::Environment;
 use crate::environment::R_ENVS;
 use crate::error::Error;
 use crate::error::Result;
 use crate::eval::r_parse_eval0;
 use crate::exec::geterrmessage;
-use crate::exec::RArgument;
 use crate::exec::RFunction;
 use crate::exec::RFunctionExt;
 use crate::object::RObject;
@@ -401,7 +402,9 @@ pub unsafe fn r_stringify(object: SEXP, delimiter: &str) -> Result<String> {
     }
 
     // call format on the object
-    let object = RFunction::new("base", "format").add(object).call()?;
+    let object = RFunction::new("base", "format")
+        .add(r_expr_quote(object))
+        .call()?;
 
     // paste into a single string
     let object = RFunction::new("base", "paste")

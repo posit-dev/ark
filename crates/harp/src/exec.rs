@@ -12,6 +12,7 @@ use std::os::raw::c_void;
 
 use libr::*;
 
+use crate::call::RCall;
 use crate::environment::R_ENVS;
 use crate::error::Error;
 use crate::error::Result;
@@ -25,84 +26,57 @@ use crate::r_string;
 use crate::r_symbol;
 use crate::utils::r_inherits;
 use crate::utils::r_stringify;
-use crate::utils::r_typeof;
 use crate::vector::CharacterVector;
 use crate::vector::Vector;
-pub struct RArgument {
-    pub name: String,
-    pub value: RObject,
-}
-
-impl RArgument {
-    pub fn new(name: &str, value: RObject) -> Self {
-        Self {
-            name: name.to_string(),
-            value,
-        }
-    }
-}
 
 pub struct RFunction {
-    package: String,
-    function: String,
-    arguments: Vec<RArgument>,
-}
-
-pub trait RFunctionExt<T> {
-    fn param(&mut self, name: &str, value: T) -> &mut Self;
-    fn add(&mut self, value: T) -> &mut Self;
-}
-
-impl<T: Into<RObject>> RFunctionExt<Option<T>> for RFunction {
-    fn param(&mut self, name: &str, value: Option<T>) -> &mut Self {
-        if let Some(value) = value {
-            self._add(name, value.into());
-        }
-        self
-    }
-
-    fn add(&mut self, value: Option<T>) -> &mut Self {
-        if let Some(value) = value {
-            self._add("", value.into());
-        }
-        self
-    }
-}
-
-impl<T: Into<RObject>> RFunctionExt<T> for RFunction {
-    fn param(&mut self, name: &str, value: T) -> &mut Self {
-        let value: RObject = value.into();
-        return self._add(name, value);
-    }
-
-    fn add(&mut self, value: T) -> &mut Self {
-        let value: RObject = value.into();
-        return self._add("", value);
-    }
+    pub call: RCall,
+    is_namespaced: bool,
 }
 
 impl RFunction {
     pub fn new(package: &str, function: &str) -> Self {
+        Self::new_ext(package, function, false)
+    }
+
+    pub fn new_internal(package: &str, function: &str) -> Self {
+        Self::new_ext(package, function, true)
+    }
+
+    pub fn new_inlined(function: impl Into<RObject>) -> Self {
         RFunction {
-            package: package.to_string(),
-            function: function.to_string(),
-            arguments: Vec::new(),
+            call: RCall::new(function),
+            is_namespaced: false,
         }
     }
 
-    fn _add(&mut self, name: &str, value: RObject) -> &mut Self {
-        self.arguments.push(RArgument {
-            name: name.to_string(),
-            value,
-        });
-        self
+    fn new_ext(package: &str, function: &str, internal: bool) -> Self {
+        unsafe {
+            let is_namespaced = !package.is_empty();
+
+            let fun = if is_namespaced {
+                let op = if internal { ":::" } else { "::" };
+                Rf_lang3(r_symbol!(op), r_symbol!(package), r_symbol!(function))
+            } else {
+                r_symbol!(function)
+            };
+            let fun = RObject::new(fun);
+
+            RFunction {
+                call: RCall::new(fun),
+                is_namespaced,
+            }
+        }
     }
 
     pub fn call(&mut self) -> Result<RObject> {
-        let env = if self.package.is_empty() {
-            R_ENVS.global
-        } else {
+        // FIXME: Once we have ArkFunction (see
+        // https://github.com/posit-dev/positron/issues/2324), we no longer need
+        // this logic to call in global. This probably shouldn't be the default?
+        let env = if self.is_namespaced {
             R_ENVS.base
+        } else {
+            R_ENVS.global
         };
 
         self.call_in(env)
@@ -110,41 +84,9 @@ impl RFunction {
 
     pub fn call_in(&mut self, env: SEXP) -> Result<RObject> {
         unsafe {
+            let call = self.call.build();
+
             let mut protect = RProtect::new();
-
-            // start building the call to be evaluated
-            let mut lhs = r_symbol!(self.function);
-            if !self.package.is_empty() {
-                lhs = protect.add(Rf_lang3(r_symbol!(":::"), r_symbol!(self.package), lhs));
-            }
-
-            // now, build the actual call to be evaluated
-            let size = (1 + self.arguments.len()) as R_xlen_t;
-            let call = protect.add(Rf_allocVector(LANGSXP, size));
-            SET_TAG(call, R_NilValue);
-            SETCAR(call, lhs);
-
-            // append arguments to the call
-            let mut slot = CDR(call);
-            for argument in self.arguments.iter() {
-                // quote language objects by default
-                let mut sexp = argument.value.sexp;
-                if matches!(r_typeof(sexp), LANGSXP | SYMSXP | EXPRSXP) {
-                    let quote = protect.add(Rf_lang3(
-                        r_symbol!("::"),
-                        r_symbol!("base"),
-                        r_symbol!("quote"),
-                    ));
-                    sexp = protect.add(Rf_lang2(quote, sexp));
-                }
-
-                SETCAR(slot, sexp);
-                if !argument.name.is_empty() {
-                    SET_TAG(slot, r_symbol!(argument.name));
-                }
-
-                slot = CDR(slot);
-            }
 
             // now, wrap call in tryCatch, so that errors don't longjmp
             let try_catch = protect.add(Rf_lang3(
@@ -154,7 +96,7 @@ impl RFunction {
             ));
             let call = protect.add(Rf_lang4(
                 try_catch,
-                call,
+                call.sexp,
                 r_symbol!("identity"),
                 r_symbol!("identity"),
             ));
@@ -184,6 +126,41 @@ impl From<&str> for RFunction {
 impl From<String> for RFunction {
     fn from(function: String) -> Self {
         RFunction::new("", function.as_str())
+    }
+}
+
+// NOTE: Having to import this trait cause a bit of friction during
+// development. Can we do without?
+pub trait RFunctionExt<T> {
+    fn param(&mut self, name: &str, value: T) -> &mut Self;
+    fn add(&mut self, value: T) -> &mut Self;
+}
+
+impl<T: Into<RObject>> RFunctionExt<Option<T>> for RFunction {
+    fn param(&mut self, name: &str, value: Option<T>) -> &mut Self {
+        if let Some(value) = value {
+            self.call.param(name, value.into());
+        }
+        self
+    }
+
+    fn add(&mut self, value: Option<T>) -> &mut Self {
+        if let Some(value) = value {
+            self.call.add(value.into());
+        }
+        self
+    }
+}
+
+impl<T: Into<RObject>> RFunctionExt<T> for RFunction {
+    fn param(&mut self, name: &str, value: T) -> &mut Self {
+        self.call.param(name, value);
+        self
+    }
+
+    fn add(&mut self, value: T) -> &mut Self {
+        self.call.add(value);
+        self
     }
 }
 
@@ -495,6 +472,9 @@ pub fn r_source_exprs_in(exprs: impl Into<SEXP>, env: impl Into<SEXP>) -> crate:
     let exprs = exprs.into();
     let env = env.into();
 
+    // `exprs` is an EXPRSXP and doesn't need to be quoted when passed as
+    // literal argument. Only the R-level `eval()` function evaluates expression
+    // vectors.
     RFunction::new("base", "source")
         .param("exprs", exprs)
         .param("local", env)
@@ -681,6 +661,7 @@ mod tests {
     use crate::r_test;
     use crate::utils::r_envir_remove;
     use crate::utils::r_is_null;
+    use crate::utils::r_typeof;
 
     #[test]
     fn test_basic_function() {

@@ -82,8 +82,12 @@ fn test_help_comm() {
         assert_eq!(handled, false);
 
         // Figure out which port the R help server is running on (or would run on)
-        let r_help_port =
-            r_task(|| unsafe { RFunction::new("tools", "httpdPort").call()?.to::<u16>() }).unwrap();
+        let r_help_port = r_task(|| unsafe {
+            RFunction::new_internal("tools", "httpdPort")
+                .call()?
+                .to::<u16>()
+        })
+        .unwrap();
 
         // Send a request to show a help URL with a valid help URL. This one should
         // be handled.
