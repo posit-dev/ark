@@ -472,6 +472,9 @@ pub fn r_source_exprs_in(exprs: impl Into<SEXP>, env: impl Into<SEXP>) -> crate:
     let exprs = exprs.into();
     let env = env.into();
 
+    // `exprs` is an EXPRSXP and doesn't need to be quoted when passed as
+    // literal argument. Only the R-level `eval()` function evaluates expression
+    // vectors.
     RFunction::new("base", "source")
         .param("exprs", exprs)
         .param("local", env)
