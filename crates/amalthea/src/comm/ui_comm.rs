@@ -148,6 +148,13 @@ pub struct DebugSleepParams {
 	pub ms: f64,
 }
 
+/// Parameters for the ExecuteCommand method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ExecuteCommandParams {
+	/// The command to execute
+	pub command: String,
+}
+
 /**
  * Backend RPC request types for the ui comm
  */
@@ -187,6 +194,13 @@ pub enum UiFrontendRequest {
 	#[serde(rename = "debug_sleep")]
 	DebugSleep(DebugSleepParams),
 
+	/// Execute a Positron command
+	///
+	/// Use this to execute a Positron command from the backend (like from a
+	/// runtime)
+	#[serde(rename = "execute_command")]
+	ExecuteCommand(ExecuteCommandParams),
+
 	/// Context metadata for the last editor
 	///
 	/// Returns metadata such as file path for the last editor selected by the
@@ -204,6 +218,9 @@ pub enum UiFrontendRequest {
 pub enum UiFrontendReply {
 	/// Reply for the debug_sleep method (no result)
 	DebugSleepReply(),
+
+	/// Reply for the execute_command method (no result)
+	ExecuteCommandReply(),
 
 	/// Editor metadata
 	LastActiveEditorContextReply(Option<EditorContext>),
@@ -256,6 +273,7 @@ pub fn ui_frontend_reply_from_value(
 ) -> anyhow::Result<UiFrontendReply> {
 	match request {
 		UiFrontendRequest::DebugSleep(_) => Ok(UiFrontendReply::DebugSleepReply()),
+		UiFrontendRequest::ExecuteCommand(_) => Ok(UiFrontendReply::ExecuteCommandReply()),
 		UiFrontendRequest::LastActiveEditorContext => Ok(UiFrontendReply::LastActiveEditorContextReply(serde_json::from_value(reply)?)),
 	}
 }
