@@ -91,7 +91,11 @@ impl RFunction {
 }
 
 pub fn r_safe_eval(expr: RObject, env: RObject) -> crate::Result<RObject> {
-    unsafe {
+    // We could detect and cancel early exits from the r side, but we'd be at
+    // risk of very unlucky interrupts occurring between `rf_eval()` and our
+    // `on.exit()` handling. So stay on the safe side by wrapping in
+    // top-level-exec. This also insulates us from user handlers.
+    r_top_level_exec(|| unsafe {
         let eval_call = RCall::new(r_symbol!("safe_evalq"))
             .add(expr.sexp)
             .add(env)
@@ -120,8 +124,8 @@ pub fn r_safe_eval(expr: RObject, env: RObject) -> crate::Result<RObject> {
             });
         }
 
-        return Ok(RObject::new(out));
-    }
+        Ok(RObject::new(out))
+    })?
 }
 
 impl From<&str> for RFunction {

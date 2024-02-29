@@ -5,7 +5,10 @@
 # - Error slot: Character vector of length 2 [message, trace], with `trace`
 #   possibly an empty string.
 #
-# TODO: Prevent this function from jumping with on.exit
+# We could detect and cancel early exits from here but we'd be at risk of very
+# unlucky interrupts occurring between `Rf_eval()` and our `on.exit()`
+# handling. So it's up to the caller to deal with early exits, for instance with
+# a top-level-exec context.
 safe_evalq <- function(expr, env) {
     # Create a promise to make call stack leaner
     do.call(delayedAssign, list("out", substitute(expr), env))
@@ -38,7 +41,6 @@ safe_evalq <- function(expr, env) {
 
     withCallingHandlers(
         list(out, NULL),
-        interrupt = handler,
         error = handler
     )
 }
