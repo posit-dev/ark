@@ -25,6 +25,7 @@ pub enum Error {
     EvaluationError {
         code: String,
         message: String,
+        trace: String,
     },
     UnsafeEvaluationError(String),
     UnexpectedLength(usize, usize),
@@ -89,8 +90,18 @@ impl fmt::Display for Error {
                 write!(f, "Error parsing {}: {}", code, message)
             },
 
-            Error::EvaluationError { code, message } => {
-                write!(f, "Error evaluating {}: {}", code, message)
+            Error::EvaluationError {
+                code,
+                message,
+                trace,
+            } => {
+                let mut msg = format!("Error evaluating {code}: {message}");
+
+                if !trace.is_empty() {
+                    msg = format!("{msg}\nR backtrace:\n{trace}");
+                }
+
+                write!(f, "{msg}")
             },
 
             Error::UnsafeEvaluationError(code) => {

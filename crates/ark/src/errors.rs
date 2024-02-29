@@ -7,6 +7,7 @@
 
 use harp::object::RObject;
 use harp::r_symbol;
+use harp::session::r_format_traceback;
 use libr::R_GlobalEnv;
 use libr::R_NilValue;
 use libr::Rf_eval;
@@ -41,6 +42,11 @@ unsafe extern "C" fn ps_record_error(evalue: SEXP, traceback: SEXP) -> anyhow::R
     main.error_traceback = traceback;
 
     Ok(R_NilValue)
+}
+
+#[harp::register]
+unsafe extern "C" fn ps_format_traceback(calls: SEXP) -> anyhow::Result<SEXP> {
+    Ok(r_format_traceback(calls.into())?.sexp)
 }
 
 pub unsafe fn initialize() {

@@ -355,6 +355,8 @@ functions_variadic::generate! {
     pub fn Rf_error(arg1: *const std::ffi::c_char, ...) -> !;
 
     pub fn Rf_errorcall(arg1: SEXP, arg2: *const std::ffi::c_char, ...) -> !;
+
+    pub fn Rprintf(x: *const std::ffi::c_char, ...);
 }
 
 constant_globals::generate! {

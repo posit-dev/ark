@@ -59,6 +59,7 @@ pub fn r_parse_eval(code: &str, options: RParseEvalOptions) -> Result<RObject> {
                 return Err(Error::EvaluationError {
                     code: code.to_string(),
                     message: geterrmessage(),
+                    trace: String::from(""),
                 });
             }
         }

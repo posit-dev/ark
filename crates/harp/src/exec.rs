@@ -19,12 +19,14 @@ use crate::error::Result;
 use crate::interrupts::RInterruptsSuspendedScope;
 use crate::line_ending::convert_line_endings;
 use crate::line_ending::LineEnding;
+use crate::modules::HARP_ENV;
+use crate::object::r_list_get;
 use crate::object::RObject;
 use crate::polled_events::RPolledEventsSuspendedScope;
 use crate::protect::RProtect;
+use crate::r_null;
 use crate::r_string;
 use crate::r_symbol;
-use crate::utils::r_inherits;
 use crate::utils::r_stringify;
 use crate::vector::CharacterVector;
 use crate::vector::Vector;
@@ -83,38 +85,48 @@ impl RFunction {
     }
 
     pub fn call_in(&mut self, env: SEXP) -> Result<RObject> {
-        unsafe {
-            let call = self.call.build();
-
-            let mut protect = RProtect::new();
-
-            // now, wrap call in tryCatch, so that errors don't longjmp
-            let try_catch = protect.add(Rf_lang3(
-                r_symbol!("::"),
-                r_symbol!("base"),
-                r_symbol!("tryCatch"),
-            ));
-            let call = protect.add(Rf_lang4(
-                try_catch,
-                call.sexp,
-                r_symbol!("identity"),
-                r_symbol!("identity"),
-            ));
-            SET_TAG(call, R_NilValue);
-            SET_TAG(CDDR(call), r_symbol!("error"));
-            SET_TAG(CDDDR(call), r_symbol!("interrupt"));
-
-            let result = protect.add(Rf_eval(call, env));
-
-            if r_inherits(result, "error") {
-                let code = r_stringify(call, "\n")?;
-                let message = geterrmessage();
-                return Err(Error::EvaluationError { code, message });
-            }
-
-            return Ok(RObject::new(result));
-        }
+        let user_call = self.call.build();
+        r_safe_eval(user_call, env.into())
     }
+}
+
+pub fn r_safe_eval(expr: RObject, env: RObject) -> crate::Result<RObject> {
+    // We could detect and cancel early exits from the r side, but we'd be at
+    // risk of very unlucky interrupts occurring between `rf_eval()` and our
+    // `on.exit()` handling. So stay on the safe side by wrapping in
+    // top-level-exec. This also insulates us from user handlers.
+    r_top_level_exec(|| unsafe {
+        let eval_call = RCall::new(r_symbol!("safe_evalq"))
+            .add(expr.sexp)
+            .add(env)
+            .build();
+
+        let result = RObject::new(Rf_eval(eval_call.sexp, HARP_ENV.unwrap()));
+
+        // Invariant of return value: List of length 2 [output, error].
+        // These are exclusive.
+        let out = r_list_get(result.sexp, 0);
+        let err = r_list_get(result.sexp, 1);
+
+        if err != r_null() {
+            let code = r_stringify(expr.sexp, "\n")?;
+
+            // Invariant of error slot: Character vector of length 2 [message, trace],
+            // with `trace` possibly an empty string.
+            let err = CharacterVector::new(err)?;
+
+            let message = err.get_value(0)?;
+            let trace = err.get_value(1)?;
+
+            return Err(Error::EvaluationError {
+                code,
+                message,
+                trace,
+            });
+        }
+
+        Ok(RObject::new(out))
+    })?
 }
 
 impl From<&str> for RFunction {
@@ -176,6 +188,8 @@ pub fn geterrmessage() -> String {
         Err(_) => return "".to_string(),
     }
 }
+
+// TODO: Reimplement around `r_safe_eval()` to gain backtraces
 
 /// Wrappers around R_tryCatch()
 ///
@@ -321,24 +335,9 @@ where
     F: FnMut() -> R,
     RObject: From<R>,
 {
-    let out = r_try_catch_any(fun);
-    out.map(|x| RObject::from(x))
-}
-
-pub unsafe fn r_try_catch_any<F, R>(fun: F) -> Result<R>
-where
-    F: FnMut() -> R,
-{
     let vector = CharacterVector::create(["error"]);
-    r_try_catch_finally(fun, vector, || {})
-}
-
-pub unsafe fn r_try_catch_classes<F, R, S>(fun: F, classes: S) -> Result<R>
-where
-    F: FnMut() -> R,
-    S: Into<CharacterVector>,
-{
-    r_try_catch_finally(fun, classes, || {})
+    let out = r_try_catch_finally(fun, vector, || {});
+    out.map(|x| RObject::from(x))
 }
 
 /// Run closure inside top-level context
@@ -678,6 +677,22 @@ mod tests {
             assert!(Rf_isInteger(*result) != 0);
             assert!(Rf_asInteger(*result) == 4);
 
+        }
+    }
+
+    #[test]
+    fn test_basic_function_error() {
+        r_test! {
+            let result = RFunction::from("+")
+                .add(1)
+                .add("")
+                .call();
+
+            assert_match!(result, Err(err) => {
+                let msg = format!("{err}");
+                let re = regex::Regex::new("R backtrace:\n(.|\n)*1L [+] \"\"").unwrap();
+                assert!(re.is_match(&msg));
+            });
         }
     }
 

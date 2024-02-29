@@ -12,6 +12,8 @@ use stdext::unwrap;
 
 use crate::exec::r_parse;
 use crate::exec::RFunction;
+use crate::exec::RFunctionExt;
+use crate::modules::HARP_ENV;
 use crate::object::RObject;
 use crate::protect::RProtect;
 use crate::r_lang;
@@ -216,6 +218,12 @@ fn stack_shift(stack: &mut Vec<FrameInfo>, pointer: FrameInfo) {
 
         current = next;
     }
+}
+
+pub fn r_format_traceback(calls: RObject) -> crate::Result<RObject> {
+    RFunction::new("", "format_traceback")
+        .add(calls)
+        .call_in(unsafe { HARP_ENV.unwrap() })
 }
 
 fn init_interface() {
