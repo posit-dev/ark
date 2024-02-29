@@ -188,6 +188,8 @@ pub fn geterrmessage() -> String {
     }
 }
 
+// TODO: Reimplement around `r_safe_eval()` to gain backtraces
+
 /// Wrappers around R_tryCatch()
 ///
 /// Takes a single closure that returns either a SEXP or `()`. If an R error is
@@ -332,24 +334,9 @@ where
     F: FnMut() -> R,
     RObject: From<R>,
 {
-    let out = r_try_catch_any(fun);
-    out.map(|x| RObject::from(x))
-}
-
-pub unsafe fn r_try_catch_any<F, R>(fun: F) -> Result<R>
-where
-    F: FnMut() -> R,
-{
     let vector = CharacterVector::create(["error"]);
-    r_try_catch_finally(fun, vector, || {})
-}
-
-pub unsafe fn r_try_catch_classes<F, R, S>(fun: F, classes: S) -> Result<R>
-where
-    F: FnMut() -> R,
-    S: Into<CharacterVector>,
-{
-    r_try_catch_finally(fun, classes, || {})
+    let out = r_try_catch_finally(fun, vector, || {});
+    out.map(|x| RObject::from(x))
 }
 
 /// Run closure inside top-level context
