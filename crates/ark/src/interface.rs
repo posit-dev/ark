@@ -184,16 +184,16 @@ pub fn start_r(
     libraries.initialize_post_setup_r();
 
     unsafe {
-        // Optionally run a user specified R startup script
-        if let Some(file) = &startup_file {
-            r_source(file).or_log_error(&format!("Failed to source startup file '{file}' due to"));
-        }
-
         // Register embedded routines
         r_register_routines();
 
         // Initialize harp (after routine registration)
         harp::initialize();
+
+        // Optionally run a user specified R startup script (after harp init)
+        if let Some(file) = &startup_file {
+            r_source(file).or_log_error(&format!("Failed to source startup file '{file}' due to"));
+        }
 
         // Initialize support functions (after routine registration)
         if let Err(err) = modules::initialize(false) {
