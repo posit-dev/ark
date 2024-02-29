@@ -45,8 +45,6 @@ safe_evalq <- function(expr, env) {
     )
 }
 
-# ?FIXME: Can we reuse the following in Ark?
-
 #' @param traceback A list of calls.
 format_traceback <- function(traceback = list()) {
     n <- length(traceback)
