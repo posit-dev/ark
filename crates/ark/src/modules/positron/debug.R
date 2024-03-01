@@ -547,7 +547,14 @@ extract_source_references_recurse <- function(x) {
 #' @param x A single string containing the text of a function, with lines
 #'   split by `\n`.
 parse_function_text <- function(x) {
-  x <- parse(text = x, keep.source = TRUE)
+  x <- tryCatch(
+    parse(text = x, keep.source = TRUE),
+    error = function(cnd) NULL
+  )
+
+  if (is.null(x)) {
+    return(NULL)
+  }
 
   if (length(x) == 0L) {
     return(NULL)
