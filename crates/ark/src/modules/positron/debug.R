@@ -19,8 +19,11 @@ debugger_stack_info <- function(
     return(list())
   }
   if (n != length(calls)) {
-    # Something is horribly wrong if `sys.functions()` and `sys.calls()` are out of sync!
-    return(list())
+    message <- paste0(
+      "`sys.function()` and `sys.calls()` didn't return consistent results. ",
+      "There are %i functions, but %i calls."
+    )
+    stop(sprintf(message, n, length(calls)))
   }
 
   # Top level call never has source references.
