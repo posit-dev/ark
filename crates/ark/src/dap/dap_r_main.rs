@@ -233,24 +233,26 @@ fn as_frame_info(info: SEXP) -> anyhow::Result<FrameInfo> {
         let mut i = 0;
 
         let source_name = VECTOR_ELT(info, i);
-        let source_name = RObject::view(source_name).to::<String>()?;
+        let source_name: String = RObject::view(source_name).try_into()?;
 
         i += 1;
         let frame_name = VECTOR_ELT(info, i);
-        let frame_name = RObject::view(frame_name).to::<String>()?;
+        let frame_name: String = RObject::view(frame_name).try_into()?;
 
         let mut source = None;
 
         i += 1;
         let file = VECTOR_ELT(info, i);
         if file != R_NilValue {
-            source = Some(FrameSource::File(RObject::view(file).to::<String>()?));
+            let file: String = RObject::view(file).try_into()?;
+            source = Some(FrameSource::File(file));
         }
 
         i += 1;
         let text = VECTOR_ELT(info, i);
         if text != R_NilValue {
-            source = Some(FrameSource::Text(RObject::view(text).to::<String>()?));
+            let text: String = RObject::view(text).try_into()?;
+            source = Some(FrameSource::Text(text));
         }
 
         let Some(source) = source else {
@@ -261,21 +263,22 @@ fn as_frame_info(info: SEXP) -> anyhow::Result<FrameInfo> {
 
         i += 1;
         let start_line = VECTOR_ELT(info, i);
-        let start_line = RObject::view(start_line).to::<i32>()?;
+        let start_line: i32 = RObject::view(start_line).try_into()?;
 
         i += 1;
         let start_column = VECTOR_ELT(info, i);
-        let start_column = RObject::view(start_column).to::<i32>()?;
+        let start_column: i32 = RObject::view(start_column).try_into()?;
 
         i += 1;
         let end_line = VECTOR_ELT(info, i);
-        let end_line = RObject::view(end_line).to::<i32>()?;
+        let end_line: i32 = RObject::view(end_line).try_into()?;
 
         // For `end_column`, the column range provided by R is inclusive `[,]`, but the
         // one used on the DAP / Positron side is exclusive `[,)` so we have to add 1.
         i += 1;
         let end_column = VECTOR_ELT(info, i);
-        let end_column = RObject::view(end_column).to::<i32>()? + 1;
+        let end_column: i32 = RObject::view(end_column).try_into()?;
+        let end_column = end_column + 1;
 
         Ok(FrameInfo {
             source_name,
