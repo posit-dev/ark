@@ -35,6 +35,7 @@ use harp::utils::r_is_object;
 use harp::utils::r_is_s4;
 use harp::utils::r_typeof;
 use harp::vector::formatted_vector::FormattedVector;
+use harp::TableInfo;
 use libr::*;
 use serde::Deserialize;
 use serde::Serialize;
@@ -196,8 +197,7 @@ impl RDataExplorer {
             let table = self.table.get().clone();
             let object = *table;
 
-            let info =
-                harp::table_info(object).ok_or(anyhow!("Unsupported type for data viewer"))?;
+            let info = table_info_or_bail(object)?;
 
             let harp::TableInfo {
                 kind,
@@ -262,7 +262,7 @@ impl RDataExplorer {
                     num_cols: num_columns,
                 },
             col_names: _,
-        } = harp::table_info(object).ok_or(anyhow!("Unsupported type for data viewer"))?;
+        } = table_info_or_bail(object)?;
 
         let state = TableState {
             table_shape: TableShape {
@@ -284,7 +284,7 @@ impl RDataExplorer {
         let table = self.table.get().clone();
         let object = *table;
 
-        let info = harp::table_info(object).ok_or(anyhow!("Unsupported type for data viewer"))?;
+        let info = table_info_or_bail(object)?;
 
         let harp::TableInfo {
             dims:
@@ -409,6 +409,10 @@ fn display_type(x: SEXP) -> ColumnSchemaTypeDisplay {
         VECSXP => return ColumnSchemaTypeDisplay::Unknown,
         _ => return ColumnSchemaTypeDisplay::Unknown,
     }
+}
+
+fn table_info_or_bail(x: SEXP) -> anyhow::Result<TableInfo> {
+    harp::table_info(x).ok_or(anyhow!("Unsupported type for data viewer"))
 }
 
 #[harp::register]
