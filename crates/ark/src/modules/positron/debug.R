@@ -60,7 +60,7 @@ debugger_stack_info <- function(
     fn <- fns[[i]]
     call_text <- call_texts[[i]]
 
-    out[[i]] <- frame_info(
+    out[[i]] <- intermediate_frame_info(
       source_name = call_text,
       frame_name = call_text,
       srcref = srcref,
@@ -117,37 +117,18 @@ context_frame_info <- function(srcref, fn, call_text, parent_call, last_start_li
     source_name <- paste0(source_name, "()")
   }
 
-  if (!is.null(srcref)) {
-    # Prefer srcref if we have it
-    out <- frame_info_from_srcref(source_name, frame_name, srcref)
-
-    if (!is.null(out)) {
-      return(out)
-    }
-  }
-
-  # Only deparse if `srcref` failed!
-  fn_lines <- call_deparse(fn)
-  fn_text <- lines_join(fn_lines)
-
-  if (!is.null(call_text)) {
-    # Fallback to matching against `call_text` if we have to and we have it.
-    out <- frame_info_from_function(source_name, frame_name, fn_text, call_text, last_start_line)
-
-    if (!is.null(out)) {
-      return(out)
-    }
-  }
-
-  frame_info_unknown_range(
-    source_name = source_name,
-    frame_name = frame_name,
-    file = NULL,
-    contents = fn_text
-  )
+  frame_info(source_name, frame_name, srcref, fn, call_text, last_start_line)
 }
 
-frame_info <- function(source_name, frame_name, srcref, fn, call_text) {
+intermediate_frame_info <- function(source_name, frame_name, srcref, fn, call_text) {
+  # Currently only tracked for the context frame, as that is where it is most useful,
+  # since that is where the user is actively stepping.
+  last_start_line <- NULL
+
+  frame_info(source_name, frame_name, srcref, fn, call_text, last_start_line)
+}
+
+frame_info <- function(source_name, frame_name, srcref, fn, call_text, last_start_line) {
   if (!is.null(srcref)) {
     # Prefer srcref if we have it
     out <- frame_info_from_srcref(source_name, frame_name, srcref)
@@ -161,15 +142,25 @@ frame_info <- function(source_name, frame_name, srcref, fn, call_text) {
   fn_lines <- call_deparse(fn)
   fn_text <- lines_join(fn_lines)
 
-  # Only tracked for the context frame, as that is where it is most useful, since that
-  # is where the user is actively stepping.
-  last_start_line <- NULL
+  # Reparse early on, so even if we fail to find `call_text` or fail to reparse,
+  # we pass a `fn_text` to `frame_info_unknown_range()` where we've consistently removed
+  # any known non parseable objects in the text. This is particularly important right when
+  # we step into a function without sources, where we aren't able to match against the
+  # whole function body in the first step, but we are able to start matching on the next
+  # step.
+  info <- reparse_frame_text(fn_text, call_text)
+  fn_expr <- info$fn_expr
+  fn_text <- info$fn_text
+  call_text <- info$call_text
 
-  # Fallback to matching against `call_text` if we have to.
-  out <- frame_info_from_function(source_name, frame_name, fn_text, call_text, last_start_line)
+  if (!is.null(fn_expr) && !is.null(call_text)) {
+    # Fallback to matching against `call_text` if we have to and we have it and we were
+    # able to successfully parse `fn_text`.
+    out <- frame_info_from_function(source_name, frame_name, fn_expr, fn_text, call_text, last_start_line)
 
-  if (!is.null(out)) {
-    return(out)
+    if (!is.null(out)) {
+      return(out)
+    }
   }
 
   frame_info_unknown_range(
@@ -218,12 +209,12 @@ frame_info_from_srcref <- function(source_name, frame_name, srcref) {
   )
 }
 
-frame_info_from_function <- function(source_name, frame_name, fn_text, call_text, last_start_line) {
+frame_info_from_function <- function(source_name, frame_name, fn_expr, fn_text, call_text, last_start_line) {
   # Immediately after we step into a function, R spits out `debug: { entire-body }`,
   # which doesn't show up in our source references so we don't find it and end up
   # returning `0`s for the locations. But this is ok, all the user has to do is step to
   # the first line of the function, and then we start recognizing expressions again.
-  range <- locate_call(fn_text, call_text, last_start_line)
+  range <- locate_call(fn_expr, call_text, last_start_line)
 
   if (is.null(range)) {
     return(NULL)
@@ -238,6 +229,33 @@ frame_info_from_function <- function(source_name, frame_name, fn_text, call_text
     start_column = range$start_column,
     end_line = range$end_line,
     end_column = range$end_column
+  )
+}
+
+reparse_frame_text <- function(fn_text, call_text) {
+  fn_expr <- parse_function_text(fn_text)
+
+  if (is.null(fn_expr)) {
+    # Likely due to a non parseable object.
+    # In these cases we try to strip out known non parseable object descriptions that
+    # come from `deparse()` and we try to parse again. We return the updated `fn_text`
+    # so we can display text in the editor that matches the text we performed the matching
+    # against.
+    fn_text <- replace_non_parseable(fn_text)
+
+    if (!is.null(call_text)) {
+      # Also update `call_text` for consistency during matching if we have it.
+      call_text <- replace_non_parseable(call_text)
+    }
+
+    # Could still return `NULL`, caller deals with that
+    fn_expr <- parse_function_text(fn_text)
+  }
+
+  list(
+    fn_expr = fn_expr,
+    fn_text = fn_text,
+    call_text = call_text
   )
 }
 
@@ -313,8 +331,8 @@ lines_join <- function(x) {
   paste0(x, collapse = "\n")
 }
 
-#' @param fn_text A single string containing the text of a function, with lines
-#'   split by `\n`.
+#' @param fn_expr A function expression returned from `parse_function_text()`, which
+#'   reparsed the function text while keeping source references.
 #' @param call_text A single string containing the text of a call to look for
 #'   in the function, with lines split by `\n`.
 #' @param last_start_line Either `NULL` if the last start line is unknown, or a single
@@ -324,13 +342,9 @@ lines_join <- function(x) {
 #'   but works decently well. Would be too complicated and not very useful to try and
 #'   track this for other frames than the current context frame that the user is actually
 #'   actively stepping through.
-locate_call <- function(fn_text, call_text, last_start_line) {
-  fn_expr <- parse_function_text(fn_text)
-
-  if (is.null(fn_expr)) {
-    return(NULL)
-  }
-
+#'
+#' @returns A range created by `srcref_to_range()` that points to a location in `fn_expr`.
+locate_call <- function(fn_expr, call_text, last_start_line) {
   info <- extract_source_references(fn_expr)
   fn_text <- info$text
 
@@ -569,4 +583,52 @@ parse_function_text <- function(x) {
   }
 
   x
+}
+
+replace_non_parseable <- function(x) {
+  infos <- non_parseable_pattern_infos()
+
+  for (info in infos) {
+    pattern <- info$pattern
+    replacement <- info$replacement
+    fixed <- info$fixed
+
+    x <- gsub(
+      pattern = pattern,
+      replacement = replacement,
+      x = x,
+      fixed = fixed
+    )
+  }
+
+  x
+}
+
+# Hand crafted list collected by finding locations where `deparse()` sets
+# `sourceable = FALSE`, and looking at the text that it inserts when that is the case
+# https://github.com/wch/r-source/blob/2bbece03085f9227ed18726e0d0faab3d4d70262/src/main/deparse.c#L945-L946
+non_parseable_pattern_infos <- function() {
+  list(
+    non_parseable_pattern_info("<S4 object of class .*>", "<S4 object>"),
+    non_parseable_pattern_info("<promise: .*>", "<promise>"),
+    non_parseable_pattern_info("<pointer: .*>", "<pointer>"),
+    non_parseable_fixed_info("<environment>", "<environment>"),
+    non_parseable_fixed_info("<bytecode>", "<bytecode>"),
+    non_parseable_fixed_info("<weak reference>", "<weak reference>"),
+    non_parseable_fixed_info("<object>", "<object>"),
+    # We see this one in `call_text` captured from `debug: <call>`,
+    # not in `deparse()` directly. In the `fn_text` this shows up as `<environment>` and
+    # we want to match that, so that's what we replace with.
+    non_parseable_pattern_info("<environment: .*>", "<environment>")
+  )
+}
+non_parseable_pattern_info <- function(pattern, replacement) {
+  list(pattern = pattern, replacement = double_quote(replacement), fixed = FALSE)
+}
+non_parseable_fixed_info <- function(pattern, replacement) {
+  list(pattern = pattern, replacement = double_quote(replacement), fixed = TRUE)
+}
+
+double_quote <- function(x) {
+  encodeString(x, quote = "\"", na.encode = FALSE)
 }
