@@ -188,7 +188,8 @@ frame_info_from_srcref <- function(source_name, frame_name, srcref) {
 
   # If the file name is missing but there is a `srcref`, then we can try to use
   # the `lines` to reconstruct a fake source file that `srcref` can point into.
-  # This is used when debugging user functions that are entered directly into the console.
+  # This is used when debugging user functions that are entered directly into the console,
+  # and for functions parsed with `parse(text = <text>, keep.source = TRUE)`.
   file <- srcfile$filename
   lines <- srcfile$lines
 
