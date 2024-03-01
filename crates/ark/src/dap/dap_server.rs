@@ -365,12 +365,33 @@ impl<R: Read, W: Write> DapServer<R, W> {
     fn handle_source(&mut self, req: Request, args: SourceArguments) {
         // We fully expect a `source` argument to exist, it is only for backwards
         // compatibility that it could be `None`
-        let source = args.source.unwrap();
+        let Some(source) = args.source else {
+            let message = "Missing `Source` to extract a `source_reference` from.";
+            log::error!("{message}");
+            let rsp = req.error(message);
+            self.server.respond(rsp).unwrap();
+            return;
+        };
 
         // We expect a `source_reference`. If the client had a `path` then it would
         // not have asked us for the source content.
-        let source_reference = source.source_reference.unwrap();
-        let content = self.find_source_content(source_reference);
+        let Some(source_reference) = source.source_reference else {
+            let message = "Missing `source_reference` to locate content for.";
+            log::error!("{message}");
+            let rsp = req.error(message);
+            self.server.respond(rsp).unwrap();
+            return;
+        };
+
+        // Try to find the source content for this `source_reference`
+        let Some(content) = self.find_source_content(source_reference) else {
+            let message =
+                "Failed to locate source content for `source_reference` {source_reference}.";
+            log::error!("{message}");
+            let rsp = req.error(message);
+            self.server.respond(rsp).unwrap();
+            return;
+        };
 
         let rsp = req.success(ResponseBody::Source(SourceResponse {
             content,
@@ -380,19 +401,18 @@ impl<R: Read, W: Write> DapServer<R, W> {
         self.server.respond(rsp).unwrap();
     }
 
-    fn find_source_content(&self, source_reference: i32) -> String {
+    fn find_source_content(&self, source_reference: i32) -> Option<String> {
         let state = self.state.lock().unwrap();
         let fallback_sources = &state.fallback_sources;
 
         // Match up the requested `source_reference` with one in our `fallback_sources`
         for (current_source, current_source_reference) in fallback_sources.iter() {
             if &source_reference == current_source_reference {
-                return current_source.clone();
+                return Some(current_source.clone());
             }
         }
 
-        log::error!("Failed to locate `source_reference` {source_reference}.");
-        "".to_string()
+        None
     }
 
     fn handle_step<A>(&mut self, req: Request, _args: A, cmd: DebugRequest, resp: ResponseBody) {
