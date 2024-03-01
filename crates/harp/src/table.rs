@@ -2,6 +2,7 @@ use libr::*;
 
 use crate::exec::RFunction;
 use crate::exec::RFunctionExt;
+use crate::object::r_length;
 use crate::utils::r_is_data_frame;
 use crate::utils::r_is_matrix;
 use crate::utils::r_typeof;
@@ -19,17 +20,19 @@ pub struct TableInfo {
     pub col_names: ColumnNames,
 }
 
-pub fn table_info(x: SEXP) -> anyhow::Result<TableInfo> {
+// TODO: Might want to encode as types with methods so that we can make
+// assumptions about memory layout more safely. Also makes it possible
+// to compute properties more lazily.
+pub fn table_info(x: SEXP) -> Option<TableInfo> {
     if r_is_data_frame(x) {
-        return df_info(x);
+        return df_info(x).ok();
     }
 
     if r_is_matrix(x) {
-        return mat_info(x);
+        return mat_info(x).ok();
     }
 
-    // TODO: better error message
-    anyhow::bail!("Unsupported type for data viewer");
+    None
 }
 
 pub fn df_info(x: SEXP) -> anyhow::Result<TableInfo> {
@@ -80,6 +83,14 @@ pub fn df_dim(data: SEXP) -> TableDim {
 pub fn mat_dim(x: SEXP) -> TableDim {
     unsafe {
         let dims = Rf_getAttrib(x, R_DimSymbol);
+
+        // Might want to return an error instead, or take a strongly typed input
+        if r_typeof(dims) != INTSXP || r_length(dims) != 2 {
+            return TableDim {
+                num_rows: r_length(x) as i32,
+                num_cols: 1,
+            };
+        }
 
         TableDim {
             num_rows: INTEGER_ELT(dims, 0),
