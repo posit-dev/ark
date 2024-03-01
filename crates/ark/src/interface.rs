@@ -894,6 +894,8 @@ impl RMain {
             Err(err) => panic!("Failed to read from R buffer: {err:?}"),
         };
 
+        // To capture the current `debug: <call>` output, for use in the debugger's
+        // match based fallback
         self.dap.handle_stdout(&content);
 
         let stream = if otype == 0 {
