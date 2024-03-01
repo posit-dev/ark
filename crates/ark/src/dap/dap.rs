@@ -53,7 +53,7 @@ pub struct Dap {
     /// associated files (i.e. no `srcref` attribute). The `source` is the key to
     /// ensure that we don't insert the same function multiple times, which would result
     /// in duplicate virtual editors being opened on the client side.
-    pub sources: HashMap<String, i32>,
+    pub fallback_sources: HashMap<String, i32>,
     current_source_reference: i32,
 
     /// Channel for sending events to the comm frontend.
@@ -74,7 +74,7 @@ impl Dap {
             is_connected: false,
             backend_events_tx: None,
             stack: None,
-            sources: HashMap::new(),
+            fallback_sources: HashMap::new(),
             current_source_reference: 1,
             comm_tx: None,
             r_request_tx,
@@ -93,18 +93,18 @@ impl Dap {
     }
 
     pub fn start_debug(&mut self, stack: Vec<FrameInfo>) {
-        // Load `sources` with this stack's text sources
+        // Load `fallback_sources` with this stack's text sources
         for frame in stack.iter() {
             let source = &frame.source;
 
             match source {
                 FrameSource::File(_) => continue,
                 FrameSource::Text(source) => {
-                    if self.sources.contains_key(source) {
-                        // Already in `sources`, associated with an existing `source_reference`
+                    if self.fallback_sources.contains_key(source) {
+                        // Already in `fallback_sources`, associated with an existing `source_reference`
                         continue;
                     }
-                    self.sources
+                    self.fallback_sources
                         .insert(source.clone(), self.current_source_reference);
                     self.current_source_reference += 1;
                 },
@@ -135,7 +135,7 @@ impl Dap {
     pub fn stop_debug(&mut self) {
         // Reset state
         self.stack = None;
-        self.sources.clear();
+        self.fallback_sources.clear();
         self.current_source_reference = 1;
         self.is_debugging = false;
 

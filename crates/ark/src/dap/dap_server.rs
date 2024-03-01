@@ -329,12 +329,12 @@ impl<R: Read, W: Write> DapServer<R, W> {
     fn handle_stacktrace(&mut self, req: Request, args: StackTraceArguments) {
         let state = self.state.lock().unwrap();
         let stack = state.stack.clone();
-        let sources = &state.sources;
+        let fallback_sources = &state.fallback_sources;
 
         let stack = match stack {
             Some(stack) => stack
                 .into_iter()
-                .map(|frame| into_dap_frame(frame, sources))
+                .map(|frame| into_dap_frame(frame, fallback_sources))
                 .collect(),
             _ => vec![],
         };
@@ -382,10 +382,10 @@ impl<R: Read, W: Write> DapServer<R, W> {
 
     fn find_source_content(&self, source_reference: i32) -> String {
         let state = self.state.lock().unwrap();
-        let sources = &state.sources;
+        let fallback_sources = &state.fallback_sources;
 
-        // Match up the requested `source_reference` with one in our `sources`
-        for (current_source, current_source_reference) in sources.iter() {
+        // Match up the requested `source_reference` with one in our `fallback_sources`
+        for (current_source, current_source_reference) in fallback_sources.iter() {
             if &source_reference == current_source_reference {
                 return current_source.clone();
             }
@@ -421,7 +421,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
     }
 }
 
-fn into_dap_frame(frame: FrameInfo, sources: &HashMap<String, i32>) -> StackFrame {
+fn into_dap_frame(frame: FrameInfo, fallback_sources: &HashMap<String, i32>) -> StackFrame {
     let source_name = frame.source_name;
     let frame_name = frame.frame_name;
     let source = frame.source;
@@ -436,7 +436,7 @@ fn into_dap_frame(frame: FrameInfo, sources: &HashMap<String, i32>) -> StackFram
     let (path, source_reference) = match source {
         FrameSource::File(path) => (Some(path), None),
         FrameSource::Text(source) => {
-            let source_reference = sources.get(&source).cloned().or_else(|| {
+            let source_reference = fallback_sources.get(&source).cloned().or_else(|| {
                 log::error!("Failed to find a source reference for source text: '{source}'");
                 None
             });
