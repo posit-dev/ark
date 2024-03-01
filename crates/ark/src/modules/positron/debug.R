@@ -607,28 +607,38 @@ replace_non_parseable <- function(x) {
 # Hand crafted list collected by finding locations where `deparse()` sets
 # `sourceable = FALSE`, and looking at the text that it inserts when that is the case
 # https://github.com/wch/r-source/blob/2bbece03085f9227ed18726e0d0faab3d4d70262/src/main/deparse.c#L945-L946
+#
+# We replace the non parseable code with something that can parse, but purposefully looks
+# suspicious. It is fairly hard to create one of these inside a function to begin with,
+# but this will do it:
+#
+# ```
+# options(keep.source = FALSE)
+# fn <- rlang::inject(function() {
+#   1 + 1
+#   !!new.env()
+#   "<environment>"
+#   !!unclass(xml2::read_xml("<foo><bar /></foo>"))$node
+# })
+# ```
 non_parseable_pattern_infos <- function() {
   list(
-    non_parseable_pattern_info("<S4 object of class .*>", "<S4 object>"),
-    non_parseable_pattern_info("<promise: .*>", "<promise>"),
-    non_parseable_pattern_info("<pointer: .*>", "<pointer>"),
-    non_parseable_fixed_info("<environment>", "<environment>"),
-    non_parseable_fixed_info("<bytecode>", "<bytecode>"),
-    non_parseable_fixed_info("<weak reference>", "<weak reference>"),
-    non_parseable_fixed_info("<object>", "<object>"),
+    non_parseable_pattern_info("<S4 object of class .*>", "...S4..."),
+    non_parseable_pattern_info("<promise: .*>", "...PROMISE..."),
+    non_parseable_pattern_info("<pointer: .*>", "...POINTER..."),
+    non_parseable_fixed_info("<environment>", "...ENVIRONMENT..."),
+    non_parseable_fixed_info("<bytecode>", "...BYTECODE..."),
+    non_parseable_fixed_info("<weak reference>", "...WEAK_REFERENCE..."),
+    non_parseable_fixed_info("<object>", "...OBJECT..."),
     # We see this one in `call_text` captured from `debug: <call>`,
     # not in `deparse()` directly. In the `fn_text` this shows up as `<environment>` and
     # we want to match that, so that's what we replace with.
-    non_parseable_pattern_info("<environment: .*>", "<environment>")
+    non_parseable_pattern_info("<environment: .*>", "...ENVIRONMENT...")
   )
 }
 non_parseable_pattern_info <- function(pattern, replacement) {
-  list(pattern = pattern, replacement = double_quote(replacement), fixed = FALSE)
+  list(pattern = pattern, replacement = replacement, fixed = FALSE)
 }
 non_parseable_fixed_info <- function(pattern, replacement) {
-  list(pattern = pattern, replacement = double_quote(replacement), fixed = TRUE)
-}
-
-double_quote <- function(x) {
-  encodeString(x, quote = "\"", na.encode = FALSE)
+  list(pattern = pattern, replacement = replacement, fixed = TRUE)
 }
