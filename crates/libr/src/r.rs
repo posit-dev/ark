@@ -247,6 +247,8 @@ functions::generate! {
 
     pub fn SET_STRING_ELT(x: SEXP, i: R_xlen_t, v: SEXP);
 
+    pub fn SET_INTEGER_ELT(x: SEXP, i: R_xlen_t, v: std::ffi::c_int);
+
     pub fn SET_TAG(x: SEXP, y: SEXP);
 
     pub fn SET_TYPEOF(x: SEXP, v: std::ffi::c_int);

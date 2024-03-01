@@ -6,6 +6,7 @@
 //
 
 pub mod dap;
+pub mod dap_r_main;
 pub mod dap_server;
 
 pub use self::dap::Dap;
