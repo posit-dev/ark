@@ -9,15 +9,14 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use anyhow::anyhow;
+use harp::call::RCall;
+use harp::exec::r_safe_eval;
 use harp::object::RObject;
 use harp::protect::RProtect;
-use harp::r_lang;
 use harp::r_string;
 use harp::r_symbol;
 use harp::session::r_sys_calls;
 use harp::session::r_sys_functions;
-use harp::utils::r_try_eval_silent;
-use libr::R_GlobalEnv;
 use libr::R_NilValue;
 use libr::R_Srcref;
 use libr::Rf_allocVector;
@@ -30,6 +29,7 @@ use stdext::log_error;
 
 use crate::dap::dap::DapBackendEvent;
 use crate::dap::Dap;
+use crate::modules::ARK_ENVS;
 
 pub struct RMainDap {
     /// Underlying dap state
@@ -201,26 +201,23 @@ fn r_stack_info(
         let calls = r_sys_calls()?;
         protect.add(calls);
 
-        let call = r_lang!(
-            r_symbol!(".ps.debug.stackInfo"),
-            context_call_text,
-            context_last_start_line,
-            context_srcref,
-            functions,
-            calls,
-        );
-        protect.add(call);
+        let call = RCall::new(r_symbol!("debugger_stack_info"))
+            .add(context_call_text)
+            .add(context_last_start_line)
+            .add(context_srcref)
+            .add(functions)
+            .add(calls)
+            .build();
 
-        let info = r_try_eval_silent(call, R_GlobalEnv)?;
-        protect.add(info);
+        let info = r_safe_eval(call, ARK_ENVS.positron_ns.into())?;
 
-        let n: isize = Rf_xlength(info).try_into()?;
+        let n: isize = Rf_xlength(info.sexp).try_into()?;
 
         let mut out = Vec::with_capacity(n as usize);
 
         // Reverse the order for DAP
         for i in (0..n).rev() {
-            let frame = VECTOR_ELT(info, i);
+            let frame = VECTOR_ELT(info.sexp, i);
             out.push(as_frame_info(frame)?);
         }
 

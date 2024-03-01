@@ -5,8 +5,7 @@
 #
 #
 
-#' @export
-.ps.debug.stackInfo <- function(
+debugger_stack_info <- function(
   context_call_text,
   context_last_start_line,
   context_srcref,
