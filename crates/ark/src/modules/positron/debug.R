@@ -46,7 +46,7 @@ debugger_stack_info <- function(
   })
   call_texts <- lapply(calls, function(call) {
     call_lines <- call_deparse(call)
-    call_text <- lines_flatten(call_lines)
+    call_text <- lines_join(call_lines)
     call_text
   })
 
@@ -87,7 +87,7 @@ debugger_stack_info <- function(
 
 top_level_call_frame_info <- function(x) {
   x <- call_deparse(x)
-  x <- lines_flatten(x)
+  x <- lines_join(x)
 
   # We return `0`s to avoid highlighting anything in the top level call.
   # We just want to show it in the editor, and that's really it.
@@ -125,7 +125,7 @@ context_frame_info <- function(srcref, fn, call_text, parent_call, last_start_li
 
   # Only deparse if `srcref` failed!
   fn_lines <- call_deparse(fn)
-  fn_text <- lines_flatten(fn_lines)
+  fn_text <- lines_join(fn_lines)
 
   if (!is.null(call_text)) {
     # Fallback to matching against `call_text` if we have to and we have it.
@@ -156,7 +156,7 @@ frame_info <- function(source_name, frame_name, srcref, fn, call_text) {
 
   # Only deparse if `srcref` failed!
   fn_lines <- call_deparse(fn)
-  fn_text <- lines_flatten(fn_lines)
+  fn_text <- lines_join(fn_lines)
 
   # Only tracked for the context frame, as that is where it is most useful, since that
   # is where the user is actively stepping.
@@ -305,7 +305,7 @@ call_deparse <- function(x) {
   deparse(x, width.cutoff = 500L)
 }
 
-lines_flatten <- function(x) {
+lines_join <- function(x) {
   paste0(x, collapse = "\n")
 }
 
