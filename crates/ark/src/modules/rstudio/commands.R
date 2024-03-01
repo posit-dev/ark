@@ -6,7 +6,7 @@
         "activateTerminal" = "workbench.action.terminal.focus",
         "saveAllSourceDocs" = "workbench.action.files.saveAll",
         {
-            if (!quiet) stop("This command is not yet supported in Positron.")
+            if (!quiet) .ps.ui.showMessage(paste0("The command '", commandId, "' does not exist."))
             return()
         }
     )
