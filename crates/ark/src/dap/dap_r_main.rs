@@ -9,12 +9,11 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use anyhow::anyhow;
-use harp::call::RCall;
-use harp::exec::r_safe_eval;
+use harp::exec::RFunction;
+use harp::exec::RFunctionExt;
 use harp::object::RObject;
 use harp::protect::RProtect;
 use harp::r_string;
-use harp::r_symbol;
 use harp::session::r_sys_calls;
 use harp::session::r_sys_functions;
 use libr::R_NilValue;
@@ -201,15 +200,13 @@ fn r_stack_info(
         let calls = r_sys_calls()?;
         protect.add(calls);
 
-        let call = RCall::new(r_symbol!("debugger_stack_info"))
+        let info = RFunction::new("", "debugger_stack_info")
             .add(context_call_text)
             .add(context_last_start_line)
             .add(context_srcref)
             .add(functions)
             .add(calls)
-            .build();
-
-        let info = r_safe_eval(call, ARK_ENVS.positron_ns.into())?;
+            .call_in(ARK_ENVS.positron_ns)?;
 
         let n: isize = Rf_xlength(info.sexp).try_into()?;
 
