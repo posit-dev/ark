@@ -1,6 +1,6 @@
 [package]
 name = "ark"
-version = "0.1.59"
+version = "0.1.60"
 edition = "2021"
 rust-version = "1.75.0"
 description = """
@@ -20,7 +20,7 @@ cfg-if = "1.0.0"
 chrono = "0.4.23"
 crossbeam = { version = "0.8.2", features = ["crossbeam-channel"] }
 ctor = "0.1.26"
-dap = { git = "https://github.com/lionel-/dap-rs", branch = "feature/all" }
+dap = { git = "https://github.com/sztomi/dap-rs", branch = "main" }
 dashmap = "5.4.0"
 ego-tree = "0.6.2"
 harp = { path = "../harp" }
@@ -48,7 +48,7 @@ serde_json = { version = "1.0.94", features = ["preserve_order"]}
 stdext = { path = "../stdext" }
 tokio = { version = "1.26.0", features = ["full"] }
 tower-lsp = "0.19.0"
-tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter" }
+tree-sitter = "0.21.0"
 tree-sitter-r = { git = "https://github.com/r-lib/tree-sitter-r", branch = "next" }
 uuid = "1.3.0"
 url = "2.4.1"

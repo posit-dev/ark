@@ -24,6 +24,7 @@ use amalthea::comm::data_explorer_comm::TableState;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
+use anyhow::anyhow;
 use anyhow::bail;
 use crossbeam::channel::Sender;
 use harp::exec::RFunction;
@@ -34,6 +35,7 @@ use harp::utils::r_is_object;
 use harp::utils::r_is_s4;
 use harp::utils::r_typeof;
 use harp::vector::formatted_vector::FormattedVector;
+use harp::TableInfo;
 use libr::*;
 use serde::Deserialize;
 use serde::Serialize;
@@ -195,6 +197,8 @@ impl RDataExplorer {
             let table = self.table.get().clone();
             let object = *table;
 
+            let info = table_info_or_bail(object)?;
+
             let harp::TableInfo {
                 kind,
                 dims:
@@ -203,7 +207,7 @@ impl RDataExplorer {
                         num_cols: total_num_columns,
                     },
                 col_names: column_names,
-            } = harp::table_info(object)?;
+            } = info;
 
             let lower_bound = cmp::min(start_index, total_num_columns) as isize;
             let upper_bound = cmp::min(total_num_columns, start_index + num_columns) as isize;
@@ -258,7 +262,7 @@ impl RDataExplorer {
                     num_cols: num_columns,
                 },
             col_names: _,
-        } = harp::table_info(object)?;
+        } = table_info_or_bail(object)?;
 
         let state = TableState {
             table_shape: TableShape {
@@ -280,6 +284,8 @@ impl RDataExplorer {
         let table = self.table.get().clone();
         let object = *table;
 
+        let info = table_info_or_bail(object)?;
+
         let harp::TableInfo {
             dims:
                 harp::TableDim {
@@ -287,7 +293,7 @@ impl RDataExplorer {
                     num_cols: total_num_cols,
                 },
             ..
-        } = harp::table_info(object)?;
+        } = info;
 
         let lower_bound = cmp::min(row_start_index, total_num_rows) as isize;
         let upper_bound = cmp::min(row_start_index + num_rows, total_num_rows) as isize;
@@ -403,6 +409,10 @@ fn display_type(x: SEXP) -> ColumnSchemaTypeDisplay {
         VECSXP => return ColumnSchemaTypeDisplay::Unknown,
         _ => return ColumnSchemaTypeDisplay::Unknown,
     }
+}
+
+fn table_info_or_bail(x: SEXP) -> anyhow::Result<TableInfo> {
+    harp::table_info(x).ok_or(anyhow!("Unsupported type for data viewer"))
 }
 
 #[harp::register]

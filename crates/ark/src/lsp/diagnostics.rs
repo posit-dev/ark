@@ -13,6 +13,7 @@ use std::time::Duration;
 use anyhow::anyhow;
 use anyhow::bail;
 use anyhow::Result;
+use harp::call::r_expr_quote;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::external_ptr::ExternalPointer;
@@ -711,14 +712,8 @@ fn recurse_call_arguments_default(
 
 struct TreeSitterCall<'a> {
     // A call of the form <fun>(list(0L, <ptr>), foo = list(1L, <ptr>))
-    call: RObject,
+    pub call: RObject,
     node_phantom: PhantomData<&'a Node<'a>>,
-}
-
-impl<'a> From<&TreeSitterCall<'a>> for RObject {
-    fn from(value: &TreeSitterCall<'a>) -> Self {
-        value.call.clone()
-    }
 }
 
 impl<'a> TreeSitterCall<'a> {
@@ -800,7 +795,7 @@ fn recurse_call_arguments_custom(
         let call = TreeSitterCall::new(node, function, context)?;
 
         let custom_diagnostics = RFunction::from(diagnostic_function)
-            .add(&call)
+            .add(r_expr_quote(call.call))
             .add(ExternalPointer::new(context.contents))
             .call()?;
 

@@ -247,6 +247,8 @@ functions::generate! {
 
     pub fn SET_STRING_ELT(x: SEXP, i: R_xlen_t, v: SEXP);
 
+    pub fn SET_INTEGER_ELT(x: SEXP, i: R_xlen_t, v: std::ffi::c_int);
+
     pub fn SET_TAG(x: SEXP, y: SEXP);
 
     pub fn SET_TYPEOF(x: SEXP, v: std::ffi::c_int);
@@ -355,6 +357,8 @@ functions_variadic::generate! {
     pub fn Rf_error(arg1: *const std::ffi::c_char, ...) -> !;
 
     pub fn Rf_errorcall(arg1: SEXP, arg2: *const std::ffi::c_char, ...) -> !;
+
+    pub fn Rprintf(x: *const std::ffi::c_char, ...);
 }
 
 constant_globals::generate! {
