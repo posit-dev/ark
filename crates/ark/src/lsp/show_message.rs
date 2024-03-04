@@ -15,8 +15,6 @@ use stdext::unwrap;
 use crate::interface::RMain;
 
 /// Shows a message in the Positron frontend
-///
-/// Test helper for `R_ShowMessage()` support
 #[harp::register]
 pub unsafe extern "C" fn ps_show_message(message: SEXP) -> anyhow::Result<SEXP> {
     // Convert message to a string
