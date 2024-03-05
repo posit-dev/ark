@@ -11,8 +11,8 @@
 }
 
 #' @export
-.ps.ui.executeCommand <- function(command) {
-    .ps.Call("ps_ui_execute_command", command)
+.ps.ui.executeCommand <- function(command, args = list()) {
+    .ps.Call("ps_ui_execute_command", command, args)
 }
 
 #' @export

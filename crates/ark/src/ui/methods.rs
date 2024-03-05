@@ -10,6 +10,7 @@ use amalthea::comm::ui_comm::ExecuteCommandParams;
 use amalthea::comm::ui_comm::UiFrontendRequest;
 use harp::object::RObject;
 use libr::SEXP;
+use serde_json::json;
 
 use crate::interface::RMain;
 
@@ -21,9 +22,10 @@ pub unsafe extern "C" fn ps_ui_last_active_editor_context() -> anyhow::Result<SE
 }
 
 #[harp::register]
-pub unsafe extern "C" fn ps_ui_execute_command(command: SEXP) -> anyhow::Result<SEXP> {
+pub unsafe extern "C" fn ps_ui_execute_command(command: SEXP, _args: SEXP) -> anyhow::Result<SEXP> {
     let params = ExecuteCommandParams {
         command: RObject::view(command).try_into()?,
+        args: vec![json!({ "uriOrString": "test.R" })],
     };
 
     let main = RMain::get();

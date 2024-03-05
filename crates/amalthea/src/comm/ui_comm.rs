@@ -17,6 +17,9 @@ pub type Param = serde_json::Value;
 /// The method result
 pub type CallMethodResult = serde_json::Value;
 
+/// Items in Params
+pub type Arg = serde_json::Value;
+
 /// Editor metadata
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct EditorContext {
@@ -153,6 +156,9 @@ pub struct DebugSleepParams {
 pub struct ExecuteCommandParams {
 	/// The command to execute
 	pub command: String,
+
+	/// The arguments to the command
+	pub args: Vec<Arg>,
 }
 
 /**
