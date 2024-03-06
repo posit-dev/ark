@@ -5,6 +5,15 @@
 //
 
 use amalthea::comm::comm_channel::CommMsg;
+use amalthea::comm::connections_comm::ConnectionsBackendReply;
+use amalthea::comm::connections_comm::ConnectionsBackendRequest;
+use amalthea::comm::connections_comm::ContainsDataParams;
+use amalthea::comm::connections_comm::FieldSchema;
+use amalthea::comm::connections_comm::GetIconParams;
+use amalthea::comm::connections_comm::ListFieldsParams;
+use amalthea::comm::connections_comm::ListObjectsParams;
+use amalthea::comm::connections_comm::ObjectSchema;
+use amalthea::comm::connections_comm::PreviewObjectParams;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
@@ -55,6 +64,7 @@ pub enum ConnectionResponse {
     ContainsDataResponse {
         contains_data: bool,
     },
+    ConnectionsBackendReply,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -126,9 +136,12 @@ impl RConnection {
         Ok(())
     }
 
-    fn handle_rpc(&self, message: ConnectionRequest) -> Result<ConnectionResponse, anyhow::Error> {
+    fn handle_rpc(
+        &self,
+        message: ConnectionsBackendRequest,
+    ) -> Result<ConnectionsBackendReply, anyhow::Error> {
         match message {
-            ConnectionRequest::TablesRequest { path } => {
+            ConnectionsBackendRequest::ListObjects(ListObjectsParams { path }) => {
                 let tables = r_task(|| -> Result<_, anyhow::Error> {
                     unsafe {
                         let mut call = RFunction::from(".ps.connection_list_objects");
@@ -152,7 +165,7 @@ impl RConnection {
                         let resulting = RObject::to::<Vec<String>>(names)?
                             .iter()
                             .zip(RObject::to::<Vec<String>>(types)?.iter())
-                            .map(|(name, kind)| ConnectionTable {
+                            .map(|(name, kind)| ObjectSchema {
                                 name: name.clone(),
                                 kind: kind.clone(),
                             })
@@ -162,12 +175,9 @@ impl RConnection {
                     }
                 })?;
 
-                Ok(ConnectionResponse::TablesResponse {
-                    name: self.name.clone(),
-                    tables,
-                })
+                Ok(ConnectionsBackendReply::ListObjectsReply(tables))
             },
-            ConnectionRequest::FieldsRequest { path } => {
+            ConnectionsBackendRequest::ListFields(ListFieldsParams { path }) => {
                 let fields = r_task(|| -> Result<_, anyhow::Error> {
                     unsafe {
                         let mut call = RFunction::from(".ps.connection_list_fields");
@@ -191,7 +201,7 @@ impl RConnection {
                         let resulting = RObject::to::<Vec<String>>(names)?
                             .iter()
                             .zip(RObject::to::<Vec<String>>(dtypes)?.iter())
-                            .map(|(name, dtype)| ConnectionTableField {
+                            .map(|(name, dtype)| FieldSchema {
                                 name: name.clone(),
                                 dtype: dtype.clone(),
                             })
@@ -201,12 +211,9 @@ impl RConnection {
                     }
                 })?;
 
-                Ok(ConnectionResponse::FieldsResponse {
-                    name: self.name.clone(),
-                    fields,
-                })
+                Ok(ConnectionsBackendReply::ListFieldsReply(fields))
             },
-            ConnectionRequest::PreviewTable { path } => {
+            ConnectionsBackendRequest::PreviewObject(PreviewObjectParams { path }) => {
                 // Calls back into R to get the preview data.
                 r_task(|| -> Result<(), anyhow::Error> {
                     let mut call = RFunction::from(".ps.connection_preview_object");
@@ -217,9 +224,9 @@ impl RConnection {
                     call.call()?;
                     Ok(())
                 })?;
-                Ok(ConnectionResponse::PreviewResponse)
+                Ok(ConnectionsBackendReply::PreviewObjectReply())
             },
-            ConnectionRequest::IconRequest { path } => {
+            ConnectionsBackendRequest::GetIcon(GetIconParams { path }) => {
                 // Calls back into R to get the icon.
                 let icon_path = r_task(|| -> Result<_, anyhow::Error> {
                     unsafe {
@@ -232,15 +239,16 @@ impl RConnection {
                         let icon = call.call()?;
 
                         if r_is_null(*icon) {
-                            Ok(None)
+                            // we'd rather use the option type but couldn't find a way to autogenerate RPC optionals
+                            Ok("".to_string())
                         } else {
-                            Ok(Some(RObject::to::<String>(icon)?))
+                            Ok(RObject::to::<String>(icon)?)
                         }
                     }
                 })?;
-                Ok(ConnectionResponse::IconResponse { icon: icon_path })
+                Ok(ConnectionsBackendReply::GetIconReply(icon_path))
             },
-            ConnectionRequest::ContainsDataRequest { path } => {
+            ConnectionsBackendRequest::ContainsData(ContainsDataParams { path }) => {
                 // Calls back into R to check if the object contains data.
                 let contains_data = r_task(|| -> Result<_, anyhow::Error> {
                     unsafe {
@@ -254,7 +262,7 @@ impl RConnection {
                         Ok(RObject::to::<bool>(contains_data)?)
                     }
                 })?;
-                Ok(ConnectionResponse::ContainsDataResponse { contains_data })
+                Ok(ConnectionsBackendReply::ContainsDataReply(contains_data))
             },
         }
     }

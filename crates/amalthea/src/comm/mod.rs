@@ -24,3 +24,5 @@ pub mod server_comm;
 pub mod ui_comm;
 #[rustfmt::skip]
 pub mod variables_comm;
+#[rustfmt::skip]
+pub mod connections_comm;
