@@ -34,54 +34,6 @@ use uuid::Uuid;
 use crate::interface::RMain;
 use crate::r_task;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ConnectionTable {
-    name: String,
-    kind: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ConnectionTableField {
-    name: String,
-    dtype: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "msg_type", rename_all = "snake_case")]
-pub enum ConnectionResponse {
-    TablesResponse {
-        name: String,
-        tables: Vec<ConnectionTable>,
-    },
-    FieldsResponse {
-        name: String,
-        fields: Vec<ConnectionTableField>,
-    },
-    PreviewResponse,
-    IconResponse {
-        icon: Option<String>,
-    },
-    ContainsDataResponse {
-        contains_data: bool,
-    },
-    ConnectionsBackendReply,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "msg_type", rename_all = "snake_case")]
-pub enum ConnectionRequest {
-    // The UI is asking for the list of tables in the connection.
-    TablesRequest { path: Vec<ConnectionTable> },
-    // The UI is asking for the list of fields in a table.
-    FieldsRequest { path: Vec<ConnectionTable> },
-    // The UI asks for a DataViewer preview of the table.
-    PreviewTable { path: Vec<ConnectionTable> },
-    // The UI asks for an icon for a given element
-    IconRequest { path: Vec<ConnectionTable> },
-    // The UI asks if the object contains data
-    ContainsDataRequest { path: Vec<ConnectionTable> },
-}
-
 #[derive(Deserialize, Serialize)]
 struct Metadata {
     name: String,
