@@ -25,7 +25,7 @@ zmq = "0.10.0"
 strum = "0.24"
 strum_macros = "0.24"
 crossbeam = { version = "0.8.2", features = ["crossbeam-channel"] }
-anyhow = "1.0.71"
+anyhow = "1.0.80"
 serde_with = "3.0.0"
 serde_repr = "0.1.17"
 

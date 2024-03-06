@@ -11,9 +11,8 @@ authors = ["Posit, PBC"]
 [dependencies]
 actix-web = "4.4.0"
 amalthea = { path = "../amalthea" }
-anyhow = { version = "^1.0", features = ["backtrace"] }
+anyhow = "1.0.80"
 async-trait = "0.1.66"
-backtrace = "0.3.67"
 base64 = "0.21.0"
 bus = "2.3.0"
 cfg-if = "1.0.0"

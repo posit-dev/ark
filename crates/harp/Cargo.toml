@@ -8,7 +8,7 @@ Tools for integrating R and Rust.
 """
 
 [dependencies]
-anyhow = "1.0.71"
+anyhow = "1.0.80"
 c2rust-bitfields = "0.17.0"
 cfg-if = "1.0.0"
 ctor = "0.1.26"
