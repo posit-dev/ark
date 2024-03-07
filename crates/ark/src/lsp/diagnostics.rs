@@ -989,17 +989,9 @@ fn check_unmatched_opening_brace(
     context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<bool> {
-    let n = node.child_count();
-
-    if n == 0 || n == 1 {
-        bail!("A block `body` must have a minimum size of 2, not {n}.");
-    }
-
-    let lhs = node.child(1 - 1).unwrap();
-    let rhs = node.child(n - 1).unwrap();
-
-    if lhs.kind() == "{" && rhs.kind() != "}" {
-        let range = lhs.range();
+    if is_unmatched_block(&node, "{", "}")? {
+        let open = node.child(0).unwrap();
+        let range = open.range();
         let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
         let message = "unmatched opening brace '{'";
         let diagnostic = Diagnostic::new_simple(range, message.into());
@@ -1014,17 +1006,9 @@ fn check_unmatched_opening_paren(
     context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<bool> {
-    let n = node.child_count();
-
-    if n == 0 || n == 1 {
-        bail!("A paren `body` must have a minimum size of 2, not {n}.");
-    }
-
-    let lhs = node.child(1 - 1).unwrap();
-    let rhs = node.child(n - 1).unwrap();
-
-    if lhs.kind() == "(" && rhs.kind() != ")" {
-        let range = lhs.range();
+    if is_unmatched_block(&node, "(", ")")? {
+        let open = node.child(0).unwrap();
+        let range = open.range();
         let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
         let message = "unmatched opening parenthesis '('";
         let diagnostic = Diagnostic::new_simple(range, message.into());
@@ -1032,6 +1016,29 @@ fn check_unmatched_opening_paren(
     }
 
     true.ok()
+}
+
+fn is_unmatched_block(node: &Node, open: &str, close: &str) -> Result<bool> {
+    let n = node.child_count();
+
+    if n == 0 {
+        // Required to have an anonymous `{` or `(` to start the node
+        bail!("A `{open}` node must have a minimum size of 1.");
+    }
+
+    if n == 1 {
+        // No `body` and no closing `token`. Definitely unmatched.
+        return true.ok();
+    }
+
+    // If `n >= 2`, might be multiple `body`s but still no closing `token`,
+    // so we check against the last child.
+    let lhs = node.child(1 - 1).unwrap();
+    let rhs = node.child(n - 1).unwrap();
+
+    let unmatched = lhs.kind() == open && rhs.kind() != close;
+
+    unmatched.ok()
 }
 
 fn check_invalid_na_comparison(
@@ -1203,4 +1210,49 @@ fn check_symbol_in_scope(
     diagnostics.push(diagnostic);
 
     true.ok()
+}
+
+#[cfg(test)]
+mod tests {
+
+    use crate::lsp::diagnostics::is_unmatched_block;
+    use crate::lsp::documents::Document;
+
+    #[test]
+    fn test_unmatched_braces() {
+        let document = Document::new("{", None);
+        let node = document.ast.root_node().named_child(0).unwrap();
+        assert!(is_unmatched_block(&node, "{", "}").unwrap());
+
+        let document = Document::new("{ 1 + 2", None);
+        let node = document.ast.root_node().named_child(0).unwrap();
+        assert!(is_unmatched_block(&node, "{", "}").unwrap());
+
+        let document = Document::new("{}", None);
+        let node = document.ast.root_node().named_child(0).unwrap();
+        assert!(!is_unmatched_block(&node, "{", "}").unwrap());
+
+        let document = Document::new("{ 1 + 2 }", None);
+        let node = document.ast.root_node().named_child(0).unwrap();
+        assert!(!is_unmatched_block(&node, "{", "}").unwrap());
+    }
+
+    #[test]
+    fn test_unmatched_parentheses() {
+        let document = Document::new("(", None);
+        let node = document.ast.root_node().named_child(0).unwrap();
+        assert!(is_unmatched_block(&node, "(", ")").unwrap());
+
+        let document = Document::new("( 1 + 2", None);
+        let node = document.ast.root_node().named_child(0).unwrap();
+        assert!(is_unmatched_block(&node, "(", ")").unwrap());
+
+        let document = Document::new("()", None);
+        let node = document.ast.root_node().named_child(0).unwrap();
+        assert!(!is_unmatched_block(&node, "(", ")").unwrap());
+
+        let document = Document::new("( 1 + 2 )", None);
+        let node = document.ast.root_node().named_child(0).unwrap();
+        assert!(!is_unmatched_block(&node, "(", ")").unwrap());
+    }
 }
