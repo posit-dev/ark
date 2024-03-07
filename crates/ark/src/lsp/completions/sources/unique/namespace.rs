@@ -1,7 +1,7 @@
 //
 // namespace.rs
 //
-// Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2024 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -16,6 +16,8 @@ use libr::Rboolean_TRUE;
 use libr::Rf_findVarInFrame;
 use libr::SEXP;
 use tower_lsp::lsp_types::CompletionItem;
+use tree_sitter::Node;
+use tree_sitter::Point;
 
 use crate::lsp::completions::completion_item::completion_item_from_lazydata;
 use crate::lsp::completions::completion_item::completion_item_from_namespace;
@@ -30,43 +32,29 @@ pub fn completions_from_namespace(
 ) -> Result<Option<Vec<CompletionItem>>> {
     log::info!("completions_from_namespace()");
 
-    let mut node = context.node;
+    let node = context.node;
 
-    let mut has_namespace_completions = false;
-    let mut exports_only = false;
-
-    loop {
-        // Must check for named nodes, otherwise literal `::` operators
-        // (with no children) come through
-        if node.is_named() && matches!(node.kind(), "::" | ":::") {
-            exports_only = node.kind() == "::";
-            has_namespace_completions = true;
-            break;
-        }
-
-        // If we reach a brace list, bail.
-        if node.kind() == "{" {
-            break;
-        }
-
-        // Update the node.
-        node = match node.parent() {
-            Some(node) => node,
-            None => break,
-        };
-    }
-
-    if !has_namespace_completions {
-        return Ok(None);
-    }
+    let node = match node.kind() {
+        "::" | ":::" => namespace_node_from_colons(node, context.point),
+        "identifier" => namespace_node_from_identifier(node),
+        _ => return Ok(None),
+    };
 
     let mut completions: Vec<CompletionItem> = vec![];
 
-    let Some(node) = node.child(0) else {
+    let node = match node {
+        NamespaceNodeKind::None => return Ok(None),
+        NamespaceNodeKind::EmptySet => return Ok(Some(completions)),
+        NamespaceNodeKind::Node(node) => node,
+    };
+
+    let exports_only = node.kind() == "::";
+
+    let Some(package) = node.child_by_field_name("lhs") else {
         return Ok(Some(completions));
     };
 
-    let package = context.document.contents.node_slice(&node)?.to_string();
+    let package = context.document.contents.node_slice(&package)?.to_string();
     let package = package.as_str();
 
     // Get the package namespace.
@@ -102,6 +90,72 @@ pub fn completions_from_namespace(
     set_sort_text_by_words_first(&mut completions);
 
     Ok(Some(completions))
+}
+
+enum NamespaceNodeKind<'tree> {
+    /// We aren't in a namespace node, allow other completions to run
+    None,
+    /// It looks like we are in some kind of namespace node, but something is off.
+    /// Don't allow any other completions to run here, anything we show is likely to
+    /// be wrong.
+    EmptySet,
+    /// We found the namespace node
+    Node(tree_sitter::Node<'tree>),
+}
+
+fn namespace_node_from_colons(node: Node, point: Point) -> NamespaceNodeKind {
+    if node.is_named() {
+        // We don't actually expect a named node to begin with because `node`
+        // should have drilled all the way down into the CST to the anonymous
+        // literal operator
+        return NamespaceNodeKind::EmptySet;
+    }
+
+    if node.end_position() != point {
+        // If we aren't at the end of the anonymous `::`/`:::` node, don't return
+        // any completions.
+        return NamespaceNodeKind::EmptySet;
+    }
+
+    let Some(parent) = node.parent() else {
+        // Anonymous `::`/`:::` without a parent? Should not be possible.
+        return NamespaceNodeKind::EmptySet;
+    };
+
+    if !matches!(parent.kind(), "::" | ":::") || !parent.is_named() {
+        // Anonymous `::`/`:::` without a named `::`/`:::` parent? Should not be possible.
+        return NamespaceNodeKind::EmptySet;
+    }
+
+    NamespaceNodeKind::Node(parent)
+}
+
+fn namespace_node_from_identifier(node: Node) -> NamespaceNodeKind {
+    let Some(parent) = node.parent() else {
+        // Simple identifier without a parent.
+        // Totally possible. Want other completions to have a chance to run.
+        return NamespaceNodeKind::None;
+    };
+
+    if !matches!(parent.kind(), "::" | ":::") || !parent.is_named() {
+        // Simple identifier with a parent that isn't a named `::`/`:::` node.
+        // Totally possible. Want other completions to have a chance to run.
+        return NamespaceNodeKind::None;
+    }
+
+    if let Some(lhs) = parent.child_by_field_name("lhs") {
+        // If we got here from the LHS of the `::`/`:::` node, then we don't
+        // want to provide any completions, because we are sitting on the package name
+        // and general completions here are not appropriate.
+        // TODO: In theory we can do better, and supply package names here. Possibly
+        // we should make a separate "unique" source of completions that runs before
+        // this one and targets this exact scenario, i.e. `dp<tab>::across()`.
+        if lhs.eq(&node) {
+            return NamespaceNodeKind::EmptySet;
+        }
+    }
+
+    NamespaceNodeKind::Node(parent)
 }
 
 fn completions_from_namespace_lazydata(
@@ -157,5 +211,99 @@ fn list_namespace_exports(namespace: SEXP) -> RObject {
         }
 
         return RObject::new(R_lsInternal(exports, 1));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tree_sitter::Point;
+
+    use crate::lsp::completions::sources::unique::namespace::completions_from_namespace;
+    use crate::lsp::document_context::DocumentContext;
+    use crate::lsp::documents::Document;
+    use crate::test::r_test;
+
+    #[test]
+    fn test_completions_after_colons() {
+        r_test(|| {
+            // Just colons, no RHS text yet
+            let point = Point { row: 0, column: 7 };
+            let document = Document::new("utils::", None);
+            let context = DocumentContext::new(&document, point, None);
+            let completions = completions_from_namespace(&context).unwrap().unwrap();
+
+            let completion = completions.iter().find(|item| item.label == "adist");
+            assert!(completion.is_some());
+
+            // Should not find internal function
+            let completion = completions
+                .iter()
+                .find(|item| item.label == "as.bibentry.bibentry");
+            assert!(completion.is_none());
+
+            // Internal functions with `:::`
+            let point = Point { row: 0, column: 8 };
+            let document = Document::new("utils:::", None);
+            let context = DocumentContext::new(&document, point, None);
+            let completions = completions_from_namespace(&context).unwrap().unwrap();
+            let completion = completions
+                .iter()
+                .find(|item| item.label == "as.bibentry.bibentry");
+            assert!(completion.is_some());
+
+            // With RHS text, which is ignored when generating completions.
+            // Filtering applied on frontend side.
+            let point = Point { row: 0, column: 11 };
+            let document = Document::new("utils::blah", None);
+            let context = DocumentContext::new(&document, point, None);
+            let completions = completions_from_namespace(&context).unwrap().unwrap();
+            let completion = completions.iter().find(|item| item.label == "adist");
+            assert!(completion.is_some());
+        })
+    }
+
+    #[test]
+    fn test_expression_after_colon_colon_doesnt_result_in_completions() {
+        r_test(|| {
+            let point = Point { row: 0, column: 7 };
+            let document = Document::new("base::+", None);
+            let context = DocumentContext::new(&document, point, None);
+            let completions = completions_from_namespace(&context).unwrap();
+            assert!(completions.is_none());
+        })
+    }
+
+    #[test]
+    fn test_empty_set_of_completions_when_on_package_name() {
+        r_test(|| {
+            let point = Point { row: 0, column: 2 };
+            let document = Document::new("base::ab", None);
+            let context = DocumentContext::new(&document, point, None);
+            let completions = completions_from_namespace(&context).unwrap().unwrap();
+            assert!(completions.is_empty());
+        })
+    }
+
+    #[test]
+    fn test_empty_set_of_completions_when_not_at_end_of_colons() {
+        r_test(|| {
+            let point = Point { row: 0, column: 5 };
+            let document = Document::new("base::ab", None);
+            let context = DocumentContext::new(&document, point, None);
+            let completions = completions_from_namespace(&context).unwrap().unwrap();
+            assert!(completions.is_empty());
+
+            let point = Point { row: 0, column: 5 };
+            let document = Document::new("base:::ab", None);
+            let context = DocumentContext::new(&document, point, None);
+            let completions = completions_from_namespace(&context).unwrap().unwrap();
+            assert!(completions.is_empty());
+
+            let point = Point { row: 0, column: 6 };
+            let document = Document::new("base:::ab", None);
+            let context = DocumentContext::new(&document, point, None);
+            let completions = completions_from_namespace(&context).unwrap().unwrap();
+            assert!(completions.is_empty());
+        })
     }
 }
