@@ -32,10 +32,23 @@ use log::*;
 use notify::Watcher;
 use stdext::unwrap;
 
+/// An enum representing the different modes in which the R session can run.
+enum SessionMode {
+    /// A session with an interactive console (REPL), such as in Positron.
+    Console,
+
+    /// A session in a Jupyter or Jupyter-like notebook.
+    Notebook,
+
+    /// A background session, typically not connected to any UI.
+    Background,
+}
+
 fn start_kernel(
     connection_file: ConnectionFile,
     r_args: Vec<String>,
     startup_file: Option<String>,
+    _session_mode: SessionMode, // TODO: Pass this to R to set the session mode
     capture_streams: bool,
 ) {
     // Create a new kernel from the connection file
@@ -196,6 +209,7 @@ fn parse_file(
     connection_file: &String,
     r_args: Vec<String>,
     startup_file: Option<String>,
+    session_mode: SessionMode,
     capture_streams: bool,
 ) {
     match ConnectionFile::from_file(connection_file) {
@@ -205,7 +219,13 @@ fn parse_file(
                 connection_file
             );
             debug!("Connection data: {:?}", connection);
-            start_kernel(connection, r_args, startup_file, capture_streams);
+            start_kernel(
+                connection,
+                r_args,
+                startup_file,
+                session_mode,
+                capture_streams,
+            );
         },
         Err(error) => {
             error!(
@@ -229,6 +249,7 @@ Available options:
 -- arg1 arg2 ...         Set the argument list to pass to R; defaults to
                          --interactive
 --startup-file FILE      An R file to run on session startup
+--session-mode MODE      The mode in which the session is running (console, notebook, background)
 --no-capture-streams     Do not capture stdout/stderr from R
 --version                Print the version of Ark
 --log FILE               Log to the given file (if not specified, stdout/stderr
@@ -251,6 +272,7 @@ fn main() {
 
     let mut connection_file: Option<String> = None;
     let mut startup_file: Option<String> = None;
+    let mut session_mode = SessionMode::Console;
     let mut log_file: Option<String> = None;
     let mut startup_notifier_file: Option<String> = None;
     let mut startup_delay: Option<std::time::Duration> = None;
@@ -278,6 +300,22 @@ fn main() {
                     has_action = true;
                 } else {
                     eprintln!("A startup file must be specified with the --startup-file argument.");
+                    break;
+                }
+            },
+            "--session-mode" => {
+                if let Some(mode) = argv.next() {
+                    session_mode = match mode.as_str() {
+                        "console" => SessionMode::Console,
+                        "notebook" => SessionMode::Notebook,
+                        "background" => SessionMode::Background,
+                        _ => {
+                            eprintln!("Invalid session mode: '{}' (expected console, notebook, or background)", mode);
+                            break;
+                        },
+                    };
+                } else {
+                    eprintln!("A session mode must be specified with the --session-mode argument.");
                     break;
                 }
             },
@@ -437,6 +475,12 @@ fn main() {
 
     // Parse the connection file and start the kernel
     if let Some(connection) = connection_file {
-        parse_file(&connection, r_args, startup_file, capture_streams);
+        parse_file(
+            &connection,
+            r_args,
+            startup_file,
+            session_mode,
+            capture_streams,
+        );
     }
 }
