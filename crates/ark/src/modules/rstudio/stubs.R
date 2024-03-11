@@ -6,6 +6,7 @@
     # TODO: support line, column, moveCursor arguments
     stopifnot(line == -1L && column == -1L && moveCursor)
 
+    file <- normalizePath(file)
     invisible(.ps.ui.navigateToFile(file))
 }
 
