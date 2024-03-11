@@ -51,3 +51,11 @@ convert_position <- function(ps_pos) {
 .rs.api.documentSaveAll <- function() {
     invisible(.ps.ui.executeCommand("workbench.action.files.saveAll"))
 }
+
+#' @export
+.rs.api.documentSave <- function(id = NULL) {
+    # TODO: Support document IDs
+    stopifnot(is.null(id))
+
+    invisible(.ps.ui.executeCommand("workbench.action.files.save"))
+}
