@@ -155,6 +155,13 @@ pub struct ExecuteCommandParams {
 	pub command: String,
 }
 
+/// Parameters for the NavigateToFile method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct NavigateToFileParams {
+	/// The file to be opened
+	pub file: String,
+}
+
 /**
  * Backend RPC request types for the ui comm
  */
@@ -201,6 +208,12 @@ pub enum UiFrontendRequest {
 	#[serde(rename = "execute_command")]
 	ExecuteCommand(ExecuteCommandParams),
 
+	/// Open a file in the editor
+	///
+	/// Use this to open a specific file in the editor
+	#[serde(rename = "navigate_to_file")]
+	NavigateToFile(NavigateToFileParams),
+
 	/// Context metadata for the last editor
 	///
 	/// Returns metadata such as file path for the last editor selected by the
@@ -221,6 +234,9 @@ pub enum UiFrontendReply {
 
 	/// Reply for the execute_command method (no result)
 	ExecuteCommandReply(),
+
+	/// Reply for the navigate_to_file method (no result)
+	NavigateToFileReply(),
 
 	/// Editor metadata
 	LastActiveEditorContextReply(Option<EditorContext>),
@@ -274,6 +290,7 @@ pub fn ui_frontend_reply_from_value(
 	match request {
 		UiFrontendRequest::DebugSleep(_) => Ok(UiFrontendReply::DebugSleepReply()),
 		UiFrontendRequest::ExecuteCommand(_) => Ok(UiFrontendReply::ExecuteCommandReply()),
+		UiFrontendRequest::NavigateToFile(_) => Ok(UiFrontendReply::NavigateToFileReply()),
 		UiFrontendRequest::LastActiveEditorContext => Ok(UiFrontendReply::LastActiveEditorContextReply(serde_json::from_value(reply)?)),
 	}
 }

@@ -11,6 +11,11 @@
 }
 
 #' @export
+.ps.ui.navigateToFile <- function(file) {
+    .ps.Call("ps_ui_navigate_to_file", file)
+}
+
+#' @export
 .ps.ui.executeCommand <- function(command) {
     .ps.Call("ps_ui_execute_command", command)
 }
