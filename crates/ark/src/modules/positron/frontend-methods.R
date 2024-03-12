@@ -16,8 +16,8 @@
 }
 
 #' @export
-.ps.ui.navigateToFile <- function(file) {
-    .ps.Call("ps_ui_navigate_to_file", file)
+.ps.ui.navigateToFile <- function(file, line, column) {
+    .ps.Call("ps_ui_navigate_to_file", file, line, column)
 }
 
 #' @export
@@ -27,7 +27,7 @@
 
 #' @export
 .ps.ui.showMessage <- function(message) {
-    .ps.Call("ps_show_message", message)
+    .ps.Call("ps_ui_show_message", message)
 }
 
 #' @export

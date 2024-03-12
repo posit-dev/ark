@@ -8,7 +8,6 @@
 use amalthea::comm::ui_comm::DebugSleepParams;
 use amalthea::comm::ui_comm::DocumentNewParams;
 use amalthea::comm::ui_comm::ExecuteCommandParams;
-use amalthea::comm::ui_comm::NavigateToFileParams;
 use amalthea::comm::ui_comm::Position;
 use amalthea::comm::ui_comm::ShowQuestionParams;
 use amalthea::comm::ui_comm::UiFrontendRequest;
@@ -83,17 +82,6 @@ pub unsafe extern "C" fn ps_ui_show_question(
 
     let main = RMain::get();
     let out = main.call_frontend_method(UiFrontendRequest::ShowQuestion(params))?;
-    Ok(out.sexp)
-}
-
-#[harp::register]
-pub unsafe extern "C" fn ps_ui_navigate_to_file(file: SEXP) -> anyhow::Result<SEXP> {
-    let params = NavigateToFileParams {
-        file: RObject::view(file).try_into()?,
-    };
-
-    let main = RMain::get();
-    let out = main.call_frontend_method(UiFrontendRequest::NavigateToFile(params))?;
     Ok(out.sexp)
 }
 

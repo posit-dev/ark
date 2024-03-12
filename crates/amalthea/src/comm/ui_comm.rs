@@ -171,13 +171,6 @@ pub struct ExecuteCommandParams {
 	pub command: String,
 }
 
-/// Parameters for the NavigateToFile method.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct NavigateToFileParams {
-	/// The file to be opened
-	pub file: String,
-}
-
 /// Parameters for the DocumentNew method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct DocumentNewParams {
@@ -243,12 +236,6 @@ pub enum UiFrontendRequest {
 	#[serde(rename = "execute_command")]
 	ExecuteCommand(ExecuteCommandParams),
 
-	/// Open a file in the editor
-	///
-	/// Use this to open a specific file in the editor
-	#[serde(rename = "navigate_to_file")]
-	NavigateToFile(NavigateToFileParams),
-
 	/// Create a new document with text contents
 	///
 	/// Use this to create a new document with the given language ID and text
@@ -279,9 +266,6 @@ pub enum UiFrontendReply {
 
 	/// Reply for the execute_command method (no result)
 	ExecuteCommandReply(),
-
-	/// Reply for the navigate_to_file method (no result)
-	NavigateToFileReply(),
 
 	/// Reply for the document_new method (no result)
 	DocumentNewReply(),
@@ -339,7 +323,6 @@ pub fn ui_frontend_reply_from_value(
 		UiFrontendRequest::ShowQuestion(_) => Ok(UiFrontendReply::ShowQuestionReply(serde_json::from_value(reply)?)),
 		UiFrontendRequest::DebugSleep(_) => Ok(UiFrontendReply::DebugSleepReply()),
 		UiFrontendRequest::ExecuteCommand(_) => Ok(UiFrontendReply::ExecuteCommandReply()),
-		UiFrontendRequest::NavigateToFile(_) => Ok(UiFrontendReply::NavigateToFileReply()),
 		UiFrontendRequest::DocumentNew(_) => Ok(UiFrontendReply::DocumentNewReply()),
 		UiFrontendRequest::LastActiveEditorContext => Ok(UiFrontendReply::LastActiveEditorContextReply(serde_json::from_value(reply)?)),
 	}

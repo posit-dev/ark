@@ -3,11 +3,11 @@
                                    line = -1L,
                                    column = -1L,
                                    moveCursor = TRUE) {
-    # TODO: support line, column, moveCursor arguments
-    stopifnot(line == -1L && column == -1L && moveCursor)
+    # TODO: support moveCursor argument
+    stopifnot(moveCursor)
 
     file <- normalizePath(file)
-    invisible(.ps.ui.navigateToFile(file))
+    invisible(.ps.ui.navigateToFile(file, line, column))
 }
 
 #' @export
