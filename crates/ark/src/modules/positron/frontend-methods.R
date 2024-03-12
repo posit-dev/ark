@@ -31,6 +31,11 @@
 }
 
 #' @export
+.ps.ui.showQuestion <- function(title, message, ok, cancel) {
+    .ps.Call("ps_ui_show_question", title, message, ok, cancel)
+}
+
+#' @export
 .ps.ui.debugSleep <- function(ms) {
     # stopifnot(is.numeric(ms) && length(ms) == 1 && !is.na(ms))
     .ps.Call("ps_ui_debug_sleep", ms)
