@@ -162,6 +162,19 @@ pub struct NavigateToFileParams {
 	pub file: String,
 }
 
+/// Parameters for the DocumentNew method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct DocumentNewParams {
+	/// Document contents
+	pub contents: Vec<String>,
+
+	/// Language identifier
+	pub language_id: String,
+
+	/// A line and character position for the position of the cursor
+	pub position: Position,
+}
+
 /**
  * Backend RPC request types for the ui comm
  */
@@ -214,6 +227,13 @@ pub enum UiFrontendRequest {
 	#[serde(rename = "navigate_to_file")]
 	NavigateToFile(NavigateToFileParams),
 
+	/// Create a new document with text contents
+	///
+	/// Use this to create a new document with the given language ID and text
+	/// contents
+	#[serde(rename = "document_new")]
+	DocumentNew(DocumentNewParams),
+
 	/// Context metadata for the last editor
 	///
 	/// Returns metadata such as file path for the last editor selected by the
@@ -237,6 +257,9 @@ pub enum UiFrontendReply {
 
 	/// Reply for the navigate_to_file method (no result)
 	NavigateToFileReply(),
+
+	/// Reply for the document_new method (no result)
+	DocumentNewReply(),
 
 	/// Editor metadata
 	LastActiveEditorContextReply(Option<EditorContext>),
@@ -291,6 +314,7 @@ pub fn ui_frontend_reply_from_value(
 		UiFrontendRequest::DebugSleep(_) => Ok(UiFrontendReply::DebugSleepReply()),
 		UiFrontendRequest::ExecuteCommand(_) => Ok(UiFrontendReply::ExecuteCommandReply()),
 		UiFrontendRequest::NavigateToFile(_) => Ok(UiFrontendReply::NavigateToFileReply()),
+		UiFrontendRequest::DocumentNew(_) => Ok(UiFrontendReply::DocumentNewReply()),
 		UiFrontendRequest::LastActiveEditorContext => Ok(UiFrontendReply::LastActiveEditorContextReply(serde_json::from_value(reply)?)),
 	}
 }

@@ -6,8 +6,10 @@
 //
 
 use amalthea::comm::ui_comm::DebugSleepParams;
+use amalthea::comm::ui_comm::DocumentNewParams;
 use amalthea::comm::ui_comm::ExecuteCommandParams;
 use amalthea::comm::ui_comm::NavigateToFileParams;
+use amalthea::comm::ui_comm::Position;
 use amalthea::comm::ui_comm::UiFrontendRequest;
 use harp::object::RObject;
 use libr::SEXP;
@@ -29,6 +31,27 @@ pub unsafe extern "C" fn ps_ui_execute_command(command: SEXP) -> anyhow::Result<
 
     let main = RMain::get();
     let out = main.call_frontend_method(UiFrontendRequest::ExecuteCommand(params))?;
+    Ok(out.sexp)
+}
+
+#[harp::register]
+pub unsafe extern "C" fn ps_ui_document_new(
+    contents: SEXP,
+    language_id: SEXP,
+    _character: SEXP,
+    _line: SEXP,
+) -> anyhow::Result<SEXP> {
+    let params = DocumentNewParams {
+        contents: RObject::view(contents).try_into()?,
+        language_id: RObject::view(language_id).try_into()?,
+        position: Position {
+            character: 0,
+            line: 0,
+        },
+    };
+
+    let main = RMain::get();
+    let out = main.call_frontend_method(UiFrontendRequest::DocumentNew(params))?;
     Ok(out.sexp)
 }
 

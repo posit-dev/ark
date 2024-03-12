@@ -48,6 +48,24 @@ convert_position <- function(ps_pos) {
 }
 
 #' @export
+.rs.api.documentNew <- function(text,
+                                type = c("r", "rmarkdown", "sql"),
+                                position = rstudioapi::document_position(0, 0),
+                                execute = FALSE) {
+    type <- match.arg(type)
+    # TODO: Support execute
+    stopifnot(!execute)
+
+    languageId <- ifelse(type == "rmarkdown", "rmd", type)
+    invisible(.ps.ui.documentNew(
+        text,
+        languageId,
+        max(position[["column"]] - 1, 0),
+        max(position[["row"]] - 1, 0)
+    ))
+}
+
+#' @export
 .rs.api.documentSaveAll <- function() {
     invisible(.ps.ui.executeCommand("workbench.action.files.saveAll"))
 }
