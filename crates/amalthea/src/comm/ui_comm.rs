@@ -229,13 +229,6 @@ pub enum UiFrontendRequest {
 	#[serde(rename = "debug_sleep")]
 	DebugSleep(DebugSleepParams),
 
-	/// Execute a Positron command
-	///
-	/// Use this to execute a Positron command from the backend (like from a
-	/// runtime)
-	#[serde(rename = "execute_command")]
-	ExecuteCommand(ExecuteCommandParams),
-
 	/// Create a new document with text contents
 	///
 	/// Use this to create a new document with the given language ID and text
@@ -263,9 +256,6 @@ pub enum UiFrontendReply {
 
 	/// Reply for the debug_sleep method (no result)
 	DebugSleepReply(),
-
-	/// Reply for the execute_command method (no result)
-	ExecuteCommandReply(),
 
 	/// Reply for the document_new method (no result)
 	DocumentNewReply(),
@@ -310,6 +300,11 @@ pub enum UiFrontendEvent {
 	#[serde(rename = "working_directory")]
 	WorkingDirectory(WorkingDirectoryParams),
 
+	/// Use this to execute a Positron command from the backend (like from a
+	/// runtime)
+	#[serde(rename = "execute_command")]
+	ExecuteCommand(ExecuteCommandParams),
+
 }
 
 /**
@@ -322,7 +317,6 @@ pub fn ui_frontend_reply_from_value(
 	match request {
 		UiFrontendRequest::ShowQuestion(_) => Ok(UiFrontendReply::ShowQuestionReply(serde_json::from_value(reply)?)),
 		UiFrontendRequest::DebugSleep(_) => Ok(UiFrontendReply::DebugSleepReply()),
-		UiFrontendRequest::ExecuteCommand(_) => Ok(UiFrontendReply::ExecuteCommandReply()),
 		UiFrontendRequest::DocumentNew(_) => Ok(UiFrontendReply::DocumentNewReply()),
 		UiFrontendRequest::LastActiveEditorContext => Ok(UiFrontendReply::LastActiveEditorContextReply(serde_json::from_value(reply)?)),
 	}
