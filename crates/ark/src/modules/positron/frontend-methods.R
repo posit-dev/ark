@@ -11,8 +11,8 @@
 }
 
 #' @export
-.ps.ui.documentNew <- function(contents, languageId, character, line) {
-    .ps.Call("ps_ui_document_new", contents, languageId, character, line)
+.ps.ui.documentNew <- function(contents, languageId) {
+    .ps.Call("ps_ui_document_new", contents, languageId)
 }
 
 #' @export

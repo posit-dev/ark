@@ -53,16 +53,11 @@ convert_position <- function(ps_pos) {
                                 position = rstudioapi::document_position(0, 0),
                                 execute = FALSE) {
     type <- match.arg(type)
-    # TODO: Support execute
-    stopifnot(!execute)
+    # TODO: Support execute & position
+    stopifnot(!execute && position != rstudioapi::document_position(0, 0))
 
     languageId <- ifelse(type == "rmarkdown", "rmd", type)
-    invisible(.ps.ui.documentNew(
-        text,
-        languageId,
-        max(position[["column"]] - 1, 0),
-        max(position[["row"]] - 1, 0)
-    ))
+    invisible(.ps.ui.documentNew(text, languageId))
 }
 
 #' @export

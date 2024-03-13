@@ -179,9 +179,6 @@ pub struct DocumentNewParams {
 
 	/// Language identifier
 	pub language_id: String,
-
-	/// A line and character position for the position of the cursor
-	pub position: Position,
 }
 
 /**

@@ -7,7 +7,6 @@
 
 use amalthea::comm::ui_comm::DebugSleepParams;
 use amalthea::comm::ui_comm::DocumentNewParams;
-use amalthea::comm::ui_comm::Position;
 use amalthea::comm::ui_comm::ShowQuestionParams;
 use amalthea::comm::ui_comm::UiFrontendRequest;
 use harp::object::RObject;
@@ -27,16 +26,12 @@ pub unsafe extern "C" fn ps_ui_last_active_editor_context() -> anyhow::Result<SE
 pub unsafe extern "C" fn ps_ui_document_new(
     contents: SEXP,
     language_id: SEXP,
-    _character: SEXP,
     _line: SEXP,
+    _column: SEXP,
 ) -> anyhow::Result<SEXP> {
     let params = DocumentNewParams {
         contents: RObject::view(contents).try_into()?,
         language_id: RObject::view(language_id).try_into()?,
-        position: Position {
-            character: 0,
-            line: 0,
-        },
     };
 
     let main = RMain::get();
