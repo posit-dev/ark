@@ -11,11 +11,6 @@
 }
 
 #' @export
-.ps.ui.documentNew <- function(contents, languageId) {
-    .ps.Call("ps_ui_document_new", contents, languageId)
-}
-
-#' @export
 .ps.ui.navigateToFile <- function(file, line, column) {
     .ps.Call("ps_ui_navigate_to_file", file, line, column)
 }

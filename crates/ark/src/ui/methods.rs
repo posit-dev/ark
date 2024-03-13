@@ -6,7 +6,6 @@
 //
 
 use amalthea::comm::ui_comm::DebugSleepParams;
-use amalthea::comm::ui_comm::DocumentNewParams;
 use amalthea::comm::ui_comm::ShowQuestionParams;
 use amalthea::comm::ui_comm::UiFrontendRequest;
 use harp::object::RObject;
@@ -19,23 +18,6 @@ use crate::interface::RMain;
 pub unsafe extern "C" fn ps_ui_last_active_editor_context() -> anyhow::Result<SEXP> {
     let main = RMain::get();
     let out = main.call_frontend_method(UiFrontendRequest::LastActiveEditorContext)?;
-    Ok(out.sexp)
-}
-
-#[harp::register]
-pub unsafe extern "C" fn ps_ui_document_new(
-    contents: SEXP,
-    language_id: SEXP,
-    _line: SEXP,
-    _column: SEXP,
-) -> anyhow::Result<SEXP> {
-    let params = DocumentNewParams {
-        contents: RObject::view(contents).try_into()?,
-        language_id: RObject::view(language_id).try_into()?,
-    };
-
-    let main = RMain::get();
-    let out = main.call_frontend_method(UiFrontendRequest::DocumentNew(params))?;
     Ok(out.sexp)
 }
 

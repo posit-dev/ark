@@ -171,16 +171,6 @@ pub struct ExecuteCommandParams {
 	pub command: String,
 }
 
-/// Parameters for the DocumentNew method.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct DocumentNewParams {
-	/// Document contents
-	pub contents: Vec<String>,
-
-	/// Language identifier
-	pub language_id: String,
-}
-
 /**
  * Backend RPC request types for the ui comm
  */
@@ -226,13 +216,6 @@ pub enum UiFrontendRequest {
 	#[serde(rename = "debug_sleep")]
 	DebugSleep(DebugSleepParams),
 
-	/// Create a new document with text contents
-	///
-	/// Use this to create a new document with the given language ID and text
-	/// contents
-	#[serde(rename = "document_new")]
-	DocumentNew(DocumentNewParams),
-
 	/// Context metadata for the last editor
 	///
 	/// Returns metadata such as file path for the last editor selected by the
@@ -253,9 +236,6 @@ pub enum UiFrontendReply {
 
 	/// Reply for the debug_sleep method (no result)
 	DebugSleepReply(),
-
-	/// Reply for the document_new method (no result)
-	DocumentNewReply(),
 
 	/// Editor metadata
 	LastActiveEditorContextReply(Option<EditorContext>),
@@ -314,7 +294,6 @@ pub fn ui_frontend_reply_from_value(
 	match request {
 		UiFrontendRequest::ShowQuestion(_) => Ok(UiFrontendReply::ShowQuestionReply(serde_json::from_value(reply)?)),
 		UiFrontendRequest::DebugSleep(_) => Ok(UiFrontendReply::DebugSleepReply()),
-		UiFrontendRequest::DocumentNew(_) => Ok(UiFrontendReply::DocumentNewReply()),
 		UiFrontendRequest::LastActiveEditorContext => Ok(UiFrontendReply::LastActiveEditorContextReply(serde_json::from_value(reply)?)),
 	}
 }
