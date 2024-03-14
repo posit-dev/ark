@@ -122,6 +122,7 @@ connection_flatten_object_types <- function(object_tree) {
     utils::View(table, title = utils::tail(path, 1)[[1]])
 }
 
+#' @export
 .ps.connection_close <- function(id, ...) {
     con <- get(id, getOption("connectionObserver")$.connections)
     if (is.null(con)) {
