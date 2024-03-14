@@ -56,7 +56,7 @@ convert_position <- function(ps_pos) {
     # TODO: Support execute & position
     stopifnot(!execute && position != rstudioapi::document_position(0, 0))
 
-    languageId <- ifelse(type == "rmarkdown", "rmd", type)
+    languageId <- if (type == "rmarkdown") "rmd" else type
     invisible(.ps.ui.documentNew(text, languageId))
 }
 
