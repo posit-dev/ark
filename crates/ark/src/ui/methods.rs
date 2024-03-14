@@ -28,8 +28,6 @@ pub unsafe extern "C" fn ps_ui_show_question(
     ok_button_title: SEXP,
     cancel_button_title: SEXP,
 ) -> anyhow::Result<SEXP> {
-    if !r_is_null(ok_button_title) {}
-
     let params = ShowQuestionParams {
         title: RObject::view(title).try_into()?,
         message: RObject::view(message).try_into()?,
