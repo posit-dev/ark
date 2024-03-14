@@ -48,6 +48,27 @@ convert_position <- function(ps_pos) {
 }
 
 #' @export
+.rs.api.documentNew <- function(text,
+                                type = c("r", "rmarkdown", "sql"),
+                                position = rstudioapi::document_position(0, 0),
+                                execute = FALSE) {
+    type <- match.arg(type)
+    # TODO: Support execute & position
+    stopifnot(!execute && position != rstudioapi::document_position(0, 0))
+
+    languageId <- if (type == "rmarkdown") "rmd" else type
+    invisible(.ps.ui.documentNew(text, languageId))
+}
+
+#' @export
 .rs.api.documentSaveAll <- function() {
     invisible(.ps.ui.executeCommand("workbench.action.files.saveAll"))
+}
+
+#' @export
+.rs.api.documentSave <- function(id = NULL) {
+    # TODO: Support document IDs
+    stopifnot(is.null(id))
+
+    invisible(.ps.ui.executeCommand("workbench.action.files.save"))
 }

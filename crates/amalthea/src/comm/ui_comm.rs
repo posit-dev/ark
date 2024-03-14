@@ -124,6 +124,22 @@ pub struct ShowMessageParams {
 	pub message: String,
 }
 
+/// Parameters for the ShowQuestion method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ShowQuestionParams {
+	/// The title of the dialog
+	pub title: String,
+
+	/// The message to display in the dialog
+	pub message: String,
+
+	/// The title of the OK button
+	pub ok_button_title: String,
+
+	/// The title of the Cancel button
+	pub cancel_button_title: String,
+}
+
 /// Parameters for the PromptState method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct PromptStateParams {
@@ -188,18 +204,17 @@ pub enum UiBackendReply {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params")]
 pub enum UiFrontendRequest {
+	/// Show a question
+	///
+	/// Use this for a modal dialog that the user can accept or cancel
+	#[serde(rename = "show_question")]
+	ShowQuestion(ShowQuestionParams),
+
 	/// Sleep for n seconds
 	///
 	/// Useful for testing in the backend a long running frontend method
 	#[serde(rename = "debug_sleep")]
 	DebugSleep(DebugSleepParams),
-
-	/// Execute a Positron command
-	///
-	/// Use this to execute a Positron command from the backend (like from a
-	/// runtime)
-	#[serde(rename = "execute_command")]
-	ExecuteCommand(ExecuteCommandParams),
 
 	/// Context metadata for the last editor
 	///
@@ -216,11 +231,11 @@ pub enum UiFrontendRequest {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "result")]
 pub enum UiFrontendReply {
+	/// Whether the user accepted or rejected the dialog.
+	ShowQuestionReply(bool),
+
 	/// Reply for the debug_sleep method (no result)
 	DebugSleepReply(),
-
-	/// Reply for the execute_command method (no result)
-	ExecuteCommandReply(),
 
 	/// Editor metadata
 	LastActiveEditorContextReply(Option<EditorContext>),
@@ -262,6 +277,11 @@ pub enum UiFrontendEvent {
 	#[serde(rename = "working_directory")]
 	WorkingDirectory(WorkingDirectoryParams),
 
+	/// Use this to execute a Positron command from the backend (like from a
+	/// runtime)
+	#[serde(rename = "execute_command")]
+	ExecuteCommand(ExecuteCommandParams),
+
 }
 
 /**
@@ -272,8 +292,8 @@ pub fn ui_frontend_reply_from_value(
 	request: &UiFrontendRequest,
 ) -> anyhow::Result<UiFrontendReply> {
 	match request {
+		UiFrontendRequest::ShowQuestion(_) => Ok(UiFrontendReply::ShowQuestionReply(serde_json::from_value(reply)?)),
 		UiFrontendRequest::DebugSleep(_) => Ok(UiFrontendReply::DebugSleepReply()),
-		UiFrontendRequest::ExecuteCommand(_) => Ok(UiFrontendReply::ExecuteCommandReply()),
 		UiFrontendRequest::LastActiveEditorContext => Ok(UiFrontendReply::LastActiveEditorContextReply(serde_json::from_value(reply)?)),
 	}
 }

@@ -1108,6 +1108,13 @@ impl RMain {
             StdInRpcReply::Interrupt => Ok(RObject::null()),
         }
     }
+
+    pub fn send_frontend_event(&self, event: UiFrontendEvent) {
+        log::trace!("Sending frontend event '{event:?}'");
+        // Send request via Kernel
+        let kernel = self.kernel.lock().unwrap();
+        kernel.send_ui_event(event);
+    }
 }
 
 /// Report an incomplete request to the frontend

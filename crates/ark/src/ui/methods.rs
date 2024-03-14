@@ -6,9 +6,10 @@
 //
 
 use amalthea::comm::ui_comm::DebugSleepParams;
-use amalthea::comm::ui_comm::ExecuteCommandParams;
+use amalthea::comm::ui_comm::ShowQuestionParams;
 use amalthea::comm::ui_comm::UiFrontendRequest;
 use harp::object::RObject;
+use harp::utils::r_is_null;
 use libr::SEXP;
 
 use crate::interface::RMain;
@@ -21,13 +22,29 @@ pub unsafe extern "C" fn ps_ui_last_active_editor_context() -> anyhow::Result<SE
 }
 
 #[harp::register]
-pub unsafe extern "C" fn ps_ui_execute_command(command: SEXP) -> anyhow::Result<SEXP> {
-    let params = ExecuteCommandParams {
-        command: RObject::view(command).try_into()?,
+pub unsafe extern "C" fn ps_ui_show_question(
+    title: SEXP,
+    message: SEXP,
+    ok_button_title: SEXP,
+    cancel_button_title: SEXP,
+) -> anyhow::Result<SEXP> {
+    let params = ShowQuestionParams {
+        title: RObject::view(title).try_into()?,
+        message: RObject::view(message).try_into()?,
+        ok_button_title: if r_is_null(ok_button_title) {
+            String::from("OK")
+        } else {
+            RObject::view(ok_button_title).try_into()?
+        },
+        cancel_button_title: if r_is_null(cancel_button_title) {
+            String::from("Cancel")
+        } else {
+            RObject::view(cancel_button_title).try_into()?
+        },
     };
 
     let main = RMain::get();
-    let out = main.call_frontend_method(UiFrontendRequest::ExecuteCommand(params))?;
+    let out = main.call_frontend_method(UiFrontendRequest::ShowQuestion(params))?;
     Ok(out.sexp)
 }
 
