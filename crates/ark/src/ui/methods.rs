@@ -6,6 +6,7 @@
 //
 
 use amalthea::comm::ui_comm::DebugSleepParams;
+use amalthea::comm::ui_comm::ShowDialogParams;
 use amalthea::comm::ui_comm::ShowQuestionParams;
 use amalthea::comm::ui_comm::UiFrontendRequest;
 use harp::object::RObject;
@@ -18,6 +19,18 @@ use crate::interface::RMain;
 pub unsafe extern "C" fn ps_ui_last_active_editor_context() -> anyhow::Result<SEXP> {
     let main = RMain::get();
     let out = main.call_frontend_method(UiFrontendRequest::LastActiveEditorContext)?;
+    Ok(out.sexp)
+}
+
+#[harp::register]
+pub unsafe extern "C" fn ps_ui_show_dialog(title: SEXP, message: SEXP) -> anyhow::Result<SEXP> {
+    let params = ShowDialogParams {
+        title: RObject::view(title).try_into()?,
+        message: RObject::view(message).try_into()?,
+    };
+
+    let main = RMain::get();
+    let out = main.call_frontend_method(UiFrontendRequest::ShowDialog(params))?;
     Ok(out.sexp)
 }
 
