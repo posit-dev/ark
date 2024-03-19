@@ -7,6 +7,8 @@
 
 use std::process::Command;
 
+use amalthea::comm::ui_comm::ShowUrlParams;
+use amalthea::comm::ui_comm::UiFrontendEvent;
 use anyhow::Result;
 use harp::object::RObject;
 use libr::Rf_ScalarLogical;
@@ -66,9 +68,21 @@ unsafe fn ps_browse_url_impl(url: SEXP) -> Result<SEXP> {
         return Ok(Rf_ScalarLogical(1));
     }
 
-    // TODO: What should we do with other URLs? This is used for opening,
-    // for example, web applications (e.g. Shiny) and also interactive plots
-    // (e.g. htmlwidgets).
-    Command::new("open").arg(url).output()?;
+    if url.starts_with("http://") || url.starts_with("https://") {
+        // If it looks like a http or https URL, open it in the Positron viewer
+        // pane.
+
+        // Create a ShowUrl event and send it to the main thread.
+        let params = ShowUrlParams { url };
+
+        let main = RMain::get();
+        let event = UiFrontendEvent::ShowUrl(params);
+        main.send_frontend_event(event);
+    } else {
+        // Doesn't look like a URL we can handle internally, so try to open it
+        // in the default browser.
+        Command::new("open").arg(url).output()?;
+    }
+
     Ok(Rf_ScalarLogical(1))
 }
