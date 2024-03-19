@@ -26,6 +26,11 @@
 }
 
 #' @export
+.ps.ui.showDialog <- function(title, message) {
+    .ps.Call("ps_ui_show_dialog", title, message)
+}
+
+#' @export
 .ps.ui.showQuestion <- function(title, message, ok, cancel) {
     .ps.Call("ps_ui_show_question", title, message, ok, cancel)
 }

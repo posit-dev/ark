@@ -140,6 +140,16 @@ pub struct ShowQuestionParams {
 	pub cancel_button_title: String,
 }
 
+/// Parameters for the ShowDialog method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ShowDialogParams {
+	/// The title of the dialog
+	pub title: String,
+
+	/// The message to display in the dialog
+	pub message: String,
+}
+
 /// Parameters for the PromptState method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct PromptStateParams {
@@ -217,6 +227,12 @@ pub enum UiFrontendRequest {
 	#[serde(rename = "show_question")]
 	ShowQuestion(ShowQuestionParams),
 
+	/// Show a dialog
+	///
+	/// Use this for a modal dialog that the user can only accept
+	#[serde(rename = "show_dialog")]
+	ShowDialog(ShowDialogParams),
+
 	/// Sleep for n seconds
 	///
 	/// Useful for testing in the backend a long running frontend method
@@ -240,6 +256,9 @@ pub enum UiFrontendRequest {
 pub enum UiFrontendReply {
 	/// Whether the user accepted or rejected the dialog.
 	ShowQuestionReply(bool),
+
+	/// Reply for the show_dialog method (no result)
+	ShowDialogReply(),
 
 	/// Reply for the debug_sleep method (no result)
 	DebugSleepReply(),
@@ -305,6 +324,7 @@ pub fn ui_frontend_reply_from_value(
 ) -> anyhow::Result<UiFrontendReply> {
 	match request {
 		UiFrontendRequest::ShowQuestion(_) => Ok(UiFrontendReply::ShowQuestionReply(serde_json::from_value(reply)?)),
+		UiFrontendRequest::ShowDialog(_) => Ok(UiFrontendReply::ShowDialogReply()),
 		UiFrontendRequest::DebugSleep(_) => Ok(UiFrontendReply::DebugSleepReply()),
 		UiFrontendRequest::LastActiveEditorContext => Ok(UiFrontendReply::LastActiveEditorContextReply(serde_json::from_value(reply)?)),
 	}
