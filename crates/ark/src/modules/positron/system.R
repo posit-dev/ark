@@ -11,3 +11,13 @@ has_cairo <- function() {
 has_x11 <- function() {
     capabilities("X11")
 }
+
+#' Reports aspects of the locale for the R process.
+#' @returns Named character vector of LANG env var and all categories of the locale.
+#' @export
+.ps.rpc.get_locale <- function() {
+    cats <- .LC.categories
+    stats::setNames(cats, cats)
+    out <- as.list(vapply(cats, Sys.getlocale, "string", USE.NAMES = TRUE))
+    c(LANG = Sys.getenv("LANG"), out)
+}
