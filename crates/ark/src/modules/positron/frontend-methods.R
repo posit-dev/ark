@@ -16,6 +16,11 @@
 }
 
 #' @export
+.ps.ui.openWorkspace <- function(path, newSession) {
+    .ps.Call("ps_ui_open_workspace", path, newSession)
+}
+
+#' @export
 .ps.ui.navigateToFile <- function(file, line, column) {
     .ps.Call("ps_ui_navigate_to_file", file, line, column)
 }

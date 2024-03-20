@@ -181,6 +181,16 @@ pub struct ExecuteCommandParams {
 	pub command: String,
 }
 
+/// Parameters for the OpenWorkspace method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct OpenWorkspaceParams {
+	/// The path for the workspace to be opened
+	pub path: String,
+
+	/// Should the workspace be opened in a new window?
+	pub new_window: bool,
+}
+
 /**
  * Backend RPC request types for the ui comm
  */
@@ -310,6 +320,10 @@ pub enum UiFrontendEvent {
 	/// runtime)
 	#[serde(rename = "execute_command")]
 	ExecuteCommand(ExecuteCommandParams),
+
+	/// Use this to open a workspace in Positron
+	#[serde(rename = "open_workspace")]
+	OpenWorkspace(OpenWorkspaceParams),
 
 }
 

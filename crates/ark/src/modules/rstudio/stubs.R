@@ -22,3 +22,9 @@
 
     invisible(.ps.ui.executeCommand('workbench.action.languageRuntime.restart'))
 }
+
+#' @export
+.rs.api.openProject <- function(path = NULL, newSession = FALSE) {
+    path <- normalizePath(path)
+    invisible(.ps.ui.openWorkspace(path, newSession))
+}
