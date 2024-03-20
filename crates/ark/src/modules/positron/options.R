@@ -43,3 +43,8 @@ if (is.null(repos) || !is.character(repos)) {
         options(repos = repos)
     }
 }
+
+# Show Plumber apps in the viewer
+options(plumber.docs.callback = function(url) {
+    .ps.ui.showUrl(url)
+})
