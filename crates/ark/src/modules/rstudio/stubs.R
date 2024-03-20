@@ -1,4 +1,9 @@
 #' @export
+.rs.api.getActiveProject <- function() {
+    invisible(.ps.ui.workspaceFolder())
+}
+
+#' @export
 .rs.api.navigateToFile <- function(file = character(0),
                                    line = -1L,
                                    column = -1L,

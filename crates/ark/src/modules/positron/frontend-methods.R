@@ -11,6 +11,11 @@
 }
 
 #' @export
+.ps.ui.workspaceFolder <- function() {
+    .ps.Call("ps_ui_workspace_folder")
+}
+
+#' @export
 .ps.ui.navigateToFile <- function(file, line, column) {
     .ps.Call("ps_ui_navigate_to_file", file, line, column)
 }
