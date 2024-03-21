@@ -1,11 +1,9 @@
 //
 // browser.rs
 //
-// Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2024 Posit Software, PBC. All rights reserved.
 //
 //
-
-use std::process::Command;
 
 use amalthea::comm::ui_comm::ShowUrlParams;
 use amalthea::comm::ui_comm::UiFrontendEvent;
@@ -68,21 +66,13 @@ unsafe fn ps_browse_url_impl(url: SEXP) -> Result<SEXP> {
         return Ok(Rf_ScalarLogical(1));
     }
 
-    if url.starts_with("http://") || url.starts_with("https://") {
-        // If it looks like a http or https URL, open it in the Positron viewer
-        // pane.
+    // For all other URLs, create a ShowUrl event and send it to the main
+    // thread; Positron will handle it.
+    let params = ShowUrlParams { url };
 
-        // Create a ShowUrl event and send it to the main thread.
-        let params = ShowUrlParams { url };
-
-        let main = RMain::get();
-        let event = UiFrontendEvent::ShowUrl(params);
-        main.send_frontend_event(event);
-    } else {
-        // Doesn't look like a URL we can handle internally, so try to open it
-        // in the default browser.
-        Command::new("open").arg(url).output()?;
-    }
+    let main = RMain::get();
+    let event = UiFrontendEvent::ShowUrl(params);
+    main.send_frontend_event(event);
 
     Ok(Rf_ScalarLogical(1))
 }
