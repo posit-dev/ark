@@ -1,4 +1,9 @@
 #' @export
+.rs.api.getActiveProject <- function() {
+    invisible(.ps.ui.workspaceFolder())
+}
+
+#' @export
 .rs.api.navigateToFile <- function(file = character(0),
                                    line = -1L,
                                    column = -1L,
@@ -16,4 +21,10 @@
     stopifnot(command == "")
 
     invisible(.ps.ui.executeCommand('workbench.action.languageRuntime.restart'))
+}
+
+#' @export
+.rs.api.openProject <- function(path = NULL, newSession = FALSE) {
+    path <- normalizePath(path)
+    invisible(.ps.ui.openWorkspace(path, newSession))
 }

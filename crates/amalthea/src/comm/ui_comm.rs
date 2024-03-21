@@ -181,6 +181,16 @@ pub struct ExecuteCommandParams {
 	pub command: String,
 }
 
+/// Parameters for the OpenWorkspace method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct OpenWorkspaceParams {
+	/// The path for the workspace to be opened
+	pub path: String,
+
+	/// Should the workspace be opened in a new window?
+	pub new_window: bool,
+}
+
 /**
  * Backend RPC request types for the ui comm
  */
@@ -232,6 +242,13 @@ pub enum UiFrontendRequest {
 	#[serde(rename = "debug_sleep")]
 	DebugSleep(DebugSleepParams),
 
+	/// Path to the workspace folder
+	///
+	/// Returns the path to the workspace folder, or first folder if there are
+	/// multiple.
+	#[serde(rename = "workspace_folder")]
+	WorkspaceFolder,
+
 	/// Context metadata for the last editor
 	///
 	/// Returns metadata such as file path for the last editor selected by the
@@ -255,6 +272,9 @@ pub enum UiFrontendReply {
 
 	/// Reply for the debug_sleep method (no result)
 	DebugSleepReply(),
+
+	/// The path to the workspace folder
+	WorkspaceFolderReply(Option<String>),
 
 	/// Editor metadata
 	LastActiveEditorContextReply(Option<EditorContext>),
@@ -301,6 +321,10 @@ pub enum UiFrontendEvent {
 	#[serde(rename = "execute_command")]
 	ExecuteCommand(ExecuteCommandParams),
 
+	/// Use this to open a workspace in Positron
+	#[serde(rename = "open_workspace")]
+	OpenWorkspace(OpenWorkspaceParams),
+
 }
 
 /**
@@ -314,6 +338,7 @@ pub fn ui_frontend_reply_from_value(
 		UiFrontendRequest::ShowQuestion(_) => Ok(UiFrontendReply::ShowQuestionReply(serde_json::from_value(reply)?)),
 		UiFrontendRequest::ShowDialog(_) => Ok(UiFrontendReply::ShowDialogReply()),
 		UiFrontendRequest::DebugSleep(_) => Ok(UiFrontendReply::DebugSleepReply()),
+		UiFrontendRequest::WorkspaceFolder => Ok(UiFrontendReply::WorkspaceFolderReply(serde_json::from_value(reply)?)),
 		UiFrontendRequest::LastActiveEditorContext => Ok(UiFrontendReply::LastActiveEditorContextReply(serde_json::from_value(reply)?)),
 	}
 }
