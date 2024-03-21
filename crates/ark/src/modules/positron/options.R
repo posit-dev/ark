@@ -1,7 +1,7 @@
 #
 # options.R
 #
-# Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+# Copyright (C) 2023-2024 Posit Software, PBC. All rights reserved.
 #
 #
 
@@ -46,5 +46,10 @@ if (is.null(repos) || !is.character(repos)) {
 
 # Show Plumber apps in the viewer
 options(plumber.docs.callback = function(url) {
+    .ps.ui.showUrl(url)
+})
+
+# Show Shiny applications in the viewer
+options(shiny.launch.browser = function(url) {
     .ps.ui.showUrl(url)
 })
