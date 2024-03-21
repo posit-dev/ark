@@ -23,6 +23,13 @@ pub unsafe extern "C" fn ps_ui_last_active_editor_context() -> anyhow::Result<SE
 }
 
 #[harp::register]
+pub unsafe extern "C" fn ps_ui_workspace_folder() -> anyhow::Result<SEXP> {
+    let main = RMain::get();
+    let out = main.call_frontend_method(UiFrontendRequest::WorkspaceFolder)?;
+    Ok(out.sexp)
+}
+
+#[harp::register]
 pub unsafe extern "C" fn ps_ui_show_dialog(title: SEXP, message: SEXP) -> anyhow::Result<SEXP> {
     let params = ShowDialogParams {
         title: RObject::view(title).try_into()?,

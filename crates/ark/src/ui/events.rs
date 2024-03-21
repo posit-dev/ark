@@ -7,6 +7,7 @@
 
 use amalthea::comm::ui_comm::ExecuteCommandParams;
 use amalthea::comm::ui_comm::OpenEditorParams;
+use amalthea::comm::ui_comm::OpenWorkspaceParams;
 use amalthea::comm::ui_comm::ShowMessageParams;
 use amalthea::comm::ui_comm::ShowUrlParams;
 use amalthea::comm::ui_comm::UiFrontendEvent;
@@ -36,6 +37,22 @@ pub unsafe extern "C" fn ps_ui_execute_command(command: SEXP) -> anyhow::Result<
 
     let main = RMain::get();
     let event = UiFrontendEvent::ExecuteCommand(params);
+    main.send_frontend_event(event);
+    Ok(R_NilValue)
+}
+
+#[harp::register]
+pub unsafe extern "C" fn ps_ui_open_workspace(
+    path: SEXP,
+    new_window: SEXP,
+) -> anyhow::Result<SEXP> {
+    let params = OpenWorkspaceParams {
+        path: RObject::view(path).try_into()?,
+        new_window: RObject::view(new_window).try_into()?,
+    };
+
+    let main = RMain::get();
+    let event = UiFrontendEvent::OpenWorkspace(params);
     main.send_frontend_event(event);
     Ok(R_NilValue)
 }
