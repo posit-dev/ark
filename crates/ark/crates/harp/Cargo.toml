@@ -24,7 +24,7 @@ once_cell = "1.17.1"
 parking_lot = "0.12.1"
 regex = "1.7.3"
 semver = "1.0.19"
-stdext = { path = "../stdext" }
+stdext = { path = "../../../stdext" }
 serde = { version = "1.0.183", features = ["derive"] }
 serde_json = { version = "1.0.94", features = ["preserve_order"]}
 rust-embed = "8.2.0"

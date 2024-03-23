@@ -8,8 +8,8 @@ resolver = "2"
 members = [
     "crates/amalthea",
     "crates/ark/crates/ark",
+    "crates/ark/crates/harp",
+    "crates/ark/crates/libr",
     "crates/echo",
-    "crates/harp",
-    "crates/libr",
     "crates/stdext"
 ]
