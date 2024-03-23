@@ -10,7 +10,7 @@ authors = ["Posit, PBC"]
 
 [dependencies]
 actix-web = "4.4.0"
-amalthea = { path = "../amalthea" }
+amalthea = { path = "../../../amalthea" }
 anyhow = "1.0.80"
 async-trait = "0.1.66"
 base64 = "0.21.0"
@@ -22,7 +22,7 @@ ctor = "0.1.26"
 dap = { git = "https://github.com/sztomi/dap-rs", branch = "main" }
 dashmap = "5.4.0"
 ego-tree = "0.6.2"
-harp = { path = "../harp" }
+harp = { path = "../../../harp" }
 html5ever = "0.26.0"
 http = "0.2.9"
 home = "0.5.5"
@@ -30,7 +30,7 @@ hyper = { version = "0.14.24", features = ["full"] }
 itertools = "0.10.5"
 lazy_static = "1.4.0"
 libc = "0.2"
-libr = { path = "../libr" }
+libr = { path = "../../../libr" }
 lock_api = "0.4.11"
 log = "0.4.17"
 nix = { version = "0.26.2", features = ["signal"] }
@@ -44,7 +44,7 @@ rust-embed = "8.0.0"
 scraper = "0.15.0"
 serde = { version = "1.0.183", features = ["derive"] }
 serde_json = { version = "1.0.94", features = ["preserve_order"]}
-stdext = { path = "../stdext" }
+stdext = { path = "../../../stdext" }
 tokio = { version = "1.26.0", features = ["full"] }
 tower-lsp = "0.19.0"
 tree-sitter = "0.21.0"

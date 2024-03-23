@@ -7,7 +7,7 @@ resolver = "2"
 
 members = [
     "crates/amalthea",
-    "crates/ark",
+    "crates/ark/crates/ark",
     "crates/echo",
     "crates/harp",
     "crates/libr",
