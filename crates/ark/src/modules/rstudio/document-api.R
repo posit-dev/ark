@@ -26,8 +26,8 @@ convert_selection <- function(ps_sels) {
     convert_one <- function(ps_sel) {
         list(
             range = rstudioapi::document_range(
-                start = convert_position(ps_sel$start),
-                end = convert_position(ps_sel$end)
+                start = convert_positron_position(ps_sel$start),
+                end = convert_positron_position(ps_sel$end)
             ),
             text = ps_sel$text
         )
@@ -37,13 +37,21 @@ convert_selection <- function(ps_sels) {
 }
 
 # Positron position --> RStudio position
-convert_position <- function(ps_pos) {
+convert_positron_position <- function(ps_pos) {
     with(
         ps_pos,
         rstudioapi::document_position(
             row = line + 1,
             column = character + 1
         )
+    )
+}
+
+# RStudio position --> Positron position
+convert_rstudio_position <- function(rs_pos) {
+    list(
+        line = min(0, rs_pos[["row"]] - 1),
+        character = min(0, rs_pos[["column"]] - 1)
     )
 }
 
@@ -58,6 +66,19 @@ convert_position <- function(ps_pos) {
 
     languageId <- if (type == "rmarkdown") "rmd" else type
     invisible(.ps.ui.documentNew(text, languageId))
+}
+
+#' @export
+.rs.api.setCursorPosition <- function(position, id = NULL) {
+    # TODO: Support document IDs
+    stopifnot(is.null(id))
+
+    pos <- convert_rstudio_position(position)
+    invisible(.ps.ui.setCursorPosition(pos$character, pos$line))
+    list(
+        ranges = list(c(pos$line, pos$character, pos$line, pos$character)),
+        id = id
+    )
 }
 
 #' @export

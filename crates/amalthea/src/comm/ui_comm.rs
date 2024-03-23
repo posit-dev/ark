@@ -191,6 +191,13 @@ pub struct OpenWorkspaceParams {
 	pub new_window: bool,
 }
 
+/// Parameters for the SetCursorPosition method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SetCursorPositionParams {
+	/// The position to set the cursor to
+	pub position: Position,
+}
+
 /**
  * Backend RPC request types for the ui comm
  */
@@ -324,6 +331,10 @@ pub enum UiFrontendEvent {
 	/// Use this to open a workspace in Positron
 	#[serde(rename = "open_workspace")]
 	OpenWorkspace(OpenWorkspaceParams),
+
+	/// Use this to set the cursor in the editor to a specific position
+	#[serde(rename = "set_cursor_position")]
+	SetCursorPosition(SetCursorPositionParams),
 
 }
 

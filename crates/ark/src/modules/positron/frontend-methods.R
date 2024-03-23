@@ -11,6 +11,11 @@
 }
 
 #' @export
+.ps.ui.setCursorPosition <- function(character, line) {
+    .ps.Call("ps_ui_set_cursor_position", character, line)
+}
+
+#' @export
 .ps.ui.workspaceFolder <- function() {
     .ps.Call("ps_ui_workspace_folder")
 }
