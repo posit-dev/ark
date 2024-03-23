@@ -69,12 +69,12 @@ convert_rstudio_position <- function(rs_pos) {
 }
 
 #' @export
-.rs.api.setCursorPosition <- function(position, id = NULL) {
+.rs.api.setSelectionRanges <- function(position, id = NULL) {
     # TODO: Support document IDs
     stopifnot(is.null(id))
 
     pos <- convert_rstudio_position(position)
-    invisible(.ps.ui.setCursorPosition(pos$character, pos$line))
+    invisible(.ps.ui.setSelectionRanges(pos$character, pos$line))
     list(
         ranges = list(c(pos$line, pos$character, pos$line, pos$character)),
         id = id

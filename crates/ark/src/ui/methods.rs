@@ -6,6 +6,8 @@
 //
 
 use amalthea::comm::ui_comm::DebugSleepParams;
+use amalthea::comm::ui_comm::Position;
+use amalthea::comm::ui_comm::SetEditorSelectionsParams;
 use amalthea::comm::ui_comm::ShowDialogParams;
 use amalthea::comm::ui_comm::ShowQuestionParams;
 use amalthea::comm::ui_comm::UiFrontendRequest;
@@ -19,6 +21,26 @@ use crate::interface::RMain;
 pub unsafe extern "C" fn ps_ui_last_active_editor_context() -> anyhow::Result<SEXP> {
     let main = RMain::get();
     let out = main.call_frontend_method(UiFrontendRequest::LastActiveEditorContext)?;
+    Ok(out.sexp)
+}
+
+#[harp::register]
+pub unsafe extern "C" fn ps_ui_set_selection_ranges(
+    character: SEXP,
+    line: SEXP,
+) -> anyhow::Result<SEXP> {
+    let character: i32 = RObject::view(character).try_into()?;
+    let line: i32 = RObject::view(line).try_into()?;
+
+    let params = SetEditorSelectionsParams {
+        position: Position {
+            character: character as i64,
+            line: line as i64,
+        },
+    };
+
+    let main = RMain::get();
+    let out = main.call_frontend_method(UiFrontendRequest::SetEditorSelections(params))?;
     Ok(out.sexp)
 }
 

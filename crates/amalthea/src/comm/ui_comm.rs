@@ -191,9 +191,9 @@ pub struct OpenWorkspaceParams {
 	pub new_window: bool,
 }
 
-/// Parameters for the SetCursorPosition method.
+/// Parameters for the SetEditorSelections method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct SetCursorPositionParams {
+pub struct SetEditorSelectionsParams {
 	/// The position to set the cursor to
 	pub position: Position,
 }
@@ -256,6 +256,12 @@ pub enum UiFrontendRequest {
 	#[serde(rename = "workspace_folder")]
 	WorkspaceFolder,
 
+	/// Set the selections in the editor
+	///
+	/// Use this to set the selection ranges/cursor in the editor
+	#[serde(rename = "set_editor_selections")]
+	SetEditorSelections(SetEditorSelectionsParams),
+
 	/// Context metadata for the last editor
 	///
 	/// Returns metadata such as file path for the last editor selected by the
@@ -282,6 +288,9 @@ pub enum UiFrontendReply {
 
 	/// The path to the workspace folder
 	WorkspaceFolderReply(Option<String>),
+
+	/// Reply for the set_editor_selections method (no result)
+	SetEditorSelectionsReply(),
 
 	/// Editor metadata
 	LastActiveEditorContextReply(Option<EditorContext>),
@@ -332,10 +341,6 @@ pub enum UiFrontendEvent {
 	#[serde(rename = "open_workspace")]
 	OpenWorkspace(OpenWorkspaceParams),
 
-	/// Use this to set the cursor in the editor to a specific position
-	#[serde(rename = "set_cursor_position")]
-	SetCursorPosition(SetCursorPositionParams),
-
 }
 
 /**
@@ -350,6 +355,7 @@ pub fn ui_frontend_reply_from_value(
 		UiFrontendRequest::ShowDialog(_) => Ok(UiFrontendReply::ShowDialogReply()),
 		UiFrontendRequest::DebugSleep(_) => Ok(UiFrontendReply::DebugSleepReply()),
 		UiFrontendRequest::WorkspaceFolder => Ok(UiFrontendReply::WorkspaceFolderReply(serde_json::from_value(reply)?)),
+		UiFrontendRequest::SetEditorSelections(_) => Ok(UiFrontendReply::SetEditorSelectionsReply()),
 		UiFrontendRequest::LastActiveEditorContext => Ok(UiFrontendReply::LastActiveEditorContextReply(serde_json::from_value(reply)?)),
 	}
 }

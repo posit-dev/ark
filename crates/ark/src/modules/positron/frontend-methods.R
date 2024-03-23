@@ -11,8 +11,8 @@
 }
 
 #' @export
-.ps.ui.setCursorPosition <- function(character, line) {
-    .ps.Call("ps_ui_set_cursor_position", character, line)
+.ps.ui.setSelectionRanges <- function(character, line) {
+    .ps.Call("ps_ui_set_selection_ranges", character, line)
 }
 
 #' @export
