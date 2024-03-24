@@ -1,12 +1,12 @@
 //
 // browser.rs
 //
-// Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2024 Posit Software, PBC. All rights reserved.
 //
 //
 
-use std::process::Command;
-
+use amalthea::comm::ui_comm::ShowUrlParams;
+use amalthea::comm::ui_comm::UiFrontendEvent;
 use anyhow::Result;
 use harp::object::RObject;
 use libr::Rf_ScalarLogical;
@@ -66,9 +66,13 @@ unsafe fn ps_browse_url_impl(url: SEXP) -> Result<SEXP> {
         return Ok(Rf_ScalarLogical(1));
     }
 
-    // TODO: What should we do with other URLs? This is used for opening,
-    // for example, web applications (e.g. Shiny) and also interactive plots
-    // (e.g. htmlwidgets).
-    Command::new("open").arg(url).output()?;
+    // For all other URLs, create a ShowUrl event and send it to the main
+    // thread; Positron will handle it.
+    let params = ShowUrlParams { url };
+
+    let main = RMain::get();
+    let event = UiFrontendEvent::ShowUrl(params);
+    main.send_frontend_event(event);
+
     Ok(Rf_ScalarLogical(1))
 }
