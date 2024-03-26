@@ -50,8 +50,8 @@ convert_positron_position <- function(ps_pos) {
 # RStudio position --> Positron position
 convert_rstudio_position <- function(rs_pos) {
     list(
-        line = min(0, rs_pos[["row"]] - 1),
-        character = min(0, rs_pos[["column"]] - 1)
+        line = as.integer(max(0, rs_pos[["row"]] - 1)),
+        character = as.integer(max(0, rs_pos[["column"]] - 1))
     )
 }
 
@@ -74,11 +74,11 @@ convert_rstudio_position <- function(rs_pos) {
     stopifnot(is.null(id))
 
     pos <- convert_rstudio_position(position)
-    invisible(.ps.ui.setSelectionRanges(pos$character, pos$line))
-    list(
+    .ps.ui.setSelectionRanges(pos$character, pos$line)
+    invisible(list(
         ranges = list(c(pos$line, pos$character, pos$line, pos$character)),
         id = id
-    )
+    ))
 }
 
 #' @export
