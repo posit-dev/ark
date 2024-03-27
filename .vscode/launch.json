@@ -4,6 +4,7 @@
     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
+
         {
             "name": "Attach: ark",
             "type": "lldb",
@@ -14,6 +15,42 @@
             "windows": {
                 "program": "ark.exe"
             }
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Unit tests: ark",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--package=ark"
+                ],
+                "filter": {
+                    "name": "ark",
+                    "kind": "lib"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Integration tests: Data Explorer",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--package=ark"
+                ],
+                "filter": {
+                    "name": "data_explorer",
+                    "kind": "test"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
         }
     ]
 }
