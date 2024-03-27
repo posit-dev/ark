@@ -51,6 +51,11 @@
 }
 
 #' @export
+.ps.ui.showUrl <- function(url) {
+    .ps.Call("ps_ui_show_url", url)
+}
+
+#' @export
 .ps.ui.debugSleep <- function(ms) {
     # stopifnot(is.numeric(ms) && length(ms) == 1 && !is.na(ms))
     .ps.Call("ps_ui_debug_sleep", ms)

@@ -12,6 +12,7 @@ use amalthea::comm::ui_comm::Position;
 use amalthea::comm::ui_comm::Range;
 use amalthea::comm::ui_comm::SetEditorSelectionsParams;
 use amalthea::comm::ui_comm::ShowMessageParams;
+use amalthea::comm::ui_comm::ShowUrlParams;
 use amalthea::comm::ui_comm::UiFrontendEvent;
 use harp::object::RObject;
 use libr::R_NilValue;
@@ -98,6 +99,18 @@ pub unsafe extern "C" fn ps_ui_set_selection_ranges(ranges: SEXP) -> anyhow::Res
 
     let main = RMain::get();
     let event = UiFrontendEvent::SetEditorSelections(params);
+    main.send_frontend_event(event);
+    Ok(R_NilValue)
+}
+
+#[harp::register]
+pub unsafe extern "C" fn ps_ui_show_url(url: SEXP) -> anyhow::Result<SEXP> {
+    let params = ShowUrlParams {
+        url: RObject::view(url).try_into()?,
+    };
+
+    let main = RMain::get();
+    let event = UiFrontendEvent::ShowUrl(params);
     main.send_frontend_event(event);
     Ok(R_NilValue)
 }
