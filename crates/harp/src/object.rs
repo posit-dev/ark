@@ -706,6 +706,9 @@ impl TryFrom<RObject> for Vec<i32> {
             let n = Rf_xlength(*value);
             for i in 0..n {
                 let res = INTEGER_ELT(*value, i);
+                if res == R_NaInt {
+                    return Err(Error::MissingValueError);
+                }
                 result.push(res);
             }
 
