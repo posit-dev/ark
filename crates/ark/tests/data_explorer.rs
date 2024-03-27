@@ -8,13 +8,17 @@
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendReply;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendRequest;
+use amalthea::comm::data_explorer_comm::DataExplorerFrontendEvent;
 use amalthea::comm::data_explorer_comm::GetDataValuesParams;
 use amalthea::comm::data_explorer_comm::GetSchemaParams;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::socket;
 use ark::data_explorer::r_data_explorer::RDataExplorer;
+use ark::lsp::events::EVENTS;
 use ark::r_task;
 use crossbeam::channel::bounded;
+use harp::environment::R_ENVS;
+use harp::eval::r_parse_eval0;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::test::start_r;
@@ -160,4 +164,45 @@ fn test_data_explorer() {
         },
         _ => panic!("Unexpected Data Explorer Reply: {:?}", reply),
     }
+
+    // --- updates ---
+    let tiny = r_parse_eval0("x <- data.frame(y = 2, z = 3)", R_ENVS.global).unwrap();
+
+    let (comm_manager_tx, comm_manager_rx) = bounded::<CommManagerEvent>(0);
+    RDataExplorer::start(String::from("tiny"), tiny, comm_manager_tx).unwrap();
+
+    // Wait for the new comm to show up.
+    let msg = comm_manager_rx
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .unwrap();
+    let socket = match msg {
+        CommManagerEvent::Opened(socket, _value) => {
+            assert_eq!(socket.comm_name, "positron.dataExplorer");
+            socket
+        },
+        _ => panic!("Unexpected Comm Manager Event"),
+    };
+
+    // Make a change to the data set.
+    r_parse_eval0("x[1, 1] <- 0", R_ENVS.global).unwrap();
+
+    // Emit a console prompt event; this should tickle the data explorer to
+    // check for changes.
+    EVENTS.console_prompt.emit(());
+
+    // Wait for an update event to arrive
+    let msg = socket
+        .outgoing_rx
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .unwrap();
+    let msg = match msg {
+        CommMsg::Data(value) => {
+            let event: DataExplorerFrontendEvent = serde_json::from_value(value).unwrap();
+            event
+        },
+        _ => panic!("Unexpected Comm Message"),
+    };
+
+    // Make sure it's a data update event.
+    assert_eq!(msg, DataExplorerFrontendEvent::DataUpdate);
 }
