@@ -1,4 +1,23 @@
 #' @export
+.rs.api.modifyRange <- function(location = NULL,
+                                text = NULL,
+                                id = NULL) {
+    .rs.api.insertText(location, text, id)
+}
+
+#' @export
+.rs.api.insertText <- function(location = NULL,
+                               text = NULL,
+                               id = NULL) {
+    # TODO: Support document IDs
+    stopifnot(is.null(id))
+
+    ps_ranges <- lapply(location, rstudioapi::document_range)
+    invisible(.ps.ui.insertText(ranges, text))
+    list(ranges = ranges, text = text, id = NULL)
+}
+
+#' @export
 .rs.api.getActiveDocumentContext <- function() {
     .rs.api.getSourceEditorContext(NULL)
 }
@@ -17,12 +36,12 @@
     list(
         path = context$document$path,
         contents = unlist(context$contents),
-        selection = convert_selection(context$selections)
+        selection = convert_positron_selection(context$selections)
     )
 }
 
 # Positron selection --> RStudio selection
-convert_selection <- function(ps_sels) {
+convert_positron_selection <- function(ps_sels) {
     convert_one <- function(ps_sel) {
         list(
             range = rstudioapi::document_range(
@@ -47,14 +66,6 @@ convert_positron_position <- function(ps_pos) {
     )
 }
 
-# RStudio position --> Positron position
-convert_rstudio_position <- function(rs_pos) {
-    list(
-        line = as.integer(max(0, rs_pos[["row"]] - 1)),
-        character = as.integer(max(0, rs_pos[["column"]] - 1))
-    )
-}
-
 #' @export
 .rs.api.documentNew <- function(text,
                                 type = c("r", "rmarkdown", "sql"),
@@ -69,16 +80,63 @@ convert_rstudio_position <- function(rs_pos) {
 }
 
 #' @export
-.rs.api.setSelectionRanges <- function(position, id = NULL) {
+.rs.api.setSelectionRanges <- function(ranges, id = NULL) {
     # TODO: Support document IDs
     stopifnot(is.null(id))
 
-    pos <- convert_rstudio_position(position)
-    .ps.ui.setSelectionRanges(pos$character, pos$line)
+    ranges <- validate_ranges(ranges)
+    .ps.ui.setSelectionRanges(unlist(ranges))
     invisible(list(
-        ranges = list(c(pos$line, pos$character, pos$line, pos$character)),
+        ranges = ranges,
         id = id
     ))
+}
+
+## similar to "validateAndTransformLocation" from
+## https://github.com/rstudio/rstudio/blob/main/src/cpp/r/R/Api.R
+## (takes care of converting to zero-based indexing)
+validate_ranges <- function(location) {
+  # allow a single range (then validate that it's a true range after)
+  if (!is.list(location) || inherits(location, "document_range")) {
+    location <- list(location)
+  }
+
+  ranges <- lapply(location, function(el) {
+    # detect proxy Inf object
+    if (identical(el, Inf)) {
+      el <- c(Inf, 0, Inf, 0)
+    }
+
+    # detect positions (2-element vectors) and transform them to ranges
+    n <- length(el)
+    if (n == 2 && is.numeric(el)) {
+      el <- c(el, el)
+    }
+
+    # detect document_ranges and transform
+    if (is.list(el) && all(c("start", "end") %in% names(el))) {
+      el <- c(el$start, el$end)
+    }
+
+    # validate we have a range-like object
+    if (length(el) != 4 || !is.numeric(el) || any(is.na(el))) {
+      stop("'ranges' should be a list of 4-element integer vectors", call. = FALSE)
+    }
+
+    # transform out-of-bounds values appropriately
+    el[el < 1] <- 1
+    el[is.infinite(el)] <- NA
+
+    # transform from 1-based to 0-based indexing for server
+    result <- as.integer(el) - 1L
+
+    # treat NAs as end of row / column
+    result[is.na(result)] <- as.integer(2^31 - 1)
+
+    result
+  })
+
+  ranges
 }
 
 #' @export

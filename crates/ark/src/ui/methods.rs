@@ -7,6 +7,7 @@
 
 use amalthea::comm::ui_comm::DebugSleepParams;
 use amalthea::comm::ui_comm::Position;
+use amalthea::comm::ui_comm::Range;
 use amalthea::comm::ui_comm::SetEditorSelectionsParams;
 use amalthea::comm::ui_comm::ShowDialogParams;
 use amalthea::comm::ui_comm::ShowQuestionParams;
@@ -25,19 +26,23 @@ pub unsafe extern "C" fn ps_ui_last_active_editor_context() -> anyhow::Result<SE
 }
 
 #[harp::register]
-pub unsafe extern "C" fn ps_ui_set_selection_ranges(
-    character: SEXP,
-    line: SEXP,
-) -> anyhow::Result<SEXP> {
-    let character: i32 = RObject::view(character).try_into()?;
-    let line: i32 = RObject::view(line).try_into()?;
+pub unsafe extern "C" fn ps_ui_set_selection_ranges(ranges: SEXP) -> anyhow::Result<SEXP> {
+    let ranges_smushed_together: Vec<i32> = RObject::view(ranges).try_into()?;
+    let ranges: Vec<Range> = ranges_smushed_together
+        .chunks_exact(4)
+        .map(|_chunk| Range {
+            start: Position {
+                character: 0,
+                line: 0,
+            },
+            end: Position {
+                character: 0,
+                line: 0,
+            },
+        })
+        .collect();
 
-    let params = SetEditorSelectionsParams {
-        position: Position {
-            character: character as i64,
-            line: line as i64,
-        },
-    };
+    let params = SetEditorSelectionsParams { selections: ranges };
 
     let main = RMain::get();
     let out = main.call_frontend_method(UiFrontendRequest::SetEditorSelections(params))?;

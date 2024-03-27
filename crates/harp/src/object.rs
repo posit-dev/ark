@@ -696,6 +696,24 @@ impl TryFrom<RObject> for Vec<Option<String>> {
     }
 }
 
+impl TryFrom<RObject> for Vec<i32> {
+    type Error = crate::error::Error;
+    fn try_from(value: RObject) -> Result<Self, Self::Error> {
+        unsafe {
+            r_assert_type(*value, &[INTSXP, NILSXP])?;
+
+            let mut result: Vec<i32> = Vec::new();
+            let n = Rf_xlength(*value);
+            for i in 0..n {
+                let res = INTEGER_ELT(*value, i);
+                result.push(res);
+            }
+
+            return Ok(result);
+        }
+    }
+}
+
 impl TryFrom<Vec<i32>> for RObject {
     type Error = crate::error::Error;
     fn try_from(value: Vec<i32>) -> Result<Self, Self::Error> {

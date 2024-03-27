@@ -87,6 +87,16 @@ pub struct Selection {
 	pub text: String
 }
 
+/// Selection range
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct Range {
+	/// Start position of the selection
+	pub start: Position,
+
+	/// End position of the selection
+	pub end: Position
+}
+
 /// Parameters for the CallMethod method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct CallMethodParams {
@@ -194,8 +204,8 @@ pub struct OpenWorkspaceParams {
 /// Parameters for the SetEditorSelections method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SetEditorSelectionsParams {
-	/// The position to set the cursor to
-	pub position: Position,
+	/// The selections (really, ranges) to set in the document
+	pub selections: Vec<Range>,
 }
 
 /**

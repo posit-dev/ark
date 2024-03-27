@@ -11,8 +11,8 @@
 }
 
 #' @export
-.ps.ui.setSelectionRanges <- function(character, line) {
-    .ps.Call("ps_ui_set_selection_ranges", character, line)
+.ps.ui.setSelectionRanges <- function(ranges) {
+    .ps.Call("ps_ui_set_selection_ranges", ranges)
 }
 
 #' @export
