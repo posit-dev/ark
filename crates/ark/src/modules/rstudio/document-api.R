@@ -36,17 +36,17 @@
     list(
         path = context$document$path,
         contents = unlist(context$contents),
-        selection = convert_positron_selection(context$selections)
+        selection = convert_selection(context$selections)
     )
 }
 
 # Positron selection --> RStudio selection
-convert_positron_selection <- function(ps_sels) {
+convert_selection <- function(ps_sels) {
     convert_one <- function(ps_sel) {
         list(
             range = rstudioapi::document_range(
-                start = convert_positron_position(ps_sel$start),
-                end = convert_positron_position(ps_sel$end)
+                start = convert_position(ps_sel$start),
+                end = convert_position(ps_sel$end)
             ),
             text = ps_sel$text
         )
@@ -56,7 +56,7 @@ convert_positron_selection <- function(ps_sels) {
 }
 
 # Positron position --> RStudio position
-convert_positron_position <- function(ps_pos) {
+convert_position <- function(ps_pos) {
     with(
         ps_pos,
         rstudioapi::document_position(
