@@ -8,6 +8,9 @@
 use amalthea::comm::ui_comm::ExecuteCommandParams;
 use amalthea::comm::ui_comm::OpenEditorParams;
 use amalthea::comm::ui_comm::OpenWorkspaceParams;
+use amalthea::comm::ui_comm::Position;
+use amalthea::comm::ui_comm::Range;
+use amalthea::comm::ui_comm::SetEditorSelectionsParams;
 use amalthea::comm::ui_comm::ShowMessageParams;
 use amalthea::comm::ui_comm::UiFrontendEvent;
 use harp::object::RObject;
@@ -70,6 +73,31 @@ pub unsafe extern "C" fn ps_ui_navigate_to_file(
 
     let main = RMain::get();
     let event = UiFrontendEvent::OpenEditor(params);
+    main.send_frontend_event(event);
+    Ok(R_NilValue)
+}
+
+#[harp::register]
+pub unsafe extern "C" fn ps_ui_set_selection_ranges(ranges: SEXP) -> anyhow::Result<SEXP> {
+    let ranges_smushed_together: Vec<i32> = RObject::view(ranges).try_into()?;
+    let ranges: Vec<Range> = ranges_smushed_together
+        .chunks_exact(4)
+        .map(|chunk| Range {
+            start: Position {
+                character: chunk[1] as i64,
+                line: chunk[0] as i64,
+            },
+            end: Position {
+                character: chunk[3] as i64,
+                line: chunk[2] as i64,
+            },
+        })
+        .collect();
+
+    let params = SetEditorSelectionsParams { selections: ranges };
+
+    let main = RMain::get();
+    let event = UiFrontendEvent::SetEditorSelections(params);
     main.send_frontend_event(event);
     Ok(R_NilValue)
 }

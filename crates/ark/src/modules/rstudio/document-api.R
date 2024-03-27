@@ -85,7 +85,7 @@ convert_position <- function(ps_pos) {
     stopifnot(is.null(id))
 
     ranges <- validate_ranges(ranges)
-    .ps.ui.setSelectionRanges(unlist(ranges))
+    .ps.ui.setSelectionRanges(unlist(ranges) + 1L)
     invisible(list(
         ranges = ranges,
         id = id
