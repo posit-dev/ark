@@ -208,6 +208,13 @@ pub struct SetEditorSelectionsParams {
 	pub selections: Vec<Range>,
 }
 
+/// Parameters for the ShowUrl method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ShowUrlParams {
+	/// The URL to display
+	pub url: String,
+}
+
 /**
  * Backend RPC request types for the ui comm
  */
@@ -345,6 +352,11 @@ pub enum UiFrontendEvent {
 	/// Use this to set the selection ranges/cursor in the editor
 	#[serde(rename = "set_editor_selections")]
 	SetEditorSelections(SetEditorSelectionsParams),
+
+	/// Causes the URL to be displayed inside the Viewer pane, and makes the
+	/// Viewer pane visible.
+	#[serde(rename = "show_url")]
+	ShowUrl(ShowUrlParams),
 
 }
 
