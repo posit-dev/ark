@@ -21,6 +21,40 @@ use harp::test::start_r;
 use harp::utils::r_envir_get;
 use libr::R_GlobalEnv;
 
+/// Test helper method to open a built-in dataset in the data explorer.
+///
+/// Parameters:
+/// - dataset: The name of the dataset to open. Must be one of the built-in
+///   dataset names returned by `data()`.
+///
+/// Returns a comm socket that can be used to communicate with the data explorer.
+fn open_data_explorer(dataset: String) -> socket::comm::CommSocket {
+    // Create a dummy comm manager channel.
+    let (comm_manager_tx, comm_manager_rx) = bounded::<CommManagerEvent>(0);
+
+    // Force the dataset to be loaded into the R environment.
+    r_task(|| unsafe {
+        let data = { r_envir_get(&dataset, R_GlobalEnv).unwrap() };
+        let mtcars = RFunction::new("base", "force")
+            .param("x", data)
+            .call()
+            .unwrap();
+        RDataExplorer::start(dataset, mtcars, comm_manager_tx).unwrap();
+    });
+
+    // Wait for the new comm to show up.
+    let msg = comm_manager_rx
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .unwrap();
+    match msg {
+        CommManagerEvent::Opened(socket, _value) => {
+            assert_eq!(socket.comm_name, "positron.dataExplorer");
+            socket
+        },
+        _ => panic!("Unexpected Comm Manager Event"),
+    }
+}
+
 /// Helper method for sending a request to the data explorer and receiving a reply.
 ///
 /// Parameters:
@@ -33,8 +67,12 @@ fn socket_rpc(
     // Randomly generate a unique ID for this request.
     let id = uuid::Uuid::new_v4().to_string();
 
+    // Serialize the message for the wire
+    let json = serde_json::to_value(req).unwrap();
+    println!("--> {:?}", json);
+
     // Covnert the request to a CommMsg and send it.
-    let msg = CommMsg::Rpc(String::from(id), serde_json::to_value(req).unwrap());
+    let msg = CommMsg::Rpc(String::from(id), json);
     socket.incoming_tx.send(msg).unwrap();
     let msg = socket
         .outgoing_rx
@@ -44,6 +82,7 @@ fn socket_rpc(
     // Extract the reply from the CommMsg.
     match msg {
         CommMsg::Rpc(_id, value) => {
+            println!("<-- {:?}", value);
             let reply: DataExplorerBackendReply = serde_json::from_value(value).unwrap();
             reply
         },
@@ -51,38 +90,19 @@ fn socket_rpc(
     }
 }
 
+/// Runs the data explorer tests.
+///
+/// Note that these are all run in one single test instead of being split out
+/// into multiple tests since they must be run serially.
 #[test]
 fn test_data_explorer() {
-    // Start the R interpreter
+    // Start the R interpreter.
     start_r();
 
-    // Create a dummy comm manager channel.
-    let (comm_manager_tx, comm_manager_rx) = bounded::<CommManagerEvent>(0);
+    // --- mtcars ---
 
-    // Force the mtcars dataset to make it available. This is a sample dataset
-    // that comes with R.
-    r_task(|| unsafe {
-        let data = { r_envir_get("mtcars", R_GlobalEnv).unwrap() };
-        let mtcars = RFunction::new("base", "force")
-            .param("x", data)
-            .call()
-            .unwrap();
-        // Make sure this looks like the mtcars dataset.
-        assert_eq!(mtcars.length(), 11);
-        RDataExplorer::start(String::from("test"), mtcars, comm_manager_tx).unwrap();
-    });
-
-    // Wait for the new comm to show up.
-    let msg = comm_manager_rx
-        .recv_timeout(std::time::Duration::from_secs(1))
-        .unwrap();
-    let socket = match msg {
-        CommManagerEvent::Opened(socket, _value) => {
-            assert_eq!(socket.comm_name, "positron.dataExplorer");
-            socket
-        },
-        _ => panic!("Unexpected Comm Manager Event"),
-    };
+    // Open the mtcars data set in the data explorer.
+    let socket = open_data_explorer(String::from("mtcars"));
 
     // Get the schema for the test data set.
     let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
@@ -109,6 +129,34 @@ fn test_data_explorer() {
     match reply {
         DataExplorerBackendReply::GetDataValuesReply(data) => {
             assert_eq!(data.columns.len(), 5);
+            let labels = data.row_labels.unwrap();
+            assert_eq!(labels[0][0], "Valiant");
+            assert_eq!(labels[0][1], "Duster 360");
+            assert_eq!(labels[0][2], "Merc 240D");
+        },
+        _ => panic!("Unexpected Data Explorer Reply: {:?}", reply),
+    }
+
+    // --- women ---
+
+    // Open the mtcars data set in the data explorer.
+    let socket = open_data_explorer(String::from("women"));
+
+    // Get 2 rows of data from the beginning of the test data set.
+    let req = DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
+        row_start_index: 0,
+        num_rows: 2,
+        column_indices: vec![0, 1],
+    });
+    let reply = socket_rpc(&socket, req);
+    match reply {
+        DataExplorerBackendReply::GetDataValuesReply(data) => {
+            assert_eq!(data.columns.len(), 2);
+            assert_eq!(data.columns[0][1], "59");
+            assert_eq!(data.columns[0][2], "60");
+
+            // This data set has no row labels.
+            assert!(data.row_labels.is_none());
         },
         _ => panic!("Unexpected Data Explorer Reply: {:?}", reply),
     }
