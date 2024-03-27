@@ -20,6 +20,7 @@ use crate::error::Error;
 use crate::exec::RFunction;
 use crate::exec::RFunctionExt;
 use crate::protect::RProtect;
+use crate::r_symbol;
 use crate::utils::r_assert_capacity;
 use crate::utils::r_assert_length;
 use crate::utils::r_assert_type;
@@ -306,6 +307,17 @@ impl RObject {
             STRSXP => Vec::<Option<String>>::try_from(names).ok(),
             _ => None,
         }
+    }
+
+    /// Gets a named attribute from the object. Returns `None` if the attribute
+    /// doesn't exist.
+    pub fn attribute(&self, name: &str) -> Option<RObject> {
+        // Get the attribute value.
+        let val = unsafe { Rf_getAttrib(self.sexp, r_symbol!(name)) };
+        if r_is_null(val) {
+            return None;
+        }
+        Some(RObject::view(val))
     }
 }
 

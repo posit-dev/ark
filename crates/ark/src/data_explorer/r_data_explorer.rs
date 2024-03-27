@@ -338,12 +338,26 @@ impl RDataExplorer {
             column_data.push(formatted);
         }
 
-        let row_names = RFunction::new("base", "row.names").add(object).call()?;
-        let row_labels: Vec<String> = row_names.try_into()?;
+        // Look for the row names attribute and include them if present
+        // (if not, let the front end generate automatic row names)
+        let row_names = object.attribute("row.names");
+        let row_labels = match row_names {
+            Some(names) => match names.kind() {
+                STRSXP => {
+                    let labels: Vec<String> = names.try_into()?;
+                    Some(vec![labels])
+                },
+                _ => {
+                    // These are automatic row names
+                    None
+                },
+            },
+            None => None,
+        };
 
         let response = TableData {
             columns: column_data,
-            row_labels: Some(vec![row_labels]),
+            row_labels,
         };
 
         Ok(DataExplorerBackendReply::GetDataValuesReply(response))
