@@ -1219,4 +1219,19 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test_tryfrom_RObject_Vec_i32() {
+        r_test! {
+            let i = RObject::from(Rf_allocVector(INTSXP, 2));
+            SET_INTEGER_ELT(*i, 0, 42);
+            SET_INTEGER_ELT(*i, 1, R_NaInt);
+
+            assert_match!(
+                Vec::<i32>::try_from(i),
+                Err(Error::MissingValueError) => {}
+            );
+        }
+    }
 }
