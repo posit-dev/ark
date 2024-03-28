@@ -12,14 +12,20 @@
     # TODO: Support document IDs
     stopifnot(is.null(id))
 
+    # For compatibility with calls like `rstudioapi::insertText("foo")`
     if (is.null(text)) {
         text <- location
         context <- .ps.ui.LastActiveEditorContext()
-        location <- lapply(context$selections, selection_to_range)
+        location <- lapply(context$selections, selection_as_range)
     }
 
-    ranges <- validate_ranges(location)
-    .ps.ui.modifyEditorSelections(unlist(ranges), rep(text, length(ranges)))
+    ranges <- asRangeList(location)
+    if (length(text) == 1L) {
+        text <- rep(text, length(ranges))
+    }
+    stopifnot(length(text) == length(ranges))
+
+    .ps.ui.modifyEditorSelections(unlist(ranges), text)
     invisible(list(
         ranges = ranges,
         text = text,
@@ -78,7 +84,7 @@ convert_position <- function(ps_pos) {
     )
 }
 
-selection_to_range <- function(ps_sel) {
+selection_as_range <- function(ps_sel) {
     c(
         ps_sel$start$line,
         ps_sel$start$character,
@@ -105,7 +111,7 @@ selection_to_range <- function(ps_sel) {
     # TODO: Support document IDs
     stopifnot(is.null(id))
 
-    ranges <- validate_ranges(ranges)
+    ranges <- asRangeList(ranges)
     .ps.ui.setSelectionRanges(unlist(ranges) + 1L)
     invisible(list(
         ranges = ranges,
@@ -113,9 +119,23 @@ selection_to_range <- function(ps_sel) {
     ))
 }
 
-## similar to "validateAndTransformLocation" from
-## https://github.com/rstudio/rstudio/blob/main/src/cpp/r/R/Api.R
-validate_ranges <- function(location) {
+# Similar to "validateAndTransformLocation" from
+# https://github.com/rstudio/rstudio/blob/main/src/cpp/r/R/Api.R
+#
+# Here `location` is a (list of) `rstudioapi::document_position` or
+# `rstudioapi::document_range` object(s), or numeric vectors coercable to such
+# objects.
+#
+# Returns a list of length-four integer vectors representing ranges, like:
+# [[1]]
+# [1] 0 0 1 1
+#
+# [[2]]
+# [1] 2 7 2 9
+#
+# [[3]]
+# [1] 9 0 9 1
+asRangeList <- function(location) {
     # allow a single range (then validate that it's a true range after)
     if (!is.list(location) || inherits(location, "document_range")) {
         location <- list(location)
