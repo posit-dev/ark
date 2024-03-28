@@ -37,6 +37,7 @@ use log::error;
 use log::warn;
 use stdext::spawn;
 
+use crate::data_explorer::r_data_explorer::DataObjectEnvBinding;
 use crate::data_explorer::r_data_explorer::RDataExplorer;
 use crate::lsp::events::EVENTS;
 use crate::r_task;
@@ -326,7 +327,16 @@ impl RVariables {
             let env = self.env.get().clone();
             let data = PositronVariable::resolve_data_object(env, &path)?;
             let name = unsafe { path.get_unchecked(path.len() - 1) };
-            RDataExplorer::start(name.clone(), data, self.comm_manager_tx.clone())?;
+            let binding = DataObjectEnvBinding {
+                name: name.to_string(),
+                env: RThreadSafe::new(self.env.get().clone()),
+            };
+            RDataExplorer::start(
+                name.clone(),
+                data,
+                Some(binding),
+                self.comm_manager_tx.clone(),
+            )?;
             Ok(())
         })
     }

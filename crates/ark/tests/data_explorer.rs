@@ -40,7 +40,7 @@ fn open_data_explorer(dataset: String) -> socket::comm::CommSocket {
     // Force the dataset to be loaded into the R environment.
     r_task(|| unsafe {
         let data = { RObject::new(Rf_eval(r_symbol!(&dataset), R_GlobalEnv)) };
-        RDataExplorer::start(dataset, data, comm_manager_tx).unwrap();
+        RDataExplorer::start(dataset, data, None, comm_manager_tx).unwrap();
     });
 
     // Wait for the new comm to show up.
@@ -166,7 +166,7 @@ fn test_data_explorer() {
     let tiny = r_parse_eval0("x <- data.frame(y = 2, z = 3)", R_ENVS.global).unwrap();
 
     let (comm_manager_tx, comm_manager_rx) = bounded::<CommManagerEvent>(0);
-    RDataExplorer::start(String::from("tiny"), tiny, comm_manager_tx).unwrap();
+    RDataExplorer::start(String::from("tiny"), tiny, None, comm_manager_tx).unwrap();
 
     // Wait for the new comm to show up.
     let msg = comm_manager_rx

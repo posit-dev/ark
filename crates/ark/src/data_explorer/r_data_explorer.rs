@@ -49,10 +49,33 @@ use crate::r_task;
 use crate::thread::RThreadSafe;
 use crate::variables::variable::WorkspaceVariableDisplayType;
 
+/// A name/value binding pair in an environment.
+///
+/// We use this to keep track of the data object that the data viewer is
+/// currently viewing; when the binding changes, we update the data viewer
+/// accordingly.
+pub struct DataObjectEnvBinding {
+    pub name: String,
+    pub env: RThreadSafe<RObject>,
+}
+
+/// The R backend for Positron's Data Explorer.
 pub struct RDataExplorer {
+    /// The human-readable title of the data viewer.
     title: String,
+
+    /// The data object that the data viewer is currently viewing.
     table: RThreadSafe<RObject>,
+
+    /// An optional binding to the environment containing the data object.
+    /// This can be omitted for cases wherein the data object isn't in an
+    /// environment (e.g. a temporary or unnamed object)
+    binding: Option<DataObjectEnvBinding>,
+
+    /// The communication socket for the data viewer.
     comm: CommSocket,
+
+    /// A channel to send messages to the CommManager.
     comm_manager_tx: Sender<CommManagerEvent>,
 }
 
@@ -65,6 +88,7 @@ impl RDataExplorer {
     pub fn start(
         title: String,
         data: RObject,
+        binding: Option<DataObjectEnvBinding>,
         comm_manager_tx: Sender<CommManagerEvent>,
     ) -> harp::Result<()> {
         let id = Uuid::new_v4().to_string();
@@ -83,6 +107,7 @@ impl RDataExplorer {
             let viewer = Self {
                 title,
                 table: data,
+                binding,
                 comm,
                 comm_manager_tx,
             };
@@ -439,7 +464,7 @@ pub unsafe extern "C" fn ps_view_data_frame(x: SEXP, title: SEXP) -> anyhow::Res
     let main = RMain::get();
     let comm_manager_tx = main.get_comm_manager_tx().clone();
 
-    RDataExplorer::start(title, x, comm_manager_tx)?;
+    RDataExplorer::start(title, x, None, comm_manager_tx)?;
 
     Ok(R_NilValue)
 }
