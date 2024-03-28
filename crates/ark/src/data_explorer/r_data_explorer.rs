@@ -1,7 +1,7 @@
 //
-// r-data-viewer.rs
+// r-data-explorer.rs
 //
-// Copyright (C) 2023 by Posit Software, PBC
+// Copyright (C) 2023-2024 by Posit Software, PBC
 //
 //
 

@@ -190,7 +190,7 @@ fn test_data_explorer() {
         _ => panic!("Unexpected Comm Manager Event"),
     };
 
-    // Make a change to the data set.
+    // Make a data-level change to the data set.
     r_parse_eval0("x[1, 1] <- 0", R_ENVS.global).unwrap();
 
     // Emit a console prompt event; this should tickle the data explorer to
@@ -198,18 +198,32 @@ fn test_data_explorer() {
     EVENTS.console_prompt.emit(());
 
     // Wait for an update event to arrive
-    let msg = socket
-        .outgoing_rx
-        .recv_timeout(std::time::Duration::from_secs(1))
-        .unwrap();
-    let msg = match msg {
+    assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
         CommMsg::Data(value) => {
-            let event: DataExplorerFrontendEvent = serde_json::from_value(value).unwrap();
-            event
-        },
-        _ => panic!("Unexpected Comm Message"),
-    };
+            // Make sure it's a data update event.
+            assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
+                DataExplorerFrontendEvent::DataUpdate
+            );
+    });
 
-    // Make sure it's a data update event.
-    assert_eq!(msg, DataExplorerFrontendEvent::DataUpdate);
+    // Now, replace 'x' with an entirely different data set. This should trigger
+    // a schema-level update.
+    r_parse_eval0(
+        "x <- data.frame(y = 'y', z = 'z', three = '3')",
+        R_ENVS.global,
+    )
+    .unwrap();
+
+    // Emit a console prompt event to trigger change detection
+    EVENTS.console_prompt.emit(());
+
+    assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
+        CommMsg::Data(value) => {
+            // Make sure it's schema update event.
+            assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
+                DataExplorerFrontendEvent::SchemaUpdate(params) => {
+                    assert_eq!(params.discard_state, true);
+                }
+            );
+    });
 }
