@@ -15,6 +15,7 @@ use amalthea::socket;
 use ark::data_explorer::r_data_explorer::RDataExplorer;
 use ark::r_task;
 use crossbeam::channel::bounded;
+use harp::assert_match;
 use harp::object::RObject;
 use harp::r_symbol;
 use harp::test::start_r;
@@ -105,15 +106,15 @@ fn test_data_explorer() {
         num_columns: 11,
         start_index: 0,
     });
-    let reply = socket_rpc(&socket, req);
-    match reply {
+
+    // Check that we got the right number of columns.
+    assert_match!(socket_rpc(&socket, req),
         DataExplorerBackendReply::GetSchemaReply(schema) => {
             // mtcars is a data frame with 11 columns, so we should get
             // 11 columns back.
             assert_eq!(schema.columns.len(), 11);
-        },
-        _ => panic!("Unexpected Data Explorer Reply: {:?}", reply),
-    }
+        }
+    );
 
     // Get 5 rows of data from the middle of the test data set.
     let req = DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
@@ -121,17 +122,17 @@ fn test_data_explorer() {
         num_rows: 5,
         column_indices: vec![0, 1, 2, 3, 4],
     });
-    let reply = socket_rpc(&socket, req);
-    match reply {
+
+    // Check that we got the right columns and row labels.
+    assert_match!(socket_rpc(&socket, req),
         DataExplorerBackendReply::GetDataValuesReply(data) => {
             assert_eq!(data.columns.len(), 5);
             let labels = data.row_labels.unwrap();
             assert_eq!(labels[0][0], "Valiant");
             assert_eq!(labels[0][1], "Duster 360");
             assert_eq!(labels[0][2], "Merc 240D");
-        },
-        _ => panic!("Unexpected Data Explorer Reply: {:?}", reply),
-    }
+        }
+    );
 
     // --- women ---
 
@@ -144,8 +145,9 @@ fn test_data_explorer() {
         num_rows: 2,
         column_indices: vec![0, 1],
     });
-    let reply = socket_rpc(&socket, req);
-    match reply {
+
+    // Spot check the data values.
+    assert_match!(socket_rpc(&socket, req),
         DataExplorerBackendReply::GetDataValuesReply(data) => {
             assert_eq!(data.columns.len(), 2);
             assert_eq!(data.columns[0][1], "59");
@@ -153,7 +155,6 @@ fn test_data_explorer() {
 
             // This data set has no row labels.
             assert!(data.row_labels.is_none());
-        },
-        _ => panic!("Unexpected Data Explorer Reply: {:?}", reply),
-    }
+        }
+    );
 }
