@@ -31,7 +31,7 @@ pub unsafe extern "C" fn ps_ui_modify_editor_selections(
     values: SEXP,
 ) -> anyhow::Result<SEXP> {
     let ranges_smushed_together: Vec<i32> = RObject::view(ranges).try_into()?;
-    let ranges: Vec<Range> = ranges_smushed_together
+    let selections: Vec<Range> = ranges_smushed_together
         .chunks_exact(4)
         .map(|chunk| Range {
             start: Position {
@@ -45,10 +45,13 @@ pub unsafe extern "C" fn ps_ui_modify_editor_selections(
         })
         .collect();
 
-    let params = ModifyEditorSelectionsParams {
-        selections: ranges,
-        values: RObject::view(values).try_into()?,
-    };
+    let values: Vec<String> = RObject::view(values).try_into()?;
+    if selections.len() != values.len() {
+        log::error!(
+            "Error modifying editor selections: selections and values are not the same length."
+        );
+    }
+    let params = ModifyEditorSelectionsParams { selections, values };
 
     let main = RMain::get();
     let out = main.call_frontend_method(UiFrontendRequest::ModifyEditorSelections(params))?;
