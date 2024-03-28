@@ -12,6 +12,7 @@ use amalthea::comm::data_explorer_comm::ColumnSchema;
 use amalthea::comm::data_explorer_comm::ColumnSchemaTypeDisplay;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendReply;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendRequest;
+use amalthea::comm::data_explorer_comm::DataExplorerFrontendEvent;
 use amalthea::comm::data_explorer_comm::GetColumnProfileParams;
 use amalthea::comm::data_explorer_comm::GetDataValuesParams;
 use amalthea::comm::data_explorer_comm::GetSchemaParams;
@@ -26,10 +27,13 @@ use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
 use anyhow::anyhow;
 use anyhow::bail;
+use crossbeam::channel::unbounded;
 use crossbeam::channel::Sender;
+use crossbeam::select;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
+use harp::r_symbol;
 use harp::utils::r_inherits;
 use harp::utils::r_is_object;
 use harp::utils::r_is_s4;
@@ -45,6 +49,7 @@ use stdext::unwrap;
 use uuid::Uuid;
 
 use crate::interface::RMain;
+use crate::lsp::events::EVENTS;
 use crate::r_task;
 use crate::thread::RThreadSafe;
 use crate::variables::variable::WorkspaceVariableDisplayType;
@@ -117,7 +122,7 @@ impl RDataExplorer {
         Ok(())
     }
 
-    pub fn execution_thread(self) {
+    pub fn execution_thread(mut self) {
         let execute: anyhow::Result<()> = local! {
             let metadata = Metadata {
                 title: self.title.clone(),
@@ -133,36 +138,102 @@ impl RDataExplorer {
             log::error!("Error while viewing object '{}': {}", self.title, err);
         };
 
+        // Register a handler for console prompt events
+        let (prompt_signal_tx, prompt_signal_rx) = unbounded::<()>();
+        let listen_id = EVENTS.console_prompt.listen({
+            move |_| {
+                prompt_signal_tx.send(()).unwrap();
+            }
+        });
+
         // Flag initially set to false, but set to true if the user closes the
         // channel (i.e. the frontend is closed)
         let mut user_initiated_close = false;
 
         // Set up event loop to listen for incoming messages from the frontend
         loop {
-            let msg = unwrap!(self.comm.incoming_rx.recv(), Err(e) => {
-                log::trace!("Data Viewer: Error while receiving message from frontend: {e:?}");
-                break;
-            });
-            log::info!("Data Viewer: Received message from frontend: {msg:?}");
+            select! {
+                // When a console prompt event is received, check for updates to
+                // the underlying data
+                recv(&prompt_signal_rx) -> msg => {
+                    if let Ok(()) = msg {
+                        if let Err(err) = self.update() {
+                            log::error!("Error while checking environment for data viewer update: {err}");
+                        }
+                    }
+                },
 
-            // Break out of the loop if the frontend has closed the channel
-            if let CommMsg::Close = msg {
-                log::trace!("Data Viewer: Closing down after receiving comm_close from frontend.");
+                // When a message is received from the frontend, handle it
+                recv(self.comm.incoming_rx) -> msg => {
+                    let msg = unwrap!(msg, Err(e) => {
+                        log::trace!("Data Viewer: Error while receiving message from frontend: {e:?}");
+                        break;
+                    });
+                    log::info!("Data Viewer: Received message from frontend: {msg:?}");
 
-                // Remember that the user initiated the close so that we can
-                // avoid sending a duplicate close message from the back end
-                user_initiated_close = true;
-                break;
+                    // Break out of the loop if the frontend has closed the channel
+                    if let CommMsg::Close = msg {
+                        log::trace!("Data Viewer: Closing down after receiving comm_close from frontend.");
+
+                        // Remember that the user initiated the close so that we can
+                        // avoid sending a duplicate close message from the back end
+                        user_initiated_close = true;
+                        break;
+                    }
+
+                    self.comm.handle_request(msg, |req| self.handle_rpc(req));
+                }
             }
-
-            self.comm.handle_request(msg, |req| self.handle_rpc(req));
         }
+
+        EVENTS.console_prompt.remove(listen_id);
 
         if !user_initiated_close {
             // Send a close message to the frontend if the frontend didn't
             // initiate the close
             self.comm.outgoing_tx.send(CommMsg::Close).unwrap();
         }
+    }
+
+    /// Check the environment bindings for updates to the underlying value
+    fn update(&mut self) -> anyhow::Result<()> {
+        // No need to check for updates if we have no binding
+        if self.binding.is_none() {
+            return Ok(());
+        }
+
+        // See if the value has changed; this block returns a new value if it
+        // has changed, or None if it hasn't
+        let new = r_task(|| {
+            let binding = self.binding.as_ref().unwrap();
+            let env = binding.env.get().sexp;
+
+            let new = unsafe {
+                let sym = r_symbol!(binding.name);
+                Rf_findVarInFrame(env, sym)
+            };
+
+            let old = self.table.get().sexp;
+            if new == old {
+                None
+            } else {
+                Some(RThreadSafe::new(RObject::view(new)))
+            }
+        });
+
+        // No change to the value, so we're done
+        if new.is_none() {
+            return Ok(());
+        }
+
+        // Update the value and send a message to the frontend
+        self.table = new.unwrap();
+
+        let event = DataExplorerFrontendEvent::DataUpdate;
+        self.comm
+            .outgoing_tx
+            .send(CommMsg::Data(serde_json::to_value(event)?))?;
+        Ok(())
     }
 
     fn handle_rpc(
