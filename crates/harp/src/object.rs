@@ -317,7 +317,7 @@ impl RObject {
         if r_is_null(val) {
             return None;
         }
-        Some(RObject::view(val))
+        Some(unsafe { RObject::new(val) })
     }
 }
 
