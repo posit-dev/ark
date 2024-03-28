@@ -311,7 +311,7 @@ impl RObject {
 
     /// Gets a named attribute from the object. Returns `None` if the attribute
     /// doesn't exist.
-    pub fn attribute(&self, name: &str) -> Option<RObject> {
+    pub fn attr(&self, name: &str) -> Option<RObject> {
         // Get the attribute value.
         let val = unsafe { Rf_getAttrib(self.sexp, r_symbol!(name)) };
         if r_is_null(val) {
