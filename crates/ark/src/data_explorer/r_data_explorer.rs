@@ -340,7 +340,7 @@ impl RDataExplorer {
 
         // Look for the row names attribute and include them if present
         // (if not, let the front end generate automatic row names)
-        let row_names = object.attribute("row.names");
+        let row_names = object.attr("row.names");
         let row_labels = match row_names {
             Some(names) => match names.kind() {
                 STRSXP => {
