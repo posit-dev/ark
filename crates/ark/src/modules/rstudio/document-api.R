@@ -62,7 +62,7 @@ convert_position <- function(ps_pos) {
 
 #' @export
 .rs.api.documentSaveAll <- function() {
-    # This excludes untitled files in RStudio
+    # This function excludes untitled files in RStudio:
     invisible(.ps.ui.executeCommand("workbench.action.files.saveAllTitled"))
 }
 

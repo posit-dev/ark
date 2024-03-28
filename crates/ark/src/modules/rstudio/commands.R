@@ -4,7 +4,7 @@
         commandId,
         "activateConsole" = "workbench.action.positronConsole.focusConsole",
         "activateTerminal" = "workbench.action.terminal.focus",
-        # This includes untitled files in RStudio
+        # This command includes untitled files in RStudio:
         "saveAllSourceDocs" = "workbench.action.files.saveAll",
         "vcsRefresh" = "git.refresh",
         "refreshFiles" = "workbench.files.action.refreshFilesExplorer",
