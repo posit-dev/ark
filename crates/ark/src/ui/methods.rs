@@ -6,6 +6,9 @@
 //
 
 use amalthea::comm::ui_comm::DebugSleepParams;
+use amalthea::comm::ui_comm::ModifyEditorSelectionsParams;
+use amalthea::comm::ui_comm::Position;
+use amalthea::comm::ui_comm::Range;
 use amalthea::comm::ui_comm::ShowDialogParams;
 use amalthea::comm::ui_comm::ShowQuestionParams;
 use amalthea::comm::ui_comm::UiFrontendRequest;
@@ -19,6 +22,36 @@ use crate::interface::RMain;
 pub unsafe extern "C" fn ps_ui_last_active_editor_context() -> anyhow::Result<SEXP> {
     let main = RMain::get();
     let out = main.call_frontend_method(UiFrontendRequest::LastActiveEditorContext)?;
+    Ok(out.sexp)
+}
+
+#[harp::register]
+pub unsafe extern "C" fn ps_ui_modify_editor_selections(
+    ranges: SEXP,
+    values: SEXP,
+) -> anyhow::Result<SEXP> {
+    let ranges_smushed_together: Vec<i32> = RObject::view(ranges).try_into()?;
+    let ranges: Vec<Range> = ranges_smushed_together
+        .chunks_exact(4)
+        .map(|chunk| Range {
+            start: Position {
+                character: chunk[1] as i64,
+                line: chunk[0] as i64,
+            },
+            end: Position {
+                character: chunk[3] as i64,
+                line: chunk[2] as i64,
+            },
+        })
+        .collect();
+
+    let params = ModifyEditorSelectionsParams {
+        selections: ranges,
+        values: RObject::view(values).try_into()?,
+    };
+
+    let main = RMain::get();
+    let out = main.call_frontend_method(UiFrontendRequest::ModifyEditorSelections(params))?;
     Ok(out.sexp)
 }
 

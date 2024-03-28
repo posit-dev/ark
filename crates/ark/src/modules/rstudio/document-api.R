@@ -12,10 +12,22 @@
     # TODO: Support document IDs
     stopifnot(is.null(id))
 
-    ps_ranges <- lapply(location, rstudioapi::document_range)
-    invisible(.ps.ui.insertText(ranges, text))
-    list(ranges = ranges, text = text, id = NULL)
+    if (is.null(text)) {
+        text <- location
+        context <- .ps.ui.LastActiveEditorContext()
+        location <- lapply(context$selections, selection_to_range)
+    }
+
+    ranges <- validate_ranges(location)
+    .ps.ui.modifyEditorSelections(unlist(ranges), rep(text, length(ranges)))
+    invisible(list(
+        ranges = ranges,
+        text = text,
+        id = id
+    ))
 }
+
+
 
 #' @export
 .rs.api.getActiveDocumentContext <- function() {
@@ -30,7 +42,7 @@
     context <- .ps.ui.LastActiveEditorContext()
 
     if (is.null(context)) {
-      return()
+        return()
     }
 
     list(
@@ -66,6 +78,15 @@ convert_position <- function(ps_pos) {
     )
 }
 
+selection_to_range <- function(ps_sel) {
+    c(
+        ps_sel$start$line,
+        ps_sel$start$character,
+        ps_sel$end$line,
+        ps_sel$end$character
+    )
+}
+
 #' @export
 .rs.api.documentNew <- function(text,
                                 type = c("r", "rmarkdown", "sql"),
@@ -94,49 +115,47 @@ convert_position <- function(ps_pos) {
 
 ## similar to "validateAndTransformLocation" from
 ## https://github.com/rstudio/rstudio/blob/main/src/cpp/r/R/Api.R
-## (takes care of converting to zero-based indexing)
 validate_ranges <- function(location) {
-  # allow a single range (then validate that it's a true range after)
-  if (!is.list(location) || inherits(location, "document_range")) {
-    location <- list(location)
-  }
-
-  ranges <- lapply(location, function(el) {
-    # detect proxy Inf object
-    if (identical(el, Inf)) {
-      el <- c(Inf, 0, Inf, 0)
+    # allow a single range (then validate that it's a true range after)
+    if (!is.list(location) || inherits(location, "document_range")) {
+        location <- list(location)
     }
 
-    # detect positions (2-element vectors) and transform them to ranges
-    n <- length(el)
-    if (n == 2 && is.numeric(el)) {
-      el <- c(el, el)
-    }
+    ranges <- lapply(location, function(el) {
+        # detect proxy Inf object
+        if (identical(el, Inf)) {
+            el <- c(Inf, 0, Inf, 0)
+        }
 
-    # detect document_ranges and transform
-    if (is.list(el) && all(c("start", "end") %in% names(el))) {
-      el <- c(el$start, el$end)
-    }
+        # detect positions (2-element vectors) and transform them to ranges
+        n <- length(el)
+        if (n == 2 && is.numeric(el)) {
+            el <- c(el, el)
+        }
 
-    # validate we have a range-like object
-    if (length(el) != 4 || !is.numeric(el) || any(is.na(el))) {
-      stop("'ranges' should be a list of 4-element integer vectors", call. = FALSE)
-    }
+        # detect document_ranges and transform
+        if (is.list(el) && all(c("start", "end") %in% names(el))) {
+            el <- c(el$start, el$end)
+        }
 
-    # transform out-of-bounds values appropriately
-    el[el < 1] <- 1
-    el[is.infinite(el)] <- NA
+        # validate we have a range-like object
+        if (length(el) != 4 || !is.numeric(el) || any(is.na(el))) {
+            stop("'ranges' should be a list of 4-element integer vectors", call. = FALSE)
+        }
 
-    # transform from 1-based to 0-based indexing for server
-    result <- as.integer(el) - 1L
+        # transform out-of-bounds values appropriately
+        el[el < 1] <- 1
+        el[is.infinite(el)] <- NA
 
-    # treat NAs as end of row / column
-    result[is.na(result)] <- as.integer(2^31 - 1)
+        # transform from 1-based to 0-based indexing for server
+        result <- as.integer(el) - 1L
 
-    result
-  })
+        # treat NAs as end of row / column
+        result[is.na(result)] <- as.integer(2^31 - 1)
+        result
+    })
 
-  ranges
+    ranges
 }
 
 #' @export
