@@ -15,11 +15,11 @@ use amalthea::socket;
 use ark::data_explorer::r_data_explorer::RDataExplorer;
 use ark::r_task;
 use crossbeam::channel::bounded;
-use harp::exec::RFunction;
-use harp::exec::RFunctionExt;
+use harp::object::RObject;
+use harp::r_symbol;
 use harp::test::start_r;
-use harp::utils::r_envir_get;
 use libr::R_GlobalEnv;
+use libr::Rf_eval;
 
 /// Test helper method to open a built-in dataset in the data explorer.
 ///
@@ -34,12 +34,8 @@ fn open_data_explorer(dataset: String) -> socket::comm::CommSocket {
 
     // Force the dataset to be loaded into the R environment.
     r_task(|| unsafe {
-        let data = { r_envir_get(&dataset, R_GlobalEnv).unwrap() };
-        let mtcars = RFunction::new("base", "force")
-            .param("x", data)
-            .call()
-            .unwrap();
-        RDataExplorer::start(dataset, mtcars, comm_manager_tx).unwrap();
+        let data = { RObject::new(Rf_eval(r_symbol!(&dataset), R_GlobalEnv)) };
+        RDataExplorer::start(dataset, data, comm_manager_tx).unwrap();
     });
 
     // Wait for the new comm to show up.
