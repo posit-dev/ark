@@ -13,9 +13,11 @@ use amalthea::comm::data_explorer_comm::GetDataValuesParams;
 use amalthea::comm::data_explorer_comm::GetSchemaParams;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::socket;
+use ark::data_explorer::r_data_explorer::DataObjectEnvBinding;
 use ark::data_explorer::r_data_explorer::RDataExplorer;
 use ark::lsp::events::EVENTS;
 use ark::r_task;
+use ark::thread::RThreadSafe;
 use crossbeam::channel::bounded;
 use harp::assert_match;
 use harp::environment::R_ENVS;
@@ -162,11 +164,19 @@ fn test_data_explorer() {
         }
     );
 
-    // --- updates ---
+    // --- live updates ---
+
+    // Create a tiny data frame to test live updates.
     let tiny = r_parse_eval0("x <- data.frame(y = 2, z = 3)", R_ENVS.global).unwrap();
 
+    // Open a data explorer for the tiny data frame and supply a binding to the
+    // global environment.
     let (comm_manager_tx, comm_manager_rx) = bounded::<CommManagerEvent>(0);
-    RDataExplorer::start(String::from("tiny"), tiny, None, comm_manager_tx).unwrap();
+    let binding = DataObjectEnvBinding {
+        name: String::from("x"),
+        env: RThreadSafe::new(RObject::view(R_ENVS.global)),
+    };
+    RDataExplorer::start(String::from("tiny"), tiny, Some(binding), comm_manager_tx).unwrap();
 
     // Wait for the new comm to show up.
     let msg = comm_manager_rx
