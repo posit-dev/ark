@@ -1235,6 +1235,18 @@ mod tests {
                 Vec::<i32>::try_from(i),
                 Err(Error::MissingValueError) => {}
             );
+
+            let j = RObject::from(Rf_allocVector(INTSXP, 3));
+            SET_INTEGER_ELT(*j, 0, 1);
+            SET_INTEGER_ELT(*j, 1, 2);
+            SET_INTEGER_ELT(*j, 2, 3);
+
+            assert_match!(
+                Vec::<i32>::try_from(j),
+                Ok(x) => {
+                    assert_eq!(x, vec![1i32, 2, 3]);
+                }
+            );
         }
     }
 }
