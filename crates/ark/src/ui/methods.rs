@@ -7,8 +7,6 @@
 
 use amalthea::comm::ui_comm::DebugSleepParams;
 use amalthea::comm::ui_comm::ModifyEditorSelectionsParams;
-use amalthea::comm::ui_comm::Position;
-use amalthea::comm::ui_comm::Range;
 use amalthea::comm::ui_comm::ShowDialogParams;
 use amalthea::comm::ui_comm::ShowQuestionParams;
 use amalthea::comm::ui_comm::UiFrontendRequest;
@@ -17,6 +15,7 @@ use harp::utils::r_is_null;
 use libr::SEXP;
 
 use crate::interface::RMain;
+use crate::ui::events::ps_ui_robj_as_ranges;
 
 #[harp::register]
 pub unsafe extern "C" fn ps_ui_last_active_editor_context() -> anyhow::Result<SEXP> {
@@ -30,26 +29,7 @@ pub unsafe extern "C" fn ps_ui_modify_editor_selections(
     ranges: SEXP,
     values: SEXP,
 ) -> anyhow::Result<SEXP> {
-    let ranges_as_r_objects: Vec<RObject> = RObject::view(ranges).try_into()?;
-    let ranges_as_result: Result<Vec<Vec<i32>>, _> = ranges_as_r_objects
-        .iter()
-        .map(|x| Vec::<i32>::try_from(x.clone()))
-        .collect();
-    let ranges_as_vec_of_vecs = ranges_as_result?;
-    let selections: Vec<Range> = ranges_as_vec_of_vecs
-        .iter()
-        .map(|chunk| Range {
-            start: Position {
-                character: chunk[1] as i64,
-                line: chunk[0] as i64,
-            },
-            end: Position {
-                character: chunk[3] as i64,
-                line: chunk[2] as i64,
-            },
-        })
-        .collect();
-
+    let selections = ps_ui_robj_as_ranges(ranges)?;
     let values: Vec<String> = RObject::view(values).try_into()?;
     if selections.len() != values.len() {
         log::error!(

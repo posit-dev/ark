@@ -80,22 +80,9 @@ pub unsafe extern "C" fn ps_ui_navigate_to_file(
 
 #[harp::register]
 pub unsafe extern "C" fn ps_ui_set_selection_ranges(ranges: SEXP) -> anyhow::Result<SEXP> {
-    let ranges_smushed_together: Vec<i32> = RObject::view(ranges).try_into()?;
-    let ranges: Vec<Range> = ranges_smushed_together
-        .chunks_exact(4)
-        .map(|chunk| Range {
-            start: Position {
-                character: chunk[1] as i64,
-                line: chunk[0] as i64,
-            },
-            end: Position {
-                character: chunk[3] as i64,
-                line: chunk[2] as i64,
-            },
-        })
-        .collect();
+    let selections = ps_ui_robj_as_ranges(ranges)?;
 
-    let params = SetEditorSelectionsParams { selections: ranges };
+    let params = SetEditorSelectionsParams { selections };
 
     let main = RMain::get();
     let event = UiFrontendEvent::SetEditorSelections(params);
@@ -113,4 +100,27 @@ pub unsafe extern "C" fn ps_ui_show_url(url: SEXP) -> anyhow::Result<SEXP> {
     let event = UiFrontendEvent::ShowUrl(params);
     main.send_frontend_event(event);
     Ok(R_NilValue)
+}
+
+pub fn ps_ui_robj_as_ranges(ranges: SEXP) -> anyhow::Result<Vec<Range>> {
+    let ranges_as_r_objects: Vec<RObject> = RObject::view(ranges).try_into()?;
+    let ranges_as_result: Result<Vec<Vec<i32>>, _> = ranges_as_r_objects
+        .iter()
+        .map(|x| Vec::<i32>::try_from(x.clone()))
+        .collect();
+    let ranges_as_vec_of_vecs = ranges_as_result?;
+    let selections: Vec<Range> = ranges_as_vec_of_vecs
+        .iter()
+        .map(|chunk| Range {
+            start: Position {
+                character: chunk[1] as i64,
+                line: chunk[0] as i64,
+            },
+            end: Position {
+                character: chunk[3] as i64,
+                line: chunk[2] as i64,
+            },
+        })
+        .collect();
+    Ok(selections)
 }
