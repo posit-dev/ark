@@ -795,6 +795,8 @@ mod tests {
 
     use super::*;
     use crate::assert_match;
+    use crate::environment::R_ENVS;
+    use crate::eval::r_parse_eval0;
     use crate::r_char;
     use crate::r_test;
 
@@ -1275,30 +1277,18 @@ mod tests {
     #[allow(non_snake_case)]
     fn test_tryfrom_RObject_Vec_RObject() {
         r_test! {
-            let i = RObject::from(Rf_allocVector(INTSXP, 2));
-            SET_INTEGER_ELT(*i, 0, 42);
-            SET_INTEGER_ELT(*i, 1, R_NaInt);
-
-            let j = RObject::from(Rf_allocVector(INTSXP, 2));
-            SET_INTEGER_ELT(*j, 0, 10);
-            SET_INTEGER_ELT(*j, 1, 20);
-
-            let v = RObject::from(Rf_allocVector(VECSXP, 2));
-            SET_VECTOR_ELT(*v, 0, *i);
-            SET_VECTOR_ELT(*v, 1, *j);
-
-            let mut w = Vec::<RObject>::try_from(v).unwrap();
+            let v = r_parse_eval0("list(c(1L, NA), c(10L, 20L))", R_ENVS.global).unwrap();
+            let w = Vec::<RObject>::try_from(v).unwrap();
 
             assert_match!(
-                Vec::<i32>::try_from(w.remove(1)),
+                Vec::<i32>::try_from(w[0].clone()),
+                Err(Error::MissingValueError) => {}
+            );
+            assert_match!(
+                Vec::<i32>::try_from(w[1].clone()),
                 Ok(x) => {
                     assert_eq!(x, vec![10i32, 20])
                 }
-            );
-
-            assert_match!(
-                Vec::<i32>::try_from(w.remove(0)),
-                Err(Error::MissingValueError) => {}
             );
         }
     }

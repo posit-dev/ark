@@ -30,9 +30,14 @@ pub unsafe extern "C" fn ps_ui_modify_editor_selections(
     ranges: SEXP,
     values: SEXP,
 ) -> anyhow::Result<SEXP> {
-    let ranges_smushed_together: Vec<i32> = RObject::view(ranges).try_into()?;
-    let selections: Vec<Range> = ranges_smushed_together
-        .chunks_exact(4)
+    let ranges_as_r_objects: Vec<RObject> = RObject::view(ranges).try_into()?;
+    let ranges_as_result: Result<Vec<Vec<i32>>, _> = ranges_as_r_objects
+        .iter()
+        .map(|x| Vec::<i32>::try_from(x.clone()))
+        .collect();
+    let ranges_as_vec_of_vecs = ranges_as_result?;
+    let selections: Vec<Range> = ranges_as_vec_of_vecs
+        .iter()
         .map(|chunk| Range {
             start: Position {
                 character: chunk[1] as i64,

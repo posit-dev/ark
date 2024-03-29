@@ -25,7 +25,7 @@
     }
     stopifnot(length(text) == length(ranges))
 
-    .ps.ui.modifyEditorSelections(unlist(ranges), text)
+    .ps.ui.modifyEditorSelections(ranges, text)
     invisible(list(
         ranges = ranges,
         text = text,
@@ -112,7 +112,7 @@ selection_as_range <- function(ps_sel) {
     stopifnot(is.null(id))
 
     ranges <- asRangeList(ranges)
-    .ps.ui.setSelectionRanges(unlist(ranges) + 1L)
+    .ps.ui.setSelectionRanges(lapply(ranges, function(x) x + 1))
     invisible(list(
         ranges = ranges,
         id = id
