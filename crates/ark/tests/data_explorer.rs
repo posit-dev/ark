@@ -217,6 +217,7 @@ fn test_data_explorer() {
     // Emit a console prompt event to trigger change detection
     EVENTS.console_prompt.emit(());
 
+    // This should trigger a schema update event.
     assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
         CommMsg::Data(value) => {
             // Make sure it's schema update event.
@@ -226,4 +227,18 @@ fn test_data_explorer() {
                 }
             );
     });
+
+    // Get the schema again to make sure it updated. We added a new column, so
+    // we should get 3 columns back.
+    let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
+        num_columns: 3,
+        start_index: 0,
+    });
+
+    // Check that we got the right number of columns.
+    assert_match!(socket_rpc(&socket, req),
+        DataExplorerBackendReply::GetSchemaReply(schema) => {
+            assert_eq!(schema.columns.len(), 3);
+        }
+    );
 }
