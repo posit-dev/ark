@@ -11,6 +11,16 @@
 }
 
 #' @export
+.ps.ui.setSelectionRanges <- function(ranges) {
+    .ps.Call("ps_ui_set_selection_ranges", ranges)
+}
+
+#' @export
+.ps.ui.modifyEditorSelections <- function(ranges, values) {
+    .ps.Call("ps_ui_modify_editor_selections", ranges, values)
+}
+
+#' @export
 .ps.ui.workspaceFolder <- function() {
     .ps.Call("ps_ui_workspace_folder")
 }

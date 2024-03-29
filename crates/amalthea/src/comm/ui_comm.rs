@@ -87,6 +87,16 @@ pub struct Selection {
 	pub text: String
 }
 
+/// Selection range
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct Range {
+	/// Start position of the selection
+	pub start: Position,
+
+	/// End position of the selection
+	pub end: Position
+}
+
 /// Parameters for the CallMethod method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct CallMethodParams {
@@ -191,6 +201,23 @@ pub struct OpenWorkspaceParams {
 	pub new_window: bool,
 }
 
+/// Parameters for the SetEditorSelections method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SetEditorSelectionsParams {
+	/// The selections (really, ranges) to set in the document
+	pub selections: Vec<Range>,
+}
+
+/// Parameters for the ModifyEditorSelections method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ModifyEditorSelectionsParams {
+	/// The selections (really, ranges) to set in the document
+	pub selections: Vec<Range>,
+
+	/// The text values to insert at the selections
+	pub values: Vec<String>,
+}
+
 /// Parameters for the ShowUrl method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ShowUrlParams {
@@ -256,6 +283,12 @@ pub enum UiFrontendRequest {
 	#[serde(rename = "workspace_folder")]
 	WorkspaceFolder,
 
+	/// Modify selections in the editor with a text edit
+	///
+	/// Use this to edit a set of selection ranges/cursor in the editor
+	#[serde(rename = "modify_editor_selections")]
+	ModifyEditorSelections(ModifyEditorSelectionsParams),
+
 	/// Context metadata for the last editor
 	///
 	/// Returns metadata such as file path for the last editor selected by the
@@ -282,6 +315,9 @@ pub enum UiFrontendReply {
 
 	/// The path to the workspace folder
 	WorkspaceFolderReply(Option<String>),
+
+	/// Reply for the modify_editor_selections method (no result)
+	ModifyEditorSelectionsReply(),
 
 	/// Editor metadata
 	LastActiveEditorContextReply(Option<EditorContext>),
@@ -332,6 +368,10 @@ pub enum UiFrontendEvent {
 	#[serde(rename = "open_workspace")]
 	OpenWorkspace(OpenWorkspaceParams),
 
+	/// Use this to set the selection ranges/cursor in the editor
+	#[serde(rename = "set_editor_selections")]
+	SetEditorSelections(SetEditorSelectionsParams),
+
 	/// Causes the URL to be displayed inside the Viewer pane, and makes the
 	/// Viewer pane visible.
 	#[serde(rename = "show_url")]
@@ -351,6 +391,7 @@ pub fn ui_frontend_reply_from_value(
 		UiFrontendRequest::ShowDialog(_) => Ok(UiFrontendReply::ShowDialogReply()),
 		UiFrontendRequest::DebugSleep(_) => Ok(UiFrontendReply::DebugSleepReply()),
 		UiFrontendRequest::WorkspaceFolder => Ok(UiFrontendReply::WorkspaceFolderReply(serde_json::from_value(reply)?)),
+		UiFrontendRequest::ModifyEditorSelections(_) => Ok(UiFrontendReply::ModifyEditorSelectionsReply()),
 		UiFrontendRequest::LastActiveEditorContext => Ok(UiFrontendReply::LastActiveEditorContextReply(serde_json::from_value(reply)?)),
 	}
 }
