@@ -44,6 +44,7 @@ use libr::*;
 use serde::Deserialize;
 use serde::Serialize;
 use stdext::local;
+use stdext::result::ResultOrLog;
 use stdext::spawn;
 use stdext::unwrap;
 use uuid::Uuid;
@@ -77,6 +78,9 @@ pub struct RDataExplorer {
     /// environment (e.g. a temporary or unnamed object)
     binding: Option<DataObjectEnvBinding>,
 
+    /// A cache containing the schema for each column of the data object.
+    columns: Vec<ColumnSchema>,
+
     /// The communication socket for the data viewer.
     comm: CommSocket,
 
@@ -109,14 +113,36 @@ impl RDataExplorer {
         let data = RThreadSafe::new(data);
 
         spawn!(format!("ark-data-viewer-{}-{}", title, id), move || {
-            let viewer = Self {
-                title,
-                table: data,
-                binding,
-                comm,
-                comm_manager_tx,
-            };
-            viewer.execution_thread();
+            // Get the initial set of column schemas for the data object
+            let columns = r_task(|| Self::r_get_columns(&data));
+            match columns {
+                // Got the columns; start the data viewer
+                Ok(columns) => {
+                    let viewer = Self {
+                        title,
+                        table: data,
+                        binding,
+                        columns,
+                        comm,
+                        comm_manager_tx,
+                    };
+                    viewer.execution_thread();
+                },
+                Err(err) => {
+                    // Didn't get the columns; log the error and close the comm
+                    log::error!(
+                        "Error retrieving initial object schema: '{}': {}",
+                        title,
+                        err
+                    );
+
+                    // Close the comm immediately since we can't proceed without
+                    // the schema
+                    comm_manager_tx
+                        .send(CommManagerEvent::Closed(comm.comm_id))
+                        .or_log_error("Error sending comm closed event")
+                },
+            }
         });
 
         Ok(())
@@ -181,7 +207,8 @@ impl RDataExplorer {
                         break;
                     }
 
-                    self.comm.handle_request(msg, |req| self.handle_rpc(req));
+                    let comm = self.comm.clone();
+                    comm.handle_request(msg, |req| self.handle_rpc(req));
                 }
             }
         }
@@ -237,7 +264,7 @@ impl RDataExplorer {
     }
 
     fn handle_rpc(
-        &self,
+        &mut self,
         req: DataExplorerBackendRequest,
     ) -> anyhow::Result<DataExplorerBackendReply> {
         match req {
@@ -249,7 +276,7 @@ impl RDataExplorer {
                 // tidyverse support long vectors in data frames, but data.table does.
                 let num_columns: i32 = num_columns.try_into()?;
                 let start_index: i32 = start_index.try_into()?;
-                r_task(|| self.r_get_schema(start_index, num_columns))
+                self.get_schema(start_index, num_columns)
             },
             DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
                 row_start_index,
@@ -284,13 +311,9 @@ impl RDataExplorer {
 
 // Methods that must be run on the main R thread
 impl RDataExplorer {
-    fn r_get_schema(
-        &self,
-        start_index: i32,
-        num_columns: i32,
-    ) -> anyhow::Result<DataExplorerBackendReply> {
+    fn r_get_columns(table: &RThreadSafe<RObject>) -> anyhow::Result<Vec<ColumnSchema>> {
         unsafe {
-            let table = self.table.get().clone();
+            let table = table.get().clone();
             let object = *table;
 
             let info = table_info_or_bail(object)?;
@@ -305,11 +328,8 @@ impl RDataExplorer {
                 col_names: column_names,
             } = info;
 
-            let lower_bound = cmp::min(start_index, total_num_columns) as isize;
-            let upper_bound = cmp::min(total_num_columns, start_index + num_columns) as isize;
-
             let mut column_schemas = Vec::<ColumnSchema>::new();
-            for i in lower_bound..upper_bound {
+            for i in 0..(total_num_columns as isize) {
                 let column_name = match column_names.get_unchecked(i) {
                     Some(name) => name,
                     None => format!("[, {}]", i + 1),
@@ -338,12 +358,31 @@ impl RDataExplorer {
                 });
             }
 
-            let response = TableSchema {
-                columns: column_schemas,
-            };
-
-            Ok(DataExplorerBackendReply::GetSchemaReply(response))
+            Ok(column_schemas)
         }
+    }
+
+    /// Get the schema for a range of columns in the data object.
+    ///
+    /// - `start_index`: The index of the first column to return.
+    /// - `num_columns`: The number of columns to return.
+    fn get_schema(
+        &self,
+        start_index: i32,
+        num_columns: i32,
+    ) -> anyhow::Result<DataExplorerBackendReply> {
+        // Clip the range of columns requested to the actual number of columns
+        // in the data object
+        let total_num_columns = self.columns.len() as i32;
+        let lower_bound = cmp::min(start_index, total_num_columns);
+        let upper_bound = cmp::min(total_num_columns, start_index + num_columns);
+
+        // Return the schema for the requested columns
+        let response = TableSchema {
+            columns: self.columns[lower_bound as usize..upper_bound as usize].to_vec(),
+        };
+
+        Ok(DataExplorerBackendReply::GetSchemaReply(response))
     }
 
     fn r_get_state(&self) -> anyhow::Result<DataExplorerBackendReply> {
