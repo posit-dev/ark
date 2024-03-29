@@ -112,7 +112,7 @@ selection_as_range <- function(ps_sel) {
     stopifnot(is.null(id))
 
     ranges <- asRangeList(ranges)
-    .ps.ui.setSelectionRanges(lapply(ranges, function(x) x + 1))
+    .ps.ui.setSelectionRanges(lapply(ranges, function(x) x + 1L))
     invisible(list(
         ranges = ranges,
         id = id
