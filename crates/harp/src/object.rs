@@ -700,15 +700,36 @@ impl TryFrom<RObject> for Vec<i32> {
     type Error = crate::error::Error;
     fn try_from(value: RObject) -> Result<Self, Self::Error> {
         unsafe {
-            r_assert_type(*value, &[INTSXP, NILSXP])?;
+            r_assert_type(value.sexp, &[INTSXP, NILSXP])?;
+            if r_is_null(value.sexp) {
+                return Ok(Vec::new());
+            }
 
-            let mut result: Vec<i32> = Vec::new();
-            let n = Rf_xlength(*value);
+            let n = Rf_xlength(value.sexp);
+            let mut result: Vec<i32> = Vec::with_capacity(n as usize);
             for i in 0..n {
-                let res = INTEGER_ELT(*value, i);
+                let res = INTEGER_ELT(value.sexp, i);
                 if res == R_NaInt {
                     return Err(Error::MissingValueError);
                 }
+                result.push(res);
+            }
+
+            return Ok(result);
+        }
+    }
+}
+
+impl TryFrom<RObject> for Vec<RObject> {
+    type Error = crate::error::Error;
+    fn try_from(value: RObject) -> Result<Self, Self::Error> {
+        unsafe {
+            r_assert_type(value.sexp, &[VECSXP])?;
+
+            let n = Rf_xlength(value.sexp);
+            let mut result: Vec<RObject> = Vec::with_capacity(n as usize);
+            for i in 0..n {
+                let res = value.vector_elt(i)?;
                 result.push(res);
             }
 
