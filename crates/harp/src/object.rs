@@ -1270,4 +1270,36 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test_tryfrom_RObject_Vec_RObject() {
+        r_test! {
+            let i = RObject::from(Rf_allocVector(INTSXP, 2));
+            SET_INTEGER_ELT(*i, 0, 42);
+            SET_INTEGER_ELT(*i, 1, R_NaInt);
+
+            let j = RObject::from(Rf_allocVector(INTSXP, 2));
+            SET_INTEGER_ELT(*j, 0, 10);
+            SET_INTEGER_ELT(*j, 1, 20);
+
+            let v = RObject::from(Rf_allocVector(VECSXP, 2));
+            SET_VECTOR_ELT(*v, 0, *i);
+            SET_VECTOR_ELT(*v, 1, *j);
+
+            let mut w = Vec::<RObject>::try_from(v).unwrap();
+
+            assert_match!(
+                Vec::<i32>::try_from(w.remove(1)),
+                Ok(x) => {
+                    assert_eq!(x, vec![10i32, 20])
+                }
+            );
+
+            assert_match!(
+                Vec::<i32>::try_from(w.remove(0)),
+                Err(Error::MissingValueError) => {}
+            );
+        }
+    }
 }
