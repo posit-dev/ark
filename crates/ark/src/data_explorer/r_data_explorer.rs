@@ -430,12 +430,21 @@ impl RDataExplorer {
 
     fn r_sort_rows(&self) -> anyhow::Result<Vec<i32>> {
         let mut order = RFunction::new("base", "order");
+
+        // Allocate a vector to hold the sort order for each column
+        let mut decreasing: Vec<bool> = Vec::new();
+
         // For each element of self.sort_keys, add an argument to order
         for key in &self.sort_keys {
             // TODO: this is way too low level
             let column = self.table.get().vector_elt(key.column_index as isize)?;
+            decreasing.push(!key.ascending);
             order.add(column);
         }
+        // Add the sort order per column
+        order.param("decreasing", RObject::try_from(decreasing)?);
+
+        // Invoke the order function and return the result
         let result = order.call()?;
         let indices: Vec<i32> = result.try_into()?;
         Ok(indices)
