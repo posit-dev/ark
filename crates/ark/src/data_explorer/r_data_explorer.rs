@@ -85,8 +85,9 @@ pub struct RDataExplorer {
     /// environment (e.g. a temporary or unnamed object)
     binding: Option<DataObjectEnvBinding>,
 
-    /// A cache containing the schema for each column of the data object.
-    columns: Vec<ColumnSchema>,
+    /// A cache containing the current number of rows and the schema for each
+    /// column of the data object.
+    shape: DataObjectShape,
 
     /// A cache containing the current set of sort keys.
     sort_keys: Vec<ColumnSortKey>,
@@ -141,7 +142,7 @@ impl RDataExplorer {
                         title,
                         table: data,
                         binding,
-                        columns: shape.columns,
+                        shape,
                         row_indices,
                         sort_keys: vec![],
                         comm,
@@ -288,11 +289,11 @@ impl RDataExplorer {
 
         // Generate the appropriate event based on whether the schema has
         // changed
-        let event = match self.columns != new_shape.columns {
+        let event = match self.shape.columns != new_shape.columns {
             true => {
                 // Columns changed, so update our cache, and we need to send a
                 // schema update event
-                self.columns = new_shape.columns;
+                self.shape.columns = new_shape.columns;
 
                 // Reset active row indices to be all rows
                 self.row_indices = (1..=new_shape.num_rows).collect();
@@ -346,13 +347,14 @@ impl RDataExplorer {
                 sort_keys: keys,
             }) => {
                 // Save the new sort keys
-                self.sort_keys = keys;
+                self.sort_keys = keys.clone();
 
-                // Rebuild the row indices based on the new sort keys
-                self.row_indices = r_task(|| self.r_sort_rows())?;
-
-                // Print the new indices
-                println!("Data Viewer: New row indices: {:?}", self.row_indices);
+                // If there are no sort keys, reset the row indices to be the
+                // row numbers; otherwise, sort the rows
+                self.row_indices = match keys.len() {
+                    0 => (1..=self.shape.num_rows).collect(),
+                    _ => r_task(|| self.r_sort_rows())?,
+                };
 
                 Ok(DataExplorerBackendReply::SetSortColumnsReply())
             },
@@ -450,13 +452,13 @@ impl RDataExplorer {
     ) -> anyhow::Result<DataExplorerBackendReply> {
         // Clip the range of columns requested to the actual number of columns
         // in the data object
-        let total_num_columns = self.columns.len() as i32;
+        let total_num_columns = self.shape.columns.len() as i32;
         let lower_bound = cmp::min(start_index, total_num_columns);
         let upper_bound = cmp::min(total_num_columns, start_index + num_columns);
 
         // Return the schema for the requested columns
         let response = TableSchema {
-            columns: self.columns[lower_bound as usize..upper_bound as usize].to_vec(),
+            columns: self.shape.columns[lower_bound as usize..upper_bound as usize].to_vec(),
         };
 
         Ok(DataExplorerBackendReply::GetSchemaReply(response))
