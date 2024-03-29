@@ -10,6 +10,7 @@ use std::cmp;
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::data_explorer_comm::ColumnSchema;
 use amalthea::comm::data_explorer_comm::ColumnSchemaTypeDisplay;
+use amalthea::comm::data_explorer_comm::ColumnSortKey;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendReply;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendRequest;
 use amalthea::comm::data_explorer_comm::DataExplorerFrontendEvent;
@@ -82,6 +83,9 @@ pub struct RDataExplorer {
     /// A cache containing the schema for each column of the data object.
     columns: Vec<ColumnSchema>,
 
+    /// A cache containing the current set of sort keys.
+    sort_keys: Vec<ColumnSortKey>,
+
     /// The communication socket for the data viewer.
     comm: CommSocket,
 
@@ -124,6 +128,7 @@ impl RDataExplorer {
                         table: data,
                         binding,
                         columns,
+                        sort_keys: vec![],
                         comm,
                         comm_manager_tx,
                     };
@@ -313,8 +318,11 @@ impl RDataExplorer {
                     .collect::<Result<Vec<i32>, _>>()?;
                 r_task(|| self.r_get_data_values(row_start_index, num_rows, column_indices))
             },
-            DataExplorerBackendRequest::SetSortColumns(SetSortColumnsParams { sort_keys: _ }) => {
-                bail!("Data Viewer: Not yet implemented")
+            DataExplorerBackendRequest::SetSortColumns(SetSortColumnsParams {
+                sort_keys: keys,
+            }) => {
+                self.sort_keys = keys;
+                Ok(DataExplorerBackendReply::SetSortColumnsReply())
             },
             DataExplorerBackendRequest::SetColumnFilters(SetColumnFiltersParams { filters: _ }) => {
                 bail!("Data Viewer: Not yet implemented")
@@ -426,7 +434,7 @@ impl RDataExplorer {
                 num_columns: num_columns as i64,
             },
             filters: vec![],
-            sort_keys: vec![],
+            sort_keys: self.sort_keys.clone(),
         };
         Ok(DataExplorerBackendReply::GetStateReply(state))
     }

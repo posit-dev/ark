@@ -6,11 +6,13 @@
 //
 
 use amalthea::comm::comm_channel::CommMsg;
+use amalthea::comm::data_explorer_comm::ColumnSortKey;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendReply;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendRequest;
 use amalthea::comm::data_explorer_comm::DataExplorerFrontendEvent;
 use amalthea::comm::data_explorer_comm::GetDataValuesParams;
 use amalthea::comm::data_explorer_comm::GetSchemaParams;
+use amalthea::comm::data_explorer_comm::SetSortColumnsParams;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::socket;
 use ark::data_explorer::r_data_explorer::DataObjectEnvBinding;
@@ -137,6 +139,27 @@ fn test_data_explorer() {
             assert_eq!(labels[0][0], "Valiant");
             assert_eq!(labels[0][1], "Duster 360");
             assert_eq!(labels[0][2], "Merc 240D");
+        }
+    );
+
+    // Create a request to sort the data set by the 'mpg' column.
+    let mpg_sort_keys = vec![ColumnSortKey {
+        column_index: 0,
+        ascending: true,
+    }];
+    let req = DataExplorerBackendRequest::SetSortColumns(SetSortColumnsParams {
+        sort_keys: mpg_sort_keys.clone(),
+    });
+
+    // We should get a SetSortColumnsReply back.
+    assert_match!(socket_rpc(&socket, req),
+        DataExplorerBackendReply::SetSortColumnsReply() => {});
+
+    // Get the table state and ensure that the backend returns the sort keys
+    let req = DataExplorerBackendRequest::GetState;
+    assert_match!(socket_rpc(&socket, req),
+        DataExplorerBackendReply::GetStateReply(state) => {
+            assert_eq!(state.sort_keys, mpg_sort_keys);
         }
     );
 
