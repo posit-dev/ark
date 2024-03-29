@@ -163,6 +163,24 @@ fn test_data_explorer() {
         }
     );
 
+    // Get the first three rows of data from the sorted data set.
+    let req = DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
+        row_start_index: 0,
+        num_rows: 3,
+        column_indices: vec![0, 1],
+    });
+
+    // Check that sorted values were correctly returned.
+    assert_match!(socket_rpc(&socket, req),
+        DataExplorerBackendReply::GetDataValuesReply(data) => {
+            // The first three sorted rows should be 10.4, 10.4, and 13.3.
+            assert_eq!(data.columns.len(), 2);
+            assert_eq!(data.columns[0][0], "10.4");
+            assert_eq!(data.columns[0][1], "10.4");
+            assert_eq!(data.columns[0][2], "13.3");
+        }
+    );
+
     // --- women ---
 
     // Open the mtcars data set in the data explorer.
@@ -179,8 +197,8 @@ fn test_data_explorer() {
     assert_match!(socket_rpc(&socket, req),
         DataExplorerBackendReply::GetDataValuesReply(data) => {
             assert_eq!(data.columns.len(), 2);
+            assert_eq!(data.columns[0][0], "58");
             assert_eq!(data.columns[0][1], "59");
-            assert_eq!(data.columns[0][2], "60");
 
             // This data set has no row labels.
             assert!(data.row_labels.is_none());

@@ -67,6 +67,11 @@ pub struct DataObjectEnvBinding {
     pub env: RThreadSafe<RObject>,
 }
 
+struct DataObjectShape {
+    pub columns: Vec<ColumnSchema>,
+    pub num_rows: i32,
+}
+
 /// The R backend for Positron's Data Explorer.
 pub struct RDataExplorer {
     /// The human-readable title of the data viewer.
@@ -85,6 +90,10 @@ pub struct RDataExplorer {
 
     /// A cache containing the current set of sort keys.
     sort_keys: Vec<ColumnSortKey>,
+
+    /// The set of active row indices after all sorts and filters have been
+    /// applied.
+    row_indices: Vec<i32>,
 
     /// The communication socket for the data viewer.
     comm: CommSocket,
@@ -119,19 +128,27 @@ impl RDataExplorer {
 
         spawn!(format!("ark-data-viewer-{}-{}", title, id), move || {
             // Get the initial set of column schemas for the data object
-            let columns = r_task(|| Self::r_get_columns(&data));
-            match columns {
-                // Got the columns; start the data viewer
-                Ok(columns) => {
+            let shape = r_task(|| Self::r_get_shape(&data));
+            match shape {
+                // shape the columns; start the data viewer
+                Ok(shape) => {
+                    // Generate an intial set of row indices that are just the
+                    // row numbers
+                    let row_indices: Vec<i32> = (1..=shape.num_rows).collect();
+
+                    // Create the initial state for the data viewer
                     let viewer = Self {
                         title,
                         table: data,
                         binding,
-                        columns,
+                        columns: shape.columns,
+                        row_indices,
                         sort_keys: vec![],
                         comm,
                         comm_manager_tx,
                     };
+
+                    // Start the data viewer's execution thread
                     viewer.execution_thread();
                 },
                 Err(err) => {
@@ -267,15 +284,22 @@ impl RDataExplorer {
         //
         // Consider: there may be a cheaper way to test the schema for changes
         // than regenerating it, but it'd be a lot more complicated.
-        let new_columns = r_task(|| Self::r_get_columns(&self.table))?;
+        let new_shape = r_task(|| Self::r_get_shape(&self.table))?;
 
         // Generate the appropriate event based on whether the schema has
         // changed
-        let event = match self.columns != new_columns {
+        let event = match self.columns != new_shape.columns {
             true => {
                 // Columns changed, so update our cache, and we need to send a
                 // schema update event
-                self.columns = new_columns;
+                self.columns = new_shape.columns;
+
+                // Reset active row indices to be all rows
+                self.row_indices = (1..=new_shape.num_rows).collect();
+
+                // Clear active sort keys
+                self.sort_keys.clear();
+
                 DataExplorerFrontendEvent::SchemaUpdate(SchemaUpdateParams {
                     discard_state: true,
                 })
@@ -321,7 +345,15 @@ impl RDataExplorer {
             DataExplorerBackendRequest::SetSortColumns(SetSortColumnsParams {
                 sort_keys: keys,
             }) => {
+                // Save the new sort keys
                 self.sort_keys = keys;
+
+                // Rebuild the row indices based on the new sort keys
+                self.row_indices = r_task(|| self.r_sort_rows())?;
+
+                // Print the new indices
+                println!("Data Viewer: New row indices: {:?}", self.row_indices);
+
                 Ok(DataExplorerBackendReply::SetSortColumnsReply())
             },
             DataExplorerBackendRequest::SetColumnFilters(SetColumnFiltersParams { filters: _ }) => {
@@ -340,7 +372,7 @@ impl RDataExplorer {
 
 // Methods that must be run on the main R thread
 impl RDataExplorer {
-    fn r_get_columns(table: &RThreadSafe<RObject>) -> anyhow::Result<Vec<ColumnSchema>> {
+    fn r_get_shape(table: &RThreadSafe<RObject>) -> anyhow::Result<DataObjectShape> {
         unsafe {
             let table = table.get().clone();
             let object = *table;
@@ -351,7 +383,7 @@ impl RDataExplorer {
                 kind,
                 dims:
                     harp::TableDim {
-                        num_rows: _,
+                        num_rows,
                         num_cols: total_num_columns,
                     },
                 col_names: column_names,
@@ -387,8 +419,24 @@ impl RDataExplorer {
                 });
             }
 
-            Ok(column_schemas)
+            Ok(DataObjectShape {
+                columns: column_schemas,
+                num_rows,
+            })
         }
+    }
+
+    fn r_sort_rows(&self) -> anyhow::Result<Vec<i32>> {
+        let mut order = RFunction::new("base", "order");
+        // For each element of self.sort_keys, add an argument to order
+        for key in &self.sort_keys {
+            // TODO: this is way too low level
+            let column = self.table.get().vector_elt(key.column_index as isize)?;
+            order.add(column);
+        }
+        let result = order.call()?;
+        let indices: Vec<i32> = result.try_into()?;
+        Ok(indices)
     }
 
     /// Get the schema for a range of columns in the data object.
@@ -472,10 +520,8 @@ impl RDataExplorer {
         let cols_r_idx: RObject = cols_r_idx.try_into()?;
         let num_cols = cols_r_idx.length() as i32;
 
-        let rows_r_idx = RFunction::new("base", ":")
-            .add((lower_bound + 1) as i32)
-            .add((upper_bound + 1) as i32)
-            .call()?;
+        let row_indices = self.row_indices[lower_bound as usize..upper_bound as usize].to_vec();
+        let rows_r_idx: RObject = row_indices.try_into()?;
 
         // Subset rows in advance, including unmaterialized row names. Also
         // subset spend time creating subsetting columns that we don't need.
