@@ -24,6 +24,17 @@
         connectCode, disconnect, listObjectTypes, listObjects,
         listColumns, previewObject, connectionObject,
         actions = NULL) {
+
+            # check if the connection is already opened.
+            # here's how this is done in RStudio:
+            # https://github.com/rstudio/rstudio/blob/2344a0bf04657a13c36053eb04bcc47616a623dc/src/cpp/session/modules/SessionConnections.R#L48-L59ß
+            for (id in ls(envir = connections)) {
+                con <- get(id, envir = connections)
+                if (identical(con$host, host) && identical(con$type, type)) {
+                    return(invisible(id))
+                }
+            }
+
             id <- .ps.connection_opened(displayName)
             connections[[id]] <- list(
                 type = type,
