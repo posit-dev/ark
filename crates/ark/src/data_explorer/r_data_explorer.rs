@@ -16,6 +16,7 @@ use amalthea::comm::data_explorer_comm::DataExplorerFrontendEvent;
 use amalthea::comm::data_explorer_comm::GetColumnProfileParams;
 use amalthea::comm::data_explorer_comm::GetDataValuesParams;
 use amalthea::comm::data_explorer_comm::GetSchemaParams;
+use amalthea::comm::data_explorer_comm::SchemaUpdateParams;
 use amalthea::comm::data_explorer_comm::SetColumnFiltersParams;
 use amalthea::comm::data_explorer_comm::SetSortColumnsParams;
 use amalthea::comm::data_explorer_comm::TableData;
@@ -253,10 +254,30 @@ impl RDataExplorer {
             return Ok(());
         }
 
-        // Update the value and send a message to the frontend
+        // Update the value
         self.table = new.unwrap();
 
-        let event = DataExplorerFrontendEvent::DataUpdate;
+        // Now we need to check to see if the schema has changed or just a data
+        // value. Regenerate the schema.
+        //
+        // Consider: there may be a cheaper way to test the schema for changes
+        // than regenerating it, but it'd be a lot more complicated.
+        let new_columns = r_task(|| Self::r_get_columns(&self.table))?;
+
+        // Generate the appropriate event based on whether the schema has
+        // changed
+        let event = match self.columns != new_columns {
+            true => {
+                // Columns changed, so update our cache, and we need to send a
+                // schema update event
+                self.columns = new_columns;
+                DataExplorerFrontendEvent::SchemaUpdate(SchemaUpdateParams {
+                    discard_state: true,
+                })
+            },
+            false => DataExplorerFrontendEvent::DataUpdate,
+        };
+
         self.comm
             .outgoing_tx
             .send(CommMsg::Data(serde_json::to_value(event)?))?;
