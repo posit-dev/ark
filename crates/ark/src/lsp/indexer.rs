@@ -30,8 +30,8 @@ use walkdir::WalkDir;
 
 use crate::lsp::documents::Document;
 use crate::lsp::encoding::convert_point_to_position;
-use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::rope::RopeExt;
+use crate::treesitter::NodeTypeExt;
 
 #[derive(Clone, Debug)]
 pub struct IndexerStateManager {

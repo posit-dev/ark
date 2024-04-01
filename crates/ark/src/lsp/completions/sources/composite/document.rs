@@ -15,9 +15,9 @@ use crate::lsp::completions::completion_item::completion_item_from_scope_paramet
 use crate::lsp::completions::sources::utils::filter_out_dot_prefixes;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::traits::cursor::TreeCursorExt;
-use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::point::PointExt;
 use crate::lsp::traits::rope::RopeExt;
+use crate::treesitter::NodeTypeExt;
 
 pub(super) fn completions_from_document(
     context: &DocumentContext,

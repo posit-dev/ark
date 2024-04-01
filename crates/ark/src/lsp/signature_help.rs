@@ -24,6 +24,7 @@ use crate::lsp::help::RHtmlHelp;
 use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::point::PointExt;
 use crate::lsp::traits::rope::RopeExt;
+use crate::treesitter::NodeTypeExt;
 
 /// SAFETY: Requires access to the R runtime.
 pub unsafe fn signature_help(context: &DocumentContext) -> Result<Option<SignatureHelp>> {
@@ -184,7 +185,7 @@ pub unsafe fn signature_help(context: &DocumentContext) -> Result<Option<Signatu
     let formals = r_formals(*object)?;
 
     // Get the help documentation associated with this function.
-    let help = if matches!(callee.kind(), "::" | ":::") {
+    let help = if callee.is_namespace_operator() {
         let package = callee.child_by_field_name("lhs").into_result()?;
         let package = context.document.contents.node_slice(&package)?.to_string();
 

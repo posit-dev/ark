@@ -17,8 +17,8 @@ use tree_sitter::Node;
 
 use crate::lsp::completions::sources::utils::completions_from_object_names;
 use crate::lsp::document_context::DocumentContext;
-use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::rope::RopeExt;
+use crate::treesitter::NodeTypeExt;
 
 #[derive(Clone)]
 pub(super) struct PipeRoot {

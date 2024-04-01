@@ -10,7 +10,7 @@ use tower_lsp::lsp_types::CompletionItem;
 
 use super::file_path::completions_from_file_path;
 use crate::lsp::document_context::DocumentContext;
-use crate::lsp::traits::node::NodeExt;
+use crate::treesitter::NodeTypeExt;
 
 pub fn completions_from_string(context: &DocumentContext) -> Result<Option<Vec<CompletionItem>>> {
     log::info!("completions_from_string()");
@@ -53,8 +53,8 @@ mod tests {
     use crate::lsp::completions::sources::unique::string::completions_from_string;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
-    use crate::lsp::traits::node::NodeExt;
     use crate::test::r_test;
+    use crate::treesitter::NodeTypeExt;
 
     #[test]
     fn test_outside_quotes() {

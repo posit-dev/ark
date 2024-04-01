@@ -27,9 +27,9 @@ use crate::lsp::backend::Backend;
 use crate::lsp::encoding::convert_point_to_position;
 use crate::lsp::indexer;
 use crate::lsp::indexer::IndexEntryData;
-use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::rope::RopeExt;
 use crate::lsp::traits::string::StringExt;
+use crate::treesitter::NodeTypeExt;
 
 pub fn symbols(
     _backend: &Backend,

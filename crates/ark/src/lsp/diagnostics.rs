@@ -56,10 +56,10 @@ use crate::lsp::backend::Backend;
 use crate::lsp::documents::Document;
 use crate::lsp::encoding::convert_tree_sitter_range_to_lsp_range;
 use crate::lsp::indexer;
-use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::rope::RopeExt;
 use crate::r_task;
 use crate::r_task::r_async_task;
+use crate::treesitter::NodeTypeExt;
 
 #[derive(Clone)]
 pub struct DiagnosticContext<'a> {

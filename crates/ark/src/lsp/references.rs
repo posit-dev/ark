@@ -27,9 +27,9 @@ use crate::lsp::encoding::convert_point_to_position;
 use crate::lsp::encoding::convert_position_to_point;
 use crate::lsp::indexer::filter_entry;
 use crate::lsp::traits::cursor::TreeCursorExt;
-use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::rope::RopeExt;
 use crate::lsp::traits::url::UrlExt;
+use crate::treesitter::NodeTypeExt;
 
 enum ReferenceKind {
     SymbolName, // a regular R symbol

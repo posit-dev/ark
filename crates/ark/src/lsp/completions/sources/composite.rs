@@ -33,7 +33,7 @@ use workspace::completions_from_workspace;
 
 use crate::lsp::backend::Backend;
 use crate::lsp::document_context::DocumentContext;
-use crate::lsp::traits::node::NodeExt;
+use crate::treesitter::NodeTypeExt;
 
 pub fn completions_from_composite_sources(
     backend: &Backend,

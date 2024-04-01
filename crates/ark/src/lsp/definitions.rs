@@ -18,6 +18,7 @@ use crate::lsp::encoding::convert_position_to_point;
 use crate::lsp::indexer;
 use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::rope::RopeExt;
+use crate::treesitter::NodeTypeExt;
 
 pub unsafe fn goto_definition<'a>(
     document: &'a Document,

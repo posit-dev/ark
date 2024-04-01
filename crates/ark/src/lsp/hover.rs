@@ -14,8 +14,8 @@ use tree_sitter::Node;
 
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::help::RHtmlHelp;
-use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::rope::RopeExt;
+use crate::treesitter::NodeTypeExt;
 
 enum HoverContext {
     Topic { topic: String },
@@ -27,13 +27,13 @@ fn hover_context(node: Node, context: &DocumentContext) -> Result<Option<HoverCo
     // TODO: What if the user hovers the cursor over 'dplyr' in e.g. 'dplyr::mutate'?
     let mut node = node;
     if let Some(parent) = node.parent() {
-        if matches!(parent.kind(), "::" | ":::") {
+        if parent.is_namespace_operator() {
             node = parent;
         }
     }
 
     // if we have a namespace call, use that to provide a qualified topic
-    if matches!(node.kind(), "::" | ":::") {
+    if node.is_namespace_operator() {
         let lhs = node.child_by_field_name("lhs").into_result()?;
         let rhs = node.child_by_field_name("rhs").into_result()?;
 

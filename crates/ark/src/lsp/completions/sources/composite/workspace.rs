@@ -18,9 +18,9 @@ use crate::lsp::completions::completion_item::completion_item_from_function;
 use crate::lsp::completions::sources::utils::filter_out_dot_prefixes;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::indexer;
-use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::rope::RopeExt;
 use crate::lsp::traits::string::StringExt;
+use crate::treesitter::NodeTypeExt;
 
 pub(super) fn completions_from_workspace(
     backend: &Backend,
@@ -30,12 +30,12 @@ pub(super) fn completions_from_workspace(
 
     let node = context.node;
 
-    if matches!(node.kind(), "::" | ":::") {
+    if node.is_namespace_operator() {
         log::error!("Should have already been handled by namespace completions source");
         return Ok(None);
     }
     if let Some(parent) = node.parent() {
-        if matches!(parent.kind(), "::" | ":::") {
+        if parent.is_namespace_operator() {
             log::error!("Should have already been handled by namespace completions source");
             return Ok(None);
         }

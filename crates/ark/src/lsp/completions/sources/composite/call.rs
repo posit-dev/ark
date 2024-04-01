@@ -23,8 +23,8 @@ use crate::lsp::completions::sources::utils::set_sort_text_by_first_appearance;
 use crate::lsp::completions::sources::utils::CallNodePositionType;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::indexer;
-use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::rope::RopeExt;
+use crate::treesitter::NodeTypeExt;
 
 pub(super) fn completions_from_call(
     context: &DocumentContext,
