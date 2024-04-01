@@ -41,7 +41,7 @@ pub(super) fn completions_from_workspace(
         }
     }
 
-    if matches!(node.kind(), "string") {
+    if node.is_string() {
         log::error!("Should have already been handled by file path completions source");
         return Ok(None);
     }

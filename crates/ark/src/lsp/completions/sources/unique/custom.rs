@@ -180,7 +180,7 @@ pub fn completions_from_custom_source_impl(
                     continue;
                 });
 
-                if enquote && node.kind() != "string" {
+                if enquote && !node.is_string() {
                     item.insert_text = Some(format!("\"{value}\""));
                 } else {
                     let mut insert_text = r_symbol_quote_invalid(value.as_str());
