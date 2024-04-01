@@ -31,6 +31,8 @@ use walkdir::WalkDir;
 use crate::lsp::documents::Document;
 use crate::lsp::encoding::convert_point_to_position;
 use crate::lsp::traits::rope::RopeExt;
+use crate::treesitter::BinaryOperatorType;
+use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
 #[derive(Clone, Debug)]
@@ -257,7 +259,12 @@ fn index_node(path: &Path, contents: &Rope, node: &Node) -> Result<Option<IndexE
 
 fn index_function(_path: &Path, contents: &Rope, node: &Node) -> Result<Option<IndexEntry>> {
     // Check for assignment.
-    matches!(node.kind(), "<-" | "=").into_result()?;
+    matches!(
+        node.node_type(),
+        NodeType::BinaryOperator(BinaryOperatorType::LeftAssignment) |
+            NodeType::BinaryOperator(BinaryOperatorType::EqualsAssignment)
+    )
+    .into_result()?;
 
     // Check for identifier on left-hand side.
     let lhs = node.child_by_field_name("lhs").into_result()?;
@@ -265,7 +272,7 @@ fn index_function(_path: &Path, contents: &Rope, node: &Node) -> Result<Option<I
 
     // Check for a function definition on the right-hand side.
     let rhs = node.child_by_field_name("rhs").into_result()?;
-    matches!(rhs.kind(), "function").into_result()?;
+    rhs.is_function_definition().into_result()?;
 
     let name = contents.node_slice(&lhs)?.to_string();
     let mut arguments = Vec::new();
