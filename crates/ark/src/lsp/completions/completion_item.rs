@@ -46,6 +46,8 @@ use crate::lsp::completions::types::PromiseStrategy;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::encoding::convert_point_to_position;
 use crate::lsp::traits::rope::RopeExt;
+use crate::treesitter::NodeType;
+use crate::treesitter::NodeTypeExt;
 
 pub(super) fn completion_item(
     label: impl AsRef<str>,
@@ -120,7 +122,7 @@ pub(super) fn completion_item_from_assignment(
     item.documentation = Some(Documentation::MarkupContent(markup));
     item.kind = Some(CompletionItemKind::VARIABLE);
 
-    if rhs.kind() == "function" {
+    if rhs.node_type() == NodeType::FunctionDefinition {
         if let Some(parameters) = rhs.child_by_field_name("parameters") {
             let parameters = context
                 .document
