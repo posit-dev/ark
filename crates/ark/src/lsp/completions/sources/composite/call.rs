@@ -44,7 +44,7 @@ pub(super) fn completions_from_call(
         }
 
         // If we reach a brace list, bail.
-        if node.kind() == "{" {
+        if node.is_braced_expression() {
             break;
         }
 

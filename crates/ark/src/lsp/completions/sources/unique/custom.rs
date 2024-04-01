@@ -46,7 +46,7 @@ pub fn completions_from_custom_source(
         }
 
         // If we reach a brace list, bail.
-        if node.kind() == "{" {
+        if node.is_braced_expression() {
             break;
         }
 

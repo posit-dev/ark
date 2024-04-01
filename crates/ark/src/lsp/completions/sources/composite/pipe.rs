@@ -67,7 +67,7 @@ pub(super) fn find_pipe_root(context: &DocumentContext) -> Option<PipeRoot> {
         }
 
         // If we reach a brace list, bail
-        if node.kind() == "{" {
+        if node.is_braced_expression() {
             break;
         }
 

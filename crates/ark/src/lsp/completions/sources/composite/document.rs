@@ -38,7 +38,7 @@ pub(super) fn completions_from_document(
 
     loop {
         // If this is a brace list, or the document root, recurse to find identifiers.
-        if node.kind() == "{" || node.parent() == None {
+        if node.is_braced_expression() || node.parent() == None {
             completions.append(&mut completions_from_document_variables(&node, context));
         }
 

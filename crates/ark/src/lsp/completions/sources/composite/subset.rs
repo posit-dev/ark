@@ -11,6 +11,7 @@ use tower_lsp::lsp_types::CompletionItem;
 use crate::lsp::completions::sources::utils::completions_from_evaluated_object_names;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::traits::rope::RopeExt;
+use crate::treesitter::NodeTypeExt;
 
 /// Checks for `[` and `[[` completions
 ///
@@ -39,7 +40,7 @@ pub(super) fn completions_from_subset(
         }
 
         // If we reach a brace list, bail.
-        if node.kind() == "{" {
+        if node.is_braced_expression() {
             break;
         }
 
