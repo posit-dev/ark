@@ -58,7 +58,7 @@ impl Backend {
         };
 
         // Find the nearest node that is an identifier.
-        while node.kind() != "identifier" {
+        while !node.is_identifier() {
             if let Some(sibling) = node.prev_sibling() {
                 // Move to an adjacent sibling if we can.
                 node = sibling;

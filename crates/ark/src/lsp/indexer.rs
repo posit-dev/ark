@@ -261,7 +261,7 @@ fn index_function(_path: &Path, contents: &Rope, node: &Node) -> Result<Option<I
 
     // Check for identifier on left-hand side.
     let lhs = node.child_by_field_name("lhs").into_result()?;
-    matches!(lhs.kind(), "identifier" | "string").into_result()?;
+    lhs.is_identifier_or_string().into_result()?;
 
     // Check for a function definition on the right-hand side.
     let rhs = node.child_by_field_name("rhs").into_result()?;
@@ -277,7 +277,7 @@ fn index_function(_path: &Path, contents: &Rope, node: &Node) -> Result<Option<I
     let mut cursor = parameters.walk();
     for child in parameters.children(&mut cursor) {
         let name = unwrap!(child.child_by_field_name("name"), None => continue);
-        if matches!(name.kind(), "identifier") {
+        if name.is_identifier() {
             let name = contents.node_slice(&name)?.to_string();
             arguments.push(name);
         }

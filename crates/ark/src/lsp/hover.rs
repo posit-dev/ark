@@ -37,8 +37,7 @@ fn hover_context(node: Node, context: &DocumentContext) -> Result<Option<HoverCo
         let lhs = node.child_by_field_name("lhs").into_result()?;
         let rhs = node.child_by_field_name("rhs").into_result()?;
 
-        let ok = matches!(lhs.kind(), "identifier" | "string") &&
-            matches!(rhs.kind(), "identifier" | "string");
+        let ok = lhs.is_identifier_or_string() && rhs.is_identifier_or_string();
 
         if !ok {
             return Ok(None);
@@ -50,7 +49,7 @@ fn hover_context(node: Node, context: &DocumentContext) -> Result<Option<HoverCo
     }
 
     // otherwise, check for an identifier or a string
-    if matches!(node.kind(), "identifier" | "string" | "keyword") {
+    if node.is_identifier_or_string() || node.is_keyword() {
         // only provide documentation for function calls for now,
         // since bare identifiers might not match the topic we expect
         if let Some(parent) = node.parent() {
@@ -73,7 +72,7 @@ pub unsafe fn hover(context: &DocumentContext) -> Result<Option<MarkupContent>> 
     let node = &context.node;
 
     // check for identifier
-    if !matches!(node.kind(), "identifier" | "keyword" | "string") {
+    if !node.is_identifier_or_string() && !node.is_keyword() {
         return Ok(None);
     }
 

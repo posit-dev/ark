@@ -42,7 +42,7 @@ pub unsafe fn goto_definition<'a>(
     let range = Range { start, end };
 
     // search for a reference in the document index
-    if matches!(node.kind(), "identifier") {
+    if node.is_identifier() {
         let symbol = document.contents.node_slice(&node)?.to_string();
         if let Some((path, entry)) = indexer::find(symbol.as_str()) {
             let link = LocationLink {

@@ -56,6 +56,7 @@ use crate::lsp::backend::Backend;
 use crate::lsp::documents::Document;
 use crate::lsp::encoding::convert_tree_sitter_range_to_lsp_range;
 use crate::lsp::indexer;
+use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::rope::RopeExt;
 use crate::r_task;
 use crate::r_task::r_async_task;
@@ -413,7 +414,7 @@ fn recurse_for(
         bail!("Missing `variable` field in a `for` node");
     });
 
-    if variable.kind() == "identifier" {
+    if variable.is_identifier() {
         let name = context.contents.node_slice(&variable)?.to_string();
         let range = variable.range();
         context.add_defined_variable(name.as_str(), range);
@@ -522,7 +523,7 @@ fn recurse_assignment(
 ) -> Result<()> {
     // Check for newly-defined variable.
     if let Some(lhs) = node.child_by_field_name("lhs") {
-        if matches!(lhs.kind(), "identifier" | "string") {
+        if lhs.is_identifier_or_string() {
             let name = context.contents.node_slice(&lhs)?.to_string();
             let range = lhs.range();
             context.add_defined_variable(name.as_str(), range);
@@ -561,7 +562,7 @@ fn recurse_namespace(
         return ().ok();
     });
 
-    if !matches!(rhs.kind(), "identifier" | "string") {
+    if !rhs.is_identifier_or_string() {
         return ().ok();
     }
 
@@ -1179,7 +1180,7 @@ fn check_symbol_in_scope(
     }
 
     // Skip if this isn't an identifier.
-    if node.kind() != "identifier" {
+    if !node.is_identifier() {
         return false.ok();
     }
 

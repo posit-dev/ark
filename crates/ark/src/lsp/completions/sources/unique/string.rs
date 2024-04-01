@@ -52,6 +52,7 @@ mod tests {
     use crate::lsp::completions::sources::unique::string::completions_from_string;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
+    use crate::lsp::traits::node::NodeExt;
     use crate::test::r_test;
 
     #[test]
@@ -75,7 +76,7 @@ mod tests {
             let document = Document::new("foo", None);
             let context = DocumentContext::new(&document, point, None);
 
-            assert_eq!(context.node.kind(), "identifier");
+            assert!(context.node.is_identifier());
             assert_eq!(completions_from_string(&context).unwrap(), None);
         })
     }

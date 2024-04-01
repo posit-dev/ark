@@ -235,6 +235,7 @@ mod tests {
     use crate::lsp::completions::sources::utils::CallNodePositionType;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
+    use crate::lsp::traits::node::NodeExt;
 
     #[test]
     fn test_call_node_position_type() {
@@ -362,7 +363,7 @@ mod tests {
         let point = Point { row: 0, column: 4 };
         let document = Document::new("fn(x )", None);
         let context = DocumentContext::new(&document, point, None);
-        assert_eq!(context.node.kind(), "identifier");
+        assert!(context.node.is_identifier());
         assert_eq!(
             call_node_position_type(&context.node, context.point),
             CallNodePositionType::Ambiguous

@@ -27,6 +27,7 @@ use crate::lsp::backend::Backend;
 use crate::lsp::encoding::convert_point_to_position;
 use crate::lsp::indexer;
 use crate::lsp::indexer::IndexEntryData;
+use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::rope::RopeExt;
 use crate::lsp::traits::string::StringExt;
 
@@ -166,8 +167,7 @@ fn index_assignment(
     let rhs = node.child_by_field_name("rhs").into_result()?;
 
     // check for identifier on lhs, function on rhs
-    let function =
-        matches!(lhs.kind(), "identifier" | "string") && matches!(rhs.kind(), "function");
+    let function = lhs.is_identifier_or_string() && rhs.is_function_definition();
 
     if function {
         return index_function(node, contents, parent, symbols);

@@ -33,6 +33,7 @@ use workspace::completions_from_workspace;
 
 use crate::lsp::backend::Backend;
 use crate::lsp::document_context::DocumentContext;
+use crate::lsp::traits::node::NodeExt;
 
 pub fn completions_from_composite_sources(
     backend: &Backend,
@@ -126,7 +127,7 @@ pub fn completions_from_composite_sources(
 fn is_identifier_like(x: Node) -> bool {
     let kind = x.kind();
 
-    if kind == "identifier" {
+    if x.is_identifier() {
         // Obvious case
         return true;
     }
@@ -137,11 +138,8 @@ fn is_identifier_like(x: Node) -> bool {
     // here, especially in two cases:
     // - `for<tab>` should provide completions for things like `forcats`
     // - `for<tab>` should provide snippet completions for the `for` snippet
-    // We want to be sure that we only provide completions on the unnamed
-    // (anonymous) versions of these keywords, not on "real" conditional
-    // statements.
     // The keywords here come from matching snippets in `r.code-snippets`.
-    if matches!(kind, "if" | "for" | "while") && !x.is_named() {
+    if matches!(kind, "if" | "for" | "while") {
         return true;
     }
 

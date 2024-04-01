@@ -27,6 +27,7 @@ use crate::lsp::encoding::convert_point_to_position;
 use crate::lsp::encoding::convert_position_to_point;
 use crate::lsp::indexer::filter_entry;
 use crate::lsp::traits::cursor::TreeCursorExt;
+use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::rope::RopeExt;
 use crate::lsp::traits::url::UrlExt;
 
@@ -53,7 +54,7 @@ fn add_reference(node: &Node, contents: &Rope, path: &Path, locations: &mut Vec<
 }
 
 fn found_match(node: &Node, contents: &Rope, context: &Context) -> bool {
-    if node.kind() != "identifier" {
+    if !node.is_identifier() {
         return false;
     }
 
@@ -117,7 +118,7 @@ impl Backend {
             // can't just subtract 1 from the position column since that would then fail to
             // resolve the correct identifier when the cursor is located at the start of the
             // identifier.
-            if node.kind() != "identifier" && point.column > 0 {
+            if !node.is_identifier() && point.column > 0 {
                 let point = Point::new(point.row, point.column - 1);
                 node = ast
                     .root_node()
@@ -126,7 +127,7 @@ impl Backend {
             }
 
             // double check that we found an identifier
-            if node.kind() != "identifier" {
+            if !node.is_identifier() {
                 bail!(
                     "couldn't find an identifier associated with point {:?}",
                     point

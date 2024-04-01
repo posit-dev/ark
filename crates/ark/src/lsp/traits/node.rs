@@ -88,9 +88,14 @@ pub trait NodeExt: Sized {
     fn fwd_leaf_iter(&self) -> FwdLeafIterator<'_>;
     fn bwd_leaf_iter(&self) -> BwdLeafIterator<'_>;
 
+    fn is_identifier(&self) -> bool;
+    fn is_string(&self) -> bool;
+    fn is_identifier_or_string(&self) -> bool;
+    fn is_keyword(&self) -> bool;
     fn is_call(&self) -> bool;
     fn is_comment(&self) -> bool;
     fn is_braced_expression(&self) -> bool;
+    fn is_function_definition(&self) -> bool;
     fn is_if_statement(&self) -> bool;
     fn is_unary_operator(&self) -> bool;
     fn is_binary_operator(&self) -> bool;
@@ -198,6 +203,23 @@ impl NodeExt for Node<'_> {
         BwdLeafIterator { node: self.clone() }
     }
 
+    fn is_identifier(&self) -> bool {
+        self.kind() == "identifier"
+    }
+
+    fn is_string(&self) -> bool {
+        self.kind() == "string"
+    }
+
+    // This combination is particularly common
+    fn is_identifier_or_string(&self) -> bool {
+        matches!(self.kind(), "identifier" | "string")
+    }
+
+    fn is_keyword(&self) -> bool {
+        self.kind() == "keyword"
+    }
+
     fn is_call(&self) -> bool {
         self.kind() == "call"
     }
@@ -209,6 +231,10 @@ impl NodeExt for Node<'_> {
     fn is_braced_expression(&self) -> bool {
         // `{`
         self.kind() == "braced_expression"
+    }
+
+    fn is_function_definition(&self) -> bool {
+        self.kind() == "function_definition"
     }
 
     fn is_if_statement(&self) -> bool {

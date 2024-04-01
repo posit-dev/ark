@@ -81,7 +81,7 @@ fn completions_from_document_variables(
             "=" | "<-" | "<<-" => {
                 // check that the left-hand side is an identifier or a string
                 if let Some(child) = node.child(0) {
-                    if matches!(child.kind(), "identifier" | "string") {
+                    if child.is_identifier_or_string() {
                         match completion_item_from_assignment(&node, context) {
                             Ok(item) => completions.push(item),
                             Err(err) => log::error!("{err:?}"),
@@ -139,7 +139,7 @@ fn completions_from_document_function_arguments(
             continue;
         });
 
-        if node.kind() != "identifier" {
+        if !node.is_identifier() {
             continue;
         }
 
@@ -157,7 +157,7 @@ fn call_uses_nse(node: &Node, context: &DocumentContext) -> bool {
     let result: Result<()> = local! {
 
         let lhs = node.child(0).into_result()?;
-        matches!(lhs.kind(), "identifier" | "string").into_result()?;
+        lhs.is_identifier_or_string().into_result()?;
 
         let value = context.document.contents.node_slice(&lhs)?.to_string();
         matches!(value.as_str(), "expression" | "local" | "quote" | "enquote" | "substitute" | "with" | "within").into_result()?;
