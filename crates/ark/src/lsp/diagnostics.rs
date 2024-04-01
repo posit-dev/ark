@@ -59,7 +59,10 @@ use crate::lsp::indexer;
 use crate::lsp::traits::rope::RopeExt;
 use crate::r_task;
 use crate::r_task::r_async_task;
+use crate::treesitter::BinaryOperatorType;
+use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
+use crate::treesitter::UnmatchedDelimiterType;
 
 #[derive(Clone)]
 pub struct DiagnosticContext<'a> {
@@ -344,20 +347,27 @@ fn recurse(
     context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<()> {
-    match node.kind() {
-        "function" => recurse_function(node, context, diagnostics),
-        "for" => recurse_for(node, context, diagnostics),
-        "while" => recurse_while(node, context, diagnostics),
-        "repeat" => recurse_repeat(node, context, diagnostics),
-        "if" => recurse_if(node, context, diagnostics),
-        "~" => recurse_formula(node, context, diagnostics),
-        "<<-" => recurse_superassignment(node, context, diagnostics),
-        "<-" => recurse_assignment(node, context, diagnostics),
-        "::" | ":::" => recurse_namespace(node, context, diagnostics),
-        "{" => recurse_block(node, context, diagnostics),
-        "(" => recurse_paren(node, context, diagnostics),
-        "[" | "[[" => recurse_subset(node, context, diagnostics),
-        "call" => recurse_call(node, context, diagnostics),
+    match node.node_type() {
+        NodeType::FunctionDefinition => recurse_function(node, context, diagnostics),
+        NodeType::ForStatement => recurse_for(node, context, diagnostics),
+        NodeType::WhileStatement => recurse_while(node, context, diagnostics),
+        NodeType::RepeatStatement => recurse_repeat(node, context, diagnostics),
+        NodeType::IfStatement => recurse_if(node, context, diagnostics),
+        NodeType::BracedExpression => recurse_braced_expression(node, context, diagnostics),
+        NodeType::ParenthesizedExpression => {
+            recurse_parenthesized_expression(node, context, diagnostics)
+        },
+        NodeType::Subset | NodeType::Subset2 => recurse_subset(node, context, diagnostics),
+        NodeType::Call => recurse_call(node, context, diagnostics),
+        NodeType::BinaryOperator(op) => match op {
+            BinaryOperatorType::Tilde => recurse_formula(node, context, diagnostics),
+            BinaryOperatorType::LeftSuperAssignment => {
+                recurse_superassignment(node, context, diagnostics)
+            },
+            BinaryOperatorType::LeftAssignment => recurse_assignment(node, context, diagnostics),
+            _ => recurse_default(node, context, diagnostics),
+        },
+        NodeType::NamespaceOperator(_) => recurse_namespace(node, context, diagnostics),
         _ => recurse_default(node, context, diagnostics),
     }
 }
@@ -384,7 +394,7 @@ fn recurse_function(
 
     // Recurse through the arguments, adding their symbols to the `context`
     let parameters = unwrap!(node.child_by_field_name("parameters"), None => {
-        bail!("Missing `parameters` field in a `function` node");
+        bail!("Missing `parameters` field in a `function_definition` node");
     });
 
     recurse_parameters(parameters, context, diagnostics)?;
@@ -499,9 +509,11 @@ fn recurse_formula(
     context.in_formula = true;
     let context = &mut context;
 
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        recurse(child, context, diagnostics)?;
+    if let Some(lhs) = node.child_by_field_name("lhs") {
+        recurse(lhs, context, diagnostics)?;
+    }
+    if let Some(rhs) = node.child_by_field_name("rhs") {
+        recurse(rhs, context, diagnostics)?;
     }
 
     ().ok()
@@ -597,7 +609,7 @@ fn recurse_parameters(
     ().ok()
 }
 
-fn recurse_block(
+fn recurse_braced_expression(
     node: Node,
     context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
@@ -615,7 +627,7 @@ fn recurse_block(
     ().ok()
 }
 
-fn recurse_paren(
+fn recurse_parenthesized_expression(
     node: Node,
     context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
@@ -649,15 +661,26 @@ fn check_call_next_sibling(
     context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<()> {
-    if let Some(next) = child.next_sibling() {
-        if !matches!(next.kind(), "comma" | ")") {
-            let range = child.range();
-            let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
-            let message = "expected ',' after expression";
-            let diagnostic = Diagnostic::new_simple(range, message.into());
-            diagnostics.push(diagnostic);
-        }
+    let Some(next) = child.next_sibling() else {
+        return ().ok();
+    };
+
+    let ok = match next.node_type() {
+        NodeType::Comma => true,
+        NodeType::Anonymous(kind) if matches!(kind.as_str(), ")") => true,
+        NodeType::Comment => true,
+        _ => false,
+    };
+
+    if ok {
+        return ().ok();
     }
+
+    let range = child.range();
+    let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
+    let message = "expected ',' after expression";
+    let diagnostic = Diagnostic::new_simple(range, message.into());
+    diagnostics.push(diagnostic);
 
     ().ok()
 }
@@ -667,15 +690,26 @@ fn check_subset_next_sibling(
     context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<()> {
-    if let Some(next) = child.next_sibling() {
-        if !matches!(next.kind(), "comma" | "]" | "]]") {
-            let range = child.range();
-            let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
-            let message = "expected ',' after expression";
-            let diagnostic = Diagnostic::new_simple(range, message.into());
-            diagnostics.push(diagnostic);
-        }
+    let Some(next) = child.next_sibling() else {
+        return ().ok();
+    };
+
+    let ok = match next.node_type() {
+        NodeType::Comma => true,
+        NodeType::Anonymous(kind) if matches!(kind.as_str(), "]" | "]]") => true,
+        NodeType::Comment => true,
+        _ => false,
+    };
+
+    if ok {
+        return ().ok();
     }
+
+    let range = child.range();
+    let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
+    let message = "expected ',' after expression";
+    let diagnostic = Diagnostic::new_simple(range, message.into());
+    diagnostics.push(diagnostic);
 
     ().ok()
 }
@@ -959,26 +993,24 @@ fn check_unmatched_closing_token(
     context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<bool> {
-    // TODO: Can we figure out a way to match on the `kind_id()` instead without
-    // hardcoding the underlying (unstable) values? It would likely be faster.
-
     // These should all be skipped over by function, if, for, while, and repeat
     // handling, so if we ever get here then it means we didn't have an
     // equivalent leading token (or there was some other syntax error that
     // caused the parser to not recognize one of the aforementioned control flow
     // operators, like `repeat { 1 + }`).
-    let kind = node.kind();
+    let NodeType::UnmatchedDelimiter(delimiter) = node.node_type() else {
+        return false.ok();
+    };
 
-    let token = match kind {
-        "}" => "brace",
-        ")" => "paren",
-        "]" => "bracket",
-        _ => return false.ok(),
+    let (token, name) = match delimiter {
+        UnmatchedDelimiterType::Brace => ("}", "brace"),
+        UnmatchedDelimiterType::Parenthesis => (")", "parenthesis"),
+        UnmatchedDelimiterType::Bracket => ("]", "bracket"),
     };
 
     let range = node.range();
     let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
-    let message = format!("unmatched closing {token} '{kind}'");
+    let message = format!("unmatched closing {name} '{token}'");
     let diagnostic = Diagnostic::new_simple(range, message.into());
     diagnostics.push(diagnostic);
 
@@ -1037,7 +1069,8 @@ fn is_unmatched_block(node: &Node, open: &str, close: &str) -> Result<bool> {
     let lhs = node.child(1 - 1).unwrap();
     let rhs = node.child(n - 1).unwrap();
 
-    let unmatched = lhs.kind() == open && rhs.kind() != close;
+    let unmatched = lhs.node_type() == NodeType::Anonymous(open.to_string()) &&
+        rhs.node_type() != NodeType::Anonymous(close.to_string());
 
     unmatched.ok()
 }
@@ -1052,7 +1085,7 @@ fn check_invalid_na_comparison(
         return false.ok();
     }
 
-    if node.kind() != "==" {
+    if node.node_type() != NodeType::BinaryOperator(BinaryOperatorType::Equal) {
         return false.ok();
     }
 
@@ -1084,7 +1117,7 @@ fn check_syntax_error(
     context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<bool> {
-    if !matches!(node.kind(), "ERROR") {
+    if !node.is_error() {
         return false.ok();
     }
 
@@ -1103,6 +1136,13 @@ fn check_unclosed_arguments(
     context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<bool> {
+    let (open, close) = match node.node_type() {
+        NodeType::Call => ("(", ")"),
+        NodeType::Subset => ("[", "]"),
+        NodeType::Subset2 => ("[[", "]]"),
+        _ => return false.ok(),
+    };
+
     let arguments = unwrap!(node.child_by_field_name("arguments"), None => {
         return false.ok();
     });
@@ -1115,11 +1155,9 @@ fn check_unclosed_arguments(
     let lhs = arguments.child(1 - 1).unwrap();
     let rhs = arguments.child(n - 1).unwrap();
 
-    if lhs.kind() == "(" && rhs.kind() == ")" {
-        return false.ok();
-    } else if lhs.kind() == "[" && rhs.kind() == "]" {
-        return false.ok();
-    } else if lhs.kind() == "[[" && rhs.kind() == "]]" {
+    if lhs.node_type() == NodeType::Anonymous(String::from(open)) &&
+        rhs.node_type() == NodeType::Anonymous(String::from(close))
+    {
         return false.ok();
     }
 
@@ -1142,8 +1180,7 @@ fn check_unexpected_assignment_in_if_conditional(
         return false.ok();
     }
 
-    let kind = node.kind();
-    if kind != "if" {
+    if node.node_type() != NodeType::IfStatement {
         return false.ok();
     }
 
@@ -1151,7 +1188,7 @@ fn check_unexpected_assignment_in_if_conditional(
         return false.ok();
     });
 
-    if !matches!(condition.kind(), "=") {
+    if condition.node_type() != NodeType::BinaryOperator(BinaryOperatorType::EqualsAssignment) {
         return false.ok();
     }
 
@@ -1184,9 +1221,9 @@ fn check_symbol_in_scope(
         return false.ok();
     }
 
-    // Skip if this identifier belongs to a '$' node.
+    // Skip if this identifier belongs to a '$' or `@` node.
     if let Some(parent) = node.parent() {
-        if parent.kind() == "$" {
+        if matches!(parent.node_type(), NodeType::ExtractOperator(_)) {
             if let Some(rhs) = parent.child_by_field_name("rhs") {
                 if rhs == node {
                     return false.ok();
