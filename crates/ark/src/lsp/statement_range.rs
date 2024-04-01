@@ -24,6 +24,7 @@ use crate::lsp::backend::Backend;
 use crate::lsp::encoding::convert_point_to_position;
 use crate::lsp::encoding::convert_position_to_point;
 use crate::lsp::traits::cursor::TreeCursorExt;
+use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::rope::RopeExt;
 
 pub static POSITRON_STATEMENT_RANGE_REQUEST: &'static str = "positron/textDocument/statementRange";
@@ -125,7 +126,7 @@ fn find_roxygen_comment_at_point<'tree>(
 
     // Tree sitter doesn't know about the special `#'` marker,
     // but does tell us if we are in a `#` comment
-    if node.kind() != "comment" {
+    if !node.is_comment() {
         return None;
     }
 
@@ -172,7 +173,7 @@ fn find_roxygen_comment_at_point<'tree>(
         last_sibling = sibling;
 
         // Have we exited comments in general?
-        if sibling.kind() != "comment" {
+        if !sibling.is_comment() {
             break;
         }
 
@@ -217,7 +218,7 @@ fn find_statement_range_node<'tree>(root: &'tree Node, row: usize) -> Option<Nod
             // equal to the user selected `row`
             continue;
         }
-        if child.kind() == "comment" {
+        if child.is_comment() {
             // Skip comments
             continue;
         }
@@ -435,7 +436,7 @@ fn recurse_block(node: Node, row: usize) -> Result<Option<Node>> {
             // equal to the user selected `row`
             continue;
         }
-        if child.kind() == "comment" {
+        if child.is_comment() {
             // Skip comments
             continue;
         }

@@ -30,6 +30,7 @@ use walkdir::WalkDir;
 
 use crate::lsp::documents::Document;
 use crate::lsp::encoding::convert_point_to_position;
+use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::rope::RopeExt;
 
 #[derive(Clone, Debug)]
@@ -297,7 +298,7 @@ fn index_function(_path: &Path, contents: &Rope, node: &Node) -> Result<Option<I
 
 fn index_comment(_path: &Path, contents: &Rope, node: &Node) -> Result<Option<IndexEntry>> {
     // check for comment
-    matches!(node.kind(), "comment").into_result()?;
+    node.is_comment().into_result()?;
 
     // see if it looks like a section
     let comment = contents.node_slice(node)?.to_string();

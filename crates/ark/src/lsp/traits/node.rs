@@ -89,6 +89,7 @@ pub trait NodeExt: Sized {
     fn bwd_leaf_iter(&self) -> BwdLeafIterator<'_>;
 
     fn is_call(&self) -> bool;
+    fn is_comment(&self) -> bool;
     fn is_unary_operator(&self) -> bool;
     fn is_binary_operator(&self) -> bool;
 }
@@ -197,6 +198,10 @@ impl NodeExt for Node<'_> {
 
     fn is_call(&self) -> bool {
         matches!(self.kind(), "call")
+    }
+
+    fn is_comment(&self) -> bool {
+        self.kind() == "comment"
     }
 
     fn is_unary_operator(&self) -> bool {
