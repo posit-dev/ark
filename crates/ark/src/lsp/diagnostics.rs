@@ -1163,7 +1163,7 @@ fn check_unclosed_arguments(
 
     let range = lhs.range();
     let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
-    let message = format!("unmatched opening bracket '{}'", lhs.kind());
+    let message = format!("unmatched opening bracket '{}'", open);
     let diagnostic = Diagnostic::new_simple(range, message.into());
     diagnostics.push(diagnostic);
 
