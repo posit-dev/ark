@@ -1253,8 +1253,10 @@ fn check_symbol_in_scope(
 #[cfg(test)]
 mod tests {
 
+    use crate::lsp::diagnostics::generate_diagnostics;
     use crate::lsp::diagnostics::is_unmatched_block;
     use crate::lsp::documents::Document;
+    use crate::test::r_test;
 
     #[test]
     fn test_unmatched_braces() {
@@ -1292,5 +1294,19 @@ mod tests {
         let document = Document::new("( 1 + 2 )", None);
         let node = document.ast.root_node().named_child(0).unwrap();
         assert!(!is_unmatched_block(&node, "(", ")").unwrap());
+    }
+
+    #[test]
+    fn test_comment_after_call_argument() {
+        r_test(|| {
+            let text = "
+            match(
+                1,
+                2 # hi there
+            )";
+            let document = Document::new(text, None);
+            let diagnostics = generate_diagnostics(&document);
+            assert!(diagnostics.is_empty());
+        })
     }
 }
