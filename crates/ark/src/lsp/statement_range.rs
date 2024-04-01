@@ -25,6 +25,7 @@ use crate::lsp::encoding::convert_point_to_position;
 use crate::lsp::encoding::convert_position_to_point;
 use crate::lsp::traits::cursor::TreeCursorExt;
 use crate::lsp::traits::rope::RopeExt;
+use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
 pub static POSITRON_STATEMENT_RANGE_REQUEST: &'static str = "positron/textDocument/statementRange";
@@ -248,20 +249,22 @@ fn recurse(node: Node, row: usize) -> Result<Option<Node>> {
         return Ok(Some(node));
     }
 
-    match node.kind() {
-        "function_definition" => recurse_function(node, row),
-        "for_statement" | "while_statement" | "repeat_statement" => recurse_loop(node, row),
-        "if_statement" => recurse_if(node, row),
-        "braced_expression" => recurse_braced_expression(node, row),
-        "subset" | "subset2" => recurse_subset(node, row),
-        "call" => recurse_call(node, row),
+    match node.node_type() {
+        NodeType::FunctionDefinition => recurse_function(node, row),
+        NodeType::ForStatement | NodeType::WhileStatement | NodeType::RepeatStatement => {
+            recurse_loop(node, row)
+        },
+        NodeType::IfStatement => recurse_if(node, row),
+        NodeType::BracedExpression => recurse_braced_expression(node, row),
+        NodeType::Subset | NodeType::Subset2 => recurse_subset(node, row),
+        NodeType::Call => recurse_call(node, row),
         _ => recurse_default(node, row),
     }
 }
 
 fn recurse_function(node: Node, row: usize) -> Result<Option<Node>> {
     let Some(parameters) = node.child_by_field_name("parameters") else {
-        bail!("Missing `parameters` field in a `function` node");
+        bail!("Missing `parameters` field in a `function_definition` node");
     };
 
     if parameters.start_position().row <= row && parameters.end_position().row >= row {
@@ -324,7 +327,7 @@ fn recurse_loop(node: Node, row: usize) -> Result<Option<Node>> {
 
 fn recurse_if(node: Node, row: usize) -> Result<Option<Node>> {
     let Some(consequence) = node.child_by_field_name("consequence") else {
-        bail!("Missing `consequence` child in an `if` node.");
+        bail!("Missing `consequence` child in an `if_statement` node.");
     };
     if row >= consequence.start_position().row && row <= consequence.end_position().row {
         // We are somewhere inside the `consequence`
@@ -384,7 +387,7 @@ fn recurse_if(node: Node, row: usize) -> Result<Option<Node>> {
 
 fn recurse_call(node: Node, row: usize) -> Result<Option<Node>> {
     let Some(arguments) = node.child_by_field_name("arguments") else {
-        bail!("Missing `arguments` field in a call node");
+        bail!("Missing `arguments` field in a `call` node");
     };
     if row == arguments.start_position().row {
         // On start row containing `(`, select whole call
