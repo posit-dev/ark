@@ -18,6 +18,8 @@ use tree_sitter::Node;
 use crate::lsp::completions::sources::utils::completions_from_object_names;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::traits::rope::RopeExt;
+use crate::treesitter::BinaryOperatorType;
+use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
 #[derive(Clone)]
@@ -121,12 +123,12 @@ fn find_pipe_root_name(context: &DocumentContext, node: &Node) -> Option<String>
     // Try to figure out the code associated with the 'root' of the pipe expression.
     let root = local! {
 
-        let root = find_pipe_root_node(*node)?;
-        is_pipe_operator(&root).into_option()?;
+        let root = find_pipe_root_node(context, *node)?;
+        is_pipe_operator(context, &root).into_option()?;
 
         // Get the left-hand side of the pipe expression.
         let mut lhs = root.child_by_field_name("lhs")?;
-        while is_pipe_operator(&lhs) {
+        while is_pipe_operator(context, &lhs) {
             lhs = lhs.child_by_field_name("lhs")?;
         }
 
@@ -139,11 +141,11 @@ fn find_pipe_root_name(context: &DocumentContext, node: &Node) -> Option<String>
     root.map(|x| x.to_string())
 }
 
-fn find_pipe_root_node(mut node: Node) -> Option<Node> {
+fn find_pipe_root_node<'a>(context: &DocumentContext, mut node: Node<'a>) -> Option<Node<'a>> {
     let mut root = None;
 
     loop {
-        if is_pipe_operator(&node) {
+        if is_pipe_operator(context, &node) {
             root = Some(node);
         }
 
@@ -154,6 +156,24 @@ fn find_pipe_root_node(mut node: Node) -> Option<Node> {
     }
 }
 
-fn is_pipe_operator(node: &Node) -> bool {
-    matches!(node.kind(), "%>%" | "|>")
+fn is_pipe_operator(context: &DocumentContext, node: &Node) -> bool {
+    let node_type = node.node_type();
+
+    if node_type == NodeType::BinaryOperator(BinaryOperatorType::Pipe) {
+        // Native pipe
+        return true;
+    }
+
+    if node_type == NodeType::BinaryOperator(BinaryOperatorType::Special) {
+        // magrittr pipe
+        match context.document.contents.node_slice(node) {
+            Ok(slice) => return slice == "%>%",
+            Err(err) => {
+                log::error!("{err:?}");
+                return false;
+            },
+        }
+    }
+
+    return false;
 }
