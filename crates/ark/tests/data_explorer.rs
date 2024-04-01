@@ -181,6 +181,44 @@ fn test_data_explorer() {
         }
     );
 
+    // A more complicated sort: sort by 'cyl' in descending order, then by 'mpg'
+    // also in descending order.
+    let descending_sort_keys = vec![
+        ColumnSortKey {
+            column_index: 1,
+            ascending: false,
+        },
+        ColumnSortKey {
+            column_index: 0,
+            ascending: false,
+        },
+    ];
+
+    let req = DataExplorerBackendRequest::SetSortColumns(SetSortColumnsParams {
+        sort_keys: descending_sort_keys.clone(),
+    });
+
+    // We should get a SetSortColumnsReply back.
+    assert_match!(socket_rpc(&socket, req),
+        DataExplorerBackendReply::SetSortColumnsReply() => {});
+
+    // Get the first three rows of data from the sorted data set.
+    let req = DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
+        row_start_index: 0,
+        num_rows: 3,
+        column_indices: vec![0, 1],
+    });
+
+    // Check that sorted values were correctly returned.
+    assert_match!(socket_rpc(&socket, req),
+        DataExplorerBackendReply::GetDataValuesReply(data) => {
+            assert_eq!(data.columns.len(), 2);
+            assert_eq!(data.columns[0][0], "19.2");
+            assert_eq!(data.columns[0][1], "18.7");
+            assert_eq!(data.columns[0][2], "17.3");
+        }
+    );
+
     // --- women ---
 
     // Open the mtcars data set in the data explorer.
