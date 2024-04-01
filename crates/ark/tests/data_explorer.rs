@@ -328,4 +328,54 @@ fn test_data_explorer() {
             assert_eq!(schema.columns.len(), 3);
         }
     );
+
+    // --- volcano (a matrix) ---
+
+    // Open the volcano data set in the data explorer. This data set is a matrix.
+    let socket = open_data_explorer(String::from("volcano"));
+
+    // Get the schema for the test data set.
+    let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
+        num_columns: 61,
+        start_index: 0,
+    });
+
+    // Check that we got the right number of columns.
+    assert_match!(socket_rpc(&socket, req),
+        DataExplorerBackendReply::GetSchemaReply(schema) => {
+            assert_eq!(schema.columns.len(), 61);
+        }
+    );
+
+    // Create a request to sort the matrix by the first column.
+    let volcano_sort_keys = vec![ColumnSortKey {
+        column_index: 0,
+        ascending: true,
+    }];
+
+    let req = DataExplorerBackendRequest::SetSortColumns(SetSortColumnsParams {
+        sort_keys: volcano_sort_keys.clone(),
+    });
+
+    // We should get a SetSortColumnsReply back.
+    assert_match!(socket_rpc(&socket, req),
+        DataExplorerBackendReply::SetSortColumnsReply() => {});
+
+    // Get the first three rows of data from the sorted matrix.
+    let req = DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
+        row_start_index: 0,
+        num_rows: 4,
+        column_indices: vec![0, 1],
+    });
+
+    // Check the data values.
+    assert_match!(socket_rpc(&socket, req),
+        DataExplorerBackendReply::GetDataValuesReply(data) => {
+            assert_eq!(data.columns.len(), 2);
+            assert_eq!(data.columns[0][0], "97");
+            assert_eq!(data.columns[0][1], "97");
+            assert_eq!(data.columns[0][2], "98");
+            assert_eq!(data.columns[0][3], "98");
+        }
+    );
 }

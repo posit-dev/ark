@@ -436,8 +436,12 @@ impl RDataExplorer {
 
         // For each element of self.sort_keys, add an argument to order
         for key in &self.sort_keys {
-            // TODO: this is way too low level
-            let column = self.table.get().vector_elt(key.column_index as isize)?;
+            // Get the column to sort by
+            let column = RFunction::new("base", "[")
+                .add(self.table.get().clone())
+                .add(unsafe { R_MissingArg })
+                .add(RObject::from((key.column_index + 1) as i32))
+                .call()?;
             decreasing.push(!key.ascending);
             order.add(column);
         }
