@@ -305,7 +305,15 @@ impl RDataExplorer {
                     discard_state: true,
                 })
             },
-            false => DataExplorerFrontendEvent::DataUpdate,
+            false => {
+                // Columns didn't change, but the data has. If there are sort
+                // keys, we need to sort the rows again to reflect the new data.
+                if self.sort_keys.len() > 0 {
+                    self.row_indices = r_task(|| self.r_sort_rows())?;
+                }
+
+                DataExplorerFrontendEvent::DataUpdate
+            },
         };
 
         self.comm

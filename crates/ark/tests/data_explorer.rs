@@ -254,7 +254,11 @@ fn test_data_explorer() {
     // --- live updates ---
 
     // Create a tiny data frame to test live updates.
-    let tiny = r_parse_eval0("x <- data.frame(y = 2, z = 3)", R_ENVS.global).unwrap();
+    let tiny = r_parse_eval0(
+        "x <- data.frame(y = c(3, 2, 1), z = c(4, 5, 6))",
+        R_ENVS.global,
+    )
+    .unwrap();
 
     // Open a data explorer for the tiny data frame and supply a binding to the
     // global environment.
@@ -292,6 +296,66 @@ fn test_data_explorer() {
                 DataExplorerFrontendEvent::DataUpdate
             );
     });
+
+    // Create a request to sort the data set by the 'y' column.
+    let sort_keys = vec![ColumnSortKey {
+        column_index: 0,
+        ascending: true,
+    }];
+    let req = DataExplorerBackendRequest::SetSortColumns(SetSortColumnsParams {
+        sort_keys: sort_keys.clone(),
+    });
+
+    // We should get a SetSortColumnsReply back.
+    assert_match!(socket_rpc(&socket, req),
+        DataExplorerBackendReply::SetSortColumnsReply() => {});
+
+    // Get the values from the first column.
+    let req = DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
+        row_start_index: 0,
+        num_rows: 3,
+        column_indices: vec![0],
+    });
+    assert_match!(socket_rpc(&socket, req),
+        DataExplorerBackendReply::GetDataValuesReply(data) => {
+            assert_eq!(data.columns.len(), 1);
+            assert_eq!(data.columns[0][0], "0");
+            assert_eq!(data.columns[0][1], "1");
+            assert_eq!(data.columns[0][2], "2");
+        }
+    );
+
+    // Make another data-level change to the data set.
+    r_parse_eval0("x[1, 1] <- 3", R_ENVS.global).unwrap();
+
+    // Emit a console prompt event; this should tickle the data explorer to
+    // check for changes.
+    EVENTS.console_prompt.emit(());
+
+    // Wait for an update event to arrive
+    assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
+        CommMsg::Data(value) => {
+            // Make sure it's a data update event.
+            assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
+                DataExplorerFrontendEvent::DataUpdate
+            );
+    });
+
+    // Get the values from the first column again. Because a sort is applied,
+    // the new value we wrote should be at the end.
+    let req = DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
+        row_start_index: 0,
+        num_rows: 3,
+        column_indices: vec![0],
+    });
+    assert_match!(socket_rpc(&socket, req),
+        DataExplorerBackendReply::GetDataValuesReply(data) => {
+            assert_eq!(data.columns.len(), 1);
+            assert_eq!(data.columns[0][0], "1");
+            assert_eq!(data.columns[0][1], "2");
+            assert_eq!(data.columns[0][2], "3");
+        }
+    );
 
     // Now, replace 'x' with an entirely different data set. This should trigger
     // a schema-level update.
