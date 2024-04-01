@@ -393,6 +393,17 @@ fn test_data_explorer() {
         }
     );
 
+    // Now, delete 'x' entirely. This should cause the comm to close.
+    r_parse_eval0("rm(x)", R_ENVS.global).unwrap();
+
+    // Emit a console prompt event to trigger change detection
+    EVENTS.console_prompt.emit(());
+
+    // Wait for an close event to arrive
+    assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
+        CommMsg::Close => {}
+    );
+
     // --- volcano (a matrix) ---
 
     // Open the volcano data set in the data explorer. This data set is a matrix.

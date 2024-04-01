@@ -207,8 +207,17 @@ impl RDataExplorer {
                 // the underlying data
                 recv(&prompt_signal_rx) -> msg => {
                     if let Ok(()) = msg {
-                        if let Err(err) = self.update() {
-                            log::error!("Error while checking environment for data viewer update: {err}");
+                        match self.update() {
+                            Ok(true) => {},
+                            Ok(false) => {
+                                // The binding has been removed (or replaced
+                                // with something incompatible), so close the
+                                // data viewer
+                                break;
+                            },
+                            Err(err) => {
+                                log::error!("Error while checking environment for data viewer update: {err}");
+                            },
                         }
                     }
                 },
@@ -247,10 +256,13 @@ impl RDataExplorer {
     }
 
     /// Check the environment bindings for updates to the underlying value
-    fn update(&mut self) -> anyhow::Result<()> {
+    ///
+    /// Returns true if the update was processed; false if the binding has been
+    /// removed and the data viewer should be closed.
+    fn update(&mut self) -> anyhow::Result<bool> {
         // No need to check for updates if we have no binding
         if self.binding.is_none() {
-            return Ok(());
+            return Ok(true);
         }
 
         // See if the value has changed; this block returns a new value if it
@@ -274,7 +286,7 @@ impl RDataExplorer {
 
         // No change to the value, so we're done
         if new.is_none() {
-            return Ok(());
+            return Ok(true);
         }
 
         // Update the value
@@ -285,7 +297,16 @@ impl RDataExplorer {
         //
         // Consider: there may be a cheaper way to test the schema for changes
         // than regenerating it, but it'd be a lot more complicated.
-        let new_shape = r_task(|| Self::r_get_shape(&self.table))?;
+        let new_shape = match r_task(|| Self::r_get_shape(&self.table)) {
+            Ok(shape) => shape,
+            Err(_) => {
+                // The most likely cause of this error is that the object is no
+                // longer something with a usable shape -- it's been removed or
+                // replaced with an object that doesn't work with the data
+                // viewer (i.e. is non rectangular)
+                return Ok(false);
+            },
+        };
 
         // Generate the appropriate event based on whether the schema has
         // changed
@@ -319,7 +340,7 @@ impl RDataExplorer {
         self.comm
             .outgoing_tx
             .send(CommMsg::Data(serde_json::to_value(event)?))?;
-        Ok(())
+        Ok(true)
     }
 
     fn handle_rpc(
