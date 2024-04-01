@@ -29,6 +29,8 @@ use crate::lsp::indexer;
 use crate::lsp::indexer::IndexEntryData;
 use crate::lsp::traits::rope::RopeExt;
 use crate::lsp::traits::string::StringExt;
+use crate::treesitter::BinaryOperatorType;
+use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
 pub fn symbols(
@@ -114,7 +116,7 @@ pub fn document_symbols(
 
 fn is_indexable(node: &Node) -> bool {
     // don't index 'arguments' or 'parameters'
-    if matches!(node.kind(), "arguments" | "parameters") {
+    if matches!(node.node_type(), NodeType::Arguments | NodeType::Parameters) {
         return false;
     }
 
@@ -128,7 +130,11 @@ fn index_node(
     symbols: &mut Vec<DocumentSymbol>,
 ) -> Result<bool> {
     // if we find an assignment, index it
-    if matches!(node.kind(), "<-" | "=") {
+    if matches!(
+        node.node_type(),
+        NodeType::BinaryOperator(BinaryOperatorType::LeftAssignment) |
+            NodeType::BinaryOperator(BinaryOperatorType::EqualsAssignment)
+    ) {
         match index_assignment(node, contents, parent, symbols) {
             Ok(handled) => {
                 if handled {
@@ -160,7 +166,12 @@ fn index_assignment(
     symbols: &mut Vec<DocumentSymbol>,
 ) -> Result<bool> {
     // check for assignment
-    matches!(node.kind(), "<-" | "=").into_result()?;
+    matches!(
+        node.node_type(),
+        NodeType::BinaryOperator(BinaryOperatorType::LeftAssignment) |
+            NodeType::BinaryOperator(BinaryOperatorType::EqualsAssignment)
+    )
+    .into_result()?;
 
     // check for lhs, rhs
     let lhs = node.child_by_field_name("lhs").into_result()?;
@@ -170,7 +181,7 @@ fn index_assignment(
     let function = lhs.is_identifier_or_string() && rhs.is_function_definition();
 
     if function {
-        return index_function(node, contents, parent, symbols);
+        return index_assignment_with_function(node, contents, parent, symbols);
     }
 
     // otherwise, just index as generic object
@@ -196,7 +207,7 @@ fn index_assignment(
     Ok(true)
 }
 
-fn index_function(
+fn index_assignment_with_function(
     node: &Node,
     contents: &Rope,
     parent: &mut DocumentSymbol,
