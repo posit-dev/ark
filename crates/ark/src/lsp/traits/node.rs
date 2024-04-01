@@ -90,6 +90,8 @@ pub trait NodeExt: Sized {
 
     fn is_call(&self) -> bool;
     fn is_comment(&self) -> bool;
+    fn is_braced_expression(&self) -> bool;
+    fn is_if_statement(&self) -> bool;
     fn is_unary_operator(&self) -> bool;
     fn is_binary_operator(&self) -> bool;
 }
@@ -202,6 +204,15 @@ impl NodeExt for Node<'_> {
 
     fn is_comment(&self) -> bool {
         self.kind() == "comment"
+    }
+
+    fn is_braced_expression(&self) -> bool {
+        // `{`
+        self.kind() == "braced_expression"
+    }
+
+    fn is_if_statement(&self) -> bool {
+        self.kind() == "if_statement"
     }
 
     fn is_unary_operator(&self) -> bool {
