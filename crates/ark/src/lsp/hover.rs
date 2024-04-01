@@ -14,6 +14,7 @@ use tree_sitter::Node;
 
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::help::RHtmlHelp;
+use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::rope::RopeExt;
 
 enum HoverContext {
@@ -53,7 +54,7 @@ fn hover_context(node: Node, context: &DocumentContext) -> Result<Option<HoverCo
         // only provide documentation for function calls for now,
         // since bare identifiers might not match the topic we expect
         if let Some(parent) = node.parent() {
-            if parent.kind() != "call" {
+            if !parent.is_call() {
                 return Ok(None);
             }
         }

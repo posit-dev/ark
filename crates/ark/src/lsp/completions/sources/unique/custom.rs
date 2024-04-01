@@ -27,6 +27,7 @@ use crate::lsp::completions::sources::utils::CallNodePositionType;
 use crate::lsp::completions::types::CompletionData;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::signature_help::signature_help;
+use crate::lsp::traits::node::NodeExt;
 
 pub fn completions_from_custom_source(
     context: &DocumentContext,
@@ -39,7 +40,7 @@ pub fn completions_from_custom_source(
 
     loop {
         // Try custom call completions
-        if node.kind() == "call" {
+        if node.is_call() {
             has_call = true;
             break;
         }

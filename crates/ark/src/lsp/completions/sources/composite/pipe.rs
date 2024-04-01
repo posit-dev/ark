@@ -17,6 +17,7 @@ use tree_sitter::Node;
 
 use crate::lsp::completions::sources::utils::completions_from_object_names;
 use crate::lsp::document_context::DocumentContext;
+use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::rope::RopeExt;
 
 #[derive(Clone)]
@@ -59,7 +60,7 @@ pub(super) fn find_pipe_root(context: &DocumentContext) -> Option<PipeRoot> {
     let mut has_call = false;
 
     loop {
-        if node.kind() == "call" {
+        if node.is_call() {
             // We look for pipe roots from here
             has_call = true;
             break;

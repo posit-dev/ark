@@ -125,7 +125,7 @@ pub unsafe fn signature_help(context: &DocumentContext) -> Result<Option<Signatu
         }
 
         // If we find the 'call' node, we can quit.
-        if parent.kind() == "call" {
+        if parent.is_call() {
             break parent;
         }
 

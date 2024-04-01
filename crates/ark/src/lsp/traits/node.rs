@@ -197,7 +197,7 @@ impl NodeExt for Node<'_> {
     }
 
     fn is_call(&self) -> bool {
-        matches!(self.kind(), "call")
+        self.kind() == "call"
     }
 
     fn is_comment(&self) -> bool {

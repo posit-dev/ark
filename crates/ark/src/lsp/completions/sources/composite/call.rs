@@ -23,6 +23,7 @@ use crate::lsp::completions::sources::utils::set_sort_text_by_first_appearance;
 use crate::lsp::completions::sources::utils::CallNodePositionType;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::indexer;
+use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::rope::RopeExt;
 
 pub(super) fn completions_from_call(
@@ -37,7 +38,7 @@ pub(super) fn completions_from_call(
     loop {
         // If we landed on a 'call', then we should provide parameter completions
         // for the associated callee if possible.
-        if node.kind() == "call" {
+        if node.is_call() {
             has_call = true;
             break;
         }
