@@ -39,6 +39,7 @@ pub enum NodeType {
     Comment,
     Comma,
     UnmatchedDelimiter(UnmatchedDelimiterType),
+    Error,
     Anonymous(String),
 }
 
@@ -81,6 +82,7 @@ fn node_type(x: &Node) -> NodeType {
         "comment" => NodeType::Comment,
         "comma" => NodeType::Comma,
         "unmatched_delimiter" => NodeType::UnmatchedDelimiter(unmatched_delimiter_type(x)),
+        "ERROR" => NodeType::Error,
         anonymous => NodeType::Anonymous(anonymous.to_string()),
     }
 }
