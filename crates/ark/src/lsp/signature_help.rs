@@ -24,6 +24,7 @@ use crate::lsp::help::RHtmlHelp;
 use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::point::PointExt;
 use crate::lsp::traits::rope::RopeExt;
+use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
 /// SAFETY: Requires access to the R runtime.
@@ -44,13 +45,13 @@ pub unsafe fn signature_help(context: &DocumentContext) -> Result<Option<Signatu
     //
     // then the current context is associated with 'x = ' and not with what follows
     // the comma.
-    if node.kind() == "comma" && node.start_position().is_before(context.point) {
+    if node.node_type() == NodeType::Comma && node.start_position().is_before(context.point) {
         if let Some(sibling) = node.next_sibling() {
             node = sibling;
         }
     }
 
-    if node.kind() == ")" {
+    if node.node_type() == NodeType::Anonymous(String::from(")")) {
         if let Some(sibling) = node.prev_sibling() {
             node = sibling;
         }
@@ -92,7 +93,7 @@ pub unsafe fn signature_help(context: &DocumentContext) -> Result<Option<Signatu
 
     let call = loop {
         // If we found an 'arguments' node, then use that to infer the current offset.
-        if parent.kind() == "arguments" {
+        if parent.node_type() == NodeType::Arguments {
             // If the cursor lies upon a named argument, use that as an override.
             if let Some(name) = node.child_by_field_name("name") {
                 let name = context.document.contents.node_slice(&name)?.to_string();
@@ -114,7 +115,7 @@ pub unsafe fn signature_help(context: &DocumentContext) -> Result<Option<Signatu
                 }
 
                 // If we find a comma, add to the offset.
-                if !found_child && child.kind() == "comma" {
+                if !found_child && child.node_type() == NodeType::Comma {
                     num_unnamed_arguments += 1;
                 }
 
