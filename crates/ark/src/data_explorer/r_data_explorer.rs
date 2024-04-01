@@ -434,7 +434,7 @@ impl RDataExplorer {
                     harp::TableKind::Matrix => object,
                 };
 
-                let type_name = WorkspaceVariableDisplayType::from(col).display_type;
+                let type_name = WorkspaceVariableDisplayType::from(col, false).display_type;
                 let type_display = display_type(col);
 
                 column_schemas.push(ColumnSchema {

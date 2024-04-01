@@ -307,7 +307,13 @@ pub struct WorkspaceVariableDisplayType {
 }
 
 impl WorkspaceVariableDisplayType {
-    pub fn from(value: SEXP) -> Self {
+    /// Create a new WorkspaceVariableDisplayType from an R object.
+    ///
+    /// Parameters:
+    /// - value: The R object to create the display type and type info for.
+    /// - include_length: Whether to include the length of the object in the
+    ///   display type.
+    pub fn from(value: SEXP, include_length: bool) -> Self {
         if r_is_null(value) {
             return Self::simple(String::from("NULL"));
         }
@@ -317,12 +323,13 @@ impl WorkspaceVariableDisplayType {
         }
 
         if r_is_simple_vector(value) {
-            let display_type: String;
-            if r_vec_is_single_dimension_with_single_value(value) {
-                display_type = r_vec_type(value);
-            } else {
-                display_type = format!("{} [{}]", r_vec_type(value), r_vec_shape(value));
-            }
+            let display_type = match include_length {
+                true => match r_vec_is_single_dimension_with_single_value(value) {
+                    true => r_vec_type(value),
+                    false => format!("{} [{}]", r_vec_type(value), r_vec_shape(value)),
+                },
+                false => r_vec_type(value),
+            };
 
             let mut type_info = display_type.clone();
             if r_is_altrep(value) {
@@ -335,7 +342,10 @@ impl WorkspaceVariableDisplayType {
         let rtype = r_typeof(value);
         match rtype {
             EXPRSXP => {
-                let default = format!("expression [{}]", unsafe { Rf_xlength(value) });
+                let default = match include_length {
+                    true => format!("expression [{}]", unsafe { Rf_xlength(value) }),
+                    false => String::from("expression"),
+                };
                 Self::from_class(value, default)
             },
             LANGSXP => Self::from_class(value, String::from("language")),
@@ -349,25 +359,35 @@ impl WorkspaceVariableDisplayType {
                 }
             },
 
-            LISTSXP => match pairlist_size(value) {
-                Ok(n) => Self::simple(format!("pairlist [{}]", n)),
-                Err(_) => Self::simple(String::from("pairlist [?]")),
+            LISTSXP => match include_length {
+                true => match pairlist_size(value) {
+                    Ok(n) => Self::simple(format!("pairlist [{}]", n)),
+                    Err(_) => Self::simple(String::from("pairlist [?]")),
+                },
+                false => Self::simple(String::from("pairlist")),
             },
 
             VECSXP => unsafe {
                 if r_is_data_frame(value) {
                     let classes = r_classes(value).unwrap();
                     let dfclass = classes.get_unchecked(0).unwrap();
-
-                    let dim = RFunction::new("base", "dim.data.frame")
-                        .add(value)
-                        .call()
-                        .unwrap();
-                    let shape = FormattedVector::new(*dim).unwrap().iter().join(", ");
-                    let display_type = format!("{} [{}]", dfclass, shape);
-                    Self::simple(display_type)
+                    match include_length {
+                        true => {
+                            let dim = RFunction::new("base", "dim.data.frame")
+                                .add(value)
+                                .call()
+                                .unwrap();
+                            let shape = FormattedVector::new(*dim).unwrap().iter().join(", ");
+                            let display_type = format!("{} [{}]", dfclass, shape);
+                            Self::simple(display_type)
+                        },
+                        false => Self::simple(dfclass),
+                    }
                 } else {
-                    let default = format!("list [{}]", Rf_xlength(value));
+                    let default = match include_length {
+                        true => format!("list [{}]", Rf_xlength(value)),
+                        false => String::from("list"),
+                    };
                     Self::from_class(value, default)
                 }
             },
@@ -462,7 +482,7 @@ impl PositronVariable {
         let WorkspaceVariableDisplayType {
             display_type,
             type_info,
-        } = WorkspaceVariableDisplayType::from(x);
+        } = WorkspaceVariableDisplayType::from(x, true);
 
         let kind = Self::variable_kind(x);
 
