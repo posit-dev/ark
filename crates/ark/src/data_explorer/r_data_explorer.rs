@@ -532,7 +532,7 @@ impl RDataExplorer {
         let num_cols = cols_r_idx.length() as i32;
 
         let row_indices = self.row_indices[lower_bound as usize..upper_bound as usize].to_vec();
-        let rows_r_idx: RObject = row_indices.try_into()?;
+        let rows_r_idx: RObject = row_indices.clone().try_into()?;
 
         // Subset rows in advance, including unmaterialized row names. Also
         // subset spend time creating subsetting columns that we don't need.
@@ -569,8 +569,10 @@ impl RDataExplorer {
                     Some(vec![labels])
                 },
                 _ => {
-                    // These are automatic row names
-                    None
+                    // Create row names by using the row indices of the subset
+                    // rows
+                    let labels: Vec<String> = row_indices.iter().map(|x| x.to_string()).collect();
+                    Some(vec![labels])
                 },
             },
             None => None,

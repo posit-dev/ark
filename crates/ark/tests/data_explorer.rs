@@ -178,6 +178,12 @@ fn test_data_explorer() {
             assert_eq!(data.columns[0][0], "10.4");
             assert_eq!(data.columns[0][1], "10.4");
             assert_eq!(data.columns[0][2], "13.3");
+
+            // Row labels should be sorted as well.
+            let labels = data.row_labels.unwrap();
+            assert_eq!(labels[0][0], "Cadillac Fleetwood");
+            assert_eq!(labels[0][1], "Lincoln Continental");
+            assert_eq!(labels[0][2], "Camaro Z28");
         }
     );
 
@@ -238,8 +244,10 @@ fn test_data_explorer() {
             assert_eq!(data.columns[0][0], "58");
             assert_eq!(data.columns[0][1], "59");
 
-            // This data set has no row labels.
-            assert!(data.row_labels.is_none());
+            // Row labels should be present.
+            let labels = data.row_labels.unwrap();
+            assert_eq!(labels[0][0], "1");
+            assert_eq!(labels[0][1], "2");
         }
     );
 
