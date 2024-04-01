@@ -41,6 +41,11 @@
 }
 
 #' @export
+.ps.ui.executeCode <- function(code, focus) {
+    .ps.Call("ps_ui_execute_code", code, focus)
+}
+
+#' @export
 .ps.ui.showMessage <- function(message) {
     .ps.Call("ps_ui_show_message", message)
 }

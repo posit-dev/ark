@@ -6,6 +6,7 @@
 //
 
 use amalthea::comm::ui_comm::DebugSleepParams;
+use amalthea::comm::ui_comm::ExecuteCodeParams;
 use amalthea::comm::ui_comm::ModifyEditorSelectionsParams;
 use amalthea::comm::ui_comm::ShowDialogParams;
 use amalthea::comm::ui_comm::ShowQuestionParams;
@@ -86,6 +87,20 @@ pub unsafe extern "C" fn ps_ui_show_question(
 
     let main = RMain::get();
     let out = main.call_frontend_method(UiFrontendRequest::ShowQuestion(params))?;
+    Ok(out.sexp)
+}
+
+#[harp::register]
+pub unsafe extern "C" fn ps_ui_execute_code(code: SEXP, focus: SEXP) -> anyhow::Result<SEXP> {
+    let params = ExecuteCodeParams {
+        language_id: String::from("r"),
+        code: RObject::view(code).try_into()?,
+        focus: RObject::view(focus).try_into()?,
+        allow_incomplete: false,
+    };
+
+    let main = RMain::get();
+    let out = main.call_frontend_method(UiFrontendRequest::ExecuteCode(params))?;
     Ok(out.sexp)
 }
 

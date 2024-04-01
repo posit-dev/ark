@@ -191,6 +191,22 @@ pub struct ExecuteCommandParams {
 	pub command: String,
 }
 
+/// Parameters for the ExecuteCode method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ExecuteCodeParams {
+	/// The language ID of the code to execute
+	pub language_id: String,
+
+	/// The code to execute
+	pub code: String,
+
+	/// Whether to focus the runtime's console
+	pub focus: bool,
+
+	/// Whether to bypass runtime code completeness checks
+	pub allow_incomplete: bool,
+}
+
 /// Parameters for the OpenWorkspace method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct OpenWorkspaceParams {
@@ -276,6 +292,12 @@ pub enum UiFrontendRequest {
 	#[serde(rename = "debug_sleep")]
 	DebugSleep(DebugSleepParams),
 
+	/// Execute code in a Positron runtime
+	///
+	/// Use this to execute code in a Positron runtime
+	#[serde(rename = "execute_code")]
+	ExecuteCode(ExecuteCodeParams),
+
 	/// Path to the workspace folder
 	///
 	/// Returns the path to the workspace folder, or first folder if there are
@@ -312,6 +334,9 @@ pub enum UiFrontendReply {
 
 	/// Reply for the debug_sleep method (no result)
 	DebugSleepReply(),
+
+	/// Reply for the execute_code method (no result)
+	ExecuteCodeReply(),
 
 	/// The path to the workspace folder
 	WorkspaceFolderReply(Option<String>),
@@ -390,6 +415,7 @@ pub fn ui_frontend_reply_from_value(
 		UiFrontendRequest::ShowQuestion(_) => Ok(UiFrontendReply::ShowQuestionReply(serde_json::from_value(reply)?)),
 		UiFrontendRequest::ShowDialog(_) => Ok(UiFrontendReply::ShowDialogReply()),
 		UiFrontendRequest::DebugSleep(_) => Ok(UiFrontendReply::DebugSleepReply()),
+		UiFrontendRequest::ExecuteCode(_) => Ok(UiFrontendReply::ExecuteCodeReply()),
 		UiFrontendRequest::WorkspaceFolder => Ok(UiFrontendReply::WorkspaceFolderReply(serde_json::from_value(reply)?)),
 		UiFrontendRequest::ModifyEditorSelections(_) => Ok(UiFrontendReply::ModifyEditorSelectionsReply()),
 		UiFrontendRequest::LastActiveEditorContext => Ok(UiFrontendReply::LastActiveEditorContextReply(serde_json::from_value(reply)?)),

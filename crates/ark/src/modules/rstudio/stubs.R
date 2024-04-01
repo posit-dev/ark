@@ -16,6 +16,15 @@
 }
 
 #' @export
+.rs.api.sendToConsole <- function(code, echo = TRUE, execute = TRUE, focus = TRUE, animate = FALSE) {
+    # TODO: support other args
+    stopifnot(echo && execute && !animate)
+
+    # If we add new args later, remember to put them **after** the existing args
+    invisible(lapply(code, function(x) .ps.ui.executeCode(x, focus)))
+}
+
+#' @export
 .rs.api.restartSession <- function(command = "") {
     # TODO: support followup `command` argument
     stopifnot(command == "")
