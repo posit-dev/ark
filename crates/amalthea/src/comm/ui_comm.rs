@@ -127,6 +127,16 @@ pub struct OpenEditorParams {
 	pub column: i64,
 }
 
+/// Parameters for the NewDocument method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct NewDocumentParams {
+	/// Document contents
+	pub contents: String,
+
+	/// Language identifier
+	pub language_id: String,
+}
+
 /// Parameters for the ShowMessage method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ShowMessageParams {
@@ -274,6 +284,13 @@ pub enum UiBackendReply {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params")]
 pub enum UiFrontendRequest {
+	/// Create a new document with text contents
+	///
+	/// Use this to create a new document with the given language ID and text
+	/// contents
+	#[serde(rename = "new_document")]
+	NewDocument(NewDocumentParams),
+
 	/// Show a question
 	///
 	/// Use this for a modal dialog that the user can accept or cancel
@@ -326,6 +343,9 @@ pub enum UiFrontendRequest {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "result")]
 pub enum UiFrontendReply {
+	/// Reply for the new_document method (no result)
+	NewDocumentReply(),
+
 	/// Whether the user accepted or rejected the dialog.
 	ShowQuestionReply(bool),
 
@@ -412,6 +432,7 @@ pub fn ui_frontend_reply_from_value(
 	request: &UiFrontendRequest,
 ) -> anyhow::Result<UiFrontendReply> {
 	match request {
+		UiFrontendRequest::NewDocument(_) => Ok(UiFrontendReply::NewDocumentReply()),
 		UiFrontendRequest::ShowQuestion(_) => Ok(UiFrontendReply::ShowQuestionReply(serde_json::from_value(reply)?)),
 		UiFrontendRequest::ShowDialog(_) => Ok(UiFrontendReply::ShowDialogReply()),
 		UiFrontendRequest::DebugSleep(_) => Ok(UiFrontendReply::DebugSleepReply()),

@@ -94,16 +94,12 @@ selection_as_range <- function(ps_sel) {
 }
 
 #' @export
-.rs.api.documentNew <- function(text,
-                                type = c("r", "rmarkdown", "sql"),
-                                position = rstudioapi::document_position(0, 0),
-                                execute = FALSE) {
-    type <- match.arg(type)
-    # TODO: Support execute & position
-    stopifnot(!execute && position != rstudioapi::document_position(0, 0))
+.rs.api.documentNew <- function(type, code, row = 0, column = 0, execute = FALSE) {
+    # TODO: Support execute
+    stopifnot(!execute)
 
     languageId <- if (type == "rmarkdown") "rmd" else type
-    invisible(.ps.ui.documentNew(text, languageId))
+    invisible(.ps.ui.newDocument(paste(code, collapse = "\n"), languageId, row, column))
 }
 
 #' @export

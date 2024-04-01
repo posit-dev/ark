@@ -8,6 +8,7 @@
 use amalthea::comm::ui_comm::DebugSleepParams;
 use amalthea::comm::ui_comm::ExecuteCodeParams;
 use amalthea::comm::ui_comm::ModifyEditorSelectionsParams;
+use amalthea::comm::ui_comm::NewDocumentParams;
 use amalthea::comm::ui_comm::ShowDialogParams;
 use amalthea::comm::ui_comm::ShowQuestionParams;
 use amalthea::comm::ui_comm::UiFrontendRequest;
@@ -87,6 +88,23 @@ pub unsafe extern "C" fn ps_ui_show_question(
 
     let main = RMain::get();
     let out = main.call_frontend_method(UiFrontendRequest::ShowQuestion(params))?;
+    Ok(out.sexp)
+}
+
+#[harp::register]
+pub unsafe extern "C" fn ps_ui_new_document(
+    contents: SEXP,
+    language_id: SEXP,
+    _line: SEXP,
+    _column: SEXP,
+) -> anyhow::Result<SEXP> {
+    let params = NewDocumentParams {
+        contents: RObject::view(contents).try_into()?,
+        language_id: RObject::view(language_id).try_into()?,
+    };
+
+    let main = RMain::get();
+    let out = main.call_frontend_method(UiFrontendRequest::NewDocument(params))?;
     Ok(out.sexp)
 }
 

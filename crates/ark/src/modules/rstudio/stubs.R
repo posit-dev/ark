@@ -21,7 +21,7 @@
     stopifnot(echo && execute && !animate)
 
     # If we add new args later, remember to put them **after** the existing args
-    invisible(lapply(code, function(x) .ps.ui.executeCode(x, focus)))
+    invisible(.ps.ui.executeCode(paste(code, collapse = "\n"), focus))
 }
 
 #' @export
