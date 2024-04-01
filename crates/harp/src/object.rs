@@ -1268,6 +1268,29 @@ mod tests {
 
     #[test]
     #[allow(non_snake_case)]
+    fn test_tryfrom_RObject_Vec_Bool() {
+        r_test! {
+            // Create a vector of logical values.
+            let flags = vec![true, false, true];
+
+            // Ensure we created an object of the same size as the flags.
+            assert_match!(RObject::try_from(flags.clone()),
+                Ok(robj) => {
+
+                    // We should get an object of the same length as the flags.
+                    assert_eq!(robj.length(), flags.len() as isize);
+
+                    // The values should match the flags.
+                    assert!(robj.get_bool(0).unwrap().unwrap());
+                    assert!(!robj.get_bool(1).unwrap().unwrap());
+                    assert!(robj.get_bool(2).unwrap().unwrap());
+                }
+            );
+        }
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
     fn test_tryfrom_RObject_Vec_String() {
         r_test! {
             let s = RObject::from(Rf_allocVector(STRSXP, 2));
