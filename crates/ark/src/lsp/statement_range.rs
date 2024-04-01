@@ -249,11 +249,11 @@ fn recurse(node: Node, row: usize) -> Result<Option<Node>> {
     }
 
     match node.kind() {
-        "function" => recurse_function(node, row),
-        "for" | "while" | "repeat" => recurse_loop(node, row),
-        "if" => recurse_if(node, row),
-        "{" => recurse_block(node, row),
-        "[" | "[[" => recurse_subset(node, row),
+        "function_definition" => recurse_function(node, row),
+        "for_statement" | "while_statement" | "repeat_statement" => recurse_loop(node, row),
+        "if_statement" => recurse_if(node, row),
+        "braced_expression" => recurse_braced_expression(node, row),
+        "subset" | "subset2" => recurse_subset(node, row),
         "call" => recurse_call(node, row),
         _ => recurse_default(node, row),
     }
@@ -281,7 +281,9 @@ fn recurse_function(node: Node, row: usize) -> Result<Option<Node>> {
         return Ok(Some(node));
     }
 
-    if body.kind() == "{" && (row == body.start_position().row || row == body.end_position().row) {
+    if body.is_braced_expression() &&
+        (row == body.start_position().row || row == body.end_position().row)
+    {
         // For the most common `{` bodies, if we are on the `{` or the `}` rows, then we select the
         // entire function. This avoids sending a `{` block without its leading `function` node if
         // `{` happens to be on a different line or if the user is on the `}` line.
@@ -306,7 +308,9 @@ fn recurse_loop(node: Node, row: usize) -> Result<Option<Node>> {
         return Ok(Some(node));
     }
 
-    if body.kind() == "{" && (row == body.start_position().row || row == body.end_position().row) {
+    if body.is_braced_expression() &&
+        (row == body.start_position().row || row == body.end_position().row)
+    {
         // For the most common `{` bodies, if we are on the `{` or the `}` rows, then we select the
         // entire loop. This avoids sending a `{` block without its leading loop node if
         // `{` happens to be on a different line or if the user is on the `}` line.
@@ -325,7 +329,7 @@ fn recurse_if(node: Node, row: usize) -> Result<Option<Node>> {
     if row >= consequence.start_position().row && row <= consequence.end_position().row {
         // We are somewhere inside the `consequence`
 
-        if consequence.kind() == "{" &&
+        if consequence.is_braced_expression() &&
             (row == consequence.start_position().row || row == consequence.end_position().row)
         {
             // On `{` or `}` row of a `{` node, select entire if statement
@@ -344,14 +348,14 @@ fn recurse_if(node: Node, row: usize) -> Result<Option<Node>> {
     if row >= alternative.start_position().row && row <= alternative.end_position().row {
         // We are somewhere inside the `alternative`, possibly in an `else if`
 
-        if alternative.kind() == "{" &&
+        if alternative.is_braced_expression() &&
             (row == alternative.start_position().row || row == alternative.end_position().row)
         {
             // On `{` or `}` row of a `{` node, select entire if statement
             return Ok(Some(node));
         }
 
-        if alternative.kind() == "if" {
+        if alternative.is_if_statement() {
             // We are inside an `else if {` case. See if recursing over this `if` node
             // results in a new start position row.
             let Some(candidate) = recurse_if(alternative, row)? else {
@@ -420,7 +424,7 @@ fn recurse_call(node: Node, row: usize) -> Result<Option<Node>> {
     Ok(Some(node))
 }
 
-fn recurse_block(node: Node, row: usize) -> Result<Option<Node>> {
+fn recurse_braced_expression(node: Node, row: usize) -> Result<Option<Node>> {
     if row == node.end_position().row {
         // `recurse()` handled the start position, but if we are on the
         // `}` row, then we also select the entire block
