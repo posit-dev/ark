@@ -1253,6 +1253,8 @@ fn check_symbol_in_scope(
 #[cfg(test)]
 mod tests {
 
+    use tower_lsp::lsp_types::Position;
+
     use crate::lsp::diagnostics::generate_diagnostics;
     use crate::lsp::diagnostics::is_unmatched_block;
     use crate::lsp::documents::Document;
@@ -1307,6 +1309,25 @@ mod tests {
             let document = Document::new(text, None);
             let diagnostics = generate_diagnostics(&document);
             assert!(diagnostics.is_empty());
+        })
+    }
+
+    #[test]
+    fn test_expression_after_call_argument() {
+        r_test(|| {
+            let text = "match(1, 2 3)";
+            let document = Document::new(text, None);
+
+            let diagnostics = generate_diagnostics(&document);
+            assert_eq!(diagnostics.len(), 1);
+
+            let diagnostic = diagnostics.get(0).unwrap();
+            assert_eq!(
+                diagnostic.message,
+                "expected ',' after expression".to_string()
+            );
+            assert_eq!(diagnostic.range.start, Position::new(0, 9));
+            assert_eq!(diagnostic.range.end, Position::new(0, 10));
         })
     }
 }
