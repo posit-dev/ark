@@ -110,7 +110,7 @@ fn unary_operator_type(x: &Node) -> UnaryOperatorType {
         "!" => UnaryOperatorType::Not,
         "+" => UnaryOperatorType::Plus,
         "-" => UnaryOperatorType::Minus,
-        _ => std::unreachable!(),
+        _ => panic!("Unknown `unary_operator` kind {}.", x.kind()),
     }
 }
 
@@ -201,6 +201,7 @@ fn binary_operator_type(x: &Node) -> BinaryOperatorType {
         "special" => BinaryOperatorType::Special,
         "|>" => BinaryOperatorType::Pipe,
         ":" => BinaryOperatorType::Colon,
+        _ => panic!("Unknown `binary_operator` kind {}.", x.kind()),
     }
 }
 
@@ -218,7 +219,7 @@ fn extract_operator_type(x: &Node) -> ExtractOperatorType {
     match x.kind() {
         "$" => ExtractOperatorType::Dollar,
         "@" => ExtractOperatorType::At,
-        _ => std::unreachable!(),
+        _ => panic!("Unknown `extract_operator` kind {}.", x.kind()),
     }
 }
 
@@ -236,7 +237,7 @@ fn namespace_operator_type(x: &Node) -> NamespaceOperatorType {
     match x.kind() {
         "::" => NamespaceOperatorType::External,
         ":::" => NamespaceOperatorType::Internal,
-        _ => std::unreachable!(),
+        _ => panic!("Unknown `namespace_operator` kind {}.", x.kind()),
     }
 }
 
@@ -263,7 +264,7 @@ fn na_type(x: &Node) -> NaType {
         "NA_real_" => NaType::Double,
         "NA_complex_" => NaType::Complex,
         "NA_character_" => NaType::Character,
-        _ => std::unreachable!(),
+        _ => panic!("Unknown `na` kind {}.", x.kind()),
     }
 }
 
@@ -284,7 +285,7 @@ fn unmatched_delimiter_type(x: &Node) -> UnmatchedDelimiterType {
         "}" => UnmatchedDelimiterType::Brace,
         ")" => UnmatchedDelimiterType::Parenthesis,
         "]" => UnmatchedDelimiterType::Bracket,
-        _ => std::unreachable!(),
+        _ => panic!("Unknown `unmatched_delimiter` kind {}.", x.kind()),
     }
 }
 
