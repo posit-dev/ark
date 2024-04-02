@@ -36,12 +36,14 @@ use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
 use harp::r_symbol;
+use harp::tbl_get_column;
 use harp::utils::r_inherits;
 use harp::utils::r_is_object;
 use harp::utils::r_is_s4;
 use harp::utils::r_typeof;
 use harp::vector::formatted_vector::FormattedVector;
 use harp::TableInfo;
+use harp::TableKind;
 use libr::*;
 use serde::Deserialize;
 use serde::Serialize;
@@ -70,6 +72,7 @@ pub struct DataObjectEnvInfo {
 struct DataObjectShape {
     pub columns: Vec<ColumnSchema>,
     pub num_rows: i32,
+    pub kind: TableKind,
 }
 
 /// The R backend for Positron's Data Explorer.
@@ -313,10 +316,10 @@ impl RDataExplorer {
         let event = if self.shape.columns != new_shape.columns {
             // Columns changed, so update our cache, and we need to send a
             // schema update event
-            self.shape.columns = new_shape.columns;
+            self.shape = new_shape;
 
             // Reset active row indices to be all rows
-            self.row_indices = (1..=new_shape.num_rows).collect();
+            self.row_indices = (1..=self.shape.num_rows).collect();
 
             // Clear active sort keys
             self.sort_keys.clear();
@@ -454,6 +457,7 @@ impl RDataExplorer {
 
             Ok(DataObjectShape {
                 columns: column_schemas,
+                kind,
                 num_rows,
             })
         }
@@ -468,13 +472,12 @@ impl RDataExplorer {
         // For each element of self.sort_keys, add an argument to order
         for key in &self.sort_keys {
             // Get the column to sort by
-            let column = RFunction::new("base", "[")
-                .add(self.table.get().clone())
-                .add(unsafe { R_MissingArg })
-                .add(RObject::from((key.column_index + 1) as i32))
-                .call()?;
+            order.add(tbl_get_column(
+                self.table.get().sexp,
+                (key.column_index + 1) as i32,
+                self.shape.kind,
+            )?);
             decreasing.push(!key.ascending);
-            order.add(column);
         }
         // Add the sort order per column
         order.param("decreasing", RObject::try_from(decreasing)?);
