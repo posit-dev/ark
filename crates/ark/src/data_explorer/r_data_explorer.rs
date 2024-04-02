@@ -280,7 +280,7 @@ impl RDataExplorer {
             if new == old {
                 None
             } else {
-                Some(RThreadSafe::new(RObject::view(new)))
+                Some(RThreadSafe::new(unsafe { RObject::new(new) }))
             }
         });
 
