@@ -178,7 +178,9 @@ impl RDataExplorer {
             DataExplorerBackendRequest::GetColumnProfiles(GetColumnProfilesParams {
                 profiles: _,
             }) => {
-                bail!("Data Viewer: Not yet implemented")
+                // TODO: Implement column profiles. We need to return a
+                // non-error response here to avoid breaking the frontend.
+                Ok(DataExplorerBackendReply::GetColumnProfilesReply(vec![]))
             },
             DataExplorerBackendRequest::GetState => r_task(|| self.r_get_state()),
             DataExplorerBackendRequest::SearchSchema(_) => {
