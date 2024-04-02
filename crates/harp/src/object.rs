@@ -761,11 +761,7 @@ impl TryFrom<Vec<bool>> for RObject {
             let v_out = DATAPTR(out_raw) as *mut i32;
 
             for i in 0..n {
-                let x = value[i];
-                *(v_out.offset(i as isize)) = match x {
-                    true => 1,
-                    false => 0,
-                };
+                *(v_out.offset(i as isize)) = value[i] as i32;
             }
 
             return Ok(out);
