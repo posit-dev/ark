@@ -17,6 +17,8 @@ use crate::lsp::document_context::DocumentContext;
 use crate::lsp::traits::cursor::TreeCursorExt;
 use crate::lsp::traits::point::PointExt;
 use crate::lsp::traits::rope::RopeExt;
+use crate::treesitter::BinaryOperatorType;
+use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
 pub(super) fn completions_from_document(
@@ -29,7 +31,13 @@ pub(super) fn completions_from_document(
         log::error!("Should have been handled by comment completion source.");
         return Ok(None);
     }
-    if matches!(node.kind(), "::" | ":::" | "$" | "[" | "[[") {
+    if matches!(
+        node.node_type(),
+        NodeType::NamespaceOperator(_) |
+            NodeType::ExtractOperator(_) |
+            NodeType::Subset |
+            NodeType::Subset2
+    ) {
         log::error!("Should have been handled by alternative completion source.");
         return Ok(None);
     }
@@ -43,7 +51,7 @@ pub(super) fn completions_from_document(
         }
 
         // If this is a function definition, add parameter names.
-        if node.kind() == "function" {
+        if node.is_function_definition() {
             completions.append(&mut completions_from_document_function_arguments(
                 &node, context,
             )?);
@@ -77,8 +85,10 @@ fn completions_from_document_variables(
             return false;
         }
 
-        match node.kind() {
-            "=" | "<-" | "<<-" => {
+        match node.node_type() {
+            NodeType::BinaryOperator(BinaryOperatorType::EqualsAssignment) |
+            NodeType::BinaryOperator(BinaryOperatorType::LeftAssignment) |
+            NodeType::BinaryOperator(BinaryOperatorType::LeftSuperAssignment) => {
                 // check that the left-hand side is an identifier or a string
                 if let Some(child) = node.child(0) {
                     if child.is_identifier_or_string() {
@@ -93,17 +103,18 @@ fn completions_from_document_variables(
                 return true;
             },
 
-            "->" | "->>" => {
+            NodeType::BinaryOperator(BinaryOperatorType::RightAssignment) |
+            NodeType::BinaryOperator(BinaryOperatorType::RightSuperAssignment) => {
                 // return true for nested assignments
                 return true;
             },
 
-            "call" => {
+            NodeType::Call => {
                 // don't recurse into calls for certain functions
                 return !call_uses_nse(&node, context);
             },
 
-            "function" => {
+            NodeType::FunctionDefinition => {
                 // don't recurse into function definitions, as these create as new scope
                 // for variable definitions (and so such definitions are no longer visible)
                 return false;
@@ -131,7 +142,7 @@ fn completions_from_document_function_arguments(
 
     // iterate through the children, looking for parameters with known names
     for node in parameters.children(&mut cursor) {
-        if node.kind() != "parameter" {
+        if node.node_type() != NodeType::Parameter {
             continue;
         }
 
