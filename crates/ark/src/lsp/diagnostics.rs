@@ -1253,6 +1253,8 @@ fn check_symbol_in_scope(
 #[cfg(test)]
 mod tests {
 
+    use harp::eval::r_parse_eval;
+    use harp::eval::RParseEvalOptions;
     use tower_lsp::lsp_types::Position;
 
     use crate::lsp::diagnostics::generate_diagnostics;
@@ -1328,6 +1330,32 @@ mod tests {
             );
             assert_eq!(diagnostic.range.start, Position::new(0, 9));
             assert_eq!(diagnostic.range.end, Position::new(0, 10));
+        })
+    }
+
+    #[test]
+    fn test_no_diagnostic_for_rhs_of_extractor() {
+        r_test(|| {
+            let options = RParseEvalOptions {
+                forbid_function_calls: false,
+                ..Default::default()
+            };
+
+            // Put the LHS in scope
+            r_parse_eval("x <- NULL", options.clone()).unwrap();
+
+            let text = "x$foo";
+            let document = Document::new(text, None);
+            let diagnostics = generate_diagnostics(&document);
+            assert!(diagnostics.is_empty());
+
+            let text = "x@foo";
+            let document = Document::new(text, None);
+            let diagnostics = generate_diagnostics(&document);
+            assert!(diagnostics.is_empty());
+
+            // Clean up
+            r_parse_eval("remove(x)", options.clone()).unwrap();
         })
     }
 }
