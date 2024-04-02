@@ -370,7 +370,7 @@ mod tests {
             assert!(completions.is_none());
 
             // Clean up
-            r_parse_eval("my_fun <- NULL", options.clone()).unwrap();
+            r_parse_eval("remove(my_fun)", options.clone()).unwrap();
         });
 
         // Case where the session object isn't a function
@@ -391,7 +391,7 @@ mod tests {
             assert_eq!(completions.len(), 0);
 
             // Clean up
-            r_parse_eval("my_fun <- NULL", options.clone()).unwrap();
+            r_parse_eval("remove(my_fun)", options.clone()).unwrap();
         })
     }
 }

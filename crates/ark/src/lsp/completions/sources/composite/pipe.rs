@@ -243,7 +243,7 @@ mod tests {
             assert!(root.object.is_some());
 
             // Clean up
-            r_parse_eval("x <- NULL", options.clone()).unwrap();
+            r_parse_eval("remove(x)", options.clone()).unwrap();
         });
     }
 }

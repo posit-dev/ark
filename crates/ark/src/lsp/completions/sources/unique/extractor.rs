@@ -167,7 +167,7 @@ mod tests {
             assert!(completions.is_none());
 
             // Clean up
-            r_parse_eval("foo <- NULL", options.clone()).unwrap();
+            r_parse_eval("remove(foo)", options.clone()).unwrap();
         })
     }
 }
