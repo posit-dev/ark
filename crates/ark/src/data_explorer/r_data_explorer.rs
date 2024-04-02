@@ -15,10 +15,14 @@ use amalthea::comm::data_explorer_comm::DataExplorerBackendReply;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendRequest;
 use amalthea::comm::data_explorer_comm::DataExplorerFrontendEvent;
 use amalthea::comm::data_explorer_comm::GetColumnProfileParams;
+use amalthea::comm::data_explorer_comm::GetColumnProfileParams;
+use amalthea::comm::data_explorer_comm::GetColumnProfilesParams;
 use amalthea::comm::data_explorer_comm::GetDataValuesParams;
 use amalthea::comm::data_explorer_comm::GetSchemaParams;
 use amalthea::comm::data_explorer_comm::SchemaUpdateParams;
 use amalthea::comm::data_explorer_comm::SetColumnFiltersParams;
+use amalthea::comm::data_explorer_comm::SetColumnFiltersParams;
+use amalthea::comm::data_explorer_comm::SetRowFiltersParams;
 use amalthea::comm::data_explorer_comm::SetSortColumnsParams;
 use amalthea::comm::data_explorer_comm::TableData;
 use amalthea::comm::data_explorer_comm::TableSchema;
@@ -387,16 +391,20 @@ impl RDataExplorer {
 
                 Ok(DataExplorerBackendReply::SetSortColumnsReply())
             },
-            DataExplorerBackendRequest::SetColumnFilters(SetColumnFiltersParams { filters: _ }) => {
+            DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams { filters: _ }) => {
                 bail!("Data Viewer: Not yet implemented")
             },
-            DataExplorerBackendRequest::GetColumnProfile(GetColumnProfileParams {
-                profile_type: _,
-                column_index: _,
+            DataExplorerBackendRequest::GetColumnProfiles(GetColumnProfilesParams {
+                profiles: _,
             }) => {
-                bail!("Data Viewer: Not yet implemented")
+                // TODO: Implement column profiles. We need to return a
+                // non-error response here to avoid breaking the frontend.
+                Ok(DataExplorerBackendReply::GetColumnProfilesReply(vec![]))
             },
             DataExplorerBackendRequest::GetState => r_task(|| self.r_get_state()),
+            DataExplorerBackendRequest::SearchSchema(_) => {
+                bail!("Data Viewer: Not yet implemented")
+            },
         }
     }
 }
@@ -439,6 +447,7 @@ impl RDataExplorer {
 
                 column_schemas.push(ColumnSchema {
                     column_name,
+                    column_index: i as i64,
                     type_name,
                     type_display,
                     description: None,
@@ -525,7 +534,7 @@ impl RDataExplorer {
                 num_rows: num_rows.into(),
                 num_columns: num_columns as i64,
             },
-            filters: vec![],
+            row_filters: None,
             sort_keys: self.sort_keys.clone(),
         };
         Ok(DataExplorerBackendReply::GetStateReply(state))
