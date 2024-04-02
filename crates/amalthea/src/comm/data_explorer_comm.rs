@@ -11,11 +11,14 @@
 use serde::Deserialize;
 use serde::Serialize;
 
-/// The schema for a table-like object
+/// Result in Methods
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct TableSchema {
-	/// Schema for each column in the table
-	pub columns: Vec<ColumnSchema>
+pub struct SearchSchemaResult {
+	/// A schema containing matching columns up to the max_results limit
+	pub matches: Option<TableSchema>,
+
+	/// The total number of columns matching the search term
+	pub total_num_matches: i64
 }
 
 /// Table values formatted as strings
@@ -35,55 +38,14 @@ pub struct FilterResult {
 	pub selected_num_rows: i64
 }
 
-/// Result of computing column profile
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct ProfileResult {
-	/// Number of null values in column
-	pub null_count: i64,
-
-	/// Minimum value as string computed as part of histogram
-	pub min_value: Option<String>,
-
-	/// Maximum value as string computed as part of histogram
-	pub max_value: Option<String>,
-
-	/// Average value as string computed as part of histogram
-	pub mean_value: Option<String>,
-
-	/// Absolute count of values in each histogram bin
-	pub histogram_bin_sizes: Option<Vec<i64>>,
-
-	/// Absolute floating-point width of a histogram bin
-	pub histogram_bin_width: Option<f64>,
-
-	/// Quantile values computed from histogram bins
-	pub histogram_quantiles: Option<Vec<ColumnQuantileValue>>,
-
-	/// Counts of distinct values in column
-	pub freqtable_counts: Option<Vec<FreqtableCounts>>,
-
-	/// Number of other values not accounted for in counts
-	pub freqtable_other_count: Option<i64>
-}
-
-/// Items in FreqtableCounts
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct FreqtableCounts {
-	/// Stringified value
-	pub value: String,
-
-	/// Number of occurrences of value
-	pub count: i64
-}
-
 /// The current backend table state
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct TableState {
 	/// Provides number of rows and columns in table
 	pub table_shape: TableShape,
 
-	/// The set of currently applied filters
-	pub filters: Vec<ColumnFilter>,
+	/// The set of currently applied row filters
+	pub row_filters: Option<Vec<RowFilter>>,
 
 	/// The set of currently applied sorts
 	pub sort_keys: Vec<ColumnSortKey>
@@ -104,6 +66,9 @@ pub struct TableShape {
 pub struct ColumnSchema {
 	/// Name of column as UTF-8 string
 	pub column_name: String,
+
+	/// The position of the column within the schema
+	pub column_index: i64,
 
 	/// Exact name of data type used by underlying table
 	pub type_name: String,
@@ -130,38 +95,159 @@ pub struct ColumnSchema {
 	pub type_size: Option<i64>
 }
 
-/// Specifies a table row filter based on a column's values
+/// The schema for a table-like object
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct ColumnFilter {
+pub struct TableSchema {
+	/// Schema for each column in the table
+	pub columns: Vec<ColumnSchema>
+}
+
+/// Specifies a table row filter based on a single column's values
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct RowFilter {
 	/// Unique identifier for this filter
 	pub filter_id: String,
 
 	/// Type of filter to apply
-	pub filter_type: ColumnFilterFilterType,
+	pub filter_type: RowFilterFilterType,
 
 	/// Column index to apply filter to
 	pub column_index: i64,
 
+	/// Parameters for the 'between' and 'not_between' filter types
+	pub between_params: Option<BetweenFilterParams>,
+
+	/// Parameters for the 'compare' filter type
+	pub compare_params: Option<CompareFilterParams>,
+
+	/// Parameters for the 'search' filter type
+	pub search_params: Option<SearchFilterParams>,
+
+	/// Parameters for the 'set_membership' filter type
+	pub set_membership_params: Option<SetMembershipFilterParams>
+}
+
+/// Parameters for the 'between' and 'not_between' filter types
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct BetweenFilterParams {
+	/// The lower limit for filtering
+	pub left_value: String,
+
+	/// The upper limit for filtering
+	pub right_value: String
+}
+
+/// Parameters for the 'compare' filter type
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct CompareFilterParams {
 	/// String representation of a binary comparison
-	pub compare_op: Option<ColumnFilterCompareOp>,
+	pub op: CompareFilterParamsOp,
 
 	/// A stringified column value for a comparison filter
-	pub compare_value: Option<String>,
+	pub value: String
+}
 
+/// Parameters for the 'set_membership' filter type
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SetMembershipFilterParams {
 	/// Array of column values for a set membership filter
-	pub set_member_values: Option<Vec<String>>,
+	pub values: Vec<String>,
 
 	/// Filter by including only values passed (true) or excluding (false)
-	pub set_member_inclusive: Option<bool>,
+	pub inclusive: bool
+}
 
+/// Parameters for the 'search' filter type
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SearchFilterParams {
 	/// Type of search to perform
-	pub search_type: Option<ColumnFilterSearchType>,
+	#[serde(rename = "type")]
+	pub search_filter_params_type: SearchFilterParamsType,
 
 	/// String value/regex to search for in stringified data
-	pub search_term: Option<String>,
+	pub term: String,
 
 	/// If true, do a case-sensitive search, otherwise case-insensitive
-	pub search_case_sensitive: Option<bool>
+	pub case_sensitive: bool
+}
+
+/// A single column profile request
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ColumnProfileRequest {
+	/// The ordinal column index to profile
+	pub column_index: i64,
+
+	/// The type of analytical column profile
+	#[serde(rename = "type")]
+	pub column_profile_request_type: ColumnProfileRequestType
+}
+
+/// Result of computing column profile
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ColumnProfileResult {
+	/// Result from null_count request
+	pub null_count: Option<i64>,
+
+	/// Results from summary_stats request
+	pub summary_stats: Option<ColumnSummaryStats>,
+
+	/// Results from summary_stats request
+	pub histogram: Option<ColumnHistogram>,
+
+	/// Results from frequency_table request
+	pub frequency_table: Option<ColumnFrequencyTable>
+}
+
+/// ColumnSummaryStats in Schemas
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ColumnSummaryStats {
+	/// Minimum value as string
+	pub min_value: String,
+
+	/// Maximum value as string
+	pub max_value: String,
+
+	/// Average value as string
+	pub mean_value: Option<String>,
+
+	/// Sample median (50% value) value as string
+	pub median: Option<String>,
+
+	/// 25th percentile value as string
+	pub q25: Option<String>,
+
+	/// 75th percentile value as string
+	pub q75: Option<String>
+}
+
+/// Result from a histogram profile request
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ColumnHistogram {
+	/// Absolute count of values in each histogram bin
+	pub bin_sizes: Vec<i64>,
+
+	/// Absolute floating-point width of a histogram bin
+	pub bin_width: f64
+}
+
+/// Result from a frequency_table profile request
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ColumnFrequencyTable {
+	/// Counts of distinct values in column
+	pub counts: Vec<ColumnFrequencyTableItem>,
+
+	/// Number of other values not accounted for in counts. May be 0
+	pub other_count: i64
+}
+
+/// Entry in a column's frequency table
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ColumnFrequencyTableItem {
+	/// Stringified value
+	pub value: String,
+
+	/// Number of occurrences of value
+	pub count: i64
 }
 
 /// An exact or approximate quantile value from a column
@@ -186,16 +272,6 @@ pub struct ColumnSortKey {
 
 	/// Sort order, ascending (true) or descending (false)
 	pub ascending: bool
-}
-
-/// Possible values for ProfileType in GetColumnProfile
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub enum GetColumnProfileProfileType {
-	#[serde(rename = "freqtable")]
-	Freqtable,
-
-	#[serde(rename = "histogram")]
-	Histogram
 }
 
 /// Possible values for TypeDisplay in ColumnSchema
@@ -229,28 +305,34 @@ pub enum ColumnSchemaTypeDisplay {
 	Unknown
 }
 
-/// Possible values for FilterType in ColumnFilter
+/// Possible values for FilterType in RowFilter
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub enum ColumnFilterFilterType {
-	#[serde(rename = "isnull")]
-	Isnull,
-
-	#[serde(rename = "notnull")]
-	Notnull,
+pub enum RowFilterFilterType {
+	#[serde(rename = "between")]
+	Between,
 
 	#[serde(rename = "compare")]
 	Compare,
 
-	#[serde(rename = "set_membership")]
-	SetMembership,
+	#[serde(rename = "is_null")]
+	IsNull,
+
+	#[serde(rename = "not_between")]
+	NotBetween,
+
+	#[serde(rename = "not_null")]
+	NotNull,
 
 	#[serde(rename = "search")]
-	Search
+	Search,
+
+	#[serde(rename = "set_membership")]
+	SetMembership
 }
 
-/// Possible values for CompareOp in ColumnFilter
+/// Possible values for Op in CompareFilterParams
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub enum ColumnFilterCompareOp {
+pub enum CompareFilterParamsOp {
 	#[serde(rename = "=")]
 	Eq,
 
@@ -270,20 +352,36 @@ pub enum ColumnFilterCompareOp {
 	GtEq
 }
 
-/// Possible values for SearchType in ColumnFilter
+/// Possible values for Type in SearchFilterParams
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub enum ColumnFilterSearchType {
+pub enum SearchFilterParamsType {
 	#[serde(rename = "contains")]
 	Contains,
 
-	#[serde(rename = "startswith")]
-	Startswith,
+	#[serde(rename = "starts_with")]
+	StartsWith,
 
-	#[serde(rename = "endswith")]
-	Endswith,
+	#[serde(rename = "ends_with")]
+	EndsWith,
 
-	#[serde(rename = "regex")]
-	Regex
+	#[serde(rename = "regex_match")]
+	RegexMatch
+}
+
+/// Possible values for Type in ColumnProfileRequest
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub enum ColumnProfileRequestType {
+	#[serde(rename = "null_count")]
+	NullCount,
+
+	#[serde(rename = "summary_stats")]
+	SummaryStats,
+
+	#[serde(rename = "frequency_table")]
+	FrequencyTable,
+
+	#[serde(rename = "histogram")]
+	Histogram
 }
 
 /// Parameters for the GetSchema method.
@@ -295,6 +393,20 @@ pub struct GetSchemaParams {
 	/// Number of column schemas to fetch from start index. May extend beyond
 	/// end of table
 	pub num_columns: i64,
+}
+
+/// Parameters for the SearchSchema method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SearchSchemaParams {
+	/// Substring to match for (currently case insensitive)
+	pub search_term: String,
+
+	/// Index (starting from zero) of first result to fetch
+	pub start_index: i64,
+
+	/// Maximum number of resulting column schemas to fetch from the start
+	/// index
+	pub max_results: i64,
 }
 
 /// Parameters for the GetDataValues method.
@@ -312,11 +424,11 @@ pub struct GetDataValuesParams {
 	pub column_indices: Vec<i64>,
 }
 
-/// Parameters for the SetColumnFilters method.
+/// Parameters for the SetRowFilters method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct SetColumnFiltersParams {
+pub struct SetRowFiltersParams {
 	/// Zero or more filters to apply
-	pub filters: Vec<ColumnFilter>,
+	pub filters: Vec<RowFilter>,
 }
 
 /// Parameters for the SetSortColumns method.
@@ -326,14 +438,11 @@ pub struct SetSortColumnsParams {
 	pub sort_keys: Vec<ColumnSortKey>,
 }
 
-/// Parameters for the GetColumnProfile method.
+/// Parameters for the GetColumnProfiles method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct GetColumnProfileParams {
-	/// The type of analytical column profile
-	pub profile_type: GetColumnProfileProfileType,
-
-	/// Column index to compute profile for
-	pub column_index: i64,
+pub struct GetColumnProfilesParams {
+	/// Array of requested profiles
+	pub profiles: Vec<ColumnProfileRequest>,
 }
 
 /// Parameters for the SchemaUpdate method.
@@ -355,17 +464,23 @@ pub enum DataExplorerBackendRequest {
 	#[serde(rename = "get_schema")]
 	GetSchema(GetSchemaParams),
 
+	/// Search schema by column name
+	///
+	/// Search schema for column names matching a passed substring
+	#[serde(rename = "search_schema")]
+	SearchSchema(SearchSchemaParams),
+
 	/// Get a rectangle of data values
 	///
 	/// Request a rectangular subset of data with values formatted as strings
 	#[serde(rename = "get_data_values")]
 	GetDataValues(GetDataValuesParams),
 
-	/// Set column filters
+	/// Set row filters based on column values
 	///
-	/// Set or clear column filters on table, replacing any previous filters
-	#[serde(rename = "set_column_filters")]
-	SetColumnFilters(SetColumnFiltersParams),
+	/// Set or clear row filters on table, replacing any previous filters
+	#[serde(rename = "set_row_filters")]
+	SetRowFilters(SetRowFiltersParams),
 
 	/// Set or clear sort-by-column(s)
 	///
@@ -374,11 +489,11 @@ pub enum DataExplorerBackendRequest {
 	#[serde(rename = "set_sort_columns")]
 	SetSortColumns(SetSortColumnsParams),
 
-	/// Get a column profile
+	/// Request a batch of column profiles
 	///
-	/// Requests a statistical summary or data profile for a column
-	#[serde(rename = "get_column_profile")]
-	GetColumnProfile(GetColumnProfileParams),
+	/// Requests a statistical summary or data profile for batch of columns
+	#[serde(rename = "get_column_profiles")]
+	GetColumnProfiles(GetColumnProfilesParams),
 
 	/// Get the state
 	///
@@ -394,20 +509,20 @@ pub enum DataExplorerBackendRequest {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "result")]
 pub enum DataExplorerBackendReply {
-	/// The schema for a table-like object
 	GetSchemaReply(TableSchema),
+
+	SearchSchemaReply(SearchSchemaResult),
 
 	/// Table values formatted as strings
 	GetDataValuesReply(TableData),
 
 	/// The result of applying filters to a table
-	SetColumnFiltersReply(FilterResult),
+	SetRowFiltersReply(FilterResult),
 
 	/// Reply for the set_sort_columns method (no result)
 	SetSortColumnsReply(),
 
-	/// Result of computing column profile
-	GetColumnProfileReply(ProfileResult),
+	GetColumnProfilesReply(Vec<ColumnProfileResult>),
 
 	/// The current backend table state
 	GetStateReply(TableState),
