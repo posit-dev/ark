@@ -310,31 +310,28 @@ impl RDataExplorer {
 
         // Generate the appropriate event based on whether the schema has
         // changed
-        let event = match self.shape.columns != new_shape.columns {
-            true => {
-                // Columns changed, so update our cache, and we need to send a
-                // schema update event
-                self.shape.columns = new_shape.columns;
+        let event = if self.shape.columns != new_shape.columns {
+            // Columns changed, so update our cache, and we need to send a
+            // schema update event
+            self.shape.columns = new_shape.columns;
 
-                // Reset active row indices to be all rows
-                self.row_indices = (1..=new_shape.num_rows).collect();
+            // Reset active row indices to be all rows
+            self.row_indices = (1..=new_shape.num_rows).collect();
 
-                // Clear active sort keys
-                self.sort_keys.clear();
+            // Clear active sort keys
+            self.sort_keys.clear();
 
-                DataExplorerFrontendEvent::SchemaUpdate(SchemaUpdateParams {
-                    discard_state: true,
-                })
-            },
-            false => {
-                // Columns didn't change, but the data has. If there are sort
-                // keys, we need to sort the rows again to reflect the new data.
-                if self.sort_keys.len() > 0 {
-                    self.row_indices = r_task(|| self.r_sort_rows())?;
-                }
+            DataExplorerFrontendEvent::SchemaUpdate(SchemaUpdateParams {
+                discard_state: true,
+            })
+        } else {
+            // Columns didn't change, but the data has. If there are sort
+            // keys, we need to sort the rows again to reflect the new data.
+            if self.sort_keys.len() > 0 {
+                self.row_indices = r_task(|| self.r_sort_rows())?;
+            }
 
-                DataExplorerFrontendEvent::DataUpdate
-            },
+            DataExplorerFrontendEvent::DataUpdate
         };
 
         self.comm
