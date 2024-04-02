@@ -165,6 +165,7 @@ pub fn map(mut callback: impl FnMut(&Path, &String, &IndexEntry)) {
 }
 
 pub fn update(document: &Document, path: &Path) -> Result<bool> {
+    clear(path);
     index_document(document, path)
 }
 
@@ -181,6 +182,24 @@ fn insert(path: &Path, entry: IndexEntry) {
 
     let index = index.entry(path.to_string()).or_default();
     index.insert(entry.key.clone(), entry);
+}
+
+fn clear(path: &Path) {
+    let mut index = unwrap!(WORKSPACE_INDEX.lock(), Err(error) => {
+        error!("{:?}", error);
+        return;
+    });
+
+    let path = unwrap!(path.to_str(), None => {
+        error!("Couldn't convert path {} to string", path.display());
+        return;
+    });
+    let path = path.to_string();
+
+    // Only clears if the `path` was an existing key
+    index.entry(path).and_modify(|index| {
+        index.clear();
+    });
 }
 
 // TODO: Should we consult the project .gitignore for ignored files?
