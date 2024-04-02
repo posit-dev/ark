@@ -8,6 +8,8 @@
 use std::cmp;
 
 use amalthea::comm::comm_channel::CommMsg;
+use amalthea::comm::data_explorer_comm::ColumnProfileRequestType;
+use amalthea::comm::data_explorer_comm::ColumnProfileResult;
 use amalthea::comm::data_explorer_comm::ColumnSchema;
 use amalthea::comm::data_explorer_comm::ColumnSchemaTypeDisplay;
 use amalthea::comm::data_explorer_comm::ColumnSortKey;
@@ -391,11 +393,44 @@ impl RDataExplorer {
                 bail!("Data Viewer: Not yet implemented")
             },
             DataExplorerBackendRequest::GetColumnProfiles(GetColumnProfilesParams {
-                profiles: _,
+                profiles: requests,
             }) => {
-                // TODO: Implement column profiles. We need to return a
-                // non-error response here to avoid breaking the frontend.
-                Ok(DataExplorerBackendReply::GetColumnProfilesReply(vec![]))
+                let profiles = requests
+                    .into_iter()
+                    .map(|request| match request.column_profile_request_type {
+                        ColumnProfileRequestType::NullCount => {
+                            let null_count =
+                                r_task(|| self.r_null_count((request.column_index + 1) as isize));
+                            ColumnProfileResult {
+                                null_count: match null_count {
+                                    Err(err) => {
+                                        log::error!(
+                                            "Error getting null count for column {}: {}",
+                                            request.column_index,
+                                            err
+                                        );
+                                        None
+                                    },
+                                    Ok(count) => Some(count as i64),
+                                },
+                                summary_stats: None,
+                                histogram: None,
+                                frequency_table: None,
+                            }
+                        },
+                        _ => {
+                            // Other kinds of column profiles are not yet
+                            // implemented in R
+                            ColumnProfileResult {
+                                null_count: None,
+                                summary_stats: None,
+                                histogram: None,
+                                frequency_table: None,
+                            }
+                        },
+                    })
+                    .collect::<Vec<ColumnProfileResult>>();
+                Ok(DataExplorerBackendReply::GetColumnProfilesReply(profiles))
             },
             DataExplorerBackendRequest::GetState => r_task(|| self.r_get_state()),
             DataExplorerBackendRequest::SearchSchema(_) => {
@@ -461,6 +496,20 @@ impl RDataExplorer {
                 num_rows,
             })
         }
+    }
+
+    /// Counts the number of nulls in a column. As the intent is to provide an
+    /// idea of how complete the data is, NA values are considered to be null
+    /// for the purposes of these stats.
+    fn r_null_count(&self, column_index: isize) -> anyhow::Result<i32> {
+        // Get the column to count nulls in
+        let column = tbl_get_column(self.table.get().sexp, column_index as i32, self.shape.kind)?;
+
+        // Compute the number of nulls in the column
+        let result = RFunction::new("", ".ps.null_count").add(column).call()?;
+
+        // Return the count of nulls and NA values
+        Ok(result.try_into()?)
     }
 
     fn r_sort_rows(&self) -> anyhow::Result<Vec<i32>> {
