@@ -22,6 +22,8 @@ use crate::lsp::document_context::DocumentContext;
 use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::point::PointExt;
 use crate::lsp::traits::rope::RopeExt;
+use crate::treesitter::NodeType;
+use crate::treesitter::NodeTypeExt;
 
 pub(super) fn set_sort_text_by_first_appearance(completions: &mut Vec<CompletionItem>) {
     let size = completions.len();
@@ -99,8 +101,8 @@ pub(super) enum CallNodePositionType {
 }
 
 pub(super) fn call_node_position_type(node: &Node, point: Point) -> CallNodePositionType {
-    match node.kind() {
-        "(" => {
+    match node.node_type() {
+        NodeType::Anonymous(kind) if kind == "(" => {
             if point.is_before_or_equal(node.start_position()) {
                 // Before the `(`
                 return CallNodePositionType::Outside;
@@ -109,7 +111,7 @@ pub(super) fn call_node_position_type(node: &Node, point: Point) -> CallNodePosi
                 return CallNodePositionType::Name;
             }
         },
-        ")" => {
+        NodeType::Anonymous(kind) if kind == ")" => {
             if point.is_after_or_equal(node.end_position()) {
                 // After the `)`
                 return CallNodePositionType::Outside;
@@ -119,11 +121,11 @@ pub(super) fn call_node_position_type(node: &Node, point: Point) -> CallNodePosi
                 return call_prev_leaf_position_type(&node, false);
             }
         },
-        "comma" => return CallNodePositionType::Name,
-        "=" => return CallNodePositionType::Value,
+        NodeType::Comma => return CallNodePositionType::Name,
+        NodeType::Anonymous(kind) if kind == "=" => return CallNodePositionType::Value,
         // Like `fn(arg<tab>)` or `fn(x = 1, arg<tab>)` (which are ambiguous)
         // or `fn(x = arg<tab>)` (which is clearly a `Value`)
-        "identifier" => return call_prev_leaf_position_type(&node, true),
+        NodeType::Identifier => return call_prev_leaf_position_type(&node, true),
         _ => {
             // Probably a complex node inside `()`. Typically a `Value`
             // unless we are at the very beginning of the node.
@@ -150,18 +152,19 @@ fn call_prev_leaf_position_type(node: &Node, allow_ambiguous: bool) -> CallNodeP
         return CallNodePositionType::Unknown;
     };
 
-    match previous.kind() {
-        "(" | "comma" => {
-            if allow_ambiguous {
-                // i.e. `fn(arg<tab>)` or `fn(x, arg<tab>)` where it can be
-                // ambiguous whether we are on a `Name` or a `Value`.
-                return CallNodePositionType::Ambiguous;
-            } else {
-                return CallNodePositionType::Name;
-            }
-        },
-        "=" => return CallNodePositionType::Value,
-        _ => return CallNodePositionType::Value,
+    let after_open_parenthesis_or_comma = if allow_ambiguous {
+        // i.e. `fn(arg<tab>)` or `fn(x, arg<tab>)` where it can be
+        // ambiguous whether we are on a `Name` or a `Value`.
+        CallNodePositionType::Ambiguous
+    } else {
+        CallNodePositionType::Name
+    };
+
+    match previous.node_type() {
+        NodeType::Comma => after_open_parenthesis_or_comma,
+        NodeType::Anonymous(kind) if kind == "(" => after_open_parenthesis_or_comma,
+        NodeType::Anonymous(kind) if kind == "=" => CallNodePositionType::Value,
+        _ => CallNodePositionType::Value,
     }
 }
 
@@ -235,6 +238,7 @@ mod tests {
     use crate::lsp::completions::sources::utils::CallNodePositionType;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
+    use crate::treesitter::NodeType;
     use crate::treesitter::NodeTypeExt;
 
     #[test]
@@ -243,7 +247,10 @@ mod tests {
         let point = Point { row: 0, column: 3 };
         let document = Document::new("fn ()", None);
         let context = DocumentContext::new(&document, point, None);
-        assert_eq!(context.node.kind(), "(");
+        assert_eq!(
+            context.node.node_type(),
+            NodeType::Anonymous(String::from("("))
+        );
         assert_eq!(
             call_node_position_type(&context.node, context.point),
             CallNodePositionType::Outside
@@ -253,7 +260,10 @@ mod tests {
         let point = Point { row: 0, column: 4 };
         let document = Document::new("fn()", None);
         let context = DocumentContext::new(&document, point, None);
-        assert_eq!(context.node.kind(), ")");
+        assert_eq!(
+            context.node.node_type(),
+            NodeType::Anonymous(String::from(")"))
+        );
         assert_eq!(
             call_node_position_type(&context.node, context.point),
             CallNodePositionType::Outside
@@ -263,7 +273,10 @@ mod tests {
         let point = Point { row: 0, column: 3 };
         let document = Document::new("fn()", None);
         let context = DocumentContext::new(&document, point, None);
-        assert_eq!(context.node.kind(), "(");
+        assert_eq!(
+            context.node.node_type(),
+            NodeType::Anonymous(String::from("("))
+        );
         assert_eq!(
             call_node_position_type(&context.node, context.point),
             CallNodePositionType::Name
@@ -291,7 +304,7 @@ mod tests {
         let point = Point { row: 0, column: 5 };
         let document = Document::new("fn(x, )", None);
         let context = DocumentContext::new(&document, point, None);
-        assert_eq!(context.node.kind(), "comma");
+        assert_eq!(context.node.node_type(), NodeType::Comma);
         assert_eq!(
             call_node_position_type(&context.node, context.point),
             CallNodePositionType::Name
@@ -301,7 +314,10 @@ mod tests {
         let point = Point { row: 0, column: 6 };
         let document = Document::new("fn(x, )", None);
         let context = DocumentContext::new(&document, point, None);
-        assert_eq!(context.node.kind(), ")");
+        assert_eq!(
+            context.node.node_type(),
+            NodeType::Anonymous(String::from(")"))
+        );
         assert_eq!(
             call_node_position_type(&context.node, context.point),
             CallNodePositionType::Name
@@ -311,7 +327,10 @@ mod tests {
         let point = Point { row: 0, column: 6 };
         let document = Document::new("fn(x =)", None);
         let context = DocumentContext::new(&document, point, None);
-        assert_eq!(context.node.kind(), "=");
+        assert_eq!(
+            context.node.node_type(),
+            NodeType::Anonymous(String::from("="))
+        );
         assert_eq!(
             call_node_position_type(&context.node, context.point),
             CallNodePositionType::Value
@@ -321,7 +340,7 @@ mod tests {
         let point = Point { row: 0, column: 4 };
         let document = Document::new("fn(1 + 1)", None);
         let context = DocumentContext::new(&document, point, None);
-        assert_eq!(context.node.kind(), "float");
+        assert_eq!(context.node.node_type(), NodeType::Float);
         assert_eq!(
             call_node_position_type(&context.node, context.point),
             CallNodePositionType::Value
@@ -330,7 +349,7 @@ mod tests {
         let point = Point { row: 0, column: 8 };
         let document = Document::new("fn(1 + 1)", None);
         let context = DocumentContext::new(&document, point, None);
-        assert_eq!(context.node.kind(), "float");
+        assert_eq!(context.node.node_type(), NodeType::Float);
         assert_eq!(
             call_node_position_type(&context.node, context.point),
             CallNodePositionType::Value
@@ -341,7 +360,7 @@ mod tests {
         let point = Point { row: 0, column: 6 };
         let document = Document::new("fn(1, 1 + 1)", None);
         let context = DocumentContext::new(&document, point, None);
-        assert_eq!(context.node.kind(), "float");
+        assert_eq!(context.node.node_type(), NodeType::Float);
         assert_eq!(
             call_node_position_type(&context.node, context.point),
             CallNodePositionType::Name
@@ -352,7 +371,10 @@ mod tests {
         let point = Point { row: 0, column: 5 };
         let document = Document::new("fn(x )", None);
         let context = DocumentContext::new(&document, point, None);
-        assert_eq!(context.node.kind(), ")");
+        assert_eq!(
+            context.node.node_type(),
+            NodeType::Anonymous(String::from(")"))
+        );
         assert_eq!(
             call_node_position_type(&context.node, context.point),
             CallNodePositionType::Value
