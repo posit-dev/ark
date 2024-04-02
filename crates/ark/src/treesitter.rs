@@ -199,9 +199,8 @@ fn binary_operator_type(x: &Node) -> BinaryOperatorType {
         "^" => BinaryOperatorType::Exponentiate,
         "**" => BinaryOperatorType::Exponentiate,
         "special" => BinaryOperatorType::Special,
-        "pipe" => BinaryOperatorType::Pipe,
-        "colon" => BinaryOperatorType::Colon,
-        _ => std::unreachable!(),
+        "|>" => BinaryOperatorType::Pipe,
+        ":" => BinaryOperatorType::Colon,
     }
 }
 
