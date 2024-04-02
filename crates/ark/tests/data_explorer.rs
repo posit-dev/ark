@@ -15,7 +15,7 @@ use amalthea::comm::data_explorer_comm::GetSchemaParams;
 use amalthea::comm::data_explorer_comm::SetSortColumnsParams;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::socket;
-use ark::data_explorer::r_data_explorer::DataObjectEnvBinding;
+use ark::data_explorer::r_data_explorer::DataObjectEnvInfo;
 use ark::data_explorer::r_data_explorer::RDataExplorer;
 use ark::lsp::events::EVENTS;
 use ark::r_task;
@@ -263,7 +263,7 @@ fn test_data_explorer() {
     // Open a data explorer for the tiny data frame and supply a binding to the
     // global environment.
     let (comm_manager_tx, comm_manager_rx) = bounded::<CommManagerEvent>(0);
-    let binding = DataObjectEnvBinding {
+    let binding = DataObjectEnvInfo {
         name: String::from("x"),
         env: RThreadSafe::new(RObject::view(R_ENVS.global)),
     };

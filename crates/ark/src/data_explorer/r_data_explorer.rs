@@ -62,7 +62,7 @@ use crate::variables::variable::WorkspaceVariableDisplayType;
 /// We use this to keep track of the data object that the data viewer is
 /// currently viewing; when the binding changes, we update the data viewer
 /// accordingly.
-pub struct DataObjectEnvBinding {
+pub struct DataObjectEnvInfo {
     pub name: String,
     pub env: RThreadSafe<RObject>,
 }
@@ -83,7 +83,7 @@ pub struct RDataExplorer {
     /// An optional binding to the environment containing the data object.
     /// This can be omitted for cases wherein the data object isn't in an
     /// environment (e.g. a temporary or unnamed object)
-    binding: Option<DataObjectEnvBinding>,
+    binding: Option<DataObjectEnvInfo>,
 
     /// A cache containing the current number of rows and the schema for each
     /// column of the data object.
@@ -112,7 +112,7 @@ impl RDataExplorer {
     pub fn start(
         title: String,
         data: RObject,
-        binding: Option<DataObjectEnvBinding>,
+        binding: Option<DataObjectEnvInfo>,
         comm_manager_tx: Sender<CommManagerEvent>,
     ) -> harp::Result<()> {
         let id = Uuid::new_v4().to_string();
