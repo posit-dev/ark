@@ -758,7 +758,7 @@ impl TryFrom<Vec<bool>> for RObject {
 
             let out_raw = Rf_allocVector(LGLSXP, n as R_xlen_t);
             let out = RObject::new(out_raw);
-            let v_out = DATAPTR(out_raw) as *mut i32;
+            let v_out = LOGICAL(out_raw);
 
             for i in 0..n {
                 *(v_out.offset(i as isize)) = value[i] as i32;
