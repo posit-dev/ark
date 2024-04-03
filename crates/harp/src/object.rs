@@ -750,6 +750,25 @@ impl TryFrom<RObject> for Vec<RObject> {
     }
 }
 
+impl TryFrom<Vec<bool>> for RObject {
+    type Error = crate::error::Error;
+    fn try_from(value: Vec<bool>) -> Result<Self, Self::Error> {
+        unsafe {
+            let n = value.len();
+
+            let out_raw = Rf_allocVector(LGLSXP, n as R_xlen_t);
+            let out = RObject::new(out_raw);
+            let v_out = LOGICAL(out_raw);
+
+            for i in 0..n {
+                *(v_out.offset(i as isize)) = value[i] as i32;
+            }
+
+            return Ok(out);
+        }
+    }
+}
+
 impl TryFrom<Vec<i32>> for RObject {
     type Error = crate::error::Error;
     fn try_from(value: Vec<i32>) -> Result<Self, Self::Error> {
@@ -1238,6 +1257,29 @@ mod tests {
                     assert_eq!(x.pop(), Some(None));
                     assert_eq!(x.pop(), Some(Some(String::from("abc"))));
                     assert_eq!(x.pop(), None);
+                }
+            );
+        }
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test_tryfrom_RObject_Vec_Bool() {
+        r_test! {
+            // Create a vector of logical values.
+            let flags = vec![true, false, true];
+
+            // Ensure we created an object of the same size as the flags.
+            assert_match!(RObject::try_from(flags.clone()),
+                Ok(robj) => {
+
+                    // We should get an object of the same length as the flags.
+                    assert_eq!(robj.length(), flags.len() as isize);
+
+                    // The values should match the flags.
+                    assert!(robj.get_bool(0).unwrap().unwrap());
+                    assert!(!robj.get_bool(1).unwrap().unwrap());
+                    assert!(robj.get_bool(2).unwrap().unwrap());
                 }
             );
         }

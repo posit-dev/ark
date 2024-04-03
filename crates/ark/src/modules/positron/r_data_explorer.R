@@ -7,12 +7,36 @@
 
 #' @export
 .ps.view_data_frame <- function(x, title) {
+    # Derive the name of the object from the expression passed to View()
+    object_name <- .ps.as_label(substitute(x))
+
+    # Create a title from the name of the object if one is not provided
     if (missing(title)) {
-        title <- .ps.as_label(substitute(x))
+        title <- object_name
     }
+
     stopifnot(
         is.data.frame(x) || is.matrix(x),
         is.character(title) && length(title) == 1L && !is.na(title)
     )
-    invisible(.ps.Call("ps_view_data_frame", x, title))
+
+    # If the variable is defined in the parent frame using the same name as was
+    # passed to View(), we can watch it for updates.
+    #
+    # Note that this means that (for example) View(foo) will watch the variable
+    # foo in the parent frame, but Viewing temporary variables like
+    # View(cbind(foo, bar)) does not create something that can be watched.
+    var <- ""
+    env <- NULL
+    if (isTRUE(exists(object_name, envir = parent.frame(), inherits = FALSE))) {
+        var <- object_name
+        env <- parent.frame()
+    }
+
+    invisible(.ps.Call("ps_view_data_frame", x, title, var, env))
+}
+
+#' @export
+.ps.null_count <- function(col) {
+    sum(is.na(col))
 }
