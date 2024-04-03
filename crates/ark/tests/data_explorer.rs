@@ -237,7 +237,10 @@ fn test_data_explorer() {
         // Now test with a tibble. This might fail if tibble is not installed
         // locally. Just skip the test in that case.
         match mtcars_tibble {
-            Ok(_) => test_mtcars_sort(open_data_explorer(String::from("mtcars_tib")), true),
+            Ok(_) => {
+                test_mtcars_sort(open_data_explorer(String::from("mtcars_tib")), true);
+                r_parse_eval0("rm(mtcars_tib)", R_ENVS.global).unwrap();
+            },
             Err(_) => (),
         }
 
