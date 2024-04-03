@@ -7,7 +7,7 @@
 
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::data_explorer_comm::ColumnProfileRequest;
-use amalthea::comm::data_explorer_comm::ColumnProfileRequestType;
+use amalthea::comm::data_explorer_comm::ColumnProfileType;
 use amalthea::comm::data_explorer_comm::ColumnSortKey;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendReply;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendRequest;
@@ -490,7 +490,7 @@ fn test_data_explorer() {
         let req = DataExplorerBackendRequest::GetColumnProfiles(GetColumnProfilesParams {
             profiles: vec![ColumnProfileRequest {
                 column_index: 0,
-                column_profile_request_type: ColumnProfileRequestType::NullCount,
+                profile_type: ColumnProfileType::NullCount,
             }],
         });
 

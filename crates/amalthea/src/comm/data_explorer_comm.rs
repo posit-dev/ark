@@ -45,7 +45,7 @@ pub struct TableState {
 	pub table_shape: TableShape,
 
 	/// The set of currently applied row filters
-	pub row_filters: Option<Vec<RowFilter>>,
+	pub row_filters: Vec<RowFilter>,
 
 	/// The set of currently applied sorts
 	pub sort_keys: Vec<ColumnSortKey>
@@ -59,6 +59,19 @@ pub struct TableShape {
 
 	/// Number of columns in the unfiltered dataset
 	pub num_columns: i64
+}
+
+/// For each field, returns flags indicating supported features
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SupportedFeatures {
+	/// Support for 'search_schema' RPC and its features
+	pub search_schema: SearchSchemaFeatures,
+
+	/// Support for 'set_row_filters' RPC and its features
+	pub set_row_filters: SetRowFiltersFeatures,
+
+	/// Support for 'get_column_profiles' RPC and its features
+	pub get_column_profiles: GetColumnProfilesFeatures
 }
 
 /// Schema for a column in a table
@@ -108,8 +121,8 @@ pub struct RowFilter {
 	/// Unique identifier for this filter
 	pub filter_id: String,
 
-	/// Type of filter to apply
-	pub filter_type: RowFilterFilterType,
+	/// Type of row filter to apply
+	pub filter_type: RowFilterType,
 
 	/// Column index to apply filter to
 	pub column_index: i64,
@@ -161,8 +174,7 @@ pub struct SetMembershipFilterParams {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SearchFilterParams {
 	/// Type of search to perform
-	#[serde(rename = "type")]
-	pub search_filter_params_type: SearchFilterParamsType,
+	pub search_type: SearchFilterType,
 
 	/// String value/regex to search for in stringified data
 	pub term: String,
@@ -178,8 +190,7 @@ pub struct ColumnProfileRequest {
 	pub column_index: i64,
 
 	/// The type of analytical column profile
-	#[serde(rename = "type")]
-	pub column_profile_request_type: ColumnProfileRequestType
+	pub profile_type: ColumnProfileType
 }
 
 /// Result of computing column profile
@@ -308,6 +319,36 @@ pub struct ColumnSortKey {
 	pub ascending: bool
 }
 
+/// Feature flags for 'search_schema' RPC
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SearchSchemaFeatures {
+	/// Whether this RPC method is supported at all
+	pub supported: bool
+}
+
+/// Feature flags for 'set_row_filters' RPC
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SetRowFiltersFeatures {
+	/// Whether this RPC method is supported at all
+	pub supported: bool,
+
+	/// Whether AND/OR filter conditions are supported
+	pub supports_conditions: bool,
+
+	/// A list of supported types
+	pub supported_types: Vec<RowFilterType>
+}
+
+/// Feature flags for 'get_column_profiles' RPC
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct GetColumnProfilesFeatures {
+	/// Whether this RPC method is supported at all
+	pub supported: bool,
+
+	/// A list of supported types
+	pub supported_types: Vec<ColumnProfileType>
+}
+
 /// Possible values for ColumnDisplayType
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum ColumnDisplayType {
@@ -339,9 +380,9 @@ pub enum ColumnDisplayType {
 	Unknown
 }
 
-/// Possible values for FilterType in RowFilter
+/// Possible values for RowFilterType
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub enum RowFilterFilterType {
+pub enum RowFilterType {
 	#[serde(rename = "between")]
 	Between,
 
@@ -386,9 +427,9 @@ pub enum CompareFilterParamsOp {
 	GtEq
 }
 
-/// Possible values for Type in SearchFilterParams
+/// Possible values for SearchFilterType
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub enum SearchFilterParamsType {
+pub enum SearchFilterType {
 	#[serde(rename = "contains")]
 	Contains,
 
@@ -402,9 +443,9 @@ pub enum SearchFilterParamsType {
 	RegexMatch
 }
 
-/// Possible values for Type in ColumnProfileRequest
+/// Possible values for ColumnProfileType
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub enum ColumnProfileRequestType {
+pub enum ColumnProfileType {
 	#[serde(rename = "null_count")]
 	NullCount,
 
@@ -535,6 +576,13 @@ pub enum DataExplorerBackendRequest {
 	#[serde(rename = "get_state")]
 	GetState,
 
+	/// Query the backend to determine supported features
+	///
+	/// Query the backend to determine supported features, to enable feature
+	/// toggling
+	#[serde(rename = "get_supported_features")]
+	GetSupportedFeatures,
+
 }
 
 /**
@@ -560,6 +608,9 @@ pub enum DataExplorerBackendReply {
 
 	/// The current backend table state
 	GetStateReply(TableState),
+
+	/// For each field, returns flags indicating supported features
+	GetSupportedFeaturesReply(SupportedFeatures),
 
 }
 
