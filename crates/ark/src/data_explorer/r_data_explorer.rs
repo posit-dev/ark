@@ -8,20 +8,24 @@
 use std::cmp;
 
 use amalthea::comm::comm_channel::CommMsg;
-use amalthea::comm::data_explorer_comm::ColumnProfileType;
-use amalthea::comm::data_explorer_comm::ColumnProfileResult;
-use amalthea::comm::data_explorer_comm::ColumnSchema;
 use amalthea::comm::data_explorer_comm::ColumnDisplayType;
+use amalthea::comm::data_explorer_comm::ColumnProfileResult;
+use amalthea::comm::data_explorer_comm::ColumnProfileType;
+use amalthea::comm::data_explorer_comm::ColumnSchema;
 use amalthea::comm::data_explorer_comm::ColumnSortKey;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendReply;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendRequest;
 use amalthea::comm::data_explorer_comm::DataExplorerFrontendEvent;
+use amalthea::comm::data_explorer_comm::GetColumnProfilesFeatures;
 use amalthea::comm::data_explorer_comm::GetColumnProfilesParams;
 use amalthea::comm::data_explorer_comm::GetDataValuesParams;
 use amalthea::comm::data_explorer_comm::GetSchemaParams;
 use amalthea::comm::data_explorer_comm::SchemaUpdateParams;
+use amalthea::comm::data_explorer_comm::SearchSchemaFeatures;
+use amalthea::comm::data_explorer_comm::SetRowFiltersFeatures;
 use amalthea::comm::data_explorer_comm::SetRowFiltersParams;
 use amalthea::comm::data_explorer_comm::SetSortColumnsParams;
+use amalthea::comm::data_explorer_comm::SupportedFeatures;
 use amalthea::comm::data_explorer_comm::TableData;
 use amalthea::comm::data_explorer_comm::TableSchema;
 use amalthea::comm::data_explorer_comm::TableShape;
@@ -437,9 +441,20 @@ impl RDataExplorer {
                 Ok(DataExplorerBackendReply::GetColumnProfilesReply(profiles))
             },
             DataExplorerBackendRequest::GetState => r_task(|| self.r_get_state()),
-            DataExplorerBackendRequest::GetSupportedFeatures => {
-                bail!("Data Explorer: Not yet implemented")
-						},
+            DataExplorerBackendRequest::GetSupportedFeatures => Ok(
+                DataExplorerBackendReply::GetSupportedFeaturesReply(SupportedFeatures {
+                    get_column_profiles: GetColumnProfilesFeatures {
+                        supported: true,
+                        supported_types: vec![ColumnProfileType::NullCount],
+                    },
+                    search_schema: SearchSchemaFeatures { supported: false },
+                    set_row_filters: SetRowFiltersFeatures {
+                        supported: false,
+                        supported_types: vec![],
+                        supports_conditions: false,
+                    },
+                }),
+            ),
             DataExplorerBackendRequest::SearchSchema(_) => {
                 bail!("Data Viewer: Not yet implemented")
             },
