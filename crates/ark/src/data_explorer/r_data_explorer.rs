@@ -8,7 +8,7 @@
 use std::cmp;
 
 use amalthea::comm::comm_channel::CommMsg;
-use amalthea::comm::data_explorer_comm::ColumnProfileRequestType;
+use amalthea::comm::data_explorer_comm::ColumnProfileType;
 use amalthea::comm::data_explorer_comm::ColumnProfileResult;
 use amalthea::comm::data_explorer_comm::ColumnSchema;
 use amalthea::comm::data_explorer_comm::ColumnDisplayType;
@@ -401,8 +401,8 @@ impl RDataExplorer {
             }) => {
                 let profiles = requests
                     .into_iter()
-                    .map(|request| match request.column_profile_request_type {
-                        ColumnProfileRequestType::NullCount => {
+                    .map(|request| match request.profile_type {
+                        ColumnProfileType::NullCount => {
                             let null_count =
                                 r_task(|| self.r_null_count(request.column_index as i32));
                             ColumnProfileResult {
@@ -437,6 +437,9 @@ impl RDataExplorer {
                 Ok(DataExplorerBackendReply::GetColumnProfilesReply(profiles))
             },
             DataExplorerBackendRequest::GetState => r_task(|| self.r_get_state()),
+            DataExplorerBackendRequest::GetSupportedFeatures => {
+                bail!("Data Explorer: Not yet implemented")
+						},
             DataExplorerBackendRequest::SearchSchema(_) => {
                 bail!("Data Viewer: Not yet implemented")
             },
@@ -586,7 +589,7 @@ impl RDataExplorer {
                 num_rows: num_rows.into(),
                 num_columns: num_columns as i64,
             },
-            row_filters: None,
+            row_filters: vec![],
             sort_keys: self.sort_keys.clone(),
         };
         Ok(DataExplorerBackendReply::GetStateReply(state))
