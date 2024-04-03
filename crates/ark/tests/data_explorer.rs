@@ -107,128 +107,130 @@ fn test_data_explorer() {
     r_test(|| {
         // --- mtcars ---
 
-        // Open the mtcars data set in the data explorer.
-        let socket = open_data_explorer(String::from("mtcars"));
+        let test_mtcars_sort = |socket| {
+            // Get the schema for the test data set.
+            let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
+                num_columns: 11,
+                start_index: 0,
+            });
 
-        // Get the schema for the test data set.
-        let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
-            num_columns: 11,
-            start_index: 0,
-        });
+            // Check that we got the right number of columns.
+            assert_match!(socket_rpc(&socket, req),
+                DataExplorerBackendReply::GetSchemaReply(schema) => {
+                    // mtcars is a data frame with 11 columns, so we should get
+                    // 11 columns back.
+                    assert_eq!(schema.columns.len(), 11);
+                }
+            );
 
-        // Check that we got the right number of columns.
-        assert_match!(socket_rpc(&socket, req),
-            DataExplorerBackendReply::GetSchemaReply(schema) => {
-                // mtcars is a data frame with 11 columns, so we should get
-                // 11 columns back.
-                assert_eq!(schema.columns.len(), 11);
-            }
-        );
+            // Get 5 rows of data from the middle of the test data set.
+            let req = DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
+                row_start_index: 5,
+                num_rows: 5,
+                column_indices: vec![0, 1, 2, 3, 4],
+            });
 
-        // Get 5 rows of data from the middle of the test data set.
-        let req = DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
-            row_start_index: 5,
-            num_rows: 5,
-            column_indices: vec![0, 1, 2, 3, 4],
-        });
+            // Check that we got the right columns and row labels.
+            assert_match!(socket_rpc(&socket, req),
+                DataExplorerBackendReply::GetDataValuesReply(data) => {
+                    assert_eq!(data.columns.len(), 5);
+                    let labels = data.row_labels.unwrap();
+                    assert_eq!(labels[0][0], "Valiant");
+                    assert_eq!(labels[0][1], "Duster 360");
+                    assert_eq!(labels[0][2], "Merc 240D");
+                }
+            );
 
-        // Check that we got the right columns and row labels.
-        assert_match!(socket_rpc(&socket, req),
-            DataExplorerBackendReply::GetDataValuesReply(data) => {
-                assert_eq!(data.columns.len(), 5);
-                let labels = data.row_labels.unwrap();
-                assert_eq!(labels[0][0], "Valiant");
-                assert_eq!(labels[0][1], "Duster 360");
-                assert_eq!(labels[0][2], "Merc 240D");
-            }
-        );
-
-        // Create a request to sort the data set by the 'mpg' column.
-        let mpg_sort_keys = vec![ColumnSortKey {
-            column_index: 0,
-            ascending: true,
-        }];
-        let req = DataExplorerBackendRequest::SetSortColumns(SetSortColumnsParams {
-            sort_keys: mpg_sort_keys.clone(),
-        });
-
-        // We should get a SetSortColumnsReply back.
-        assert_match!(socket_rpc(&socket, req),
-        DataExplorerBackendReply::SetSortColumnsReply() => {});
-
-        // Get the table state and ensure that the backend returns the sort keys
-        let req = DataExplorerBackendRequest::GetState;
-        assert_match!(socket_rpc(&socket, req),
-            DataExplorerBackendReply::GetStateReply(state) => {
-                assert_eq!(state.sort_keys, mpg_sort_keys);
-            }
-        );
-
-        // Get the first three rows of data from the sorted data set.
-        let req = DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
-            row_start_index: 0,
-            num_rows: 3,
-            column_indices: vec![0, 1],
-        });
-
-        // Check that sorted values were correctly returned.
-        assert_match!(socket_rpc(&socket, req),
-            DataExplorerBackendReply::GetDataValuesReply(data) => {
-                // The first three sorted rows should be 10.4, 10.4, and 13.3.
-                assert_eq!(data.columns.len(), 2);
-                assert_eq!(data.columns[0][0], "10.4");
-                assert_eq!(data.columns[0][1], "10.4");
-                assert_eq!(data.columns[0][2], "13.3");
-
-                // Row labels should be sorted as well.
-                let labels = data.row_labels.unwrap();
-                assert_eq!(labels[0][0], "Cadillac Fleetwood");
-                assert_eq!(labels[0][1], "Lincoln Continental");
-                assert_eq!(labels[0][2], "Camaro Z28");
-            }
-        );
-
-        // A more complicated sort: sort by 'cyl' in descending order, then by 'mpg'
-        // also in descending order.
-        let descending_sort_keys = vec![
-            ColumnSortKey {
-                column_index: 1,
-                ascending: false,
-            },
-            ColumnSortKey {
+            // Create a request to sort the data set by the 'mpg' column.
+            let mpg_sort_keys = vec![ColumnSortKey {
                 column_index: 0,
-                ascending: false,
-            },
-        ];
+                ascending: true,
+            }];
+            let req = DataExplorerBackendRequest::SetSortColumns(SetSortColumnsParams {
+                sort_keys: mpg_sort_keys.clone(),
+            });
 
-        let req = DataExplorerBackendRequest::SetSortColumns(SetSortColumnsParams {
-            sort_keys: descending_sort_keys.clone(),
-        });
-
-        // We should get a SetSortColumnsReply back.
-        assert_match!(socket_rpc(&socket, req),
+            // We should get a SetSortColumnsReply back.
+            assert_match!(socket_rpc(&socket, req),
         DataExplorerBackendReply::SetSortColumnsReply() => {});
 
-        // Get the first three rows of data from the sorted data set.
-        let req = DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
-            row_start_index: 0,
-            num_rows: 3,
-            column_indices: vec![0, 1],
-        });
+            // Get the table state and ensure that the backend returns the sort keys
+            let req = DataExplorerBackendRequest::GetState;
+            assert_match!(socket_rpc(&socket, req),
+                DataExplorerBackendReply::GetStateReply(state) => {
+                    assert_eq!(state.sort_keys, mpg_sort_keys);
+                }
+            );
 
-        // Check that sorted values were correctly returned.
-        assert_match!(socket_rpc(&socket, req),
-            DataExplorerBackendReply::GetDataValuesReply(data) => {
-                assert_eq!(data.columns.len(), 2);
-                assert_eq!(data.columns[0][0], "19.2");
-                assert_eq!(data.columns[0][1], "18.7");
-                assert_eq!(data.columns[0][2], "17.3");
-            }
-        );
+            // Get the first three rows of data from the sorted data set.
+            let req = DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
+                row_start_index: 0,
+                num_rows: 3,
+                column_indices: vec![0, 1],
+            });
+
+            // Check that sorted values were correctly returned.
+            assert_match!(socket_rpc(&socket, req),
+                DataExplorerBackendReply::GetDataValuesReply(data) => {
+                    // The first three sorted rows should be 10.4, 10.4, and 13.3.
+                    assert_eq!(data.columns.len(), 2);
+                    assert_eq!(data.columns[0][0], "10.4");
+                    assert_eq!(data.columns[0][1], "10.4");
+                    assert_eq!(data.columns[0][2], "13.3");
+
+                    // Row labels should be sorted as well.
+                    let labels = data.row_labels.unwrap();
+                    assert_eq!(labels[0][0], "Cadillac Fleetwood");
+                    assert_eq!(labels[0][1], "Lincoln Continental");
+                    assert_eq!(labels[0][2], "Camaro Z28");
+                }
+            );
+
+            // A more complicated sort: sort by 'cyl' in descending order, then by 'mpg'
+            // also in descending order.
+            let descending_sort_keys = vec![
+                ColumnSortKey {
+                    column_index: 1,
+                    ascending: false,
+                },
+                ColumnSortKey {
+                    column_index: 0,
+                    ascending: false,
+                },
+            ];
+
+            let req = DataExplorerBackendRequest::SetSortColumns(SetSortColumnsParams {
+                sort_keys: descending_sort_keys.clone(),
+            });
+
+            // We should get a SetSortColumnsReply back.
+            assert_match!(socket_rpc(&socket, req),
+        DataExplorerBackendReply::SetSortColumnsReply() => {});
+
+            // Get the first three rows of data from the sorted data set.
+            let req = DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
+                row_start_index: 0,
+                num_rows: 3,
+                column_indices: vec![0, 1],
+            });
+
+            // Check that sorted values were correctly returned.
+            assert_match!(socket_rpc(&socket, req),
+                DataExplorerBackendReply::GetDataValuesReply(data) => {
+                    assert_eq!(data.columns.len(), 2);
+                    assert_eq!(data.columns[0][0], "19.2");
+                    assert_eq!(data.columns[0][1], "18.7");
+                    assert_eq!(data.columns[0][2], "17.3");
+                }
+            );
+        };
+
+        // Test with the regular mtcars data set.
+        test_mtcars_sort(open_data_explorer(String::from("mtcars")));
 
         // --- women ---
 
-        // Open the mtcars data set in the data explorer.
+        // Open the women data set in the data explorer.
         let socket = open_data_explorer(String::from("women"));
 
         // Get 2 rows of data from the beginning of the test data set.
