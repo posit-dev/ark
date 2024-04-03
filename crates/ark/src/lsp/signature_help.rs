@@ -64,8 +64,6 @@ pub unsafe fn signature_help(context: &DocumentContext) -> Result<Option<Signatu
         }
     }
 
-    info!("Signature help node: {}", node.to_sexp());
-
     // Get the current node.
     let mut parent = match node.parent() {
         Some(parent) => parent,
