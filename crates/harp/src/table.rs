@@ -40,8 +40,7 @@ pub fn table_info(x: SEXP) -> Option<TableInfo> {
 /// Extracts a single column from a table.
 ///
 /// - `x` - The table to extract the column from.
-/// - `column_index` - The index of the column to extract. Passed directly to R,
-///    so uses 1-based indexing.
+/// - `column_index` - The index of the column to extract (0-based)
 /// - `kind` - The kind of table `x` is (matrix or data frame).
 ///
 pub fn tbl_get_column(x: SEXP, column_index: i32, kind: TableKind) -> anyhow::Result<RObject> {
@@ -50,7 +49,7 @@ pub fn tbl_get_column(x: SEXP, column_index: i32, kind: TableKind) -> anyhow::Re
         TableKind::Dataframe => {
             let column = RFunction::new("base", "[[")
                 .add(x)
-                .add(RObject::from(column_index))
+                .add(RObject::from(column_index + 1))
                 .call()?;
             Ok(column)
         },
@@ -58,7 +57,7 @@ pub fn tbl_get_column(x: SEXP, column_index: i32, kind: TableKind) -> anyhow::Re
             let column = RFunction::new("base", "[")
                 .add(x)
                 .add(unsafe { R_MissingArg })
-                .add(RObject::from(column_index))
+                .add(RObject::from(column_index + 1))
                 .call()?;
             Ok(column)
         },

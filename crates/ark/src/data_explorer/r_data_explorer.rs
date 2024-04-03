@@ -400,7 +400,7 @@ impl RDataExplorer {
                     .map(|request| match request.column_profile_request_type {
                         ColumnProfileRequestType::NullCount => {
                             let null_count =
-                                r_task(|| self.r_null_count((request.column_index + 1) as isize));
+                                r_task(|| self.r_null_count(request.column_index as i32));
                             ColumnProfileResult {
                                 null_count: match null_count {
                                     Err(err) => {
@@ -501,9 +501,11 @@ impl RDataExplorer {
     /// Counts the number of nulls in a column. As the intent is to provide an
     /// idea of how complete the data is, NA values are considered to be null
     /// for the purposes of these stats.
-    fn r_null_count(&self, column_index: isize) -> anyhow::Result<i32> {
+    ///
+    /// - `column_index`: The index of the column to count nulls in; 0-based.
+    fn r_null_count(&self, column_index: i32) -> anyhow::Result<i32> {
         // Get the column to count nulls in
-        let column = tbl_get_column(self.table.get().sexp, column_index as i32, self.shape.kind)?;
+        let column = tbl_get_column(self.table.get().sexp, column_index, self.shape.kind)?;
 
         // Compute the number of nulls in the column
         let result = RFunction::new("", ".ps.null_count").add(column).call()?;
@@ -523,7 +525,7 @@ impl RDataExplorer {
             // Get the column to sort by
             order.add(tbl_get_column(
                 self.table.get().sexp,
-                (key.column_index + 1) as i32,
+                key.column_index as i32,
                 self.shape.kind,
             )?);
             decreasing.push(!key.ascending);
