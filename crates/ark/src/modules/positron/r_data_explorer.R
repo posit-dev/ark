@@ -19,7 +19,5 @@
 
 #' @export
 .ps.null_count <- function(col) {
-    # Include NA and NaN values in the null count
-    is_null <- function(x) { is.na(x) | is.null(x) | is.nan(x) }
-    sum(is_null(col))
+    sum(is.na(col))
 }
