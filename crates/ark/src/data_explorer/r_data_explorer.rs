@@ -138,7 +138,7 @@ impl RDataExplorer {
             match shape {
                 // shape the columns; start the data viewer
                 Ok(shape) => {
-                    // Generate an intial set of row indices that are just the
+                    // Generate an initial set of row indices that are just the
                     // row numbers
                     let row_indices: Vec<i32> = (1..=shape.num_rows).collect();
 
