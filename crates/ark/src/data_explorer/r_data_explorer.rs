@@ -740,8 +740,23 @@ fn table_info_or_bail(x: SEXP) -> anyhow::Result<TableInfo> {
     harp::table_info(x).ok_or(anyhow!("Unsupported type for data viewer"))
 }
 
+/// Open an R object in the data viewer.
+///
+/// This function is called from the R side to open an R object in the data viewer.
+///
+/// # Parameters
+/// - `x`: The R object to open in the data viewer.
+/// - `title`: The title of the data viewer.
+/// - `var`: The name of the variable containing the R object in its
+///   environment; optional.
+/// - `env`: The environment containing the R object; optional.
 #[harp::register]
-pub unsafe extern "C" fn ps_view_data_frame(x: SEXP, title: SEXP) -> anyhow::Result<SEXP> {
+pub unsafe extern "C" fn ps_view_data_frame(
+    x: SEXP,
+    title: SEXP,
+    var: SEXP,
+    env: SEXP,
+) -> anyhow::Result<SEXP> {
     let x = RObject::new(x);
 
     let title = RObject::new(title);
@@ -750,7 +765,30 @@ pub unsafe extern "C" fn ps_view_data_frame(x: SEXP, title: SEXP) -> anyhow::Res
     let main = RMain::get();
     let comm_manager_tx = main.get_comm_manager_tx().clone();
 
-    RDataExplorer::start(title, x, None, comm_manager_tx)?;
+    // If an environment is provided, watch the variable in the environment
+    let env_info = if env != R_NilValue {
+        let var_obj = RObject::new(var);
+        // Attempt to convert the variable name to a string
+        match String::try_from(var_obj.clone()) {
+            Ok(var_name) => Some(DataObjectEnvInfo {
+                name: var_name,
+                env: RThreadSafe::new(RObject::new(env)),
+            }),
+            Err(_) => {
+                // If the variable name can't be converted to a string, don't
+                // watch the variable.
+                log::warn!(
+                    "Attempt to watch variable in environment failed: {:?} not a string",
+                    var_obj
+                );
+                None
+            },
+        }
+    } else {
+        None
+    };
+
+    RDataExplorer::start(title, x, env_info, comm_manager_tx)?;
 
     Ok(R_NilValue)
 }
