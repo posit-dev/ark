@@ -74,7 +74,7 @@ pub struct ColumnSchema {
 	pub type_name: String,
 
 	/// Canonical Positron display name of data type
-	pub type_display: ColumnSchemaTypeDisplay,
+	pub type_display: ColumnDisplayType,
 
 	/// Column annotation / description
 	pub description: Option<String>,
@@ -198,9 +198,26 @@ pub struct ColumnProfileResult {
 	pub frequency_table: Option<ColumnFrequencyTable>
 }
 
-/// ColumnSummaryStats in Schemas
+/// Profile result containing summary stats for a column based on the data
+/// type
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ColumnSummaryStats {
+	/// Canonical Positron display name of data type
+	pub type_display: ColumnDisplayType,
+
+	/// Statistics for a numeric data type
+	pub number_stats: Option<SummaryStatsNumber>,
+
+	/// Statistics for a string-like data type
+	pub string_stats: Option<SummaryStatsString>,
+
+	/// Statistics for a boolean data type
+	pub boolean_stats: Option<SummaryStatsBoolean>
+}
+
+/// SummaryStatsNumber in Schemas
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SummaryStatsNumber {
 	/// Minimum value as string
 	pub min_value: String,
 
@@ -208,16 +225,33 @@ pub struct ColumnSummaryStats {
 	pub max_value: String,
 
 	/// Average value as string
-	pub mean_value: Option<String>,
+	pub mean: String,
 
 	/// Sample median (50% value) value as string
-	pub median: Option<String>,
+	pub median: String,
 
-	/// 25th percentile value as string
-	pub q25: Option<String>,
+	/// Sample standard deviation as a string
+	pub stdev: String
+}
 
-	/// 75th percentile value as string
-	pub q75: Option<String>
+/// SummaryStatsBoolean in Schemas
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SummaryStatsBoolean {
+	/// The number of non-null true values
+	pub true_count: i64,
+
+	/// The number of non-null false values
+	pub false_count: i64
+}
+
+/// SummaryStatsString in Schemas
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SummaryStatsString {
+	/// The number of empty / length-zero values
+	pub num_empty: i64,
+
+	/// The exact number of distinct values
+	pub num_unique: i64
 }
 
 /// Result from a histogram profile request
@@ -274,9 +308,9 @@ pub struct ColumnSortKey {
 	pub ascending: bool
 }
 
-/// Possible values for TypeDisplay in ColumnSchema
+/// Possible values for ColumnDisplayType
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub enum ColumnSchemaTypeDisplay {
+pub enum ColumnDisplayType {
 	#[serde(rename = "number")]
 	Number,
 

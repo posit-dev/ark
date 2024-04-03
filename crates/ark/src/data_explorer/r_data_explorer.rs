@@ -11,7 +11,7 @@ use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::data_explorer_comm::ColumnProfileRequestType;
 use amalthea::comm::data_explorer_comm::ColumnProfileResult;
 use amalthea::comm::data_explorer_comm::ColumnSchema;
-use amalthea::comm::data_explorer_comm::ColumnSchemaTypeDisplay;
+use amalthea::comm::data_explorer_comm::ColumnDisplayType;
 use amalthea::comm::data_explorer_comm::ColumnSortKey;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendReply;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendRequest;
@@ -684,61 +684,61 @@ impl RDataExplorer {
 // This returns the type of an _element_ of the column. In R atomic
 // vectors do not have a distinct internal type but we pretend that they
 // do for the purpose of integrating with Positron types.
-fn display_type(x: SEXP) -> ColumnSchemaTypeDisplay {
+fn display_type(x: SEXP) -> ColumnDisplayType {
     if r_is_s4(x) {
-        return ColumnSchemaTypeDisplay::Unknown;
+        return ColumnDisplayType::Unknown;
     }
 
     if r_is_object(x) {
         if r_inherits(x, "logical") {
-            return ColumnSchemaTypeDisplay::Boolean;
+            return ColumnDisplayType::Boolean;
         }
 
         if r_inherits(x, "integer") {
-            return ColumnSchemaTypeDisplay::Number;
+            return ColumnDisplayType::Number;
         }
         if r_inherits(x, "double") {
-            return ColumnSchemaTypeDisplay::Number;
+            return ColumnDisplayType::Number;
         }
         if r_inherits(x, "complex") {
-            return ColumnSchemaTypeDisplay::Number;
+            return ColumnDisplayType::Number;
         }
         if r_inherits(x, "numeric") {
-            return ColumnSchemaTypeDisplay::Number;
+            return ColumnDisplayType::Number;
         }
 
         if r_inherits(x, "character") {
-            return ColumnSchemaTypeDisplay::String;
+            return ColumnDisplayType::String;
         }
         if r_inherits(x, "factor") {
-            return ColumnSchemaTypeDisplay::String;
+            return ColumnDisplayType::String;
         }
 
         if r_inherits(x, "Date") {
-            return ColumnSchemaTypeDisplay::Date;
+            return ColumnDisplayType::Date;
         }
         if r_inherits(x, "POSIXct") {
-            return ColumnSchemaTypeDisplay::Datetime;
+            return ColumnDisplayType::Datetime;
         }
         if r_inherits(x, "POSIXlt") {
-            return ColumnSchemaTypeDisplay::Datetime;
+            return ColumnDisplayType::Datetime;
         }
 
         // TODO: vctrs's list_of
         if r_inherits(x, "list") {
-            return ColumnSchemaTypeDisplay::Unknown;
+            return ColumnDisplayType::Unknown;
         }
 
         // Catch-all, including for data frame
-        return ColumnSchemaTypeDisplay::Unknown;
+        return ColumnDisplayType::Unknown;
     }
 
     match r_typeof(x) {
-        LGLSXP => return ColumnSchemaTypeDisplay::Boolean,
-        INTSXP | REALSXP | CPLXSXP => return ColumnSchemaTypeDisplay::Number,
-        STRSXP => return ColumnSchemaTypeDisplay::String,
-        VECSXP => return ColumnSchemaTypeDisplay::Unknown,
-        _ => return ColumnSchemaTypeDisplay::Unknown,
+        LGLSXP => return ColumnDisplayType::Boolean,
+        INTSXP | REALSXP | CPLXSXP => return ColumnDisplayType::Number,
+        STRSXP => return ColumnDisplayType::String,
+        VECSXP => return ColumnDisplayType::Unknown,
+        _ => return ColumnDisplayType::Unknown,
     }
 }
 
