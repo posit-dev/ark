@@ -7,9 +7,12 @@
 
 #' @export
 .ps.view_data_frame <- function(x, title) {
+    # Derive the name of the object from the expression passed to View()
+    object_name <- .ps.as_label(substitute(x))
+
     # Create a title from the name of the object if one is not provided
     if (missing(title)) {
-        title <- .ps.as_label(substitute(x))
+        title <- object_name
     }
 
     stopifnot(
@@ -25,8 +28,8 @@
     # View(cbind(foo, bar)) does not create something that can be watched.
     var <- ""
     env <- NULL
-    if (isTRUE(exists(substitute(x), envir = parent.frame(), inherits = FALSE))) {
-        var <- paste0(substitute(x))
+    if (isTRUE(exists(object_name, envir = parent.frame(), inherits = FALSE))) {
+        var <- object_name
         env <- parent.frame()
     }
 
