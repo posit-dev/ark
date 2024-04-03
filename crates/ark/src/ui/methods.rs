@@ -6,7 +6,9 @@
 //
 
 use amalthea::comm::ui_comm::DebugSleepParams;
+use amalthea::comm::ui_comm::ExecuteCodeParams;
 use amalthea::comm::ui_comm::ModifyEditorSelectionsParams;
+use amalthea::comm::ui_comm::NewDocumentParams;
 use amalthea::comm::ui_comm::ShowDialogParams;
 use amalthea::comm::ui_comm::ShowQuestionParams;
 use amalthea::comm::ui_comm::UiFrontendRequest;
@@ -86,6 +88,35 @@ pub unsafe extern "C" fn ps_ui_show_question(
 
     let main = RMain::get();
     let out = main.call_frontend_method(UiFrontendRequest::ShowQuestion(params))?;
+    Ok(out.sexp)
+}
+
+#[harp::register]
+pub unsafe extern "C" fn ps_ui_new_document(
+    contents: SEXP,
+    language_id: SEXP,
+) -> anyhow::Result<SEXP> {
+    let params = NewDocumentParams {
+        contents: RObject::view(contents).try_into()?,
+        language_id: RObject::view(language_id).try_into()?,
+    };
+
+    let main = RMain::get();
+    let out = main.call_frontend_method(UiFrontendRequest::NewDocument(params))?;
+    Ok(out.sexp)
+}
+
+#[harp::register]
+pub unsafe extern "C" fn ps_ui_execute_code(code: SEXP, focus: SEXP) -> anyhow::Result<SEXP> {
+    let params = ExecuteCodeParams {
+        language_id: String::from("r"),
+        code: RObject::view(code).try_into()?,
+        focus: RObject::view(focus).try_into()?,
+        allow_incomplete: false,
+    };
+
+    let main = RMain::get();
+    let out = main.call_frontend_method(UiFrontendRequest::ExecuteCode(params))?;
     Ok(out.sexp)
 }
 

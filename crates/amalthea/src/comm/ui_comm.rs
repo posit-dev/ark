@@ -127,6 +127,16 @@ pub struct OpenEditorParams {
 	pub column: i64,
 }
 
+/// Parameters for the NewDocument method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct NewDocumentParams {
+	/// Document contents
+	pub contents: String,
+
+	/// Language identifier
+	pub language_id: String,
+}
+
 /// Parameters for the ShowMessage method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ShowMessageParams {
@@ -189,6 +199,22 @@ pub struct DebugSleepParams {
 pub struct ExecuteCommandParams {
 	/// The command to execute
 	pub command: String,
+}
+
+/// Parameters for the ExecuteCode method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ExecuteCodeParams {
+	/// The language ID of the code to execute
+	pub language_id: String,
+
+	/// The code to execute
+	pub code: String,
+
+	/// Whether to focus the runtime's console
+	pub focus: bool,
+
+	/// Whether to bypass runtime code completeness checks
+	pub allow_incomplete: bool,
 }
 
 /// Parameters for the OpenWorkspace method.
@@ -258,6 +284,13 @@ pub enum UiBackendReply {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params")]
 pub enum UiFrontendRequest {
+	/// Create a new document with text contents
+	///
+	/// Use this to create a new document with the given language ID and text
+	/// contents
+	#[serde(rename = "new_document")]
+	NewDocument(NewDocumentParams),
+
 	/// Show a question
 	///
 	/// Use this for a modal dialog that the user can accept or cancel
@@ -275,6 +308,12 @@ pub enum UiFrontendRequest {
 	/// Useful for testing in the backend a long running frontend method
 	#[serde(rename = "debug_sleep")]
 	DebugSleep(DebugSleepParams),
+
+	/// Execute code in a Positron runtime
+	///
+	/// Use this to execute code in a Positron runtime
+	#[serde(rename = "execute_code")]
+	ExecuteCode(ExecuteCodeParams),
 
 	/// Path to the workspace folder
 	///
@@ -304,6 +343,9 @@ pub enum UiFrontendRequest {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "result")]
 pub enum UiFrontendReply {
+	/// Reply for the new_document method (no result)
+	NewDocumentReply(),
+
 	/// Whether the user accepted or rejected the dialog.
 	ShowQuestionReply(bool),
 
@@ -312,6 +354,9 @@ pub enum UiFrontendReply {
 
 	/// Reply for the debug_sleep method (no result)
 	DebugSleepReply(),
+
+	/// Reply for the execute_code method (no result)
+	ExecuteCodeReply(),
 
 	/// The path to the workspace folder
 	WorkspaceFolderReply(Option<String>),
@@ -387,9 +432,11 @@ pub fn ui_frontend_reply_from_value(
 	request: &UiFrontendRequest,
 ) -> anyhow::Result<UiFrontendReply> {
 	match request {
+		UiFrontendRequest::NewDocument(_) => Ok(UiFrontendReply::NewDocumentReply()),
 		UiFrontendRequest::ShowQuestion(_) => Ok(UiFrontendReply::ShowQuestionReply(serde_json::from_value(reply)?)),
 		UiFrontendRequest::ShowDialog(_) => Ok(UiFrontendReply::ShowDialogReply()),
 		UiFrontendRequest::DebugSleep(_) => Ok(UiFrontendReply::DebugSleepReply()),
+		UiFrontendRequest::ExecuteCode(_) => Ok(UiFrontendReply::ExecuteCodeReply()),
 		UiFrontendRequest::WorkspaceFolder => Ok(UiFrontendReply::WorkspaceFolderReply(serde_json::from_value(reply)?)),
 		UiFrontendRequest::ModifyEditorSelections(_) => Ok(UiFrontendReply::ModifyEditorSelectionsReply()),
 		UiFrontendRequest::LastActiveEditorContext => Ok(UiFrontendReply::LastActiveEditorContextReply(serde_json::from_value(reply)?)),

@@ -272,7 +272,7 @@ checksum = "5ad32ce52e4161730f7098c077cd2ed6229b5804ccf99e5366be1ab72a98b4e1"
 
 [[package]]
 name = "ark"
-version = "0.1.74"
+version = "0.1.76"
 dependencies = [
  "actix-web",
  "amalthea",
@@ -3540,9 +3540,9 @@ dependencies = [
 
 [[package]]
 name = "zeromq-src"
-version = "0.2.5+4.3.4"
+version = "0.2.6+4.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "53aaa8119f753d047dc5a9dbcc720bf720b466fdf859aaaae8638f3afc1a3564"
+checksum = "fc120b771270365d5ed0dfb4baf1005f2243ae1ae83703265cb3504070f4160b"
 dependencies = [
  "cc",
  "dircpy",
