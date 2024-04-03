@@ -95,8 +95,6 @@ pub unsafe extern "C" fn ps_ui_show_question(
 pub unsafe extern "C" fn ps_ui_new_document(
     contents: SEXP,
     language_id: SEXP,
-    _line: SEXP,
-    _column: SEXP,
 ) -> anyhow::Result<SEXP> {
     let params = NewDocumentParams {
         contents: RObject::view(contents).try_into()?,

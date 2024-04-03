@@ -95,11 +95,11 @@ selection_as_range <- function(ps_sel) {
 
 #' @export
 .rs.api.documentNew <- function(type, code, row = 0, column = 0, execute = FALSE) {
-    # TODO: Support execute
-    stopifnot(!execute)
+    # TODO: Support execute and row/column
+    stopifnot(!execute && !row && !column)
 
     languageId <- if (type == "rmarkdown") "rmd" else type
-    invisible(.ps.ui.newDocument(paste(code, collapse = "\n"), languageId, row, column))
+    invisible(.ps.ui.newDocument(paste(code, collapse = "\n"), languageId))
 }
 
 #' @export

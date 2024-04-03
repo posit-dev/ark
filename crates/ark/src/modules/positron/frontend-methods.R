@@ -36,8 +36,8 @@
 }
 
 #' @export
-.ps.ui.newDocument <- function(contents, languageId, line, column) {
-    .ps.Call("ps_ui_new_document", contents, languageId, line, column)
+.ps.ui.newDocument <- function(contents, languageId) {
+    .ps.Call("ps_ui_new_document", contents, languageId)
 }
 
 #' @export
