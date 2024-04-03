@@ -140,7 +140,11 @@ impl RDataExplorer {
                 Ok(shape) => {
                     // Generate an initial set of row indices that are just the
                     // row numbers
-                    let row_indices: Vec<i32> = (1..=shape.num_rows).collect();
+                    let row_indices: Vec<i32> = if shape.num_rows < 1 {
+                        vec![]
+                    } else {
+                        (1..=shape.num_rows).collect()
+                    };
 
                     // Create the initial state for the data viewer
                     let viewer = Self {
