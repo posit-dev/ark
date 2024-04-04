@@ -1,5 +1,6 @@
 use amalthea::comm::connections_comm::ConnectionsBackendReply;
 use amalthea::comm::connections_comm::ConnectionsBackendRequest;
+use amalthea::comm::connections_comm::ContainsDataParams;
 use amalthea::comm::connections_comm::GetIconParams;
 use amalthea::comm::connections_comm::ObjectSchema;
 use amalthea::comm::event::CommManagerEvent;
@@ -57,7 +58,7 @@ fn socket_rpc(
 }
 
 #[test]
-fn test_connections() {
+fn test_connections_get_icon() {
     r_test(|| {
         let socket = open_dummy_connection();
 
@@ -104,6 +105,60 @@ fn test_connections() {
                 socket_rpc(&socket, ConnectionsBackendRequest::GetIcon(GetIconParams { path })),
                 ConnectionsBackendReply::GetIconReply(path) => {
                     assert_eq!(path, icon_path);
+                }
+            );
+        }
+    })
+}
+
+#[test]
+fn test_connections_contains_data() {
+    r_test(|| {
+        let socket = open_dummy_connection();
+
+        // Check that we get the correct contians_data
+        let cases: Vec<(Vec<ObjectSchema>, bool)> = vec![
+            (vec![], false),
+            (
+                vec![ObjectSchema {
+                    name: String::from("main"),
+                    kind: String::from("schema"),
+                }],
+                false,
+            ),
+            (
+                vec![
+                    ObjectSchema {
+                        name: String::from("main"),
+                        kind: String::from("schema"),
+                    },
+                    ObjectSchema {
+                        name: String::from("table1"),
+                        kind: String::from("table"),
+                    },
+                ],
+                true,
+            ),
+            (
+                vec![
+                    ObjectSchema {
+                        name: String::from("main"),
+                        kind: String::from("schema"),
+                    },
+                    ObjectSchema {
+                        name: String::from("view1"),
+                        kind: String::from("view"),
+                    },
+                ],
+                true,
+            ),
+        ];
+
+        for (path, contains_data) in cases {
+            assert_match!(
+                socket_rpc(&socket, ConnectionsBackendRequest::ContainsData(ContainsDataParams { path })),
+                ConnectionsBackendReply::ContainsDataReply(val) => {
+                    assert_eq!(val, contains_data);
                 }
             );
         }
