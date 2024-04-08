@@ -305,9 +305,8 @@ pub unsafe fn signature_help(context: &DocumentContext) -> Result<Option<Signatu
     Ok(Some(help))
 }
 
-// TODO: Use `NodeType` rather than `kind()`
 fn is_within_call_parentheses(x: &Point, node: &Node) -> bool {
-    if node.kind() != "call" {
+    if node.node_type() != NodeType::Call {
         // This would be very weird
         log::error!("`is_within_call_parentheses()` called on a non-`call` node.");
         return false;
@@ -326,10 +325,10 @@ fn is_within_call_parentheses(x: &Point, node: &Node) -> bool {
     let open = arguments.child(1 - 1).unwrap();
     let close = arguments.child(n_children - 1).unwrap();
 
-    if open.kind() != "(" {
+    if open.node_type() != NodeType::Anonymous(String::from("(")) {
         return false;
     }
-    if close.kind() != ")" {
+    if close.node_type() != NodeType::Anonymous(String::from(")")) {
         return false;
     }
 
