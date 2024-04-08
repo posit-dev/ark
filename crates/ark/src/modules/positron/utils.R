@@ -83,6 +83,16 @@
     eval(expr, parent.frame())
 }
 
+# Evaluate whole call in Ark's namespace. Unlike `.ps.internal()`,
+# the whole expression is evaluated in the namespace, including
+# arguments in the case of a function call. You can also evaluate
+# simple symbols to pick up an object from the namespace.
+#' @export
+.ps.evalq <- function(expr) {
+    expr <- substitute(expr)
+    eval(expr, parent.env(environment()))
+}
+
 # From `rlang::env_name()`
 #' @export
 .ps.env_name <- function(env) {
