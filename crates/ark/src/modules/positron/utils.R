@@ -72,25 +72,28 @@
 # Evaluate expression in positron's namespace (which includes access to the
 # private modules). Any features accessible from `.ps.internal()` are
 # subject to change without notice.
+#
+# If `expr` is a function call, the function is retrieved from the namespace
+# but the call (and thus arguments) are evaluated in the calling frame.
 #' @export
 .ps.internal <- function(expr) {
     expr <- substitute(expr)
+    ns <- parent.env(environment())
 
-    # Retrieve function from internal namespace
-    expr[[1]] <- eval(expr[[1]], parent.env(environment()))
+    if (is.call(expr)) {
+        # We evaluate function calls in two different
+        # environments.
 
-    # Evaluate arguments in calling frame
-    eval(expr, parent.frame())
-}
+        # Fist retrieve function from internal namespace
+        expr[[1]] <- eval(expr[[1]], ns)
 
-# Evaluate whole call in Ark's namespace. Unlike `.ps.internal()`,
-# the whole expression is evaluated in the namespace, including
-# arguments in the case of a function call. You can also evaluate
-# simple symbols to pick up an object from the namespace.
-#' @export
-.ps.evalq <- function(expr) {
-    expr <- substitute(expr)
-    eval(expr, parent.env(environment()))
+        # Now evaluate call and arguments in calling frame
+        eval(expr, parent.frame())
+    } else {
+        # Simple symbols (and literals) are evaluated
+        # in the namespace
+        eval(expr, ns)
+    }
 }
 
 # From `rlang::env_name()`
