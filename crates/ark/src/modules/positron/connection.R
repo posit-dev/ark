@@ -235,7 +235,7 @@ connection_flatten_object_types <- function(object_tree) {
             result$name <- paste0(path[[2]], "_", result$name)
             result
         },
-        previewObject = function() {
+        previewObject = function(...) {
             data.frame(
                 col1 = 1:10,
                 col2 = letters[1:10],
