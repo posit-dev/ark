@@ -96,6 +96,9 @@
     }
 }
 
+# Alias for the Ark namespace, useful for `.ps.internal(ark_ns)`
+ark_ns <- environment()
+
 # From `rlang::env_name()`
 #' @export
 .ps.env_name <- function(env) {
