@@ -28,19 +28,11 @@
     )
     do.call(globalCallingHandlers, handlers)
 
-    # Tell rlang and base R not to print the error message, we will do it!
-    options(show.error.messages = FALSE)
-
     invisible(NULL)
 }
 
 #' @export
 .ps.errors.globalErrorHandler <- function(cnd) {
-    # Don't instrument errors if the option has been switched back on
-    if (isTRUE(getOption("show.error.messages", TRUE))) {
-        return()
-    }
-
     if (!.ps.is_installed("rlang")) {
         # rlang is not installed, no option except to use the base handler
         return(handle_error_base(cnd))
@@ -134,6 +126,10 @@ handle_error_base <- function(cnd) {
     traceback <- format_traceback(traceback)
 
     .ps.Call("ps_record_error", evalue, traceback)
+
+    # Prevent further error handling, including by R's internal handler that
+    # displays the error message
+    invokeRestart("abort")
 }
 
 #' @param traceback A list of calls.
@@ -158,18 +154,9 @@ handle_error_rlang <- function(cnd) {
 
     .ps.Call("ps_record_error", evalue, traceback)
 
-    if (!.ps.is_installed("rlang", "1.1.1.9000")) {
-        # In older versions of rlang, rlang did not respect `show.error.messages`
-        # and there was no way to keep it from printing to the console. To work
-        # around this, we throw a dummy base error after recording the rlang information.
-        # Nicely, this:
-        # - Won't print due to `show.error.messages = FALSE`
-        # - Prevents rlang from printing its own error
-        # However, this:
-        # - Causes `traceback()` to show the global calling handler frames
-        # - Causes `options(error = recover)` to show the global calling handler frames
-        stop("dummy")
-    }
+    # Prevent further error handling, including by R's internal handler that
+    # displays the error message
+    invokeRestart("abort")
 }
 
 positron_option_error_entrace <- function() {

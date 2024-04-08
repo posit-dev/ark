@@ -75,7 +75,6 @@ use harp::routines::r_register_routines;
 use harp::session::r_traceback;
 use harp::utils::r_is_data_frame;
 use harp::utils::r_pairlist_any;
-use harp::utils::r_poke_option_show_error_messages;
 use harp::R_MAIN_THREAD_ID;
 use libr::R_BaseNamespace;
 use libr::R_GlobalEnv;
@@ -327,11 +326,6 @@ pub struct RMain {
     /// Whether or not R itself is actively busy.
     /// This does not represent the busy state of the kernel.
     pub is_busy: bool,
-
-    /// The `show.error.messages` global option is set to `TRUE` whenever
-    /// we get in the browser. We save the previous value here and restore
-    /// it the next time we see a non-browser prompt.
-    old_show_error_messages: Option<bool>,
 }
 
 /// Represents the currently active execution request from the frontend. It
@@ -428,7 +422,6 @@ impl RMain {
             lsp_events_tx: None,
             dap: RMainDap::new(dap),
             is_busy: false,
-            old_show_error_messages: None,
             tasks_interrupt_rx,
             tasks_idle_rx,
             pending_futures: HashMap::new(),
@@ -646,15 +639,6 @@ impl RMain {
         EVENTS.console_prompt.emit(());
 
         if info.browser {
-            // Calling handlers don't currently reach inside the
-            // debugger. So we temporarily reenable the
-            // `show.error.messages` option to let error messages
-            // stream to stderr.
-            if let None = self.old_show_error_messages {
-                let old = r_poke_option_show_error_messages(true);
-                self.old_show_error_messages = Some(old);
-            }
-
             match self.dap.stack_info() {
                 Ok(stack) => {
                     self.dap.start_debug(stack);
@@ -662,14 +646,6 @@ impl RMain {
                 Err(err) => error!("ReadConsole: Can't get stack info: {err}"),
             };
         } else {
-            // We've left the `browser()` state, so we can disable the
-            // `show.error.messages` option again to let our global handler
-            // capture error messages as before.
-            if let Some(old) = self.old_show_error_messages {
-                r_poke_option_show_error_messages(old);
-                self.old_show_error_messages = None;
-            }
-
             if self.dap.is_debugging() {
                 // Terminate debugging session
                 self.dap.stop_debug();
