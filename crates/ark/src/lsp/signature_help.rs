@@ -18,6 +18,8 @@ use tower_lsp::lsp_types::ParameterInformation;
 use tower_lsp::lsp_types::ParameterLabel;
 use tower_lsp::lsp_types::SignatureHelp;
 use tower_lsp::lsp_types::SignatureInformation;
+use tree_sitter::Node;
+use tree_sitter::Point;
 
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::help::RHtmlHelp;
@@ -26,6 +28,11 @@ use crate::lsp::traits::point::PointExt;
 use crate::lsp::traits::rope::RopeExt;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
+
+// TODO: We should probably take a pass through `signature_help()` and rewrite it from
+// the ground up using our more advanced rust / tree-sitter knowledge. It feels like it
+// is the accumulation of a number of smaller changes that have resulted in something
+// that is a bit hard to follow.
 
 /// SAFETY: Requires access to the R runtime.
 pub unsafe fn signature_help(context: &DocumentContext) -> Result<Option<SignatureHelp>> {
@@ -56,8 +63,6 @@ pub unsafe fn signature_help(context: &DocumentContext) -> Result<Option<Signatu
             node = sibling;
         }
     }
-
-    info!("Signature help node: {}", node.to_sexp());
 
     // Get the current node.
     let mut parent = match node.parent() {
@@ -138,6 +143,13 @@ pub unsafe fn signature_help(context: &DocumentContext) -> Result<Option<Signatu
             None => return Ok(None),
         };
     };
+
+    // Totally possible that `node.find_closest_node_to_point(context.point)` finds a
+    // call node that is technically the closest node to the point, but is completely
+    // before the point. We only want to provide signature help when inside `fn(<here>)`!
+    if !is_within_call_parentheses(&context.point, &call) {
+        return Ok(None);
+    }
 
     // Get the left-hand side of the call.
     let callee = unwrap!(call.child(0), None => {
@@ -291,4 +303,82 @@ pub unsafe fn signature_help(context: &DocumentContext) -> Result<Option<Signatu
 
     info!("{:?}", help);
     Ok(Some(help))
+}
+
+fn is_within_call_parentheses(x: &Point, node: &Node) -> bool {
+    if node.node_type() != NodeType::Call {
+        // This would be very weird
+        log::error!("`is_within_call_parentheses()` called on a non-`call` node.");
+        return false;
+    }
+
+    let Some(arguments) = node.child_by_field_name("arguments") else {
+        return false;
+    };
+
+    let n_children = arguments.child_count();
+    if n_children < 2 {
+        log::error!("`arguments` node only has {n_children} children.");
+        return false;
+    }
+
+    let open = arguments.child(1 - 1).unwrap();
+    let close = arguments.child(n_children - 1).unwrap();
+
+    if open.node_type() != NodeType::Anonymous(String::from("(")) {
+        return false;
+    }
+    if close.node_type() != NodeType::Anonymous(String::from(")")) {
+        return false;
+    }
+
+    x.is_after_or_equal(open.end_position()) && x.is_before_or_equal(close.start_position())
+}
+
+#[cfg(test)]
+mod tests {
+    use harp::test::r_test;
+    use tower_lsp::lsp_types::ParameterLabel;
+
+    use crate::lsp::document_context::DocumentContext;
+    use crate::lsp::documents::Document;
+    use crate::lsp::signature_help::signature_help;
+    use crate::test::point_from_cursor;
+
+    #[test]
+    fn test_basic_signature_help() {
+        r_test(|| {
+            let (text, point) = point_from_cursor("library(@)");
+            let document = Document::new(&text, None);
+            let context = DocumentContext::new(&document, point, None);
+
+            let help = unsafe { signature_help(&context) };
+            let help = help.unwrap().unwrap();
+            assert_eq!(help.signatures.len(), 1);
+
+            // Looking for the label offset into `library(package, ...etc)` for `package`
+            let signature = help.signatures.get(0).unwrap();
+            let label = &signature.parameters.as_ref().unwrap().get(0).unwrap().label;
+            assert_eq!(label, &ParameterLabel::LabelOffsets([8, 15]));
+        })
+    }
+
+    #[test]
+    fn test_no_signature_help_outside_parentheses() {
+        r_test(|| {
+            let (text, point) = point_from_cursor("library@()");
+            let document = Document::new(&text, None);
+            let context = DocumentContext::new(&document, point, None);
+            let help = unsafe { signature_help(&context) };
+            let help = help.unwrap();
+            assert!(help.is_none());
+
+            let (text, point) = point_from_cursor("library()@");
+            let document = Document::new(&text, None);
+            let context = DocumentContext::new(&document, point, None);
+            let help = unsafe { signature_help(&context) };
+            let help = help.unwrap();
+            assert!(help.is_none());
+        })
+    }
 }
