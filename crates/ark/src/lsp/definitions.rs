@@ -18,6 +18,7 @@ use crate::lsp::encoding::convert_position_to_point;
 use crate::lsp::indexer;
 use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::rope::RopeExt;
+use crate::treesitter::NodeTypeExt;
 
 pub unsafe fn goto_definition<'a>(
     document: &'a Document,
@@ -42,7 +43,7 @@ pub unsafe fn goto_definition<'a>(
     let range = Range { start, end };
 
     // search for a reference in the document index
-    if matches!(node.kind(), "identifier") {
+    if node.is_identifier() {
         let symbol = document.contents.node_slice(&node)?.to_string();
         if let Some((path, entry)) = indexer::find(symbol.as_str()) {
             let link = LocationLink {

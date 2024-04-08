@@ -25,6 +25,8 @@ use crate::lsp::encoding::convert_point_to_position;
 use crate::lsp::encoding::convert_position_to_point;
 use crate::lsp::traits::cursor::TreeCursorExt;
 use crate::lsp::traits::rope::RopeExt;
+use crate::treesitter::NodeType;
+use crate::treesitter::NodeTypeExt;
 
 pub static POSITRON_STATEMENT_RANGE_REQUEST: &'static str = "positron/textDocument/statementRange";
 
@@ -125,7 +127,7 @@ fn find_roxygen_comment_at_point<'tree>(
 
     // Tree sitter doesn't know about the special `#'` marker,
     // but does tell us if we are in a `#` comment
-    if node.kind() != "comment" {
+    if !node.is_comment() {
         return None;
     }
 
@@ -172,7 +174,7 @@ fn find_roxygen_comment_at_point<'tree>(
         last_sibling = sibling;
 
         // Have we exited comments in general?
-        if sibling.kind() != "comment" {
+        if !sibling.is_comment() {
             break;
         }
 
@@ -217,7 +219,7 @@ fn find_statement_range_node<'tree>(root: &'tree Node, row: usize) -> Option<Nod
             // equal to the user selected `row`
             continue;
         }
-        if child.kind() == "comment" {
+        if child.is_comment() {
             // Skip comments
             continue;
         }
@@ -247,20 +249,22 @@ fn recurse(node: Node, row: usize) -> Result<Option<Node>> {
         return Ok(Some(node));
     }
 
-    match node.kind() {
-        "function" => recurse_function(node, row),
-        "for" | "while" | "repeat" => recurse_loop(node, row),
-        "if" => recurse_if(node, row),
-        "{" => recurse_block(node, row),
-        "[" | "[[" => recurse_subset(node, row),
-        "call" => recurse_call(node, row),
+    match node.node_type() {
+        NodeType::FunctionDefinition => recurse_function(node, row),
+        NodeType::ForStatement | NodeType::WhileStatement | NodeType::RepeatStatement => {
+            recurse_loop(node, row)
+        },
+        NodeType::IfStatement => recurse_if(node, row),
+        NodeType::BracedExpression => recurse_braced_expression(node, row),
+        NodeType::Subset | NodeType::Subset2 => recurse_subset(node, row),
+        NodeType::Call => recurse_call(node, row),
         _ => recurse_default(node, row),
     }
 }
 
 fn recurse_function(node: Node, row: usize) -> Result<Option<Node>> {
     let Some(parameters) = node.child_by_field_name("parameters") else {
-        bail!("Missing `parameters` field in a `function` node");
+        bail!("Missing `parameters` field in a `function_definition` node");
     };
 
     if parameters.start_position().row <= row && parameters.end_position().row >= row {
@@ -280,7 +284,9 @@ fn recurse_function(node: Node, row: usize) -> Result<Option<Node>> {
         return Ok(Some(node));
     }
 
-    if body.kind() == "{" && (row == body.start_position().row || row == body.end_position().row) {
+    if body.is_braced_expression() &&
+        (row == body.start_position().row || row == body.end_position().row)
+    {
         // For the most common `{` bodies, if we are on the `{` or the `}` rows, then we select the
         // entire function. This avoids sending a `{` block without its leading `function` node if
         // `{` happens to be on a different line or if the user is on the `}` line.
@@ -305,7 +311,9 @@ fn recurse_loop(node: Node, row: usize) -> Result<Option<Node>> {
         return Ok(Some(node));
     }
 
-    if body.kind() == "{" && (row == body.start_position().row || row == body.end_position().row) {
+    if body.is_braced_expression() &&
+        (row == body.start_position().row || row == body.end_position().row)
+    {
         // For the most common `{` bodies, if we are on the `{` or the `}` rows, then we select the
         // entire loop. This avoids sending a `{` block without its leading loop node if
         // `{` happens to be on a different line or if the user is on the `}` line.
@@ -319,12 +327,12 @@ fn recurse_loop(node: Node, row: usize) -> Result<Option<Node>> {
 
 fn recurse_if(node: Node, row: usize) -> Result<Option<Node>> {
     let Some(consequence) = node.child_by_field_name("consequence") else {
-        bail!("Missing `consequence` child in an `if` node.");
+        bail!("Missing `consequence` child in an `if_statement` node.");
     };
     if row >= consequence.start_position().row && row <= consequence.end_position().row {
         // We are somewhere inside the `consequence`
 
-        if consequence.kind() == "{" &&
+        if consequence.is_braced_expression() &&
             (row == consequence.start_position().row || row == consequence.end_position().row)
         {
             // On `{` or `}` row of a `{` node, select entire if statement
@@ -343,14 +351,14 @@ fn recurse_if(node: Node, row: usize) -> Result<Option<Node>> {
     if row >= alternative.start_position().row && row <= alternative.end_position().row {
         // We are somewhere inside the `alternative`, possibly in an `else if`
 
-        if alternative.kind() == "{" &&
+        if alternative.is_braced_expression() &&
             (row == alternative.start_position().row || row == alternative.end_position().row)
         {
             // On `{` or `}` row of a `{` node, select entire if statement
             return Ok(Some(node));
         }
 
-        if alternative.kind() == "if" {
+        if alternative.is_if_statement() {
             // We are inside an `else if {` case. See if recursing over this `if` node
             // results in a new start position row.
             let Some(candidate) = recurse_if(alternative, row)? else {
@@ -379,7 +387,7 @@ fn recurse_if(node: Node, row: usize) -> Result<Option<Node>> {
 
 fn recurse_call(node: Node, row: usize) -> Result<Option<Node>> {
     let Some(arguments) = node.child_by_field_name("arguments") else {
-        bail!("Missing `arguments` field in a call node");
+        bail!("Missing `arguments` field in a `call` node");
     };
     if row == arguments.start_position().row {
         // On start row containing `(`, select whole call
@@ -419,7 +427,7 @@ fn recurse_call(node: Node, row: usize) -> Result<Option<Node>> {
     Ok(Some(node))
 }
 
-fn recurse_block(node: Node, row: usize) -> Result<Option<Node>> {
+fn recurse_braced_expression(node: Node, row: usize) -> Result<Option<Node>> {
     if row == node.end_position().row {
         // `recurse()` handled the start position, but if we are on the
         // `}` row, then we also select the entire block
@@ -435,7 +443,7 @@ fn recurse_block(node: Node, row: usize) -> Result<Option<Node>> {
             // equal to the user selected `row`
             continue;
         }
-        if child.kind() == "comment" {
+        if child.is_comment() {
             // Skip comments
             continue;
         }

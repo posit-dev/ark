@@ -29,6 +29,7 @@ pub mod sys;
 pub mod test;
 pub mod thread;
 pub mod traps;
+pub mod treesitter;
 pub mod ui;
 pub mod variables;
 pub mod version;

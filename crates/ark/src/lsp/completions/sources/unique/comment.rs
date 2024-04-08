@@ -22,13 +22,14 @@ use crate::lsp::completions::completion_item::completion_item;
 use crate::lsp::completions::types::CompletionData;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::traits::rope::RopeExt;
+use crate::treesitter::NodeTypeExt;
 
 pub fn completions_from_comment(context: &DocumentContext) -> Result<Option<Vec<CompletionItem>>> {
     log::info!("completions_from_comment()");
 
     let node = context.node;
 
-    if node.kind() != "comment" {
+    if !node.is_comment() {
         return Ok(None);
     }
 

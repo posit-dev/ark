@@ -24,6 +24,9 @@ use crate::lsp::completions::completion_item::completion_item_from_namespace;
 use crate::lsp::completions::sources::utils::set_sort_text_by_words_first;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::traits::rope::RopeExt;
+use crate::treesitter::NamespaceOperatorType;
+use crate::treesitter::NodeType;
+use crate::treesitter::NodeTypeExt;
 
 // Handle the case with 'package::prefix', where the user has now
 // started typing the prefix of the symbol they would like completions for.
@@ -34,9 +37,13 @@ pub fn completions_from_namespace(
 
     let node = context.node;
 
-    let node = match node.kind() {
-        "::" | ":::" => namespace_node_from_colons(node, context.point),
-        "identifier" => namespace_node_from_identifier(node),
+    // We expect `DocumentContext` to have drilled down into the CST to the anonymous node,
+    // we will find the actual `NamespaceOperator` node here
+    let node = match node.node_type() {
+        NodeType::Anonymous(kind) if matches!(kind.as_str(), "::" | ":::") => {
+            namespace_node_from_colons(node, context.point)
+        },
+        NodeType::Identifier => namespace_node_from_identifier(node),
         _ => return Ok(None),
     };
 
@@ -48,7 +55,8 @@ pub fn completions_from_namespace(
         NamespaceNodeKind::Node(node) => node,
     };
 
-    let exports_only = node.kind() == "::";
+    let exports_only =
+        node.node_type() == NodeType::NamespaceOperator(NamespaceOperatorType::External);
 
     let Some(package) = node.child_by_field_name("lhs") else {
         return Ok(Some(completions));
@@ -104,13 +112,6 @@ enum NamespaceNodeKind<'tree> {
 }
 
 fn namespace_node_from_colons(node: Node, point: Point) -> NamespaceNodeKind {
-    if node.is_named() {
-        // We don't actually expect a named node to begin with because `node`
-        // should have drilled all the way down into the CST to the anonymous
-        // literal operator
-        return NamespaceNodeKind::EmptySet;
-    }
-
     if node.end_position() != point {
         // If we aren't at the end of the anonymous `::`/`:::` node, don't return
         // any completions.
@@ -122,7 +123,7 @@ fn namespace_node_from_colons(node: Node, point: Point) -> NamespaceNodeKind {
         return NamespaceNodeKind::EmptySet;
     };
 
-    if !matches!(parent.kind(), "::" | ":::") || !parent.is_named() {
+    if !matches!(parent.node_type(), NodeType::NamespaceOperator(_)) {
         // Anonymous `::`/`:::` without a named `::`/`:::` parent? Should not be possible.
         return NamespaceNodeKind::EmptySet;
     }
@@ -137,8 +138,8 @@ fn namespace_node_from_identifier(node: Node) -> NamespaceNodeKind {
         return NamespaceNodeKind::None;
     };
 
-    if !matches!(parent.kind(), "::" | ":::") || !parent.is_named() {
-        // Simple identifier with a parent that isn't a named `::`/`:::` node.
+    if !matches!(parent.node_type(), NodeType::NamespaceOperator(_)) {
+        // Simple identifier with a parent that isn't a namespace node.
         // Totally possible. Want other completions to have a chance to run.
         return NamespaceNodeKind::None;
     }

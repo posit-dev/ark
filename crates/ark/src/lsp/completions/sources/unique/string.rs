@@ -10,13 +10,14 @@ use tower_lsp::lsp_types::CompletionItem;
 
 use super::file_path::completions_from_file_path;
 use crate::lsp::document_context::DocumentContext;
+use crate::treesitter::NodeTypeExt;
 
 pub fn completions_from_string(context: &DocumentContext) -> Result<Option<Vec<CompletionItem>>> {
     log::info!("completions_from_string()");
 
     let node = context.node;
 
-    if node.kind() != "string" {
+    if !node.is_string() {
         return Ok(None);
     }
 
@@ -53,6 +54,7 @@ mod tests {
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
     use crate::test::r_test;
+    use crate::treesitter::NodeTypeExt;
 
     #[test]
     fn test_outside_quotes() {
@@ -63,7 +65,7 @@ mod tests {
             let document = Document::new("''", None);
             let context = DocumentContext::new(&document, point, None);
 
-            assert_eq!(context.node.kind(), "string");
+            assert!(context.node.is_string());
             assert_eq!(completions_from_string(&context).unwrap(), None);
         })
     }
@@ -75,7 +77,7 @@ mod tests {
             let document = Document::new("foo", None);
             let context = DocumentContext::new(&document, point, None);
 
-            assert_eq!(context.node.kind(), "identifier");
+            assert!(context.node.is_identifier());
             assert_eq!(completions_from_string(&context).unwrap(), None);
         })
     }

@@ -18,6 +18,9 @@ use tree_sitter::Node;
 use crate::lsp::completions::sources::utils::completions_from_object_names;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::traits::rope::RopeExt;
+use crate::treesitter::BinaryOperatorType;
+use crate::treesitter::NodeType;
+use crate::treesitter::NodeTypeExt;
 
 #[derive(Clone)]
 pub(super) struct PipeRoot {
@@ -59,14 +62,14 @@ pub(super) fn find_pipe_root(context: &DocumentContext) -> Option<PipeRoot> {
     let mut has_call = false;
 
     loop {
-        if node.kind() == "call" {
+        if node.is_call() {
             // We look for pipe roots from here
             has_call = true;
             break;
         }
 
         // If we reach a brace list, bail
-        if node.kind() == "{" {
+        if node.is_braced_expression() {
             break;
         }
 
@@ -84,7 +87,7 @@ pub(super) fn find_pipe_root(context: &DocumentContext) -> Option<PipeRoot> {
     let name = find_pipe_root_name(context, &node);
 
     let object = match &name {
-        Some(name) => Some(eval_pipe_root(name)?),
+        Some(name) => eval_pipe_root(name),
         None => None,
     };
 
@@ -120,12 +123,12 @@ fn find_pipe_root_name(context: &DocumentContext, node: &Node) -> Option<String>
     // Try to figure out the code associated with the 'root' of the pipe expression.
     let root = local! {
 
-        let root = find_pipe_root_node(*node)?;
-        is_pipe_operator(&root).into_option()?;
+        let root = find_pipe_root_node(context, *node)?;
+        is_pipe_operator(context, &root).into_option()?;
 
         // Get the left-hand side of the pipe expression.
         let mut lhs = root.child_by_field_name("lhs")?;
-        while is_pipe_operator(&lhs) {
+        while is_pipe_operator(context, &lhs) {
             lhs = lhs.child_by_field_name("lhs")?;
         }
 
@@ -138,11 +141,11 @@ fn find_pipe_root_name(context: &DocumentContext, node: &Node) -> Option<String>
     root.map(|x| x.to_string())
 }
 
-fn find_pipe_root_node(mut node: Node) -> Option<Node> {
+fn find_pipe_root_node<'a>(context: &DocumentContext, mut node: Node<'a>) -> Option<Node<'a>> {
     let mut root = None;
 
     loop {
-        if is_pipe_operator(&node) {
+        if is_pipe_operator(context, &node) {
             root = Some(node);
         }
 
@@ -153,6 +156,94 @@ fn find_pipe_root_node(mut node: Node) -> Option<Node> {
     }
 }
 
-fn is_pipe_operator(node: &Node) -> bool {
-    matches!(node.kind(), "%>%" | "|>")
+fn is_pipe_operator(context: &DocumentContext, node: &Node) -> bool {
+    let node_type = node.node_type();
+
+    if node_type == NodeType::BinaryOperator(BinaryOperatorType::Pipe) {
+        // Native pipe
+        return true;
+    }
+
+    if node_type == NodeType::BinaryOperator(BinaryOperatorType::Special) {
+        // magrittr pipe
+        let Some(node) = node.child_by_field_name("operator") else {
+            return false;
+        };
+
+        match context.document.contents.node_slice(&node) {
+            Ok(slice) => return slice == "%>%",
+            Err(err) => {
+                log::error!("{err:?}");
+                return false;
+            },
+        }
+    }
+
+    return false;
+}
+
+#[cfg(test)]
+mod tests {
+    use harp::eval::r_parse_eval;
+    use harp::eval::RParseEvalOptions;
+    use tree_sitter::Point;
+
+    use crate::lsp::completions::sources::composite::pipe::find_pipe_root;
+    use crate::lsp::document_context::DocumentContext;
+    use crate::lsp::documents::Document;
+    use crate::test::r_test;
+
+    #[test]
+    fn test_find_pipe_root_works_with_native_and_magrittr() {
+        r_test(|| {
+            // Place cursor between `()` of `bar()`
+            let point = Point { row: 0, column: 19 };
+            let document = Document::new("x |> foo() %>% bar()", None);
+            let context = DocumentContext::new(&document, point, None);
+
+            let root = find_pipe_root(&context).unwrap();
+            assert_eq!(root.name, "x".to_string());
+            assert!(root.object.is_none());
+        });
+
+        r_test(|| {
+            // `%||%` is not a pipe!
+            // Place cursor between `()` of `bar()`
+            let point = Point { row: 0, column: 20 };
+            let document = Document::new("x |> foo() %||% bar()", None);
+            let context = DocumentContext::new(&document, point, None);
+
+            let root = find_pipe_root(&context);
+            assert!(root.is_none());
+        });
+    }
+
+    #[test]
+    fn test_find_pipe_root_finds_objects() {
+        r_test(|| {
+            let options = RParseEvalOptions {
+                forbid_function_calls: false,
+                ..Default::default()
+            };
+
+            // Place cursor between `()`
+            let point = Point { row: 0, column: 10 };
+            let document = Document::new("x %>% foo()", None);
+            let context = DocumentContext::new(&document, point, None);
+
+            let root = find_pipe_root(&context).unwrap();
+            assert_eq!(root.name, "x".to_string());
+            assert!(root.object.is_none());
+
+            // Set up a real `x` and try again
+            r_parse_eval("x <- data.frame(a = 1)", options.clone()).unwrap();
+
+            let root = find_pipe_root(&context).unwrap();
+            assert_eq!(root.name, "x".to_string());
+            assert!(root.object.is_some());
+
+            // Clean up
+            r_parse_eval("remove(x)", options.clone()).unwrap();
+        });
+    }
 }

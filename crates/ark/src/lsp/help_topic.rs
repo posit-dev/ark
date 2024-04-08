@@ -15,6 +15,7 @@ use crate::lsp::backend::Backend;
 use crate::lsp::encoding::convert_position_to_point;
 use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::rope::RopeExt;
+use crate::treesitter::NodeTypeExt;
 
 pub static POSITRON_HELP_TOPIC_REQUEST: &'static str = "positron/textDocument/helpTopic";
 
@@ -58,7 +59,7 @@ impl Backend {
         };
 
         // Find the nearest node that is an identifier.
-        while node.kind() != "identifier" {
+        while !node.is_identifier() {
             if let Some(sibling) = node.prev_sibling() {
                 // Move to an adjacent sibling if we can.
                 node = sibling;

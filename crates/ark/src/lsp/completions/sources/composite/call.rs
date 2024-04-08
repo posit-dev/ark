@@ -24,6 +24,7 @@ use crate::lsp::completions::sources::utils::CallNodePositionType;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::indexer;
 use crate::lsp::traits::rope::RopeExt;
+use crate::treesitter::NodeTypeExt;
 
 pub(super) fn completions_from_call(
     context: &DocumentContext,
@@ -37,13 +38,13 @@ pub(super) fn completions_from_call(
     loop {
         // If we landed on a 'call', then we should provide parameter completions
         // for the associated callee if possible.
-        if node.kind() == "call" {
+        if node.is_call() {
             has_call = true;
             break;
         }
 
         // If we reach a brace list, bail.
-        if node.kind() == "{" {
+        if node.is_braced_expression() {
             break;
         }
 
@@ -369,7 +370,7 @@ mod tests {
             assert!(completions.is_none());
 
             // Clean up
-            r_parse_eval("my_fun <- NULL", options.clone()).unwrap();
+            r_parse_eval("remove(my_fun)", options.clone()).unwrap();
         });
 
         // Case where the session object isn't a function
@@ -390,7 +391,7 @@ mod tests {
             assert_eq!(completions.len(), 0);
 
             // Clean up
-            r_parse_eval("my_fun <- NULL", options.clone()).unwrap();
+            r_parse_eval("remove(my_fun)", options.clone()).unwrap();
         })
     }
 }

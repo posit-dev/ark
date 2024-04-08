@@ -29,11 +29,44 @@ use crate::lsp::indexer::filter_entry;
 use crate::lsp::traits::cursor::TreeCursorExt;
 use crate::lsp::traits::rope::RopeExt;
 use crate::lsp::traits::url::UrlExt;
+use crate::treesitter::ExtractOperatorType;
+use crate::treesitter::NodeType;
+use crate::treesitter::NodeTypeExt;
 
+#[derive(Debug, PartialEq)]
 enum ReferenceKind {
     SymbolName, // a regular R symbol
     DollarName, // a dollar name, following '$'
-    SlotName,   // a slot name, following '@'
+    AtName,     // a slot name, following '@'
+}
+
+// Assuming `x` is an `identifier`, is it the RHS of a `$` or `@`?
+fn node_reference_kind(x: &Node) -> ReferenceKind {
+    let Some(parent) = x.parent() else {
+        // No `parent`, must be a regular symbol
+        return ReferenceKind::SymbolName;
+    };
+
+    let parent_type = parent.node_type();
+
+    if !matches!(parent_type, NodeType::ExtractOperator(_)) {
+        // Parent not `$` or `@`
+        return ReferenceKind::SymbolName;
+    }
+
+    // Need to check that we actually came from the RHS
+    let Some(rhs) = parent.child_by_field_name("rhs") else {
+        return ReferenceKind::SymbolName;
+    };
+    if &rhs != x {
+        return ReferenceKind::SymbolName;
+    };
+
+    match parent_type {
+        NodeType::ExtractOperator(ExtractOperatorType::Dollar) => ReferenceKind::DollarName,
+        NodeType::ExtractOperator(ExtractOperatorType::At) => ReferenceKind::AtName,
+        _ => std::unreachable!(),
+    }
 }
 
 struct Context {
@@ -53,7 +86,7 @@ fn add_reference(node: &Node, contents: &Rope, path: &Path, locations: &mut Vec<
 }
 
 fn found_match(node: &Node, contents: &Rope, context: &Context) -> bool {
-    if node.kind() != "identifier" {
+    if !node.is_identifier() {
         return false;
     }
 
@@ -62,35 +95,7 @@ fn found_match(node: &Node, contents: &Rope, context: &Context) -> bool {
         return false;
     }
 
-    match context.kind {
-        ReferenceKind::DollarName => {
-            if let Some(sibling) = node.prev_sibling() {
-                if sibling.kind() == "$" {
-                    return true;
-                }
-            }
-        },
-
-        ReferenceKind::SlotName => {
-            if let Some(sibling) = node.prev_sibling() {
-                if sibling.kind() == "@" {
-                    return true;
-                }
-            }
-        },
-
-        ReferenceKind::SymbolName => {
-            if let Some(sibling) = node.prev_sibling() {
-                if !matches!(sibling.kind(), "$" | "@") {
-                    return true;
-                }
-            } else {
-                return true;
-            }
-        },
-    }
-
-    return false;
+    context.kind == node_reference_kind(node)
 }
 
 impl Backend {
@@ -117,7 +122,7 @@ impl Backend {
             // can't just subtract 1 from the position column since that would then fail to
             // resolve the correct identifier when the cursor is located at the start of the
             // identifier.
-            if node.kind() != "identifier" && point.column > 0 {
+            if !node.is_identifier() && point.column > 0 {
                 let point = Point::new(point.row, point.column - 1);
                 node = ast
                     .root_node()
@@ -126,30 +131,14 @@ impl Backend {
             }
 
             // double check that we found an identifier
-            if node.kind() != "identifier" {
+            if !node.is_identifier() {
                 bail!(
                     "couldn't find an identifier associated with point {:?}",
                     point
                 );
             }
 
-            // check this node's previous sibling; if this is the name of a slot
-            // or dollar accessed item, we should mark it
-            let kind = match node.prev_sibling() {
-                None => {
-                    info!("node {:?} has no previous sibling", node);
-                    ReferenceKind::SymbolName
-                },
-
-                Some(sibling) => {
-                    info!("found sibling {:?} ({})", sibling, sibling.kind());
-                    match sibling.kind() {
-                        "$" => ReferenceKind::DollarName,
-                        "@" => ReferenceKind::SlotName,
-                        _ => ReferenceKind::SymbolName,
-                    }
-                },
-            };
+            let kind = node_reference_kind(&node);
 
             // return identifier text contents
             let symbol = document.contents.node_slice(&node)?.to_string();

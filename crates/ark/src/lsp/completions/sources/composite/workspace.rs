@@ -20,6 +20,7 @@ use crate::lsp::document_context::DocumentContext;
 use crate::lsp::indexer;
 use crate::lsp::traits::rope::RopeExt;
 use crate::lsp::traits::string::StringExt;
+use crate::treesitter::NodeTypeExt;
 
 pub(super) fn completions_from_workspace(
     backend: &Backend,
@@ -29,25 +30,25 @@ pub(super) fn completions_from_workspace(
 
     let node = context.node;
 
-    if matches!(node.kind(), "::" | ":::") {
+    if node.is_namespace_operator() {
         log::error!("Should have already been handled by namespace completions source");
         return Ok(None);
     }
     if let Some(parent) = node.parent() {
-        if matches!(parent.kind(), "::" | ":::") {
+        if parent.is_namespace_operator() {
             log::error!("Should have already been handled by namespace completions source");
             return Ok(None);
         }
     }
 
-    if matches!(node.kind(), "string") {
+    if node.is_string() {
         log::error!("Should have already been handled by file path completions source");
         return Ok(None);
     }
 
     let mut completions = vec![];
 
-    let token = if node.kind() == "identifier" {
+    let token = if node.is_identifier() {
         context.document.contents.node_slice(&node)?.to_string()
     } else {
         "".to_string()

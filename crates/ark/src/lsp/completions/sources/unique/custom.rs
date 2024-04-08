@@ -27,6 +27,7 @@ use crate::lsp::completions::sources::utils::CallNodePositionType;
 use crate::lsp::completions::types::CompletionData;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::signature_help::signature_help;
+use crate::treesitter::NodeTypeExt;
 
 pub fn completions_from_custom_source(
     context: &DocumentContext,
@@ -39,13 +40,13 @@ pub fn completions_from_custom_source(
 
     loop {
         // Try custom call completions
-        if node.kind() == "call" {
+        if node.is_call() {
             has_call = true;
             break;
         }
 
         // If we reach a brace list, bail.
-        if node.kind() == "{" {
+        if node.is_braced_expression() {
             break;
         }
 
@@ -179,7 +180,7 @@ pub fn completions_from_custom_source_impl(
                     continue;
                 });
 
-                if enquote && node.kind() != "string" {
+                if enquote && !node.is_string() {
                     item.insert_text = Some(format!("\"{value}\""));
                 } else {
                     let mut insert_text = r_symbol_quote_invalid(value.as_str());

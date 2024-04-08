@@ -87,10 +87,6 @@ pub trait NodeExt: Sized {
 
     fn fwd_leaf_iter(&self) -> FwdLeafIterator<'_>;
     fn bwd_leaf_iter(&self) -> BwdLeafIterator<'_>;
-
-    fn is_call(&self) -> bool;
-    fn is_unary_operator(&self) -> bool;
-    fn is_binary_operator(&self) -> bool;
 }
 
 impl NodeExt for Node<'_> {
@@ -193,23 +189,6 @@ impl NodeExt for Node<'_> {
 
     fn bwd_leaf_iter(&self) -> BwdLeafIterator<'_> {
         BwdLeafIterator { node: self.clone() }
-    }
-
-    fn is_call(&self) -> bool {
-        matches!(self.kind(), "call")
-    }
-
-    fn is_unary_operator(&self) -> bool {
-        all! {
-            self.child_by_field_name("operand").is_some()
-        }
-    }
-
-    fn is_binary_operator(&self) -> bool {
-        all! {
-            self.child_by_field_name("operand").is_none()
-            self.child_by_field_name("operator").is_some()
-        }
     }
 }
 

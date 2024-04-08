@@ -33,6 +33,8 @@ use workspace::completions_from_workspace;
 
 use crate::lsp::backend::Backend;
 use crate::lsp::document_context::DocumentContext;
+use crate::treesitter::NodeType;
+use crate::treesitter::NodeTypeExt;
 
 pub fn completions_from_composite_sources(
     backend: &Backend,
@@ -124,9 +126,7 @@ pub fn completions_from_composite_sources(
 }
 
 fn is_identifier_like(x: Node) -> bool {
-    let kind = x.kind();
-
-    if kind == "identifier" {
+    if x.is_identifier() {
         // Obvious case
         return true;
     }
@@ -137,11 +137,9 @@ fn is_identifier_like(x: Node) -> bool {
     // here, especially in two cases:
     // - `for<tab>` should provide completions for things like `forcats`
     // - `for<tab>` should provide snippet completions for the `for` snippet
-    // We want to be sure that we only provide completions on the unnamed
-    // (anonymous) versions of these keywords, not on "real" conditional
-    // statements.
     // The keywords here come from matching snippets in `r.code-snippets`.
-    if matches!(kind, "if" | "for" | "while") && !x.is_named() {
+    if matches!(x.node_type(), NodeType::Anonymous(kind) if matches!(kind.as_str(), "if" | "for" | "while"))
+    {
         return true;
     }
 
@@ -156,6 +154,8 @@ mod tests {
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
     use crate::test::r_test;
+    use crate::treesitter::NodeType;
+    use crate::treesitter::NodeTypeExt;
 
     #[test]
     fn test_completions_on_anonymous_node_keywords() {
@@ -168,7 +168,10 @@ mod tests {
                 let document = Document::new(keyword, None);
                 let context = DocumentContext::new(&document, point, None);
                 assert!(is_identifier_like(context.node));
-                assert_eq!(context.node.kind(), keyword);
+                assert_eq!(
+                    context.node.node_type(),
+                    NodeType::Anonymous(keyword.to_string())
+                );
             }
         })
     }
