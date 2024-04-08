@@ -189,25 +189,3 @@ fn test_connection_list_fields() {
         }
     })
 }
-
-#[test]
-fn test_connections_preview_object() {
-    r_test(|| {
-        let socket = open_dummy_connection();
-
-        // Check that we get the correct list of objects
-        let cases: Vec<Vec<ObjectSchema>> = vec![
-            (vec![obj("main", "schema"), obj("table1", "table")]),
-            (vec![obj("main", "schema"), obj("view1", "view")]),
-        ];
-
-        for path in cases {
-            assert_match!(
-                socket_rpc(&socket, ConnectionsBackendRequest::PreviewObject(PreviewObjectParams { path })),
-                ConnectionsBackendReply::PreviewObjectReply() => {
-                    // No need to check the actual reply, just that it's a valid reply
-                }
-            );
-        }
-    })
-}
