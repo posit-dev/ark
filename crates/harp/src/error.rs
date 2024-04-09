@@ -120,7 +120,7 @@ impl fmt::Display for Error {
                 )
             },
 
-            Error::UnexpectedType(actual, expected) => unsafe {
+            Error::UnexpectedType(actual, expected) => {
                 let actual = r_type2char(*actual);
                 let expected = expected
                     .iter()

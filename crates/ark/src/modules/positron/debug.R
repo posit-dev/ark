@@ -10,6 +10,7 @@ debugger_stack_info <- function(
   context_last_start_line,
   context_srcref,
   fns,
+  environments,
   calls
 ) {
   n <- length(fns)
@@ -18,30 +19,33 @@ debugger_stack_info <- function(
     # Must have at least 1 frame on the stack to proceed
     return(list())
   }
-  if (n != length(calls)) {
+  if (n != length(environments) || n != length(calls)) {
     message <- paste0(
-      "`sys.function()` and `sys.calls()` didn't return consistent results. ",
-      "There are %i functions, but %i calls."
+      "`sys.function()`, `sys.frames()`, and `sys.calls()` didn't return consistent results. ",
+      "There are %i functions, %i frames, and %i calls."
     )
-    stop(sprintf(message, n, length(calls)))
+    stop(sprintf(message, n, length(environments), length(calls)))
   }
 
   # Top level call never has source references.
   # It's what comes through the console input.
   top_level_call <- calls[[1L]]
 
-  # Last function goes with the context, and will be used as needed.
+  # Last function and environment go with the context, and will be used as needed.
   # Last call is the call that dropped us into the `context_fn`, and can be used
   # to generate an informative name.
   context_fn <- fns[[length(fns)]]
+  context_environment <- environments[[length(environments)]]
   context_parent_call <- calls[[length(calls)]]
 
-  # Remove top level call from `calls` and context function from `fns` as
-  # they are handled in their own paths. This actually also aligns the `calls` and
-  # `fns` in a way that is useful to us when constructing frame information (i.e. we
-  # end up wanting the function associated with the call you evaluate inside that function).
+  # Remove top level call from `calls` and context function/environment from
+  # `fns`/`environments` as they are handled in their own paths. This actually
+  # also aligns the `calls` and `fns`/`environments` in a way that is useful to
+  # us when constructing frame information (i.e. we end up wanting the function
+  # and environment associated with the call you evaluate inside that function).
   calls <- calls[-1L]
   fns <- fns[-length(fns)]
+  environments <- environments[-length(environments)]
   n <- n - 1L
 
   srcrefs <- lapply(calls, function(call) {
@@ -58,6 +62,7 @@ debugger_stack_info <- function(
   for (i in seq_len(n)) {
     srcref <- srcrefs[[i]]
     fn <- fns[[i]]
+    environment <- environments[[i]]
     call_text <- call_texts[[i]]
 
     out[[i]] <- intermediate_frame_info(
@@ -65,6 +70,7 @@ debugger_stack_info <- function(
       frame_name = call_text,
       srcref = srcref,
       fn = fn,
+      environment = environment,
       call_text = call_text
     )
   }
@@ -74,6 +80,7 @@ debugger_stack_info <- function(
   last_frame_info <- context_frame_info(
     context_srcref,
     context_fn,
+    context_environment,
     context_call_text,
     context_parent_call,
     context_last_start_line
@@ -99,6 +106,7 @@ top_level_call_frame_info <- function(x) {
     frame_name = x,
     file = NULL,
     contents = x,
+    environment = NULL,
     start_line = 0L,
     start_column = 0L,
     end_line = 0L,
@@ -106,7 +114,14 @@ top_level_call_frame_info <- function(x) {
   )
 }
 
-context_frame_info <- function(srcref, fn, call_text, parent_call, last_start_line) {
+context_frame_info <- function(
+  srcref,
+  fn,
+  environment,
+  call_text,
+  parent_call,
+  last_start_line
+) {
   frame_name <- "<current>"
 
   # Try to figure out the calling function's name and use that as our `source_name`
@@ -117,21 +132,36 @@ context_frame_info <- function(srcref, fn, call_text, parent_call, last_start_li
     source_name <- paste0(source_name, "()")
   }
 
-  frame_info(source_name, frame_name, srcref, fn, call_text, last_start_line)
+  frame_info(source_name, frame_name, srcref, fn, environment, call_text, last_start_line)
 }
 
-intermediate_frame_info <- function(source_name, frame_name, srcref, fn, call_text) {
+intermediate_frame_info <- function(
+  source_name,
+  frame_name,
+  srcref,
+  fn,
+  environment,
+  call_text
+) {
   # Currently only tracked for the context frame, as that is where it is most useful,
   # since that is where the user is actively stepping.
   last_start_line <- NULL
 
-  frame_info(source_name, frame_name, srcref, fn, call_text, last_start_line)
+  frame_info(source_name, frame_name, srcref, fn, environment, call_text, last_start_line)
 }
 
-frame_info <- function(source_name, frame_name, srcref, fn, call_text, last_start_line) {
+frame_info <- function(
+  source_name,
+  frame_name,
+  srcref,
+  fn,
+  environment,
+  call_text,
+  last_start_line
+) {
   if (!is.null(srcref)) {
     # Prefer srcref if we have it
-    out <- frame_info_from_srcref(source_name, frame_name, srcref)
+    out <- frame_info_from_srcref(source_name, frame_name, srcref, environment)
 
     if (!is.null(out)) {
       return(out)
@@ -156,7 +186,15 @@ frame_info <- function(source_name, frame_name, srcref, fn, call_text, last_star
   if (!is.null(fn_expr) && !is.null(call_text)) {
     # Fallback to matching against `call_text` if we have to and we have it and we were
     # able to successfully parse `fn_text`.
-    out <- frame_info_from_function(source_name, frame_name, fn_expr, fn_text, call_text, last_start_line)
+    out <- frame_info_from_function(
+      source_name = source_name,
+      frame_name = frame_name,
+      environment = environment,
+      fn_expr = fn_expr,
+      fn_text = fn_text,
+      call_text = call_text,
+      last_start_line = last_start_line
+    )
 
     if (!is.null(out)) {
       return(out)
@@ -167,11 +205,12 @@ frame_info <- function(source_name, frame_name, srcref, fn, call_text, last_star
     source_name = source_name,
     frame_name = frame_name,
     file = NULL,
-    contents = fn_text
+    contents = fn_text,
+    environment = environment
   )
 }
 
-frame_info_from_srcref <- function(source_name, frame_name, srcref) {
+frame_info_from_srcref <- function(source_name, frame_name, srcref, environment) {
   srcfile <- attr(srcref, "srcfile")
   if (is.null(srcfile)) {
     return(NULL)
@@ -202,6 +241,7 @@ frame_info_from_srcref <- function(source_name, frame_name, srcref) {
     frame_name = frame_name,
     file = file,
     contents = content,
+    environment = environment,
     start_line = range$start_line,
     start_column = range$start_column,
     end_line = range$end_line,
@@ -209,7 +249,15 @@ frame_info_from_srcref <- function(source_name, frame_name, srcref) {
   )
 }
 
-frame_info_from_function <- function(source_name, frame_name, fn_expr, fn_text, call_text, last_start_line) {
+frame_info_from_function <- function(
+  source_name,
+  frame_name,
+  environment,
+  fn_expr,
+  fn_text,
+  call_text,
+  last_start_line
+) {
   # Immediately after we step into a function, R spits out `debug: { entire-body }`,
   # which doesn't show up in our source references so we don't find it and end up
   # returning `0`s for the locations. But this is ok, all the user has to do is step to
@@ -225,6 +273,7 @@ frame_info_from_function <- function(source_name, frame_name, fn_expr, fn_text, 
     frame_name = frame_name,
     file = NULL,
     contents = fn_text,
+    environment = environment,
     start_line = range$start_line,
     start_column = range$start_column,
     end_line = range$end_line,
@@ -259,12 +308,13 @@ reparse_frame_text <- function(fn_text, call_text) {
   )
 }
 
-frame_info_unknown_range <- function(source_name, frame_name, file, contents) {
+frame_info_unknown_range <- function(source_name, frame_name, file, contents, environment) {
   new_frame_info(
     source_name = source_name,
     frame_name = frame_name,
     file = file,
     contents = contents,
+    environment = environment,
     start_line = 0L,
     start_column = 0L,
     end_line = 0L,
@@ -306,6 +356,7 @@ new_frame_info <- function(
   frame_name,
   file,
   contents,
+  environment,
   start_line,
   start_column,
   end_line,
@@ -316,6 +367,7 @@ new_frame_info <- function(
     frame_name = frame_name,
     file = file,
     contents = contents,
+    environment = environment,
     start_line = start_line,
     start_column = start_column,
     end_line = end_line,

@@ -11,7 +11,6 @@ use anyhow::bail;
 use anyhow::Result;
 use harp::r_symbol;
 use harp::utils::r_env_binding_is_active;
-use harp::utils::r_env_has;
 use harp::utils::r_envir_name;
 use harp::utils::r_formals;
 use harp::utils::r_promise_force_with_rollback;
@@ -371,13 +370,7 @@ pub(super) unsafe fn completion_item_from_symbol(
 ) -> Option<Result<CompletionItem>> {
     let symbol = r_symbol!(name);
 
-    if !r_env_has(envir, symbol) {
-        // `r_env_binding_is_active()` will error if the `envir` doesn't contain
-        // the symbol in question
-        return None;
-    }
-
-    if r_env_binding_is_active(envir, symbol) {
+    if r_env_binding_is_active(envir, symbol)? {
         // Active bindings must be checked before `Rf_findVarInFrame()`, as that
         // triggers active bindings
         return Some(completion_item_from_active_binding(name));

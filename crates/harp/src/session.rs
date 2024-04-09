@@ -26,6 +26,7 @@ use crate::vector::Vector;
 static SESSION_INIT: Once = Once::new();
 static mut NFRAME_CALL: Option<SEXP> = None;
 static mut SYS_CALLS_CALL: Option<SEXP> = None;
+static mut SYS_FRAMES_CALL: Option<SEXP> = None;
 
 pub fn r_n_frame() -> crate::error::Result<i32> {
     SESSION_INIT.call_once(init_interface);
@@ -43,6 +44,17 @@ pub fn r_sys_calls() -> crate::error::Result<SEXP> {
     unsafe {
         Ok(r_try_eval_silent(
             SYS_CALLS_CALL.unwrap_unchecked(),
+            R_BaseEnv,
+        )?)
+    }
+}
+
+pub fn r_sys_frames() -> crate::error::Result<SEXP> {
+    SESSION_INIT.call_once(init_interface);
+
+    unsafe {
+        Ok(r_try_eval_silent(
+            SYS_FRAMES_CALL.unwrap_unchecked(),
             R_BaseEnv,
         )?)
     }
@@ -125,5 +137,9 @@ fn init_interface() {
         let sys_calls_call = r_lang!(r_symbol!("sys.calls"));
         R_PreserveObject(sys_calls_call);
         SYS_CALLS_CALL = Some(sys_calls_call);
+
+        let sys_frames_call = r_lang!(r_symbol!("sys.frames"));
+        R_PreserveObject(sys_frames_call);
+        SYS_FRAMES_CALL = Some(sys_frames_call);
     }
 }

@@ -1,0 +1,757 @@
+//
+// variables.rs
+//
+// Copyright (C) 2024 Posit Software, PBC. All rights reserved.
+//
+//
+
+use dap::types::Variable;
+use harp::exec::RFunction;
+use harp::exec::RFunctionExt;
+use harp::object::r_chr_get;
+use harp::object::r_cpl_get;
+use harp::object::r_dbl_get;
+use harp::object::r_dbl_is_finite;
+use harp::object::r_dbl_is_na;
+use harp::object::r_dbl_is_nan;
+use harp::object::r_int_get;
+use harp::object::r_int_na;
+use harp::object::r_length;
+use harp::object::r_lgl_get;
+use harp::object::r_lgl_na;
+use harp::object::r_str_na;
+use harp::object::RObject;
+use harp::r_symbol;
+use harp::symbol::RSymbol;
+use harp::utils::r_bytecode_expr;
+use harp::utils::r_classes;
+use harp::utils::r_env_binding_is_active;
+use harp::utils::r_env_names;
+use harp::utils::r_envir_get;
+use harp::utils::r_is_object;
+use harp::utils::r_promise_expr;
+use harp::utils::r_promise_is_forced;
+use harp::utils::r_promise_value;
+use harp::utils::r_str_to_owned_utf8;
+use harp::utils::r_type2char;
+use harp::utils::r_typeof;
+use harp::vector::Vector;
+use libr::Rcomplex;
+use libr::BCODESXP;
+use libr::CLOSXP;
+use libr::CPLXSXP;
+use libr::EXPRSXP;
+use libr::INTSXP;
+use libr::LANGSXP;
+use libr::LGLSXP;
+use libr::LISTSXP;
+use libr::NILSXP;
+use libr::PROMSXP;
+use libr::REALSXP;
+use libr::SEXP;
+use libr::SEXPTYPE;
+use libr::STRSXP;
+use libr::SYMSXP;
+use stdext::unwrap;
+
+pub(super) fn env_variables(env: SEXP) -> Vec<Variable> {
+    let names = RObject::from(r_env_names(env));
+    let names = Vec::<String>::try_from(names).unwrap_or(Vec::new());
+
+    names
+        .into_iter()
+        .map(|name| as_variable(name, env))
+        .flatten()
+        .collect()
+}
+
+struct VariableBuilder {
+    name: String,
+    value: Option<String>,
+    type_field: Option<String>,
+}
+
+impl VariableBuilder {
+    fn new(name: String) -> Self {
+        Self {
+            name,
+            value: None,
+            type_field: None,
+        }
+    }
+
+    fn value(mut self, value: String) -> Self {
+        self.value = Some(value);
+        self
+    }
+
+    fn type_field(mut self, type_field: String) -> Self {
+        self.type_field = Some(type_field);
+        self
+    }
+
+    fn build(self) -> Variable {
+        let name = self.name;
+
+        // `""` signals no value should be displayed
+        let value = self.value.unwrap_or(String::from(""));
+
+        let type_field = self.type_field;
+
+        Variable {
+            name,
+            value,
+            type_field,
+            presentation_hint: None,
+            evaluate_name: None,
+            variables_reference: 0,
+            named_variables: None,
+            indexed_variables: None,
+            memory_reference: None,
+        }
+    }
+}
+
+fn as_variable(name: String, env: SEXP) -> Option<Variable> {
+    if is_ignored_name(&name) {
+        return None;
+    }
+
+    let symbol = unsafe { r_symbol!(name) };
+
+    if r_env_binding_is_active(env, symbol)? {
+        // We can't even extract the object out for active bindings,
+        // so we have extra special handling for them
+        return Some(active_binding_variable(name));
+    }
+
+    let x = r_envir_get(name.as_str(), env)?;
+    let variable = object_variable(name, x);
+
+    Some(variable)
+}
+
+fn object_variable(name: String, x: SEXP) -> Variable {
+    if r_is_object(x) {
+        object_variable_classed(name, x)
+    } else {
+        object_variable_bare(name, x)
+    }
+}
+
+fn object_variable_classed(name: String, x: SEXP) -> Variable {
+    // TODO: Eventually add some support for classed values.
+    // Right now we just display the class name.
+    let class = object_class(x);
+
+    let (value, type_field) = match class {
+        Some(class) => (class.clone(), class.clone()),
+        None => (String::from(""), String::from("<???>")),
+    };
+
+    VariableBuilder::new(name)
+        .value(value)
+        .type_field(type_field)
+        .build()
+}
+
+fn object_variable_bare(name: String, x: SEXP) -> Variable {
+    match r_typeof(x) {
+        NILSXP => nil_variable(name, x),
+        LGLSXP => vec_variable(name, x, LGLSXP),
+        INTSXP => vec_variable(name, x, INTSXP),
+        REALSXP => vec_variable(name, x, REALSXP),
+        CPLXSXP => vec_variable(name, x, CPLXSXP),
+        STRSXP => vec_variable(name, x, STRSXP),
+        SYMSXP => symbol_variable(name, x),
+        LANGSXP => call_variable(name, x),
+        PROMSXP => promise_variable(name, x),
+        BCODESXP => bytecode_variable(name, x),
+        EXPRSXP => expression_variable(name, x),
+        LISTSXP => pairlist_variable(name, x),
+        CLOSXP => closure_variable(name, x),
+        x_type => object_variable_bare_default(name, x_type),
+    }
+}
+
+fn nil_variable(name: String, _x: SEXP) -> Variable {
+    VariableBuilder::new(name)
+        .value(String::from("NULL"))
+        .type_field(String::from("<NULL>"))
+        .build()
+}
+
+fn vec_variable(name: String, x: SEXP, x_type: SEXPTYPE) -> Variable {
+    VariableBuilder::new(name)
+        .value(vec_value(x, x_type))
+        .type_field(vec_type_field(x_type))
+        .build()
+}
+
+fn vec_type_field(x_type: SEXPTYPE) -> String {
+    match x_type {
+        LGLSXP => String::from("<logical>"),
+        INTSXP => String::from("<integer>"),
+        REALSXP => String::from("<double>"),
+        CPLXSXP => String::from("<complex>"),
+        STRSXP => String::from("<character>"),
+        _ => std::unreachable!(),
+    }
+}
+
+fn vec_value(x: SEXP, x_type: SEXPTYPE) -> String {
+    let mut size = r_length(x);
+
+    if size == 0 {
+        return vec_value_empty(x_type);
+    }
+
+    // Cap the size
+    let trim = size > 5;
+    if trim {
+        size = 5;
+    }
+
+    let mut out = "".to_string();
+
+    match x_type {
+        LGLSXP => lgl_fill_value(x, size, &mut out),
+        INTSXP => int_fill_value(x, size, &mut out),
+        REALSXP => dbl_fill_value(x, size, &mut out),
+        CPLXSXP => cpl_fill_value(x, size, &mut out),
+        STRSXP => chr_fill_value(x, size, &mut out),
+        _ => std::unreachable!(),
+    }
+
+    if trim {
+        out.push_str(", ...");
+    }
+
+    out
+}
+
+fn vec_value_empty(x_type: SEXPTYPE) -> String {
+    match x_type {
+        LGLSXP => String::from("logical(0)"),
+        INTSXP => String::from("integer(0)"),
+        REALSXP => String::from("double(0)"),
+        CPLXSXP => String::from("complex(0)"),
+        STRSXP => String::from("character(0)"),
+        _ => std::unreachable!(),
+    }
+}
+
+fn lgl_fill_value(x: SEXP, size: isize, out: &mut String) {
+    for i in 0..size {
+        let elt = r_lgl_get(x, i);
+        let elt = lgl_to_string(elt);
+        out.push_str(&elt);
+
+        if i != size - 1 {
+            out.push_str(", ");
+        }
+    }
+}
+
+fn int_fill_value(x: SEXP, size: isize, out: &mut String) {
+    for i in 0..size {
+        let elt = r_int_get(x, i);
+        let elt = int_to_string(elt);
+        out.push_str(&elt);
+
+        if i != size - 1 {
+            out.push_str(", ");
+        }
+    }
+}
+
+fn dbl_fill_value(x: SEXP, size: isize, out: &mut String) {
+    for i in 0..size {
+        let elt = r_dbl_get(x, i);
+        let elt = dbl_to_string(elt);
+        out.push_str(&elt);
+
+        if i != size - 1 {
+            out.push_str(", ");
+        }
+    }
+}
+
+fn cpl_fill_value(x: SEXP, size: isize, out: &mut String) {
+    for i in 0..size {
+        let elt = r_cpl_get(x, i);
+        let elt = cpl_to_string(elt);
+        out.push_str(&elt);
+
+        if i != size - 1 {
+            out.push_str(", ");
+        }
+    }
+}
+
+fn chr_fill_value(x: SEXP, size: isize, out: &mut String) {
+    for i in 0..size {
+        let elt = r_chr_get(x, i);
+        let elt = str_to_string(elt);
+        out.push_str(&elt);
+
+        if i != size - 1 {
+            out.push_str(", ");
+        }
+    }
+}
+
+fn lgl_to_string(x: i32) -> String {
+    if x == r_lgl_na() {
+        String::from("NA")
+    } else if x == 0 {
+        String::from("FALSE")
+    } else {
+        String::from("TRUE")
+    }
+}
+
+fn int_to_string(x: i32) -> String {
+    if x == r_int_na() {
+        String::from("NA")
+    } else {
+        x.to_string() + "L"
+    }
+}
+
+fn dbl_to_string(x: f64) -> String {
+    if r_dbl_is_na(x) {
+        String::from("NA")
+    } else if r_dbl_is_nan(x) {
+        String::from("NaN")
+    } else if !r_dbl_is_finite(x) {
+        if x.is_sign_positive() {
+            String::from("Inf")
+        } else {
+            String::from("-Inf")
+        }
+    } else {
+        x.to_string()
+    }
+}
+
+fn cpl_to_string(x: Rcomplex) -> String {
+    let mut out = String::from("");
+
+    let real = dbl_to_string(x.r);
+    out.push_str(&real);
+
+    // If `x.i < 0`, use `-` from converting the dbl to string
+    if r_dbl_is_na(x.i) || r_dbl_is_nan(x.i) || x.i >= 0.0 {
+        out.push_str("+");
+    }
+
+    let imaginary = dbl_to_string(x.i);
+    out.push_str(&imaginary);
+    out.push_str("i");
+
+    out
+}
+
+fn str_to_string(x: SEXP) -> String {
+    if x == r_str_na() {
+        String::from("NA")
+    } else {
+        let mut out = String::from("\"");
+        let elt = r_str_to_owned_utf8(x).unwrap_or(String::from("???"));
+        out.push_str(&elt);
+        out.push_str("\"");
+        out
+    }
+}
+
+fn symbol_variable(name: String, x: SEXP) -> Variable {
+    let value = RSymbol::new_unchecked(x).to_string();
+    let type_field = String::from("<symbol>");
+
+    VariableBuilder::new(name)
+        .value(value)
+        .type_field(type_field)
+        .build()
+}
+
+fn call_variable(name: String, x: SEXP) -> Variable {
+    let value = unwrap!(call_value(x), Err(err) => {
+        log::error!("Failed to format call value: {err:?}");
+        String::from("<call>")
+    });
+
+    let type_field = String::from("<call>");
+
+    VariableBuilder::new(name)
+        .value(value)
+        .type_field(type_field)
+        .build()
+}
+
+fn call_value(x: SEXP) -> anyhow::Result<String> {
+    let x = RFunction::from(".ps.environment.describeCall")
+        .add(x)
+        .call()?;
+
+    let x = String::try_from(x)?;
+
+    Ok(x)
+}
+
+fn promise_variable(name: String, x: SEXP) -> Variable {
+    // Even if the promise hasn't been forced, the expression often contains
+    // very useful information.
+    // Practically it is typically:
+    // - A symbol captured at the call site
+    // - A call captured at the call site
+    // - A simple object, like `NULL` or a scalar, that we know how to display
+    let x = if r_promise_is_forced(x) {
+        r_promise_value(x)
+    } else {
+        r_promise_expr(x)
+    };
+
+    if r_typeof(x) == PROMSXP {
+        // Avoid any potential recursive weirdness
+        return VariableBuilder::new(name)
+            .value(String::from("<promise>"))
+            .type_field(String::from("<promise>"))
+            .build();
+    }
+
+    // Let's assume we can display this object
+    object_variable(name, x)
+}
+
+fn bytecode_variable(name: String, x: SEXP) -> Variable {
+    let x = r_bytecode_expr(x);
+
+    if r_typeof(x) == BCODESXP {
+        // Avoid any potential recursive weirdness
+        return VariableBuilder::new(name)
+            .value(String::from("<bytecode>"))
+            .type_field(String::from("<bytecode>"))
+            .build();
+    }
+
+    // Let's assume we can display this object
+    object_variable(name, x)
+}
+
+fn object_variable_bare_default(name: String, x_type: SEXPTYPE) -> Variable {
+    let class = r_type2char(x_type);
+
+    let mut value = "<".to_string();
+    value.push_str(&class);
+    value.push_str(">");
+
+    let type_field = value.clone();
+
+    VariableBuilder::new(name)
+        .value(value)
+        .type_field(type_field)
+        .build()
+}
+
+fn closure_variable(name: String, _x: SEXP) -> Variable {
+    VariableBuilder::new(name)
+        .value(String::from("<function>"))
+        .type_field(String::from("<function>"))
+        .build()
+}
+
+fn pairlist_variable(name: String, _x: SEXP) -> Variable {
+    VariableBuilder::new(name)
+        .value(String::from("<pairlist>"))
+        .type_field(String::from("<pairlist>"))
+        .build()
+}
+
+fn expression_variable(name: String, _x: SEXP) -> Variable {
+    VariableBuilder::new(name)
+        .value(String::from("<expression>"))
+        .type_field(String::from("<expression>"))
+        .build()
+}
+
+fn active_binding_variable(name: String) -> Variable {
+    VariableBuilder::new(name)
+        .value(String::from("<active binding>"))
+        .type_field(String::from("<active binding>"))
+        .build()
+}
+
+fn object_class(x: SEXP) -> Option<String> {
+    let Some(classes) = r_classes(x) else {
+        // We've seen OBJECTs with no class attribute before
+        return None;
+    };
+
+    let Ok(class) = classes.get(0) else {
+        // Error means OOB error here (our weird Vector API, should probably be an Option?).
+        log::error!("Detected length 0 class vector.");
+        return None;
+    };
+
+    let Some(class) = class else {
+        // `None` here means `NA` class value.
+        log::error!("Detected `NA_character_` in a class vector.");
+        return None;
+    };
+
+    let mut out = "<".to_string();
+    out.push_str(&class);
+    out.push_str(">");
+
+    Some(out)
+}
+
+fn is_ignored_name(x: &str) -> bool {
+    // Dots in signatures
+    if matches!(x, "...") {
+        return true;
+    }
+
+    // S3 details passed through to generics and methods
+    // See `?UseMethod`
+    // User can always print them in the console directly if they are "experts"
+    if matches!(
+        x,
+        ".Generic" | ".Method" | ".Class" | ".Group" | ".GenericCallEnv" | ".GenericDefEnv"
+    ) {
+        return true;
+    }
+
+    return false;
+}
+
+#[cfg(test)]
+mod tests {
+    use harp::environment::R_ENVS;
+    use harp::eval::r_parse_eval0;
+    use harp::exec::RFunction;
+    use harp::exec::RFunctionExt;
+    use harp::object::r_chr_poke;
+    use harp::object::r_dbl_na;
+    use harp::object::r_dbl_nan;
+    use harp::object::r_dbl_negative_infinity;
+    use harp::object::r_dbl_poke;
+    use harp::object::r_dbl_positive_infinity;
+    use harp::object::r_int_na;
+    use harp::object::r_int_poke;
+    use harp::object::r_lgl_na;
+    use harp::object::r_str_na;
+    use harp::object::RObject;
+    use harp::r_char;
+    use harp::utils::r_envir_set;
+    use libr::R_ClassSymbol;
+    use libr::Rcomplex;
+    use libr::Rf_ScalarInteger;
+    use libr::Rf_ScalarString;
+    use libr::Rf_allocVector;
+    use libr::Rf_setAttrib;
+    use libr::CPLXSXP;
+    use libr::INTSXP;
+    use libr::LGLSXP;
+    use libr::REALSXP;
+    use libr::STRSXP;
+
+    use crate::dap::variables::as_variable;
+    use crate::dap::variables::cpl_to_string;
+    use crate::dap::variables::dbl_to_string;
+    use crate::dap::variables::int_to_string;
+    use crate::dap::variables::lgl_to_string;
+    use crate::dap::variables::str_to_string;
+    use crate::dap::variables::vec_value;
+    use crate::test::r_test;
+
+    #[test]
+    fn test_to_string_methods() {
+        r_test(|| unsafe {
+            assert_eq!(lgl_to_string(1), String::from("TRUE"));
+            assert_eq!(lgl_to_string(0), String::from("FALSE"));
+            assert_eq!(lgl_to_string(r_lgl_na()), String::from("NA"));
+
+            assert_eq!(int_to_string(1), String::from("1L"));
+            assert_eq!(int_to_string(0), String::from("0L"));
+            assert_eq!(int_to_string(-1), String::from("-1L"));
+            assert_eq!(int_to_string(r_int_na()), String::from("NA"));
+
+            assert_eq!(dbl_to_string(1.5), String::from("1.5"));
+            assert_eq!(dbl_to_string(0.0), String::from("0"));
+            assert_eq!(dbl_to_string(-1.5), String::from("-1.5"));
+            assert_eq!(dbl_to_string(r_dbl_na()), String::from("NA"));
+            assert_eq!(dbl_to_string(r_dbl_nan()), String::from("NaN"));
+            assert_eq!(
+                dbl_to_string(r_dbl_positive_infinity()),
+                String::from("Inf")
+            );
+            assert_eq!(
+                dbl_to_string(r_dbl_negative_infinity()),
+                String::from("-Inf")
+            );
+
+            assert_eq!(
+                cpl_to_string(Rcomplex { r: 1.5, i: 2.5 }),
+                String::from("1.5+2.5i")
+            );
+            assert_eq!(
+                cpl_to_string(Rcomplex { r: 0.0, i: 0.0 }),
+                String::from("0+0i")
+            );
+            assert_eq!(
+                cpl_to_string(Rcomplex { r: 1.0, i: -2.0 }),
+                String::from("1-2i")
+            );
+            assert_eq!(
+                cpl_to_string(Rcomplex {
+                    r: r_dbl_na(),
+                    i: r_dbl_nan()
+                }),
+                String::from("NA+NaNi")
+            );
+            assert_eq!(
+                cpl_to_string(Rcomplex {
+                    r: r_dbl_positive_infinity(),
+                    i: r_dbl_negative_infinity()
+                }),
+                String::from("Inf-Infi")
+            );
+
+            let x = RObject::from(r_char!("abc"));
+            assert_eq!(str_to_string(x.sexp), String::from("\"abc\""));
+            let x = RObject::from(r_str_na());
+            assert_eq!(str_to_string(x.sexp), String::from("NA"));
+        })
+    }
+
+    #[test]
+    fn test_vec_value_methods() {
+        r_test(|| unsafe {
+            let x = RObject::from(Rf_allocVector(INTSXP, 2));
+            r_int_poke(x.sexp, 0, 1);
+            r_int_poke(x.sexp, 1, r_int_na());
+            assert_eq!(vec_value(x.sexp, INTSXP), String::from("1L, NA"));
+
+            let x = RObject::from(Rf_allocVector(REALSXP, 5));
+            r_dbl_poke(x.sexp, 0, 1.5);
+            r_dbl_poke(x.sexp, 1, r_dbl_na());
+            r_dbl_poke(x.sexp, 2, r_dbl_nan());
+            r_dbl_poke(x.sexp, 3, r_dbl_positive_infinity());
+            r_dbl_poke(x.sexp, 4, r_dbl_negative_infinity());
+            assert_eq!(
+                vec_value(x.sexp, REALSXP),
+                String::from("1.5, NA, NaN, Inf, -Inf")
+            );
+
+            let x = RObject::from(Rf_allocVector(STRSXP, 2));
+            r_chr_poke(x.sexp, 0, r_char!("hi"));
+            r_chr_poke(x.sexp, 1, r_str_na());
+            assert_eq!(vec_value(x.sexp, STRSXP), String::from("\"hi\", NA"))
+        })
+    }
+
+    #[test]
+    fn test_vec_value_truncation() {
+        r_test(|| unsafe {
+            let x = RObject::from(Rf_allocVector(INTSXP, 6));
+            r_int_poke(x.sexp, 0, 1);
+            r_int_poke(x.sexp, 1, 2);
+            r_int_poke(x.sexp, 2, 3);
+            r_int_poke(x.sexp, 3, r_int_na());
+            r_int_poke(x.sexp, 4, -1);
+            r_int_poke(x.sexp, 5, 100);
+            assert_eq!(
+                vec_value(x.sexp, INTSXP),
+                String::from("1L, 2L, 3L, NA, -1L, ...")
+            )
+        })
+    }
+
+    #[test]
+    fn test_vec_value_empty() {
+        r_test(|| unsafe {
+            let x = RObject::from(Rf_allocVector(LGLSXP, 0));
+            assert_eq!(vec_value(x.sexp, LGLSXP), String::from("logical(0)"));
+
+            let x = RObject::from(Rf_allocVector(INTSXP, 0));
+            assert_eq!(vec_value(x.sexp, INTSXP), String::from("integer(0)"));
+
+            let x = RObject::from(Rf_allocVector(REALSXP, 0));
+            assert_eq!(vec_value(x.sexp, REALSXP), String::from("double(0)"));
+
+            let x = RObject::from(Rf_allocVector(CPLXSXP, 0));
+            assert_eq!(vec_value(x.sexp, CPLXSXP), String::from("complex(0)"));
+
+            let x = RObject::from(Rf_allocVector(STRSXP, 0));
+            assert_eq!(vec_value(x.sexp, STRSXP), String::from("character(0)"));
+        })
+    }
+
+    #[test]
+    fn test_as_variable_base() {
+        r_test(|| unsafe {
+            let env = RFunction::new("base", "new.env")
+                .param("parent", R_ENVS.base)
+                .call()
+                .unwrap();
+
+            let a = RObject::from(Rf_ScalarInteger(1));
+            r_envir_set("a", a.sexp, env.sexp);
+            let variable = as_variable(String::from("a"), env.sexp).unwrap();
+            assert_eq!(variable.name, String::from("a"));
+            assert_eq!(variable.value, String::from("1L"));
+            assert_eq!(variable.type_field, Some(String::from("<integer>")));
+
+            let variable = as_variable(String::from("b"), env.sexp);
+            assert!(variable.is_none());
+        })
+    }
+
+    #[test]
+    fn test_as_variable_classed() {
+        r_test(|| unsafe {
+            let env = RFunction::new("base", "new.env")
+                .param("parent", R_ENVS.base)
+                .call()
+                .unwrap();
+
+            let a = RObject::from(Rf_ScalarInteger(1));
+            r_envir_set("a", a.sexp, env.sexp);
+
+            let class = RObject::from(r_char!("foo"));
+            let class = RObject::from(Rf_ScalarString(class.sexp));
+            Rf_setAttrib(a.sexp, R_ClassSymbol, class.sexp);
+
+            let variable = as_variable(String::from("a"), env.sexp).unwrap();
+            assert_eq!(variable.name, String::from("a"));
+            assert_eq!(variable.value, String::from("<foo>"));
+            assert_eq!(variable.type_field, Some(String::from("<foo>")));
+        })
+    }
+
+    #[test]
+    fn test_as_variable_active_binding() {
+        r_test(|| {
+            let env = RFunction::new("base", "new.env")
+                .param("parent", R_ENVS.base)
+                .call()
+                .unwrap();
+
+            let function = r_parse_eval0("function() stop('oh no')", R_ENVS.base).unwrap();
+
+            let _ = RFunction::new("base", "makeActiveBinding")
+                .param("sym", "a")
+                .param("fun", function)
+                .param("env", env.sexp)
+                .call()
+                .unwrap();
+
+            let variable = as_variable(String::from("a"), env.sexp).unwrap();
+            assert_eq!(variable.name, String::from("a"));
+            assert_eq!(variable.value, String::from("<active binding>"));
+            assert_eq!(variable.type_field, Some(String::from("<active binding>")));
+        })
+    }
+}

@@ -15,7 +15,9 @@ use harp::object::RObject;
 use harp::protect::RProtect;
 use harp::r_string;
 use harp::session::r_sys_calls;
+use harp::session::r_sys_frames;
 use harp::session::r_sys_functions;
+use harp::utils::r_is_null;
 use libr::R_NilValue;
 use libr::R_Srcref;
 use libr::Rf_allocVector;
@@ -29,6 +31,7 @@ use stdext::log_error;
 use crate::dap::dap::DapBackendEvent;
 use crate::dap::Dap;
 use crate::modules::ARK_ENVS;
+use crate::thread::RThreadSafe;
 
 pub struct RMainDap {
     /// Underlying dap state
@@ -51,13 +54,15 @@ pub enum DebugCallText {
     Finalized(String),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct FrameInfo {
+    pub id: i64,
     /// The name shown in the editor tab bar when this frame is viewed.
     pub source_name: String,
     /// The name shown in the stack frame UI when this frame is visible.
     pub frame_name: String,
     pub source: FrameSource,
+    pub environment: Option<RThreadSafe<RObject>>,
     pub start_line: i64,
     pub start_column: i64,
     pub end_line: i64,
@@ -197,6 +202,9 @@ fn r_stack_info(
         let functions = r_sys_functions()?;
         protect.add(functions);
 
+        let environments = r_sys_frames()?;
+        protect.add(environments);
+
         let calls = r_sys_calls()?;
         protect.add(calls);
 
@@ -205,6 +213,7 @@ fn r_stack_info(
             .add(context_last_start_line)
             .add(context_srcref)
             .add(functions)
+            .add(environments)
             .add(calls)
             .call_in(ARK_ENVS.positron_ns)?;
 
@@ -215,14 +224,14 @@ fn r_stack_info(
         // Reverse the order for DAP
         for i in (0..n).rev() {
             let frame = VECTOR_ELT(info.sexp, i);
-            out.push(as_frame_info(frame)?);
+            out.push(as_frame_info(i as i64, frame)?);
         }
 
         Ok(out)
     }
 }
 
-fn as_frame_info(info: SEXP) -> anyhow::Result<FrameInfo> {
+fn as_frame_info(id: i64, info: SEXP) -> anyhow::Result<FrameInfo> {
     unsafe {
         let mut i = 0;
 
@@ -256,6 +265,14 @@ fn as_frame_info(info: SEXP) -> anyhow::Result<FrameInfo> {
         };
 
         i += 1;
+        let environment = VECTOR_ELT(info, i);
+        let environment = if r_is_null(environment) {
+            None
+        } else {
+            Some(RThreadSafe::new(RObject::from(environment)))
+        };
+
+        i += 1;
         let start_line = VECTOR_ELT(info, i);
         let start_line: i32 = RObject::view(start_line).try_into()?;
 
@@ -275,9 +292,11 @@ fn as_frame_info(info: SEXP) -> anyhow::Result<FrameInfo> {
         let end_column = end_column + 1;
 
         Ok(FrameInfo {
+            id,
             source_name,
             frame_name,
             source,
+            environment,
             start_line: start_line.try_into()?,
             start_column: start_column.try_into()?,
             end_line: end_line.try_into()?,

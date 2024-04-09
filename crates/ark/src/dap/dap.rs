@@ -56,6 +56,11 @@ pub struct Dap {
     pub fallback_sources: HashMap<String, i32>,
     current_source_reference: i32,
 
+    /// Map of `variables_reference -> stack[index]` used to determine which
+    /// `FrameInfo` in the `stack` goes with this `variables_reference` request.
+    pub variables_sources: HashMap<i64, i64>,
+    current_variables_reference: i64,
+
     /// Channel for sending events to the comm frontend.
     comm_tx: Option<Sender<CommMsg>>,
 
@@ -76,6 +81,8 @@ impl Dap {
             stack: None,
             fallback_sources: HashMap::new(),
             current_source_reference: 1,
+            variables_sources: HashMap::new(),
+            current_variables_reference: 1,
             comm_tx: None,
             r_request_tx,
             shared_self: None,
@@ -93,24 +100,8 @@ impl Dap {
     }
 
     pub fn start_debug(&mut self, stack: Vec<FrameInfo>) {
-        // Load `fallback_sources` with this stack's text sources
-        for frame in stack.iter() {
-            let source = &frame.source;
-
-            match source {
-                FrameSource::File(_) => continue,
-                FrameSource::Text(source) => {
-                    if self.fallback_sources.contains_key(source) {
-                        // Already in `fallback_sources`, associated with an existing `source_reference`
-                        continue;
-                    }
-                    self.fallback_sources
-                        .insert(source.clone(), self.current_source_reference);
-                    self.current_source_reference += 1;
-                },
-            }
-        }
-
+        self.load_fallback_sources(&stack);
+        self.load_variables_sources(&stack);
         self.stack = Some(stack);
 
         if self.is_debugging {
@@ -135,8 +126,8 @@ impl Dap {
     pub fn stop_debug(&mut self) {
         // Reset state
         self.stack = None;
-        self.fallback_sources.clear();
-        self.current_source_reference = 1;
+        self.clear_fallback_sources();
+        self.clear_variables_sources();
         self.is_debugging = false;
 
         if self.is_connected {
@@ -152,6 +143,50 @@ impl Dap {
             // have received a `Continued` event already, after a `n`
             // command or similar.
         }
+    }
+
+    /// Load `fallback_sources` with this stack's text sources
+    fn load_fallback_sources(&mut self, stack: &Vec<FrameInfo>) {
+        for frame in stack.iter() {
+            let source = &frame.source;
+
+            match source {
+                FrameSource::File(_) => continue,
+                FrameSource::Text(source) => {
+                    if self.fallback_sources.contains_key(source) {
+                        // Already in `fallback_sources`, associated with an existing `source_reference`
+                        continue;
+                    }
+                    self.fallback_sources
+                        .insert(source.clone(), self.current_source_reference);
+                    self.current_source_reference += 1;
+                },
+            }
+        }
+    }
+
+    fn clear_fallback_sources(&mut self) {
+        self.fallback_sources.clear();
+        self.current_source_reference = 1;
+    }
+
+    fn load_variables_sources(&mut self, stack: &Vec<FrameInfo>) {
+        for frame in stack.iter() {
+            if frame.environment.is_none() {
+                continue;
+            }
+
+            // Log the `FrameInfo` that this `variables_reference` goes with
+            self.variables_sources
+                .insert(self.current_variables_reference, frame.id);
+
+            self.current_variables_reference += 1;
+        }
+    }
+
+    fn clear_variables_sources(&mut self) {
+        self.variables_sources.clear();
+        self.current_variables_reference = 1;
     }
 }
 
