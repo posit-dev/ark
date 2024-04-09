@@ -55,6 +55,7 @@ url = "2.4.1"
 walkdir = "2"
 yaml-rust = "0.4.5"
 winsafe = { version = "0.0.19", features = ["kernel"] }
+struct-field-names-as-array = "0.3.0"
 strum = "0.26.2"
 futures = "0.3.30"
 
