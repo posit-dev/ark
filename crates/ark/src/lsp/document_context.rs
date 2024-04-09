@@ -25,7 +25,12 @@ impl<'a> DocumentContext<'a> {
         let ast = &document.ast;
 
         // find node at point
-        let node = ast.root_node().find_closest_node_to_point(point).unwrap();
+        let Some(node) = ast.root_node().find_closest_node_to_point(point) else {
+            // TODO: We really want to track this down and figure out what's happening
+            // and fix it in `find_closest_node_to_point()`.
+            let contents = document.contents.to_string();
+            panic!("Failed to find closest node to point: {point} with contents '{contents}'");
+        };
 
         // build document context
         DocumentContext {
