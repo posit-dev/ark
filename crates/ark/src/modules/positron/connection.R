@@ -171,3 +171,77 @@ connection_flatten_object_types <- function(object_tree) {
     object_types <- con$objectTypes[[utils::tail(path, 1)]]
     identical(object_types$contains, "data")
 }
+
+.ps.register_dummy_connection <- function() {
+    # This is used for testing the connections service
+    observer <- getOption("connectionObserver")
+    id <- observer$connectionOpened(
+        type = "DummyConnection",
+        host = "DummyHost",
+        displayName = "Dummy Connection",
+        icon = "dummy-connection.png",
+        connectCode = "print('Connected to Dummy Connection')",
+        disconnect = function() print("Disconnected from Dummy Connection"),
+        listObjectTypes = function() {
+            list(
+                schema = list(
+                    icon = "schema.png",
+                    contains = list(
+                        table = list(
+                            icon = "table.png",
+                            contains = "data"
+                        ),
+                        view = list(
+                            contains = "data"
+                        )
+                    )
+                )
+            )
+        },
+        listObjects = function(...) {
+            path <- list(...)
+
+            if (length(path) == 0) {
+                return(data.frame(name = c("main"), type = c("schema")))
+            }
+
+            if (length(path) == 1) {
+                if (path$schema == "main") {
+                    return(data.frame(
+                        name = c("table1", "table2", "view1"),
+                        type = c("table", "table", "view")
+                    ))
+                }
+            }
+
+            stop("No more levels in the hierarchy")
+        },
+        listColumns = function(...) {
+            path <- list(...)
+
+            if (length(path) != 2) {
+                stop("Need two levels in this path")
+            }
+
+            result <- data.frame(
+                name = c("col1", "col2", "col3"),
+                type = c("integer", "character", "logical")
+            )
+
+            result$name <- paste0(path[[2]], "_", result$name)
+            result
+        },
+        previewObject = function(...) {
+            data.frame(
+                col1 = 1:10,
+                col2 = letters[1:10],
+                col3 = rep(c(TRUE, FALSE), 5)
+            )
+        },
+        connectionObject = NULL,
+        actions = NULL
+    )
+
+    if (is.null(id)) return("hello")
+    id
+}

@@ -23,6 +23,7 @@ use ark::data_explorer::r_data_explorer::RDataExplorer;
 use ark::lsp::events::EVENTS;
 use ark::r_task;
 use ark::test::r_test;
+use ark::test::socket_rpc_request;
 use ark::thread::RThreadSafe;
 use crossbeam::channel::bounded;
 use harp::assert_match;
@@ -72,30 +73,7 @@ fn socket_rpc(
     socket: &socket::comm::CommSocket,
     req: DataExplorerBackendRequest,
 ) -> DataExplorerBackendReply {
-    // Randomly generate a unique ID for this request.
-    let id = uuid::Uuid::new_v4().to_string();
-
-    // Serialize the message for the wire
-    let json = serde_json::to_value(req).unwrap();
-    println!("--> {:?}", json);
-
-    // Covnert the request to a CommMsg and send it.
-    let msg = CommMsg::Rpc(String::from(id), json);
-    socket.incoming_tx.send(msg).unwrap();
-    let msg = socket
-        .outgoing_rx
-        .recv_timeout(std::time::Duration::from_secs(1))
-        .unwrap();
-
-    // Extract the reply from the CommMsg.
-    match msg {
-        CommMsg::Rpc(_id, value) => {
-            println!("<-- {:?}", value);
-            let reply: DataExplorerBackendReply = serde_json::from_value(value).unwrap();
-            reply
-        },
-        _ => panic!("Unexpected Comm Message"),
-    }
+    socket_rpc_request::<DataExplorerBackendRequest, DataExplorerBackendReply>(&socket, req)
 }
 
 /// Runs the data explorer tests.

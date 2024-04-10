@@ -39,22 +39,21 @@ struct Metadata {
     name: String,
 }
 
-struct RConnection {
+pub struct RConnection {
     name: String,
     comm: CommSocket,
     comm_manager_tx: Sender<CommManagerEvent>,
 }
 
 impl RConnection {
-    fn start(
+    pub fn start(
         name: String,
         comm_manager_tx: Sender<CommManagerEvent>,
+        comm_id: String,
     ) -> Result<String, anyhow::Error> {
-        let id = Uuid::new_v4().to_string();
-
         let comm = CommSocket::new(
             CommInitiator::BackEnd,
-            id.clone(),
+            comm_id.clone(),
             String::from("positron.connection"),
         );
 
@@ -64,16 +63,16 @@ impl RConnection {
             comm_manager_tx,
         };
 
-        log::info!("Connection Pane: Channel created id:{id}");
+        log::info!("Connection Pane: Channel created id:{comm_id}");
         connection.open_and_register_comm()?;
 
-        spawn!(format!("ark-connection-{}", id), move || {
+        spawn!(format!("ark-connection-{}", comm_id), move || {
             unwrap!(connection.handle_messages(), Err(err) => {
                 log::error!("Connection Pane: Error while handling messages: {err:?}");
             });
         });
 
-        Ok(id)
+        Ok(comm_id)
     }
 
     fn open_and_register_comm(&self) -> Result<(), anyhow::Error> {
@@ -258,13 +257,24 @@ impl RConnection {
 
 #[harp::register]
 pub unsafe extern "C" fn ps_connection_opened(name: SEXP) -> Result<SEXP, anyhow::Error> {
-    let main = RMain::get();
     let nm = RObject::view(name).to::<String>()?;
+    let id = Uuid::new_v4().to_string();
 
-    let id = unwrap! (RConnection::start(nm, main.get_comm_manager_tx().clone()), Err(err) => {
-        log::error!("Connection Pane: Failed to start connection: {err:?}");
-        return Err(err);
-    });
+    // If RMain is not initialized, we are probably in testing mode, so we just don't start the connection
+    // and let the testing code manually do it
+    if RMain::initialized() {
+        let main = RMain::get();
+
+        unwrap! (
+            RConnection::start(nm, main.get_comm_manager_tx().clone(), id.clone()),
+            Err(err) => {
+                log::error!("Connection Pane: Failed to start connection: {err:?}");
+                return Err(err);
+            }
+        );
+    } else {
+        log::warn!("Connection Pane: RMain is not initialized. Connection will not be started.");
+    }
 
     Ok(RObject::from(id).into())
 }
