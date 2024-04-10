@@ -34,7 +34,8 @@ use super::dap::Dap;
 use super::dap::DapBackendEvent;
 use crate::dap::dap_r_main::FrameInfo;
 use crate::dap::dap_r_main::FrameSource;
-use crate::dap::variables::env_variables;
+use crate::dap::variables::object_variables;
+use crate::dap::variables::RVariable;
 use crate::r_task;
 use crate::request::debug_request_command;
 use crate::request::DebugRequest;
@@ -424,12 +425,18 @@ impl<R: Read, W: Write> DapServer<R, W> {
     }
 
     fn handle_scopes(&mut self, req: Request, args: ScopesArguments) {
-        let mut scopes = Vec::new();
+        let state = self.state.lock().unwrap();
+        let frame_id_to_variables_reference = &state.frame_id_to_variables_reference;
 
-        let variables_reference = match self.find_variables_reference(args.frame_id) {
-            Some(variables_reference) => variables_reference,
-            None => 0,
-        };
+        // Entirely possible that the requested `frame_id` doesn't have any
+        // variables (like the top most frame where the call was made). We send
+        // back `0` in those cases, which is an indication of "no variables".
+        let variables_reference = frame_id_to_variables_reference
+            .get(&args.frame_id)
+            .copied()
+            .unwrap_or(0);
+
+        let mut scopes = Vec::new();
 
         // Only 1 overarching scope for now
         scopes.push(Scope {
@@ -451,63 +458,70 @@ impl<R: Read, W: Write> DapServer<R, W> {
         self.server.respond(rsp).unwrap();
     }
 
-    fn find_variables_reference(&self, frame_id: i64) -> Option<i64> {
-        let state = self.state.lock().unwrap();
-        let variables_sources = &state.variables_sources;
-
-        // Match up the requested `frame_id` with one in our `variables_sources`.
-        // Entirely possible that the requested `frame_id` doesn't have any
-        // variables (like the top most frame where the call was made).
-        for (current_variables_reference, current_frame_id) in variables_sources.iter() {
-            if &frame_id == current_frame_id {
-                return Some(current_variables_reference.clone());
-            }
-        }
-
-        None
-    }
-
     fn handle_variables(&mut self, req: Request, args: VariablesArguments) {
         let variables_reference = args.variables_reference;
-        let variables = self.collect_variables(variables_reference);
+        let variables = self.collect_r_variables(variables_reference);
+        let variables = self.into_variables(variables);
         let rsp = req.success(ResponseBody::Variables(VariablesResponse { variables }));
         self.server.respond(rsp).unwrap();
     }
 
-    fn collect_variables(&self, variables_reference: i64) -> Vec<Variable> {
+    fn collect_r_variables(&self, variables_reference: i64) -> Vec<RVariable> {
         let state = self.state.lock().unwrap();
+        let variables_reference_to_r_object = &state.variables_reference_to_r_object;
 
-        let Some(stack) = state.stack.as_ref() else {
-            log::error!("Missing a `stack` when collecting variables.");
-            return Vec::new();
-        };
-
-        let variables_sources = &state.variables_sources;
-
-        // First look up the `frame_id` that corresponds to this `variables_reference`
-        let Some(frame_id) = variables_sources.get(&variables_reference) else {
-            return Vec::new();
-        };
-
-        // Now actually get that `frame`, we should definitely have it
-        let Some(frame) = stack.iter().find(|frame| &frame.id == frame_id) else {
-            log::error!("Failed to locate `frame_id` {frame_id} in `stack`.");
-            return Vec::new();
-        };
-
-        let Some(ref environment) = frame.environment else {
-            log::error!("Located frame for `frame_id` {frame_id}, but there is no environment in this `FrameInfo`.");
+        let Some(object) = variables_reference_to_r_object.get(&variables_reference) else {
+            log::error!(
+                "Failed to locate R object for `variables_reference` {variables_reference}."
+            );
             return Vec::new();
         };
 
         // Should be safe to run an r-task while paused in the debugger, tasks
         // are still run while polling within the read console hook
         let variables = r_task(|| {
-            let environment = environment.get();
-            env_variables(environment.sexp)
+            let object = object.get();
+            object_variables(object.sexp)
         });
 
         variables
+    }
+
+    fn into_variables(&self, variables: Vec<RVariable>) -> Vec<Variable> {
+        let mut state = self.state.lock().unwrap();
+        let mut out = Vec::with_capacity(variables.len());
+
+        for variable in variables.into_iter() {
+            let name = variable.name;
+            let value = variable.value;
+            let type_field = variable.type_field;
+            let variables_reference_object = variable.variables_reference_object;
+
+            // If we have a `variables_reference_object`, then this variable is
+            // structured and has children. We need a new unique
+            // `variables_reference` to return that will map to this object in
+            // a followup `Variables` request.
+            let variables_reference = match variables_reference_object {
+                Some(x) => state.insert_variables_reference_object(x),
+                None => 0,
+            };
+
+            let variable = Variable {
+                name,
+                value,
+                type_field,
+                presentation_hint: None,
+                evaluate_name: None,
+                variables_reference,
+                named_variables: None,
+                indexed_variables: None,
+                memory_reference: None,
+            };
+
+            out.push(variable);
+        }
+
+        out
     }
 
     fn handle_step<A>(&mut self, req: Request, _args: A, cmd: DebugRequest, resp: ResponseBody) {

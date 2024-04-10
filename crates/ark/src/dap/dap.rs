@@ -12,6 +12,7 @@ use std::sync::Mutex;
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::language::server_handler::ServerHandler;
 use crossbeam::channel::Sender;
+use harp::object::RObject;
 use serde_json::json;
 use stdext::log_error;
 use stdext::spawn;
@@ -20,6 +21,7 @@ use crate::dap::dap_r_main::FrameInfo;
 use crate::dap::dap_r_main::FrameSource;
 use crate::dap::dap_server;
 use crate::request::RRequest;
+use crate::thread::RThreadSafe;
 
 #[derive(Debug, Copy, Clone)]
 pub enum DapBackendEvent {
@@ -56,9 +58,17 @@ pub struct Dap {
     pub fallback_sources: HashMap<String, i32>,
     current_source_reference: i32,
 
-    /// Map of `variables_reference -> stack[index]` used to determine which
-    /// `FrameInfo` in the `stack` goes with this `variables_reference` request.
-    pub variables_sources: HashMap<i64, i64>,
+    /// Maps a frame `id` from within the `stack` to a unique
+    /// `variables_reference` id, which then allows you to use
+    /// `variables_reference_to_r_object` to look up the R object to collect
+    /// variables from.
+    pub frame_id_to_variables_reference: HashMap<i64, i64>,
+
+    /// Maps a `variables_reference` to the corresponding R object used to
+    /// collect variables from. The R object may be a frame environment from
+    /// a `FrameInfo`, or an arbitrarily nested child of one of those
+    /// environments if the child has its own children.
+    pub variables_reference_to_r_object: HashMap<i64, RThreadSafe<RObject>>,
     current_variables_reference: i64,
 
     /// Channel for sending events to the comm frontend.
@@ -81,7 +91,8 @@ impl Dap {
             stack: None,
             fallback_sources: HashMap::new(),
             current_source_reference: 1,
-            variables_sources: HashMap::new(),
+            frame_id_to_variables_reference: HashMap::new(),
+            variables_reference_to_r_object: HashMap::new(),
             current_variables_reference: 1,
             comm_tx: None,
             r_request_tx,
@@ -99,9 +110,9 @@ impl Dap {
         shared
     }
 
-    pub fn start_debug(&mut self, stack: Vec<FrameInfo>) {
+    pub fn start_debug(&mut self, mut stack: Vec<FrameInfo>) {
         self.load_fallback_sources(&stack);
-        self.load_variables_sources(&stack);
+        self.load_variables_references(&mut stack);
         self.stack = Some(stack);
 
         if self.is_debugging {
@@ -127,7 +138,7 @@ impl Dap {
         // Reset state
         self.stack = None;
         self.clear_fallback_sources();
-        self.clear_variables_sources();
+        self.clear_variables_references();
         self.is_debugging = false;
 
         if self.is_connected {
@@ -170,23 +181,50 @@ impl Dap {
         self.current_source_reference = 1;
     }
 
-    fn load_variables_sources(&mut self, stack: &Vec<FrameInfo>) {
-        for frame in stack.iter() {
-            if frame.environment.is_none() {
-                continue;
-            }
+    fn load_variables_references(&mut self, stack: &mut Vec<FrameInfo>) {
+        for frame in stack.iter_mut() {
+            // Move the `environment` out of the `FrameInfo`, who's only
+            // job is to get it here. We don't use it otherwise.
+            let environment = frame.environment.take();
 
-            // Log the `FrameInfo` that this `variables_reference` goes with
-            self.variables_sources
-                .insert(self.current_variables_reference, frame.id);
+            let Some(environment) = environment else {
+                continue;
+            };
+
+            // Map this frame's `id` to a unique `variables_reference`, and
+            // then map that `variables_reference` to the R object we will
+            // eventually get the variables from
+            self.frame_id_to_variables_reference
+                .insert(frame.id, self.current_variables_reference);
+            self.variables_reference_to_r_object
+                .insert(self.current_variables_reference, environment);
 
             self.current_variables_reference += 1;
         }
     }
 
-    fn clear_variables_sources(&mut self) {
-        self.variables_sources.clear();
+    fn clear_variables_references(&mut self) {
+        self.frame_id_to_variables_reference.clear();
+        self.variables_reference_to_r_object.clear();
         self.current_variables_reference = 1;
+    }
+
+    /// Map an arbitrary `RObject` to a new unique `variables_reference`
+    ///
+    /// This is used on structured R objects that have children requiring a
+    /// lazy secondary `Variables` request to collect those children.
+    ///
+    /// Returns the `variables_reference` which gets bound to the corresponding
+    /// `Variable` object for `x`, which the frontend uses to request its
+    /// children.
+    pub fn insert_variables_reference_object(&mut self, x: RThreadSafe<RObject>) -> i64 {
+        let variables_reference = self.current_variables_reference;
+
+        self.variables_reference_to_r_object
+            .insert(variables_reference, x);
+        self.current_variables_reference += 1;
+
+        variables_reference
     }
 }
 

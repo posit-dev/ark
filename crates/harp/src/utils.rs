@@ -24,8 +24,12 @@ use crate::eval::r_parse_eval0;
 use crate::exec::geterrmessage;
 use crate::exec::RFunction;
 use crate::exec::RFunctionExt;
+use crate::object::r_chr_get;
+use crate::object::r_chr_poke;
 use crate::object::r_dim;
 use crate::object::r_length;
+use crate::object::r_str_blank;
+use crate::object::r_str_na;
 use crate::object::RObject;
 use crate::protect::RProtect;
 use crate::r_char;
@@ -401,6 +405,76 @@ pub unsafe fn r_envir_set(symbol: &str, value: SEXP, envir: SEXP) {
 
 pub unsafe fn r_envir_remove(symbol: &str, envir: SEXP) {
     R_removeVarFromFrame(r_symbol!(symbol), envir);
+}
+
+/// Get names of a vector
+///
+/// `r_names2()` always returns a character vector, even when the object does
+/// not have a `names` attribute. When there are no `names`, a vector of empty
+/// names is returned. Missing names are standardized to `""`.
+///
+/// Note that it does not use S3 dispatch for length or names.
+pub fn r_names2(x: SEXP) -> SEXP {
+    let mut protect = unsafe { RProtect::new() };
+
+    let size = r_length(x);
+
+    let names = unsafe { Rf_getAttrib(x, R_NamesSymbol) };
+    unsafe { protect.add(names) };
+
+    if r_is_null(names) {
+        return r_empty_names(size);
+    }
+
+    if r_typeof(names) != STRSXP {
+        log::error!("`names` attribute was neither a character vector nor `NULL`.");
+        return r_empty_names(size);
+    }
+
+    let mut needs_renaming = false;
+
+    for i in 0..size {
+        let elt = r_chr_get(names, i);
+
+        if elt == r_str_na() {
+            needs_renaming = true;
+            break;
+        }
+    }
+
+    if !needs_renaming {
+        return names;
+    }
+
+    let out = unsafe { Rf_allocVector(STRSXP, size) };
+    unsafe { protect.add(out) };
+
+    for i in 0..size {
+        let elt = r_chr_get(names, i);
+
+        if elt == r_str_na() {
+            r_chr_poke(out, i, r_str_blank());
+        } else {
+            r_chr_poke(out, i, elt);
+        }
+    }
+
+    out
+}
+
+fn r_empty_names(size: R_xlen_t) -> SEXP {
+    unsafe {
+        let mut protect = RProtect::new();
+
+        let out = Rf_allocVector(STRSXP, size);
+        protect.add(out);
+
+        for i in 0..size {
+            r_chr_poke(out, i, r_str_blank());
+        }
+
+        out
+    }
 }
 
 pub unsafe fn r_stringify(object: SEXP, delimiter: &str) -> Result<String> {

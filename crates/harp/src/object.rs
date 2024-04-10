@@ -192,6 +192,10 @@ pub fn r_str_na() -> SEXP {
     unsafe { R_NaString }
 }
 
+pub fn r_str_blank() -> SEXP {
+    unsafe { R_BlankString }
+}
+
 pub fn r_dbl_nan() -> f64 {
     unsafe { R_NaN }
 }

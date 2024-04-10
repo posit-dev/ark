@@ -5,7 +5,6 @@
 //
 //
 
-use dap::types::Variable;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::r_chr_get;
@@ -19,6 +18,8 @@ use harp::object::r_int_na;
 use harp::object::r_length;
 use harp::object::r_lgl_get;
 use harp::object::r_lgl_na;
+use harp::object::r_list_get;
+use harp::object::r_str_blank;
 use harp::object::r_str_na;
 use harp::object::RObject;
 use harp::r_symbol;
@@ -29,6 +30,7 @@ use harp::utils::r_env_binding_is_active;
 use harp::utils::r_env_names;
 use harp::utils::r_envir_get;
 use harp::utils::r_is_object;
+use harp::utils::r_names2;
 use harp::utils::r_promise_expr;
 use harp::utils::r_promise_is_forced;
 use harp::utils::r_promise_value;
@@ -36,10 +38,12 @@ use harp::utils::r_str_to_owned_utf8;
 use harp::utils::r_type2char;
 use harp::utils::r_typeof;
 use harp::vector::Vector;
+use libr::R_xlen_t;
 use libr::Rcomplex;
 use libr::BCODESXP;
 use libr::CLOSXP;
 use libr::CPLXSXP;
+use libr::ENVSXP;
 use libr::EXPRSXP;
 use libr::INTSXP;
 use libr::LANGSXP;
@@ -52,20 +56,95 @@ use libr::SEXP;
 use libr::SEXPTYPE;
 use libr::STRSXP;
 use libr::SYMSXP;
+use libr::VECSXP;
 use stdext::unwrap;
 
-pub(super) fn env_variables(env: SEXP) -> Vec<Variable> {
-    let names = RObject::from(r_env_names(env));
+use crate::thread::RThreadSafe;
+
+pub struct RVariable {
+    pub name: String,
+    pub value: String,
+    pub type_field: Option<String>,
+    pub variables_reference_object: Option<RThreadSafe<RObject>>,
+}
+
+struct RVariableBuilder {
+    name: String,
+    value: Option<String>,
+    type_field: Option<String>,
+    variables_reference_object: Option<RThreadSafe<RObject>>,
+}
+
+impl RVariableBuilder {
+    fn new(name: String) -> Self {
+        Self {
+            name,
+            value: None,
+            type_field: None,
+            variables_reference_object: None,
+        }
+    }
+
+    fn value(mut self, x: String) -> Self {
+        self.value = Some(x);
+        self
+    }
+
+    fn type_field(mut self, x: String) -> Self {
+        self.type_field = Some(x);
+        self
+    }
+
+    fn variables_reference_object(mut self, x: RThreadSafe<RObject>) -> Self {
+        self.variables_reference_object = Some(x);
+        self
+    }
+
+    fn build(self) -> RVariable {
+        let name = self.name;
+        // `""` signals no value should be displayed
+        let value = self.value.unwrap_or(String::from(""));
+        let type_field = self.type_field;
+        let variables_reference_object = self.variables_reference_object;
+
+        RVariable {
+            name,
+            value,
+            type_field,
+            variables_reference_object,
+        }
+    }
+}
+
+/// Main entry point for `RVariable` collection by a `Variables` DAP request
+///
+/// Currently can collect variables for either:
+/// - A frame environment, from a `FrameInfo`
+/// - A recursive child of a frame environment, if that child is a bare list
+///   or environment itself.
+pub(super) fn object_variables(x: SEXP) -> Vec<RVariable> {
+    match r_typeof(x) {
+        ENVSXP => env_variables(x),
+        VECSXP => list_variables(x),
+        r_type => panic!(
+            "Can't request variables for object of type '{}'.",
+            r_type2char(r_type)
+        ),
+    }
+}
+
+fn env_variables(x: SEXP) -> Vec<RVariable> {
+    let names = RObject::from(r_env_names(x));
     let names = Vec::<String>::try_from(names).unwrap_or(Vec::new());
 
     names
         .into_iter()
-        .map(|name| env_binding_variable(name, env))
+        .map(|name| env_binding_variable(name, x))
         .flatten()
         .collect()
 }
 
-fn env_binding_variable(name: String, env: SEXP) -> Option<Variable> {
+fn env_binding_variable(name: String, x: SEXP) -> Option<RVariable> {
     if is_ignored_name(&name) {
         // Drop ignored names entirely
         return None;
@@ -73,66 +152,34 @@ fn env_binding_variable(name: String, env: SEXP) -> Option<Variable> {
 
     let symbol = unsafe { r_symbol!(name) };
 
-    if r_env_binding_is_active(env, symbol)? {
+    if r_env_binding_is_active(x, symbol)? {
         // We can't even extract out the object for active bindings so they
         // are handled extremely specially.
         return Some(active_binding_variable(name));
     }
 
-    let x = r_envir_get(name.as_str(), env)?;
+    let x = r_envir_get(name.as_str(), x)?;
     let variable = object_variable(name, x);
 
     Some(variable)
 }
 
-struct VariableBuilder {
-    name: String,
-    value: Option<String>,
-    type_field: Option<String>,
+fn list_variables(x: SEXP) -> Vec<RVariable> {
+    let size = r_length(x) as usize;
+    let names = indexed_names(x);
+
+    let mut out = Vec::with_capacity(size);
+
+    for (i, name) in names.into_iter().enumerate() {
+        let elt = r_list_get(x, i as R_xlen_t);
+        let variable = object_variable(name, elt);
+        out.push(variable);
+    }
+
+    out
 }
 
-impl VariableBuilder {
-    fn new(name: String) -> Self {
-        Self {
-            name,
-            value: None,
-            type_field: None,
-        }
-    }
-
-    fn value(mut self, value: String) -> Self {
-        self.value = Some(value);
-        self
-    }
-
-    fn type_field(mut self, type_field: String) -> Self {
-        self.type_field = Some(type_field);
-        self
-    }
-
-    fn build(self) -> Variable {
-        let name = self.name;
-
-        // `""` signals no value should be displayed
-        let value = self.value.unwrap_or(String::from(""));
-
-        let type_field = self.type_field;
-
-        Variable {
-            name,
-            value,
-            type_field,
-            presentation_hint: None,
-            evaluate_name: None,
-            variables_reference: 0,
-            named_variables: None,
-            indexed_variables: None,
-            memory_reference: None,
-        }
-    }
-}
-
-fn object_variable(name: String, x: SEXP) -> Variable {
+fn object_variable(name: String, x: SEXP) -> RVariable {
     if r_is_object(x) {
         object_variable_classed(name, x)
     } else {
@@ -140,7 +187,7 @@ fn object_variable(name: String, x: SEXP) -> Variable {
     }
 }
 
-fn object_variable_classed(name: String, x: SEXP) -> Variable {
+fn object_variable_classed(name: String, x: SEXP) -> RVariable {
     // TODO: Eventually add some support for classed values.
     // Right now we just display the class name.
     let class = object_class(x);
@@ -150,13 +197,13 @@ fn object_variable_classed(name: String, x: SEXP) -> Variable {
         None => (String::from(""), String::from("<???>")),
     };
 
-    VariableBuilder::new(name)
+    RVariableBuilder::new(name)
         .value(value)
         .type_field(type_field)
         .build()
 }
 
-fn object_variable_bare(name: String, x: SEXP) -> Variable {
+fn object_variable_bare(name: String, x: SEXP) -> RVariable {
     match r_typeof(x) {
         NILSXP => nil_variable(name, x),
         LGLSXP => vec_variable(name, x, LGLSXP),
@@ -164,6 +211,7 @@ fn object_variable_bare(name: String, x: SEXP) -> Variable {
         REALSXP => vec_variable(name, x, REALSXP),
         CPLXSXP => vec_variable(name, x, CPLXSXP),
         STRSXP => vec_variable(name, x, STRSXP),
+        VECSXP => list_variable(name, x),
         SYMSXP => symbol_variable(name, x),
         LANGSXP => call_variable(name, x),
         PROMSXP => promise_variable(name, x),
@@ -171,19 +219,20 @@ fn object_variable_bare(name: String, x: SEXP) -> Variable {
         EXPRSXP => expression_variable(name, x),
         LISTSXP => pairlist_variable(name, x),
         CLOSXP => closure_variable(name, x),
+        ENVSXP => environment_variable(name, x),
         x_type => object_variable_bare_default(name, x_type),
     }
 }
 
-fn nil_variable(name: String, _x: SEXP) -> Variable {
-    VariableBuilder::new(name)
+fn nil_variable(name: String, _x: SEXP) -> RVariable {
+    RVariableBuilder::new(name)
         .value(String::from("NULL"))
         .type_field(String::from("<NULL>"))
         .build()
 }
 
-fn vec_variable(name: String, x: SEXP, x_type: SEXPTYPE) -> Variable {
-    VariableBuilder::new(name)
+fn vec_variable(name: String, x: SEXP, x_type: SEXPTYPE) -> RVariable {
+    RVariableBuilder::new(name)
         .value(vec_value(x, x_type))
         .type_field(vec_type_field(x_type))
         .build()
@@ -366,17 +415,28 @@ fn str_to_string(x: SEXP) -> String {
     }
 }
 
-fn symbol_variable(name: String, x: SEXP) -> Variable {
+fn list_variable(name: String, x: SEXP) -> RVariable {
+    // This object can have children, and we know how to handle them
+    let x = RThreadSafe::new(RObject::from(x));
+
+    RVariableBuilder::new(name)
+        .value(String::from("<list>"))
+        .type_field(String::from("<list>"))
+        .variables_reference_object(x)
+        .build()
+}
+
+fn symbol_variable(name: String, x: SEXP) -> RVariable {
     let value = RSymbol::new_unchecked(x).to_string();
     let type_field = String::from("<symbol>");
 
-    VariableBuilder::new(name)
+    RVariableBuilder::new(name)
         .value(value)
         .type_field(type_field)
         .build()
 }
 
-fn call_variable(name: String, x: SEXP) -> Variable {
+fn call_variable(name: String, x: SEXP) -> RVariable {
     let value = unwrap!(call_value(x), Err(err) => {
         log::error!("Failed to format call value: {err:?}");
         String::from("<call>")
@@ -384,7 +444,7 @@ fn call_variable(name: String, x: SEXP) -> Variable {
 
     let type_field = String::from("<call>");
 
-    VariableBuilder::new(name)
+    RVariableBuilder::new(name)
         .value(value)
         .type_field(type_field)
         .build()
@@ -400,7 +460,7 @@ fn call_value(x: SEXP) -> anyhow::Result<String> {
     Ok(x)
 }
 
-fn promise_variable(name: String, x: SEXP) -> Variable {
+fn promise_variable(name: String, x: SEXP) -> RVariable {
     // Even if the promise hasn't been forced, the expression often contains
     // very useful information.
     // Practically it is typically:
@@ -415,7 +475,7 @@ fn promise_variable(name: String, x: SEXP) -> Variable {
 
     if r_typeof(x) == PROMSXP {
         // Avoid any potential recursive weirdness
-        return VariableBuilder::new(name)
+        return RVariableBuilder::new(name)
             .value(String::from("<promise>"))
             .type_field(String::from("<promise>"))
             .build();
@@ -425,12 +485,12 @@ fn promise_variable(name: String, x: SEXP) -> Variable {
     object_variable(name, x)
 }
 
-fn bytecode_variable(name: String, x: SEXP) -> Variable {
+fn bytecode_variable(name: String, x: SEXP) -> RVariable {
     let x = r_bytecode_expr(x);
 
     if r_typeof(x) == BCODESXP {
         // Avoid any potential recursive weirdness
-        return VariableBuilder::new(name)
+        return RVariableBuilder::new(name)
             .value(String::from("<bytecode>"))
             .type_field(String::from("<bytecode>"))
             .build();
@@ -440,7 +500,7 @@ fn bytecode_variable(name: String, x: SEXP) -> Variable {
     object_variable(name, x)
 }
 
-fn object_variable_bare_default(name: String, x_type: SEXPTYPE) -> Variable {
+fn object_variable_bare_default(name: String, x_type: SEXPTYPE) -> RVariable {
     let class = r_type2char(x_type);
 
     let mut value = "<".to_string();
@@ -449,35 +509,46 @@ fn object_variable_bare_default(name: String, x_type: SEXPTYPE) -> Variable {
 
     let type_field = value.clone();
 
-    VariableBuilder::new(name)
+    RVariableBuilder::new(name)
         .value(value)
         .type_field(type_field)
         .build()
 }
 
-fn closure_variable(name: String, _x: SEXP) -> Variable {
-    VariableBuilder::new(name)
+fn closure_variable(name: String, _x: SEXP) -> RVariable {
+    RVariableBuilder::new(name)
         .value(String::from("<function>"))
         .type_field(String::from("<function>"))
         .build()
 }
 
-fn pairlist_variable(name: String, _x: SEXP) -> Variable {
-    VariableBuilder::new(name)
+fn environment_variable(name: String, x: SEXP) -> RVariable {
+    // This object can have children, and we know how to handle them
+    let x = RThreadSafe::new(RObject::from(x));
+
+    RVariableBuilder::new(name)
+        .value(String::from("<environment>"))
+        .type_field(String::from("<environment>"))
+        .variables_reference_object(x)
+        .build()
+}
+
+fn pairlist_variable(name: String, _x: SEXP) -> RVariable {
+    RVariableBuilder::new(name)
         .value(String::from("<pairlist>"))
         .type_field(String::from("<pairlist>"))
         .build()
 }
 
-fn expression_variable(name: String, _x: SEXP) -> Variable {
-    VariableBuilder::new(name)
+fn expression_variable(name: String, _x: SEXP) -> RVariable {
+    RVariableBuilder::new(name)
         .value(String::from("<expression>"))
         .type_field(String::from("<expression>"))
         .build()
 }
 
-fn active_binding_variable(name: String) -> Variable {
-    VariableBuilder::new(name)
+fn active_binding_variable(name: String) -> RVariable {
+    RVariableBuilder::new(name)
         .value(String::from("<active binding>"))
         .type_field(String::from("<active binding>"))
         .build()
@@ -506,6 +577,30 @@ fn object_class(x: SEXP) -> Option<String> {
     out.push_str(">");
 
     Some(out)
+}
+
+/// Return the names of a vector
+///
+/// If a name is empty, it is replaced with the 1-based index number instead
+fn indexed_names(x: SEXP) -> Vec<String> {
+    let names = RObject::from(r_names2(x));
+    let size = r_length(names.sexp);
+
+    let mut out = Vec::with_capacity(size as usize);
+
+    for i in 0..size {
+        let elt = r_chr_get(names.sexp, i);
+
+        if elt == r_str_blank() {
+            let elt = (i + 1).to_string();
+            out.push(elt);
+        } else {
+            let elt = r_str_to_owned_utf8(elt).unwrap();
+            out.push(elt);
+        }
+    }
+
+    out
 }
 
 fn is_ignored_name(x: &str) -> bool {
