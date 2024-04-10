@@ -263,7 +263,6 @@ pub unsafe extern "C" fn ps_connection_opened(name: SEXP) -> Result<SEXP, anyhow
     // if RMain is not initialized, we are probly in testing mode, so we just don't start the connection
     // and let the testing code manually do it
     if RMain::initialized() {
-        log::warn!("Connection Pane: RMain is not initialized. Connection will not be started.");
         let main = RMain::get();
 
         unwrap! (
@@ -273,6 +272,8 @@ pub unsafe extern "C" fn ps_connection_opened(name: SEXP) -> Result<SEXP, anyhow
                 return Err(err);
             }
         );
+    } else {
+        log::warn!("Connection Pane: RMain is not initialized. Connection will not be started.");
     }
 
     Ok(RObject::from(id).into())
