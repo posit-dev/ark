@@ -74,7 +74,7 @@ where
     let json = serde_json::to_value(req).unwrap();
     println!("--> {:?}", json);
 
-    // Covnert the request to a CommMsg and send it.
+    // Convert the request to a CommMsg and send it.
     let msg = CommMsg::Rpc(String::from(id), json);
     socket.incoming_tx.send(msg).unwrap();
     let msg = socket

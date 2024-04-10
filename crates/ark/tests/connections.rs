@@ -19,7 +19,7 @@ use harp::exec::RFunction;
 use harp::object::RObject;
 
 fn open_dummy_connection() -> socket::comm::CommSocket {
-    print!("testign!\n");
+    print!("testing!\n");
 
     let (comm_manager_tx, comm_manager_rx) = bounded::<CommManagerEvent>(0);
 
@@ -33,7 +33,7 @@ fn open_dummy_connection() -> socket::comm::CommSocket {
     // R returns the comm socket id that's used as key to communicate with the comm.
     // but it didn't actually open the comm because RMain is not initialized in tests
     // thus we need to manually open the comm here, using our own CommManager.
-    // we run this in a speare theread because it will block until we read the messsage
+    // we run this in a spare thread because it will block until we read the messsage
     stdext::spawn!("start-connection-thread", {
         let id = comm_id.clone();
         move || RConnection::start(String::from("Dummy Comm"), comm_manager_tx, id)
@@ -114,7 +114,7 @@ fn test_connections_contains_data() {
     r_test(|| {
         let socket = open_dummy_connection();
 
-        // Check that we get the correct contians_data
+        // Check that we get the correct `contains_data`
         let cases: Vec<(Vec<ObjectSchema>, bool)> = vec![
             (vec![], false),
             (vec![obj("main", "schema")], false),
