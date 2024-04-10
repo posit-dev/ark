@@ -172,11 +172,7 @@ connection_flatten_object_types <- function(object_tree) {
     identical(object_types$contains, "data")
 }
 
-
-#' @export
 .ps.register_dummy_connection <- function() {
-    # TODO: We don't want to export this, but probably want to wait for:
-    #   https://github.com/posit-dev/positron/issues/2324 before we can do that.
     # This is used for testing the connections service
     observer <- getOption("connectionObserver")
     id <- observer$connectionOpened(

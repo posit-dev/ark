@@ -6,10 +6,10 @@ use amalthea::comm::connections_comm::GetIconParams;
 use amalthea::comm::connections_comm::ListFieldsParams;
 use amalthea::comm::connections_comm::ListObjectsParams;
 use amalthea::comm::connections_comm::ObjectSchema;
-use amalthea::comm::connections_comm::PreviewObjectParams;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::socket;
 use ark::connections::r_connection::RConnection;
+use ark::modules::ARK_ENVS;
 use ark::r_task;
 use ark::test::r_test;
 use ark::test::socket_rpc_request;
@@ -25,7 +25,7 @@ fn open_dummy_connection() -> socket::comm::CommSocket {
 
     let comm_id = r_task(|| unsafe {
         let mut dummy_connection = RFunction::new("", ".ps.register_dummy_connection");
-        let comm_id = dummy_connection.call()?;
+        let comm_id = dummy_connection.call_in(ARK_ENVS.positron_ns)?;
         RObject::to::<String>(comm_id)
     })
     .unwrap();
