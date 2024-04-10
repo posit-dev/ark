@@ -60,9 +60,29 @@ pub(super) fn env_variables(env: SEXP) -> Vec<Variable> {
 
     names
         .into_iter()
-        .map(|name| as_variable(name, env))
+        .map(|name| env_binding_variable(name, env))
         .flatten()
         .collect()
+}
+
+fn env_binding_variable(name: String, env: SEXP) -> Option<Variable> {
+    if is_ignored_name(&name) {
+        // Drop ignored names entirely
+        return None;
+    }
+
+    let symbol = unsafe { r_symbol!(name) };
+
+    if r_env_binding_is_active(env, symbol)? {
+        // We can't even extract out the object for active bindings so they
+        // are handled extremely specially.
+        return Some(active_binding_variable(name));
+    }
+
+    let x = r_envir_get(name.as_str(), env)?;
+    let variable = object_variable(name, x);
+
+    Some(variable)
 }
 
 struct VariableBuilder {
@@ -110,25 +130,6 @@ impl VariableBuilder {
             memory_reference: None,
         }
     }
-}
-
-fn as_variable(name: String, env: SEXP) -> Option<Variable> {
-    if is_ignored_name(&name) {
-        return None;
-    }
-
-    let symbol = unsafe { r_symbol!(name) };
-
-    if r_env_binding_is_active(env, symbol)? {
-        // We can't even extract the object out for active bindings,
-        // so we have extra special handling for them
-        return Some(active_binding_variable(name));
-    }
-
-    let x = r_envir_get(name.as_str(), env)?;
-    let variable = object_variable(name, x);
-
-    Some(variable)
 }
 
 fn object_variable(name: String, x: SEXP) -> Variable {
@@ -557,9 +558,9 @@ mod tests {
     use libr::REALSXP;
     use libr::STRSXP;
 
-    use crate::dap::variables::as_variable;
     use crate::dap::variables::cpl_to_string;
     use crate::dap::variables::dbl_to_string;
+    use crate::dap::variables::env_binding_variable;
     use crate::dap::variables::int_to_string;
     use crate::dap::variables::lgl_to_string;
     use crate::dap::variables::str_to_string;
@@ -690,7 +691,7 @@ mod tests {
     }
 
     #[test]
-    fn test_as_variable_base() {
+    fn test_env_binding_variable_base() {
         r_test(|| unsafe {
             let env = RFunction::new("base", "new.env")
                 .param("parent", R_ENVS.base)
@@ -699,18 +700,18 @@ mod tests {
 
             let a = RObject::from(Rf_ScalarInteger(1));
             r_envir_set("a", a.sexp, env.sexp);
-            let variable = as_variable(String::from("a"), env.sexp).unwrap();
+            let variable = env_binding_variable(String::from("a"), env.sexp).unwrap();
             assert_eq!(variable.name, String::from("a"));
             assert_eq!(variable.value, String::from("1L"));
             assert_eq!(variable.type_field, Some(String::from("<integer>")));
 
-            let variable = as_variable(String::from("b"), env.sexp);
+            let variable = env_binding_variable(String::from("b"), env.sexp);
             assert!(variable.is_none());
         })
     }
 
     #[test]
-    fn test_as_variable_classed() {
+    fn test_env_binding_variable_classed() {
         r_test(|| unsafe {
             let env = RFunction::new("base", "new.env")
                 .param("parent", R_ENVS.base)
@@ -724,7 +725,7 @@ mod tests {
             let class = RObject::from(Rf_ScalarString(class.sexp));
             Rf_setAttrib(a.sexp, R_ClassSymbol, class.sexp);
 
-            let variable = as_variable(String::from("a"), env.sexp).unwrap();
+            let variable = env_binding_variable(String::from("a"), env.sexp).unwrap();
             assert_eq!(variable.name, String::from("a"));
             assert_eq!(variable.value, String::from("<foo>"));
             assert_eq!(variable.type_field, Some(String::from("<foo>")));
@@ -732,7 +733,7 @@ mod tests {
     }
 
     #[test]
-    fn test_as_variable_active_binding() {
+    fn test_env_binding_variable_binding() {
         r_test(|| {
             let env = RFunction::new("base", "new.env")
                 .param("parent", R_ENVS.base)
@@ -748,7 +749,7 @@ mod tests {
                 .call()
                 .unwrap();
 
-            let variable = as_variable(String::from("a"), env.sexp).unwrap();
+            let variable = env_binding_variable(String::from("a"), env.sexp).unwrap();
             assert_eq!(variable.name, String::from("a"));
             assert_eq!(variable.value, String::from("<active binding>"));
             assert_eq!(variable.type_field, Some(String::from("<active binding>")));
