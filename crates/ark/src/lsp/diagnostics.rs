@@ -362,9 +362,14 @@ fn recurse(
         NodeType::BinaryOperator(op) => match op {
             BinaryOperatorType::Tilde => recurse_formula(node, context, diagnostics),
             BinaryOperatorType::LeftSuperAssignment => {
-                recurse_superassignment(node, context, diagnostics)
+                recurse_left_super_assignment(node, context, diagnostics)
             },
-            BinaryOperatorType::LeftAssignment => recurse_assignment(node, context, diagnostics),
+            BinaryOperatorType::LeftAssignment => {
+                recurse_left_assignment(node, context, diagnostics)
+            },
+            BinaryOperatorType::RightAssignment => {
+                recurse_right_assignment(node, context, diagnostics)
+            },
             _ => recurse_default(node, context, diagnostics),
         },
         NodeType::NamespaceOperator(_) => recurse_namespace(node, context, diagnostics),
@@ -519,7 +524,7 @@ fn recurse_formula(
     ().ok()
 }
 
-fn recurse_superassignment(
+fn recurse_left_super_assignment(
     _node: Node,
     _context: &mut DiagnosticContext,
     _diagnostics: &mut Vec<Diagnostic>,
@@ -528,23 +533,44 @@ fn recurse_superassignment(
     ().ok()
 }
 
-fn recurse_assignment(
+fn recurse_left_assignment(
     node: Node,
     context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<()> {
+    let identifier = node.child_by_field_name("lhs");
+    let expression = node.child_by_field_name("rhs");
+    recurse_assignment(identifier, expression, context, diagnostics)
+}
+
+fn recurse_right_assignment(
+    node: Node,
+    context: &mut DiagnosticContext,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<()> {
+    let identifier = node.child_by_field_name("rhs");
+    let expression = node.child_by_field_name("lhs");
+    recurse_assignment(identifier, expression, context, diagnostics)
+}
+
+fn recurse_assignment(
+    identifier: Option<Node>,
+    expression: Option<Node>,
+    context: &mut DiagnosticContext,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<()> {
     // Check for newly-defined variable.
-    if let Some(lhs) = node.child_by_field_name("lhs") {
-        if lhs.is_identifier_or_string() {
-            let name = context.contents.node_slice(&lhs)?.to_string();
-            let range = lhs.range();
+    if let Some(identifier) = identifier {
+        if identifier.is_identifier_or_string() {
+            let name = context.contents.node_slice(&identifier)?.to_string();
+            let range = identifier.range();
             context.add_defined_variable(name.as_str(), range);
         }
     }
 
     // Recurse into expression for assignment.
-    if let Some(rhs) = node.child_by_field_name("rhs") {
-        recurse(rhs, context, diagnostics)?;
+    if let Some(expression) = expression {
+        recurse(expression, context, diagnostics)?;
     }
 
     ().ok()
@@ -1356,6 +1382,20 @@ mod tests {
 
             // Clean up
             r_parse_eval("remove(x)", options.clone()).unwrap();
+        })
+    }
+
+    #[test]
+    fn test_no_diagnostic_for_assignment_bindings() {
+        r_test(|| {
+            let text = "
+                x <- 1
+                2 -> y
+                y + x
+            ";
+            let document = Document::new(text, None);
+            let diagnostics = generate_diagnostics(&document);
+            assert!(diagnostics.is_empty());
         })
     }
 }
