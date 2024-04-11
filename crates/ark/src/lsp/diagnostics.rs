@@ -1439,4 +1439,23 @@ mod tests {
             assert!(diagnostics.is_empty());
         })
     }
+
+    #[test]
+    fn test_symbol_not_in_scope_diagnostic_is_ordering_dependent() {
+        r_test(|| {
+            let text = "
+                x + 1
+                x <- 1
+                x + 1
+            ";
+            let document = Document::new(text, None);
+
+            let diagnostics = generate_diagnostics(&document);
+            assert_eq!(diagnostics.len(), 1);
+
+            // Only marks the `x` before the `x <- 1`
+            let diagnostic = diagnostics.get(0).unwrap();
+            assert_eq!(diagnostic.range.start.line, 1)
+        })
+    }
 }
