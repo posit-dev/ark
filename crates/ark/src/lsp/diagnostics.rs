@@ -361,14 +361,17 @@ fn recurse(
         NodeType::Call => recurse_call(node, context, diagnostics),
         NodeType::BinaryOperator(op) => match op {
             BinaryOperatorType::Tilde => recurse_formula(node, context, diagnostics),
-            BinaryOperatorType::LeftSuperAssignment => {
-                recurse_left_super_assignment(node, context, diagnostics)
-            },
             BinaryOperatorType::LeftAssignment => {
                 recurse_left_assignment(node, context, diagnostics)
             },
             BinaryOperatorType::RightAssignment => {
                 recurse_right_assignment(node, context, diagnostics)
+            },
+            BinaryOperatorType::LeftSuperAssignment => {
+                recurse_left_super_assignment(node, context, diagnostics)
+            },
+            BinaryOperatorType::RightSuperAssignment => {
+                recurse_right_super_assignment(node, context, diagnostics)
             },
             _ => recurse_default(node, context, diagnostics),
         },
@@ -525,12 +528,36 @@ fn recurse_formula(
 }
 
 fn recurse_left_super_assignment(
-    _node: Node,
-    _context: &mut DiagnosticContext,
-    _diagnostics: &mut Vec<Diagnostic>,
+    node: Node,
+    context: &mut DiagnosticContext,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<()> {
+    let identifier = node.child_by_field_name("lhs");
+    let expression = node.child_by_field_name("rhs");
+    recurse_super_assignment(identifier, expression, context, diagnostics)
+}
+
+fn recurse_right_super_assignment(
+    node: Node,
+    context: &mut DiagnosticContext,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<()> {
+    let identifier = node.child_by_field_name("rhs");
+    let expression = node.child_by_field_name("lhs");
+    recurse_super_assignment(identifier, expression, context, diagnostics)
+}
+
+fn recurse_super_assignment(
+    identifier: Option<Node>,
+    expression: Option<Node>,
+    context: &mut DiagnosticContext,
+    diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<()> {
     // TODO: Check for a target within a parent scope.
-    ().ok()
+    // We could probably add some more advanced diagnostics here, but for
+    // now we want to make sure that the `identifier` isn't hit with a "symbol
+    // not in scope" diagnostic, so we add it to the `document_symbols` map.
+    recurse_assignment(identifier, expression, context, diagnostics)
 }
 
 fn recurse_left_assignment(
@@ -1391,6 +1418,20 @@ mod tests {
             let text = "
                 x <- 1
                 2 -> y
+                y + x
+            ";
+            let document = Document::new(text, None);
+            let diagnostics = generate_diagnostics(&document);
+            assert!(diagnostics.is_empty());
+        })
+    }
+
+    #[test]
+    fn test_no_diagnostic_for_super_assignment_bindings() {
+        r_test(|| {
+            let text = "
+                x <<- 1
+                2 ->> y
                 y + x
             ";
             let document = Document::new(text, None);
