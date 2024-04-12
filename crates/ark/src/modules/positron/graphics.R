@@ -117,18 +117,18 @@ default_device_type <- function() {
 }
 
 #' @export
-.ps.graphics.renderPlot <- function(id, width, height, dpr) {
+.ps.graphics.renderPlot <- function(id, width, height, dpr, format) {
 
     # If we have an existing snapshot, render from that file.
     snapshotPath <- .ps.graphics.plotSnapshotPath(id)
     if (file.exists(snapshotPath))
-        .ps.graphics.renderPlotFromSnapshot(id, width, height, dpr)
+        .ps.graphics.renderPlotFromSnapshot(id, width, height, dpr, format)
     else
-        .ps.graphics.renderPlotFromCurrentDevice(id, width, height, dpr)
+        .ps.graphics.renderPlotFromCurrentDevice(id, width, height, dpr, format)
 }
 
 #' @export
-.ps.graphics.renderPlotFromSnapshot <- function(id, width, height, dpr) {
+.ps.graphics.renderPlotFromSnapshot <- function(id, width, height, dpr, format) {
 
     # Get path to snapshot file + output path.
     outputPath <- .ps.graphics.plotOutputPath(id)
@@ -144,12 +144,32 @@ default_device_type <- function() {
     height <- height * dpr
 
     # Create a new graphics device.
-    grDevices::png(
-        filename = outputPath,
-        width    = width,
-        height   = height,
-        res      = res,
-        type     = type
+    switch(
+        format,
+        "png" = grDevices::png(
+            filename = filepath,
+            width    = width,
+            height   = height,
+            res      = res,
+            type     = type
+        ),
+        "svg" = grDevices::svg(
+            filename = filepath,
+            width    = (width / 72),
+            height   = (height / 72),
+        ),
+        "pdf" = grDevices::pdf(
+            file = filepath,
+            width = (width / 72),
+            height = (height / 72)
+        ),
+        "jpeg" = grDevices::jpeg(
+            filename = filepath,
+            width    = width,
+            height   = height,
+            res      = res,
+            type     = type
+        )
     )
 
     # Replay the plot.
@@ -164,7 +184,7 @@ default_device_type <- function() {
 }
 
 #' @export
-.ps.graphics.renderPlotFromCurrentDevice <- function(id, width, height, dpr) {
+.ps.graphics.renderPlotFromCurrentDevice <- function(id, width, height, dpr, format) {
 
     # Try and force the graphics device to sync changes.
     grDevices::dev.set(grDevices::dev.cur())
@@ -183,12 +203,32 @@ default_device_type <- function() {
     # TODO: We'll want some indirection around which graphics device is selected here.
     filepath <- attr(device, "filepath")
     grDevices::dev.copy(function() {
-        grDevices::png(
-            filename = filepath,
-            width    = width,
-            height   = height,
-            res      = res,
-            type     = type
+        switch(
+            format,
+            "png" = grDevices::png(
+                filename = filepath,
+                width    = width,
+                height   = height,
+                res      = res,
+                type     = type
+            ),
+            "svg" = grDevices::svg(
+                filename = filepath,
+                width    = (width / 72),
+                height   = (height / 72),
+            ),
+            "pdf" = grDevices::pdf(
+                file = filepath,
+                width = (width / 72),
+                height = (height / 72)
+            ),
+            "jpeg" = grDevices::jpeg(
+                filename = filepath,
+                width    = width,
+                height   = height,
+                res      = res,
+                type     = type
+            )
         )
     })
 

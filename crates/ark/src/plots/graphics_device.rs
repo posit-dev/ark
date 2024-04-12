@@ -195,13 +195,25 @@ impl DeviceContext {
                     plot_meta.width,
                     plot_meta.height,
                     plot_meta.pixel_ratio,
+                    &plot_meta.format,
                 )?;
 
+                let mime_type = Self::get_mime_type(&plot_meta.format);
                 Ok(PlotBackendReply::RenderReply(PlotResult {
                     data: data.to_string(),
-                    mime_type: "image/png".to_string(),
+                    mime_type: mime_type.to_string(),
                 }))
             },
+        }
+    }
+
+    fn get_mime_type(format: &str) -> String {
+        match format {
+            "png" => "image/png".to_string(),
+            "svg" => "image/svg+xml".to_string(),
+            "pdf" => "application/pdf".to_string(),
+            "jpeg" => "image/jpeg".to_string(),
+            _ => "image/png".to_string(),
         }
     }
 
@@ -345,8 +357,9 @@ impl DeviceContext {
         let width = 400;
         let height = 650;
         let pixel_ratio = 1.0;
+        let format = "png";
 
-        let data = unwrap!(self.render_plot(id, width, height, pixel_ratio), Err(error) => {
+        let data = unwrap!(self.render_plot(id, width, height, pixel_ratio, &format), Err(error) => {
             bail!("Failed to render plot with id {id} due to: {error}.");
         });
 
@@ -362,6 +375,7 @@ impl DeviceContext {
         width: i64,
         height: i64,
         pixel_ratio: f64,
+        format: &str,
     ) -> anyhow::Result<String> {
         // Render the plot to file.
         // TODO: Is it possible to do this without writing to file; e.g. could
@@ -373,6 +387,7 @@ impl DeviceContext {
                 .param("width", RObject::try_from(width)?)
                 .param("height", RObject::try_from(height)?)
                 .param("dpr", pixel_ratio)
+                .param("format", format)
                 .call()?
                 .to::<String>()
         });
