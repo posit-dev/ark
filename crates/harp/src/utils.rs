@@ -207,20 +207,10 @@ pub fn r_chr_get_owned_utf8(x: SEXP, i: isize) -> Result<String> {
 ///
 /// Missing values return an `Error::MissingValueError`.
 pub fn r_str_to_owned_utf8(x: SEXP) -> Result<String> {
-    unsafe {
-        if x == R_NaString {
-            return Err(Error::MissingValueError);
-        }
-
-        // Translate it to a UTF-8 C string (note that this allocates with
-        // `R_alloc()` so we need to save and reset the protection stack)
-        let vmax = vmaxget();
-        let translated = Rf_translateCharUTF8(x);
-        vmaxset(vmax);
-
-        // Convert to a Rust string and return
-        let cstr = CStr::from_ptr(translated).to_str()?;
-        Ok(cstr.to_string())
+    if x == unsafe { R_NaString } {
+        return Err(Error::MissingValueError);
+    } else {
+        Ok(r_str_to_owned_utf8_unchecked(x))
     }
 }
 
@@ -228,15 +218,27 @@ pub fn r_str_to_owned_utf8(x: SEXP) -> Result<String> {
 ///
 /// - `x` is a CHARSXP that is assumed to not be missing.
 ///
-/// Uses `from_utf8_unchecked()`.
+/// Unchecked here only refers to checking for `NA`. Otherwise it still attempts
+/// a UTF-8 translation and will replace any remaining invalid UTF-8 characters
+/// with the UTF-8 replacement character.
 pub fn r_str_to_owned_utf8_unchecked(x: SEXP) -> String {
     unsafe {
+        // Attempt to translate it to a UTF-8 C string (note that this allocates
+        // with `R_alloc()` so we need to save and reset the protection stack).
+        // Sadly this can still result in invalid UTF-8 bytes, so we are forced
+        // to use `to_string_lossy()` below to be absolutely sure that invalid
+        // UTF-8 has been replaced with the valid UTF-8 replacement character.
+        // https://github.com/posit-dev/positron/issues/2698
         let vmax = vmaxget();
-        let translated = Rf_translateCharUTF8(x);
+        let x = Rf_translateCharUTF8(x);
         vmaxset(vmax);
 
-        let bytes = CStr::from_ptr(translated).to_bytes();
-        std::str::from_utf8_unchecked(bytes).to_owned()
+        // `const char*` -> `Cstr` wrapper -> `Cow<'static, str>` -> `String`
+        let x = CStr::from_ptr(x);
+        let x = x.to_string_lossy();
+        let x = x.to_string();
+
+        x
     }
 }
 
@@ -660,5 +662,47 @@ pub fn r_printf(x: &str) {
     let c_str = std::ffi::CString::new(x).unwrap();
     unsafe {
         libr::Rprintf(c_str.as_ptr());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use harp::eval::r_parse_eval0;
+    use libr::STRING_ELT;
+
+    use crate::environment::R_ENVS;
+    use crate::exec::RFunction;
+    use crate::exec::RFunctionExt;
+    use crate::r_str_to_owned_utf8_unchecked;
+    use crate::test::r_test;
+
+    #[test]
+    fn test_r_str_to_utf8_replaces_invalid_utf8() {
+        r_test(|| {
+            let env = RFunction::new("base", "new.env")
+                .param("parent", R_ENVS.base)
+                .call()
+                .unwrap();
+
+            // Constructs "\xa0" in such a way that it wrongly gets a UTF-8
+            // encoding. This ends up bypassing translation in
+            // `Rf_translateCharUTF8()`, so we end up replacing the invalid
+            // UTF-8 with the `REPLACEMENT_CHARACTER`. This can also occur
+            // when it gets an "unknown" encoding on an OS where the native
+            // encoding is UTF-8.
+            // https://github.com/posit-dev/positron/issues/2698
+            let code = "
+                x <- intToUtf8(0xa0)
+                x <- iconv(x, from = 'UTF-8', to = 'latin1')
+                Encoding(x) <- 'UTF-8'
+                x
+            ";
+
+            let x = r_parse_eval0(code, env).unwrap();
+            let x = unsafe { STRING_ELT(x.sexp, 0) };
+            let x = r_str_to_owned_utf8_unchecked(x);
+
+            assert_eq!(x, String::from(std::char::REPLACEMENT_CHARACTER));
+        })
     }
 }
