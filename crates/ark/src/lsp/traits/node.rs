@@ -80,6 +80,7 @@ pub trait NodeExt: Sized {
 
     fn find_parent(&self, callback: impl Fn(&Self) -> bool) -> Option<Self>;
 
+    fn find_smallest_spanning_node(&self, point: Point) -> Option<Self>;
     fn find_closest_node_to_point(&self, point: Point) -> Option<Self>;
 
     fn prev_leaf(&self) -> Option<Self>;
@@ -87,9 +88,11 @@ pub trait NodeExt: Sized {
 
     fn fwd_leaf_iter(&self) -> FwdLeafIterator<'_>;
     fn bwd_leaf_iter(&self) -> BwdLeafIterator<'_>;
+
+    fn ancestors(&self) -> impl Iterator<Item = Self>;
 }
 
-impl NodeExt for Node<'_> {
+impl<'tree> NodeExt for Node<'tree> {
     fn dump(&self, source: &str) -> String {
         let mut output = "\n".to_string();
         _dump_impl(&mut self.walk(), source, "", &mut output);
@@ -108,6 +111,11 @@ impl NodeExt for Node<'_> {
                 None => return None,
             }
         }
+    }
+
+    fn find_smallest_spanning_node(&self, point: Point) -> Option<Self> {
+        // The only way this should ever be `None` is if `Point` is not in the AST span
+        _find_smallest_container(&self, point)
     }
 
     fn find_closest_node_to_point(&self, point: Point) -> Option<Self> {
@@ -189,6 +197,14 @@ impl NodeExt for Node<'_> {
 
     fn bwd_leaf_iter(&self) -> BwdLeafIterator<'_> {
         BwdLeafIterator { node: self.clone() }
+    }
+
+    // From rowan. Note that until we switch to rowan, each `parent()` call
+    // causes a linear traversal of the whole tree to find the parent node.
+    // We could do better in the future:
+    // https://github.com/tree-sitter/tree-sitter/pull/3214
+    fn ancestors(&self) -> impl Iterator<Item = Node<'tree>> {
+        std::iter::successors(Some(self.clone()), |p| p.parent())
     }
 }
 
