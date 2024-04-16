@@ -213,7 +213,10 @@ impl DeviceContext {
             "svg" => "image/svg+xml".to_string(),
             "pdf" => "application/pdf".to_string(),
             "jpeg" => "image/jpeg".to_string(),
-            _ => "image/png".to_string(),
+            _ => {
+                log::error!("Unknown plot type '{format}'. Falling back to 'image/png'.");
+                "image/png".to_string();
+            },
         }
     }
 

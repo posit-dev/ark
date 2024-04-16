@@ -169,7 +169,8 @@ default_device_type <- function() {
             height   = height,
             res      = res,
             type     = type
-        )
+        ),
+        stop("Internal error: Unknown plot `format`.")
     )
 
     # Replay the plot.
