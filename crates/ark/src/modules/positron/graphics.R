@@ -27,6 +27,9 @@ default_device_type <- function() {
 }
 
 renderWithPlotDevice <- function(filepath, format, width, height, res, type ) {
+    # width and height are in inches and use 72 DPI to create the requested size in pixels
+    dpi <- 72
+
     # Create a new graphics device.
     switch(
         format,
@@ -39,13 +42,13 @@ renderWithPlotDevice <- function(filepath, format, width, height, res, type ) {
         ),
         "svg" = grDevices::svg(
             filename = filepath,
-            width    = (width / 72),
-            height   = (height / 72),
+            width    = (width / dpi),
+            height   = (height / dpi),
         ),
         "pdf" = grDevices::pdf(
             file = filepath,
-            width = (width / 72),
-            height = (height / 72)
+            width = (width / dpi),
+            height = (height / dpi)
         ),
         "jpeg" = grDevices::jpeg(
             filename = filepath,
