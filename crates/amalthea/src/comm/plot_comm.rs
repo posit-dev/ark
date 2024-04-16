@@ -32,6 +32,9 @@ pub struct RenderParams {
 
 	/// The pixel ratio of the display device
 	pub pixel_ratio: f64,
+
+	/// The requested plot format
+	pub format: String,
 }
 
 /**

@@ -26,6 +26,41 @@ default_device_type <- function() {
     }
 }
 
+renderWithPlotDevice <- function(filepath, format, width, height, res, type ) {
+    # width and height are in inches and use 72 DPI to create the requested size in pixels
+    dpi <- 72
+
+    # Create a new graphics device.
+    switch(
+        format,
+        "png" = grDevices::png(
+            filename = filepath,
+            width    = width,
+            height   = height,
+            res      = res,
+            type     = type
+        ),
+        "svg" = grDevices::svg(
+            filename = filepath,
+            width    = (width / dpi),
+            height   = (height / dpi),
+        ),
+        "pdf" = grDevices::pdf(
+            file = filepath,
+            width = (width / dpi),
+            height = (height / dpi)
+        ),
+        "jpeg" = grDevices::jpeg(
+            filename = filepath,
+            width    = width,
+            height   = height,
+            res      = res,
+            type     = type
+        ),
+        stop("Internal error: Unknown plot `format`.")
+    )
+}
+
 #' @export
 .ps.graphics.defaultResolution <- if (Sys.info()[["sysname"]] == "Darwin") 96L else 72L
 
@@ -117,18 +152,18 @@ default_device_type <- function() {
 }
 
 #' @export
-.ps.graphics.renderPlot <- function(id, width, height, dpr) {
+.ps.graphics.renderPlot <- function(id, width, height, dpr, format) {
 
     # If we have an existing snapshot, render from that file.
     snapshotPath <- .ps.graphics.plotSnapshotPath(id)
     if (file.exists(snapshotPath))
-        .ps.graphics.renderPlotFromSnapshot(id, width, height, dpr)
+        .ps.graphics.renderPlotFromSnapshot(id, width, height, dpr, format)
     else
-        .ps.graphics.renderPlotFromCurrentDevice(id, width, height, dpr)
+        .ps.graphics.renderPlotFromCurrentDevice(id, width, height, dpr, format)
 }
 
 #' @export
-.ps.graphics.renderPlotFromSnapshot <- function(id, width, height, dpr) {
+.ps.graphics.renderPlotFromSnapshot <- function(id, width, height, dpr, format) {
 
     # Get path to snapshot file + output path.
     outputPath <- .ps.graphics.plotOutputPath(id)
@@ -144,13 +179,7 @@ default_device_type <- function() {
     height <- height * dpr
 
     # Create a new graphics device.
-    grDevices::png(
-        filename = outputPath,
-        width    = width,
-        height   = height,
-        res      = res,
-        type     = type
-    )
+    renderWithPlotDevice(outputPath, format, width, height, res, type)
 
     # Replay the plot.
     suppressWarnings(grDevices::replayPlot(recordedPlot))
@@ -164,7 +193,7 @@ default_device_type <- function() {
 }
 
 #' @export
-.ps.graphics.renderPlotFromCurrentDevice <- function(id, width, height, dpr) {
+.ps.graphics.renderPlotFromCurrentDevice <- function(id, width, height, dpr, format) {
 
     # Try and force the graphics device to sync changes.
     grDevices::dev.set(grDevices::dev.cur())
@@ -183,13 +212,7 @@ default_device_type <- function() {
     # TODO: We'll want some indirection around which graphics device is selected here.
     filepath <- attr(device, "filepath")
     grDevices::dev.copy(function() {
-        grDevices::png(
-            filename = filepath,
-            width    = width,
-            height   = height,
-            res      = res,
-            type     = type
-        )
+        renderWithPlotDevice(filepath, format, width, height, res, type)
     })
 
     # Turn off the graphics device.
