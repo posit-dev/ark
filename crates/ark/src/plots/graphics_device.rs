@@ -215,7 +215,7 @@ impl DeviceContext {
             "jpeg" => "image/jpeg".to_string(),
             _ => {
                 log::error!("Unknown plot type '{format}'. Falling back to 'image/png'.");
-                "image/png".to_string();
+                "image/png".to_string()
             },
         }
     }

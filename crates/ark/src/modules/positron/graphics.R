@@ -26,6 +26,38 @@ default_device_type <- function() {
     }
 }
 
+renderWithPlotDevice <- function(filepath, format, width, height, res, type ) {
+    # Create a new graphics device.
+    switch(
+        format,
+        "png" = grDevices::png(
+            filename = filepath,
+            width    = width,
+            height   = height,
+            res      = res,
+            type     = type
+        ),
+        "svg" = grDevices::svg(
+            filename = filepath,
+            width    = (width / 72),
+            height   = (height / 72),
+        ),
+        "pdf" = grDevices::pdf(
+            file = filepath,
+            width = (width / 72),
+            height = (height / 72)
+        ),
+        "jpeg" = grDevices::jpeg(
+            filename = filepath,
+            width    = width,
+            height   = height,
+            res      = res,
+            type     = type
+        ),
+        stop("Internal error: Unknown plot `format`.")
+    )
+}
+
 #' @export
 .ps.graphics.defaultResolution <- if (Sys.info()[["sysname"]] == "Darwin") 96L else 72L
 
@@ -144,34 +176,7 @@ default_device_type <- function() {
     height <- height * dpr
 
     # Create a new graphics device.
-    switch(
-        format,
-        "png" = grDevices::png(
-            filename = filepath,
-            width    = width,
-            height   = height,
-            res      = res,
-            type     = type
-        ),
-        "svg" = grDevices::svg(
-            filename = filepath,
-            width    = (width / 72),
-            height   = (height / 72),
-        ),
-        "pdf" = grDevices::pdf(
-            file = filepath,
-            width = (width / 72),
-            height = (height / 72)
-        ),
-        "jpeg" = grDevices::jpeg(
-            filename = filepath,
-            width    = width,
-            height   = height,
-            res      = res,
-            type     = type
-        ),
-        stop("Internal error: Unknown plot `format`.")
-    )
+    renderWithPlotDevice(outputPath, format, width, height, res, type)
 
     # Replay the plot.
     suppressWarnings(grDevices::replayPlot(recordedPlot))
@@ -204,33 +209,7 @@ default_device_type <- function() {
     # TODO: We'll want some indirection around which graphics device is selected here.
     filepath <- attr(device, "filepath")
     grDevices::dev.copy(function() {
-        switch(
-            format,
-            "png" = grDevices::png(
-                filename = filepath,
-                width    = width,
-                height   = height,
-                res      = res,
-                type     = type
-            ),
-            "svg" = grDevices::svg(
-                filename = filepath,
-                width    = (width / 72),
-                height   = (height / 72),
-            ),
-            "pdf" = grDevices::pdf(
-                file = filepath,
-                width = (width / 72),
-                height = (height / 72)
-            ),
-            "jpeg" = grDevices::jpeg(
-                filename = filepath,
-                width    = width,
-                height   = height,
-                res      = res,
-                type     = type
-            )
-        )
+        renderWithPlotDevice(filepath, format, width, height, res, type)
     })
 
     # Turn off the graphics device.
