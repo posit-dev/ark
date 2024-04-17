@@ -448,7 +448,7 @@ pub fn r_names2(x: SEXP) -> SEXP {
         return names;
     }
 
-    let out = unsafe { Rf_allocVector(STRSXP, size) };
+    let out = r_alloc_character(size);
     unsafe { protect.add(out) };
 
     for i in 0..size {

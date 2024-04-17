@@ -584,30 +584,10 @@ mod tests {
     use harp::eval::r_parse_eval0;
     use harp::exec::RFunction;
     use harp::exec::RFunctionExt;
-    use harp::object::r_chr_poke;
-    use harp::object::r_dbl_na;
-    use harp::object::r_dbl_nan;
-    use harp::object::r_dbl_negative_infinity;
-    use harp::object::r_dbl_poke;
-    use harp::object::r_dbl_positive_infinity;
-    use harp::object::r_int_na;
-    use harp::object::r_int_poke;
-    use harp::object::r_lgl_na;
-    use harp::object::r_str_na;
-    use harp::object::RObject;
+    use harp::object::*;
     use harp::r_char;
     use harp::utils::r_envir_set;
-    use libr::R_ClassSymbol;
-    use libr::Rcomplex;
-    use libr::Rf_ScalarInteger;
-    use libr::Rf_ScalarString;
-    use libr::Rf_allocVector;
-    use libr::Rf_setAttrib;
-    use libr::CPLXSXP;
-    use libr::INTSXP;
-    use libr::LGLSXP;
-    use libr::REALSXP;
-    use libr::STRSXP;
+    use libr::*;
 
     use crate::dap::dap_variables::cpl_to_string;
     use crate::dap::dap_variables::dbl_to_string;
@@ -681,12 +661,12 @@ mod tests {
     #[test]
     fn test_vec_value_methods() {
         r_test(|| unsafe {
-            let x = RObject::from(Rf_allocVector(INTSXP, 2));
+            let x = RObject::from(r_alloc_integer(2));
             r_int_poke(x.sexp, 0, 1);
             r_int_poke(x.sexp, 1, r_int_na());
             assert_eq!(vec_value(x.sexp, INTSXP), String::from("1L, NA"));
 
-            let x = RObject::from(Rf_allocVector(REALSXP, 5));
+            let x = RObject::from(r_alloc_double(5));
             r_dbl_poke(x.sexp, 0, 1.5);
             r_dbl_poke(x.sexp, 1, r_dbl_na());
             r_dbl_poke(x.sexp, 2, r_dbl_nan());
@@ -697,7 +677,7 @@ mod tests {
                 String::from("1.5, NA, NaN, Inf, -Inf")
             );
 
-            let x = RObject::from(Rf_allocVector(STRSXP, 2));
+            let x = RObject::from(r_alloc_character(2));
             r_chr_poke(x.sexp, 0, r_char!("hi"));
             r_chr_poke(x.sexp, 1, r_str_na());
             assert_eq!(vec_value(x.sexp, STRSXP), String::from("\"hi\", NA"))
@@ -707,7 +687,7 @@ mod tests {
     #[test]
     fn test_vec_value_truncation() {
         r_test(|| unsafe {
-            let x = RObject::from(Rf_allocVector(INTSXP, 6));
+            let x = RObject::from(r_alloc_integer(6));
             r_int_poke(x.sexp, 0, 1);
             r_int_poke(x.sexp, 1, 2);
             r_int_poke(x.sexp, 2, 3);
@@ -724,19 +704,19 @@ mod tests {
     #[test]
     fn test_vec_value_empty() {
         r_test(|| unsafe {
-            let x = RObject::from(Rf_allocVector(LGLSXP, 0));
+            let x = RObject::from(r_alloc_logical(0));
             assert_eq!(vec_value(x.sexp, LGLSXP), String::from("logical(0)"));
 
-            let x = RObject::from(Rf_allocVector(INTSXP, 0));
+            let x = RObject::from(r_alloc_integer(0));
             assert_eq!(vec_value(x.sexp, INTSXP), String::from("integer(0)"));
 
-            let x = RObject::from(Rf_allocVector(REALSXP, 0));
+            let x = RObject::from(r_alloc_double(0));
             assert_eq!(vec_value(x.sexp, REALSXP), String::from("double(0)"));
 
-            let x = RObject::from(Rf_allocVector(CPLXSXP, 0));
+            let x = RObject::from(r_alloc_complex(0));
             assert_eq!(vec_value(x.sexp, CPLXSXP), String::from("complex(0)"));
 
-            let x = RObject::from(Rf_allocVector(STRSXP, 0));
+            let x = RObject::from(r_alloc_character(0));
             assert_eq!(vec_value(x.sexp, STRSXP), String::from("character(0)"));
         })
     }
