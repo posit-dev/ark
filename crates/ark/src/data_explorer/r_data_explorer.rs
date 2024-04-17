@@ -8,6 +8,7 @@
 use std::cmp;
 
 use amalthea::comm::comm_channel::CommMsg;
+use amalthea::comm::data_explorer_comm::BackendState;
 use amalthea::comm::data_explorer_comm::ColumnDisplayType;
 use amalthea::comm::data_explorer_comm::ColumnProfileResult;
 use amalthea::comm::data_explorer_comm::ColumnProfileType;
@@ -29,7 +30,6 @@ use amalthea::comm::data_explorer_comm::SupportedFeatures;
 use amalthea::comm::data_explorer_comm::TableData;
 use amalthea::comm::data_explorer_comm::TableSchema;
 use amalthea::comm::data_explorer_comm::TableShape;
-use amalthea::comm::data_explorer_comm::TableState;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
@@ -441,20 +441,6 @@ impl RDataExplorer {
                 Ok(DataExplorerBackendReply::GetColumnProfilesReply(profiles))
             },
             DataExplorerBackendRequest::GetState => r_task(|| self.r_get_state()),
-            DataExplorerBackendRequest::GetSupportedFeatures => Ok(
-                DataExplorerBackendReply::GetSupportedFeaturesReply(SupportedFeatures {
-                    get_column_profiles: GetColumnProfilesFeatures {
-                        supported: true,
-                        supported_types: vec![ColumnProfileType::NullCount],
-                    },
-                    search_schema: SearchSchemaFeatures { supported: false },
-                    set_row_filters: SetRowFiltersFeatures {
-                        supported: false,
-                        supported_types: vec![],
-                        supports_conditions: false,
-                    },
-                }),
-            ),
             DataExplorerBackendRequest::SearchSchema(_) => {
                 bail!("Data Viewer: Not yet implemented")
             },
@@ -599,13 +585,26 @@ impl RDataExplorer {
             col_names: _,
         } = table_info_or_bail(object)?;
 
-        let state = TableState {
+        let state = BackendState {
+            display_name: self.title.clone(),
             table_shape: TableShape {
                 num_rows: num_rows.into(),
                 num_columns: num_columns as i64,
             },
             row_filters: vec![],
             sort_keys: self.sort_keys.clone(),
+            supported_features: SupportedFeatures {
+                get_column_profiles: GetColumnProfilesFeatures {
+                    supported: true,
+                    supported_types: vec![ColumnProfileType::NullCount],
+                },
+                search_schema: SearchSchemaFeatures { supported: false },
+                set_row_filters: SetRowFiltersFeatures {
+                    supported: false,
+                    supported_types: vec![],
+                    supports_conditions: false,
+                },
+            },
         };
         Ok(DataExplorerBackendReply::GetStateReply(state))
     }

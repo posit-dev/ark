@@ -138,6 +138,12 @@ fn test_data_explorer() {
             let req = DataExplorerBackendRequest::GetState;
             assert_match!(socket_rpc(&socket, req),
                 DataExplorerBackendReply::GetStateReply(state) => {
+                    assert_eq!(state.display_name,
+                        if is_tibble {
+                            "mtcars_tib"
+                         } else {
+                            "mtcars"
+                         });
                     assert_eq!(state.sort_keys, mpg_sort_keys);
                 }
             );
