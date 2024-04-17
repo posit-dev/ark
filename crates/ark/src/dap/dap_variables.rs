@@ -1,5 +1,5 @@
 //
-// variables.rs
+// dap_variables.rs
 //
 // Copyright (C) 2024 Posit Software, PBC. All rights reserved.
 //
@@ -653,13 +653,13 @@ mod tests {
     use libr::REALSXP;
     use libr::STRSXP;
 
-    use crate::dap::variables::cpl_to_string;
-    use crate::dap::variables::dbl_to_string;
-    use crate::dap::variables::env_binding_variable;
-    use crate::dap::variables::int_to_string;
-    use crate::dap::variables::lgl_to_string;
-    use crate::dap::variables::str_to_string;
-    use crate::dap::variables::vec_value;
+    use crate::dap::dap_variables::cpl_to_string;
+    use crate::dap::dap_variables::dbl_to_string;
+    use crate::dap::dap_variables::env_binding_variable;
+    use crate::dap::dap_variables::int_to_string;
+    use crate::dap::dap_variables::lgl_to_string;
+    use crate::dap::dap_variables::str_to_string;
+    use crate::dap::dap_variables::vec_value;
     use crate::test::r_test;
 
     #[test]
