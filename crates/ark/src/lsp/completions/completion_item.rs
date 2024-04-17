@@ -370,10 +370,20 @@ pub(super) unsafe fn completion_item_from_symbol(
 ) -> Option<Result<CompletionItem>> {
     let symbol = r_symbol!(name);
 
-    if r_env_binding_is_active(envir, symbol)? {
-        // Active bindings must be checked before `Rf_findVarInFrame()`, as that
-        // triggers active bindings
-        return Some(completion_item_from_active_binding(name));
+    match r_env_binding_is_active(envir, symbol) {
+        Ok(false) => {
+            // Continue with standard environment completion item creation
+            ()
+        },
+        Ok(true) => {
+            // We can't even extract out the object for active bindings so they
+            // are handled extremely specially.
+            return Some(completion_item_from_active_binding(name));
+        },
+        Err(err) => {
+            log::error!("Can't determine if binding is active: {err:?}");
+            return None;
+        },
     }
 
     let object = Rf_findVarInFrame(envir, symbol);

@@ -14,6 +14,7 @@ use libr::*;
 use once_cell::sync::Lazy;
 use regex::Regex;
 
+use crate::anyhow;
 use crate::call::r_expr_quote;
 use crate::call::RArgument;
 use crate::environment::Environment;
@@ -600,17 +601,19 @@ pub fn r_env_has(env: SEXP, sym: SEXP) -> bool {
 /// Check if a symbol is an active binding in an environment
 ///
 /// Returns:
-/// - `None` if `sym` doesn't exist in the `env`
-/// - `Some(true)` if `sym` exists in the `env` and is an active binding
-/// - `Some(false)` if `sym` exists in the `env` and is not an active binding
-pub fn r_env_binding_is_active(env: SEXP, sym: SEXP) -> Option<bool> {
+/// - `Err` if `sym` doesn't exist in the `env`
+/// - `Ok(true)` if `sym` exists in the `env` and is an active binding
+/// - `Ok(false)` if `sym` exists in the `env` and is not an active binding
+pub fn r_env_binding_is_active(env: SEXP, sym: SEXP) -> Result<bool> {
     // `R_BindingIsActive()` will throw an error if the `env` doesn't contain
     // the symbol in question, which would be quite bad for us, so we are extra
     // careful with how we expose this.
     if !r_env_has(env, sym) {
-        return None;
+        let sym = RSymbol::new(sym)?.to_string();
+        Err(anyhow!("Can't find '{sym}' in this environment."))
+    } else {
+        Ok(unsafe { R_BindingIsActive(sym, env) == Rboolean_TRUE })
     }
-    unsafe { Some(R_BindingIsActive(sym, env) == Rboolean_TRUE) }
 }
 
 pub unsafe fn r_env_is_pkg_env(env: SEXP) -> bool {

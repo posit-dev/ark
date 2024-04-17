@@ -108,10 +108,20 @@ fn env_binding_variable(name: String, x: SEXP) -> Option<RVariable> {
 
     let symbol = unsafe { r_symbol!(name) };
 
-    if r_env_binding_is_active(x, symbol)? {
-        // We can't even extract out the object for active bindings so they
-        // are handled extremely specially.
-        return Some(active_binding_variable(name));
+    match r_env_binding_is_active(x, symbol) {
+        Ok(false) => {
+            // Continue with standard environment variable creation
+            ()
+        },
+        Ok(true) => {
+            // We can't even extract out the object for active bindings so they
+            // are handled extremely specially.
+            return Some(active_binding_variable(name));
+        },
+        Err(err) => {
+            log::error!("Can't determine if binding is active: {err:?}");
+            return None;
+        },
     }
 
     let x = r_envir_get(name.as_str(), x)?;

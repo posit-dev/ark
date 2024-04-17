@@ -192,9 +192,9 @@ impl fmt::Display for Error {
 macro_rules! anyhow {
     ($($rest: expr),*) => {{
         let message = format!($($rest, )*);
-        Err(crate::error::Error::Anyhow {
+        crate::error::Error::Anyhow {
             message,
-        })
+        }
     }}
 }
 
