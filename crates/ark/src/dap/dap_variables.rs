@@ -11,6 +11,7 @@ use harp::object::*;
 use harp::r_symbol;
 use harp::symbol::RSymbol;
 use harp::utils::*;
+use harp::vec_format::vec_format;
 use harp::vector::Vector;
 use libr::*;
 use stdext::unwrap;
@@ -177,11 +178,11 @@ fn object_variable_classed(name: String, x: SEXP) -> RVariable {
 fn object_variable_bare(name: String, x: SEXP) -> RVariable {
     match r_typeof(x) {
         NILSXP => nil_variable(name, x),
-        LGLSXP => vec_variable(name, x, LGLSXP),
-        INTSXP => vec_variable(name, x, INTSXP),
-        REALSXP => vec_variable(name, x, REALSXP),
-        CPLXSXP => vec_variable(name, x, CPLXSXP),
-        STRSXP => vec_variable(name, x, STRSXP),
+        LGLSXP => vec_variable(name, x),
+        INTSXP => vec_variable(name, x),
+        REALSXP => vec_variable(name, x),
+        CPLXSXP => vec_variable(name, x),
+        STRSXP => vec_variable(name, x),
         VECSXP => list_variable(name, x),
         SYMSXP => symbol_variable(name, x),
         LANGSXP => call_variable(name, x),
@@ -202,187 +203,21 @@ fn nil_variable(name: String, _x: SEXP) -> RVariable {
         .build()
 }
 
-fn vec_variable(name: String, x: SEXP, x_type: SEXPTYPE) -> RVariable {
+fn vec_variable(name: String, x: SEXP) -> RVariable {
     RVariableBuilder::new(name)
-        .value(vec_value(x, x_type))
-        .type_field(vec_type_field(x_type))
+        .value(vec_format(x, Some(5)))
+        .type_field(vec_type_field(x))
         .build()
 }
 
-fn vec_type_field(x_type: SEXPTYPE) -> String {
-    match x_type {
+fn vec_type_field(x: SEXP) -> String {
+    match r_typeof(x) {
         LGLSXP => String::from("<logical>"),
         INTSXP => String::from("<integer>"),
         REALSXP => String::from("<double>"),
         CPLXSXP => String::from("<complex>"),
         STRSXP => String::from("<character>"),
         _ => std::unreachable!(),
-    }
-}
-
-fn vec_value(x: SEXP, x_type: SEXPTYPE) -> String {
-    let mut size = r_length(x);
-
-    if size == 0 {
-        return vec_value_empty(x_type);
-    }
-
-    // Cap the size
-    let trim = size > 5;
-    if trim {
-        size = 5;
-    }
-
-    let mut out = "".to_string();
-
-    match x_type {
-        LGLSXP => lgl_fill_value(x, size, &mut out),
-        INTSXP => int_fill_value(x, size, &mut out),
-        REALSXP => dbl_fill_value(x, size, &mut out),
-        CPLXSXP => cpl_fill_value(x, size, &mut out),
-        STRSXP => chr_fill_value(x, size, &mut out),
-        _ => std::unreachable!(),
-    }
-
-    if trim {
-        out.push_str(", ...");
-    }
-
-    out
-}
-
-fn vec_value_empty(x_type: SEXPTYPE) -> String {
-    match x_type {
-        LGLSXP => String::from("logical(0)"),
-        INTSXP => String::from("integer(0)"),
-        REALSXP => String::from("double(0)"),
-        CPLXSXP => String::from("complex(0)"),
-        STRSXP => String::from("character(0)"),
-        _ => std::unreachable!(),
-    }
-}
-
-fn lgl_fill_value(x: SEXP, size: isize, out: &mut String) {
-    for i in 0..size {
-        let elt = r_lgl_get(x, i);
-        let elt = lgl_to_string(elt);
-        out.push_str(&elt);
-
-        if i != size - 1 {
-            out.push_str(", ");
-        }
-    }
-}
-
-fn int_fill_value(x: SEXP, size: isize, out: &mut String) {
-    for i in 0..size {
-        let elt = r_int_get(x, i);
-        let elt = int_to_string(elt);
-        out.push_str(&elt);
-
-        if i != size - 1 {
-            out.push_str(", ");
-        }
-    }
-}
-
-fn dbl_fill_value(x: SEXP, size: isize, out: &mut String) {
-    for i in 0..size {
-        let elt = r_dbl_get(x, i);
-        let elt = dbl_to_string(elt);
-        out.push_str(&elt);
-
-        if i != size - 1 {
-            out.push_str(", ");
-        }
-    }
-}
-
-fn cpl_fill_value(x: SEXP, size: isize, out: &mut String) {
-    for i in 0..size {
-        let elt = r_cpl_get(x, i);
-        let elt = cpl_to_string(elt);
-        out.push_str(&elt);
-
-        if i != size - 1 {
-            out.push_str(", ");
-        }
-    }
-}
-
-fn chr_fill_value(x: SEXP, size: isize, out: &mut String) {
-    for i in 0..size {
-        let elt = r_chr_get(x, i);
-        let elt = str_to_string(elt);
-        out.push_str(&elt);
-
-        if i != size - 1 {
-            out.push_str(", ");
-        }
-    }
-}
-
-fn lgl_to_string(x: i32) -> String {
-    if x == r_lgl_na() {
-        String::from("NA")
-    } else if x == 0 {
-        String::from("FALSE")
-    } else {
-        String::from("TRUE")
-    }
-}
-
-fn int_to_string(x: i32) -> String {
-    if x == r_int_na() {
-        String::from("NA")
-    } else {
-        x.to_string() + "L"
-    }
-}
-
-fn dbl_to_string(x: f64) -> String {
-    if r_dbl_is_na(x) {
-        String::from("NA")
-    } else if r_dbl_is_nan(x) {
-        String::from("NaN")
-    } else if !r_dbl_is_finite(x) {
-        if x.is_sign_positive() {
-            String::from("Inf")
-        } else {
-            String::from("-Inf")
-        }
-    } else {
-        x.to_string()
-    }
-}
-
-fn cpl_to_string(x: Rcomplex) -> String {
-    let mut out = String::from("");
-
-    let real = dbl_to_string(x.r);
-    out.push_str(&real);
-
-    // If `x.i < 0`, use `-` from converting the dbl to string
-    if r_dbl_is_na(x.i) || r_dbl_is_nan(x.i) || x.i >= 0.0 {
-        out.push_str("+");
-    }
-
-    let imaginary = dbl_to_string(x.i);
-    out.push_str(&imaginary);
-    out.push_str("i");
-
-    out
-}
-
-fn str_to_string(x: SEXP) -> String {
-    if x == r_str_na() {
-        String::from("NA")
-    } else {
-        let mut out = String::from("\"");
-        let elt = r_str_to_owned_utf8(x).unwrap_or(String::from("???"));
-        out.push_str(&elt);
-        out.push_str("\"");
-        out
     }
 }
 
@@ -609,137 +444,8 @@ mod tests {
     use harp::utils::r_envir_set;
     use libr::*;
 
-    use crate::dap::dap_variables::cpl_to_string;
-    use crate::dap::dap_variables::dbl_to_string;
     use crate::dap::dap_variables::env_binding_variable;
-    use crate::dap::dap_variables::int_to_string;
-    use crate::dap::dap_variables::lgl_to_string;
-    use crate::dap::dap_variables::str_to_string;
-    use crate::dap::dap_variables::vec_value;
     use crate::test::r_test;
-
-    #[test]
-    fn test_to_string_methods() {
-        r_test(|| unsafe {
-            assert_eq!(lgl_to_string(1), String::from("TRUE"));
-            assert_eq!(lgl_to_string(0), String::from("FALSE"));
-            assert_eq!(lgl_to_string(r_lgl_na()), String::from("NA"));
-
-            assert_eq!(int_to_string(1), String::from("1L"));
-            assert_eq!(int_to_string(0), String::from("0L"));
-            assert_eq!(int_to_string(-1), String::from("-1L"));
-            assert_eq!(int_to_string(r_int_na()), String::from("NA"));
-
-            assert_eq!(dbl_to_string(1.5), String::from("1.5"));
-            assert_eq!(dbl_to_string(0.0), String::from("0"));
-            assert_eq!(dbl_to_string(-1.5), String::from("-1.5"));
-            assert_eq!(dbl_to_string(r_dbl_na()), String::from("NA"));
-            assert_eq!(dbl_to_string(r_dbl_nan()), String::from("NaN"));
-            assert_eq!(
-                dbl_to_string(r_dbl_positive_infinity()),
-                String::from("Inf")
-            );
-            assert_eq!(
-                dbl_to_string(r_dbl_negative_infinity()),
-                String::from("-Inf")
-            );
-
-            assert_eq!(
-                cpl_to_string(Rcomplex { r: 1.5, i: 2.5 }),
-                String::from("1.5+2.5i")
-            );
-            assert_eq!(
-                cpl_to_string(Rcomplex { r: 0.0, i: 0.0 }),
-                String::from("0+0i")
-            );
-            assert_eq!(
-                cpl_to_string(Rcomplex { r: 1.0, i: -2.0 }),
-                String::from("1-2i")
-            );
-            assert_eq!(
-                cpl_to_string(Rcomplex {
-                    r: r_dbl_na(),
-                    i: r_dbl_nan()
-                }),
-                String::from("NA+NaNi")
-            );
-            assert_eq!(
-                cpl_to_string(Rcomplex {
-                    r: r_dbl_positive_infinity(),
-                    i: r_dbl_negative_infinity()
-                }),
-                String::from("Inf-Infi")
-            );
-
-            let x = RObject::from(r_char!("abc"));
-            assert_eq!(str_to_string(x.sexp), String::from("\"abc\""));
-            let x = RObject::from(r_str_na());
-            assert_eq!(str_to_string(x.sexp), String::from("NA"));
-        })
-    }
-
-    #[test]
-    fn test_vec_value_methods() {
-        r_test(|| unsafe {
-            let x = RObject::from(r_alloc_integer(2));
-            r_int_poke(x.sexp, 0, 1);
-            r_int_poke(x.sexp, 1, r_int_na());
-            assert_eq!(vec_value(x.sexp, INTSXP), String::from("1L, NA"));
-
-            let x = RObject::from(r_alloc_double(5));
-            r_dbl_poke(x.sexp, 0, 1.5);
-            r_dbl_poke(x.sexp, 1, r_dbl_na());
-            r_dbl_poke(x.sexp, 2, r_dbl_nan());
-            r_dbl_poke(x.sexp, 3, r_dbl_positive_infinity());
-            r_dbl_poke(x.sexp, 4, r_dbl_negative_infinity());
-            assert_eq!(
-                vec_value(x.sexp, REALSXP),
-                String::from("1.5, NA, NaN, Inf, -Inf")
-            );
-
-            let x = RObject::from(r_alloc_character(2));
-            r_chr_poke(x.sexp, 0, r_char!("hi"));
-            r_chr_poke(x.sexp, 1, r_str_na());
-            assert_eq!(vec_value(x.sexp, STRSXP), String::from("\"hi\", NA"))
-        })
-    }
-
-    #[test]
-    fn test_vec_value_truncation() {
-        r_test(|| unsafe {
-            let x = RObject::from(r_alloc_integer(6));
-            r_int_poke(x.sexp, 0, 1);
-            r_int_poke(x.sexp, 1, 2);
-            r_int_poke(x.sexp, 2, 3);
-            r_int_poke(x.sexp, 3, r_int_na());
-            r_int_poke(x.sexp, 4, -1);
-            r_int_poke(x.sexp, 5, 100);
-            assert_eq!(
-                vec_value(x.sexp, INTSXP),
-                String::from("1L, 2L, 3L, NA, -1L, ...")
-            )
-        })
-    }
-
-    #[test]
-    fn test_vec_value_empty() {
-        r_test(|| unsafe {
-            let x = RObject::from(r_alloc_logical(0));
-            assert_eq!(vec_value(x.sexp, LGLSXP), String::from("logical(0)"));
-
-            let x = RObject::from(r_alloc_integer(0));
-            assert_eq!(vec_value(x.sexp, INTSXP), String::from("integer(0)"));
-
-            let x = RObject::from(r_alloc_double(0));
-            assert_eq!(vec_value(x.sexp, REALSXP), String::from("double(0)"));
-
-            let x = RObject::from(r_alloc_complex(0));
-            assert_eq!(vec_value(x.sexp, CPLXSXP), String::from("complex(0)"));
-
-            let x = RObject::from(r_alloc_character(0));
-            assert_eq!(vec_value(x.sexp, STRSXP), String::from("character(0)"));
-        })
-    }
 
     #[test]
     fn test_env_binding_variable_base() {
