@@ -242,6 +242,8 @@ fn symbol_variable(name: String, x: SEXP) -> RVariable {
         .build()
 }
 
+// TODO: It might be nice to treat the call like a pairlist with children,
+// since the debugger is mostly a development tool where introspection is valuable.
 fn call_variable(name: String, x: SEXP) -> RVariable {
     let value = unwrap!(call_value(x), Err(err) => {
         log::error!("Failed to format call value: {err:?}");
