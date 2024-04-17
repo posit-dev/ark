@@ -17,10 +17,12 @@ use amalthea::comm::data_explorer_comm::ColumnSortKey;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendReply;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendRequest;
 use amalthea::comm::data_explorer_comm::DataExplorerFrontendEvent;
+use amalthea::comm::data_explorer_comm::FilterResult;
 use amalthea::comm::data_explorer_comm::GetColumnProfilesFeatures;
 use amalthea::comm::data_explorer_comm::GetColumnProfilesParams;
 use amalthea::comm::data_explorer_comm::GetDataValuesParams;
 use amalthea::comm::data_explorer_comm::GetSchemaParams;
+use amalthea::comm::data_explorer_comm::RowFilter;
 use amalthea::comm::data_explorer_comm::SchemaUpdateParams;
 use amalthea::comm::data_explorer_comm::SearchSchemaFeatures;
 use amalthea::comm::data_explorer_comm::SetRowFiltersFeatures;
@@ -101,9 +103,14 @@ pub struct RDataExplorer {
     /// A cache containing the current set of sort keys.
     sort_keys: Vec<ColumnSortKey>,
 
-    /// The set of active row indices after all sorts and filters have been
-    /// applied.
-    row_indices: Vec<i32>,
+    /// A cache containing the current set of row filters.
+    row_filters: Vec<RowFilter>,
+
+    /// The set of sorted row indices
+    sorted_indices: Vec<i32>,
+
+    /// The set of filtered row indices
+    filtered_indices: Vec<i32>,
 
     /// The communication socket for the data viewer.
     comm: CommSocket,
@@ -156,8 +163,10 @@ impl RDataExplorer {
                         table: data,
                         binding,
                         shape,
-                        row_indices,
+                        sorted_indices: row_indices.clone(),
+                        filtered_indices: row_indices,
                         sort_keys: vec![],
+                        row_filters: vec![],
                         comm,
                         comm_manager_tx,
                     };
@@ -329,7 +338,7 @@ impl RDataExplorer {
             self.shape = new_shape;
 
             // Reset active row indices to be all rows
-            self.row_indices = (1..=self.shape.num_rows).collect();
+            self.sorted_indices = (1..=self.shape.num_rows).collect();
 
             // Clear active sort keys
             self.sort_keys.clear();
@@ -341,7 +350,7 @@ impl RDataExplorer {
             // Columns didn't change, but the data has. If there are sort
             // keys, we need to sort the rows again to reflect the new data.
             if self.sort_keys.len() > 0 {
-                self.row_indices = r_task(|| self.r_sort_rows())?;
+                self.sorted_indices = r_task(|| self.r_sort_rows())?;
             }
 
             DataExplorerFrontendEvent::DataUpdate
@@ -390,15 +399,23 @@ impl RDataExplorer {
 
                 // If there are no sort keys, reset the row indices to be the
                 // row numbers; otherwise, sort the rows
-                self.row_indices = match keys.len() {
+                self.sorted_indices = match keys.len() {
                     0 => (1..=self.shape.num_rows).collect(),
                     _ => r_task(|| self.r_sort_rows())?,
                 };
 
                 Ok(DataExplorerBackendReply::SetSortColumnsReply())
             },
-            DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams { filters: _ }) => {
-                bail!("Data Viewer: Not yet implemented")
+            DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams { filters }) => {
+                // Save the new row filters
+                self.row_filters = filters.clone();
+
+                self.filtered_indices = r_task(|| self.r_filter_rows())?;
+                Ok(DataExplorerBackendReply::SetRowFiltersReply({
+                    FilterResult {
+                        selected_num_rows: self.filtered_indices.len() as i64,
+                    }
+                }))
             },
             DataExplorerBackendRequest::GetColumnProfiles(GetColumnProfilesParams {
                 profiles: requests,
@@ -548,6 +565,10 @@ impl RDataExplorer {
         Ok(indices)
     }
 
+    fn r_filter_rows(&self) -> anyhow::Result<Vec<i32>> {
+        Ok(vec![])
+    }
+
     /// Get the schema for a range of columns in the data object.
     ///
     /// - `start_index`: The index of the first column to return.
@@ -642,7 +663,7 @@ impl RDataExplorer {
         let cols_r_idx: RObject = cols_r_idx.try_into()?;
         let num_cols = cols_r_idx.length() as i32;
 
-        let row_indices = self.row_indices[lower_bound as usize..upper_bound as usize].to_vec();
+        let row_indices = self.sorted_indices[lower_bound as usize..upper_bound as usize].to_vec();
         let rows_r_idx: RObject = row_indices.clone().try_into()?;
 
         // Subset rows in advance, including unmaterialized row names. Also
