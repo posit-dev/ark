@@ -42,6 +42,39 @@
 }
 
 #' @export
-.ps.filter_rows <- function(tbl, row_filters) {
+.ps.filter_rows <- function(table, row_filters) {
+    indices <- rep(TRUE, nrow(table))
+    for (row_filter in row_filters) {
+        # Dynamic dispatch to the appropriate filter function
+        filter_function <- paste('.ps.filter_col', row_filter$filter_type, sep = '.')
 
+        # Each filter function accepts the column and the parameters as arguments
+        filter_args <- c(table[[row_filter$column_index + 1]], row_filter$params)
+
+        # Apply the filter function to the column
+        if (identical(row_filter$condition), "or") {
+            indices <- indices | do.call(filter_function, filter_args)
+        } else {
+            indices <- indices & do.call(filter_function, filter_args)
+        }
+    }
+
+    # Return the indices of the rows that pass all filters
+    which(indices)
+}
+
+# Filter functions; each accepts a column and a set of parameters
+#
+#' @export
+.ps.filter_col.compare <- function(col, params) {
+    # Form the expression to evaluate. The filter operations map
+    # straightforwardly to R's operators, except for the 'equals' operation,
+    # which is represented by '=' but needs to be converted to '=='.
+    op <- if (identical(params$op, '=')) {
+        '=='
+    } else {
+        params$op
+    }
+
+    do.call(op, c(col, params$value))
 }

@@ -23,6 +23,7 @@ use amalthea::comm::data_explorer_comm::GetColumnProfilesParams;
 use amalthea::comm::data_explorer_comm::GetDataValuesParams;
 use amalthea::comm::data_explorer_comm::GetSchemaParams;
 use amalthea::comm::data_explorer_comm::RowFilter;
+use amalthea::comm::data_explorer_comm::RowFilterType;
 use amalthea::comm::data_explorer_comm::SchemaUpdateParams;
 use amalthea::comm::data_explorer_comm::SearchSchemaFeatures;
 use amalthea::comm::data_explorer_comm::SetRowFiltersFeatures;
@@ -581,9 +582,17 @@ impl RDataExplorer {
             filters.push(filter);
         }
 
-        let _ = RObject::try_from(filters)?;
+        // Pass the row filters to R and get the resulting row indices
+        let filters = RObject::try_from(filters)?;
+        let rows = RFunction::new("", ".ps.filter_rows")
+            .param("table", self.table.get().sexp)
+            .param("row_filters", filters)
+            .call()?;
 
-        Ok(vec![])
+        // Convert the row indices to a Rust vector and return it
+        let rows = Vec::<i32>::try_from(rows)?;
+
+        Ok(rows)
     }
 
     /// Get the schema for a range of columns in the data object.
@@ -638,8 +647,8 @@ impl RDataExplorer {
                 },
                 search_schema: SearchSchemaFeatures { supported: false },
                 set_row_filters: SetRowFiltersFeatures {
-                    supported: false,
-                    supported_types: vec![],
+                    supported: true,
+                    supported_types: vec![RowFilterType::Compare],
                     supports_conditions: false,
                 },
             },
