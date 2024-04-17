@@ -38,9 +38,12 @@ pub struct FilterResult {
 	pub selected_num_rows: i64
 }
 
-/// The current backend table state
+/// The current backend state for the data explorer
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct TableState {
+pub struct BackendState {
+	/// Variable name or other string to display for tab name in UI
+	pub display_name: String,
+
 	/// Provides number of rows and columns in table
 	pub table_shape: TableShape,
 
@@ -48,7 +51,10 @@ pub struct TableState {
 	pub row_filters: Vec<RowFilter>,
 
 	/// The set of currently applied sorts
-	pub sort_keys: Vec<ColumnSortKey>
+	pub sort_keys: Vec<ColumnSortKey>,
+
+	/// The features currently supported by the backend instance
+	pub supported_features: SupportedFeatures
 }
 
 /// Provides number of rows and columns in table
@@ -59,19 +65,6 @@ pub struct TableShape {
 
 	/// Number of columns in the unfiltered dataset
 	pub num_columns: i64
-}
-
-/// For each field, returns flags indicating supported features
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct SupportedFeatures {
-	/// Support for 'search_schema' RPC and its features
-	pub search_schema: SearchSchemaFeatures,
-
-	/// Support for 'set_row_filters' RPC and its features
-	pub set_row_filters: SetRowFiltersFeatures,
-
-	/// Support for 'get_column_profiles' RPC and its features
-	pub get_column_profiles: GetColumnProfilesFeatures
 }
 
 /// Schema for a column in a table
@@ -126,6 +119,13 @@ pub struct RowFilter {
 
 	/// Column index to apply filter to
 	pub column_index: i64,
+
+	/// The binary condition to use to combine with preceding row filters
+	pub condition: RowFilterCondition,
+
+	/// Whether the filter is valid and supported by the backend, if undefined
+	/// then true
+	pub is_valid: Option<bool>,
 
 	/// Parameters for the 'between' and 'not_between' filter types
 	pub between_params: Option<BetweenFilterParams>,
@@ -319,6 +319,19 @@ pub struct ColumnSortKey {
 	pub ascending: bool
 }
 
+/// For each field, returns flags indicating supported features
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SupportedFeatures {
+	/// Support for 'search_schema' RPC and its features
+	pub search_schema: SearchSchemaFeatures,
+
+	/// Support for 'set_row_filters' RPC and its features
+	pub set_row_filters: SetRowFiltersFeatures,
+
+	/// Support for 'get_column_profiles' RPC and its features
+	pub get_column_profiles: GetColumnProfilesFeatures
+}
+
 /// Feature flags for 'search_schema' RPC
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SearchSchemaFeatures {
@@ -380,6 +393,16 @@ pub enum ColumnDisplayType {
 	Unknown
 }
 
+/// Possible values for Condition in RowFilter
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub enum RowFilterCondition {
+	#[serde(rename = "and")]
+	And,
+
+	#[serde(rename = "or")]
+	Or
+}
+
 /// Possible values for RowFilterType
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum RowFilterType {
@@ -389,11 +412,17 @@ pub enum RowFilterType {
 	#[serde(rename = "compare")]
 	Compare,
 
+	#[serde(rename = "is_empty")]
+	IsEmpty,
+
 	#[serde(rename = "is_null")]
 	IsNull,
 
 	#[serde(rename = "not_between")]
 	NotBetween,
+
+	#[serde(rename = "not_empty")]
+	NotEmpty,
 
 	#[serde(rename = "not_null")]
 	NotNull,
@@ -576,13 +605,6 @@ pub enum DataExplorerBackendRequest {
 	#[serde(rename = "get_state")]
 	GetState,
 
-	/// Query the backend to determine supported features
-	///
-	/// Query the backend to determine supported features, to enable feature
-	/// toggling
-	#[serde(rename = "get_supported_features")]
-	GetSupportedFeatures,
-
 }
 
 /**
@@ -606,11 +628,8 @@ pub enum DataExplorerBackendReply {
 
 	GetColumnProfilesReply(Vec<ColumnProfileResult>),
 
-	/// The current backend table state
-	GetStateReply(TableState),
-
-	/// For each field, returns flags indicating supported features
-	GetSupportedFeaturesReply(SupportedFeatures),
+	/// The current backend state for the data explorer
+	GetStateReply(BackendState),
 
 }
 
