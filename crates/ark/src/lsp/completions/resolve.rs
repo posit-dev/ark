@@ -37,6 +37,7 @@ pub unsafe fn resolve_completion(item: &mut CompletionItem) -> Result<bool> {
             resolve_parameter_completion_item(item, name.as_str(), function.as_str())
         },
         CompletionData::Object { name: _ } => Ok(false),
+        CompletionData::Keyword { name: _ } => Ok(false),
         CompletionData::RoxygenTag { tag: _ } => Ok(false),
         CompletionData::ScopeVariable { name: _ } => Ok(false),
         CompletionData::ScopeParameter { name: _ } => Ok(false),
