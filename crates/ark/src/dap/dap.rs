@@ -61,14 +61,22 @@ pub struct Dap {
     /// Maps a frame `id` from within the `stack` to a unique
     /// `variables_reference` id, which then allows you to use
     /// `variables_reference_to_r_object` to look up the R object to collect
-    /// variables from.
+    /// variables from. Reset after each debug step.
     pub frame_id_to_variables_reference: HashMap<i64, i64>,
 
     /// Maps a `variables_reference` to the corresponding R object used to
     /// collect variables from. The R object may be a frame environment from
     /// a `FrameInfo`, or an arbitrarily nested child of one of those
-    /// environments if the child has its own children.
+    /// environments if the child has its own children. Reset after each debug step,
+    /// allowing us to free our references to the R objects.
     pub variables_reference_to_r_object: HashMap<i64, RThreadSafe<RObject>>,
+
+    /// The current `variables_reference`. Unique within a debug session. Reset after
+    /// `stop_debug()`, not between debug steps like the hash maps are. If we reset
+    /// between steps, we could potentially have a race condition where
+    /// `handle_variables()` could request `variables` for a `variables_reference` that
+    /// we've already overwritten the R object for, potentially sending back incorrect
+    /// information.
     current_variables_reference: i64,
 
     /// Channel for sending events to the comm frontend.
@@ -138,7 +146,8 @@ impl Dap {
         // Reset state
         self.stack = None;
         self.clear_fallback_sources();
-        self.clear_variables_references();
+        self.clear_variables_reference_maps();
+        self.reset_variables_reference_count();
         self.is_debugging = false;
 
         if self.is_connected {
@@ -182,6 +191,12 @@ impl Dap {
     }
 
     fn load_variables_references(&mut self, stack: &mut Vec<FrameInfo>) {
+        // Reset the last step's maps. The frontend should never ask for these variable
+        // references or variables again (and if it does due to some race condition, we
+        // end up replying with an error). This lets us free our references to the
+        // R objects used to populate the variables pane between steps.
+        self.clear_variables_reference_maps();
+
         for frame in stack.iter_mut() {
             // Move the `environment` out of the `FrameInfo`, who's only
             // job is to get it here. We don't use it otherwise.
@@ -203,9 +218,14 @@ impl Dap {
         }
     }
 
-    fn clear_variables_references(&mut self) {
+    // Called between steps
+    fn clear_variables_reference_maps(&mut self) {
         self.frame_id_to_variables_reference.clear();
         self.variables_reference_to_r_object.clear();
+    }
+
+    // Called between debug sessions (i.e. on `debug_stop()`)
+    fn reset_variables_reference_count(&mut self) {
         self.current_variables_reference = 1;
     }
 
