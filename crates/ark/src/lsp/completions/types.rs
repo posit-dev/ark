@@ -29,6 +29,9 @@ pub(super) enum CompletionData {
     Object {
         name: String,
     },
+    Keyword {
+        name: String,
+    },
     Package {
         name: String,
     },
