@@ -40,3 +40,8 @@
 .ps.null_count <- function(col) {
     sum(is.na(col))
 }
+
+#' @export
+.ps.filter_rows <- function(tbl, row_filters) {
+
+}

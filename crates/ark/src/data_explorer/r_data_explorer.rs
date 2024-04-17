@@ -566,6 +566,23 @@ impl RDataExplorer {
     }
 
     fn r_filter_rows(&self) -> anyhow::Result<Vec<i32>> {
+        let mut filters: Vec<RObject> = vec![];
+
+        // Convert each filter to an R object by marshaling through the JSON
+        // layer.
+        //
+        // This feels a little weird since the filters were *unmarshaled* from
+        // JSON earlier in the RPC stack, but it's the easiest way to create R
+        // objects from the filter data without creating an unnecessary
+        // intermediate representation.
+        for filter in &self.row_filters {
+            let filter = serde_json::to_value(filter)?;
+            let filter = RObject::try_from(filter)?;
+            filters.push(filter);
+        }
+
+        let _ = RObject::try_from(filters)?;
+
         Ok(vec![])
     }
 

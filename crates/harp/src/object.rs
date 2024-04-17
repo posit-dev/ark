@@ -1,7 +1,7 @@
 //
 // object.rs
 //
-// Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2024 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -750,6 +750,27 @@ impl TryFrom<RObject> for Vec<RObject> {
     }
 }
 
+impl TryFrom<Vec<RObject>> for RObject {
+    type Error = crate::error::Error;
+    fn try_from(value: Vec<RObject>) -> Result<Self, Self::Error> {
+        unsafe {
+            let n = value.len();
+
+            // Create the list object.
+            let out_raw = Rf_allocVector(VECSXP, n as R_xlen_t);
+            let out = RObject::new(out_raw);
+            let v_out = DATAPTR(out_raw) as *mut SEXP;
+
+            // Copy the values into the list.
+            for i in 0..n {
+                *(v_out.offset(i as isize)) = *value[i];
+            }
+
+            return Ok(out);
+        }
+    }
+}
+
 impl TryFrom<Vec<bool>> for RObject {
     type Error = crate::error::Error;
     fn try_from(value: Vec<bool>) -> Result<Self, Self::Error> {
@@ -1344,6 +1365,26 @@ mod tests {
                     assert_eq!(x, vec![10i32, 20])
                 }
             );
+        }
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test_tryfrom_Vec_RObject_RObject() {
+        r_test! {
+            let items_in = vec![
+                RObject::from(1),
+                RObject::from(2),
+                RObject::from(3)
+            ];
+
+            // Convert the vector of RObjects into a single RObject (a list).
+            let list = RObject::try_from(items_in.clone()).unwrap();
+            assert_eq!(list.length(), 3);
+
+            // Now convert back to a vector of RObjects.
+            let items_out = Vec::<RObject>::try_from(list).unwrap();
+            assert_eq!(items_in, items_out);
         }
     }
 }
