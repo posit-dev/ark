@@ -24,6 +24,7 @@ use crate::eval::r_parse_eval0;
 use crate::exec::geterrmessage;
 use crate::exec::RFunction;
 use crate::exec::RFunctionExt;
+use crate::object::r_alloc_character;
 use crate::object::r_chr_get;
 use crate::object::r_chr_poke;
 use crate::object::r_dim;
@@ -423,12 +424,13 @@ pub fn r_names2(x: SEXP) -> SEXP {
     unsafe { protect.add(names) };
 
     if r_is_null(names) {
-        return r_empty_names(size);
+        // Comes initialized with `""`.
+        return r_alloc_character(size);
     }
 
     if r_typeof(names) != STRSXP {
         log::error!("`names` attribute was neither a character vector nor `NULL`.");
-        return r_empty_names(size);
+        return r_alloc_character(size);
     }
 
     let mut needs_renaming = false;
@@ -460,21 +462,6 @@ pub fn r_names2(x: SEXP) -> SEXP {
     }
 
     out
-}
-
-fn r_empty_names(size: R_xlen_t) -> SEXP {
-    unsafe {
-        let mut protect = RProtect::new();
-
-        let out = Rf_allocVector(STRSXP, size);
-        protect.add(out);
-
-        for i in 0..size {
-            r_chr_poke(out, i, r_str_blank());
-        }
-
-        out
-    }
 }
 
 pub unsafe fn r_stringify(object: SEXP, delimiter: &str) -> Result<String> {

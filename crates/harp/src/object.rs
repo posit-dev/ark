@@ -230,6 +230,27 @@ pub fn r_chr_poke(x: SEXP, i: R_xlen_t, value: SEXP) {
     unsafe { SET_STRING_ELT(x, i, value) }
 }
 
+// TODO: Make these wrappers robust to allocation failures
+// https://github.com/posit-dev/positron/issues/2600
+pub fn r_alloc_logical(size: R_xlen_t) -> SEXP {
+    unsafe { Rf_allocVector(LGLSXP, size) }
+}
+pub fn r_alloc_integer(size: R_xlen_t) -> SEXP {
+    unsafe { Rf_allocVector(INTSXP, size) }
+}
+pub fn r_alloc_double(size: R_xlen_t) -> SEXP {
+    unsafe { Rf_allocVector(REALSXP, size) }
+}
+pub fn r_alloc_complex(size: R_xlen_t) -> SEXP {
+    unsafe { Rf_allocVector(CPLXSXP, size) }
+}
+pub fn r_alloc_character(size: R_xlen_t) -> SEXP {
+    unsafe { Rf_allocVector(STRSXP, size) }
+}
+pub fn r_alloc_list(size: R_xlen_t) -> SEXP {
+    unsafe { Rf_allocVector(VECSXP, size) }
+}
+
 impl RObject {
     pub unsafe fn new(data: SEXP) -> Self {
         RObject {
