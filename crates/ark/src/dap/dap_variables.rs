@@ -571,13 +571,18 @@ fn indexed_names(x: SEXP) -> Vec<String> {
 
 fn is_ignored_name(x: &str) -> bool {
     // Dots in signatures
+    // TODO: It would be cool to show `<...>` for the dots, which could expand to show
+    // the promises / values inside the dots without accidentally forcing anything.
+    // See rlang's `capturedots()` for more about how to do this:
+    // https://github.com/r-lib/rlang/blob/e5da30cb9fe54e020f0e122543466841c3ce6ea7/src/capture.c#L112
     if matches!(x, "...") {
         return true;
     }
 
-    // S3 details passed through to generics and methods
-    // See `?UseMethod`
-    // User can always print them in the console directly if they are "experts"
+    // S3 details passed through to generics and methods. See `?UseMethod`.
+    // User can always print them in the console directly if they are advanced.
+    // TODO: We could consider putting these in their own separate "Scope", which advanced
+    // users might find useful.
     if matches!(
         x,
         ".Generic" | ".Method" | ".Class" | ".Group" | ".GenericCallEnv" | ".GenericDefEnv"
