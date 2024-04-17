@@ -24,6 +24,11 @@ pub struct RVariable {
     pub variables_reference_object: Option<RThreadSafe<RObject>>,
 }
 
+/// A "builder" pattern for `RVariable`
+///
+/// Useful because we generate `RVariable`s with various combinations of the possible
+/// fields, and it's cleanest if we only have to specify the ones we actually have
+/// values for.
 struct RVariableBuilder {
     name: String,
     value: Option<String>,
