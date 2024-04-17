@@ -208,7 +208,7 @@ pub fn r_chr_get_owned_utf8(x: SEXP, i: isize) -> Result<String> {
 /// Missing values return an `Error::MissingValueError`.
 pub fn r_str_to_owned_utf8(x: SEXP) -> Result<String> {
     if x == unsafe { R_NaString } {
-       Err(Error::MissingValueError)
+        Err(Error::MissingValueError)
     } else {
         Ok(r_str_to_owned_utf8_unchecked(x))
     }
