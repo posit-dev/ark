@@ -14,6 +14,7 @@ use libr::*;
 use once_cell::sync::Lazy;
 use regex::Regex;
 
+use crate::anyhow;
 use crate::call::r_expr_quote;
 use crate::call::RArgument;
 use crate::environment::Environment;
@@ -24,10 +25,18 @@ use crate::eval::r_parse_eval0;
 use crate::exec::geterrmessage;
 use crate::exec::RFunction;
 use crate::exec::RFunctionExt;
+use crate::object::r_alloc_character;
+use crate::object::r_chr_get;
+use crate::object::r_chr_poke;
+use crate::object::r_dim;
+use crate::object::r_length;
+use crate::object::r_str_blank;
+use crate::object::r_str_na;
 use crate::object::RObject;
 use crate::protect::RProtect;
 use crate::r_char;
 use crate::r_lang;
+use crate::r_null;
 use crate::r_symbol;
 use crate::string::r_is_string;
 use crate::symbol::RSymbol;
@@ -256,7 +265,7 @@ pub fn pairlist_size(mut pairlist: SEXP) -> Result<isize> {
 }
 
 pub fn r_vec_is_single_dimension_with_single_value(value: SEXP) -> bool {
-    unsafe { Rf_getAttrib(value, R_DimSymbol) == libr::R_NilValue && Rf_xlength(value) == 1 }
+    r_dim(value) == r_null() && r_length(value) == 1
 }
 
 pub fn r_vec_type(value: SEXP) -> String {
@@ -309,10 +318,12 @@ pub fn r_typeof(object: SEXP) -> u32 {
     unsafe { TYPEOF(object) as u32 }
 }
 
-pub unsafe fn r_type2char<T: Into<u32>>(kind: T) -> String {
-    let kind = Rf_type2char(kind.into());
-    let cstr = CStr::from_ptr(kind);
-    return cstr.to_str().unwrap().to_string();
+pub fn r_type2char<T: Into<u32>>(kind: T) -> String {
+    unsafe {
+        let kind = Rf_type2char(kind.into());
+        let cstr = CStr::from_ptr(kind);
+        return cstr.to_str().unwrap().to_string();
+    }
 }
 
 pub unsafe fn r_get_option<T: TryFrom<RObject, Error = Error>>(name: &str) -> Result<T> {
@@ -380,13 +391,16 @@ pub unsafe fn r_envir_name(envir: SEXP) -> Result<String> {
     Ok(format!("{:p}", envir))
 }
 
-pub unsafe fn r_envir_get(symbol: &str, envir: SEXP) -> Option<SEXP> {
-    let value = Rf_findVar(r_symbol!(symbol), envir);
-    if value == R_UnboundValue {
-        return None;
-    }
+pub fn r_envir_get(symbol: &str, envir: SEXP) -> Option<SEXP> {
+    unsafe {
+        let value = Rf_findVar(r_symbol!(symbol), envir);
 
-    Some(value)
+        if value == R_UnboundValue {
+            None
+        } else {
+            Some(value)
+        }
+    }
 }
 
 pub unsafe fn r_envir_set(symbol: &str, value: SEXP, envir: SEXP) {
@@ -395,6 +409,62 @@ pub unsafe fn r_envir_set(symbol: &str, value: SEXP, envir: SEXP) {
 
 pub unsafe fn r_envir_remove(symbol: &str, envir: SEXP) {
     R_removeVarFromFrame(r_symbol!(symbol), envir);
+}
+
+/// Get names of a vector
+///
+/// `r_names2()` always returns a character vector, even when the object does
+/// not have a `names` attribute. When there are no `names`, a vector of empty
+/// names is returned. Missing names are standardized to `""`.
+///
+/// Note that it does not use S3 dispatch for length or names.
+pub fn r_names2(x: SEXP) -> SEXP {
+    let mut protect = unsafe { RProtect::new() };
+
+    let size = r_length(x);
+
+    let names = unsafe { Rf_getAttrib(x, R_NamesSymbol) };
+    unsafe { protect.add(names) };
+
+    if r_is_null(names) {
+        // Comes initialized with `""`.
+        return r_alloc_character(size);
+    }
+
+    if r_typeof(names) != STRSXP {
+        log::error!("`names` attribute was neither a character vector nor `NULL`.");
+        return r_alloc_character(size);
+    }
+
+    let mut needs_renaming = false;
+
+    for i in 0..size {
+        let elt = r_chr_get(names, i);
+
+        if elt == r_str_na() {
+            needs_renaming = true;
+            break;
+        }
+    }
+
+    if !needs_renaming {
+        return names;
+    }
+
+    let out = r_alloc_character(size);
+    unsafe { protect.add(out) };
+
+    for i in 0..size {
+        let elt = r_chr_get(names, i);
+
+        if elt == r_str_na() {
+            r_chr_poke(out, i, r_str_blank());
+        } else {
+            r_chr_poke(out, i, elt);
+        }
+    }
+
+    out
 }
 
 pub unsafe fn r_stringify(object: SEXP, delimiter: &str) -> Result<String> {
@@ -441,8 +511,21 @@ pub fn r_symbol_quote(name: &str) -> String {
     format!("`{}`", name.replace("`", "\\`"))
 }
 
-pub unsafe fn r_promise_is_forced(x: SEXP) -> bool {
-    PRVALUE(x) != R_UnboundValue
+pub fn r_is_promise(x: SEXP) -> bool {
+    r_typeof(x) == PROMSXP
+}
+
+pub fn r_promise_is_forced(x: SEXP) -> bool {
+    unsafe { PRVALUE(x) != R_UnboundValue }
+}
+
+pub fn r_promise_value(x: SEXP) -> SEXP {
+    unsafe { PRVALUE(x) }
+}
+
+pub fn r_promise_expr(x: SEXP) -> SEXP {
+    // Like `PRCODE()`, but also handles bytecode expressions
+    unsafe { R_PromiseExpr(x) }
 }
 
 pub unsafe fn r_promise_force(x: SEXP) -> Result<SEXP> {
@@ -485,29 +568,54 @@ pub unsafe fn r_promise_is_lazy_load_binding(x: SEXP) -> bool {
     expr == r_symbol!("lazyLoadDBfetch")
 }
 
-pub unsafe fn r_env_has(env: SEXP, sym: SEXP) -> bool {
-    if libr::has::R_existsVarInFrame() {
-        libr::R_existsVarInFrame(env, sym) == libr::Rboolean_TRUE
-    } else {
-        // Not particularly fast, but seems to be good enough for checking symbol
-        // existance during completion generation
-        let mut protect = RProtect::new();
-        let name = protect.add(PRINTNAME(sym));
-        let name = protect.add(Rf_ScalarString(name));
-        let call = protect.add(r_lang!(
-            r_symbol!("exists"),
-            x = name,
-            envir = env,
-            inherits = false
-        ));
-        let out = Rf_eval(call, R_BaseEnv);
-        // `exists()` is guaranteed to return a logical vector on success
-        LOGICAL_ELT(out, 0) != 0
+pub fn r_bytecode_expr(x: SEXP) -> SEXP {
+    unsafe { R_BytecodeExpr(x) }
+}
+
+pub fn r_env_names(env: SEXP) -> SEXP {
+    // `all = true`, `sorted = false`
+    unsafe { R_lsInternal3(env, Rboolean_TRUE, Rboolean_FALSE) }
+}
+
+pub fn r_env_has(env: SEXP, sym: SEXP) -> bool {
+    unsafe {
+        if libr::has::R_existsVarInFrame() {
+            libr::R_existsVarInFrame(env, sym) == libr::Rboolean_TRUE
+        } else {
+            // Not particularly fast, but seems to be good enough for checking symbol
+            // existance during completion generation
+            let mut protect = RProtect::new();
+            let name = protect.add(PRINTNAME(sym));
+            let name = protect.add(Rf_ScalarString(name));
+            let call = protect.add(r_lang!(
+                r_symbol!("exists"),
+                x = name,
+                envir = env,
+                inherits = false
+            ));
+            let out = Rf_eval(call, R_BaseEnv);
+            // `exists()` is guaranteed to return a logical vector on success
+            LOGICAL_ELT(out, 0) != 0
+        }
     }
 }
 
-pub unsafe fn r_env_binding_is_active(env: SEXP, sym: SEXP) -> bool {
-    R_BindingIsActive(sym, env) == Rboolean_TRUE
+/// Check if a symbol is an active binding in an environment
+///
+/// Returns:
+/// - `Err` if `sym` doesn't exist in the `env`
+/// - `Ok(true)` if `sym` exists in the `env` and is an active binding
+/// - `Ok(false)` if `sym` exists in the `env` and is not an active binding
+pub fn r_env_binding_is_active(env: SEXP, sym: SEXP) -> Result<bool> {
+    // `R_BindingIsActive()` will throw an error if the `env` doesn't contain
+    // the symbol in question, which would be quite bad for us, so we are extra
+    // careful with how we expose this.
+    if !r_env_has(env, sym) {
+        let sym = RSymbol::new(sym)?.to_string();
+        Err(anyhow!("Can't find '{sym}' in this environment."))
+    } else {
+        Ok(unsafe { R_BindingIsActive(sym, env) == Rboolean_TRUE })
+    }
 }
 
 pub unsafe fn r_env_is_pkg_env(env: SEXP) -> bool {

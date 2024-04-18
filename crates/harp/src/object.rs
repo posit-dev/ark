@@ -156,8 +156,99 @@ pub fn r_length(x: SEXP) -> isize {
     unsafe { Rf_xlength(x) }
 }
 
+pub fn r_dim(x: SEXP) -> SEXP {
+    unsafe { Rf_getAttrib(x, R_DimSymbol) }
+}
+
+pub fn r_lgl_get(x: SEXP, i: isize) -> i32 {
+    unsafe { LOGICAL_ELT(x, i) }
+}
+pub fn r_int_get(x: SEXP, i: isize) -> i32 {
+    unsafe { INTEGER_ELT(x, i) }
+}
+pub fn r_dbl_get(x: SEXP, i: isize) -> f64 {
+    unsafe { REAL_ELT(x, i) }
+}
+pub fn r_cpl_get(x: SEXP, i: isize) -> Rcomplex {
+    unsafe { COMPLEX_ELT(x, i) }
+}
+pub fn r_chr_get(x: SEXP, i: isize) -> SEXP {
+    unsafe { STRING_ELT(x, i) }
+}
 pub fn r_list_get(x: SEXP, i: isize) -> SEXP {
     unsafe { VECTOR_ELT(x, i) }
+}
+
+pub fn r_lgl_na() -> i32 {
+    unsafe { R_NaInt }
+}
+pub fn r_int_na() -> i32 {
+    unsafe { R_NaInt }
+}
+pub fn r_dbl_na() -> f64 {
+    unsafe { R_NaReal }
+}
+pub fn r_str_na() -> SEXP {
+    unsafe { R_NaString }
+}
+
+pub fn r_str_blank() -> SEXP {
+    unsafe { R_BlankString }
+}
+
+pub fn r_dbl_nan() -> f64 {
+    unsafe { R_NaN }
+}
+pub fn r_dbl_positive_infinity() -> f64 {
+    unsafe { R_PosInf }
+}
+pub fn r_dbl_negative_infinity() -> f64 {
+    unsafe { R_NegInf }
+}
+
+pub fn r_dbl_is_na(x: f64) -> bool {
+    unsafe { R_IsNA(x) != 0 }
+}
+pub fn r_dbl_is_nan(x: f64) -> bool {
+    unsafe { R_IsNaN(x) != 0 }
+}
+/// Returns `true` if `x` is not `NA`, `NaN`, `Inf`, or `-Inf`
+pub fn r_dbl_is_finite(x: f64) -> bool {
+    unsafe { R_finite(x) != 0 }
+}
+
+pub fn r_lgl_poke(x: SEXP, i: R_xlen_t, value: i32) {
+    unsafe { SET_LOGICAL_ELT(x, i, value) }
+}
+pub fn r_int_poke(x: SEXP, i: R_xlen_t, value: i32) {
+    unsafe { SET_INTEGER_ELT(x, i, value) }
+}
+pub fn r_dbl_poke(x: SEXP, i: R_xlen_t, value: f64) {
+    unsafe { SET_REAL_ELT(x, i, value) }
+}
+pub fn r_chr_poke(x: SEXP, i: R_xlen_t, value: SEXP) {
+    unsafe { SET_STRING_ELT(x, i, value) }
+}
+
+// TODO: Make these wrappers robust to allocation failures
+// https://github.com/posit-dev/positron/issues/2600
+pub fn r_alloc_logical(size: R_xlen_t) -> SEXP {
+    unsafe { Rf_allocVector(LGLSXP, size) }
+}
+pub fn r_alloc_integer(size: R_xlen_t) -> SEXP {
+    unsafe { Rf_allocVector(INTSXP, size) }
+}
+pub fn r_alloc_double(size: R_xlen_t) -> SEXP {
+    unsafe { Rf_allocVector(REALSXP, size) }
+}
+pub fn r_alloc_complex(size: R_xlen_t) -> SEXP {
+    unsafe { Rf_allocVector(CPLXSXP, size) }
+}
+pub fn r_alloc_character(size: R_xlen_t) -> SEXP {
+    unsafe { Rf_allocVector(STRSXP, size) }
+}
+pub fn r_alloc_list(size: R_xlen_t) -> SEXP {
+    unsafe { Rf_allocVector(VECSXP, size) }
 }
 
 impl RObject {

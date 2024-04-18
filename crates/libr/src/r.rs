@@ -59,6 +59,10 @@ functions::generate! {
 
     pub fn R_IsNA(arg1: f64) -> std::ffi::c_int;
 
+    pub fn R_IsNaN(arg1: f64) -> std::ffi::c_int;
+
+    pub fn R_finite(arg1: f64) -> std::ffi::c_int;
+
     pub fn R_IsNamespaceEnv(rho: SEXP) -> Rboolean;
 
     pub fn R_IsPackageEnv(rho: SEXP) -> Rboolean;
@@ -92,6 +96,8 @@ functions::generate! {
     pub fn R_do_slot(obj: SEXP, name: SEXP) -> SEXP;
 
     pub fn R_lsInternal(arg1: SEXP, arg2: Rboolean) -> SEXP;
+
+    pub fn R_lsInternal3(arg1: SEXP, arg2: Rboolean, arg3: Rboolean) -> SEXP;
 
     pub fn R_tryCatch(
         arg1: Option<unsafe extern "C" fn(arg1: *mut std::ffi::c_void) -> SEXP>,
@@ -247,7 +253,11 @@ functions::generate! {
 
     pub fn SET_STRING_ELT(x: SEXP, i: R_xlen_t, v: SEXP);
 
+    pub fn SET_LOGICAL_ELT(x: SEXP, i: R_xlen_t, v: std::ffi::c_int);
+
     pub fn SET_INTEGER_ELT(x: SEXP, i: R_xlen_t, v: std::ffi::c_int);
+
+    pub fn SET_REAL_ELT(x: SEXP, i: R_xlen_t, v: f64);
 
     pub fn SET_TAG(x: SEXP, y: SEXP);
 
@@ -280,6 +290,10 @@ functions::generate! {
     pub fn CLOENV(x: SEXP) -> SEXP;
 
     pub fn Rf_PrintValue(x: SEXP);
+
+    pub fn R_PromiseExpr(p: SEXP) -> SEXP;
+
+    pub fn R_BytecodeExpr(e: SEXP) -> SEXP;
 
     /// R >= 4.2.0
     pub fn R_existsVarInFrame(rho: SEXP, symbol: SEXP) -> Rboolean;

@@ -28,6 +28,7 @@ pub mod table;
 pub mod test;
 pub mod traits;
 pub mod utils;
+pub mod vec_format;
 pub mod vector;
 
 // Reexport API
