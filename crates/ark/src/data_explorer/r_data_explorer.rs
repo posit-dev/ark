@@ -361,6 +361,7 @@ impl RDataExplorer {
             if self.sort_keys.len() > 0 {
                 self.sorted_indices = r_task(|| self.r_sort_rows())?;
             }
+            self.apply_sorts_and_filters();
 
             DataExplorerFrontendEvent::DataUpdate
         };

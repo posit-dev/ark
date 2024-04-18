@@ -9,12 +9,19 @@ use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::data_explorer_comm::ColumnProfileRequest;
 use amalthea::comm::data_explorer_comm::ColumnProfileType;
 use amalthea::comm::data_explorer_comm::ColumnSortKey;
+use amalthea::comm::data_explorer_comm::CompareFilterParams;
+use amalthea::comm::data_explorer_comm::CompareFilterParamsOp;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendReply;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendRequest;
 use amalthea::comm::data_explorer_comm::DataExplorerFrontendEvent;
+use amalthea::comm::data_explorer_comm::FilterResult;
 use amalthea::comm::data_explorer_comm::GetColumnProfilesParams;
 use amalthea::comm::data_explorer_comm::GetDataValuesParams;
 use amalthea::comm::data_explorer_comm::GetSchemaParams;
+use amalthea::comm::data_explorer_comm::RowFilter;
+use amalthea::comm::data_explorer_comm::RowFilterCondition;
+use amalthea::comm::data_explorer_comm::RowFilterType;
+use amalthea::comm::data_explorer_comm::SetRowFiltersParams;
 use amalthea::comm::data_explorer_comm::SetSortColumnsParams;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::socket;
@@ -251,6 +258,73 @@ fn test_data_explorer() {
                 let labels = data.row_labels.unwrap();
                 assert_eq!(labels[0][0], "1");
                 assert_eq!(labels[0][1], "2");
+            }
+        );
+
+        // Apply a sort to the data set. We'll sort the first field (height) in
+        // descending order.
+        let sort_keys = vec![ColumnSortKey {
+            column_index: 0,
+            ascending: false,
+        }];
+        let req = DataExplorerBackendRequest::SetSortColumns(SetSortColumnsParams {
+            sort_keys: sort_keys.clone(),
+        });
+
+        // We should get a SetSortColumnsReply back.
+        assert_match!(socket_rpc(&socket, req), DataExplorerBackendReply::SetSortColumnsReply() => {});
+
+        // Next, apply a filter to the data set. We'll filter out all rows where
+        // the first field (height) is less than 60.
+        let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
+            filters: vec![RowFilter {
+                column_index: 0,
+                filter_type: RowFilterType::Compare,
+                compare_params: Some(CompareFilterParams {
+                    op: CompareFilterParamsOp::Lt,
+                    value: "60".to_string(),
+                }),
+                filter_id: "A11876D6-7CF3-435F-874D-E96892B25C9A".to_string(),
+                condition: RowFilterCondition::And,
+                is_valid: None,
+                between_params: None,
+                search_params: None,
+                set_membership_params: None,
+            }],
+        });
+
+        // We should get a SortRowFiltersReply back. There are 2 rows where the
+        // height is less than 60.
+        assert_match!(socket_rpc(&socket, req),
+        DataExplorerBackendReply::SetRowFiltersReply(
+            FilterResult { selected_num_rows: num_rows }
+        ) => {
+            assert_eq!(num_rows, 2);
+        });
+
+        // Get 2 rows of data. These rows should be both sorted and filtered
+        // since we have applied both a sort and a filter.
+        let req = DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
+            row_start_index: 0,
+            num_rows: 2,
+            column_indices: vec![0, 1],
+        });
+
+        // Spot check the data values.
+        assert_match!(socket_rpc(&socket, req),
+            DataExplorerBackendReply::GetDataValuesReply(data) => {
+                // The first column (height) should contain the only two rows
+                // where the height is less than 60.
+                assert_eq!(data.columns.len(), 2);
+                assert_eq!(data.columns[0][0], "59");
+                assert_eq!(data.columns[0][1], "58");
+
+                // Row labels should be present. The row labels represent the
+                // rows in the original data set, so after sorting we expect the
+                // first two rows to be 2 and 1.
+                let labels = data.row_labels.unwrap();
+                assert_eq!(labels[0][0], "2");
+                assert_eq!(labels[0][1], "1");
             }
         );
 
