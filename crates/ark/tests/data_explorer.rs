@@ -293,7 +293,7 @@ fn test_data_explorer() {
             }],
         });
 
-        // We should get a SortRowFiltersReply back. There are 2 rows where the
+        // We should get a SetRowFiltersReply back. There are 2 rows where the
         // height is less than 60.
         assert_match!(socket_rpc(&socket, req),
         DataExplorerBackendReply::SetRowFiltersReply(
@@ -559,5 +559,53 @@ fn test_data_explorer() {
                assert_eq!(data[0].null_count, Some(3));
            }
         );
+
+        // Next, apply a filter to the data set. Filter out all empty rows.
+        let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
+            filters: vec![RowFilter {
+                column_index: 0,
+                filter_type: RowFilterType::NotNull,
+                filter_id: "048D4D03-A7B5-4825-BEB1-769B70DE38A6".to_string(),
+                condition: RowFilterCondition::And,
+                is_valid: None,
+                compare_params: None,
+                between_params: None,
+                search_params: None,
+                set_membership_params: None,
+            }],
+        });
+
+        // We should get a SetRowFiltersReply back. There are 6 rows where the
+        // first column is not NA.
+        assert_match!(socket_rpc(&socket, req),
+        DataExplorerBackendReply::SetRowFiltersReply(
+            FilterResult { selected_num_rows: num_rows }
+        ) => {
+            assert_eq!(num_rows, 6);
+        });
+
+        // Let's look at JUST the empty rows.
+        let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
+            filters: vec![RowFilter {
+                column_index: 0,
+                filter_type: RowFilterType::IsNull,
+                filter_id: "87E2E016-C853-4928-8914-8774125E3C87".to_string(),
+                condition: RowFilterCondition::And,
+                is_valid: None,
+                compare_params: None,
+                between_params: None,
+                search_params: None,
+                set_membership_params: None,
+            }],
+        });
+
+        // We should get a SetRowFiltersReply back. There are 3 rows where the
+        // first field has a missing value.
+        assert_match!(socket_rpc(&socket, req),
+        DataExplorerBackendReply::SetRowFiltersReply(
+            FilterResult { selected_num_rows: num_rows }
+        ) => {
+            assert_eq!(num_rows, 3);
+        });
     });
 }

@@ -66,7 +66,7 @@
 }
 
 # Filter functions; each accepts a column and a set of parameters
-#
+
 #' @export
 .ps.filter_col.compare <- function(col, params) {
     # Form the expression to evaluate. The filter operations map
@@ -79,4 +79,14 @@
     }
 
     do.call(op, list(col, params$value))
+}
+
+#' @export
+.ps.filter_col.not_null <- function(col, params) {
+    !is.na(col)
+}
+
+#' @export
+.ps.filter_col.is_null <- function(col, params) {
+    is.na(col)
 }
