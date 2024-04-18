@@ -111,9 +111,12 @@ pub struct RDataExplorer {
     sorted_indices: Vec<i32>,
 
     /// The set of filtered row indices. These are the row indices that remain
-    /// after applying all row filters, and are sorted according to the current
-    /// sort keys.
+    /// after applying all row filters. They're sorted in ascending order.
     filtered_indices: Vec<i32>,
+
+    /// The set of sorted and filtered row indices. This is the set of row
+    /// indices that are displayed in the data viewer.
+    view_indices: Vec<i32>,
 
     /// The communication socket for the data viewer.
     comm: CommSocket,
@@ -167,7 +170,8 @@ impl RDataExplorer {
                         binding,
                         shape,
                         sorted_indices: row_indices.clone(),
-                        filtered_indices: row_indices,
+                        filtered_indices: row_indices.clone(),
+                        view_indices: row_indices.clone(),
                         sort_keys: vec![],
                         row_filters: vec![],
                         comm,
@@ -342,6 +346,8 @@ impl RDataExplorer {
 
             // Reset active row indices to be all rows
             self.sorted_indices = (1..=self.shape.num_rows).collect();
+            self.filtered_indices = self.sorted_indices.clone();
+            self.view_indices = self.sorted_indices.clone();
 
             // Clear active sort keys
             self.sort_keys.clear();
@@ -407,8 +413,8 @@ impl RDataExplorer {
                     _ => r_task(|| self.r_sort_rows())?,
                 };
 
-                // Apply sorts to the filtered indices
-                self.sort_filtered_indices();
+                // Apply sorts to the filtered indices to create view indices
+                self.apply_sorts_and_filters();
 
                 Ok(DataExplorerBackendReply::SetSortColumnsReply())
             },
@@ -418,8 +424,8 @@ impl RDataExplorer {
 
                 self.filtered_indices = r_task(|| self.r_filter_rows())?;
 
-                // Apply sorts to the filtered indices
-                self.sort_filtered_indices();
+                // Apply sorts to the filtered indices to create view indices
+                self.apply_sorts_and_filters();
 
                 Ok(DataExplorerBackendReply::SetRowFiltersReply({
                     FilterResult {
@@ -604,27 +610,24 @@ impl RDataExplorer {
         Ok(row_indices)
     }
 
-    fn sort_filtered_indices(&mut self) {
-        let mut filter_idx = 0;
-        let mut sorted_idx = 0;
-
-        // Create a vector to hold the sorted row indices
-        let mut sorted_indices = Vec::with_capacity(self.filtered_indices.len());
-
-        // Sort the row indices according to the current sort keys. We do this
-        // by making a pass over the sorted indices and filtered indices
-        // simultaneously.
-        while filter_idx < self.filtered_indices.len() && sorted_idx < self.sorted_indices.len() {
-            if self.filtered_indices[filter_idx] == self.sorted_indices[sorted_idx] {
-                sorted_indices.push(self.filtered_indices[filter_idx]);
-                filter_idx += 1;
-            } else {
-                sorted_idx += 1;
+    /// Sort the filtered indices according to the sort keys, storing the
+    /// result in view_indices.
+    fn apply_sorts_and_filters(&mut self) {
+        // self.sorted_indices contains all the indices; self.filtered_indices
+        // contains the subset of indices that pass the filters, in ascending
+        // order.
+        //
+        // Derive the set of indices that pass the filters and are sorted
+        // according to the sort keys.
+        let mut sorted_filtered_indices = Vec::<i32>::with_capacity(self.filtered_indices.len());
+        for &index in &self.sorted_indices {
+            // We can use a binary search here for performance because
+            // filtered_indices is already sorted in ascending order.
+            if let Ok(_) = self.filtered_indices.binary_search(&index) {
+                sorted_filtered_indices.push(index);
             }
         }
-
-        // Save the newly sorted indices
-        self.filtered_indices = sorted_indices;
+        self.view_indices = sorted_filtered_indices;
     }
 
     /// Get the schema for a range of columns in the data object.
@@ -708,7 +711,7 @@ impl RDataExplorer {
             ..
         } = info;
 
-        let num_filtered_rows = self.filtered_indices.len() as i32;
+        let num_filtered_rows = self.view_indices.len() as i32;
         let lower_bound = cmp::min(row_start_index, num_filtered_rows) as isize;
         let upper_bound = cmp::min(row_start_index + num_rows, num_filtered_rows) as isize;
 
@@ -723,8 +726,7 @@ impl RDataExplorer {
         let num_cols = cols_r_idx.length() as i32;
 
         // Select the rows to subset
-        let row_indices =
-            self.filtered_indices[lower_bound as usize..upper_bound as usize].to_vec();
+        let row_indices = self.view_indices[lower_bound as usize..upper_bound as usize].to_vec();
         let rows_r_idx: RObject = row_indices.clone().try_into()?;
 
         // Subset rows in advance, including unmaterialized row names. Also
