@@ -48,11 +48,13 @@
         # Dynamic dispatch to the appropriate filter function
         filter_function <- paste('.ps.filter_col', row_filter$filter_type, sep = '.')
 
-        # Each filter function accepts the column and the parameters as arguments
-        filter_args <- c(table[[row_filter$column_index + 1]], row_filter$params)
+        # Each filter function accepts the column and the parameters as
+        # arguments.
+        params <- row_filter[[paste0(row_filter$filter_type, "_params")]]
+        filter_args <- list(table[[row_filter$column_index + 1]], params)
 
         # Apply the filter function to the column
-        if (identical(row_filter$condition), "or") {
+        if (identical(row_filter$condition, "or")) {
             indices <- indices | do.call(filter_function, filter_args)
         } else {
             indices <- indices & do.call(filter_function, filter_args)
@@ -76,5 +78,5 @@
         params$op
     }
 
-    do.call(op, c(col, params$value))
+    do.call(op, list(col, params$value))
 }
