@@ -684,7 +684,13 @@ impl RDataExplorer {
                 search_schema: SearchSchemaFeatures { supported: false },
                 set_row_filters: SetRowFiltersFeatures {
                     supported: true,
-                    supported_types: vec![RowFilterType::Compare],
+                    supported_types: vec![
+                        RowFilterType::Between,
+                        RowFilterType::Compare,
+                        RowFilterType::IsNull,
+                        RowFilterType::NotBetween,
+                        RowFilterType::NotNull,
+                    ],
                     supports_conditions: false,
                 },
             },
