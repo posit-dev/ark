@@ -533,6 +533,34 @@ fn test_data_explorer() {
             }
         );
 
+        // Next, apply a filter to the data set. We'll filter out all rows where
+        // the first column is less than 100.
+        let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
+            filters: vec![RowFilter {
+                column_index: 0,
+                filter_type: RowFilterType::Compare,
+                compare_params: Some(CompareFilterParams {
+                    op: CompareFilterParamsOp::Lt,
+                    value: "100".to_string(),
+                }),
+                filter_id: "F5D5FE28-04D9-4010-8C77-84094D9B8E2C".to_string(),
+                condition: RowFilterCondition::And,
+                is_valid: None,
+                between_params: None,
+                search_params: None,
+                set_membership_params: None,
+            }],
+        });
+
+        // We should get a SetRowFiltersReply back. There are 8 rows where the
+        // first column of the matrix is less than 100.
+        assert_match!(socket_rpc(&socket, req),
+        DataExplorerBackendReply::SetRowFiltersReply(
+            FilterResult { selected_num_rows: num_rows }
+        ) => {
+            assert_eq!(num_rows, 8);
+        });
+
         // --- null count ---
 
         // Create a data frame with the Fibonacci sequence, including some NA values

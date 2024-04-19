@@ -43,6 +43,9 @@
 
 #' @export
 .ps.filter_rows <- function(table, row_filters) {
+    # Are we working with a matrix here?
+    is_matrix <- is.matrix(table)
+
     # Mapping of filter types to parameter arguments
     filter_params <- list(
         compare = "compare_params",
@@ -70,7 +73,12 @@
 
         # Each filter function accepts the column and the parameters as
         # arguments.
-        filter_args <- list(table[[row_filter$column_index + 1]], params)
+        col <- if (is_matrix) {
+            table[, row_filter$column_index + 1]
+        } else {
+            table[[row_filter$column_index + 1]]
+        }
+        filter_args <- list(col, params)
 
         # Apply the filter function to the column
         if (identical(row_filter$condition, "or")) {
@@ -96,7 +104,15 @@
         params$op
     }
 
-    do.call(op, list(col, params$value))
+    # Values are always marshaled as strings at the RPC layer, so coerce them to
+    # numeric if the column is numeric.
+    value <- if (is.numeric(col)) {
+        as.numeric(params$value)
+    } else {
+        params$value
+    }
+
+    do.call(op, list(col, value))
 }
 
 .ps.filter_col.not_null <- function(col, params) {
@@ -108,11 +124,25 @@
 }
 
 .ps.filter_col.between <- function(col, params) {
-    col >= params$left_value & col <= params$right_value
+    # Coerce values to numeric if the column is numeric
+    is_numeric <- is.numeric(col)
+    left_value <- if (is_numeric) {
+        as.numeric(params$left_value)
+    } else {
+        params$left_value
+    }
+    right_value <- if (is_numeric) {
+        as.numeric(params$right_value)
+    } else {
+        params$right_value
+    }
+
+    # Look for values between the left and right values
+    col >= left_value & col <= right_value
 }
 
 .ps.filter_col.not_between <- function(col, params) {
-    !ps.filter_col.between(col, params)
+    !.ps.filter_col.between(col, params)
 }
 
 .ps.regex_escape <- function(x) {
