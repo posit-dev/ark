@@ -556,6 +556,10 @@ impl RDataExplorer {
         Ok(result.try_into()?)
     }
 
+    /// Sort the rows of the data object according to the sort keys in
+    /// self.sort_keys.
+    ///
+    /// Returns a vector containing the sorted row indices.
     fn r_sort_rows(&self) -> anyhow::Result<Vec<i32>> {
         let mut order = RFunction::new("base", "order");
 
@@ -582,8 +586,18 @@ impl RDataExplorer {
         Ok(indices)
     }
 
+    /// Filter all the rows in the data object according to the row filters in
+    /// self.row_filters.
+    ///
+    /// Returns a vector of all the row indices that pass the filters.
     fn r_filter_rows(&self) -> anyhow::Result<Vec<i32>> {
         let mut filters: Vec<RObject> = vec![];
+
+        // Shortcut: If there are no row filters, the filtered indices include
+        // all row indices.
+        if self.row_filters.is_empty() {
+            return Ok((1..=self.shape.num_rows).collect());
+        }
 
         // Convert each filter to an R object by marshaling through the JSON
         // layer.
@@ -614,6 +628,13 @@ impl RDataExplorer {
     /// Sort the filtered indices according to the sort keys, storing the
     /// result in view_indices.
     fn apply_sorts_and_filters(&mut self) {
+        // Shortcut: If there are no sort keys, the view indices are the same as
+        // the filtered indices.
+        if self.sort_keys.is_empty() {
+            self.view_indices = self.filtered_indices.clone();
+            return;
+        }
+
         // self.sorted_indices contains all the indices; self.filtered_indices
         // contains the subset of indices that pass the filters, in ascending
         // order.
