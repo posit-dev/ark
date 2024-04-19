@@ -690,6 +690,7 @@ impl RDataExplorer {
                         RowFilterType::IsNull,
                         RowFilterType::NotBetween,
                         RowFilterType::NotNull,
+                        RowFilterType::Search,
                     ],
                     supports_conditions: false,
                 },

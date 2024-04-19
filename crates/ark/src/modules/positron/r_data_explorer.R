@@ -119,3 +119,33 @@
 .ps.filter_col.not_between <- function(col, params) {
     !ps.filter_col.between(col, params)
 }
+
+#' @export
+.ps.regex_escape <- function(x) {
+    # Escape all regex magic characters in a string
+    gsub("([][{}()+*^$|\\\\?.])", "\\\\\\1", x)
+}
+
+#' @export
+.ps.filter_col.search <- function(col, params) {
+    if (identical(params$search_type, "contains")) {
+        # Search for the term anywhere in the column's values, as a fixed string
+        grepl(pattern = params$term, col, fixed = TRUE, ignore.case = !params$case_sensitive)
+    } else if (identical(params$search_type, "starts_with")) {
+        # Escape the term to ensure that it is treated as a fixed string, then
+        # search for it at the beginning of the column's values
+        escaped_term <- .ps.regex_escape(params$term)
+        grepl(pattern = paste0("^", escaped_term), col, ignore.case = !params$case_sensitive)
+    } else if (identical(params$search_type, "ends_with")) {
+        # Escape the term to ensure that it is treated as a fixed string, then
+        # search for it at the end of the column's values
+        escaped_term <- .ps.regex_escape(params$term)
+        grepl(pattern = paste0(escaped_term, "$"), col, ignore.case = !params$case_sensitive)
+    } else if (identical(params$search_type, "regex_match")) {
+        # Search for the term anywhere in the column's values, as a regular
+        # expression
+        grepl(pattern = params$term, col, ignore.case = !params$case_sensitive)
+    } else {
+        stop("Invalid search type '", params$search_type, "'")
+    }
+}
