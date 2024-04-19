@@ -123,6 +123,14 @@
     is.na(col)
 }
 
+.ps.filter_col.is_empty <- function(col, params) {
+    !nzchar(col)
+}
+
+.ps.filter_col.not_empty <- function(col, params) {
+    nzchar(col)
+}
+
 .ps.filter_col.between <- function(col, params) {
     # Coerce values to numeric if the column is numeric
     is_numeric <- is.numeric(col)

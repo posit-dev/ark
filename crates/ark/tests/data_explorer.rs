@@ -647,6 +647,7 @@ fn test_data_explorer() {
                 "incandescent",
                 "that will be $10.26",
                 "pi is 3.14159",
+                "",
                 "weasel",
                 "refrigerator"
             ))"#,
@@ -716,6 +717,32 @@ fn test_data_explorer() {
             FilterResult { selected_num_rows: num_rows }
         ) => {
             assert_eq!(num_rows, 4);
+        });
+
+        // Create a filter for empty values.
+        let empty_filter = RowFilter {
+            column_index: 0,
+            filter_type: RowFilterType::IsEmpty,
+            filter_id: "3F032747-4667-40CB-9013-AA659AE37F1C".to_string(),
+            condition: RowFilterCondition::And,
+            is_valid: None,
+            compare_params: None,
+            between_params: None,
+            search_params: None,
+            set_membership_params: None,
+        };
+
+        let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
+            filters: vec![empty_filter],
+        });
+
+        // We should get a SetRowFiltersReply back. There's 1 row with an empty
+        // value.
+        assert_match!(socket_rpc(&socket, req),
+        DataExplorerBackendReply::SetRowFiltersReply(
+            FilterResult { selected_num_rows: num_rows }
+        ) => {
+            assert_eq!(num_rows, 1);
         });
     });
 }

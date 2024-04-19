@@ -695,8 +695,10 @@ impl RDataExplorer {
                     supported_types: vec![
                         RowFilterType::Between,
                         RowFilterType::Compare,
+                        RowFilterType::IsEmpty,
                         RowFilterType::IsNull,
                         RowFilterType::NotBetween,
+                        RowFilterType::NotEmpty,
                         RowFilterType::NotNull,
                         RowFilterType::Search,
                     ],
