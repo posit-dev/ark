@@ -21,6 +21,8 @@ use amalthea::comm::data_explorer_comm::GetSchemaParams;
 use amalthea::comm::data_explorer_comm::RowFilter;
 use amalthea::comm::data_explorer_comm::RowFilterCondition;
 use amalthea::comm::data_explorer_comm::RowFilterType;
+use amalthea::comm::data_explorer_comm::SearchFilterParams;
+use amalthea::comm::data_explorer_comm::SearchFilterType;
 use amalthea::comm::data_explorer_comm::SetRowFiltersParams;
 use amalthea::comm::data_explorer_comm::SetSortColumnsParams;
 use amalthea::comm::event::CommManagerEvent;
@@ -606,6 +608,86 @@ fn test_data_explorer() {
             FilterResult { selected_num_rows: num_rows }
         ) => {
             assert_eq!(num_rows, 3);
+        });
+
+        // --- search filters ---
+
+        // Create a data frame with a bunch of words to use for regex testing.
+        r_parse_eval0(
+            r#"words <- data.frame(text = c(
+                "lambent",
+                "incandescent",
+                "that will be $10.26",
+                "pi is 3.14159",
+                "weasel",
+                "refrigerator"
+            ))"#,
+            R_ENVS.global,
+        )
+        .unwrap();
+
+        // Open the words data set in the data explorer.
+        let socket = open_data_explorer(String::from("words"));
+
+        // Next, apply a filter to the data set. Check for rows that contain the
+        // text ".".
+        let dot_filter = RowFilter {
+            column_index: 0,
+            filter_type: RowFilterType::Search,
+            filter_id: "A58A4497-29E0-4407-BC25-67FEF73F6224".to_string(),
+            condition: RowFilterCondition::And,
+            is_valid: None,
+            compare_params: None,
+            between_params: None,
+            search_params: Some(SearchFilterParams {
+                case_sensitive: false,
+                search_type: SearchFilterType::Contains,
+                term: ".".to_string(),
+            }),
+            set_membership_params: None,
+        };
+        let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
+            filters: vec![dot_filter.clone()],
+        });
+
+        // We should get a SetRowFiltersReply back. There are 2 rows where
+        // the text contains ".".
+        assert_match!(socket_rpc(&socket, req),
+        DataExplorerBackendReply::SetRowFiltersReply(
+            FilterResult { selected_num_rows: num_rows }
+        ) => {
+            assert_eq!(num_rows, 2);
+        });
+
+        // Combine this with an OR filter that checks for rows that end in
+        // 'ent'.
+        let ent_filter = RowFilter {
+            column_index: 0,
+            filter_type: RowFilterType::Search,
+            filter_id: "4BA46699-EF41-4FA8-A927-C8CD88520D6E".to_string(),
+            condition: RowFilterCondition::Or,
+            is_valid: None,
+            compare_params: None,
+            between_params: None,
+            search_params: Some(SearchFilterParams {
+                case_sensitive: false,
+                search_type: SearchFilterType::EndsWith,
+                term: "ent".to_string(),
+            }),
+            set_membership_params: None,
+        };
+
+        let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
+            filters: vec![dot_filter, ent_filter],
+        });
+
+        // We should get a SetRowFiltersReply back. There are 4 rows where
+        // the text either contains "." OR ends in "ent".
+        assert_match!(socket_rpc(&socket, req),
+        DataExplorerBackendReply::SetRowFiltersReply(
+            FilterResult { selected_num_rows: num_rows }
+        ) => {
+            assert_eq!(num_rows, 4);
         });
     });
 }

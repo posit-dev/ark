@@ -700,7 +700,7 @@ impl RDataExplorer {
                         RowFilterType::NotNull,
                         RowFilterType::Search,
                     ],
-                    supports_conditions: false,
+                    supports_conditions: true,
                 },
             },
         };

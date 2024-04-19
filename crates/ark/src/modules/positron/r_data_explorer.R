@@ -128,24 +128,35 @@
 
 #' @export
 .ps.filter_col.search <- function(col, params) {
+    # Search for the term anywhere in the column's values
     if (identical(params$search_type, "contains")) {
-        # Search for the term anywhere in the column's values, as a fixed string
-        grepl(pattern = params$term, col, fixed = TRUE, ignore.case = !params$case_sensitive)
-    } else if (identical(params$search_type, "starts_with")) {
-        # Escape the term to ensure that it is treated as a fixed string, then
-        # search for it at the beginning of the column's values
+        # We escape the term to ensure that it is treated as a fixed string; we
+        # can't do this using `fixed = TRUE` since `ignore.case` only works when
+        # `fixed = FALSE`
+        escaped_term <- .ps.regex_escape(params$term)
+        grepl(pattern = escaped_term, col, fixed = FALSE, ignore.case = !params$case_sensitive)
+    }
+
+    # Search for the term at the beginning of the column's values
+    else if (identical(params$search_type, "starts_with")) {
         escaped_term <- .ps.regex_escape(params$term)
         grepl(pattern = paste0("^", escaped_term), col, ignore.case = !params$case_sensitive)
-    } else if (identical(params$search_type, "ends_with")) {
-        # Escape the term to ensure that it is treated as a fixed string, then
-        # search for it at the end of the column's values
+    }
+
+    # Search for the term at the end of the column's values
+    else if (identical(params$search_type, "ends_with")) {
         escaped_term <- .ps.regex_escape(params$term)
         grepl(pattern = paste0(escaped_term, "$"), col, ignore.case = !params$case_sensitive)
-    } else if (identical(params$search_type, "regex_match")) {
-        # Search for the term anywhere in the column's values, as a regular
-        # expression
+    }
+
+    # Search for the term anywhere in the column's values, as a regular
+    # expression
+    else if (identical(params$search_type, "regex_match")) {
         grepl(pattern = params$term, col, ignore.case = !params$case_sensitive)
-    } else {
-        stop("Invalid search type '", params$search_type, "'")
+    }
+
+    # Unsupported search type
+    else {
+        stop("Unsupported search type '", params$search_type, "'")
     }
 }
