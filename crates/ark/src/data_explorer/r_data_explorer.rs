@@ -655,24 +655,11 @@ impl RDataExplorer {
     }
 
     fn r_get_state(&self) -> anyhow::Result<DataExplorerBackendReply> {
-        let table = self.table.get().clone();
-        let object = *table;
-
-        let harp::TableInfo {
-            kind: _,
-            dims:
-                harp::TableDim {
-                    num_rows: _num_rows,
-                    num_cols: num_columns,
-                },
-            col_names: _,
-        } = table_info_or_bail(object)?;
-
         let state = BackendState {
             display_name: self.title.clone(),
             table_shape: TableShape {
                 num_rows: self.filtered_indices.len() as i64,
-                num_columns: num_columns as i64,
+                num_columns: self.shape.columns.len() as i64,
             },
             row_filters: self.row_filters.clone(),
             sort_keys: self.sort_keys.clone(),
@@ -708,17 +695,7 @@ impl RDataExplorer {
         let table = self.table.get().clone();
         let object = *table;
 
-        let info = table_info_or_bail(object)?;
-
-        let harp::TableInfo {
-            dims:
-                harp::TableDim {
-                    num_cols: total_num_cols,
-                    num_rows: _total_num_rows,
-                },
-            ..
-        } = info;
-
+        let total_num_cols = self.shape.columns.len() as i32;
         let num_filtered_rows = self.view_indices.len() as i32;
         let lower_bound = cmp::min(row_start_index, num_filtered_rows) as isize;
         let upper_bound = cmp::min(row_start_index + num_rows, num_filtered_rows) as isize;
