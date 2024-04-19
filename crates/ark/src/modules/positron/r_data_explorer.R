@@ -86,7 +86,6 @@
 
 # Filter functions; each accepts a column and a set of parameters
 
-#' @export
 .ps.filter_col.compare <- function(col, params) {
     # Form the expression to evaluate. The filter operations map
     # straightforwardly to R's operators, except for the 'equals' operation,
@@ -100,33 +99,27 @@
     do.call(op, list(col, params$value))
 }
 
-#' @export
 .ps.filter_col.not_null <- function(col, params) {
     !is.na(col)
 }
 
-#' @export
 .ps.filter_col.is_null <- function(col, params) {
     is.na(col)
 }
 
-#' @export
 .ps.filter_col.between <- function(col, params) {
     col >= params$left_value & col <= params$right_value
 }
 
-#' @export
 .ps.filter_col.not_between <- function(col, params) {
     !ps.filter_col.between(col, params)
 }
 
-#' @export
 .ps.regex_escape <- function(x) {
     # Escape all regex magic characters in a string
     gsub("([][{}()+*^$|\\\\?.])", "\\\\\\1", x)
 }
 
-#' @export
 .ps.filter_col.search <- function(col, params) {
     # Search for the term anywhere in the column's values
     if (identical(params$search_type, "contains")) {
