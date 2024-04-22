@@ -76,6 +76,9 @@ pub fn completions_from_comment(context: &DocumentContext) -> Result<Option<Vec<
         };
 
         let template = entry["template"].as_str();
+        let template = template.map(inject_roxygen_comment_after_newline);
+        let template = template.as_deref();
+
         let description = entry["description"].as_str();
 
         let item = completion_item_from_roxygen(name, template, description)?;
@@ -115,6 +118,10 @@ fn completion_item_from_roxygen(
     }
 
     Ok(item)
+}
+
+fn inject_roxygen_comment_after_newline(x: &str) -> String {
+    x.replace("\n", "\n#' ")
 }
 
 #[test]
@@ -166,14 +173,27 @@ fn test_roxygen_comment() {
         let context = DocumentContext::new(&document, point, None);
         let completions = completions_from_comment(&context).unwrap().unwrap();
 
-        let completions: Vec<CompletionItem> = completions
-            .into_iter()
+        // Make sure we find it
+        let aliases: Vec<&CompletionItem> = completions
+            .iter()
             .filter(|item| item.label == "aliases")
             .collect();
+        assert_eq!(aliases.len(), 1);
 
-        // roxygen2 controls the contents of the fields, so we won't test those.
-        // Just make sure we found it!
-        assert_eq!(completions.len(), 1);
+        // Replace `\n` with `\n#' ` since we are directly injecting into the
+        // document with no allowance for context specific rules to kick in
+        // and automatically add the leading comment for us.
+        let description: Vec<&CompletionItem> = completions
+            .iter()
+            .filter(|item| item.label == "description")
+            .collect();
+        let description = description.get(0).unwrap();
+        assert_eq!(
+            description.insert_text,
+            Some(String::from(
+                "description\n#' ${1:A short description...}\n#' "
+            ))
+        );
     });
 }
 
