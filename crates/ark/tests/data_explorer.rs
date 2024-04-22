@@ -639,6 +639,24 @@ fn test_data_explorer() {
             assert_eq!(num_rows, 6);
         });
 
+        // Ask for a count of nulls in the first column again. Since a filter
+        // has been applied, the null count should be 0.
+        let req = DataExplorerBackendRequest::GetColumnProfiles(GetColumnProfilesParams {
+            profiles: vec![ColumnProfileRequest {
+                column_index: 0,
+                profile_type: ColumnProfileType::NullCount,
+            }],
+        });
+
+        assert_match!(socket_rpc(&socket, req),
+           DataExplorerBackendReply::GetColumnProfilesReply(data) => {
+               // We asked for the null count of the first column, which has no
+                // NA values after the filter.
+               assert!(data.len() == 1);
+               assert_eq!(data[0].null_count, Some(0));
+           }
+        );
+
         // Let's look at JUST the empty rows.
         let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
             filters: vec![RowFilter {

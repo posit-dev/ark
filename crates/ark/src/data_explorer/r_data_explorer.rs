@@ -548,7 +548,13 @@ impl RDataExplorer {
         let column = tbl_get_column(self.table.get().sexp, column_index, self.shape.kind)?;
 
         // Compute the number of nulls in the column
-        let result = RFunction::new("", ".ps.null_count").add(column).call()?;
+        let result = RFunction::new("", ".ps.null_count")
+            .param("column", column)
+            .param(
+                "filtered_indices",
+                RObject::try_from(self.filtered_indices.clone())?,
+            )
+            .call()?;
 
         // Return the count of nulls and NA values
         Ok(result.try_into()?)
