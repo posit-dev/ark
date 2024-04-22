@@ -7,26 +7,22 @@
 
 options(help_type = "html")
 
-# Pick up `help()` devtools if the shim is on the search path.
-# Internally, we should be using `get_help()` to work around a pkgload bug
-# consistently.
-help <- function(...) {
-    if ("devtools_shims" %in% search()) {
-        help <- as.environment("devtools_shims")[["help"]]
-    } else {
-        help <- utils::help
-    }
+# A wrapper around `help()` that works for our specific use cases:
+# - Pick up devtools `help()` if the shim is on the search path.
+# - Expects that `topic` and `package` don't require NSE and are just strings or `NULL`.
+# - Works around a pkgload NSE bug that has been fixed, but many people won't have
+#   (https://github.com/r-lib/pkgload/pull/267).
+# - Hardcodes a request for HTML help results.
+help <- function(topic, package = NULL) {
+  if ("devtools_shims" %in% search()) {
+      help <- as.environment("devtools_shims")[["help"]]
+  } else {
+      help <- utils::help
+  }
 
-  # Passing arguments with `...` avoids issues of NSE interpretation
-  help(...)
-}
-
-# Expect that `topic` and `package` don't require NSE and are just strings or `NULL`.
-get_help <- function(topic, package = NULL) {
-  # Due to a pkgload NSE bug, we use an explicit `NULL` to ensure this always works with
-  # dev help https://github.com/r-lib/pkgload/pull/267.
-  # The `topic` and `package` are wrapped in `()` so they are evaluated rather than deparsed.
   if (is.null(package)) {
+    # Use an explicit `NULL` to ensure this always works with dev help
+    # https://github.com/r-lib/pkgload/pull/267
     help(topic = (topic), package = NULL, help_type = "html")
   } else {
     help(topic = (topic), package = (package), help_type = "html")
@@ -52,7 +48,7 @@ get_help <- function(topic, package = NULL) {
     }
 
     # Try to find help on the topic.
-    results <- get_help(topic, package)
+    results <- help(topic, package)
 
     # If we found results of any kind, show them.
     # If we are running ark tests, don't show the results as this requires
@@ -104,10 +100,10 @@ get_help <- function(topic, package = NULL) {
   }
 
   # Get the help file associated with this topic.
-  helpFiles <- get_help(topic, package)
+  helpFiles <- help(topic, package)
 
   if (inherits(helpFiles, "dev_topic")) {
-    tryGetHtmlHelpContentsDev(helpFiles)
+    getHtmlHelpContentsDev(helpFiles)
   } else {
     getHtmlHelpContentsInstalled(helpFiles, package)
   }
@@ -144,31 +140,28 @@ getHtmlHelpContentsInstalled <- function(helpFiles, package) {
   paste(contents, collapse = "\n")
 }
 
-tryGetHtmlHelpContentsDev <- function(x) {
+getHtmlHelpContentsDev <- function(x) {
   tryCatch(
-    getHtmlHelpContentsDev(x),
+    getHtmlHelpContentsDevImpl(x),
     error = function(e) NULL
   )
 }
 
 # pkgload specific dev help when looking up help for an internal function
 # while working on a package
-getHtmlHelpContentsDev <- function(x) {
+getHtmlHelpContentsDevImpl <- function(x) {
   if (!"pkgload" %in% loadedNamespaces()) {
     # Refuse if we somehow get a dev topic but pkgload isn't loaded
     return(NULL)
   }
 
-  # Let pkgload "print" the HTML in the topic to file, which it then
-  # calls `browseURL()` on. Intercept that, and return the file path for us
-  # to read from.
-  local_options(browser = function(url) url)
+  directory <- positron_tempdir("help")
+  path <- file.path(directory, "dev-contents.html")
 
-  # Suppress the `Rendering development documentation for ...` message
-  suppressMessages(
-    path <- print(x),
-    classes = "rlang_message"
-  )
+  # Would be great it pkgload exposed this officially.
+  # Possibly as `topic_write(x, path, type = c("text", "html"))`.
+  # Also used by RStudio in the exact same way.
+  pkgload:::topic_write_html(x = x, path = path)
 
   contents <- readLines(path, warn = FALSE)
   paste(contents, collapse = "\n")

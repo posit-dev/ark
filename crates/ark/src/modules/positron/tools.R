@@ -137,3 +137,23 @@ local_options <- function(..., .frame = parent.frame()) {
     defer(options(old), envir = .frame)
     invisible(old)
 }
+
+#' A Positron specific temporary directory
+#'
+#' Creates a directory at `tempdir()` + `positron/` + `...`, or dies trying.
+#'
+#' @param ... Further subdirectories to create
+#'
+#' @noRd
+positron_tempdir <- function(...) {
+    dir <- tempdir()
+    out <- file.path(dir, "positron", ...)
+
+    if (!dir.exists(out)) {
+        if (!dir.create(out, showWarnings = FALSE, recursive = TRUE)) {
+            stop(sprintf("Can't create temporary directory at '%s'.", out))
+        }
+    }
+
+    out
+}
