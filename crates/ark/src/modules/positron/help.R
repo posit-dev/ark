@@ -8,7 +8,7 @@
 options(help_type = "html")
 
 # A wrapper around `help()` that works for our specific use cases:
-# - Pick up devtools `help()` if the shim is on the search path.
+# - Picks up devtools `help()` if the shim is on the search path.
 # - Expects that `topic` and `package` don't require NSE and are just strings or `NULL`.
 # - Works around a pkgload NSE bug that has been fixed, but many people won't have
 #   (https://github.com/r-lib/pkgload/pull/267).
