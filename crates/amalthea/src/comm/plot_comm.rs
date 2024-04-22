@@ -21,6 +21,22 @@ pub struct PlotResult {
 	pub mime_type: String
 }
 
+/// Possible values for Format in Render
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
+pub enum RenderFormat {
+	#[serde(rename = "png")]
+	Png,
+
+	#[serde(rename = "jpeg")]
+	Jpeg,
+
+	#[serde(rename = "svg")]
+	Svg,
+
+	#[serde(rename = "pdf")]
+	Pdf
+}
+
 /// Parameters for the Render method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct RenderParams {
@@ -34,7 +50,7 @@ pub struct RenderParams {
 	pub pixel_ratio: f64,
 
 	/// The requested plot format
-	pub format: String,
+	pub format: RenderFormat,
 }
 
 /**
@@ -88,5 +104,7 @@ pub enum PlotFrontendEvent {
 	#[serde(rename = "update")]
 	Update,
 
-}
+	#[serde(rename = "show")]
+	Show,
 
+}

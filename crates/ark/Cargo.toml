@@ -1,6 +1,6 @@
 [package]
 name = "ark"
-version = "0.1.82"
+version = "0.1.84"
 edition = "2021"
 rust-version = "1.75.0"
 description = """
@@ -54,6 +54,7 @@ url = "2.4.1"
 walkdir = "2"
 yaml-rust = "0.4.5"
 winsafe = { version = "0.0.19", features = ["kernel"] }
+strum = "0.26.2"
 
 [build-dependencies]
 chrono = "0.4.23"

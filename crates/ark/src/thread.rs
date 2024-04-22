@@ -27,6 +27,7 @@ use crate::r_task::r_async_task;
 /// effectively means that `RShelter` gets to own the type that it shelters.
 /// Without this, we can't move the `RShelter` to the main R thread, since `T`
 /// "might not live long enough" according to the compiler.
+#[derive(Debug)]
 struct RShelter<T: 'static> {
     object: T,
 }
@@ -51,6 +52,7 @@ unsafe impl<T> Send for RShelter<T> {}
 ///
 /// Purposefully does not implement `Clone`, as we want the thread safe objects
 /// to be moved across threads without running any R code.
+#[derive(Debug)]
 pub struct RThreadSafe<T: 'static> {
     shelter: Option<RShelter<T>>,
 }

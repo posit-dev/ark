@@ -120,7 +120,7 @@ impl fmt::Display for Error {
                 )
             },
 
-            Error::UnexpectedType(actual, expected) => unsafe {
+            Error::UnexpectedType(actual, expected) => {
                 let actual = r_type2char(*actual);
                 let expected = expected
                     .iter()
@@ -192,9 +192,9 @@ impl fmt::Display for Error {
 macro_rules! anyhow {
     ($($rest: expr),*) => {{
         let message = format!($($rest, )*);
-        Err(crate::error::Error::Anyhow {
+        crate::error::Error::Anyhow {
             message,
-        })
+        }
     }}
 }
 

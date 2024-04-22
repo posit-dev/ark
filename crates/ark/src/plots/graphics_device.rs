@@ -33,6 +33,7 @@ use amalthea::comm::plot_comm::PlotBackendReply;
 use amalthea::comm::plot_comm::PlotBackendRequest;
 use amalthea::comm::plot_comm::PlotFrontendEvent;
 use amalthea::comm::plot_comm::PlotResult;
+use amalthea::comm::plot_comm::RenderFormat;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
 use amalthea::socket::iopub::IOPubMessage;
@@ -207,16 +208,12 @@ impl DeviceContext {
         }
     }
 
-    fn get_mime_type(format: &str) -> String {
+    fn get_mime_type(format: &RenderFormat) -> String {
         match format {
-            "png" => "image/png".to_string(),
-            "svg" => "image/svg+xml".to_string(),
-            "pdf" => "application/pdf".to_string(),
-            "jpeg" => "image/jpeg".to_string(),
-            _ => {
-                log::error!("Unknown plot type '{format}'. Falling back to 'image/png'.");
-                "image/png".to_string()
-            },
+            RenderFormat::Png => "image/png".to_string(),
+            RenderFormat::Svg => "image/svg+xml".to_string(),
+            RenderFormat::Pdf => "application/pdf".to_string(),
+            RenderFormat::Jpeg => "image/jpeg".to_string(),
         }
     }
 
@@ -360,7 +357,7 @@ impl DeviceContext {
         let width = 400;
         let height = 650;
         let pixel_ratio = 1.0;
-        let format = "png";
+        let format = RenderFormat::Png;
 
         let data = unwrap!(self.render_plot(id, width, height, pixel_ratio, &format), Err(error) => {
             bail!("Failed to render plot with id {id} due to: {error}.");
@@ -378,7 +375,7 @@ impl DeviceContext {
         width: i64,
         height: i64,
         pixel_ratio: f64,
-        format: &str,
+        format: &RenderFormat,
     ) -> anyhow::Result<String> {
         // Render the plot to file.
         // TODO: Is it possible to do this without writing to file; e.g. could
@@ -390,7 +387,7 @@ impl DeviceContext {
                 .param("width", RObject::try_from(width)?)
                 .param("height", RObject::try_from(height)?)
                 .param("dpr", pixel_ratio)
-                .param("format", format)
+                .param("format", format.to_string().to_lowercase())
                 .call()?
                 .to::<String>()
         });

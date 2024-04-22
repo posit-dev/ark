@@ -34,6 +34,9 @@ use super::dap::Dap;
 use super::dap::DapBackendEvent;
 use crate::dap::dap_r_main::FrameInfo;
 use crate::dap::dap_r_main::FrameSource;
+use crate::dap::dap_variables::object_variables;
+use crate::dap::dap_variables::RVariable;
+use crate::r_task;
 use crate::request::debug_request_command;
 use crate::request::DebugRequest;
 use crate::request::RRequest;
@@ -226,6 +229,12 @@ impl<R: Read, W: Write> DapServer<R, W> {
             Command::Source(args) => {
                 self.handle_source(req, args);
             },
+            Command::Scopes(args) => {
+                self.handle_scopes(req, args);
+            },
+            Command::Variables(args) => {
+                self.handle_variables(req, args);
+            },
             Command::Continue(args) => {
                 let resp = ResponseBody::Continue(ContinueResponse {
                     all_threads_continued: Some(true),
@@ -328,7 +337,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
 
     fn handle_stacktrace(&mut self, req: Request, args: StackTraceArguments) {
         let state = self.state.lock().unwrap();
-        let stack = state.stack.clone();
+        let stack = &state.stack;
         let fallback_sources = &state.fallback_sources;
 
         let stack = match stack {
@@ -415,6 +424,106 @@ impl<R: Read, W: Write> DapServer<R, W> {
         None
     }
 
+    fn handle_scopes(&mut self, req: Request, args: ScopesArguments) {
+        let state = self.state.lock().unwrap();
+        let frame_id_to_variables_reference = &state.frame_id_to_variables_reference;
+
+        // Entirely possible that the requested `frame_id` doesn't have any
+        // variables (like the top most frame where the call was made). We send
+        // back `0` in those cases, which is an indication of "no variables".
+        let variables_reference = frame_id_to_variables_reference
+            .get(&args.frame_id)
+            .copied()
+            .unwrap_or(0);
+
+        let mut scopes = Vec::new();
+
+        // Only 1 overarching scope for now
+        scopes.push(Scope {
+            name: String::from("Locals"),
+            presentation_hint: Some(ScopePresentationhint::Locals),
+            variables_reference,
+            named_variables: None,
+            indexed_variables: None,
+            expensive: false,
+            source: None,
+            line: None,
+            column: None,
+            end_line: None,
+            end_column: None,
+        });
+
+        let rsp = req.success(ResponseBody::Scopes(ScopesResponse { scopes }));
+
+        self.server.respond(rsp).unwrap();
+    }
+
+    fn handle_variables(&mut self, req: Request, args: VariablesArguments) {
+        let variables_reference = args.variables_reference;
+        let variables = self.collect_r_variables(variables_reference);
+        let variables = self.into_variables(variables);
+        let rsp = req.success(ResponseBody::Variables(VariablesResponse { variables }));
+        self.server.respond(rsp).unwrap();
+    }
+
+    fn collect_r_variables(&self, variables_reference: i64) -> Vec<RVariable> {
+        let state = self.state.lock().unwrap();
+        let variables_reference_to_r_object = &state.variables_reference_to_r_object;
+
+        let Some(object) = variables_reference_to_r_object.get(&variables_reference) else {
+            log::error!(
+                "Failed to locate R object for `variables_reference` {variables_reference}."
+            );
+            return Vec::new();
+        };
+
+        // Should be safe to run an r-task while paused in the debugger, tasks
+        // are still run while polling within the read console hook
+        let variables = r_task(|| {
+            let object = object.get();
+            object_variables(object.sexp)
+        });
+
+        variables
+    }
+
+    fn into_variables(&self, variables: Vec<RVariable>) -> Vec<Variable> {
+        let mut state = self.state.lock().unwrap();
+        let mut out = Vec::with_capacity(variables.len());
+
+        for variable in variables.into_iter() {
+            let name = variable.name;
+            let value = variable.value;
+            let type_field = variable.type_field;
+            let variables_reference_object = variable.variables_reference_object;
+
+            // If we have a `variables_reference_object`, then this variable is
+            // structured and has children. We need a new unique
+            // `variables_reference` to return that will map to this object in
+            // a followup `Variables` request.
+            let variables_reference = match variables_reference_object {
+                Some(x) => state.insert_variables_reference_object(x),
+                None => 0,
+            };
+
+            let variable = Variable {
+                name,
+                value,
+                type_field,
+                presentation_hint: None,
+                evaluate_name: None,
+                variables_reference,
+                named_variables: None,
+                indexed_variables: None,
+                memory_reference: None,
+            };
+
+            out.push(variable);
+        }
+
+        out
+    }
+
     fn handle_step<A>(&mut self, req: Request, _args: A, cmd: DebugRequest, resp: ResponseBody) {
         self.send_command(cmd);
         let rsp = req.success(resp);
@@ -441,10 +550,11 @@ impl<R: Read, W: Write> DapServer<R, W> {
     }
 }
 
-fn into_dap_frame(frame: FrameInfo, fallback_sources: &HashMap<String, i32>) -> StackFrame {
-    let source_name = frame.source_name;
-    let frame_name = frame.frame_name;
-    let source = frame.source;
+fn into_dap_frame(frame: &FrameInfo, fallback_sources: &HashMap<String, i32>) -> StackFrame {
+    let id = frame.id;
+    let source_name = frame.source_name.clone();
+    let frame_name = frame.frame_name.clone();
+    let source = frame.source.clone();
     let start_line = frame.start_line;
     let start_column = frame.start_column;
     let end_line = frame.end_line;
@@ -476,7 +586,7 @@ fn into_dap_frame(frame: FrameInfo, fallback_sources: &HashMap<String, i32>) -> 
     };
 
     StackFrame {
-        id: THREAD_ID,
+        id,
         name: frame_name,
         source: Some(src),
         line: start_line,
