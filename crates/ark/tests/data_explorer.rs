@@ -276,17 +276,30 @@ fn test_data_explorer() {
         // We should get a SetSortColumnsReply back.
         assert_match!(socket_rpc(&socket, req), DataExplorerBackendReply::SetSortColumnsReply() => {});
 
+        // Get the schema of the data set.
+        let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
+            num_columns: 2,
+            start_index: 0,
+        });
+
+        let schema_reply = socket_rpc(&socket, req);
+        let schema = match schema_reply {
+            DataExplorerBackendReply::GetSchemaReply(schema) => schema,
+            _ => panic!("Unexpected reply: {:?}", schema_reply),
+        };
+
         // Next, apply a filter to the data set. We'll filter out all rows where
         // the first field (height) is less than 60.
         let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
             filters: vec![RowFilter {
-                column_index: 0,
+                column_schema: schema.columns[0].clone(),
                 filter_type: RowFilterType::Compare,
                 compare_params: Some(CompareFilterParams {
                     op: CompareFilterParamsOp::Lt,
                     value: "60".to_string(),
                 }),
                 filter_id: "A11876D6-7CF3-435F-874D-E96892B25C9A".to_string(),
+                error_message: None,
                 condition: RowFilterCondition::And,
                 is_valid: None,
                 between_params: None,
@@ -299,7 +312,7 @@ fn test_data_explorer() {
         // height is less than 60.
         assert_match!(socket_rpc(&socket, req),
         DataExplorerBackendReply::SetRowFiltersReply(
-            FilterResult { selected_num_rows: num_rows }
+            FilterResult { selected_num_rows: num_rows, had_errors: None}
         ) => {
             assert_eq!(num_rows, 2);
         });
@@ -452,10 +465,7 @@ fn test_data_explorer() {
             CommMsg::Data(value) => {
                 // Make sure it's schema update event.
                 assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
-                    DataExplorerFrontendEvent::SchemaUpdate(params) => {
-                        assert_eq!(params.discard_state, true);
-                    }
-                );
+                    DataExplorerFrontendEvent::SchemaUpdate);
         });
 
         // Get the schema again to make sure it updated. We added a new column, so
@@ -495,11 +505,12 @@ fn test_data_explorer() {
         });
 
         // Check that we got the right number of columns.
-        assert_match!(socket_rpc(&socket, req),
-            DataExplorerBackendReply::GetSchemaReply(schema) => {
-                assert_eq!(schema.columns.len(), 61);
-            }
-        );
+        let schema_reply = socket_rpc(&socket, req);
+        let schema = match schema_reply {
+            DataExplorerBackendReply::GetSchemaReply(schema) => schema,
+            _ => panic!("Unexpected reply: {:?}", schema_reply),
+        };
+        assert_eq!(schema.columns.len(), 61);
 
         // Create a request to sort the matrix by the first column.
         let volcano_sort_keys = vec![ColumnSortKey {
@@ -537,7 +548,7 @@ fn test_data_explorer() {
         // the first column is less than 100.
         let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
             filters: vec![RowFilter {
-                column_index: 0,
+                column_schema: schema.columns[0].clone(),
                 filter_type: RowFilterType::Compare,
                 compare_params: Some(CompareFilterParams {
                     op: CompareFilterParamsOp::Lt,
@@ -545,6 +556,7 @@ fn test_data_explorer() {
                 }),
                 filter_id: "F5D5FE28-04D9-4010-8C77-84094D9B8E2C".to_string(),
                 condition: RowFilterCondition::And,
+                error_message: None,
                 is_valid: None,
                 between_params: None,
                 search_params: None,
@@ -556,7 +568,7 @@ fn test_data_explorer() {
         // first column of the matrix is less than 100.
         assert_match!(socket_rpc(&socket, req),
         DataExplorerBackendReply::SetRowFiltersReply(
-            FilterResult { selected_num_rows: num_rows }
+            FilterResult { selected_num_rows: num_rows, had_errors: None }
         ) => {
             assert_eq!(num_rows, 8);
         });
@@ -573,6 +585,18 @@ fn test_data_explorer() {
 
         // Open the fibo data set in the data explorer.
         let socket = open_data_explorer(String::from("fibo"));
+
+        // Get the schema of the data set.
+        let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
+            num_columns: 1,
+            start_index: 0,
+        });
+
+        let schema_reply = socket_rpc(&socket, req);
+        let schema = match schema_reply {
+            DataExplorerBackendReply::GetSchemaReply(schema) => schema,
+            _ => panic!("Unexpected reply: {:?}", schema_reply),
+        };
 
         // Ask for a count of nulls in the first column.
         let req = DataExplorerBackendRequest::GetColumnProfiles(GetColumnProfilesParams {
@@ -593,7 +617,7 @@ fn test_data_explorer() {
         // Next, apply a filter to the data set. Filter out all empty rows.
         let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
             filters: vec![RowFilter {
-                column_index: 0,
+                column_schema: schema.columns[0].clone(),
                 filter_type: RowFilterType::NotNull,
                 filter_id: "048D4D03-A7B5-4825-BEB1-769B70DE38A6".to_string(),
                 condition: RowFilterCondition::And,
@@ -602,6 +626,7 @@ fn test_data_explorer() {
                 between_params: None,
                 search_params: None,
                 set_membership_params: None,
+                error_message: None,
             }],
         });
 
@@ -609,7 +634,7 @@ fn test_data_explorer() {
         // first column is not NA.
         assert_match!(socket_rpc(&socket, req),
         DataExplorerBackendReply::SetRowFiltersReply(
-            FilterResult { selected_num_rows: num_rows }
+            FilterResult { selected_num_rows: num_rows, had_errors: None }
         ) => {
             assert_eq!(num_rows, 6);
         });
@@ -617,7 +642,7 @@ fn test_data_explorer() {
         // Let's look at JUST the empty rows.
         let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
             filters: vec![RowFilter {
-                column_index: 0,
+                column_schema: schema.columns[0].clone(),
                 filter_type: RowFilterType::IsNull,
                 filter_id: "87E2E016-C853-4928-8914-8774125E3C87".to_string(),
                 condition: RowFilterCondition::And,
@@ -626,6 +651,7 @@ fn test_data_explorer() {
                 between_params: None,
                 search_params: None,
                 set_membership_params: None,
+                error_message: None,
             }],
         });
 
@@ -633,7 +659,7 @@ fn test_data_explorer() {
         // first field has a missing value.
         assert_match!(socket_rpc(&socket, req),
         DataExplorerBackendReply::SetRowFiltersReply(
-            FilterResult { selected_num_rows: num_rows }
+            FilterResult { selected_num_rows: num_rows, had_errors: None}
         ) => {
             assert_eq!(num_rows, 3);
         });
@@ -658,10 +684,22 @@ fn test_data_explorer() {
         // Open the words data set in the data explorer.
         let socket = open_data_explorer(String::from("words"));
 
+        // Get the schema of the data set.
+        let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
+            num_columns: 1,
+            start_index: 0,
+        });
+
+        let schema_reply = socket_rpc(&socket, req);
+        let schema = match schema_reply {
+            DataExplorerBackendReply::GetSchemaReply(schema) => schema,
+            _ => panic!("Unexpected reply: {:?}", schema_reply),
+        };
+
         // Next, apply a filter to the data set. Check for rows that contain the
         // text ".".
         let dot_filter = RowFilter {
-            column_index: 0,
+            column_schema: schema.columns[0].clone(),
             filter_type: RowFilterType::Search,
             filter_id: "A58A4497-29E0-4407-BC25-67FEF73F6224".to_string(),
             condition: RowFilterCondition::And,
@@ -674,6 +712,7 @@ fn test_data_explorer() {
                 term: ".".to_string(),
             }),
             set_membership_params: None,
+            error_message: None,
         };
         let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
             filters: vec![dot_filter.clone()],
@@ -683,7 +722,7 @@ fn test_data_explorer() {
         // the text contains ".".
         assert_match!(socket_rpc(&socket, req),
         DataExplorerBackendReply::SetRowFiltersReply(
-            FilterResult { selected_num_rows: num_rows }
+            FilterResult { selected_num_rows: num_rows, had_errors: None}
         ) => {
             assert_eq!(num_rows, 2);
         });
@@ -691,7 +730,7 @@ fn test_data_explorer() {
         // Combine this with an OR filter that checks for rows that end in
         // 'ent'.
         let ent_filter = RowFilter {
-            column_index: 0,
+            column_schema: schema.columns[0].clone(),
             filter_type: RowFilterType::Search,
             filter_id: "4BA46699-EF41-4FA8-A927-C8CD88520D6E".to_string(),
             condition: RowFilterCondition::Or,
@@ -704,6 +743,7 @@ fn test_data_explorer() {
                 term: "ent".to_string(),
             }),
             set_membership_params: None,
+            error_message: None,
         };
 
         let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
@@ -714,14 +754,14 @@ fn test_data_explorer() {
         // the text either contains "." OR ends in "ent".
         assert_match!(socket_rpc(&socket, req),
         DataExplorerBackendReply::SetRowFiltersReply(
-            FilterResult { selected_num_rows: num_rows }
+            FilterResult { selected_num_rows: num_rows, had_errors: None }
         ) => {
             assert_eq!(num_rows, 4);
         });
 
         // Create a filter for empty values.
         let empty_filter = RowFilter {
-            column_index: 0,
+            column_schema: schema.columns[0].clone(),
             filter_type: RowFilterType::IsEmpty,
             filter_id: "3F032747-4667-40CB-9013-AA659AE37F1C".to_string(),
             condition: RowFilterCondition::And,
@@ -730,6 +770,7 @@ fn test_data_explorer() {
             between_params: None,
             search_params: None,
             set_membership_params: None,
+            error_message: None,
         };
 
         let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
@@ -740,7 +781,7 @@ fn test_data_explorer() {
         // value.
         assert_match!(socket_rpc(&socket, req),
         DataExplorerBackendReply::SetRowFiltersReply(
-            FilterResult { selected_num_rows: num_rows }
+            FilterResult { selected_num_rows: num_rows, had_errors: None }
         ) => {
             assert_eq!(num_rows, 1);
         });

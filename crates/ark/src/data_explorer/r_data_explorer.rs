@@ -24,7 +24,6 @@ use amalthea::comm::data_explorer_comm::GetDataValuesParams;
 use amalthea::comm::data_explorer_comm::GetSchemaParams;
 use amalthea::comm::data_explorer_comm::RowFilter;
 use amalthea::comm::data_explorer_comm::RowFilterType;
-use amalthea::comm::data_explorer_comm::SchemaUpdateParams;
 use amalthea::comm::data_explorer_comm::SearchSchemaFeatures;
 use amalthea::comm::data_explorer_comm::SetRowFiltersFeatures;
 use amalthea::comm::data_explorer_comm::SetRowFiltersParams;
@@ -352,9 +351,7 @@ impl RDataExplorer {
             // Clear active sort keys
             self.sort_keys.clear();
 
-            DataExplorerFrontendEvent::SchemaUpdate(SchemaUpdateParams {
-                discard_state: true,
-            })
+            DataExplorerFrontendEvent::SchemaUpdate
         } else {
             // Columns didn't change, but the data has. If there are sort
             // keys, we need to sort the rows again to reflect the new data.
@@ -431,6 +428,7 @@ impl RDataExplorer {
                 Ok(DataExplorerBackendReply::SetRowFiltersReply({
                     FilterResult {
                         selected_num_rows: self.filtered_indices.len() as i64,
+                        had_errors: None,
                     }
                 }))
             },

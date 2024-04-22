@@ -35,7 +35,10 @@ pub struct TableData {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct FilterResult {
 	/// Number of rows in table after applying filters
-	pub selected_num_rows: i64
+	pub selected_num_rows: i64,
+
+	/// Flag indicating if there were errors in evaluation
+	pub had_errors: Option<bool>
 }
 
 /// The current backend state for the data explorer
@@ -117,8 +120,8 @@ pub struct RowFilter {
 	/// Type of row filter to apply
 	pub filter_type: RowFilterType,
 
-	/// Column index to apply filter to
-	pub column_index: i64,
+	/// Column to apply filter to
+	pub column_schema: ColumnSchema,
 
 	/// The binary condition to use to combine with preceding row filters
 	pub condition: RowFilterCondition,
@@ -126,6 +129,9 @@ pub struct RowFilter {
 	/// Whether the filter is valid and supported by the backend, if undefined
 	/// then true
 	pub is_valid: Option<bool>,
+
+	/// Optional error message when the filter is invalid
+	pub error_message: Option<String>,
 
 	/// Parameters for the 'between' and 'not_between' filter types
 	pub between_params: Option<BetweenFilterParams>,
@@ -549,13 +555,6 @@ pub struct GetColumnProfilesParams {
 	pub profiles: Vec<ColumnProfileRequest>,
 }
 
-/// Parameters for the SchemaUpdate method.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct SchemaUpdateParams {
-	/// If true, the UI should discard the filter/sort state.
-	pub discard_state: bool,
-}
-
 /**
  * Backend RPC request types for the data_explorer comm
  */
@@ -655,9 +654,9 @@ pub enum DataExplorerFrontendReply {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params")]
 pub enum DataExplorerFrontendEvent {
-	/// Fully reset and redraw the data explorer after a schema change.
+	/// Notify the data explorer to do a state sync after a schema change.
 	#[serde(rename = "schema_update")]
-	SchemaUpdate(SchemaUpdateParams),
+	SchemaUpdate,
 
 	/// Triggered when there is any data change detected, clearing cache data
 	/// and triggering a refresh/redraw.

@@ -74,9 +74,9 @@
         # Each filter function accepts the column and the parameters as
         # arguments.
         col <- if (is_matrix) {
-            table[, row_filter$column_index + 1]
+            table[, row_filter$column_schema$column_index + 1]
         } else {
-            table[[row_filter$column_index + 1]]
+            table[[row_filter$column_schema$column_index + 1]]
         }
         filter_args <- list(col, params)
 
