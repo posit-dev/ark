@@ -680,6 +680,10 @@ impl RDataExplorer {
                 num_rows: self.filtered_indices.len() as i64,
                 num_columns: self.shape.columns.len() as i64,
             },
+            table_unfiltered_shape: TableShape {
+                num_rows: self.shape.num_rows as i64,
+                num_columns: self.shape.columns.len() as i64,
+            },
             row_filters: self.row_filters.clone(),
             sort_keys: self.sort_keys.clone(),
             supported_features: SupportedFeatures {

@@ -785,5 +785,14 @@ fn test_data_explorer() {
         ) => {
             assert_eq!(num_rows, 1);
         });
+
+        // Check the table state; at this point we should have 1 row from 7 total.
+        let req = DataExplorerBackendRequest::GetState;
+        assert_match!(socket_rpc(&socket, req),
+            DataExplorerBackendReply::GetStateReply(state) => {
+                assert_eq!(state.table_shape.num_rows, 1);
+                assert_eq!(state.table_unfiltered_shape.num_rows, 7);
+            }
+        );
     });
 }

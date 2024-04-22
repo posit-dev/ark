@@ -47,8 +47,11 @@ pub struct BackendState {
 	/// Variable name or other string to display for tab name in UI
 	pub display_name: String,
 
-	/// Provides number of rows and columns in table
+	/// Number of rows and columns in table with filters applied
 	pub table_shape: TableShape,
+
+	/// Number of rows and columns in table without any filters applied
+	pub table_unfiltered_shape: TableShape,
 
 	/// The set of currently applied row filters
 	pub row_filters: Vec<RowFilter>,
@@ -58,16 +61,6 @@ pub struct BackendState {
 
 	/// The features currently supported by the backend instance
 	pub supported_features: SupportedFeatures
-}
-
-/// Provides number of rows and columns in table
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct TableShape {
-	/// Numbers of rows in the unfiltered dataset
-	pub num_rows: i64,
-
-	/// Number of columns in the unfiltered dataset
-	pub num_columns: i64
 }
 
 /// Schema for a column in a table
@@ -109,6 +102,16 @@ pub struct ColumnSchema {
 pub struct TableSchema {
 	/// Schema for each column in the table
 	pub columns: Vec<ColumnSchema>
+}
+
+/// Provides number of rows and columns in a table
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct TableShape {
+	/// Numbers of rows in the table
+	pub num_rows: i64,
+
+	/// Number of columns in the table
+	pub num_columns: i64
 }
 
 /// Specifies a table row filter based on a single column's values
@@ -600,7 +603,8 @@ pub enum DataExplorerBackendRequest {
 
 	/// Get the state
 	///
-	/// Request the current table state (applied filters and sort columns)
+	/// Request the current backend state (shape, filters, sort keys,
+	/// features)
 	#[serde(rename = "get_state")]
 	GetState,
 
