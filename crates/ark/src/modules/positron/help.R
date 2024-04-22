@@ -20,6 +20,8 @@ help <- function(topic, package = NULL) {
       help <- utils::help
   }
 
+  # Since `topic` and `package` are strings (or `NULL`), we wrap them in `()` to tell the
+  # special NSE semantics of `help()` to evaluate them rather than deparse them.
   if (is.null(package)) {
     # Use an explicit `NULL` to ensure this always works with dev help
     # https://github.com/r-lib/pkgload/pull/267
