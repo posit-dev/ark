@@ -229,6 +229,11 @@ pub fn r_dbl_poke(x: SEXP, i: R_xlen_t, value: f64) {
 pub fn r_chr_poke(x: SEXP, i: R_xlen_t, value: SEXP) {
     unsafe { SET_STRING_ELT(x, i, value) }
 }
+pub fn r_list_poke(x: SEXP, i: R_xlen_t, value: SEXP) {
+    unsafe {
+        SET_VECTOR_ELT(x, i, value);
+    }
+}
 
 // TODO: Make these wrappers robust to allocation failures
 // https://github.com/posit-dev/positron/issues/2600
@@ -850,11 +855,10 @@ impl TryFrom<Vec<RObject>> for RObject {
             // Create the list object.
             let out_raw = Rf_allocVector(VECSXP, n as R_xlen_t);
             let out = RObject::new(out_raw);
-            let v_out = DATAPTR(out_raw) as *mut SEXP;
 
             // Copy the values into the list.
             for i in 0..n {
-                *(v_out.offset(i as isize)) = *value[i];
+                r_list_poke(out.sexp, i as isize, value[i].sexp)
             }
 
             return Ok(out);
