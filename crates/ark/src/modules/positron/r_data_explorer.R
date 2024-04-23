@@ -102,11 +102,15 @@
     # Form the expression to evaluate. The filter operations map
     # straightforwardly to R's operators, except for the 'equals' operation,
     # which is represented by '=' but needs to be converted to '=='.
-    op <- if (identical(params$op, '=')) {
-        '=='
-    } else {
-        params$op
-    }
+    op <- switch(params$op,
+        `=` = "==",
+        `!=` = "!=",
+        `>` = ">",
+        `>=` = ">=",
+        `<` = "<",
+        `<=` = "<=",
+        stop("Unsupported comparison operator '", params$op, "'")
+    )
 
     # Values are always marshaled as strings at the RPC layer, so coerce them to
     # numeric if the column is numeric.
