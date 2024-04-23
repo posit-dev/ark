@@ -38,7 +38,11 @@
 
 #' @export
 .ps.null_count <- function(column, filtered_indices) {
-    sum(is.na(column[filtered_indices]))
+    if (is.null(filtered_indices)) {
+        sum(is.na(column))
+    } else {
+        sum(is.na(column[filtered_indices]))
+    }
 }
 
 #' @export

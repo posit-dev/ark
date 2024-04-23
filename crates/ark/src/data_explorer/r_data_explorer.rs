@@ -106,16 +106,19 @@ pub struct RDataExplorer {
     /// A cache containing the current set of row filters.
     row_filters: Vec<RowFilter>,
 
-    /// The set of sorted row indices. This always includes all row indices.
-    sorted_indices: Vec<i32>,
+    /// The set of sorted row indices, if any sorts are applied. This always
+    /// includes all row indices.
+    sorted_indices: Option<Vec<i32>>,
 
-    /// The set of filtered row indices. These are the row indices that remain
-    /// after applying all row filters. They're sorted in ascending order.
-    filtered_indices: Vec<i32>,
+    /// The set of filtered row indices, if any filters are applied. These are
+    /// the row indices that remain after applying all row filters. They're
+    /// sorted in ascending order.
+    filtered_indices: Option<Vec<i32>>,
 
-    /// The set of sorted and filtered row indices. This is the set of row
-    /// indices that are displayed in the data viewer.
-    view_indices: Vec<i32>,
+    /// When any sorts or filters are applied, the set of sorted and filtered
+    /// row indices. This is the set of row indices that are displayed in the
+    /// data viewer.
+    view_indices: Option<Vec<i32>>,
 
     /// The communication socket for the data viewer.
     comm: CommSocket,
@@ -154,23 +157,15 @@ impl RDataExplorer {
             match shape {
                 // shape the columns; start the data viewer
                 Ok(shape) => {
-                    // Generate an initial set of row indices that are just the
-                    // row numbers
-                    let row_indices: Vec<i32> = if shape.num_rows < 1 {
-                        vec![]
-                    } else {
-                        (1..=shape.num_rows).collect()
-                    };
-
                     // Create the initial state for the data viewer
                     let viewer = Self {
                         title,
                         table: data,
                         binding,
                         shape,
-                        sorted_indices: row_indices.clone(),
-                        filtered_indices: row_indices.clone(),
-                        view_indices: row_indices.clone(),
+                        sorted_indices: None,
+                        filtered_indices: None,
+                        view_indices: None,
                         sort_keys: vec![],
                         row_filters: vec![],
                         comm,
@@ -344,9 +339,9 @@ impl RDataExplorer {
             self.shape = new_shape;
 
             // Reset active row indices to be all rows
-            self.sorted_indices = (1..=self.shape.num_rows).collect();
-            self.filtered_indices = self.sorted_indices.clone();
-            self.view_indices = self.sorted_indices.clone();
+            self.sorted_indices = None;
+            self.filtered_indices = None;
+            self.view_indices = None;
 
             // Clear active sort keys
             self.sort_keys.clear();
@@ -356,7 +351,7 @@ impl RDataExplorer {
             // Columns didn't change, but the data has. If there are sort
             // keys, we need to sort the rows again to reflect the new data.
             if self.sort_keys.len() > 0 {
-                self.sorted_indices = r_task(|| self.r_sort_rows())?;
+                self.sorted_indices = Some(r_task(|| self.r_sort_rows())?);
             }
             self.apply_sorts_and_filters();
 
@@ -407,8 +402,8 @@ impl RDataExplorer {
                 // If there are no sort keys, reset the row indices to be the
                 // row numbers; otherwise, sort the rows
                 self.sorted_indices = match keys.len() {
-                    0 => (1..=self.shape.num_rows).collect(),
-                    _ => r_task(|| self.r_sort_rows())?,
+                    0 => None,
+                    _ => Some(r_task(|| self.r_sort_rows())?),
                 };
 
                 // Apply sorts to the filtered indices to create view indices
@@ -420,14 +415,21 @@ impl RDataExplorer {
                 // Save the new row filters
                 self.row_filters = filters.clone();
 
-                self.filtered_indices = r_task(|| self.r_filter_rows())?;
+                self.filtered_indices = if filters.len() > 0 {
+                    Some(r_task(|| self.r_filter_rows())?)
+                } else {
+                    None
+                };
 
                 // Apply sorts to the filtered indices to create view indices
                 self.apply_sorts_and_filters();
 
                 Ok(DataExplorerBackendReply::SetRowFiltersReply({
                     FilterResult {
-                        selected_num_rows: self.filtered_indices.len() as i64,
+                        selected_num_rows: match self.filtered_indices {
+                            Some(ref indices) => indices.len() as i64,
+                            None => self.shape.num_rows as i64,
+                        },
                         had_errors: None,
                     }
                 }))
@@ -542,6 +544,8 @@ impl RDataExplorer {
     /// idea of how complete the data is, NA values are considered to be null
     /// for the purposes of these stats.
     ///
+    /// If a filter is applied, only the nulls in the filtered rows are counted.
+    ///
     /// - `column_index`: The index of the column to count nulls in; 0-based.
     fn r_null_count(&self, column_index: i32) -> anyhow::Result<i32> {
         // Get the column to count nulls in
@@ -550,10 +554,10 @@ impl RDataExplorer {
         // Compute the number of nulls in the column
         let result = RFunction::new("", ".ps.null_count")
             .param("column", column)
-            .param(
-                "filtered_indices",
-                RObject::try_from(self.filtered_indices.clone())?,
-            )
+            .param("filtered_indices", match &self.filtered_indices {
+                Some(indices) => RObject::try_from(indices.clone())?,
+                None => RObject::null(),
+            })
             .call()?;
 
         // Return the count of nulls and NA values
@@ -632,28 +636,44 @@ impl RDataExplorer {
     /// Sort the filtered indices according to the sort keys, storing the
     /// result in view_indices.
     fn apply_sorts_and_filters(&mut self) {
-        // Shortcut: If there are no sort keys, the view indices are the same as
-        // the filtered indices.
-        if self.sort_keys.is_empty() {
+        // If there are no filters or sorts, we don't need any view indices
+        if self.filtered_indices.is_none() && self.sorted_indices.is_none() {
+            self.view_indices = None;
+            return;
+        }
+
+        // If there are filters but no sorts, the view indices are the filtered
+        // indices
+        if self.sorted_indices.is_none() {
             self.view_indices = self.filtered_indices.clone();
             return;
         }
 
+        // If there are sorts but no filters, the view indices are the sorted
+        // indices
+        if self.filtered_indices.is_none() {
+            self.view_indices = self.sorted_indices.clone();
+            return;
+        }
+
+        // There are both sorts and filters, so we need to combine them.
         // self.sorted_indices contains all the indices; self.filtered_indices
         // contains the subset of indices that pass the filters, in ascending
         // order.
         //
         // Derive the set of indices that pass the filters and are sorted
         // according to the sort keys.
-        let mut sorted_filtered_indices = Vec::<i32>::with_capacity(self.filtered_indices.len());
-        for &index in &self.sorted_indices {
+        let filtered_indices = self.filtered_indices.as_ref().unwrap();
+        let sorted_indices = self.sorted_indices.as_ref().unwrap();
+        let mut sorted_filtered_indices = Vec::<i32>::with_capacity(filtered_indices.len());
+        for &index in sorted_indices {
             // We can use a binary search here for performance because
             // filtered_indices is already sorted in ascending order.
-            if let Ok(_) = self.filtered_indices.binary_search(&index) {
+            if let Ok(_) = filtered_indices.binary_search(&index) {
                 sorted_filtered_indices.push(index);
             }
         }
-        self.view_indices = sorted_filtered_indices;
+        self.view_indices = Some(sorted_filtered_indices);
     }
 
     /// Get the schema for a range of columns in the data object.
@@ -683,7 +703,10 @@ impl RDataExplorer {
         let state = BackendState {
             display_name: self.title.clone(),
             table_shape: TableShape {
-                num_rows: self.filtered_indices.len() as i64,
+                num_rows: match self.filtered_indices {
+                    Some(ref indices) => indices.len() as i64,
+                    None => self.shape.num_rows as i64,
+                },
                 num_columns: self.shape.columns.len() as i64,
             },
             table_unfiltered_shape: TableShape {
@@ -727,7 +750,10 @@ impl RDataExplorer {
         let object = *table;
 
         let total_num_cols = self.shape.columns.len() as i32;
-        let num_filtered_rows = self.view_indices.len() as i32;
+        let num_filtered_rows = match self.filtered_indices {
+            Some(ref indices) => indices.len() as i32,
+            None => self.shape.num_rows,
+        };
         let lower_bound = cmp::min(row_start_index, num_filtered_rows) as isize;
         let upper_bound = cmp::min(row_start_index + num_rows, num_filtered_rows) as isize;
 
@@ -741,8 +767,12 @@ impl RDataExplorer {
         let cols_r_idx: RObject = cols_r_idx.try_into()?;
         let num_cols = cols_r_idx.length() as i32;
 
-        // Select the rows to subset
-        let row_indices = self.view_indices[lower_bound as usize..upper_bound as usize].to_vec();
+        // Select the rows to subset; use the filtered indices if they exist,
+        // otherwise use all rows
+        let row_indices = match &self.view_indices {
+            Some(indices) => indices[lower_bound as usize..upper_bound as usize].to_vec(),
+            None => ((lower_bound + 1) as i32..(upper_bound + 1) as i32).collect(),
+        };
         let rows_r_idx: RObject = row_indices.clone().try_into()?;
 
         // Subset rows in advance, including unmaterialized row names. Also
