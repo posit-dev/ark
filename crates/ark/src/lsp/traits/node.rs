@@ -249,3 +249,47 @@ fn _find_closest_child<'a>(node: &Node<'a>, point: Point) -> Option<Node<'a>> {
         None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use tree_sitter::Parser;
+    use tree_sitter::Point;
+
+    use crate::lsp::traits::node::NodeExt;
+    use crate::test::point_from_cursor;
+
+    #[test]
+    #[rustfmt::skip]
+    fn test_point_in_whitespace() {
+        let text = "
+fn <- function(x, arg) {
+  if (is.null(arg)) {
+  @  return(x)
+  }
+}
+";
+
+        let (text, point) = point_from_cursor(text);
+
+        let language = tree_sitter_r::language();
+
+        // create a parser for this document
+        let mut parser = Parser::new();
+        parser
+            .set_language(&language)
+            .expect("failed to create parser");
+
+        let tree = parser.parse(text, None).unwrap();
+        let node = tree.root_node();
+
+        let node = node.find_closest_node_to_point(point).unwrap();
+
+        // It takes into account anonymous nodes, so the lone `{` is the closest node
+        // that is still before the `@` cursor position.
+        // Note that if it is important that the selected node "contains" the point, then
+        // this is the wrong thing to use. If we just want the absolute closest node where
+        // the only requirement is that it starts before the point, then this is correct.
+        assert_eq!(node.start_position(), Point::new(2, 20));
+        assert_eq!(node.end_position(), Point::new(2, 21))
+    }
+}
