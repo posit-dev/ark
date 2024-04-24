@@ -669,7 +669,7 @@ impl RDataExplorer {
         // according to the sort keys.
         let filtered_indices = self.filtered_indices.as_ref().unwrap();
         let sorted_indices = self.sorted_indices.as_ref().unwrap();
-        let mut sorted_filtered_indices = Vec::<i32>::with_capacity(filtered_indices.len());
+        let mut view_indices = Vec::<i32>::with_capacity(filtered_indices.len());
         for &index in sorted_indices {
             // We can use a binary search here for performance because
             // filtered_indices is already sorted in ascending order.
