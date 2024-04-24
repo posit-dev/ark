@@ -417,9 +417,9 @@ impl RDataExplorer {
             },
             DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams { filters }) => {
                 // Save the new row filters
-                self.row_filters = filters.clone();
+                self.row_filters = filters;
 
-                self.filtered_indices = if filters.len() > 0 {
+                self.filtered_indices = if self.row_filters.len() > 0 {
                     Some(r_task(|| self.r_filter_rows())?)
                 } else {
                     None
