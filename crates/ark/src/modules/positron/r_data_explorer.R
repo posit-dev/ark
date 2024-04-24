@@ -36,7 +36,6 @@
     invisible(.ps.Call("ps_view_data_frame", x, title, var, env))
 }
 
-#' @export
 .ps.null_count <- function(column, filtered_indices) {
     if (is.null(filtered_indices)) {
         sum(is.na(column))
@@ -45,7 +44,6 @@
     }
 }
 
-#' @export
 .ps.filter_rows <- function(table, row_filters) {
     # Are we working with a matrix here?
     is_matrix <- is.matrix(table)

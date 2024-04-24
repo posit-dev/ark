@@ -63,6 +63,7 @@ use uuid::Uuid;
 
 use crate::interface::RMain;
 use crate::lsp::events::EVENTS;
+use crate::modules::ARK_ENVS;
 use crate::r_task;
 use crate::thread::RThreadSafe;
 use crate::variables::variable::WorkspaceVariableDisplayType;
@@ -558,7 +559,7 @@ impl RDataExplorer {
                 Some(indices) => RObject::try_from(indices.clone())?,
                 None => RObject::null(),
             })
-            .call()?;
+            .call_in(ARK_ENVS.positron_ns)?;
 
         // Return the count of nulls and NA values
         Ok(result.try_into()?)
@@ -625,7 +626,7 @@ impl RDataExplorer {
         let rows = RFunction::new("", ".ps.filter_rows")
             .param("table", self.table.get().sexp)
             .param("row_filters", filters)
-            .call()?;
+            .call_in(ARK_ENVS.positron_ns)?;
 
         // Convert the row indices to a Rust vector
         let row_indices = Vec::<i32>::try_from(rows)?;
