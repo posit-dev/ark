@@ -82,12 +82,19 @@
         }
         filter_args <- list(col, params)
 
-        # Apply the filter function to the column
-        if (identical(row_filter$condition, "or")) {
-            indices <- indices | do.call(filter_function, filter_args)
-        } else {
-            indices <- indices & do.call(filter_function, filter_args)
-        }
+        tryCatch({
+            # Apply the filter function to the column
+            filter_matches <- do.call(filter_function, filter_args)
+            if (identical(row_filter$condition, "or")) {
+                indices <- indices | filter_matches
+            } else {
+                indices <- indices & filter_matches
+            }
+        }, error = function(e) {
+            # TODO: Surface this error to the user. Errors in a single row
+            # filter shouldn't cause all filters to become invalid, so
+            # errors need to be accumulated on a per-row-filter basis.
+        })
     }
 
     # Return the indices of the rows that pass all filters

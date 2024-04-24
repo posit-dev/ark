@@ -812,5 +812,63 @@ fn test_data_explorer() {
                 assert_eq!(state.table_unfiltered_shape.num_rows, 7);
             }
         );
+
+        // --- invalid filters ---
+
+        // Create a data frame with a bunch of dates.
+        r_parse_eval0(
+            r#"test_dates <- data.frame(date = as.POSIXct(c(
+                    "2024-01-01 01:00:00",
+                    "2024-01-02 02:00:00",
+                    "2024-01-03 03:00:00"))
+            )"#,
+            R_ENVS.global,
+        )
+        .unwrap();
+
+        // Open the dates data set in the data explorer.
+        let socket = open_data_explorer(String::from("test_dates"));
+
+        // Get the schema of the data set.
+        let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
+            num_columns: 1,
+            start_index: 0,
+        });
+
+        let schema_reply = socket_rpc(&socket, req);
+        let schema = match schema_reply {
+            DataExplorerBackendReply::GetSchemaReply(schema) => schema,
+            _ => panic!("Unexpected reply: {:?}", schema_reply),
+        };
+
+        // Next, apply a filter to the data set. Check for rows that are greater than
+        // "marshmallows". This is an invalid filter because the column is a date.
+        let year_filter = RowFilter {
+            column_schema: schema.columns[0].clone(),
+            filter_type: RowFilterType::Compare,
+            filter_id: "0DB2F23D-B299-4068-B8D5-A2B513A93330".to_string(),
+            condition: RowFilterCondition::And,
+            is_valid: None,
+            compare_params: Some(CompareFilterParams {
+                op: CompareFilterParamsOp::Gt,
+                value: "marshmallows".to_string(),
+            }),
+            between_params: None,
+            search_params: None,
+            set_membership_params: None,
+            error_message: None,
+        };
+        let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
+            filters: vec![year_filter.clone()],
+        });
+
+        // We should get a SetRowFiltersReply back. Because the filter is invalid,
+        // the number of selected rows should be 3 (all the rows in the data set)
+        assert_match!(socket_rpc(&socket, req),
+        DataExplorerBackendReply::SetRowFiltersReply(
+            FilterResult { selected_num_rows: num_rows, had_errors: None}
+        ) => {
+            assert_eq!(num_rows, 3);
+        });
     });
 }
