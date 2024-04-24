@@ -771,7 +771,7 @@ impl RDataExplorer {
         let cols_r_idx: RObject = cols_r_idx.try_into()?;
         let num_cols = cols_r_idx.length() as i32;
 
-        // Select the rows to subset; use the filtered indices if they exist,
+        // Select the rows to subset; use the view indices if they exist,
         // otherwise use all rows
         let row_indices = match &self.view_indices {
             Some(indices) => indices[lower_bound as usize..upper_bound as usize].to_vec(),
