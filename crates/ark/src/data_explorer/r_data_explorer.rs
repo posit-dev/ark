@@ -339,13 +339,16 @@ impl RDataExplorer {
             // schema update event
             self.shape = new_shape;
 
-            // Reset active row indices to be all rows
+            // Clear precomputed indices
             self.sorted_indices = None;
             self.filtered_indices = None;
             self.view_indices = None;
 
             // Clear active sort keys
             self.sort_keys.clear();
+
+            // Clear active row filters
+            self.row_filters.clear();
 
             DataExplorerFrontendEvent::SchemaUpdate
         } else {
@@ -400,8 +403,8 @@ impl RDataExplorer {
                 // Save the new sort keys
                 self.sort_keys = keys.clone();
 
-                // If there are no sort keys, reset the row indices to be the
-                // row numbers; otherwise, sort the rows
+                // If there are no sort keys, clear the precomputed sorted
+                // indices; otherwise, sort the rows and save the result
                 self.sorted_indices = match keys.len() {
                     0 => None,
                     _ => Some(r_task(|| self.r_sort_rows())?),
