@@ -559,7 +559,7 @@ impl RDataExplorer {
         let result = RFunction::new("", ".ps.null_count")
             .param("column", column)
             .param("filtered_indices", match &self.filtered_indices {
-                Some(indices) => RObject::try_from(indices.clone())?,
+                Some(indices) => RObject::try_from(indices)?,
                 None => RObject::null(),
             })
             .call_in(ARK_ENVS.positron_ns)?;
@@ -768,7 +768,7 @@ impl RDataExplorer {
             .filter(|x| *x < total_num_cols)
             .map(|x| x + 1)
             .collect();
-        let cols_r_idx: RObject = cols_r_idx.try_into()?;
+        let cols_r_idx = RObject::try_from(&cols_r_idx)?;
         let num_cols = cols_r_idx.length() as i32;
 
         // Select the rows to subset; use the view indices if they exist,
@@ -777,7 +777,7 @@ impl RDataExplorer {
             Some(indices) => indices[lower_bound as usize..upper_bound as usize].to_vec(),
             None => ((lower_bound + 1) as i32..(upper_bound + 1) as i32).collect(),
         };
-        let rows_r_idx: RObject = row_indices.clone().try_into()?;
+        let rows_r_idx = RObject::try_from(&row_indices)?;
 
         // Subset rows in advance, including unmaterialized row names. Also
         // subset spend time creating subsetting columns that we don't need.

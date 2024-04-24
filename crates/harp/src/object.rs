@@ -885,9 +885,9 @@ impl TryFrom<Vec<bool>> for RObject {
     }
 }
 
-impl TryFrom<Vec<i32>> for RObject {
+impl TryFrom<&Vec<i32>> for RObject {
     type Error = crate::error::Error;
-    fn try_from(value: Vec<i32>) -> Result<Self, Self::Error> {
+    fn try_from(value: &Vec<i32>) -> Result<Self, Self::Error> {
         unsafe {
             let n = value.len();
 
