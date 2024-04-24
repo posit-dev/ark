@@ -674,10 +674,10 @@ impl RDataExplorer {
             // We can use a binary search here for performance because
             // filtered_indices is already sorted in ascending order.
             if let Ok(_) = filtered_indices.binary_search(&index) {
-                sorted_filtered_indices.push(index);
+                view_indices.push(index);
             }
         }
-        self.view_indices = Some(sorted_filtered_indices);
+        self.view_indices = Some(view_indices);
     }
 
     /// Get the schema for a range of columns in the data object.
