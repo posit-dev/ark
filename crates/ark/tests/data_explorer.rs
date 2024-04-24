@@ -9,12 +9,21 @@ use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::data_explorer_comm::ColumnProfileRequest;
 use amalthea::comm::data_explorer_comm::ColumnProfileType;
 use amalthea::comm::data_explorer_comm::ColumnSortKey;
+use amalthea::comm::data_explorer_comm::CompareFilterParams;
+use amalthea::comm::data_explorer_comm::CompareFilterParamsOp;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendReply;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendRequest;
 use amalthea::comm::data_explorer_comm::DataExplorerFrontendEvent;
+use amalthea::comm::data_explorer_comm::FilterResult;
 use amalthea::comm::data_explorer_comm::GetColumnProfilesParams;
 use amalthea::comm::data_explorer_comm::GetDataValuesParams;
 use amalthea::comm::data_explorer_comm::GetSchemaParams;
+use amalthea::comm::data_explorer_comm::RowFilter;
+use amalthea::comm::data_explorer_comm::RowFilterCondition;
+use amalthea::comm::data_explorer_comm::RowFilterType;
+use amalthea::comm::data_explorer_comm::SearchFilterParams;
+use amalthea::comm::data_explorer_comm::SearchFilterType;
+use amalthea::comm::data_explorer_comm::SetRowFiltersParams;
 use amalthea::comm::data_explorer_comm::SetSortColumnsParams;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::socket;
@@ -254,6 +263,86 @@ fn test_data_explorer() {
             }
         );
 
+        // Apply a sort to the data set. We'll sort the first field (height) in
+        // descending order.
+        let sort_keys = vec![ColumnSortKey {
+            column_index: 0,
+            ascending: false,
+        }];
+        let req = DataExplorerBackendRequest::SetSortColumns(SetSortColumnsParams {
+            sort_keys: sort_keys.clone(),
+        });
+
+        // We should get a SetSortColumnsReply back.
+        assert_match!(socket_rpc(&socket, req), DataExplorerBackendReply::SetSortColumnsReply() => {});
+
+        // Get the schema of the data set.
+        let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
+            num_columns: 2,
+            start_index: 0,
+        });
+
+        let schema_reply = socket_rpc(&socket, req);
+        let schema = match schema_reply {
+            DataExplorerBackendReply::GetSchemaReply(schema) => schema,
+            _ => panic!("Unexpected reply: {:?}", schema_reply),
+        };
+
+        // Next, apply a filter to the data set. We'll filter out all rows where
+        // the first field (height) is less than 60.
+        let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
+            filters: vec![RowFilter {
+                column_schema: schema.columns[0].clone(),
+                filter_type: RowFilterType::Compare,
+                compare_params: Some(CompareFilterParams {
+                    op: CompareFilterParamsOp::Lt,
+                    value: "60".to_string(),
+                }),
+                filter_id: "A11876D6-7CF3-435F-874D-E96892B25C9A".to_string(),
+                error_message: None,
+                condition: RowFilterCondition::And,
+                is_valid: None,
+                between_params: None,
+                search_params: None,
+                set_membership_params: None,
+            }],
+        });
+
+        // We should get a SetRowFiltersReply back. There are 2 rows where the
+        // height is less than 60.
+        assert_match!(socket_rpc(&socket, req),
+        DataExplorerBackendReply::SetRowFiltersReply(
+            FilterResult { selected_num_rows: num_rows, had_errors: None}
+        ) => {
+            assert_eq!(num_rows, 2);
+        });
+
+        // Get 2 rows of data. These rows should be both sorted and filtered
+        // since we have applied both a sort and a filter.
+        let req = DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
+            row_start_index: 0,
+            num_rows: 2,
+            column_indices: vec![0, 1],
+        });
+
+        // Spot check the data values.
+        assert_match!(socket_rpc(&socket, req),
+            DataExplorerBackendReply::GetDataValuesReply(data) => {
+                // The first column (height) should contain the only two rows
+                // where the height is less than 60.
+                assert_eq!(data.columns.len(), 2);
+                assert_eq!(data.columns[0][0], "59");
+                assert_eq!(data.columns[0][1], "58");
+
+                // Row labels should be present. The row labels represent the
+                // rows in the original data set, so after sorting we expect the
+                // first two rows to be 2 and 1.
+                let labels = data.row_labels.unwrap();
+                assert_eq!(labels[0][0], "2");
+                assert_eq!(labels[0][1], "1");
+            }
+        );
+
         // --- live updates ---
 
         // Create a tiny data frame to test live updates.
@@ -376,10 +465,7 @@ fn test_data_explorer() {
             CommMsg::Data(value) => {
                 // Make sure it's schema update event.
                 assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
-                    DataExplorerFrontendEvent::SchemaUpdate(params) => {
-                        assert_eq!(params.discard_state, true);
-                    }
-                );
+                    DataExplorerFrontendEvent::SchemaUpdate);
         });
 
         // Get the schema again to make sure it updated. We added a new column, so
@@ -419,11 +505,12 @@ fn test_data_explorer() {
         });
 
         // Check that we got the right number of columns.
-        assert_match!(socket_rpc(&socket, req),
-            DataExplorerBackendReply::GetSchemaReply(schema) => {
-                assert_eq!(schema.columns.len(), 61);
-            }
-        );
+        let schema_reply = socket_rpc(&socket, req);
+        let schema = match schema_reply {
+            DataExplorerBackendReply::GetSchemaReply(schema) => schema,
+            _ => panic!("Unexpected reply: {:?}", schema_reply),
+        };
+        assert_eq!(schema.columns.len(), 61);
 
         // Create a request to sort the matrix by the first column.
         let volcano_sort_keys = vec![ColumnSortKey {
@@ -457,6 +544,35 @@ fn test_data_explorer() {
             }
         );
 
+        // Next, apply a filter to the data set. We'll filter out all rows where
+        // the first column is less than 100.
+        let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
+            filters: vec![RowFilter {
+                column_schema: schema.columns[0].clone(),
+                filter_type: RowFilterType::Compare,
+                compare_params: Some(CompareFilterParams {
+                    op: CompareFilterParamsOp::Lt,
+                    value: "100".to_string(),
+                }),
+                filter_id: "F5D5FE28-04D9-4010-8C77-84094D9B8E2C".to_string(),
+                condition: RowFilterCondition::And,
+                error_message: None,
+                is_valid: None,
+                between_params: None,
+                search_params: None,
+                set_membership_params: None,
+            }],
+        });
+
+        // We should get a SetRowFiltersReply back. There are 8 rows where the
+        // first column of the matrix is less than 100.
+        assert_match!(socket_rpc(&socket, req),
+        DataExplorerBackendReply::SetRowFiltersReply(
+            FilterResult { selected_num_rows: num_rows, had_errors: None }
+        ) => {
+            assert_eq!(num_rows, 8);
+        });
+
         // --- null count ---
 
         // Create a data frame with the Fibonacci sequence, including some NA values
@@ -469,6 +585,18 @@ fn test_data_explorer() {
 
         // Open the fibo data set in the data explorer.
         let socket = open_data_explorer(String::from("fibo"));
+
+        // Get the schema of the data set.
+        let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
+            num_columns: 1,
+            start_index: 0,
+        });
+
+        let schema_reply = socket_rpc(&socket, req);
+        let schema = match schema_reply {
+            DataExplorerBackendReply::GetSchemaReply(schema) => schema,
+            _ => panic!("Unexpected reply: {:?}", schema_reply),
+        };
 
         // Ask for a count of nulls in the first column.
         let req = DataExplorerBackendRequest::GetColumnProfiles(GetColumnProfilesParams {
@@ -485,5 +613,262 @@ fn test_data_explorer() {
                assert_eq!(data[0].null_count, Some(3));
            }
         );
+
+        // Next, apply a filter to the data set. Filter out all empty rows.
+        let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
+            filters: vec![RowFilter {
+                column_schema: schema.columns[0].clone(),
+                filter_type: RowFilterType::NotNull,
+                filter_id: "048D4D03-A7B5-4825-BEB1-769B70DE38A6".to_string(),
+                condition: RowFilterCondition::And,
+                is_valid: None,
+                compare_params: None,
+                between_params: None,
+                search_params: None,
+                set_membership_params: None,
+                error_message: None,
+            }],
+        });
+
+        // We should get a SetRowFiltersReply back. There are 6 rows where the
+        // first column is not NA.
+        assert_match!(socket_rpc(&socket, req),
+        DataExplorerBackendReply::SetRowFiltersReply(
+            FilterResult { selected_num_rows: num_rows, had_errors: None }
+        ) => {
+            assert_eq!(num_rows, 6);
+        });
+
+        // Ask for a count of nulls in the first column again. Since a filter
+        // has been applied, the null count should be 0.
+        let req = DataExplorerBackendRequest::GetColumnProfiles(GetColumnProfilesParams {
+            profiles: vec![ColumnProfileRequest {
+                column_index: 0,
+                profile_type: ColumnProfileType::NullCount,
+            }],
+        });
+
+        assert_match!(socket_rpc(&socket, req),
+           DataExplorerBackendReply::GetColumnProfilesReply(data) => {
+               // We asked for the null count of the first column, which has no
+                // NA values after the filter.
+               assert!(data.len() == 1);
+               assert_eq!(data[0].null_count, Some(0));
+           }
+        );
+
+        // Let's look at JUST the empty rows.
+        let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
+            filters: vec![RowFilter {
+                column_schema: schema.columns[0].clone(),
+                filter_type: RowFilterType::IsNull,
+                filter_id: "87E2E016-C853-4928-8914-8774125E3C87".to_string(),
+                condition: RowFilterCondition::And,
+                is_valid: None,
+                compare_params: None,
+                between_params: None,
+                search_params: None,
+                set_membership_params: None,
+                error_message: None,
+            }],
+        });
+
+        // We should get a SetRowFiltersReply back. There are 3 rows where the
+        // first field has a missing value.
+        assert_match!(socket_rpc(&socket, req),
+        DataExplorerBackendReply::SetRowFiltersReply(
+            FilterResult { selected_num_rows: num_rows, had_errors: None}
+        ) => {
+            assert_eq!(num_rows, 3);
+        });
+
+        // --- search filters ---
+
+        // Create a data frame with a bunch of words to use for regex testing.
+        r_parse_eval0(
+            r#"words <- data.frame(text = c(
+                "lambent",
+                "incandescent",
+                "that will be $10.26",
+                "pi is 3.14159",
+                "",
+                "weasel",
+                "refrigerator"
+            ))"#,
+            R_ENVS.global,
+        )
+        .unwrap();
+
+        // Open the words data set in the data explorer.
+        let socket = open_data_explorer(String::from("words"));
+
+        // Get the schema of the data set.
+        let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
+            num_columns: 1,
+            start_index: 0,
+        });
+
+        let schema_reply = socket_rpc(&socket, req);
+        let schema = match schema_reply {
+            DataExplorerBackendReply::GetSchemaReply(schema) => schema,
+            _ => panic!("Unexpected reply: {:?}", schema_reply),
+        };
+
+        // Next, apply a filter to the data set. Check for rows that contain the
+        // text ".".
+        let dot_filter = RowFilter {
+            column_schema: schema.columns[0].clone(),
+            filter_type: RowFilterType::Search,
+            filter_id: "A58A4497-29E0-4407-BC25-67FEF73F6224".to_string(),
+            condition: RowFilterCondition::And,
+            is_valid: None,
+            compare_params: None,
+            between_params: None,
+            search_params: Some(SearchFilterParams {
+                case_sensitive: false,
+                search_type: SearchFilterType::Contains,
+                term: ".".to_string(),
+            }),
+            set_membership_params: None,
+            error_message: None,
+        };
+        let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
+            filters: vec![dot_filter.clone()],
+        });
+
+        // We should get a SetRowFiltersReply back. There are 2 rows where
+        // the text contains ".".
+        assert_match!(socket_rpc(&socket, req),
+        DataExplorerBackendReply::SetRowFiltersReply(
+            FilterResult { selected_num_rows: num_rows, had_errors: None}
+        ) => {
+            assert_eq!(num_rows, 2);
+        });
+
+        // Combine this with an OR filter that checks for rows that end in
+        // 'ent'.
+        let ent_filter = RowFilter {
+            column_schema: schema.columns[0].clone(),
+            filter_type: RowFilterType::Search,
+            filter_id: "4BA46699-EF41-4FA8-A927-C8CD88520D6E".to_string(),
+            condition: RowFilterCondition::Or,
+            is_valid: None,
+            compare_params: None,
+            between_params: None,
+            search_params: Some(SearchFilterParams {
+                case_sensitive: false,
+                search_type: SearchFilterType::EndsWith,
+                term: "ent".to_string(),
+            }),
+            set_membership_params: None,
+            error_message: None,
+        };
+
+        let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
+            filters: vec![dot_filter, ent_filter],
+        });
+
+        // We should get a SetRowFiltersReply back. There are 4 rows where
+        // the text either contains "." OR ends in "ent".
+        assert_match!(socket_rpc(&socket, req),
+        DataExplorerBackendReply::SetRowFiltersReply(
+            FilterResult { selected_num_rows: num_rows, had_errors: None }
+        ) => {
+            assert_eq!(num_rows, 4);
+        });
+
+        // Create a filter for empty values.
+        let empty_filter = RowFilter {
+            column_schema: schema.columns[0].clone(),
+            filter_type: RowFilterType::IsEmpty,
+            filter_id: "3F032747-4667-40CB-9013-AA659AE37F1C".to_string(),
+            condition: RowFilterCondition::And,
+            is_valid: None,
+            compare_params: None,
+            between_params: None,
+            search_params: None,
+            set_membership_params: None,
+            error_message: None,
+        };
+
+        let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
+            filters: vec![empty_filter],
+        });
+
+        // We should get a SetRowFiltersReply back. There's 1 row with an empty
+        // value.
+        assert_match!(socket_rpc(&socket, req),
+        DataExplorerBackendReply::SetRowFiltersReply(
+            FilterResult { selected_num_rows: num_rows, had_errors: None }
+        ) => {
+            assert_eq!(num_rows, 1);
+        });
+
+        // Check the table state; at this point we should have 1 row from 7 total.
+        let req = DataExplorerBackendRequest::GetState;
+        assert_match!(socket_rpc(&socket, req),
+            DataExplorerBackendReply::GetStateReply(state) => {
+                assert_eq!(state.table_shape.num_rows, 1);
+                assert_eq!(state.table_unfiltered_shape.num_rows, 7);
+            }
+        );
+
+        // --- invalid filters ---
+
+        // Create a data frame with a bunch of dates.
+        r_parse_eval0(
+            r#"test_dates <- data.frame(date = as.POSIXct(c(
+                    "2024-01-01 01:00:00",
+                    "2024-01-02 02:00:00",
+                    "2024-01-03 03:00:00"))
+            )"#,
+            R_ENVS.global,
+        )
+        .unwrap();
+
+        // Open the dates data set in the data explorer.
+        let socket = open_data_explorer(String::from("test_dates"));
+
+        // Get the schema of the data set.
+        let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
+            num_columns: 1,
+            start_index: 0,
+        });
+
+        let schema_reply = socket_rpc(&socket, req);
+        let schema = match schema_reply {
+            DataExplorerBackendReply::GetSchemaReply(schema) => schema,
+            _ => panic!("Unexpected reply: {:?}", schema_reply),
+        };
+
+        // Next, apply a filter to the data set. Check for rows that are greater than
+        // "marshmallows". This is an invalid filter because the column is a date.
+        let year_filter = RowFilter {
+            column_schema: schema.columns[0].clone(),
+            filter_type: RowFilterType::Compare,
+            filter_id: "0DB2F23D-B299-4068-B8D5-A2B513A93330".to_string(),
+            condition: RowFilterCondition::And,
+            is_valid: None,
+            compare_params: Some(CompareFilterParams {
+                op: CompareFilterParamsOp::Gt,
+                value: "marshmallows".to_string(),
+            }),
+            between_params: None,
+            search_params: None,
+            set_membership_params: None,
+            error_message: None,
+        };
+        let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
+            filters: vec![year_filter.clone()],
+        });
+
+        // We should get a SetRowFiltersReply back. Because the filter is invalid,
+        // the number of selected rows should be 3 (all the rows in the data set)
+        assert_match!(socket_rpc(&socket, req),
+        DataExplorerBackendReply::SetRowFiltersReply(
+            FilterResult { selected_num_rows: num_rows, had_errors: None}
+        ) => {
+            assert_eq!(num_rows, 3);
+        });
     });
 }

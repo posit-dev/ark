@@ -17,11 +17,13 @@ use amalthea::comm::data_explorer_comm::ColumnSortKey;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendReply;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendRequest;
 use amalthea::comm::data_explorer_comm::DataExplorerFrontendEvent;
+use amalthea::comm::data_explorer_comm::FilterResult;
 use amalthea::comm::data_explorer_comm::GetColumnProfilesFeatures;
 use amalthea::comm::data_explorer_comm::GetColumnProfilesParams;
 use amalthea::comm::data_explorer_comm::GetDataValuesParams;
 use amalthea::comm::data_explorer_comm::GetSchemaParams;
-use amalthea::comm::data_explorer_comm::SchemaUpdateParams;
+use amalthea::comm::data_explorer_comm::RowFilter;
+use amalthea::comm::data_explorer_comm::RowFilterType;
 use amalthea::comm::data_explorer_comm::SearchSchemaFeatures;
 use amalthea::comm::data_explorer_comm::SetRowFiltersFeatures;
 use amalthea::comm::data_explorer_comm::SetRowFiltersParams;
@@ -61,6 +63,7 @@ use uuid::Uuid;
 
 use crate::interface::RMain;
 use crate::lsp::events::EVENTS;
+use crate::modules::ARK_ENVS;
 use crate::r_task;
 use crate::thread::RThreadSafe;
 use crate::variables::variable::WorkspaceVariableDisplayType;
@@ -101,9 +104,22 @@ pub struct RDataExplorer {
     /// A cache containing the current set of sort keys.
     sort_keys: Vec<ColumnSortKey>,
 
-    /// The set of active row indices after all sorts and filters have been
-    /// applied.
-    row_indices: Vec<i32>,
+    /// A cache containing the current set of row filters.
+    row_filters: Vec<RowFilter>,
+
+    /// The set of sorted row indices, if any sorts are applied. This always
+    /// includes all row indices.
+    sorted_indices: Option<Vec<i32>>,
+
+    /// The set of filtered row indices, if any filters are applied. These are
+    /// the row indices that remain after applying all row filters. They're
+    /// sorted in ascending order.
+    filtered_indices: Option<Vec<i32>>,
+
+    /// When any sorts or filters are applied, the set of sorted and filtered
+    /// row indices. This is the set of row indices that are displayed in the
+    /// data viewer.
+    view_indices: Option<Vec<i32>>,
 
     /// The communication socket for the data viewer.
     comm: CommSocket,
@@ -142,22 +158,17 @@ impl RDataExplorer {
             match shape {
                 // shape the columns; start the data viewer
                 Ok(shape) => {
-                    // Generate an initial set of row indices that are just the
-                    // row numbers
-                    let row_indices: Vec<i32> = if shape.num_rows < 1 {
-                        vec![]
-                    } else {
-                        (1..=shape.num_rows).collect()
-                    };
-
                     // Create the initial state for the data viewer
                     let viewer = Self {
                         title,
                         table: data,
                         binding,
                         shape,
-                        row_indices,
+                        sorted_indices: None,
+                        filtered_indices: None,
+                        view_indices: None,
                         sort_keys: vec![],
+                        row_filters: vec![],
                         comm,
                         comm_manager_tx,
                     };
@@ -328,21 +339,25 @@ impl RDataExplorer {
             // schema update event
             self.shape = new_shape;
 
-            // Reset active row indices to be all rows
-            self.row_indices = (1..=self.shape.num_rows).collect();
+            // Clear precomputed indices
+            self.sorted_indices = None;
+            self.filtered_indices = None;
+            self.view_indices = None;
 
             // Clear active sort keys
             self.sort_keys.clear();
 
-            DataExplorerFrontendEvent::SchemaUpdate(SchemaUpdateParams {
-                discard_state: true,
-            })
+            // Clear active row filters
+            self.row_filters.clear();
+
+            DataExplorerFrontendEvent::SchemaUpdate
         } else {
             // Columns didn't change, but the data has. If there are sort
             // keys, we need to sort the rows again to reflect the new data.
             if self.sort_keys.len() > 0 {
-                self.row_indices = r_task(|| self.r_sort_rows())?;
+                self.sorted_indices = Some(r_task(|| self.r_sort_rows())?);
             }
+            self.apply_sorts_and_filters();
 
             DataExplorerFrontendEvent::DataUpdate
         };
@@ -388,17 +403,40 @@ impl RDataExplorer {
                 // Save the new sort keys
                 self.sort_keys = keys.clone();
 
-                // If there are no sort keys, reset the row indices to be the
-                // row numbers; otherwise, sort the rows
-                self.row_indices = match keys.len() {
-                    0 => (1..=self.shape.num_rows).collect(),
-                    _ => r_task(|| self.r_sort_rows())?,
+                // If there are no sort keys, clear the precomputed sorted
+                // indices; otherwise, sort the rows and save the result
+                self.sorted_indices = match keys.len() {
+                    0 => None,
+                    _ => Some(r_task(|| self.r_sort_rows())?),
                 };
+
+                // Apply sorts to the filtered indices to create view indices
+                self.apply_sorts_and_filters();
 
                 Ok(DataExplorerBackendReply::SetSortColumnsReply())
             },
-            DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams { filters: _ }) => {
-                bail!("Data Viewer: Not yet implemented")
+            DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams { filters }) => {
+                // Save the new row filters
+                self.row_filters = filters;
+
+                self.filtered_indices = if self.row_filters.len() > 0 {
+                    Some(r_task(|| self.r_filter_rows())?)
+                } else {
+                    None
+                };
+
+                // Apply sorts to the filtered indices to create view indices
+                self.apply_sorts_and_filters();
+
+                Ok(DataExplorerBackendReply::SetRowFiltersReply({
+                    FilterResult {
+                        selected_num_rows: match self.filtered_indices {
+                            Some(ref indices) => indices.len() as i64,
+                            None => self.shape.num_rows as i64,
+                        },
+                        had_errors: None,
+                    }
+                }))
             },
             DataExplorerBackendRequest::GetColumnProfiles(GetColumnProfilesParams {
                 profiles: requests,
@@ -510,18 +548,30 @@ impl RDataExplorer {
     /// idea of how complete the data is, NA values are considered to be null
     /// for the purposes of these stats.
     ///
+    /// If a filter is applied, only the nulls in the filtered rows are counted.
+    ///
     /// - `column_index`: The index of the column to count nulls in; 0-based.
     fn r_null_count(&self, column_index: i32) -> anyhow::Result<i32> {
         // Get the column to count nulls in
         let column = tbl_get_column(self.table.get().sexp, column_index, self.shape.kind)?;
 
         // Compute the number of nulls in the column
-        let result = RFunction::new("", ".ps.null_count").add(column).call()?;
+        let result = RFunction::new("", ".ps.null_count")
+            .param("column", column)
+            .param("filtered_indices", match &self.filtered_indices {
+                Some(indices) => RObject::try_from(indices)?,
+                None => RObject::null(),
+            })
+            .call_in(ARK_ENVS.positron_ns)?;
 
         // Return the count of nulls and NA values
         Ok(result.try_into()?)
     }
 
+    /// Sort the rows of the data object according to the sort keys in
+    /// self.sort_keys.
+    ///
+    /// Returns a vector containing the sorted row indices.
     fn r_sort_rows(&self) -> anyhow::Result<Vec<i32>> {
         let mut order = RFunction::new("base", "order");
 
@@ -548,6 +598,88 @@ impl RDataExplorer {
         Ok(indices)
     }
 
+    /// Filter all the rows in the data object according to the row filters in
+    /// self.row_filters.
+    ///
+    /// Returns a vector of all the row indices that pass the filters.
+    fn r_filter_rows(&self) -> anyhow::Result<Vec<i32>> {
+        let mut filters: Vec<RObject> = vec![];
+
+        // Shortcut: If there are no row filters, the filtered indices include
+        // all row indices.
+        if self.row_filters.is_empty() {
+            return Ok((1..=self.shape.num_rows).collect());
+        }
+
+        // Convert each filter to an R object by marshaling through the JSON
+        // layer.
+        //
+        // This feels a little weird since the filters were *unmarshaled* from
+        // JSON earlier in the RPC stack, but it's the easiest way to create R
+        // objects from the filter data without creating an unnecessary
+        // intermediate representation.
+        for filter in &self.row_filters {
+            let filter = serde_json::to_value(filter)?;
+            let filter = RObject::try_from(filter)?;
+            filters.push(filter);
+        }
+
+        // Pass the row filters to R and get the resulting row indices
+        let filters = RObject::try_from(filters)?;
+        let rows = RFunction::new("", ".ps.filter_rows")
+            .param("table", self.table.get().sexp)
+            .param("row_filters", filters)
+            .call_in(ARK_ENVS.positron_ns)?;
+
+        // Convert the row indices to a Rust vector
+        let row_indices = Vec::<i32>::try_from(rows)?;
+
+        Ok(row_indices)
+    }
+
+    /// Sort the filtered indices according to the sort keys, storing the
+    /// result in view_indices.
+    fn apply_sorts_and_filters(&mut self) {
+        // If there are no filters or sorts, we don't need any view indices
+        if self.filtered_indices.is_none() && self.sorted_indices.is_none() {
+            self.view_indices = None;
+            return;
+        }
+
+        // If there are filters but no sorts, the view indices are the filtered
+        // indices
+        if self.sorted_indices.is_none() {
+            self.view_indices = self.filtered_indices.clone();
+            return;
+        }
+
+        // If there are sorts but no filters, the view indices are the sorted
+        // indices
+        if self.filtered_indices.is_none() {
+            self.view_indices = self.sorted_indices.clone();
+            return;
+        }
+
+        // There are both sorts and filters, so we need to combine them.
+        // self.sorted_indices contains all the indices; self.filtered_indices
+        // contains the subset of indices that pass the filters, in ascending
+        // order.
+        //
+        // Derive the set of indices that pass the filters and are sorted
+        // according to the sort keys.
+        let filtered_indices = self.filtered_indices.as_ref().unwrap();
+        let sorted_indices = self.sorted_indices.as_ref().unwrap();
+        let mut view_indices = Vec::<i32>::with_capacity(filtered_indices.len());
+        for &index in sorted_indices {
+            // We can use a binary search here for performance because
+            // filtered_indices is already sorted in ascending order.
+            if let Ok(_) = filtered_indices.binary_search(&index) {
+                view_indices.push(index);
+            }
+        }
+        self.view_indices = Some(view_indices);
+    }
+
     /// Get the schema for a range of columns in the data object.
     ///
     /// - `start_index`: The index of the first column to return.
@@ -572,26 +704,20 @@ impl RDataExplorer {
     }
 
     fn r_get_state(&self) -> anyhow::Result<DataExplorerBackendReply> {
-        let table = self.table.get().clone();
-        let object = *table;
-
-        let harp::TableInfo {
-            kind: _,
-            dims:
-                harp::TableDim {
-                    num_rows,
-                    num_cols: num_columns,
-                },
-            col_names: _,
-        } = table_info_or_bail(object)?;
-
         let state = BackendState {
             display_name: self.title.clone(),
             table_shape: TableShape {
-                num_rows: num_rows.into(),
-                num_columns: num_columns as i64,
+                num_rows: match self.filtered_indices {
+                    Some(ref indices) => indices.len() as i64,
+                    None => self.shape.num_rows as i64,
+                },
+                num_columns: self.shape.columns.len() as i64,
             },
-            row_filters: vec![],
+            table_unfiltered_shape: TableShape {
+                num_rows: self.shape.num_rows as i64,
+                num_columns: self.shape.columns.len() as i64,
+            },
+            row_filters: self.row_filters.clone(),
             sort_keys: self.sort_keys.clone(),
             supported_features: SupportedFeatures {
                 get_column_profiles: GetColumnProfilesFeatures {
@@ -600,9 +726,18 @@ impl RDataExplorer {
                 },
                 search_schema: SearchSchemaFeatures { supported: false },
                 set_row_filters: SetRowFiltersFeatures {
-                    supported: false,
-                    supported_types: vec![],
-                    supports_conditions: false,
+                    supported: true,
+                    supported_types: vec![
+                        RowFilterType::Between,
+                        RowFilterType::Compare,
+                        RowFilterType::IsEmpty,
+                        RowFilterType::IsNull,
+                        RowFilterType::NotBetween,
+                        RowFilterType::NotEmpty,
+                        RowFilterType::NotNull,
+                        RowFilterType::Search,
+                    ],
+                    supports_conditions: true,
                 },
             },
         };
@@ -618,19 +753,13 @@ impl RDataExplorer {
         let table = self.table.get().clone();
         let object = *table;
 
-        let info = table_info_or_bail(object)?;
-
-        let harp::TableInfo {
-            dims:
-                harp::TableDim {
-                    num_rows: total_num_rows,
-                    num_cols: total_num_cols,
-                },
-            ..
-        } = info;
-
-        let lower_bound = cmp::min(row_start_index, total_num_rows) as isize;
-        let upper_bound = cmp::min(row_start_index + num_rows, total_num_rows) as isize;
+        let total_num_cols = self.shape.columns.len() as i32;
+        let num_view_rows = match self.view_indices {
+            Some(ref indices) => indices.len() as i32,
+            None => self.shape.num_rows,
+        };
+        let lower_bound = cmp::min(row_start_index, num_view_rows) as isize;
+        let upper_bound = cmp::min(row_start_index + num_rows, num_view_rows) as isize;
 
         // Create R indices
         let cols_r_idx: Vec<i32> = column_indices
@@ -639,11 +768,16 @@ impl RDataExplorer {
             .filter(|x| *x < total_num_cols)
             .map(|x| x + 1)
             .collect();
-        let cols_r_idx: RObject = cols_r_idx.try_into()?;
+        let cols_r_idx = RObject::try_from(&cols_r_idx)?;
         let num_cols = cols_r_idx.length() as i32;
 
-        let row_indices = self.row_indices[lower_bound as usize..upper_bound as usize].to_vec();
-        let rows_r_idx: RObject = row_indices.clone().try_into()?;
+        // Select the rows to subset; use the view indices if they exist,
+        // otherwise use all rows
+        let row_indices = match &self.view_indices {
+            Some(indices) => indices[lower_bound as usize..upper_bound as usize].to_vec(),
+            None => ((lower_bound + 1) as i32..(upper_bound + 1) as i32).collect(),
+        };
+        let rows_r_idx = RObject::try_from(&row_indices)?;
 
         // Subset rows in advance, including unmaterialized row names. Also
         // subset spend time creating subsetting columns that we don't need.

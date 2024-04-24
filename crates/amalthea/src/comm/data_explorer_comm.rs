@@ -35,7 +35,10 @@ pub struct TableData {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct FilterResult {
 	/// Number of rows in table after applying filters
-	pub selected_num_rows: i64
+	pub selected_num_rows: i64,
+
+	/// Flag indicating if there were errors in evaluation
+	pub had_errors: Option<bool>
 }
 
 /// The current backend state for the data explorer
@@ -44,8 +47,11 @@ pub struct BackendState {
 	/// Variable name or other string to display for tab name in UI
 	pub display_name: String,
 
-	/// Provides number of rows and columns in table
+	/// Number of rows and columns in table with filters applied
 	pub table_shape: TableShape,
+
+	/// Number of rows and columns in table without any filters applied
+	pub table_unfiltered_shape: TableShape,
 
 	/// The set of currently applied row filters
 	pub row_filters: Vec<RowFilter>,
@@ -55,16 +61,6 @@ pub struct BackendState {
 
 	/// The features currently supported by the backend instance
 	pub supported_features: SupportedFeatures
-}
-
-/// Provides number of rows and columns in table
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct TableShape {
-	/// Numbers of rows in the unfiltered dataset
-	pub num_rows: i64,
-
-	/// Number of columns in the unfiltered dataset
-	pub num_columns: i64
 }
 
 /// Schema for a column in a table
@@ -108,6 +104,16 @@ pub struct TableSchema {
 	pub columns: Vec<ColumnSchema>
 }
 
+/// Provides number of rows and columns in a table
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct TableShape {
+	/// Numbers of rows in the table
+	pub num_rows: i64,
+
+	/// Number of columns in the table
+	pub num_columns: i64
+}
+
 /// Specifies a table row filter based on a single column's values
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct RowFilter {
@@ -117,8 +123,8 @@ pub struct RowFilter {
 	/// Type of row filter to apply
 	pub filter_type: RowFilterType,
 
-	/// Column index to apply filter to
-	pub column_index: i64,
+	/// Column to apply filter to
+	pub column_schema: ColumnSchema,
 
 	/// The binary condition to use to combine with preceding row filters
 	pub condition: RowFilterCondition,
@@ -126,6 +132,9 @@ pub struct RowFilter {
 	/// Whether the filter is valid and supported by the backend, if undefined
 	/// then true
 	pub is_valid: Option<bool>,
+
+	/// Optional error message when the filter is invalid
+	pub error_message: Option<String>,
 
 	/// Parameters for the 'between' and 'not_between' filter types
 	pub between_params: Option<BetweenFilterParams>,
@@ -549,13 +558,6 @@ pub struct GetColumnProfilesParams {
 	pub profiles: Vec<ColumnProfileRequest>,
 }
 
-/// Parameters for the SchemaUpdate method.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct SchemaUpdateParams {
-	/// If true, the UI should discard the filter/sort state.
-	pub discard_state: bool,
-}
-
 /**
  * Backend RPC request types for the data_explorer comm
  */
@@ -601,7 +603,8 @@ pub enum DataExplorerBackendRequest {
 
 	/// Get the state
 	///
-	/// Request the current table state (applied filters and sort columns)
+	/// Request the current backend state (shape, filters, sort keys,
+	/// features)
 	#[serde(rename = "get_state")]
 	GetState,
 
@@ -655,9 +658,9 @@ pub enum DataExplorerFrontendReply {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params")]
 pub enum DataExplorerFrontendEvent {
-	/// Fully reset and redraw the data explorer after a schema change.
+	/// Notify the data explorer to do a state sync after a schema change.
 	#[serde(rename = "schema_update")]
-	SchemaUpdate(SchemaUpdateParams),
+	SchemaUpdate,
 
 	/// Triggered when there is any data change detected, clearing cache data
 	/// and triggering a refresh/redraw.
