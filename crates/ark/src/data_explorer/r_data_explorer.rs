@@ -754,12 +754,12 @@ impl RDataExplorer {
         let object = *table;
 
         let total_num_cols = self.shape.columns.len() as i32;
-        let num_filtered_rows = match self.filtered_indices {
+        let num_view_rows = match self.view_indices {
             Some(ref indices) => indices.len() as i32,
             None => self.shape.num_rows,
         };
-        let lower_bound = cmp::min(row_start_index, num_filtered_rows) as isize;
-        let upper_bound = cmp::min(row_start_index + num_rows, num_filtered_rows) as isize;
+        let lower_bound = cmp::min(row_start_index, num_view_rows) as isize;
+        let upper_bound = cmp::min(row_start_index + num_rows, num_view_rows) as isize;
 
         // Create R indices
         let cols_r_idx: Vec<i32> = column_indices
