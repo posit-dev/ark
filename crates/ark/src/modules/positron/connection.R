@@ -135,13 +135,16 @@ connection_flatten_object_types <- function(object_tree) {
 
 #' @export
 .ps.connection_close <- function(id, ...) {
-    con <- get(id, getOption("connectionObserver")$.connections)
+    con <- getOption("connectionObserver")$.connections[[id]]
     if (is.null(con)) {
-        return(NULL)
+         # this value is used to determine if we should send a close msg to the frontend
+         # ie. closing the connection was an action from the R console, not from the frontend
+        return(FALSE)
     }
     # disconnect is resposible for calling connectionClosed that
     # will remove the connection from the list of connections
     con$disconnect(...)
+    return(TRUE)
 }
 
 #' @export
