@@ -22,6 +22,7 @@ pub mod hover;
 pub mod indexer;
 pub mod markdown;
 pub mod references;
+pub mod selection_range;
 pub mod signature_help;
 pub mod statement_range;
 pub mod symbols;
