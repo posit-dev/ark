@@ -285,6 +285,43 @@ fn <- function(x, arg) {
 
     #[test]
     #[rustfmt::skip]
+    fn test_selection_range_assignment() {
+        let language = tree_sitter_r::language();
+
+        let mut parser = Parser::new();
+        parser
+            .set_language(&language)
+            .expect("failed to create parser");
+
+        let text = "
+fn <- function() {
+    x <- @f(a, b, c)
+    1 + 1
+}
+";
+        let (text, point) = point_from_cursor(text);
+        let tree = parser.parse(text, None).unwrap();
+        let points = Vec::from([point]);
+        let selections = selection_range(&tree, points).unwrap();
+
+        // `f` identifier
+        let selection = selections.get(0).unwrap();
+        assert_eq!(selection.range.start_point, Point::new(2, 9));
+        assert_eq!(selection.range.end_point, Point::new(2, 10));
+
+        // `f(a, b, c)` call
+        let selection = selection.parent.as_ref().unwrap();
+        assert_eq!(selection.range.start_point, Point::new(2, 9));
+        assert_eq!(selection.range.end_point, Point::new(2, 19));
+
+        // `x <- f(a, b, c)` assignment
+        let selection = selection.parent.as_ref().unwrap();
+        assert_eq!(selection.range.start_point, Point::new(2, 4));
+        assert_eq!(selection.range.end_point, Point::new(2, 19));
+    }
+
+    #[test]
+    #[rustfmt::skip]
     fn test_selection_range_call_arguments() {
         let language = tree_sitter_r::language();
 
