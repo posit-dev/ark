@@ -418,4 +418,40 @@ x[[a, @fn(), c]]
         assert_eq!(selection.range.start_point, Point::new(1, 0));
         assert_eq!(selection.range.end_point, Point::new(1, 15));
     }
+
+    #[test]
+    #[rustfmt::skip]
+    fn test_selection_range_namespaced_calls() {
+        let language = tree_sitter_r::language();
+
+        let mut parser = Parser::new();
+        parser
+            .set_language(&language)
+            .unwrap();
+
+        let text = "
+p@kg::fn(a)
+
+1 + 1
+";
+        let (text, point) = point_from_cursor(text);
+        let tree = parser.parse(text, None).unwrap();
+        let points = Vec::from([point]);
+        let selections = selection_range(&tree, points).unwrap();
+
+        // `<<pkg>>` `identifier` node
+        let selection = selections.get(0).unwrap();
+        assert_eq!(selection.range.start_point, Point::new(1, 0));
+        assert_eq!(selection.range.end_point, Point::new(1, 3));
+
+        // `<<pkg::fn>>` `namespace_operator` node
+        let selection = selection.parent.as_ref().unwrap();
+        assert_eq!(selection.range.start_point, Point::new(1, 0));
+        assert_eq!(selection.range.end_point, Point::new(1, 7));
+
+        // `<<pkg::fn(a)>>` whole call
+        let selection = selection.parent.as_ref().unwrap();
+        assert_eq!(selection.range.start_point, Point::new(1, 0));
+        assert_eq!(selection.range.end_point, Point::new(1, 10));
+    }
 }
