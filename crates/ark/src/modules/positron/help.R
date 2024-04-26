@@ -7,16 +7,28 @@
 
 options(help_type = "html")
 
-# Pick up `help()` devtools if the shim is on the search path
-help <- function(...) {
-    if ("devtools_shims" %in% search()) {
-        help <- as.environment("devtools_shims")[["help"]]
-    } else {
-        help <- utils::help
-    }
+# A wrapper around `help()` that works for our specific use cases:
+# - Picks up devtools `help()` if the shim is on the search path.
+# - Expects that `topic` and `package` don't require NSE and are just strings or `NULL`.
+# - Works around a pkgload NSE bug that has been fixed, but many people won't have
+#   (https://github.com/r-lib/pkgload/pull/267).
+# - Hardcodes a request for HTML help results.
+help <- function(topic, package = NULL) {
+  if ("devtools_shims" %in% search()) {
+      help <- as.environment("devtools_shims")[["help"]]
+  } else {
+      help <- utils::help
+  }
 
-  # Passing arguments with `...` avoids issues of NSE interpretation
-  help(...)
+  # Since `topic` and `package` are strings (or `NULL`), we wrap them in `()` to tell the
+  # special NSE semantics of `help()` to evaluate them rather than deparse them.
+  if (is.null(package)) {
+    # Use an explicit `NULL` to ensure this always works with dev help
+    # https://github.com/r-lib/pkgload/pull/267
+    help(topic = (topic), package = NULL, help_type = "html")
+  } else {
+    help(topic = (topic), package = (package), help_type = "html")
+  }
 }
 
 # Start R's dynamic HTTP help server; returns the chosen port (invisibly)
@@ -37,9 +49,8 @@ help <- function(...) {
         topic <- components[[2L]]
     }
 
-    # Try to find help on the topic. The package needs to be wrapped in () so it
-    # is not deparsed.
-    results <- help(topic = topic, package = (package))
+    # Try to find help on the topic.
+    results <- help(topic, package)
 
     # If we found results of any kind, show them.
     # If we are running ark tests, don't show the results as this requires
@@ -82,8 +93,7 @@ help <- function(...) {
 }
 
 #' @export
-.ps.help.getHtmlHelpContents <- function(topic, package = "") {
-
+.ps.help.getHtmlHelpContents <- function(topic, package = NULL) {
   # If a package name is encoded into 'topic', split that here.
   if (grepl(":{2,3}", topic)) {
     parts <- strsplit(topic, ":{2,3}")[[1L]]
@@ -92,21 +102,36 @@ help <- function(...) {
   }
 
   # Get the help file associated with this topic.
-  helpFiles <- help(topic = (topic), package = if (nzchar(package)) package)
-  if (length(helpFiles) == 0)
-    return(NULL)
+  helpFiles <- help(topic, package)
 
-  # Get the help documentation.
+  if (inherits(helpFiles, "dev_topic")) {
+    getHtmlHelpContentsDev(helpFiles)
+  } else {
+    getHtmlHelpContentsInstalled(helpFiles, package)
+  }
+}
+
+getHtmlHelpContentsInstalled <- function(helpFiles, package) {
+  if (length(helpFiles) == 0) {
+    return(NULL)
+  }
+
   helpFile <- helpFiles[[1L]]
+
   rd <- utils:::.getHelpFile(helpFile)
 
   # Set 'package' now if it was unknown.
-  if (identical(package, "")) {
+  if (is.null(package)) {
     pattern <- "/library/([^/]+)/"
     m <- regexec(pattern, helpFile, perl = TRUE)
     matches <- regmatches(helpFile, m)
     if (length(matches) && length(matches[[1L]] == 2L))
       package <- matches[[1L]][[2L]]
+  }
+
+  # If still unknown, set to `""` for `Rd2HTML()`
+  if (is.null(package)) {
+    package <- ""
   }
 
   # Convert to html.
@@ -115,5 +140,31 @@ help <- function(...) {
   tools::Rd2HTML(rd, out = htmlFile, package = package)
   contents <- readLines(htmlFile, warn = FALSE)
   paste(contents, collapse = "\n")
+}
 
+getHtmlHelpContentsDev <- function(x) {
+  tryCatch(
+    getHtmlHelpContentsDevImpl(x),
+    error = function(e) NULL
+  )
+}
+
+# pkgload specific dev help when looking up help for an internal function
+# while working on a package
+getHtmlHelpContentsDevImpl <- function(x) {
+  if (!"pkgload" %in% loadedNamespaces()) {
+    # Refuse if we somehow get a dev topic but pkgload isn't loaded
+    return(NULL)
+  }
+
+  directory <- positron_tempdir("help")
+  path <- file.path(directory, "dev-contents.html")
+
+  # Would be great it pkgload exposed this officially.
+  # Possibly as `topic_write(x, path, type = c("text", "html"))`.
+  # Also used by RStudio in the exact same way.
+  pkgload:::topic_write_html(x = x, path = path)
+
+  contents <- readLines(path, warn = FALSE)
+  paste(contents, collapse = "\n")
 }
