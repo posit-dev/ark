@@ -59,7 +59,7 @@ jobs:
     build_macos:
         name: Build macOS
         runs-on: [self-hosted-staging, macos, arm64]
-        needs: [do_release, get_version]
+        needs: [get_version]
         timeout-minutes: 40
 
         env:
