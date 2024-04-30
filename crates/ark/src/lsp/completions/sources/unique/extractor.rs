@@ -78,18 +78,27 @@ fn completions_from_extractor(
 
 fn locate_extractor_node(node: Node, node_type: NodeType) -> Option<Node> {
     match node.node_type() {
-        NodeType::Anonymous(operator) if matches!(operator.as_str(), "$" | "@") => {
-            locate_extractor_node_from_anonymous_literal(node, node_type)
+        NodeType::Anonymous(operator) => {
+            locate_extractor_node_from_anonymous(node, node_type, operator)
         },
         NodeType::Identifier => locate_extractor_node_from_identifier(node, node_type),
         _ => None,
     }
 }
 
-// If we are on the anonymous literal extractor operator, look up one level to find the
-// parent. We have to do this because `DocumentContext` considers all nodes, not just
-// named ones. We should be on the RHS of the operator if we got here.
-fn locate_extractor_node_from_anonymous_literal(node: Node, node_type: NodeType) -> Option<Node> {
+// Return named parent (while being extra defensive).
+// `DocumentContext` considers all nodes, not just named ones.
+// We should be on the RHS of the operator if we got here.
+fn locate_extractor_node_from_anonymous(
+    node: Node,
+    node_type: NodeType,
+    operator: String,
+) -> Option<Node> {
+    if !matches!(operator.as_str(), "$" | "@") {
+        // Not the right kind of anonymous node
+        return None;
+    }
+
     let parent = node.parent()?;
 
     if parent.node_type() != node_type {
