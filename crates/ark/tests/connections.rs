@@ -8,6 +8,7 @@ use amalthea::comm::connections_comm::ListObjectsParams;
 use amalthea::comm::connections_comm::ObjectSchema;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::socket;
+use ark::connections::r_connection::Metadata;
 use ark::connections::r_connection::RConnection;
 use ark::modules::ARK_ENVS;
 use ark::r_task;
@@ -36,7 +37,17 @@ fn open_dummy_connection() -> socket::comm::CommSocket {
     // we run this in a spare thread because it will block until we read the messsage
     stdext::spawn!("start-connection-thread", {
         let id = comm_id.clone();
-        move || RConnection::start(String::from("Dummy Comm"), comm_manager_tx, id)
+        move || {
+            let metadata = Metadata {
+                name: String::from("Dummy conn"),
+                host: Some(String::from("Dummy host")),
+                r#type: Some(String::from("Dummy type")),
+                code: Some(String::from("Dummy connect code")),
+                language_id: String::from("r"),
+            };
+
+            RConnection::start(metadata, comm_manager_tx, id)
+        }
     });
 
     // Wait for the new comm to show up.

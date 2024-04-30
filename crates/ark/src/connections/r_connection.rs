@@ -34,20 +34,24 @@ use uuid::Uuid;
 use crate::interface::RMain;
 use crate::r_task;
 
-#[derive(Deserialize, Serialize)]
-struct Metadata {
-    name: String,
+#[derive(Deserialize, Serialize, Clone)]
+pub struct Metadata {
+    pub name: String,
+    pub language_id: String,
+    pub host: Option<String>,
+    pub r#type: Option<String>, // r#type is used to avoid conflict with the type keyword
+    pub code: Option<String>,
 }
 
 pub struct RConnection {
-    name: String,
+    metadata: Metadata,
     comm: CommSocket,
     comm_manager_tx: Sender<CommManagerEvent>,
 }
 
 impl RConnection {
     pub fn start(
-        name: String,
+        metadata: Metadata,
         comm_manager_tx: Sender<CommManagerEvent>,
         comm_id: String,
     ) -> Result<String, anyhow::Error> {
@@ -58,7 +62,7 @@ impl RConnection {
         );
 
         let connection = Self {
-            name,
+            metadata,
             comm,
             comm_manager_tx,
         };
@@ -76,10 +80,7 @@ impl RConnection {
     }
 
     fn open_and_register_comm(&self) -> Result<(), anyhow::Error> {
-        let metadata = Metadata {
-            name: self.name.clone(),
-        };
-        let comm_open_json = serde_json::to_value(metadata)?;
+        let comm_open_json = serde_json::to_value(self.metadata.clone())?;
 
         // Notify the frontend that a new connection has been opened.
         let event = CommManagerEvent::Opened(self.comm.clone(), comm_open_json);
@@ -261,8 +262,12 @@ impl RConnection {
 }
 
 #[harp::register]
-pub unsafe extern "C" fn ps_connection_opened(name: SEXP) -> Result<SEXP, anyhow::Error> {
-    let nm = RObject::view(name).to::<String>()?;
+pub unsafe extern "C" fn ps_connection_opened(
+    name: SEXP,
+    host: SEXP,
+    r#type: SEXP,
+    code: SEXP,
+) -> Result<SEXP, anyhow::Error> {
     let id = Uuid::new_v4().to_string();
 
     // If RMain is not initialized, we are probably in testing mode, so we just don't start the connection
@@ -270,8 +275,16 @@ pub unsafe extern "C" fn ps_connection_opened(name: SEXP) -> Result<SEXP, anyhow
     if RMain::initialized() {
         let main = RMain::get();
 
+        let metadata = Metadata {
+            name: RObject::view(name).to::<String>()?,
+            language_id: String::from("r"),
+            host: RObject::view(host).to::<Option<String>>().unwrap_or(None),
+            r#type: RObject::view(r#type).to::<Option<String>>().unwrap_or(None),
+            code: RObject::view(code).to::<Option<String>>().unwrap_or(None),
+        };
+
         unwrap! (
-            RConnection::start(nm, main.get_comm_manager_tx().clone(), id.clone()),
+            RConnection::start(metadata, main.get_comm_manager_tx().clone(), id.clone()),
             Err(err) => {
                 log::error!("Connection Pane: Failed to start connection: {err:?}");
                 return Err(err);

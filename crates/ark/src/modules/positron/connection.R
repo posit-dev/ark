@@ -6,8 +6,8 @@
 #
 
 #' @export
-.ps.connection_opened <- function(name) {
-    .ps.Call("ps_connection_opened", name)
+.ps.connection_opened <- function(name, host, type, code) {
+    .ps.Call("ps_connection_opened", name, host, type, code)
 }
 
 #' @export
@@ -35,7 +35,7 @@
                 }
             }
 
-            id <- .ps.connection_opened(displayName)
+            id <- .ps.connection_opened(displayName, host, type, connectCode)
             connections[[id]] <- list(
                 type = type,
                 host = host,
