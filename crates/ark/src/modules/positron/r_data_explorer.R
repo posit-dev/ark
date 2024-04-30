@@ -144,6 +144,14 @@
     nzchar(col)
 }
 
+.ps.filter_col.is_true <- function(col, params) {
+    col == TRUE
+}
+
+.ps.filter_col.is_false <- function(col, params) {
+    col == FALSE
+}
+
 .ps.filter_col.between <- function(col, params) {
     # Coerce values to numeric if the column is numeric
     is_numeric <- is.numeric(col)
