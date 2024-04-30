@@ -77,53 +77,30 @@ fn completions_from_extractor(
 }
 
 fn locate_extractor_node(node: Node, node_type: NodeType) -> Option<Node> {
+    // `DocumentContext` considers all nodes, not just named ones, so we will have
+    // drilled down into either the LHS, RHS, or the anonymous `$` or `@` node by now.
+    let parent = node.parent()?;
+
+    if parent.node_type() != node_type {
+        // Parent node isn't an extractor node type, nothing to do
+        return None;
+    }
+
     match node.node_type() {
-        NodeType::Anonymous(operator) => {
-            locate_extractor_node_from_anonymous(node, node_type, operator)
+        NodeType::Anonymous(operator) if matches!(operator.as_str(), "$" | "@") => {
+            // Cursor should be on the RHS of the `operator`
+            return Some(parent);
         },
-        NodeType::Identifier => locate_extractor_node_from_identifier(node, node_type),
+        NodeType::Identifier => {
+            // Only provide completions for the RHS child
+            if node == parent.child_by_field_name("rhs")? {
+                Some(parent)
+            } else {
+                None
+            }
+        },
         _ => None,
     }
-}
-
-// Return named parent (while being extra defensive).
-// `DocumentContext` considers all nodes, not just named ones.
-// We should be on the RHS of the operator if we got here.
-fn locate_extractor_node_from_anonymous(
-    node: Node,
-    node_type: NodeType,
-    operator: String,
-) -> Option<Node> {
-    if !matches!(operator.as_str(), "$" | "@") {
-        // Not the right kind of anonymous node
-        return None;
-    }
-
-    let parent = node.parent()?;
-
-    if parent.node_type() != node_type {
-        return None;
-    }
-
-    Some(parent)
-}
-
-// If we are on the RHS of the extractor node typing an identifier, find the parent
-// extractor node and check that we are indeed the RHS node, not the LHS one
-fn locate_extractor_node_from_identifier(node: Node, node_type: NodeType) -> Option<Node> {
-    let parent = node.parent()?;
-
-    if parent.node_type() != node_type {
-        return None;
-    }
-
-    let rhs = parent.child_by_field_name("rhs")?;
-
-    if rhs != node {
-        return None;
-    }
-
-    Some(parent)
 }
 
 fn completions_from_extractor_object(text: &str, fun: &str) -> Result<Vec<CompletionItem>> {
