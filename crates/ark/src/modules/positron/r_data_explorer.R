@@ -145,11 +145,11 @@
 }
 
 .ps.filter_col.is_true <- function(col, params) {
-    col == TRUE
+    col & !is.na(col)
 }
 
 .ps.filter_col.is_false <- function(col, params) {
-    col == FALSE
+    !col & !is.na(col)
 }
 
 .ps.filter_col.between <- function(col, params) {
