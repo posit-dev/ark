@@ -424,8 +424,14 @@ pub enum RowFilterType {
 	#[serde(rename = "is_empty")]
 	IsEmpty,
 
+	#[serde(rename = "is_false")]
+	IsFalse,
+
 	#[serde(rename = "is_null")]
 	IsNull,
+
+	#[serde(rename = "is_true")]
+	IsTrue,
 
 	#[serde(rename = "not_between")]
 	NotBetween,
