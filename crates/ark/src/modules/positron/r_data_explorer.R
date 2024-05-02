@@ -59,8 +59,11 @@
 
     # Create the initial set of indices
     indices <- rep(TRUE, nrow(table))
+    row_filters_errors <- vector("list", length(row_filters))
 
-    for (row_filter in row_filters) {
+    for (i in seq_along(row_filters)) {
+        row_filter <- row_filters[[i]]
+
         # Dynamic dispatch to the appropriate filter function
         filter_function <- paste('.ps.filter_col', row_filter$filter_type, sep = '.')
 
@@ -82,7 +85,7 @@
         }
         filter_args <- list(col, params)
 
-        tryCatch({
+        row_filters_errors[[i]] <- tryCatch({
             # Apply the filter function to the column
             filter_matches <- do.call(filter_function, filter_args)
             if (identical(row_filter$condition, "or")) {
@@ -90,15 +93,14 @@
             } else {
                 indices <- indices & filter_matches
             }
+            list(is_valid = TRUE)
         }, error = function(e) {
-            # TODO: Surface this error to the user. Errors in a single row
-            # filter shouldn't cause all filters to become invalid, so
-            # errors need to be accumulated on a per-row-filter basis.
+            list(is_valid = FALSE, error_message = e$message)
         })
     }
 
     # Return the indices of the rows that pass all filters
-    which(indices)
+    structure(which(indices), row_filters_errors = row_filters_errors)
 }
 
 # Filter functions; each accepts a column and a set of parameters

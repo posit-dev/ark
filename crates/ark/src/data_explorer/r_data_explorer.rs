@@ -419,8 +419,11 @@ impl RDataExplorer {
                 // Save the new row filters
                 self.row_filters = filters;
 
+                let mut had_errors: Option<bool> = None;
                 self.filtered_indices = if self.row_filters.len() > 0 {
-                    Some(r_task(|| self.r_filter_rows())?)
+                    let (indices, err) = r_task(|| self.r_filter_rows())?;
+                    had_errors = Some(err);
+                    Some(indices)
                 } else {
                     None
                 };
@@ -434,7 +437,7 @@ impl RDataExplorer {
                             Some(ref indices) => indices.len() as i64,
                             None => self.shape.num_rows as i64,
                         },
-                        had_errors: None,
+                        had_errors,
                     }
                 }))
             },
@@ -601,14 +604,16 @@ impl RDataExplorer {
     /// Filter all the rows in the data object according to the row filters in
     /// self.row_filters.
     ///
-    /// Returns a vector of all the row indices that pass the filters.
-    fn r_filter_rows(&self) -> anyhow::Result<Vec<i32>> {
+    /// Returns a tuple containing a vector of all the row indices that pass the filters and
+    /// a boolean indicating whether any of the filters had errors. As a side effect it mutates
+    /// the `row_filters` attribute to include error messages and validity status.
+    fn r_filter_rows(&mut self) -> anyhow::Result<(Vec<i32>, bool)> {
         let mut filters: Vec<RObject> = vec![];
 
         // Shortcut: If there are no row filters, the filtered indices include
         // all row indices.
         if self.row_filters.is_empty() {
-            return Ok((1..=self.shape.num_rows).collect());
+            return Ok(((1..=self.shape.num_rows).collect(), false));
         }
 
         // Convert each filter to an R object by marshaling through the JSON
@@ -631,10 +636,49 @@ impl RDataExplorer {
             .param("row_filters", filters)
             .call_in(ARK_ENVS.positron_ns)?;
 
+        // Handle errors that occured in the filters
+        let had_errors = self.handle_filter_errors(rows.attr("row_filters_errors"))?;
+
         // Convert the row indices to a Rust vector
         let row_indices = Vec::<i32>::try_from(rows)?;
 
-        Ok(row_indices)
+        Ok((row_indices, had_errors))
+    }
+
+    // Handle errors that occured in the filters
+    //
+    // This function mutates the `row_filters` attribute to include error messages and validity status.
+    fn handle_filter_errors(&mut self, errors: Option<RObject>) -> anyhow::Result<bool> {
+        let errors = match errors {
+            Some(errors) => Vec::<RObject>::try_from(errors)?,
+            None => {
+                return Ok(false);
+            },
+        };
+
+        let mut had_errors = false;
+        for (i, error) in errors.iter().enumerate() {
+            let is_valid: bool = RFunction::new("", "[[")
+                .add(error.clone())
+                .add(RObject::from("is_valid"))
+                .call_in(ARK_ENVS.positron_ns)?
+                .try_into()?;
+
+            if is_valid {
+                continue;
+            }
+
+            let message: String = RFunction::new("base", "[[")
+                .add(error.clone())
+                .add(RObject::from("error_message"))
+                .call()?
+                .try_into()?;
+
+            self.row_filters[i].error_message = Some(message);
+            self.row_filters[i].is_valid = Some(false);
+            had_errors = true;
+        }
+        return Ok(had_errors);
     }
 
     /// Sort the filtered indices according to the sort keys, storing the
