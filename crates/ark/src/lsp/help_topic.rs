@@ -43,7 +43,7 @@ impl Backend {
         backend_trace!(self, "help_topic({:?})", params);
 
         let uri = &params.text_document.uri;
-        let Some(document) = self.documents.get_mut(uri) else {
+        let Some(document) = self.documents.get(uri) else {
             backend_trace!(self, "help_topic(): No document associated with URI {uri}");
             return Ok(None);
         };
