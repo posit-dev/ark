@@ -933,7 +933,7 @@ fn test_data_explorer() {
         // value is TRUE.
         assert_match!(socket_rpc(&socket, req),
         DataExplorerBackendReply::SetRowFiltersReply(
-            FilterResult { selected_num_rows: num_rows, had_errors: None}
+            FilterResult { selected_num_rows: num_rows, had_errors: Some(false)}
         ) => {
             assert_eq!(num_rows, 3);
         });
