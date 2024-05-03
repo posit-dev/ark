@@ -217,3 +217,10 @@
         stop("Unsupported search type '", params$search_type, "'")
     }
 }
+
+.ps.get_rows_and_columns <- function(table, index_rows, index_cols) {
+    # if we don't do a do.call here, data.table will consider 'index_cols' as the
+    # column name and not the actual list of indexes.
+    args <- list(table, index_rows, index_cols, drop = FALSE)
+    do.call(`[`, args)
+}

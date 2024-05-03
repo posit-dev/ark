@@ -493,6 +493,21 @@ fn test_data_explorer() {
             CommMsg::Close => {}
         );
 
+        // --- mtcars (as a data.table) ---
+
+        let mtcars_data_table =
+            r_parse_eval0("mtcars_dt <- data.table::data.table(mtcars)", R_ENVS.global);
+
+        // Now test with a data.table. This might fail if data.table is not installed
+        // locally. Just skip the test in that case.
+        match mtcars_data_table {
+            Ok(_) => {
+                test_mtcars_sort(open_data_explorer(String::from("mtcars")), false);
+                r_parse_eval0("rm(mtcars)", R_ENVS.global).unwrap();
+            },
+            Err(_) => (),
+        }
+
         // --- volcano (a matrix) ---
 
         // Open the volcano data set in the data explorer. This data set is a matrix.

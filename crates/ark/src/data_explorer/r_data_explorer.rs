@@ -823,22 +823,15 @@ impl RDataExplorer {
         // Subset rows in advance, including unmaterialized row names. Also
         // subset spend time creating subsetting columns that we don't need.
         // Supports dispatch and should be vectorised in most implementations.
-        let object = RFunction::new("base", "[")
+        let object = RFunction::new("", ".ps.get_rows_and_columns")
             .add(object)
             .add(rows_r_idx.sexp)
             .add(cols_r_idx.sexp)
-            .param("drop", false)
-            .call()?;
+            .call_in(ARK_ENVS.positron_ns)?;
 
         let mut column_data: Vec<Vec<String>> = Vec::new();
         for i in 0..num_cols {
-            let column = RFunction::new("base", "[")
-                .add(object.clone())
-                .add(unsafe { R_MissingArg })
-                .add(i + 1)
-                .param("drop", true)
-                .call()?;
-
+            let column = tbl_get_column(object.sexp, i, self.shape.kind)?;
             let formatter = FormattedVector::new_with_options(*column, FormattedVectorOptions {
                 character: FormattedVectorCharacterOptions { quote: false },
             })?;
