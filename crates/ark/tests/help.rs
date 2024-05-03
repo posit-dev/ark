@@ -80,12 +80,13 @@ fn test_help_comm() {
         // an internal function
         test_topic("utils:::find", "help-test-id-3");
 
+        let duration = std::time::Duration::from_secs(1);
+
         // Send a request to show a help URL. This URL isn't in help format, so we
         // don't expect it to be handled.
         let url = String::from("https://www.example.com");
         let request = HelpRequest::ShowHelpUrlRequest(url);
         help_request_tx.send(request).unwrap();
-        let duration = std::time::Duration::from_secs(1);
         let response = help_reply_rx.recv_timeout(duration).unwrap();
         let handled = match response {
             HelpReply::ShowHelpUrlReply(handled) => handled,
@@ -108,7 +109,6 @@ fn test_help_comm() {
         );
         let request = HelpRequest::ShowHelpUrlRequest(url);
         help_request_tx.send(request).unwrap();
-        let duration = std::time::Duration::from_secs(1);
         let response = help_reply_rx.recv_timeout(duration).unwrap();
         let handled = match response {
             HelpReply::ShowHelpUrlReply(handled) => handled,
