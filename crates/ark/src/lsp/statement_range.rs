@@ -19,6 +19,7 @@ use tower_lsp::lsp_types::VersionedTextDocumentIdentifier;
 use tree_sitter::Node;
 use tree_sitter::Point;
 
+use crate::backend_read_method;
 use crate::backend_trace;
 use crate::lsp::backend::Backend;
 use crate::lsp::encoding::convert_point_to_position;
@@ -58,7 +59,7 @@ impl Backend {
         &self,
         params: StatementRangeParams,
     ) -> tower_lsp::jsonrpc::Result<Option<StatementRangeResponse>> {
-        backend_trace!(self, "statement_range({:?})", params);
+        backend_read_method!(self, "statement_range({:?})", params);
 
         let uri = &params.text_document.uri;
         let Some(document) = self.documents.get(uri) else {

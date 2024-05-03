@@ -10,6 +10,7 @@ use serde::Serialize;
 use tower_lsp::lsp_types::Position;
 use tower_lsp::lsp_types::VersionedTextDocumentIdentifier;
 
+use crate::backend_read_method;
 use crate::backend_trace;
 use crate::lsp::backend::Backend;
 use crate::lsp::encoding::convert_position_to_point;
@@ -40,7 +41,7 @@ impl Backend {
         &self,
         params: HelpTopicParams,
     ) -> tower_lsp::jsonrpc::Result<Option<HelpTopicResponse>> {
-        backend_trace!(self, "help_topic({:?})", params);
+        backend_read_method!(self, "help_topic({:?})", params);
 
         let uri = &params.text_document.uri;
         let Some(document) = self.documents.get(uri) else {
