@@ -41,13 +41,9 @@ help <- function(topic, package = NULL) {
 # found.
 #' @export
 .ps.help.showHelpTopic <- function(topic) {
-    # Resolve the package specifier.
-    package <- NULL
-    components <- strsplit(topic, "::")[[1L]]
-    if (length(components) > 1L) {
-        package <- components[[1L]]
-        topic <- components[[2L]]
-    }
+    info <- split_topic(topic)
+    topic <- info$topic
+    package <- info$package
 
     # Try to find help on the topic.
     results <- help(topic, package)
@@ -61,6 +57,26 @@ help <- function(topic, package = NULL) {
 
     # Return whether we found any help.
     length(results) > 0
+}
+
+# Resolve the package specifier, if there is one
+split_topic <- function(topic) {
+    # Try `:::` first, as `::` will match both
+    components <- strsplit(topic, ":::")[[1L]]
+    if (length(components) > 1L) {
+        package <- components[[1L]]
+        topic <- components[[2L]]
+        return(list(topic = topic, package = package))
+    }
+
+    components <- strsplit(topic, "::")[[1L]]
+    if (length(components) > 1L) {
+        package <- components[[1L]]
+        topic <- components[[2L]]
+        return(list(topic = topic, package = package))
+    }
+
+    list(topic = topic, package = NULL)
 }
 
 # Expose the show help topic function as an RPC.

@@ -42,33 +42,45 @@ fn test_help_comm() {
         // sender to be dropped signals the help comm to exit.
         let (help_request_tx, help_reply_rx) = RHelp::start(comm).unwrap();
 
-        // Send a request for the help topic 'library'
-        let request = HelpBackendRequest::ShowHelpTopic(ShowHelpTopicParams {
-            topic: String::from("library"),
-        });
-        let data = serde_json::to_value(request).unwrap();
-        let request_id = String::from("help-test-id-1");
-        incoming_tx
-            .send(CommMsg::Rpc(request_id.clone(), data))
-            .unwrap();
+        // Utility function for testing `ShowHelpTopic` requests
+        let test_topic = |topic: &str, id: &str| {
+            // Send a request for the help topic
+            let request = HelpBackendRequest::ShowHelpTopic(ShowHelpTopicParams {
+                topic: String::from(topic),
+            });
+            let data = serde_json::to_value(request).unwrap();
+            let request_id = String::from(id);
+            incoming_tx
+                .send(CommMsg::Rpc(request_id.clone(), data))
+                .unwrap();
 
-        // Wait for the response (up to 1 second; this should be fast!)
+            // Wait for the response (up to 1 second; this should be fast!)
+            let duration = std::time::Duration::from_secs(1);
+            let response = outgoing_rx.recv_timeout(duration).unwrap();
+            match response {
+                CommMsg::Rpc(id, val) => {
+                    let response = serde_json::from_value::<HelpBackendReply>(val).unwrap();
+                    match response {
+                        HelpBackendReply::ShowHelpTopicReply(found) => {
+                            // Ensure we got a reply with an ID that matches the request
+                            assert!(found);
+                            assert_eq!(id, request_id);
+                        },
+                    }
+                },
+                _ => {
+                    panic!("Unexpected response from help comm: {:?}", response);
+                },
+            }
+        };
+
+        test_topic("library", "help-test-id-1");
+        test_topic("utils::find", "help-test-id-2");
+        // Can come through this way if users request help while their cursor is on
+        // an internal function
+        test_topic("utils:::find", "help-test-id-3");
+
         let duration = std::time::Duration::from_secs(1);
-        let response = outgoing_rx.recv_timeout(duration).unwrap();
-        match response {
-            CommMsg::Rpc(id, val) => {
-                let response = serde_json::from_value::<HelpBackendReply>(val).unwrap();
-                match response {
-                    HelpBackendReply::ShowHelpTopicReply(_reply) => {
-                        // Ensure we got a reply with an ID that matches the request
-                        assert_eq!(id, request_id);
-                    },
-                }
-            },
-            _ => {
-                panic!("Unexpected response from help comm: {:?}", response);
-            },
-        }
 
         // Send a request to show a help URL. This URL isn't in help format, so we
         // don't expect it to be handled.
