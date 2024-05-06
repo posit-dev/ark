@@ -15,6 +15,7 @@ use amalthea::comm::data_explorer_comm::ColumnProfileResult;
 use amalthea::comm::data_explorer_comm::ColumnProfileType;
 use amalthea::comm::data_explorer_comm::ColumnSchema;
 use amalthea::comm::data_explorer_comm::ColumnSortKey;
+use amalthea::comm::data_explorer_comm::ColumnSummaryStats;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendReply;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendRequest;
 use amalthea::comm::data_explorer_comm::DataExplorerFrontendEvent;
@@ -29,6 +30,9 @@ use amalthea::comm::data_explorer_comm::SearchSchemaFeatures;
 use amalthea::comm::data_explorer_comm::SetRowFiltersFeatures;
 use amalthea::comm::data_explorer_comm::SetRowFiltersParams;
 use amalthea::comm::data_explorer_comm::SetSortColumnsParams;
+use amalthea::comm::data_explorer_comm::SummaryStatsBoolean;
+use amalthea::comm::data_explorer_comm::SummaryStatsNumber;
+use amalthea::comm::data_explorer_comm::SummaryStatsString;
 use amalthea::comm::data_explorer_comm::SupportedFeatures;
 use amalthea::comm::data_explorer_comm::TableData;
 use amalthea::comm::data_explorer_comm::TableSchema;
@@ -473,6 +477,26 @@ impl RDataExplorer {
                                 frequency_table: None,
                             }
                         },
+                        ColumnProfileType::SummaryStats => {
+                            let summary_stats =
+                                r_task(|| self.r_summary_stats(request.column_index as i32));
+                            ColumnProfileResult {
+                                null_count: None,
+                                summary_stats: match summary_stats {
+                                    Err(err) => {
+                                        log::error!(
+                                            "Error getting summary stats for column {}: {}",
+                                            request.column_index,
+                                            err
+                                        );
+                                        None
+                                    },
+                                    Ok(stats) => Some(stats),
+                                },
+                                histogram: None,
+                                frequency_table: None,
+                            }
+                        },
                         _ => {
                             // Other kinds of column profiles are not yet
                             // implemented in R
@@ -575,6 +599,87 @@ impl RDataExplorer {
 
         // Return the count of nulls and NA values
         Ok(result.try_into()?)
+    }
+
+    fn r_summary_stats(&self, column_index: i32) -> anyhow::Result<ColumnSummaryStats> {
+        // Get the column to compute summary stats for
+        let column = tbl_get_column(self.table.get().sexp, column_index, self.shape.kind)?;
+        let dtype = display_type(column.sexp);
+        match dtype.clone() {
+            ColumnDisplayType::Number => {
+                let r_stats: Vec<String> = RFunction::new("", ".ps.number_summary_stats")
+                    .param("column", column)
+                    .param("filtered_indices", match &self.filtered_indices {
+                        Some(indices) => RObject::try_from(indices)?,
+                        None => RObject::null(),
+                    })
+                    .call_in(ARK_ENVS.positron_ns)?
+                    .try_into()?;
+
+                let stats = Some(SummaryStatsNumber {
+                    min_value: r_stats[0].clone(),
+                    max_value: r_stats[1].clone(),
+                    mean: r_stats[2].clone(),
+                    median: r_stats[3].clone(),
+                    stdev: r_stats[4].clone(),
+                });
+
+                Ok(ColumnSummaryStats {
+                    type_display: dtype,
+                    number_stats: stats,
+                    string_stats: None,
+                    boolean_stats: None,
+                })
+            },
+            ColumnDisplayType::String => {
+                let r_stats: Vec<i32> = RFunction::new("", ".ps.string_summary_stats")
+                    .param("column", column)
+                    .param("filtered_indices", match &self.filtered_indices {
+                        Some(indices) => RObject::try_from(indices)?,
+                        None => RObject::null(),
+                    })
+                    .call_in(ARK_ENVS.positron_ns)?
+                    .try_into()?;
+
+                let stats = Some(SummaryStatsString {
+                    num_empty: r_stats[0].clone() as i64,
+                    num_unique: r_stats[1].clone() as i64,
+                });
+
+                Ok(ColumnSummaryStats {
+                    type_display: dtype,
+                    number_stats: None,
+                    string_stats: stats,
+                    boolean_stats: None,
+                })
+            },
+            ColumnDisplayType::Boolean => {
+                let r_stats: Vec<i32> = RFunction::new("", ".ps.boolean_summary_stats")
+                    .param("column", column)
+                    .param("filtered_indices", match &self.filtered_indices {
+                        Some(indices) => RObject::try_from(indices)?,
+                        None => RObject::null(),
+                    })
+                    .call_in(ARK_ENVS.positron_ns)?
+                    .try_into()?;
+
+                let stats = Some(SummaryStatsBoolean {
+                    true_count: r_stats[0].clone() as i64,
+                    false_count: r_stats[1].clone() as i64,
+                });
+
+                Ok(ColumnSummaryStats {
+                    type_display: dtype,
+                    number_stats: None,
+                    string_stats: None,
+                    boolean_stats: stats,
+                })
+            },
+            _ => {
+                log::error!("Summary stats not implemented for type: {:?}", dtype);
+                bail!("Summary stats not implemented for this type")
+            },
+        }
     }
 
     /// Sort the rows of the data object according to the sort keys in
@@ -761,7 +866,10 @@ impl RDataExplorer {
             supported_features: SupportedFeatures {
                 get_column_profiles: GetColumnProfilesFeatures {
                     supported: true,
-                    supported_types: vec![ColumnProfileType::NullCount],
+                    supported_types: vec![
+                        ColumnProfileType::NullCount,
+                        ColumnProfileType::SummaryStats,
+                    ],
                 },
                 search_schema: SearchSchemaFeatures { supported: false },
                 set_row_filters: SetRowFiltersFeatures {

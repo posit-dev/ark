@@ -44,6 +44,36 @@
     }
 }
 
+.ps.number_summary_stats <- function(column, filtered_indices) {
+    col <- .ps.col_filter_indices(column, filtered_indices)
+
+    format(c(
+        min = min(col, na.rm = TRUE),
+        max = max(col, na.rm = TRUE),
+        mean = mean(col, na.rm = TRUE),
+        median = stats::median(col, na.rm = TRUE),
+        stdev = stats::sd(col, na.rm = TRUE)
+    ))
+}
+
+.ps.string_summary_stats <- function(column, filtered_indices) {
+    col <- .ps.col_filter_indices(column, filtered_indices)
+    c(num_empty = sum(!nzchar(col)), num_unique = length(unique(col)))
+}
+
+.ps.boolean_summary_stats <- function(column, filtered_indices) {
+    col <- .ps.col_filter_indices(column, filtered_indices)
+    c(true_count = sum(col, na.rm = TRUE), false_count = sum(!col, na.rm = TRUE))
+}
+
+.ps.col_filter_indices <- function(column, filtered_indices) {
+    col <- column
+    if (!is.null(filtered_indices)) {
+        col <- column[filtered_indices]
+    }
+    col
+}
+
 .ps.filter_rows <- function(table, row_filters) {
     # Are we working with a matrix here?
     is_matrix <- is.matrix(table)

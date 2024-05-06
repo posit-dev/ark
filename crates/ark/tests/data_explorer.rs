@@ -9,6 +9,7 @@ use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::data_explorer_comm::ColumnProfileRequest;
 use amalthea::comm::data_explorer_comm::ColumnProfileType;
 use amalthea::comm::data_explorer_comm::ColumnSortKey;
+use amalthea::comm::data_explorer_comm::ColumnSummaryStats;
 use amalthea::comm::data_explorer_comm::CompareFilterParams;
 use amalthea::comm::data_explorer_comm::CompareFilterParamsOp;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendReply;
@@ -25,6 +26,9 @@ use amalthea::comm::data_explorer_comm::SearchFilterParams;
 use amalthea::comm::data_explorer_comm::SearchFilterType;
 use amalthea::comm::data_explorer_comm::SetRowFiltersParams;
 use amalthea::comm::data_explorer_comm::SetSortColumnsParams;
+use amalthea::comm::data_explorer_comm::SummaryStatsBoolean;
+use amalthea::comm::data_explorer_comm::SummaryStatsNumber;
+use amalthea::comm::data_explorer_comm::SummaryStatsString;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::socket;
 use ark::data_explorer::r_data_explorer::DataObjectEnvInfo;
@@ -681,6 +685,76 @@ fn test_data_explorer() {
         ) => {
             assert_eq!(num_rows, 3);
         });
+
+        // --- summary stats ---
+
+        // Create a data frame with some numbers, characters and booleans to test
+        // summary statistics.
+        r_parse_eval0(
+            "df <- data.frame(num = c(1, 2, 3, NA), char = c('a', 'a', '', NA), bool = c(TRUE, TRUE, FALSE, NA))",
+            R_ENVS.global,
+        )
+        .unwrap();
+
+        // Open the fibo data set in the data explorer.
+        let socket = open_data_explorer(String::from("df"));
+
+        // Get the schema of the data set.
+        let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
+            num_columns: 3,
+            start_index: 0,
+        });
+
+        // Ask for summary stats for the columns
+        let req = DataExplorerBackendRequest::GetColumnProfiles(GetColumnProfilesParams {
+            profiles: (0..3)
+                .map(|i| ColumnProfileRequest {
+                    column_index: i,
+                    profile_type: ColumnProfileType::SummaryStats,
+                })
+                .collect(),
+        });
+
+        assert_match!(socket_rpc(&socket, req),
+           DataExplorerBackendReply::GetColumnProfilesReply(data) => {
+                // We asked for summary stats for all 3 columns
+                assert!(data.len() == 3);
+
+                // The first column is numeric and has 3 non-NA values.
+                assert!(data[0].summary_stats.is_some());
+                let number_stats = data[0].summary_stats.clone().unwrap().number_stats;
+                assert!(number_stats.is_some());
+                let number_stats = number_stats.unwrap();
+                assert_eq!(number_stats, SummaryStatsNumber {
+                    min_value: String::from("1"),
+                    max_value: String::from("3"),
+                    mean: String::from("2"),
+                    median: String::from("2"),
+                    stdev: String::from("1"),
+                });
+
+                // The second column is a character column
+                assert!(data[1].summary_stats.is_some());
+                let string_stats = data[1].summary_stats.clone().unwrap().string_stats;
+                assert!(string_stats.is_some());
+                let string_stats = string_stats.unwrap();
+                assert_eq!(string_stats, SummaryStatsString {
+                    num_empty: 1,
+                    num_unique: 3, // NA's are counted as unique values
+                });
+
+                // The third column is boolean
+                assert!(data[2].summary_stats.is_some());
+                let boolean_stats = data[2].summary_stats.clone().unwrap().boolean_stats;
+                assert!(boolean_stats.is_some());
+                let boolean_stats = boolean_stats.unwrap();
+                assert_eq!(boolean_stats, SummaryStatsBoolean {
+                    true_count: 2,
+                    false_count: 1,
+                });
+
+           }
+        );
 
         // --- search filters ---
 
