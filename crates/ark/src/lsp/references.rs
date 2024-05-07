@@ -215,7 +215,7 @@ impl Backend {
         });
 
         // Now, start searching through workspace folders for references to that identifier.
-        let workspace = self.workspace.lock();
+        let workspace = self.state.workspace.lock();
         for folder in workspace.folders.iter() {
             if let Ok(path) = folder.to_file_path() {
                 info!("searching references in folder {}", path.display());

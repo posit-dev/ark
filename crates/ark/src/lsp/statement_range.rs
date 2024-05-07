@@ -61,7 +61,7 @@ impl Backend {
         backend_trace!(self, "statement_range({:?})", params);
 
         let uri = &params.text_document.uri;
-        let Some(document) = self.documents.get(uri) else {
+        let Some(document) = self.state.documents.get(uri) else {
             backend_trace!(
                 self,
                 "statement_range(): No document associated with URI {uri}"

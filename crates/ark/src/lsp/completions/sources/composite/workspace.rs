@@ -70,7 +70,7 @@ pub(super) fn completions_from_workspace(
 
                 // add some metadata about where the completion was found
                 let mut path = path.to_str().unwrap_or_default();
-                let workspace = backend.workspace.lock();
+                let workspace = backend.state.workspace.lock();
                 for folder in &workspace.folders {
                     if let Ok(folder) = folder.to_file_path() {
                         if let Some(folder) = folder.to_str() {

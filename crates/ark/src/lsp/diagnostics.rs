@@ -159,7 +159,7 @@ pub fn refresh_all_open_file_diagnostics() {
 
         let runtime = main.get_lsp_runtime();
 
-        for document in backend.documents.iter() {
+        for document in backend.state.documents.iter() {
             let backend = backend.clone();
             let uri = document.key().clone();
             let version = document.version.clone();
@@ -222,7 +222,7 @@ async fn request_diagnostics(
 }
 
 fn get_diagnostics_id(backend: &Backend, uri: &Url) -> anyhow::Result<i64> {
-    let Some(mut document) = backend.documents.get_mut(uri) else {
+    let Some(mut document) = backend.state.documents.get_mut(uri) else {
         return Err(anyhow!("Unknown document URI '{uri}'."));
     };
 
@@ -242,7 +242,7 @@ fn try_generate_diagnostics(
     // At this point we already know this document existed before we slept, so if it
     // doesn't exist now, that is because it must have been closed, so if that occurs
     // then simply return.
-    let Some(doc) = backend.documents.get(uri) else {
+    let Some(doc) = backend.state.documents.get(uri) else {
         log::info!("Document with uri '{uri}' no longer exists after diagnostics delay. It was likely closed.");
         return None;
     };

@@ -86,7 +86,7 @@ pub fn document_symbols(
     let mut symbols: Vec<DocumentSymbol> = Vec::new();
 
     let uri = &params.text_document.uri;
-    let document = backend.documents.get(uri).into_result()?;
+    let document = backend.state.documents.get(uri).into_result()?;
     let ast = &document.ast;
     let contents = &document.contents;
 
