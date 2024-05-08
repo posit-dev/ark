@@ -35,19 +35,51 @@ use crate::vector::RawVector;
 use crate::vector::Vector;
 pub enum FormattedVector {
     // simple
-    Raw { vector: RawVector },
-    Logical { vector: LogicalVector },
-    Integer { vector: IntegerVector },
-    Numeric { vector: NumericVector },
-    Character { vector: CharacterVector },
-    Complex { vector: ComplexVector },
+    Raw {
+        vector: RawVector,
+    },
+    Logical {
+        vector: LogicalVector,
+    },
+    Integer {
+        vector: IntegerVector,
+    },
+    Numeric {
+        vector: NumericVector,
+    },
+    Character {
+        vector: CharacterVector,
+        options: Option<FormattedVectorStringOptions>,
+    },
+    Complex {
+        vector: ComplexVector,
+    },
     // special
-    Factor { vector: Factor },
-    FormattedVector { vector: CharacterVector },
+    Factor {
+        vector: Factor,
+    },
+    FormattedVector {
+        vector: CharacterVector,
+    },
+}
+
+pub struct FormattedVectorStringOptions {
+    pub quote: bool,
+}
+
+pub struct FormattedVectorOptions {
+    pub string: Option<FormattedVectorStringOptions>,
 }
 
 impl FormattedVector {
     pub fn new(vector: SEXP) -> Result<Self> {
+        Self::new_with_options(vector, FormattedVectorOptions { string: None })
+    }
+
+    pub fn new_with_options(
+        vector: SEXP,
+        formatting_options: FormattedVectorOptions,
+    ) -> Result<Self> {
         unsafe {
             let class = Rf_getAttrib(vector, R_ClassSymbol);
             if r_is_null(class) {
@@ -66,6 +98,10 @@ impl FormattedVector {
                     }),
                     STRSXP => Ok(Self::Character {
                         vector: CharacterVector::new_unchecked(vector),
+                        options: match formatting_options.string {
+                            Some(options) => Some(options),
+                            None => None,
+                        },
                     }),
                     CPLXSXP => Ok(Self::Complex {
                         vector: ComplexVector::new_unchecked(vector),
@@ -100,7 +136,14 @@ impl FormattedVector {
             FormattedVector::Logical { vector } => vector.format_elt_unchecked(index),
             FormattedVector::Integer { vector } => vector.format_elt_unchecked(index),
             FormattedVector::Numeric { vector } => vector.format_elt_unchecked(index),
-            FormattedVector::Character { vector } => vector.format_elt_unchecked(index),
+            FormattedVector::Character { vector, options } => {
+                let value = vector.format_elt_unchecked(index);
+                if let Some(FormattedVectorStringOptions { quote: false }) = options {
+                    return value;
+                }
+
+                format!("\"{}\"", value.replace("\"", "\\\""))
+            },
             FormattedVector::Complex { vector } => vector.format_elt_unchecked(index),
             FormattedVector::Factor { vector } => vector.format_elt_unchecked(index),
             FormattedVector::FormattedVector { vector } => vector.format_elt_unchecked(index),
@@ -117,7 +160,7 @@ impl FormattedVector {
             FormattedVector::Logical { vector } => vector.data(),
             FormattedVector::Integer { vector } => vector.data(),
             FormattedVector::Numeric { vector } => vector.data(),
-            FormattedVector::Character { vector } => vector.data(),
+            FormattedVector::Character { vector, options: _ } => vector.data(),
             FormattedVector::Complex { vector } => vector.data(),
             FormattedVector::Factor { vector } => vector.data(),
             FormattedVector::FormattedVector { vector } => vector.data(),
