@@ -235,6 +235,16 @@ pub fn r_list_poke(x: SEXP, i: R_xlen_t, value: SEXP) {
     }
 }
 
+pub fn r_lgl_begin(x: SEXP) -> *mut i32 {
+    unsafe { LOGICAL(x) }
+}
+pub fn r_int_begin(x: SEXP) -> *mut i32 {
+    unsafe { INTEGER(x) }
+}
+pub fn r_dbl_begin(x: SEXP) -> *mut f64 {
+    unsafe { REAL(x) }
+}
+
 // TODO: Make these wrappers robust to allocation failures
 // https://github.com/posit-dev/positron/issues/2600
 pub fn r_alloc_logical(size: R_xlen_t) -> SEXP {
@@ -595,6 +605,23 @@ impl From<HashMap<String, String>> for RObject {
     }
 }
 
+impl From<&Vec<bool>> for RObject {
+    fn from(value: &Vec<bool>) -> Self {
+        let n = value.len();
+
+        let out = RObject::from(r_alloc_logical(n as R_xlen_t));
+        let v_out = r_lgl_begin(out.sexp);
+
+        for i in 0..n {
+            unsafe {
+                *v_out.add(i) = value[i] as i32;
+            }
+        }
+
+        return out;
+    }
+}
+
 /// Convert RObject into other types.
 
 impl From<RObject> for SEXP {
@@ -859,25 +886,6 @@ impl TryFrom<Vec<RObject>> for RObject {
             // Copy the values into the list.
             for i in 0..n {
                 r_list_poke(out.sexp, i as isize, value[i].sexp)
-            }
-
-            return Ok(out);
-        }
-    }
-}
-
-impl TryFrom<Vec<bool>> for RObject {
-    type Error = crate::error::Error;
-    fn try_from(value: Vec<bool>) -> Result<Self, Self::Error> {
-        unsafe {
-            let n = value.len();
-
-            let out_raw = Rf_allocVector(LGLSXP, n as R_xlen_t);
-            let out = RObject::new(out_raw);
-            let v_out = LOGICAL(out_raw);
-
-            for i in 0..n {
-                *(v_out.offset(i as isize)) = value[i] as i32;
             }
 
             return Ok(out);
@@ -1380,24 +1388,20 @@ mod tests {
 
     #[test]
     #[allow(non_snake_case)]
-    fn test_tryfrom_RObject_Vec_Bool() {
+    fn test_from_RObject_Vec_Bool() {
         r_test! {
             // Create a vector of logical values.
             let flags = vec![true, false, true];
 
-            // Ensure we created an object of the same size as the flags.
-            assert_match!(RObject::try_from(flags.clone()),
-                Ok(robj) => {
+            let robj = RObject::from(&flags);
 
-                    // We should get an object of the same length as the flags.
-                    assert_eq!(robj.length(), flags.len() as isize);
+            // We should get an object of the same length as the flags.
+            assert_eq!(robj.length(), flags.len() as isize);
 
-                    // The values should match the flags.
-                    assert!(robj.get_bool(0).unwrap().unwrap());
-                    assert!(!robj.get_bool(1).unwrap().unwrap());
-                    assert!(robj.get_bool(2).unwrap().unwrap());
-                }
-            );
+            // The values should match the flags.
+            assert!(robj.get_bool(0).unwrap().unwrap());
+            assert!(!robj.get_bool(1).unwrap().unwrap());
+            assert!(robj.get_bool(2).unwrap().unwrap());
         }
     }
 
