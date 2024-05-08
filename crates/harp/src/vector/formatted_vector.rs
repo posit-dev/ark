@@ -49,7 +49,7 @@ pub enum FormattedVector {
     },
     Character {
         vector: CharacterVector,
-        options: Option<FormattedVectorStringOptions>,
+        options: Option<FormattedVectorCharacterOptions>,
     },
     Complex {
         vector: ComplexVector,
@@ -60,20 +60,26 @@ pub enum FormattedVector {
     },
     FormattedVector {
         vector: CharacterVector,
+        options: Option<FormattedVectorCharacterOptions>,
     },
 }
 
-pub struct FormattedVectorStringOptions {
+// Formatting options for character vectors
+pub struct FormattedVectorCharacterOptions {
+    // Wether to quote the strings or not
+    // If `true`, elements will be quoted during format so, eg: c("a", "b") becomes ("\"a\"", "\"b\"") in Rust
     pub quote: bool,
 }
 
+// Formatting options for vectors
 pub struct FormattedVectorOptions {
-    pub string: Option<FormattedVectorStringOptions>,
+    // Formatting options for character vectors
+    pub character: Option<FormattedVectorCharacterOptions>,
 }
 
 impl FormattedVector {
     pub fn new(vector: SEXP) -> Result<Self> {
-        Self::new_with_options(vector, FormattedVectorOptions { string: None })
+        Self::new_with_options(vector, FormattedVectorOptions { character: None })
     }
 
     pub fn new_with_options(
@@ -98,10 +104,7 @@ impl FormattedVector {
                     }),
                     STRSXP => Ok(Self::Character {
                         vector: CharacterVector::new_unchecked(vector),
-                        options: match formatting_options.string {
-                            Some(options) => Some(options),
-                            None => None,
-                        },
+                        options: formatting_options.character,
                     }),
                     CPLXSXP => Ok(Self::Complex {
                         vector: ComplexVector::new_unchecked(vector),
@@ -124,6 +127,7 @@ impl FormattedVector {
                     r_assert_type(*formatted, &[STRSXP])?;
                     Ok(Self::FormattedVector {
                         vector: CharacterVector::new_unchecked(formatted),
+                        options: formatting_options.character,
                     })
                 }
             }
@@ -138,15 +142,32 @@ impl FormattedVector {
             FormattedVector::Numeric { vector } => vector.format_elt_unchecked(index),
             FormattedVector::Character { vector, options } => {
                 let value = vector.format_elt_unchecked(index);
-                if let Some(FormattedVectorStringOptions { quote: false }) = options {
-                    return value;
-                }
-
-                format!("\"{}\"", value.replace("\"", "\\\""))
+                self.format_with_string_options(value, options)
             },
             FormattedVector::Complex { vector } => vector.format_elt_unchecked(index),
             FormattedVector::Factor { vector } => vector.format_elt_unchecked(index),
-            FormattedVector::FormattedVector { vector } => vector.format_elt_unchecked(index),
+            FormattedVector::FormattedVector { vector, options } => {
+                let value = vector.format_elt_unchecked(index);
+                self.format_with_string_options(value, options)
+            },
+        }
+    }
+
+    fn format_with_string_options(
+        &self,
+        value: String,
+        options: &Option<FormattedVectorCharacterOptions>,
+    ) -> String {
+        let quote = match options {
+            Some(FormattedVectorCharacterOptions { quote: false }) => false,
+            Some(FormattedVectorCharacterOptions { quote: true }) => true,
+            None => true,
+        };
+
+        if quote {
+            format!("\"{}\"", value.replace("\"", "\\\""))
+        } else {
+            value
         }
     }
 
@@ -163,7 +184,7 @@ impl FormattedVector {
             FormattedVector::Character { vector, options: _ } => vector.data(),
             FormattedVector::Complex { vector } => vector.data(),
             FormattedVector::Factor { vector } => vector.data(),
-            FormattedVector::FormattedVector { vector } => vector.data(),
+            FormattedVector::FormattedVector { vector, options: _ } => vector.data(),
         }
     }
 }
