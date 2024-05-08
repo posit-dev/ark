@@ -30,6 +30,8 @@ use crate::object::r_chr_get;
 use crate::object::r_chr_poke;
 use crate::object::r_dim;
 use crate::object::r_length;
+use crate::object::r_node_car;
+use crate::object::r_node_cdr;
 use crate::object::r_str_blank;
 use crate::object::r_str_na;
 use crate::object::RObject;
@@ -658,6 +660,26 @@ pub unsafe fn r_ns_env_name(env: SEXP) -> SEXP {
     }
 
     STRING_ELT(spec, 0)
+}
+
+/// Returns `true` if `f` returns `true` for any node of the pairlist
+pub fn r_pairlist_any<F>(x: SEXP, f: F) -> bool
+where
+    F: Fn(SEXP) -> bool,
+{
+    let mut node = x;
+
+    while node != r_null() {
+        let elt = r_node_car(node);
+
+        if f(elt) {
+            return true;
+        }
+
+        node = r_node_cdr(node);
+    }
+
+    return false;
 }
 
 pub unsafe fn r_try_eval_silent(x: SEXP, env: SEXP) -> Result<SEXP> {
