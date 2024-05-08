@@ -12,7 +12,6 @@ pub mod definitions;
 pub mod diagnostics;
 pub mod document_context;
 pub mod documents;
-pub mod editor;
 pub mod encoding;
 pub mod events;
 pub mod handler;

@@ -266,7 +266,6 @@ pub struct RMain {
 
     // LSP tokio runtime used to spawn LSP tasks on the executor and the
     // corresponding backend used to send LSP requests to the frontend.
-    // Used by R callbacks, like `ps_editor()` for `utils::file.edit()`.
     // The backend is initialized on LSP start up, and is refreshed after a
     // frontend reconnect.
     lsp_runtime: Arc<Runtime>,
