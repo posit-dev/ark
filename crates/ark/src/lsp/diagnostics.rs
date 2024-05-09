@@ -364,6 +364,9 @@ fn recurse(
             BinaryOperatorType::LeftAssignment => {
                 recurse_left_assignment(node, context, diagnostics)
             },
+            BinaryOperatorType::EqualsAssignment => {
+                recurse_equals_assignment(node, context, diagnostics)
+            },
             BinaryOperatorType::RightAssignment => {
                 recurse_right_assignment(node, context, diagnostics)
             },
@@ -561,6 +564,16 @@ fn recurse_super_assignment(
 }
 
 fn recurse_left_assignment(
+    node: Node,
+    context: &mut DiagnosticContext,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<()> {
+    let identifier = node.child_by_field_name("lhs");
+    let expression = node.child_by_field_name("rhs");
+    recurse_assignment(identifier, expression, context, diagnostics)
+}
+
+fn recurse_equals_assignment(
     node: Node,
     context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
@@ -1418,7 +1431,8 @@ mod tests {
             let text = "
                 x <- 1
                 2 -> y
-                y + x
+                z = 3
+                y + x + z
             ";
             let document = Document::new(text, None);
             let diagnostics = generate_diagnostics(&document);

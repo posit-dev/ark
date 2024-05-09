@@ -9,12 +9,16 @@ use serde::Deserialize;
 use serde::Serialize;
 use tower_lsp::lsp_types::Position;
 use tower_lsp::lsp_types::VersionedTextDocumentIdentifier;
+use tree_sitter::Node;
+use tree_sitter::Point;
+use tree_sitter::Tree;
 
 use crate::backend_trace;
 use crate::lsp::backend::Backend;
 use crate::lsp::encoding::convert_position_to_point;
 use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::rope::RopeExt;
+use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
 pub static POSITRON_HELP_TOPIC_REQUEST: &'static str = "positron/textDocument/helpTopic";
@@ -43,34 +47,21 @@ impl Backend {
         backend_trace!(self, "help_topic({:?})", params);
 
         let uri = &params.text_document.uri;
-        let Some(document) = self.documents.get_mut(uri) else {
+        let Some(document) = self.documents.get(uri) else {
             backend_trace!(self, "help_topic(): No document associated with URI {uri}");
             return Ok(None);
         };
 
-        let root = document.ast.root_node();
+        let tree = &document.ast;
         let contents = &document.contents;
 
         let position = params.position;
         let point = convert_position_to_point(contents, position);
 
-        let Some(mut node) = root.find_closest_node_to_point(point) else {
+        let Some(node) = locate_help_node(tree, point) else {
+            backend_trace!(self, "help_topic(): No help node at position {point}");
             return Ok(None);
         };
-
-        // Find the nearest node that is an identifier.
-        while !node.is_identifier() {
-            if let Some(sibling) = node.prev_sibling() {
-                // Move to an adjacent sibling if we can.
-                node = sibling;
-            } else if let Some(parent) = node.parent() {
-                // If no sibling, check the parent.
-                node = parent;
-            } else {
-                backend_trace!(self, "help_topic(): No help at position {point}");
-                return Ok(None);
-            }
-        }
 
         // Get the text of the node
         let text = document.contents.node_slice(&node).unwrap().to_string();
@@ -86,5 +77,84 @@ impl Backend {
         );
 
         Ok(Some(response))
+    }
+}
+
+fn locate_help_node(tree: &Tree, point: Point) -> Option<Node> {
+    let root = tree.root_node();
+
+    let Some(mut node) = root.find_closest_node_to_point(point) else {
+        return None;
+    };
+
+    // Find the nearest node that is an identifier.
+    while !node.is_identifier() {
+        if let Some(sibling) = node.prev_sibling() {
+            // Move to an adjacent sibling if we can.
+            node = sibling;
+        } else if let Some(parent) = node.parent() {
+            // If no sibling, check the parent.
+            node = parent;
+        } else {
+            return None;
+        }
+    }
+
+    // Check if this identifier is part of a namespace operator. If it is, we send
+    // back the whole `pkg::fun` text, regardless of which side the user was on.
+    // Even if they are at `p<>kg::fun`, we assume they really want docs for `fun`.
+    let node = match node.parent() {
+        Some(parent) if matches!(parent.node_type(), NodeType::NamespaceOperator(_)) => parent,
+        Some(_) => node,
+        None => node,
+    };
+
+    Some(node)
+}
+
+#[cfg(test)]
+mod tests {
+    use tree_sitter::Parser;
+
+    use crate::lsp::help_topic::locate_help_node;
+    use crate::test::point_from_cursor;
+
+    #[test]
+    fn test_locate_help_node() {
+        let language = tree_sitter_r::language();
+
+        let mut parser = Parser::new();
+        parser
+            .set_language(&language)
+            .expect("failed to create parser");
+
+        // On the RHS
+        let (text, point) = point_from_cursor("dplyr::ac@ross(x:y, sum)");
+        let tree = parser.parse(text.as_str(), None).unwrap();
+        let node = locate_help_node(&tree, point).unwrap();
+        let text = node.utf8_text(text.as_bytes()).unwrap();
+        assert_eq!(text, "dplyr::across");
+
+        // On the LHS (Returns function help for `across()`, not package help for `dplyr`,
+        // as we assume that is more useful for the user).
+        let (text, point) = point_from_cursor("dpl@yr::across(x:y, sum)");
+        let tree = parser.parse(text.as_str(), None).unwrap();
+        let node = locate_help_node(&tree, point).unwrap();
+        let text = node.utf8_text(text.as_bytes()).unwrap();
+        assert_eq!(text, "dplyr::across");
+
+        // In the operator
+        let (text, point) = point_from_cursor("dplyr:@:across(x:y, sum)");
+        let tree = parser.parse(text.as_str(), None).unwrap();
+        let node = locate_help_node(&tree, point).unwrap();
+        let text = node.utf8_text(text.as_bytes()).unwrap();
+        assert_eq!(text, "dplyr::across");
+
+        // Internal `:::`
+        let (text, point) = point_from_cursor("dplyr:::ac@ross(x:y, sum)");
+        let tree = parser.parse(text.as_str(), None).unwrap();
+        let node = locate_help_node(&tree, point).unwrap();
+        let text = node.utf8_text(text.as_bytes()).unwrap();
+        assert_eq!(text, "dplyr:::across");
     }
 }
