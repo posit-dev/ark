@@ -49,7 +49,7 @@ pub enum FormattedVector {
     },
     Character {
         vector: CharacterVector,
-        options: Option<FormattedVectorCharacterOptions>,
+        options: FormattedVectorCharacterOptions,
     },
     Complex {
         vector: ComplexVector,
@@ -60,7 +60,7 @@ pub enum FormattedVector {
     },
     FormattedVector {
         vector: CharacterVector,
-        options: Option<FormattedVectorCharacterOptions>,
+        options: FormattedVectorCharacterOptions,
     },
 }
 
@@ -72,14 +72,21 @@ pub struct FormattedVectorCharacterOptions {
 }
 
 // Formatting options for vectors
+#[derive(Default)]
 pub struct FormattedVectorOptions {
     // Formatting options for character vectors
-    pub character: Option<FormattedVectorCharacterOptions>,
+    pub character: FormattedVectorCharacterOptions,
+}
+
+impl Default for FormattedVectorCharacterOptions {
+    fn default() -> Self {
+        Self { quote: true }
+    }
 }
 
 impl FormattedVector {
     pub fn new(vector: SEXP) -> Result<Self> {
-        Self::new_with_options(vector, FormattedVectorOptions { character: None })
+        Self::new_with_options(vector, FormattedVectorOptions::default())
     }
 
     pub fn new_with_options(
@@ -156,15 +163,9 @@ impl FormattedVector {
     fn format_with_string_options(
         &self,
         value: String,
-        options: &Option<FormattedVectorCharacterOptions>,
+        options: &FormattedVectorCharacterOptions,
     ) -> String {
-        let quote = match options {
-            Some(FormattedVectorCharacterOptions { quote: false }) => false,
-            Some(FormattedVectorCharacterOptions { quote: true }) => true,
-            None => true,
-        };
-
-        if quote {
+        if options.quote {
             format!("\"{}\"", value.replace("\"", "\\\""))
         } else {
             value
@@ -244,12 +245,17 @@ impl FormattedVector {
 #[cfg(test)]
 mod tests {
     use itertools::Itertools;
+    use libr::STRSXP;
 
     use crate::environment::Environment;
     use crate::eval::r_parse_eval0;
     use crate::modules::HARP_ENV;
+    use crate::object::RObject;
+    use crate::r_assert_type;
     use crate::test::r_test;
     use crate::vector::formatted_vector::FormattedVector;
+    use crate::vector::formatted_vector::FormattedVectorCharacterOptions;
+    use crate::vector::formatted_vector::FormattedVectorOptions;
 
     #[test]
     fn test_unconforming_format_method() {
@@ -275,6 +281,30 @@ mod tests {
             let x = FormattedVector::new(objs.find("unconforming_type")).unwrap();
             let out = x.iter().join(" ");
             assert_eq!(out, exp);
+        })
+    }
+
+    #[test]
+    fn test_formatting_option() {
+        r_test(|| {
+            let x = RObject::from(vec![String::from("1"), String::from("2")]);
+            r_assert_type(x.sexp, &[STRSXP]).unwrap();
+
+            let formatted = FormattedVector::new_with_options(x.sexp, FormattedVectorOptions {
+                character: FormattedVectorCharacterOptions { quote: false },
+            })
+            .unwrap();
+
+            let out = formatted.iter().join(" ");
+            assert_eq!(out, String::from("1 2"));
+
+            let formatted = FormattedVector::new_with_options(x.sexp, FormattedVectorOptions {
+                character: FormattedVectorCharacterOptions { quote: true },
+            })
+            .unwrap();
+
+            let out = formatted.iter().join(" ");
+            assert_eq!(out, String::from("\"1\" \"2\""));
         })
     }
 }

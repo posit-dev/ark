@@ -803,7 +803,7 @@ impl RDataExplorer {
                 .call()?;
 
             let formatter = FormattedVector::new_with_options(*column, FormattedVectorOptions {
-                character: Some(FormattedVectorCharacterOptions { quote: false }),
+                character: FormattedVectorCharacterOptions { quote: false },
             })?;
             let formatted = formatter.iter().collect();
 
