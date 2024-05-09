@@ -219,8 +219,12 @@
 }
 
 .ps.get_rows_and_columns <- function(table, index_rows, index_cols) {
-    # if we don't do a do.call here, data.table will consider 'index_cols' as the
-    # column name and not the actual list of indexes.
-    args <- list(table, index_rows, index_cols, drop = FALSE)
-    do.call(`[`, args)
+    if (is.matrix(table)) {
+        table[index_rows, index_cols, drop = FALSE]
+    } else {
+        # If the table is a data frame, we need to use `[.data.frame` to ensure
+        # that we don't dispatch to other classes that might expect different
+        # inputs, such as with `data.table`.
+        `[.data.frame`(table, index_rows, index_cols, drop = FALSE)
+    }
 }
