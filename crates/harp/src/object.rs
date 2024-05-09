@@ -936,6 +936,27 @@ impl TryFrom<RObject> for HashMap<String, String> {
     }
 }
 
+impl TryFrom<RObject> for HashMap<String, RObject> {
+    type Error = crate::error::Error;
+    fn try_from(value: RObject) -> Result<Self, Self::Error> {
+        unsafe {
+            let names = Rf_getAttrib(*value, R_NamesSymbol);
+            r_assert_type(names, &[STRSXP])?;
+
+            let n = Rf_xlength(names);
+            let mut map = HashMap::<String, RObject>::with_capacity(n as usize);
+
+            for i in 0..n {
+                let name = r_chr_get_owned_utf8(names, i)?;
+                let value = RObject::new(VECTOR_ELT(*value, i));
+                map.insert(name, value);
+            }
+
+            Ok(map)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use libr::SET_STRING_ELT;

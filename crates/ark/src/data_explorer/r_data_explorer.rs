@@ -6,6 +6,7 @@
 //
 
 use std::cmp;
+use std::collections::HashMap;
 
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::data_explorer_comm::BackendState;
@@ -420,9 +421,12 @@ impl RDataExplorer {
                 self.row_filters = filters;
 
                 let mut had_errors: Option<bool> = None;
+
                 self.filtered_indices = if self.row_filters.len() > 0 {
-                    let (indices, err) = r_task(|| self.r_filter_rows())?;
-                    had_errors = Some(err);
+                    let (indices, errors) = r_task(|| self.r_filter_rows())?;
+                    // this is called for the side-effect of updating the row_filters with validty status and
+                    // error messages
+                    had_errors = Some(self.apply_filter_errors(errors)?);
                     Some(indices)
                 } else {
                     None
@@ -605,15 +609,14 @@ impl RDataExplorer {
     /// self.row_filters.
     ///
     /// Returns a tuple containing a vector of all the row indices that pass the filters and
-    /// a boolean indicating whether any of the filters had errors. As a side effect it mutates
-    /// the `row_filters` attribute to include error messages and validity status.
-    fn r_filter_rows(&mut self) -> anyhow::Result<(Vec<i32>, bool)> {
+    /// a character vector of errors, where None means no error happened.
+    fn r_filter_rows(&mut self) -> anyhow::Result<(Vec<i32>, Vec<Option<String>>)> {
         let mut filters: Vec<RObject> = vec![];
 
         // Shortcut: If there are no row filters, the filtered indices include
         // all row indices.
         if self.row_filters.is_empty() {
-            return Ok(((1..=self.shape.num_rows).collect(), false));
+            return Ok(((1..=self.shape.num_rows).collect(), vec![]));
         }
 
         // Convert each filter to an R object by marshaling through the JSON
@@ -631,52 +634,44 @@ impl RDataExplorer {
 
         // Pass the row filters to R and get the resulting row indices
         let filters = RObject::try_from(filters)?;
-        let rows = RFunction::new("", ".ps.filter_rows")
+        let result: HashMap<String, RObject> = RFunction::new("", ".ps.filter_rows")
             .param("table", self.table.get().sexp)
             .param("row_filters", filters)
-            .call_in(ARK_ENVS.positron_ns)?;
+            .call_in(ARK_ENVS.positron_ns)?
+            .try_into()?;
 
         // Handle errors that occured in the filters
-        let had_errors = self.handle_filter_errors(rows.attr("row_filters_errors"))?;
+        let row_indices = match result.get("indices") {
+            Some(indices) => Vec::<i32>::try_from(indices.clone())?,
+            None => bail!("Unexpected output from .ps.filter_rows. Expected 'indices' field."),
+        };
 
-        // Convert the row indices to a Rust vector
-        let row_indices = Vec::<i32>::try_from(rows)?;
+        let errors = match result.get("errors") {
+            Some(errors) => Vec::<Option<String>>::try_from(errors.clone())?,
+            None => bail!("Unexpected output from .ps.filter_rows. Expected 'errors' field."),
+        };
 
-        Ok((row_indices, had_errors))
+        // let had_errors = self.handle_filter_errors(rows.attr("row_filters_errors"))?;
+        Ok((row_indices, errors))
     }
 
     // Handle errors that occured in the filters
     //
     // This function mutates the `row_filters` attribute to include error messages and validity status.
-    fn handle_filter_errors(&mut self, errors: Option<RObject>) -> anyhow::Result<bool> {
-        let errors = match errors {
-            Some(errors) => Vec::<RObject>::try_from(errors)?,
-            None => {
-                return Ok(false);
-            },
-        };
-
+    fn apply_filter_errors(&mut self, errors: Vec<Option<String>>) -> anyhow::Result<bool> {
         let mut had_errors = false;
         for (i, error) in errors.iter().enumerate() {
-            let is_valid: bool = RFunction::new("", "[[")
-                .add(error.clone())
-                .add(RObject::from("is_valid"))
-                .call_in(ARK_ENVS.positron_ns)?
-                .try_into()?;
-
-            if is_valid {
-                continue;
+            match error {
+                None => {
+                    self.row_filters[i].is_valid = Some(true);
+                    continue;
+                },
+                Some(error) => {
+                    self.row_filters[i].is_valid = Some(false);
+                    self.row_filters[i].error_message = Some(error.clone());
+                    had_errors = true;
+                },
             }
-
-            let message: String = RFunction::new("base", "[[")
-                .add(error.clone())
-                .add(RObject::from("error_message"))
-                .call()?
-                .try_into()?;
-
-            self.row_filters[i].error_message = Some(message);
-            self.row_filters[i].is_valid = Some(false);
-            had_errors = true;
         }
         return Ok(had_errors);
     }
