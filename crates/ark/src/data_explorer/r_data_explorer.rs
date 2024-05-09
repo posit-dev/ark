@@ -607,7 +607,7 @@ impl RDataExplorer {
         let dtype = display_type(column.sexp);
         match dtype.clone() {
             ColumnDisplayType::Number => {
-                let r_stats: Vec<String> = RFunction::new("", ".ps.number_summary_stats")
+                let r_stats: Vec<String> = RFunction::new("", "number_summary_stats")
                     .param("column", column)
                     .param("filtered_indices", match &self.filtered_indices {
                         Some(indices) => RObject::try_from(indices)?,
@@ -632,7 +632,7 @@ impl RDataExplorer {
                 })
             },
             ColumnDisplayType::String => {
-                let r_stats: Vec<i32> = RFunction::new("", ".ps.string_summary_stats")
+                let r_stats: Vec<i32> = RFunction::new("", "string_summary_stats")
                     .param("column", column)
                     .param("filtered_indices", match &self.filtered_indices {
                         Some(indices) => RObject::try_from(indices)?,
@@ -654,7 +654,7 @@ impl RDataExplorer {
                 })
             },
             ColumnDisplayType::Boolean => {
-                let r_stats: Vec<i32> = RFunction::new("", ".ps.boolean_summary_stats")
+                let r_stats: Vec<i32> = RFunction::new("", "boolean_summary_stats")
                     .param("column", column)
                     .param("filtered_indices", match &self.filtered_indices {
                         Some(indices) => RObject::try_from(indices)?,

@@ -44,8 +44,8 @@
     }
 }
 
-.ps.number_summary_stats <- function(column, filtered_indices) {
-    col <- .ps.col_filter_indices(column, filtered_indices)
+number_summary_stats <- function(column, filtered_indices) {
+    col <- col_filter_indices(column, filtered_indices)
 
     format(c(
         min = min(col, na.rm = TRUE),
@@ -56,20 +56,19 @@
     ))
 }
 
-.ps.string_summary_stats <- function(column, filtered_indices) {
-    col <- .ps.col_filter_indices(column, filtered_indices)
+string_summary_stats <- function(column, filtered_indices) {
+    col <- col_filter_indices(column, filtered_indices)
     c(num_empty = sum(!nzchar(col)), num_unique = length(unique(col)))
 }
 
-.ps.boolean_summary_stats <- function(column, filtered_indices) {
-    col <- .ps.col_filter_indices(column, filtered_indices)
+boolean_summary_stats <- function(column, filtered_indices) {
+    col <- col_filter_indices(column, filtered_indices)
     c(true_count = sum(col, na.rm = TRUE), false_count = sum(!col, na.rm = TRUE))
 }
 
-.ps.col_filter_indices <- function(column, filtered_indices) {
-    col <- column
-    if (!is.null(filtered_indices)) {
-        col <- column[filtered_indices]
+col_filter_indices <- function(col, idx = NULL) {
+    if (!is.null(idx)) {
+        col <- col[idx]
     }
     col
 }
