@@ -66,7 +66,7 @@ pub enum FormattedVector {
 
 // Formatting options for character vectors
 pub struct FormattedVectorCharacterOptions {
-    // Wether to quote the strings or not
+    // Wether to quote the strings or not (defaults to `true`)
     // If `true`, elements will be quoted during format so, eg: c("a", "b") becomes ("\"a\"", "\"b\"") in Rust
     pub quote: bool,
 }
