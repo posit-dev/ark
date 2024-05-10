@@ -219,12 +219,10 @@
 }
 
 .ps.get_rows_and_columns <- function(table, index_rows, index_cols) {
-    if (is.matrix(table)) {
-        table[index_rows, index_cols, drop = FALSE]
-    } else {
-        # If the table is a data frame, we need to use `[.data.frame` to ensure
-        # that we don't dispatch to other classes that might expect different
-        # inputs, such as with `data.table`.
-        `[.data.frame`(table, index_rows, index_cols, drop = FALSE)
+    if (inherits(table, "data.frame")) {
+        # drop additional classes, so data we dont dispatch to subclasses methods
+        # like `[.tibble` or `[.data.table`.
+        class(table) <- "data.frame"
     }
+    table[index_rows, index_cols, drop = FALSE]
 }
