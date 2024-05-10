@@ -9,7 +9,6 @@ use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::data_explorer_comm::ColumnProfileRequest;
 use amalthea::comm::data_explorer_comm::ColumnProfileType;
 use amalthea::comm::data_explorer_comm::ColumnSortKey;
-use amalthea::comm::data_explorer_comm::ColumnSummaryStats;
 use amalthea::comm::data_explorer_comm::CompareFilterParams;
 use amalthea::comm::data_explorer_comm::CompareFilterParamsOp;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendReply;
@@ -698,12 +697,6 @@ fn test_data_explorer() {
 
         // Open the fibo data set in the data explorer.
         let socket = open_data_explorer(String::from("df"));
-
-        // Get the schema of the data set.
-        let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
-            num_columns: 3,
-            start_index: 0,
-        });
 
         // Ask for summary stats for the columns
         let req = DataExplorerBackendRequest::GetColumnProfiles(GetColumnProfilesParams {

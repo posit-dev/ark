@@ -923,12 +923,40 @@ impl TryFrom<RObject> for HashMap<String, String> {
             let n = Rf_xlength(names);
             let mut map = HashMap::<String, String>::with_capacity(n as usize);
 
-            for i in 0..Rf_xlength(names) {
+            for i in (0..Rf_xlength(names)).rev() {
                 // Translate the name and value into Rust strings.
                 let lhs = r_chr_get_owned_utf8(names, i)?;
                 let rhs = r_chr_get_owned_utf8(value, i)?;
 
                 map.insert(lhs, rhs);
+            }
+
+            Ok(map)
+        }
+    }
+}
+
+impl TryFrom<RObject> for HashMap<String, i32> {
+    type Error = crate::error::Error;
+    fn try_from(value: RObject) -> Result<Self, Self::Error> {
+        unsafe {
+            r_assert_type(*value, &[INTSXP, VECSXP])?;
+
+            let mut protect = RProtect::new();
+            let names = protect.add(Rf_getAttrib(*value, R_NamesSymbol));
+            r_assert_type(names, &[STRSXP])?;
+
+            let value = protect.add(Rf_coerceVector(*value, INTSXP));
+
+            let n = Rf_xlength(names);
+            let mut map = HashMap::<String, i32>::with_capacity(n as usize);
+
+            for i in (0..Rf_xlength(names)).rev() {
+                // Translate the name and value into Rust strings.
+                let name = r_chr_get_owned_utf8(names, i)?;
+                let val = r_int_get(value, i);
+
+                map.insert(name, val);
             }
 
             Ok(map)
@@ -952,7 +980,7 @@ impl TryFrom<RObject> for HashMap<String, RObject> {
             // iterate in the reverse order to keep the first occurence of a name
             for i in (0..n).rev() {
                 let name = r_chr_get_owned_utf8(names, i)?;
-                let value = RObject::new(VECTOR_ELT(*value, i));
+                let value: RObject = RObject::new(VECTOR_ELT(*value, i));
                 map.insert(name, value);
             }
 

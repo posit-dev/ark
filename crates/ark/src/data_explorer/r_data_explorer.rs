@@ -605,81 +605,60 @@ impl RDataExplorer {
         // Get the column to compute summary stats for
         let column = tbl_get_column(self.table.get().sexp, column_index, self.shape.kind)?;
         let dtype = display_type(column.sexp);
-        match dtype.clone() {
-            ColumnDisplayType::Number => {
-                let r_stats: Vec<String> = RFunction::new("", "number_summary_stats")
-                    .param("column", column)
-                    .param("filtered_indices", match &self.filtered_indices {
-                        Some(indices) => RObject::try_from(indices)?,
-                        None => RObject::null(),
-                    })
-                    .call_in(ARK_ENVS.positron_ns)?
-                    .try_into()?;
 
-                let stats = Some(SummaryStatsNumber {
-                    min_value: r_stats[0].clone(),
-                    max_value: r_stats[1].clone(),
-                    mean: r_stats[2].clone(),
-                    median: r_stats[3].clone(),
-                    stdev: r_stats[4].clone(),
-                });
-
-                Ok(ColumnSummaryStats {
-                    type_display: dtype,
-                    number_stats: stats,
-                    string_stats: None,
-                    boolean_stats: None,
+        let call_summary_fn = |fun| {
+            RFunction::new("", fun)
+                .param("column", column)
+                .param("filtered_indices", match &self.filtered_indices {
+                    Some(indices) => RObject::try_from(indices)?,
+                    None => RObject::null(),
                 })
+                .call_in(ARK_ENVS.positron_ns)
+        };
+
+        let mut stats = ColumnSummaryStats {
+            type_display: dtype.clone(),
+            number_stats: None,
+            string_stats: None,
+            boolean_stats: None,
+        };
+
+        match dtype {
+            ColumnDisplayType::Number => {
+                let r_stats: HashMap<String, String> =
+                    call_summary_fn("number_summary_stats")?.try_into()?;
+
+                stats.number_stats = Some(SummaryStatsNumber {
+                    min_value: r_stats["min_value"].clone(),
+                    max_value: r_stats["max_value"].clone(),
+                    mean: r_stats["mean"].clone(),
+                    median: r_stats["median"].clone(),
+                    stdev: r_stats["stdev"].clone(),
+                });
             },
             ColumnDisplayType::String => {
-                let r_stats: Vec<i32> = RFunction::new("", "string_summary_stats")
-                    .param("column", column)
-                    .param("filtered_indices", match &self.filtered_indices {
-                        Some(indices) => RObject::try_from(indices)?,
-                        None => RObject::null(),
-                    })
-                    .call_in(ARK_ENVS.positron_ns)?
-                    .try_into()?;
+                let r_stats: HashMap<String, i32> =
+                    call_summary_fn("string_summary_stats")?.try_into()?;
 
-                let stats = Some(SummaryStatsString {
-                    num_empty: r_stats[0].clone() as i64,
-                    num_unique: r_stats[1].clone() as i64,
+                stats.string_stats = Some(SummaryStatsString {
+                    num_empty: r_stats["num_empty"].clone() as i64,
+                    num_unique: r_stats["num_unique"].clone() as i64,
                 });
-
-                Ok(ColumnSummaryStats {
-                    type_display: dtype,
-                    number_stats: None,
-                    string_stats: stats,
-                    boolean_stats: None,
-                })
             },
             ColumnDisplayType::Boolean => {
-                let r_stats: Vec<i32> = RFunction::new("", "boolean_summary_stats")
-                    .param("column", column)
-                    .param("filtered_indices", match &self.filtered_indices {
-                        Some(indices) => RObject::try_from(indices)?,
-                        None => RObject::null(),
-                    })
-                    .call_in(ARK_ENVS.positron_ns)?
-                    .try_into()?;
+                let r_stats: HashMap<String, i32> =
+                    call_summary_fn("boolean_summary_stats")?.try_into()?;
 
-                let stats = Some(SummaryStatsBoolean {
-                    true_count: r_stats[0].clone() as i64,
-                    false_count: r_stats[1].clone() as i64,
+                stats.boolean_stats = Some(SummaryStatsBoolean {
+                    true_count: r_stats["true_count"].clone() as i64,
+                    false_count: r_stats["false_count"].clone() as i64,
                 });
-
-                Ok(ColumnSummaryStats {
-                    type_display: dtype,
-                    number_stats: None,
-                    string_stats: None,
-                    boolean_stats: stats,
-                })
             },
             _ => {
-                log::error!("Summary stats not implemented for type: {:?}", dtype);
-                bail!("Summary stats not implemented for this type")
+                bail!("Summary stats not implemented for type: {:?}", dtype);
             },
         }
+        Ok(stats)
     }
 
     /// Sort the rows of the data object according to the sort keys in

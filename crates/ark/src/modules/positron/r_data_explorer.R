@@ -48,8 +48,8 @@ number_summary_stats <- function(column, filtered_indices) {
     col <- col_filter_indices(column, filtered_indices)
 
     format(c(
-        min = min(col, na.rm = TRUE),
-        max = max(col, na.rm = TRUE),
+        min_value = min(col, na.rm = TRUE),
+        max_value = max(col, na.rm = TRUE),
         mean = mean(col, na.rm = TRUE),
         median = stats::median(col, na.rm = TRUE),
         stdev = stats::sd(col, na.rm = TRUE)
