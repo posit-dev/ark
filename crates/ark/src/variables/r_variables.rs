@@ -246,8 +246,8 @@ impl RVariables {
                 ))
             },
             VariablesBackendRequest::View(params) => {
-                self.view(&params.path)?;
-                Ok(VariablesBackendReply::ViewReply())
+                let viewer_id = self.view(&params.path)?;
+                Ok(VariablesBackendReply::ViewReply(viewer_id))
             },
         }
     }
@@ -322,7 +322,7 @@ impl RVariables {
     /// Open a data viewer for the given variable.
     ///
     /// - `path`: The path to the variable to view, as an array of access keys
-    fn view(&mut self, path: &Vec<String>) -> Result<(), harp::error::Error> {
+    fn view(&mut self, path: &Vec<String>) -> Result<String, harp::error::Error> {
         r_task(|| {
             let env = self.env.get().clone();
             let data = PositronVariable::resolve_data_object(env, &path)?;
@@ -331,13 +331,13 @@ impl RVariables {
                 name: name.to_string(),
                 env: RThreadSafe::new(self.env.get().clone()),
             };
-            RDataExplorer::start(
+            let viewer_id = RDataExplorer::start(
                 name.clone(),
                 data,
                 Some(binding),
                 self.comm_manager_tx.clone(),
             )?;
-            Ok(())
+            Ok(viewer_id)
         })
     }
 

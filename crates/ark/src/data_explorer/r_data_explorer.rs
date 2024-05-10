@@ -142,7 +142,7 @@ impl RDataExplorer {
         data: RObject,
         binding: Option<DataObjectEnvInfo>,
         comm_manager_tx: Sender<CommManagerEvent>,
-    ) -> harp::Result<()> {
+    ) -> harp::Result<String> {
         let id = Uuid::new_v4().to_string();
 
         let comm = CommSocket::new(
@@ -196,7 +196,7 @@ impl RDataExplorer {
             }
         });
 
-        Ok(())
+        Ok(id)
     }
 
     pub fn execution_thread(mut self) {
