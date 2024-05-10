@@ -203,6 +203,7 @@ impl Binding {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct Environment {
     env: RObject,
 }
@@ -371,6 +372,21 @@ impl Environment {
         Self {
             env: RObject::view(env),
         }
+    }
+
+    pub fn parent(&self) -> Option<Environment> {
+        unsafe {
+            let parent = ENCLOS(self.env.sexp);
+            if parent == R_ENVS.empty {
+                None
+            } else {
+                Some(Self::new(RObject::new(parent)))
+            }
+        }
+    }
+
+    pub fn ancestors(&self) -> impl Iterator<Item = Environment> {
+        std::iter::successors(Some(self.clone()), |p| p.parent())
     }
 
     pub fn bind(&self, name: &str, value: impl Into<SEXP>) {

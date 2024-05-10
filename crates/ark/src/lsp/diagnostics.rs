@@ -18,24 +18,17 @@ use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::external_ptr::ExternalPointer;
 use harp::object::RObject;
-use harp::protect::RProtect;
 use harp::r_symbol;
 use harp::utils::r_is_null;
 use harp::utils::r_symbol_quote_invalid;
 use harp::utils::r_symbol_valid;
-use harp::vector::CharacterVector;
-use harp::vector::Vector;
-use libr::R_EmptyEnv;
-use libr::R_GlobalEnv;
 use libr::R_NilValue;
-use libr::R_lsInternal;
 use libr::Rf_ScalarInteger;
 use libr::Rf_allocVector;
 use libr::Rf_cons;
 use libr::Rf_lang1;
 use libr::Rf_xlength;
 use libr::CDR;
-use libr::ENCLOS;
 use libr::RAW;
 use libr::RAWSXP;
 use libr::SETCDR;
@@ -56,6 +49,7 @@ use crate::lsp::backend::Backend;
 use crate::lsp::documents::Document;
 use crate::lsp::encoding::convert_tree_sitter_range_to_lsp_range;
 use crate::lsp::indexer;
+use crate::lsp::state::WorldState;
 use crate::lsp::traits::rope::RopeExt;
 use crate::r_task;
 use crate::r_task::r_async_task;
@@ -262,10 +256,10 @@ fn try_generate_diagnostics(
     // timeout delay and version check to ensure that the `lock()` doesn't run needlessly.
     backend.indexer_state_manager.wait_until_initialized();
 
-    Some(generate_diagnostics(&doc))
+    Some(generate_diagnostics(&doc, &backend.state))
 }
 
-fn generate_diagnostics(doc: &Document) -> Vec<Diagnostic> {
+fn generate_diagnostics(doc: &Document, state: &WorldState) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
 
     {
@@ -290,43 +284,20 @@ fn generate_diagnostics(doc: &Document) -> Vec<Diagnostic> {
             _ => {},
         });
 
-        r_task(|| unsafe {
-            // Get the set of symbols currently in scope.
-            let mut envir = R_GlobalEnv;
-            while envir != R_EmptyEnv {
-                // List symbol names in this environment.
-                let mut protect = RProtect::new();
-                let objects = protect.add(R_lsInternal(envir, 1));
-
-                // Ensure that non-syntactic names are quoted.
-                let vector = CharacterVector::new(objects).unwrap();
-                for name in vector.iter() {
-                    if let Some(name) = name {
-                        if r_symbol_valid(name.as_str()) {
-                            context.session_symbols.insert(name);
-                        } else {
-                            let name = r_symbol_quote_invalid(name.as_str());
-                            context.session_symbols.insert(name);
-                        }
-                    }
-                }
-
-                envir = ENCLOS(envir);
-            }
-
-            // Get the set of installed packages.
-            let packages = RFunction::new("base", ".packages")
-                .param("all.available", true)
-                .call()
-                .unwrap();
-
-            let vector = CharacterVector::new(packages).unwrap();
-            for name in vector.iter() {
-                if let Some(name) = name {
-                    context.installed_packages.insert(name);
+        for scope in state.console_scopes.lock().iter() {
+            for name in scope.iter() {
+                if r_symbol_valid(name.as_str()) {
+                    context.session_symbols.insert(name.clone());
+                } else {
+                    let name = r_symbol_quote_invalid(name.as_str());
+                    context.session_symbols.insert(name.clone());
                 }
             }
-        });
+        }
+
+        for pkg in state.installed_packages.lock().iter() {
+            context.installed_packages.insert(pkg.clone());
+        }
 
         // Start iterating through the nodes.
         let root = doc.ast.root_node();
@@ -1318,15 +1289,33 @@ fn check_symbol_in_scope(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
 
     use harp::eval::r_parse_eval;
     use harp::eval::RParseEvalOptions;
+    use once_cell::sync::Lazy;
+    use parking_lot::Mutex;
     use tower_lsp::lsp_types::Position;
 
+    use crate::interface::console_inputs;
     use crate::lsp::diagnostics::generate_diagnostics;
     use crate::lsp::diagnostics::is_unmatched_block;
     use crate::lsp::documents::Document;
+    use crate::lsp::state::WorldState;
     use crate::test::r_test;
+
+    // Default state that includes installed packages and default scopes.
+    static DEFAULT_STATE: Lazy<WorldState> = Lazy::new(|| current_state());
+
+    fn current_state() -> WorldState {
+        let inputs = console_inputs().unwrap();
+
+        WorldState {
+            console_scopes: Arc::new(Mutex::new(inputs.console_scopes)),
+            installed_packages: Arc::new(Mutex::new(inputs.installed_packages)),
+            ..Default::default()
+        }
+    }
 
     #[test]
     fn test_unmatched_braces() {
@@ -1375,7 +1364,7 @@ mod tests {
                 2 # hi there
             )";
             let document = Document::new(text, None);
-            let diagnostics = generate_diagnostics(&document);
+            let diagnostics = generate_diagnostics(&document, &DEFAULT_STATE);
             assert!(diagnostics.is_empty());
         })
     }
@@ -1386,7 +1375,7 @@ mod tests {
             let text = "match(1, 2 3)";
             let document = Document::new(text, None);
 
-            let diagnostics = generate_diagnostics(&document);
+            let diagnostics = generate_diagnostics(&document, &DEFAULT_STATE);
             assert_eq!(diagnostics.len(), 1);
 
             let diagnostic = diagnostics.get(0).unwrap();
@@ -1409,15 +1398,16 @@ mod tests {
 
             // Put the LHS in scope
             r_parse_eval("x <- NULL", options.clone()).unwrap();
+            let state = current_state();
 
             let text = "x$foo";
             let document = Document::new(text, None);
-            let diagnostics = generate_diagnostics(&document);
+            let diagnostics = generate_diagnostics(&document, &state);
             assert!(diagnostics.is_empty());
 
             let text = "x@foo";
             let document = Document::new(text, None);
-            let diagnostics = generate_diagnostics(&document);
+            let diagnostics = generate_diagnostics(&document, &state);
             assert!(diagnostics.is_empty());
 
             // Clean up
@@ -1435,7 +1425,7 @@ mod tests {
                 y + x + z
             ";
             let document = Document::new(text, None);
-            let diagnostics = generate_diagnostics(&document);
+            let diagnostics = generate_diagnostics(&document, &DEFAULT_STATE);
             assert!(diagnostics.is_empty());
         })
     }
@@ -1449,7 +1439,7 @@ mod tests {
                 y + x
             ";
             let document = Document::new(text, None);
-            let diagnostics = generate_diagnostics(&document);
+            let diagnostics = generate_diagnostics(&document, &DEFAULT_STATE);
             assert!(diagnostics.is_empty());
         })
     }
@@ -1464,7 +1454,7 @@ mod tests {
             ";
             let document = Document::new(text, None);
 
-            let diagnostics = generate_diagnostics(&document);
+            let diagnostics = generate_diagnostics(&document, &DEFAULT_STATE);
             assert_eq!(diagnostics.len(), 1);
 
             // Only marks the `x` before the `x <- 1`
