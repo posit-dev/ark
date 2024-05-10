@@ -50,6 +50,8 @@ use harp::utils::r_is_object;
 use harp::utils::r_is_s4;
 use harp::utils::r_typeof;
 use harp::vector::formatted_vector::FormattedVector;
+use harp::vector::formatted_vector::FormattedVectorCharacterOptions;
+use harp::vector::formatted_vector::FormattedVectorOptions;
 use harp::TableInfo;
 use harp::TableKind;
 use libr::*;
@@ -800,7 +802,9 @@ impl RDataExplorer {
                 .param("drop", true)
                 .call()?;
 
-            let formatter = FormattedVector::new(*column)?;
+            let formatter = FormattedVector::new_with_options(*column, FormattedVectorOptions {
+                character: FormattedVectorCharacterOptions { quote: false },
+            })?;
             let formatted = formatter.iter().collect();
 
             column_data.push(formatted);

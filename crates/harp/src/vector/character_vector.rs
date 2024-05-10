@@ -81,7 +81,7 @@ impl Vector for CharacterVector {
     }
 
     fn format_one(&self, x: Self::Type) -> String {
-        format!("\"{}\"", x.replace("\"", "\\\""))
+        x
     }
 }
 
