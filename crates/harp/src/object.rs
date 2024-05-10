@@ -914,10 +914,10 @@ impl TryFrom<RObject> for HashMap<String, String> {
         unsafe {
             r_assert_type(*value, &[STRSXP, VECSXP])?;
 
-            let names = Rf_getAttrib(*value, R_NamesSymbol);
+            let mut protect = RProtect::new();
+            let names = protect.add(Rf_getAttrib(*value, R_NamesSymbol));
             r_assert_type(names, &[STRSXP])?;
 
-            let mut protect = RProtect::new();
             let value = protect.add(Rf_coerceVector(*value, STRSXP));
 
             let n = Rf_xlength(names);
@@ -936,17 +936,21 @@ impl TryFrom<RObject> for HashMap<String, String> {
     }
 }
 
+// Converts a named R object into a HashMap<String, RObject> whose names are used as keys.
+// Duplicated names are silently ignored, and only the first occurence is kept.
 impl TryFrom<RObject> for HashMap<String, RObject> {
     type Error = crate::error::Error;
     fn try_from(value: RObject) -> Result<Self, Self::Error> {
         unsafe {
-            let names = Rf_getAttrib(*value, R_NamesSymbol);
+            let mut protect = RProtect::new();
+            let names = protect.add(Rf_getAttrib(*value, R_NamesSymbol));
             r_assert_type(names, &[STRSXP])?;
 
             let n = Rf_xlength(names);
             let mut map = HashMap::<String, RObject>::with_capacity(n as usize);
 
-            for i in 0..n {
+            // iterate in the reverse order to keep the first occurence of a name
+            for i in (0..n).rev() {
                 let name = r_chr_get_owned_utf8(names, i)?;
                 let value = RObject::new(VECTOR_ELT(*value, i));
                 map.insert(name, value);
@@ -1377,6 +1381,25 @@ mod tests {
             assert_eq!(out.get("pepperoni").unwrap(), "OK");
             assert_eq!(out.get("sausage").unwrap(), "OK");
             assert_eq!(out.get("pineapple").unwrap(), "NOT OK");
+        }
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test_tryfrom_RObject_hashmap_Robject() {
+        r_test! {
+            // Create a map of pizza toppings to their acceptability.
+            let v = r_parse_eval0("list(x = c(1L, 2L), y = c('a', 'b'))", R_ENVS.global).unwrap();
+            assert_eq!(v.length(), 2 as isize);
+
+            // Ensure we can convert the object back into a map with the same values.
+            let out: HashMap<String, RObject> = v.try_into().unwrap();
+
+            let value: Vec<i32> = out.get("x").unwrap().clone().try_into().unwrap();
+            assert_eq!(value, vec![1, 2]);
+
+            let value: Vec<String> = out.get("y").unwrap().clone().try_into().unwrap();
+            assert_eq!(value, vec!["a", "b"]);
         }
     }
 
