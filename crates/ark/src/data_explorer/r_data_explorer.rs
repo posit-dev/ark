@@ -651,7 +651,6 @@ impl RDataExplorer {
             None => bail!("Unexpected output from .ps.filter_rows. Expected 'errors' field."),
         };
 
-        // let had_errors = self.handle_filter_errors(rows.attr("row_filters_errors"))?;
         Ok((row_indices, errors))
     }
 
@@ -664,7 +663,6 @@ impl RDataExplorer {
             match error {
                 None => {
                     self.row_filters[i].is_valid = Some(true);
-                    continue;
                 },
                 Some(error) => {
                     self.row_filters[i].is_valid = Some(false);
