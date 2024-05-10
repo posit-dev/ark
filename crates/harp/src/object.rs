@@ -908,6 +908,8 @@ impl TryFrom<&Vec<i32>> for RObject {
     }
 }
 
+// Converts an R named character vector to a HashMap<String, String>
+// Note: Duplicated names are silently ignored, and only the first occurence is kept.
 impl TryFrom<RObject> for HashMap<String, String> {
     type Error = crate::error::Error;
     fn try_from(value: RObject) -> Result<Self, Self::Error> {
@@ -936,6 +938,8 @@ impl TryFrom<RObject> for HashMap<String, String> {
     }
 }
 
+// Converts an R named integer vector to a HashMap<String, i32>
+// Note: Duplicated names are silently ignored, and only the first occurence is kept.
 impl TryFrom<RObject> for HashMap<String, i32> {
     type Error = crate::error::Error;
     fn try_from(value: RObject) -> Result<Self, Self::Error> {
@@ -1409,6 +1413,34 @@ mod tests {
             assert_eq!(out.get("pepperoni").unwrap(), "OK");
             assert_eq!(out.get("sausage").unwrap(), "OK");
             assert_eq!(out.get("pineapple").unwrap(), "NOT OK");
+
+
+            let v = r_parse_eval0("c(x = 'a', y = 'b', z = 'c')", R_ENVS.global).unwrap();
+            let out: HashMap<String, String> = v.try_into().unwrap();
+            assert_eq!(out["x"], "a"); // duplicated name is ignored and first is kept
+            assert_eq!(out["y"], "b");
+        }
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test_tryfrom_RObject_hashmap_i32() {
+        r_test! {
+            // Create a map of pizza toppings to their acceptability.
+            let v = r_parse_eval0("list(x = 1L, y = 2L, x = 3L)", R_ENVS.global).unwrap();
+            assert_eq!(v.length(), 3 as isize);
+
+            // Ensure we created an object of the same size as the map.
+            let out: HashMap<String, i32> = v.try_into().unwrap();
+
+            // Ensure we can convert the object back into a map with the same values.
+            assert_eq!(out["x"], 1); // duplicated name is ignored and first is kept
+            assert_eq!(out["y"], 2);
+
+            let v = r_parse_eval0("c(x = 1L, y = 2L, x = 3L)", R_ENVS.global).unwrap();
+            let out: HashMap<String, i32> = v.try_into().unwrap();
+            assert_eq!(out["x"], 1); // duplicated name is ignored and first is kept
+            assert_eq!(out["y"], 2);
         }
     }
 
