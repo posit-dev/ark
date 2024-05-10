@@ -312,7 +312,7 @@ fn test_data_explorer() {
         // height is less than 60.
         assert_match!(socket_rpc(&socket, req),
         DataExplorerBackendReply::SetRowFiltersReply(
-            FilterResult { selected_num_rows: num_rows, had_errors: None}
+            FilterResult { selected_num_rows: num_rows, had_errors: Some(false)}
         ) => {
             assert_eq!(num_rows, 2);
         });
@@ -568,7 +568,7 @@ fn test_data_explorer() {
         // first column of the matrix is less than 100.
         assert_match!(socket_rpc(&socket, req),
         DataExplorerBackendReply::SetRowFiltersReply(
-            FilterResult { selected_num_rows: num_rows, had_errors: None }
+            FilterResult { selected_num_rows: num_rows, had_errors: Some(false)}
         ) => {
             assert_eq!(num_rows, 8);
         });
@@ -634,7 +634,7 @@ fn test_data_explorer() {
         // first column is not NA.
         assert_match!(socket_rpc(&socket, req),
         DataExplorerBackendReply::SetRowFiltersReply(
-            FilterResult { selected_num_rows: num_rows, had_errors: None }
+            FilterResult { selected_num_rows: num_rows, had_errors: Some(false) }
         ) => {
             assert_eq!(num_rows, 6);
         });
@@ -677,7 +677,7 @@ fn test_data_explorer() {
         // first field has a missing value.
         assert_match!(socket_rpc(&socket, req),
         DataExplorerBackendReply::SetRowFiltersReply(
-            FilterResult { selected_num_rows: num_rows, had_errors: None}
+            FilterResult { selected_num_rows: num_rows, had_errors: Some(false)}
         ) => {
             assert_eq!(num_rows, 3);
         });
@@ -740,7 +740,7 @@ fn test_data_explorer() {
         // the text contains ".".
         assert_match!(socket_rpc(&socket, req),
         DataExplorerBackendReply::SetRowFiltersReply(
-            FilterResult { selected_num_rows: num_rows, had_errors: None}
+            FilterResult { selected_num_rows: num_rows, had_errors: Some(false)}
         ) => {
             assert_eq!(num_rows, 2);
         });
@@ -772,7 +772,7 @@ fn test_data_explorer() {
         // the text either contains "." OR ends in "ent".
         assert_match!(socket_rpc(&socket, req),
         DataExplorerBackendReply::SetRowFiltersReply(
-            FilterResult { selected_num_rows: num_rows, had_errors: None }
+            FilterResult { selected_num_rows: num_rows, had_errors: Some(false) }
         ) => {
             assert_eq!(num_rows, 4);
         });
@@ -799,7 +799,7 @@ fn test_data_explorer() {
         // value.
         assert_match!(socket_rpc(&socket, req),
         DataExplorerBackendReply::SetRowFiltersReply(
-            FilterResult { selected_num_rows: num_rows, had_errors: None }
+            FilterResult { selected_num_rows: num_rows, had_errors: Some(false) }
         ) => {
             assert_eq!(num_rows, 1);
         });
@@ -866,10 +866,20 @@ fn test_data_explorer() {
         // the number of selected rows should be 3 (all the rows in the data set)
         assert_match!(socket_rpc(&socket, req),
         DataExplorerBackendReply::SetRowFiltersReply(
-            FilterResult { selected_num_rows: num_rows, had_errors: None}
+            FilterResult { selected_num_rows: num_rows, had_errors: Some(true)}
         ) => {
             assert_eq!(num_rows, 3);
         });
+
+        // We also want to make sure that invalid filters are marked along with their
+        // error messages.
+        let req = DataExplorerBackendRequest::GetState;
+        assert_match!(socket_rpc(&socket, req),
+            DataExplorerBackendReply::GetStateReply(state) => {
+                assert_eq!(state.row_filters[0].is_valid, Some(false));
+                assert!(state.row_filters[0].error_message.is_some());
+            }
+        );
 
         // --- boolean filters ---
 
@@ -923,7 +933,7 @@ fn test_data_explorer() {
         // value is TRUE.
         assert_match!(socket_rpc(&socket, req),
         DataExplorerBackendReply::SetRowFiltersReply(
-            FilterResult { selected_num_rows: num_rows, had_errors: None}
+            FilterResult { selected_num_rows: num_rows, had_errors: Some(false)}
         ) => {
             assert_eq!(num_rows, 3);
         });

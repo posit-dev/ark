@@ -6,6 +6,7 @@
 //
 
 use std::cmp;
+use std::collections::HashMap;
 
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::data_explorer_comm::BackendState;
@@ -421,8 +422,14 @@ impl RDataExplorer {
                 // Save the new row filters
                 self.row_filters = filters;
 
+                let mut had_errors: Option<bool> = None;
+
                 self.filtered_indices = if self.row_filters.len() > 0 {
-                    Some(r_task(|| self.r_filter_rows())?)
+                    let (indices, errors) = r_task(|| self.r_filter_rows())?;
+                    // this is called for the side-effect of updating the row_filters with validty status and
+                    // error messages
+                    had_errors = Some(self.apply_filter_errors(errors)?);
+                    Some(indices)
                 } else {
                     None
                 };
@@ -436,7 +443,7 @@ impl RDataExplorer {
                             Some(ref indices) => indices.len() as i64,
                             None => self.shape.num_rows as i64,
                         },
-                        had_errors: None,
+                        had_errors,
                     }
                 }))
             },
@@ -603,14 +610,15 @@ impl RDataExplorer {
     /// Filter all the rows in the data object according to the row filters in
     /// self.row_filters.
     ///
-    /// Returns a vector of all the row indices that pass the filters.
-    fn r_filter_rows(&self) -> anyhow::Result<Vec<i32>> {
+    /// Returns a tuple containing a vector of all the row indices that pass the filters and
+    /// a character vector of errors, where None means no error happened.
+    fn r_filter_rows(&mut self) -> anyhow::Result<(Vec<i32>, Vec<Option<String>>)> {
         let mut filters: Vec<RObject> = vec![];
 
         // Shortcut: If there are no row filters, the filtered indices include
         // all row indices.
         if self.row_filters.is_empty() {
-            return Ok((1..=self.shape.num_rows).collect());
+            return Ok(((1..=self.shape.num_rows).collect(), vec![]));
         }
 
         // Convert each filter to an R object by marshaling through the JSON
@@ -628,15 +636,44 @@ impl RDataExplorer {
 
         // Pass the row filters to R and get the resulting row indices
         let filters = RObject::try_from(filters)?;
-        let rows = RFunction::new("", ".ps.filter_rows")
+        let result: HashMap<String, RObject> = RFunction::new("", ".ps.filter_rows")
             .param("table", self.table.get().sexp)
             .param("row_filters", filters)
-            .call_in(ARK_ENVS.positron_ns)?;
+            .call_in(ARK_ENVS.positron_ns)?
+            .try_into()?;
 
-        // Convert the row indices to a Rust vector
-        let row_indices = Vec::<i32>::try_from(rows)?;
+        // Handle errors that occured in the filters
+        let row_indices = match result.get("indices") {
+            Some(indices) => Vec::<i32>::try_from(indices.clone())?,
+            None => bail!("Unexpected output from .ps.filter_rows. Expected 'indices' field."),
+        };
 
-        Ok(row_indices)
+        let errors = match result.get("errors") {
+            Some(errors) => Vec::<Option<String>>::try_from(errors.clone())?,
+            None => bail!("Unexpected output from .ps.filter_rows. Expected 'errors' field."),
+        };
+
+        Ok((row_indices, errors))
+    }
+
+    // Handle errors that occured in the filters
+    //
+    // This function mutates the `row_filters` attribute to include error messages and validity status.
+    fn apply_filter_errors(&mut self, errors: Vec<Option<String>>) -> anyhow::Result<bool> {
+        let mut had_errors = false;
+        for (i, error) in errors.iter().enumerate() {
+            match error {
+                None => {
+                    self.row_filters[i].is_valid = Some(true);
+                },
+                Some(error) => {
+                    self.row_filters[i].is_valid = Some(false);
+                    self.row_filters[i].error_message = Some(error.clone());
+                    had_errors = true;
+                },
+            }
+        }
+        return Ok(had_errors);
     }
 
     /// Sort the filtered indices according to the sort keys, storing the
