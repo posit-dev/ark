@@ -24,9 +24,9 @@ pub struct Lsp {
 }
 
 impl Lsp {
-    pub fn new(runtime: Arc<Runtime>, kernel_init_rx: BusReader<KernelInfo>) -> Self {
+    pub fn new(kernel_init_rx: BusReader<KernelInfo>) -> Self {
         Self {
-            runtime,
+            runtime: Arc::new(tokio::runtime::Runtime::new().unwrap()),
             kernel_init_rx,
             kernel_initialized: false,
         }

@@ -10,13 +10,9 @@ use std::path::Path;
 use std::result::Result::Ok;
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::Once;
-use std::time::Duration;
 use std::time::SystemTime;
 
 use anyhow::*;
-use crossbeam::channel::Receiver;
-use crossbeam::channel::Sender;
 use lazy_static::lazy_static;
 use log::*;
 use regex::Regex;
@@ -34,50 +30,6 @@ use crate::lsp::traits::rope::RopeExt;
 use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
-
-#[derive(Clone, Debug)]
-pub struct IndexerStateManager {
-    init_tx: Arc<Mutex<Sender<()>>>,
-    init_rx: Arc<Mutex<Receiver<()>>>,
-}
-
-impl IndexerStateManager {
-    pub fn new() -> Self {
-        let (init_tx, init_rx) = crossbeam::channel::bounded(1);
-
-        let init_tx = Arc::new(Mutex::new(init_tx));
-        let init_rx = Arc::new(Mutex::new(init_rx));
-
-        Self { init_tx, init_rx }
-    }
-
-    pub fn initialize(&self) {
-        let init_tx = self.init_tx.lock().unwrap();
-        init_tx.send(()).unwrap();
-    }
-
-    pub fn wait_until_initialized(&self) {
-        // Ensures that only 1 thread can call the initialization function.
-        // All other calling threads get blocked until the initializer has run.
-        // All subsequent calls essentially become no-ops.
-        static ONCE: Once = std::sync::Once::new();
-
-        ONCE.call_once(|| {
-            let init_rx = self.init_rx.lock().unwrap();
-
-            match init_rx.recv_timeout(Duration::from_secs(30)) {
-                Ok(_) => {
-                    log::info!(
-                        "Received signal that indexer was initialized, proceeding with diagnostics."
-                    )
-                },
-                Err(err) => log::error!(
-                    "Indexer wasn't initialized after 30 seconds, proceeding with diagnostics. {err:?}"
-                ),
-            };
-        })
-    }
-}
 
 #[derive(Clone, Debug)]
 pub enum IndexEntryData {
@@ -108,32 +60,26 @@ lazy_static! {
     static ref RE_COMMENT_SECTION: Regex = Regex::new(r"^\s*(#+)\s*(.*?)\s*[#=-]{4,}\s*$").unwrap();
 }
 
-pub fn start(folders: Vec<String>, indexer_state_manager: IndexerStateManager) {
-    // create a task that indexes these folders
-    let _handle = tokio::spawn(async move {
-        let now = SystemTime::now();
-        info!("Indexing started.");
+pub fn start(folders: Vec<String>) {
+    let now = SystemTime::now();
+    info!("Indexing started.");
 
-        for folder in folders {
-            let walker = WalkDir::new(folder);
-            for entry in walker.into_iter().filter_entry(|e| filter_entry(e)) {
-                if let Ok(entry) = entry {
-                    if entry.file_type().is_file() {
-                        if let Err(error) = index_file(entry.path()) {
-                            error!("{:?}", error);
-                        }
+    for folder in folders {
+        let walker = WalkDir::new(folder);
+        for entry in walker.into_iter().filter_entry(|e| filter_entry(e)) {
+            if let Ok(entry) = entry {
+                if entry.file_type().is_file() {
+                    if let Err(error) = index_file(entry.path()) {
+                        error!("{:?}", error);
                     }
                 }
             }
         }
+    }
 
-        if let Ok(elapsed) = now.elapsed() {
-            info!("Indexing finished after {:?}.", elapsed);
-        }
-
-        // Send notification that indexer has finished initial indexing
-        indexer_state_manager.initialize();
-    });
+    if let Ok(elapsed) = now.elapsed() {
+        info!("Indexing finished after {:?}.", elapsed);
+    }
 }
 
 pub fn find(symbol: &str) -> Option<(String, IndexEntry)> {
