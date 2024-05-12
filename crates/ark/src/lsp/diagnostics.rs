@@ -7,35 +7,13 @@
 
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::marker::PhantomData;
 use std::time::Duration;
 
 use anyhow::anyhow;
 use anyhow::bail;
 use anyhow::Result;
-use harp::call::r_expr_quote;
-use harp::exec::RFunction;
-use harp::exec::RFunctionExt;
-use harp::external_ptr::ExternalPointer;
-use harp::object::RObject;
-use harp::r_symbol;
 use harp::utils::is_symbol_valid;
-use harp::utils::r_is_null;
 use harp::utils::sym_quote_invalid;
-use libr::R_NilValue;
-use libr::Rf_ScalarInteger;
-use libr::Rf_allocVector;
-use libr::Rf_cons;
-use libr::Rf_lang1;
-use libr::Rf_xlength;
-use libr::CDR;
-use libr::RAW;
-use libr::RAWSXP;
-use libr::SETCDR;
-use libr::SET_TAG;
-use libr::SET_VECTOR_ELT;
-use libr::VECSXP;
-use libr::VECTOR_ELT;
 use ropey::Rope;
 use stdext::*;
 use tower_lsp::lsp_types::Diagnostic;
@@ -51,7 +29,6 @@ use crate::lsp::encoding::convert_tree_sitter_range_to_lsp_range;
 use crate::lsp::indexer;
 use crate::lsp::state::WorldState;
 use crate::lsp::traits::rope::RopeExt;
-use crate::r_task;
 use crate::r_task::r_async_task;
 use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
@@ -782,137 +759,150 @@ fn recurse_call_arguments_default(
     ().ok()
 }
 
-struct TreeSitterCall<'a> {
-    // A call of the form <fun>(list(0L, <ptr>), foo = list(1L, <ptr>))
-    pub call: RObject,
-    node_phantom: PhantomData<&'a Node<'a>>,
-}
+// This is commented out because:
+//
+// - The package not installed lint is a bit too distracting. Should it become
+//   an assist?
+//   https://github.com/posit-dev/positron/issues/2672
+// - We'd like to avoid running R code during diagnostics
+//   https://github.com/posit-dev/positron/issues/2321
+// - The diagnostic meshes R and tree-sitter objects in a way that's not
+//   perfectly safe and we have a known crash logged:
+//   https://github.com/posit-dev/positron/issues/2630. This diagnostic uses R for
+//   argument matching but since we prefer to avoid running `r_task()` in LSP code
+//   we should just reimplement argument matching on the Rust side.
 
-impl<'a> TreeSitterCall<'a> {
-    pub unsafe fn new(
-        node: Node<'a>,
-        function: &str,
-        context: &mut DiagnosticContext,
-    ) -> Result<Self> {
-        // start with a call to the function: <fun>()
-        let sym = r_symbol!(function);
-        let call = RObject::new(Rf_lang1(sym));
-
-        // then augment it with arguments
-        let mut tail = *call;
-
-        if let Some(arguments) = node.child_by_field_name("arguments") {
-            let mut cursor = arguments.walk();
-            let children = arguments.children_by_field_name("argument", &mut cursor);
-            let mut i = 0;
-            for child in children {
-                let arg_list = RObject::from(Rf_allocVector(VECSXP, 2));
-
-                // set the argument to a list<2>, with its first element: a scalar integer
-                // that corresponds to its O-based position. The position is used below to
-                // map back to the Node
-                SET_VECTOR_ELT(*arg_list, 0, Rf_ScalarInteger(i as i32));
-
-                // Set the second element of the list to an external pointer
-                // to the child node.
-                if let Some(value) = child.child_by_field_name("value") {
-                    // TODO: Wrap this in a nice constructor
-                    let node_size = std::mem::size_of::<Node>();
-                    let node_storage = Rf_allocVector(RAWSXP, node_size as isize);
-                    SET_VECTOR_ELT(*arg_list, 1, node_storage);
-
-                    let p_node_storage: *mut Node<'a> = RAW(node_storage) as *mut Node<'a>;
-                    std::ptr::copy_nonoverlapping(&value, p_node_storage, 1);
-                }
-
-                SETCDR(tail, Rf_cons(*arg_list, R_NilValue));
-                tail = CDR(tail);
-
-                // potentially add the argument name
-                if let Some(name) = child.child_by_field_name("name") {
-                    let name = context.contents.node_slice(&name)?.to_string();
-                    let sym_name = r_symbol!(name);
-                    SET_TAG(tail, sym_name);
-                }
-
-                i = i + 1;
-            }
-        }
-
-        Ok(Self {
-            call,
-            node_phantom: PhantomData,
-        })
-    }
-}
-
-fn recurse_call_arguments_custom(
-    node: Node,
-    context: &mut DiagnosticContext,
-    diagnostics: &mut Vec<Diagnostic>,
-    function: &str,
-    diagnostic_function: &str,
-) -> Result<()> {
-    r_task(|| unsafe {
-        // Build a call that mixes treesitter nodes (as external pointers)
-        // library(foo, pos = 2 + 2)
-        //    ->
-        // library([0, <node0>], pos = [1, <node1>])
-        // where:
-        //   - node0 is an external pointer to a treesitter Node for the identifier `foo`
-        //   - node1 is an external pointer to a treesitter Node for the call `2 + 2`
-        //
-        // The TreeSitterCall object holds on to the nodes, so that they can be
-        // safely passed down to the R side as external pointers
-        let call = TreeSitterCall::new(node, function, context)?;
-
-        let custom_diagnostics = RFunction::from(diagnostic_function)
-            .add(r_expr_quote(call.call))
-            .add(ExternalPointer::new(context.contents))
-            .call()?;
-
-        if !r_is_null(*custom_diagnostics) {
-            let n = Rf_xlength(*custom_diagnostics);
-            for i in 0..n {
-                // diag is a list with:
-                //   - The kind of diagnostic: skip, default, simple
-                //   - The node external pointer, i.e. the ones made in TreeSitterCall::new
-                //   - The message, when kind is "simple"
-                let diag = VECTOR_ELT(*custom_diagnostics, i);
-
-                let kind: String = RObject::view(VECTOR_ELT(diag, 0)).try_into()?;
-
-                if kind == "skip" {
-                    // skip the diagnostic entirely, e.g.
-                    // library(foo)
-                    //         ^^^
-                    continue;
-                }
-
-                let ptr = VECTOR_ELT(diag, 1);
-                let value: Node<'static> = *(RAW(ptr) as *mut Node<'static>);
-
-                if kind == "default" {
-                    // the R side gives up, so proceed as normal, e.g.
-                    // library(foo, pos = ...)
-                    //                    ^^^
-                    recurse(value, context, diagnostics)?;
-                } else if kind == "simple" {
-                    // Simple diagnostic from R, e.g.
-                    // library("ggplot3")
-                    //          ^^^^^^^   Package 'ggplot3' is not installed
-                    let message: String = RObject::view(VECTOR_ELT(diag, 2)).try_into()?;
-                    let range = value.range();
-                    let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
-                    let diagnostic = Diagnostic::new_simple(range, message.into());
-                    diagnostics.push(diagnostic);
-                }
-            }
-        }
-
-        ().ok()
-    })
-}
+// struct TreeSitterCall<'a> {
+//     // A call of the form <fun>(list(0L, <ptr>), foo = list(1L, <ptr>))
+//     pub call: RObject,
+//     node_phantom: PhantomData<&'a Node<'a>>,
+// }
+//
+// impl<'a> TreeSitterCall<'a> {
+//     pub unsafe fn new(
+//         node: Node<'a>,
+//         function: &str,
+//         context: &mut DiagnosticContext,
+//     ) -> Result<Self> {
+//         // start with a call to the function: <fun>()
+//         let sym = r_symbol!(function);
+//         let call = RObject::new(Rf_lang1(sym));
+//
+//         // then augment it with arguments
+//         let mut tail = *call;
+//
+//         if let Some(arguments) = node.child_by_field_name("arguments") {
+//             let mut cursor = arguments.walk();
+//             let children = arguments.children_by_field_name("argument", &mut cursor);
+//             let mut i = 0;
+//             for child in children {
+//                 let arg_list = RObject::from(Rf_allocVector(VECSXP, 2));
+//
+//                 // set the argument to a list<2>, with its first element: a scalar integer
+//                 // that corresponds to its O-based position. The position is used below to
+//                 // map back to the Node
+//                 SET_VECTOR_ELT(*arg_list, 0, Rf_ScalarInteger(i as i32));
+//
+//                 // Set the second element of the list to an external pointer
+//                 // to the child node.
+//                 if let Some(value) = child.child_by_field_name("value") {
+//                     // TODO: Wrap this in a nice constructor
+//                     let node_size = std::mem::size_of::<Node>();
+//                     let node_storage = Rf_allocVector(RAWSXP, node_size as isize);
+//                     SET_VECTOR_ELT(*arg_list, 1, node_storage);
+//
+//                     let p_node_storage: *mut Node<'a> = RAW(node_storage) as *mut Node<'a>;
+//                     std::ptr::copy_nonoverlapping(&value, p_node_storage, 1);
+//                 }
+//
+//                 SETCDR(tail, Rf_cons(*arg_list, R_NilValue));
+//                 tail = CDR(tail);
+//
+//                 // potentially add the argument name
+//                 if let Some(name) = child.child_by_field_name("name") {
+//                     let name = context.contents.node_slice(&name)?.to_string();
+//                     let sym_name = r_symbol!(name);
+//                     SET_TAG(tail, sym_name);
+//                 }
+//
+//                 i = i + 1;
+//             }
+//         }
+//
+//         Ok(Self {
+//             call,
+//             node_phantom: PhantomData,
+//         })
+//     }
+// }
+//
+// fn recurse_call_arguments_custom(
+//     node: Node,
+//     context: &mut DiagnosticContext,
+//     diagnostics: &mut Vec<Diagnostic>,
+//     function: &str,
+//     diagnostic_function: &str,
+// ) -> Result<()> {
+//     r_task(|| unsafe {
+//         // Build a call that mixes treesitter nodes (as external pointers)
+//         // library(foo, pos = 2 + 2)
+//         //    ->
+//         // library([0, <node0>], pos = [1, <node1>])
+//         // where:
+//         //   - node0 is an external pointer to a treesitter Node for the identifier `foo`
+//         //   - node1 is an external pointer to a treesitter Node for the call `2 + 2`
+//         //
+//         // The TreeSitterCall object holds on to the nodes, so that they can be
+//         // safely passed down to the R side as external pointers
+//         let call = TreeSitterCall::new(node, function, context)?;
+//
+//         let custom_diagnostics = RFunction::from(diagnostic_function)
+//             .add(r_expr_quote(call.call))
+//             .add(ExternalPointer::new(context.contents))
+//             .call()?;
+//
+//         if !r_is_null(*custom_diagnostics) {
+//             let n = Rf_xlength(*custom_diagnostics);
+//             for i in 0..n {
+//                 // diag is a list with:
+//                 //   - The kind of diagnostic: skip, default, simple
+//                 //   - The node external pointer, i.e. the ones made in TreeSitterCall::new
+//                 //   - The message, when kind is "simple"
+//                 let diag = VECTOR_ELT(*custom_diagnostics, i);
+//
+//                 let kind: String = RObject::view(VECTOR_ELT(diag, 0)).try_into()?;
+//
+//                 if kind == "skip" {
+//                     // skip the diagnostic entirely, e.g.
+//                     // library(foo)
+//                     //         ^^^
+//                     continue;
+//                 }
+//
+//                 let ptr = VECTOR_ELT(diag, 1);
+//                 let value: Node<'static> = *(RAW(ptr) as *mut Node<'static>);
+//
+//                 if kind == "default" {
+//                     // the R side gives up, so proceed as normal, e.g.
+//                     // library(foo, pos = ...)
+//                     //                    ^^^
+//                     recurse(value, context, diagnostics)?;
+//                 } else if kind == "simple" {
+//                     // Simple diagnostic from R, e.g.
+//                     // library("ggplot3")
+//                     //          ^^^^^^^   Package 'ggplot3' is not installed
+//                     let message: String = RObject::view(VECTOR_ELT(diag, 2)).try_into()?;
+//                     let range = value.range();
+//                     let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
+//                     let diagnostic = Diagnostic::new_simple(range, message.into());
+//                     diagnostics.push(diagnostic);
+//                 }
+//             }
+//         }
+//
+//         ().ok()
+//     })
+// }
 
 fn recurse_call(
     node: Node,
@@ -934,26 +924,6 @@ fn recurse_call(
     let fun = fun.as_str();
 
     match fun {
-        // TODO: there should be some sort of registration mechanism so
-        //       that functions can declare that they know how to generate
-        //       diagnostics, i.e. ggplot2::aes() would skip diagnostics
-
-        // special case to deal with library() and require() nse
-        "library" => recurse_call_arguments_custom(
-            node,
-            context,
-            diagnostics,
-            "library",
-            ".ps.diagnostics.custom.library",
-        )?,
-        "require" => recurse_call_arguments_custom(
-            node,
-            context,
-            diagnostics,
-            "require",
-            ".ps.diagnostics.custom.require",
-        )?,
-
         // default case: recurse into each argument
         _ => recurse_call_arguments_default(node, context, diagnostics)?,
     };
