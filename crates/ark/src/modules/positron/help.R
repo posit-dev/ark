@@ -187,90 +187,87 @@ getHtmlHelpContentsDevImpl <- function(x) {
 
 #' @export
 .ps.help.previewRd <- function(rd_file) {
-  # I have allowed myself to use pkgload in the implementation of this, because
-  # the main usage we anticipate is via the pkgload shims for `help()` and `?`.
-  # This could maybe be relaxed to a check whether pkgload is installed.
-  # The usage doesn't absolutely require that it be attached.
-  if (!"pkgload" %in% loadedNamespaces()) {
-    return(NULL)
+  # This `/preview` url gets special handling in `proxy_request()`.
+  url <- sprintf("/preview?file=%s", rd_file)
+  port <- tools:::httpdPort()
+  url <- tools:::dynamicHelpURL(url, port)
+  # TO THINK: now that we are making a special URL that only we can handle,
+  # perhaps this should be .ps.Call("ps_browse_url",url) or something even more
+  # specialized to positron help.
+  utils::browseURL(url)
+}
+
+# @param rd_file Path to an `.Rd` file.
+# @returns The result of converting that `.Rd` to HTML and concatenating to a
+#   string.
+rd_to_html <- function(rd_file) {
+  if (!nzchar(package)) {
+    # TODO(Jenny) Use `DESCRIPTION` if it is there instead of this
+    package <- basename(dirname(dirname(x)))
   }
 
-  # Get "devhelp" and "foofy" out of a path like:
-  # /Users/jenny/rrr/devhelp/man/foofy.Rd
-  pkg <- basename(dirname(dirname(rd_file)))
-  topic <- tools::file_path_sans_ext(basename(rd_file))
+  path <- tempfile(fileext = ".html")
+  on.exit(unlink(path), add = TRUE)
 
-  # Get the help files associated with this topic.
-  help_files <- help(topic, pkg)
+  # Write HTML to file (with support for links and dynamic requests)
+  macros <- load_macros(rd_file)
+  tools::Rd2HTML(
+    rd_file,
+    out = path,
+    package = package,
+    macros = macros,
+    dynamic = TRUE
+  )
 
-  # Prepare a temporary filepath
-  file <- paste0(topic, ".html")
-  doc_path <- file.path("doc", "html", file)
-  # This MUST have a very specific form to please the R help server.
-  # In particular, I can't use positron_tempdir() here.
-  directory <- file.path(tempdir(), ".R", "doc", "html")
-  if (!dir.exists(directory)) {
-    if (!dir.create(directory, showWarnings = FALSE, recursive = TRUE)) {
-      stop(sprintf("Can't create temporary directory at '%s'.", directory))
-    }
-  }
-  html_path <- file.path(directory, file)
-  # `html_path` looks like:
-  # /tmp/RtmpDOCyeE/.R/doc/html/foofy.html
+  # Make tweaks to the returned HTML
+  lines <- readLines(path, warn = FALSE)
 
-  pkgload_topic_write_html(x = help_files, path = html_path)
-
-  # fixups from RStudio's Rd2HTML function
-  # https://github.com/rstudio/rstudio/blob/eef4efa0b4a9a6c6d984912a09cd6504decfb8c6/src/cpp/session/modules/SessionHelp.R#L1021
-  lines <- readLines(html_path, warn = FALSE)
   lines <- sub(
     "R Documentation</td></tr></table>",
     "(preview) R Documentation</td></tr></table>",
     lines
   )
-  if (nzchar(pkg)) {
-      # replace with "dev-figure" and parameters so that the server
-      # can look for figures in `man/` of the dev package
-      lines <- sub(
-        'img src="figures/([^"]*)"',
-        sprintf('img src="dev-figure?pkg=%s&figure=\\1"',pkg),
-        lines
-      )
 
-      # add ?dev=<topic>
-      lines <- gsub(
-        'a href="../../([^/]*/help/)([^/]*)">',
-        'a href="/library/\\1\\2?dev=\\2">',
-        lines
-      )
+  if (nzchar(package)) {
+    # TODO(Jenny) support dev-figure
+    # Replace with "dev-figure" and parameters so that `proxy_request()` of our help proxy
+    # server can look for figures in `man/` of the dev package.
+    lines <- sub(
+      'img src="figures/([^"]*)"',
+      sprintf('img src="dev-figure?pkg=%s&figure=\\1"', package),
+      lines
+    )
+
+    # TODO(Jenny) support `?dev` query parameter. Likely by calling
+    # `pkgload::dev_topic_find()` and then recalling `rd_as_html()` with that Rd file
+    # and the returned `package`.
+    # Two purposes:
+    # - For non-dev topics, these end up correctly going through `/library/` again rather
+    #   than looking into a temp directory.
+    # - For dev topics, the `?dev=<topic>` query parameter gives us a chance to try to look
+    #   up the dev topic ourselves before forwarding on to the R server, i.e. in
+    #   `proxy_request()` of our help proxy server.
+    lines <- gsub(
+      'a href="../../([^/]*/help/)([^/]*)">',
+      'a href="/library/\\1\\2?dev=\\2">',
+      lines
+    )
   }
-  writeLines(lines, html_path)
 
-  # This MUST be a localhost URL for Positron to open it in the help pane.
-  port <- pkgload:::httpdPort()
-  url <- sprintf("http://127.0.0.1:%i/%s", port, doc_path)
-
-  utils::browseURL(url)
+  paste0(lines, collapse = "\n")
 }
 
-pkgload_topic_write_html <- function(x, path) {
-  macros <- pkgload:::load_rd_macros(dirname(dirname(x$path)))
+load_macros <- function(rd_file) {
+  maybe_package_dir <- dirname(dirname(rd_file))
 
-  tools::Rd2HTML(
-    x$path,
-    out = path,
-    package = x$pkg,
-    stages = x$stage,
-    no_links = TRUE,
-    macros = macros
-  )
-
-  # departure from pkgload:::topic_write_html()
-  # make sure R.css is a sibling to path
-  css_path <- file.path(dirname(path), "R.css")
-  # departure from pkgload:::topic_write_html()
-  # TODO: use Positron's R.css instead of the one that ships with R?
-  if (!file.exists(css_path)) {
-    file.copy(file.path(R.home("doc"), "html", "R.css"), css_path)
+  if (file.exists(file.path(maybe_package_dir, "DESCRIPTION")) ||
+      file.exists(file.path(maybe_package_dir, "DESCRIPTION.in"))) {
+    # NOTE: ?loadPkgRdMacros has:
+    #   loadPkgRdMacros loads the system Rd macros by default
+    # so it shouldn't be necessary to load system macros ourselves here
+    tools::loadPkgRdMacros(maybe_package_dir)
+  } else {
+    path <- file.path(R.home("share"), "Rd/macros/system.Rd")
+    tools::loadRdMacros(path)
   }
 }
