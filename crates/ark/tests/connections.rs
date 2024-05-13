@@ -1,5 +1,7 @@
+use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::connections_comm::ConnectionsBackendReply;
 use amalthea::comm::connections_comm::ConnectionsBackendRequest;
+use amalthea::comm::connections_comm::ConnectionsFrontendEvent;
 use amalthea::comm::connections_comm::ContainsDataParams;
 use amalthea::comm::connections_comm::FieldSchema;
 use amalthea::comm::connections_comm::GetIconParams;
@@ -198,5 +200,19 @@ fn test_connection_list_fields() {
                 }
             );
         }
+    })
+}
+
+#[test]
+fn test_send_frontend_event() {
+    r_test(|| {
+        let socket = open_dummy_connection();
+
+        let event = ConnectionsFrontendEvent::Update;
+        let out = socket
+            .incoming_tx
+            .send(CommMsg::Data(serde_json::to_value(event).unwrap()));
+
+        out.unwrap();
     })
 }
