@@ -69,8 +69,8 @@ pub fn start(folders: Vec<String>) {
         for entry in walker.into_iter().filter_entry(|e| filter_entry(e)) {
             if let Ok(entry) = entry {
                 if entry.file_type().is_file() {
-                    if let Err(error) = index_file(entry.path()) {
-                        error!("{:?}", error);
+                    if let Err(err) = index_file(entry.path()) {
+                        error!("Can't index file {:?}: {err:?}", entry.path());
                     }
                 }
             }
