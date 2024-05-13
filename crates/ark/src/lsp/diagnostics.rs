@@ -78,7 +78,7 @@ impl<'a> DiagnosticContext<'a> {
     }
 }
 
-pub fn generate_diagnostics(doc: Document, state: WorldState) -> Vec<Diagnostic> {
+pub(crate) fn generate_diagnostics(doc: Document, state: WorldState) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
 
     {

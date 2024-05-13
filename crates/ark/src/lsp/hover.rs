@@ -66,8 +66,7 @@ fn hover_context(node: Node, context: &DocumentContext) -> Result<Option<HoverCo
     Ok(None)
 }
 
-/// SAFETY: Requires access to the R runtime.
-pub unsafe fn hover(context: &DocumentContext) -> Result<Option<MarkupContent>> {
+pub(crate) unsafe fn r_hover(context: &DocumentContext) -> anyhow::Result<Option<MarkupContent>> {
     // get the node
     let node = &context.node;
 

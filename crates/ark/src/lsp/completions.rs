@@ -11,5 +11,5 @@ mod resolve;
 mod sources;
 mod types;
 
-pub use provide::provide_completions;
-pub use resolve::resolve_completion;
+pub(crate) use provide::provide_completions;
+pub(crate) use resolve::resolve_completion;

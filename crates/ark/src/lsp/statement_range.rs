@@ -19,10 +19,7 @@ use tower_lsp::lsp_types::VersionedTextDocumentIdentifier;
 use tree_sitter::Node;
 use tree_sitter::Point;
 
-use crate::backend_trace;
-use crate::lsp::backend::Backend;
 use crate::lsp::encoding::convert_point_to_position;
-use crate::lsp::encoding::convert_position_to_point;
 use crate::lsp::traits::cursor::TreeCursorExt;
 use crate::lsp::traits::rope::RopeExt;
 use crate::treesitter::NodeType;
@@ -53,44 +50,25 @@ pub struct StatementRangeResponse {
 // roxygen2 comments can contain 1 or more leading `#` before the `'`.
 static RE_ROXYGEN2_COMMENT: Lazy<Regex> = Lazy::new(|| Regex::new(r"^#+'").unwrap());
 
-impl Backend {
-    pub async fn statement_range(
-        &self,
-        params: StatementRangeParams,
-    ) -> tower_lsp::jsonrpc::Result<Option<StatementRangeResponse>> {
-        backend_trace!(self, "statement_range({:?})", params);
-
-        let uri = &params.text_document.uri;
-        let Some(document) = self.state.documents.get(uri) else {
-            backend_trace!(
-                self,
-                "statement_range(): No document associated with URI {uri}"
-            );
-            return Ok(None);
-        };
-
-        let root = document.ast.root_node();
-        let contents = &document.contents;
-
-        let position = params.position;
-        let point = convert_position_to_point(contents, position);
-
-        let row = point.row;
-
-        // Initial check to see if we are in a roxygen2 comment, in which case
-        // we exit immediately, returning that line as the `range` and possibly
-        // with `code` stripped of the leading `#' ` if we detect that we are in
-        // `@examples`.
-        if let Some((node, code)) = find_roxygen_comment_at_point(&root, contents, point) {
-            return Ok(Some(new_statement_range_response(&node, contents, code)));
-        }
-
-        if let Some(node) = find_statement_range_node(&root, row) {
-            return Ok(Some(new_statement_range_response(&node, contents, None)));
-        };
-
-        Ok(None)
+pub(crate) fn statement_range(
+    root: tree_sitter::Node,
+    contents: &ropey::Rope,
+    point: Point,
+    row: usize,
+) -> anyhow::Result<Option<StatementRangeResponse>> {
+    // Initial check to see if we are in a roxygen2 comment, in which case
+    // we exit immediately, returning that line as the `range` and possibly
+    // with `code` stripped of the leading `#' ` if we detect that we are in
+    // `@examples`.
+    if let Some((node, code)) = find_roxygen_comment_at_point(&root, contents, point) {
+        return Ok(Some(new_statement_range_response(&node, contents, code)));
     }
+
+    if let Some(node) = find_statement_range_node(&root, row) {
+        return Ok(Some(new_statement_range_response(&node, contents, None)));
+    };
+
+    Ok(None)
 }
 
 fn new_statement_range_response(

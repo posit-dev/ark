@@ -5,7 +5,6 @@
 //
 //
 
-use anyhow::Result;
 use harp::eval::r_parse_eval;
 use harp::eval::RParseEvalOptions;
 use harp::utils::r_formals;
@@ -35,7 +34,9 @@ use crate::treesitter::NodeTypeExt;
 // that is a bit hard to follow.
 
 /// SAFETY: Requires access to the R runtime.
-pub unsafe fn signature_help(context: &DocumentContext) -> Result<Option<SignatureHelp>> {
+pub(crate) unsafe fn r_signature_help(
+    context: &DocumentContext,
+) -> anyhow::Result<Option<SignatureHelp>> {
     // Get document AST + completion position.
     let ast = &context.document.ast;
 
@@ -342,7 +343,7 @@ mod tests {
 
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
-    use crate::lsp::signature_help::signature_help;
+    use crate::lsp::signature_help::r_signature_help;
     use crate::test::point_from_cursor;
 
     #[test]
@@ -352,7 +353,7 @@ mod tests {
             let document = Document::new(&text, None);
             let context = DocumentContext::new(&document, point, None);
 
-            let help = unsafe { signature_help(&context) };
+            let help = unsafe { r_signature_help(&context) };
             let help = help.unwrap().unwrap();
             assert_eq!(help.signatures.len(), 1);
 
@@ -369,14 +370,14 @@ mod tests {
             let (text, point) = point_from_cursor("library@()");
             let document = Document::new(&text, None);
             let context = DocumentContext::new(&document, point, None);
-            let help = unsafe { signature_help(&context) };
+            let help = unsafe { r_signature_help(&context) };
             let help = help.unwrap();
             assert!(help.is_none());
 
             let (text, point) = point_from_cursor("library()@");
             let document = Document::new(&text, None);
             let context = DocumentContext::new(&document, point, None);
-            let help = unsafe { signature_help(&context) };
+            let help = unsafe { r_signature_help(&context) };
             let help = help.unwrap();
             assert!(help.is_none());
         })

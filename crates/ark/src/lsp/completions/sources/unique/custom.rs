@@ -26,7 +26,7 @@ use crate::lsp::completions::sources::utils::set_sort_text_by_words_first;
 use crate::lsp::completions::sources::utils::CallNodePositionType;
 use crate::lsp::completions::types::CompletionData;
 use crate::lsp::document_context::DocumentContext;
-use crate::lsp::signature_help::signature_help;
+use crate::lsp::signature_help::r_signature_help;
 use crate::treesitter::NodeTypeExt;
 
 pub fn completions_from_custom_source(
@@ -73,7 +73,7 @@ pub fn completions_from_custom_source_impl(
     let node = context.node;
 
     // Use the signature help tools to figure out the necessary pieces.
-    let signatures = unsafe { signature_help(context)? };
+    let signatures = unsafe { r_signature_help(context)? };
     let Some(signatures) = signatures else {
         return Ok(None);
     };

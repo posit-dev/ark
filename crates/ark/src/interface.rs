@@ -99,10 +99,12 @@ use crate::errors;
 use crate::help::message::HelpReply;
 use crate::help::message::HelpRequest;
 use crate::kernel::Kernel;
-use crate::lsp::backend::ConsoleInputs;
-use crate::lsp::backend::LspEvent;
-use crate::lsp::backend::TokioUnboundedSender;
 use crate::lsp::events::EVENTS;
+use crate::lsp::main_loop::Event;
+use crate::lsp::main_loop::KernelNotification;
+use crate::lsp::main_loop::LspTask;
+use crate::lsp::main_loop::TokioUnboundedSender;
+use crate::lsp::state_handlers::ConsoleInputs;
 use crate::modules;
 use crate::plots::graphics_device;
 use crate::r_task;
@@ -266,7 +268,7 @@ pub struct RMain {
     pub help_rx: Option<Receiver<HelpReply>>,
 
     /// Event channel for notifying the LSP. In principle, could be a Jupyter comm.
-    lsp_events_tx: Option<TokioUnboundedSender<LspEvent>>,
+    lsp_events_tx: Option<TokioUnboundedSender<Event>>,
 
     dap: RMainDap,
 
@@ -1054,13 +1056,19 @@ impl RMain {
         &self.kernel
     }
 
-    fn send_lsp(&self, event: LspEvent) {
+    fn send_lsp_task(&self, task: LspTask) {
         if let Some(ref tx) = self.lsp_events_tx {
-            tx.send(event).unwrap();
+            tx.send(Event::Task(task)).unwrap();
         }
     }
 
-    pub fn set_lsp_channel(&mut self, lsp_events_tx: TokioUnboundedSender<LspEvent>) {
+    fn send_lsp_notification(&self, event: KernelNotification) {
+        if let Some(ref tx) = self.lsp_events_tx {
+            tx.send(Event::Kernel(event)).unwrap();
+        }
+    }
+
+    pub(crate) fn set_lsp_channel(&mut self, lsp_events_tx: TokioUnboundedSender<Event>) {
         self.lsp_events_tx = Some(lsp_events_tx.clone());
 
         // Refresh LSP state now since we probably have missed some updates
@@ -1073,11 +1081,11 @@ impl RMain {
     pub fn refresh_lsp(&self) {
         match console_inputs() {
             Ok(inputs) => {
-                self.send_lsp(LspEvent::DidChangeConsoleInputs(inputs));
+                self.send_lsp_notification(KernelNotification::DidChangeConsoleInputs(inputs));
             },
             Err(err) => log::error!("Can't retrieve console inputs: {err:?}"),
         }
-        self.send_lsp(LspEvent::RefreshAllDiagnostics());
+        self.send_lsp_task(LspTask::RefreshAllDiagnostics());
     }
 
     pub fn call_frontend_method(&self, request: UiFrontendRequest) -> anyhow::Result<RObject> {

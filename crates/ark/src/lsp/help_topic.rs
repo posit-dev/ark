@@ -13,9 +13,7 @@ use tree_sitter::Node;
 use tree_sitter::Point;
 use tree_sitter::Tree;
 
-use crate::backend_trace;
-use crate::lsp::backend::Backend;
-use crate::lsp::encoding::convert_position_to_point;
+use crate::lsp::documents::Document;
 use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::rope::RopeExt;
 use crate::treesitter::NodeType;
@@ -39,45 +37,29 @@ pub struct HelpTopicResponse {
     pub topic: String,
 }
 
-impl Backend {
-    pub async fn help_topic(
-        &self,
-        params: HelpTopicParams,
-    ) -> tower_lsp::jsonrpc::Result<Option<HelpTopicResponse>> {
-        backend_trace!(self, "help_topic({:?})", params);
+pub(crate) fn help_topic(
+    tree: &tree_sitter::Tree,
+    point: Point,
+    document: &Document,
+) -> anyhow::Result<Option<HelpTopicResponse>> {
+    let Some(node) = locate_help_node(tree, point) else {
+        log::warn!("help_topic(): No help node at position {point}");
+        return Ok(None);
+    };
 
-        let uri = &params.text_document.uri;
-        let Some(document) = self.state.documents.get(uri) else {
-            backend_trace!(self, "help_topic(): No document associated with URI {uri}");
-            return Ok(None);
-        };
+    // Get the text of the node
+    let text = document.contents.node_slice(&node)?.to_string();
 
-        let tree = &document.ast;
-        let contents = &document.contents;
+    // Form the response
+    let response = HelpTopicResponse { topic: text };
 
-        let position = params.position;
-        let point = convert_position_to_point(contents, position);
+    log::trace!(
+        "help_topic(): Using help topic '{}' at position {}",
+        response.topic,
+        point
+    );
 
-        let Some(node) = locate_help_node(tree, point) else {
-            backend_trace!(self, "help_topic(): No help node at position {point}");
-            return Ok(None);
-        };
-
-        // Get the text of the node
-        let text = document.contents.node_slice(&node).unwrap().to_string();
-
-        // Form the response
-        let response = HelpTopicResponse { topic: text };
-
-        backend_trace!(
-            self,
-            "help_topic(): Using help topic '{}' at position {}",
-            response.topic,
-            point
-        );
-
-        Ok(Some(response))
-    }
+    Ok(Some(response))
 }
 
 fn locate_help_node(tree: &Tree, point: Point) -> Option<Node> {
