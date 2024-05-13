@@ -15,6 +15,12 @@
     .ps.Call("ps_connection_closed", id)
 }
 
+
+#' @export
+.ps.connection_updated <- function(id) {
+    .ps.Call("ps_connection_updated", id)
+}
+
 #' @export
 .ps.connection_observer <- function() {
 
@@ -67,10 +73,17 @@
         }
     }
 
-    connectionUpdated <- function(type, host) {
-
+    connectionUpdated <- function(type, host, hint) {
+        # hint is currently unused.
+        # it looks like its also not used in RStudio at all https://github.com/rstudio/rstudio/blob/6af5c0d231bd6fb2e50dcd980be49ecc2bf64c16/src/gwt/src/org/rstudio/studio/client/workbench/views/connections/ui/ObjectBrowser.java#L64
+        for (id in names(connections)) {
+            con <- connections[[id]]
+            if (con$host == host && con$type == type) {
+                .ps.connection_updated(id)
+                break
+            }
+        }
     }
-
 
     list(
         connectionOpened = connectionOpened,
