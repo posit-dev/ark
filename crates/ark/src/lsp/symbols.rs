@@ -23,20 +23,17 @@ use tower_lsp::lsp_types::Url;
 use tower_lsp::lsp_types::WorkspaceSymbolParams;
 use tree_sitter::Node;
 
-use crate::lsp::backend::Backend;
 use crate::lsp::encoding::convert_point_to_position;
 use crate::lsp::indexer;
 use crate::lsp::indexer::IndexEntryData;
+use crate::lsp::state::WorldState;
 use crate::lsp::traits::rope::RopeExt;
 use crate::lsp::traits::string::StringExt;
 use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
-pub fn symbols(
-    _backend: &Backend,
-    params: &WorkspaceSymbolParams,
-) -> Result<Vec<SymbolInformation>> {
+pub fn symbols(params: &WorkspaceSymbolParams) -> anyhow::Result<Vec<SymbolInformation>> {
     let query = &params.query;
     let mut info: Vec<SymbolInformation> = Vec::new();
 
@@ -79,14 +76,14 @@ pub fn symbols(
     Ok(info)
 }
 
-pub fn document_symbols(
-    backend: &Backend,
+pub(crate) fn document_symbols(
+    state: &WorldState,
     params: &DocumentSymbolParams,
-) -> Result<Vec<DocumentSymbol>> {
+) -> anyhow::Result<Vec<DocumentSymbol>> {
     let mut symbols: Vec<DocumentSymbol> = Vec::new();
 
     let uri = &params.text_document.uri;
-    let document = backend.state.documents.get(uri).into_result()?;
+    let document = state.documents.get(uri).into_result()?;
     let ast = &document.ast;
     let contents = &document.contents;
 
