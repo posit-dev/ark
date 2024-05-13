@@ -129,7 +129,7 @@ async fn proxy_request(
 
             // Log.
             log::info!(
-                "Proxing URL '{:?}' path '{}' content-type is '{:?}'",
+                "Proxying URL '{:?}' path '{}' content-type is '{:?}'",
                 target_url.to_string(),
                 target_url.path(),
                 content_type,
