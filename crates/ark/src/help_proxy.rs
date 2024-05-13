@@ -10,6 +10,7 @@ use std::net::TcpListener;
 use actix_web::get;
 use actix_web::web;
 use actix_web::App;
+use actix_web::HttpRequest;
 use actix_web::HttpResponse;
 use actix_web::HttpServer;
 use rust_embed::RustEmbed;
@@ -90,7 +91,14 @@ impl HelpProxy {
 
 // Proxies a request.
 #[get("/{url:.*}")]
-async fn proxy_request(path: web::Path<(String,)>, app_state: web::Data<AppState>) -> HttpResponse {
+async fn proxy_request(
+    req: HttpRequest,
+    path: web::Path<(String,)>,
+    app_state: web::Data<AppState>,
+) -> HttpResponse {
+    // Get the search string.
+    let _search = req.query_string();
+
     // Get the URL path.
     let (path,) = path.into_inner();
 
