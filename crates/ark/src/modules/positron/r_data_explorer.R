@@ -217,3 +217,12 @@
         stop("Unsupported search type '", params$search_type, "'")
     }
 }
+
+.ps.table_subset <- function(x, i, j) {
+    if (inherits(x, "data.frame")) {
+        # drop additional classes, so data we dont dispatch to subclasses methods
+        # like `[.tibble` or `[.data.table`.
+        class(x) <- "data.frame"
+    }
+    x[i, j, drop = FALSE]
+}
