@@ -605,23 +605,6 @@ impl From<HashMap<String, String>> for RObject {
     }
 }
 
-impl From<&Vec<bool>> for RObject {
-    fn from(value: &Vec<bool>) -> Self {
-        let n = value.len();
-
-        let out = RObject::from(r_alloc_logical(n as R_xlen_t));
-        let v_out = r_lgl_begin(out.sexp);
-
-        for i in 0..n {
-            unsafe {
-                *v_out.add(i) = value[i] as i32;
-            }
-        }
-
-        return out;
-    }
-}
-
 /// Convert RObject into other types.
 
 impl From<RObject> for SEXP {
@@ -890,6 +873,27 @@ impl TryFrom<Vec<RObject>> for RObject {
 
             return Ok(out);
         }
+    }
+}
+
+impl TryFrom<&Vec<bool>> for RObject {
+    type Error = crate::error::Error;
+
+    // NOTE: Can't currently return `Err`, but will once we add R memory allocators that
+    // can fail
+    fn try_from(value: &Vec<bool>) -> Result<Self, Self::Error> {
+        let n = value.len();
+
+        let out = RObject::from(r_alloc_logical(n as R_xlen_t));
+        let v_out = r_lgl_begin(out.sexp);
+
+        for i in 0..n {
+            unsafe {
+                *v_out.add(i) = value[i] as i32;
+            }
+        }
+
+        return Ok(out);
     }
 }
 
@@ -1388,12 +1392,12 @@ mod tests {
 
     #[test]
     #[allow(non_snake_case)]
-    fn test_from_RObject_Vec_Bool() {
+    fn test_tryfrom_RObject_Vec_Bool() {
         r_test! {
             // Create a vector of logical values.
             let flags = vec![true, false, true];
 
-            let robj = RObject::from(&flags);
+            let robj = RObject::try_from(&flags).unwrap();
 
             // We should get an object of the same length as the flags.
             assert_eq!(robj.length(), flags.len() as isize);
