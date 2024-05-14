@@ -94,7 +94,7 @@ fn test_data_explorer() {
     r_test(|| {
         // --- mtcars ---
 
-        let test_mtcars_sort = |socket, is_tibble: bool| {
+        let test_mtcars_sort = |socket, has_row_names: bool, display_name: String| {
             // Get the schema for the test data set.
             let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
                 num_columns: 11,
@@ -121,7 +121,7 @@ fn test_data_explorer() {
             assert_match!(socket_rpc(&socket, req),
                 DataExplorerBackendReply::GetDataValuesReply(data) => {
                     assert_eq!(data.columns.len(), 5);
-                    if !is_tibble {
+                    if has_row_names {
                         let labels = data.row_labels.unwrap();
                         assert_eq!(labels[0][0], "Valiant");
                         assert_eq!(labels[0][1], "Duster 360");
@@ -147,12 +147,7 @@ fn test_data_explorer() {
             let req = DataExplorerBackendRequest::GetState;
             assert_match!(socket_rpc(&socket, req),
                 DataExplorerBackendReply::GetStateReply(state) => {
-                    assert_eq!(state.display_name,
-                        if is_tibble {
-                            "mtcars_tib"
-                         } else {
-                            "mtcars"
-                         });
+                    assert_eq!(state.display_name, display_name);
                     assert_eq!(state.sort_keys, mpg_sort_keys);
                 }
             );
@@ -174,7 +169,7 @@ fn test_data_explorer() {
                     assert_eq!(data.columns[0][2], "13.3");
 
                     // Row labels should be sorted as well.
-                    if !is_tibble {
+                    if has_row_names {
                         let labels = data.row_labels.unwrap();
                         assert_eq!(labels[0][0], "Cadillac Fleetwood");
                         assert_eq!(labels[0][1], "Lincoln Continental");
@@ -223,7 +218,11 @@ fn test_data_explorer() {
         };
 
         // Test with the regular mtcars data set.
-        test_mtcars_sort(open_data_explorer(String::from("mtcars")), false);
+        test_mtcars_sort(
+            open_data_explorer(String::from("mtcars")),
+            true,
+            String::from("mtcars"),
+        );
 
         let mtcars_tibble = r_parse_eval0("mtcars_tib <- tibble::as_tibble(mtcars)", R_ENVS.global);
 
@@ -231,7 +230,11 @@ fn test_data_explorer() {
         // locally. Just skip the test in that case.
         match mtcars_tibble {
             Ok(_) => {
-                test_mtcars_sort(open_data_explorer(String::from("mtcars_tib")), true);
+                test_mtcars_sort(
+                    open_data_explorer(String::from("mtcars_tib")),
+                    false,
+                    String::from("mtcars_tib"),
+                );
                 r_parse_eval0("rm(mtcars_tib)", R_ENVS.global).unwrap();
             },
             Err(_) => (),
@@ -502,7 +505,11 @@ fn test_data_explorer() {
         // locally. Just skip the test in that case.
         match mtcars_data_table {
             Ok(_) => {
-                test_mtcars_sort(open_data_explorer(String::from("mtcars_dt")), false);
+                test_mtcars_sort(
+                    open_data_explorer(String::from("mtcars_dt")),
+                    false,
+                    String::from("mtcars_dt"),
+                );
                 r_parse_eval0("rm(mtcars_dt)", R_ENVS.global).unwrap();
             },
             Err(_) => (),
