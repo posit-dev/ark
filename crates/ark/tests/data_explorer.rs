@@ -502,8 +502,8 @@ fn test_data_explorer() {
         // locally. Just skip the test in that case.
         match mtcars_data_table {
             Ok(_) => {
-                test_mtcars_sort(open_data_explorer(String::from("mtcars")), false);
-                r_parse_eval0("rm(mtcars)", R_ENVS.global).unwrap();
+                test_mtcars_sort(open_data_explorer(String::from("mtcars_dt")), false);
+                r_parse_eval0("rm(mtcars_dt)", R_ENVS.global).unwrap();
             },
             Err(_) => (),
         }
