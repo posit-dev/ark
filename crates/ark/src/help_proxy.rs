@@ -13,11 +13,15 @@ use actix_web::App;
 use actix_web::HttpRequest;
 use actix_web::HttpResponse;
 use actix_web::HttpServer;
+use harp::exec::RFunction;
+use harp::exec::RFunctionExt;
 use rust_embed::RustEmbed;
 use stdext::spawn;
+use url::form_urlencoded;
 use url::Url;
 
 use crate::browser;
+use crate::r_task;
 
 // Embed `resources/help/` which is where replacement resources can be found.
 #[derive(RustEmbed)]
@@ -96,11 +100,12 @@ async fn proxy_request(
     path: web::Path<(String,)>,
     app_state: web::Data<AppState>,
 ) -> HttpResponse {
-    // Get the search string.
-    let _search = req.query_string();
-
     // Get the URL path.
     let (path,) = path.into_inner();
+
+    if path == "preview" {
+        return handle_rd_preview_request(req.query_string());
+    }
 
     // Construct the target URL string.
     let target_url_string = format!("http://localhost:{}/{path}", app_state.target_port);
@@ -168,4 +173,58 @@ async fn proxy_request(
             HttpResponse::BadGateway().finish()
         },
     }
+}
+
+// https://github.com/rstudio/rstudio/blob/6af5c0d231bd6fb2e50dcd980be49ecc2bf64c16/src/cpp/session/modules/SessionHelp.cpp#L850
+fn handle_rd_preview_request(query_string: &str) -> HttpResponse {
+    log::info!(
+        "Received request with path 'preview' and query string '{}'",
+        query_string
+    );
+
+    let parsed_query: Vec<(String, String)> = form_urlencoded::parse(query_string.as_bytes())
+        .into_owned()
+        .collect();
+
+    let file_values: Vec<&str> = parsed_query
+        .iter()
+        .filter(|(key, _)| key == "file")
+        .map(|(_, value)| value.as_str())
+        .collect();
+
+    let file_value;
+    if let Some(value) = file_values.get(0).cloned() {
+        file_value = value;
+        log::info!("Found Rd filepath: '{}'", file_value);
+    } else {
+        log::error!("No 'file' value found in query string: {}", query_string);
+        return HttpResponse::BadGateway().finish();
+    }
+
+    if !std::path::Path::new(file_value).exists() {
+        log::error!("File does not exist: '{}'", file_value);
+        return HttpResponse::BadGateway().finish();
+    }
+
+    let html_result = r_task(|| unsafe {
+        RFunction::from(".ps.Rd2HTML")
+            .param("rd_file", file_value)
+            .call()
+            .and_then(|r_val| r_val.to::<String>())
+    });
+
+    let body_content = match html_result {
+        Ok(html_string) => html_string,
+        Err(err) => {
+            log::error!("Error converting Rd to HTML: {err:?}");
+            return HttpResponse::InternalServerError().finish();
+        },
+    };
+
+    let response = HttpResponse::Ok().body(body_content);
+    return response;
+
+    // was useful for getting a decent return value even while building
+    // up this function
+    //return HttpResponse::Ok().finish();
 }

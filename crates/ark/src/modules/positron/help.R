@@ -200,10 +200,11 @@ getHtmlHelpContentsDevImpl <- function(x) {
 # @param rd_file Path to an `.Rd` file.
 # @returns The result of converting that `.Rd` to HTML and concatenating to a
 #   string.
-rd_to_html <- function(rd_file) {
+#' @export
+.ps.Rd2HTML <- function(rd_file, package = "") {
   if (!nzchar(package)) {
     # TODO(Jenny) Use `DESCRIPTION` if it is there instead of this
-    package <- basename(dirname(dirname(x)))
+    package <- basename(dirname(dirname(rd_file)))
   }
 
   path <- tempfile(fileext = ".html")
