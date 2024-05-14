@@ -219,6 +219,8 @@ functions::generate! {
 
     pub fn HASHTAB(x: SEXP) -> SEXP;
 
+    pub fn INTEGER(x: SEXP) -> *mut std::ffi::c_int;
+
     pub fn INTEGER_ELT(x: SEXP, i: R_xlen_t) -> std::ffi::c_int;
 
     pub fn LOGICAL(x: SEXP) -> *mut std::ffi::c_int;

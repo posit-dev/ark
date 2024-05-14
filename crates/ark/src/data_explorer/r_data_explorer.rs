@@ -598,7 +598,7 @@ impl RDataExplorer {
             decreasing.push(!key.ascending);
         }
         // Add the sort order per column
-        order.param("decreasing", RObject::try_from(decreasing)?);
+        order.param("decreasing", RObject::try_from(&decreasing)?);
         order.param("method", RObject::from("radix"));
 
         // Invoke the order function and return the result
