@@ -10,11 +10,12 @@
 
 #' @export
 .ps.s3.genericNameFromFunction <- function(callable) {
-
     # Check whether we can safely cache the result.
-    isCacheable <- !is.null(utils::packageName(environment(callable)))
-    if (!isCacheable)
+    package <- fn_package_name(callable)
+    if (is.null(package)) {
+        # Can't cache
         return(.ps.s3.genericNameFromFunctionImpl(callable))
+    }
 
     id <- .ps.objectId(callable)
     .ps.s3.genericNameCache[[id]] <-

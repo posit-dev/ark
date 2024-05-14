@@ -157,3 +157,26 @@ positron_tempdir <- function(...) {
 
     out
 }
+
+fn_package_name <- function(fn) {
+    env <- fn_env(fn)
+
+    if (is.null(env)) {
+        # We hope not, since `fn_env()` handles the builtin/special case, but just in case
+        return(NULL)
+    }
+
+    # Returns `NULL` on local functions
+    utils::packageName(env)
+}
+
+fn_env <- function(fn) {
+    # Primitives like `c()` have `NULL` `environment()` results.
+    switch(
+        typeof(fn),
+        builtin = asNamespace("base"),
+        special = asNamespace("base"),
+        closure = environment(fn),
+        stop(sprintf("`fn` must be a function, not a '%s'.", typeof(fn)))
+    )
+}
