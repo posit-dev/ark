@@ -218,11 +218,11 @@
     }
 }
 
-.ps.get_rows_and_columns <- function(table, index_rows, index_cols) {
-    if (inherits(table, "data.frame")) {
+.ps.table_subset <- function(x, i, j) {
+    if (inherits(x, "data.frame")) {
         # drop additional classes, so data we dont dispatch to subclasses methods
         # like `[.tibble` or `[.data.table`.
-        class(table) <- "data.frame"
+        class(x) <- "data.frame"
     }
-    table[index_rows, index_cols, drop = FALSE]
+    x[i, j, drop = FALSE]
 }

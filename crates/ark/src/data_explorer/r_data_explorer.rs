@@ -823,7 +823,7 @@ impl RDataExplorer {
         // Subset rows in advance, including unmaterialized row names. Also
         // subset spend time creating subsetting columns that we don't need.
         // Supports dispatch and should be vectorised in most implementations.
-        let object = RFunction::new("", ".ps.get_rows_and_columns")
+        let object = RFunction::new("", ".ps.table_subset")
             .add(object)
             .add(rows_r_idx.sexp)
             .add(cols_r_idx.sexp)
