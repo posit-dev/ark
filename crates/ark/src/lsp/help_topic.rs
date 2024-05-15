@@ -13,6 +13,7 @@ use tree_sitter::Node;
 use tree_sitter::Point;
 use tree_sitter::Tree;
 
+use crate::lsp;
 use crate::lsp::documents::Document;
 use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::rope::RopeExt;
@@ -43,7 +44,7 @@ pub(crate) fn help_topic(
     document: &Document,
 ) -> anyhow::Result<Option<HelpTopicResponse>> {
     let Some(node) = locate_help_node(tree, point) else {
-        log::warn!("help_topic(): No help node at position {point}");
+        lsp::log_warn!("help_topic(): No help node at position {point}");
         return Ok(None);
     };
 
@@ -53,7 +54,7 @@ pub(crate) fn help_topic(
     // Form the response
     let response = HelpTopicResponse { topic: text };
 
-    log::trace!(
+    lsp::log_info!(
         "help_topic(): Using help topic '{}' at position {}",
         response.topic,
         point

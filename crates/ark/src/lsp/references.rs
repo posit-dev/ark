@@ -8,8 +8,6 @@
 use std::path::Path;
 
 use anyhow::anyhow;
-use anyhow::bail;
-use log::info;
 use ropey::Rope;
 use stdext::unwrap::IntoResult;
 use stdext::*;
@@ -22,6 +20,7 @@ use tree_sitter::Node;
 use tree_sitter::Point;
 use walkdir::WalkDir;
 
+use crate::lsp;
 use crate::lsp::documents::Document;
 use crate::lsp::encoding::convert_point_to_position;
 use crate::lsp::encoding::convert_position_to_point;
@@ -133,10 +132,9 @@ fn build_context(uri: &Url, position: Position, state: &WorldState) -> anyhow::R
 
         // double check that we found an identifier
         if !node.is_identifier() {
-            bail!(
-                "couldn't find an identifier associated with point {:?}",
-                point
-            );
+            return Err(anyhow!(
+                "couldn't find an identifier associated with point {point:?}",
+            ));
         }
 
         let kind = node_reference_kind(&node);
@@ -165,7 +163,7 @@ fn find_references_in_folder(
             continue;
         }
 
-        info!("found R file {}", path.display());
+        lsp::log_info!("found R file {}", path.display());
         let result = with_document(path, state, |document| {
             find_references_in_document(context, path, document, locations);
             return Ok(());
@@ -174,7 +172,7 @@ fn find_references_in_folder(
         match result {
             Ok(result) => result,
             Err(_error) => {
-                info!("error retrieving document for path {}", path.display());
+                lsp::log_warn!("error retrieving document for path {}", path.display());
                 continue;
             },
         }
@@ -220,7 +218,7 @@ pub(crate) fn find_references(
     let workspace = state.workspace.lock();
     for folder in workspace.folders.iter() {
         if let Ok(path) = folder.to_file_path() {
-            info!("searching references in folder {}", path.display());
+            lsp::log_info!("searching references in folder {}", path.display());
             find_references_in_folder(&context, &path, &mut locations, state);
         }
     }
