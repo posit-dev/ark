@@ -202,22 +202,25 @@ getHtmlHelpContentsDevImpl <- function(x) {
 #   string.
 #' @export
 .ps.Rd2HTML <- function(rd_file, package = "") {
-  if (!nzchar(package)) {
-    # TODO(Jenny) Use `DESCRIPTION` if it is there instead of this
-    package <- basename(dirname(dirname(rd_file)))
+  package_root <- find_package_root(rd_file)
+  package_desc <- package_info(package_root)
+
+  if (!nzchar(package) && utils::hasName(package_desc, "Package")) {
+    package <- package_desc$Package
   }
 
   path <- tempfile(fileext = ".html")
   on.exit(unlink(path), add = TRUE)
 
   # Write HTML to file (with support for links and dynamic requests)
-  macros <- load_macros(rd_file)
+  macros <- load_macros(package_root)
   tools::Rd2HTML(
     rd_file,
     out = path,
     package = package,
     macros = macros,
     dynamic = TRUE
+    # TO THINK: could we use the stylesheet argument to inject our own R.css?
   )
 
   # Make tweaks to the returned HTML
@@ -258,17 +261,48 @@ getHtmlHelpContentsDevImpl <- function(x) {
   paste0(lines, collapse = "\n")
 }
 
-load_macros <- function(rd_file) {
-  maybe_package_dir <- dirname(dirname(rd_file))
-
-  if (file.exists(file.path(maybe_package_dir, "DESCRIPTION")) ||
-      file.exists(file.path(maybe_package_dir, "DESCRIPTION.in"))) {
-    # NOTE: ?loadPkgRdMacros has:
-    #   loadPkgRdMacros loads the system Rd macros by default
-    # so it shouldn't be necessary to load system macros ourselves here
-    tools::loadPkgRdMacros(maybe_package_dir)
-  } else {
+load_macros <- function(package_root) {
+  if (is.null(package_root) ||
+      !file.exists(file.path(package_root, "DESCRIPTION"))) {
     path <- file.path(R.home("share"), "Rd/macros/system.Rd")
     tools::loadRdMacros(path)
+  } else {
+    tools::loadPkgRdMacros(package_root)
   }
+}
+
+# @param path The path to file believed to be inside an R source package.
+#   Currently only used when we expect a path like
+#   {package-root}/man/some_topic.Rd. But you could imagine doing a more general
+#   recursive walk upwards, if we ever need that.
+# @returns Normalized path to package root or NULL if we don't seem to be in a
+#   package.
+find_package_root <- function(path) {
+  # currently hard-wired for the case of finding package root from an Rd filepath
+  # i.e. we anticipate input that's
+  # could use a more general recurisve walk upwards, if we ever have that need
+  maybe_package_root <- dirname(dirname(path))
+
+  if (file.exists(file.path(maybe_package_root, "DESCRIPTION"))) {
+    normalizePath(maybe_package_root)
+  } else {
+    NULL
+  }
+}
+
+# @param path Normalized path to package root or, possibly, NULL.
+# @returns A list containing the metadata in DESCRIPTION or, for NULL input or
+#   when no DESCRIPTION is found, an empty list.
+package_info <- function(path) {
+  if (is.null(path)) {
+    return(list())
+  }
+
+  desc <- file.path(path, "DESCRIPTION")
+  if (!file.exists(desc)) {
+    return(list())
+  }
+
+  desc_mat <- read.dcf(desc)
+  as.list(desc_mat[1, ])
 }
