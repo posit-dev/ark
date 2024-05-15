@@ -191,10 +191,7 @@ getHtmlHelpContentsDevImpl <- function(x) {
   url <- sprintf("/preview?file=%s", rd_file)
   port <- tools:::httpdPort()
   url <- tools:::dynamicHelpURL(url, port)
-  # TO THINK: now that we are making a special URL that only we can handle,
-  # perhaps this should be .ps.Call("ps_browse_url",url) or something even more
-  # specialized to positron help.
-  utils::browseURL(url)
+  .ps.Call("ps_browse_url", as.character(url))
 }
 
 # @param rd_file Path to an `.Rd` file.
