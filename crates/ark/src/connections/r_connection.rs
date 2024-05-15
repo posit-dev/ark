@@ -310,8 +310,7 @@ pub unsafe extern "C" fn ps_connection_closed(id: SEXP) -> Result<SEXP, anyhow::
     let id_ = RObject::view(id).to::<String>()?;
 
     main.get_comm_manager_tx()
-        .send(CommManagerEvent::Message(id_, CommMsg::Close))
-        .or_log_error("Connection Pane: Failed to send comm_close to front end.");
+        .send(CommManagerEvent::Message(id_, CommMsg::Close))?;
 
     Ok(R_NilValue)
 }
@@ -323,12 +322,10 @@ pub unsafe extern "C" fn ps_connection_updated(id: SEXP) -> Result<SEXP, anyhow:
 
     let event = ConnectionsFrontendEvent::Update;
 
-    main.get_comm_manager_tx()
-        .send(CommManagerEvent::Message(
-            comm_id,
-            CommMsg::Data(serde_json::to_value(event)?),
-        ))
-        .or_log_error("Connection Pane: Failed to send comm_update to front end.");
+    main.get_comm_manager_tx().send(CommManagerEvent::Message(
+        comm_id,
+        CommMsg::Data(serde_json::to_value(event)?),
+    ))?;
 
     Ok(R_NilValue)
 }
