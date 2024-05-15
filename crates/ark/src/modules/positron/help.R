@@ -176,10 +176,18 @@ getHtmlHelpContentsDevImpl <- function(x) {
   directory <- positron_tempdir("help")
   path <- file.path(directory, "dev-contents.html")
 
-  # Would be great it pkgload exposed this officially.
-  # Possibly as `topic_write(x, path, type = c("text", "html"))`.
-  # Also used by RStudio in the exact same way.
-  pkgload:::topic_write_html(x = x, path = path)
+  package_root <- find_package_root(x$path)
+  macros <- load_macros(package_root)
+
+  tools::Rd2HTML(
+    x$path,
+    out = path,
+    package = x$pkg,
+    stages = x$stage,
+    no_links = TRUE,
+    dynamic = FALSE,
+    macros = macros
+  )
 
   contents <- readLines(path, warn = FALSE)
   paste(contents, collapse = "\n")
