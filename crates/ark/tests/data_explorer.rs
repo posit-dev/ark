@@ -1026,6 +1026,35 @@ fn test_data_explorer() {
         ) => {
             assert_eq!(num_rows, 3);
         });
+
+        // ---- formatting of list columns ----
+        r_parse_eval0(
+            r#"list_cols <- tibble::tibble(
+                list_col = list(c(1,2,3,4), tibble::tibble(x = 1, b = 2), matrix(1:4, nrow = 2), c(TRUE, FALSE))
+            )"#,
+            R_ENVS.global,
+        )
+        .unwrap();
+
+        // Open the data set in the data explorer.
+        let socket = open_data_explorer(String::from("list_cols"));
+
+        // Get the values from the first column again. Because a sort is applied,
+        // the new value we wrote should be at the end.
+        let req = DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
+            row_start_index: 0,
+            num_rows: 4,
+            column_indices: vec![0],
+        });
+        assert_match!(socket_rpc(&socket, req),
+            DataExplorerBackendReply::GetDataValuesReply(data) => {
+                assert_eq!(data.columns.len(), 1);
+                assert_eq!(data.columns[0][0], "<numeric [4]>");
+                assert_eq!(data.columns[0][1], "<tbl_df [1 x 2]>");
+                assert_eq!(data.columns[0][2], "<matrix [2 x 2]>");
+                assert_eq!(data.columns[0][3], "<logical [2]>");
+            }
+        );
     });
 }
 
