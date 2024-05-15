@@ -273,7 +273,7 @@ format_list_column <- function(x) {
             "<",
             class(x)[1],
             " [",
-            paste0(d, collapse = ", "),
+            paste0(d, collapse = " x "),
             "]>"
         )
     })
