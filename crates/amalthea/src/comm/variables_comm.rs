@@ -133,7 +133,10 @@ pub enum VariableKind {
 	Table,
 
 	#[serde(rename = "lazy")]
-	Lazy
+	Lazy,
+
+	#[serde(rename = "connection")]
+	Connection
 }
 
 /// Parameters for the Clear method.
@@ -269,8 +272,8 @@ pub enum VariablesBackendReply {
 	/// An object formatted for copying to the clipboard.
 	ClipboardFormatReply(FormattedVariable),
 
-	/// Reply for the view method (no result)
-	ViewReply(),
+	/// The ID of the viewer that was opened.
+	ViewReply(String),
 
 }
 
