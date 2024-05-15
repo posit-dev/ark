@@ -27,7 +27,6 @@ use libr::R_NilValue;
 use libr::SEXP;
 use serde::Deserialize;
 use serde::Serialize;
-use stdext::result::ResultOrLog;
 use stdext::spawn;
 use stdext::unwrap;
 use uuid::Uuid;
