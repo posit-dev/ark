@@ -266,6 +266,16 @@ pub fn r_alloc_list(size: R_xlen_t) -> SEXP {
     unsafe { Rf_allocVector(VECSXP, size) }
 }
 
+pub fn r_node_car(x: SEXP) -> SEXP {
+    unsafe { CAR(x) }
+}
+pub fn r_node_tag(x: SEXP) -> SEXP {
+    unsafe { TAG(x) }
+}
+pub fn r_node_cdr(x: SEXP) -> SEXP {
+    unsafe { CDR(x) }
+}
+
 impl RObject {
     pub unsafe fn new(data: SEXP) -> Self {
         RObject {

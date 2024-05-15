@@ -72,6 +72,7 @@ use harp::routines::r_register_routines;
 use harp::session::r_traceback;
 use harp::utils::r_get_option;
 use harp::utils::r_is_data_frame;
+use harp::utils::r_pairlist_any;
 use harp::utils::r_poke_option_show_error_messages;
 use harp::R_MAIN_THREAD_ID;
 use libr::R_BaseNamespace;
@@ -745,15 +746,19 @@ impl RMain {
         let prompt_slice = unsafe { CStr::from_ptr(prompt_c) };
         let prompt = prompt_slice.to_string_lossy().into_owned();
 
-        // Detect browser prompts by inspecting the `RDEBUG` flag of the
-        // last frame on the stack. This is not 100% infallible, for
-        // instance `debug(readline)` followed by `n` will instantiate a
-        // user request prompt that will look like a browser prompt
-        // according to this heuristic. However it has the advantage of
-        // correctly detecting that continue prompts are top-level browser
-        // prompts in case of incomplete inputs within `browser()`.
-        let frame = harp::session::r_sys_frame(n_frame).unwrap();
-        let browser = harp::session::r_env_is_browsed(frame).unwrap();
+        // Detect browser prompts by inspecting the `RDEBUG` flag of each
+        // frame on the stack. If ANY of the frames are marked with `RDEBUG`,
+        // then we assume we are in a debug state. We can't just check the
+        // last frame, as sometimes frames are pushed onto the stack by lazy
+        // evaluation of arguments or `tryCatch()` that aren't debug frames,
+        // but we don't want to exit the debugger when we hit these, as R is
+        // still inside a browser state. Should also handle cases like `debug(readline)`
+        // followed by `n`.
+        // https://github.com/posit-dev/positron/issues/2310
+        let frames = RObject::from(harp::session::r_sys_frames().unwrap());
+        let browser = r_pairlist_any(frames.sexp, |frame| {
+            harp::session::r_env_is_browsed(frame).unwrap()
+        });
 
         // If there are frames on the stack and we're not in a browser prompt,
         // this means some user code is requesting input, e.g. via `readline()`
