@@ -215,8 +215,7 @@ pub(crate) fn find_references(
     });
 
     // Now, start searching through workspace folders for references to that identifier.
-    let workspace = state.workspace.lock();
-    for folder in workspace.folders.iter() {
+    for folder in state.workspace.folders.iter() {
         if let Ok(path) = folder.to_file_path() {
             lsp::log_info!("searching references in folder {}", path.display());
             find_references_in_folder(&context, &path, &mut locations, state);
