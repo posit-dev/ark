@@ -103,7 +103,7 @@ pub(crate) fn generate_diagnostics(doc: Document, state: WorldState) -> Vec<Diag
             _ => {},
         });
 
-        for scope in state.console_scopes.lock().iter() {
+        for scope in state.console_scopes.iter() {
             for name in scope.iter() {
                 if is_symbol_valid(name.as_str()) {
                     context.session_symbols.insert(name.clone());
@@ -114,7 +114,7 @@ pub(crate) fn generate_diagnostics(doc: Document, state: WorldState) -> Vec<Diag
             }
         }
 
-        for pkg in state.installed_packages.lock().iter() {
+        for pkg in state.installed_packages.iter() {
             context.installed_packages.insert(pkg.clone());
         }
 
@@ -956,12 +956,9 @@ fn check_symbol_in_scope(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use harp::eval::r_parse_eval;
     use harp::eval::RParseEvalOptions;
     use once_cell::sync::Lazy;
-    use parking_lot::Mutex;
     use tower_lsp::lsp_types::Position;
 
     use crate::interface::console_inputs;
@@ -978,8 +975,8 @@ mod tests {
         let inputs = console_inputs().unwrap();
 
         WorldState {
-            console_scopes: Arc::new(Mutex::new(inputs.console_scopes)),
-            installed_packages: Arc::new(Mutex::new(inputs.installed_packages)),
+            console_scopes: inputs.console_scopes,
+            installed_packages: inputs.installed_packages,
             ..Default::default()
         }
     }
