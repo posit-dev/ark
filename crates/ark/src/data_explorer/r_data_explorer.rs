@@ -51,6 +51,7 @@ use harp::exec::RFunctionExt;
 use harp::object::RObject;
 use harp::r_symbol;
 use harp::tbl_get_column;
+use harp::utils::r_classes;
 use harp::utils::r_inherits;
 use harp::utils::r_is_object;
 use harp::utils::r_is_s4;
@@ -1010,12 +1011,8 @@ impl RDataExplorer {
         let mut column_data: Vec<Vec<String>> = Vec::new();
         for i in 0..num_cols {
             let column = tbl_get_column(object.sexp, i, self.shape.kind)?;
-            let formatter = FormattedVector::new_with_options(*column, FormattedVectorOptions {
-                character: FormattedVectorCharacterOptions { quote: false },
-            })?;
-            let formatted = formatter.iter().collect();
-
-            column_data.push(formatted);
+            let formatted = format_column(column.sexp)?;
+            column_data.push(formatted.clone());
         }
 
         // Look for the row names attribute and include them if present
@@ -1044,6 +1041,33 @@ impl RDataExplorer {
 
         Ok(DataExplorerBackendReply::GetDataValuesReply(response))
     }
+}
+
+fn format_column(x: SEXP) -> anyhow::Result<Vec<String>> {
+    let formatted = match r_typeof(x) {
+        VECSXP => {
+            match r_classes(x) {
+                Some(_) => {
+                    bail!("List columns that have classes (such as data.frames) are not supported.")
+                },
+                None => {
+                    // For list columns we do something similar to tibbles, ie
+                    // show the element <class [length]>.
+                    RFunction::new("", "format_list_column")
+                        .add(x)
+                        .call_in(ARK_ENVS.positron_ns)?
+                        .try_into()?
+                },
+            }
+        },
+        _ => {
+            let formatter = FormattedVector::new_with_options(x, FormattedVectorOptions {
+                character: FormattedVectorCharacterOptions { quote: false },
+            })?;
+            formatter.iter().collect()
+        },
+    };
+    Ok(formatted)
 }
 
 // This returns the type of an _element_ of the column. In R atomic
