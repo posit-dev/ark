@@ -283,9 +283,6 @@ load_macros <- function(package_root) {
 # @returns Normalized path to package root or NULL if we don't seem to be in a
 #   package.
 find_package_root <- function(path) {
-  # currently hard-wired for the case of finding package root from an Rd filepath
-  # i.e. we anticipate input that's
-  # could use a more general recurisve walk upwards, if we ever have that need
   maybe_package_root <- dirname(dirname(path))
 
   if (file.exists(file.path(maybe_package_root, "DESCRIPTION"))) {
