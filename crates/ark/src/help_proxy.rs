@@ -8,6 +8,7 @@
 use std::net::TcpListener;
 
 use actix_web::get;
+use actix_web::http::header::ContentType;
 use actix_web::web;
 use actix_web::App;
 use actix_web::HttpResponse;
@@ -197,5 +198,10 @@ async fn preview_rd(params: web::Query<PreviewRdParams>) -> HttpResponse {
         return HttpResponse::InternalServerError().finish();
     });
 
-    HttpResponse::Ok().content_type("text/html").body(content)
+    HttpResponse::Ok()
+        .content_type(ContentType::html())
+        // TODO: I think we have something on the positron side that is
+        // preventing this from having desired effect
+        .append_header(("Cache-Control", "no-cache,must-revalidate"))
+        .body(content)
 }
