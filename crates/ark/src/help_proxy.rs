@@ -221,7 +221,9 @@ fn handle_rd_preview_request(query_string: &str) -> HttpResponse {
         },
     };
 
-    let response = HttpResponse::Ok().body(body_content);
+    let response = HttpResponse::Ok()
+        .content_type("text/html")
+        .body(body_content);
     return response;
 
     // was useful for getting a decent return value even while building
