@@ -10,14 +10,14 @@ use std::net::TcpListener;
 use actix_web::get;
 use actix_web::web;
 use actix_web::App;
-use actix_web::HttpRequest;
 use actix_web::HttpResponse;
 use actix_web::HttpServer;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use rust_embed::RustEmbed;
+use serde::Deserialize;
 use stdext::spawn;
-use url::form_urlencoded;
+use stdext::unwrap;
 use url::Url;
 
 use crate::browser;
@@ -27,6 +27,11 @@ use crate::r_task;
 #[derive(RustEmbed)]
 #[folder = "resources/help/"]
 struct Asset;
+
+#[derive(Deserialize)]
+struct PreviewRdParams {
+    file: String,
+}
 
 // Starts the help proxy.
 pub fn start(target_port: u16) {
@@ -84,6 +89,7 @@ impl HelpProxy {
         let server = HttpServer::new(move || {
             App::new()
                 .app_data(app_state.clone())
+                .service(preview_rd)
                 .service(proxy_request)
         })
         .bind(("127.0.0.1", self.source_port))?;
@@ -95,17 +101,9 @@ impl HelpProxy {
 
 // Proxies a request.
 #[get("/{url:.*}")]
-async fn proxy_request(
-    req: HttpRequest,
-    path: web::Path<(String,)>,
-    app_state: web::Data<AppState>,
-) -> HttpResponse {
+async fn proxy_request(path: web::Path<(String,)>, app_state: web::Data<AppState>) -> HttpResponse {
     // Get the URL path.
     let (path,) = path.into_inner();
-
-    if path == "preview" {
-        return handle_rd_preview_request(req.query_string());
-    }
 
     // Construct the target URL string.
     let target_url_string = format!("http://localhost:{}/{path}", app_state.target_port);
@@ -176,57 +174,28 @@ async fn proxy_request(
 }
 
 // https://github.com/rstudio/rstudio/blob/6af5c0d231bd6fb2e50dcd980be49ecc2bf64c16/src/cpp/session/modules/SessionHelp.cpp#L850
-fn handle_rd_preview_request(query_string: &str) -> HttpResponse {
-    log::info!(
-        "Received request with path 'preview' and query string '{}'",
-        query_string
-    );
+#[get("/preview")]
+async fn preview_rd(params: web::Query<PreviewRdParams>) -> HttpResponse {
+    let file = params.file.as_str();
 
-    let parsed_query: Vec<(String, String)> = form_urlencoded::parse(query_string.as_bytes())
-        .into_owned()
-        .collect();
+    log::info!("Received request with path 'preview' and file '{file}'.");
 
-    let file_values: Vec<&str> = parsed_query
-        .iter()
-        .filter(|(key, _)| key == "file")
-        .map(|(_, value)| value.as_str())
-        .collect();
-
-    let file_value;
-    if let Some(value) = file_values.get(0).cloned() {
-        file_value = value;
-        log::info!("Found Rd filepath: '{}'", file_value);
-    } else {
-        log::error!("No 'file' value found in query string: {}", query_string);
+    if !std::path::Path::new(file).exists() {
+        log::error!("File does not exist: '{file}'.");
         return HttpResponse::BadGateway().finish();
     }
 
-    if !std::path::Path::new(file_value).exists() {
-        log::error!("File does not exist: '{}'", file_value);
-        return HttpResponse::BadGateway().finish();
-    }
-
-    let html_result = r_task(|| unsafe {
+    let content = r_task(|| unsafe {
         RFunction::from(".ps.Rd2HTML")
-            .param("rd_file", file_value)
+            .param("rd_file", file)
             .call()
-            .and_then(|r_val| r_val.to::<String>())
+            .and_then(|content| content.to::<String>())
     });
 
-    let body_content = match html_result {
-        Ok(html_string) => html_string,
-        Err(err) => {
-            log::error!("Error converting Rd to HTML: {err:?}");
-            return HttpResponse::InternalServerError().finish();
-        },
-    };
+    let content = unwrap!(content, Err(err) => {
+        log::error!("Error converting Rd to HTML: {err:?}");
+        return HttpResponse::InternalServerError().finish();
+    });
 
-    let response = HttpResponse::Ok()
-        .content_type("text/html")
-        .body(body_content);
-    return response;
-
-    // was useful for getting a decent return value even while building
-    // up this function
-    //return HttpResponse::Ok().finish();
+    HttpResponse::Ok().content_type("text/html").body(content)
 }
