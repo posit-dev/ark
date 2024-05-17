@@ -102,7 +102,6 @@ use crate::kernel::Kernel;
 use crate::lsp::events::EVENTS;
 use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::KernelNotification;
-use crate::lsp::main_loop::LspTask;
 use crate::lsp::main_loop::TokioUnboundedSender;
 use crate::lsp::state_handlers::ConsoleInputs;
 use crate::modules;
@@ -1056,12 +1055,6 @@ impl RMain {
         &self.kernel
     }
 
-    fn send_lsp_task(&self, task: LspTask) {
-        if let Some(ref tx) = self.lsp_events_tx {
-            tx.send(Event::Task(task)).unwrap();
-        }
-    }
-
     fn send_lsp_notification(&self, event: KernelNotification) {
         if let Some(ref tx) = self.lsp_events_tx {
             tx.send(Event::Kernel(event)).unwrap();
@@ -1085,7 +1078,6 @@ impl RMain {
             },
             Err(err) => log::error!("Can't retrieve console inputs: {err:?}"),
         }
-        self.send_lsp_task(LspTask::RefreshAllDiagnostics());
     }
 
     pub fn call_frontend_method(&self, request: UiFrontendRequest) -> anyhow::Result<RObject> {
