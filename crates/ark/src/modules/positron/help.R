@@ -194,9 +194,9 @@ getHtmlHelpContentsDevImpl <- function(x) {
 }
 
 #' @export
-.ps.help.previewRd <- function(rd_file) {
-  # This `/preview` url gets special handling in `proxy_request()`.
-  url <- sprintf("/preview?file=%s", rd_file)
+.ps.help.previewRd <- function(rdFile) {
+  # `/preview` causes this to be handled by preview_rd() in ark's help proxy.
+  url <- sprintf("/preview?file=%s", rdFile)
   port <- tools:::httpdPort()
   url <- tools:::dynamicHelpURL(url, port)
   .ps.Call("ps_browse_url", as.character(url))
@@ -238,12 +238,10 @@ getHtmlHelpContentsDevImpl <- function(x) {
   )
 
   if (nzchar(package)) {
-    # TODO(Jenny) support dev-figure
-    # Replace with "dev-figure" and parameters so that `proxy_request()` of our help proxy
-    # server can look for figures in `man/` of the dev package.
-    lines <- sub(
+    # `/dev-figure` causes this to be handled by preview_img() in ark's help proxy.
+    lines <- gsub(
       'img src="figures/([^"]*)"',
-      sprintf('img src="dev-figure?pkg=%s&figure=\\1"', package),
+      sprintf('img src="dev-figure?file=%s/man/figures/\\1"', package_root),
       lines
     )
 

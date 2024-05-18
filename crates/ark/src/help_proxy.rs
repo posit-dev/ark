@@ -15,6 +15,7 @@ use actix_web::HttpResponse;
 use actix_web::HttpServer;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
+use mime_guess::from_path;
 use rust_embed::RustEmbed;
 use serde::Deserialize;
 use stdext::spawn;
@@ -91,6 +92,7 @@ impl HelpProxy {
             App::new()
                 .app_data(app_state.clone())
                 .service(preview_rd)
+                .service(preview_img)
                 .service(proxy_request)
         })
         .bind(("127.0.0.1", self.source_port))?;
@@ -204,4 +206,37 @@ async fn preview_rd(params: web::Query<PreviewRdParams>) -> HttpResponse {
         // preventing this from having desired effect
         .append_header(("Cache-Control", "no-cache,must-revalidate"))
         .body(content)
+}
+
+#[get("/dev-figure")]
+async fn preview_img(params: web::Query<PreviewRdParams>) -> HttpResponse {
+    let file = params.file.as_str();
+
+    log::info!("Received request with path 'dev-figure' for image file '{file}'.");
+
+    if !std::path::Path::new(file).exists() {
+        log::error!("File does not exist: '{file}'.");
+        return HttpResponse::BadGateway().finish();
+    }
+
+    let mime_type = from_path(file).first();
+    let mime_str = match mime_type {
+        Some(mime) => mime.to_string(),
+        None => {
+            log::error!("Could not determine MIME type.");
+            return HttpResponse::InternalServerError().finish();
+        },
+    };
+
+    // Read the file into a byte array.
+    let content = match tokio::fs::read(file).await {
+        Ok(content) => content,
+        Err(err) => {
+            log::error!("Error reading image file: {err:?}");
+            return HttpResponse::InternalServerError().finish();
+        },
+    };
+
+    // Construct an HttpResponse with the content and MIME type.
+    HttpResponse::Ok().content_type(mime_str).body(content)
 }
