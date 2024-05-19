@@ -244,7 +244,13 @@ getHtmlHelpContentsDevImpl <- function(x) {
       lines
     )
 
-    # TODO: add high level description, with examples, of what this does
+    # Rewrite links to other help topics.
+    # These links look like this:
+    # href="../../PACKAGE/help/TOPIC"
+    # For a topic in not-this-package, we rewrite as:
+    # href="/library/PACKAGE/help/TOPIC"
+    # For a topic in this in-development package, we rewrite like:
+    # href="/preview?file=/normalized/path/to/source/of/PACKAGE/man/topic.Rd"
     lines[] <- vapply(lines, rewrite_help_links, "", package, package_root)
   }
 
@@ -294,7 +300,11 @@ package_info <- function(path) {
   as.list(desc_mat[1, ])
 }
 
-# TODO: document this somewhat
+# @param line A single line of HTML in a rendered help topic.
+# @param package The name of the in-development package.
+# @param package_root The normalized path to the source of the in-development
+#   package.
+# @returns The input `line`, with its help links rewritten.
 rewrite_help_links <- function(line, package, package_root) {
   # inspired by an official example for regmatches()
   # gregexec() returns overlapping ranges: the first match is the full match,

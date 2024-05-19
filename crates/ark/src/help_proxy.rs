@@ -176,7 +176,6 @@ async fn proxy_request(path: web::Path<(String,)>, app_state: web::Data<AppState
     }
 }
 
-// https://github.com/rstudio/rstudio/blob/6af5c0d231bd6fb2e50dcd980be49ecc2bf64c16/src/cpp/session/modules/SessionHelp.cpp#L850
 #[get("/preview")]
 async fn preview_rd(params: web::Query<PreviewRdParams>) -> HttpResponse {
     let file = params.file.as_str();
@@ -202,8 +201,6 @@ async fn preview_rd(params: web::Query<PreviewRdParams>) -> HttpResponse {
 
     HttpResponse::Ok()
         .content_type(ContentType::html())
-        // TODO: I think we have something on the positron side that is
-        // preventing this from having desired effect
         .append_header(("Cache-Control", "no-cache,must-revalidate"))
         .body(content)
 }
@@ -228,7 +225,6 @@ async fn preview_img(params: web::Query<PreviewRdParams>) -> HttpResponse {
         },
     };
 
-    // Read the file into a byte array.
     let content = match tokio::fs::read(file).await {
         Ok(content) => content,
         Err(err) => {
@@ -237,6 +233,5 @@ async fn preview_img(params: web::Query<PreviewRdParams>) -> HttpResponse {
         },
     };
 
-    // Construct an HttpResponse with the content and MIME type.
     HttpResponse::Ok().content_type(mime_str).body(content)
 }
