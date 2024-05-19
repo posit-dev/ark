@@ -322,6 +322,20 @@ rewrite_help_links <- function(line, package, package_root) {
     x
   }
 
+  # if available, use pkgload::dev_topic_find() to get the definitive filepath
+  # this accounts for scenario where topic name != function name
+  # otherwise, use the typical pattern and hope for the best
+  construct_filepath <- function(topic) {
+    out <- sprintf('%s/man/%s.Rd">', package_root, topic)
+    if (.ps.is_installed("pkgload")) {
+      tf <- pkgload::dev_topic_find(topic, dev_packages = package)
+      if (!is.null(tf)) {
+        out <- tf$path
+      }
+    }
+    out
+  }
+
   # concrete examples:
   # dev         a href="../../devhelp/help/blarg">
   # installed   a href="../../rlang/help/abort">
@@ -335,11 +349,11 @@ rewrite_help_links <- function(line, package, package_root) {
   }
 
   match_data  <- as.data.frame(t(rm))
-  # TODO for links to help in the in-development package:
-  #   * Use `pkgload::dev_topic_find()` to figure out the right Rd file
+
+  dev_file <- vapply(match_data$topic, construct_filepath, "")
   replacement <- ifelse(
     match_data$pkg == package,
-    sprintf('a href="/preview?file=%s/man/%s.Rd">', package_root, match_data$topic),
+    sprintf('a href="/preview?file=%s">', dev_file),
     sprintf('a href="/library/%s/help/%s">', match_data$pkg, match_data$topic)
   )
   regmatches(line, lapply(x, keep_first)) <- list(as.matrix(replacement))
