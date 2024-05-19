@@ -225,7 +225,6 @@ getHtmlHelpContentsDevImpl <- function(x) {
     package = package,
     macros = macros,
     dynamic = TRUE
-    # TO THINK: could we use the stylesheet argument to inject our own R.css?
   )
 
   # Make tweaks to the returned HTML
@@ -237,7 +236,7 @@ getHtmlHelpContentsDevImpl <- function(x) {
     lines
   )
 
-  if (nzchar(package)) {
+  if (!is.null(package_root) && nzchar(package)) {
     # `/dev-figure` causes this to be handled by preview_img() in ark's help proxy.
     lines <- gsub(
       'img src="figures/([^"]*)"',
@@ -245,20 +244,8 @@ getHtmlHelpContentsDevImpl <- function(x) {
       lines
     )
 
-    # TODO(Jenny) support `?dev` query parameter. Likely by calling
-    # `pkgload::dev_topic_find()` and then recalling `rd_as_html()` with that Rd file
-    # and the returned `package`.
-    # Two purposes:
-    # - For non-dev topics, these end up correctly going through `/library/` again rather
-    #   than looking into a temp directory.
-    # - For dev topics, the `?dev=<topic>` query parameter gives us a chance to try to look
-    #   up the dev topic ourselves before forwarding on to the R server, i.e. in
-    #   `proxy_request()` of our help proxy server.
-    lines <- gsub(
-      'a href="../../([^/]*/help/)([^/]*)">',
-      'a href="/library/\\1\\2?dev=\\2">',
-      lines
-    )
+    # TODO: add high level description, with examples, of what this does
+    lines[] <- vapply(lines, rewrite_help_links, "", package, package_root)
   }
 
   paste0(lines, collapse = "\n")
@@ -305,4 +292,61 @@ package_info <- function(path) {
 
   desc_mat <- read.dcf(desc)
   as.list(desc_mat[1, ])
+}
+
+# TODO: document this somewhat
+rewrite_help_links <- function(line, package, package_root) {
+  # inspired by an official example for regmatches()
+  # gregexec() returns overlapping ranges: the first match is the full match,
+  #   then the sub-matches follow (pkg and topic, for us)
+  # when we use the `regmatches<-` assignment form, we want to keep only the
+  #   coordinates for the first, full match
+  keep_first <- function(x) {
+    if(!anyNA(x) && all(x > 0)) {
+      ml <- attr(x, 'match.length')
+      it <- attr(x, 'index.type')
+      ub <- attr(x, 'useBytes')
+      if(is.matrix(x)) {
+        x <- x[1, , drop = FALSE]
+      } else {
+        x <- x[1]
+      }
+      if(is.matrix(ml)) {
+        attr(x, 'match.length') <- ml[1, , drop = FALSE]
+      } else {
+        attr(x, 'match.length') <- ml[1]
+      }
+      attr(x, 'index.type') <- it
+      attr(x, 'useBytes') <- ub
+    }
+    x
+  }
+
+  # concrete examples:
+  # dev         a href="../../devhelp/help/blarg">
+  # installed   a href="../../rlang/help/abort">
+  pattern <- 'a href="../../(?<pkg>[^/]*)/help/(?<topic>[^/]*)">'
+
+  x <- gregexec(pattern, line, perl = TRUE)
+  rm <- regmatches(line, x)[[1]]
+
+  if (length(rm) == 0) {
+    return(line)
+  }
+
+  match_data  <- as.data.frame(t(rm))
+  # TODO for links to help in the in-development package:
+  #   * Use `pkgload::dev_topic_find()` to figure out the right Rd file
+  replacement <- ifelse(
+    match_data$pkg == package,
+    sprintf('a href="/preview?file=%s/man/%s.Rd">', package_root, match_data$topic),
+    sprintf('a href="/library/%s/help/%s">', match_data$pkg, match_data$topic)
+  )
+  regmatches(line, lapply(x, keep_first)) <- list(as.matrix(replacement))
+
+  # what has happened to our concrete examples:
+  # dev         a href="/preview?file=/Users/jenny/rrr/devhelp/man/blarg.Rd">
+  # installed   a href="/library/rlang/help/abort">
+
+  line
 }
