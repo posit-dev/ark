@@ -83,7 +83,11 @@ pub struct Variable {
 
 	/// True if the 'value' field is a truncated representation of the
 	/// variable's value
-	pub is_truncated: bool
+	pub is_truncated: bool,
+
+	/// The time the variable was created or updated, in milliseconds since
+	/// the epoch, or 0 if unknown.
+	pub updated_time: i64
 }
 
 /// Possible values for Format in ClipboardFormat
