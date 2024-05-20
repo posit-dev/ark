@@ -127,3 +127,33 @@ pub enum ConnectionsBackendReply {
 
 }
 
+/**
+ * Frontend RPC request types for the connections comm
+ */
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "method", content = "params")]
+pub enum ConnectionsFrontendRequest {
+}
+
+/**
+ * Frontend RPC Reply types for the connections comm
+ */
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "method", content = "result")]
+pub enum ConnectionsFrontendReply {
+}
+
+/**
+ * Frontend events for the connections comm
+ */
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "method", content = "params")]
+pub enum ConnectionsFrontendEvent {
+	#[serde(rename = "focus")]
+	Focus,
+
+	#[serde(rename = "update")]
+	Update,
+
+}
+
