@@ -250,7 +250,7 @@ getHtmlHelpContentsDevImpl <- function(x) {
     # For a topic in not-this-package, we rewrite as:
     # href="/library/PACKAGE/help/TOPIC"
     # For a topic in this in-development package, we rewrite like:
-    # href="/preview?file=/normalized/path/to/source/of/PACKAGE/man/topic.Rd"
+    # href="/preview?file=/normalized/path/to/source/of/PACKAGE/man/TOPIC.Rd"
     lines[] <- vapply(lines, rewrite_help_links, "", package, package_root)
   }
 
@@ -267,7 +267,7 @@ load_macros <- function(package_root) {
   }
 }
 
-# @param path The path to file believed to be inside an R source package.
+# @param path The path to a file believed to be inside an R source package.
 #   Currently only used when we expect a path like
 #   {package-root}/man/some_topic.Rd. But you could imagine doing a more general
 #   recursive walk upwards, if we ever need that.
