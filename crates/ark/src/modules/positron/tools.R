@@ -180,3 +180,7 @@ fn_env <- function(fn) {
         stop(sprintf("`fn` must be a function, not a '%s'.", typeof(fn)))
     )
 }
+
+map_chr <- function(.x, .f, ...) {
+    vapply(.x, .f, character(1), ...)
+}

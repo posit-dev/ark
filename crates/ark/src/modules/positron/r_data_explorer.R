@@ -263,7 +263,7 @@ col_filter_indices <- function(col, idx = NULL) {
 }
 
 format_list_column <- function(x) {
-    sapply(x, function(x) {
+    map_chr(x, function(x) {
         d <- dim(x)
         if (is.null(d)) {
             d <- length(x)
