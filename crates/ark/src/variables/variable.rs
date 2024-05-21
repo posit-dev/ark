@@ -1166,7 +1166,7 @@ impl PositronVariable {
                 has_children: true,
                 is_truncated: false,
                 has_viewer: false,
-                updated_time: 0,
+                updated_time: Self::update_timestamp(),
             });
         }
 
