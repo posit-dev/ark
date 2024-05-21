@@ -187,6 +187,9 @@ pub struct UpdateParams {
 	/// An array of variables that have been newly assigned.
 	pub assigned: Vec<Variable>,
 
+	/// An array of variables that were not evaluated for value updates.
+	pub unevaluated: Vec<Variable>,
+
 	/// An array of variable names that have been removed.
 	pub removed: Vec<String>,
 
