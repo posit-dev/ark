@@ -1,5 +1,7 @@
+use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::connections_comm::ConnectionsBackendReply;
 use amalthea::comm::connections_comm::ConnectionsBackendRequest;
+use amalthea::comm::connections_comm::ConnectionsFrontendEvent;
 use amalthea::comm::connections_comm::ContainsDataParams;
 use amalthea::comm::connections_comm::FieldSchema;
 use amalthea::comm::connections_comm::GetIconParams;
@@ -197,6 +199,32 @@ fn test_connection_list_fields() {
                     assert_eq!(val, objects);
                 }
             );
+        }
+    })
+}
+
+#[test]
+fn test_send_frontend_event() {
+    r_test(|| {
+        let socket = open_dummy_connection();
+
+        let event = ConnectionsFrontendEvent::Update;
+
+        socket
+            .incoming_tx
+            .send(CommMsg::Data(serde_json::to_value(event).unwrap()))
+            .unwrap();
+
+        let msg = socket
+            .outgoing_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap();
+
+        if let CommMsg::Data(value) = msg {
+            let v: ConnectionsFrontendEvent = serde_json::from_value(value).unwrap();
+            assert_eq!(ConnectionsFrontendEvent::Update, v);
+        } else {
+            panic!("Expected a CommMsg::Data");
         }
     })
 }

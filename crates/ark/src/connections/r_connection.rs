@@ -7,6 +7,7 @@
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::connections_comm::ConnectionsBackendReply;
 use amalthea::comm::connections_comm::ConnectionsBackendRequest;
+use amalthea::comm::connections_comm::ConnectionsFrontendEvent;
 use amalthea::comm::connections_comm::ContainsDataParams;
 use amalthea::comm::connections_comm::FieldSchema;
 use amalthea::comm::connections_comm::GetIconParams;
@@ -26,7 +27,6 @@ use libr::R_NilValue;
 use libr::SEXP;
 use serde::Deserialize;
 use serde::Serialize;
-use stdext::result::ResultOrLog;
 use stdext::spawn;
 use stdext::unwrap;
 use uuid::Uuid;
@@ -249,6 +249,12 @@ impl RConnection {
                 break;
             }
 
+            // Forward data msgs to the frontend
+            if let CommMsg::Data(_) = msg {
+                self.comm.outgoing_tx.send(msg)?;
+                continue;
+            }
+
             self.comm.handle_request(msg, |req| self.handle_rpc(req));
         }
 
@@ -303,8 +309,22 @@ pub unsafe extern "C" fn ps_connection_closed(id: SEXP) -> Result<SEXP, anyhow::
     let id_ = RObject::view(id).to::<String>()?;
 
     main.get_comm_manager_tx()
-        .send(CommManagerEvent::Message(id_, CommMsg::Close))
-        .or_log_error("Connection Pane: Failed to send comm_close to front end.");
+        .send(CommManagerEvent::Message(id_, CommMsg::Close))?;
+
+    Ok(R_NilValue)
+}
+
+#[harp::register]
+pub unsafe extern "C" fn ps_connection_updated(id: SEXP) -> Result<SEXP, anyhow::Error> {
+    let main = RMain::get();
+    let comm_id: String = RObject::view(id).to::<String>()?;
+
+    let event = ConnectionsFrontendEvent::Update;
+
+    main.get_comm_manager_tx().send(CommManagerEvent::Message(
+        comm_id,
+        CommMsg::Data(serde_json::to_value(event)?),
+    ))?;
 
     Ok(R_NilValue)
 }
