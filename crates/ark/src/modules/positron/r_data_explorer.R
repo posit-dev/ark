@@ -93,6 +93,12 @@ col_filter_indices <- function(col, idx = NULL) {
     for (i in seq_along(row_filters)) {
         row_filter <- row_filters[[i]]
 
+        # Do not try to apply filters that are already marked as invalid.
+        if (!is.null(row_filter$is_valid) && !row_filter$is_valid) {
+            row_filters_errors[i] <- row_filter$error_message %||% "Invalid filter for unknown reason"
+            next
+        }
+
         # Dynamic dispatch to the appropriate filter function
         filter_function <- paste('.ps.filter_col', row_filter$filter_type, sep = '.')
 
