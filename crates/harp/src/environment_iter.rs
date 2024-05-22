@@ -54,7 +54,7 @@ impl EnvironmentIter {
 }
 
 impl Iterator for EnvironmentIter {
-    type Item = Binding;
+    type Item = harp::Result<Binding>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.names
@@ -64,14 +64,14 @@ impl Iterator for EnvironmentIter {
 }
 
 impl Binding {
-    pub fn new(env: Environment, name: RSymbol) -> Self {
+    pub fn new(env: Environment, name: RSymbol) -> harp::Result<Self> {
         unsafe {
-            if env.is_active(name) {
+            if env.is_active(name)? {
                 let fun = libr::R_ActiveBindingFunction(name.sexp, env.env.sexp);
                 let value = BindingValue::Active {
                     fun: RObject::from(fun),
                 };
-                return Self { name, value };
+                return Ok(Self { name, value });
             };
 
             let value = env.find(name);
@@ -83,7 +83,7 @@ impl Binding {
                     data2: RObject::from(R_altrep_data2(value)),
                     has_nested_environment: BindingNestedEnvironment::new(value),
                 };
-                return Self { name, value };
+                return Ok(Self { name, value });
             }
 
             if r_typeof(value) == PROMSXP {
@@ -100,7 +100,7 @@ impl Binding {
                     let value = BindingValue::Promise {
                         promise: RObject::from(value),
                     };
-                    return Self { name, value };
+                    return Ok(Self { name, value });
                 }
 
                 // Promise to a literal expression
@@ -111,12 +111,12 @@ impl Binding {
         }
     }
 
-    fn new_standard(name: RSymbol, value: SEXP) -> Self {
+    fn new_standard(name: RSymbol, value: SEXP) -> harp::Result<Self> {
         let value = BindingValue::Standard {
             object: RObject::from(value),
             has_nested_environment: BindingNestedEnvironment::new(value),
         };
-        Self { name, value }
+        Ok(Self { name, value })
     }
 
     pub fn is_hidden(&self) -> bool {

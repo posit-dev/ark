@@ -15,6 +15,7 @@ pub use crate::environment_iter::*;
 use crate::exec::RFunction;
 use crate::exec::RFunctionExt;
 use crate::object::RObject;
+use crate::r_env_binding_is_active;
 use crate::r_symbol;
 use crate::symbol::RSymbol;
 
@@ -92,18 +93,23 @@ impl Environment {
     pub fn is_empty(&self, filter: EnvironmentFilter) -> bool {
         match filter {
             EnvironmentFilter::IncludeHiddenBindings => self.env.length() == 0,
-            EnvironmentFilter::ExcludeHiddenBindings => {
-                self.iter().filter(|b| !b.is_hidden()).next().is_none()
-            },
+            EnvironmentFilter::ExcludeHiddenBindings => self
+                .iter()
+                .filter_map(|b| b.ok())
+                .filter(|b| !b.is_hidden())
+                .next()
+                .is_none(),
         }
     }
 
     pub fn length(&self, filter: EnvironmentFilter) -> usize {
         match filter {
             EnvironmentFilter::IncludeHiddenBindings => self.env.length() as usize,
-            EnvironmentFilter::ExcludeHiddenBindings => {
-                self.iter().filter(|b| !b.is_hidden()).count()
-            },
+            EnvironmentFilter::ExcludeHiddenBindings => self
+                .iter()
+                .filter_map(|b| b.ok())
+                .filter(|b| !b.is_hidden())
+                .count(),
         }
     }
 
@@ -161,8 +167,8 @@ impl Environment {
         unsafe { libr::R_EnvironmentIsLocked(self.env.sexp) != 0 }
     }
 
-    pub fn is_active(&self, name: RSymbol) -> bool {
-        unsafe { libr::R_BindingIsActive(name.sexp, self.env.sexp) != 0 }
+    pub fn is_active(&self, name: RSymbol) -> harp::Result<bool> {
+        r_env_binding_is_active(self.env.sexp, name.sexp)
     }
 
     fn flags(&self) -> std::ffi::c_int {

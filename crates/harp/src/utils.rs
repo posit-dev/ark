@@ -609,7 +609,7 @@ pub fn r_env_has(env: SEXP, sym: SEXP) -> bool {
 /// - `Err` if `sym` doesn't exist in the `env`
 /// - `Ok(true)` if `sym` exists in the `env` and is an active binding
 /// - `Ok(false)` if `sym` exists in the `env` and is not an active binding
-pub fn r_env_binding_is_active(env: SEXP, sym: SEXP) -> Result<bool> {
+pub fn r_env_binding_is_active(env: SEXP, sym: SEXP) -> harp::Result<bool> {
     // `R_BindingIsActive()` will throw an error if the `env` doesn't contain
     // the symbol in question, which would be quite bad for us, so we are extra
     // careful with how we expose this.

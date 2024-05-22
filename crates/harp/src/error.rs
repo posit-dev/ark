@@ -52,6 +52,9 @@ pub enum Error {
         line: i32,
     },
     MissingValueError,
+    MissingBindingError {
+        name: String,
+    },
     InspectError {
         path: Vec<String>,
     },
@@ -183,6 +186,9 @@ impl fmt::Display for Error {
 
             Error::Anyhow { message } => {
                 write!(f, "{message}")
+            },
+            Error::MissingBindingError { name } => {
+                write!(f, "Can't find binding {name} in environment")
             },
         }
     }

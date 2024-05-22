@@ -1121,6 +1121,7 @@ impl PositronVariable {
         let env = Environment::new(value);
         let mut childs: Vec<Variable> = env
             .iter()
+            .filter_map(|b| b.ok())
             .filter(|b: &Binding| {
                 if b.name == ".__enclos_env__" {
                     if let BindingValue::Standard { object, .. } = &b.value {
@@ -1193,6 +1194,7 @@ impl PositronVariable {
     fn inspect_environment(value: RObject) -> Result<Vec<Variable>, harp::error::Error> {
         let mut out: Vec<Variable> = Environment::new(value)
             .iter()
+            .filter_map(|b| b.ok())
             .filter(|b: &Binding| !b.is_hidden())
             .map(|b| Self::new(&b).var())
             .collect();
@@ -1224,6 +1226,7 @@ impl PositronVariable {
     fn inspect_r6_methods(value: RObject) -> Result<Vec<Variable>, harp::error::Error> {
         let mut out: Vec<Variable> = Environment::new(value)
             .iter()
+            .filter_map(|b| b.ok())
             .filter(|b: &Binding| match &b.value {
                 BindingValue::Standard { object, .. } => r_typeof(object.sexp) == CLOSXP,
 

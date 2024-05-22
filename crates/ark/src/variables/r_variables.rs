@@ -451,10 +451,15 @@ impl RVariables {
     fn bindings(&self) -> RThreadSafe<Vec<Binding>> {
         let env = self.env.get().clone();
         let env = Environment::new(env);
-        let mut bindings: Vec<Binding> =
-            env.iter().filter(|binding| !binding.is_hidden()).collect();
+
+        let mut bindings: Vec<Binding> = env
+            .iter()
+            .filter_map(|b| b.ok())
+            .filter(|binding| !binding.is_hidden())
+            .collect();
+
         bindings.sort_by(|a, b| a.name.cmp(&b.name));
-        let bindings = RThreadSafe::new(bindings);
-        bindings
+
+        RThreadSafe::new(bindings)
     }
 }
