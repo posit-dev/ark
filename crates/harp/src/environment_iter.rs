@@ -59,12 +59,12 @@ impl Iterator for EnvironmentIter {
     fn next(&mut self) -> Option<Self::Item> {
         self.names
             .next()
-            .map(|name| Binding::new(self.env.clone(), (&name).into()))
+            .map(|name| Binding::new(&self.env, (&name).into()))
     }
 }
 
 impl Binding {
-    pub fn new(env: Environment, name: RSymbol) -> harp::Result<Self> {
+    pub fn new(env: &Environment, name: RSymbol) -> harp::Result<Self> {
         unsafe {
             if env.is_active(name)? {
                 let fun = libr::R_ActiveBindingFunction(name.sexp, env.env.sexp);
