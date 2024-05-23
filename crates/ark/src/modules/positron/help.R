@@ -334,13 +334,17 @@ rewrite_help_links <- function(line, package, package_root) {
     x
   }
 
-  # TODO: deal with the ramifications with the fact that we really do require
-  # pkgload now
   # Accomplishes two goals:
   # 1. Determine if topic belongs to the in-development package.
   # 2. If so, account for the scenario where our nominal `topic` is actually an
   #    alias and we need the actual topic name.
   dev_topic_find <- function(topic) {
+    # It should be exceedingly rare, but if we somehow get here in the absence
+    # of pkgload, all bets are off re: rewriting links.
+    if (!.ps.is_installed("pkgload")) {
+      return(NA_character_)
+    }
+
     tf <- pkgload::dev_topic_find(topic, dev_packages = package)
     if (is.null(tf)) {
       NA_character_
