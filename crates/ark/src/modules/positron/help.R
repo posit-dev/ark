@@ -179,6 +179,8 @@ getHtmlHelpContentsDevImpl <- function(x) {
   package_root <- find_package_root(x$path)
   macros <- load_macros(package_root)
 
+  # - `no_links = TRUE` because we don't click links while looking at docs on hover
+  # - `dynamic = FALSE` because we want the HTML to be static for the hover provider, it isn't connected to a help server
   tools::Rd2HTML(
     x$path,
     out = path,
@@ -194,9 +196,9 @@ getHtmlHelpContentsDevImpl <- function(x) {
 }
 
 #' @export
-.ps.help.previewRd <- function(rdFile) {
+.ps.help.previewRd <- function(rd_file) {
   # `/preview` causes this to be handled by preview_rd() in ark's help proxy.
-  url <- sprintf("/preview?file=%s", rdFile)
+  url <- sprintf("/preview?file=%s", rd_file)
   port <- tools:::httpdPort()
   url <- tools:::dynamicHelpURL(url, port)
   .ps.Call("ps_browse_url", as.character(url))
