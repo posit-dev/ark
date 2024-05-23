@@ -210,10 +210,9 @@ getHtmlHelpContentsDevImpl <- function(x) {
 #' @export
 .ps.Rd2HTML <- function(rd_file, package = "") {
   package_root <- find_package_root(rd_file)
-  package_desc <- package_info(package_root)
-
-  if (!nzchar(package) && utils::hasName(package_desc, "Package")) {
-    package <- package_desc$Package
+  if (!is.null(package_root) && !nzchar(package)) {
+    package_desc <- package_info(package_root)
+    package <- package_desc$Package %||% ""
   }
 
   path <- tempfile(fileext = ".html")
@@ -282,17 +281,14 @@ find_package_root <- function(path) {
   }
 }
 
-# @param path Normalized path to package root or, possibly, NULL.
-# @returns A list containing the metadata in DESCRIPTION or, for NULL input or
-#   when no DESCRIPTION is found, an empty list.
+# @param path Normalized path to package root.
+# @returns A list containing the metadata in DESCRIPTION.
 package_info <- function(path) {
-  if (is.null(path)) {
-    return(list())
-  }
+  stopifnot(is_string(path))
 
   desc <- file.path(path, "DESCRIPTION")
   if (!file.exists(desc)) {
-    return(list())
+    stop("No DESCRIPTION found")
   }
 
   desc_mat <- read.dcf(desc)
