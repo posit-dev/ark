@@ -253,7 +253,7 @@ getHtmlHelpContentsDevImpl <- function(x) {
     # href="/library/PACKAGE/help/TOPIC"
     # For a topic in this in-development package, we rewrite like:
     # href="/preview?file=/normalized/path/to/source/of/PACKAGE/man/TOPIC.Rd"
-    lines[] <- vapply(lines, rewrite_help_links, "", package, package_root)
+    lines <- vapply(lines, rewrite_help_links, "", package, package_root)
   }
 
   paste0(lines, collapse = "\n")
