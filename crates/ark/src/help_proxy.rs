@@ -201,7 +201,6 @@ async fn preview_rd(params: web::Query<PreviewRdParams>) -> HttpResponse {
 
     HttpResponse::Ok()
         .content_type(ContentType::html())
-        .append_header(("Cache-Control", "no-cache,must-revalidate"))
         .body(content)
 }
 
