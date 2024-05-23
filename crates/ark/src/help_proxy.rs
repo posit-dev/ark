@@ -11,6 +11,7 @@ use actix_web::get;
 use actix_web::http::header::ContentType;
 use actix_web::web;
 use actix_web::App;
+use actix_web::HttpRequest;
 use actix_web::HttpResponse;
 use actix_web::HttpServer;
 use harp::exec::RFunction;
@@ -93,7 +94,7 @@ impl HelpProxy {
                 .app_data(app_state.clone())
                 .service(preview_rd)
                 .service(preview_img)
-                .service(proxy_request)
+                .default_service(web::to(proxy_request))
         })
         .bind(("127.0.0.1", self.source_port))?;
 
@@ -103,13 +104,12 @@ impl HelpProxy {
 }
 
 // Proxies a request.
-#[get("/{url:.*}")]
-async fn proxy_request(path: web::Path<(String,)>, app_state: web::Data<AppState>) -> HttpResponse {
+async fn proxy_request(req: HttpRequest, app_state: web::Data<AppState>) -> HttpResponse {
     // Get the URL path.
-    let (path,) = path.into_inner();
+    let path = req.path();
 
     // Construct the target URL string.
-    let target_url_string = format!("http://localhost:{}/{path}", app_state.target_port);
+    let target_url_string = format!("http://localhost:{}{}", app_state.target_port, path);
 
     // Parse the target URL string into the target URL.
     let target_url = match Url::parse(&target_url_string) {
