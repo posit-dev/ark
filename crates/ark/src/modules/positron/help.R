@@ -334,23 +334,25 @@ rewrite_help_links <- function(line, package, package_root) {
     x
   }
 
-  # if available, use pkgload::dev_topic_find() to get the definitive filepath
-  # this accounts for scenario where topic name != function name
-  # otherwise, use the typical pattern and hope for the best
-  construct_filepath <- function(topic) {
-    out <- sprintf('%s/man/%s.Rd">', package_root, topic)
-    if (.ps.is_installed("pkgload")) {
-      tf <- pkgload::dev_topic_find(topic, dev_packages = package)
-      if (!is.null(tf)) {
-        out <- tf$path
-      }
+  # TODO: deal with the ramifications with the fact that we really do require
+  # pkgload now
+  # Accomplishes two goals:
+  # 1. Determine if topic belongs to the in-development package.
+  # 2. If so, account for the scenario where our nominal `topic` is actually an
+  #    alias and we need the actual topic name.
+  dev_topic_find <- function(topic) {
+    tf <- pkgload::dev_topic_find(topic, dev_packages = package)
+    if (is.null(tf)) {
+      NA_character_
+    } else {
+      tf$path
     }
-    out
   }
 
   # concrete examples:
   # dev         a href="../../devhelp/help/blarg">
   # installed   a href="../../rlang/help/abort">
+  # installed   a href="../../devhelp/help/match">
   pattern <- 'a href="../../(?<pkg>[^/]*)/help/(?<topic>[^/]*)">'
 
   x <- gregexec(pattern, line, perl = TRUE)
@@ -362,11 +364,15 @@ rewrite_help_links <- function(line, package, package_root) {
 
   match_data  <- as.data.frame(t(rm))
 
-  dev_file <- vapply(match_data$topic, construct_filepath, "")
+  maybe_dev_rd_path <- vapply(match_data$topic, dev_topic_find, "")
+
   replacement <- ifelse(
-    match_data$pkg == package,
-    sprintf('a href="/preview?file=%s">', dev_file),
-    sprintf('a href="/library/%s/help/%s">', match_data$pkg, match_data$topic)
+    is.na(maybe_dev_rd_path),
+    # this looks nuts, because we KNOW this `topic` is not in `pkg`, but this
+    # delegates the problem to R's help server, which will figure out where the
+    # topic actually is
+    sprintf('a href="/library/%s/help/%s">', match_data$pkg, match_data$topic),
+    sprintf('a href="/preview?file=%s">', maybe_dev_rd_path)
   )
   regmatches(line, lapply(x, keep_first)) <- list(as.matrix(replacement))
 
