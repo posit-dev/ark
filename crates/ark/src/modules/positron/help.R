@@ -238,6 +238,9 @@ getHtmlHelpContentsDevImpl <- function(x) {
     lines
   )
 
+  # This condition is meant to detect the scenario where we are clearly working
+  # inside the source of a specific in-development package, which will almost
+  # always be true.
   if (!is.null(package_root) && nzchar(package)) {
     # `/dev-figure` causes this to be handled by preview_img() in ark's help proxy.
     lines <- gsub(
@@ -247,12 +250,6 @@ getHtmlHelpContentsDevImpl <- function(x) {
     )
 
     # Rewrite links to other help topics.
-    # These links look like this:
-    # href="../../PACKAGE/help/TOPIC"
-    # For a topic in not-this-package, we rewrite as:
-    # href="/library/PACKAGE/help/TOPIC"
-    # For a topic in this in-development package, we rewrite like:
-    # href="/preview?file=/normalized/path/to/source/of/PACKAGE/man/TOPIC.Rd"
     lines <- vapply(lines, rewrite_help_links, "", package, package_root)
   }
 
@@ -353,10 +350,25 @@ rewrite_help_links <- function(line, package, package_root) {
     }
   }
 
-  # concrete examples:
-  # dev         a href="../../devhelp/help/blarg">
-  # installed   a href="../../rlang/help/abort">
-  # installed   a href="../../devhelp/help/match">
+  # Incoming links look like this:
+  # href="../../PACKAGE/help/TOPIC"
+  #
+  # For a topic known to be in this OTHER_PACKAGE, we rewrite as:
+  # href="/library/OTHER_PACKAGE/help/TOPIC"
+  #
+  # For a topic in this in-development PACKAGE, we rewrite like:
+  # href="/preview?file=/normalized/path/to/source/of/PACKAGE/man/TOPIC.Rd"
+  #
+  # When we know the topic is not in this in-development PACKAGE, but we don't
+  # know which other package it belongs to, we rewrite as:
+  # href="/library/PACKAGE/help/TOPIC"
+  # This is obviously wrong, but this is how we delegate the problem of
+  # resolving the package back to the R help server.
+
+  # concrete incoming examples:
+  #                        dev  a href="../../devhelp/help/blarg">
+  #   installed, known package  a href="../../rlang/help/abort">
+  # installed, unknown package  a href="../../devhelp/help/match">
   pattern <- 'a href="../../(?<pkg>[^/]*)/help/(?<topic>[^/]*)">'
 
   x <- gregexec(pattern, line, perl = TRUE)
@@ -372,17 +384,15 @@ rewrite_help_links <- function(line, package, package_root) {
 
   replacement <- ifelse(
     is.na(maybe_dev_rd_path),
-    # this looks nuts, because we KNOW this `topic` is not in `pkg`, but this
-    # delegates the problem to R's help server, which will figure out where the
-    # topic actually is
     sprintf('a href="/library/%s/help/%s">', match_data$pkg, match_data$topic),
     sprintf('a href="/preview?file=%s">', maybe_dev_rd_path)
   )
   regmatches(line, lapply(x, keep_first)) <- list(as.matrix(replacement))
 
-  # what has happened to our concrete examples:
-  # dev         a href="/preview?file=/Users/jenny/rrr/devhelp/man/blarg.Rd">
-  # installed   a href="/library/rlang/help/abort">
+  # concrete outgoing examples:
+  #                        dev  a href="/preview?file=/Users/jenny/rrr/devhelp/man/blarg.Rd">
+  #   installed, known package  a href="/library/rlang/help/abort">
+  # installed, unknown package  a href="/library/devhelp/help/match">
 
   line
 }
