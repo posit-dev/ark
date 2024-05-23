@@ -8,20 +8,33 @@
 use std::net::TcpListener;
 
 use actix_web::get;
+use actix_web::http::header::ContentType;
 use actix_web::web;
 use actix_web::App;
+use actix_web::HttpRequest;
 use actix_web::HttpResponse;
 use actix_web::HttpServer;
+use harp::exec::RFunction;
+use harp::exec::RFunctionExt;
+use mime_guess::from_path;
 use rust_embed::RustEmbed;
+use serde::Deserialize;
 use stdext::spawn;
+use stdext::unwrap;
 use url::Url;
 
 use crate::browser;
+use crate::r_task;
 
 // Embed `resources/help/` which is where replacement resources can be found.
 #[derive(RustEmbed)]
 #[folder = "resources/help/"]
 struct Asset;
+
+#[derive(Deserialize)]
+struct PreviewRdParams {
+    file: String,
+}
 
 // Starts the help proxy.
 pub fn start(target_port: u16) {
@@ -79,7 +92,9 @@ impl HelpProxy {
         let server = HttpServer::new(move || {
             App::new()
                 .app_data(app_state.clone())
-                .service(proxy_request)
+                .service(preview_rd)
+                .service(preview_img)
+                .default_service(web::to(proxy_request))
         })
         .bind(("127.0.0.1", self.source_port))?;
 
@@ -89,13 +104,12 @@ impl HelpProxy {
 }
 
 // Proxies a request.
-#[get("/{url:.*}")]
-async fn proxy_request(path: web::Path<(String,)>, app_state: web::Data<AppState>) -> HttpResponse {
+async fn proxy_request(req: HttpRequest, app_state: web::Data<AppState>) -> HttpResponse {
     // Get the URL path.
-    let (path,) = path.into_inner();
+    let path = req.path();
 
     // Construct the target URL string.
-    let target_url_string = format!("http://localhost:{}/{path}", app_state.target_port);
+    let target_url_string = format!("http://localhost:{}{}", app_state.target_port, path);
 
     // Parse the target URL string into the target URL.
     let target_url = match Url::parse(&target_url_string) {
@@ -121,7 +135,7 @@ async fn proxy_request(path: web::Path<(String,)>, app_state: web::Data<AppState
 
             // Log.
             log::info!(
-                "Proxing URL '{:?}' path '{}' content-type is '{:?}'",
+                "Proxying URL '{:?}' path '{}' content-type is '{:?}'",
                 target_url.to_string(),
                 target_url.path(),
                 content_type,
@@ -160,4 +174,63 @@ async fn proxy_request(path: web::Path<(String,)>, app_state: web::Data<AppState
             HttpResponse::BadGateway().finish()
         },
     }
+}
+
+#[get("/preview")]
+async fn preview_rd(params: web::Query<PreviewRdParams>) -> HttpResponse {
+    let file = params.file.as_str();
+
+    log::info!("Received request with path 'preview' and file '{file}'.");
+
+    if !std::path::Path::new(file).exists() {
+        log::error!("File does not exist: '{file}'.");
+        return HttpResponse::BadGateway().finish();
+    }
+
+    let content = r_task(|| unsafe {
+        RFunction::from(".ps.Rd2HTML")
+            .param("rd_file", file)
+            .call()
+            .and_then(|content| content.to::<String>())
+    });
+
+    let content = unwrap!(content, Err(err) => {
+        log::error!("Error converting Rd to HTML: {err:?}");
+        return HttpResponse::InternalServerError().finish();
+    });
+
+    HttpResponse::Ok()
+        .content_type(ContentType::html())
+        .body(content)
+}
+
+#[get("/dev-figure")]
+async fn preview_img(params: web::Query<PreviewRdParams>) -> HttpResponse {
+    let file = params.file.as_str();
+
+    log::info!("Received request with path 'dev-figure' for image file '{file}'.");
+
+    if !std::path::Path::new(file).exists() {
+        log::error!("File does not exist: '{file}'.");
+        return HttpResponse::BadGateway().finish();
+    }
+
+    let mime_type = from_path(file).first();
+    let mime_str = match mime_type {
+        Some(mime) => mime.to_string(),
+        None => {
+            log::error!("Could not determine MIME type.");
+            return HttpResponse::InternalServerError().finish();
+        },
+    };
+
+    let content = match tokio::fs::read(file).await {
+        Ok(content) => content,
+        Err(err) => {
+            log::error!("Error reading image file: {err:?}");
+            return HttpResponse::InternalServerError().finish();
+        },
+    };
+
+    HttpResponse::Ok().content_type(mime_str).body(content)
 }
