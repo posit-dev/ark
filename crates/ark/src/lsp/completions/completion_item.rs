@@ -27,6 +27,7 @@ use libr::ENCLOS;
 use libr::PROMSXP;
 use libr::PRVALUE;
 use libr::SEXP;
+use ropey::Rope;
 use stdext::*;
 use tower_lsp::lsp_types::Command;
 use tower_lsp::lsp_types::CompletionItem;
@@ -45,8 +46,10 @@ use crate::lsp::completions::types::PromiseStrategy;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::encoding::convert_point_to_position;
 use crate::lsp::traits::rope::RopeExt;
+use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
+use crate::treesitter::UnaryOperatorType;
 
 pub(super) fn completion_item(
     label: impl AsRef<str>,
@@ -164,6 +167,8 @@ pub(super) unsafe fn completion_item_from_package(
 
 pub(super) fn completion_item_from_function<T: AsRef<str>>(
     name: &str,
+    node: &Node,
+    contents: &Rope,
     package: Option<&str>,
     parameters: &[T],
 ) -> Result<CompletionItem> {
@@ -179,17 +184,93 @@ pub(super) fn completion_item_from_function<T: AsRef<str>>(
     item.detail = Some(detail);
 
     let insert_text = r_symbol_quote_invalid(name);
-    item.insert_text_format = Some(InsertTextFormat::SNIPPET);
-    item.insert_text = Some(format!("{insert_text}($0)"));
 
-    // provide parameter completions after completing function
-    item.command = Some(Command {
-        title: "Trigger Parameter Hints".to_string(),
-        command: "editor.action.triggerParameterHints".to_string(),
-        ..Default::default()
-    });
+    if node_needs_parentheses(node, contents) {
+        item.insert_text_format = Some(InsertTextFormat::SNIPPET);
+        item.insert_text = Some(format!("{insert_text}($0)"));
+
+        // provide parameter completions after completing function
+        item.command = Some(Command {
+            title: "Trigger Parameter Hints".to_string(),
+            command: "editor.action.triggerParameterHints".to_string(),
+            ..Default::default()
+        });
+    } else {
+        item.insert_text_format = Some(InsertTextFormat::PLAIN_TEXT);
+        item.insert_text = Some(insert_text);
+    }
 
     return Ok(item);
+}
+
+fn node_needs_parentheses(node: &Node, contents: &Rope) -> bool {
+    if node.node_type() != NodeType::Identifier {
+        return true;
+    }
+
+    let Some(node) = node.parent() else {
+        // If no parent, assume we want parentheses
+        return true;
+    };
+
+    if node.node_type() == NodeType::UnaryOperator(UnaryOperatorType::Help) {
+        // `?<topic>`, don't add parentheses
+        return false;
+    }
+    if node.node_type() == NodeType::BinaryOperator(BinaryOperatorType::Help) {
+        // `<pkg>?<topic>`, don't add parentheses on either side
+        return false;
+    }
+
+    if node.node_type() == NodeType::Argument {
+        // Special `debug(<fn>)`, don't add parentheses
+        return argument_node_needs_parentheses(&node, contents);
+    }
+
+    return true;
+}
+
+// Known list where we don't want to add parentheses to the first argument when it is
+// a function
+const FUNCTIONS_NO_PARENTHESES: &[&str] = &["debug", "debugonce", "View", "str", "trace", "help"];
+
+fn argument_node_needs_parentheses(node: &Node, contents: &Rope) -> bool {
+    // Work our way up from the `Argument` node to the `Call` node
+
+    // `Argument` -> `Arguments`
+    // The early return branches shouldn't really happen.
+    let node = match node.parent() {
+        Some(parent) if parent.node_type() == NodeType::Arguments => parent,
+        Some(_) => return true,
+        None => return true,
+    };
+
+    // `Arguments` -> `Call`
+    // The `Some(_)` case can occur with `Subset` and `Subset2` parent nodes.
+    let node = match node.parent() {
+        Some(parent) if parent.node_type() == NodeType::Call => parent,
+        Some(_) => return true,
+        None => return true,
+    };
+
+    // Get the `function` field of the call node, which is the call name
+    let Some(node) = node.child_by_field_name("function") else {
+        return true;
+    };
+
+    // Ok, now get the function name
+    let text = unwrap!(contents.node_slice(&node), Err(err) => {
+        log::error!("Failed to slice node {node:?} with contents {contents} due to {err}.");
+        return true;
+    });
+    let text = text.to_string();
+
+    if FUNCTIONS_NO_PARENTHESES.contains(&text.as_str()) {
+        // One of the special ones where we don't add parentheses
+        return false;
+    }
+
+    return true;
 }
 
 // TODO
@@ -223,13 +304,23 @@ pub(super) unsafe fn completion_item_from_data_variable(
 
 pub(super) unsafe fn completion_item_from_object(
     name: &str,
+    node: &Node,
+    contents: &Rope,
     object: SEXP,
     envir: SEXP,
     package: Option<&str>,
     promise_strategy: PromiseStrategy,
 ) -> Result<CompletionItem> {
     if r_typeof(object) == PROMSXP {
-        return completion_item_from_promise(name, object, envir, package, promise_strategy);
+        return completion_item_from_promise(
+            name,
+            node,
+            contents,
+            object,
+            envir,
+            package,
+            promise_strategy,
+        );
     }
 
     // TODO: For some functions (e.g. S4 generics?) the help file might be
@@ -243,7 +334,7 @@ pub(super) unsafe fn completion_item_from_object(
             .iter()
             .map(|formal| formal.name.as_str())
             .collect::<Vec<_>>();
-        return completion_item_from_function(name, package, &arguments);
+        return completion_item_from_function(name, node, contents, package, &arguments);
     }
 
     let mut item = completion_item(name, CompletionData::Object {
@@ -262,6 +353,8 @@ pub(super) unsafe fn completion_item_from_object(
 
 pub(super) unsafe fn completion_item_from_promise(
     name: &str,
+    node: &Node,
+    contents: &Rope,
     object: SEXP,
     envir: SEXP,
     package: Option<&str>,
@@ -271,7 +364,15 @@ pub(super) unsafe fn completion_item_from_promise(
         // Promise has already been evaluated before.
         // Generate completion item from underlying value.
         let object = PRVALUE(object);
-        return completion_item_from_object(name, object, envir, package, promise_strategy);
+        return completion_item_from_object(
+            name,
+            node,
+            contents,
+            object,
+            envir,
+            package,
+            promise_strategy,
+        );
     }
 
     if promise_strategy == PromiseStrategy::Force && r_promise_is_lazy_load_binding(object) {
@@ -281,7 +382,15 @@ pub(super) unsafe fn completion_item_from_promise(
         // important for functions, where we also set a `CompletionItem::command()`
         // to display function signature help after the completion.
         let object = r_promise_force_with_rollback(object)?;
-        return completion_item_from_object(name, object, envir, package, promise_strategy);
+        return completion_item_from_object(
+            name,
+            node,
+            contents,
+            object,
+            envir,
+            package,
+            promise_strategy,
+        );
     }
 
     // Otherwise we never want to force promises, so we return a fairly
@@ -319,21 +428,33 @@ pub(super) fn completion_item_from_active_binding(name: &str) -> Result<Completi
 
 pub(super) unsafe fn completion_item_from_namespace(
     name: &str,
+    node: &Node,
+    contents: &Rope,
     namespace: SEXP,
     package: &str,
 ) -> Result<CompletionItem> {
     // First, look in the namespace itself.
-    if let Some(item) =
-        completion_item_from_symbol(name, namespace, Some(package), PromiseStrategy::Force)
-    {
+    if let Some(item) = completion_item_from_symbol(
+        name,
+        node,
+        contents,
+        namespace,
+        Some(package),
+        PromiseStrategy::Force,
+    ) {
         return item;
     }
 
     // Otherwise, try the imports environment.
     let imports = ENCLOS(namespace);
-    if let Some(item) =
-        completion_item_from_symbol(name, imports, Some(package), PromiseStrategy::Force)
-    {
+    if let Some(item) = completion_item_from_symbol(
+        name,
+        node,
+        contents,
+        imports,
+        Some(package),
+        PromiseStrategy::Force,
+    ) {
         return item;
     }
 
@@ -347,6 +468,8 @@ pub(super) unsafe fn completion_item_from_namespace(
 
 pub(super) unsafe fn completion_item_from_lazydata(
     name: &str,
+    node: &Node,
+    contents: &Rope,
     env: SEXP,
     package: &str,
 ) -> Result<CompletionItem> {
@@ -355,7 +478,7 @@ pub(super) unsafe fn completion_item_from_lazydata(
     // long time to load.
     let promise_strategy = PromiseStrategy::Simple;
 
-    match completion_item_from_symbol(name, env, Some(package), promise_strategy) {
+    match completion_item_from_symbol(name, node, contents, env, Some(package), promise_strategy) {
         Some(item) => item,
         None => {
             // Should be impossible, but we'll be extra safe
@@ -366,6 +489,8 @@ pub(super) unsafe fn completion_item_from_lazydata(
 
 pub(super) unsafe fn completion_item_from_symbol(
     name: &str,
+    node: &Node,
+    contents: &Rope,
     envir: SEXP,
     package: Option<&str>,
     promise_strategy: PromiseStrategy,
@@ -397,6 +522,8 @@ pub(super) unsafe fn completion_item_from_symbol(
 
     Some(completion_item_from_object(
         name,
+        node,
+        contents,
         object,
         envir,
         package,
@@ -484,4 +611,48 @@ fn completion_item_from_dot_dot_dot(
     item.text_edit = Some(textedit);
 
     Ok(item)
+}
+
+#[cfg(test)]
+mod tests {
+    use ropey::Rope;
+    use tree_sitter::Parser;
+
+    use crate::lsp::completions::completion_item::node_needs_parentheses;
+    use crate::lsp::completions::completion_item::FUNCTIONS_NO_PARENTHESES;
+    use crate::lsp::traits::node::NodeExt;
+    use crate::test::point_from_cursor;
+
+    #[test]
+    fn test_node_needs_parentheses() {
+        let language = tree_sitter_r::language();
+
+        let mut parser = Parser::new();
+        parser
+            .set_language(&language)
+            .expect("failed to create parser");
+
+        let mut test_node_needs_parentheses = |text: &str| {
+            let (text, point) = point_from_cursor(text);
+            let contents = Rope::from_str(text.as_str());
+            let tree = parser.parse(text.as_str(), None).unwrap();
+            let node = tree.root_node().find_closest_node_to_point(point).unwrap();
+            node_needs_parentheses(&node, &contents)
+        };
+
+        // `fn@`, i.e. typical function case
+        assert!(test_node_needs_parentheses("fn@"));
+
+        // No parentheses after help
+        assert!(!test_node_needs_parentheses("?fn@"));
+        assert!(!test_node_needs_parentheses("foo?fn@"));
+        assert!(!test_node_needs_parentheses("foo@?fn"));
+
+        // No parentheses after a set of special functions
+        // i.e., `debug(fn@)`
+        for function in FUNCTIONS_NO_PARENTHESES {
+            let text = format!("{function}(fn@)");
+            assert!(!test_node_needs_parentheses(text.as_str()));
+        }
+    }
 }

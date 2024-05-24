@@ -36,6 +36,9 @@ pub(super) fn completions_from_search_path(
         "if", "else", "for", "in", "while", "repeat", "break", "next", "return", "function",
     ];
 
+    let node = &context.node;
+    let contents = &context.document.contents;
+
     unsafe {
         // Iterate through environments starting from the global environment.
         let mut envir = R_GlobalEnv;
@@ -73,6 +76,8 @@ pub(super) fn completions_from_search_path(
                 // Add the completion item.
                 let Some(item) = completion_item_from_symbol(
                     symbol,
+                    node,
+                    contents,
                     envir,
                     Some(name.as_str()),
                     promise_strategy.clone(),

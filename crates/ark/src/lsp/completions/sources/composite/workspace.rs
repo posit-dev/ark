@@ -28,7 +28,8 @@ pub(super) fn completions_from_workspace(
 ) -> Result<Option<Vec<CompletionItem>>> {
     log::info!("completions_from_workspace()");
 
-    let node = context.node;
+    let node = &context.node;
+    let contents = &context.document.contents;
 
     if node.is_namespace_operator() {
         log::error!("Should have already been handled by namespace completions source");
@@ -49,7 +50,7 @@ pub(super) fn completions_from_workspace(
     let mut completions = vec![];
 
     let token = if node.is_identifier() {
-        context.document.contents.node_slice(&node)?.to_string()
+        context.document.contents.node_slice(node)?.to_string()
     } else {
         "".to_string()
     };
@@ -63,7 +64,7 @@ pub(super) fn completions_from_workspace(
 
         match &entry.data {
             indexer::IndexEntryData::Function { name, arguments } => {
-                let mut completion = unwrap!(completion_item_from_function(name, None, arguments), Err(error) => {
+                let mut completion = unwrap!(completion_item_from_function(name, node, contents, None, arguments), Err(error) => {
                     error!("{:?}", error);
                     return;
                 });
