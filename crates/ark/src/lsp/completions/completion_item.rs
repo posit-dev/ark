@@ -204,10 +204,6 @@ pub(super) fn completion_item_from_function<T: AsRef<str>>(
 }
 
 fn node_needs_parentheses(node: &Node, contents: &Rope) -> bool {
-    if node.node_type() != NodeType::Identifier {
-        return true;
-    }
-
     let Some(node) = node.parent() else {
         // If no parent, assume we want parentheses
         return true;

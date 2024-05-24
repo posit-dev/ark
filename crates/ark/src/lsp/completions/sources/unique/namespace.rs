@@ -222,11 +222,13 @@ fn list_namespace_exports(namespace: SEXP) -> RObject {
 
 #[cfg(test)]
 mod tests {
+    use tower_lsp::lsp_types::InsertTextFormat;
     use tree_sitter::Point;
 
     use crate::lsp::completions::sources::unique::namespace::completions_from_namespace;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
+    use crate::test::point_from_cursor;
     use crate::test::r_test;
 
     #[test]
@@ -310,6 +312,32 @@ mod tests {
             let context = DocumentContext::new(&document, point, None);
             let completions = completions_from_namespace(&context).unwrap().unwrap();
             assert!(completions.is_empty());
+        })
+    }
+
+    #[test]
+    fn test_completions_dont_add_parentheses_inside_special_functions() {
+        r_test(|| {
+            let (text, point) = point_from_cursor("debug(base::ab@)");
+
+            let document = Document::new(text.as_str(), None);
+            let context = DocumentContext::new(&document, point, None);
+
+            let completions = completions_from_namespace(&context).unwrap().unwrap();
+            let completion = completions
+                .iter()
+                .find(|item| item.label == "abs")
+                .unwrap()
+                .clone();
+
+            // Not a snippet, and not with `()`, and no extra command to trigger
+            // parameter hints!
+            assert_eq!(completion.insert_text.unwrap(), String::from("abs"));
+            assert_eq!(
+                completion.insert_text_format.unwrap(),
+                InsertTextFormat::PLAIN_TEXT
+            );
+            assert!(completion.command.is_none());
         })
     }
 }
