@@ -18,7 +18,7 @@ use anyhow::Result;
 use crossbeam::channel::Sender;
 
 use crate::interface::RMain;
-use crate::r_task::r_async_task;
+use crate::r_task;
 use crate::request::KernelRequest;
 use crate::ui::UiCommMessage;
 
@@ -73,7 +73,7 @@ impl Kernel {
         // So check for status in an async task and send event from there.
         let kernel = self.kernel.as_ref().unwrap().clone();
 
-        r_async_task(move || {
+        r_task::spawn(|| async move {
             // Get the current busy status
             let busy = if RMain::initialized() {
                 RMain::get().is_busy

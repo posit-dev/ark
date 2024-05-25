@@ -10,14 +10,17 @@
 // The frontend methods called by R are forwarded to the corresponding
 // `RMain` methods via `R_MAIN`.
 
+use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::ffi::*;
+use std::future::Future;
 use std::os::raw::c_uchar;
 use std::path::PathBuf;
 use std::result::Result::Ok;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::Once;
+use std::task::Poll;
 use std::time::Duration;
 
 use amalthea::comm::base_comm::JsonRpcReply;
@@ -90,7 +93,9 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use serde_json::json;
 use stdext::result::ResultOrLog;
+use stdext::vec::vec_deque_extract_if;
 use stdext::*;
+use uuid::Uuid;
 
 use crate::dap::dap::DapBackendEvent;
 use crate::dap::dap_r_main::RMainDap;
@@ -107,7 +112,12 @@ use crate::lsp::state_handlers::ConsoleInputs;
 use crate::modules;
 use crate::plots::graphics_device;
 use crate::r_task;
-use crate::r_task::RTaskMain;
+use crate::r_task::is_parked_task;
+use crate::r_task::BoxFuture;
+use crate::r_task::RTask;
+use crate::r_task::RTaskKind;
+use crate::r_task::RTaskStatus;
+use crate::r_task::RTaskWaker;
 use crate::request::debug_request_command;
 use crate::request::RRequest;
 use crate::signals::initialize_signal_handlers;
@@ -149,12 +159,13 @@ pub fn start_r(
         R_MAIN_THREAD_ID = Some(std::thread::current().id());
 
         // Channels to send/receive tasks from auxiliary threads via `r_task()`
-        let (tasks_tx, tasks_rx) = unbounded::<RTaskMain>();
+        let (tasks_tx, tasks_rx) = unbounded::<RTask>();
 
-        r_task::initialize(tasks_tx);
+        r_task::initialize(tasks_tx.clone());
 
         R_MAIN = Some(RMain::new(
             kernel_mutex,
+            tasks_tx,
             tasks_rx,
             comm_manager_tx,
             r_request_rx,
@@ -217,6 +228,7 @@ pub fn start_r(
     // Does not return!
     crate::sys::interface::run_r();
 }
+
 pub struct RMain {
     initializing: bool,
     kernel_init_tx: Bus<KernelInfo>,
@@ -249,9 +261,15 @@ pub struct RMain {
     stderr: String,
     banner: String,
 
-    /// Channel to receive tasks from `r_task()`
-    tasks_rx: Receiver<RTaskMain>,
-    pending_tasks: VecDeque<RTaskMain>,
+    /// Channel to send and receive tasks from `r_task()`
+    tasks_tx: Sender<RTask>,
+    tasks_rx: Receiver<RTask>,
+    pending_tasks: VecDeque<RTask>,
+
+    // /// Channel to send and receive notification from woken tasks
+    // parked_tasks_tx: Sender<Arc<RTaskWaker>>,
+    // parked_tasks_rx: Receiver<Arc<RTaskWaker>>,
+    pending_futures: HashMap<Uuid, (BoxFuture<'static, ()>, RTaskWaker)>,
 
     /// Shared reference to kernel. Currently used by the ark-execution
     /// thread, the R frontend callbacks, and LSP routines called from R
@@ -343,7 +361,8 @@ pub enum ConsoleResult {
 impl RMain {
     pub fn new(
         kernel: Arc<Mutex<Kernel>>,
-        tasks_rx: Receiver<RTaskMain>,
+        tasks_tx: Sender<RTask>,
+        tasks_rx: Receiver<RTask>,
         comm_manager_tx: Sender<CommManagerEvent>,
         r_request_rx: Receiver<RRequest>,
         stdin_request_tx: Sender<StdInRequest>,
@@ -375,8 +394,10 @@ impl RMain {
             dap: RMainDap::new(dap),
             is_busy: false,
             old_show_error_messages: None,
+            tasks_tx,
             tasks_rx,
             pending_tasks: VecDeque::new(),
+            pending_futures: HashMap::new(),
         }
     }
 
@@ -633,9 +654,8 @@ impl RMain {
             // reset the flag
             set_interrupts_pending(false);
 
-            // Yield to auxiliary threads and to the R event loop
-            self.yield_to_tasks();
-            unsafe { Self::process_events() };
+            // Yield to auxiliary threads
+            self.yield_to_tasks(false);
 
             // FIXME: Race between interrupt and new code request. To fix
             // this, we could manage the Shell and Control sockets on the
@@ -643,83 +663,29 @@ impl RMain {
             // to be handled in a blocking way to ensure subscribers are
             // notified before the next incoming message is processed.
 
+            // First handle execut requests outside of `select!` to ensure they
+            // have priority. `select!` chooses at random.
+            if let Ok(req) = self.r_request_rx.try_recv() {
+                if let Some(input) = self.handle_execute_request(req, &info, buf, buflen) {
+                    return input;
+                }
+            }
+
             select! {
                 // Wait for an execution request from the frontend.
                 recv(self.r_request_rx) -> req => {
-                    let req = unwrap!(req, Err(_) => {
+                    let Ok(req) = req else {
                         // The channel is disconnected and empty
                         return ConsoleResult::Disconnected;
-                    });
-
-                    if info.input_request {
-                        panic!("Unexpected `execute_request` while waiting for `input_reply`.");
-                    }
-
-                    let input = match req {
-                        RRequest::ExecuteCode(exec_req, orig, response_tx) => {
-                            // Extract input from request
-                            let (input, exec_count) = { self.init_execute_request(&exec_req) };
-
-                            // Save `ExecuteCode` request so we can respond to it at next prompt
-                            self.active_request = Some(ActiveReadConsoleRequest {
-                                exec_count,
-                                request: exec_req,
-                                orig,
-                                response_tx,
-                            });
-
-                            input
-                        },
-
-                        RRequest::Shutdown(_) => ConsoleInput::EOF,
-
-                        RRequest::DebugCommand(cmd) => {
-                            // Just ignore command in case we left the debugging state already
-                            if !self.dap.is_debugging() {
-                                continue;
-                            }
-
-                            // Translate requests from the debugger frontend to actual inputs for
-                            // the debug interpreter
-                            ConsoleInput::Input(debug_request_command(cmd))
-                        },
                     };
 
-                    // Clear error flag
-                    self.error_occurred = false;
-
-                    return match input {
-                        ConsoleInput::Input(code) => {
-                            // Handle commands for the debug interpreter
-                            if self.dap.is_debugging() {
-                                let continue_cmds = vec!["n", "f", "c", "cont"];
-                                if continue_cmds.contains(&&code[..]) {
-                                    self.dap.send_dap(DapBackendEvent::Continued);
-                                }
-                            }
-
-                            Self::on_console_input(buf, buflen, code);
-                            ConsoleResult::NewInput
-                        },
-                        ConsoleInput::EOF => ConsoleResult::Disconnected,
+                    if let Some(input) = self.handle_execute_request(req, &info, buf, buflen) {
+                        return input;
                     }
                 }
 
-                recv(self.stdin_reply_rx) -> chan_result => {
-                    // StdIn must remain alive
-                    let result = chan_result.unwrap();
-
-                    match result {
-                        Ok(input) => {
-                            let input = convert_line_endings(&input.value, LineEnding::Posix);
-
-                            Self::on_console_input(buf, buflen, input);
-                            return ConsoleResult::NewInput;
-                        },
-                        Err(err) => {
-                            return ConsoleResult::Error(err);
-                        }
-                    }
+                recv(self.stdin_reply_rx) -> reply => {
+                    return self.handle_input_reply(reply.unwrap(), buf, buflen);
                 }
 
                 // A task woke us up, start next loop tick to yield to it
@@ -727,7 +693,6 @@ impl RMain {
                     if let Ok(task) = task {
                         self.pending_tasks.push_back(task);
                     }
-                    continue;
                 }
 
                 // Wait with a timeout. Necessary because we need to
@@ -737,6 +702,7 @@ impl RMain {
                 // descriptors that R has open and select() on those for
                 // available data?
                 default(Duration::from_millis(200)) => {
+                    unsafe { Self::process_events() };
                     continue;
                 }
             }
@@ -789,6 +755,83 @@ impl RMain {
             incomplete,
             input_request: user_request,
         };
+    }
+
+    fn handle_execute_request(
+        &mut self,
+        req: RRequest,
+        info: &PromptInfo,
+        buf: *mut c_uchar,
+        buflen: c_int,
+    ) -> Option<ConsoleResult> {
+        if info.input_request {
+            panic!("Unexpected `execute_request` while waiting for `input_reply`.");
+        }
+
+        let input = match req {
+            RRequest::ExecuteCode(exec_req, orig, response_tx) => {
+                // Extract input from request
+                let (input, exec_count) = { self.init_execute_request(&exec_req) };
+
+                // Save `ExecuteCode` request so we can respond to it at next prompt
+                self.active_request = Some(ActiveReadConsoleRequest {
+                    exec_count,
+                    request: exec_req,
+                    orig,
+                    response_tx,
+                });
+
+                input
+            },
+
+            RRequest::Shutdown(_) => ConsoleInput::EOF,
+
+            RRequest::DebugCommand(cmd) => {
+                // Just ignore command in case we left the debugging state already
+                if !self.dap.is_debugging() {
+                    return None;
+                }
+
+                // Translate requests from the debugger frontend to actual inputs for
+                // the debug interpreter
+                ConsoleInput::Input(debug_request_command(cmd))
+            },
+        };
+
+        // Clear error flag
+        self.error_occurred = false;
+
+        match input {
+            ConsoleInput::Input(code) => {
+                // Handle commands for the debug interpreter
+                if self.dap.is_debugging() {
+                    let continue_cmds = vec!["n", "f", "c", "cont"];
+                    if continue_cmds.contains(&&code[..]) {
+                        self.dap.send_dap(DapBackendEvent::Continued);
+                    }
+                }
+
+                Self::on_console_input(buf, buflen, code);
+                Some(ConsoleResult::NewInput)
+            },
+            ConsoleInput::EOF => Some(ConsoleResult::Disconnected),
+        }
+    }
+
+    fn handle_input_reply(
+        &self,
+        reply: amalthea::Result<InputReply>,
+        buf: *mut c_uchar,
+        buflen: c_int,
+    ) -> ConsoleResult {
+        match reply {
+            Ok(input) => {
+                let input = convert_line_endings(&input.value, LineEnding::Posix);
+                Self::on_console_input(buf, buflen, input);
+                ConsoleResult::NewInput
+            },
+            Err(err) => ConsoleResult::Error(err),
+        }
     }
 
     /// Copy console input into R's internal input buffer
@@ -993,7 +1036,7 @@ impl RMain {
     /// Invoked by the R event loop
     fn polled_events(&mut self) {
         let _scope = RSandboxScope::new();
-        self.yield_to_tasks();
+        self.yield_to_tasks(true);
     }
 
     unsafe fn process_events() {
@@ -1016,7 +1059,9 @@ impl RMain {
         graphics_device::on_process_events();
     }
 
-    fn yield_to_tasks(&mut self) {
+    fn yield_to_tasks(&mut self, busy: bool) {
+        let tick = std::time::Instant::now();
+
         // Skip task if we don't have 128KB of stack space available.  This
         // is 1/8th of the typical Windows stack space (1MB, whereas macOS
         // and Linux have 8MB).
@@ -1032,17 +1077,94 @@ impl RMain {
             }
         }
 
-        // Run pending tasks but yield back to R after max 3 tasks
-        for _ in 0..3 {
-            if let Some(mut task) = self.pending_tasks.pop_front() {
-                log::info!(
-                    "Yielding to task - {} more task(s) remaining",
-                    self.pending_tasks.len()
-                );
-                task.fulfill();
-            } else {
-                return;
+        // Sort so that preemptive tasks have priority over idle tasks
+        self.pending_tasks
+            .make_contiguous()
+            .sort_by(|x, y| x.only_idle.cmp(&y.only_idle));
+
+        // If we're busy don't consider idle tasks
+        let task = vec_deque_extract_if(&mut self.pending_tasks, |x| !x.only_idle || !busy);
+
+        let Some(task) = task else {
+            return;
+        };
+
+        if !is_parked_task(&task) {
+            // Immediately let caller know we have started so it can set up the
+            // timeout
+            if let Some(ref status_tx) = task.status_tx {
+                status_tx.send(RTaskStatus::Started).unwrap();
             }
+
+            log::trace!(
+                "Yielding to task - {} more task(s) remaining",
+                self.pending_tasks
+                    .iter()
+                    .filter(|task| !is_parked_task(*task))
+                    .count()
+            )
+        }
+
+        match task.task {
+            RTaskKind::Closure(fun) => {
+                // Background tasks can't take any user input, so we set R_Interactive
+                // to 0 to prevent `readline()` from blocking the task.
+                unsafe { libr::set(libr::R_Interactive, 0) };
+                let result = r_sandbox(fun);
+                unsafe { libr::set(libr::R_Interactive, 1) };
+
+                // Unblock caller via the notification channel
+                if let Some(status_tx) = task.status_tx {
+                    status_tx.send(RTaskStatus::Finished(result)).unwrap()
+                }
+            },
+
+            RTaskKind::Future(fut) => {
+                let id = Uuid::new_v4();
+                let waker = RTaskWaker {
+                    task_id: id.clone(),
+                    status_tx: task.status_tx,
+                    tasks_tx: self.tasks_tx.clone(),
+                    only_idle: task.only_idle,
+                };
+
+                self.poll_task(waker, fut, id);
+            },
+
+            RTaskKind::ParkedTask(id) => {
+                if let Some((fut, waker)) = self.pending_futures.remove(&id) {
+                    self.poll_task(waker, fut, id);
+                } else {
+                    log::error!("Can't find parked R task");
+                };
+            },
+        };
+
+        if tick.elapsed() > std::time::Duration::from_millis(20) {
+            log::info!("R task took {}ms", tick.elapsed().as_millis());
+        }
+    }
+
+    fn poll_task(
+        &mut self,
+        waker: RTaskWaker,
+        mut fut: std::pin::Pin<Box<dyn Future<Output = ()> + 'static>>,
+        id: Uuid,
+    ) {
+        let awaker = Arc::new(waker.clone()).into();
+        let mut ctxt = &mut std::task::Context::from_waker(&awaker);
+
+        let ready = match fut.as_mut().poll(&mut ctxt) {
+            Poll::Ready(_) => true,
+            Poll::Pending => false,
+        };
+
+        if ready {
+            waker
+                .status_tx
+                .map(|tx| tx.send(RTaskStatus::Finished(Ok(()))));
+        } else {
+            self.pending_futures.insert(id, (fut, waker));
         }
     }
 
@@ -1221,7 +1343,7 @@ fn peek_execute_response(exec_count: u32) -> ExecuteResponse {
         data.insert("text/plain".to_string(), json!(""));
 
         // Include HTML representation of data.frame
-        r_task(|| unsafe {
+        unsafe {
             let value = Rf_findVarInFrame(R_GlobalEnv, r_symbol!(".Last.value"));
             if r_is_data_frame(value) {
                 match to_html(value) {
@@ -1232,7 +1354,7 @@ fn peek_execute_response(exec_count: u32) -> ExecuteResponse {
                     },
                 };
             }
-        });
+        }
 
         main.iopub_tx
             .send(IOPubMessage::ExecuteResult(ExecuteResult {
