@@ -174,6 +174,11 @@ pub fn r_cpl_get(x: SEXP, i: isize) -> Rcomplex {
 pub fn r_chr_get(x: SEXP, i: isize) -> SEXP {
     unsafe { STRING_ELT(x, i) }
 }
+
+pub fn r_names(x: SEXP) -> isize {
+    unsafe { Rf_xlength(x) }
+}
+
 pub fn r_list_get(x: SEXP, i: isize) -> SEXP {
     unsafe { VECTOR_ELT(x, i) }
 }

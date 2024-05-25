@@ -26,6 +26,7 @@ pub mod r_task;
 pub mod request;
 pub mod shell;
 pub mod signals;
+pub mod srcref;
 pub mod startup;
 pub mod sys;
 pub mod test;

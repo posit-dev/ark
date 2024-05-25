@@ -25,6 +25,7 @@
 #' @export
 .ps.register_all_hooks <- function() {
   .ps.register_utils_hook("View", .ps.view_data_frame, namespace = TRUE)
+  register_onload_hook()
 }
 
 #' Override a function within an attached package
@@ -64,4 +65,24 @@ pkg_hook <- function(pkg, name, hook, hook_namespace = NULL) {
     hook = hook_original,
     hook_namespace = hook_namespace_original
   ))
+}
+
+# R only allows `onLoad` hooks for named packages, not for any package that
+# might be loaded in the session. We modify `getHook()` to add support for
+# such a general event.
+register_onload_hook <- function() {
+    ns <- asNamespace("base")
+
+    local_unlock_binding(ns, ".userHooksEnv")
+
+    ns[[".userHooksEnv"]][["Ark::onLoad"]] <- list(function(pkg, path) {
+        .ps.Call("ps_onload_hook", pkg, path)
+    })
+
+    expr <- quote(if (grepl("^UserHook::.*::onLoad$", hookName)) {
+        return(get0("Ark::onLoad", envir = .userHooksEnv, inherits = FALSE, ifnotfound = list()))
+    })
+
+    push_body(ns, "getHook", expr)
+    push_body(baseenv(), "getHook", expr)
 }

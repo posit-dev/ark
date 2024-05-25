@@ -104,7 +104,7 @@ functions::generate! {
 
     pub fn R_lsInternal(arg1: SEXP, arg2: Rboolean) -> SEXP;
 
-    pub fn R_lsInternal3(arg1: SEXP, arg2: Rboolean, arg3: Rboolean) -> SEXP;
+    pub fn R_lsInternal3(x: SEXP, all: Rboolean, sorted: Rboolean) -> SEXP;
 
     pub fn Rf_GetOption1(arg1: SEXP) -> SEXP;
 
@@ -208,6 +208,8 @@ functions::generate! {
 
     pub fn ENCLOS(x: SEXP) -> SEXP;
 
+    pub fn SET_ENCLOS(x: SEXP, v: SEXP) -> SEXP;
+
     pub fn FORMALS(x: SEXP) -> SEXP;
 
     pub fn FRAME(x: SEXP) -> SEXP;
@@ -229,6 +231,8 @@ functions::generate! {
     pub fn PRINTNAME(x: SEXP) -> SEXP;
 
     pub fn PRVALUE(x: SEXP) -> SEXP;
+
+    pub fn IS_S4_OBJECT(x: SEXP) -> std::ffi::c_int;
 
     pub fn RAW(x: SEXP) -> *mut Rbyte;
 
@@ -286,16 +290,30 @@ functions::generate! {
 
     pub fn CLOENV(x: SEXP) -> SEXP;
 
+    pub fn BODY(x: SEXP) -> SEXP;
+
+    pub fn SET_BODY(x: SEXP, v: SEXP);
+
+    pub fn R_ClosureExpr(x: SEXP) -> SEXP;
+
     pub fn Rf_PrintValue(x: SEXP);
 
     pub fn R_PromiseExpr(p: SEXP) -> SEXP;
 
     pub fn R_BytecodeExpr(e: SEXP) -> SEXP;
 
+    pub fn Rf_installChar(x: SEXP) -> SEXP;
+
     /// R >= 4.2.0
     pub fn R_existsVarInFrame(rho: SEXP, symbol: SEXP) -> Rboolean;
 
     pub fn R_ActiveBindingFunction(sym: SEXP, env: SEXP) -> SEXP;
+
+    pub fn R_LockBinding(sym: SEXP, env: SEXP) -> SEXP;
+
+    pub fn R_unLockBinding(sym: SEXP, env: SEXP) -> SEXP;
+
+    pub fn R_BindingIsLocked(sym: SEXP, env: SEXP) -> Rboolean;
 
     // -----------------------------------------------------------------------------------
     // Unix

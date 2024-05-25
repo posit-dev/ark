@@ -117,6 +117,8 @@ use crate::request::RRequest;
 use crate::signals::initialize_signal_handlers;
 use crate::signals::interrupts_pending;
 use crate::signals::set_interrupts_pending;
+use crate::srcref::ns_populate_srcref;
+use crate::srcref::resource_loaded_namespaces;
 use crate::startup;
 use crate::sys::console::console_to_utf8;
 
@@ -230,6 +232,12 @@ pub fn start_r(
         let hook_result = RFunction::from(".ps.register_all_hooks").call();
         if let Err(err) = hook_result {
             log::error!("Error registering some hooks: {err:?}");
+        }
+
+        // Populate srcrefs for namespaces already loaded in the session.
+        // Namespaces of future loaded packages will be populated on load.
+        if let Err(err) = resource_loaded_namespaces() {
+            log::error!("Can't populate srcrefs for loaded packages: {err:?}");
         }
 
         // Set up the global error handler (after support function initialization)
@@ -1576,4 +1584,20 @@ pub extern "C" fn r_busy(which: i32) {
 pub unsafe extern "C" fn r_polled_events() {
     let main = RMain::get_mut();
     main.polled_events();
+}
+
+// This hook is called like a user onLoad hook but for every packages to be
+// loaded in the session
+#[harp::register]
+unsafe extern "C" fn ps_onload_hook(pkg: SEXP, _path: SEXP) -> anyhow::Result<SEXP> {
+    let pkg: String = RObject::view(pkg).try_into()?;
+
+    // Populate fake source refs if needed
+    r_task::spawn_idle(|| async move {
+        if let Err(err) = ns_populate_srcref(pkg.clone()).await {
+            log::error!("Can't populate srcref for `{pkg}`: {err:?}");
+        }
+    });
+
+    Ok(RObject::null().sexp)
 }

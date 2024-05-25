@@ -534,13 +534,15 @@ pub unsafe fn r_promise_force(x: SEXP) -> harp::Result<RObject> {
     harp::try_eval_silent(x, R_EmptyEnv)
 }
 
-pub unsafe fn r_promise_force_with_rollback(x: SEXP) -> harp::Result<RObject> {
+pub fn r_promise_force_with_rollback(x: SEXP) -> harp::Result<RObject> {
     // Like `r_promise_force()`, but if evaluation results in an error
     // then the original promise is untouched, i.e. `PRSEEN` isn't modified,
     // avoiding `"restarting interrupted promise evaluation"` warnings.
-    let out = harp::try_eval_silent(PRCODE(x), PRENV(x))?;
-    SET_PRVALUE(x, out.sexp);
-    Ok(out)
+    unsafe {
+        let out = harp::try_eval_silent(PRCODE(x), PRENV(x))?;
+        SET_PRVALUE(x, out.sexp);
+        Ok(out)
+    }
 }
 
 pub unsafe fn r_promise_is_lazy_load_binding(x: SEXP) -> bool {
@@ -708,8 +710,8 @@ pub fn save_rds(x: SEXP, path: &str) {
     let path = RObject::from(path);
 
     let env = Environment::new(r_parse_eval0("new.env()", R_ENVS.base).unwrap());
-    env.bind("x", x);
-    env.bind("path", path);
+    env.bind("x".into(), x);
+    env.bind("path".into(), path);
 
     let res = r_parse_eval0("base::saveRDS(x, path)", env);
 
@@ -736,9 +738,9 @@ pub fn push_rds(x: SEXP, path: &str, context: &str) {
 
     let env = Environment::new(r_parse_eval0("new.env()", R_ENVS.global).unwrap());
 
-    env.bind("x", x);
-    env.bind("path", path);
-    env.bind("context", context);
+    env.bind("x".into(), x);
+    env.bind("path".into(), path);
+    env.bind("context".into(), context);
 
     let res = r_parse_eval0(".ps.internal(push_rds(x, path, context))", env);
 
