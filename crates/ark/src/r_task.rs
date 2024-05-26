@@ -27,7 +27,7 @@ type SharedOption<T> = Arc<Mutex<Option<T>>>;
 pub enum RTask {
     Sync(RTaskSync),
     Async(RTaskAsync),
-    Parked(RTaskWaker),
+    Parked(Arc<RTaskWaker>),
 }
 
 pub struct RTaskSync {
@@ -63,11 +63,11 @@ pub struct RTaskStartInfo {
 }
 
 impl RTask {
-    pub(crate) fn start_info_mut(&mut self) -> &mut RTaskStartInfo {
+    pub(crate) fn start_info_mut(&mut self) -> Option<&mut RTaskStartInfo> {
         match self {
-            RTask::Sync(ref mut task) => &mut task.start_info,
-            RTask::Async(ref mut task) => &mut task.start_info,
-            RTask::Parked(ref mut task) => &mut task.start_info,
+            RTask::Sync(ref mut task) => Some(&mut task.start_info),
+            RTask::Async(ref mut task) => Some(&mut task.start_info),
+            RTask::Parked(_) => None,
         }
     }
 }
@@ -80,9 +80,8 @@ unsafe impl Sync for RTaskAsync {}
 
 impl std::task::Wake for RTaskWaker {
     fn wake(self: Arc<RTaskWaker>) {
-        let waker = Arc::unwrap_or_clone(self);
-        let tasks_tx = waker.tasks_tx.clone();
-        tasks_tx.send(RTask::Parked(waker)).unwrap();
+        let tasks_tx = self.tasks_tx.clone();
+        tasks_tx.send(RTask::Parked(self)).unwrap();
     }
 }
 

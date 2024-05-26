@@ -820,21 +820,26 @@ impl RMain {
         }
     }
 
+    /// Handle a concurrent (non idle) task.
+    ///
+    /// Wrapper around `handle_task()` that does some extra logging to record
+    /// how long a task waited before being picked up by the R or ReadConsole
+    /// event loop.
     fn handle_task_concurrent(&mut self, mut task: RTask) {
         {
-            let start_info = task.start_info_mut();
+            if let Some(start_info) = task.start_info_mut() {
+                // Log excessive waiting before starting task
+                if start_info.start_time.elapsed() > std::time::Duration::from_millis(50) {
+                    log::info!(
+                        "{} waited for {} milliseconds to spawn a task.",
+                        start_info.caller(),
+                        start_info.start_time.elapsed().as_millis()
+                    );
+                }
 
-            // Log excessive waiting before starting task
-            if start_info.start_time.elapsed() > std::time::Duration::from_millis(50) {
-                log::info!(
-                    "{} waited for {} milliseconds to spawn a task.",
-                    start_info.caller(),
-                    start_info.start_time.elapsed().as_millis()
-                );
+                // Reset timer, next time we'll log how long the task took
+                start_info.start_time = std::time::Instant::now();
             }
-
-            // Reset timer, next time we'll log how long the task took
-            start_info.start_time = std::time::Instant::now();
         }
 
         self.handle_task(task)
@@ -865,11 +870,11 @@ impl RMain {
 
             RTask::Async(task) => {
                 let id = Uuid::new_v4();
-                let waker = r_task::RTaskWaker {
+                let waker = Arc::new(r_task::RTaskWaker {
                     id,
                     tasks_tx: task.tasks_tx.clone(),
                     start_info: task.start_info,
-                };
+                });
                 self.poll_task(Some(task.fut), waker)
             },
 
@@ -890,19 +895,17 @@ impl RMain {
     fn poll_task(
         &mut self,
         fut: Option<BoxFuture<'static, ()>>,
-        waker: r_task::RTaskWaker,
+        waker: Arc<r_task::RTaskWaker>,
     ) -> Option<r_task::RTaskStartInfo> {
-        let id = waker.id.clone();
-        let mut fut = fut.unwrap_or_else(|| self.pending_futures.remove(&id).unwrap());
+        let mut fut = fut.unwrap_or_else(|| self.pending_futures.remove(&waker.id).unwrap());
 
-        let waker = Arc::new(waker);
         let awaker = waker.clone().into();
         let mut ctxt = &mut std::task::Context::from_waker(&awaker);
 
         match fut.as_mut().poll(&mut ctxt) {
             Poll::Ready(()) => Some(waker.start_info.clone()),
             Poll::Pending => {
-                self.pending_futures.insert(id, fut);
+                self.pending_futures.insert(waker.id, fut);
                 None
             },
         }
