@@ -82,7 +82,7 @@ static mut R_MAIN_TASKS_IDLE_TX: Mutex<Option<Sender<RTask>>> = Mutex::new(None)
 // thread. See also `Crossbeam::thread::ScopedThreadBuilder` (from which
 // `r_task()` is adapted) for a similar approach.
 
-pub fn r_task<'env, F, T>(f: F) -> T
+pub(crate) fn r_task<'env, F, T>(f: F) -> T
 where
     F: FnOnce() -> T,
     F: 'env + Send + Sync,
@@ -188,7 +188,7 @@ where
     return result.lock().unwrap().take().unwrap();
 }
 
-pub fn spawn<F, Fut>(fun: F)
+pub(crate) fn spawn<F, Fut>(fun: F)
 where
     F: FnOnce() -> Fut + 'static + Send,
     Fut: Future<Output = ()> + 'static,
@@ -196,7 +196,7 @@ where
     spawn_ext(fun, false)
 }
 
-pub fn spawn_idle<F, Fut>(fun: F)
+pub(crate) fn spawn_idle<F, Fut>(fun: F)
 where
     F: FnOnce() -> Fut + 'static + Send,
     Fut: Future<Output = ()> + 'static,
