@@ -60,6 +60,11 @@ pub struct RTaskStartInfo {
     pub thread_id: std::thread::ThreadId,
     pub thread_name: String,
     pub start_time: std::time::Instant,
+
+    /// Time it took to run the time. Used to record time accumulated while
+    /// running an async task in the executor. Optional because elapsed time is
+    /// computed more simply from start time in other cases.
+    pub elapsed_time: Option<std::time::Duration>,
 }
 
 impl RTask {
@@ -97,11 +102,23 @@ impl RTaskStartInfo {
             thread_id,
             thread_name,
             start_time,
+            elapsed_time: None,
         }
     }
 
     pub(crate) fn caller(&self) -> String {
         format!("Thread '{}' ({:?})", self.thread_name, self.thread_id)
+    }
+
+    pub(crate) fn elapsed(&self) -> Duration {
+        self.elapsed_time
+            .unwrap_or_else(|| self.start_time.elapsed())
+    }
+
+    pub(crate) fn bump_elapsed(&mut self, duration: Duration) {
+        if let Some(ref mut elapsed_time) = self.elapsed_time {
+            *elapsed_time = *elapsed_time + duration;
+        }
     }
 }
 

@@ -110,6 +110,7 @@ use crate::plots::graphics_device;
 use crate::r_task;
 use crate::r_task::BoxFuture;
 use crate::r_task::RTask;
+use crate::r_task::RTaskStartInfo;
 use crate::r_task::RTaskStatus;
 use crate::request::debug_request_command;
 use crate::request::RRequest;
@@ -258,7 +259,7 @@ pub struct RMain {
     /// Channel to send and receive tasks from `r_task()`
     tasks_rx: Receiver<RTask>,
     tasks_idle_rx: Receiver<RTask>,
-    pending_futures: HashMap<Uuid, BoxFuture<'static, ()>>,
+    pending_futures: HashMap<Uuid, (BoxFuture<'static, ()>, RTaskStartInfo)>,
 
     /// Shared reference to kernel. Currently used by the ark-execution
     /// thread, the R frontend callbacks, and LSP routines called from R
@@ -882,11 +883,11 @@ impl RMain {
         };
 
         if let Some(info) = start_info {
-            if info.start_time.elapsed() > std::time::Duration::from_millis(50) {
+            if info.elapsed() > std::time::Duration::from_millis(50) {
                 log::info!(
                     "{}'s task took {} milliseconds.",
                     info.caller(),
-                    info.start_time.elapsed().as_millis()
+                    info.elapsed().as_millis()
                 );
             }
         }
@@ -897,15 +898,24 @@ impl RMain {
         fut: Option<BoxFuture<'static, ()>>,
         waker: Arc<r_task::RTaskWaker>,
     ) -> Option<r_task::RTaskStartInfo> {
-        let mut fut = fut.unwrap_or_else(|| self.pending_futures.remove(&waker.id).unwrap());
+        let tick = std::time::Instant::now();
+
+        let (mut fut, mut start_info) = match fut {
+            Some(fut) => (fut, waker.start_info.clone()),
+            None => self.pending_futures.remove(&waker.id).unwrap(),
+        };
 
         let awaker = waker.clone().into();
         let mut ctxt = &mut std::task::Context::from_waker(&awaker);
 
         match fut.as_mut().poll(&mut ctxt) {
-            Poll::Ready(()) => Some(waker.start_info.clone()),
+            Poll::Ready(()) => {
+                start_info.bump_elapsed(tick.elapsed());
+                Some(start_info)
+            },
             Poll::Pending => {
-                self.pending_futures.insert(waker.id, fut);
+                start_info.bump_elapsed(tick.elapsed());
+                self.pending_futures.insert(waker.id, (fut, start_info));
                 None
             },
         }
