@@ -676,7 +676,7 @@ impl RMain {
 
                 // A task woke us up, start next loop tick to yield to it
                 recv(self.tasks_rx) -> task => {
-                    self.handle_task(task.unwrap());
+                    self.handle_task_concurrent(task.unwrap());
                 }
                 recv(self.tasks_idle_rx) -> task => {
                     self.handle_task(task.unwrap());
@@ -820,10 +820,28 @@ impl RMain {
         }
     }
 
-    fn handle_task(&mut self, task: RTask) {
-        let tick = std::time::Instant::now();
+    fn handle_task_concurrent(&mut self, mut task: RTask) {
+        {
+            let start_info = task.start_info_mut();
 
-        match task {
+            // Log excessive waiting before starting task
+            if start_info.start_time.elapsed() > std::time::Duration::from_millis(50) {
+                log::info!(
+                    "{} waited for {} milliseconds to spawn a task.",
+                    start_info.caller(),
+                    start_info.start_time.elapsed().as_millis()
+                );
+            }
+
+            // Reset timer, next time we'll log how long the task took
+            start_info.start_time = std::time::Instant::now();
+        }
+
+        self.handle_task(task)
+    }
+
+    fn handle_task(&mut self, task: RTask) {
+        let start_info = match task {
             RTask::Sync(task) => {
                 // Immediately let caller know we have started so it can set up the
                 // timeout
@@ -841,6 +859,8 @@ impl RMain {
                 if let Some(ref status_tx) = task.status_tx {
                     status_tx.send(RTaskStatus::Finished(result)).unwrap()
                 }
+
+                Some(task.start_info)
             },
 
             RTask::Async(task) => {
@@ -848,31 +868,42 @@ impl RMain {
                 let waker = r_task::RTaskWaker {
                     id,
                     tasks_tx: task.tasks_tx.clone(),
+                    start_info: task.start_info,
                 };
-                self.poll_task(Some(task.fut), waker);
+                self.poll_task(Some(task.fut), waker)
             },
 
-            RTask::Parked(waker) => {
-                self.poll_task(None, waker);
-            },
+            RTask::Parked(waker) => self.poll_task(None, waker),
         };
 
-        if tick.elapsed() > std::time::Duration::from_millis(20) {
-            log::info!("R task took {}ms", tick.elapsed().as_millis());
+        if let Some(info) = start_info {
+            if info.start_time.elapsed() > std::time::Duration::from_millis(50) {
+                log::info!(
+                    "{}'s task took {} milliseconds.",
+                    info.caller(),
+                    info.start_time.elapsed().as_millis()
+                );
+            }
         }
     }
 
-    fn poll_task(&mut self, fut: Option<BoxFuture<'static, ()>>, waker: r_task::RTaskWaker) {
+    fn poll_task(
+        &mut self,
+        fut: Option<BoxFuture<'static, ()>>,
+        waker: r_task::RTaskWaker,
+    ) -> Option<r_task::RTaskStartInfo> {
         let id = waker.id.clone();
-        let mut fut = fut.unwrap_or(self.pending_futures.remove(&id).unwrap());
+        let mut fut = fut.unwrap_or_else(|| self.pending_futures.remove(&id).unwrap());
 
-        let awaker = Arc::new(waker).into();
+        let waker = Arc::new(waker);
+        let awaker = waker.clone().into();
         let mut ctxt = &mut std::task::Context::from_waker(&awaker);
 
         match fut.as_mut().poll(&mut ctxt) {
-            Poll::Ready(()) => {},
+            Poll::Ready(()) => Some(waker.start_info.clone()),
             Poll::Pending => {
                 self.pending_futures.insert(id, fut);
+                None
             },
         }
     }
@@ -1091,7 +1122,7 @@ impl RMain {
         // slowed down
         for _ in 0..3 {
             if let Ok(task) = self.tasks_rx.try_recv() {
-                self.handle_task(task);
+                self.handle_task_concurrent(task);
             } else {
                 break;
             }

@@ -30,26 +30,46 @@ pub enum RTask {
     Parked(RTaskWaker),
 }
 
-#[derive(Debug)]
-pub enum RTaskStatus {
-    Started,
-    Finished(harp::error::Result<()>),
-}
-
 pub struct RTaskSync {
     pub fun: Box<dyn FnOnce() + Send + Sync + 'static>,
     pub status_tx: Option<Sender<RTaskStatus>>,
+    pub start_info: RTaskStartInfo,
 }
 
 pub struct RTaskAsync {
     pub fut: BoxFuture<'static, ()>,
     pub tasks_tx: Sender<RTask>,
+    pub start_info: RTaskStartInfo,
 }
 
 #[derive(Clone)]
 pub struct RTaskWaker {
     pub id: Uuid,
     pub tasks_tx: Sender<RTask>,
+    pub start_info: RTaskStartInfo,
+}
+
+#[derive(Debug)]
+pub enum RTaskStatus {
+    Started,
+    Finished(harp::error::Result<()>),
+}
+
+#[derive(Clone)]
+pub struct RTaskStartInfo {
+    pub thread_id: std::thread::ThreadId,
+    pub thread_name: String,
+    pub start_time: std::time::Instant,
+}
+
+impl RTask {
+    pub(crate) fn start_info_mut(&mut self) -> &mut RTaskStartInfo {
+        match self {
+            RTask::Sync(ref mut task) => &mut task.start_info,
+            RTask::Async(ref mut task) => &mut task.start_info,
+            RTask::Parked(ref mut task) => &mut task.start_info,
+        }
+    }
 }
 
 // RTaskAsync is not Send because of the Future variant which doesn't require
@@ -63,6 +83,26 @@ impl std::task::Wake for RTaskWaker {
         let waker = Arc::unwrap_or_clone(self);
         let tasks_tx = waker.tasks_tx.clone();
         tasks_tx.send(RTask::Parked(waker)).unwrap();
+    }
+}
+
+impl RTaskStartInfo {
+    pub(crate) fn new() -> Self {
+        let thread = std::thread::current();
+        let thread_id = thread.id();
+        let thread_name = thread.name().unwrap_or("<unnamed>").to_owned();
+
+        let start_time = std::time::Instant::now();
+
+        Self {
+            thread_id,
+            thread_name,
+            start_time,
+        }
+    }
+
+    pub(crate) fn caller(&self) -> String {
+        format!("Thread '{}' ({:?})", self.thread_name, self.thread_id)
     }
 }
 
@@ -100,18 +140,9 @@ where
         return f();
     }
 
-    let thread = std::thread::current();
-    let thread_id = thread.id();
-    let thread_name = thread.name().unwrap_or("<unnamed>");
-
-    log::trace!("Thread '{thread_name}' ({thread_id:?}) is requesting a task.");
-
     // The following is adapted from `Crossbeam::thread::ScopedThreadBuilder`.
     // Instead of scoping the task with a thread join, we send it on the R
     // thread and block the thread until a completion channel wakes us up.
-
-    // Record how long it takes for the task to be picked up on the main thread.
-    let now = std::time::SystemTime::now();
 
     // The result of `f` will be stored here.
     let result = SharedOption::default();
@@ -138,6 +169,7 @@ where
         let task = RTask::Sync(RTaskSync {
             fun: closure,
             status_tx: Some(status_tx),
+            start_info: RTaskStartInfo::new(),
         });
         get_tasks_tx().send(task).unwrap();
 
@@ -177,12 +209,6 @@ where
         }
     }
 
-    // Log how long we were stuck waiting.
-    let elapsed = now.elapsed().unwrap().as_millis();
-    log::trace!(
-        "Thread '{thread_name}' ({thread_id:?}) was unblocked after waiting for {elapsed} milliseconds."
-    );
-
     // Retrieve closure result from the synchronized shared option.
     // If we get here without panicking we know the result was assigned.
     return result.lock().unwrap().take().unwrap();
@@ -216,14 +242,6 @@ where
         return;
     }
 
-    let thread = std::thread::current();
-    let thread_id = thread.id();
-    let thread_name = thread.name().unwrap_or("<unnamed>");
-
-    log::trace!("Thread '{thread_name}' ({thread_id:?}) is spawning a task.");
-
-    let fut = Box::pin(fun()) as BoxFuture<'static, ()>;
-
     let tasks_tx = if only_idle {
         get_tasks_idle_tx()
     } else {
@@ -232,9 +250,11 @@ where
 
     // Send the async task to the R thread
     let task = RTask::Async(RTaskAsync {
-        fut,
+        fut: Box::pin(fun()) as BoxFuture<'static, ()>,
         tasks_tx: tasks_tx.clone(),
+        start_info: RTaskStartInfo::new(),
     });
+
     tasks_tx.send(task).unwrap();
 }
 
