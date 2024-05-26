@@ -24,16 +24,11 @@ pub(crate) type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
 
 type SharedOption<T> = Arc<Mutex<Option<T>>>;
 
-pub enum RTaskKind {
-    Closure(Box<dyn FnOnce() + Send + Sync + 'static>),
-    Future(BoxFuture<'static, ()>),
-    ParkedTask(Uuid),
+pub enum RTask {
+    Sync(RTaskSync),
+    Async(RTaskAsync),
+    Parked(RTaskWaker),
 }
-
-// RTaskKind is not Send because of the Future variant which doesn't require
-// Send to avoid issues across await points, but the future as a whole is
-// actually safe to send to other threads.
-unsafe impl Send for RTaskKind {}
 
 #[derive(Debug)]
 pub enum RTaskStatus {
@@ -41,34 +36,40 @@ pub enum RTaskStatus {
     Finished(harp::error::Result<()>),
 }
 
-pub struct RTask {
-    pub task: RTaskKind,
+pub struct RTaskSync {
+    pub fun: Box<dyn FnOnce() + Send + Sync + 'static>,
     pub status_tx: Option<Sender<RTaskStatus>>,
-    pub only_idle: bool,
 }
 
-#[derive(Clone, Debug)]
-pub(crate) struct RTaskWaker {
-    pub(crate) task_id: Uuid,
-    pub(crate) status_tx: Option<Sender<RTaskStatus>>,
-    pub(crate) tasks_tx: Sender<RTask>,
-    pub(crate) only_idle: bool,
+pub struct RTaskAsync {
+    pub fut: BoxFuture<'static, ()>,
+    pub tasks_tx: Sender<RTask>,
 }
+
+#[derive(Clone)]
+pub struct RTaskWaker {
+    pub id: Uuid,
+    pub tasks_tx: Sender<RTask>,
+}
+
+// RTaskAsync is not Send because of the Future variant which doesn't require
+// Send to avoid issues across await points, but the future as a whole is
+// actually safe to send to other threads.
+unsafe impl Send for RTaskAsync {}
+unsafe impl Sync for RTaskAsync {}
 
 impl std::task::Wake for RTaskWaker {
     fn wake(self: Arc<RTaskWaker>) {
-        let task = RTask {
-            task: RTaskKind::ParkedTask(self.task_id),
-            status_tx: self.status_tx.clone(),
-            only_idle: self.only_idle,
-        };
-        self.tasks_tx.send(task).unwrap();
+        let waker = Arc::unwrap_or_clone(self);
+        let tasks_tx = waker.tasks_tx.clone();
+        tasks_tx.send(RTask::Parked(waker)).unwrap();
     }
 }
 
 /// Channel for sending tasks to `R_MAIN`. Initialized by `initialize()`, but
 /// is otherwise only accessed by `r_task()` and `r_async_task()`.
 static mut R_MAIN_TASKS_TX: Mutex<Option<Sender<RTask>>> = Mutex::new(None);
+static mut R_MAIN_TASKS_IDLE_TX: Mutex<Option<Sender<RTask>>> = Mutex::new(None);
 
 // The `Send` bound on `F` is necessary for safety. Although we are not
 // worried about data races since control flow from one thread to the other
@@ -103,7 +104,7 @@ where
     let thread_id = thread.id();
     let thread_name = thread.name().unwrap_or("<unnamed>");
 
-    log::info!("Thread '{thread_name}' ({thread_id:?}) is requesting a task.");
+    log::trace!("Thread '{thread_name}' ({thread_id:?}) is requesting a task.");
 
     // The following is adapted from `Crossbeam::thread::ScopedThreadBuilder`.
     // Instead of scoping the task with a thread join, we send it on the R
@@ -134,11 +135,10 @@ where
         let (status_tx, status_rx) = bounded::<RTaskStatus>(0);
 
         // Send the task to the R thread
-        let task = RTask {
-            task: RTaskKind::Closure(closure),
+        let task = RTask::Sync(RTaskSync {
+            fun: closure,
             status_tx: Some(status_tx),
-            only_idle: false,
-        };
+        });
         get_tasks_tx().send(task).unwrap();
 
         // Block until we get the signal that the task has started
@@ -179,7 +179,7 @@ where
 
     // Log how long we were stuck waiting.
     let elapsed = now.elapsed().unwrap().as_millis();
-    log::info!(
+    log::trace!(
         "Thread '{thread_name}' ({thread_id:?}) was unblocked after waiting for {elapsed} milliseconds."
     );
 
@@ -224,26 +224,39 @@ where
 
     let fut = Box::pin(fun()) as BoxFuture<'static, ()>;
 
-    // Send the async task to the R thread
-    let task = RTask {
-        task: RTaskKind::Future(fut),
-        status_tx: None,
-        only_idle,
+    let tasks_tx = if only_idle {
+        get_tasks_idle_tx()
+    } else {
+        get_tasks_tx()
     };
-    get_tasks_tx().send(task).unwrap();
+
+    // Send the async task to the R thread
+    let task = RTask::Async(RTaskAsync {
+        fut,
+        tasks_tx: tasks_tx.clone(),
+    });
+    tasks_tx.send(task).unwrap();
 }
 
-pub fn initialize(tasks_tx: Sender<RTask>) {
+pub fn initialize(tasks_tx: Sender<RTask>, tasks_idle_tx: Sender<RTask>) {
     unsafe { *R_MAIN_TASKS_TX.lock().unwrap() = Some(tasks_tx) };
+    unsafe { *R_MAIN_TASKS_IDLE_TX.lock().unwrap() = Some(tasks_idle_tx) };
 }
 
 // Be defensive for the case an auxiliary thread runs a task before R is initialized
 // by `start_r()`, which calls `r_task::initialize()`
 fn get_tasks_tx() -> Sender<RTask> {
+    get_tx(unsafe { &R_MAIN_TASKS_TX })
+}
+fn get_tasks_idle_tx() -> Sender<RTask> {
+    get_tx(unsafe { &R_MAIN_TASKS_IDLE_TX })
+}
+
+fn get_tx(tx: &Mutex<Option<Sender<RTask>>>) -> Sender<RTask> {
     let now = std::time::SystemTime::now();
 
     loop {
-        let guard = unsafe { R_MAIN_TASKS_TX.lock().unwrap() };
+        let guard = tx.lock().unwrap();
 
         if let Some(ref tasks_tx) = *guard {
             // Return a clone of the sender so we can immediately unlock
@@ -256,22 +269,12 @@ fn get_tasks_tx() -> Sender<RTask> {
         drop(guard);
 
         log::info!("`tasks_tx` not yet initialized, going to sleep for 100ms.");
-
         std::thread::sleep(Duration::from_millis(100));
 
         let elapsed = now.elapsed().unwrap().as_secs();
-
         if elapsed > 50 {
             panic!("Can't acquire `tasks_tx` after 50 seconds.");
         }
-    }
-}
-
-pub(crate) fn is_parked_task(task: &RTask) -> bool {
-    if let RTaskKind::ParkedTask(_) = task.task {
-        true
-    } else {
-        false
     }
 }
 

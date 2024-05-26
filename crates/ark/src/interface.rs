@@ -11,9 +11,7 @@
 // `RMain` methods via `R_MAIN`.
 
 use std::collections::HashMap;
-use std::collections::VecDeque;
 use std::ffi::*;
-use std::future::Future;
 use std::os::raw::c_uchar;
 use std::path::PathBuf;
 use std::result::Result::Ok;
@@ -57,7 +55,6 @@ use crossbeam::channel::bounded;
 use crossbeam::channel::unbounded;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
-use crossbeam::channel::TryRecvError;
 use crossbeam::select;
 use harp::environment::Environment;
 use harp::environment::R_ENVS;
@@ -93,7 +90,6 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use serde_json::json;
 use stdext::result::ResultOrLog;
-use stdext::vec::vec_deque_extract_if;
 use stdext::*;
 use uuid::Uuid;
 
@@ -112,12 +108,9 @@ use crate::lsp::state_handlers::ConsoleInputs;
 use crate::modules;
 use crate::plots::graphics_device;
 use crate::r_task;
-use crate::r_task::is_parked_task;
 use crate::r_task::BoxFuture;
 use crate::r_task::RTask;
-use crate::r_task::RTaskKind;
 use crate::r_task::RTaskStatus;
-use crate::r_task::RTaskWaker;
 use crate::request::debug_request_command;
 use crate::request::RRequest;
 use crate::signals::initialize_signal_handlers;
@@ -160,13 +153,14 @@ pub fn start_r(
 
         // Channels to send/receive tasks from auxiliary threads via `r_task()`
         let (tasks_tx, tasks_rx) = unbounded::<RTask>();
+        let (tasks_idle_tx, tasks_idle_rx) = unbounded::<RTask>();
 
-        r_task::initialize(tasks_tx.clone());
+        r_task::initialize(tasks_tx.clone(), tasks_idle_tx.clone());
 
         R_MAIN = Some(RMain::new(
             kernel_mutex,
-            tasks_tx,
             tasks_rx,
+            tasks_idle_rx,
             comm_manager_tx,
             r_request_rx,
             stdin_request_tx,
@@ -262,14 +256,9 @@ pub struct RMain {
     banner: String,
 
     /// Channel to send and receive tasks from `r_task()`
-    tasks_tx: Sender<RTask>,
     tasks_rx: Receiver<RTask>,
-    pending_tasks: VecDeque<RTask>,
-
-    // /// Channel to send and receive notification from woken tasks
-    // parked_tasks_tx: Sender<Arc<RTaskWaker>>,
-    // parked_tasks_rx: Receiver<Arc<RTaskWaker>>,
-    pending_futures: HashMap<Uuid, (BoxFuture<'static, ()>, RTaskWaker)>,
+    tasks_idle_rx: Receiver<RTask>,
+    pending_futures: HashMap<Uuid, BoxFuture<'static, ()>>,
 
     /// Shared reference to kernel. Currently used by the ark-execution
     /// thread, the R frontend callbacks, and LSP routines called from R
@@ -361,8 +350,8 @@ pub enum ConsoleResult {
 impl RMain {
     pub fn new(
         kernel: Arc<Mutex<Kernel>>,
-        tasks_tx: Sender<RTask>,
         tasks_rx: Receiver<RTask>,
+        tasks_idle_rx: Receiver<RTask>,
         comm_manager_tx: Sender<CommManagerEvent>,
         r_request_rx: Receiver<RRequest>,
         stdin_request_tx: Sender<StdInRequest>,
@@ -394,9 +383,8 @@ impl RMain {
             dap: RMainDap::new(dap),
             is_busy: false,
             old_show_error_messages: None,
-            tasks_tx,
             tasks_rx,
-            pending_tasks: VecDeque::new(),
+            tasks_idle_rx,
             pending_futures: HashMap::new(),
         }
     }
@@ -654,9 +642,6 @@ impl RMain {
             // reset the flag
             set_interrupts_pending(false);
 
-            // Yield to auxiliary threads
-            self.yield_to_tasks(false);
-
             // FIXME: Race between interrupt and new code request. To fix
             // this, we could manage the Shell and Control sockets on the
             // common message event thread. The Control messages would need
@@ -684,15 +669,17 @@ impl RMain {
                     }
                 }
 
+                // We've got a response for readline
                 recv(self.stdin_reply_rx) -> reply => {
                     return self.handle_input_reply(reply.unwrap(), buf, buflen);
                 }
 
                 // A task woke us up, start next loop tick to yield to it
                 recv(self.tasks_rx) -> task => {
-                    if let Ok(task) = task {
-                        self.pending_tasks.push_back(task);
-                    }
+                    self.handle_task(task.unwrap());
+                }
+                recv(self.tasks_idle_rx) -> task => {
+                    self.handle_task(task.unwrap());
                 }
 
                 // Wait with a timeout. Necessary because we need to
@@ -703,7 +690,6 @@ impl RMain {
                 // available data?
                 default(Duration::from_millis(200)) => {
                     unsafe { Self::process_events() };
-                    continue;
                 }
             }
         }
@@ -831,6 +817,63 @@ impl RMain {
                 ConsoleResult::NewInput
             },
             Err(err) => ConsoleResult::Error(err),
+        }
+    }
+
+    fn handle_task(&mut self, task: RTask) {
+        let tick = std::time::Instant::now();
+
+        match task {
+            RTask::Sync(task) => {
+                // Immediately let caller know we have started so it can set up the
+                // timeout
+                if let Some(ref status_tx) = task.status_tx {
+                    status_tx.send(RTaskStatus::Started).unwrap();
+                }
+
+                // Background tasks can't take any user input, so we set R_Interactive
+                // to 0 to prevent `readline()` from blocking the task.
+                unsafe { libr::set(libr::R_Interactive, 0) };
+                let result = r_sandbox(task.fun);
+                unsafe { libr::set(libr::R_Interactive, 1) };
+
+                // Unblock caller via the notification channel
+                if let Some(ref status_tx) = task.status_tx {
+                    status_tx.send(RTaskStatus::Finished(result)).unwrap()
+                }
+            },
+
+            RTask::Async(task) => {
+                let id = Uuid::new_v4();
+                let waker = r_task::RTaskWaker {
+                    id,
+                    tasks_tx: task.tasks_tx.clone(),
+                };
+                self.poll_task(Some(task.fut), waker);
+            },
+
+            RTask::Parked(waker) => {
+                self.poll_task(None, waker);
+            },
+        };
+
+        if tick.elapsed() > std::time::Duration::from_millis(20) {
+            log::info!("R task took {}ms", tick.elapsed().as_millis());
+        }
+    }
+
+    fn poll_task(&mut self, fut: Option<BoxFuture<'static, ()>>, waker: r_task::RTaskWaker) {
+        let id = waker.id.clone();
+        let mut fut = fut.unwrap_or(self.pending_futures.remove(&id).unwrap());
+
+        let awaker = Arc::new(waker).into();
+        let mut ctxt = &mut std::task::Context::from_waker(&awaker);
+
+        match fut.as_mut().poll(&mut ctxt) {
+            Poll::Ready(()) => {},
+            Poll::Pending => {
+                self.pending_futures.insert(id, fut);
+            },
         }
     }
 
@@ -1036,7 +1079,23 @@ impl RMain {
     /// Invoked by the R event loop
     fn polled_events(&mut self) {
         let _scope = RSandboxScope::new();
-        self.yield_to_tasks(true);
+
+        // Skip running tasks if we don't have 128KB of stack space available.
+        // This is 1/8th of the typical Windows stack space (1MB, whereas macOS
+        // and Linux have 8MB).
+        if let Err(_) = r_check_stack(Some(128 * 1024)) {
+            return;
+        }
+
+        // Coalesce up to three concurrent tasks in case the R event loop is
+        // slowed down
+        for _ in 0..3 {
+            if let Ok(task) = self.tasks_rx.try_recv() {
+                self.handle_task(task);
+            } else {
+                break;
+            }
+        }
     }
 
     unsafe fn process_events() {
@@ -1057,115 +1116,6 @@ impl RMain {
 
         // Check for Positron render requests
         graphics_device::on_process_events();
-    }
-
-    fn yield_to_tasks(&mut self, busy: bool) {
-        let tick = std::time::Instant::now();
-
-        // Skip task if we don't have 128KB of stack space available.  This
-        // is 1/8th of the typical Windows stack space (1MB, whereas macOS
-        // and Linux have 8MB).
-        if let Err(_) = r_check_stack(Some(128 * 1024)) {
-            return;
-        }
-
-        loop {
-            match self.tasks_rx.try_recv() {
-                Ok(task) => self.pending_tasks.push_back(task),
-                Err(TryRecvError::Empty) => break,
-                Err(err) => log::error!("{err:}"),
-            }
-        }
-
-        // Sort so that preemptive tasks have priority over idle tasks
-        self.pending_tasks
-            .make_contiguous()
-            .sort_by(|x, y| x.only_idle.cmp(&y.only_idle));
-
-        // If we're busy don't consider idle tasks
-        let task = vec_deque_extract_if(&mut self.pending_tasks, |x| !x.only_idle || !busy);
-
-        let Some(task) = task else {
-            return;
-        };
-
-        if !is_parked_task(&task) {
-            // Immediately let caller know we have started so it can set up the
-            // timeout
-            if let Some(ref status_tx) = task.status_tx {
-                status_tx.send(RTaskStatus::Started).unwrap();
-            }
-
-            log::trace!(
-                "Yielding to task - {} more task(s) remaining",
-                self.pending_tasks
-                    .iter()
-                    .filter(|task| !is_parked_task(*task))
-                    .count()
-            )
-        }
-
-        match task.task {
-            RTaskKind::Closure(fun) => {
-                // Background tasks can't take any user input, so we set R_Interactive
-                // to 0 to prevent `readline()` from blocking the task.
-                unsafe { libr::set(libr::R_Interactive, 0) };
-                let result = r_sandbox(fun);
-                unsafe { libr::set(libr::R_Interactive, 1) };
-
-                // Unblock caller via the notification channel
-                if let Some(status_tx) = task.status_tx {
-                    status_tx.send(RTaskStatus::Finished(result)).unwrap()
-                }
-            },
-
-            RTaskKind::Future(fut) => {
-                let id = Uuid::new_v4();
-                let waker = RTaskWaker {
-                    task_id: id.clone(),
-                    status_tx: task.status_tx,
-                    tasks_tx: self.tasks_tx.clone(),
-                    only_idle: task.only_idle,
-                };
-
-                self.poll_task(waker, fut, id);
-            },
-
-            RTaskKind::ParkedTask(id) => {
-                if let Some((fut, waker)) = self.pending_futures.remove(&id) {
-                    self.poll_task(waker, fut, id);
-                } else {
-                    log::error!("Can't find parked R task");
-                };
-            },
-        };
-
-        if tick.elapsed() > std::time::Duration::from_millis(20) {
-            log::info!("R task took {}ms", tick.elapsed().as_millis());
-        }
-    }
-
-    fn poll_task(
-        &mut self,
-        waker: RTaskWaker,
-        mut fut: std::pin::Pin<Box<dyn Future<Output = ()> + 'static>>,
-        id: Uuid,
-    ) {
-        let awaker = Arc::new(waker.clone()).into();
-        let mut ctxt = &mut std::task::Context::from_waker(&awaker);
-
-        let ready = match fut.as_mut().poll(&mut ctxt) {
-            Poll::Ready(_) => true,
-            Poll::Pending => false,
-        };
-
-        if ready {
-            waker
-                .status_tx
-                .map(|tx| tx.send(RTaskStatus::Finished(Ok(()))));
-        } else {
-            self.pending_futures.insert(id, (fut, waker));
-        }
     }
 
     pub fn get_comm_manager_tx(&self) -> &Sender<CommManagerEvent> {
