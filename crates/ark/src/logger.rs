@@ -65,6 +65,9 @@ pub fn init(file: Option<&str>) {
         }
 
         let subscriber = tracing_subscriber::fmt::fmt()
+            // Use pretty representation. This has more spacing
+            // and a clearer layout for fields.
+            .pretty()
             // Disable ANSI escapes, those are not supported in Code
             .with_ansi(false)
             // Display source code file paths
