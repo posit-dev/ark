@@ -230,15 +230,15 @@ where
     F: FnOnce() -> Fut + 'static + Send,
     Fut: Future<Output = ()> + 'static,
 {
-    spawn_ext(fun, false)
+    spawn_ext(fun, true)
 }
 
-pub(crate) fn spawn_idle<F, Fut>(fun: F)
+pub(crate) fn spawn_interrupt<F, Fut>(fun: F)
 where
     F: FnOnce() -> Fut + 'static + Send,
     Fut: Future<Output = ()> + 'static,
 {
-    spawn_ext(fun, true)
+    spawn_ext(fun, false)
 }
 
 fn spawn_ext<F, Fut>(fun: F, only_idle: bool)

@@ -84,7 +84,7 @@ impl<T> Drop for RThreadSafe<T> {
             return;
         };
 
-        r_task::spawn(|| async move {
+        r_task::spawn_interrupt(|| async move {
             // Run the `drop()` method of the `RShelter`, which in turn
             // runs the `drop()` method of the wrapped Rust object, which likely
             // uses the R API (i.e. if it is an `RObject`) so it must be called

@@ -73,7 +73,7 @@ impl Kernel {
         // So check for status in an async task and send event from there.
         let kernel = self.kernel.as_ref().unwrap().clone();
 
-        r_task::spawn(|| async move {
+        r_task::spawn_interrupt(|| async move {
             // Get the current busy status
             let busy = if RMain::initialized() {
                 RMain::get().is_busy
