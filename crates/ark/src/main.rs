@@ -371,7 +371,7 @@ fn main() {
     }
 
     // Initialize the logger.
-    logger::initialize(log_file.as_deref());
+    logger::init(log_file.as_deref());
 
     if let Some(file) = startup_notifier_file {
         let path = std::path::Path::new(&file);
