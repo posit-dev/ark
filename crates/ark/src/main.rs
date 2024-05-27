@@ -447,13 +447,15 @@ fn main() {
             String::from("No location information:")
         };
 
+        let trace = format!("Backtrace:\n{}", std::backtrace::Backtrace::force_capture());
+
         // Report panic to the frontend
         if let Some(info) = info.downcast_ref::<&str>() {
-            log::error!("Panic! {loc} {info:}");
+            log::error!("Panic! {loc} {info:}\n{trace}");
         } else if let Some(info) = info.downcast_ref::<String>() {
-            log::error!("Panic! {loc} {info:}");
+            log::error!("Panic! {loc} {info:}\n{trace}");
         } else {
-            log::error!("Panic! {loc} No contextual information.");
+            log::error!("Panic! {loc} No contextual information.\n{trace}");
         }
 
         // Give some time to flush log
