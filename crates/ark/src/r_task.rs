@@ -31,7 +31,7 @@ pub enum RTask {
 }
 
 pub struct RTaskSync {
-    pub fun: Box<dyn FnOnce() + Send + Sync + 'static>,
+    pub fun: Box<dyn FnOnce() + Send + 'static>,
     pub status_tx: Option<Sender<RTaskStatus>>,
     pub start_info: RTaskStartInfo,
 }
@@ -141,7 +141,7 @@ static mut R_MAIN_TASKS_IDLE_TX: Mutex<Option<Sender<RTask>>> = Mutex::new(None)
 pub(crate) fn r_task<'env, F, T>(f: F) -> T
 where
     F: FnOnce() -> T,
-    F: 'env + Send + Sync,
+    F: 'env + Send,
     T: 'env + Send,
 {
     // Escape hatch for unit tests
@@ -174,9 +174,8 @@ where
         // scope until the closure has finished running, so the objects
         // captured by the closure are guaranteed to exist for the duration
         // of the closure call.
-        let closure: Box<dyn FnOnce() + Send + Sync + 'env> = Box::new(closure);
-        let closure: Box<dyn FnOnce() + Send + Sync + 'static> =
-            unsafe { std::mem::transmute(closure) };
+        let closure: Box<dyn FnOnce() + Send + 'env> = Box::new(closure);
+        let closure: Box<dyn FnOnce() + Send + 'static> = unsafe { std::mem::transmute(closure) };
 
         // Channel to communicate status of the task/closure
         let (status_tx, status_rx) = bounded::<RTaskStatus>(0);
