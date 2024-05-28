@@ -15,6 +15,7 @@ use libr::R_lsInternal;
 use libr::Rboolean_TRUE;
 use libr::Rf_findVarInFrame;
 use libr::SEXP;
+use ropey::Rope;
 use tower_lsp::lsp_types::CompletionItem;
 use tree_sitter::Node;
 use tree_sitter::Point;
@@ -36,6 +37,7 @@ pub fn completions_from_namespace(
     log::info!("completions_from_namespace()");
 
     let node = context.node;
+    let contents = &context.document.contents;
 
     // We expect `DocumentContext` to have drilled down into the CST to the anonymous node,
     // we will find the actual `NamespaceOperator` node here
@@ -79,7 +81,8 @@ pub fn completions_from_namespace(
     let strings = unsafe { symbols.to::<Vec<String>>()? };
 
     for string in strings.iter() {
-        let item = unsafe { completion_item_from_namespace(string, *namespace, package) };
+        let item =
+            unsafe { completion_item_from_namespace(string, &node, contents, *namespace, package) };
         match item {
             Ok(item) => completions.push(item),
             Err(error) => log::error!("{:?}", error),
@@ -89,7 +92,7 @@ pub fn completions_from_namespace(
     if exports_only {
         // `pkg:::object` doesn't return lazy objects, so we don't want
         // to show lazydata completions if we are inside `:::`
-        let lazydata = completions_from_namespace_lazydata(*namespace, package)?;
+        let lazydata = completions_from_namespace_lazydata(*namespace, package, &node, contents)?;
         if let Some(mut lazydata) = lazydata {
             completions.append(&mut lazydata);
         }
@@ -162,6 +165,8 @@ fn namespace_node_from_identifier(node: Node) -> NamespaceNodeKind {
 fn completions_from_namespace_lazydata(
     namespace: SEXP,
     package: &str,
+    node: &Node,
+    contents: &Rope,
 ) -> Result<Option<Vec<CompletionItem>>> {
     log::info!("completions_from_namespace_lazydata()");
 
@@ -185,7 +190,7 @@ fn completions_from_namespace_lazydata(
         let mut completions: Vec<CompletionItem> = vec![];
 
         for name in names.iter() {
-            match completion_item_from_lazydata(name, env, package) {
+            match completion_item_from_lazydata(name, node, contents, env, package) {
                 Ok(item) => completions.push(item),
                 Err(error) => log::error!("{:?}", error),
             }
@@ -217,11 +222,13 @@ fn list_namespace_exports(namespace: SEXP) -> RObject {
 
 #[cfg(test)]
 mod tests {
+    use tower_lsp::lsp_types::InsertTextFormat;
     use tree_sitter::Point;
 
     use crate::lsp::completions::sources::unique::namespace::completions_from_namespace;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
+    use crate::test::point_from_cursor;
     use crate::test::r_test;
 
     #[test]
@@ -305,6 +312,32 @@ mod tests {
             let context = DocumentContext::new(&document, point, None);
             let completions = completions_from_namespace(&context).unwrap().unwrap();
             assert!(completions.is_empty());
+        })
+    }
+
+    #[test]
+    fn test_completions_dont_add_parentheses_inside_special_functions() {
+        r_test(|| {
+            let (text, point) = point_from_cursor("debug(base::ab@)");
+
+            let document = Document::new(text.as_str(), None);
+            let context = DocumentContext::new(&document, point, None);
+
+            let completions = completions_from_namespace(&context).unwrap().unwrap();
+            let completion = completions
+                .iter()
+                .find(|item| item.label == "abs")
+                .unwrap()
+                .clone();
+
+            // Not a snippet, and not with `()`, and no extra command to trigger
+            // parameter hints!
+            assert_eq!(completion.insert_text.unwrap(), String::from("abs"));
+            assert_eq!(
+                completion.insert_text_format.unwrap(),
+                InsertTextFormat::PLAIN_TEXT
+            );
+            assert!(completion.command.is_none());
         })
     }
 }
