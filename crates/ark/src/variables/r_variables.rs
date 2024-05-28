@@ -439,6 +439,7 @@ impl RVariables {
             let event = VariablesFrontendEvent::Update(UpdateParams {
                 assigned,
                 removed,
+                unevaluated: vec![],
                 version: self.version as i64,
             });
             self.send_event(event, request_id);

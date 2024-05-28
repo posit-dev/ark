@@ -5,6 +5,9 @@
 //
 //
 
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
+
 use amalthea::comm::variables_comm::ClipboardFormatFormat;
 use amalthea::comm::variables_comm::Variable;
 use amalthea::comm::variables_comm::VariableKind;
@@ -499,6 +502,7 @@ impl PositronVariable {
                 has_children: has_children(x),
                 is_truncated,
                 has_viewer: r_is_data_frame(x) || r_is_matrix(x),
+                updated_time: Self::update_timestamp(),
             },
         }
     }
@@ -544,6 +548,7 @@ impl PositronVariable {
                 has_children: false,
                 is_truncated: false,
                 has_viewer: false,
+                updated_time: Self::update_timestamp(),
             },
         }
     }
@@ -562,6 +567,7 @@ impl PositronVariable {
                 has_children: false,
                 is_truncated: false,
                 has_viewer: false,
+                updated_time: Self::update_timestamp(),
             },
         }
     }
@@ -984,6 +990,7 @@ impl PositronVariable {
                     has_children: true,
                     is_truncated: false,
                     has_viewer: false,
+                    updated_time: Self::update_timestamp(),
                 });
             }
 
@@ -1025,6 +1032,7 @@ impl PositronVariable {
                     has_children: false,
                     is_truncated: false,
                     has_viewer: false,
+                    updated_time: Self::update_timestamp(),
                 });
             }
 
@@ -1064,11 +1072,20 @@ impl PositronVariable {
                     has_children: false,
                     is_truncated: false,
                     has_viewer: false,
+                    updated_time: Self::update_timestamp(),
                 });
             }
 
             Ok(out)
         }
+    }
+
+    /// Creates an update timestamp for a variable
+    fn update_timestamp() -> i64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64
     }
 
     fn inspect_pairlist(value: SEXP) -> Result<Vec<Variable>, harp::error::Error> {
@@ -1149,6 +1166,7 @@ impl PositronVariable {
                 has_children: true,
                 is_truncated: false,
                 has_viewer: false,
+                updated_time: Self::update_timestamp(),
             });
         }
 
@@ -1165,6 +1183,7 @@ impl PositronVariable {
                 has_children: true,
                 is_truncated: false,
                 has_viewer: false,
+                updated_time: Self::update_timestamp(),
             });
         }
 
