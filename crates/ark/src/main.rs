@@ -265,6 +265,7 @@ fn main() {
     let mut startup_file: Option<String> = None;
     let mut session_mode = SessionMode::Console;
     let mut log_file: Option<String> = None;
+    let mut profile_file: Option<String> = None;
     let mut startup_notifier_file: Option<String> = None;
     let mut startup_delay: Option<std::time::Duration> = None;
     let mut r_args: Vec<String> = Vec::new();
@@ -331,6 +332,14 @@ fn main() {
                     break;
                 }
             },
+            "--profile" => {
+                if let Some(file) = argv.next() {
+                    profile_file = Some(file);
+                } else {
+                    eprintln!("A profile file must be specified with the --profile argument.");
+                    break;
+                }
+            },
             "--startup-notifier-file" => {
                 if let Some(file) = argv.next() {
                     startup_notifier_file = Some(file);
@@ -371,7 +380,7 @@ fn main() {
     }
 
     // Initialize the logger.
-    logger::init(log_file.as_deref());
+    logger::init(log_file.as_deref(), profile_file.as_deref());
 
     if let Some(file) = startup_notifier_file {
         let path = std::path::Path::new(&file);

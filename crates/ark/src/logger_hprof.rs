@@ -1,3 +1,6 @@
+// Based on https://github.com/rust-lang/rust-analyzer/blob/master/crates/rust-analyzer/src/tracing/hprof.rs
+// Includes custom writer.
+
 //! Consumer of `tracing` data, which prints a hierarchical profile.
 //!
 //! Based on https://github.com/davidbarsky/tracing-tree, but does less, while
@@ -45,22 +48,24 @@ use tracing::Id;
 use tracing::Level;
 use tracing::Subscriber;
 use tracing_subscriber::filter;
+use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::layer::Context;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::Layer;
 use tracing_subscriber::Registry;
 
-use crate::tracing::hprof;
+use crate::logger_hprof;
 
 pub fn init(spec: &str) -> tracing::subscriber::DefaultGuard {
-    let subscriber = Registry::default().with(layer(spec));
+    let subscriber = Registry::default().with(layer(spec, std::io::stderr));
     tracing::subscriber::set_default(subscriber)
 }
 
-pub fn layer<S>(spec: &str) -> impl Layer<S>
+pub fn layer<W, S>(spec: &str, make_writer: W) -> impl Layer<S>
 where
     S: Subscriber + for<'span> tracing_subscriber::registry::LookupSpan<'span>,
+    W: for<'writer> MakeWriter<'writer> + 'static + Send + Sync,
 {
     let (write_filter, allowed_names) = WriteFilter::from_spec(spec);
 
@@ -80,34 +85,19 @@ where
             !metadata.target().starts_with("chalk")
     });
 
-    hprof::SpanTree::default()
-        .aggregate(true)
-        .spec_filter(write_filter)
-        .with_filter(profile_filter)
+    logger_hprof::SpanTree {
+        aggregate: false,
+        write_filter,
+        make_writer,
+    }
+    .with_filter(profile_filter)
 }
 
-#[derive(Default, Debug)]
-pub(crate) struct SpanTree {
+#[derive(Debug)]
+pub(crate) struct SpanTree<W = fn() -> std::io::Stderr> {
     aggregate: bool,
     write_filter: WriteFilter,
-}
-
-impl SpanTree {
-    /// Merge identical sibling spans together.
-    pub(crate) fn aggregate(self, yes: bool) -> SpanTree {
-        SpanTree {
-            aggregate: yes,
-            ..self
-        }
-    }
-
-    /// Add a write-time filter for span duration or tree depth.
-    pub(crate) fn spec_filter(self, write_filter: WriteFilter) -> SpanTree {
-        SpanTree {
-            write_filter,
-            ..self
-        }
-    }
+    make_writer: W,
 }
 
 struct Data {
@@ -152,9 +142,10 @@ impl<'a> Visit for DataVisitor<'a> {
     }
 }
 
-impl<S> Layer<S> for SpanTree
+impl<S, W> Layer<S> for SpanTree<W>
 where
     S: Subscriber + for<'span> LookupSpan<'span>,
+    W: for<'writer> MakeWriter<'writer> + 'static,
 {
     fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
         let span = ctx.span(id).unwrap();
@@ -183,7 +174,8 @@ where
                 if self.aggregate {
                     node.aggregate()
                 }
-                node.print(&self.write_filter)
+                let mut writer = self.make_writer.make_writer();
+                node.print(&self.write_filter, &mut writer)
             },
         }
     }
@@ -199,17 +191,22 @@ struct Node {
 }
 
 impl Node {
-    fn print(&self, filter: &WriteFilter) {
-        self.go(0, filter)
+    fn print<W>(&self, filter: &WriteFilter, writer: &mut W)
+    where
+        W: std::io::Write,
+    {
+        self.go(0, filter, writer)
     }
 
     #[allow(clippy::print_stderr)]
-    fn go(&self, level: usize, filter: &WriteFilter) {
+    fn go<W>(&self, level: usize, filter: &WriteFilter, out: &mut W)
+    where
+        W: std::io::Write,
+    {
         if self.duration > filter.longer_than && level < filter.depth {
             let duration = ms(self.duration);
             let current_indent = level * 2;
 
-            let mut out = String::new();
             let _ = write!(out, "{:current_indent$}   {duration} {:<6}", "", self.name);
 
             if !self.fields.is_empty() {
@@ -220,10 +217,10 @@ impl Node {
                 let _ = write!(out, " ({} calls)", self.count);
             }
 
-            eprintln!("{}", out);
+            let _ = write!(out, "\n");
 
             for child in &self.children {
-                child.go(level + 1, filter)
+                child.go(level + 1, filter, out)
             }
         }
     }

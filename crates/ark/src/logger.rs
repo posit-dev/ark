@@ -7,44 +7,22 @@
 
 use std::sync::Once;
 
+use once_cell::sync::OnceCell;
 use regex::Regex;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::fmt::writer::BoxMakeWriter;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::Layer;
 
-pub fn init(file: Option<&str>) {
+use crate::logger_hprof;
+
+pub fn init(log_file: Option<&str>, profile_file: Option<&str>) {
     static ONCE: Once = Once::new();
 
     ONCE.call_once(|| {
-        let file = match file {
-            None => None,
-            Some(file) => {
-                let file = std::fs::OpenOptions::new()
-                    .write(true)
-                    .append(true)
-                    .create(true)
-                    .open(file);
-
-                match file {
-                    Ok(file) => Some(file),
-                    Err(error) => {
-                        eprintln!("Error initializing log: {error:?}");
-                        None
-                    },
-                }
-            },
-        };
-
-        // Spawn appender thread for non-blocking writes
-        let (writer, guard) = if let Some(file) = file {
-            tracing_appender::non_blocking(file)
-        } else {
-            tracing_appender::non_blocking(std::io::stderr())
-        };
-
-        static LOG_GUARD: std::sync::OnceLock<WorkerGuard> = std::sync::OnceLock::new();
-        LOG_GUARD.set(guard).unwrap();
-
+        // Parse `RUST_LOG`
         let mut env_filter = EnvFilter::from_default_env();
 
         // Propagate 'ark' verbosity to internal crates
@@ -64,7 +42,11 @@ pub fn init(file: Option<&str>) {
             }
         }
 
-        let subscriber = tracing_subscriber::fmt::fmt()
+        // Spawn appender thread for non-blocking writes
+        static mut LOG_GUARD: OnceCell<WorkerGuard> = OnceCell::new();
+        let log_writer = non_blocking(log_file, unsafe { &mut LOG_GUARD });
+
+        let log = tracing_subscriber::fmt::layer()
             // Use pretty representation. This has more spacing
             // and a clearer layout for fields.
             .pretty()
@@ -80,14 +62,47 @@ pub fn init(file: Option<&str>) {
             // Mostly redundant with file paths.
             .with_target(false)
             // Use our custom file writer
-            .with_writer(BoxMakeWriter::new(writer))
+            .with_writer(log_writer)
             // Filter based on `RUST_LOG` envvar
-            .with_env_filter(env_filter)
-            .finish();
+            .with_filter(env_filter);
 
-        tracing::subscriber::set_global_default(subscriber).unwrap();
+        let subscriber = tracing_subscriber::Registry::default().with(log);
 
-        // Propagate events from log:: crate as tracing:: events
-        tracing_log::LogTracer::builder().init().unwrap();
+        // Only log profile if requested
+        if profile_file.is_some() {
+            static mut PROFILE_GUARD: OnceCell<WorkerGuard> = OnceCell::new();
+            let profile_writer = non_blocking(profile_file, unsafe { &mut PROFILE_GUARD });
+
+            // Profile anything taking over 50ms by default
+            let config = std::env::var("ARK_PROFILE").unwrap_or("*>50".into());
+
+            let profile = logger_hprof::layer(&config, profile_writer);
+            subscriber.with(profile).try_init().unwrap();
+        } else {
+            subscriber.try_init().unwrap();
+        }
     });
+}
+
+// Returns a boxed value for genericity
+fn non_blocking(file: Option<&str>, cell: &mut OnceCell<WorkerGuard>) -> BoxMakeWriter {
+    let file = file.and_then(|file| {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .append(true)
+            .create(true)
+            .open(file)
+            .ok()
+    });
+
+    if let Some(file) = file {
+        let (writer, guard) = tracing_appender::non_blocking(file);
+
+        // Save the guard forever
+        cell.set(guard).unwrap();
+
+        BoxMakeWriter::new(writer)
+    } else {
+        BoxMakeWriter::new(std::io::stderr)
+    }
 }

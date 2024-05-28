@@ -18,6 +18,7 @@ pub mod interface;
 pub mod json;
 pub mod kernel;
 pub mod logger;
+pub mod logger_hprof;
 pub mod lsp;
 pub mod modules;
 pub mod plots;
