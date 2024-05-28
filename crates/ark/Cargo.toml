@@ -62,6 +62,7 @@ tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 tracing-appender = "0.2.3"
 tracing-log = "0.2.0"
+rustc-hash = "1.2.0"
 
 [build-dependencies]
 chrono = "0.4.23"

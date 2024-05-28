@@ -309,6 +309,7 @@ dependencies = [
  "reqwest",
  "ropey",
  "rust-embed",
+ "rustc-hash",
  "scraper",
  "serde",
  "serde_json",
@@ -2301,6 +2302,12 @@ dependencies = [
  "sha2",
  "walkdir",
 ]
+
+[[package]]
+name = "rustc-hash"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3450ed37fe9609abb6bc3b8891b6e078404e4c53c7332350e2e15126a95229bf"
 
 [[package]]
 name = "rustc_version"
