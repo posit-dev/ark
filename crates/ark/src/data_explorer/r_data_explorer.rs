@@ -52,6 +52,7 @@ use harp::object::RObject;
 use harp::r_symbol;
 use harp::tbl_get_column;
 use harp::utils::r_classes;
+use harp::utils::r_format;
 use harp::utils::r_inherits;
 use harp::utils::r_is_object;
 use harp::utils::r_is_s4;
@@ -1049,10 +1050,7 @@ fn format_column(x: SEXP) -> anyhow::Result<Vec<String>> {
             match r_classes(x) {
                 Some(_) => {
                     // If column has a class, we just call format on it.
-                    RFunction::new("", "format")
-                        .add(x)
-                        .call_in(ARK_ENVS.positron_ns)?
-                        .try_into()?
+                    r_format(x)?
                 },
                 None => {
                     // For list columns we do something similar to tibbles, ie

@@ -25,6 +25,7 @@ use crate::eval::r_parse_eval0;
 use crate::exec::geterrmessage;
 use crate::exec::RFunction;
 use crate::exec::RFunctionExt;
+use crate::modules::HARP_ENV;
 use crate::object::r_alloc_character;
 use crate::object::r_chr_get;
 use crate::object::r_chr_poke;
@@ -792,6 +793,15 @@ pub fn r_printf(x: &str) {
     let c_str = std::ffi::CString::new(x).unwrap();
     unsafe {
         libr::Rprintf(c_str.as_ptr());
+    }
+}
+
+pub fn r_format(x: SEXP) -> Result<Vec<String>> {
+    unsafe {
+        RFunction::new("", "harp_format")
+            .add(x)
+            .call_in(HARP_ENV.unwrap())?
+            .to::<Vec<String>>()
     }
 }
 
