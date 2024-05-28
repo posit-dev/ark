@@ -1048,7 +1048,11 @@ fn format_column(x: SEXP) -> anyhow::Result<Vec<String>> {
         VECSXP => {
             match r_classes(x) {
                 Some(_) => {
-                    bail!("List columns that have classes (such as data.frames) are not supported.")
+                    // If column has a class, we just call format on it.
+                    RFunction::new("", "format")
+                        .add(x)
+                        .call_in(ARK_ENVS.positron_ns)?
+                        .try_into()?
                 },
                 None => {
                     // For list columns we do something similar to tibbles, ie

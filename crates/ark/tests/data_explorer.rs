@@ -1030,7 +1030,8 @@ fn test_data_explorer() {
         // ---- formatting of list columns ----
         let val = r_parse_eval0(
             r#"list_cols <- tibble::tibble(
-                list_col = list(c(1,2,3,4), tibble::tibble(x = 1, b = 2), matrix(1:4, nrow = 2), c(TRUE, FALSE))
+                list_col = list(c(1,2,3,4), tibble::tibble(x = 1, b = 2), matrix(1:4, nrow = 2), c(TRUE, FALSE)),
+                list_col_class = vctrs::list_of(1,2,3, 4)
             )"#,
             R_ENVS.global,
         );
@@ -1045,20 +1046,25 @@ fn test_data_explorer() {
                 let req = DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
                     row_start_index: 0,
                     num_rows: 4,
-                    column_indices: vec![0],
+                    column_indices: vec![0, 1],
                 });
                 assert_match!(socket_rpc(&socket, req),
                     DataExplorerBackendReply::GetDataValuesReply(data) => {
-                        assert_eq!(data.columns.len(), 1);
+                        assert_eq!(data.columns.len(), 2);
                         assert_eq!(data.columns[0][0], "<numeric [4]>");
                         assert_eq!(data.columns[0][1], "<tbl_df [1 x 2]>");
                         assert_eq!(data.columns[0][2], "<matrix [2 x 2]>");
                         assert_eq!(data.columns[0][3], "<logical [2]>");
+
+                        assert_eq!(data.columns[1][0], "1");
+                        assert_eq!(data.columns[1][1], "2");
+                        assert_eq!(data.columns[1][2], "3");
+                        assert_eq!(data.columns[1][3], "4");
                     }
                 );
             },
             Err(_) => {
-                // Skip test if tibble not installed
+                // Skip test if tibble/vctrs not installed
             },
         }
     });
