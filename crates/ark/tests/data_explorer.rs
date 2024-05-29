@@ -403,158 +403,6 @@ fn test_data_explorer() {
             }
         );
 
-        // --- live updates ---
-
-        // Create a tiny data frame to test live updates.
-        let tiny = r_parse_eval0(
-            "x <- data.frame(y = c(3, 2, 1), z = c(4, 5, 6))",
-            R_ENVS.global,
-        )
-        .unwrap();
-
-        // Open a data explorer for the tiny data frame and supply a binding to the
-        // global environment.
-        let (comm_manager_tx, comm_manager_rx) = bounded::<CommManagerEvent>(0);
-        let binding = DataObjectEnvInfo {
-            name: String::from("x"),
-            env: RThreadSafe::new(RObject::view(R_ENVS.global)),
-        };
-        RDataExplorer::start(String::from("tiny"), tiny, Some(binding), comm_manager_tx).unwrap();
-
-        // Wait for the new comm to show up.
-        let msg = comm_manager_rx
-            .recv_timeout(std::time::Duration::from_secs(1))
-            .unwrap();
-        let socket = match msg {
-            CommManagerEvent::Opened(socket, _value) => {
-                assert_eq!(socket.comm_name, "positron.dataExplorer");
-                socket
-            },
-            _ => panic!("Unexpected Comm Manager Event"),
-        };
-
-        // Make a data-level change to the data set.
-        r_parse_eval0("x[1, 1] <- 0", R_ENVS.global).unwrap();
-
-        // Emit a console prompt event; this should tickle the data explorer to
-        // check for changes.
-        EVENTS.console_prompt.emit(());
-
-        // Wait for an update event to arrive
-        assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
-            CommMsg::Data(value) => {
-                // Make sure it's a data update event.
-                assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
-                    DataExplorerFrontendEvent::DataUpdate
-                );
-        });
-
-        // Create a request to sort the data set by the 'y' column.
-        let sort_keys = vec![ColumnSortKey {
-            column_index: 0,
-            ascending: true,
-        }];
-        let req = DataExplorerBackendRequest::SetSortColumns(SetSortColumnsParams {
-            sort_keys: sort_keys.clone(),
-        });
-
-        // We should get a SetSortColumnsReply back.
-        assert_match!(socket_rpc(&socket, req),
-        DataExplorerBackendReply::SetSortColumnsReply() => {});
-
-        // Get the values from the first column.
-        let req = DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
-            row_start_index: 0,
-            num_rows: 3,
-            column_indices: vec![0],
-            format_options: default_format_options(),
-        });
-        assert_match!(socket_rpc(&socket, req),
-            DataExplorerBackendReply::GetDataValuesReply(data) => {
-                assert_eq!(data.columns.len(), 1);
-                assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("0.00".to_string()));
-                assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("1.00".to_string()));
-                assert_eq!(data.columns[0][2], ColumnValue::FormattedValue("2.00".to_string()));
-            }
-        );
-
-        // Make another data-level change to the data set.
-        r_parse_eval0("x[1, 1] <- 3", R_ENVS.global).unwrap();
-
-        // Emit a console prompt event; this should tickle the data explorer to
-        // check for changes.
-        EVENTS.console_prompt.emit(());
-
-        // Wait for an update event to arrive
-        assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
-            CommMsg::Data(value) => {
-                // Make sure it's a data update event.
-                assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
-                    DataExplorerFrontendEvent::DataUpdate
-                );
-        });
-
-        // Get the values from the first column again. Because a sort is applied,
-        // the new value we wrote should be at the end.
-        let req = DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
-            row_start_index: 0,
-            num_rows: 3,
-            column_indices: vec![0],
-            format_options: default_format_options(),
-        });
-        assert_match!(socket_rpc(&socket, req),
-            DataExplorerBackendReply::GetDataValuesReply(data) => {
-                assert_eq!(data.columns.len(), 1);
-                assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("1.00".to_string()));
-                assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("2.00".to_string()));
-                assert_eq!(data.columns[0][2], ColumnValue::FormattedValue("3.00".to_string()));
-            }
-        );
-
-        // Now, replace 'x' with an entirely different data set. This should trigger
-        // a schema-level update.
-        r_parse_eval0(
-            "x <- data.frame(y = 'y', z = 'z', three = '3')",
-            R_ENVS.global,
-        )
-        .unwrap();
-
-        // Emit a console prompt event to trigger change detection
-        EVENTS.console_prompt.emit(());
-
-        // This should trigger a schema update event.
-        assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
-            CommMsg::Data(value) => {
-                // Make sure it's schema update event.
-                assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
-                    DataExplorerFrontendEvent::SchemaUpdate);
-        });
-
-        // Get the schema again to make sure it updated. We added a new column, so
-        // we should get 3 columns back.
-        let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
-            num_columns: 3,
-            start_index: 0,
-        });
-
-        // Check that we got the right number of columns.
-        assert_match!(socket_rpc(&socket, req),
-            DataExplorerBackendReply::GetSchemaReply(schema) => {
-                assert_eq!(schema.columns.len(), 3);
-            }
-        );
-
-        // Now, delete 'x' entirely. This should cause the comm to close.
-        r_parse_eval0("rm(x)", R_ENVS.global).unwrap();
-
-        // Emit a console prompt event to trigger change detection
-        EVENTS.console_prompt.emit(());
-
-        // Wait for an close event to arrive
-        assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
-            CommMsg::Close => {}
-        );
-
         // --- mtcars (as a data.table) ---
 
         let mtcars_data_table =
@@ -1129,6 +977,137 @@ fn test_data_explorer() {
             },
         }
     });
+}
+
+#[test]
+fn test_live_updates() {
+    r_test(|| {
+        let socket = open_data_explorer_from_expression(
+            "x <- data.frame(y = c(3, 2, 1), z = c(4, 5, 6))",
+            Some("x"),
+        )
+        .unwrap();
+
+        // Make a data-level change to the data set.
+        r_parse_eval0("x[1, 1] <- 0", R_ENVS.global).unwrap();
+
+        // Emit a console prompt event; this should tickle the data explorer to
+        // check for changes.
+        EVENTS.console_prompt.emit(());
+
+        // Wait for an update event to arrive
+        assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
+            CommMsg::Data(value) => {
+                // Make sure it's a data update event.
+                assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
+                    DataExplorerFrontendEvent::DataUpdate
+                );
+        });
+
+        // Create a request to sort the data set by the 'y' column.
+        let sort_keys = vec![ColumnSortKey {
+            column_index: 0,
+            ascending: true,
+        }];
+        let req = DataExplorerBackendRequest::SetSortColumns(SetSortColumnsParams {
+            sort_keys: sort_keys.clone(),
+        });
+
+        // We should get a SetSortColumnsReply back.
+        assert_match!(socket_rpc(&socket, req),
+DataExplorerBackendReply::SetSortColumnsReply() => {});
+
+        // Get the values from the first column.
+        let req = DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
+            row_start_index: 0,
+            num_rows: 3,
+            column_indices: vec![0],
+        });
+        assert_match!(socket_rpc(&socket, req),
+            DataExplorerBackendReply::GetDataValuesReply(data) => {
+                assert_eq!(data.columns.len(), 1);
+                assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("0".to_string()));
+                assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("1".to_string()));
+                assert_eq!(data.columns[0][2], ColumnValue::FormattedValue("2".to_string()));
+            }
+        );
+
+        // Make another data-level change to the data set.
+        r_parse_eval0("x[1, 1] <- 3", R_ENVS.global).unwrap();
+
+        // Emit a console prompt event; this should tickle the data explorer to
+        // check for changes.
+        EVENTS.console_prompt.emit(());
+
+        // Wait for an update event to arrive
+        assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
+            CommMsg::Data(value) => {
+                // Make sure it's a data update event.
+                assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
+                    DataExplorerFrontendEvent::DataUpdate
+                );
+        });
+
+        // Get the values from the first column again. Because a sort is applied,
+        // the new value we wrote should be at the end.
+        let req = DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
+            row_start_index: 0,
+            num_rows: 3,
+            column_indices: vec![0],
+        });
+        assert_match!(socket_rpc(&socket, req),
+            DataExplorerBackendReply::GetDataValuesReply(data) => {
+                assert_eq!(data.columns.len(), 1);
+                assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("1".to_string()));
+                assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("2".to_string()));
+                assert_eq!(data.columns[0][2], ColumnValue::FormattedValue("3".to_string()));
+            }
+        );
+
+        // Now, replace 'x' with an entirely different data set. This should trigger
+        // a schema-level update.
+        r_parse_eval0(
+            "x <- data.frame(y = 'y', z = 'z', three = '3')",
+            R_ENVS.global,
+        )
+        .unwrap();
+
+        // Emit a console prompt event to trigger change detection
+        EVENTS.console_prompt.emit(());
+
+        // This should trigger a schema update event.
+        assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
+            CommMsg::Data(value) => {
+                // Make sure it's schema update event.
+                assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
+                    DataExplorerFrontendEvent::SchemaUpdate);
+        });
+
+        // Get the schema again to make sure it updated. We added a new column, so
+        // we should get 3 columns back.
+        let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
+            num_columns: 3,
+            start_index: 0,
+        });
+
+        // Check that we got the right number of columns.
+        assert_match!(socket_rpc(&socket, req),
+            DataExplorerBackendReply::GetSchemaReply(schema) => {
+                assert_eq!(schema.columns.len(), 3);
+            }
+        );
+
+        // Now, delete 'x' entirely. This should cause the comm to close.
+        r_parse_eval0("rm(x)", R_ENVS.global).unwrap();
+
+        // Emit a console prompt event to trigger change detection
+        EVENTS.console_prompt.emit(());
+
+        // Wait for an close event to arrive
+        assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
+            CommMsg::Close => {}
+        );
+    })
 }
 
 // Tests that invalid filters are preserved after a live update that removes the column
