@@ -23,6 +23,7 @@ pub mod markdown;
 pub mod references;
 pub mod selection_range;
 pub mod signature_help;
+pub mod state;
 pub mod statement_range;
 pub mod symbols;
 pub mod traits;
