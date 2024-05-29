@@ -584,10 +584,10 @@ impl RMain {
 
         // In the future we'll also send browser information, see
         // https://github.com/posit-dev/positron/issues/3001. Currently this is
-        // a push model where we send the console scopes at each round. In the
+        // a push model where we send the console inputs at each round. In the
         // future, a pull model would be better, this way the LSP can manage a
-        // cache of scopes and we don't need to retraverse the environments as
-        // often. We'd still push a `DidChangeConsoleScopes` notification from
+        // cache of inputs and we don't need to retraverse the environments as
+        // often. We'd still push a `DidChangeConsoleInputs` notification from
         // here, but only containing high-level information such as `search()`
         // contents and `ls(rho)`.
         if !info.browser && !info.incomplete && !info.input_request {
@@ -595,7 +595,7 @@ impl RMain {
                 Ok(inputs) => {
                     self.send_lsp(LspEvent::DidChangeConsoleInputs(inputs));
                 },
-                Err(err) => log::error!("Can't retrieve console scopes: {err:?}"),
+                Err(err) => log::error!("Can't retrieve console inputs: {err:?}"),
             }
         }
 
