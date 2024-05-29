@@ -27,5 +27,4 @@ pub mod state;
 pub mod statement_range;
 pub mod symbols;
 pub mod traits;
-pub mod treesitter;
 pub mod util;
