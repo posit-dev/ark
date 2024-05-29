@@ -1082,7 +1082,9 @@ impl RMain {
     }
 
     fn send_lsp(&self, event: LspEvent) {
-        self.lsp_events_tx.as_ref().unwrap().send(event).unwrap();
+        if let Some(ref tx) = self.lsp_events_tx {
+            tx.send(event).unwrap();
+        }
     }
 
     pub fn set_lsp_backend(
