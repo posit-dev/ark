@@ -815,7 +815,7 @@ impl RDataExplorer {
                         _ => Ok(is_compare_supported(display_type)),
                     }
                 } else {
-                    bail!("Missing compare_params for filter")
+                    Err(anyhow!("Missing compare_params for filter"))
                 }
             },
             RowFilterType::Between | RowFilterType::NotBetween => {
