@@ -970,8 +970,70 @@ fn test_data_explorer() {
             }
         );
 
-        // --- invalid filters are preserved after a live update that removes the column ----
+        // --- boolean filters ---
 
+        // Create a data frame with a series of boolean values.
+        r_parse_eval0(
+            r#"test_bools <- data.frame(bool = c(
+                    TRUE,
+                    TRUE,
+                    FALSE,
+                    NA,
+                    TRUE,
+                    FALSE
+            ))"#,
+            R_ENVS.global,
+        )
+        .unwrap();
+
+        // Open the data set in the data explorer.
+        let socket = open_data_explorer(String::from("test_bools"));
+
+        // Get the schema of the data set.
+        let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
+            num_columns: 1,
+            start_index: 0,
+        });
+
+        let schema_reply = socket_rpc(&socket, req);
+        let schema = match schema_reply {
+            DataExplorerBackendReply::GetSchemaReply(schema) => schema,
+            _ => panic!("Unexpected reply: {:?}", schema_reply),
+        };
+
+        // Next, apply a filter to the data set. Check for rows that are TRUE.
+        let true_filter = RowFilter {
+            column_schema: schema.columns[0].clone(),
+            filter_type: RowFilterType::IsTrue,
+            filter_id: "16B3E3E7-44D0-4003-B6BD-46EE0629F067".to_string(),
+            condition: RowFilterCondition::And,
+            is_valid: None,
+            compare_params: None,
+            between_params: None,
+            search_params: None,
+            set_membership_params: None,
+            error_message: None,
+        };
+        let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
+            filters: vec![true_filter.clone()],
+        });
+
+        // We should get a SetRowFiltersReply back. There are 3 rows where the
+        // value is TRUE.
+        assert_match!(socket_rpc(&socket, req),
+        DataExplorerBackendReply::SetRowFiltersReply(
+            FilterResult { selected_num_rows: num_rows, had_errors: Some(false)}
+        ) => {
+            assert_eq!(num_rows, 3);
+        });
+    });
+}
+
+// Tests that invalid filters are preserved after a live update that removes the column
+// Refer to https://github.com/posit-dev/positron/issues/3141 for more info.
+#[test]
+fn test_invalid_filters_preserved() {
+    r_test(|| {
         // Create a small data frame with a bunch of dates.
         let test_df = r_parse_eval0(
             r#"test_df <- data.frame(x = c('','a', 'b'), y = c(1, 2, 3))"#,
@@ -1119,61 +1181,6 @@ fn test_data_explorer() {
             }
         );
 
-        // --- boolean filters ---
-
-        // Create a data frame with a series of boolean values.
-        r_parse_eval0(
-            r#"test_bools <- data.frame(bool = c(
-                    TRUE,
-                    TRUE,
-                    FALSE,
-                    NA,
-                    TRUE,
-                    FALSE
-            ))"#,
-            R_ENVS.global,
-        )
-        .unwrap();
-
-        // Open the data set in the data explorer.
-        let socket = open_data_explorer(String::from("test_bools"));
-
-        // Get the schema of the data set.
-        let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
-            num_columns: 1,
-            start_index: 0,
-        });
-
-        let schema_reply = socket_rpc(&socket, req);
-        let schema = match schema_reply {
-            DataExplorerBackendReply::GetSchemaReply(schema) => schema,
-            _ => panic!("Unexpected reply: {:?}", schema_reply),
-        };
-
-        // Next, apply a filter to the data set. Check for rows that are TRUE.
-        let true_filter = RowFilter {
-            column_schema: schema.columns[0].clone(),
-            filter_type: RowFilterType::IsTrue,
-            filter_id: "16B3E3E7-44D0-4003-B6BD-46EE0629F067".to_string(),
-            condition: RowFilterCondition::And,
-            is_valid: None,
-            compare_params: None,
-            between_params: None,
-            search_params: None,
-            set_membership_params: None,
-            error_message: None,
-        };
-        let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
-            filters: vec![true_filter.clone()],
-        });
-
-        // We should get a SetRowFiltersReply back. There are 3 rows where the
-        // value is TRUE.
-        assert_match!(socket_rpc(&socket, req),
-        DataExplorerBackendReply::SetRowFiltersReply(
-            FilterResult { selected_num_rows: num_rows, had_errors: Some(false)}
-        ) => {
-            assert_eq!(num_rows, 3);
-        });
+        r_parse_eval0("rm(test_df)", R_ENVS.global).unwrap();
     });
 }
