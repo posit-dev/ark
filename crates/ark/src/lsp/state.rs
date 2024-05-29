@@ -6,21 +6,13 @@ use url::Url;
 
 use crate::lsp::documents::Document;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Default, Debug)]
 pub struct WorldState {
     pub documents: Arc<DashMap<Url, Document>>,
     pub workspace: Arc<Mutex<Workspace>>,
 }
 
-#[derive(Debug)]
+#[derive(Default, Debug)]
 pub struct Workspace {
     pub folders: Vec<Url>,
-}
-
-impl Default for Workspace {
-    fn default() -> Self {
-        Self {
-            folders: Default::default(),
-        }
-    }
 }
