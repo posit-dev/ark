@@ -85,11 +85,22 @@ fn open_data_explorer(dataset: String) -> socket::comm::CommSocket {
     }
 }
 
-fn open_data_explorer_from_expression(expr: &str) -> anyhow::Result<socket::comm::CommSocket> {
+fn open_data_explorer_from_expression(
+    expr: &str,
+    bind: Option<&str>,
+) -> anyhow::Result<socket::comm::CommSocket> {
     let object = r_parse_eval0(expr, R_ENVS.global)?;
 
+    let binding = match bind {
+        Some(name) => Some(DataObjectEnvInfo {
+            name: name.to_string(),
+            env: RThreadSafe::new(RObject::view(R_ENVS.global)),
+        }),
+        None => None,
+    };
+
     let (comm_manager_tx, comm_manager_rx) = bounded::<CommManagerEvent>(0);
-    RDataExplorer::start(String::from("obj"), object, None, comm_manager_tx).unwrap();
+    RDataExplorer::start(String::from("obj"), object, binding, comm_manager_tx).unwrap();
 
     // Wait for the new comm to show up.
     let msg = comm_manager_rx
@@ -1125,40 +1136,11 @@ fn test_data_explorer() {
 #[test]
 fn test_invalid_filters_preserved() {
     r_test(|| {
-        // Create a small data frame with a bunch of dates.
-        let test_df = r_parse_eval0(
+        let socket = open_data_explorer_from_expression(
             r#"test_df <- data.frame(x = c('','a', 'b'), y = c(1, 2, 3))"#,
-            R_ENVS.global,
+            Some("test_df"),
         )
         .unwrap();
-
-        // Open a data explorer for the tiny data frame and supply a binding to the
-        // global environment.
-        let (comm_manager_tx, comm_manager_rx) = bounded::<CommManagerEvent>(0);
-        let binding = DataObjectEnvInfo {
-            name: String::from("test_df"),
-            env: RThreadSafe::new(RObject::view(R_ENVS.global)),
-        };
-        RDataExplorer::start(
-            String::from("test_df"),
-            test_df,
-            Some(binding),
-            comm_manager_tx,
-        )
-        .unwrap();
-
-        // Wait for the new comm to show up.
-        let msg = comm_manager_rx
-            .recv_timeout(std::time::Duration::from_secs(1))
-            .unwrap();
-
-        let socket = match msg {
-            CommManagerEvent::Opened(socket, _value) => {
-                assert_eq!(socket.comm_name, "positron.dataExplorer");
-                socket
-            },
-            _ => panic!("Unexpected Comm Manager Event"),
-        };
 
         // Get the schema of the data set.
         let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
@@ -1288,7 +1270,7 @@ fn test_data_explorer_special_values() {
             f = list(NULL, list(1,2,3), list(4,5,6), list(7,8,9), list(10,11,12))
         )";
 
-        let socket = match open_data_explorer_from_expression(code) {
+        let socket = match open_data_explorer_from_expression(code, None) {
             Ok(socket) => socket,
             Err(_) => return, // Skip test if tibble is not installed
         };
