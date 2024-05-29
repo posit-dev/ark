@@ -19,9 +19,9 @@ use harp::exec::RFunctionExt;
 use harp::external_ptr::ExternalPointer;
 use harp::object::RObject;
 use harp::r_symbol;
+use harp::utils::is_symbol_valid;
 use harp::utils::r_is_null;
-use harp::utils::r_symbol_quote_invalid;
-use harp::utils::r_symbol_valid;
+use harp::utils::sym_quote_invalid;
 use libr::R_NilValue;
 use libr::Rf_ScalarInteger;
 use libr::Rf_allocVector;
@@ -286,10 +286,10 @@ fn generate_diagnostics(doc: &Document, state: &WorldState) -> Vec<Diagnostic> {
 
         for scope in state.console_scopes.lock().iter() {
             for name in scope.iter() {
-                if r_symbol_valid(name.as_str()) {
+                if is_symbol_valid(name.as_str()) {
                     context.session_symbols.insert(name.clone());
                 } else {
-                    let name = r_symbol_quote_invalid(name.as_str());
+                    let name = sym_quote_invalid(name.as_str());
                     context.session_symbols.insert(name.clone());
                 }
             }

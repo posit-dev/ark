@@ -497,19 +497,19 @@ pub unsafe fn r_inspect(object: SEXP) {
     Rf_eval(internal, R_BaseEnv);
 }
 
-pub fn r_symbol_valid(name: &str) -> bool {
+pub fn is_symbol_valid(name: &str) -> bool {
     RE_SYNTACTIC_IDENTIFIER.is_match(name)
 }
 
-pub fn r_symbol_quote_invalid(name: &str) -> String {
-    if RE_SYNTACTIC_IDENTIFIER.is_match(name) {
+pub fn sym_quote_invalid(name: &str) -> String {
+    if is_symbol_valid(name) {
         name.to_string()
     } else {
-        r_symbol_quote(name)
+        sym_quote(name)
     }
 }
 
-pub fn r_symbol_quote(name: &str) -> String {
+pub fn sym_quote(name: &str) -> String {
     format!("`{}`", name.replace("`", "\\`"))
 }
 
