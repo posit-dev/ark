@@ -15,7 +15,7 @@ use amalthea::comm::variables_comm::VariablesFrontendEvent;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
 use ark::lsp::events::EVENTS;
-use ark::r_task;
+use ark::r_task::r_task;
 use ark::thread::RThreadSafe;
 use ark::variables::r_variables::RVariables;
 use crossbeam::channel::bounded;

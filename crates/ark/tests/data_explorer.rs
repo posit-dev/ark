@@ -33,7 +33,7 @@ use amalthea::socket;
 use ark::data_explorer::r_data_explorer::DataObjectEnvInfo;
 use ark::data_explorer::r_data_explorer::RDataExplorer;
 use ark::lsp::events::EVENTS;
-use ark::r_task;
+use ark::r_task::r_task;
 use ark::test::r_test;
 use ark::test::socket_rpc_request;
 use ark::thread::RThreadSafe;

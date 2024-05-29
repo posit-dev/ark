@@ -134,7 +134,7 @@ impl RTaskStartInfo {
 // thread. See also `Crossbeam::thread::ScopedThreadBuilder` (from which
 // `r_task()` is adapted) for a similar approach.
 
-pub(crate) fn r_task<'env, F, T>(f: F) -> T
+pub fn r_task<'env, F, T>(f: F) -> T
 where
     F: FnOnce() -> T,
     F: 'env + Send,

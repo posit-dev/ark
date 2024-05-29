@@ -13,7 +13,7 @@ use amalthea::socket;
 use ark::connections::r_connection::Metadata;
 use ark::connections::r_connection::RConnection;
 use ark::modules::ARK_ENVS;
-use ark::r_task;
+use ark::r_task::r_task;
 use ark::test::r_test;
 use ark::test::socket_rpc_request;
 use crossbeam::channel::bounded;
