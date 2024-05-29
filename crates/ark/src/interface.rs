@@ -577,13 +577,7 @@ impl RMain {
         // here, but only containing high-level information such as `search()`
         // contents and `ls(rho)`.
         if !info.browser && !info.incomplete && !info.input_request {
-            match console_inputs() {
-                Ok(inputs) => {
-                    self.send_lsp(LspEvent::DidChangeConsoleInputs(inputs));
-                },
-                Err(err) => log::error!("Can't retrieve console inputs: {err:?}"),
-            }
-            self.send_lsp(LspEvent::RefreshAllDiagnostics());
+            self.refresh_lsp();
         }
 
         // Signal prompt
@@ -1072,9 +1066,16 @@ impl RMain {
         // Refresh LSP state now since we probably have missed some updates
         // while the channel was offline. This is currently not an ideal timing
         // as the channel is set up from a preemptive `r_task()` after the LSP
-        // is set up. Might want to do this in an idle task.
-        if let Ok(inputs) = console_inputs() {
-            self.send_lsp(LspEvent::DidChangeConsoleInputs(inputs));
+        // is set up. We'll want to do this in an idle task.
+        self.refresh_lsp();
+    }
+
+    pub fn refresh_lsp(&self) {
+        match console_inputs() {
+            Ok(inputs) => {
+                self.send_lsp(LspEvent::DidChangeConsoleInputs(inputs));
+            },
+            Err(err) => log::error!("Can't retrieve console inputs: {err:?}"),
         }
         self.send_lsp(LspEvent::RefreshAllDiagnostics());
     }
