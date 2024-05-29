@@ -5,6 +5,8 @@
 #
 #
 
+# TODO: Unexport these methods
+
 #' @export
 .ps.ui.LastActiveEditorContext <- function() {
     .ps.Call("ps_ui_last_active_editor_context")
@@ -31,7 +33,8 @@
 }
 
 #' @export
-.ps.ui.navigateToFile <- function(file, line, column) {
+.ps.ui.navigateToFile <- function(file = character(0), line = -1L, column = -1L) {
+    file <- normalizePath(file)
     .ps.Call("ps_ui_navigate_to_file", file, line, column)
 }
 

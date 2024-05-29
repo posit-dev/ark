@@ -22,7 +22,11 @@ handler_editor <- function(file, title, ..., name = NULL) {
     ensure_file(file)
 
     # Edit those files.
-    .ps.Call("ps_editor", file, title)
+    for (f in file) {
+        # This blocks until a response from the frontend, unlike RStudio which
+        # uses a fire-and-forget event. This shouldn't cause any issues.
+        .ps.ui.navigateToFile(f)
+    }
 
     invisible()
 }
