@@ -347,34 +347,8 @@ impl RDataExplorer {
             // schema update event
             self.shape = new_shape;
 
-            // Mark row_filters as invalid if the column no longer exists
-            // If the column still exists, update the column schema of the filter
-            // and check if they are still valid.
-            for rf in self.row_filters.iter_mut() {
-                let new_schema = self
-                    .shape
-                    .columns
-                    .iter()
-                    .find(|c| c.column_name == rf.column_schema.column_name);
-
-                match new_schema {
-                    Some(schema) => {
-                        rf.column_schema = schema.clone();
-                        let is_valid = Self::is_valid_filter(rf)?;
-                        rf.is_valid = Some(is_valid);
-                        rf.error_message = if is_valid {
-                            None
-                        } else {
-                            Some("Unsupported column type for filter".to_string())
-                        };
-                    },
-                    None => {
-                        // the column no longer exists
-                        rf.is_valid = Some(false);
-                        rf.error_message = Some("Column was removed".to_string());
-                    },
-                }
-            }
+            // Update row filters to reflect the new schema
+            self.row_filters_update()?;
 
             // Clear precomputed indices
             self.sorted_indices = None;
@@ -384,8 +358,8 @@ impl RDataExplorer {
             // Clear active sort keys
             self.sort_keys.clear();
 
-            // Clear active row filters
-            let (indices, _) = self.validate_and_compute_filters()?;
+            // Recompute and apply filters and sorts.
+            let (indices, _) = self.row_filters_compute()?;
             self.filtered_indices = indices;
             self.apply_sorts_and_filters();
 
@@ -405,6 +379,39 @@ impl RDataExplorer {
             .outgoing_tx
             .send(CommMsg::Data(serde_json::to_value(event)?))?;
         Ok(true)
+    }
+
+    // Marks row_filters as invalid if the column no longer exists
+    // If the column still exists, update the column schema of the filter
+    // and check if they are still valid.
+    // Should be called whenever there's a schema update, ie. when `self.shape` changes.
+    fn row_filters_update(&mut self) -> anyhow::Result<()> {
+        for rf in self.row_filters.iter_mut() {
+            let new_schema = self
+                .shape
+                .columns
+                .iter()
+                .find(|c| c.column_name == rf.column_schema.column_name);
+
+            match new_schema {
+                Some(schema) => {
+                    rf.column_schema = schema.clone();
+                    let is_valid = Self::is_valid_filter(rf)?;
+                    rf.is_valid = Some(is_valid);
+                    rf.error_message = if is_valid {
+                        None
+                    } else {
+                        Some("Unsupported column type for filter".to_string())
+                    };
+                },
+                None => {
+                    // the column no longer exists
+                    rf.is_valid = Some(false);
+                    rf.error_message = Some("Column was removed".to_string());
+                },
+            };
+        }
+        Ok(())
     }
 
     fn handle_rpc(
@@ -459,7 +466,7 @@ impl RDataExplorer {
                 self.row_filters = filters;
 
                 // Compute the filtered indices
-                let (indices, had_errors) = self.validate_and_compute_filters()?;
+                let (indices, had_errors) = self.row_filters_compute()?;
                 self.filtered_indices = indices;
 
                 // Apply sorts to the filtered indices to create view indices
@@ -764,11 +771,11 @@ impl RDataExplorer {
         Ok((row_indices, errors))
     }
 
-    // Validates filters and computes the filtered indices
+    // Compute filtered indices out of the current `row_filters`.
     //
-    // Validation happens implicitly and `row_filters` are updated to include error messages and
-    // validity status.
-    fn validate_and_compute_filters(&mut self) -> anyhow::Result<(Option<Vec<i32>>, Option<bool>)> {
+    // Implicitly updates the `row_filters` with validity status and error messages, if they
+    // fail during the computation.
+    fn row_filters_compute(&mut self) -> anyhow::Result<(Option<Vec<i32>>, Option<bool>)> {
         if self.row_filters.len() == 0 {
             return Ok((None, None));
         }
