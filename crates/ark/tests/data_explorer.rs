@@ -1028,3 +1028,159 @@ fn test_data_explorer() {
         });
     });
 }
+
+// Tests that invalid filters are preserved after a live update that removes the column
+// Refer to https://github.com/posit-dev/positron/issues/3141 for more info.
+#[test]
+fn test_invalid_filters_preserved() {
+    r_test(|| {
+        // Create a small data frame with a bunch of dates.
+        let test_df = r_parse_eval0(
+            r#"test_df <- data.frame(x = c('','a', 'b'), y = c(1, 2, 3))"#,
+            R_ENVS.global,
+        )
+        .unwrap();
+
+        // Open a data explorer for the tiny data frame and supply a binding to the
+        // global environment.
+        let (comm_manager_tx, comm_manager_rx) = bounded::<CommManagerEvent>(0);
+        let binding = DataObjectEnvInfo {
+            name: String::from("test_df"),
+            env: RThreadSafe::new(RObject::view(R_ENVS.global)),
+        };
+        RDataExplorer::start(
+            String::from("test_df"),
+            test_df,
+            Some(binding),
+            comm_manager_tx,
+        )
+        .unwrap();
+
+        // Wait for the new comm to show up.
+        let msg = comm_manager_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap();
+
+        let socket = match msg {
+            CommManagerEvent::Opened(socket, _value) => {
+                assert_eq!(socket.comm_name, "positron.dataExplorer");
+                socket
+            },
+            _ => panic!("Unexpected Comm Manager Event"),
+        };
+
+        // Get the schema of the data set.
+        let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
+            num_columns: 1,
+            start_index: 0,
+        });
+
+        let schema_reply = socket_rpc(&socket, req);
+        let schema = match schema_reply {
+            DataExplorerBackendReply::GetSchemaReply(schema) => schema,
+            _ => panic!("Unexpected reply: {:?}", schema_reply),
+        };
+
+        // Next, apply a filter to the data set. Check for rows that are greater than
+        // "marshmallows". This is an invalid filter because the column is a date.
+        let x_is_empty = RowFilter {
+            column_schema: schema.columns[0].clone(),
+            filter_type: RowFilterType::IsEmpty,
+            filter_id: "0DB2F23D-B299-4068-B8D5-A2B513A93330".to_string(),
+            condition: RowFilterCondition::And,
+            is_valid: None,
+            compare_params: None,
+            between_params: None,
+            search_params: None,
+            set_membership_params: None,
+            error_message: None,
+        };
+
+        let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
+            filters: vec![x_is_empty.clone()],
+        });
+
+        // We should get a SetRowFiltersReply back and we should get a single row
+        assert_match!(socket_rpc(&socket, req),
+        DataExplorerBackendReply::SetRowFiltersReply(
+            FilterResult { selected_num_rows: num_rows, had_errors: Some(false)}
+        ) => {
+            assert_eq!(num_rows, 1);
+        });
+
+        // Now let's update the data frame removing the 'x' column, the filter should
+        // now be invalid.
+        r_parse_eval0("test_df$x <- NULL", R_ENVS.global).unwrap();
+
+        // Emit a console prompt event; this should tickle the data explorer to
+        // check for changes.
+        EVENTS.console_prompt.emit(());
+
+        // Wait for an update event to arrive
+        assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
+            CommMsg::Data(value) => {
+                // Make sure it's a data update event.
+                assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
+                    DataExplorerFrontendEvent::SchemaUpdate
+                );
+        });
+
+        // Check the backend state. The filter should be marked invalid and have an error message.
+        let req = DataExplorerBackendRequest::GetState;
+        assert_match!(socket_rpc(&socket, req),
+            DataExplorerBackendReply::GetStateReply(state) => {
+                assert_eq!(state.row_filters[0].is_valid, Some(false));
+                assert!(state.row_filters[0].error_message.is_some());
+                assert_eq!(state.table_shape.num_rows, 3);
+            }
+        );
+
+        // we now re-assign the column to make the filter valid again and see if it's re-applied
+        r_parse_eval0("test_df$x <- c('','a', 'b')", R_ENVS.global).unwrap();
+        // Emit a console prompt event; this should tickle the data explorer to
+        // check for changes.
+        EVENTS.console_prompt.emit(());
+        // Wait for an update event to arrive
+        assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
+            CommMsg::Data(value) => {
+                // Make sure it's a data update event.
+                assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
+                    DataExplorerFrontendEvent::SchemaUpdate
+                );
+        });
+        // Check the backend state. The filter should be marked valid
+        let req = DataExplorerBackendRequest::GetState;
+        assert_match!(socket_rpc(&socket, req),
+            DataExplorerBackendReply::GetStateReply(state) => {
+                assert_eq!(state.row_filters[0].is_valid, Some(true));
+                assert!(state.row_filters[0].error_message.is_none());
+                assert_eq!(state.table_shape.num_rows, 1);
+            }
+        );
+
+        // now make the filter invalid because of the data type has changed
+        r_parse_eval0("test_df$x <- c(1, 2, 3)", R_ENVS.global).unwrap();
+        // Emit a console prompt event; this should tickle the data explorer to
+        // check for changes.
+        EVENTS.console_prompt.emit(());
+        // Wait for an update event to arrive
+        assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
+            CommMsg::Data(value) => {
+                // Make sure it's a data update event.
+                assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
+                    DataExplorerFrontendEvent::SchemaUpdate
+                );
+        });
+        // Check the backend state. The filter should be marked valid
+        let req = DataExplorerBackendRequest::GetState;
+        assert_match!(socket_rpc(&socket, req),
+            DataExplorerBackendReply::GetStateReply(state) => {
+                assert_eq!(state.row_filters[0].is_valid, Some(false));
+                assert!(state.row_filters[0].error_message.is_some());
+                assert_eq!(state.table_shape.num_rows, 3);
+            }
+        );
+
+        r_parse_eval0("rm(test_df)", R_ENVS.global).unwrap();
+    });
+}

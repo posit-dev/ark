@@ -16,6 +16,7 @@ use amalthea::comm::data_explorer_comm::ColumnProfileType;
 use amalthea::comm::data_explorer_comm::ColumnSchema;
 use amalthea::comm::data_explorer_comm::ColumnSortKey;
 use amalthea::comm::data_explorer_comm::ColumnSummaryStats;
+use amalthea::comm::data_explorer_comm::CompareFilterParamsOp;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendReply;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendRequest;
 use amalthea::comm::data_explorer_comm::DataExplorerFrontendEvent;
@@ -346,6 +347,9 @@ impl RDataExplorer {
             // schema update event
             self.shape = new_shape;
 
+            // Update row filters to reflect the new schema
+            self.row_filters_update()?;
+
             // Clear precomputed indices
             self.sorted_indices = None;
             self.filtered_indices = None;
@@ -354,8 +358,10 @@ impl RDataExplorer {
             // Clear active sort keys
             self.sort_keys.clear();
 
-            // Clear active row filters
-            self.row_filters.clear();
+            // Recompute and apply filters and sorts.
+            let (indices, _) = self.row_filters_compute()?;
+            self.filtered_indices = indices;
+            self.apply_sorts_and_filters();
 
             DataExplorerFrontendEvent::SchemaUpdate
         } else {
@@ -373,6 +379,39 @@ impl RDataExplorer {
             .outgoing_tx
             .send(CommMsg::Data(serde_json::to_value(event)?))?;
         Ok(true)
+    }
+
+    // Marks row_filters as invalid if the column no longer exists
+    // If the column still exists, update the column schema of the filter
+    // and check if they are still valid.
+    // Should be called whenever there's a schema update, ie. when `self.shape` changes.
+    fn row_filters_update(&mut self) -> anyhow::Result<()> {
+        for rf in self.row_filters.iter_mut() {
+            let new_schema = self
+                .shape
+                .columns
+                .iter()
+                .find(|c| c.column_name == rf.column_schema.column_name);
+
+            match new_schema {
+                Some(schema) => {
+                    rf.column_schema = schema.clone();
+                    let is_valid = Self::is_valid_filter(rf)?;
+                    rf.is_valid = Some(is_valid);
+                    rf.error_message = if is_valid {
+                        None
+                    } else {
+                        Some("Unsupported column type for filter".to_string())
+                    };
+                },
+                None => {
+                    // the column no longer exists
+                    rf.is_valid = Some(false);
+                    rf.error_message = Some("Column was removed".to_string());
+                },
+            };
+        }
+        Ok(())
     }
 
     fn handle_rpc(
@@ -426,17 +465,9 @@ impl RDataExplorer {
                 // Save the new row filters
                 self.row_filters = filters;
 
-                let mut had_errors: Option<bool> = None;
-
-                self.filtered_indices = if self.row_filters.len() > 0 {
-                    let (indices, errors) = r_task(|| self.r_filter_rows())?;
-                    // this is called for the side-effect of updating the row_filters with validty status and
-                    // error messages
-                    had_errors = Some(self.apply_filter_errors(errors)?);
-                    Some(indices)
-                } else {
-                    None
-                };
+                // Compute the filtered indices
+                let (indices, had_errors) = self.row_filters_compute()?;
+                self.filtered_indices = indices;
 
                 // Apply sorts to the filtered indices to create view indices
                 self.apply_sorts_and_filters();
@@ -696,7 +727,7 @@ impl RDataExplorer {
     ///
     /// Returns a tuple containing a vector of all the row indices that pass the filters and
     /// a character vector of errors, where None means no error happened.
-    fn r_filter_rows(&mut self) -> anyhow::Result<(Vec<i32>, Vec<Option<String>>)> {
+    fn r_filter_rows(&self) -> anyhow::Result<(Vec<i32>, Vec<Option<String>>)> {
         let mut filters: Vec<RObject> = vec![];
 
         // Shortcut: If there are no row filters, the filtered indices include
@@ -738,6 +769,66 @@ impl RDataExplorer {
         };
 
         Ok((row_indices, errors))
+    }
+
+    // Compute filtered indices out of the current `row_filters`.
+    //
+    // Implicitly updates the `row_filters` with validity status and error messages, if they
+    // fail during the computation.
+    fn row_filters_compute(&mut self) -> anyhow::Result<(Option<Vec<i32>>, Option<bool>)> {
+        if self.row_filters.len() == 0 {
+            return Ok((None, None));
+        }
+
+        let (indices, errors) = r_task(|| self.r_filter_rows())?;
+        // this is called for the side-effect of updating the row_filters with validty status and
+        // error messages
+        let had_errors = Some(self.apply_filter_errors(errors)?);
+
+        Ok((Some(indices), had_errors))
+    }
+
+    // Check if a filter is valid by looking at it's type and the type of the column its applied to.
+    // Uses logic similar to python side: https://github.com/posit-dev/positron/blob/aafe313a261fd133b9f4a9f87c92bb10dc9966ad/extensions/positron-python/python_files/positron/positron_ipykernel/data_explorer.py#L743-L744
+    fn is_valid_filter(filter: &RowFilter) -> anyhow::Result<bool> {
+        let display_type = &filter.column_schema.type_display;
+        let filter_type = &filter.filter_type;
+
+        let is_compare_supported = |x: &ColumnDisplayType| match x {
+            ColumnDisplayType::Number |
+            ColumnDisplayType::Date |
+            ColumnDisplayType::Datetime |
+            ColumnDisplayType::Time => true,
+            _ => false,
+        };
+
+        match filter_type {
+            RowFilterType::IsEmpty | RowFilterType::NotEmpty | RowFilterType::Search => {
+                // String-only filter types
+                Ok(display_type == &ColumnDisplayType::String)
+            },
+            RowFilterType::Compare => {
+                if let Some(compare_params) = &filter.compare_params {
+                    let compare_op = &compare_params.op;
+                    match compare_op {
+                        CompareFilterParamsOp::Eq | CompareFilterParamsOp::NotEq => Ok(true),
+                        _ => Ok(is_compare_supported(display_type)),
+                    }
+                } else {
+                    Err(anyhow!("Missing compare_params for filter"))
+                }
+            },
+            RowFilterType::Between | RowFilterType::NotBetween => {
+                Ok(is_compare_supported(display_type))
+            },
+            RowFilterType::IsTrue | RowFilterType::IsFalse => {
+                Ok(display_type == &ColumnDisplayType::Boolean)
+            },
+            RowFilterType::IsNull | RowFilterType::NotNull | RowFilterType::SetMembership => {
+                // Filters always supported
+                Ok(true)
+            },
+        }
     }
 
     // Handle errors that occured in the filters
