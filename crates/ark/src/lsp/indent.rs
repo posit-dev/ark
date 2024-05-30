@@ -1,11 +1,11 @@
 use anyhow::anyhow;
-use tower_lsp::lsp_types::Position;
-use tower_lsp::lsp_types::Range;
-use tower_lsp::lsp_types::TextEdit;
 
 use crate::lsp::config::IndentStyle;
 use crate::lsp::config::IndentationConfig;
 use crate::lsp::documents::Document;
+use crate::lsp::offset::ArkPoint;
+use crate::lsp::offset::ArkRange;
+use crate::lsp::offset::ArkTextEdit;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::NodeTypeExt;
 
@@ -20,7 +20,7 @@ use crate::treesitter::NodeTypeExt;
 ///
 /// Once we implement a full formatter, indentation will be provided for any
 /// constructs based on the formatter and will be fully consistent with it.
-pub fn indent_edit(doc: &Document, line: usize) -> anyhow::Result<Option<Vec<TextEdit>>> {
+pub fn indent_edit(doc: &Document, line: usize) -> anyhow::Result<Option<Vec<ArkTextEdit>>> {
     let text = &doc.contents;
     let ast = &doc.ast;
     let config = &doc.config.indent;
@@ -86,16 +86,16 @@ pub fn indent_edit(doc: &Document, line: usize) -> anyhow::Result<Option<Vec<Tex
 
     let new_text = new_line_indent(config, new_indent);
 
-    let beg = Position {
-        line: line as u32,
-        character: 0,
+    let beg = ArkPoint {
+        row: line,
+        column: 0,
     };
-    let end = Position {
-        line: line as u32,
-        character: old_indent_byte as u32,
+    let end = ArkPoint {
+        row: line,
+        column: old_indent_byte,
     };
-    let edit = TextEdit {
-        range: Range { start: beg, end },
+    let edit = ArkTextEdit {
+        range: ArkRange { start: beg, end },
         new_text,
     };
 
@@ -148,7 +148,7 @@ mod tests {
     use crate::lsp::documents::Document;
     use crate::lsp::indent::indent_edit;
     use crate::lsp::indent::new_line_indent;
-    use crate::lsp::util::apply_text_edits;
+    use crate::lsp::offset::apply_text_edits;
 
     // NOTE: If we keep adding tests we might want to switch to snapshot tests
 

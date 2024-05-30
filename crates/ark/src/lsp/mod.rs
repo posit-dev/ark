@@ -24,6 +24,7 @@ pub mod indent;
 pub mod indexer;
 pub mod main_loop;
 pub mod markdown;
+pub mod offset;
 pub mod references;
 pub mod selection_range;
 pub mod signature_help;
