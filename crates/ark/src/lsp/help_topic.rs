@@ -39,10 +39,11 @@ pub struct HelpTopicResponse {
 }
 
 pub(crate) fn help_topic(
-    tree: &tree_sitter::Tree,
     point: Point,
     document: &Document,
 ) -> anyhow::Result<Option<HelpTopicResponse>> {
+    let tree = &document.ast;
+
     let Some(node) = locate_help_node(tree, point) else {
         lsp::log_warn!("help_topic(): No help node at position {point}");
         return Ok(None);
