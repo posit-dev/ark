@@ -61,6 +61,7 @@ pub fn indent_edit(doc: &Document, line: usize) -> anyhow::Result<Option<Vec<Ark
         // https://github.com/posit-dev/positron/issues/1880
         // https://github.com/posit-dev/positron/issues/2764
         parent if parent.is_program() => (parent, 0),
+        parent if parent.is_braced_expression() => (parent, config.indent_size),
 
         // Indentation of chained operators (aka pipelines):
         // https://github.com/posit-dev/positron/issues/2707
@@ -265,6 +266,16 @@ mod tests {
         let doc = test_doc("foo(\n) +\n  bar");
         let edit = indent_edit(&doc, 0).unwrap();
         assert!(edit.is_none());
+    }
+
+    #[test]
+    fn test_line_indent_braced_expression() {
+        let mut text = String::from("{\nbar\n}");
+        let doc = test_doc(&text);
+
+        let edit = indent_edit(&doc, 1).unwrap().unwrap();
+        apply_text_edits(edit, &mut text).unwrap();
+        assert_eq!(text, String::from("{\n  bar\n}"));
     }
 
     #[test]
