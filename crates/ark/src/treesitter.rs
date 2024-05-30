@@ -2,6 +2,7 @@ use tree_sitter::Node;
 
 #[derive(Debug, PartialEq)]
 pub enum NodeType {
+    Program,
     FunctionDefinition,
     Parameters,
     Parameter,
@@ -45,6 +46,7 @@ pub enum NodeType {
 
 fn node_type(x: &Node) -> NodeType {
     match x.kind() {
+        "program" => NodeType::Program,
         "function_definition" => NodeType::FunctionDefinition,
         "parameters" => NodeType::Parameters,
         "parameter" => NodeType::Parameter,
@@ -292,6 +294,7 @@ fn unmatched_delimiter_type(x: &Node) -> UnmatchedDelimiterType {
 pub trait NodeTypeExt: Sized {
     fn node_type(&self) -> NodeType;
 
+    fn is_program(&self) -> bool;
     fn is_identifier(&self) -> bool;
     fn is_string(&self) -> bool;
     fn is_identifier_or_string(&self) -> bool;
@@ -310,6 +313,10 @@ pub trait NodeTypeExt: Sized {
 impl NodeTypeExt for Node<'_> {
     fn node_type(&self) -> NodeType {
         node_type(self)
+    }
+
+    fn is_program(&self) -> bool {
+        self.node_type() == NodeType::Program
     }
 
     fn is_identifier(&self) -> bool {

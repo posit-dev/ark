@@ -8,11 +8,17 @@
 use std::path::Path;
 
 use anyhow::anyhow;
+use serde_json::Value;
+use struct_field_names_as_array::FieldNamesAsArray;
 use tower_lsp::lsp_types::CompletionOptions;
+use tower_lsp::lsp_types::ConfigurationItem;
+use tower_lsp::lsp_types::DidChangeConfigurationParams;
 use tower_lsp::lsp_types::DidChangeTextDocumentParams;
 use tower_lsp::lsp_types::DidCloseTextDocumentParams;
 use tower_lsp::lsp_types::DidOpenTextDocumentParams;
+use tower_lsp::lsp_types::DocumentOnTypeFormattingOptions;
 use tower_lsp::lsp_types::ExecuteCommandOptions;
+use tower_lsp::lsp_types::FormattingOptions;
 use tower_lsp::lsp_types::HoverProviderCapability;
 use tower_lsp::lsp_types::ImplementationProviderCapability;
 use tower_lsp::lsp_types::InitializeParams;
@@ -28,12 +34,17 @@ use tower_lsp::lsp_types::WorkDoneProgressOptions;
 use tower_lsp::lsp_types::WorkspaceFoldersServerCapabilities;
 use tower_lsp::lsp_types::WorkspaceServerCapabilities;
 use tree_sitter::Parser;
+use url::Url;
 
 use crate::lsp;
+use crate::lsp::config::indent_style_from_lsp;
+use crate::lsp::config::DocumentConfig;
+use crate::lsp::config::VscDocumentConfig;
 use crate::lsp::documents::Document;
 use crate::lsp::encoding::get_position_encoding_kind;
 use crate::lsp::indexer;
-use crate::lsp::state::ParserState;
+use crate::lsp::main_loop::LspState;
+use crate::lsp::state::workspace_uris;
 use crate::lsp::state::WorldState;
 
 // Handlers that mutate the world state
@@ -57,8 +68,18 @@ pub struct ConsoleInputs {
 
 pub(crate) fn initialize(
     params: InitializeParams,
+    lsp_state: &mut LspState,
     state: &mut WorldState,
 ) -> anyhow::Result<InitializeResult> {
+    // Take note of supported capabilities so we can register them in the
+    // `Initialized` handler
+    if let Some(ws_caps) = params.capabilities.workspace {
+        if matches!(ws_caps.did_change_configuration, Some(caps) if matches!(caps.dynamic_registration, Some(true)))
+        {
+            lsp_state.needs_registration.did_change_configuration = true;
+        }
+    }
+
     // Initialize the workspace folders
     let mut folders: Vec<String> = Vec::new();
     if let Some(workspace_folders) = params.workspace_folders {
@@ -121,6 +142,10 @@ pub(crate) fn initialize(
                 }),
                 file_operations: None,
             }),
+            document_on_type_formatting_provider: Some(DocumentOnTypeFormattingOptions {
+                first_trigger_character: String::from("\n"),
+                more_trigger_character: None,
+            }),
             ..ServerCapabilities::default()
         },
     })
@@ -128,8 +153,8 @@ pub(crate) fn initialize(
 
 pub(crate) fn did_open(
     params: DidOpenTextDocumentParams,
+    lsp_state: &mut LspState,
     state: &mut WorldState,
-    parsers: &mut ParserState,
 ) -> anyhow::Result<()> {
     let contents = params.text_document.text.as_str();
     let uri = params.text_document.uri;
@@ -141,8 +166,11 @@ pub(crate) fn did_open(
 
     let document = Document::new_with_parser(contents, &mut parser, Some(version));
 
-    parsers.insert(uri.clone(), parser);
+    lsp_state.parsers.insert(uri.clone(), parser);
     state.documents.insert(uri.clone(), document.clone());
+
+    // NOTE: Do we need to call `update_config()` here?
+    // update_config(vec![uri]).await;
 
     update_index(&uri, &document);
     lsp::spawn_diagnostics_refresh(uri, document, state.clone());
@@ -152,12 +180,16 @@ pub(crate) fn did_open(
 
 pub(crate) fn did_change(
     params: DidChangeTextDocumentParams,
+    lsp_state: &mut LspState,
     state: &mut WorldState,
-    parsers: &mut ParserState,
 ) -> anyhow::Result<()> {
     let uri = &params.text_document.uri;
     let doc = state.get_document_mut(uri)?;
-    let mut parser = parsers.get_mut(uri)?;
+
+    let mut parser = lsp_state
+        .parsers
+        .get_mut(uri)
+        .ok_or(anyhow!("No parser for {uri}"))?;
 
     doc.on_did_change(&mut parser, &params);
 
@@ -169,8 +201,8 @@ pub(crate) fn did_change(
 
 pub(crate) fn did_close(
     params: DidCloseTextDocumentParams,
+    lsp_state: &mut LspState,
     state: &mut WorldState,
-    parsers: &mut ParserState,
 ) -> anyhow::Result<()> {
     let uri = params.text_document.uri;
 
@@ -182,11 +214,114 @@ pub(crate) fn did_close(
         .remove(&uri)
         .ok_or(anyhow!("Failed to remove document for URI: {uri}"))?;
 
-    parsers
+    lsp_state
+        .parsers
         .remove(&uri)
         .ok_or(anyhow!("Failed to remove parser for URI: {uri}"))?;
 
     lsp::log_info!("did_close(): closed document with URI: '{uri}'.");
+
+    Ok(())
+}
+
+pub(crate) async fn did_change_configuration(
+    _params: DidChangeConfigurationParams,
+    client: &tower_lsp::Client,
+    state: &mut WorldState,
+) -> anyhow::Result<()> {
+    // The notification params sometimes contain data but it seems in practice
+    // we should just ignore it. Instead we need to pull the settings again for
+    // all URI of interest.
+
+    update_config(workspace_uris(state), client, state).await
+}
+
+pub(crate) fn did_change_formatting_options(
+    uri: &Url,
+    opts: &FormattingOptions,
+    state: &mut WorldState,
+) {
+    let Ok(doc) = state.get_document_mut(uri) else {
+        return;
+    };
+
+    // The information provided in formatting requests is more up-to-date
+    // than the user settings because it also includes changes made to the
+    // configuration of particular editors. However the former is less rich
+    // than the latter: it does not allow the tab size to differ from the
+    // indent size, as in the R core sources. So we just ignore the less
+    // rich updates in this case.
+    if doc.config.indent.indent_size != doc.config.indent.tab_width {
+        return;
+    }
+
+    doc.config.indent.indent_size = opts.tab_size as usize;
+    doc.config.indent.tab_width = opts.tab_size as usize;
+    doc.config.indent.indent_style = indent_style_from_lsp(opts.insert_spaces);
+
+    // TODO:
+    // `trim_trailing_whitespace`
+    // `trim_final_newlines`
+    // `insert_final_newline`
+}
+
+async fn update_config(
+    uris: Vec<Url>,
+    client: &tower_lsp::Client,
+    state: &mut WorldState,
+) -> anyhow::Result<()> {
+    let config_keys = VscDocumentConfig::FIELD_NAMES_AS_ARRAY;
+
+    // We first collect all pairs of URIs and config keys of interest in a
+    // flat vector. This way we can make a single request for all items.
+    let items: Vec<ConfigurationItem> = itertools::iproduct!(uris.iter(), config_keys.iter())
+        .map(|(uri, key)| ConfigurationItem {
+            scope_uri: Some(uri.clone()),
+            section: Some(VscDocumentConfig::section_from_key(key).into()),
+        })
+        .collect();
+
+    let configs = client.configuration(items).await?;
+
+    // We got the config items in a flat vector that's guaranteed to be
+    // ordered in the same way it was sent in. Be defensive and check that
+    // we've got the expected number of items before we process them chunk
+    // by chunk
+    let n_config_items = config_keys.len();
+    let n_items = n_config_items * uris.len();
+
+    if configs.len() != n_items {
+        return Err(anyhow!(
+            "Unexpected number of retrieved configurations: {}/{}",
+            configs.len(),
+            n_items
+        ));
+    }
+
+    let mut configs = configs.into_iter();
+
+    // For each document, deserialise the vector of JSON values into a typed config
+    for uri in uris.into_iter() {
+        let keys = config_keys.into_iter();
+        let items: Vec<Value> = configs.by_ref().take(n_config_items).collect();
+
+        // Create a new `serde_json::Value::Object` manually to convert it
+        // to a `VscDocumentConfig` with `from_value()`. This way serde_json
+        // can type-check the dynamic JSON value we got from the client.
+        let mut map = serde_json::Map::new();
+        std::iter::zip(keys, items).for_each(|(key, item)| {
+            map.insert(key.into(), item);
+        });
+
+        // Deserialise the VS Code configuration
+        let config: VscDocumentConfig = serde_json::from_value(serde_json::Value::Object(map))?;
+
+        // Now convert the VS Code specific type into our own type
+        let config: DocumentConfig = config.into();
+
+        // Finally, update the document's config
+        state.get_document_mut(&uri)?.config = config;
+    }
 
     Ok(())
 }
