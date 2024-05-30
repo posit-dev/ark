@@ -42,8 +42,12 @@ pub fn indent_edit(doc: &Document, line: usize) -> anyhow::Result<Option<Vec<Tex
 
     // Get the parent node of the beginning of line
     let mut bol_parent = node;
-    while bol_parent.start_position().row == line && bol_parent.parent().is_some() {
-        bol_parent = bol_parent.parent().unwrap();
+    while bol_parent.start_position().row == line {
+        if let Some(parent) = bol_parent.parent() {
+            bol_parent = parent;
+        } else {
+            break;
+        }
     }
 
     // log::trace!("node: {node:?}");
