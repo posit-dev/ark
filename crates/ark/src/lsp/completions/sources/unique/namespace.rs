@@ -66,7 +66,10 @@ pub fn completions_from_namespace(
     let package = package.as_str();
 
     // Get the package namespace.
-    let namespace = RFunction::new("base", "getNamespace").add(package).call()?;
+    let Ok(namespace) = RFunction::new("base", "getNamespace").add(package).call() else {
+        // There is no package of this name or it could not be loaded
+        return Ok(None);
+    };
 
     let symbols = if package == "base" {
         list_namespace_symbols(*namespace)

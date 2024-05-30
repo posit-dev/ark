@@ -13,18 +13,18 @@ use tower_lsp::lsp_types::Documentation;
 use tower_lsp::lsp_types::MarkupContent;
 use tower_lsp::lsp_types::MarkupKind;
 
-use crate::lsp::backend::Backend;
 use crate::lsp::completions::completion_item::completion_item_from_function;
 use crate::lsp::completions::sources::utils::filter_out_dot_prefixes;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::indexer;
+use crate::lsp::state::WorldState;
 use crate::lsp::traits::rope::RopeExt;
 use crate::lsp::traits::string::StringExt;
 use crate::treesitter::NodeTypeExt;
 
 pub(super) fn completions_from_workspace(
-    backend: &Backend,
     context: &DocumentContext,
+    state: &WorldState,
 ) -> Result<Option<Vec<CompletionItem>>> {
     log::info!("completions_from_workspace()");
 
@@ -70,8 +70,7 @@ pub(super) fn completions_from_workspace(
 
                 // add some metadata about where the completion was found
                 let mut path = path.to_str().unwrap_or_default();
-                let workspace = backend.state.workspace.lock();
-                for folder in &workspace.folders {
+                for folder in &state.workspace.folders {
                     if let Ok(folder) = folder.to_file_path() {
                         if let Some(folder) = folder.to_str() {
                             if path.starts_with(folder) {

@@ -10,11 +10,9 @@ use std::path::Path;
 use std::result::Result::Ok;
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::time::SystemTime;
 
-use anyhow::*;
+use anyhow::anyhow;
 use lazy_static::lazy_static;
-use log::*;
 use regex::Regex;
 use ropey::Rope;
 use stdext::unwrap;
@@ -24,6 +22,7 @@ use tree_sitter::Node;
 use walkdir::DirEntry;
 use walkdir::WalkDir;
 
+use crate::lsp;
 use crate::lsp::documents::Document;
 use crate::lsp::encoding::convert_point_to_position;
 use crate::lsp::traits::rope::RopeExt;
@@ -61,8 +60,8 @@ lazy_static! {
 }
 
 pub fn start(folders: Vec<String>) {
-    let now = SystemTime::now();
-    info!("Indexing started.");
+    let now = std::time::Instant::now();
+    lsp::log_info!("Initial indexing started");
 
     for folder in folders {
         let walker = WalkDir::new(folder);
@@ -70,26 +69,22 @@ pub fn start(folders: Vec<String>) {
             if let Ok(entry) = entry {
                 if entry.file_type().is_file() {
                     if let Err(err) = index_file(entry.path()) {
-                        error!("Can't index file {:?}: {err:?}", entry.path());
+                        lsp::log_error!("Can't index file {:?}: {err:?}", entry.path());
                     }
                 }
             }
         }
     }
 
-    if let Ok(elapsed) = now.elapsed() {
-        info!("Indexing finished after {:?}.", elapsed);
-    }
+    lsp::log_info!(
+        "Initial indexing finished after {}ms",
+        now.elapsed().as_millis()
+    );
 }
 
 pub fn find(symbol: &str) -> Option<(String, IndexEntry)> {
-    // get index lock
-    let index = unwrap!(WORKSPACE_INDEX.lock(), Err(error) => {
-        error!("{:?}", error);
-        return None;
-    });
+    let index = WORKSPACE_INDEX.lock().unwrap();
 
-    // start iterating through index entries
     for (path, index) in index.iter() {
         if let Some(entry) = index.get(symbol) {
             return Some((path.clone(), entry.clone()));
@@ -100,10 +95,7 @@ pub fn find(symbol: &str) -> Option<(String, IndexEntry)> {
 }
 
 pub fn map(mut callback: impl FnMut(&Path, &String, &IndexEntry)) {
-    let index = unwrap!(WORKSPACE_INDEX.lock(), Err(error) => {
-        error!("{:?}", error);
-        return;
-    });
+    let index = WORKSPACE_INDEX.lock().unwrap();
 
     for (path, index) in index.iter() {
         for (symbol, entry) in index.iter() {
@@ -113,42 +105,39 @@ pub fn map(mut callback: impl FnMut(&Path, &String, &IndexEntry)) {
     }
 }
 
-pub fn update(document: &Document, path: &Path) -> Result<bool> {
-    clear(path);
-    index_document(document, path)
+pub fn update(document: &Document, path: &Path) -> anyhow::Result<()> {
+    clear(path)?;
+    index_document(document, path);
+    Ok(())
 }
 
-fn insert(path: &Path, entry: IndexEntry) {
-    let mut index = unwrap!(WORKSPACE_INDEX.lock(), Err(error) => {
-        error!("{:?}", error);
-        return;
-    });
-
-    let path = unwrap!(path.to_str(), None => {
-        error!("Couldn't convert path {} to string", path.display());
-        return;
-    });
+fn insert(path: &Path, entry: IndexEntry) -> anyhow::Result<()> {
+    let mut index = WORKSPACE_INDEX.lock().unwrap();
+    let path = str_from_path(path)?;
 
     let index = index.entry(path.to_string()).or_default();
     index.insert(entry.key.clone(), entry);
+
+    Ok(())
 }
 
-fn clear(path: &Path) {
-    let mut index = unwrap!(WORKSPACE_INDEX.lock(), Err(error) => {
-        error!("{:?}", error);
-        return;
-    });
-
-    let path = unwrap!(path.to_str(), None => {
-        error!("Couldn't convert path {} to string", path.display());
-        return;
-    });
-    let path = path.to_string();
+fn clear(path: &Path) -> anyhow::Result<()> {
+    let mut index = WORKSPACE_INDEX.lock().unwrap();
+    let path = str_from_path(path)?;
 
     // Only clears if the `path` was an existing key
-    index.entry(path).and_modify(|index| {
+    index.entry(path.into()).and_modify(|index| {
         index.clear();
     });
+
+    Ok(())
+}
+
+fn str_from_path(path: &Path) -> anyhow::Result<&str> {
+    path.to_str().ok_or(anyhow!(
+        "Couldn't convert path {} to string",
+        path.display()
+    ))
 }
 
 // TODO: Should we consult the project .gitignore for ignored files?
@@ -175,11 +164,11 @@ pub fn filter_entry(entry: &DirEntry) -> bool {
     true
 }
 
-fn index_file(path: &Path) -> Result<bool> {
+fn index_file(path: &Path) -> anyhow::Result<()> {
     // only index R files
     let ext = path.extension().unwrap_or_default();
     if ext != "r" && ext != "R" {
-        return Ok(false);
+        return Ok(());
     }
 
     // TODO: Handle document encodings here.
@@ -188,29 +177,29 @@ fn index_file(path: &Path) -> Result<bool> {
     let contents = String::from_utf8(contents)?;
     let document = Document::new(contents.as_str(), None);
 
-    index_document(&document, path)?;
+    index_document(&document, path);
 
-    Ok(true)
+    Ok(())
 }
 
-fn index_document(document: &Document, path: &Path) -> Result<bool> {
+fn index_document(document: &Document, path: &Path) {
     let ast = &document.ast;
     let contents = &document.contents;
 
     let root = ast.root_node();
     let mut cursor = root.walk();
     for node in root.children(&mut cursor) {
-        match index_node(path, contents, &node) {
+        if let Err(err) = match index_node(path, contents, &node) {
             Ok(Some(entry)) => insert(path, entry),
-            Ok(None) => {},
-            Err(error) => error!("{:?}", error),
+            Ok(None) => Ok(()),
+            Err(err) => Err(err),
+        } {
+            lsp::log_error!("Can't index document: {err:?}");
         }
     }
-
-    Ok(true)
 }
 
-fn index_node(path: &Path, contents: &Rope, node: &Node) -> Result<Option<IndexEntry>> {
+fn index_node(path: &Path, contents: &Rope, node: &Node) -> anyhow::Result<Option<IndexEntry>> {
     if let Ok(Some(entry)) = index_function(path, contents, node) {
         return Ok(Some(entry));
     }
@@ -222,7 +211,11 @@ fn index_node(path: &Path, contents: &Rope, node: &Node) -> Result<Option<IndexE
     Ok(None)
 }
 
-fn index_function(_path: &Path, contents: &Rope, node: &Node) -> Result<Option<IndexEntry>> {
+fn index_function(
+    _path: &Path,
+    contents: &Rope,
+    node: &Node,
+) -> anyhow::Result<Option<IndexEntry>> {
     // Check for assignment.
     matches!(
         node.node_type(),
@@ -268,7 +261,7 @@ fn index_function(_path: &Path, contents: &Rope, node: &Node) -> Result<Option<I
     }))
 }
 
-fn index_comment(_path: &Path, contents: &Rope, node: &Node) -> Result<Option<IndexEntry>> {
+fn index_comment(_path: &Path, contents: &Rope, node: &Node) -> anyhow::Result<Option<IndexEntry>> {
     // check for comment
     node.is_comment().into_result()?;
 

@@ -1,12 +1,9 @@
 //
 // document.rs
 //
-// Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2022-2024 Posit Software, PBC. All rights reserved.
 //
 //
-
-use std::sync::Arc;
-use std::sync::RwLock;
 
 use anyhow::*;
 use ropey::Rope;
@@ -42,19 +39,12 @@ pub struct Document {
     // The document's textual contents.
     pub contents: Rope,
 
-    // A set of pending changes for this document.
-    pub pending: Vec<DidChangeTextDocumentParams>,
+    // The document's AST.
+    pub ast: Tree,
 
     // The version of the document we last synchronized with.
     // None if the document hasn't been synchronized yet.
     pub version: Option<i32>,
-
-    // The parser used to generate the AST. TODO: Once LSP handlers are
-    // properly synchronised, remove the RwLock.
-    pub parser: Arc<RwLock<Parser>>,
-
-    // The document's AST.
-    pub ast: Tree,
 }
 
 impl std::fmt::Debug for Document {
@@ -68,108 +58,57 @@ impl std::fmt::Debug for Document {
 
 impl Document {
     pub fn new(contents: &str, version: Option<i32>) -> Self {
-        // create initial document from rope
-        let document = Rope::from(contents);
-
+        // A one-shot parser, assumes the `Document` won't be incrementally reparsed.
+        // Useful for testing, `with_document()`, and `index_file()`.
         let language = tree_sitter_r::language();
-
-        // create a parser for this document
         let mut parser = Parser::new();
+        parser.set_language(&language).unwrap();
 
-        parser
-            .set_language(&language)
-            .expect("failed to create parser");
+        Self::new_with_parser(contents, &mut parser, version)
+    }
+
+    pub fn new_with_parser(contents: &str, parser: &mut Parser, version: Option<i32>) -> Self {
+        let document = Rope::from(contents);
         let ast = parser.parse(contents, None).unwrap();
 
-        let pending = Vec::new();
-
-        // return generated document
         Self {
             contents: document,
-            pending,
             version,
-            parser: Arc::new(RwLock::new(parser)),
             ast,
         }
     }
 
-    pub fn on_did_change(&mut self, params: &DidChangeTextDocumentParams) -> Result<i32> {
-        // Add pending changes.
-        self.pending.push(params.clone());
+    pub fn on_did_change(&mut self, parser: &mut Parser, params: &DidChangeTextDocumentParams) {
+        let new_version = params.text_document.version;
 
-        // Check the version of this update.
-        //
-        // If we receive version {n + 2} before {n + 1}, then we'll
-        // bail here, and handle the {n + 2} change after we received
-        // version {n + 1}.
-        //
-        // TODO: What if an intermediate document change is somehow dropped or lost?
-        // Do we need a way to recover (e.g. reset the document state)?
+        // Check for out-of-order change notifications
         if let Some(old_version) = self.version {
-            let new_version = params.text_document.version;
-            if new_version > old_version + 1 {
-                log::info!("on_did_change(): received out-of-order document changes; currently at {}; deferring {}", old_version, new_version);
-                return Ok(old_version);
-            }
-        }
-
-        // Get pending updates, sort by version, and then apply as many as we can.
-        self.pending.sort_by(|lhs, rhs| {
-            let lhs = lhs.text_document.version;
-            let rhs = rhs.text_document.version;
-            lhs.cmp(&rhs)
-        });
-
-        // Apply as many changes as we can, bailing if we hit a non consecutive change.
-        let pending = std::mem::take(&mut self.pending);
-
-        // We know there is at least 1 consecutive change to apply so that can serve
-        // as the initial version since we don't always have a `self.version`.
-        let mut loc = 0;
-        let mut version = pending.first().unwrap().text_document.version - 1;
-
-        for candidate in pending.iter() {
-            let new_version = candidate.text_document.version;
-
-            if new_version > version + 1 {
-                // Not consecutive!
-                log::info!(
-                    "on_did_change(): applying changes [{}, {}]; deferring still out-of-order change {}.",
-                    pending.first().unwrap().text_document.version,
-                    version,
-                    new_version
+            // According to the spec, versions might not be consecutive but they must be monotonically
+            // increasing. If that's not the case this is a hard nope as we
+            // can't maintain our state integrity. Currently panicking but in
+            // principle we should shut down the LSP in an orderly fashion.
+            if new_version < old_version {
+                panic!(
+                    "out-of-sync change notification: currently at {old_version}, got {new_version}"
                 );
-                break;
-            }
-
-            loc += 1;
-            version = new_version;
-        }
-
-        // Split into the actual changes we can apply and the remaining pending changes.
-        let (changes, pending) = pending.split_at(loc);
-
-        // We will still have to apply these later (if any).
-        self.pending = pending.to_vec();
-
-        // Apply the changes one-by-one.
-        for change in changes {
-            let content_changes = &change.content_changes;
-
-            for event in content_changes {
-                if let Err(error) = self.update(event) {
-                    log::error!("error updating document: {}", error);
-                }
             }
         }
 
-        // Updates successfully applied; update cached document version.
-        self.version = Some(version);
+        for event in &params.content_changes {
+            if let Err(err) = self.update(parser, event) {
+                panic!("Failed to update document: {err:?}");
+            }
+        }
 
-        Ok(version)
+        // Set new version
+        self.version = Some(new_version);
     }
 
-    fn update(&mut self, change: &TextDocumentContentChangeEvent) -> Result<()> {
+    fn update(
+        &mut self,
+        parser: &mut Parser,
+        change: &TextDocumentContentChangeEvent,
+    ) -> Result<()> {
         // Extract edit range. Nothing to do if there wasn't an edit.
         let range = match change.range {
             Some(r) => r,
@@ -216,11 +155,7 @@ impl Document {
         let contents = &self.contents;
         let callback = &mut |byte, point| Self::parse_callback(contents, byte, point);
 
-        let ast = self
-            .parser
-            .write()
-            .unwrap()
-            .parse_with(callback, Some(&self.ast));
+        let ast = parser.parse_with(callback, Some(&self.ast));
         self.ast = ast.unwrap();
 
         Ok(())

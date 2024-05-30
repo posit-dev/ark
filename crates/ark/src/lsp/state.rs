@@ -1,23 +1,22 @@
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::path::Path;
 
-use dashmap::DashMap;
-use parking_lot::Mutex;
+use anyhow::anyhow;
+use tree_sitter::Parser;
 use url::Url;
 
 use crate::lsp::documents::Document;
 
-// This is a work in progress. Currently contains synchronised objects but this
-// shouldn't be necessary after we have implemented synchronisation of LSP handlers.
-// The handlers will either get a shared ref or an exclusive ref to the worldstate.
-
 #[derive(Clone, Default, Debug)]
-/// The world state, i.e. all the inputs necessary for analysing or refactoring code.
-pub struct WorldState {
+/// The world state, i.e. all the inputs necessary for analysing or refactoring
+/// code. This is a pure value. There is no interior mutability in this data
+/// structure. It can be cloned and safely sent to other threads.
+pub(crate) struct WorldState {
     /// Watched documents
-    pub documents: Arc<DashMap<Url, Document>>,
+    pub(crate) documents: HashMap<Url, Document>,
 
     /// Watched folders
-    pub workspace: Arc<Mutex<Workspace>>,
+    pub(crate) workspace: Workspace,
 
     /// The scopes for the console. This currently contains a list (outer `Vec`)
     /// of names (inner `Vec`) within the environments on the search path, starting
@@ -40,13 +39,95 @@ pub struct WorldState {
     /// currently pushed to the LSP), and cache the symbols with Salsa. The
     /// performance is not currently an issue but this could change once we do
     /// more analysis of symbols in the search path.
-    pub console_scopes: Arc<Mutex<Vec<Vec<String>>>>,
+    pub(crate) console_scopes: Vec<Vec<String>>,
 
     /// Currently installed packages
-    pub installed_packages: Arc<Mutex<Vec<String>>>,
+    pub(crate) installed_packages: Vec<String>,
 }
 
-#[derive(Default, Debug)]
-pub struct Workspace {
+#[derive(Clone, Default, Debug)]
+pub(crate) struct Workspace {
     pub folders: Vec<Url>,
+}
+
+/// The set of tree-sitter document parsers managed by the `GlobalState`. Unlike
+/// `WorldState`, `ParserState` cannot be cloned and is only accessed by exclusive
+/// handlers.
+pub(crate) struct ParserState {
+    inner: HashMap<Url, Parser>,
+}
+
+impl WorldState {
+    pub(crate) fn get_document(&self, uri: &Url) -> anyhow::Result<&Document> {
+        if let Some(doc) = self.documents.get(uri) {
+            Ok(doc)
+        } else {
+            Err(anyhow!("Can't find document for URI {uri}"))
+        }
+    }
+
+    pub(crate) fn get_document_mut(&mut self, uri: &Url) -> anyhow::Result<&mut Document> {
+        if let Some(doc) = self.documents.get_mut(uri) {
+            Ok(doc)
+        } else {
+            Err(anyhow!("Can't find document for URI {uri}"))
+        }
+    }
+}
+
+impl ParserState {
+    pub(crate) fn new() -> Self {
+        Self {
+            inner: HashMap::new(),
+        }
+    }
+
+    pub(crate) fn insert(&mut self, uri: Url, parser: Parser) -> Option<Parser> {
+        self.inner.insert(uri, parser)
+    }
+
+    pub(crate) fn remove(&mut self, uri: &Url) -> Option<Parser> {
+        self.inner.remove(uri)
+    }
+
+    pub(crate) fn get_mut(&mut self, uri: &Url) -> anyhow::Result<&mut Parser> {
+        if let Some(parser) = self.inner.get_mut(uri) {
+            Ok(parser)
+        } else {
+            Err(anyhow!("Can't find parser for URI {uri}"))
+        }
+    }
+}
+
+pub(crate) fn with_document<T, F>(
+    path: &Path,
+    state: &WorldState,
+    mut callback: F,
+) -> anyhow::Result<T>
+where
+    F: FnMut(&Document) -> anyhow::Result<T>,
+{
+    let mut fallback = || {
+        let contents = std::fs::read_to_string(path)?;
+        let document = Document::new(contents.as_str(), None);
+        return callback(&document);
+    };
+
+    // If we have a cached copy of the document (because we're monitoring it)
+    // then use that; otherwise, try to read the document from the provided
+    // path and use that instead.
+    let Ok(uri) = Url::from_file_path(path) else {
+        log::info!(
+            "couldn't construct uri from {}; reading from disk instead",
+            path.display()
+        );
+        return fallback();
+    };
+
+    let Ok(document) = state.get_document(&uri) else {
+        log::info!("no document for uri {uri}; reading from disk instead");
+        return fallback();
+    };
+
+    return callback(document);
 }

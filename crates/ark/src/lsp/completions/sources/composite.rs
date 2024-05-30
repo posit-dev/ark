@@ -31,14 +31,14 @@ use tower_lsp::lsp_types::CompletionItemKind;
 use tree_sitter::Node;
 use workspace::completions_from_workspace;
 
-use crate::lsp::backend::Backend;
 use crate::lsp::document_context::DocumentContext;
+use crate::lsp::state::WorldState;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
 pub fn completions_from_composite_sources(
-    backend: &Backend,
     context: &DocumentContext,
+    state: &WorldState,
 ) -> Result<Vec<CompletionItem>> {
     log::info!("completions_from_composite_sources()");
 
@@ -75,7 +75,7 @@ pub fn completions_from_composite_sources(
             completions.append(&mut additional_completions);
         }
 
-        if let Some(mut additional_completions) = completions_from_workspace(backend, context)? {
+        if let Some(mut additional_completions) = completions_from_workspace(context, state)? {
             completions.append(&mut additional_completions);
         }
     }
