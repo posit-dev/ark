@@ -5,6 +5,9 @@
 //
 //
 
+use std::sync::Arc;
+use std::sync::RwLock;
+
 use anyhow::*;
 use ropey::Rope;
 use tower_lsp::lsp_types::DidChangeTextDocumentParams;
@@ -34,6 +37,7 @@ fn compute_point(point: Point, text: &str) -> Point {
     }
 }
 
+#[derive(Clone)]
 pub struct Document {
     // The document's textual contents.
     pub contents: Rope,
@@ -45,14 +49,9 @@ pub struct Document {
     // None if the document hasn't been synchronized yet.
     pub version: Option<i32>,
 
-    // An identifier tied to the current diagnostic request. Used during diagnostic
-    // debouncing to determine if diagnostics should still proceed after a short delay.
-    // Can't be `version` as diagnostics can be requested even if the document itself
-    // hasn't changed (i.e. after console execution).
-    pub diagnostics_id: i64,
-
-    // The parser used to generate the AST.
-    pub parser: Parser,
+    // The parser used to generate the AST. TODO: Once LSP handlers are
+    // properly synchronised, remove the RwLock.
+    pub parser: Arc<RwLock<Parser>>,
 
     // The document's AST.
     pub ast: Tree,
@@ -84,15 +83,12 @@ impl Document {
 
         let pending = Vec::new();
 
-        let diagnostics_id = 0;
-
         // return generated document
         Self {
             contents: document,
             pending,
             version,
-            diagnostics_id,
-            parser,
+            parser: Arc::new(RwLock::new(parser)),
             ast,
         }
     }
@@ -220,7 +216,11 @@ impl Document {
         let contents = &self.contents;
         let callback = &mut |byte, point| Self::parse_callback(contents, byte, point);
 
-        let ast = self.parser.parse_with(callback, Some(&self.ast));
+        let ast = self
+            .parser
+            .write()
+            .unwrap()
+            .parse_with(callback, Some(&self.ast));
         self.ast = ast.unwrap();
 
         Ok(())

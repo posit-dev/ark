@@ -91,8 +91,6 @@ use regex::Regex;
 use serde_json::json;
 use stdext::result::ResultOrLog;
 use stdext::*;
-use tokio::runtime::Runtime;
-use tokio::sync::mpsc::UnboundedSender as TokioUnboundedSender;
 
 use crate::dap::dap::DapBackendEvent;
 use crate::dap::dap_r_main::RMainDap;
@@ -101,9 +99,9 @@ use crate::errors;
 use crate::help::message::HelpReply;
 use crate::help::message::HelpRequest;
 use crate::kernel::Kernel;
-use crate::lsp::backend::Backend;
 use crate::lsp::backend::ConsoleInputs;
 use crate::lsp::backend::LspEvent;
+use crate::lsp::backend::TokioUnboundedSender;
 use crate::lsp::events::EVENTS;
 use crate::modules;
 use crate::plots::graphics_device;
@@ -143,7 +141,6 @@ pub fn start_r(
     stdin_reply_rx: Receiver<amalthea::Result<InputReply>>,
     iopub_tx: Sender<IOPubMessage>,
     kernel_init_tx: Bus<KernelInfo>,
-    lsp_runtime: Arc<Runtime>,
     dap: Arc<Mutex<Dap>>,
 ) {
     // Initialize global state (ensure we only do this once!)
@@ -164,7 +161,6 @@ pub fn start_r(
             stdin_reply_rx,
             iopub_tx,
             kernel_init_tx,
-            lsp_runtime,
             dap,
         ));
     });
@@ -269,13 +265,6 @@ pub struct RMain {
     pub help_tx: Option<Sender<HelpRequest>>,
     pub help_rx: Option<Receiver<HelpReply>>,
 
-    // LSP tokio runtime used to spawn LSP tasks on the executor and the
-    // corresponding backend used to send LSP requests to the frontend.
-    // The backend is initialized on LSP start up, and is refreshed after a
-    // frontend reconnect.
-    lsp_runtime: Arc<Runtime>,
-    lsp_backend: Option<Backend>,
-
     /// Event channel for notifying the LSP. In principle, could be a Jupyter comm.
     lsp_events_tx: Option<TokioUnboundedSender<LspEvent>>,
 
@@ -360,7 +349,6 @@ impl RMain {
         stdin_reply_rx: Receiver<amalthea::Result<InputReply>>,
         iopub_tx: Sender<IOPubMessage>,
         kernel_init_tx: Bus<KernelInfo>,
-        lsp_runtime: Arc<Runtime>,
         dap: Arc<Mutex<Dap>>,
     ) -> Self {
         Self {
@@ -382,8 +370,6 @@ impl RMain {
             error_traceback: Vec::new(),
             help_tx: None,
             help_rx: None,
-            lsp_runtime,
-            lsp_backend: None,
             lsp_events_tx: None,
             dap: RMainDap::new(dap),
             is_busy: false,
@@ -591,12 +577,7 @@ impl RMain {
         // here, but only containing high-level information such as `search()`
         // contents and `ls(rho)`.
         if !info.browser && !info.incomplete && !info.input_request {
-            match console_inputs() {
-                Ok(inputs) => {
-                    self.send_lsp(LspEvent::DidChangeConsoleInputs(inputs));
-                },
-                Err(err) => log::error!("Can't retrieve console inputs: {err:?}"),
-            }
+            self.refresh_lsp();
         }
 
         // Signal prompt
@@ -1073,27 +1054,30 @@ impl RMain {
         &self.kernel
     }
 
-    pub fn get_lsp_runtime(&self) -> &Arc<Runtime> {
-        &self.lsp_runtime
-    }
-
-    pub fn get_lsp_backend(&self) -> Option<&Backend> {
-        self.lsp_backend.as_ref()
-    }
-
     fn send_lsp(&self, event: LspEvent) {
         if let Some(ref tx) = self.lsp_events_tx {
             tx.send(event).unwrap();
         }
     }
 
-    pub fn set_lsp_backend(
-        &mut self,
-        backend: Backend,
-        lsp_events_tx: TokioUnboundedSender<LspEvent>,
-    ) {
-        self.lsp_backend = Some(backend);
-        self.lsp_events_tx = Some(lsp_events_tx);
+    pub fn set_lsp_channel(&mut self, lsp_events_tx: TokioUnboundedSender<LspEvent>) {
+        self.lsp_events_tx = Some(lsp_events_tx.clone());
+
+        // Refresh LSP state now since we probably have missed some updates
+        // while the channel was offline. This is currently not an ideal timing
+        // as the channel is set up from a preemptive `r_task()` after the LSP
+        // is set up. We'll want to do this in an idle task.
+        self.refresh_lsp();
+    }
+
+    pub fn refresh_lsp(&self) {
+        match console_inputs() {
+            Ok(inputs) => {
+                self.send_lsp(LspEvent::DidChangeConsoleInputs(inputs));
+            },
+            Err(err) => log::error!("Can't retrieve console inputs: {err:?}"),
+        }
+        self.send_lsp(LspEvent::RefreshAllDiagnostics());
     }
 
     pub fn call_frontend_method(&self, request: UiFrontendRequest) -> anyhow::Result<RObject> {

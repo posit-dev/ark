@@ -7,52 +7,23 @@
 
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::marker::PhantomData;
-use std::time::Duration;
 
-use anyhow::anyhow;
 use anyhow::bail;
 use anyhow::Result;
-use harp::call::r_expr_quote;
-use harp::exec::RFunction;
-use harp::exec::RFunctionExt;
-use harp::external_ptr::ExternalPointer;
-use harp::object::RObject;
-use harp::r_symbol;
 use harp::utils::is_symbol_valid;
-use harp::utils::r_is_null;
 use harp::utils::sym_quote_invalid;
-use libr::R_NilValue;
-use libr::Rf_ScalarInteger;
-use libr::Rf_allocVector;
-use libr::Rf_cons;
-use libr::Rf_lang1;
-use libr::Rf_xlength;
-use libr::CDR;
-use libr::RAW;
-use libr::RAWSXP;
-use libr::SETCDR;
-use libr::SET_TAG;
-use libr::SET_VECTOR_ELT;
-use libr::VECSXP;
-use libr::VECTOR_ELT;
 use ropey::Rope;
 use stdext::*;
 use tower_lsp::lsp_types::Diagnostic;
 use tower_lsp::lsp_types::DiagnosticSeverity;
-use tower_lsp::lsp_types::Url;
 use tree_sitter::Node;
 use tree_sitter::Range;
 
-use crate::interface::RMain;
-use crate::lsp::backend::Backend;
 use crate::lsp::documents::Document;
 use crate::lsp::encoding::convert_tree_sitter_range_to_lsp_range;
 use crate::lsp::indexer;
 use crate::lsp::state::WorldState;
 use crate::lsp::traits::rope::RopeExt;
-use crate::r_task;
-use crate::r_task::r_async_task;
 use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
@@ -107,159 +78,7 @@ impl<'a> DiagnosticContext<'a> {
     }
 }
 
-/// Clear the diagnostics of a single file
-///
-/// Note that we don't reference the `document` in the DashMap in any way,
-/// in case it has already been removed by the time the thread runs.
-///
-/// Must be called from an LSP method so it runs on the LSP tokio `Runtime`
-pub fn clear_diagnostics(backend: Backend, uri: Url, version: Option<i32>) {
-    tokio::spawn(async move {
-        // Empty set to clear them
-        let diagnostics = Vec::new();
-
-        backend
-            .client
-            .publish_diagnostics(uri.clone(), diagnostics, version)
-            .await
-    });
-}
-
-/// Refresh the diagnostics of a single file
-///
-/// Must be called from an LSP method so it runs on the LSP tokio `Runtime`
-pub fn refresh_diagnostics(backend: Backend, uri: Url, version: Option<i32>) {
-    tokio::spawn(async move {
-        refresh_diagnostics_impl(backend, uri, version).await;
-    });
-}
-
-/// Request a full diagnostic refresh on all open documents
-///
-/// Called after each R console execution so diagnostics are dynamic to code sent to the
-/// console.
-///
-/// Still goes through `request_diagnostics()` with its 1 second delay before actually
-/// generating diagnostics. This avoids being too aggressive with the refresh, since
-/// generating diagnostics does require R.
-pub fn refresh_all_open_file_diagnostics() {
-    r_async_task(|| {
-        let main = RMain::get();
-
-        let Some(backend) = main.get_lsp_backend() else {
-            log::error!("No LSP `backend` to request a diagnostic refresh with.");
-            return;
-        };
-
-        let runtime = main.get_lsp_runtime();
-
-        for document in backend.state.documents.iter() {
-            let backend = backend.clone();
-            let uri = document.key().clone();
-            let version = document.version.clone();
-
-            // Explicit `drop()` before we request diagnostics, which requires `get()`ting
-            // this document again on the thread. Likely not needed, but better to be safe.
-            drop(document);
-
-            runtime.spawn(async move {
-                refresh_diagnostics_impl(backend, uri, version).await;
-            });
-        }
-    });
-}
-
-async fn refresh_diagnostics_impl(backend: Backend, uri: Url, version: Option<i32>) {
-    let diagnostics = match request_diagnostics(&backend, &uri).await {
-        Ok(diagnostics) => diagnostics,
-        Err(err) => {
-            log::error!("While refreshing diagnostics for '{uri}': {err:?}");
-            return;
-        },
-    };
-
-    let Some(diagnostics) = diagnostics else {
-        // File was closed or `version` changed. Not an error, just a side effect
-        // of delaying diagnostics.
-        return;
-    };
-
-    backend
-        .client
-        .publish_diagnostics(uri.clone(), diagnostics, version)
-        .await
-}
-
-async fn request_diagnostics(
-    backend: &Backend,
-    uri: &Url,
-) -> anyhow::Result<Option<Vec<Diagnostic>>> {
-    // SAFETY: It is absolutely imperative that the `doc` be `Drop`ped outside
-    // of any `await` context. That is why the extraction of `doc` is captured
-    // inside of `try_generate_diagnostics()` and `get_diagnostics_id()`; this ensures
-    // that any `doc` is `Drop`ped before the `sleep().await` call. If this doesn't
-    // happen, then the `await` could switch us to a different LSP task, which will also
-    // try and access a document, causing a deadlock since it won't be able to access a
-    // document until our `doc` reference is dropped, but we can't drop until we get
-    // control back from the `await`.
-
-    // Get the `diagnostics_id` for this request, before sleeping
-    let diagnostics_id = get_diagnostics_id(backend, uri)?;
-
-    // Wait some amount of time. Note that the `diagnostics_id` is updated on every
-    // diagnostic request, so if another request comes in while this task is waiting,
-    // we'll see that the current `diagnostics_id` is now past the id associated with this
-    // request and toss it away.
-    tokio::time::sleep(Duration::from_millis(1000)).await;
-
-    Ok(try_generate_diagnostics(backend, uri, diagnostics_id))
-}
-
-fn get_diagnostics_id(backend: &Backend, uri: &Url) -> anyhow::Result<i64> {
-    let Some(mut document) = backend.state.documents.get_mut(uri) else {
-        return Err(anyhow!("Unknown document URI '{uri}'."));
-    };
-
-    // First, bump the id to correspond to this request
-    document.diagnostics_id += 1;
-
-    // Return the bumped id
-    Ok(document.diagnostics_id)
-}
-
-fn try_generate_diagnostics(
-    backend: &Backend,
-    uri: &Url,
-    diagnostics_id: i64,
-) -> Option<Vec<Diagnostic>> {
-    // Get reference to document.
-    // At this point we already know this document existed before we slept, so if it
-    // doesn't exist now, that is because it must have been closed, so if that occurs
-    // then simply return.
-    let Some(doc) = backend.state.documents.get(uri) else {
-        log::info!("Document with uri '{uri}' no longer exists after diagnostics delay. It was likely closed.");
-        return None;
-    };
-
-    // Check if the `diagnostics_id` has been bumped by another diagnostics request while
-    // we were asleep
-    let current_diagnostics_id = doc.diagnostics_id;
-    if diagnostics_id != current_diagnostics_id {
-        // log::info!("[diagnostics({diagnostics_id}, {uri})] Aborting diagnostics in favor of id {current_diagnostics_id}.");
-        return None;
-    }
-
-    // If we've made it this far, we really do want diagnostics, and we want them to
-    // be accurate. The indexer is a very important part of our diagnostics, so we need
-    // it to finish an initial run before we generate any diagnostics, otherwise they
-    // can be pretty bad and annoying. Importantly, we place this check after the 1 sec
-    // timeout delay and version check to ensure that the `lock()` doesn't run needlessly.
-    backend.indexer_state_manager.wait_until_initialized();
-
-    Some(generate_diagnostics(&doc, &backend.state))
-}
-
-fn generate_diagnostics(doc: &Document, state: &WorldState) -> Vec<Diagnostic> {
+pub fn generate_diagnostics(doc: Document, state: WorldState) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
 
     {
@@ -782,138 +601,6 @@ fn recurse_call_arguments_default(
     ().ok()
 }
 
-struct TreeSitterCall<'a> {
-    // A call of the form <fun>(list(0L, <ptr>), foo = list(1L, <ptr>))
-    pub call: RObject,
-    node_phantom: PhantomData<&'a Node<'a>>,
-}
-
-impl<'a> TreeSitterCall<'a> {
-    pub unsafe fn new(
-        node: Node<'a>,
-        function: &str,
-        context: &mut DiagnosticContext,
-    ) -> Result<Self> {
-        // start with a call to the function: <fun>()
-        let sym = r_symbol!(function);
-        let call = RObject::new(Rf_lang1(sym));
-
-        // then augment it with arguments
-        let mut tail = *call;
-
-        if let Some(arguments) = node.child_by_field_name("arguments") {
-            let mut cursor = arguments.walk();
-            let children = arguments.children_by_field_name("argument", &mut cursor);
-            let mut i = 0;
-            for child in children {
-                let arg_list = RObject::from(Rf_allocVector(VECSXP, 2));
-
-                // set the argument to a list<2>, with its first element: a scalar integer
-                // that corresponds to its O-based position. The position is used below to
-                // map back to the Node
-                SET_VECTOR_ELT(*arg_list, 0, Rf_ScalarInteger(i as i32));
-
-                // Set the second element of the list to an external pointer
-                // to the child node.
-                if let Some(value) = child.child_by_field_name("value") {
-                    // TODO: Wrap this in a nice constructor
-                    let node_size = std::mem::size_of::<Node>();
-                    let node_storage = Rf_allocVector(RAWSXP, node_size as isize);
-                    SET_VECTOR_ELT(*arg_list, 1, node_storage);
-
-                    let p_node_storage: *mut Node<'a> = RAW(node_storage) as *mut Node<'a>;
-                    std::ptr::copy_nonoverlapping(&value, p_node_storage, 1);
-                }
-
-                SETCDR(tail, Rf_cons(*arg_list, R_NilValue));
-                tail = CDR(tail);
-
-                // potentially add the argument name
-                if let Some(name) = child.child_by_field_name("name") {
-                    let name = context.contents.node_slice(&name)?.to_string();
-                    let sym_name = r_symbol!(name);
-                    SET_TAG(tail, sym_name);
-                }
-
-                i = i + 1;
-            }
-        }
-
-        Ok(Self {
-            call,
-            node_phantom: PhantomData,
-        })
-    }
-}
-
-fn recurse_call_arguments_custom(
-    node: Node,
-    context: &mut DiagnosticContext,
-    diagnostics: &mut Vec<Diagnostic>,
-    function: &str,
-    diagnostic_function: &str,
-) -> Result<()> {
-    r_task(|| unsafe {
-        // Build a call that mixes treesitter nodes (as external pointers)
-        // library(foo, pos = 2 + 2)
-        //    ->
-        // library([0, <node0>], pos = [1, <node1>])
-        // where:
-        //   - node0 is an external pointer to a treesitter Node for the identifier `foo`
-        //   - node1 is an external pointer to a treesitter Node for the call `2 + 2`
-        //
-        // The TreeSitterCall object holds on to the nodes, so that they can be
-        // safely passed down to the R side as external pointers
-        let call = TreeSitterCall::new(node, function, context)?;
-
-        let custom_diagnostics = RFunction::from(diagnostic_function)
-            .add(r_expr_quote(call.call))
-            .add(ExternalPointer::new(context.contents))
-            .call()?;
-
-        if !r_is_null(*custom_diagnostics) {
-            let n = Rf_xlength(*custom_diagnostics);
-            for i in 0..n {
-                // diag is a list with:
-                //   - The kind of diagnostic: skip, default, simple
-                //   - The node external pointer, i.e. the ones made in TreeSitterCall::new
-                //   - The message, when kind is "simple"
-                let diag = VECTOR_ELT(*custom_diagnostics, i);
-
-                let kind: String = RObject::view(VECTOR_ELT(diag, 0)).try_into()?;
-
-                if kind == "skip" {
-                    // skip the diagnostic entirely, e.g.
-                    // library(foo)
-                    //         ^^^
-                    continue;
-                }
-
-                let ptr = VECTOR_ELT(diag, 1);
-                let value: Node<'static> = *(RAW(ptr) as *mut Node<'static>);
-
-                if kind == "default" {
-                    // the R side gives up, so proceed as normal, e.g.
-                    // library(foo, pos = ...)
-                    //                    ^^^
-                    recurse(value, context, diagnostics)?;
-                } else if kind == "simple" {
-                    // Simple diagnostic from R, e.g.
-                    // library("ggplot3")
-                    //          ^^^^^^^   Package 'ggplot3' is not installed
-                    let message: String = RObject::view(VECTOR_ELT(diag, 2)).try_into()?;
-                    let range = value.range();
-                    let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
-                    let diagnostic = Diagnostic::new_simple(range, message.into());
-                    diagnostics.push(diagnostic);
-                }
-            }
-        }
-
-        ().ok()
-    })
-}
-
 fn recurse_call(
     node: Node,
     context: &mut DiagnosticContext,
@@ -934,26 +621,6 @@ fn recurse_call(
     let fun = fun.as_str();
 
     match fun {
-        // TODO: there should be some sort of registration mechanism so
-        //       that functions can declare that they know how to generate
-        //       diagnostics, i.e. ggplot2::aes() would skip diagnostics
-
-        // special case to deal with library() and require() nse
-        "library" => recurse_call_arguments_custom(
-            node,
-            context,
-            diagnostics,
-            "library",
-            ".ps.diagnostics.custom.library",
-        )?,
-        "require" => recurse_call_arguments_custom(
-            node,
-            context,
-            diagnostics,
-            "require",
-            ".ps.diagnostics.custom.require",
-        )?,
-
         // default case: recurse into each argument
         _ => recurse_call_arguments_default(node, context, diagnostics)?,
     };
@@ -1364,7 +1031,7 @@ mod tests {
                 2 # hi there
             )";
             let document = Document::new(text, None);
-            let diagnostics = generate_diagnostics(&document, &DEFAULT_STATE);
+            let diagnostics = generate_diagnostics(document, DEFAULT_STATE.clone());
             assert!(diagnostics.is_empty());
         })
     }
@@ -1375,7 +1042,7 @@ mod tests {
             let text = "match(1, 2 3)";
             let document = Document::new(text, None);
 
-            let diagnostics = generate_diagnostics(&document, &DEFAULT_STATE);
+            let diagnostics = generate_diagnostics(document, DEFAULT_STATE.clone());
             assert_eq!(diagnostics.len(), 1);
 
             let diagnostic = diagnostics.get(0).unwrap();
@@ -1402,12 +1069,12 @@ mod tests {
 
             let text = "x$foo";
             let document = Document::new(text, None);
-            let diagnostics = generate_diagnostics(&document, &state);
+            let diagnostics = generate_diagnostics(document.clone(), state.clone());
             assert!(diagnostics.is_empty());
 
             let text = "x@foo";
             let document = Document::new(text, None);
-            let diagnostics = generate_diagnostics(&document, &state);
+            let diagnostics = generate_diagnostics(document.clone(), state.clone());
             assert!(diagnostics.is_empty());
 
             // Clean up
@@ -1425,7 +1092,7 @@ mod tests {
                 y + x + z
             ";
             let document = Document::new(text, None);
-            let diagnostics = generate_diagnostics(&document, &DEFAULT_STATE);
+            let diagnostics = generate_diagnostics(document.clone(), DEFAULT_STATE.clone());
             assert!(diagnostics.is_empty());
         })
     }
@@ -1439,7 +1106,7 @@ mod tests {
                 y + x
             ";
             let document = Document::new(text, None);
-            let diagnostics = generate_diagnostics(&document, &DEFAULT_STATE);
+            let diagnostics = generate_diagnostics(document.clone(), DEFAULT_STATE.clone());
             assert!(diagnostics.is_empty());
         })
     }
@@ -1454,7 +1121,7 @@ mod tests {
             ";
             let document = Document::new(text, None);
 
-            let diagnostics = generate_diagnostics(&document, &DEFAULT_STATE);
+            let diagnostics = generate_diagnostics(document.clone(), DEFAULT_STATE.clone());
             assert_eq!(diagnostics.len(), 1);
 
             // Only marks the `x` before the `x <- 1`
