@@ -9,7 +9,7 @@ use anyhow::Result;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
-use harp::utils::r_symbol_quote_invalid;
+use harp::utils::sym_quote_invalid;
 use harp::utils::r_typeof;
 use libr::R_NilValue;
 use libr::VECSXP;
@@ -183,7 +183,7 @@ pub fn completions_from_custom_source_impl(
                 if enquote && !node.is_string() {
                     item.insert_text = Some(format!("\"{value}\""));
                 } else {
-                    let mut insert_text = r_symbol_quote_invalid(value.as_str());
+                    let mut insert_text = sym_quote_invalid(value.as_str());
 
                     if !append.is_empty() {
                         insert_text = format!("{insert_text}{append}");

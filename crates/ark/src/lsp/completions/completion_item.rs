@@ -10,16 +10,16 @@ use std::fs::DirEntry;
 use anyhow::bail;
 use anyhow::Result;
 use harp::r_symbol;
+use harp::utils::is_symbol_valid;
 use harp::utils::r_env_binding_is_active;
 use harp::utils::r_envir_name;
 use harp::utils::r_formals;
 use harp::utils::r_promise_force_with_rollback;
 use harp::utils::r_promise_is_forced;
 use harp::utils::r_promise_is_lazy_load_binding;
-use harp::utils::r_symbol_quote;
-use harp::utils::r_symbol_quote_invalid;
-use harp::utils::r_symbol_valid;
 use harp::utils::r_typeof;
+use harp::utils::sym_quote;
+use harp::utils::sym_quote_invalid;
 use libr::R_UnboundValue;
 use libr::Rf_findVarInFrame;
 use libr::Rf_isFunction;
@@ -178,7 +178,7 @@ pub(super) fn completion_item_from_function<T: AsRef<str>>(
     let detail = format!("{}({})", name, parameters.joined(", "));
     item.detail = Some(detail);
 
-    let insert_text = r_symbol_quote_invalid(name);
+    let insert_text = sym_quote_invalid(name);
     item.insert_text_format = Some(InsertTextFormat::SNIPPET);
     item.insert_text = Some(format!("{insert_text}($0)"));
 
@@ -211,8 +211,8 @@ pub(super) unsafe fn completion_item_from_data_variable(
 
     if enquote {
         item.insert_text = Some(format!("\"{}\"", name));
-    } else if !r_symbol_valid(name) {
-        item.insert_text = Some(r_symbol_quote(name));
+    } else if !is_symbol_valid(name) {
+        item.insert_text = Some(sym_quote(name));
     }
 
     item.detail = Some(owner.to_string());
@@ -253,8 +253,8 @@ pub(super) unsafe fn completion_item_from_object(
     item.detail = Some("(Object)".to_string());
     item.kind = Some(CompletionItemKind::STRUCT);
 
-    if !r_symbol_valid(name) {
-        item.insert_text = Some(r_symbol_quote(name));
+    if !is_symbol_valid(name) {
+        item.insert_text = Some(sym_quote(name));
     }
 
     Ok(item)
@@ -293,8 +293,8 @@ pub(super) unsafe fn completion_item_from_promise(
     item.detail = Some("Promise".to_string());
     item.kind = Some(CompletionItemKind::STRUCT);
 
-    if !r_symbol_valid(name) {
-        item.insert_text = Some(r_symbol_quote(name));
+    if !is_symbol_valid(name) {
+        item.insert_text = Some(sym_quote(name));
     }
 
     Ok(item)
@@ -310,8 +310,8 @@ pub(super) fn completion_item_from_active_binding(name: &str) -> Result<Completi
     item.detail = Some("Active binding".to_string());
     item.kind = Some(CompletionItemKind::STRUCT);
 
-    if !r_symbol_valid(name) {
-        item.insert_text = Some(r_symbol_quote(name));
+    if !is_symbol_valid(name) {
+        item.insert_text = Some(sym_quote(name));
     }
 
     Ok(item)
@@ -433,7 +433,7 @@ pub(super) fn completion_item_from_parameter(
         function: callee.to_string(),
     };
 
-    let parameter = r_symbol_quote_invalid(parameter);
+    let parameter = sym_quote_invalid(parameter);
 
     // We want to display to the user the name with the `=`
     let label = parameter.clone() + " = ";
