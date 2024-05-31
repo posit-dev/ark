@@ -580,26 +580,7 @@ pub fn r_env_names(env: SEXP) -> SEXP {
 }
 
 pub fn r_env_has(env: SEXP, sym: SEXP) -> bool {
-    unsafe {
-        if libr::has::R_existsVarInFrame() {
-            libr::R_existsVarInFrame(env, sym) == libr::Rboolean_TRUE
-        } else {
-            // Not particularly fast, but seems to be good enough for checking symbol
-            // existance during completion generation
-            let mut protect = RProtect::new();
-            let name = protect.add(PRINTNAME(sym));
-            let name = protect.add(Rf_ScalarString(name));
-            let call = protect.add(r_lang!(
-                r_symbol!("exists"),
-                x = name,
-                envir = env,
-                inherits = false
-            ));
-            let out = Rf_eval(call, R_BaseEnv);
-            // `exists()` is guaranteed to return a logical vector on success
-            LOGICAL_ELT(out, 0) != 0
-        }
-    }
+    unsafe { libr::R_existsVarInFrame(env, sym) == libr::Rboolean_TRUE }
 }
 
 /// Check if a symbol is an active binding in an environment
