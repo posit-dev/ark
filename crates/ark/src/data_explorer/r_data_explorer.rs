@@ -21,6 +21,10 @@ use amalthea::comm::data_explorer_comm::CompareFilterParamsOp;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendReply;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendRequest;
 use amalthea::comm::data_explorer_comm::DataExplorerFrontendEvent;
+use amalthea::comm::data_explorer_comm::DataSelection;
+use amalthea::comm::data_explorer_comm::ExportDataSelectionParams;
+use amalthea::comm::data_explorer_comm::ExportFormat;
+use amalthea::comm::data_explorer_comm::ExportedData;
 use amalthea::comm::data_explorer_comm::FilterResult;
 use amalthea::comm::data_explorer_comm::GetColumnProfilesFeatures;
 use amalthea::comm::data_explorer_comm::GetColumnProfilesParams;
@@ -562,9 +566,15 @@ impl RDataExplorer {
             DataExplorerBackendRequest::SearchSchema(_) => {
                 bail!("Data Viewer: Not yet implemented")
             },
-            DataExplorerBackendRequest::ExportDataSelection(_) => {
-                bail!("Data Viewer: Not yet implemented")
-            },
+            DataExplorerBackendRequest::ExportDataSelection(ExportDataSelectionParams {
+                selection,
+                format,
+            }) => Ok(DataExplorerBackendReply::ExportDataSelectionReply(
+                ExportedData {
+                    data: self.r_export_data_selection(selection, format.clone())?,
+                    format,
+                },
+            )),
         }
     }
 }
@@ -1060,6 +1070,14 @@ impl RDataExplorer {
         };
 
         Ok(DataExplorerBackendReply::GetDataValuesReply(response))
+    }
+
+    fn r_export_data_selection(
+        &self,
+        selection: DataSelection,
+        format: ExportFormat,
+    ) -> anyhow::Result<String> {
+        Ok("Not yet implemented".to_string())
     }
 }
 
