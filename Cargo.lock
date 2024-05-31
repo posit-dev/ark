@@ -251,6 +251,7 @@ dependencies = [
  "stdext",
  "strum 0.24.1",
  "strum_macros",
+ "tracing",
  "uuid",
  "zmq",
 ]

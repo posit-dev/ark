@@ -114,7 +114,7 @@ impl CommSocket {
         request_handler: impl FnOnce(Reqs) -> anyhow::Result<Reps>,
     ) -> bool
     where
-        Reqs: DeserializeOwned,
+        Reqs: DeserializeOwned + std::fmt::Debug,
         Reps: Serialize,
     {
         let (id, data) = match message {
@@ -123,24 +123,29 @@ impl CommSocket {
         };
 
         let json = match serde_json::from_value::<Reqs>(data.clone()) {
-            Ok(m) => match request_handler(m) {
-                Ok(reply) => match serde_json::to_value(reply) {
-                    Ok(value) => value,
-                    Err(err) => json_rpc_error(
-                        JsonRpcErrorCode::InternalError,
-                        format!(
-                            "Failed to serialise reply for {} request: {err} (request: {data:})",
-                            self.comm_name
-                        ),
-                    ),
-                },
-                Err(err) => json_rpc_error(
-                    JsonRpcErrorCode::InternalError,
-                    format!(
-                        "Failed to process {} request: {err} (request: {data:})",
-                        self.comm_name
-                    ),
-                ),
+            Ok(m) => {
+                let _span =
+                    tracing::trace_span!("comm handler", name = ?self.comm_name, request = ?m)
+                        .entered();
+                match request_handler(m) {
+                            Ok(reply) => match serde_json::to_value(reply) {
+                                Ok(value) => value,
+                                Err(err) => json_rpc_error(
+                                    JsonRpcErrorCode::InternalError,
+                                    format!(
+                                        "Failed to serialise reply for {} request: {err} (request: {data:})",
+                                        self.comm_name
+                                    ),
+                                ),
+                            },
+                            Err(err) => json_rpc_error(
+                                JsonRpcErrorCode::InternalError,
+                                format!(
+                                    "Failed to process {} request: {err} (request: {data:})",
+                                    self.comm_name
+                                ),
+                            ),
+                        }
             },
             Err(err) => json_rpc_error(
                 JsonRpcErrorCode::MethodNotFound,
