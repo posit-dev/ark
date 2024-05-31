@@ -14,7 +14,6 @@ use libr::*;
 use once_cell::sync::Lazy;
 use regex::Regex;
 
-use crate::anyhow;
 use crate::call::r_expr_quote;
 use crate::call::RArgument;
 use crate::environment::Environment;
@@ -581,26 +580,7 @@ pub fn r_env_names(env: SEXP) -> SEXP {
 }
 
 pub fn r_env_has(env: SEXP, sym: SEXP) -> bool {
-    unsafe {
-        if libr::has::R_existsVarInFrame() {
-            libr::R_existsVarInFrame(env, sym) == libr::Rboolean_TRUE
-        } else {
-            // Not particularly fast, but seems to be good enough for checking symbol
-            // existance during completion generation
-            let mut protect = RProtect::new();
-            let name = protect.add(PRINTNAME(sym));
-            let name = protect.add(Rf_ScalarString(name));
-            let call = protect.add(r_lang!(
-                r_symbol!("exists"),
-                x = name,
-                envir = env,
-                inherits = false
-            ));
-            let out = Rf_eval(call, R_BaseEnv);
-            // `exists()` is guaranteed to return a logical vector on success
-            LOGICAL_ELT(out, 0) != 0
-        }
-    }
+    unsafe { libr::R_existsVarInFrame(env, sym) == libr::Rboolean_TRUE }
 }
 
 /// Check if a symbol is an active binding in an environment
@@ -609,13 +589,13 @@ pub fn r_env_has(env: SEXP, sym: SEXP) -> bool {
 /// - `Err` if `sym` doesn't exist in the `env`
 /// - `Ok(true)` if `sym` exists in the `env` and is an active binding
 /// - `Ok(false)` if `sym` exists in the `env` and is not an active binding
-pub fn r_env_binding_is_active(env: SEXP, sym: SEXP) -> Result<bool> {
+pub fn r_env_binding_is_active(env: SEXP, sym: SEXP) -> harp::Result<bool> {
     // `R_BindingIsActive()` will throw an error if the `env` doesn't contain
     // the symbol in question, which would be quite bad for us, so we are extra
     // careful with how we expose this.
     if !r_env_has(env, sym) {
-        let sym = RSymbol::new(sym)?.to_string();
-        Err(anyhow!("Can't find '{sym}' in this environment."))
+        let name = RSymbol::new(sym)?.to_string();
+        Err(harp::Error::MissingBindingError { name })
     } else {
         Ok(unsafe { R_BindingIsActive(sym, env) == Rboolean_TRUE })
     }

@@ -6,6 +6,7 @@
 //
 pub mod call;
 pub mod environment;
+pub mod environment_iter;
 pub mod error;
 pub mod eval;
 pub mod exec;

@@ -310,7 +310,7 @@ mod tests {
     use crate::test::r_test;
 
     fn get_namespace(exports: Environment, fun: &str) -> Environment {
-        let fun = exports.find(fun);
+        let fun = exports.find(fun).unwrap();
         let ns = unsafe { CLOENV(fun) };
         Environment::view(ns)
     }

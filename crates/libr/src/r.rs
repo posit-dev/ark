@@ -300,6 +300,8 @@ functions::generate! {
     /// R >= 4.2.0
     pub fn R_existsVarInFrame(rho: SEXP, symbol: SEXP) -> Rboolean;
 
+    pub fn R_ActiveBindingFunction(sym: SEXP, env: SEXP) -> SEXP;
+
     // -----------------------------------------------------------------------------------
     // Unix
 
