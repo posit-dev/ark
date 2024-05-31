@@ -796,12 +796,12 @@ pub fn r_printf(x: &str) {
     }
 }
 
-pub fn r_format(x: SEXP) -> Result<Vec<String>> {
+pub fn r_format(x: SEXP) -> Result<SEXP> {
     unsafe {
-        RFunction::new("", "harp_format")
+        let out = RFunction::new("", "harp_format")
             .add(x)
-            .call_in(HARP_ENV.unwrap())?
-            .to::<Vec<String>>()
+            .call_in(HARP_ENV.unwrap())?;
+        Ok(out.sexp)
     }
 }
 

@@ -1050,7 +1050,7 @@ fn format_column(x: SEXP) -> anyhow::Result<Vec<String>> {
             match r_classes(x) {
                 Some(_) => {
                     // If column has a class, we just call format on it.
-                    r_format(x)?
+                    RObject::from(r_format(x)?).try_into()?
                 },
                 None => {
                     // For list columns we do something similar to tibbles, ie

@@ -18,9 +18,7 @@ use libr::STRSXP;
 
 use crate::error::Error;
 use crate::error::Result;
-use crate::exec::RFunction;
-use crate::exec::RFunctionExt;
-use crate::modules::HARP_ENV;
+use crate::r_format;
 use crate::utils::r_assert_type;
 use crate::utils::r_inherits;
 use crate::utils::r_is_null;
@@ -127,11 +125,9 @@ impl FormattedVector {
                         vector: Factor::new_unchecked(vector),
                     })
                 } else {
-                    let formatted = RFunction::new("", "harp_format")
-                        .add(vector)
-                        .call_in(HARP_ENV.unwrap())?;
+                    let formatted = r_format(vector)?;
 
-                    r_assert_type(*formatted, &[STRSXP])?;
+                    r_assert_type(formatted, &[STRSXP])?;
                     Ok(Self::FormattedVector {
                         vector: CharacterVector::new_unchecked(formatted),
                         options: formatting_options.character,
