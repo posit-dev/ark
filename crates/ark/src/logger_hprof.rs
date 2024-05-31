@@ -1,38 +1,38 @@
 // Based on https://github.com/rust-lang/rust-analyzer/blob/master/crates/rust-analyzer/src/tracing/hprof.rs
 // Includes custom writer.
 
-//! Consumer of `tracing` data, which prints a hierarchical profile.
-//!
-//! Based on https://github.com/davidbarsky/tracing-tree, but does less, while
-//! actually printing timings for spans by default. The code here is vendored from
-//! https://github.com/matklad/tracing-span-tree.
-//!
-//! Usage:
-//!
-//! ```rust
-//! let layer = hprof::SpanTree::default();
-//! Registry::default().with(layer).init();
-//! ```
-//!
-//! Example output:
-//!
-//! ```text
-//! 8.37ms           top_level
-//!   1.09ms           middle
-//!     1.06ms           leaf
-//!   1.06ms           middle
-//!   3.12ms           middle
-//!     1.06ms           leaf
-//!   3.06ms           middle
-//! ```
-//!
-//! Same data, but with `.aggregate(true)`:
-//!
-//! ```text
-//! 8.39ms           top_level
-//!  8.35ms    4      middle
-//!    2.13ms    2      leaf
-//! ```
+// Consumer of `tracing` data, which prints a hierarchical profile.
+//
+// Based on https://github.com/davidbarsky/tracing-tree, but does less, while
+// actually printing timings for spans by default. The code here is vendored from
+// https://github.com/matklad/tracing-span-tree.
+//
+// Usage:
+//
+// ```rust
+// let layer = hprof::SpanTree::default();
+// Registry::default().with(layer).init();
+// ```
+//
+// Example output:
+//
+// ```text
+// 8.37ms           top_level
+//   1.09ms           middle
+//     1.06ms           leaf
+//   1.06ms           middle
+//   3.12ms           middle
+//     1.06ms           leaf
+//   3.06ms           middle
+// ```
+//
+// Same data, but with `.aggregate(true)`:
+//
+// ```text
+// 8.39ms           top_level
+//  8.35ms    4      middle
+//    2.13ms    2      leaf
+// ```
 
 use std::fmt::Write;
 use std::mem;
