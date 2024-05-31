@@ -67,7 +67,7 @@ impl Binding {
     pub fn new(env: &Environment, name: RSymbol) -> harp::Result<Self> {
         unsafe {
             if env.is_active(name)? {
-                let fun = libr::R_ActiveBindingFunction(name.sexp, env.env.sexp);
+                let fun = libr::R_ActiveBindingFunction(name.sexp, env.inner.sexp);
                 let value = BindingValue::Active {
                     fun: RObject::from(fun),
                 };

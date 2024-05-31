@@ -23,7 +23,7 @@ const FRAME_LOCK_MASK: std::ffi::c_int = 1 << 14;
 
 #[derive(Clone)]
 pub struct Environment {
-    pub env: RObject,
+    pub inner: RObject,
 }
 
 pub enum EnvironmentFilter {
@@ -47,18 +47,18 @@ pub static R_ENVS: Lazy<REnvs> = Lazy::new(|| unsafe {
 
 impl Environment {
     pub fn new(env: RObject) -> Self {
-        Self { env }
+        Self { inner: env }
     }
 
     pub fn view(env: SEXP) -> Self {
         Self {
-            env: RObject::view(env),
+            inner: RObject::view(env),
         }
     }
 
     pub fn parent(&self) -> Option<Environment> {
         unsafe {
-            let parent = ENCLOS(self.env.sexp);
+            let parent = ENCLOS(self.inner.sexp);
             if parent == R_ENVS.empty {
                 None
             } else {
@@ -73,7 +73,7 @@ impl Environment {
 
     pub fn bind(&self, name: &str, value: impl Into<SEXP>) {
         unsafe {
-            Rf_defineVar(r_symbol!(name), value.into(), self.env.sexp);
+            Rf_defineVar(r_symbol!(name), value.into(), self.inner.sexp);
         }
     }
 
@@ -82,17 +82,17 @@ impl Environment {
     }
 
     pub fn exists(&self, name: impl Into<RSymbol>) -> bool {
-        unsafe { libr::R_existsVarInFrame(self.env.sexp, name.into().sexp) != 0 }
+        unsafe { libr::R_existsVarInFrame(self.inner.sexp, name.into().sexp) != 0 }
     }
 
     pub fn find(&self, name: impl Into<RSymbol>) -> SEXP {
         let name = name.into();
-        unsafe { Rf_findVarInFrame(self.env.sexp, *name) }
+        unsafe { Rf_findVarInFrame(self.inner.sexp, *name) }
     }
 
     pub fn is_empty(&self, filter: EnvironmentFilter) -> bool {
         match filter {
-            EnvironmentFilter::IncludeHiddenBindings => self.env.length() == 0,
+            EnvironmentFilter::IncludeHiddenBindings => self.inner.length() == 0,
             EnvironmentFilter::ExcludeHiddenBindings => self
                 .iter()
                 .filter_map(|b| b.ok())
@@ -104,7 +104,7 @@ impl Environment {
 
     pub fn length(&self, filter: EnvironmentFilter) -> usize {
         match filter {
-            EnvironmentFilter::IncludeHiddenBindings => self.env.length() as usize,
+            EnvironmentFilter::IncludeHiddenBindings => self.inner.length() as usize,
             EnvironmentFilter::ExcludeHiddenBindings => self
                 .iter()
                 .filter_map(|b| b.ok())
@@ -116,7 +116,9 @@ impl Environment {
     /// Returns environment name if it has one. Reproduces the same output as
     /// `rlang::env_name()`.
     pub fn name(&self) -> Option<String> {
-        let name = RFunction::new("", ".ps.env_name").add(self.env.sexp).call();
+        let name = RFunction::new("", ".ps.env_name")
+            .add(self.inner.sexp)
+            .call();
         let name = unwrap!(name, Err(err) => {
             log::error!("{err:?}");
             return None
@@ -137,7 +139,7 @@ impl Environment {
 
     /// Returns the names of the bindings of the environment
     pub fn names(&self) -> Vec<String> {
-        let names = RFunction::new("base", "names").add(self.env.sexp).call();
+        let names = RFunction::new("base", "names").add(self.inner.sexp).call();
         let names = unwrap!(names, Err(err) => {
             log::error!("{err:?}");
             return vec![]
@@ -154,44 +156,44 @@ impl Environment {
 
     pub fn lock(&mut self, bindings: bool) {
         unsafe {
-            libr::R_LockEnvironment(self.env.sexp, bindings.into());
+            libr::R_LockEnvironment(self.inner.sexp, bindings.into());
         }
     }
 
     pub fn unlock(&mut self) {
         let unlocked_mask = self.flags() & !FRAME_LOCK_MASK;
-        unsafe { libr::SET_ENVFLAGS(self.env.sexp, unlocked_mask) }
+        unsafe { libr::SET_ENVFLAGS(self.inner.sexp, unlocked_mask) }
     }
 
     pub fn is_locked(&self) -> bool {
-        unsafe { libr::R_EnvironmentIsLocked(self.env.sexp) != 0 }
+        unsafe { libr::R_EnvironmentIsLocked(self.inner.sexp) != 0 }
     }
 
     pub fn is_active(&self, name: RSymbol) -> harp::Result<bool> {
-        r_env_binding_is_active(self.env.sexp, name.sexp)
+        r_env_binding_is_active(self.inner.sexp, name.sexp)
     }
 
     fn flags(&self) -> std::ffi::c_int {
-        unsafe { libr::ENVFLAGS(self.env.sexp) }
+        unsafe { libr::ENVFLAGS(self.inner.sexp) }
     }
 }
 
 impl Deref for Environment {
     type Target = SEXP;
     fn deref(&self) -> &Self::Target {
-        &self.env.sexp
+        &self.inner.sexp
     }
 }
 
 impl From<Environment> for SEXP {
     fn from(object: Environment) -> Self {
-        object.env.sexp
+        object.inner.sexp
     }
 }
 
 impl From<Environment> for RObject {
     fn from(object: Environment) -> Self {
-        object.env
+        object.inner
     }
 }
 
