@@ -9,6 +9,7 @@ use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::data_explorer_comm::ColumnProfileRequest;
 use amalthea::comm::data_explorer_comm::ColumnProfileType;
 use amalthea::comm::data_explorer_comm::ColumnSortKey;
+use amalthea::comm::data_explorer_comm::ColumnValue;
 use amalthea::comm::data_explorer_comm::CompareFilterParams;
 use amalthea::comm::data_explorer_comm::CompareFilterParamsOp;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendReply;
@@ -71,6 +72,26 @@ fn open_data_explorer(dataset: String) -> socket::comm::CommSocket {
         CommManagerEvent::Opened(socket, _value) => {
             assert_eq!(socket.comm_name, "positron.dataExplorer");
             socket
+        },
+        _ => panic!("Unexpected Comm Manager Event"),
+    }
+}
+
+fn open_data_explorer_from_expression(expr: &str) -> anyhow::Result<socket::comm::CommSocket> {
+    let object = r_parse_eval0(expr, R_ENVS.global)?;
+
+    let (comm_manager_tx, comm_manager_rx) = bounded::<CommManagerEvent>(0);
+    RDataExplorer::start(String::from("obj"), object, None, comm_manager_tx).unwrap();
+
+    // Wait for the new comm to show up.
+    let msg = comm_manager_rx
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .unwrap();
+
+    match msg {
+        CommManagerEvent::Opened(socket, _value) => {
+            assert_eq!(socket.comm_name, "positron.dataExplorer");
+            Ok(socket)
         },
         _ => panic!("Unexpected Comm Manager Event"),
     }
@@ -167,9 +188,9 @@ fn test_data_explorer() {
                 DataExplorerBackendReply::GetDataValuesReply(data) => {
                     // The first three sorted rows should be 10.4, 10.4, and 13.3.
                     assert_eq!(data.columns.len(), 2);
-                    assert_eq!(data.columns[0][0], "10.4");
-                    assert_eq!(data.columns[0][1], "10.4");
-                    assert_eq!(data.columns[0][2], "13.3");
+                    assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("10.4".to_string()));
+                    assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("10.4".to_string()));
+                    assert_eq!(data.columns[0][2], ColumnValue::FormattedValue("13.3".to_string()));
 
                     // Row labels should be sorted as well.
                     if has_row_names {
@@ -213,9 +234,9 @@ fn test_data_explorer() {
             assert_match!(socket_rpc(&socket, req),
                 DataExplorerBackendReply::GetDataValuesReply(data) => {
                     assert_eq!(data.columns.len(), 2);
-                    assert_eq!(data.columns[0][0], "19.2");
-                    assert_eq!(data.columns[0][1], "18.7");
-                    assert_eq!(data.columns[0][2], "17.3");
+                    assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("19.2".to_string()));
+                    assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("18.7".to_string()));
+                    assert_eq!(data.columns[0][2], ColumnValue::FormattedValue("17.3".to_string()));
                 }
             );
         };
@@ -259,8 +280,8 @@ fn test_data_explorer() {
         assert_match!(socket_rpc(&socket, req),
             DataExplorerBackendReply::GetDataValuesReply(data) => {
                 assert_eq!(data.columns.len(), 2);
-                assert_eq!(data.columns[0][0], "58");
-                assert_eq!(data.columns[0][1], "59");
+                assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("58".to_string()));
+                assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("59".to_string()));
 
                 // Row labels should be present.
                 let labels = data.row_labels.unwrap();
@@ -337,8 +358,8 @@ fn test_data_explorer() {
                 // The first column (height) should contain the only two rows
                 // where the height is less than 60.
                 assert_eq!(data.columns.len(), 2);
-                assert_eq!(data.columns[0][0], "59");
-                assert_eq!(data.columns[0][1], "58");
+                assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("59".to_string()));
+                assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("58".to_string()));
 
                 // Row labels should be present. The row labels represent the
                 // rows in the original data set, so after sorting we expect the
@@ -417,9 +438,9 @@ fn test_data_explorer() {
         assert_match!(socket_rpc(&socket, req),
             DataExplorerBackendReply::GetDataValuesReply(data) => {
                 assert_eq!(data.columns.len(), 1);
-                assert_eq!(data.columns[0][0], "0");
-                assert_eq!(data.columns[0][1], "1");
-                assert_eq!(data.columns[0][2], "2");
+                assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("0".to_string()));
+                assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("1".to_string()));
+                assert_eq!(data.columns[0][2], ColumnValue::FormattedValue("2".to_string()));
             }
         );
 
@@ -449,9 +470,9 @@ fn test_data_explorer() {
         assert_match!(socket_rpc(&socket, req),
             DataExplorerBackendReply::GetDataValuesReply(data) => {
                 assert_eq!(data.columns.len(), 1);
-                assert_eq!(data.columns[0][0], "1");
-                assert_eq!(data.columns[0][1], "2");
-                assert_eq!(data.columns[0][2], "3");
+                assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("1".to_string()));
+                assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("2".to_string()));
+                assert_eq!(data.columns[0][2], ColumnValue::FormattedValue("3".to_string()));
             }
         );
 
@@ -562,10 +583,10 @@ fn test_data_explorer() {
         assert_match!(socket_rpc(&socket, req),
             DataExplorerBackendReply::GetDataValuesReply(data) => {
                 assert_eq!(data.columns.len(), 2);
-                assert_eq!(data.columns[0][0], "97");
-                assert_eq!(data.columns[0][1], "97");
-                assert_eq!(data.columns[0][2], "98");
-                assert_eq!(data.columns[0][3], "98");
+                assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("97".to_string()));
+                assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("97".to_string()));
+                assert_eq!(data.columns[0][2], ColumnValue::FormattedValue("98".to_string()));
+                assert_eq!(data.columns[0][3], ColumnValue::FormattedValue("98".to_string()));
             }
         );
 
@@ -1224,4 +1245,46 @@ fn test_invalid_filters_preserved() {
 
         r_parse_eval0("rm(test_df)", R_ENVS.global).unwrap();
     });
+}
+
+#[test]
+fn test_data_explorer_special_values() {
+    r_test(|| {
+        let code = "x <- tibble::tibble(
+            a = c(1, NA, NaN, Inf, -Inf),
+            b = c('a', 'b', 'c', 'd', NA),
+            c = c(TRUE, FALSE, NA, NA, NA),
+            d = c(1:4, NA),
+            e = c(complex(4), NA)
+            # TODO should add tests for list columns
+        )";
+
+        let socket = match open_data_explorer_from_expression(code) {
+            Ok(socket) => socket,
+            Err(_) => return, // Skip test if tibble is not installed
+        };
+
+        let req = DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
+            row_start_index: 0,
+            num_rows: 5,
+            column_indices: vec![0, 1, 2, 3, 4],
+        });
+
+        assert_match!(socket_rpc(&socket, req),
+            DataExplorerBackendReply::GetDataValuesReply(data) => {
+                assert_eq!(data.columns.len(), 5);
+
+                assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("1".to_string()));
+                assert_eq!(data.columns[0][1], ColumnValue::SpecialValueCode(1));
+                assert_eq!(data.columns[0][2], ColumnValue::SpecialValueCode(2));
+                assert_eq!(data.columns[0][3], ColumnValue::SpecialValueCode(10));
+                assert_eq!(data.columns[0][4], ColumnValue::SpecialValueCode(11));
+
+                assert_eq!(data.columns[1][4], ColumnValue::SpecialValueCode(1));
+                assert_eq!(data.columns[2][4], ColumnValue::SpecialValueCode(1));
+                assert_eq!(data.columns[3][4], ColumnValue::SpecialValueCode(1));
+                assert_eq!(data.columns[4][4], ColumnValue::SpecialValueCode(1));
+            }
+        );
+    })
 }
