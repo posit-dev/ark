@@ -85,9 +85,17 @@ impl Environment {
         unsafe { libr::R_existsVarInFrame(self.inner.sexp, name.into().sexp) != 0 }
     }
 
-    pub fn find(&self, name: impl Into<RSymbol>) -> SEXP {
+    pub fn find(&self, name: impl Into<RSymbol>) -> harp::Result<SEXP> {
         let name = name.into();
-        unsafe { Rf_findVarInFrame(self.inner.sexp, *name) }
+        unsafe {
+            let out = Rf_findVarInFrame(self.inner.sexp, *name);
+
+            if out == R_UnboundValue {
+                Err(harp::Error::MissingBindingError { name: name.into() })
+            } else {
+                Ok(out)
+            }
+        }
     }
 
     pub fn is_empty(&self, filter: EnvironmentFilter) -> bool {

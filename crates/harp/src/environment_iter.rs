@@ -74,7 +74,7 @@ impl Binding {
                 return Ok(Self { name, value });
             };
 
-            let value = env.find(name);
+            let value = env.find(name)?;
 
             if libr::ALTREP(value) != 0 {
                 let value = BindingValue::Altrep {

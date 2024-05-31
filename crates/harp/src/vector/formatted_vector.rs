@@ -264,17 +264,17 @@ mod tests {
                 Environment::new(r_parse_eval0("init_test_format()", HARP_ENV.unwrap()).unwrap());
 
             // Unconforming dims (posit-dev/positron#1862)
-            let x = FormattedVector::new(objs.find("unconforming_dims")).unwrap();
+            let x = FormattedVector::new(objs.find("unconforming_dims").unwrap()).unwrap();
             let out = x.column_iter(0).join(" ");
             assert_eq!(out, exp);
 
             // Unconforming length
-            let x = FormattedVector::new(objs.find("unconforming_length")).unwrap();
+            let x = FormattedVector::new(objs.find("unconforming_length").unwrap()).unwrap();
             let out = x.iter().join(" ");
             assert_eq!(out, exp);
 
             // Unconforming type
-            let x = FormattedVector::new(objs.find("unconforming_type")).unwrap();
+            let x = FormattedVector::new(objs.find("unconforming_type").unwrap()).unwrap();
             let out = x.iter().join(" ");
             assert_eq!(out, exp);
         })
