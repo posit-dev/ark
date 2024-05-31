@@ -1255,8 +1255,8 @@ fn test_data_explorer_special_values() {
             b = c('a', 'b', 'c', 'd', NA),
             c = c(TRUE, FALSE, NA, NA, NA),
             d = c(1:4, NA),
-            e = c(complex(4), NA)
-            # TODO should add tests for list columns
+            e = c(complex(4), NA),
+            f = list(NULL, list(1,2,3), list(4,5,6), list(7,8,9), list(10,11,12))
         )";
 
         let socket = match open_data_explorer_from_expression(code) {
@@ -1267,12 +1267,12 @@ fn test_data_explorer_special_values() {
         let req = DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
             row_start_index: 0,
             num_rows: 5,
-            column_indices: vec![0, 1, 2, 3, 4],
+            column_indices: vec![0, 1, 2, 3, 4, 5],
         });
 
         assert_match!(socket_rpc(&socket, req),
             DataExplorerBackendReply::GetDataValuesReply(data) => {
-                assert_eq!(data.columns.len(), 5);
+                assert_eq!(data.columns.len(), 6);
 
                 assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("1".to_string()));
                 assert_eq!(data.columns[0][1], ColumnValue::SpecialValueCode(1));
@@ -1284,6 +1284,8 @@ fn test_data_explorer_special_values() {
                 assert_eq!(data.columns[2][4], ColumnValue::SpecialValueCode(1));
                 assert_eq!(data.columns[3][4], ColumnValue::SpecialValueCode(1));
                 assert_eq!(data.columns[4][4], ColumnValue::SpecialValueCode(1));
+
+                assert_eq!(data.columns[5][0], ColumnValue::SpecialValueCode(0));
             }
         );
     })
