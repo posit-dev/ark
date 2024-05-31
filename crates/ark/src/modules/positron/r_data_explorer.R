@@ -261,3 +261,20 @@ col_filter_indices <- function(col, idx = NULL) {
     }
     x[i, j, drop = FALSE]
 }
+
+format_list_column <- function(x) {
+    map_chr(x, function(x) {
+        d <- dim(x)
+        if (is.null(d)) {
+            d <- length(x)
+        }
+
+        paste0(
+            "<",
+            class(x)[1],
+            " [",
+            paste0(d, collapse = " x "),
+            "]>"
+        )
+    })
+}
