@@ -14,7 +14,6 @@ use libr::*;
 use once_cell::sync::Lazy;
 use regex::Regex;
 
-use crate::anyhow;
 use crate::call::r_expr_quote;
 use crate::call::RArgument;
 use crate::environment::Environment;
@@ -614,8 +613,8 @@ pub fn r_env_binding_is_active(env: SEXP, sym: SEXP) -> harp::Result<bool> {
     // the symbol in question, which would be quite bad for us, so we are extra
     // careful with how we expose this.
     if !r_env_has(env, sym) {
-        let sym = RSymbol::new(sym)?.to_string();
-        Err(anyhow!("Can't find '{sym}' in this environment."))
+        let name = RSymbol::new(sym)?.to_string();
+        Err(harp::Error::MissingBindingError { name })
     } else {
         Ok(unsafe { R_BindingIsActive(sym, env) == Rboolean_TRUE })
     }
