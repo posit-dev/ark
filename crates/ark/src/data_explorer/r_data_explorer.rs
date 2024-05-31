@@ -447,6 +447,7 @@ impl RDataExplorer {
                 row_start_index,
                 num_rows,
                 column_indices,
+                format_options: _, // TODO: add support for format options
             }) => {
                 // TODO: Support for data frames with over 2B rows
                 let row_start_index: i32 = row_start_index.try_into()?;
@@ -498,6 +499,7 @@ impl RDataExplorer {
             },
             DataExplorerBackendRequest::GetColumnProfiles(GetColumnProfilesParams {
                 profiles: requests,
+                format_options: _, // TODO: add support for format options
             }) => {
                 let profiles = requests
                     .into_iter()
@@ -558,6 +560,9 @@ impl RDataExplorer {
             },
             DataExplorerBackendRequest::GetState => r_task(|| self.r_get_state()),
             DataExplorerBackendRequest::SearchSchema(_) => {
+                bail!("Data Viewer: Not yet implemented")
+            },
+            DataExplorerBackendRequest::ExportDataSelection(_) => {
                 bail!("Data Viewer: Not yet implemented")
             },
         }
@@ -666,6 +671,8 @@ impl RDataExplorer {
             number_stats: None,
             string_stats: None,
             boolean_stats: None,
+            date_stats: None, // TODO: add support for date/datetime stats
+            datetime_stats: None,
         };
 
         match dtype {
