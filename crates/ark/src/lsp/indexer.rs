@@ -60,6 +60,8 @@ lazy_static! {
 }
 
 pub fn start(folders: Vec<String>) {
+    let _s = tracing::info_span!("indexer::start").entered();
+
     let now = std::time::Instant::now();
     lsp::log_info!("Initial indexing started");
 
@@ -106,6 +108,8 @@ pub fn map(mut callback: impl FnMut(&Path, &String, &IndexEntry)) {
 }
 
 pub fn update(document: &Document, path: &Path) -> anyhow::Result<()> {
+    let _s = tracing::info_span!("indexer::update", path = ?path).entered();
+
     clear(path)?;
     index_document(document, path);
     Ok(())
