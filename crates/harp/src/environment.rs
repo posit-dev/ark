@@ -5,8 +5,6 @@
 //
 //
 
-use std::ops::Deref;
-
 use libr::*;
 use once_cell::sync::Lazy;
 use stdext::unwrap;
@@ -183,13 +181,6 @@ impl Environment {
 
     fn flags(&self) -> std::ffi::c_int {
         unsafe { libr::ENVFLAGS(self.inner.sexp) }
-    }
-}
-
-impl Deref for Environment {
-    type Target = SEXP;
-    fn deref(&self) -> &Self::Target {
-        &self.inner.sexp
     }
 }
 
