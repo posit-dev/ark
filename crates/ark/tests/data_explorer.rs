@@ -1072,15 +1072,15 @@ fn test_data_explorer() {
                 assert_match!(socket_rpc(&socket, req),
                     DataExplorerBackendReply::GetDataValuesReply(data) => {
                         assert_eq!(data.columns.len(), 2);
-                        assert_eq!(data.columns[0][0], "<numeric [4]>");
-                        assert_eq!(data.columns[0][1], "<tbl_df [1 x 2]>");
-                        assert_eq!(data.columns[0][2], "<matrix [2 x 2]>");
-                        assert_eq!(data.columns[0][3], "<logical [2]>");
+                        assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("<numeric [4]>".to_string()));
+                        assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("<tbl_df [1 x 2]>".to_string()));
+                        assert_eq!(data.columns[0][2], ColumnValue::FormattedValue("<matrix [2 x 2]>".to_string()));
+                        assert_eq!(data.columns[0][3], ColumnValue::FormattedValue("<logical [2]>".to_string()));
 
-                        assert_eq!(data.columns[1][0], "1");
-                        assert_eq!(data.columns[1][1], "2");
-                        assert_eq!(data.columns[1][2], "3");
-                        assert_eq!(data.columns[1][3], "4");
+                        assert_eq!(data.columns[1][0], ColumnValue::FormattedValue("1".to_string()));
+                        assert_eq!(data.columns[1][1], ColumnValue::FormattedValue("2".to_string()));
+                        assert_eq!(data.columns[1][2], ColumnValue::FormattedValue("3".to_string()));
+                        assert_eq!(data.columns[1][3], ColumnValue::FormattedValue("4".to_string()));
                     }
                 );
             },
