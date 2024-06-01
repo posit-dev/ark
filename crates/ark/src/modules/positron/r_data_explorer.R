@@ -278,3 +278,24 @@ format_list_column <- function(x) {
         )
     })
 }
+
+export_selection <- function(x, format = c("csv", "tsv", "html"), include_header = TRUE) {
+    format <- match.arg(format)
+
+    if (format == "csv") {
+        write_delim(x, delim = ",", include_header)
+    } else if (format == "tsv") {
+        write_delim(x, delim = "\t", include_header)
+    } else if (format == "html") {
+        knitr::kable(x, format = "html", row.names = FALSE, col.names = include_header)
+    } else {
+        stop("Unsupported format: ", format)
+    }
+}
+
+write_delim <- function(x, delim, include_header) {
+    con <- textConnection("text_val", "w", encoding="UTF-8")
+    on.exit(close(con), add = TRUE)
+    utils::write.table(x, con, sep = delim, row.names = FALSE, col.names = include_header, quote = FALSE, na = "")
+    paste0(textConnectionValue(con), collapse = "\n")
+}

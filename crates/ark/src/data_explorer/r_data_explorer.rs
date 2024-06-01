@@ -87,6 +87,7 @@ use stdext::spawn;
 use stdext::unwrap;
 use uuid::Uuid;
 
+use crate::data_explorer::export_selection;
 use crate::interface::RMain;
 use crate::lsp::events::EVENTS;
 use crate::modules::ARK_ENVS;
@@ -1077,7 +1078,12 @@ impl RDataExplorer {
         selection: DataSelection,
         format: ExportFormat,
     ) -> anyhow::Result<String> {
-        Ok("Not yet implemented".to_string())
+        export_selection::export_selection(
+            self.table.get().sexp,
+            self.view_indices.clone(),
+            selection,
+            format,
+        )
     }
 }
 
