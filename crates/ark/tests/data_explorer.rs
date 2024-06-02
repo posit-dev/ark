@@ -16,6 +16,7 @@ use amalthea::comm::data_explorer_comm::DataExplorerBackendReply;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendRequest;
 use amalthea::comm::data_explorer_comm::DataExplorerFrontendEvent;
 use amalthea::comm::data_explorer_comm::FilterResult;
+use amalthea::comm::data_explorer_comm::FormatOptions;
 use amalthea::comm::data_explorer_comm::GetColumnProfilesParams;
 use amalthea::comm::data_explorer_comm::GetDataValuesParams;
 use amalthea::comm::data_explorer_comm::GetSchemaParams;
@@ -109,6 +110,15 @@ fn socket_rpc(
     socket_rpc_request::<DataExplorerBackendRequest, DataExplorerBackendReply>(&socket, req)
 }
 
+fn default_format_options() -> FormatOptions {
+    FormatOptions {
+        large_num_digits: 2,
+        small_num_digits: 4,
+        max_integral_digits: 7,
+        thousands_sep: Some(",".to_string()),
+    }
+}
+
 /// Runs the data explorer tests.
 ///
 /// Note that these are all run in one single test instead of being split out
@@ -139,6 +149,7 @@ fn test_data_explorer() {
                 row_start_index: 5,
                 num_rows: 5,
                 column_indices: vec![0, 1, 2, 3, 4],
+                format_options: default_format_options(),
             });
 
             // Check that we got the right columns and row labels.
@@ -181,6 +192,7 @@ fn test_data_explorer() {
                 row_start_index: 0,
                 num_rows: 3,
                 column_indices: vec![0, 1],
+                format_options: default_format_options(),
             });
 
             // Check that sorted values were correctly returned.
@@ -228,6 +240,7 @@ fn test_data_explorer() {
                 row_start_index: 0,
                 num_rows: 3,
                 column_indices: vec![0, 1],
+                format_options: default_format_options(),
             });
 
             // Check that sorted values were correctly returned.
@@ -274,6 +287,7 @@ fn test_data_explorer() {
             row_start_index: 0,
             num_rows: 2,
             column_indices: vec![0, 1],
+            format_options: default_format_options(),
         });
 
         // Spot check the data values.
@@ -350,6 +364,7 @@ fn test_data_explorer() {
             row_start_index: 0,
             num_rows: 2,
             column_indices: vec![0, 1],
+            format_options: default_format_options(),
         });
 
         // Spot check the data values.
@@ -434,6 +449,7 @@ fn test_data_explorer() {
             row_start_index: 0,
             num_rows: 3,
             column_indices: vec![0],
+            format_options: default_format_options(),
         });
         assert_match!(socket_rpc(&socket, req),
             DataExplorerBackendReply::GetDataValuesReply(data) => {
@@ -466,6 +482,7 @@ fn test_data_explorer() {
             row_start_index: 0,
             num_rows: 3,
             column_indices: vec![0],
+            format_options: default_format_options(),
         });
         assert_match!(socket_rpc(&socket, req),
             DataExplorerBackendReply::GetDataValuesReply(data) => {
@@ -577,6 +594,7 @@ fn test_data_explorer() {
             row_start_index: 0,
             num_rows: 4,
             column_indices: vec![0, 1],
+            format_options: default_format_options(),
         });
 
         // Check the data values.
@@ -650,6 +668,7 @@ fn test_data_explorer() {
                 column_index: 0,
                 profile_type: ColumnProfileType::NullCount,
             }],
+            format_options: default_format_options(),
         });
 
         assert_match!(socket_rpc(&socket, req),
@@ -692,6 +711,7 @@ fn test_data_explorer() {
                 column_index: 0,
                 profile_type: ColumnProfileType::NullCount,
             }],
+            format_options: default_format_options(),
         });
 
         assert_match!(socket_rpc(&socket, req),
@@ -749,6 +769,7 @@ fn test_data_explorer() {
                     profile_type: ColumnProfileType::SummaryStats,
                 })
                 .collect(),
+            format_options: default_format_options(),
         });
 
         assert_match!(socket_rpc(&socket, req),
@@ -1068,6 +1089,7 @@ fn test_data_explorer() {
                     row_start_index: 0,
                     num_rows: 4,
                     column_indices: vec![0, 1],
+                    format_options: default_format_options(),
                 });
                 assert_match!(socket_rpc(&socket, req),
                     DataExplorerBackendReply::GetDataValuesReply(data) => {
@@ -1268,6 +1290,7 @@ fn test_data_explorer_special_values() {
             row_start_index: 0,
             num_rows: 5,
             column_indices: vec![0, 1, 2, 3, 4, 5],
+            format_options: default_format_options(),
         });
 
         assert_match!(socket_rpc(&socket, req),
