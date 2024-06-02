@@ -164,14 +164,18 @@ mod tests {
         export_selection(data.sexp, None, selection, format).unwrap()
     }
 
+    fn small_test_data() -> RObject {
+        r_parse_eval0(
+            "data.frame(a = 1:3, b = c(4,5,NA), c = letters[1:3])",
+            R_ENVS.global,
+        )
+        .unwrap()
+    }
+
     #[test]
     fn test_single_cell_selection() {
         r_test(|| {
-            let data = r_parse_eval0(
-                "data.frame(a = 1:3, b = c(4,5,NA), c = letters[1:3])",
-                R_ENVS.global,
-            )
-            .unwrap();
+            let data = small_test_data();
 
             let single_cell_selection = |i, j| DataSelection {
                 kind: DataSelectionKind::SingleCell,
@@ -197,6 +201,167 @@ mod tests {
             assert_eq!(
                 export_selection_helper(data.clone(), single_cell_selection(2, 1)),
                 "".to_string()
+            );
+        });
+    }
+
+    #[test]
+    fn test_cell_range_selection() {
+        r_test(|| {
+            let data = small_test_data();
+
+            let cell_range_selection = |i1, i2, j1, j2| DataSelection {
+                kind: DataSelectionKind::CellRange,
+                selection: Selection::CellRange(DataSelectionCellRange {
+                    first_row_index: i1,
+                    last_row_index: i2,
+                    first_column_index: j1,
+                    last_column_index: j2,
+                }),
+            };
+
+            // Basic test
+            assert_eq!(
+                export_selection_helper(data.clone(), cell_range_selection(0, 1, 0, 1)),
+                "a,b\n1,4\n2,5".to_string()
+            );
+
+            // Strings are copied unquoted
+            assert_eq!(
+                export_selection_helper(data.clone(), cell_range_selection(0, 1, 1, 2)),
+                "b,c\n4,a\n5,b".to_string()
+            );
+
+            // NA's are copied as empty strings
+            assert_eq!(
+                export_selection_helper(data.clone(), cell_range_selection(1, 2, 1, 2)),
+                "b,c\n5,b\n,c".to_string()
+            );
+        });
+    }
+
+    #[test]
+    fn test_row_range_selection() {
+        r_test(|| {
+            let data = small_test_data();
+
+            let row_range_selection = |i1, i2| DataSelection {
+                kind: DataSelectionKind::RowRange,
+                selection: Selection::IndexRange(DataSelectionRange {
+                    first_index: i1,
+                    last_index: i2,
+                }),
+            };
+
+            // Basic test
+            assert_eq!(
+                export_selection_helper(data.clone(), row_range_selection(0, 1)),
+                "a,b,c\n1,4,a\n2,5,b".to_string()
+            );
+
+            // Strings are copied unquoted
+            assert_eq!(
+                export_selection_helper(data.clone(), row_range_selection(1, 2)),
+                "a,b,c\n2,5,b\n3,,c".to_string()
+            );
+
+            // NA's are copied as empty strings
+            assert_eq!(
+                export_selection_helper(data.clone(), row_range_selection(2, 2)),
+                "a,b,c\n3,,c".to_string()
+            );
+        });
+    }
+
+    #[test]
+    fn test_col_range_selection() {
+        r_test(|| {
+            let data = small_test_data();
+
+            let col_range_selection = |j1, j2| DataSelection {
+                kind: DataSelectionKind::ColumnRange,
+                selection: Selection::IndexRange(DataSelectionRange {
+                    first_index: j1,
+                    last_index: j2,
+                }),
+            };
+
+            // Basic test
+            assert_eq!(
+                export_selection_helper(data.clone(), col_range_selection(0, 1)),
+                "a,b\n1,4\n2,5\n3,".to_string()
+            );
+
+            // Strings are copied unquoted
+            assert_eq!(
+                export_selection_helper(data.clone(), col_range_selection(1, 2)),
+                "b,c\n4,a\n5,b\n,c".to_string()
+            );
+
+            // NA's are copied as empty strings
+            assert_eq!(
+                export_selection_helper(data.clone(), col_range_selection(2, 2)),
+                "c\na\nb\nc".to_string()
+            );
+        });
+    }
+
+    #[test]
+    fn test_row_indices_selection() {
+        r_test(|| {
+            let data = small_test_data();
+
+            let row_indices_selection = |indices| DataSelection {
+                kind: DataSelectionKind::RowIndices,
+                selection: Selection::Indices(DataSelectionIndices { indices }),
+            };
+
+            // Basic test
+            assert_eq!(
+                export_selection_helper(data.clone(), row_indices_selection(vec![0, 2])),
+                "a,b,c\n1,4,a\n3,,c".to_string()
+            );
+
+            // Strings are copied unquoted
+            assert_eq!(
+                export_selection_helper(data.clone(), row_indices_selection(vec![1, 2])),
+                "a,b,c\n2,5,b\n3,,c".to_string()
+            );
+
+            // NA's are copied as empty strings
+            assert_eq!(
+                export_selection_helper(data.clone(), row_indices_selection(vec![2])),
+                "a,b,c\n3,,c".to_string()
+            );
+        });
+    }
+
+    #[test]
+    fn test_col_indices_selection() {
+        r_test(|| {
+            let data = small_test_data();
+
+            let col_indices_selection = |indices| DataSelection {
+                kind: DataSelectionKind::ColumnIndices,
+                selection: Selection::Indices(DataSelectionIndices { indices }),
+            };
+
+            // Basic test
+            assert_eq!(
+                export_selection_helper(data.clone(), col_indices_selection(vec![0, 2])),
+                "a,c\n1,a\n2,b\n3,c".to_string()
+            );
+
+            // Strings are copied unquoted
+            assert_eq!(
+                export_selection_helper(data.clone(), col_indices_selection(vec![1, 2])),
+                "b,c\n4,a\n5,b\n,c".to_string()
+            );
+
+            // NA's are copied as empty strings
+            assert_eq!(
+                export_selection_helper(data.clone(), col_indices_selection(vec![2])),
+                "c\na\nb\nc".to_string()
             );
         });
     }
