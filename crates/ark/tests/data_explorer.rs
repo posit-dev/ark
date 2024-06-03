@@ -1331,7 +1331,7 @@ fn test_export_data() {
     r_test(|| {
         let socket = open_data_explorer_from_expression(
             r#"
-            x <- tibble::tibble(
+            x <- data.frame(
                 a = c(1, 3, 2),
                 b = c('a', 'b', 'c'),
                 c = c(TRUE, FALSE, TRUE)
