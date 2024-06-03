@@ -171,6 +171,14 @@ mod tests {
         export_selection(data.sexp, None, selection, format).unwrap()
     }
 
+    fn export_selection_helper_with_view_indices(
+        data: RObject,
+        view_indices: Vec<i32>,
+        selection: DataSelection,
+    ) -> String {
+        export_selection(data.sexp, Some(view_indices), selection, ExportFormat::Csv).unwrap()
+    }
+
     fn small_test_data() -> RObject {
         r_parse_eval0(
             "data.frame(a = 1:3, b = c(4,5,NA), c = letters[1:3])",
@@ -410,5 +418,41 @@ mod tests {
                 "c\na\nb\nc".to_string()
             );
         });
+    }
+
+    #[test]
+    fn test_view_indices() {
+        r_test(|| {
+            let data = small_test_data();
+
+            let single_cell_selection = |i, j| DataSelection {
+                kind: DataSelectionKind::SingleCell,
+                selection: Selection::SingleCell(DataSelectionSingleCell {
+                    row_index: i,
+                    column_index: j,
+                }),
+            };
+
+            // view indices imply a different ordering of the data
+            // note: view_indices are 1 based!
+            assert_eq!(
+                export_selection_helper_with_view_indices(
+                    data.clone(),
+                    vec![3, 2, 1],
+                    single_cell_selection(0, 1)
+                ),
+                "".to_string()
+            );
+
+            // view indices imply a different subset of the data
+            assert_eq!(
+                export_selection_helper_with_view_indices(
+                    data.clone(),
+                    vec![2],
+                    single_cell_selection(0, 1)
+                ),
+                "5".to_string()
+            );
+        })
     }
 }
