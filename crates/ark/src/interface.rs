@@ -844,6 +844,10 @@ impl RMain {
     }
 
     fn handle_task(&mut self, task: RTask) {
+        // Background tasks can't take any user input, so we set R_Interactive
+        // to 0 to prevent `readline()` from blocking the task.
+        let _interactive = harp::raii::RInteractiveScope::new(false);
+
         let start_info = match task {
             RTask::Sync(task) => {
                 // Immediately let caller know we have started so it can set up the
@@ -852,11 +856,7 @@ impl RMain {
                     status_tx.send(RTaskStatus::Started).unwrap();
                 }
 
-                // Background tasks can't take any user input, so we set R_Interactive
-                // to 0 to prevent `readline()` from blocking the task.
-                unsafe { libr::set(libr::R_Interactive, 0) };
                 let result = r_sandbox(task.fun);
-                unsafe { libr::set(libr::R_Interactive, 1) };
 
                 // Unblock caller via the notification channel
                 if let Some(ref status_tx) = task.status_tx {
@@ -905,7 +905,7 @@ impl RMain {
         let awaker = waker.clone().into();
         let mut ctxt = &mut std::task::Context::from_waker(&awaker);
 
-        match fut.as_mut().poll(&mut ctxt) {
+        match r_sandbox(|| fut.as_mut().poll(&mut ctxt)).unwrap() {
             Poll::Ready(()) => {
                 start_info.bump_elapsed(tick.elapsed());
                 Some(start_info)
@@ -1119,8 +1119,6 @@ impl RMain {
 
     /// Invoked by the R event loop
     fn polled_events(&mut self) {
-        let _scope = harp::raii::RSandboxScope::new();
-
         // Skip running tasks if we don't have 128KB of stack space available.
         // This is 1/8th of the typical Windows stack space (1MB, whereas macOS
         // and Linux have 8MB).
