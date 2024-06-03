@@ -829,12 +829,12 @@ impl RMain {
         if let Some(start_info) = task.start_info_mut() {
             // Log excessive waiting before starting task
             if start_info.start_time.elapsed() > std::time::Duration::from_millis(50) {
-                let _s = start_info.span.enter();
-
-                tracing::info!(
-                    "{} milliseconds wait before running task.",
-                    start_info.start_time.elapsed().as_millis()
-                );
+                start_info.span.in_scope(|| {
+                    tracing::info!(
+                        "{} milliseconds wait before running task.",
+                        start_info.start_time.elapsed().as_millis()
+                    )
+                });
             }
 
             // Reset timer, next time we'll log how long the task took
@@ -857,11 +857,7 @@ impl RMain {
                     status_tx.send(RTaskStatus::Started).unwrap();
                 }
 
-                let _s = task.start_info.span.enter();
-
-                let result = r_sandbox(task.fun);
-
-                drop(_s);
+                let result = task.start_info.span.in_scope(|| r_sandbox(task.fun));
 
                 // Unblock caller via the notification channel
                 if let Some(ref status_tx) = task.status_tx {
@@ -907,8 +903,11 @@ impl RMain {
         let awaker = waker.clone().into();
         let mut ctxt = &mut std::task::Context::from_waker(&awaker);
 
-        let _s = waker.start_info.span.enter();
-        match r_sandbox(|| fut.as_mut().poll(&mut ctxt)).unwrap() {
+        match waker
+            .start_info
+            .span
+            .in_scope(|| r_sandbox(|| fut.as_mut().poll(&mut ctxt)).unwrap())
+        {
             Poll::Ready(()) => {
                 start_info.bump_elapsed(tick.elapsed());
                 Some(start_info)
