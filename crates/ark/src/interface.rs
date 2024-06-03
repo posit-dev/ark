@@ -827,20 +827,18 @@ impl RMain {
     /// how long a task waited before being picked up by the R or ReadConsole
     /// event loop.
     fn handle_task_concurrent(&mut self, mut task: RTask) {
-        {
-            if let Some(start_info) = task.start_info_mut() {
-                // Log excessive waiting before starting task
-                if start_info.start_time.elapsed() > std::time::Duration::from_millis(50) {
-                    log::info!(
-                        "{} waited for {} milliseconds to spawn a task.",
-                        start_info.caller(),
-                        start_info.start_time.elapsed().as_millis()
-                    );
-                }
-
-                // Reset timer, next time we'll log how long the task took
-                start_info.start_time = std::time::Instant::now();
+        if let Some(start_info) = task.start_info_mut() {
+            // Log excessive waiting before starting task
+            if start_info.start_time.elapsed() > std::time::Duration::from_millis(50) {
+                log::info!(
+                    "{} waited for {} milliseconds to spawn a task.",
+                    start_info.caller(),
+                    start_info.start_time.elapsed().as_millis()
+                );
             }
+
+            // Reset timer, next time we'll log how long the task took
+            start_info.start_time = std::time::Instant::now();
         }
 
         self.handle_task(task)
