@@ -182,7 +182,7 @@ where
             status_tx: Some(status_tx),
             start_info: RTaskStartInfo::new(),
         });
-        get_tasks_tx().send(task).unwrap();
+        get_tasks_interrupt_tx().send(task).unwrap();
 
         // Block until we get the signal that the task has started
         let status = status_rx.recv().unwrap();
@@ -257,7 +257,7 @@ where
     let tasks_tx = if only_idle {
         get_tasks_idle_tx()
     } else {
-        get_tasks_tx()
+        get_tasks_interrupt_tx()
     };
 
     // Send the async task to the R thread
@@ -271,19 +271,19 @@ where
 }
 
 /// Channel for sending tasks to `R_MAIN`. Initialized by `initialize()`, but
-/// is otherwise only accessed by `r_task()` and `r_async_task()`.
-static mut R_MAIN_TASKS_TX: OnceLock<Sender<RTask>> = OnceLock::new();
+/// is otherwise only accessed to create `RTask`s.
+static mut R_MAIN_TASKS_INTERRUPT_TX: OnceLock<Sender<RTask>> = OnceLock::new();
 static mut R_MAIN_TASKS_IDLE_TX: OnceLock<Sender<RTask>> = OnceLock::new();
 
 pub fn initialize(tasks_tx: Sender<RTask>, tasks_idle_tx: Sender<RTask>) {
-    unsafe { R_MAIN_TASKS_TX.set(tasks_tx).unwrap() };
+    unsafe { R_MAIN_TASKS_INTERRUPT_TX.set(tasks_tx).unwrap() };
     unsafe { R_MAIN_TASKS_IDLE_TX.set(tasks_idle_tx).unwrap() };
 }
 
 // Be defensive for the case an auxiliary thread runs a task before R is initialized
 // by `start_r()`, which calls `r_task::initialize()`
-fn get_tasks_tx() -> &'static Sender<RTask> {
-    get_tx(unsafe { &R_MAIN_TASKS_TX })
+fn get_tasks_interrupt_tx() -> &'static Sender<RTask> {
+    get_tx(unsafe { &R_MAIN_TASKS_INTERRUPT_TX })
 }
 fn get_tasks_idle_tx() -> &'static Sender<RTask> {
     get_tx(unsafe { &R_MAIN_TASKS_IDLE_TX })

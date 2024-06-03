@@ -153,14 +153,14 @@ pub fn start_r(
         R_MAIN_THREAD_ID = Some(std::thread::current().id());
 
         // Channels to send/receive tasks from auxiliary threads via `RTask`s
-        let (tasks_tx, tasks_rx) = unbounded::<RTask>();
+        let (tasks_interrupt_tx, tasks_interrupt_rx) = unbounded::<RTask>();
         let (tasks_idle_tx, tasks_idle_rx) = unbounded::<RTask>();
 
-        r_task::initialize(tasks_tx.clone(), tasks_idle_tx.clone());
+        r_task::initialize(tasks_interrupt_tx.clone(), tasks_idle_tx.clone());
 
         R_MAIN = Some(RMain::new(
             kernel_mutex,
-            tasks_rx,
+            tasks_interrupt_rx,
             tasks_idle_rx,
             comm_manager_tx,
             r_request_rx,
@@ -257,7 +257,7 @@ pub struct RMain {
     banner: String,
 
     /// Channel to send and receive tasks from `RTask`s
-    tasks_rx: Receiver<RTask>,
+    tasks_interrupt_rx: Receiver<RTask>,
     tasks_idle_rx: Receiver<RTask>,
     pending_futures: HashMap<Uuid, (BoxFuture<'static, ()>, RTaskStartInfo)>,
 
@@ -351,7 +351,7 @@ pub enum ConsoleResult {
 impl RMain {
     pub fn new(
         kernel: Arc<Mutex<Kernel>>,
-        tasks_rx: Receiver<RTask>,
+        tasks_interrupt_rx: Receiver<RTask>,
         tasks_idle_rx: Receiver<RTask>,
         comm_manager_tx: Sender<CommManagerEvent>,
         r_request_rx: Receiver<RRequest>,
@@ -384,7 +384,7 @@ impl RMain {
             dap: RMainDap::new(dap),
             is_busy: false,
             old_show_error_messages: None,
-            tasks_rx,
+            tasks_interrupt_rx,
             tasks_idle_rx,
             pending_futures: HashMap::new(),
         }
@@ -676,7 +676,7 @@ impl RMain {
                 }
 
                 // A task woke us up, start next loop tick to yield to it
-                recv(self.tasks_rx) -> task => {
+                recv(self.tasks_interrupt_rx) -> task => {
                     self.handle_task_concurrent(task.unwrap());
                 }
                 recv(self.tasks_idle_rx) -> task => {
@@ -1134,7 +1134,7 @@ impl RMain {
         // Coalesce up to three concurrent tasks in case the R event loop is
         // slowed down
         for _ in 0..3 {
-            if let Ok(task) = self.tasks_rx.try_recv() {
+            if let Ok(task) = self.tasks_interrupt_rx.try_recv() {
                 self.handle_task_concurrent(task);
             } else {
                 break;

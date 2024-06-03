@@ -69,7 +69,7 @@ impl Kernel {
             log::error!("Error establishing working directory for frontend: {err:?}");
         }
 
-        // We shouldn't block with an `r_task()` while holding the kernel lock.
+        // We shouldn't block with an `RTask` while holding the kernel lock.
         // So check for status in an async task and send event from there.
         let kernel = self.kernel.as_ref().unwrap().clone();
 
