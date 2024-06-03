@@ -152,7 +152,7 @@ pub fn start_r(
     INIT.call_once(|| unsafe {
         R_MAIN_THREAD_ID = Some(std::thread::current().id());
 
-        // Channels to send/receive tasks from auxiliary threads via `r_task()`
+        // Channels to send/receive tasks from auxiliary threads via `RTask`s
         let (tasks_tx, tasks_rx) = unbounded::<RTask>();
         let (tasks_idle_tx, tasks_idle_rx) = unbounded::<RTask>();
 
@@ -256,7 +256,7 @@ pub struct RMain {
     stderr: String,
     banner: String,
 
-    /// Channel to send and receive tasks from `r_task()`
+    /// Channel to send and receive tasks from `RTask`s
     tasks_rx: Receiver<RTask>,
     tasks_idle_rx: Receiver<RTask>,
     pending_futures: HashMap<Uuid, (BoxFuture<'static, ()>, RTaskStartInfo)>,
@@ -649,7 +649,7 @@ impl RMain {
             // to be handled in a blocking way to ensure subscribers are
             // notified before the next incoming message is processed.
 
-            // First handle execut requests outside of `select!` to ensure they
+            // First handle execute requests outside of `select!` to ensure they
             // have priority. `select!` chooses at random.
             if let Ok(req) = self.r_request_rx.try_recv() {
                 if let Some(input) = self.handle_execute_request(req, &info, buf, buflen) {
