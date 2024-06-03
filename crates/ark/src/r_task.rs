@@ -226,7 +226,7 @@ where
 }
 
 #[allow(dead_code)] // Currently unused
-pub(crate) fn spawn<F, Fut>(fun: F)
+pub(crate) fn spawn_idle<F, Fut>(fun: F)
 where
     F: FnOnce() -> Fut + 'static + Send,
     Fut: Future<Output = ()> + 'static,
