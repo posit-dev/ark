@@ -64,7 +64,6 @@ use harp::exec::r_sandbox;
 use harp::exec::r_source;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
-use harp::exec::RSandboxScope;
 use harp::library::RLibraries;
 use harp::line_ending::convert_line_endings;
 use harp::line_ending::LineEnding;
@@ -1120,7 +1119,7 @@ impl RMain {
 
     /// Invoked by the R event loop
     fn polled_events(&mut self) {
-        let _scope = RSandboxScope::new();
+        let _scope = harp::raii::RSandboxScope::new();
 
         // Skip running tasks if we don't have 128KB of stack space available.
         // This is 1/8th of the typical Windows stack space (1MB, whereas macOS
