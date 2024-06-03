@@ -160,10 +160,16 @@ mod tests {
     use crate::test::r_test;
 
     fn export_selection_helper(data: RObject, selection: DataSelection) -> String {
-        let format = ExportFormat::Csv;
-        export_selection(data.sexp, None, selection, format).unwrap()
+        export_selection_helper_with_format(data, selection, ExportFormat::Csv)
     }
 
+    fn export_selection_helper_with_format(
+        data: RObject,
+        selection: DataSelection,
+        format: ExportFormat,
+    ) -> String {
+        export_selection(data.sexp, None, selection, format).unwrap()
+    }
     fn small_test_data() -> RObject {
         r_parse_eval0(
             "data.frame(a = 1:3, b = c(4,5,NA), c = letters[1:3])",
@@ -202,6 +208,22 @@ mod tests {
                 export_selection_helper(data.clone(), single_cell_selection(2, 1)),
                 "".to_string()
             );
+
+            // HTML format
+            assert!(export_selection_helper_with_format(
+                data.clone(),
+                single_cell_selection(0, 1),
+                ExportFormat::Html
+            )
+            .contains("<table>"));
+
+            // HTML format, NA's handling
+            assert!(export_selection_helper_with_format(
+                data.clone(),
+                single_cell_selection(2, 1),
+                ExportFormat::Html
+            )
+            .contains(r#"<td style="text-align:right;">  </td>"#)); // NA's are formatted as empty strings
         });
     }
 
@@ -237,6 +259,14 @@ mod tests {
                 export_selection_helper(data.clone(), cell_range_selection(1, 2, 1, 2)),
                 "b,c\n5,b\n,c".to_string()
             );
+
+            // test HTML format
+            assert!(export_selection_helper_with_format(
+                data.clone(),
+                cell_range_selection(1, 2, 1, 2),
+                ExportFormat::Html
+            )
+            .contains("<thead>")); // test that contais a table header
         });
     }
 
