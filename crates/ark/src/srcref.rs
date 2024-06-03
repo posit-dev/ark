@@ -17,6 +17,7 @@ use crate::thread::RThreadSafe;
 use crate::variables::variable::is_binding_fancy;
 use crate::variables::variable::plain_binding_force_with_rollback;
 
+#[tracing::instrument(level = "trace")]
 pub(crate) fn resource_loaded_namespaces() -> anyhow::Result<()> {
     let loaded = RFunction::new("base", "loadedNamespaces").call()?;
     let mut loaded: Vec<String> = loaded.try_into()?;
@@ -41,6 +42,7 @@ unsafe extern "C" fn ps_ns_populate_srcref(ns_name: SEXP) -> anyhow::Result<SEXP
 }
 
 pub(crate) async fn ns_populate_srcref(ns_name: String) -> anyhow::Result<()> {
+    let span = tracing::trace_span!("ns_populate_srcref", ns = ns_name);
     let mut tick = std::time::Instant::now();
 
     let ns = r_ns_env(&ns_name)?;
@@ -60,27 +62,29 @@ pub(crate) async fn ns_populate_srcref(ns_name: String) -> anyhow::Result<()> {
     let mut n_skipped = 0;
 
     for b in ns.get().iter().filter_map(Result::ok) {
-        match generate_source(&ns.get(), &b, vdoc.len(), &uri) {
-            Ok(Some(mut lines)) => {
-                n_ok = n_ok + 1;
+        span.in_scope(|| {
+            match generate_source(&ns.get(), &b, vdoc.len(), &uri) {
+                Ok(Some(mut lines)) => {
+                    n_ok = n_ok + 1;
 
-                vdoc.append(&mut lines);
+                    vdoc.append(&mut lines);
 
-                // Add some separation
-                vdoc.push(String::from(""));
-            },
-            Err(_err) => {
-                n_bad = n_bad + 1;
+                    // Add some separation
+                    vdoc.push(String::from(""));
+                },
+                Err(_err) => {
+                    n_bad = n_bad + 1;
 
-                // log::error!(
-                //     "Can't populate srcref for {} in namespace {ns_name}: {_err}",
-                //     b.name
-                // )
-            },
-            _ => {
-                n_skipped = n_skipped + 1;
-            },
-        }
+                    // log::error!(
+                    //     "Can't populate srcref for {} in namespace {ns_name}: {_err}",
+                    //     b.name
+                    // )
+                },
+                _ => {
+                    n_skipped = n_skipped + 1;
+                },
+            }
+        });
 
         if tick.elapsed() > std::time::Duration::from_millis(10) {
             tick = std::time::Instant::now();
@@ -103,6 +107,7 @@ pub(crate) async fn ns_populate_srcref(ns_name: String) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[tracing::instrument(level = "trace", skip_all, fields(name = %binding.name))]
 fn generate_source(
     env: &Environment,
     binding: &Binding,

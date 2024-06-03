@@ -1592,6 +1592,9 @@ pub unsafe extern "C" fn r_polled_events() {
 unsafe extern "C" fn ps_onload_hook(pkg: SEXP, _path: SEXP) -> anyhow::Result<SEXP> {
     let pkg: String = RObject::view(pkg).try_into()?;
 
+    // Need to reset parent as this might run in the context of another thread's R task
+    let _span = tracing::trace_span!(parent: None, "onload_hook", pkg = pkg).entered();
+
     // Populate fake source refs if needed
     r_task::spawn_idle(|| async move {
         if let Err(err) = ns_populate_srcref(pkg.clone()).await {
