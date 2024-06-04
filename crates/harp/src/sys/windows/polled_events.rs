@@ -1,7 +1,7 @@
 //
 // polled_events.rs
 //
-// Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2024 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -9,7 +9,7 @@
 pub struct RPolledEventsSuspendedScope {}
 
 impl RPolledEventsSuspendedScope {
-    pub fn new() -> Self {
+    pub fn new(_value: bool) -> Self {
         Self {}
     }
 }
