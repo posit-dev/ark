@@ -57,9 +57,10 @@ pub fn r_parse_eval(code: &str, options: RParseEvalOptions) -> Result<RObject> {
             value = R_tryEvalSilent(expr, options.env.sexp, &mut errc);
             if errc != 0 {
                 return Err(Error::EvaluationError {
-                    code: code.to_string(),
+                    code: Some(code.to_string()),
                     message: geterrmessage(),
-                    trace: String::from(""),
+                    r_trace: String::from(""),
+                    class: None,
                 });
             }
         }

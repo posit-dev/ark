@@ -1027,6 +1027,17 @@ impl TryFrom<RObject> for HashMap<String, RObject> {
     }
 }
 
+pub fn r_null_or_try_into<T>(x: RObject) -> harp::Result<Option<T>>
+where
+    RObject: TryInto<T, Error = harp::Error>,
+{
+    if x.sexp == crate::r_null() {
+        Ok(None)
+    } else {
+        Ok(Some(x.try_into()?))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use libr::SET_STRING_ELT;

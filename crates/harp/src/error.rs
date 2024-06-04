@@ -23,9 +23,10 @@ pub enum Error {
         message: String,
     },
     EvaluationError {
-        code: String,
+        code: Option<String>,
         message: String,
-        trace: String,
+        class: Option<Vec<String>>,
+        r_trace: String,
     },
     UnsafeEvaluationError(String),
     UnexpectedLength(usize, usize),
@@ -36,10 +37,6 @@ pub enum Error {
         max: i64,
     },
     InvalidUtf8(Utf8Error),
-    TryCatchError {
-        message: Vec<String>,
-        classes: Vec<String>,
-    },
     TryEvalError {
         message: String,
     },
@@ -64,9 +61,7 @@ pub enum Error {
         backtrace: Backtrace,
         span_trace: tracing_error::SpanTrace,
     },
-    Anyhow {
-        message: String,
-    },
+    Anyhow(anyhow::Error),
 }
 
 // empty implementation required for 'anyhow'
@@ -98,15 +93,20 @@ impl fmt::Display for Error {
             Error::EvaluationError {
                 code,
                 message,
-                trace,
+                r_trace: trace,
+                ..
             } => {
-                let mut msg = format!("Error evaluating {code}: {message}");
+                let mut message = if let Some(code) = code {
+                    format!("Error evaluating {code}: {message}")
+                } else {
+                    message.clone()
+                };
 
                 if !trace.is_empty() {
-                    msg = format!("{msg}\nR backtrace:\n{trace}");
+                    message = format!("{message}\n\nR backtrace:\n{trace}");
                 }
 
-                write!(f, "{msg}")
+                write!(f, "{message}")
             },
 
             Error::UnsafeEvaluationError(code) => {
@@ -151,16 +151,8 @@ impl fmt::Display for Error {
                 write!(f, "Invalid UTF-8 in string: {}", error)
             },
 
-            Error::TryCatchError {
-                message,
-                classes: _,
-            } => {
-                let message = message.join("\n");
-                write!(f, "tryCatch error: {message}")
-            },
-
             Error::TryEvalError { message } => {
-                write!(f, "`eval()` error: {}", message)
+                write!(f, "R-level error: {}", message)
             },
 
             Error::TopLevelExecError {
@@ -195,9 +187,10 @@ impl fmt::Display for Error {
                 write!(f, "C stack usage too close to the limit")
             },
 
-            Error::Anyhow { message } => {
-                write!(f, "{message}")
+            Error::Anyhow(err) => {
+                write!(f, "{err:?}")
             },
+
             Error::MissingBindingError { name } => {
                 write!(f, "Can't find binding {name} in environment")
             },

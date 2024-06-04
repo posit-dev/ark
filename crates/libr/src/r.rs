@@ -109,6 +109,13 @@ functions::generate! {
         arg7: *mut std::ffi::c_void
     ) -> SEXP;
 
+    pub fn R_withCallingErrorHandler(
+        body: Option<unsafe extern "C" fn(args: *mut std::ffi::c_void)>,
+        bdata: *mut std::ffi::c_void,
+        handler: Option<unsafe extern "C" fn(err: SEXP, args: *mut std::ffi::c_void)>,
+        hdata: *mut std::ffi::c_void
+    ) -> SEXP;
+
     pub fn R_tryEvalSilent(arg1: SEXP, arg2: SEXP, arg3: *mut std::ffi::c_int) -> SEXP;
 
     pub fn Rf_GetOption1(arg1: SEXP) -> SEXP;

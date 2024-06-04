@@ -833,7 +833,7 @@ impl PositronVariable {
                 EnvironmentVariableNode::Concrete { object } => {
                     if object.is_s4() {
                         let name = r_symbol!(path_element);
-                        let child = r_try_catch(|| R_do_slot(*object, name))?;
+                        let child: RObject = r_try_catch(|| R_do_slot(object.sexp, name).into())?;
                         EnvironmentVariableNode::Concrete { object: child }
                     } else {
                         let rtype = r_typeof(*object);
@@ -1214,9 +1214,9 @@ impl PositronVariable {
             let mut iter = slot_names.iter();
             while let Some(Some(display_name)) = iter.next() {
                 let slot_symbol = r_symbol!(display_name);
-                let slot = r_try_catch(|| R_do_slot(value, slot_symbol))?;
+                let slot: RObject = r_try_catch(|| R_do_slot(value, slot_symbol).into())?;
                 let access_key = display_name.clone();
-                out.push(PositronVariable::from(access_key, display_name, *slot).var());
+                out.push(PositronVariable::from(access_key, display_name, slot.sexp).var());
             }
         }
 

@@ -462,7 +462,7 @@ fn main() {
                 String::from("")
             } else {
                 format!(
-                    "\nBacktrace:\n{}",
+                    "\n\nBacktrace:\n{}",
                     std::backtrace::Backtrace::force_capture()
                 )
             }

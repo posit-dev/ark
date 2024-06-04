@@ -28,8 +28,11 @@ safe_evalq <- function(expr, env) {
         }
 
         trace <- format_traceback(calls)
-        trace <- paste(trace, collapse = '\n')
 
+        # More recent calls should be first to match the Rust backtraces
+        trace <- rev(trace)
+
+        trace <- paste(trace, collapse = '\n')
         message <- conditionMessage(cnd)
 
         # A character vector is easier to destructure from Rust.
@@ -45,7 +48,35 @@ safe_evalq <- function(expr, env) {
     )
 }
 
+try_catch_handler <- function(cnd) {
+    # Save backtrace in error value
+    calls <- sys.calls()
+
+    # Remove handling context
+    n <- length(calls)
+    if (n > 3) {
+        calls <- calls[-seq(n - 3, n)]
+    }
+
+    trace <- format_traceback(calls)
+
+    # More recent calls should be first to match the Rust backtraces
+    trace <- rev(trace)
+
+    message <- conditionMessage(cnd)
+    class <- class(cnd)
+    trace <- paste(trace, collapse = '\n')
+
+    call <- conditionCall(cnd)
+    if (!is.null(call)) {
+        call <- paste(deparse(call), collapse = "\n")
+    }
+
+    list(message, call, class, trace)
+}
+
 #' @param traceback A list of calls.
+#' @param rev Whether to list older calls first.
 format_traceback <- function(traceback = list()) {
     n <- length(traceback)
 
