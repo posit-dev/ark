@@ -679,6 +679,7 @@ pub enum ColumnValue {
 
 /// Union type Selection in Properties
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
 pub enum Selection {
 	SingleCell(DataSelectionSingleCell),
 
