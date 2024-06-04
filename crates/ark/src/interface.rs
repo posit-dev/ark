@@ -846,7 +846,7 @@ impl RMain {
     fn handle_task(&mut self, task: RTask) {
         // Background tasks can't take any user input, so we set R_Interactive
         // to 0 to prevent `readline()` from blocking the task.
-        let _interactive = harp::raii::RInteractiveScope::new(false);
+        let _interactive = harp::raii::RLocalInteractive::new(false);
 
         let start_info = match task {
             RTask::Sync(task) => {

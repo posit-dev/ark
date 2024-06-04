@@ -6,9 +6,9 @@
 //
 
 // Polled events aren't used on Windows, so this is a no-op
-pub struct RPolledEventsSuspendedScope {}
+pub struct RLocalPolledEventsSuspended {}
 
-impl RPolledEventsSuspendedScope {
+impl RLocalPolledEventsSuspended {
     pub fn new(_value: bool) -> Self {
         Self {}
     }

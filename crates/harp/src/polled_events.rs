@@ -5,4 +5,4 @@
 //
 //
 
-pub use crate::sys::polled_events::RPolledEventsSuspendedScope;
+pub use crate::sys::polled_events::RLocalPolledEventsSuspended;

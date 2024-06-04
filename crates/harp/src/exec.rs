@@ -538,7 +538,7 @@ where
     F: 'env,
     T: 'env,
 {
-    let _scope = crate::raii::RSandboxScope::new();
+    let _scope = crate::raii::RLocalSandbox::new();
     r_top_level_exec(f)
 }
 

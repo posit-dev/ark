@@ -5,7 +5,7 @@
 //
 //
 
-pub struct RRaiiScope<T: Copy> {
+pub struct RLocal<T: Copy> {
     old_value: T,
     variable: *mut T,
 
@@ -15,28 +15,28 @@ pub struct RRaiiScope<T: Copy> {
     _pin: std::marker::PhantomPinned,
 }
 
-pub struct RRaiiBooleanScope {
-    _raii: RRaiiScope<libr::Rboolean>,
+pub struct RLocalBoolean {
+    _raii: RLocal<libr::Rboolean>,
 }
 
-pub struct RInterruptsSuspendedScope {
-    _raii: RRaiiBooleanScope,
+pub struct RLocalInterruptsSuspended {
+    _raii: RLocalBoolean,
 }
 
-pub struct RInteractiveScope {
-    _raii: RRaiiBooleanScope,
+pub struct RLocalInteractive {
+    _raii: RLocalBoolean,
 }
 
-pub struct RSandboxScope {
-    _interrupts_scope: RInterruptsSuspendedScope,
-    _polled_events_scope: crate::sys::polled_events::RPolledEventsSuspendedScope,
+pub struct RLocalSandbox {
+    _interrupts_scope: RLocalInterruptsSuspended,
+    _polled_events_scope: crate::sys::polled_events::RLocalPolledEventsSuspended,
 }
 
-impl<T> RRaiiScope<T>
+impl<T> RLocal<T>
 where
     T: Copy,
 {
-    pub fn new(new_value: T, variable: *mut T) -> RRaiiScope<T> {
+    pub fn new(new_value: T, variable: *mut T) -> RLocal<T> {
         unsafe {
             let old_value = libr::get(variable);
             libr::set(variable, new_value);
@@ -50,7 +50,7 @@ where
     }
 }
 
-impl<T> Drop for RRaiiScope<T>
+impl<T> Drop for RLocal<T>
 where
     T: Copy,
 {
@@ -61,7 +61,7 @@ where
     }
 }
 
-impl RRaiiBooleanScope {
+impl RLocalBoolean {
     pub fn new(value: bool, variable: *mut libr::Rboolean) -> Self {
         let new_value = if value {
             libr::Rboolean_FALSE
@@ -70,32 +70,32 @@ impl RRaiiBooleanScope {
         };
 
         Self {
-            _raii: RRaiiScope::new(new_value, variable),
+            _raii: RLocal::new(new_value, variable),
         }
     }
 }
 
-impl RInterruptsSuspendedScope {
+impl RLocalInterruptsSuspended {
     pub fn new(value: bool) -> Self {
         Self {
-            _raii: RRaiiBooleanScope::new(value, unsafe { libr::R_interrupts_suspended }),
+            _raii: RLocalBoolean::new(value, unsafe { libr::R_interrupts_suspended }),
         }
     }
 }
 
-impl RInteractiveScope {
+impl RLocalInteractive {
     pub fn new(value: bool) -> Self {
         Self {
-            _raii: RRaiiBooleanScope::new(value, unsafe { libr::R_Interactive }),
+            _raii: RLocalBoolean::new(value, unsafe { libr::R_Interactive }),
         }
     }
 }
 
-impl RSandboxScope {
+impl RLocalSandbox {
     pub fn new() -> Self {
         Self {
-            _interrupts_scope: RInterruptsSuspendedScope::new(true),
-            _polled_events_scope: crate::sys::polled_events::RPolledEventsSuspendedScope::new(true),
+            _interrupts_scope: RLocalInterruptsSuspended::new(true),
+            _polled_events_scope: crate::sys::polled_events::RLocalPolledEventsSuspended::new(true),
         }
     }
 }
