@@ -21,16 +21,6 @@ pub struct SearchSchemaResult {
 	pub total_num_matches: i64
 }
 
-/// Table values formatted as strings
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct TableData {
-	/// The columns of data
-	pub columns: Vec<Vec<String>>,
-
-	/// Zero or more arrays of row labels
-	pub row_labels: Option<Vec<Vec<String>>>
-}
-
 /// The result of applying filters to a table
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct FilterResult {
@@ -95,6 +85,16 @@ pub struct ColumnSchema {
 
 	/// Size parameter for fixed-size types (list, binary)
 	pub type_size: Option<i64>
+}
+
+/// Table values formatted as strings
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct TableData {
+	/// The columns of data
+	pub columns: Vec<Vec<ColumnValue>>,
+
+	/// Zero or more arrays of row labels
+	pub row_labels: Option<Vec<Vec<String>>>
 }
 
 /// The schema for a table-like object
@@ -501,6 +501,15 @@ pub enum ColumnProfileType {
 
 	#[serde(rename = "histogram")]
 	Histogram
+}
+
+/// Union type ColumnValue
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum ColumnValue {
+	SpecialValueCode(i64),
+
+	FormattedValue(String)
 }
 
 /// Parameters for the GetSchema method.
