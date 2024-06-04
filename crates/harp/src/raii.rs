@@ -19,10 +19,6 @@ pub struct RRaiiBooleanScope {
     _raii: RRaiiScope<libr::Rboolean>,
 }
 
-pub struct RRaiiOptionScope<T: Copy> {
-    _raii: RRaiiScope<Option<T>>,
-}
-
 pub struct RInterruptsSuspendedScope {
     _raii: RRaiiBooleanScope,
 }
@@ -67,7 +63,7 @@ where
 
 impl RRaiiBooleanScope {
     pub fn new(value: bool, variable: *mut libr::Rboolean) -> Self {
-        let new_value = if value == false {
+        let new_value = if value {
             libr::Rboolean_FALSE
         } else {
             libr::Rboolean_TRUE
