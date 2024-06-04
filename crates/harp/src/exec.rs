@@ -402,6 +402,7 @@ where
                 geterrmessage()
             )),
             backtrace: std::backtrace::Backtrace::capture(),
+            span_trace: tracing_error::SpanTrace::capture(),
         })
     }
 }
@@ -625,9 +626,15 @@ pub fn r_check_stack(size: Option<usize>) -> Result<()> {
 
                 // Convert TopLevelExecError to StackUsageError
                 match err {
-                    Error::TopLevelExecError { message, backtrace } => {
-                        Err(Error::StackUsageError { message, backtrace })
-                    },
+                    Error::TopLevelExecError {
+                        message,
+                        backtrace,
+                        span_trace,
+                    } => Err(Error::StackUsageError {
+                        message,
+                        backtrace,
+                        span_trace,
+                    }),
                     _ => unreachable!(),
                 }
             },
@@ -786,7 +793,7 @@ mod tests {
                 unreachable!()
             });
 
-            assert_match!(out, Err(Error::TopLevelExecError { message, backtrace: _ }) => {
+            assert_match!(out, Err(Error::TopLevelExecError { message, backtrace: _ , span_trace: _}) => {
                 assert!(message.contains("Unexpected longjump"));
                 assert!(message.contains("my message"));
             });

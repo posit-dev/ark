@@ -66,7 +66,13 @@ pub fn init(log_file: Option<&str>, profile_file: Option<&str>) {
             // Filter based on `RUST_LOG` envvar
             .with_filter(env_filter);
 
-        let subscriber = tracing_subscriber::Registry::default().with(log);
+        // Subscriber for adding span information to errors
+        // https://docs.rs/tracing-error/latest/tracing_error
+        let errors = tracing_error::ErrorLayer::default();
+
+        let subscriber = tracing_subscriber::Registry::default()
+            .with(log)
+            .with(errors);
 
         // Only log profile if requested
         if profile_file.is_some() {
