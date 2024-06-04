@@ -59,6 +59,7 @@ lazy_static! {
     static ref RE_COMMENT_SECTION: Regex = Regex::new(r"^\s*(#+)\s*(.*?)\s*[#=-]{4,}\s*$").unwrap();
 }
 
+#[tracing::instrument(level = "info", skip_all)]
 pub fn start(folders: Vec<String>) {
     let now = std::time::Instant::now();
     lsp::log_info!("Initial indexing started");
@@ -105,6 +106,7 @@ pub fn map(mut callback: impl FnMut(&Path, &String, &IndexEntry)) {
     }
 }
 
+#[tracing::instrument(level = "trace", skip_all, fields(path = ?path))]
 pub fn update(document: &Document, path: &Path) -> anyhow::Result<()> {
     clear(path)?;
     index_document(document, path);

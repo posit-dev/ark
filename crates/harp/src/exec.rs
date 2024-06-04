@@ -396,12 +396,16 @@ where
     if success == 1 {
         Ok(res.unwrap())
     } else {
+        let mut err_buf = geterrmessage();
+
+        if err_buf.len() > 0 {
+            err_buf = format!("\nLikely caused by: {err_buf}");
+        }
+
         Err(Error::TopLevelExecError {
-            message: String::from(format!(
-                "Unexpected longjump.\nLikely caused by: {}",
-                geterrmessage()
-            )),
+            message: String::from(format!("Unexpected longjump{err_buf}")),
             backtrace: std::backtrace::Backtrace::capture(),
+            span_trace: tracing_error::SpanTrace::capture(),
         })
     }
 }
@@ -625,9 +629,15 @@ pub fn r_check_stack(size: Option<usize>) -> Result<()> {
 
                 // Convert TopLevelExecError to StackUsageError
                 match err {
-                    Error::TopLevelExecError { message, backtrace } => {
-                        Err(Error::StackUsageError { message, backtrace })
-                    },
+                    Error::TopLevelExecError {
+                        message,
+                        backtrace,
+                        span_trace,
+                    } => Err(Error::StackUsageError {
+                        message,
+                        backtrace,
+                        span_trace,
+                    }),
                     _ => unreachable!(),
                 }
             },
@@ -786,7 +796,7 @@ mod tests {
                 unreachable!()
             });
 
-            assert_match!(out, Err(Error::TopLevelExecError { message, backtrace: _ }) => {
+            assert_match!(out, Err(Error::TopLevelExecError { message, backtrace: _ , span_trace: _}) => {
                 assert!(message.contains("Unexpected longjump"));
                 assert!(message.contains("my message"));
             });

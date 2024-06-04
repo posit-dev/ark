@@ -84,6 +84,8 @@ impl<T> Drop for RThreadSafe<T> {
             return;
         };
 
+        let _span = tracing::trace_span!("async drop").entered();
+
         r_task::spawn_interrupt(|| async move {
             // Run the `drop()` method of the `RShelter`, which in turn
             // runs the `drop()` method of the wrapped Rust object, which likely

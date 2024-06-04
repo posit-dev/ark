@@ -265,6 +265,7 @@ fn main() {
     let mut startup_file: Option<String> = None;
     let mut session_mode = SessionMode::Console;
     let mut log_file: Option<String> = None;
+    let mut profile_file: Option<String> = None;
     let mut startup_notifier_file: Option<String> = None;
     let mut startup_delay: Option<std::time::Duration> = None;
     let mut r_args: Vec<String> = Vec::new();
@@ -331,6 +332,14 @@ fn main() {
                     break;
                 }
             },
+            "--profile" => {
+                if let Some(file) = argv.next() {
+                    profile_file = Some(file);
+                } else {
+                    eprintln!("A profile file must be specified with the --profile argument.");
+                    break;
+                }
+            },
             "--startup-notifier-file" => {
                 if let Some(file) = argv.next() {
                     startup_notifier_file = Some(file);
@@ -371,7 +380,7 @@ fn main() {
     }
 
     // Initialize the logger.
-    logger::initialize(log_file.as_deref());
+    logger::init(log_file.as_deref(), profile_file.as_deref());
 
     if let Some(file) = startup_notifier_file {
         let path = std::path::Path::new(&file);
@@ -447,13 +456,28 @@ fn main() {
             String::from("No location information:")
         };
 
+        let append_trace = |info: &str| -> String {
+            // Top-level-exec errors already contain a backtrace
+            if info.contains("\nR thread Backtrace") {
+                String::from("")
+            } else {
+                format!(
+                    "\nBacktrace:\n{}",
+                    std::backtrace::Backtrace::force_capture()
+                )
+            }
+        };
+
         // Report panic to the frontend
         if let Some(info) = info.downcast_ref::<&str>() {
-            log::error!("Panic! {loc} {info:}");
+            let trace = append_trace(info);
+            log::error!("Panic! {loc} {info:}{trace}");
         } else if let Some(info) = info.downcast_ref::<String>() {
-            log::error!("Panic! {loc} {info:}");
+            let trace = append_trace(&info);
+            log::error!("Panic! {loc} {info:}{trace}");
         } else {
-            log::error!("Panic! {loc} No contextual information.");
+            let trace = format!("Backtrace:\n{}", std::backtrace::Backtrace::force_capture());
+            log::error!("Panic! {loc} No contextual information.\n{trace}");
         }
 
         // Give some time to flush log

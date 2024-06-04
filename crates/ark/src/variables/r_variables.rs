@@ -194,9 +194,9 @@ impl RVariables {
         self.version
     }
 
+    #[tracing::instrument(level = "trace", skip_all)]
     fn list_variables(&mut self) -> Vec<Variable> {
         let mut variables: Vec<Variable> = vec![];
-
         r_task(|| {
             self.update_bindings(self.bindings());
 
@@ -361,6 +361,7 @@ impl RVariables {
         }
     }
 
+    #[tracing::instrument(level = "trace", skip_all)]
     fn update(&mut self, request_id: Option<String>) {
         let mut assigned: Vec<Variable> = vec![];
         let mut removed: Vec<String> = vec![];

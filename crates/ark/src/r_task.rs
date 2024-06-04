@@ -66,6 +66,9 @@ pub struct RTaskStartInfo {
     /// running an async task in the executor. Optional because elapsed time is
     /// computed more simply from start time in other cases.
     pub elapsed_time: Option<std::time::Duration>,
+
+    /// Tracing span for the task
+    pub span: tracing::Span,
 }
 
 impl RTask {
@@ -92,23 +95,25 @@ impl std::task::Wake for RTaskWaker {
 }
 
 impl RTaskStartInfo {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(idle: bool) -> Self {
         let thread = std::thread::current();
         let thread_id = thread.id();
-        let thread_name = thread.name().unwrap_or("<unnamed>").to_owned();
+        let thread_name = thread
+            .name()
+            .map(|n| n.to_owned())
+            .unwrap_or_else(|| format!("{thread_id:?}"))
+            .to_owned();
 
         let start_time = std::time::Instant::now();
+        let span = tracing::trace_span!("R task", thread = thread_name, interrupt = !idle,);
 
         Self {
             thread_id,
             thread_name,
             start_time,
             elapsed_time: None,
+            span,
         }
-    }
-
-    pub(crate) fn caller(&self) -> String {
-        format!("Thread '{}' ({:?})", self.thread_name, self.thread_id)
     }
 
     pub(crate) fn elapsed(&self) -> Duration {
@@ -180,7 +185,7 @@ where
         let task = RTask::Sync(RTaskSync {
             fun: closure,
             status_tx: Some(status_tx),
-            start_info: RTaskStartInfo::new(),
+            start_info: RTaskStartInfo::new(false),
         });
         get_tasks_interrupt_tx().send(task).unwrap();
 
@@ -264,7 +269,7 @@ where
     let task = RTask::Async(RTaskAsync {
         fut: Box::pin(fun()) as BoxFuture<'static, ()>,
         tasks_tx: tasks_tx.clone(),
-        start_info: RTaskStartInfo::new(),
+        start_info: RTaskStartInfo::new(only_idle),
     });
 
     tasks_tx.send(task).unwrap();

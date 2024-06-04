@@ -33,6 +33,7 @@ use tower_lsp::lsp_types::TextDocumentSyncKind;
 use tower_lsp::lsp_types::WorkDoneProgressOptions;
 use tower_lsp::lsp_types::WorkspaceFoldersServerCapabilities;
 use tower_lsp::lsp_types::WorkspaceServerCapabilities;
+use tracing::Instrument;
 use tree_sitter::Parser;
 use url::Url;
 
@@ -66,6 +67,7 @@ pub struct ConsoleInputs {
 
 // Handlers taking exclusive references to global state
 
+#[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn initialize(
     params: InitializeParams,
     lsp_state: &mut LspState,
@@ -93,7 +95,7 @@ pub(crate) fn initialize(
         }
     }
 
-    // Start indexing
+    // Start first round of indexing
     lsp::spawn_blocking(|| {
         indexer::start(folders);
         Ok(None)
@@ -151,6 +153,7 @@ pub(crate) fn initialize(
     })
 }
 
+#[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn did_open(
     params: DidOpenTextDocumentParams,
     lsp_state: &mut LspState,
@@ -178,6 +181,7 @@ pub(crate) fn did_open(
     Ok(())
 }
 
+#[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn did_change(
     params: DidChangeTextDocumentParams,
     lsp_state: &mut LspState,
@@ -199,6 +203,7 @@ pub(crate) fn did_change(
     Ok(())
 }
 
+#[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn did_close(
     params: DidCloseTextDocumentParams,
     lsp_state: &mut LspState,
@@ -233,9 +238,12 @@ pub(crate) async fn did_change_configuration(
     // we should just ignore it. Instead we need to pull the settings again for
     // all URI of interest.
 
-    update_config(workspace_uris(state), client, state).await
+    update_config(workspace_uris(state), client, state)
+        .instrument(tracing::info_span!("did_change_configuration"))
+        .await
 }
 
+#[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn did_change_formatting_options(
     uri: &Url,
     opts: &FormattingOptions,
@@ -326,6 +334,7 @@ async fn update_config(
     Ok(())
 }
 
+#[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn did_change_console_inputs(
     inputs: ConsoleInputs,
     state: &mut WorldState,

@@ -46,6 +46,7 @@ pub enum Error {
     TopLevelExecError {
         message: String,
         backtrace: Backtrace,
+        span_trace: tracing_error::SpanTrace,
     },
     ParseSyntaxError {
         message: String,
@@ -61,6 +62,7 @@ pub enum Error {
     StackUsageError {
         message: String,
         backtrace: Backtrace,
+        span_trace: tracing_error::SpanTrace,
     },
     Anyhow {
         message: String,
@@ -163,9 +165,18 @@ impl fmt::Display for Error {
 
             Error::TopLevelExecError {
                 message,
-                backtrace: _,
+                backtrace: _backtrace,
+                span_trace,
             } => {
-                write!(f, "`R_topLevelExec()` error: {}", message)
+                writeln!(f, "{message}")?;
+
+                writeln!(f)?;
+                writeln!(f, "In spans:")?;
+                span_trace.fmt(f)?;
+                writeln!(f)?;
+                writeln!(f)?;
+
+                Ok(())
             },
 
             Error::ParseSyntaxError { message, line } => {
@@ -234,7 +245,13 @@ impl fmt::Debug for Error {
             Error::TopLevelExecError {
                 message: _,
                 backtrace,
-            } => fmt::Display::fmt(backtrace, f),
+                span_trace: _,
+            } => {
+                // If you change this header, make sure to update the panic handler in main.rs
+                writeln!(f)?;
+                writeln!(f, "R thread Backtrace:")?;
+                fmt::Display::fmt(backtrace, f)
+            },
             _ => Ok(()),
         }
     }

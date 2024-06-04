@@ -28,6 +28,7 @@ crossbeam = { version = "0.8.2", features = ["crossbeam-channel"] }
 anyhow = "1.0.80"
 serde_with = "3.0.0"
 serde_repr = "0.1.17"
+tracing = "0.1.40"
 
 [dev-dependencies]
 rand = "0.8.5"
