@@ -16,13 +16,11 @@ use crate::call::RCall;
 use crate::environment::R_ENVS;
 use crate::error::Error;
 use crate::error::Result;
-use crate::interrupts::RInterruptsSuspendedScope;
 use crate::line_ending::convert_line_endings;
 use crate::line_ending::LineEnding;
 use crate::modules::HARP_ENV;
 use crate::object::r_list_get;
 use crate::object::RObject;
-use crate::polled_events::RPolledEventsSuspendedScope;
 use crate::protect::RProtect;
 use crate::r_null;
 use crate::r_string;
@@ -540,22 +538,8 @@ where
     F: 'env,
     T: 'env,
 {
-    let _scope = RSandboxScope::new();
+    let _scope = crate::raii::RLocalSandbox::new();
     r_top_level_exec(f)
-}
-
-pub struct RSandboxScope {
-    _interrupts_scope: RInterruptsSuspendedScope,
-    _polled_events_scope: RPolledEventsSuspendedScope,
-}
-
-impl RSandboxScope {
-    pub fn new() -> RSandboxScope {
-        RSandboxScope {
-            _interrupts_scope: RInterruptsSuspendedScope::new(),
-            _polled_events_scope: RPolledEventsSuspendedScope::new(),
-        }
-    }
 }
 
 /// Unwrap Rust error and throw as R error

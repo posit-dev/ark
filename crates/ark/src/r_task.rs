@@ -5,19 +5,123 @@
 //
 //
 
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use crossbeam::channel::bounded;
 use crossbeam::channel::Sender;
-use harp::exec::r_sandbox;
 use harp::test::R_TASK_BYPASS;
-use libr::R_Interactive;
+use uuid::Uuid;
 
 use crate::interface::RMain;
 
+// Compared to `futures::BoxFuture`, this doesn't require the future to be Send.
+// We don't need this bound since the executor runs on only on the R thread
+pub(crate) type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
+
 type SharedOption<T> = Arc<Mutex<Option<T>>>;
+
+pub enum RTask {
+    Sync(RTaskSync),
+    Async(RTaskAsync),
+    Parked(Arc<RTaskWaker>),
+}
+
+pub struct RTaskSync {
+    pub fun: Box<dyn FnOnce() + Send + 'static>,
+    pub status_tx: Option<Sender<RTaskStatus>>,
+    pub start_info: RTaskStartInfo,
+}
+
+pub struct RTaskAsync {
+    pub fut: BoxFuture<'static, ()>,
+    pub tasks_tx: Sender<RTask>,
+    pub start_info: RTaskStartInfo,
+}
+
+#[derive(Clone)]
+pub struct RTaskWaker {
+    pub id: Uuid,
+    pub tasks_tx: Sender<RTask>,
+    pub start_info: RTaskStartInfo,
+}
+
+#[derive(Debug)]
+pub enum RTaskStatus {
+    Started,
+    Finished(harp::error::Result<()>),
+}
+
+#[derive(Clone)]
+pub struct RTaskStartInfo {
+    pub thread_id: std::thread::ThreadId,
+    pub thread_name: String,
+    pub start_time: std::time::Instant,
+
+    /// Time it took to run the time. Used to record time accumulated while
+    /// running an async task in the executor. Optional because elapsed time is
+    /// computed more simply from start time in other cases.
+    pub elapsed_time: Option<std::time::Duration>,
+}
+
+impl RTask {
+    pub(crate) fn start_info_mut(&mut self) -> Option<&mut RTaskStartInfo> {
+        match self {
+            RTask::Sync(ref mut task) => Some(&mut task.start_info),
+            RTask::Async(ref mut task) => Some(&mut task.start_info),
+            RTask::Parked(_) => None,
+        }
+    }
+}
+
+// RTaskAsync is not Send because of the Future variant which doesn't require
+// Send to avoid issues across await points, but the future as a whole is
+// actually safe to send to other threads.
+unsafe impl Send for RTaskAsync {}
+unsafe impl Sync for RTaskAsync {}
+
+impl std::task::Wake for RTaskWaker {
+    fn wake(self: Arc<RTaskWaker>) {
+        let tasks_tx = self.tasks_tx.clone();
+        tasks_tx.send(RTask::Parked(self)).unwrap();
+    }
+}
+
+impl RTaskStartInfo {
+    pub(crate) fn new() -> Self {
+        let thread = std::thread::current();
+        let thread_id = thread.id();
+        let thread_name = thread.name().unwrap_or("<unnamed>").to_owned();
+
+        let start_time = std::time::Instant::now();
+
+        Self {
+            thread_id,
+            thread_name,
+            start_time,
+            elapsed_time: None,
+        }
+    }
+
+    pub(crate) fn caller(&self) -> String {
+        format!("Thread '{}' ({:?})", self.thread_name, self.thread_id)
+    }
+
+    pub(crate) fn elapsed(&self) -> Duration {
+        self.elapsed_time
+            .unwrap_or_else(|| self.start_time.elapsed())
+    }
+
+    pub(crate) fn bump_elapsed(&mut self, duration: Duration) {
+        if let Some(ref mut elapsed_time) = self.elapsed_time {
+            *elapsed_time = *elapsed_time + duration;
+        }
+    }
+}
 
 // The `Send` bound on `F` is necessary for safety. Although we are not
 // worried about data races since control flow from one thread to the other
@@ -48,18 +152,9 @@ where
         return f();
     }
 
-    let thread = std::thread::current();
-    let thread_id = thread.id();
-    let thread_name = thread.name().unwrap_or("<unnamed>");
-
-    log::info!("Thread '{thread_name}' ({thread_id:?}) is requesting a task.");
-
     // The following is adapted from `Crossbeam::thread::ScopedThreadBuilder`.
     // Instead of scoping the task with a thread join, we send it on the R
     // thread and block the thread until a completion channel wakes us up.
-
-    // Record how long it takes for the task to be picked up on the main thread.
-    let now = std::time::SystemTime::now();
 
     // The result of `f` will be stored here.
     let result = SharedOption::default();
@@ -75,18 +170,19 @@ where
         // scope until the closure has finished running, so the objects
         // captured by the closure are guaranteed to exist for the duration
         // of the closure call.
-        let closure: Box<dyn FnOnce() + 'env + Send> = Box::new(closure);
+        let closure: Box<dyn FnOnce() + Send + 'env> = Box::new(closure);
         let closure: Box<dyn FnOnce() + Send + 'static> = unsafe { std::mem::transmute(closure) };
 
         // Channel to communicate status of the task/closure
         let (status_tx, status_rx) = bounded::<RTaskStatus>(0);
 
         // Send the task to the R thread
-        let task = RTaskMain {
-            closure: Some(closure),
+        let task = RTask::Sync(RTaskSync {
+            fun: closure,
             status_tx: Some(status_tx),
-        };
-        get_tasks_tx().send(task).unwrap();
+            start_info: RTaskStartInfo::new(),
+        });
+        get_tasks_interrupt_tx().send(task).unwrap();
 
         // Block until we get the signal that the task has started
         let status = status_rx.recv().unwrap();
@@ -124,132 +220,88 @@ where
         }
     }
 
-    // Log how long we were stuck waiting.
-    let elapsed = now.elapsed().unwrap().as_millis();
-    log::info!(
-        "Thread '{thread_name}' ({thread_id:?}) was unblocked after waiting for {elapsed} milliseconds."
-    );
-
     // Retrieve closure result from the synchronized shared option.
     // If we get here without panicking we know the result was assigned.
     return result.lock().unwrap().take().unwrap();
 }
 
-pub fn r_async_task<F>(f: F)
+#[allow(dead_code)] // Currently unused
+pub(crate) fn spawn_idle<F, Fut>(fun: F)
 where
-    F: FnOnce(),
-    F: Send + 'static,
+    F: FnOnce() -> Fut + 'static + Send,
+    Fut: Future<Output = ()> + 'static,
 {
-    // Escape hatch for unit tests
-    if unsafe { R_TASK_BYPASS } {
-        f();
+    spawn_ext(fun, true)
+}
+
+pub(crate) fn spawn_interrupt<F, Fut>(fun: F)
+where
+    F: FnOnce() -> Fut + 'static + Send,
+    Fut: Future<Output = ()> + 'static,
+{
+    spawn_ext(fun, false)
+}
+
+fn spawn_ext<F, Fut>(fun: F, only_idle: bool)
+where
+    F: FnOnce() -> Fut + 'static + Send,
+    Fut: Future<Output = ()> + 'static,
+{
+    // Idle tasks are always run from the read-console loop
+    if !only_idle && unsafe { R_TASK_BYPASS } {
+        // Escape hatch for unit tests
+        futures::executor::block_on(fun());
         return;
     }
 
-    // Recursive case: If we're on ark-r-main already, just run the
-    // task and return. This allows `r_task(|| { r_task(|| {}) })`
-    // to run without deadlocking.
-    if RMain::on_main_thread() {
-        f();
-        return;
-    }
-
-    let thread = std::thread::current();
-    let thread_id = thread.id();
-    let thread_name = thread.name().unwrap_or("<unnamed>");
-
-    log::info!("Thread '{thread_name}' ({thread_id:?}) is requesting an async task.");
-
-    let closure: Box<dyn FnOnce() + Send + 'static> = Box::new(f);
+    let tasks_tx = if only_idle {
+        get_tasks_idle_tx()
+    } else {
+        get_tasks_interrupt_tx()
+    };
 
     // Send the async task to the R thread
-    let task = RTaskMain {
-        closure: Some(closure),
-        status_tx: None,
-    };
-    get_tasks_tx().send(task).unwrap();
+    let task = RTask::Async(RTaskAsync {
+        fut: Box::pin(fun()) as BoxFuture<'static, ()>,
+        tasks_tx: tasks_tx.clone(),
+        start_info: RTaskStartInfo::new(),
+    });
 
-    // Log that we've sent off the async task
-    log::info!("Thread '{thread_name}' ({thread_id:?}) has sent the async task.");
-}
-
-#[derive(Debug)]
-pub enum RTaskStatus {
-    Started,
-    Finished(harp::error::Result<()>),
-}
-
-pub struct RTaskMain {
-    pub closure: Option<Box<dyn FnOnce() + Send + 'static>>,
-    pub status_tx: Option<Sender<RTaskStatus>>,
-}
-
-impl RTaskMain {
-    pub fn fulfill(&mut self) {
-        // Immediately let caller know we have started so it can set up the
-        // timeout
-        if let Some(status_tx) = &self.status_tx {
-            status_tx.send(RTaskStatus::Started).unwrap();
-        }
-
-        // Move closure here and call it
-        let closure = self.closure.take().unwrap();
-
-        // Background tasks can't take any user input, so we set R_Interactive
-        // to 0 to prevent `readline()` from blocking the task.
-        unsafe { libr::set(R_Interactive, 0) };
-        let result = r_sandbox(closure);
-        unsafe { libr::set(R_Interactive, 1) };
-
-        match &self.status_tx {
-            Some(status_tx) => {
-                // Unblock caller via the notification channel if it was a
-                // blocking call. Failures are handled by the caller.
-                status_tx.send(RTaskStatus::Finished(result)).unwrap()
-            },
-            None => {
-                // If task is async panic immediately in case of failure
-                if let Err(err) = result {
-                    panic!("While running task: {err:?}");
-                }
-            },
-        };
-    }
+    tasks_tx.send(task).unwrap();
 }
 
 /// Channel for sending tasks to `R_MAIN`. Initialized by `initialize()`, but
-/// is otherwise only accessed by `r_task()` and `r_async_task()`.
-static mut R_MAIN_TASKS_TX: Mutex<Option<Sender<RTaskMain>>> = Mutex::new(None);
+/// is otherwise only accessed to create `RTask`s.
+static mut R_MAIN_TASKS_INTERRUPT_TX: OnceLock<Sender<RTask>> = OnceLock::new();
+static mut R_MAIN_TASKS_IDLE_TX: OnceLock<Sender<RTask>> = OnceLock::new();
 
-pub fn initialize(tasks_tx: Sender<RTaskMain>) {
-    unsafe { *R_MAIN_TASKS_TX.lock().unwrap() = Some(tasks_tx) };
+pub fn initialize(tasks_tx: Sender<RTask>, tasks_idle_tx: Sender<RTask>) {
+    unsafe { R_MAIN_TASKS_INTERRUPT_TX.set(tasks_tx).unwrap() };
+    unsafe { R_MAIN_TASKS_IDLE_TX.set(tasks_idle_tx).unwrap() };
 }
 
 // Be defensive for the case an auxiliary thread runs a task before R is initialized
 // by `start_r()`, which calls `r_task::initialize()`
-fn get_tasks_tx() -> Sender<RTaskMain> {
-    let now = std::time::SystemTime::now();
+fn get_tasks_interrupt_tx() -> &'static Sender<RTask> {
+    get_tx(unsafe { &R_MAIN_TASKS_INTERRUPT_TX })
+}
+fn get_tasks_idle_tx() -> &'static Sender<RTask> {
+    get_tx(unsafe { &R_MAIN_TASKS_IDLE_TX })
+}
+
+fn get_tx(once_tx: &'static OnceLock<Sender<RTask>>) -> &'static Sender<RTask> {
+    let now = std::time::Instant::now();
 
     loop {
-        let guard = unsafe { R_MAIN_TASKS_TX.lock().unwrap() };
-
-        if let Some(ref tasks_tx) = *guard {
-            // Return a clone of the sender so we can immediately unlock
-            // `R_MAIN_TASKS_TX` for use by other tasks (especially async ones)
-            return tasks_tx.clone();
+        if let Some(tx) = once_tx.get() {
+            return tx;
         }
 
-        // If not initialized, drop to give `initialize()` time to lock
-        // and set `R_MAIN_TASKS_TX`
-        drop(guard);
+        // Wait for `initialize()`
+        log::info!("`tasks_tx` not yet initialized, going to sleep for 50ms.");
+        std::thread::sleep(Duration::from_millis(50));
 
-        log::info!("`tasks_tx` not yet initialized, going to sleep for 100ms.");
-
-        std::thread::sleep(Duration::from_millis(100));
-
-        let elapsed = now.elapsed().unwrap().as_secs();
-
-        if elapsed > 50 {
+        if now.elapsed().as_secs() > 50 {
             panic!("Can't acquire `tasks_tx` after 50 seconds.");
         }
     }

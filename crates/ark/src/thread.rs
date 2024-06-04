@@ -8,7 +8,7 @@
 use harp::test::R_TASK_BYPASS;
 
 use crate::interface::RMain;
-use crate::r_task::r_async_task;
+use crate::r_task;
 
 /// Private "shelter" around a Rust object (typically wrapping a `SEXP`, like
 /// an `RObject`) that makes it `Send`able
@@ -84,7 +84,7 @@ impl<T> Drop for RThreadSafe<T> {
             return;
         };
 
-        r_async_task(move || {
+        r_task::spawn_interrupt(|| async move {
             // Run the `drop()` method of the `RShelter`, which in turn
             // runs the `drop()` method of the wrapped Rust object, which likely
             // uses the R API (i.e. if it is an `RObject`) so it must be called

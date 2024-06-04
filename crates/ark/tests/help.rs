@@ -16,7 +16,7 @@ use amalthea::socket::comm::CommSocket;
 use ark::help::message::HelpReply;
 use ark::help::message::HelpRequest;
 use ark::help::r_help::RHelp;
-use ark::r_task;
+use ark::r_task::r_task;
 use ark::test::r_test;
 use harp::exec::RFunction;
 

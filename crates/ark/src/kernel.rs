@@ -18,7 +18,7 @@ use anyhow::Result;
 use crossbeam::channel::Sender;
 
 use crate::interface::RMain;
-use crate::r_task::r_async_task;
+use crate::r_task;
 use crate::request::KernelRequest;
 use crate::ui::UiCommMessage;
 
@@ -69,11 +69,11 @@ impl Kernel {
             log::error!("Error establishing working directory for frontend: {err:?}");
         }
 
-        // We shouldn't block with an `r_task()` while holding the kernel lock.
+        // We shouldn't block with an `RTask` while holding the kernel lock.
         // So check for status in an async task and send event from there.
         let kernel = self.kernel.as_ref().unwrap().clone();
 
-        r_async_task(move || {
+        r_task::spawn_interrupt(|| async move {
             // Get the current busy status
             let busy = if RMain::initialized() {
                 RMain::get().is_busy
