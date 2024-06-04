@@ -1084,11 +1084,11 @@ fn format_column(x: SEXP) -> anyhow::Result<Vec<ColumnValue>> {
 
     let special_value_codes = special_values(x);
     let output = formatted
-        .iter()
-        .zip(special_value_codes.iter())
+        .into_iter()
+        .zip(special_value_codes.into_iter())
         .map(|(val, code)| match code {
-            SpecialValueTypes::NotSpecial => ColumnValue::FormattedValue(val.clone()),
-            _ => ColumnValue::SpecialValueCode(code.clone().into()),
+            SpecialValueTypes::NotSpecial => ColumnValue::FormattedValue(val),
+            _ => ColumnValue::SpecialValueCode(code.into()),
         })
         .collect();
 
