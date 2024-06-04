@@ -1,5 +1,8 @@
-// Based on https://github.com/rust-lang/rust-analyzer/blob/master/crates/rust-analyzer/src/tracing/hprof.rs
-// Includes custom writer.
+// Embedded dependency: hprof
+// Source: https://github.com/rust-lang/rust-analyzer/blob/master/crates/rust-analyzer/src/tracing/hprof.rs
+// License: MIT OR Apache-2.0
+
+// Modified version of hprof that includes custom writer.
 
 // Consumer of `tracing` data, which prints a hierarchical profile.
 //
