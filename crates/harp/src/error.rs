@@ -246,7 +246,12 @@ impl fmt::Debug for Error {
                 message: _,
                 backtrace,
                 span_trace: _,
-            } => fmt::Display::fmt(backtrace, f),
+            } => {
+                // If you change this header, make sure to update the panic handler in main.rs
+                writeln!(f)?;
+                writeln!(f, "R thread Backtrace:")?;
+                fmt::Display::fmt(backtrace, f)
+            },
             _ => Ok(()),
         }
     }

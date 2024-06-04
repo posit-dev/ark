@@ -456,14 +456,27 @@ fn main() {
             String::from("No location information:")
         };
 
-        let trace = format!("Backtrace:\n{}", std::backtrace::Backtrace::force_capture());
+        let append_trace = |info: &str| -> String {
+            // Top-level-exec errors already contain a backtrace
+            if info.contains("\nR thread Backtrace") {
+                String::from("")
+            } else {
+                format!(
+                    "\nBacktrace:\n{}",
+                    std::backtrace::Backtrace::force_capture()
+                )
+            }
+        };
 
         // Report panic to the frontend
         if let Some(info) = info.downcast_ref::<&str>() {
-            log::error!("Panic! {loc} {info:}\n{trace}");
+            let trace = append_trace(info);
+            log::error!("Panic! {loc} {info:}{trace}");
         } else if let Some(info) = info.downcast_ref::<String>() {
-            log::error!("Panic! {loc} {info:}\n{trace}");
+            let trace = append_trace(&info);
+            log::error!("Panic! {loc} {info:}{trace}");
         } else {
+            let trace = format!("Backtrace:\n{}", std::backtrace::Backtrace::force_capture());
             log::error!("Panic! {loc} No contextual information.\n{trace}");
         }
 
