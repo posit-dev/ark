@@ -396,11 +396,14 @@ where
     if success == 1 {
         Ok(res.unwrap())
     } else {
+        let mut err_buf = geterrmessage();
+
+        if err_buf.len() > 0 {
+            err_buf = format!("\nLikely caused by: {err_buf}");
+        }
+
         Err(Error::TopLevelExecError {
-            message: String::from(format!(
-                "Unexpected longjump.\nLikely caused by: {}",
-                geterrmessage()
-            )),
+            message: String::from(format!("Unexpected longjump{err_buf}")),
             backtrace: std::backtrace::Backtrace::capture(),
             span_trace: tracing_error::SpanTrace::capture(),
         })
