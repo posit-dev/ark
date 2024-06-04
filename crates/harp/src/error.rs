@@ -96,20 +96,8 @@ impl fmt::Display for Error {
                 }
             },
 
-            Error::TopLevelExecError {
-                message,
-                backtrace: _backtrace,
-                span_trace,
-            } => {
-                writeln!(f, "{message}")?;
-
-                writeln!(f)?;
-                writeln!(f, "In spans:")?;
-                span_trace.fmt(f)?;
-                writeln!(f)?;
-                writeln!(f)?;
-
-                Ok(())
+            Error::TopLevelExecError { message, .. } => {
+                writeln!(f, "{message}")
             },
 
             Error::UnsafeEvaluationError(code) => {
@@ -224,8 +212,13 @@ impl fmt::Debug for Error {
             Error::TopLevelExecError {
                 message: _,
                 backtrace,
-                span_trace: _,
+                span_trace,
             } => {
+                if span_trace.status() == tracing_error::SpanTraceStatus::CAPTURED {
+                    writeln!(f, "\n\nIn spans:")?;
+                    span_trace.fmt(f)?;
+                }
+
                 writeln!(f, "\n\nR thread backtrace:\n{backtrace}")?;
                 fmt::Display::fmt(backtrace, f)
             },
