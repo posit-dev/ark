@@ -53,6 +53,11 @@ pub fn indent_edit(doc: &Document, line: usize) -> anyhow::Result<Option<Vec<Ark
     // log::trace!("node: {node:?}");
     // log::trace!("bol_parent: {bol_parent:?}");
 
+    // The indentation of the line the node starts on
+    let node_line_indent = |point: tree_sitter::Node| -> usize {
+        line_indent(text, point.start_position().row, config).0
+    };
+
     // Structured in two stages as in Emacs TS rules: first match, then
     // return anchor and indent size. We can add more rules here as needed.
     let (anchor, indent) = match bol_parent {
@@ -60,8 +65,8 @@ pub fn indent_edit(doc: &Document, line: usize) -> anyhow::Result<Option<Vec<Ark
         // outdents:
         // https://github.com/posit-dev/positron/issues/1880
         // https://github.com/posit-dev/positron/issues/2764
-        parent if parent.is_program() => (parent, 0),
-        parent if parent.is_braced_expression() => (parent, config.indent_size),
+        parent if parent.is_program() => (parent.start_position().column, 0),
+        parent if parent.is_braced_expression() => (node_line_indent(parent), config.indent_size),
 
         // Indentation of chained operators (aka pipelines):
         // https://github.com/posit-dev/positron/issues/2707
@@ -71,15 +76,13 @@ pub fn indent_edit(doc: &Document, line: usize) -> anyhow::Result<Option<Vec<Ark
                 .find(|n| n.parent().map_or(true, |p| !p.is_binary_operator()))
                 .unwrap_or(parent); // Should not happen
 
-            (anchor, config.indent_size)
+            (anchor.start_position().column, config.indent_size)
         },
         _ => return Ok(None),
     };
 
-    let anchor_pos = anchor.start_position();
-    let new_indent = anchor_pos.column + indent;
-
-    let (old_indent, old_indent_byte) = get_line_indent(text, line, config);
+    let new_indent = anchor + indent;
+    let (old_indent, old_indent_byte) = line_indent(text, line, config);
 
     if old_indent == new_indent {
         return Ok(None);
@@ -104,11 +107,7 @@ pub fn indent_edit(doc: &Document, line: usize) -> anyhow::Result<Option<Vec<Ark
 }
 
 /// Returns indent as a pair of space size and byte size
-pub fn get_line_indent(
-    text: &ropey::Rope,
-    line: usize,
-    config: &IndentationConfig,
-) -> (usize, usize) {
+pub fn line_indent(text: &ropey::Rope, line: usize, config: &IndentationConfig) -> (usize, usize) {
     let mut byte_indent = 0;
     let mut indent = 0;
     let mut iter = text.chars_at(text.line_to_char(line));
@@ -276,6 +275,13 @@ mod tests {
         let edit = indent_edit(&doc, 1).unwrap().unwrap();
         apply_text_edits(edit, &mut text).unwrap();
         assert_eq!(text, String::from("{\n  bar\n}"));
+
+        let mut text = String::from("function() {\nbar\n}");
+        let doc = test_doc(&text);
+
+        let edit = indent_edit(&doc, 1).unwrap().unwrap();
+        apply_text_edits(edit, &mut text).unwrap();
+        assert_eq!(text, String::from("function() {\n  bar\n}"));
     }
 
     #[test]
