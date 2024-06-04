@@ -72,17 +72,32 @@ pkg_hook <- function(pkg, name, hook, hook_namespace = NULL) {
 # such a general event.
 register_onload_hook <- function() {
     ns <- asNamespace("base")
+    local_unlock_binding(ns, "getHook")
 
-    local_unlock_binding(ns, ".userHooksEnv")
+    ns[["getHook"]] <- function(hookName, ...) {
+        hooks <- get0(hookName, envir = .userHooksEnv, inherits = FALSE, ifnotfound = list())
 
-    ns[[".userHooksEnv"]][["Ark::onLoad"]] <- list(function(pkg, path) {
-        .ps.Call("ps_onload_hook", pkg, path)
-    })
+        if (!grepl("^UserHook::.*::onLoad$", hookName)) {
+            return(hooks)
+        }
 
-    expr <- quote(if (grepl("^UserHook::.*::onLoad$", hookName)) {
-        return(get0("Ark::onLoad", envir = .userHooksEnv, inherits = FALSE, ifnotfound = list()))
-    })
+        is_ark_hook <- function(fn) {
+            inherits(fn, "ark_onload_hook")
+        }
 
-    push_body(ns, "getHook", expr)
-    push_body(baseenv(), "getHook", expr)
+        # Inject our onload hook but only if not already there
+        if (is.na(Position(is_ark_hook, hooks))) {
+            c(list(ark_onload_hook), hooks)
+        } else {
+            hooks
+        }
+    }
 }
+
+ark_onload_hook <- function(pkg, path) {
+    .ps.Call("ps_onload_hook", pkg, path)
+}
+ark_onload_hook <- structure(
+    ark_onload_hook,
+    class = c("ark_onload_hook", "function")
+)
