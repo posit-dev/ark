@@ -1287,6 +1287,8 @@ fn test_data_explorer_special_values() {
 
                 assert_eq!(data.columns[5][0], ColumnValue::SpecialValueCode(0));
             }
+
         );
-    })
+        r_parse_eval0("rm(x)", R_ENVS.global).unwrap();
+    });
 }
