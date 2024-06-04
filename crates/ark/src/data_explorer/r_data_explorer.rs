@@ -1078,12 +1078,14 @@ impl RDataExplorer {
         selection: DataSelection,
         format: ExportFormat,
     ) -> anyhow::Result<String> {
-        export_selection::export_selection(
-            self.table.get().sexp,
-            self.view_indices.clone(),
-            selection,
-            format,
-        )
+        r_task(|| {
+            export_selection::export_selection(
+                self.table.get().sexp,
+                self.view_indices.clone(),
+                selection,
+                format,
+            )
+        })
     }
 }
 
