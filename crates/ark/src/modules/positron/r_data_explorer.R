@@ -279,6 +279,68 @@ format_list_column <- function(x) {
     })
 }
 
+# Specialized function to format integer values, supporting format options
+# that the front-end might provide.
+# This function must be vectorized on `x`.
+format_integer <- function(x, thousands_sep) {
+    base::format(x, big.mark = thousands_sep)
+}
+
+#' Format a real number for display
+#'
+#' This function must be vectorized on `x`.
+#'
+#' @param large_num_digits Fixed number of decimal places to display for numbers over 1, or in
+#'  scientific notation.
+#' @param small_num_digits Fixed number of decimal places to display for numbers under 1.
+#' @param max_integral_digits Maximum number of integral digits to display before switching to
+#'  scientific notation.
+#' @param thousands_sep Thousands separator string
+format_real <- function(x, large_num_digits, small_num_digits, max_integral_digits, thousands_sep) {
+  # format numbers larger than 1
+  formatted <- character(length(x))
+
+  # The limit for large numbers before switching to scientific
+  # notation
+  upper_threshold <- 10^max_integral_digits
+
+  # The limit for small numbers before switching to scientific
+  # notation
+  lower_threshold <- 10^(-(small_num_digits - 1))
+
+  abs_x <- abs(x)
+  formatted <- format_if(
+      formatted, x, abs_x >= upper_threshold & is.finite(x),
+      scientific = TRUE, nsmall = large_num_digits
+  )
+  formatted <- format_if(
+      formatted, x, abs_x > 1 & abs_x < upper_threshold,
+      scientific = FALSE, nsmall = large_num_digits, big.mark = thousands_sep
+  )
+  formatted <- format_if(
+      formatted, x, abs_x <= 1 & abs_x >= lower_threshold,
+      scientific = FALSE, nsmall = small_num_digits
+  )
+  formatted <- format_if(
+      formatted, x, abs_x < lower_threshold & is.finite(x),
+      scientific = TRUE, nsmall = large_num_digits
+  )
+  formatted <- format_if( # special case 0 to align with other medium numbers
+        formatted, x, abs_x == 0,
+        scientific = FALSE, nsmall = small_num_digits
+  )
+
+  formatted
+}
+
+format_if <- function(formatted, x, condition, ...) {
+  if (any(condition, na.rm = TRUE)) { # avoids copying formatted if condition doesn't match anything
+      pos <- which(condition)
+      formatted[pos] <- base::format(x[pos], ...)
+  }
+  formatted
+}
+
 export_selection <- function(x, format = c("csv", "tsv", "html"), include_header = TRUE) {
     format <- match.arg(format)
 
