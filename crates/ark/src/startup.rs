@@ -124,7 +124,11 @@ fn find_user_r_profile() -> Option<PathBuf> {
 
     // Then from current directory level `.Rprofile`
     match std::env::current_dir().map(|dir| dir.join(".Rprofile")) {
-        Ok(path) => return Some(path),
+        Ok(path) => {
+            if path.exists() {
+                return Some(path);
+            }
+        },
         Err(_) => {
             // Swallow any errors and try other sources
             ()
@@ -133,7 +137,11 @@ fn find_user_r_profile() -> Option<PathBuf> {
 
     // Then from user level home `.Rprofile`
     match sys::path::r_user_home().map(|dir| dir.join(".Rprofile")) {
-        Some(path) => return Some(path),
+        Some(path) => {
+            if path.exists() {
+                return Some(path);
+            }
+        },
         None => (),
     }
 
