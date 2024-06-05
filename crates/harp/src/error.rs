@@ -88,28 +88,12 @@ impl fmt::Display for Error {
                 write!(f, "Error parsing {}: {}", code, message)
             },
 
-            Error::EvaluationError {
-                code,
-                message,
-                r_trace,
-                rust_trace,
-                ..
-            } => {
-                let mut message = if let Some(code) = code {
-                    format!("Error evaluating {code}: {message}")
+            Error::EvaluationError { code, message, .. } => {
+                if let Some(code) = code {
+                    write!(f, "Error evaluating {code}: {message}")
                 } else {
-                    message.clone()
-                };
-
-                if !r_trace.is_empty() {
-                    message = format!("{message}\n\nR backtrace:\n{r_trace}");
+                    write!(f, "{message}")
                 }
-
-                if let Some(rust_trace) = rust_trace {
-                    message = format!("{message}\n\nR thread backtrace:\n{rust_trace}");
-                }
-
-                write!(f, "{message}")
             },
 
             Error::TopLevelExecError {
@@ -233,17 +217,35 @@ impl fmt::Debug for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(self, f)?;
 
+        // If you change the "R thread backtrace" header, make sure to update
+        // the panic handler in main.rs
+
         match self {
             Error::TopLevelExecError {
                 message: _,
                 backtrace,
                 span_trace: _,
             } => {
-                // If you change this header, make sure to update the panic handler in main.rs
-                writeln!(f)?;
-                writeln!(f, "R thread backtrace:")?;
+                writeln!(f, "\n\nR thread backtrace:\n{backtrace}")?;
                 fmt::Display::fmt(backtrace, f)
             },
+
+            Error::EvaluationError {
+                r_trace,
+                rust_trace,
+                ..
+            } => {
+                if !r_trace.is_empty() {
+                    writeln!(f, "\n\nR backtrace:\n{r_trace}")?;
+                }
+
+                if let Some(rust_trace) = rust_trace {
+                    writeln!(f, "\n\nR thread backtrace:\n{rust_trace}")?;
+                }
+
+                Ok(())
+            },
+
             _ => Ok(()),
         }
     }
