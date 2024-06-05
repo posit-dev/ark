@@ -105,8 +105,18 @@ fn find_site_r_profile(r_home: &PathBuf) -> Option<PathBuf> {
         Err(_) => (),
     };
 
-    // Then from specified location under R's home directory
-    // TODO: Need etc/x64 on Windows?
+    // Then try arch specific `Rprofile.site` location
+    // (Typically only for Windows, with `etc/x86/Rprofile.site`)
+    if let Ok(arch) = std::env::var("R_ARCH") {
+        // Typically need to remove leading `/`.
+        let arch = arch.replace("/", "");
+        let path = r_home.join("etc").join(arch).join("Rprofile.site");
+        if path.exists() {
+            return Some(path);
+        }
+    }
+
+    // Then try arch agnostic `Rprofile.site` location
     let path = r_home.join("etc").join("Rprofile.site");
     if path.exists() {
         return Some(path);
