@@ -399,7 +399,7 @@ where
         let mut err_buf = geterrmessage();
 
         if err_buf.len() > 0 {
-            err_buf = format!("\nLikely caused by: {err_buf}");
+            err_buf = format!("\nLikely caused by:\n{err_buf}");
         }
 
         Err(Error::TopLevelExecError {
