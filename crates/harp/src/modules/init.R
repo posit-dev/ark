@@ -8,10 +8,7 @@ try_catch_handler <- function(cnd) {
         calls <- calls[-seq(n - 3, n)]
     }
 
-    trace <- format_traceback(calls)
-
-    # More recent calls should be first to match the Rust backtraces
-    trace <- rev(trace)
+    trace <- format_traceback(calls, rust_like = TRUE)
 
     message <- conditionMessage(cnd)
     class <- class(cnd)
@@ -27,7 +24,7 @@ try_catch_handler <- function(cnd) {
 
 #' @param traceback A list of calls.
 #' @param rev Whether to list older calls first.
-format_traceback <- function(traceback = list()) {
+format_traceback <- function(traceback = list(), rust_like = FALSE) {
     n <- length(traceback)
 
     # TODO: This implementation prints the traceback in the same ordering
@@ -42,13 +39,22 @@ format_traceback <- function(traceback = list()) {
     has_srcref <- nchar(srcrefs) != 0L
     srcrefs[has_srcref] <- vec_paste0(" at ", srcrefs[has_srcref])
 
-    # Converts to a list of quoted calls to a list of deparsd calls.
+    # Converts from a list of quoted calls to a list of deparsed calls.
     # Respects global options `"traceback.max.lines"` and `"deparse.max.lines"`!
     traceback <- .traceback(traceback)
 
+    # Line prefix sequence
+    seq <- seq_len(n)
+
+    if (rust_like) {
+        # Rust backtraces have younger frames first and count from 0
+        traceback <- rev(traceback)
+        seq <- seq - 1L
+    }
+
     # Prepend the stack number to each deparsed call, padding multiline calls as needed,
     # and then collapse multiline calls into one line
-    prefixes <- vec_paste0(seq_len(n), ". ")
+    prefixes <- vec_paste0(seq, ". ")
     prefixes <- format(prefixes, justify = "right")
 
     traceback <- mapply(prepend_prefix, traceback, prefixes, SIMPLIFY = FALSE)

@@ -115,11 +115,13 @@ pub fn try_eval(expr: RObject, env: RObject) -> crate::Result<RObject> {
                 message,
                 class,
                 r_trace,
+                rust_trace,
             } => Err(Error::EvaluationError {
                 code: Some(unsafe { r_stringify(expr.sexp, "\n")? }),
                 message,
                 class,
                 r_trace,
+                rust_trace,
             }),
             // Propagate as is
             _ => Err(err),
@@ -177,9 +179,12 @@ impl<T: Into<RObject>> RFunctionExt<T> for RFunction {
 /// Run closure in a context protected from errors and longjumps
 ///
 /// `try_catch()` runs a closure and captures any R-level errors with an R
-/// backtrace. It calls the closure inside `top_level_exec()` to inherit from
-/// its safety properties: insulating the closure from condition handlers and
-/// converting any unexpected longjumps into a Rust error.
+/// backtrace and Rust backtraces. Both backtraces are captured at the error
+/// site, not the catch site.
+///
+/// The closure is run inside `top_level_exec()` to inherit from its safety
+/// properties: insulating the closure from condition handlers and converting
+/// any unexpected longjumps into a Rust error.
 ///
 /// Two kinds of `harp::Error` are potentially returned:
 /// - `EvaluationError` if an error was caught.
@@ -244,11 +249,14 @@ where
 
                 let r_trace: String = RObject::view(r_list_get(err.sexp, 3)).try_into()?;
 
+                let rust_trace = std::backtrace::Backtrace::force_capture();
+
                 *(data.res) = Some(Err(Error::EvaluationError {
                     code: call,
                     message,
                     class,
                     r_trace,
+                    rust_trace: Some(rust_trace),
                 }));
 
                 Ok(())
@@ -652,9 +660,9 @@ mod tests {
                 .call();
 
             assert_match!(result, Err(err) => {
-                let msg = format!("{err}");
-                let re = regex::Regex::new("R backtrace:\n(.|\n)*1L [+] \"\"").unwrap();
-                assert!(re.is_match(&msg));
+                let re = regex::Regex::new("backtrace:\n(.|\n)*1L [+] \"\"").unwrap();
+                assert!(!re.is_match(&format!("{err}")));
+                assert!(re.is_match(&format!("{err:?}")));
             });
         }
     }

@@ -27,6 +27,7 @@ pub enum Error {
         message: String,
         class: Option<Vec<String>>,
         r_trace: String,
+        rust_trace: Option<Backtrace>,
     },
     UnsafeEvaluationError(String),
     UnexpectedLength(usize, usize),
@@ -93,7 +94,8 @@ impl fmt::Display for Error {
             Error::EvaluationError {
                 code,
                 message,
-                r_trace: trace,
+                r_trace,
+                rust_trace,
                 ..
             } => {
                 let mut message = if let Some(code) = code {
@@ -102,8 +104,12 @@ impl fmt::Display for Error {
                     message.clone()
                 };
 
-                if !trace.is_empty() {
-                    message = format!("{message}\n\nR backtrace:\n{trace}");
+                if !r_trace.is_empty() {
+                    message = format!("{message}\n\nR backtrace:\n{r_trace}");
+                }
+
+                if let Some(rust_trace) = rust_trace {
+                    message = format!("{message}\n\nR thread backtrace:\n{rust_trace}");
                 }
 
                 write!(f, "{message}")
@@ -242,7 +248,7 @@ impl fmt::Debug for Error {
             } => {
                 // If you change this header, make sure to update the panic handler in main.rs
                 writeln!(f)?;
-                writeln!(f, "R thread Backtrace:")?;
+                writeln!(f, "R thread backtrace:")?;
                 fmt::Display::fmt(backtrace, f)
             },
             _ => Ok(()),

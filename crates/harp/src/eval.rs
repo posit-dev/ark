@@ -60,6 +60,7 @@ pub fn r_parse_eval(code: &str, options: RParseEvalOptions) -> Result<RObject> {
                     code: Some(code.to_string()),
                     message: geterrmessage(),
                     r_trace: String::from(""),
+                    rust_trace: String::from(""),
                     class: None,
                 });
             }
