@@ -7,7 +7,7 @@
 
 # Based on `rlang::call_name()`
 call_name <- function(x) {
-  if (typeof(x) != "language") {
+  if (!is_call(x)) {
     return(NULL)
   }
 
@@ -20,7 +20,7 @@ call_name <- function(x) {
 }
 
 call_type <- function(x) {
-  stopifnot(typeof(x) == "language")
+  stopifnot(is_call(x))
 
   node <- x[[1L]]
   type <- typeof(node)
@@ -39,11 +39,15 @@ call_type <- function(x) {
 }
 
 is_namespaced_symbol <- function(x) {
-  if (typeof(x) != "language") {
+  if (!is_call(x)) {
     return(FALSE)
   }
 
   node <- x[[1L]]
 
   identical(node, as.name("::")) || identical(node, as.name(":::"))
+}
+
+is_call <- function(x) {
+  typeof(x) == "language"
 }
