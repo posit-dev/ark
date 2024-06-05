@@ -82,11 +82,7 @@ fn source_r_profile(path: &PathBuf) {
 
     log::error!("Error while sourcing R profile at '{path}': {err}");
 
-    let harp::Error::TopLevelExecError {
-        message,
-        backtrace: _,
-    } = err
-    else {
+    let harp::Error::TopLevelExecError { message, .. } = err else {
         unreachable!("Only `TopLevelExecError` errors should be thrown.");
     };
 

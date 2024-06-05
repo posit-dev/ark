@@ -399,11 +399,11 @@ where
         let mut err_buf = geterrmessage();
 
         if err_buf.len() > 0 {
-            err_buf = format!("\nLikely caused by:\n{err_buf}");
+            err_buf = format!(" Likely caused by:\n{err_buf}");
         }
 
         Err(Error::TopLevelExecError {
-            message: String::from(format!("Unexpected longjump{err_buf}")),
+            message: String::from(format!("Unexpected longjump.{err_buf}")),
             backtrace: std::backtrace::Backtrace::capture(),
             span_trace: tracing_error::SpanTrace::capture(),
         })
