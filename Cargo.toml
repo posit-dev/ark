@@ -18,4 +18,4 @@ members = [
 rust-version = "1.75"
 edition = "2021"
 license = "MIT"
-authors = ["Posit, PBC"]
+authors = ["Posit Software, PBC"]
