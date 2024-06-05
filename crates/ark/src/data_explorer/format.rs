@@ -180,3 +180,96 @@ fn special_values(object: SEXP) -> Vec<SpecialValueTypes> {
         _ => vec![SpecialValueTypes::NotSpecial; unsafe { Rf_xlength(object) as usize }],
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use harp::environment::R_ENVS;
+    use harp::eval::r_parse_eval0;
+
+    use super::*;
+    use crate::test::r_test;
+
+    #[test]
+    fn test_real_formatting() {
+        r_test(|| {
+            // this test needs to match the Python equivalent in
+            // https://github.com/posit-dev/positron/blob/5192792967b6778608d643b821e84ebb6d5f7025/extensions/positron-python/python_files/positron/positron_ipykernel/tests/test_data_explorer.py#L742-L743
+            let assert_float_formatting = |options: FormatOptions, expected: Vec<ColumnValue>| {
+                let testing_values = r_parse_eval0(
+                    r#"c(
+                                0,
+                                1.0,
+                                1.01,
+                                1.012,
+                                0.0123,
+                                0.01234,
+                                0.0001,
+                                0.00001,
+                                9999.123,
+                                9999.999,
+                                9999999,
+                                10000000
+                            )"#,
+                    R_ENVS.global,
+                )
+                .unwrap();
+
+                let formatted = format_column(testing_values.sexp, &options).unwrap();
+                assert_eq!(formatted, expected);
+            };
+
+            let options = FormatOptions {
+                large_num_digits: 2,
+                small_num_digits: 4,
+                max_integral_digits: 7,
+                thousands_sep: None,
+            };
+            let expected = vec![
+                "0.00",
+                "1.00",
+                "1.01",
+                "1.01",
+                "0.0123",
+                "0.0123",
+                "0.0001",
+                "1.00e-05",
+                "9999.12",
+                "10000.00",
+                "9999999.00",
+                "1.00e+07",
+            ]
+            .iter()
+            .map(|x| ColumnValue::FormattedValue(x.to_string()))
+            .collect::<Vec<ColumnValue>>();
+
+            assert_float_formatting(options, expected);
+
+            let options = FormatOptions {
+                large_num_digits: 3,
+                small_num_digits: 4,
+                max_integral_digits: 7,
+                thousands_sep: Some("_".to_string()),
+            };
+
+            let expected = vec![
+                "0.000",
+                "1.000",
+                "1.010",
+                "1.012",
+                "0.0123",
+                "0.0123",
+                "0.0001",
+                "1.000e-05",
+                "9_999.123",
+                "9_999.999",
+                "9_999_999.000",
+                "1.000e+07",
+            ]
+            .iter()
+            .map(|x| ColumnValue::FormattedValue(x.to_string()))
+            .collect::<Vec<ColumnValue>>();
+
+            assert_float_formatting(options, expected);
+        })
+    }
+}

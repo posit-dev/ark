@@ -296,7 +296,7 @@ format_integer <- function(x, thousands_sep) {
 #' @param max_integral_digits Maximum number of integral digits to display before switching to
 #'  scientific notation.
 #' @param thousands_sep Thousands separator string
-format_real <- function(x, large_num_digits, small_num_digits, max_integral_digits, thousands_sep) {
+format_real <- function(x, large_num_digits, small_num_digits, max_integral_digits, thousands_sep = "") {
   # format numbers larger than 1
   formatted <- character(length(x))
 
@@ -306,37 +306,37 @@ format_real <- function(x, large_num_digits, small_num_digits, max_integral_digi
 
   # The limit for small numbers before switching to scientific
   # notation
-  lower_threshold <- 10^(-(small_num_digits - 1))
+  lower_threshold <- 10^(-(small_num_digits + 1))
 
   abs_x <- abs(x)
   formatted <- format_if(
-      formatted, x, abs_x >= upper_threshold & is.finite(x),
-      scientific = TRUE, nsmall = large_num_digits
+      formatted, x, abs_x >= upper_threshold & is.finite(x), .fun = base::sprintf,
+      fmt = paste0("%.", large_num_digits, "e")
   )
   formatted <- format_if(
-      formatted, x, abs_x > 1 & abs_x < upper_threshold,
-      scientific = FALSE, nsmall = large_num_digits, big.mark = thousands_sep
+      formatted, x, abs_x >= 1 & abs_x < upper_threshold,
+      scientific = FALSE, nsmall = large_num_digits, big.mark = thousands_sep, digits = large_num_digits - 1
   )
   formatted <- format_if(
-      formatted, x, abs_x <= 1 & abs_x >= lower_threshold,
-      scientific = FALSE, nsmall = small_num_digits
+      formatted, x, abs_x < 1 & abs_x > lower_threshold,
+      scientific = FALSE, nsmall = small_num_digits, digits = small_num_digits - 1
   )
   formatted <- format_if(
-      formatted, x, abs_x < lower_threshold & is.finite(x),
-      scientific = TRUE, nsmall = large_num_digits
+      formatted, x, abs_x <= lower_threshold & is.finite(x), .fun = base::sprintf,
+      fmt = paste0("%.", large_num_digits, "e")
   )
   formatted <- format_if( # special case 0 to align with other medium numbers
         formatted, x, abs_x == 0,
-        scientific = FALSE, nsmall = small_num_digits
+        scientific = FALSE, nsmall = large_num_digits, digits = large_num_digits - 1
   )
 
   formatted
 }
 
-format_if <- function(formatted, x, condition, ...) {
+format_if <- function(formatted, x, condition, ..., .fun = base::format) {
   if (any(condition, na.rm = TRUE)) { # avoids copying formatted if condition doesn't match anything
       pos <- which(condition)
-      formatted[pos] <- base::format(x[pos], ...)
+      formatted[pos] <- .fun(x[pos], ..., trim = TRUE)
   }
   formatted
 }
