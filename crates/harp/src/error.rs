@@ -29,6 +29,11 @@ pub enum Error {
         r_trace: String,
         rust_trace: Option<Backtrace>,
     },
+    TopLevelExecError {
+        message: String,
+        backtrace: Backtrace,
+        span_trace: tracing_error::SpanTrace,
+    },
     UnsafeEvaluationError(String),
     UnexpectedLength(usize, usize),
     UnexpectedType(u32, Vec<u32>),
@@ -38,14 +43,6 @@ pub enum Error {
         max: i64,
     },
     InvalidUtf8(Utf8Error),
-    TryEvalError {
-        message: String,
-    },
-    TopLevelExecError {
-        message: String,
-        backtrace: Backtrace,
-        span_trace: tracing_error::SpanTrace,
-    },
     ParseSyntaxError {
         message: String,
         line: i32,
@@ -115,6 +112,22 @@ impl fmt::Display for Error {
                 write!(f, "{message}")
             },
 
+            Error::TopLevelExecError {
+                message,
+                backtrace: _backtrace,
+                span_trace,
+            } => {
+                writeln!(f, "{message}")?;
+
+                writeln!(f)?;
+                writeln!(f, "In spans:")?;
+                span_trace.fmt(f)?;
+                writeln!(f)?;
+                writeln!(f)?;
+
+                Ok(())
+            },
+
             Error::UnsafeEvaluationError(code) => {
                 write!(
                     f,
@@ -155,26 +168,6 @@ impl fmt::Display for Error {
 
             Error::InvalidUtf8(error) => {
                 write!(f, "Invalid UTF-8 in string: {}", error)
-            },
-
-            Error::TryEvalError { message } => {
-                write!(f, "R-level error: {}", message)
-            },
-
-            Error::TopLevelExecError {
-                message,
-                backtrace: _backtrace,
-                span_trace,
-            } => {
-                writeln!(f, "{message}")?;
-
-                writeln!(f)?;
-                writeln!(f, "In spans:")?;
-                span_trace.fmt(f)?;
-                writeln!(f)?;
-                writeln!(f)?;
-
-                Ok(())
             },
 
             Error::ParseSyntaxError { message, line } => {

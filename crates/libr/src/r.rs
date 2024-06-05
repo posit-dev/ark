@@ -87,6 +87,13 @@ functions::generate! {
         data: *mut std::ffi::c_void
     ) -> Rboolean;
 
+    pub fn R_withCallingErrorHandler(
+        body: Option<unsafe extern "C" fn(args: *mut std::ffi::c_void)>,
+        bdata: *mut std::ffi::c_void,
+        handler: Option<unsafe extern "C" fn(err: SEXP, args: *mut std::ffi::c_void)>,
+        hdata: *mut std::ffi::c_void
+    ) -> SEXP;
+
     pub fn R_altrep_data1(x: SEXP) -> SEXP;
 
     pub fn R_altrep_data2(x: SEXP) -> SEXP;
@@ -98,25 +105,6 @@ functions::generate! {
     pub fn R_lsInternal(arg1: SEXP, arg2: Rboolean) -> SEXP;
 
     pub fn R_lsInternal3(arg1: SEXP, arg2: Rboolean, arg3: Rboolean) -> SEXP;
-
-    pub fn R_tryCatch(
-        arg1: Option<unsafe extern "C" fn(arg1: *mut std::ffi::c_void) -> SEXP>,
-        arg2: *mut std::ffi::c_void,
-        arg3: SEXP,
-        arg4: Option<unsafe extern "C" fn(arg1: SEXP, arg2: *mut std::ffi::c_void) -> SEXP>,
-        arg5: *mut std::ffi::c_void,
-        arg6: Option<unsafe extern "C" fn(arg1: *mut std::ffi::c_void)>,
-        arg7: *mut std::ffi::c_void
-    ) -> SEXP;
-
-    pub fn R_withCallingErrorHandler(
-        body: Option<unsafe extern "C" fn(args: *mut std::ffi::c_void)>,
-        bdata: *mut std::ffi::c_void,
-        handler: Option<unsafe extern "C" fn(err: SEXP, args: *mut std::ffi::c_void)>,
-        hdata: *mut std::ffi::c_void
-    ) -> SEXP;
-
-    pub fn R_tryEvalSilent(arg1: SEXP, arg2: SEXP, arg3: *mut std::ffi::c_int) -> SEXP;
 
     pub fn Rf_GetOption1(arg1: SEXP) -> SEXP;
 

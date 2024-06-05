@@ -5,16 +5,10 @@
 //
 //
 
-use libr::R_NilValue;
-use libr::R_tryEvalSilent;
-use libr::Rf_xlength;
-use libr::VECTOR_ELT;
-
 use crate::environment::R_ENVS;
 use crate::error::Error;
-use crate::error::Result;
-use crate::exec::geterrmessage;
 use crate::exec::r_parse_exprs;
+use crate::object::r_list_get;
 use crate::object::RObject;
 
 #[derive(Clone)]
@@ -32,40 +26,28 @@ impl Default for RParseEvalOptions {
     }
 }
 
-pub fn r_parse_eval0(code: &str, env: impl Into<RObject>) -> Result<RObject> {
+pub fn r_parse_eval0(code: &str, env: impl Into<RObject>) -> harp::Result<RObject> {
     r_parse_eval(code, RParseEvalOptions {
         env: env.into(),
         ..Default::default()
     })
 }
 
-pub fn r_parse_eval(code: &str, options: RParseEvalOptions) -> Result<RObject> {
+pub fn r_parse_eval(code: &str, options: RParseEvalOptions) -> harp::Result<RObject> {
     // Forbid certain kinds of evaluation if requested.
     if options.forbid_function_calls && code.find('(').is_some() {
         return Err(Error::UnsafeEvaluationError(code.to_string()));
     }
 
-    unsafe {
-        // Parse the provided code.
-        let parsed_sexp = r_parse_exprs(code)?;
+    let exprs = r_parse_exprs(code)?;
 
-        // Evaluate the provided code.
-        let mut value = R_NilValue;
-        for i in 0..Rf_xlength(*parsed_sexp) {
-            let expr = VECTOR_ELT(*parsed_sexp, i);
-            let mut errc: i32 = 0;
-            value = R_tryEvalSilent(expr, options.env.sexp, &mut errc);
-            if errc != 0 {
-                return Err(Error::EvaluationError {
-                    code: Some(code.to_string()),
-                    message: geterrmessage(),
-                    r_trace: String::from(""),
-                    rust_trace: String::from(""),
-                    class: None,
-                });
-            }
-        }
+    // Evaluate each expression in turn and return the last one
+    let mut value = RObject::null();
 
-        Ok(RObject::new(value))
+    for i in 0..exprs.length() {
+        let expr = r_list_get(exprs.sexp, i);
+        value = harp::try_eval_silent(expr, options.env.sexp)?;
     }
+
+    Ok(value)
 }

@@ -95,15 +95,15 @@ impl RFunction {
 
     pub fn call_in(&mut self, env: SEXP) -> Result<RObject> {
         let user_call = self.call.build();
-        try_eval(user_call, env.into())
+        try_eval(user_call.sexp, env)
     }
 }
 
 /// Evaluate R code in a context protected from errors and longjumps
 ///
 /// Calls `Rf_eval()` inside `try_catch()`.
-pub fn try_eval(expr: RObject, env: RObject) -> crate::Result<RObject> {
-    let res = try_catch(|| unsafe { Rf_eval(expr.sexp, env.sexp) });
+pub fn try_eval(expr: SEXP, env: SEXP) -> crate::Result<RObject> {
+    let res = try_catch(|| unsafe { Rf_eval(expr, env) });
 
     match res {
         // Convert to RObject
@@ -117,7 +117,7 @@ pub fn try_eval(expr: RObject, env: RObject) -> crate::Result<RObject> {
                 r_trace,
                 rust_trace,
             } => Err(Error::EvaluationError {
-                code: Some(unsafe { r_stringify(expr.sexp, "\n")? }),
+                code: Some(unsafe { r_stringify(expr, "\n")? }),
                 message,
                 class,
                 r_trace,
@@ -127,6 +127,11 @@ pub fn try_eval(expr: RObject, env: RObject) -> crate::Result<RObject> {
             _ => Err(err),
         },
     }
+}
+
+pub fn try_eval_silent(expr: SEXP, env: SEXP) -> crate::Result<RObject> {
+    let _guard = crate::raii::RLocalShowErrorMessageOption::new(false);
+    try_eval(expr, env)
 }
 
 impl From<&str> for RFunction {

@@ -21,7 +21,6 @@ use crate::environment::R_ENVS;
 use crate::error::Error;
 use crate::error::Result;
 use crate::eval::r_parse_eval0;
-use crate::exec::geterrmessage;
 use crate::exec::RFunction;
 use crate::exec::RFunctionExt;
 use crate::modules::HARP_ENV;
@@ -530,17 +529,17 @@ pub fn r_promise_expr(x: SEXP) -> SEXP {
     unsafe { R_PromiseExpr(x) }
 }
 
-pub unsafe fn r_promise_force(x: SEXP) -> Result<SEXP> {
+pub unsafe fn r_promise_force(x: SEXP) -> harp::Result<RObject> {
     // Expect that the promise protects its own result
-    r_try_eval_silent(x, R_EmptyEnv)
+    harp::try_eval_silent(x, R_EmptyEnv)
 }
 
-pub unsafe fn r_promise_force_with_rollback(x: SEXP) -> Result<SEXP> {
+pub unsafe fn r_promise_force_with_rollback(x: SEXP) -> harp::Result<RObject> {
     // Like `r_promise_force()`, but if evaluation results in an error
     // then the original promise is untouched, i.e. `PRSEEN` isn't modified,
     // avoiding `"restarting interrupted promise evaluation"` warnings.
-    let out = r_try_eval_silent(PRCODE(x), PRENV(x))?;
-    SET_PRVALUE(x, out);
+    let out = harp::try_eval_silent(PRCODE(x), PRENV(x))?;
+    SET_PRVALUE(x, out.sexp);
     Ok(out)
 }
 
@@ -661,22 +660,6 @@ where
     }
 
     return false;
-}
-
-pub unsafe fn r_try_eval_silent(x: SEXP, env: SEXP) -> Result<SEXP> {
-    let mut errc = 0;
-
-    let x = R_tryEvalSilent(x, env, &mut errc);
-
-    // NOTE: This error message is potentially incorrect because `errc`
-    // might be true in other cases of longjumps than just errors.
-    if errc != 0 {
-        return Err(Error::TryEvalError {
-            message: geterrmessage(),
-        });
-    }
-
-    Ok(x)
 }
 
 static mut OPTIONS_FN: Option<SEXP> = None;
