@@ -23,12 +23,9 @@ use crate::object::r_list_get;
 use crate::object::r_null_or_try_into;
 use crate::object::RObject;
 use crate::protect::RProtect;
-use crate::r_null;
 use crate::r_string;
 use crate::r_symbol;
 use crate::utils::r_stringify;
-use crate::vector::CharacterVector;
-use crate::vector::Vector;
 
 pub enum ParseResult {
     Complete(SEXP),
@@ -98,48 +95,36 @@ impl RFunction {
 
     pub fn call_in(&mut self, env: SEXP) -> Result<RObject> {
         let user_call = self.call.build();
-        r_safe_eval(user_call, env.into())
+        r_try_eval(user_call, env.into())
     }
 }
 
-pub fn r_safe_eval(expr: RObject, env: RObject) -> crate::Result<RObject> {
-    // We could detect and cancel early exits from the r side, but we'd be at
-    // risk of very unlucky interrupts occurring between `rf_eval()` and our
-    // `on.exit()` handling. So stay on the safe side by wrapping in
-    // top-level-exec. This also insulates us from user handlers.
-    r_top_level_exec(|| unsafe {
-        let eval_call = RCall::new(r_symbol!("safe_evalq"))
-            .add(expr.sexp)
-            .add(env)
-            .build();
+/// Evaluate R code in a context protected from errors and longjumps
+///
+/// Calls `Rf_eval()` inside `r_try_catch()`.
+pub fn r_try_eval(expr: RObject, env: RObject) -> crate::Result<RObject> {
+    let res = r_try_catch(|| unsafe { Rf_eval(expr.sexp, env.sexp) });
 
-        let result = RObject::new(Rf_eval(eval_call.sexp, HARP_ENV.unwrap()));
-
-        // Invariant of return value: List of length 2 [output, error].
-        // These are exclusive.
-        let out = r_list_get(result.sexp, 0);
-        let err = r_list_get(result.sexp, 1);
-
-        if err != r_null() {
-            let code = r_stringify(expr.sexp, "\n")?;
-
-            // Invariant of error slot: Character vector of length 2 [message, trace],
-            // with `trace` possibly an empty string.
-            let err = CharacterVector::new(err)?;
-
-            let message = err.get_value(0)?;
-            let trace = err.get_value(1)?;
-
-            return Err(Error::EvaluationError {
-                code: Some(code),
+    match res {
+        // Convert to RObject
+        Ok(value) => Ok(value.into()),
+        Err(err) => match err {
+            // Set correct expression. Can this be less verbose?
+            Error::EvaluationError {
+                code: _,
                 message,
-                class: None,
-                r_trace: trace,
-            });
-        }
-
-        Ok(RObject::new(out))
-    })?
+                class,
+                r_trace,
+            } => Err(Error::EvaluationError {
+                code: Some(unsafe { r_stringify(expr.sexp, "\n")? }),
+                message,
+                class,
+                r_trace,
+            }),
+            // Propagate as is
+            _ => Err(err),
+        },
+    }
 }
 
 impl From<&str> for RFunction {
