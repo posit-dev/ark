@@ -1036,7 +1036,7 @@ impl RDataExplorer {
         let mut column_data: Vec<Vec<ColumnValue>> = Vec::new();
         for i in 0..num_cols {
             let column = tbl_get_column(object.sexp, i, self.shape.kind)?;
-            let formatted = format::format_column(column.sexp, &format_options)?;
+            let formatted = format::format_column(column.sexp, &format_options);
             column_data.push(formatted.clone());
         }
 

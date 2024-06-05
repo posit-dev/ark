@@ -461,8 +461,8 @@ fn test_data_explorer() {
         assert_match!(socket_rpc(&socket, req),
             DataExplorerBackendReply::GetDataValuesReply(data) => {
                 assert_eq!(data.columns.len(), 1);
-                assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("0.0000".to_string()));
-                assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("1.0000".to_string()));
+                assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("0.00".to_string()));
+                assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("1.00".to_string()));
                 assert_eq!(data.columns[0][2], ColumnValue::FormattedValue("2.00".to_string()));
             }
         );
@@ -494,7 +494,7 @@ fn test_data_explorer() {
         assert_match!(socket_rpc(&socket, req),
             DataExplorerBackendReply::GetDataValuesReply(data) => {
                 assert_eq!(data.columns.len(), 1);
-                assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("1.0000".to_string()));
+                assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("1.00".to_string()));
                 assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("2.00".to_string()));
                 assert_eq!(data.columns[0][2], ColumnValue::FormattedValue("3.00".to_string()));
             }
@@ -1304,7 +1304,7 @@ fn test_data_explorer_special_values() {
             DataExplorerBackendReply::GetDataValuesReply(data) => {
                 assert_eq!(data.columns.len(), 6);
 
-                assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("1.0000".to_string()));
+                assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("1.00".to_string()));
                 assert_eq!(data.columns[0][1], ColumnValue::SpecialValueCode(1));
                 assert_eq!(data.columns[0][2], ColumnValue::SpecialValueCode(2));
                 assert_eq!(data.columns[0][3], ColumnValue::SpecialValueCode(10));
