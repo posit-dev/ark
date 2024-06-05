@@ -42,6 +42,7 @@ pub enum Error {
     UnknownCommName(String),
     UnknownCommId(String),
     InvalidCommMessage(String, String, String),
+    InvalidInputRequest(String),
 }
 
 impl std::error::Error for Error {}
@@ -188,6 +189,9 @@ impl fmt::Display for Error {
                     "Message '{}' sent to comm '{}' is invalid: {}",
                     msg, id, err
                 )
+            },
+            Error::InvalidInputRequest(reason) => {
+                write!(f, "Input request is invalid: {reason}")
             },
         }
     }

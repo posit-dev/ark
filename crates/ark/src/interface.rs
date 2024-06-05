@@ -576,6 +576,12 @@ impl RMain {
                 // we might also return here after an interrupt.
                 self.active_request = None;
             }
+        } else {
+            if info.input_request {
+                return ConsoleResult::Error(Error::InvalidInputRequest(String::from(
+                    "Unexpected `input_request` received outside of an `execute_request`.",
+                )));
+            }
         }
 
         // In the future we'll also send browser information, see
