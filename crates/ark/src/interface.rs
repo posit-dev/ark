@@ -49,6 +49,7 @@ use amalthea::wire::jupyter_message::Status;
 use amalthea::wire::originator::Originator;
 use amalthea::wire::stream::Stream;
 use amalthea::wire::stream::StreamOutput;
+use amalthea::Error;
 use anyhow::*;
 use bus::Bus;
 use crossbeam::channel::bounded;
@@ -116,6 +117,7 @@ use crate::request::RRequest;
 use crate::signals::initialize_signal_handlers;
 use crate::signals::interrupts_pending;
 use crate::signals::set_interrupts_pending;
+use crate::startup;
 use crate::sys::console::console_to_utf8;
 
 // --- Globals ---
@@ -124,7 +126,6 @@ use crate::sys::console::console_to_utf8;
 
 /// Ensures that the kernel is only ever initialized once
 static INIT: Once = Once::new();
-static INIT_KERNEL: Once = Once::new();
 
 // The global state used by R callbacks.
 //
@@ -171,6 +172,22 @@ pub fn start_r(
         ));
     });
 
+    let mut r_args = r_args.clone();
+
+    // Record if the user has requested that we don't load the site/user level R profiles
+    let ignore_site_r_profile = startup::should_ignore_site_r_profile(&r_args);
+    let ignore_user_r_profile = startup::should_ignore_user_r_profile(&r_args);
+
+    // We always manually load site/user level R profiles rather than letting R do it
+    // to ensure that ark is fully set up before running code that could potentially call
+    // back into ark internals.
+    if !ignore_site_r_profile {
+        startup::push_ignore_site_r_profile(&mut r_args);
+    }
+    if !ignore_user_r_profile {
+        startup::push_ignore_user_r_profile(&mut r_args);
+    }
+
     // Build the argument list from the command line arguments. The default
     // list is `--interactive` unless altered with the `--` passthrough
     // argument.
@@ -199,7 +216,7 @@ pub fn start_r(
         // Initialize harp (after routine registration)
         harp::initialize();
 
-        // Optionally run a user specified R startup script (after harp init)
+        // Optionally run a frontend specified R startup script (after harp init)
         if let Some(file) = &startup_file {
             r_source(file).or_log_error(&format!("Failed to source startup file '{file}' due to"));
         }
@@ -217,6 +234,25 @@ pub fn start_r(
 
         // Set up the global error handler (after support function initialization)
         errors::initialize();
+    }
+
+    // Now that R has started (emitting any startup messages), and now that we have set
+    // up all hooks and handlers, officially finish the R initialization process to
+    // unblock the kernel-info request and also allow the LSP to start.
+    RMain::with_mut(|main| {
+        log::info!(
+            "R has started and ark handlers have been registered, completing initialization."
+        );
+        main.complete_initialization();
+    });
+
+    // Now that R has started and libr and ark have fully initialized, run site and user
+    // level R profiles, in that order
+    if !ignore_site_r_profile {
+        startup::source_site_r_profile(&r_home);
+    }
+    if !ignore_user_r_profile {
+        startup::source_user_r_profile();
     }
 
     // Does not return!
@@ -430,24 +466,38 @@ impl RMain {
         }
     }
 
+    pub fn with<F: FnOnce(&RMain)>(f: F) {
+        let main = Self::get();
+        f(main)
+    }
+
+    pub fn with_mut<F: FnOnce(&mut RMain)>(f: F) {
+        let main = Self::get_mut();
+        f(main)
+    }
+
     pub fn on_main_thread() -> bool {
         let thread = std::thread::current();
         thread.id() == unsafe { R_MAIN_THREAD_ID.unwrap() }
     }
 
     /// Completes the kernel's initialization
-    pub fn complete_initialization(&mut self, prompt_info: &PromptInfo) {
+    pub fn complete_initialization(&mut self) {
         if self.initializing {
             let version = unsafe {
                 let version = Rf_findVarInFrame(R_BaseNamespace, r_symbol!("R.version.string"));
                 RObject::new(version).to::<String>().unwrap()
             };
 
+            // Initial input and continuation prompts
+            let input_prompt = unsafe { r_get_option::<String>("prompt").unwrap() };
+            let continuation_prompt = unsafe { r_get_option::<String>("continue").unwrap() };
+
             let kernel_info = KernelInfo {
                 version: version.clone(),
                 banner: self.banner.clone(),
-                input_prompt: Some(prompt_info.input_prompt.clone()),
-                continuation_prompt: Some(prompt_info.continuation_prompt.clone()),
+                input_prompt: Some(input_prompt),
+                continuation_prompt: Some(continuation_prompt),
             };
 
             debug!("Sending kernel info: {}", version);
@@ -510,15 +560,6 @@ impl RMain {
     ) -> ConsoleResult {
         let info = Self::prompt_info(prompt);
         debug!("R prompt: {}", info.input_prompt);
-
-        INIT_KERNEL.call_once(|| {
-            self.complete_initialization(&info);
-
-            trace!(
-                "Got initial R prompt '{}', ready for execution requests",
-                info.input_prompt
-            );
-        });
 
         // Upon entering read-console, finalize any debug call text that we were capturing.
         // At this point, the user can either advance the debugger, causing us to capture
