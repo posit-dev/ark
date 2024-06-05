@@ -95,15 +95,15 @@ impl RFunction {
 
     pub fn call_in(&mut self, env: SEXP) -> Result<RObject> {
         let user_call = self.call.build();
-        r_try_eval(user_call, env.into())
+        try_eval(user_call, env.into())
     }
 }
 
 /// Evaluate R code in a context protected from errors and longjumps
 ///
-/// Calls `Rf_eval()` inside `r_try_catch()`.
-pub fn r_try_eval(expr: RObject, env: RObject) -> crate::Result<RObject> {
-    let res = r_try_catch(|| unsafe { Rf_eval(expr.sexp, env.sexp) });
+/// Calls `Rf_eval()` inside `try_catch()`.
+pub fn try_eval(expr: RObject, env: RObject) -> crate::Result<RObject> {
+    let res = try_catch(|| unsafe { Rf_eval(expr.sexp, env.sexp) });
 
     match res {
         // Convert to RObject
@@ -176,8 +176,8 @@ impl<T: Into<RObject>> RFunctionExt<T> for RFunction {
 
 /// Run closure in a context protected from errors and longjumps
 ///
-/// `r_try_catch()` runs a closure and captures any R-level errors with an R
-/// backtrace. It calls the closure inside `r_top_level_exec()` to inherit from
+/// `try_catch()` runs a closure and captures any R-level errors with an R
+/// backtrace. It calls the closure inside `top_level_exec()` to inherit from
 /// its safety properties: insulating the closure from condition handlers and
 /// converting any unexpected longjumps into a Rust error.
 ///
@@ -186,9 +186,9 @@ impl<T: Into<RObject>> RFunctionExt<T> for RFunction {
 /// - `TopLevelExecError` if an unexpected longjump was caught.
 ///
 /// NOTE: Rust objects with `drop()` methods should be stored outside the
-/// `r_try_catch()` context. It's fine to longjump (e.g. throw an R error) over
+/// `try_catch()` context. It's fine to longjump (e.g. throw an R error) over
 /// a Rust stack as long as it doesn't contain destructors.
-pub fn r_try_catch<'env, F, T>(fun: F) -> harp::Result<T>
+pub fn try_catch<'env, F, T>(fun: F) -> harp::Result<T>
 where
     F: FnOnce() -> T,
     F: 'env,
@@ -255,7 +255,7 @@ where
             }
         })() {
             *(data.res) = Some(Err(Error::Anyhow(anyhow!(
-                "Internal error in `r_try_catch()`: {err:?}"
+                "Internal error in `try_catch()`: {err:?}"
             ))))
         };
 
@@ -276,7 +276,7 @@ where
         unreachable!();
     }
 
-    let longjump = r_top_level_exec(|| unsafe {
+    let longjump = top_level_exec(|| unsafe {
         libr::R_withCallingErrorHandler(
             Some(callback::<F, T>),
             payload,
@@ -307,12 +307,12 @@ where
 /// the C-level error buffer. It might or might not be related to the cause
 /// of the longjump. The error also carries a Rust backtrace.
 ///
-/// `r_top_level_exec()` is a low-level operator. Prefer using `r_try_catch()`
+/// `top_level_exec()` is a low-level operator. Prefer using `try_catch()`
 /// if possible:
 ///
-/// - `r_try_catch()` uses a more robust strategy to catch R errors.
+/// - `try_catch()` uses a more robust strategy to catch R errors.
 ///
-/// - `r_try_catch()` captures R-level and Rust-level backtraces at the R error site.
+/// - `try_catch()` captures R-level and Rust-level backtraces at the R error site.
 ///
 /// - With top-level-exec, if an unhandled R-level error does occur during a
 ///   top-level context, the error message is normally printed in the R console,
@@ -321,9 +321,9 @@ where
 ///   isn't normally the case in Ark.
 ///
 /// NOTE: Rust objects with `drop()` methods should be stored outside the
-/// `r_top_level_exec()` context. It's fine to longjump (e.g. throw an R error)
+/// `top_level_exec()` context. It's fine to longjump (e.g. throw an R error)
 /// over a Rust stack as long as it doesn't contain destructors.
-pub fn r_top_level_exec<'env, F, T>(fun: F) -> Result<T>
+pub fn top_level_exec<'env, F, T>(fun: F) -> harp::Result<T>
 where
     F: FnOnce() -> T,
     F: 'env,
@@ -391,7 +391,7 @@ pub unsafe fn r_parse_vector(code: &str) -> Result<ParseResult> {
     let mut protect = RProtect::new();
     let r_code = r_string!(convert_line_endings(code, LineEnding::Posix), &mut protect);
 
-    let result: RObject = r_try_catch(|| R_ParseVector(r_code, -1, &mut ps, R_NilValue).into())?;
+    let result: RObject = try_catch(|| R_ParseVector(r_code, -1, &mut ps, R_NilValue).into())?;
 
     match ps {
         ParseStatus_PARSE_OK => Ok(ParseResult::Complete(result.sexp)),
@@ -513,7 +513,7 @@ where
     T: 'env,
 {
     let _scope = crate::raii::RLocalSandbox::new();
-    r_try_catch(f)
+    try_catch(f)
 }
 
 /// Unwrap Rust error and throw as R error
@@ -582,7 +582,7 @@ where
 /// algorithms from blowing the stack.
 pub fn r_check_stack(size: Option<usize>) -> Result<()> {
     unsafe {
-        let out = r_top_level_exec(|| {
+        let out = top_level_exec(|| {
             if let Some(size) = size {
                 R_CheckStack2(size);
             } else {
@@ -703,7 +703,7 @@ mod tests {
         r_test! {
 
             // ok SEXP
-            let ok: harp::Result<RObject> = r_try_catch(|| {
+            let ok: harp::Result<RObject> = try_catch(|| {
                 Rf_ScalarInteger(42).into()
             });
             assert_match!(ok, Ok(value) => {
@@ -712,7 +712,7 @@ mod tests {
             });
 
             // Error case
-            let out = r_try_catch(|| unsafe {
+            let out = try_catch(|| unsafe {
                 // This leaks
                 let msg = CString::new("ouch").unwrap();
                 Rf_error(msg.as_ptr());
@@ -729,7 +729,7 @@ mod tests {
     #[test]
     fn test_top_level_exec() {
         r_test! {
-            let ok = r_top_level_exec(|| { 42 });
+            let ok = top_level_exec(|| { 42 });
             assert_match!(ok, Ok(value) => {
                 assert_eq!(value, 42);
             });
@@ -740,7 +740,7 @@ mod tests {
             let msg = CString::new("my message").unwrap();
             let stop = CString::new("stop").unwrap();
 
-            let out = r_top_level_exec(|| unsafe {
+            let out = top_level_exec(|| unsafe {
                 let msg = Rf_protect(Rf_cons(Rf_mkString(msg.as_ptr()), R_NilValue));
                 let call = Rf_protect(Rf_lcons(Rf_install(stop.as_ptr()), msg));
                 Rf_eval(call, R_BaseEnv);
@@ -836,7 +836,7 @@ mod tests {
     #[test]
     fn test_r_unwrap() {
         r_test! {
-            let out: Result<RObject> = r_try_catch(|| {
+            let out: Result<RObject> = try_catch(|| {
                 r_unwrap(|| Err::<RObject, anyhow::Error>(anyhow::anyhow!("ouch")))
             });
 

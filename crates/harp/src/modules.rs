@@ -8,7 +8,7 @@ use crate::call::RCall;
 use crate::environment::R_ENVS;
 use crate::exec::r_parse_exprs;
 use crate::exec::r_source_str_in;
-use crate::exec::r_top_level_exec;
+use crate::exec::top_level_exec;
 use crate::r_symbol;
 
 pub static mut HARP_ENV: Option<SEXP> = None;
@@ -48,7 +48,7 @@ pub fn init_modules() -> anyhow::Result<()> {
                 .param("exprs", exprs)
                 .param("local", namespace)
                 .build();
-            r_top_level_exec(|| Rf_eval(source_call.sexp, R_ENVS.base))?;
+            top_level_exec(|| Rf_eval(source_call.sexp, R_ENVS.base))?;
         }
         Ok(())
     })?;
