@@ -13,3 +13,9 @@ members = [
     "crates/libr",
     "crates/stdext"
 ]
+
+[workspace.package]
+rust-version = "1.75"
+edition = "2021"
+license = "MIT"
+authors = ["Posit Software, PBC"]
