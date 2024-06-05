@@ -41,6 +41,11 @@
         return()
     }
 
+    # Decline to handle if a `utils::recover` handler is installed
+    if (has_recover_handler()) {
+        return()
+    }
+
     if (!.ps.is_installed("rlang")) {
         # rlang is not installed, no option except to use the base handler
         return(handle_error_base(cnd))
@@ -52,6 +57,14 @@
 
     if (!inherits(cnd, "rlang_error")) {
         cnd <- rlang::catch_cnd(rlang::entrace(cnd))
+
+        if (is.null(cnd)) {
+            # We expect `entrace()` to always signal a condition since we:
+            # - Know we are providing a non-rlang error condition
+            # - Already handled the `utils::recover` case above
+            # But we try to be defensive here anyways.
+            return()
+        }
     }
 
     handle_error_rlang(cnd)
@@ -169,6 +182,17 @@ handle_error_rlang <- function(cnd) {
         # - Causes `options(error = recover)` to show the global calling handler frames
         stop("dummy")
     }
+}
+
+# See `rlang:::has_recover()`
+has_recover_handler <- function() {
+    handler <- getOption("error")
+
+    if (!is_call(handler)) {
+        return(FALSE)
+    }
+
+    identical(handler[[1L]], utils::recover)
 }
 
 positron_option_error_entrace <- function() {
