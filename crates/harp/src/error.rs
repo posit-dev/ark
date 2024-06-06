@@ -22,7 +22,7 @@ pub enum Error {
         code: String,
         message: String,
     },
-    EvaluationError {
+    TryCatchError {
         code: Option<String>,
         message: String,
         class: Option<Vec<String>>,
@@ -88,7 +88,7 @@ impl fmt::Display for Error {
                 write!(f, "Error parsing {}: {}", code, message)
             },
 
-            Error::EvaluationError { code, message, .. } => {
+            Error::TryCatchError { code, message, .. } => {
                 if let Some(code) = code {
                     write!(f, "Error evaluating {code}: {message}")
                 } else {
@@ -230,7 +230,7 @@ impl fmt::Debug for Error {
                 fmt::Display::fmt(backtrace, f)
             },
 
-            Error::EvaluationError {
+            Error::TryCatchError {
                 r_trace,
                 rust_trace,
                 ..

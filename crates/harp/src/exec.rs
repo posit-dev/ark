@@ -110,13 +110,13 @@ pub fn try_eval(expr: SEXP, env: SEXP) -> crate::Result<RObject> {
         Ok(value) => Ok(value.into()),
         Err(err) => match err {
             // Set correct expression. Can this be less verbose?
-            Error::EvaluationError {
+            Error::TryCatchError {
                 code: _,
                 message,
                 class,
                 r_trace,
                 rust_trace,
-            } => Err(Error::EvaluationError {
+            } => Err(Error::TryCatchError {
                 code: Some(unsafe { r_stringify(expr, "\n")? }),
                 message,
                 class,
@@ -256,7 +256,7 @@ where
 
                 let rust_trace = std::backtrace::Backtrace::force_capture();
 
-                *(data.res) = Some(Err(Error::EvaluationError {
+                *(data.res) = Some(Err(Error::TryCatchError {
                     code: call,
                     message,
                     class,
@@ -731,7 +731,7 @@ mod tests {
                 Rf_error(msg.as_ptr());
             });
 
-            assert_match!(out, Err(Error::EvaluationError { message, class, .. }) => {
+            assert_match!(out, Err(Error::TryCatchError { message, class, .. }) => {
                 assert_eq!(message, "ouch");
                 assert_eq!(class.unwrap(), ["simpleError", "error", "condition"]);
             });
@@ -853,7 +853,7 @@ mod tests {
                 r_unwrap(|| Err::<RObject, anyhow::Error>(anyhow::anyhow!("ouch")))
             });
 
-            assert_match!(out, Err(Error::EvaluationError { message, class, .. }) => {
+            assert_match!(out, Err(Error::TryCatchError { message, class, .. }) => {
                 assert_eq!(message, "ouch");
                 assert_eq!(class.unwrap(), ["simpleError", "error", "condition"]);
             });
