@@ -1,5 +1,7 @@
 use tree_sitter::Node;
 
+use crate::lsp::traits::rope::RopeExt;
+
 #[derive(Debug, PartialEq)]
 pub enum NodeType {
     Program,
@@ -382,4 +384,38 @@ impl NodeTypeExt for Node<'_> {
     fn is_binary_operator(&self) -> bool {
         matches!(self.node_type(), NodeType::BinaryOperator(_))
     }
+}
+
+pub(crate) fn node_text(node: &Node, contents: &ropey::Rope) -> Option<String> {
+    contents.node_slice(node).ok().map(|f| f.to_string())
+}
+
+pub(crate) fn node_is_call(node: &Node, name: &str, contents: &ropey::Rope) -> bool {
+    if !node.is_call() {
+        return false;
+    }
+    let Some(fun) = node.child_by_field_name("function") else {
+        return false;
+    };
+    let Some(fun) = node_text(&fun, contents) else {
+        return false;
+    };
+    fun == name
+}
+
+pub(crate) fn node_arg_value<'tree>(
+    args: &Node<'tree>,
+    name: &str,
+    contents: &ropey::Rope,
+) -> Option<Node<'tree>> {
+    let Some(name_node) = args.child_by_field_name("name") else {
+        return None;
+    };
+    let Some(value_node) = args.child_by_field_name("value") else {
+        return None;
+    };
+    let Some(name_text) = node_text(&name_node, contents) else {
+        return None;
+    };
+    (name_text == name).then_some(value_node)
 }
