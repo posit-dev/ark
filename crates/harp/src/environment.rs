@@ -211,6 +211,14 @@ impl Environment {
     fn flags(&self) -> std::ffi::c_int {
         unsafe { libr::ENVFLAGS(self.inner.sexp) }
     }
+
+    pub fn as_list(&self) -> harp::Result<RObject> {
+        RFunction::new("", "as.list")
+            .add(self.inner.sexp)
+            // TODO: Respect the future hidden flag
+            .param("all.names", true)
+            .call_in(R_ENVS.base)
+    }
 }
 
 impl From<Environment> for SEXP {

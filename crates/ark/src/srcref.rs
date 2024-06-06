@@ -46,7 +46,13 @@ pub(crate) async fn ns_populate_srcref(ns_name: String) -> anyhow::Result<()> {
     let mut tick = std::time::Instant::now();
 
     let ns = r_ns_env(&ns_name)?;
-    let ns = RThreadSafe::new(ns);
+
+    // We're going to replace objects in the namespace. To prevent any
+    // protection issues with packages caching objects plucked from other
+    // namespaces at C-level, we save the current set of objects in a list
+    // preserved for the session.
+    static mut SAVED_NAMESPACES: Vec<RThreadSafe<RObject>> = vec![];
+    unsafe { SAVED_NAMESPACES.push(RThreadSafe::new(ns.as_list()?)) };
 
     let uri_path = format!("namespace:{ns_name}.R");
     let uri = format!("ark:{uri_path}");
@@ -61,9 +67,9 @@ pub(crate) async fn ns_populate_srcref(ns_name: String) -> anyhow::Result<()> {
     let mut n_bad = 0;
     let mut n_skipped = 0;
 
-    for b in ns.get().iter().filter_map(Result::ok) {
+    for b in ns.iter().filter_map(Result::ok) {
         span.in_scope(|| {
-            match generate_source(&ns.get(), &b, vdoc.len(), &uri) {
+            match generate_source(&ns, &b, vdoc.len(), &uri) {
                 Ok(Some(mut lines)) => {
                     n_ok = n_ok + 1;
 
