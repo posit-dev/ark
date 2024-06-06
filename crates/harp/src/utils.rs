@@ -327,9 +327,8 @@ pub fn r_type2char<T: Into<u32>>(kind: T) -> String {
     }
 }
 
-pub unsafe fn r_get_option<T: TryFrom<RObject, Error = Error>>(name: &str) -> Result<T> {
-    let result = Rf_GetOption1(r_symbol!(name));
-    return RObject::new(result).try_into();
+pub fn r_get_option(name: &str) -> RObject {
+    unsafe { Rf_GetOption1(r_symbol!(name)).into() }
 }
 
 pub fn r_inherits(object: SEXP, class: &str) -> bool {

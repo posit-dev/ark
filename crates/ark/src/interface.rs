@@ -68,6 +68,7 @@ use harp::exec::RFunctionExt;
 use harp::library::RLibraries;
 use harp::line_ending::convert_line_endings;
 use harp::line_ending::LineEnding;
+use harp::object::r_null_or_try_into;
 use harp::object::RObject;
 use harp::r_symbol;
 use harp::routines::r_register_routines;
@@ -236,8 +237,10 @@ pub fn start_r(
 
         // Populate srcrefs for namespaces already loaded in the session.
         // Namespaces of future loaded packages will be populated on load.
-        if let Err(err) = resource_loaded_namespaces() {
-            log::error!("Can't populate srcrefs for loaded packages: {err:?}");
+        if do_resource_namespaces() {
+            if let Err(err) = resource_loaded_namespaces() {
+                log::error!("Can't populate srcrefs for loaded packages: {err:?}");
+            }
         }
 
         // Set up the global error handler (after support function initialization)
@@ -775,7 +778,7 @@ impl RMain {
 
         // The request is incomplete if we see the continue prompt, except if
         // we're in a user request, e.g. `readline("+ ")`
-        let continuation_prompt = unsafe { r_get_option::<String>("continue").unwrap() };
+        let continuation_prompt: String = r_get_option("continue").try_into().unwrap();
         let incomplete = !user_request && prompt == continuation_prompt;
 
         if incomplete {
@@ -1596,11 +1599,20 @@ unsafe extern "C" fn ps_onload_hook(pkg: SEXP, _path: SEXP) -> anyhow::Result<SE
     let _span = tracing::trace_span!(parent: None, "onload_hook", pkg = pkg).entered();
 
     // Populate fake source refs if needed
-    r_task::spawn_idle(|| async move {
-        if let Err(err) = ns_populate_srcref(pkg.clone()).await {
-            log::error!("Can't populate srcref for `{pkg}`: {err:?}");
-        }
-    });
+    if do_resource_namespaces() {
+        r_task::spawn_idle(|| async move {
+            if let Err(err) = ns_populate_srcref(pkg.clone()).await {
+                log::error!("Can't populate srcref for `{pkg}`: {err:?}");
+            }
+        });
+    }
 
     Ok(RObject::null().sexp)
+}
+
+fn do_resource_namespaces() -> bool {
+    let opt: Option<bool> = r_null_or_try_into(r_get_option("ark.resource_namespaces"))
+        .ok()
+        .flatten();
+    opt.unwrap_or(true)
 }
