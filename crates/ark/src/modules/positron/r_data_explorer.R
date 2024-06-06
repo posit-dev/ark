@@ -47,13 +47,13 @@
 number_summary_stats <- function(column, filtered_indices) {
     col <- col_filter_indices(column, filtered_indices)
 
-    format(c(
+    c(
         min_value = min(col, na.rm = TRUE),
         max_value = max(col, na.rm = TRUE),
         mean = mean(col, na.rm = TRUE),
         median = stats::median(col, na.rm = TRUE),
         stdev = stats::sd(col, na.rm = TRUE)
-    ))
+    )
 }
 
 string_summary_stats <- function(column, filtered_indices) {
@@ -262,83 +262,10 @@ col_filter_indices <- function(col, idx = NULL) {
     x[i, j, drop = FALSE]
 }
 
-format_list_column <- function(x) {
-    map_chr(x, function(x) {
-        d <- dim(x)
-        if (is.null(d)) {
-            d <- length(x)
-        }
-
-        paste0(
-            "<",
-            class(x)[1],
-            " [",
-            paste0(d, collapse = " x "),
-            "]>"
-        )
-    })
-}
-
-# Specialized function to format integer values, supporting format options
-# that the front-end might provide.
-# This function must be vectorized on `x`.
-format_integer <- function(x, thousands_sep) {
-    base::format(x, big.mark = thousands_sep)
-}
-
-#' Format a real number for display
-#'
-#' This function must be vectorized on `x`.
-#'
-#' @param large_num_digits Fixed number of decimal places to display for numbers over 1, or in
-#'  scientific notation.
-#' @param small_num_digits Fixed number of decimal places to display for numbers under 1.
-#' @param max_integral_digits Maximum number of integral digits to display before switching to
-#'  scientific notation.
-#' @param thousands_sep Thousands separator string
-format_real <- function(x, large_num_digits, small_num_digits, max_integral_digits, thousands_sep = "") {
-  # format numbers larger than 1
-  formatted <- character(length(x))
-
-  # The limit for large numbers before switching to scientific
-  # notation
-  upper_threshold <- 10^max_integral_digits
-
-  # The limit for small numbers before switching to scientific
-  # notation
-  lower_threshold <- 10^(-(small_num_digits + 1))
-
-  abs_x <- abs(x)
-  formatted <- format_if(
-      formatted, x, abs_x >= upper_threshold & is.finite(x), .fun = base::sprintf,
-      fmt = paste0("%.", large_num_digits, "e")
-  )
-  formatted <- format_if(
-      formatted, x, abs_x >= 1 & abs_x < upper_threshold,
-      scientific = FALSE, nsmall = large_num_digits, big.mark = thousands_sep, digits = large_num_digits - 1
-  )
-  formatted <- format_if(
-      formatted, x, abs_x < 1 & abs_x > lower_threshold,
-      scientific = FALSE, nsmall = small_num_digits, digits = small_num_digits - 1
-  )
-  formatted <- format_if(
-      formatted, x, abs_x <= lower_threshold & is.finite(x), .fun = base::sprintf,
-      fmt = paste0("%.", large_num_digits, "e")
-  )
-  formatted <- format_if( # special case 0 to align with other medium numbers
-        formatted, x, abs_x == 0,
-        scientific = FALSE, nsmall = large_num_digits, digits = large_num_digits - 1
-  )
-
-  formatted
-}
-
-format_if <- function(formatted, x, condition, ..., .fun = base::format) {
-  if (any(condition, na.rm = TRUE)) { # avoids copying formatted if condition doesn't match anything
-      pos <- which(condition)
-      formatted[pos] <- .fun(x[pos], ..., trim = TRUE)
-  }
-  formatted
+is_na_checked <- function(x) {
+    result <- is.na(x)
+    stopifnot(is.logical(result), length(x) == length(result))
+    result
 }
 
 export_selection <- function(x, format = c("csv", "tsv", "html"), include_header = TRUE) {

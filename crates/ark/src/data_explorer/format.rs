@@ -5,6 +5,8 @@
 //
 //
 
+use std::collections::HashMap;
+
 use amalthea::comm::data_explorer_comm::ColumnValue;
 use amalthea::comm::data_explorer_comm::FormatOptions;
 use harp::exec::RFunction;
@@ -18,6 +20,7 @@ use harp::r_null;
 use harp::utils::r_classes;
 use harp::utils::r_format;
 use harp::utils::r_is_null;
+use harp::utils::r_names2;
 use harp::utils::r_typeof;
 use harp::vector::CharacterVector;
 use harp::vector::ComplexVector;
@@ -30,22 +33,41 @@ use libr::*;
 
 use crate::modules::ARK_ENVS;
 
+// Used by the get_data_values method to format columns for displaying in the grid.
 pub fn format_column(x: SEXP, format_options: &FormatOptions) -> Vec<ColumnValue> {
+    format(x, format_options)
+        .into_iter()
+        .map(Into::into)
+        .collect()
+}
+
+// Used by the summary_profile method to format the summary statistics for display.
+pub fn format_stats(x: SEXP, format_options: &FormatOptions) -> HashMap<String, String> {
+    let out = format(x, format_options);
+    let mut stats = HashMap::new();
+    unsafe {
+        CharacterVector::new_unchecked(r_names2(x))
+            .iter()
+            .zip(out.into_iter())
+            .for_each(|(nm, value)| {
+                stats.insert(nm.unwrap_or("????".to_string()), value.into());
+            });
+    }
+    stats
+}
+
+fn format(x: SEXP, format_options: &FormatOptions) -> Vec<FormattedValue> {
     format_values(x, format_options).unwrap_or(unknown_format(x))
 }
 
-fn unknown_format(x: SEXP) -> Vec<ColumnValue> {
-    vec![ColumnValue::FormattedValue("????".to_string()); r_length(x) as usize]
+fn unknown_format(x: SEXP) -> Vec<FormattedValue> {
+    vec![FormattedValue::Unkown; r_length(x) as usize]
 }
 
 // Format a column of data for display in the data explorer.
-fn format_values(x: SEXP, format_options: &FormatOptions) -> anyhow::Result<Vec<ColumnValue>> {
+fn format_values(x: SEXP, format_options: &FormatOptions) -> anyhow::Result<Vec<FormattedValue>> {
     if let Some(_) = r_classes(x) {
-        let formatted: Vec<String> = RObject::from(r_format(x)?).try_into()?;
-        return Ok(formatted
-            .into_iter()
-            .map(ColumnValue::FormattedValue)
-            .collect());
+        return Ok(format_object(x));
     }
 
     match r_typeof(x) {
@@ -59,16 +81,64 @@ fn format_values(x: SEXP, format_options: &FormatOptions) -> anyhow::Result<Vec<
     }
 }
 
-fn format_vec(x: SEXP) -> Vec<ColumnValue> {
+fn format_object(x: SEXP) -> Vec<FormattedValue> {
+    // we call r_format() to dispatch the format method
+    let formatted: Vec<String> = match r_format(x) {
+        Ok(fmt) => match RObject::from(fmt).try_into() {
+            Ok(x) => x,
+            Err(_) => return unknown_format(x),
+        },
+        Err(_) => return unknown_format(x),
+    };
+
+    // but we also want to show special value codes. we call base::is.na() to dispatch
+    // the is.na() function and then replace those with FormattedValues::NA.
+    let is_na = RFunction::from("is_na_checked")
+        .add(x)
+        .call_in(ARK_ENVS.positron_ns);
+
+    match is_na {
+        Ok(is_na) => {
+            formatted
+                .into_iter()
+                .zip(unsafe { LogicalVector::new_unchecked(is_na.sexp).iter() })
+                .map(|(v, is_na)| {
+                    // we don't expect is.na to return NA's, but if it happens, we treat it as false
+                    if is_na.unwrap_or(false) {
+                        FormattedValue::NA
+                    } else {
+                        // base::format defaults to using `trim=FALSE`
+                        // so it will add spaces to the end of the strings so all elements of the vector
+                        // have the same fixed width. We don't want this behavior in the data explorer,
+                        // We tried passing `trim=TRUE` but this is unfortunatelly is not supported for eg. `factors`:
+                        // > format(factor(c("aaaa", "a")), trim = TRUE)
+                        // [1] "aaaa" "a   "
+                        //
+                        // so we will just trim the spaces manually, which is not ideal, but it's better than
+                        // having the values misaligned
+                        FormattedValue::Value(v.trim_matches(|x| x == ' ').to_string())
+                    }
+                })
+                .collect()
+        },
+        Err(_) => {
+            // if we fail to get the is.na() values we will just return the formatted values
+            // without additional treatments.
+            formatted.into_iter().map(FormattedValue::Value).collect()
+        },
+    }
+}
+
+fn format_vec(x: SEXP) -> Vec<FormattedValue> {
     let len = r_length(x);
-    let mut output = Vec::<ColumnValue>::with_capacity(len as usize);
+    let mut output = Vec::<FormattedValue>::with_capacity(len as usize);
 
     for i in 0..len {
         let elt = r_list_get(x, i);
         let formatted = if r_is_null(elt) {
-            SpecialValueTypes::NULL.into()
+            FormattedValue::NULL
         } else {
-            ColumnValue::FormattedValue(format_vec_elt(elt))
+            FormattedValue::Value(format_vec_elt(elt))
         };
         output.push(formatted);
     }
@@ -116,48 +186,48 @@ fn format_vec_elt(x: SEXP) -> String {
     format!("<{} [{}]>", class_str, dim_str)
 }
 
-fn format_cpl(x: SEXP) -> Vec<ColumnValue> {
+fn format_cpl(x: SEXP) -> Vec<FormattedValue> {
     unsafe {
         ComplexVector::new_unchecked(x)
             .iter()
             .map(|x| match x {
                 Some(v) => {
-                    ColumnValue::FormattedValue(format!("{}+{}i", v.r.to_string(), v.i.to_string()))
+                    FormattedValue::Value(format!("{}+{}i", v.r.to_string(), v.i.to_string()))
                 },
-                None => SpecialValueTypes::NA.into(),
+                None => FormattedValue::NA,
             })
             .collect()
     }
 }
 
-fn format_lgl(x: SEXP) -> Vec<ColumnValue> {
+fn format_lgl(x: SEXP) -> Vec<FormattedValue> {
     unsafe {
         LogicalVector::new_unchecked(x)
             .iter()
             .map(|x| match x {
                 Some(v) => match v {
-                    true => ColumnValue::FormattedValue("TRUE".to_string()),
-                    false => ColumnValue::FormattedValue("FALSE".to_string()),
+                    true => FormattedValue::Value("TRUE".to_string()),
+                    false => FormattedValue::Value("FALSE".to_string()),
                 },
-                None => SpecialValueTypes::NA.into(),
+                None => FormattedValue::NA,
             })
             .collect()
     }
 }
 
-fn format_chr(x: SEXP) -> Vec<ColumnValue> {
+fn format_chr(x: SEXP) -> Vec<FormattedValue> {
     unsafe {
         CharacterVector::new_unchecked(x)
             .iter()
             .map(|x| match x {
-                Some(v) => ColumnValue::FormattedValue(v),
-                None => SpecialValueTypes::NA.into(),
+                Some(v) => FormattedValue::Value(v),
+                None => FormattedValue::NA,
             })
             .collect()
     }
 }
 
-fn format_int(x: SEXP, options: &FormatOptions) -> Vec<ColumnValue> {
+fn format_int(x: SEXP, options: &FormatOptions) -> Vec<FormattedValue> {
     unsafe {
         IntegerVector::new_unchecked(x)
             .iter()
@@ -166,17 +236,17 @@ fn format_int(x: SEXP, options: &FormatOptions) -> Vec<ColumnValue> {
     }
 }
 
-fn format_int_elt(x: Option<i32>, options: &FormatOptions) -> ColumnValue {
+fn format_int_elt(x: Option<i32>, options: &FormatOptions) -> FormattedValue {
     match x {
-        None => SpecialValueTypes::NA.into(),
-        Some(v) => ColumnValue::FormattedValue(apply_thousands_sep(
+        None => FormattedValue::NA,
+        Some(v) => FormattedValue::Value(apply_thousands_sep(
             v.to_string(),
             options.thousands_sep.clone(),
         )),
     }
 }
 
-fn format_dbl(x: SEXP, options: &FormatOptions) -> Vec<ColumnValue> {
+fn format_dbl(x: SEXP, options: &FormatOptions) -> Vec<FormattedValue> {
     unsafe {
         NumericVector::new_unchecked(x)
             .iter()
@@ -185,25 +255,25 @@ fn format_dbl(x: SEXP, options: &FormatOptions) -> Vec<ColumnValue> {
     }
 }
 
-fn format_dbl_elt(x: Option<f64>, options: &FormatOptions) -> ColumnValue {
+fn format_dbl_elt(x: Option<f64>, options: &FormatOptions) -> FormattedValue {
     match x {
-        None => SpecialValueTypes::NA.into(),
+        None => FormattedValue::NA,
         Some(v) => {
             if r_dbl_is_nan(v) {
-                SpecialValueTypes::NaN.into()
+                FormattedValue::NaN
             } else if r_dbl_is_finite(v) {
                 // finite values that are not NaN nor NA
                 format_dbl_value(v, options)
             } else if v > 0.0 {
-                SpecialValueTypes::Inf.into()
+                FormattedValue::Inf
             } else {
-                SpecialValueTypes::NegInf.into()
+                FormattedValue::NegInf
             }
         },
     }
 }
 
-fn format_dbl_value(x: f64, options: &FormatOptions) -> ColumnValue {
+fn format_dbl_value(x: f64, options: &FormatOptions) -> FormattedValue {
     // The limit for large numbers before switching to scientific
     // notation
     let upper_threshold = f64::powf(10.0, options.max_integral_digits as f64);
@@ -245,7 +315,7 @@ fn format_dbl_value(x: f64, options: &FormatOptions) -> ColumnValue {
         pad_exponent(v)
     };
 
-    ColumnValue::FormattedValue(formatted)
+    FormattedValue::Value(formatted)
 }
 
 fn apply_thousands_sep(x: String, sep: Option<String>) -> String {
@@ -263,6 +333,14 @@ fn apply_thousands_sep(x: String, sep: Option<String>) -> String {
             for (i, c) in x.chars().rev().enumerate() {
                 // while before the decimal point, just copy the string
                 if i < (x.len() - decimal_point) {
+                    formatted.push(c);
+                    continue;
+                }
+
+                // for negative numbers, break the iteration.
+                // continue should have the same effect as `break` as there shouldn't exist
+                // any character before `-`.
+                if c == '-' {
                     formatted.push(c);
                     continue;
                 }
@@ -297,6 +375,49 @@ fn pad_exponent(x: String) -> String {
     formatted
 }
 
+// This type is only internally used with the intent of being easy to convert to
+// ColumnValue or String when needed.
+#[derive(Clone)]
+enum FormattedValue {
+    Unkown,
+    NULL,
+    NA,
+    NaN,
+    Inf,
+    NegInf,
+    Value(String),
+}
+
+// Find the special code values mapping to integer here:
+// https://github.com/posit-dev/positron/blob/46eb4dc0b071984be0f083c7836d74a19ef1509f/src/vs/workbench/services/positronDataExplorer/common/dataExplorerCache.ts#L59-L60
+impl Into<ColumnValue> for FormattedValue {
+    fn into(self) -> ColumnValue {
+        match self {
+            FormattedValue::Unkown => ColumnValue::FormattedValue(self.into()),
+            FormattedValue::NULL => ColumnValue::SpecialValueCode(0),
+            FormattedValue::NA => ColumnValue::SpecialValueCode(1),
+            FormattedValue::NaN => ColumnValue::SpecialValueCode(2),
+            FormattedValue::Inf => ColumnValue::SpecialValueCode(10),
+            FormattedValue::NegInf => ColumnValue::SpecialValueCode(11),
+            FormattedValue::Value(v) => ColumnValue::FormattedValue(v),
+        }
+    }
+}
+
+impl Into<String> for FormattedValue {
+    fn into(self) -> String {
+        match self {
+            FormattedValue::NULL => "NULL".to_string(),
+            FormattedValue::NA => "NA".to_string(),
+            FormattedValue::NaN => "NaN".to_string(),
+            FormattedValue::Inf => "Inf".to_string(),
+            FormattedValue::NegInf => "-Inf".to_string(),
+            FormattedValue::Unkown => "????".to_string(),
+            FormattedValue::Value(v) => v,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use harp::environment::R_ENVS;
@@ -310,7 +431,7 @@ mod tests {
             large_num_digits: 2,
             small_num_digits: 4,
             max_integral_digits: 7,
-            thousands_sep: None,
+            thousands_sep: Some(",".to_string()),
         }
     }
 
@@ -439,43 +560,131 @@ mod tests {
     }
 
     #[test]
-    fn test_list_formatting() {
+    fn test_float_special_values() {
         r_test(|| {
-            let data = r_parse_eval0("list(0, NULL)", R_ENVS.global).unwrap();
+            let data = r_parse_eval0(
+                "c(NA_real_, NaN, Inf, -Inf, 0, 1, 1000000000, -1000000000)",
+                R_ENVS.global,
+            )
+            .unwrap();
             let formatted = format_column(data.sexp, &default_options());
             assert_eq!(formatted, vec![
-                ColumnValue::FormattedValue("<numeric [1]>".to_string()),
-                SpecialValueTypes::NULL.into()
+                FormattedValue::NA.into(),
+                FormattedValue::NaN.into(),
+                FormattedValue::Inf.into(),
+                FormattedValue::NegInf.into(),
+                ColumnValue::FormattedValue("0.00".to_string()),
+                ColumnValue::FormattedValue("1.00".to_string()),
+                ColumnValue::FormattedValue("1.00e+09".to_string()),
+                ColumnValue::FormattedValue("-1.00e+09".to_string())
             ]);
         })
     }
-}
 
-#[derive(Clone)]
-enum SpecialValueTypes {
-    NULL,
-    NA,
-    NaN,
-    Inf,
-    NegInf,
-}
-
-// Find the special code values mapping to integer here:
-// https://github.com/posit-dev/positron/blob/46eb4dc0b071984be0f083c7836d74a19ef1509f/src/vs/workbench/services/positronDataExplorer/common/dataExplorerCache.ts#L59-L60
-impl Into<i64> for SpecialValueTypes {
-    fn into(self) -> i64 {
-        match self {
-            SpecialValueTypes::NULL => 0,
-            SpecialValueTypes::NA => 1,
-            SpecialValueTypes::NaN => 2,
-            SpecialValueTypes::Inf => 10,
-            SpecialValueTypes::NegInf => 11,
-        }
+    #[test]
+    fn test_list_formatting() {
+        r_test(|| {
+            let data = r_parse_eval0("list(0, NULL, NA_real_)", R_ENVS.global).unwrap();
+            let formatted = format_column(data.sexp, &default_options());
+            assert_eq!(formatted, vec![
+                ColumnValue::FormattedValue("<numeric [1]>".to_string()),
+                FormattedValue::NULL.into(),
+                ColumnValue::FormattedValue("<numeric [1]>".to_string())
+            ]);
+        })
     }
-}
 
-impl Into<ColumnValue> for SpecialValueTypes {
-    fn into(self) -> ColumnValue {
-        ColumnValue::SpecialValueCode(self.into())
+    #[test]
+    fn test_integer_formatting() {
+        r_test(|| {
+            let data = r_parse_eval0(
+                "as.integer(c(1, 1000, 0, -100000, NA, 1000000))",
+                R_ENVS.global,
+            )
+            .unwrap();
+            let formatted = format_column(data.sexp, &default_options());
+            assert_eq!(formatted, vec![
+                ColumnValue::FormattedValue("1".to_string()),
+                ColumnValue::FormattedValue("1,000".to_string()),
+                ColumnValue::FormattedValue("0".to_string()),
+                ColumnValue::FormattedValue("-100,000".to_string()),
+                FormattedValue::NA.into(),
+                ColumnValue::FormattedValue("1,000,000".to_string())
+            ]);
+        })
+    }
+
+    #[test]
+    fn test_chr_formatting() {
+        r_test(|| {
+            let data = r_parse_eval0("c('a', 'b', 'c', NA, 'd', 'e')", R_ENVS.global).unwrap();
+            let formatted = format_column(data.sexp, &default_options());
+            assert_eq!(formatted, vec![
+                ColumnValue::FormattedValue("a".to_string()),
+                ColumnValue::FormattedValue("b".to_string()),
+                ColumnValue::FormattedValue("c".to_string()),
+                FormattedValue::NA.into(),
+                ColumnValue::FormattedValue("d".to_string()),
+                ColumnValue::FormattedValue("e".to_string())
+            ]);
+        })
+    }
+
+    #[test]
+    fn test_factors_formatting() {
+        r_test(|| {
+            let data =
+                r_parse_eval0("factor(c('aaaaa', 'b', 'c', NA, 'd', 'e'))", R_ENVS.global).unwrap();
+            let formatted = format_column(data.sexp, &default_options());
+            assert_eq!(formatted, vec![
+                ColumnValue::FormattedValue("aaaaa".to_string()),
+                ColumnValue::FormattedValue("b".to_string()),
+                ColumnValue::FormattedValue("c".to_string()),
+                FormattedValue::NA.into(),
+                ColumnValue::FormattedValue("d".to_string()),
+                ColumnValue::FormattedValue("e".to_string())
+            ]);
+        })
+    }
+
+    #[test]
+    fn test_cpl_formatting() {
+        // TODO: In the future we might want to use scientific notation for complex numbers
+        // although I'm not sure it's really helpful:
+        // > 1000000000+1000000000i
+        // [1] 1e+09+1e+09i
+        r_test(|| {
+            let data = r_parse_eval0(
+                "c(1+1i, 2+2i, 3+3i, NA, 1000000000+1000000000i, 5+5i)",
+                R_ENVS.global,
+            )
+            .unwrap();
+            let formatted = format_column(data.sexp, &default_options());
+            assert_eq!(formatted, vec![
+                ColumnValue::FormattedValue("1+1i".to_string()),
+                ColumnValue::FormattedValue("2+2i".to_string()),
+                ColumnValue::FormattedValue("3+3i".to_string()),
+                FormattedValue::NA.into(),
+                ColumnValue::FormattedValue("1000000000+1000000000i".to_string()),
+                ColumnValue::FormattedValue("5+5i".to_string())
+            ]);
+        })
+    }
+
+    #[test]
+    fn test_lgl_formatting() {
+        r_test(|| {
+            let data =
+                r_parse_eval0("c(TRUE, FALSE, NA, TRUE, FALSE, TRUE)", R_ENVS.global).unwrap();
+            let formatted = format_column(data.sexp, &default_options());
+            assert_eq!(formatted, vec![
+                ColumnValue::FormattedValue("TRUE".to_string()),
+                ColumnValue::FormattedValue("FALSE".to_string()),
+                FormattedValue::NA.into(),
+                ColumnValue::FormattedValue("TRUE".to_string()),
+                ColumnValue::FormattedValue("FALSE".to_string()),
+                ColumnValue::FormattedValue("TRUE".to_string())
+            ]);
+        })
     }
 }

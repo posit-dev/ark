@@ -790,11 +790,11 @@ fn test_data_explorer() {
                 assert!(number_stats.is_some());
                 let number_stats = number_stats.unwrap();
                 assert_eq!(number_stats, SummaryStatsNumber {
-                    min_value: String::from("1"),
-                    max_value: String::from("3"),
-                    mean: String::from("2"),
-                    median: String::from("2"),
-                    stdev: String::from("1"),
+                    min_value: String::from("1.00"),
+                    max_value: String::from("3.00"),
+                    mean: String::from("2.00"),
+                    median: String::from("2.00"),
+                    stdev: String::from("1.00"),
                 });
 
                 // The second column is a character column

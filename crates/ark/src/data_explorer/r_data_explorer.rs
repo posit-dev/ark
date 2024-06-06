@@ -74,6 +74,7 @@ use uuid::Uuid;
 
 use crate::data_explorer::export_selection;
 use crate::data_explorer::format;
+use crate::data_explorer::format::format_stats;
 use crate::interface::RMain;
 use crate::lsp::events::EVENTS;
 use crate::modules::ARK_ENVS;
@@ -438,7 +439,7 @@ impl RDataExplorer {
                 row_start_index,
                 num_rows,
                 column_indices,
-                format_options, // TODO: add support for format options
+                format_options,
             }) => {
                 // TODO: Support for data frames with over 2B rows
                 let row_start_index: i32 = row_start_index.try_into()?;
@@ -497,7 +498,7 @@ impl RDataExplorer {
             },
             DataExplorerBackendRequest::GetColumnProfiles(GetColumnProfilesParams {
                 profiles: requests,
-                format_options: _, // TODO: add support for format options
+                format_options,
             }) => {
                 let profiles = requests
                     .into_iter()
@@ -523,8 +524,9 @@ impl RDataExplorer {
                             }
                         },
                         ColumnProfileType::SummaryStats => {
-                            let summary_stats =
-                                r_task(|| self.r_summary_stats(request.column_index as i32));
+                            let summary_stats = r_task(|| {
+                                self.r_summary_stats(request.column_index as i32, &format_options)
+                            });
                             ColumnProfileResult {
                                 null_count: None,
                                 summary_stats: match summary_stats {
@@ -651,11 +653,15 @@ impl RDataExplorer {
             })
             .call_in(ARK_ENVS.positron_ns)?;
 
-        // Return the count of nulls and NA values
+        // Retur  n the count of nulls and NA values
         Ok(result.try_into()?)
     }
 
-    fn r_summary_stats(&self, column_index: i32) -> anyhow::Result<ColumnSummaryStats> {
+    fn r_summary_stats(
+        &self,
+        column_index: i32,
+        format_options: &FormatOptions,
+    ) -> anyhow::Result<ColumnSummaryStats> {
         // Get the column to compute summary stats for
         let column = tbl_get_column(self.table.get().sexp, column_index, self.shape.kind)?;
         let dtype = display_type(column.sexp);
@@ -681,8 +687,10 @@ impl RDataExplorer {
 
         match dtype {
             ColumnDisplayType::Number => {
-                let r_stats: HashMap<String, String> =
-                    call_summary_fn("number_summary_stats")?.try_into()?;
+                let r_stats: HashMap<String, String> = format_stats(
+                    call_summary_fn("number_summary_stats")?.sexp,
+                    &format_options,
+                );
 
                 stats.number_stats = Some(SummaryStatsNumber {
                     min_value: r_stats["min_value"].clone(),
