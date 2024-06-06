@@ -65,6 +65,8 @@
 # `show.error.messages` back to `TRUE`. This prevents the user from tweaking
 # this option, but we don't expect them to do that anyways.
 .ps.register_try_hook <- function() {
+    formals <- formals(base::try)
+
     # Can't use `local_options()` in the body, must be base code
     body <- body(base::try)
     body <- bquote({
@@ -73,12 +75,8 @@
         .(body)
     })
 
-    # Keep signature in sync with `try()`
-    fn <- function(
-        expr,
-        silent = FALSE,
-        outFile = getOption("try.outFile", default = stderr())
-    ) {}
+    fn <- function() {}
+    formals(fn) <- formals
     body(fn) <- body
 
     .ps.register_base_hook("try", fn, namespace = TRUE)
