@@ -729,7 +729,7 @@ impl RMain {
 
                 // A task woke us up, start next loop tick to yield to it
                 recv(self.tasks_interrupt_rx) -> task => {
-                    self.handle_task_concurrent(task.unwrap());
+                    self.handle_task_interrupt(task.unwrap());
                 }
                 recv(self.tasks_idle_rx) -> task => {
                     self.handle_task(task.unwrap());
@@ -914,7 +914,7 @@ impl RMain {
     /// Wrapper around `handle_task()` that does some extra logging to record
     /// how long a task waited before being picked up by the R or ReadConsole
     /// event loop.
-    fn handle_task_concurrent(&mut self, mut task: RTask) {
+    fn handle_task_interrupt(&mut self, mut task: RTask) {
         if let Some(start_info) = task.start_info_mut() {
             // Log excessive waiting before starting task
             if start_info.start_time.elapsed() > std::time::Duration::from_millis(50) {
@@ -930,15 +930,26 @@ impl RMain {
             start_info.start_time = std::time::Instant::now();
         }
 
-        self.handle_task(task)
+        let finished_task_info = self.handle_task(task);
+
+        // We only log long task durations in the interrupt case since we expect
+        // idle tasks to take longer. Use the tracing profiler to monitor the
+        // duration of idle tasks.
+        if let Some(info) = finished_task_info {
+            if info.elapsed() > std::time::Duration::from_millis(50) {
+                let _s = info.span.enter();
+                log::info!("task took {} milliseconds.", info.elapsed().as_millis());
+            }
+        }
     }
 
-    fn handle_task(&mut self, task: RTask) {
+    /// Returns start information when the task has been completed
+    fn handle_task(&mut self, task: RTask) -> Option<RTaskStartInfo> {
         // Background tasks can't take any user input, so we set R_Interactive
         // to 0 to prevent `readline()` from blocking the task.
         let _interactive = harp::raii::RLocalInteractive::new(false);
 
-        let start_info = match task {
+        match task {
             RTask::Sync(task) => {
                 // Immediately let caller know we have started so it can set up the
                 // timeout
@@ -967,13 +978,6 @@ impl RMain {
             },
 
             RTask::Parked(waker) => self.poll_task(None, waker),
-        };
-
-        if let Some(info) = start_info {
-            if info.elapsed() > std::time::Duration::from_millis(50) {
-                let _s = info.span.enter();
-                log::info!("task took {} milliseconds.", info.elapsed().as_millis());
-            }
         }
     }
 
@@ -1236,7 +1240,7 @@ This is a Positron limitation we plan to fix. In the meantime, you can:
         // slowed down
         for _ in 0..3 {
             if let Ok(task) = self.tasks_interrupt_rx.try_recv() {
-                self.handle_task_concurrent(task);
+                self.handle_task_interrupt(task);
             } else {
                 break;
             }
