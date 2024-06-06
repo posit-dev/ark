@@ -65,18 +65,15 @@
 # `show.error.messages` back to `TRUE`. This prevents the user from tweaking
 # this option, but we don't expect them to do that anyways.
 .ps.register_try_hook <- function() {
-    formals <- formals(base::try)
+    fn <- base::try
 
     # Can't use `local_options()` in the body, must be base code
-    body <- body(base::try)
+    body <- body(fn)
     body <- bquote({
         old <- options(show.error.messages = TRUE)
         on.exit(options(old), add = TRUE, after = FALSE)
         .(body)
     })
-
-    fn <- function() {}
-    formals(fn) <- formals
     body(fn) <- body
 
     .ps.register_base_hook("try", fn, namespace = TRUE)
