@@ -41,9 +41,6 @@ use amalthea::comm::data_explorer_comm::SetRowFiltersFeatures;
 use amalthea::comm::data_explorer_comm::SetRowFiltersParams;
 use amalthea::comm::data_explorer_comm::SetSortColumnsFeatures;
 use amalthea::comm::data_explorer_comm::SetSortColumnsParams;
-use amalthea::comm::data_explorer_comm::SummaryStatsBoolean;
-use amalthea::comm::data_explorer_comm::SummaryStatsNumber;
-use amalthea::comm::data_explorer_comm::SummaryStatsString;
 use amalthea::comm::data_explorer_comm::SupportStatus;
 use amalthea::comm::data_explorer_comm::SupportedFeatures;
 use amalthea::comm::data_explorer_comm::TableData;
@@ -83,6 +80,7 @@ use uuid::Uuid;
 use crate::data_explorer::export_selection;
 use crate::data_explorer::format;
 use crate::data_explorer::format::format_string;
+use crate::data_explorer::summary_stats::summary_stats;
 use crate::interface::RMain;
 use crate::lsp::events::EVENTS;
 use crate::modules::ARK_ENVS;
@@ -674,72 +672,16 @@ impl RDataExplorer {
         let column = tbl_get_column(self.table.get().sexp, column_index, self.shape.kind)?;
         let dtype = display_type(column.sexp);
 
-        let call_summary_fn = |fun| {
-            RFunction::new("", fun)
-                .param("column", column)
-                .param("filtered_indices", match &self.filtered_indices {
-                    Some(indices) => RObject::try_from(indices)?,
-                    None => RObject::null(),
-                })
-                .call_in(ARK_ENVS.positron_ns)
+        // Filter the column if we have filtered indices before computing the summmary.
+        let filtered_column = match &self.filtered_indices {
+            Some(indices) => RFunction::from("col_filter_indices")
+                .add(column)
+                .add(RObject::try_from(indices)?)
+                .call_in(ARK_ENVS.positron_ns)?,
+            None => column,
         };
 
-        let mut stats = ColumnSummaryStats {
-            type_display: dtype.clone(),
-            number_stats: None,
-            string_stats: None,
-            boolean_stats: None,
-            date_stats: None, // TODO: add support for date/datetime stats
-            datetime_stats: None,
-        };
-
-        match dtype {
-            ColumnDisplayType::Number => {
-                let r_stats = call_summary_fn("number_summary_stats")?;
-
-                let names = unsafe { CharacterVector::new_unchecked(r_names2(r_stats.sexp)) };
-                let values = format_string(r_stats.sexp, format_options);
-
-                let r_stats: HashMap<String, String> = names
-                    .iter()
-                    .zip(values.into_iter())
-                    .map(|(name, value)| match name {
-                        Some(name) => (name, value),
-                        None => ("unk".to_string(), value),
-                    })
-                    .collect();
-
-                stats.number_stats = Some(SummaryStatsNumber {
-                    min_value: Some(r_stats["min_value"].clone()),
-                    max_value: Some(r_stats["max_value"].clone()),
-                    mean: Some(r_stats["mean"].clone()),
-                    median: Some(r_stats["median"].clone()),
-                    stdev: Some(r_stats["stdev"].clone()),
-                });
-            },
-            ColumnDisplayType::String => {
-                let r_stats: HashMap<String, i32> =
-                    call_summary_fn("string_summary_stats")?.try_into()?;
-
-                stats.string_stats = Some(SummaryStatsString {
-                    num_empty: r_stats["num_empty"].clone() as i64,
-                    num_unique: r_stats["num_unique"].clone() as i64,
-                });
-            },
-            ColumnDisplayType::Boolean => {
-                let r_stats: HashMap<String, i32> =
-                    call_summary_fn("boolean_summary_stats")?.try_into()?;
-
-                stats.boolean_stats = Some(SummaryStatsBoolean {
-                    true_count: r_stats["true_count"].clone() as i64,
-                    false_count: r_stats["false_count"].clone() as i64,
-                });
-            },
-            _ => {
-                bail!("Summary stats not implemented for type: {:?}", dtype);
-            },
-        }
-        Ok(stats)
+        Ok(summary_stats(filtered_column.sexp, dtype))
     }
 
     /// Sort the rows of the data object according to the sort keys in

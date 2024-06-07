@@ -1,0 +1,246 @@
+//
+// summary_stats.rs
+//
+// Copyright (C) 2024 by Posit Software, PBC
+//
+//
+
+use std::collections::HashMap;
+
+use amalthea::comm::data_explorer_comm;
+use amalthea::comm::data_explorer_comm::ColumnDisplayType;
+use amalthea::comm::data_explorer_comm::ColumnSummaryStats;
+use harp::exec::RFunction;
+use harp::exec::RFunctionExt;
+use harp::object::RObject;
+use libr::SEXP;
+use stdext::unwrap;
+
+use crate::modules::ARK_ENVS;
+
+pub fn summary_stats(column: SEXP, display_type: ColumnDisplayType) -> ColumnSummaryStats {
+    match summary_stats_(column, display_type) {
+        Ok(stats) => stats,
+        Err(e) => {
+            // we want to log the error but return an empty summary stats so
+            // that the user can still see the rest of the data
+            log::error!("Error getting summary stats: {:?}", e);
+            empty_column_summary_stats()
+        },
+    }
+}
+
+fn summary_stats_(
+    column: SEXP,
+    display_type: ColumnDisplayType,
+) -> anyhow::Result<ColumnSummaryStats> {
+    match display_type {
+        ColumnDisplayType::Number => Ok(summary_stats_number(column)?.into()),
+        ColumnDisplayType::String => Ok(summary_stats_string(column)?.into()),
+        ColumnDisplayType::Boolean => Ok(summary_stats_boolean(column)?.into()),
+        ColumnDisplayType::Date => Ok(summary_stats_date(column)?.into()),
+        _ => Err(anyhow::anyhow!("Unkown type")),
+    }
+}
+
+fn summary_stats_number(column: SEXP) -> anyhow::Result<SummaryStatsNumber> {
+    let stats = call_summary_fn("summary_stats_number", column)?;
+    let r_stats: HashMap<String, String> = stats.try_into()?;
+
+    Ok(SummaryStatsNumber(data_explorer_comm::SummaryStatsNumber {
+        min_value: r_stats["min_value"].clone(),
+        max_value: r_stats["max_value"].clone(),
+        mean: r_stats["mean"].clone(),
+        median: r_stats["median"].clone(),
+        stdev: r_stats["stdev"].clone(),
+    }))
+}
+
+fn summary_stats_string(column: SEXP) -> anyhow::Result<SummaryStatsString> {
+    let stats = call_summary_fn("summary_stats_string", column)?;
+    let r_stats: HashMap<String, i32> = stats.try_into()?;
+
+    Ok(SummaryStatsString(data_explorer_comm::SummaryStatsString {
+        num_empty: r_stats["num_empty"].clone() as i64,
+        num_unique: r_stats["num_unique"].clone() as i64,
+    }))
+}
+
+fn summary_stats_boolean(column: SEXP) -> anyhow::Result<SummaryStatsBoolean> {
+    let stats = call_summary_fn("summary_stats_boolean", column)?;
+    let r_stats: HashMap<String, i32> = stats.try_into()?;
+
+    Ok(SummaryStatsBoolean(
+        data_explorer_comm::SummaryStatsBoolean {
+            true_count: r_stats["true_count"].clone() as i64,
+            false_count: r_stats["false_count"].clone() as i64,
+        },
+    ))
+}
+
+fn summary_stats_date(column: SEXP) -> anyhow::Result<SummaryStatsDate> {
+    let robj_to_string = |robj: &RObject| -> String {
+        let string: Option<String> = unwrap!(robj.clone().try_into(), Err(e) => {
+            log::error!("Date stats: Error converting RObject to String: {e}");
+            None
+        });
+
+        match string {
+            Some(s) => s,
+            None => {
+                log::warn!("Date stats: Expected a string, got NA");
+                "NA".to_string()
+            },
+        }
+    };
+
+    let r_stats: HashMap<String, RObject> =
+        call_summary_fn("summary_stats_date", column)?.try_into()?;
+
+    let num_unique: i32 = r_stats["num_unique"].clone().try_into()?;
+
+    Ok(SummaryStatsDate(data_explorer_comm::SummaryStatsDate {
+        min_date: robj_to_string(&r_stats["min_date"]),
+        mean_date: robj_to_string(&r_stats["mean_date"]),
+        median_date: robj_to_string(&r_stats["median_date"]),
+        max_date: robj_to_string(&r_stats["max_date"]),
+        num_unique: num_unique as i64,
+    }))
+}
+
+fn call_summary_fn(function: &str, column: SEXP) -> anyhow::Result<RObject> {
+    Ok(RFunction::from(function)
+        .add(column)
+        .call_in(ARK_ENVS.positron_ns)?)
+}
+
+macro_rules! impl_summary_stats_conversion {
+    ($name:ident, $summary_stats:ident, $comm_type:ty, $display_type:expr) => {
+        struct $summary_stats(pub $comm_type);
+
+        impl From<$summary_stats> for ColumnSummaryStats {
+            fn from(summary_stats: $summary_stats) -> Self {
+                let mut stats = empty_column_summary_stats();
+                stats.type_display = $display_type;
+                stats.$name = Some(summary_stats.0);
+                stats
+            }
+        }
+    };
+}
+
+impl_summary_stats_conversion!(
+    number_stats,
+    SummaryStatsNumber,
+    data_explorer_comm::SummaryStatsNumber,
+    ColumnDisplayType::Number
+);
+impl_summary_stats_conversion!(
+    string_stats,
+    SummaryStatsString,
+    data_explorer_comm::SummaryStatsString,
+    ColumnDisplayType::String
+);
+impl_summary_stats_conversion!(
+    boolean_stats,
+    SummaryStatsBoolean,
+    data_explorer_comm::SummaryStatsBoolean,
+    ColumnDisplayType::Boolean
+);
+impl_summary_stats_conversion!(
+    date_stats,
+    SummaryStatsDate,
+    data_explorer_comm::SummaryStatsDate,
+    ColumnDisplayType::Date
+);
+
+fn empty_column_summary_stats() -> data_explorer_comm::ColumnSummaryStats {
+    data_explorer_comm::ColumnSummaryStats {
+        type_display: ColumnDisplayType::Unknown,
+        number_stats: None,
+        string_stats: None,
+        boolean_stats: None,
+        date_stats: None,
+        datetime_stats: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    use harp::environment::R_ENVS;
+    use harp::eval::r_parse_eval0;
+
+    use super::*;
+    use crate::test::r_test;
+
+    #[test]
+    fn test_numeric_summary() {
+        r_test(|| {
+            let column = r_parse_eval0("c(1,2,3,4,5, NA)", R_ENVS.global).unwrap();
+            let stats = summary_stats_(column.sexp, ColumnDisplayType::Number).unwrap();
+            let expected: ColumnSummaryStats =
+                SummaryStatsNumber(data_explorer_comm::SummaryStatsNumber {
+                    min_value: "1.000000".to_string(),
+                    max_value: "5.000000".to_string(),
+                    mean: "3.000000".to_string(),
+                    median: "3.000000".to_string(),
+                    stdev: "1.581139".to_string(),
+                })
+                .into();
+            assert_eq!(stats, expected);
+        })
+    }
+
+    #[test]
+    fn test_string_summary() {
+        r_test(|| {
+            let column = r_parse_eval0("c('a', 'b', 'c', 'd', '')", R_ENVS.global).unwrap();
+            let stats = summary_stats_(column.sexp, ColumnDisplayType::String).unwrap();
+            let expected: ColumnSummaryStats =
+                SummaryStatsString(data_explorer_comm::SummaryStatsString {
+                    num_empty: 1,
+                    num_unique: 5,
+                })
+                .into();
+            assert_eq!(stats, expected);
+        })
+    }
+
+    #[test]
+    fn test_boolean_summary() {
+        r_test(|| {
+            let column = r_parse_eval0("c(TRUE, FALSE, TRUE, TRUE, NA)", R_ENVS.global).unwrap();
+            let stats = summary_stats_(column.sexp, ColumnDisplayType::Boolean).unwrap();
+            let expected: ColumnSummaryStats =
+                SummaryStatsBoolean(data_explorer_comm::SummaryStatsBoolean {
+                    true_count: 3,
+                    false_count: 1,
+                })
+                .into();
+            assert_eq!(stats, expected);
+        })
+    }
+
+    #[test]
+    fn test_date_summary() {
+        r_test(|| {
+            let column = r_parse_eval0(
+                "as.Date(c('2021-01-01', '2021-01-02', '2021-01-03', '2021-01-04', NA))",
+                R_ENVS.global,
+            )
+            .unwrap();
+            let stats = summary_stats_(column.sexp, ColumnDisplayType::Date).unwrap();
+            let expected: ColumnSummaryStats =
+                SummaryStatsDate(data_explorer_comm::SummaryStatsDate {
+                    min_date: "2021-01-01".to_string(),
+                    mean_date: "2021-01-02".to_string(),
+                    median_date: "2021-01-02".to_string(),
+                    max_date: "2021-01-04".to_string(),
+                    num_unique: 5,
+                })
+                .into();
+            assert_eq!(stats, expected);
+        })
+    }
+}
