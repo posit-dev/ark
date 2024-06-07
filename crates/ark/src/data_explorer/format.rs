@@ -363,7 +363,13 @@ fn apply_thousands_sep(x: String, sep: Option<String>) -> String {
 // the string must have already been processed to include the e+ in positive values
 fn pad_exponent(x: String) -> String {
     // find the exponent position
-    let e_pos = x.find('e').unwrap();
+    let e_pos = match x.find('e') {
+        Some(v) => v,
+        None => return x, // if no e is found, return the string as is
+    };
+
+    // "1e-12" the e_pos (1) + 3 is < x.len() (5)
+    // "1e-1"  the e_pos (1) + 3 is == x.len() (4)
     if (e_pos + 1 + 2) < x.len() {
         return x; // the exponent already have 2 digits
     }
