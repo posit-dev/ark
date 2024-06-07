@@ -574,8 +574,8 @@ impl From<Vec<String>> for RObject {
     }
 }
 
-impl From<Vec<i64>> for RObject {
-    fn from(values: Vec<i64>) -> Self {
+impl From<&Vec<i64>> for RObject {
+    fn from(values: &Vec<i64>) -> Self {
         unsafe {
             let vector = RObject::from(Rf_allocVector(INTSXP, values.len() as isize));
             for idx in 0..values.len() {

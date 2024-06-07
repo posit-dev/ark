@@ -136,10 +136,10 @@ fn r_table_subset(x: SEXP, i: Option<Vec<i64>>, j: Option<Vec<i64>>) -> anyhow::
     let mut call = RFunction::from(".ps.table_subset");
     call.param("x", x);
     if let Some(i) = i {
-        call.param("i", i);
+        call.param("i", &i);
     }
     if let Some(j) = j {
-        call.param("j", j);
+        call.param("j", &j);
     }
 
     Ok(call.call_in(ARK_ENVS.positron_ns)?.sexp)
