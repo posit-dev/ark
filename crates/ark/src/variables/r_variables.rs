@@ -23,6 +23,7 @@ use crossbeam::channel::unbounded;
 use crossbeam::channel::Sender;
 use harp::environment::Binding;
 use harp::environment::Environment;
+use harp::environment::EnvironmentFilter;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
@@ -451,13 +452,9 @@ impl RVariables {
 
     fn bindings(&self) -> RThreadSafe<Vec<Binding>> {
         let env = self.env.get().clone();
-        let env = Environment::new(env);
+        let env = Environment::new(env, EnvironmentFilter::ExcludeHiddenBindings);
 
-        let mut bindings: Vec<Binding> = env
-            .iter()
-            .filter_map(|b| b.ok())
-            .filter(|binding| !binding.is_hidden())
-            .collect();
+        let mut bindings: Vec<Binding> = env.iter().filter_map(|b| b.ok()).collect();
 
         bindings.sort_by(|a, b| a.name.cmp(&b.name));
 

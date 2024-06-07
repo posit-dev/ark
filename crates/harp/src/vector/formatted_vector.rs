@@ -244,6 +244,7 @@ mod tests {
     use libr::STRSXP;
 
     use crate::environment::Environment;
+    use crate::environment::EnvironmentFilter;
     use crate::eval::r_parse_eval0;
     use crate::modules::HARP_ENV;
     use crate::object::RObject;
@@ -260,8 +261,10 @@ mod tests {
             let exp = String::from("\"1\" \"2\"");
 
             // From src/modules/format.R
-            let objs =
-                Environment::new(r_parse_eval0("init_test_format()", HARP_ENV.unwrap()).unwrap());
+            let objs = Environment::new(
+                r_parse_eval0("init_test_format()", HARP_ENV.unwrap()).unwrap(),
+                EnvironmentFilter::default(),
+            );
 
             // Unconforming dims (posit-dev/positron#1862)
             let x = FormattedVector::new(objs.find("unconforming_dims").unwrap()).unwrap();

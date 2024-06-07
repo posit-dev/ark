@@ -22,11 +22,19 @@ const FRAME_LOCK_MASK: std::ffi::c_int = 1 << 14;
 #[derive(Clone)]
 pub struct Environment {
     pub inner: RObject,
+    filter: EnvironmentFilter,
 }
 
+#[derive(Clone)]
 pub enum EnvironmentFilter {
     IncludeHiddenBindings,
     ExcludeHiddenBindings,
+}
+
+impl Default for EnvironmentFilter {
+    fn default() -> Self {
+        Self::ExcludeHiddenBindings
+    }
 }
 
 pub struct REnvs {
@@ -44,13 +52,14 @@ pub static R_ENVS: Lazy<REnvs> = Lazy::new(|| unsafe {
 });
 
 impl Environment {
-    pub fn new(env: RObject) -> Self {
-        Self { inner: env }
+    pub fn new(env: RObject, filter: EnvironmentFilter) -> Self {
+        Self { inner: env, filter }
     }
 
-    pub fn view(env: SEXP) -> Self {
+    pub fn view(env: SEXP, filter: EnvironmentFilter) -> Self {
         Self {
             inner: RObject::view(env),
+            filter,
         }
     }
 
@@ -60,7 +69,7 @@ impl Environment {
             if parent == R_ENVS.empty {
                 None
             } else {
-                Some(Self::new(RObject::new(parent)))
+                Some(Self::new(RObject::new(parent), self.filter.clone()))
             }
         }
     }
@@ -96,8 +105,8 @@ impl Environment {
         }
     }
 
-    pub fn is_empty(&self, filter: EnvironmentFilter) -> bool {
-        match filter {
+    pub fn is_empty(&self) -> bool {
+        match self.filter {
             EnvironmentFilter::IncludeHiddenBindings => self.inner.length() == 0,
             EnvironmentFilter::ExcludeHiddenBindings => self
                 .iter()
@@ -108,8 +117,8 @@ impl Environment {
         }
     }
 
-    pub fn length(&self, filter: EnvironmentFilter) -> usize {
-        match filter {
+    pub fn length(&self) -> usize {
+        match self.filter {
             EnvironmentFilter::IncludeHiddenBindings => self.inner.length() as usize,
             EnvironmentFilter::ExcludeHiddenBindings => self
                 .iter()
@@ -145,7 +154,16 @@ impl Environment {
 
     /// Returns the names of the bindings of the environment
     pub fn names(&self) -> Vec<String> {
-        let names = RFunction::new("base", "names").add(self.inner.sexp).call();
+        let all_names = match self.filter {
+            EnvironmentFilter::IncludeHiddenBindings => true,
+            EnvironmentFilter::ExcludeHiddenBindings => false,
+        };
+
+        let names = RFunction::new("base", "ls")
+            .param("envir", self.inner.sexp)
+            .param("all.names", all_names)
+            .call();
+
         let names = unwrap!(names, Err(err) => {
             log::error!("{err:?}");
             return vec![]
@@ -205,7 +223,7 @@ unsafe impl Sync for REnvs {}
 pub extern "C" fn ark_env_unlock(env: SEXP) -> crate::error::Result<SEXP> {
     unsafe {
         crate::check_env(env)?;
-        Environment::view(env).unlock();
+        Environment::view(env, EnvironmentFilter::default()).unlock();
         Ok(libr::R_NilValue)
     }
 }

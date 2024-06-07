@@ -57,6 +57,7 @@ use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use crossbeam::select;
 use harp::environment::Environment;
+use harp::environment::EnvironmentFilter;
 use harp::environment::R_ENVS;
 use harp::exec::geterrmessage;
 use harp::exec::r_check_stack;
@@ -1392,7 +1393,7 @@ fn to_html(frame: SEXP) -> Result<String> {
 pub(crate) fn console_inputs() -> anyhow::Result<ConsoleInputs> {
     // TODO: Should send the debug environment if debugging:
     // https://github.com/posit-dev/positron/issues/3001
-    let env = Environment::new(R_ENVS.global.into());
+    let env = Environment::new(R_ENVS.global.into(), EnvironmentFilter::default());
     let scopes = env.ancestors().map(|e| e.names()).collect();
 
     // Get the set of installed packages

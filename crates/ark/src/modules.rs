@@ -7,6 +7,7 @@
 
 use anyhow::anyhow;
 use harp::environment::Environment;
+use harp::environment::EnvironmentFilter;
 use harp::environment::R_ENVS;
 use harp::eval::r_parse_eval;
 use harp::exec::r_parse_exprs_with_srcrefs;
@@ -99,7 +100,7 @@ pub fn initialize(testing: bool) -> anyhow::Result<()> {
     // Needs to happen after the `r_source_in()` above. We don't lock the
     // bindings to make it easy to make updates by `source()`ing inside the
     // temporarily unlocked environment.
-    Environment::view(namespace.sexp).lock(false);
+    Environment::view(namespace.sexp, EnvironmentFilter::default()).lock(false);
 
     // Load the positron and rstudio namespaces and their exported functions
     for file in PositronModuleAsset::iter() {
@@ -303,6 +304,7 @@ pub unsafe extern "C" fn ps_deep_sleep(secs: SEXP) -> anyhow::Result<SEXP> {
 #[cfg(test)]
 mod tests {
     use harp::environment::Environment;
+    use harp::environment::EnvironmentFilter;
     use harp::environment::R_ENVS;
     use harp::eval::r_parse_eval0;
     use libr::CLOENV;
@@ -312,7 +314,7 @@ mod tests {
     fn get_namespace(exports: Environment, fun: &str) -> Environment {
         let fun = exports.find(fun).unwrap();
         let ns = unsafe { CLOENV(fun) };
-        Environment::view(ns)
+        Environment::view(ns, EnvironmentFilter::default())
     }
 
     #[test]
@@ -323,8 +325,8 @@ mod tests {
             let rstudio_exports =
                 r_parse_eval0("as.environment('tools:rstudio')", R_ENVS.base).unwrap();
 
-            let positron_exports = Environment::new(positron_exports);
-            let rstudio_exports = Environment::new(rstudio_exports);
+            let positron_exports = Environment::new(positron_exports, EnvironmentFilter::default());
+            let rstudio_exports = Environment::new(rstudio_exports, EnvironmentFilter::default());
 
             assert!(positron_exports.is_locked());
             assert!(rstudio_exports.is_locked());
