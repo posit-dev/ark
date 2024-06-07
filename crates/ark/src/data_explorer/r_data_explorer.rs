@@ -653,7 +653,7 @@ impl RDataExplorer {
             })
             .call_in(ARK_ENVS.positron_ns)?;
 
-        // Retur  n the count of nulls and NA values
+        // Return the count of nulls and NA values
         Ok(result.try_into()?)
     }
 
