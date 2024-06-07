@@ -15,6 +15,7 @@ use amalthea::comm::data_explorer_comm::ExportFormat;
 use amalthea::comm::data_explorer_comm::Selection;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
+use harp::object::RObject;
 use libr::SEXP;
 
 use crate::modules::ARK_ENVS;
@@ -59,7 +60,7 @@ fn get_selection(
     data: SEXP,
     view_indices: Option<Vec<i32>>,
     selection: DataSelection,
-) -> anyhow::Result<SEXP> {
+) -> anyhow::Result<RObject> {
     let (i, j) = match selection.kind {
         DataSelectionKind::SingleCell => match selection.selection {
             Selection::SingleCell(DataSelectionSingleCell {
@@ -114,7 +115,7 @@ fn subset_with_view_indices(
     view_indices: Option<Vec<i32>>,
     i: Option<Vec<i64>>,
     j: Option<Vec<i64>>,
-) -> anyhow::Result<SEXP> {
+) -> anyhow::Result<RObject> {
     let i = match view_indices {
         Some(view_indices) => match i {
             Some(i) => Some(i.iter().map(|i| view_indices[*i as usize] as i64).collect()),
@@ -132,7 +133,7 @@ fn subset_with_view_indices(
     r_table_subset(x, i, j)
 }
 
-fn r_table_subset(x: SEXP, i: Option<Vec<i64>>, j: Option<Vec<i64>>) -> anyhow::Result<SEXP> {
+fn r_table_subset(x: SEXP, i: Option<Vec<i64>>, j: Option<Vec<i64>>) -> anyhow::Result<RObject> {
     let mut call = RFunction::from(".ps.table_subset");
     call.param("x", x);
     if let Some(i) = i {
@@ -142,7 +143,7 @@ fn r_table_subset(x: SEXP, i: Option<Vec<i64>>, j: Option<Vec<i64>>) -> anyhow::
         call.param("j", &j);
     }
 
-    Ok(call.call_in(ARK_ENVS.positron_ns)?.sexp)
+    Ok(call.call_in(ARK_ENVS.positron_ns)?)
 }
 
 #[cfg(test)]
