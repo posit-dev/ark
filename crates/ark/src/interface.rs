@@ -573,10 +573,7 @@ impl RMain {
         // NOTE: Should be able to overwrite the `Cleanup` frontend method.
         // This would also help with detecting normal exits versus crashes.
         if info.input_prompt.starts_with("Save workspace") {
-            let n = CString::new("n\n").unwrap();
-            unsafe {
-                libc::strcpy(buf as *mut c_char, n.as_ptr());
-            }
+            Self::on_console_input(buf, buflen, String::from("n"));
             return ConsoleResult::NewInput;
         }
 
@@ -619,9 +616,7 @@ impl RMain {
             }
         } else {
             if info.input_request {
-                return ConsoleResult::Error(Error::InvalidInputRequest(String::from(
-                    "Unexpected `input_request` received outside of an `execute_request`.",
-                )));
+                return self.handle_invalid_input_request(buf, buflen);
             }
         }
 
@@ -849,6 +844,42 @@ impl RMain {
             },
             ConsoleInput::EOF => Some(ConsoleResult::Disconnected),
         }
+    }
+
+    /// Handle an `input_request` received outside of an `execute_request` context
+    ///
+    /// We believe it is always invalid to receive an `input_request` that isn't
+    /// nested within an `execute_request`. However, this can happen at R
+    /// startup when sourcing an `.Rprofile` that calls `readline()` or `menu()`.
+    /// Both of these are explicitly forbidden by `?Startup` in R as
+    /// "interaction with the user during startup", so when we detect this
+    /// invalid `input_request` case we throw an R error and assume that it
+    /// came from a `readline()` or `menu()` call during startup.
+    ///
+    /// We make a single exception for preexisting renv `activate.R` scripts,
+    /// which used to call `readline()` from within `.Rprofile`. In those cases,
+    /// we return `"n"` which allows older versions of renv to at least startup.
+    /// https://github.com/posit-dev/positron/issues/2070
+    /// https://github.com/rstudio/renv/blob/5d0d52c395e569f7f24df4288d949cef95efca4e/inst/resources/activate.R#L85-L87
+    fn handle_invalid_input_request(&self, buf: *mut c_uchar, buflen: c_int) -> ConsoleResult {
+        if Self::in_renv_autoloader() {
+            log::info!("Detected `readline()` call in renv autoloader. Returning `'n'`.");
+            Self::on_console_input(buf, buflen, String::from("n"));
+            return ConsoleResult::NewInput;
+        }
+
+        log::info!("Detected invalid `input_request` outside an `execute_request`. Preparing to throw an R error.");
+
+        let message = vec![
+            "Can't request input from the user at this time.",
+            "Are you calling `readline()` or `menu()` from an `.Rprofile` or `.Rprofile.site` file? If so, that is the issue and you should remove that code."
+        ].join("\n");
+
+        return ConsoleResult::Error(Error::InvalidInputRequest(message));
+    }
+
+    fn in_renv_autoloader() -> bool {
+        unsafe { r_get_option::<bool>("renv.autoloader.running").unwrap_or(false) }
     }
 
     fn handle_input_reply(
@@ -1495,17 +1526,8 @@ pub extern "C" fn r_read_console(
             // error message comes from the frontend and might be corrupted.
             static mut ERROR_BUF: Option<CString> = None;
 
-            {
-                let err_cstring = new_cstring(format!("{err:?}"));
-                unsafe {
-                    ERROR_BUF = Some(
-                        CString::new(format!(
-                            "Error while reading input: {}",
-                            err_cstring.into_string().unwrap()
-                        ))
-                        .unwrap(),
-                    );
-                }
+            unsafe {
+                ERROR_BUF = Some(new_cstring(format!("\n{err}")));
             }
 
             unsafe { Rf_error(ERROR_BUF.as_ref().unwrap().as_ptr()) };

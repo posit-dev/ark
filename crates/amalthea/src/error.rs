@@ -190,8 +190,8 @@ impl fmt::Display for Error {
                     msg, id, err
                 )
             },
-            Error::InvalidInputRequest(reason) => {
-                write!(f, "Input request is invalid: {reason}")
+            Error::InvalidInputRequest(message) => {
+                write!(f, "{message}")
             },
         }
     }

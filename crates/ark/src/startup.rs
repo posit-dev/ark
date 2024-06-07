@@ -11,13 +11,13 @@ use std::str::FromStr;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::stream::Stream;
 use amalthea::wire::stream::StreamOutput;
-use harp::call::RCall;
+use harp::environment::R_ENVS;
 use harp::exec::r_top_level_exec;
-use harp::r_symbol;
+use harp::exec::RFunction;
+use harp::exec::RFunctionExt;
 use libr::Rf_eval;
 
 use crate::interface::RMain;
-use crate::modules::ARK_ENVS;
 use crate::sys;
 
 pub(crate) fn should_ignore_site_r_profile(args: &Vec<String>) -> bool {
@@ -63,16 +63,20 @@ fn source_r_profile(path: &PathBuf) {
 
     log::info!("Found R profile at '{path}', sourcing now");
 
-    // Must source with `r_top_level_exec()`. In particular, can't source with the typical
-    // `r_safe_eval()` because it wraps in `withCallingHandlers()`, which prevents
-    // `globalCallingHandlers()` from being called within `.Rprofile`s (can't call it when
-    // there are handlers on the stack). That is a common place to register global calling
-    // handlers, including in Gabor's prompt package.
+    // Must source with `r_top_level_exec()` rather than just calling `call()`.
+    // In particular, can't source with the typical `r_safe_eval()` because it
+    // wraps in `withCallingHandlers()`, which prevents
+    // `globalCallingHandlers()` from being called within `.Rprofile`s (can't
+    // call it when there are handlers on the stack). That is a common place to
+    // register global calling handlers, including in Gabor's prompt package.
+    // Source in the global env to mimic R.
     let result = unsafe {
-        let call = RCall::new(r_symbol!(".ps.source_r_profile"))
-            .param("path", path)
+        let call = RFunction::new("base", "sys.source")
+            .param("file", path)
+            .param("envir", R_ENVS.global)
+            .call
             .build();
-        r_top_level_exec(|| Rf_eval(call.sexp, ARK_ENVS.positron_ns))
+        r_top_level_exec(|| Rf_eval(call.sexp, R_ENVS.global))
     };
 
     let Err(err) = result else {
