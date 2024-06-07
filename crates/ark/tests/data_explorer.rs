@@ -138,15 +138,6 @@ fn default_format_options() -> FormatOptions {
     }
 }
 
-fn default_format_options() -> FormatOptions {
-    FormatOptions {
-        large_num_digits: 2,
-        small_num_digits: 4,
-        max_integral_digits: 7,
-        thousands_sep: Some(",".to_string()),
-    }
-}
-
 fn test_mtcars_sort(socket: CommSocket, has_row_names: bool, display_name: String) {
     // Get the schema for the test data set.
     let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
@@ -1062,6 +1053,7 @@ DataExplorerBackendReply::SetSortColumnsReply() => {});
             row_start_index: 0,
             num_rows: 3,
             column_indices: vec![0],
+            format_options: default_format_options(),
         });
         assert_match!(socket_rpc(&socket, req),
             DataExplorerBackendReply::GetDataValuesReply(data) => {
@@ -1094,6 +1086,7 @@ DataExplorerBackendReply::SetSortColumnsReply() => {});
             row_start_index: 0,
             num_rows: 3,
             column_indices: vec![0],
+            format_options: default_format_options(),
         });
         assert_match!(socket_rpc(&socket, req),
             DataExplorerBackendReply::GetDataValuesReply(data) => {
@@ -1470,6 +1463,7 @@ fn test_export_data() {
                 c = c(TRUE, FALSE, TRUE)
             )
         "#,
+            None,
         )
         .unwrap();
 
