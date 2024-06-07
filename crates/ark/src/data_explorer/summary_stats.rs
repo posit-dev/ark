@@ -39,6 +39,7 @@ fn summary_stats_(
         ColumnDisplayType::String => Ok(summary_stats_string(column)?.into()),
         ColumnDisplayType::Boolean => Ok(summary_stats_boolean(column)?.into()),
         ColumnDisplayType::Date => Ok(summary_stats_date(column)?.into()),
+        ColumnDisplayType::Datetime => Ok(summary_stats_datetime(column)?.into()),
         _ => Err(anyhow::anyhow!("Unkown type")),
     }
 }
@@ -79,21 +80,6 @@ fn summary_stats_boolean(column: SEXP) -> anyhow::Result<SummaryStatsBoolean> {
 }
 
 fn summary_stats_date(column: SEXP) -> anyhow::Result<SummaryStatsDate> {
-    let robj_to_string = |robj: &RObject| -> String {
-        let string: Option<String> = unwrap!(robj.clone().try_into(), Err(e) => {
-            log::error!("Date stats: Error converting RObject to String: {e}");
-            None
-        });
-
-        match string {
-            Some(s) => s,
-            None => {
-                log::warn!("Date stats: Expected a string, got NA");
-                "NA".to_string()
-            },
-        }
-    };
-
     let r_stats: HashMap<String, RObject> =
         call_summary_fn("summary_stats_date", column)?.try_into()?;
 
@@ -106,6 +92,44 @@ fn summary_stats_date(column: SEXP) -> anyhow::Result<SummaryStatsDate> {
         max_date: robj_to_string(&r_stats["max_date"]),
         num_unique: num_unique as i64,
     }))
+}
+
+fn summary_stats_datetime(column: SEXP) -> anyhow::Result<SummaryStatsDatetime> {
+    // use the same implementationas the date
+    let r_stats: HashMap<String, RObject> =
+        call_summary_fn("summary_stats_date", column)?.try_into()?;
+
+    let num_unique: i32 = r_stats["num_unique"].clone().try_into()?;
+    let timezone: Option<String> = RFunction::from("summary_stats_get_timezone")
+        .add(column)
+        .call_in(ARK_ENVS.positron_ns)?
+        .try_into()?;
+
+    Ok(SummaryStatsDatetime(
+        data_explorer_comm::SummaryStatsDatetime {
+            min_date: robj_to_string(&r_stats["min_date"]),
+            mean_date: robj_to_string(&r_stats["mean_date"]),
+            median_date: robj_to_string(&r_stats["median_date"]),
+            max_date: robj_to_string(&r_stats["max_date"]),
+            num_unique: num_unique as i64,
+            timezone,
+        },
+    ))
+}
+
+fn robj_to_string(robj: &RObject) -> String {
+    let string: Option<String> = unwrap!(robj.clone().try_into(), Err(e) => {
+        log::error!("Date stats: Error converting RObject to String: {e}");
+        None
+    });
+
+    match string {
+        Some(s) => s,
+        None => {
+            log::warn!("Date stats: Expected a string, got NA");
+            "NA".to_string()
+        },
+    }
 }
 
 fn call_summary_fn(function: &str, column: SEXP) -> anyhow::Result<RObject> {
@@ -152,6 +176,12 @@ impl_summary_stats_conversion!(
     SummaryStatsDate,
     data_explorer_comm::SummaryStatsDate,
     ColumnDisplayType::Date
+);
+impl_summary_stats_conversion!(
+    datetime_stats,
+    SummaryStatsDatetime,
+    data_explorer_comm::SummaryStatsDatetime,
+    ColumnDisplayType::Datetime
 );
 
 fn empty_column_summary_stats() -> data_explorer_comm::ColumnSummaryStats {
@@ -238,6 +268,29 @@ mod tests {
                     median_date: "2021-01-02".to_string(),
                     max_date: "2021-01-04".to_string(),
                     num_unique: 5,
+                })
+                .into();
+            assert_eq!(stats, expected);
+        })
+    }
+
+    #[test]
+    fn test_datetime_summary() {
+        r_test(|| {
+            let column = r_parse_eval0(
+                "as.POSIXct(c('2015-07-24 23:15:07', '2015-07-24 23:15:07', NA), tz = 'Japan')",
+                R_ENVS.global,
+            )
+            .unwrap();
+            let stats = summary_stats_(column.sexp, ColumnDisplayType::Datetime).unwrap();
+            let expected: ColumnSummaryStats =
+                SummaryStatsDatetime(data_explorer_comm::SummaryStatsDatetime {
+                    num_unique: 2,
+                    min_date: "2015-07-24 23:15:07".to_string(),
+                    mean_date: "2015-07-24 23:15:07".to_string(),
+                    median_date: "2015-07-24 23:15:07".to_string(),
+                    max_date: "2015-07-24 23:15:07".to_string(),
+                    timezone: Some("Japan".to_string()),
                 })
                 .into();
             assert_eq!(stats, expected);

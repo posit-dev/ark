@@ -72,6 +72,31 @@ summary_stats_date <- function(col) {
     )
 }
 
+summary_stats_get_timezone <- function(x) {
+    # this is the implementation in lubridate for POSIXt objects
+    tz <- function (x) {
+        tzone <- attr(x, "tzone")
+        if (is.null(tzone)) {
+            ""
+        }
+        else {
+            tzone[[1]]
+        }
+    }
+
+    if (inherits(x, "POSIXt")) {
+        timezone <- tz(x)
+        # when the timezone is reported as "", it will actually be formatted
+        # using the system timzeone, so we report it instead.
+        if (timezone == "") {
+            timezone <- Sys.timezone()
+        }
+        timezone
+    } else {
+        stop("Timezone can't be obtained for this object type")
+    }
+}
+
 col_filter_indices <- function(col, idx = NULL) {
     if (!is.null(idx)) {
         col <- col[idx]
