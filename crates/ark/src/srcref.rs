@@ -1,7 +1,6 @@
 use harp::call::r_expr_quote;
 use harp::environment::r_ns_env;
 use harp::environment::Binding;
-use harp::environment::Environment;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::r_length;
@@ -13,7 +12,6 @@ use libr::*;
 use crate::lsp::handlers::ARK_VDOCS;
 use crate::modules::ARK_ENVS;
 use crate::r_task;
-use crate::thread::RThreadSafe;
 use crate::variables::variable::is_binding_fancy;
 use crate::variables::variable::plain_binding_force_with_rollback;
 
@@ -47,13 +45,6 @@ pub(crate) async fn ns_populate_srcref(ns_name: String) -> anyhow::Result<()> {
 
     let ns = r_ns_env(&ns_name)?;
 
-    // We're going to replace objects in the namespace. To prevent any
-    // protection issues with packages caching objects plucked from other
-    // namespaces at C-level, we save the current set of objects in a list
-    // preserved for the session.
-    static mut SAVED_NAMESPACES: Vec<RThreadSafe<RObject>> = vec![];
-    unsafe { SAVED_NAMESPACES.push(RThreadSafe::new(ns.as_list()?)) };
-
     let uri_path = format!("namespace:{ns_name}.R");
     let uri = format!("ark:{uri_path}");
 
@@ -69,7 +60,7 @@ pub(crate) async fn ns_populate_srcref(ns_name: String) -> anyhow::Result<()> {
 
     for b in ns.iter().filter_map(Result::ok) {
         span.in_scope(|| {
-            match generate_source(&ns, &b, vdoc.len(), &uri) {
+            match generate_source(&b, vdoc.len(), &uri) {
                 Ok(Some(mut lines)) => {
                     n_ok = n_ok + 1;
 
@@ -115,7 +106,6 @@ pub(crate) async fn ns_populate_srcref(ns_name: String) -> anyhow::Result<()> {
 
 #[tracing::instrument(level = "trace", skip_all, fields(name = %binding.name))]
 fn generate_source(
-    env: &Environment,
     binding: &Binding,
     line: usize,
     uri: &String,
@@ -150,8 +140,12 @@ fn generate_source(
 
     let (out, text) = unsafe { (VECTOR_ELT(reparsed.sexp, 0), VECTOR_ELT(reparsed.sexp, 1)) };
 
-    // Propagate bytecode of compiled functions
+    // Inject source references in functions. This is slightly unsafe but we
+    // couldn't think of a dire failure mode.
     unsafe {
+        // First replace the body which contains expressions tagged with srcrefs
+        // such as calls to `{`. Compiled functions are a little more tricky.
+
         let body = BODY(obj.sexp);
         if r_typeof(body) == BCODESXP {
             // This is a compiled function. We could recompile the fresh
@@ -165,18 +159,20 @@ fn generate_source(
             // The original body expression is stored as first element
             // of the constant pool
             if r_length(consts) > 0 {
+                // Inject new body instrumented with source references
                 SET_VECTOR_ELT(consts, 0, R_ClosureExpr(out));
             }
-
-            // Update our function with the original bytecode, now containing
-            // source references
-            SET_BODY(out, body);
+        } else {
+            SET_BODY(obj.sexp, BODY(out));
         }
-    }
 
-    // Now update environment with the new function instrumented with
-    // srcrefs. TODO: Update copies too (posit-dev/positron#2283)
-    env.force_bind(binding.name, out);
+        // Finally push the srcref attribute for the whole function
+        Rf_setAttrib(
+            obj.sexp,
+            r_symbol!("srcref"),
+            Rf_getAttrib(out, r_symbol!("srcref")),
+        );
+    }
 
     let text: Vec<String> = RObject::view(text).try_into()?;
     Ok(Some(text))
