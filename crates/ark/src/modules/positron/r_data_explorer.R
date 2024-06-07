@@ -295,7 +295,8 @@ export_selection <- function(x, format = c("csv", "tsv", "html"), include_header
 
 write_delim <- function(x, delim, include_header) {
     con <- textConnection("text_val", "w", encoding="UTF-8")
-    on.exit(close(con), add = TRUE)
+    defer(close(con))
+
     utils::write.table(x, con, sep = delim, row.names = FALSE, col.names = include_header, quote = FALSE, na = "")
     paste0(textConnectionValue(con), collapse = "\n")
 }

@@ -26,7 +26,7 @@ use crate::modules::ARK_ENVS;
 // - view_indices: The order of rows, and maybe filtered rows from the data frame to be selected.
 //   Must be applied before the selection rules if selection affects rows.
 // - selection: The selected region of the data frame
-// - format: The format to export the data frame to (csv, tsv and html) are currently supported.
+// - format: The format to export the data frame to (csv, tsv and html are currently supported).
 pub fn export_selection(
     data: SEXP,
     view_indices: Option<Vec<i32>>,
