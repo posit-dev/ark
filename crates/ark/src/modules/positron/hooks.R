@@ -32,6 +32,10 @@
 #' Assumes the package is attached, typically used for base packages like base or utils.
 #' - `hook` will replace the binding for unnamespaced calls.
 #' - `hook_namespace` will optionally also replace the binding for namespaced calls.
+#'
+#' TODO: Will cause ark to fail to start if `option(defaultPackages = character())`
+#' or `R_DEFAULT_PACKAGES=NULL` are set! One idea is to register an `onAttach()`
+#' hook here and use that if the package is not loaded yet.
 pkg_hook <- function(pkg, name, hook, hook_namespace = NULL) {
   env <- sprintf("package:%s", pkg)
   env <- as.environment(env)
@@ -60,10 +64,4 @@ pkg_hook <- function(pkg, name, hook, hook_namespace = NULL) {
     hook = hook_original,
     hook_namespace = hook_namespace_original
   ))
-}
-
-local_pkg_hook <- function(pkg, name, hook, hook_namespace = NULL, frame = parent.frame()) {
-  old <- pkg_hook(pkg, name, hook, hook_namespace)
-  defer(pkg_hook(pkg, name, old$hook, old$hook_namespace), envir = frame)
-  invisible()
 }
