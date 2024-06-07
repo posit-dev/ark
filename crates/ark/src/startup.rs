@@ -92,6 +92,7 @@ fn source_r_profile(path: &PathBuf) {
 
     // Forward the message on to the frontend to be shown in the console.
     // This technically happens outside of any parent context, but that is allowed.
+    // https://jupyter-client.readthedocs.io/en/stable/messaging.html#parent-header
     let message = format!("Error while sourcing R profile file at path '{path}':\n{message}");
 
     let message = IOPubMessage::Stream(StreamOutput {
