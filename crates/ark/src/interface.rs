@@ -945,9 +945,8 @@ impl RMain {
         let buflen = buflen - 2;
 
         if input.len() > buflen {
-            let dropped = &input[buflen..input.len()];
-            log::error!("Console input too large for buffer. Input has been trimmed, dropping: '{dropped}'.");
-            input = input[..buflen].to_string();
+            log::error!("Console input too large for buffer, writing R error.");
+            input = Self::buffer_overflow_call();
         }
 
         // Push `\n`
@@ -959,6 +958,22 @@ impl RMain {
         unsafe {
             libc::strcpy(buf as *mut c_char, input.as_ptr());
         }
+    }
+
+    // Temporary patch for https://github.com/posit-dev/positron/issues/2675.
+    // We write an informative `stop()` call rather than the user's actual input.
+    fn buffer_overflow_call() -> String {
+        let message = r#"
+Can't pass console input on to R, it exceeds R's internal console buffer size.
+This is a Positron limitation we plan to fix. In the meantime, you can:
+- Break the command you sent to the console into smaller chunks, if possible.
+- Otherwise, send the whole script to the console using `source()`.
+        "#;
+
+        let message = message.trim();
+        let message = format!("stop(\"{message}\")");
+
+        message
     }
 
     // Reply to the previously active request. The current prompt type and
