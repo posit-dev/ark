@@ -15,7 +15,14 @@ use amalthea::comm::data_explorer_comm::CompareFilterParamsOp;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendReply;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendRequest;
 use amalthea::comm::data_explorer_comm::DataExplorerFrontendEvent;
+use amalthea::comm::data_explorer_comm::DataSelection;
+use amalthea::comm::data_explorer_comm::DataSelectionKind;
+use amalthea::comm::data_explorer_comm::DataSelectionSingleCell;
+use amalthea::comm::data_explorer_comm::ExportDataSelectionParams;
+use amalthea::comm::data_explorer_comm::ExportFormat;
+use amalthea::comm::data_explorer_comm::ExportedData;
 use amalthea::comm::data_explorer_comm::FilterResult;
+use amalthea::comm::data_explorer_comm::FormatOptions;
 use amalthea::comm::data_explorer_comm::GetColumnProfilesParams;
 use amalthea::comm::data_explorer_comm::GetDataValuesParams;
 use amalthea::comm::data_explorer_comm::GetSchemaParams;
@@ -24,6 +31,7 @@ use amalthea::comm::data_explorer_comm::RowFilterCondition;
 use amalthea::comm::data_explorer_comm::RowFilterType;
 use amalthea::comm::data_explorer_comm::SearchFilterParams;
 use amalthea::comm::data_explorer_comm::SearchFilterType;
+use amalthea::comm::data_explorer_comm::Selection;
 use amalthea::comm::data_explorer_comm::SetRowFiltersParams;
 use amalthea::comm::data_explorer_comm::SetSortColumnsParams;
 use amalthea::comm::data_explorer_comm::SummaryStatsBoolean;
@@ -109,6 +117,15 @@ fn socket_rpc(
     socket_rpc_request::<DataExplorerBackendRequest, DataExplorerBackendReply>(&socket, req)
 }
 
+fn default_format_options() -> FormatOptions {
+    FormatOptions {
+        large_num_digits: 2,
+        small_num_digits: 4,
+        max_integral_digits: 7,
+        thousands_sep: Some(",".to_string()),
+    }
+}
+
 /// Runs the data explorer tests.
 ///
 /// Note that these are all run in one single test instead of being split out
@@ -139,6 +156,7 @@ fn test_data_explorer() {
                 row_start_index: 5,
                 num_rows: 5,
                 column_indices: vec![0, 1, 2, 3, 4],
+                format_options: default_format_options(),
             });
 
             // Check that we got the right columns and row labels.
@@ -181,6 +199,7 @@ fn test_data_explorer() {
                 row_start_index: 0,
                 num_rows: 3,
                 column_indices: vec![0, 1],
+                format_options: default_format_options(),
             });
 
             // Check that sorted values were correctly returned.
@@ -228,6 +247,7 @@ fn test_data_explorer() {
                 row_start_index: 0,
                 num_rows: 3,
                 column_indices: vec![0, 1],
+                format_options: default_format_options(),
             });
 
             // Check that sorted values were correctly returned.
@@ -274,6 +294,7 @@ fn test_data_explorer() {
             row_start_index: 0,
             num_rows: 2,
             column_indices: vec![0, 1],
+            format_options: default_format_options(),
         });
 
         // Spot check the data values.
@@ -350,6 +371,7 @@ fn test_data_explorer() {
             row_start_index: 0,
             num_rows: 2,
             column_indices: vec![0, 1],
+            format_options: default_format_options(),
         });
 
         // Spot check the data values.
@@ -434,6 +456,7 @@ fn test_data_explorer() {
             row_start_index: 0,
             num_rows: 3,
             column_indices: vec![0],
+            format_options: default_format_options(),
         });
         assert_match!(socket_rpc(&socket, req),
             DataExplorerBackendReply::GetDataValuesReply(data) => {
@@ -466,6 +489,7 @@ fn test_data_explorer() {
             row_start_index: 0,
             num_rows: 3,
             column_indices: vec![0],
+            format_options: default_format_options(),
         });
         assert_match!(socket_rpc(&socket, req),
             DataExplorerBackendReply::GetDataValuesReply(data) => {
@@ -577,6 +601,7 @@ fn test_data_explorer() {
             row_start_index: 0,
             num_rows: 4,
             column_indices: vec![0, 1],
+            format_options: default_format_options(),
         });
 
         // Check the data values.
@@ -650,6 +675,7 @@ fn test_data_explorer() {
                 column_index: 0,
                 profile_type: ColumnProfileType::NullCount,
             }],
+            format_options: default_format_options(),
         });
 
         assert_match!(socket_rpc(&socket, req),
@@ -692,6 +718,7 @@ fn test_data_explorer() {
                 column_index: 0,
                 profile_type: ColumnProfileType::NullCount,
             }],
+            format_options: default_format_options(),
         });
 
         assert_match!(socket_rpc(&socket, req),
@@ -749,6 +776,7 @@ fn test_data_explorer() {
                     profile_type: ColumnProfileType::SummaryStats,
                 })
                 .collect(),
+            format_options: default_format_options(),
         });
 
         assert_match!(socket_rpc(&socket, req),
@@ -1068,6 +1096,7 @@ fn test_data_explorer() {
                     row_start_index: 0,
                     num_rows: 4,
                     column_indices: vec![0, 1],
+                    format_options: default_format_options(),
                 });
                 assert_match!(socket_rpc(&socket, req),
                     DataExplorerBackendReply::GetDataValuesReply(data) => {
@@ -1268,6 +1297,7 @@ fn test_data_explorer_special_values() {
             row_start_index: 0,
             num_rows: 5,
             column_indices: vec![0, 1, 2, 3, 4, 5],
+            format_options: default_format_options(),
         });
 
         assert_match!(socket_rpc(&socket, req),
@@ -1291,4 +1321,91 @@ fn test_data_explorer_special_values() {
         );
         r_parse_eval0("rm(x)", R_ENVS.global).unwrap();
     });
+}
+
+// The main exporting logic is tested in the data_exporter module. This test
+// is mainly an integration test to check if the data explorer can correctly
+// work with sorting/filtering the data and then exporting it.
+#[test]
+fn test_export_data() {
+    r_test(|| {
+        let socket = open_data_explorer_from_expression(
+            r#"
+            data.frame(
+                a = c(1, 3, 2),
+                b = c('a', 'b', 'c'),
+                c = c(TRUE, FALSE, TRUE)
+            )
+        "#,
+        )
+        .unwrap();
+
+        let selection_req =
+            DataExplorerBackendRequest::ExportDataSelection(ExportDataSelectionParams {
+                format: ExportFormat::Csv,
+                selection: DataSelection {
+                    kind: DataSelectionKind::SingleCell,
+                    selection: Selection::SingleCell(DataSelectionSingleCell {
+                        row_index: 1,
+                        column_index: 1,
+                    }),
+                },
+            });
+
+        assert_match!(socket_rpc(&socket, selection_req.clone()),
+            DataExplorerBackendReply::ExportDataSelectionReply(ExportedData {format, data}) => {
+                assert_eq!(data, "b".to_string());
+                assert_eq!(format, ExportFormat::Csv);
+            }
+        );
+
+        // sort the data frame
+        let sort_req = DataExplorerBackendRequest::SetSortColumns(SetSortColumnsParams {
+            sort_keys: vec![ColumnSortKey {
+                column_index: 0,
+                ascending: false,
+            }],
+        });
+        socket_rpc(&socket, sort_req);
+
+        assert_match!(socket_rpc(&socket, selection_req.clone()),
+            DataExplorerBackendReply::ExportDataSelectionReply(ExportedData {format, data}) => {
+                assert_eq!(data, "c".to_string());
+                assert_eq!(format, ExportFormat::Csv);
+            }
+        );
+
+        // now filter the data frame
+        let schemas_req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
+            num_columns: 3,
+            start_index: 0,
+        });
+        let schema = match socket_rpc(&socket, schemas_req) {
+            DataExplorerBackendReply::GetSchemaReply(schema) => schema,
+            _ => panic!("Unexpected reply"),
+        };
+
+        let filter_req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
+            filters: vec![RowFilter {
+                column_schema: schema.columns[2].clone(),
+                filter_type: RowFilterType::IsTrue,
+                filter_id: "1".to_string(),
+                condition: RowFilterCondition::And,
+                is_valid: None,
+                compare_params: None,
+                between_params: None,
+                search_params: None,
+                set_membership_params: None,
+                error_message: None,
+            }],
+        });
+        socket_rpc(&socket, filter_req);
+
+        assert_match!(socket_rpc(&socket, selection_req.clone()),
+            DataExplorerBackendReply::ExportDataSelectionReply(ExportedData {format, data}) => {
+                assert_eq!(data, "a".to_string());
+                assert_eq!(format, ExportFormat::Csv);
+            }
+        );
+    })
 }

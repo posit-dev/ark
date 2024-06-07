@@ -21,6 +21,16 @@ pub struct SearchSchemaResult {
 	pub total_num_matches: i64
 }
 
+/// Exported result
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ExportedData {
+	/// Exported data as a string suitable for copy and paste
+	pub data: String,
+
+	/// The exported data format
+	pub format: ExportFormat
+}
+
 /// The result of applying filters to a table
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct FilterResult {
@@ -95,6 +105,25 @@ pub struct TableData {
 
 	/// Zero or more arrays of row labels
 	pub row_labels: Option<Vec<Vec<String>>>
+}
+
+/// Formatting options for returning data values as strings
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct FormatOptions {
+	/// Fixed number of decimal places to display for numbers over 1, or in
+	/// scientific notation
+	pub large_num_digits: i64,
+
+	/// Fixed number of decimal places to display for small numbers, and to
+	/// determine lower threshold for switching to scientific notation
+	pub small_num_digits: i64,
+
+	/// Maximum number of integral digits to display before switching to
+	/// scientific notation
+	pub max_integral_digits: i64,
+
+	/// Thousands separator string
+	pub thousands_sep: Option<String>
 }
 
 /// The schema for a table-like object
@@ -232,7 +261,13 @@ pub struct ColumnSummaryStats {
 	pub string_stats: Option<SummaryStatsString>,
 
 	/// Statistics for a boolean data type
-	pub boolean_stats: Option<SummaryStatsBoolean>
+	pub boolean_stats: Option<SummaryStatsBoolean>,
+
+	/// Statistics for a date data type
+	pub date_stats: Option<SummaryStatsDate>,
+
+	/// Statistics for a datetime data type
+	pub datetime_stats: Option<SummaryStatsDatetime>
 }
 
 /// SummaryStatsNumber in Schemas
@@ -272,6 +307,47 @@ pub struct SummaryStatsString {
 
 	/// The exact number of distinct values
 	pub num_unique: i64
+}
+
+/// SummaryStatsDate in Schemas
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SummaryStatsDate {
+	/// The exact number of distinct values
+	pub num_unique: i64,
+
+	/// Minimum date value as string
+	pub min_date: String,
+
+	/// Average date value as string
+	pub mean_date: String,
+
+	/// Sample median (50% value) date value as string
+	pub median_date: String,
+
+	/// Maximum date value as string
+	pub max_date: String
+}
+
+/// SummaryStatsDatetime in Schemas
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SummaryStatsDatetime {
+	/// The exact number of distinct values
+	pub num_unique: i64,
+
+	/// Minimum date value as string
+	pub min_date: String,
+
+	/// Average date value as string
+	pub mean_date: String,
+
+	/// Sample median (50% value) date value as string
+	pub median_date: String,
+
+	/// Maximum date value as string
+	pub max_date: String,
+
+	/// Time zone for timestamp with time zone
+	pub timezone: Option<String>
 }
 
 /// Result from a histogram profile request
@@ -369,6 +445,60 @@ pub struct GetColumnProfilesFeatures {
 
 	/// A list of supported types
 	pub supported_types: Vec<ColumnProfileType>
+}
+
+/// A selection on the data grid, for copying to the clipboard or other
+/// actions
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct DataSelection {
+	/// Type of selection
+	pub kind: DataSelectionKind,
+
+	/// A union of selection types
+	pub selection: Selection
+}
+
+/// A selection that contains a single data cell
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct DataSelectionSingleCell {
+	/// The selected row index
+	pub row_index: i64,
+
+	/// The selected column index
+	pub column_index: i64
+}
+
+/// A selection that contains a rectangular range of data cells
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct DataSelectionCellRange {
+	/// The starting selected row index (inclusive)
+	pub first_row_index: i64,
+
+	/// The final selected row index (inclusive)
+	pub last_row_index: i64,
+
+	/// The starting selected column index (inclusive)
+	pub first_column_index: i64,
+
+	/// The final selected column index (inclusive)
+	pub last_column_index: i64
+}
+
+/// A contiguous selection bounded by inclusive start and end indices
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct DataSelectionRange {
+	/// The starting selected index (inclusive)
+	pub first_index: i64,
+
+	/// The final selected index (inclusive)
+	pub last_index: i64
+}
+
+/// A selection defined by a sequence of indices to include
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct DataSelectionIndices {
+	/// The selected indices
+	pub indices: Vec<i64>
 }
 
 /// Possible values for ColumnDisplayType
@@ -503,6 +633,41 @@ pub enum ColumnProfileType {
 	Histogram
 }
 
+/// Possible values for Kind in DataSelection
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub enum DataSelectionKind {
+	#[serde(rename = "single_cell")]
+	SingleCell,
+
+	#[serde(rename = "cell_range")]
+	CellRange,
+
+	#[serde(rename = "column_range")]
+	ColumnRange,
+
+	#[serde(rename = "row_range")]
+	RowRange,
+
+	#[serde(rename = "column_indices")]
+	ColumnIndices,
+
+	#[serde(rename = "row_indices")]
+	RowIndices
+}
+
+/// Possible values for ExportFormat
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub enum ExportFormat {
+	#[serde(rename = "csv")]
+	Csv,
+
+	#[serde(rename = "tsv")]
+	Tsv,
+
+	#[serde(rename = "html")]
+	Html
+}
+
 /// Union type ColumnValue
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
@@ -510,6 +675,19 @@ pub enum ColumnValue {
 	SpecialValueCode(i64),
 
 	FormattedValue(String)
+}
+
+/// Union type Selection in Properties
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum Selection {
+	SingleCell(DataSelectionSingleCell),
+
+	CellRange(DataSelectionCellRange),
+
+	IndexRange(DataSelectionRange),
+
+	Indices(DataSelectionIndices)
 }
 
 /// Parameters for the GetSchema method.
@@ -550,6 +728,19 @@ pub struct GetDataValuesParams {
 	/// Indices to select, which can be a sequential, sparse, or random
 	/// selection
 	pub column_indices: Vec<i64>,
+
+	/// Formatting options for returning data values as strings
+	pub format_options: FormatOptions,
+}
+
+/// Parameters for the ExportDataSelection method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ExportDataSelectionParams {
+	/// The data selection
+	pub selection: DataSelection,
+
+	/// Result string format
+	pub format: ExportFormat,
 }
 
 /// Parameters for the SetRowFilters method.
@@ -571,6 +762,9 @@ pub struct SetSortColumnsParams {
 pub struct GetColumnProfilesParams {
 	/// Array of requested profiles
 	pub profiles: Vec<ColumnProfileRequest>,
+
+	/// Formatting options for returning data values as strings
+	pub format_options: FormatOptions,
 }
 
 /**
@@ -596,6 +790,13 @@ pub enum DataExplorerBackendRequest {
 	/// Request a rectangular subset of data with values formatted as strings
 	#[serde(rename = "get_data_values")]
 	GetDataValues(GetDataValuesParams),
+
+	/// Export data selection as a string in different formats
+	///
+	/// Export data selection as a string in different formats like CSV, TSV,
+	/// HTML
+	#[serde(rename = "export_data_selection")]
+	ExportDataSelection(ExportDataSelectionParams),
 
 	/// Set row filters based on column values
 	///
@@ -637,6 +838,9 @@ pub enum DataExplorerBackendReply {
 
 	/// Table values formatted as strings
 	GetDataValuesReply(TableData),
+
+	/// Exported result
+	ExportDataSelectionReply(ExportedData),
 
 	/// The result of applying filters to a table
 	SetRowFiltersReply(FilterResult),

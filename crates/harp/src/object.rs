@@ -574,6 +574,18 @@ impl From<Vec<String>> for RObject {
     }
 }
 
+impl From<&Vec<i64>> for RObject {
+    fn from(values: &Vec<i64>) -> Self {
+        unsafe {
+            let vector = RObject::from(Rf_allocVector(INTSXP, values.len() as isize));
+            for idx in 0..values.len() {
+                SET_INTEGER_ELT(vector.sexp, idx as isize, values[idx] as c_int);
+            }
+            return vector;
+        }
+    }
+}
+
 // Convert a String -> String HashMap into named character vector.
 impl From<HashMap<String, String>> for RObject {
     fn from(value: HashMap<String, String>) -> Self {

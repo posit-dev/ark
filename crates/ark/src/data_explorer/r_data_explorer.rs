@@ -21,6 +21,10 @@ use amalthea::comm::data_explorer_comm::CompareFilterParamsOp;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendReply;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendRequest;
 use amalthea::comm::data_explorer_comm::DataExplorerFrontendEvent;
+use amalthea::comm::data_explorer_comm::DataSelection;
+use amalthea::comm::data_explorer_comm::ExportDataSelectionParams;
+use amalthea::comm::data_explorer_comm::ExportFormat;
+use amalthea::comm::data_explorer_comm::ExportedData;
 use amalthea::comm::data_explorer_comm::FilterResult;
 use amalthea::comm::data_explorer_comm::GetColumnProfilesFeatures;
 use amalthea::comm::data_explorer_comm::GetColumnProfilesParams;
@@ -83,6 +87,7 @@ use stdext::spawn;
 use stdext::unwrap;
 use uuid::Uuid;
 
+use crate::data_explorer::export_selection;
 use crate::interface::RMain;
 use crate::lsp::events::EVENTS;
 use crate::modules::ARK_ENVS;
@@ -447,6 +452,7 @@ impl RDataExplorer {
                 row_start_index,
                 num_rows,
                 column_indices,
+                format_options: _, // TODO: add support for format options
             }) => {
                 // TODO: Support for data frames with over 2B rows
                 let row_start_index: i32 = row_start_index.try_into()?;
@@ -498,6 +504,7 @@ impl RDataExplorer {
             },
             DataExplorerBackendRequest::GetColumnProfiles(GetColumnProfilesParams {
                 profiles: requests,
+                format_options: _, // TODO: add support for format options
             }) => {
                 let profiles = requests
                     .into_iter()
@@ -560,6 +567,15 @@ impl RDataExplorer {
             DataExplorerBackendRequest::SearchSchema(_) => {
                 bail!("Data Viewer: Not yet implemented")
             },
+            DataExplorerBackendRequest::ExportDataSelection(ExportDataSelectionParams {
+                selection,
+                format,
+            }) => Ok(DataExplorerBackendReply::ExportDataSelectionReply(
+                ExportedData {
+                    data: self.r_export_data_selection(selection, format.clone())?,
+                    format,
+                },
+            )),
         }
     }
 }
@@ -666,6 +682,8 @@ impl RDataExplorer {
             number_stats: None,
             string_stats: None,
             boolean_stats: None,
+            date_stats: None, // TODO: add support for date/datetime stats
+            datetime_stats: None,
         };
 
         match dtype {
@@ -1053,6 +1071,21 @@ impl RDataExplorer {
         };
 
         Ok(DataExplorerBackendReply::GetDataValuesReply(response))
+    }
+
+    fn r_export_data_selection(
+        &self,
+        selection: DataSelection,
+        format: ExportFormat,
+    ) -> anyhow::Result<String> {
+        r_task(|| {
+            export_selection::export_selection(
+                self.table.get().sexp,
+                self.view_indices.clone(),
+                selection,
+                format,
+            )
+        })
     }
 }
 

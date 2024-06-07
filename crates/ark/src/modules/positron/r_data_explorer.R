@@ -278,3 +278,38 @@ format_list_column <- function(x) {
         )
     })
 }
+
+export_selection <- function(x, format = c("csv", "tsv", "html"), include_header = TRUE) {
+    format <- match.arg(format)
+
+    if (format == "csv") {
+        write_delim(x, delim = ",", include_header)
+    } else if (format == "tsv") {
+        write_delim(x, delim = "\t", include_header)
+    } else if (format == "html") {
+        write_html(x, include_header)
+    } else {
+        stop("Unsupported format: ", format)
+    }
+}
+
+write_delim <- function(x, delim, include_header) {
+    con <- textConnection("text_val", "w", encoding="UTF-8")
+    defer(close(con))
+
+    utils::write.table(x, con, sep = delim, row.names = FALSE, col.names = include_header, quote = FALSE, na = "")
+    paste0(textConnectionValue(con), collapse = "\n")
+}
+
+write_html <- function(x, include_header) {
+    # TODO: do not depend on knitr to render html tables
+    # kable takes NA to mean "use the default column names"
+    # and `NULL` means no column names
+    col_names <- if(include_header) {
+        NA
+    } else {
+        NULL
+    }
+    local_options(knitr.kable.NA = "") # use empty strings for NA's
+    knitr::kable(x, format = "html", row.names = FALSE, col.names = col_names)
+}
