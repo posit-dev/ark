@@ -30,6 +30,11 @@ use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 use crate::treesitter::UnmatchedDelimiterType;
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DiagnosticsConfig {
+    pub enable: bool,
+}
+
 #[derive(Clone)]
 pub struct DiagnosticContext<'a> {
     /// The contents of the source document.
@@ -53,6 +58,12 @@ pub struct DiagnosticContext<'a> {
 
     // Whether or not we're inside of a call's arguments
     pub in_call: bool,
+}
+
+impl Default for DiagnosticsConfig {
+    fn default() -> Self {
+        Self { enable: true }
+    }
 }
 
 impl<'a> DiagnosticContext<'a> {
@@ -81,6 +92,10 @@ impl<'a> DiagnosticContext<'a> {
 
 pub(crate) fn generate_diagnostics(doc: Document, state: WorldState) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
+
+    if !state.config.diagnostics.enable {
+        return diagnostics;
+    }
 
     // Check that diagnostics are not disabled in top-level declarations for
     // this document
