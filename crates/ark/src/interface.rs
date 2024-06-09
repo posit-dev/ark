@@ -49,6 +49,7 @@ use amalthea::wire::jupyter_message::Status;
 use amalthea::wire::originator::Originator;
 use amalthea::wire::stream::Stream;
 use amalthea::wire::stream::StreamOutput;
+use amalthea::Error;
 use anyhow::*;
 use bus::Bus;
 use crossbeam::channel::bounded;
@@ -116,6 +117,7 @@ use crate::request::RRequest;
 use crate::signals::initialize_signal_handlers;
 use crate::signals::interrupts_pending;
 use crate::signals::set_interrupts_pending;
+use crate::startup;
 use crate::sys::console::console_to_utf8;
 
 // --- Globals ---
@@ -124,7 +126,6 @@ use crate::sys::console::console_to_utf8;
 
 /// Ensures that the kernel is only ever initialized once
 static INIT: Once = Once::new();
-static INIT_KERNEL: Once = Once::new();
 
 // The global state used by R callbacks.
 //
@@ -171,6 +172,22 @@ pub fn start_r(
         ));
     });
 
+    let mut r_args = r_args.clone();
+
+    // Record if the user has requested that we don't load the site/user level R profiles
+    let ignore_site_r_profile = startup::should_ignore_site_r_profile(&r_args);
+    let ignore_user_r_profile = startup::should_ignore_user_r_profile(&r_args);
+
+    // We always manually load site/user level R profiles rather than letting R do it
+    // to ensure that ark is fully set up before running code that could potentially call
+    // back into ark internals.
+    if !ignore_site_r_profile {
+        startup::push_ignore_site_r_profile(&mut r_args);
+    }
+    if !ignore_user_r_profile {
+        startup::push_ignore_user_r_profile(&mut r_args);
+    }
+
     // Build the argument list from the command line arguments. The default
     // list is `--interactive` unless altered with the `--` passthrough
     // argument.
@@ -199,7 +216,7 @@ pub fn start_r(
         // Initialize harp (after routine registration)
         harp::initialize();
 
-        // Optionally run a user specified R startup script (after harp init)
+        // Optionally run a frontend specified R startup script (after harp init)
         if let Some(file) = &startup_file {
             r_source(file).or_log_error(&format!("Failed to source startup file '{file}' due to"));
         }
@@ -217,6 +234,25 @@ pub fn start_r(
 
         // Set up the global error handler (after support function initialization)
         errors::initialize();
+    }
+
+    // Now that R has started (emitting any startup messages), and now that we have set
+    // up all hooks and handlers, officially finish the R initialization process to
+    // unblock the kernel-info request and also allow the LSP to start.
+    RMain::with_mut(|main| {
+        log::info!(
+            "R has started and ark handlers have been registered, completing initialization."
+        );
+        main.complete_initialization();
+    });
+
+    // Now that R has started and libr and ark have fully initialized, run site and user
+    // level R profiles, in that order
+    if !ignore_site_r_profile {
+        startup::source_site_r_profile(&r_home);
+    }
+    if !ignore_user_r_profile {
+        startup::source_user_r_profile();
     }
 
     // Does not return!
@@ -430,24 +466,38 @@ impl RMain {
         }
     }
 
+    pub fn with<F: FnOnce(&RMain)>(f: F) {
+        let main = Self::get();
+        f(main)
+    }
+
+    pub fn with_mut<F: FnOnce(&mut RMain)>(f: F) {
+        let main = Self::get_mut();
+        f(main)
+    }
+
     pub fn on_main_thread() -> bool {
         let thread = std::thread::current();
         thread.id() == unsafe { R_MAIN_THREAD_ID.unwrap() }
     }
 
     /// Completes the kernel's initialization
-    pub fn complete_initialization(&mut self, prompt_info: &PromptInfo) {
+    pub fn complete_initialization(&mut self) {
         if self.initializing {
             let version = unsafe {
                 let version = Rf_findVarInFrame(R_BaseNamespace, r_symbol!("R.version.string"));
                 RObject::new(version).to::<String>().unwrap()
             };
 
+            // Initial input and continuation prompts
+            let input_prompt = unsafe { r_get_option::<String>("prompt").unwrap() };
+            let continuation_prompt = unsafe { r_get_option::<String>("continue").unwrap() };
+
             let kernel_info = KernelInfo {
                 version: version.clone(),
                 banner: self.banner.clone(),
-                input_prompt: Some(prompt_info.input_prompt.clone()),
-                continuation_prompt: Some(prompt_info.continuation_prompt.clone()),
+                input_prompt: Some(input_prompt),
+                continuation_prompt: Some(continuation_prompt),
             };
 
             debug!("Sending kernel info: {}", version);
@@ -511,15 +561,6 @@ impl RMain {
         let info = Self::prompt_info(prompt);
         debug!("R prompt: {}", info.input_prompt);
 
-        INIT_KERNEL.call_once(|| {
-            self.complete_initialization(&info);
-
-            trace!(
-                "Got initial R prompt '{}', ready for execution requests",
-                info.input_prompt
-            );
-        });
-
         // Upon entering read-console, finalize any debug call text that we were capturing.
         // At this point, the user can either advance the debugger, causing us to capture
         // a new expression, or execute arbitrary code, where we will reuse a finalized
@@ -532,10 +573,7 @@ impl RMain {
         // NOTE: Should be able to overwrite the `Cleanup` frontend method.
         // This would also help with detecting normal exits versus crashes.
         if info.input_prompt.starts_with("Save workspace") {
-            let n = CString::new("n\n").unwrap();
-            unsafe {
-                libc::strcpy(buf as *mut c_char, n.as_ptr());
-            }
+            Self::on_console_input(buf, buflen, String::from("n"));
             return ConsoleResult::NewInput;
         }
 
@@ -575,6 +613,10 @@ impl RMain {
                 // `self.active_request` will be set to a fresh request), but
                 // we might also return here after an interrupt.
                 self.active_request = None;
+            }
+        } else {
+            if info.input_request {
+                return self.handle_invalid_input_request(buf, buflen);
             }
         }
 
@@ -802,6 +844,42 @@ impl RMain {
             },
             ConsoleInput::EOF => Some(ConsoleResult::Disconnected),
         }
+    }
+
+    /// Handle an `input_request` received outside of an `execute_request` context
+    ///
+    /// We believe it is always invalid to receive an `input_request` that isn't
+    /// nested within an `execute_request`. However, this can happen at R
+    /// startup when sourcing an `.Rprofile` that calls `readline()` or `menu()`.
+    /// Both of these are explicitly forbidden by `?Startup` in R as
+    /// "interaction with the user during startup", so when we detect this
+    /// invalid `input_request` case we throw an R error and assume that it
+    /// came from a `readline()` or `menu()` call during startup.
+    ///
+    /// We make a single exception for preexisting renv `activate.R` scripts,
+    /// which used to call `readline()` from within `.Rprofile`. In those cases,
+    /// we return `"n"` which allows older versions of renv to at least startup.
+    /// https://github.com/posit-dev/positron/issues/2070
+    /// https://github.com/rstudio/renv/blob/5d0d52c395e569f7f24df4288d949cef95efca4e/inst/resources/activate.R#L85-L87
+    fn handle_invalid_input_request(&self, buf: *mut c_uchar, buflen: c_int) -> ConsoleResult {
+        if Self::in_renv_autoloader() {
+            log::info!("Detected `readline()` call in renv autoloader. Returning `'n'`.");
+            Self::on_console_input(buf, buflen, String::from("n"));
+            return ConsoleResult::NewInput;
+        }
+
+        log::info!("Detected invalid `input_request` outside an `execute_request`. Preparing to throw an R error.");
+
+        let message = vec![
+            "Can't request input from the user at this time.",
+            "Are you calling `readline()` or `menu()` from an `.Rprofile` or `.Rprofile.site` file? If so, that is the issue and you should remove that code."
+        ].join("\n");
+
+        return ConsoleResult::Error(Error::InvalidInputRequest(message));
+    }
+
+    fn in_renv_autoloader() -> bool {
+        unsafe { r_get_option::<bool>("renv.autoloader.running").unwrap_or(false) }
     }
 
     fn handle_input_reply(
@@ -1463,17 +1541,8 @@ pub extern "C" fn r_read_console(
             // error message comes from the frontend and might be corrupted.
             static mut ERROR_BUF: Option<CString> = None;
 
-            {
-                let err_cstring = new_cstring(format!("{err:?}"));
-                unsafe {
-                    ERROR_BUF = Some(
-                        CString::new(format!(
-                            "Error while reading input: {}",
-                            err_cstring.into_string().unwrap()
-                        ))
-                        .unwrap(),
-                    );
-                }
+            unsafe {
+                ERROR_BUF = Some(new_cstring(format!("\n{err}")));
             }
 
             unsafe { Rf_error(ERROR_BUF.as_ref().unwrap().as_ptr()) };
