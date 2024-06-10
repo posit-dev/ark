@@ -28,23 +28,26 @@ pub(crate) fn top_level_declare(
     let Some(declare_args) = top_level_declare_args(ast, contents) else {
         return decls;
     };
-    let Some(args) = declare_ark_args(declare_args, contents) else {
+    let Some(ark_args) = declare_ark_args(declare_args, contents) else {
+        return decls;
+    };
+    let Some(diagnostics_args) = ark_diagnostics_args(ark_args, contents) else {
         return decls;
     };
 
-    let mut cursor = args.walk();
-    let mut iter = args.children(&mut cursor);
+    let mut cursor = diagnostics_args.walk();
+    let mut iter = diagnostics_args.children(&mut cursor);
 
-    let Some(diags) = iter.find_map(|n| node_arg_value(&n, "diagnostics", contents)) else {
+    let Some(enable) = iter.find_map(|n| node_arg_value(&n, "enable", contents)) else {
         return decls;
     };
-    let Some(diags_text) = node_text(&diags, contents) else {
+    let Some(enable_text) = node_text(&enable, contents) else {
         return decls;
     };
 
-    if diags_text == "FALSE" {
+    if enable_text == "FALSE" {
         decls.diagnostics = false;
-    } else if diags_text != "TRUE" {
+    } else if enable_text != "TRUE" {
         lsp::log_warn!("Invalid `diagnostics = ` declaration");
     }
 
@@ -83,6 +86,13 @@ fn declare_ark_args<'tree>(
     contents: &ropey::Rope,
 ) -> Option<Node<'tree>> {
     args_find_call_args(declare_args, "ark", contents)
+}
+
+fn ark_diagnostics_args<'tree>(
+    ark_args: Node<'tree>,
+    contents: &ropey::Rope,
+) -> Option<Node<'tree>> {
+    args_find_call_args(ark_args, "diagnostics", contents)
 }
 
 #[cfg(test)]
@@ -133,15 +143,15 @@ mod test {
         let decls = top_level_declare(&doc.ast, &doc.contents);
         assert_eq!(decls.diagnostics, true);
 
-        let doc = Document::new("declare(ark(diagnostics = TRUE))", None);
+        let doc = Document::new("declare(ark(diagnostics(enable = TRUE)))", None);
         let decls = top_level_declare(&doc.ast, &doc.contents);
         assert_eq!(decls.diagnostics, true);
 
-        let doc = Document::new("declare(ark(diagnostics = NULL))", None);
+        let doc = Document::new("declare(ark(diagnostics(enable = NULL)))", None);
         let decls = top_level_declare(&doc.ast, &doc.contents);
         assert_eq!(decls.diagnostics, true);
 
-        let doc = Document::new("declare(ark(diagnostics = invalid()))", None);
+        let doc = Document::new("declare(ark(diagnostics(enable = invalid())))", None);
         let decls = top_level_declare(&doc.ast, &doc.contents);
         assert_eq!(decls.diagnostics, true);
 
@@ -149,7 +159,7 @@ mod test {
         let decls = top_level_declare(&doc.ast, &doc.contents);
         assert_eq!(decls.diagnostics, true);
 
-        let doc = Document::new("declare(ark(diagnostics = FALSE))", None);
+        let doc = Document::new("declare(ark(diagnostics(enable = FALSE)))", None);
         let decls = top_level_declare(&doc.ast, &doc.contents);
         assert_eq!(decls.diagnostics, false);
     }
