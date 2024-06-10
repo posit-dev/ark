@@ -125,8 +125,7 @@ fn generate_source(
     }
 
     // Ignore functions that already have sources
-    let srcref = unsafe { Rf_getAttrib(old.sexp, r_symbol!("srcref")) };
-    if r_typeof(srcref) != NILSXP {
+    if let Some(_) = old.attr("srcref") {
         return Ok(None);
     }
 
