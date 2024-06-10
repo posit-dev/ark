@@ -5,6 +5,7 @@
 //
 //
 
+use harp::call::r_expr_quote;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::*;
@@ -260,7 +261,7 @@ fn call_variable(name: String, x: SEXP) -> RVariable {
 
 fn call_value(x: SEXP) -> anyhow::Result<String> {
     let x = RFunction::from(".ps.environment.describeCall")
-        .add(x)
+        .add(r_expr_quote(x))
         .call()?;
 
     let x = String::try_from(x)?;
