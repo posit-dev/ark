@@ -73,7 +73,6 @@ use harp::object::RObject;
 use harp::r_symbol;
 use harp::routines::r_register_routines;
 use harp::session::r_traceback;
-use harp::utils::r_get_option;
 use harp::utils::r_is_data_frame;
 use harp::utils::r_pairlist_any;
 use harp::utils::r_poke_option_show_error_messages;
@@ -501,8 +500,8 @@ impl RMain {
             };
 
             // Initial input and continuation prompts
-            let input_prompt = unsafe { r_get_option::<String>("prompt").unwrap() };
-            let continuation_prompt = unsafe { r_get_option::<String>("continue").unwrap() };
+            let input_prompt: String = harp::get_option("prompt").try_into().unwrap();
+            let continuation_prompt: String = harp::get_option("continue").try_into().unwrap();
 
             let kernel_info = KernelInfo {
                 version: version.clone(),
@@ -778,7 +777,7 @@ impl RMain {
 
         // The request is incomplete if we see the continue prompt, except if
         // we're in a user request, e.g. `readline("+ ")`
-        let continuation_prompt: String = r_get_option("continue").try_into().unwrap();
+        let continuation_prompt: String = harp::get_option("continue").try_into().unwrap();
         let incomplete = !user_request && prompt == continuation_prompt;
 
         if incomplete {
@@ -890,7 +889,9 @@ impl RMain {
     }
 
     fn in_renv_autoloader() -> bool {
-        unsafe { r_get_option::<bool>("renv.autoloader.running").unwrap_or(false) }
+        harp::get_option("renv.autoloader.running")
+            .try_into()
+            .unwrap_or(false)
     }
 
     fn handle_input_reply(
@@ -1615,7 +1616,7 @@ unsafe extern "C" fn ps_onload_hook(pkg: SEXP, _path: SEXP) -> anyhow::Result<SE
 }
 
 fn do_resource_namespaces() -> bool {
-    let opt: Option<bool> = r_null_or_try_into(r_get_option("ark.resource_namespaces"))
+    let opt: Option<bool> = r_null_or_try_into(harp::get_option("ark.resource_namespaces"))
         .ok()
         .flatten();
     opt.unwrap_or(true)

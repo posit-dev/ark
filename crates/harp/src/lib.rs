@@ -45,6 +45,7 @@ pub use harp::exec::try_eval;
 pub use harp::exec::try_eval_silent;
 pub use harp::object::RObject;
 pub use harp::symbol::RSymbol;
+pub use harp::utils::get_option;
 pub use harp_macros::register;
 
 // Allow `crate::` references within the crate

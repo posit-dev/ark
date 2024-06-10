@@ -327,7 +327,7 @@ pub fn r_type2char<T: Into<u32>>(kind: T) -> String {
     }
 }
 
-pub fn r_get_option(name: &str) -> RObject {
+pub fn get_option(name: &str) -> RObject {
     unsafe { Rf_GetOption1(r_symbol!(name)).into() }
 }
 
