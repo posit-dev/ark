@@ -90,16 +90,51 @@ impl fmt::Display for Error {
                 write!(f, "Error parsing {}: {}", code, message)
             },
 
-            Error::TryCatchError { code, message, .. } => {
+            Error::TryCatchError {
+                code,
+                message,
+                r_trace,
+                rust_trace,
+                ..
+            } => {
                 if let Some(code) = code {
-                    write!(f, "Error evaluating '{code}': {message}")
+                    write!(f, "Error evaluating '{code}': {message}")?;
                 } else {
-                    write!(f, "{message}")
+                    write!(f, "{message}")?;
                 }
+
+                // We display intercepting backtraces in Display instead of
+                // Debug because anyhow doesn't propagate the `?` flag:
+                // https://users.rust-lang.org/t/why-doesnt-anyhows-debug-formatter-include-the-underlying-debug-formatting/44227
+
+                if !r_trace.is_empty() {
+                    writeln!(f, "\n\nR backtrace:\n{r_trace}")?;
+                }
+
+                if let Some(rust_trace) = rust_trace {
+                    writeln!(f, "\n\n{R_BACKTRACE_HEADER}\n{rust_trace}")?;
+                }
+
+                Ok(())
             },
 
-            Error::TopLevelExecError { message, .. } => {
-                writeln!(f, "{message}")
+            Error::TopLevelExecError {
+                message,
+                span_trace,
+                backtrace,
+                ..
+            } => {
+                writeln!(f, "{message}")?;
+
+                if span_trace.status() == tracing_error::SpanTraceStatus::CAPTURED {
+                    writeln!(f, "\n\nIn spans:")?;
+                    span_trace.fmt(f)?;
+                }
+
+                writeln!(f, "\n\n{R_BACKTRACE_HEADER}\n{backtrace}")?;
+                fmt::Display::fmt(backtrace, f)?;
+
+                Ok(())
             },
 
             Error::UnsafeEvaluationError(code) => {
@@ -181,6 +216,14 @@ macro_rules! anyhow {
     }}
 }
 
+// We include R-level backtraces in `Display` because anyhow doesn't propagate the `?` flag:
+// https://users.rust-lang.org/t/why-doesnt-anyhows-debug-formatter-include-the-underlying-debug-formatting/44227
+impl fmt::Debug for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
+    }
+}
+
 // TODO: Macro variants of `check_` helpers that record function name, see
 // `function_name` in https://docs.rs/stdext/latest/src/stdext/macros.rs.html
 
@@ -198,52 +241,6 @@ fn check(x: impl Into<libr::SEXP>, expected: libr::SEXPTYPE) -> crate::Result<()
 
 pub fn check_env(x: impl Into<libr::SEXP>) -> crate::Result<()> {
     check(x, libr::ENVSXP)
-}
-
-// NOTE: Debug is the same as Display but with backtrace printing.
-// This matches anyhow error formatters and we can still retrieve the
-// struct-style format with `{:#?}`.
-impl fmt::Debug for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(self, f)?;
-
-        // If you change the "R thread backtrace" header, make sure to update
-        // the panic handler in main.rs
-
-        match self {
-            Error::TopLevelExecError {
-                message: _,
-                backtrace,
-                span_trace,
-            } => {
-                if span_trace.status() == tracing_error::SpanTraceStatus::CAPTURED {
-                    writeln!(f, "\n\nIn spans:")?;
-                    span_trace.fmt(f)?;
-                }
-
-                writeln!(f, "\n\n{R_BACKTRACE_HEADER}\n{backtrace}")?;
-                fmt::Display::fmt(backtrace, f)
-            },
-
-            Error::TryCatchError {
-                r_trace,
-                rust_trace,
-                ..
-            } => {
-                if !r_trace.is_empty() {
-                    writeln!(f, "\n\nR backtrace:\n{r_trace}")?;
-                }
-
-                if let Some(rust_trace) = rust_trace {
-                    writeln!(f, "\n\n{R_BACKTRACE_HEADER}\n{rust_trace}")?;
-                }
-
-                Ok(())
-            },
-
-            _ => Ok(()),
-        }
-    }
 }
 
 impl From<Utf8Error> for Error {

@@ -666,7 +666,7 @@ mod tests {
 
             assert_match!(result, Err(err) => {
                 let re = regex::Regex::new("backtrace:\n(.|\n)*1L [+] \"\"").unwrap();
-                assert!(!re.is_match(&format!("{err}")));
+                assert!(re.is_match(&format!("{err}")));
                 assert!(re.is_match(&format!("{err:?}")));
             });
         }
