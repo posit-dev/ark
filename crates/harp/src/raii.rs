@@ -5,21 +5,19 @@
 //
 //
 
+// SAFETY: The guards created by `RLocal` structs should never be moved around.
+// The guards should always form a nested stack so that restoration to old
+// values happens in the expected order. If you move the guards, you might end
+// up creating an unexpected order of value restoration.
+
 pub struct RLocal<T: Copy> {
     old_value: T,
     variable: *mut T,
-
-    // The RAII scopes must be nested to work properly and thus can't be moved
-    // or copied. The no copy requirement is fulfilled by having a `Drop` method
-    // and this Pin marker prevents moving.
-    _pin: std::marker::PhantomPinned,
 }
 
 pub struct RLocalOption {
     old_value: crate::RObject,
     option: crate::RSymbol,
-
-    _pin: std::marker::PhantomPinned,
 }
 
 pub struct RLocalBoolean {
@@ -59,7 +57,6 @@ where
             Self {
                 old_value,
                 variable,
-                _pin: std::marker::PhantomPinned,
             }
         }
     }
@@ -83,7 +80,6 @@ impl RLocalOption {
         Self {
             old_value: old_value.into(),
             option,
-            _pin: std::marker::PhantomPinned,
         }
     }
 }
