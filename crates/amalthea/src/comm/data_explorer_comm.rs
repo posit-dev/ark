@@ -414,7 +414,13 @@ pub struct SupportedFeatures {
 	pub set_row_filters: SetRowFiltersFeatures,
 
 	/// Support for 'get_column_profiles' RPC and its features
-	pub get_column_profiles: GetColumnProfilesFeatures
+	pub get_column_profiles: GetColumnProfilesFeatures,
+
+	/// Support for 'set_sort_columns' RPC and its features
+	pub set_sort_columns: SetSortColumnsFeatures,
+
+	/// Support for 'export_data_selection' RPC and its features
+	pub export_data_selection: ExportDataSelectionFeatures
 }
 
 /// Feature flags for 'search_schema' RPC
@@ -445,6 +451,20 @@ pub struct GetColumnProfilesFeatures {
 
 	/// A list of supported types
 	pub supported_types: Vec<ColumnProfileType>
+}
+
+/// Feature flags for 'export_data_selction' RPC
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ExportDataSelectionFeatures {
+	/// Whether this RPC method is supported at all
+	pub supported: bool
+}
+
+/// Feature flags for 'set_sort_columns' RPC
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SetSortColumnsFeatures {
+	/// Whether this RPC method is supported at all
+	pub supported: bool
 }
 
 /// A selection on the data grid, for copying to the clipboard or other
@@ -521,6 +541,9 @@ pub enum ColumnDisplayType {
 
 	#[serde(rename = "time")]
 	Time,
+
+	#[serde(rename = "object")]
+	Object,
 
 	#[serde(rename = "array")]
 	Array,

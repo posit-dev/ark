@@ -22,6 +22,7 @@ use amalthea::comm::data_explorer_comm::DataExplorerBackendReply;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendRequest;
 use amalthea::comm::data_explorer_comm::DataExplorerFrontendEvent;
 use amalthea::comm::data_explorer_comm::DataSelection;
+use amalthea::comm::data_explorer_comm::ExportDataSelectionFeatures;
 use amalthea::comm::data_explorer_comm::ExportDataSelectionParams;
 use amalthea::comm::data_explorer_comm::ExportFormat;
 use amalthea::comm::data_explorer_comm::ExportedData;
@@ -35,6 +36,7 @@ use amalthea::comm::data_explorer_comm::RowFilterType;
 use amalthea::comm::data_explorer_comm::SearchSchemaFeatures;
 use amalthea::comm::data_explorer_comm::SetRowFiltersFeatures;
 use amalthea::comm::data_explorer_comm::SetRowFiltersParams;
+use amalthea::comm::data_explorer_comm::SetSortColumnsFeatures;
 use amalthea::comm::data_explorer_comm::SetSortColumnsParams;
 use amalthea::comm::data_explorer_comm::SummaryStatsBoolean;
 use amalthea::comm::data_explorer_comm::SummaryStatsNumber;
@@ -989,6 +991,8 @@ impl RDataExplorer {
                     ],
                     supports_conditions: true,
                 },
+                set_sort_columns: SetSortColumnsFeatures { supported: true },
+                export_data_selection: ExportDataSelectionFeatures { supported: true },
             },
         };
         Ok(DataExplorerBackendReply::GetStateReply(state))
