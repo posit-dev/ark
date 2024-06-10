@@ -422,3 +422,26 @@ pub(crate) fn node_arg_value<'tree>(
     };
     (name_text == name).then_some(value_node)
 }
+
+pub(crate) fn args_find_call<'tree>(
+    args: Node<'tree>,
+    name: &str,
+    contents: &ropey::Rope,
+) -> Option<Node<'tree>> {
+    let mut cursor = args.walk();
+    let mut iter = args.children(&mut cursor);
+
+    iter.find_map(|n| {
+        let value = n.child_by_field_name("value")?;
+        node_is_call(&value, name, contents).then_some(value)
+    })
+}
+
+pub(crate) fn args_find_call_args<'tree>(
+    args: Node<'tree>,
+    name: &str,
+    contents: &ropey::Rope,
+) -> Option<Node<'tree>> {
+    let call = args_find_call(args, name, contents)?;
+    call.child_by_field_name("arguments")
+}

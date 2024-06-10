@@ -1,6 +1,7 @@
 use tree_sitter::Node;
 
 use crate::lsp;
+use crate::treesitter::args_find_call_args;
 use crate::treesitter::node_arg_value;
 use crate::treesitter::node_is_call;
 use crate::treesitter::node_text;
@@ -81,15 +82,7 @@ fn declare_ark_args<'tree>(
     declare_args: Node<'tree>,
     contents: &ropey::Rope,
 ) -> Option<Node<'tree>> {
-    let mut cursor = declare_args.walk();
-    let mut iter = declare_args.children(&mut cursor);
-
-    let ark = iter.find_map(|n| {
-        let value = n.child_by_field_name("value")?;
-        node_is_call(&value, "ark", contents).then_some(value)
-    })?;
-
-    ark.child_by_field_name("arguments")
+    args_find_call_args(declare_args, "ark", contents)
 }
 
 #[cfg(test)]
