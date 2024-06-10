@@ -196,7 +196,7 @@ where
     };
     let payload = &mut callback_data as *mut _ as *mut c_void;
 
-    extern "C" fn callback<'env, F, T>(payload: *mut c_void)
+    extern "C" fn callback<'env, F, T>(payload: *mut c_void) -> SEXP
     where
         F: FnOnce() -> T,
         F: 'env,
@@ -208,9 +208,11 @@ where
 
         // Call closure and move the result to its stack space
         *(data.res) = Some(Ok(closure()));
+
+        harp::r_null()
     }
 
-    extern "C" fn handler<'env, F, T>(err: SEXP, payload: *mut c_void)
+    extern "C" fn handler<'env, F, T>(err: SEXP, payload: *mut c_void) -> SEXP
     where
         F: FnOnce() -> T,
         F: 'env,

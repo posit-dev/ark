@@ -88,9 +88,9 @@ functions::generate! {
     ) -> Rboolean;
 
     pub fn R_withCallingErrorHandler(
-        body: Option<unsafe extern "C" fn(args: *mut std::ffi::c_void)>,
+        body: Option<unsafe extern "C" fn(args: *mut std::ffi::c_void) -> SEXP>,
         bdata: *mut std::ffi::c_void,
-        handler: Option<unsafe extern "C" fn(err: SEXP, args: *mut std::ffi::c_void)>,
+        handler: Option<unsafe extern "C" fn(err: SEXP, args: *mut std::ffi::c_void) -> SEXP>,
         hdata: *mut std::ffi::c_void
     ) -> SEXP;
 
