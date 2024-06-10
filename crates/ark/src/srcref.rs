@@ -98,7 +98,7 @@ pub(crate) async fn ns_populate_srcref(ns_name: String) -> anyhow::Result<()> {
     // SAFETY: That's a DashMap so should be safe across threads
     unsafe {
         // Save virtual document containing the namespace source
-        ARK_VDOCS.insert(uri_path, vdoc);
+        ARK_VDOCS.insert(uri_path, vdoc.join("\n"));
     }
 
     Ok(())
