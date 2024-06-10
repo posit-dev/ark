@@ -115,30 +115,30 @@ fn generate_source(
     }
 
     // Only update regular functions
-    let obj = plain_binding_force_with_rollback(binding)?;
-    if obj.kind() != CLOSXP {
+    let old = plain_binding_force_with_rollback(binding)?;
+    if old.kind() != CLOSXP {
         return Ok(None);
     }
 
     // These don't deparse to a `function` call!
-    if unsafe { IS_S4_OBJECT(obj.sexp) != 0 } {
+    if unsafe { IS_S4_OBJECT(old.sexp) != 0 } {
         return Ok(None);
     }
 
     // Ignore functions that already have sources
-    let srcref = unsafe { Rf_getAttrib(obj.sexp, r_symbol!("srcref")) };
+    let srcref = unsafe { Rf_getAttrib(old.sexp, r_symbol!("srcref")) };
     if r_typeof(srcref) != NILSXP {
         return Ok(None);
     }
 
     let reparsed = RFunction::new("", "reparse_with_srcref")
-        .add(obj.clone())
+        .add(old.clone())
         .param("name", r_expr_quote(binding.name.sexp))
         .param("uri", uri.clone())
         .param("line", (line + 1) as i32)
         .call_in(ARK_ENVS.positron_ns)?;
 
-    let (out, text) = unsafe { (VECTOR_ELT(reparsed.sexp, 0), VECTOR_ELT(reparsed.sexp, 1)) };
+    let (new, text) = unsafe { (VECTOR_ELT(reparsed.sexp, 0), VECTOR_ELT(reparsed.sexp, 1)) };
 
     // Inject source references in functions. This is slightly unsafe but we
     // couldn't think of a dire failure mode.
@@ -146,7 +146,7 @@ fn generate_source(
         // First replace the body which contains expressions tagged with srcrefs
         // such as calls to `{`. Compiled functions are a little more tricky.
 
-        let body = BODY(obj.sexp);
+        let body = BODY(old.sexp);
         if r_typeof(body) == BCODESXP {
             // This is a compiled function. We could recompile the fresh
             // function we just created but the compiler is very slow. Instead,
@@ -160,17 +160,17 @@ fn generate_source(
             // of the constant pool
             if r_length(consts) > 0 {
                 // Inject new body instrumented with source references
-                SET_VECTOR_ELT(consts, 0, R_ClosureExpr(out));
+                SET_VECTOR_ELT(consts, 0, R_ClosureExpr(new));
             }
         } else {
-            SET_BODY(obj.sexp, BODY(out));
+            SET_BODY(old.sexp, BODY(new));
         }
 
         // Finally push the srcref attribute for the whole function
         Rf_setAttrib(
-            obj.sexp,
+            old.sexp,
             r_symbol!("srcref"),
-            Rf_getAttrib(out, r_symbol!("srcref")),
+            Rf_getAttrib(new, r_symbol!("srcref")),
         );
     }
 
