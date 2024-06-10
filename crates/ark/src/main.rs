@@ -468,7 +468,7 @@ fn main() {
             // for the R thread so don't repeat it if we see one. Only perform
             // this check on the R thread because we do want other threads'
             // backtraces if the panic occurred elsewhere.
-            if ON_R_THREAD.get() && info.contains("\nR thread backtrace:\n") {
+            if ON_R_THREAD.get() && info.contains("\n{R_BACKTRACE_HEADER}\n") {
                 String::from("")
             } else {
                 format!(

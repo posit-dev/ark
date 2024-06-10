@@ -62,6 +62,8 @@ pub enum Error {
     Anyhow(anyhow::Error),
 }
 
+pub const R_BACKTRACE_HEADER: &str = "R thread backtrace:";
+
 // empty implementation required for 'anyhow'
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
@@ -219,7 +221,7 @@ impl fmt::Debug for Error {
                     span_trace.fmt(f)?;
                 }
 
-                writeln!(f, "\n\nR thread backtrace:\n{backtrace}")?;
+                writeln!(f, "\n\n{R_BACKTRACE_HEADER}\n{backtrace}")?;
                 fmt::Display::fmt(backtrace, f)
             },
 
@@ -233,7 +235,7 @@ impl fmt::Debug for Error {
                 }
 
                 if let Some(rust_trace) = rust_trace {
-                    writeln!(f, "\n\nR thread backtrace:\n{rust_trace}")?;
+                    writeln!(f, "\n\n{R_BACKTRACE_HEADER}\n{rust_trace}")?;
                 }
 
                 Ok(())
