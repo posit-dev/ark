@@ -1251,14 +1251,6 @@ pub fn is_binding_fancy(binding: &Binding) -> bool {
     }
 }
 
-pub fn is_binding_plain(binding: &Binding) -> bool {
-    match &binding.value {
-        BindingValue::Standard { .. } => true,
-        BindingValue::Promise { .. } => true,
-        _ => false,
-    }
-}
-
 pub fn plain_binding_force_with_rollback(binding: &Binding) -> anyhow::Result<RObject> {
     match &binding.value {
         BindingValue::Standard { object, .. } => Ok(object.clone()),
