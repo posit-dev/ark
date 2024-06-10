@@ -910,11 +910,15 @@ impl RMain {
         }
     }
 
-    /// Handle a concurrent (non idle) task.
+    /// Handle a task at interrupt time.
     ///
     /// Wrapper around `handle_task()` that does some extra logging to record
     /// how long a task waited before being picked up by the R or ReadConsole
     /// event loop.
+    ///
+    /// Since tasks running during interrupt checks block the R thread while
+    /// they are running, they should return very quickly. The log message helps
+    /// monitor excessively long-running tasks.
     fn handle_task_interrupt(&mut self, mut task: RTask) {
         if let Some(start_info) = task.start_info_mut() {
             // Log excessive waiting before starting task
@@ -1594,7 +1598,7 @@ pub unsafe extern "C" fn r_polled_events() {
     main.polled_events();
 }
 
-// This hook is called like a user onLoad hook but for every packages to be
+// This hook is called like a user onLoad hook but for every package to be
 // loaded in the session
 #[harp::register]
 unsafe extern "C" fn ps_onload_hook(pkg: SEXP, _path: SEXP) -> anyhow::Result<SEXP> {
