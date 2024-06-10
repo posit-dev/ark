@@ -35,7 +35,7 @@ pub(crate) fn resource_loaded_namespaces() -> anyhow::Result<()> {
 unsafe extern "C" fn ps_ns_populate_srcref(ns_name: SEXP) -> anyhow::Result<SEXP> {
     let ns_name: String = RObject::view(ns_name).try_into()?;
     futures::executor::block_on(ns_populate_srcref(ns_name))?;
-    Ok(RObject::null().sexp)
+    Ok(harp::r_null())
 }
 
 pub(crate) async fn ns_populate_srcref(ns_name: String) -> anyhow::Result<()> {
