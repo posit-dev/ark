@@ -26,10 +26,8 @@ reparse_with_srcref <- function(x, name, uri, line) {
 
     # Now check that body and formals were losslessly reparsed. In theory
     # `identical()` should ignore srcrefs but it seems buggy with nested ones,
-    # so we zap them beforehand. rlang has a fast and accurate C implementation
-    # that we use for convenience. If not available we let it fail as the error
-    # is silently ignored.
-    if (!identical(rlang::zap_srcref(x), rlang::zap_srcref(out))) {
+    # so we zap them beforehand.
+    if (!identical(zap_srcref(x), zap_srcref(out))) {
         stop("Can't reparse function losslessly")
     }
 
@@ -41,4 +39,8 @@ reparse_with_srcref <- function(x, name, uri, line) {
     text[[1]] <- paste(name, "<-", text[[1]])
 
     list(obj = out, text = text)
+}
+
+zap_srcref <- function(x) {
+    .ps.Call("ark_zap_srcref", x)
 }

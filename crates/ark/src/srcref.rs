@@ -178,3 +178,8 @@ fn generate_source(
     let text: Vec<String> = RObject::view(text).try_into()?;
     Ok(Some(text))
 }
+
+#[harp::register]
+pub extern "C" fn ark_zap_srcref(x: SEXP) -> anyhow::Result<SEXP> {
+    Ok(harp::attrib::zap_srcref(x).sexp)
+}

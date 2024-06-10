@@ -175,8 +175,15 @@ pub fn r_chr_get(x: SEXP, i: isize) -> SEXP {
     unsafe { STRING_ELT(x, i) }
 }
 
+// TODO: Once we have a Rust list type, move this back to unsafe.
+// Should be unsafe because the type and bounds are not checked and
+// will result in a crash if used incorrectly.
 pub fn list_get(x: SEXP, i: isize) -> SEXP {
     unsafe { VECTOR_ELT(x, i) }
+}
+
+pub fn list_poke(x: SEXP, i: isize, value: SEXP) {
+    unsafe { SET_VECTOR_ELT(x, i, value) };
 }
 
 pub fn r_lgl_na() -> i32 {
@@ -428,12 +435,28 @@ impl RObject {
     /// Gets a named attribute from the object. Returns `None` if the attribute
     /// doesn't exist.
     pub fn attr(&self, name: &str) -> Option<RObject> {
-        // Get the attribute value.
         let val = unsafe { Rf_getAttrib(self.sexp, r_symbol!(name)) };
         if r_is_null(val) {
-            return None;
+            None
+        } else {
+            Some(unsafe { RObject::new(val) })
         }
-        Some(unsafe { RObject::new(val) })
+    }
+
+    pub fn set_attr(&self, name: &str, value: SEXP) {
+        unsafe {
+            Rf_protect(value);
+            Rf_setAttrib(self.sexp, r_symbol!(name), value);
+            Rf_unprotect(1);
+        }
+    }
+
+    pub fn duplicate(&self) -> RObject {
+        unsafe { RObject::new(libr::Rf_duplicate(self.sexp)) }
+    }
+
+    pub fn shallow_duplicate(&self) -> RObject {
+        unsafe { RObject::new(libr::Rf_shallow_duplicate(self.sexp)) }
     }
 }
 

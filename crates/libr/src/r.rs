@@ -134,6 +134,10 @@ functions::generate! {
 
     pub fn Rf_getAttrib(arg1: SEXP, arg2: SEXP) -> SEXP;
 
+    pub fn Rf_duplicate(arg: SEXP) -> SEXP;
+
+    pub fn Rf_shallow_duplicate(arg: SEXP) -> SEXP;
+
     pub fn Rf_inherits(arg1: SEXP, arg2: *const std::ffi::c_char) -> Rboolean;
 
     pub fn Rf_install(arg1: *const std::ffi::c_char) -> SEXP;
