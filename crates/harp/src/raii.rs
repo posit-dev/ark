@@ -152,6 +152,7 @@ impl RLocalShowErrorMessageOption {
 
 #[cfg(test)]
 mod tests {
+    use crate::r_get_option;
     use crate::raii::RLocalInteractive;
     use crate::raii::RLocalShowErrorMessageOption;
     use crate::test::r_test;
@@ -181,15 +182,8 @@ mod tests {
     #[test]
     fn test_local_option() {
         r_test(|| {
-            let get = || -> bool {
-                unsafe {
-                    crate::RObject::view(libr::Rf_GetOption1(crate::r_symbol!(
-                        "show.error.messages"
-                    )))
-                    .try_into()
-                    .unwrap()
-                }
-            };
+            let get =
+                || -> bool { unsafe { r_get_option::<bool>("show.error.messages").unwrap() } };
             let old = get();
 
             {
