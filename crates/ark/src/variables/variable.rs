@@ -12,6 +12,7 @@ use amalthea::comm::variables_comm::ClipboardFormatFormat;
 use amalthea::comm::variables_comm::Variable;
 use amalthea::comm::variables_comm::VariableKind;
 use anyhow::anyhow;
+use harp::call::r_expr_quote;
 use harp::environment::Binding;
 use harp::environment::BindingValue;
 use harp::environment::Environment;
@@ -526,7 +527,7 @@ impl PositronVariable {
                         }
 
                         RFunction::from(".ps.environment.describeCall")
-                            .add(code)
+                            .add(r_expr_quote(code))
                             .call()?
                             .try_into()
                     },
@@ -535,11 +536,19 @@ impl PositronVariable {
             }
         };
 
+        let display_value = match display_value {
+            Ok(x) => x,
+            Err(err) => {
+                log::error!("{err}");
+                String::from("(unevaluated)")
+            },
+        };
+
         Self {
             var: Variable {
                 access_key: display_name.clone(),
                 display_name,
-                display_value: display_value.unwrap_or(String::from("(unevaluated)")),
+                display_value,
                 display_type: String::from("promise"),
                 type_info: String::from("promise"),
                 kind: VariableKind::Lazy,
