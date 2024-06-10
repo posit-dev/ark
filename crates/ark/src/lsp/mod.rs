@@ -9,6 +9,7 @@ pub mod backend;
 pub mod comm;
 pub mod completions;
 mod config;
+mod declarations;
 pub mod definitions;
 pub mod diagnostics;
 pub mod document_context;
