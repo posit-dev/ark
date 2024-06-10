@@ -23,7 +23,8 @@ try_catch_handler <- function(cnd) {
 }
 
 #' @param traceback A list of calls.
-#' @param rev Whether to list older calls first.
+#' @param rust_like Format backtrace in the same way as Rust, i.e. sort frames
+#    from recent to old.
 format_traceback <- function(traceback = list(), rust_like = FALSE) {
     n <- length(traceback)
 
