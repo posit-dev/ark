@@ -408,6 +408,9 @@ pub(crate) fn node_arg_value<'tree>(
     name: &str,
     contents: &ropey::Rope,
 ) -> Option<Node<'tree>> {
+    if args.node_type() != NodeType::Argument {
+        return None;
+    }
     let Some(name_node) = args.child_by_field_name("name") else {
         return None;
     };
