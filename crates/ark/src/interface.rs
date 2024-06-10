@@ -1598,6 +1598,8 @@ pub unsafe extern "C" fn r_polled_events() {
 // loaded in the session
 #[harp::register]
 unsafe extern "C" fn ps_onload_hook(pkg: SEXP, _path: SEXP) -> anyhow::Result<SEXP> {
+    // NOTE: `_path` might be NULL for a compat reason, see comments on the R side
+
     let pkg: String = RObject::view(pkg).try_into()?;
 
     // Need to reset parent as this might run in the context of another thread's R task

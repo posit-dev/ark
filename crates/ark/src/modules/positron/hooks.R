@@ -95,6 +95,11 @@ register_onload_hook <- function() {
 }
 
 ark_onload_hook <- function(pkg, path) {
+    # For compatibility with older pkgload versions
+    # https://github.com/r-lib/pkgload/commit/b4e178bd52182a2d7f650754830c69fe51be4b8b
+    if (missing(path)) {
+        path <- NULL
+    }
     .ps.Call("ps_onload_hook", pkg, path)
 }
 ark_onload_hook <- structure(
