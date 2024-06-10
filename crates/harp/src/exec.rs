@@ -29,7 +29,7 @@ use crate::utils::r_stringify;
 
 pub enum ParseResult {
     Complete(SEXP),
-    Incomplete(),
+    Incomplete,
 }
 
 pub struct RFunction {
@@ -408,7 +408,7 @@ pub unsafe fn r_parse_vector(code: &str) -> Result<ParseResult> {
 
     match ps {
         ParseStatus_PARSE_OK => Ok(ParseResult::Complete(result.sexp)),
-        ParseStatus_PARSE_INCOMPLETE => Ok(ParseResult::Incomplete()),
+        ParseStatus_PARSE_INCOMPLETE => Ok(ParseResult::Incomplete),
         ParseStatus_PARSE_ERROR => Err(Error::ParseSyntaxError {
             message: CStr::from_ptr(libr::get(R_ParseErrorMsg).as_ptr())
                 .to_string_lossy()
@@ -473,7 +473,7 @@ pub fn r_parse_exprs(code: &str) -> Result<RObject> {
         ParseResult::Complete(x) => {
             return Ok(RObject::from(x));
         },
-        ParseResult::Incomplete() => {
+        ParseResult::Incomplete => {
             return Err(Error::ParseError {
                 code: code.to_string(),
                 message: String::from("Incomplete code"),
@@ -790,7 +790,7 @@ mod tests {
             // incomplete
             assert_match!(
                 r_parse_vector("force(42"),
-                Ok(ParseResult::Incomplete())
+                Ok(ParseResult::Incomplete)
             );
 
             // error
