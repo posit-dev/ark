@@ -90,7 +90,7 @@ impl fmt::Display for Error {
 
             Error::TryCatchError { code, message, .. } => {
                 if let Some(code) = code {
-                    write!(f, "Error evaluating {code}: {message}")
+                    write!(f, "Error evaluating '{code}': {message}")
                 } else {
                     write!(f, "{message}")
                 }
