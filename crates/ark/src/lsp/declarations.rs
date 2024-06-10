@@ -152,6 +152,10 @@ mod test {
         let decls = top_level_declare(&doc.ast, &doc.contents);
         assert_eq!(decls.diagnostics, true);
 
+        let doc = Document::new("~declare()", None);
+        let decls = top_level_declare(&doc.ast, &doc.contents);
+        assert_eq!(decls.diagnostics, true);
+
         let doc = Document::new("declare(ark(diagnostics = FALSE))", None);
         let decls = top_level_declare(&doc.ast, &doc.contents);
         assert_eq!(decls.diagnostics, false);
