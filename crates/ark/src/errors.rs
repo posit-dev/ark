@@ -63,7 +63,7 @@ pub unsafe fn initialize() {
 
 #[harp::register]
 unsafe extern "C" fn ps_rust_backtrace() -> anyhow::Result<SEXP> {
-    let trace = std::backtrace::Backtrace::capture();
+    let trace = std::backtrace::Backtrace::force_capture();
     let trace = format!("{trace}");
     Ok(*RObject::from(trace))
 }

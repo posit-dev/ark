@@ -364,7 +364,7 @@ where
 
             Err(Error::TopLevelExecError {
                 message: String::from(format!("Unexpected longjump{err_buf}")),
-                backtrace: std::backtrace::Backtrace::capture(),
+                backtrace: std::backtrace::Backtrace::force_capture(),
                 span_trace: tracing_error::SpanTrace::capture(),
             })
         },
