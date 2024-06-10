@@ -38,5 +38,5 @@ pub extern "C" fn backtrace_handler(signum: libc::c_int) {
     // always delivered to the thread that caused it, so we can just
     // capture the current thread's backtrace
     let bt = std::backtrace::Backtrace::force_capture();
-    log::info!("{}\n{:?}", header, bt);
+    log::error!("{}\n{}", header, bt);
 }

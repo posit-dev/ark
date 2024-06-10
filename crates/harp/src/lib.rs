@@ -4,6 +4,7 @@
 // Copyright (C) 2023 Posit Software, PBC. All rights reserved.
 //
 //
+pub mod attrib;
 pub mod call;
 pub mod environment;
 pub mod environment_iter;
@@ -43,8 +44,11 @@ pub use harp::exec::top_level_exec;
 pub use harp::exec::try_catch;
 pub use harp::exec::try_eval;
 pub use harp::exec::try_eval_silent;
+pub use harp::object::list_get;
+pub use harp::object::list_poke;
 pub use harp::object::RObject;
 pub use harp::symbol::RSymbol;
+pub use harp::utils::get_option;
 pub use harp_macros::register;
 
 // Allow `crate::` references within the crate

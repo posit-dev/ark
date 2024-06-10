@@ -19,7 +19,6 @@ use crate::error::Result;
 use crate::line_ending::convert_line_endings;
 use crate::line_ending::LineEnding;
 use crate::modules::HARP_ENV;
-use crate::object::r_list_get;
 use crate::object::r_null_or_try_into;
 use crate::object::RObject;
 use crate::protect::RProtect;
@@ -234,14 +233,15 @@ where
             // Invariant of error slot: List of length 4 [message, call, class, trace],
             // with `trace` possibly an empty string.
 
-            let message: String = RObject::view(r_list_get(err.sexp, 0)).try_into()?;
+            let message: String = RObject::view(harp::list_get(err.sexp, 0)).try_into()?;
 
-            let call: Option<String> = r_null_or_try_into(RObject::view(r_list_get(err.sexp, 1)))?;
+            let call: Option<String> =
+                r_null_or_try_into(RObject::view(harp::list_get(err.sexp, 1)))?;
 
             let class: Option<Vec<String>> =
-                r_null_or_try_into(RObject::view(r_list_get(err.sexp, 2)))?;
+                r_null_or_try_into(RObject::view(harp::list_get(err.sexp, 2)))?;
 
-            let r_trace: String = RObject::view(r_list_get(err.sexp, 3)).try_into()?;
+            let r_trace: String = RObject::view(harp::list_get(err.sexp, 3)).try_into()?;
 
             let rust_trace = std::backtrace::Backtrace::force_capture();
 

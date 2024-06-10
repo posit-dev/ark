@@ -143,7 +143,7 @@ fn list_variables(x: SEXP) -> Vec<RVariable> {
     let mut out = Vec::with_capacity(size);
 
     for (i, name) in names.into_iter().enumerate() {
-        let elt = r_list_get(x, i as R_xlen_t);
+        let elt = harp::list_get(x, i as R_xlen_t);
         let variable = object_variable(name, elt);
         out.push(variable);
     }

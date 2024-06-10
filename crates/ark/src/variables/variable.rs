@@ -11,6 +11,7 @@ use std::time::UNIX_EPOCH;
 use amalthea::comm::variables_comm::ClipboardFormatFormat;
 use amalthea::comm::variables_comm::Variable;
 use amalthea::comm::variables_comm::VariableKind;
+use anyhow::anyhow;
 use harp::environment::Binding;
 use harp::environment::BindingValue;
 use harp::environment::Environment;
@@ -19,7 +20,6 @@ use harp::error::Error;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::r_length;
-use harp::object::r_list_get;
 use harp::object::RObject;
 use harp::r_symbol;
 use harp::symbol::RSymbol;
@@ -35,6 +35,7 @@ use harp::utils::r_is_null;
 use harp::utils::r_is_s4;
 use harp::utils::r_is_simple_vector;
 use harp::utils::r_is_unbound;
+use harp::utils::r_promise_force_with_rollback;
 use harp::utils::r_typeof;
 use harp::utils::r_vec_is_single_dimension_with_single_value;
 use harp::utils::r_vec_shape;
@@ -125,7 +126,7 @@ impl WorkspaceVariableDisplayValue {
             if i > 0 {
                 display_value.push_str(", ");
             }
-            let display_i = Self::from(r_list_get(value, i));
+            let display_i = Self::from(harp::list_get(value, i));
             let name = names.get_unchecked(i);
             if !name.is_empty() {
                 display_value.push_str(&name);
@@ -1238,5 +1239,23 @@ impl PositronVariable {
         out.sort_by(|a, b| a.display_name.cmp(&b.display_name));
 
         Ok(out)
+    }
+}
+
+pub fn is_binding_fancy(binding: &Binding) -> bool {
+    match &binding.value {
+        BindingValue::Active { .. } => true,
+        BindingValue::Altrep { .. } => true,
+        _ => false,
+    }
+}
+
+pub fn plain_binding_force_with_rollback(binding: &Binding) -> anyhow::Result<RObject> {
+    match &binding.value {
+        BindingValue::Standard { object, .. } => Ok(object.clone()),
+        BindingValue::Promise { promise, .. } => {
+            Ok(r_promise_force_with_rollback(promise.sexp).map(|x| x.into())?)
+        },
+        _ => Err(anyhow!("Unexpected binding type")),
     }
 }

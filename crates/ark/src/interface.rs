@@ -68,11 +68,11 @@ use harp::exec::RFunctionExt;
 use harp::library::RLibraries;
 use harp::line_ending::convert_line_endings;
 use harp::line_ending::LineEnding;
+use harp::object::r_null_or_try_into;
 use harp::object::RObject;
 use harp::r_symbol;
 use harp::routines::r_register_routines;
 use harp::session::r_traceback;
-use harp::utils::r_get_option;
 use harp::utils::r_is_data_frame;
 use harp::utils::r_pairlist_any;
 use harp::utils::r_poke_option_show_error_messages;
@@ -117,6 +117,8 @@ use crate::request::RRequest;
 use crate::signals::initialize_signal_handlers;
 use crate::signals::interrupts_pending;
 use crate::signals::set_interrupts_pending;
+use crate::srcref::ns_populate_srcref;
+use crate::srcref::resource_loaded_namespaces;
 use crate::startup;
 use crate::sys::console::console_to_utf8;
 
@@ -230,6 +232,14 @@ pub fn start_r(
         let hook_result = RFunction::from(".ps.register_all_hooks").call();
         if let Err(err) = hook_result {
             log::error!("Error registering some hooks: {err:?}");
+        }
+
+        // Populate srcrefs for namespaces already loaded in the session.
+        // Namespaces of future loaded packages will be populated on load.
+        if do_resource_namespaces() {
+            if let Err(err) = resource_loaded_namespaces() {
+                log::error!("Can't populate srcrefs for loaded packages: {err:?}");
+            }
         }
 
         // Set up the global error handler (after support function initialization)
@@ -490,8 +500,8 @@ impl RMain {
             };
 
             // Initial input and continuation prompts
-            let input_prompt = unsafe { r_get_option::<String>("prompt").unwrap() };
-            let continuation_prompt = unsafe { r_get_option::<String>("continue").unwrap() };
+            let input_prompt: String = harp::get_option("prompt").try_into().unwrap();
+            let continuation_prompt: String = harp::get_option("continue").try_into().unwrap();
 
             let kernel_info = KernelInfo {
                 version: version.clone(),
@@ -718,7 +728,7 @@ impl RMain {
 
                 // A task woke us up, start next loop tick to yield to it
                 recv(self.tasks_interrupt_rx) -> task => {
-                    self.handle_task_concurrent(task.unwrap());
+                    self.handle_task_interrupt(task.unwrap());
                 }
                 recv(self.tasks_idle_rx) -> task => {
                     self.handle_task(task.unwrap());
@@ -767,7 +777,7 @@ impl RMain {
 
         // The request is incomplete if we see the continue prompt, except if
         // we're in a user request, e.g. `readline("+ ")`
-        let continuation_prompt = unsafe { r_get_option::<String>("continue").unwrap() };
+        let continuation_prompt: String = harp::get_option("continue").try_into().unwrap();
         let incomplete = !user_request && prompt == continuation_prompt;
 
         if incomplete {
@@ -879,7 +889,9 @@ impl RMain {
     }
 
     fn in_renv_autoloader() -> bool {
-        unsafe { r_get_option::<bool>("renv.autoloader.running").unwrap_or(false) }
+        harp::get_option("renv.autoloader.running")
+            .try_into()
+            .unwrap_or(false)
     }
 
     fn handle_input_reply(
@@ -898,12 +910,16 @@ impl RMain {
         }
     }
 
-    /// Handle a concurrent (non idle) task.
+    /// Handle a task at interrupt time.
     ///
     /// Wrapper around `handle_task()` that does some extra logging to record
     /// how long a task waited before being picked up by the R or ReadConsole
     /// event loop.
-    fn handle_task_concurrent(&mut self, mut task: RTask) {
+    ///
+    /// Since tasks running during interrupt checks block the R thread while
+    /// they are running, they should return very quickly. The log message helps
+    /// monitor excessively long-running tasks.
+    fn handle_task_interrupt(&mut self, mut task: RTask) {
         if let Some(start_info) = task.start_info_mut() {
             // Log excessive waiting before starting task
             if start_info.start_time.elapsed() > std::time::Duration::from_millis(50) {
@@ -919,15 +935,27 @@ impl RMain {
             start_info.start_time = std::time::Instant::now();
         }
 
-        self.handle_task(task)
+        let finished_task_info = self.handle_task(task);
+
+        // We only log long task durations in the interrupt case since we expect
+        // idle tasks to take longer. Use the tracing profiler to monitor the
+        // duration of idle tasks.
+        if let Some(info) = finished_task_info {
+            if info.elapsed() > std::time::Duration::from_millis(50) {
+                info.span.in_scope(|| {
+                    log::info!("task took {} milliseconds.", info.elapsed().as_millis());
+                })
+            }
+        }
     }
 
-    fn handle_task(&mut self, task: RTask) {
+    /// Returns start information when the task has been completed
+    fn handle_task(&mut self, task: RTask) -> Option<RTaskStartInfo> {
         // Background tasks can't take any user input, so we set R_Interactive
         // to 0 to prevent `readline()` from blocking the task.
         let _interactive = harp::raii::RLocalInteractive::new(false);
 
-        let start_info = match task {
+        match task {
             RTask::Sync(task) => {
                 // Immediately let caller know we have started so it can set up the
                 // timeout
@@ -956,13 +984,6 @@ impl RMain {
             },
 
             RTask::Parked(waker) => self.poll_task(None, waker),
-        };
-
-        if let Some(info) = start_info {
-            if info.elapsed() > std::time::Duration::from_millis(50) {
-                let _s = info.span.enter();
-                log::info!("task took {} milliseconds.", info.elapsed().as_millis());
-            }
         }
     }
 
@@ -1225,7 +1246,7 @@ This is a Positron limitation we plan to fix. In the meantime, you can:
         // slowed down
         for _ in 0..3 {
             if let Ok(task) = self.tasks_interrupt_rx.try_recv() {
-                self.handle_task_concurrent(task);
+                self.handle_task_interrupt(task);
             } else {
                 break;
             }
@@ -1576,4 +1597,34 @@ pub extern "C" fn r_busy(which: i32) {
 pub unsafe extern "C" fn r_polled_events() {
     let main = RMain::get_mut();
     main.polled_events();
+}
+
+// This hook is called like a user onLoad hook but for every package to be
+// loaded in the session
+#[harp::register]
+unsafe extern "C" fn ps_onload_hook(pkg: SEXP, _path: SEXP) -> anyhow::Result<SEXP> {
+    // NOTE: `_path` might be NULL for a compat reason, see comments on the R side
+
+    let pkg: String = RObject::view(pkg).try_into()?;
+
+    // Need to reset parent as this might run in the context of another thread's R task
+    let _span = tracing::trace_span!(parent: None, "onload_hook", pkg = pkg).entered();
+
+    // Populate fake source refs if needed
+    if do_resource_namespaces() {
+        r_task::spawn_idle(|| async move {
+            if let Err(err) = ns_populate_srcref(pkg.clone()).await {
+                log::error!("Can't populate srcref for `{pkg}`: {err:?}");
+            }
+        });
+    }
+
+    Ok(RObject::null().sexp)
+}
+
+fn do_resource_namespaces() -> bool {
+    let opt: Option<bool> = r_null_or_try_into(harp::get_option("ark.resource_namespaces"))
+        .ok()
+        .flatten();
+    opt.unwrap_or(true)
 }
