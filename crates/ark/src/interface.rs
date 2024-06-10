@@ -942,8 +942,9 @@ impl RMain {
         // duration of idle tasks.
         if let Some(info) = finished_task_info {
             if info.elapsed() > std::time::Duration::from_millis(50) {
-                let _s = info.span.enter();
-                log::info!("task took {} milliseconds.", info.elapsed().as_millis());
+                info.span.in_scope(|| {
+                    log::info!("task took {} milliseconds.", info.elapsed().as_millis());
+                })
             }
         }
     }
