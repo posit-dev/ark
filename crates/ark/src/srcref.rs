@@ -18,10 +18,9 @@ use crate::variables::variable::plain_binding_force_with_rollback;
 #[tracing::instrument(level = "trace")]
 pub(crate) fn resource_loaded_namespaces() -> anyhow::Result<()> {
     let loaded = RFunction::new("base", "loadedNamespaces").call()?;
-    let mut loaded: Vec<String> = loaded.try_into()?;
+    let loaded: Vec<String> = loaded.try_into()?;
 
-    for pkg in loaded.iter_mut() {
-        let pkg = std::mem::take(pkg);
+    for pkg in loaded.into_iter() {
         r_task::spawn_idle(|| async move {
             if let Err(err) = ns_populate_srcref(pkg.clone()).await {
                 log::error!("Can't populate srcrefs for `{pkg}`: {err:?}");
