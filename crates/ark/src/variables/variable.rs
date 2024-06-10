@@ -20,7 +20,6 @@ use harp::error::Error;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::r_length;
-use harp::object::r_list_get;
 use harp::object::RObject;
 use harp::r_symbol;
 use harp::symbol::RSymbol;
@@ -127,7 +126,7 @@ impl WorkspaceVariableDisplayValue {
             if i > 0 {
                 display_value.push_str(", ");
             }
-            let display_i = Self::from(r_list_get(value, i));
+            let display_i = Self::from(harp::list_get(value, i));
             let name = names.get_unchecked(i);
             if !name.is_empty() {
                 display_value.push_str(&name);

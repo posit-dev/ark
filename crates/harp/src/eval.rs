@@ -8,7 +8,6 @@
 use crate::environment::R_ENVS;
 use crate::error::Error;
 use crate::exec::r_parse_exprs;
-use crate::object::r_list_get;
 use crate::object::RObject;
 
 #[derive(Clone)]
@@ -45,7 +44,7 @@ pub fn r_parse_eval(code: &str, options: RParseEvalOptions) -> harp::Result<RObj
     let mut value = RObject::null();
 
     for i in 0..exprs.length() {
-        let expr = r_list_get(exprs.sexp, i);
+        let expr = harp::list_get(exprs.sexp, i);
         value = harp::try_eval_silent(expr, options.env.sexp)?;
     }
 

@@ -56,7 +56,6 @@ use harp::exec::RFunctionExt;
 use harp::object::r_dbl_is_finite;
 use harp::object::r_dbl_is_nan;
 use harp::object::r_length;
-use harp::object::r_list_get;
 use harp::object::RObject;
 use harp::r_symbol;
 use harp::tbl_get_column;
@@ -1333,7 +1332,7 @@ fn special_values(object: SEXP) -> Vec<SpecialValueTypes> {
         },
         VECSXP => (0..r_length(object))
             .map(|i| {
-                if r_is_null(r_list_get(object, i)) {
+                if r_is_null(harp::list_get(object, i)) {
                     SpecialValueTypes::NULL
                 } else {
                     SpecialValueTypes::NotSpecial

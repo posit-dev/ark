@@ -175,7 +175,7 @@ pub fn r_chr_get(x: SEXP, i: isize) -> SEXP {
     unsafe { STRING_ELT(x, i) }
 }
 
-pub fn r_list_get(x: SEXP, i: isize) -> SEXP {
+pub fn list_get(x: SEXP, i: isize) -> SEXP {
     unsafe { VECTOR_ELT(x, i) }
 }
 

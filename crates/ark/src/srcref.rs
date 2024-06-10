@@ -136,7 +136,10 @@ fn generate_source(
         .param("line", (line + 1) as i32)
         .call_in(ARK_ENVS.positron_ns)?;
 
-    let (new, text) = unsafe { (VECTOR_ELT(reparsed.sexp, 0), VECTOR_ELT(reparsed.sexp, 1)) };
+    let (new, text) = (
+        harp::list_get(reparsed.sexp, 0),
+        harp::list_get(reparsed.sexp, 1),
+    );
 
     // Inject source references in functions. This is slightly unsafe but we
     // couldn't think of a dire failure mode.
