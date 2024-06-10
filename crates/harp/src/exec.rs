@@ -103,30 +103,13 @@ impl RFunction {
 ///
 /// Calls `Rf_eval()` inside `try_catch()`.
 pub fn try_eval(expr: SEXP, env: SEXP) -> crate::Result<RObject> {
-    let res = try_catch(|| unsafe { Rf_eval(expr, env) });
+    let mut res = try_catch(|| unsafe { Rf_eval(expr, env) }).map(RObject::from);
 
-    match res {
-        // Convert to RObject
-        Ok(value) => Ok(value.into()),
-        Err(err) => match err {
-            // Set correct expression. Can this be less verbose?
-            Error::TryCatchError {
-                code: _,
-                message,
-                class,
-                r_trace,
-                rust_trace,
-            } => Err(Error::TryCatchError {
-                code: Some(unsafe { r_stringify(expr, "\n")? }),
-                message,
-                class,
-                r_trace,
-                rust_trace,
-            }),
-            // Propagate as is
-            _ => Err(err),
-        },
+    if let Err(Error::TryCatchError { ref mut code, .. }) = res {
+        *code = Some(unsafe { r_stringify(expr, "\n")? });
     }
+
+    res
 }
 
 pub fn try_eval_silent(expr: SEXP, env: SEXP) -> crate::Result<RObject> {
