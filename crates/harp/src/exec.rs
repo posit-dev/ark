@@ -220,9 +220,13 @@ where
         // Run in lambda to collect errors more easily
         if let Err(err) = (|| -> harp::Result<()> {
             unsafe {
-                let err = RFunction::new("", "try_catch_handler")
+                let call = RFunction::new("", "try_catch_handler")
                     .add(err)
-                    .call_in(HARP_ENV.unwrap())?;
+                    .call
+                    .build();
+
+                // Call without protection to avoid recursing here
+                let err: RObject = Rf_eval(call.sexp, HARP_ENV.unwrap()).into();
 
                 // Invariant of error slot: List of length 4 [message, call, class, trace],
                 // with `trace` possibly an empty string.
