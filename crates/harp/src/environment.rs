@@ -247,7 +247,7 @@ pub extern "C" fn ark_env_unlock(env: SEXP) -> crate::error::Result<SEXP> {
     }
 }
 
-pub fn r_ns_env(name: &String) -> anyhow::Result<Environment> {
+pub fn r_ns_env(name: &str) -> anyhow::Result<Environment> {
     let registry = Environment::new(unsafe { R_NamespaceRegistry.into() });
     let ns = registry.find(name)?;
 
