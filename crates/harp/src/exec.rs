@@ -356,7 +356,7 @@ where
     match res {
         Some(res) => res,
         None => {
-            let mut err_buf = geterrmessage();
+            let mut err_buf = r_peek_error_buffer();
 
             if err_buf.len() > 0 {
                 err_buf = format!("\nLikely caused by:\n{err_buf}");
@@ -371,7 +371,7 @@ where
     }
 }
 
-pub fn geterrmessage() -> String {
+pub fn r_peek_error_buffer() -> String {
     // SAFETY: Returns pointer to static memory buffer owned by R.
     let buffer = unsafe { R_curErrorBuf() };
 

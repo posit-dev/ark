@@ -59,8 +59,8 @@ use crossbeam::channel::Sender;
 use crossbeam::select;
 use harp::environment::Environment;
 use harp::environment::R_ENVS;
-use harp::exec::geterrmessage;
 use harp::exec::r_check_stack;
+use harp::exec::r_peek_error_buffer;
 use harp::exec::r_sandbox;
 use harp::exec::r_source;
 use harp::exec::RFunction;
@@ -1376,7 +1376,7 @@ fn peek_execute_response(exec_count: u32) -> ExecuteResponse {
     // isn't set. Instead we detect stack overflows by peeking at the error
     // buffer. The message is explicitly not translated to save stack space
     // so the matching should be reliable.
-    let err_buf = geterrmessage();
+    let err_buf = r_peek_error_buffer();
     let stack_overflow_occurred = RE_STACK_OVERFLOW.is_match(&err_buf);
 
     // Reset error buffer so we don't display this message again
