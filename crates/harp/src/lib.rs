@@ -39,6 +39,12 @@ pub use table::*;
 // resolve to the correct symbols
 extern crate self as harp;
 
+pub use harp::exec::top_level_exec;
+pub use harp::exec::try_catch;
+pub use harp::exec::try_eval;
+pub use harp::exec::try_eval_silent;
+pub use harp::object::RObject;
+pub use harp::symbol::RSymbol;
 pub use harp_macros::register;
 
 // Allow `crate::` references within the crate

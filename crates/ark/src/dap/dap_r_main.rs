@@ -213,10 +213,10 @@ impl RMainDap {
             protect.add(functions);
 
             let environments = r_sys_frames()?;
-            protect.add(environments);
+            protect.add(environments.sexp);
 
             let calls = r_sys_calls()?;
-            protect.add(calls);
+            protect.add(calls.sexp);
 
             let info = RFunction::new("", "debugger_stack_info")
                 .add(context_call_text)

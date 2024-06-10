@@ -12,7 +12,6 @@ use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::stream::Stream;
 use amalthea::wire::stream::StreamOutput;
 use harp::environment::R_ENVS;
-use harp::exec::r_top_level_exec;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use libr::Rf_eval;
@@ -63,7 +62,7 @@ fn source_r_profile(path: &PathBuf) {
 
     log::info!("Found R profile at '{path}', sourcing now");
 
-    // Must source with `r_top_level_exec()` rather than just calling `call()`.
+    // Must source with `top_level_exec()` rather than just calling `call()`.
     // In particular, can't source with the typical `r_safe_eval()` because it
     // wraps in `withCallingHandlers()`, which prevents
     // `globalCallingHandlers()` from being called within `.Rprofile`s (can't
@@ -76,7 +75,7 @@ fn source_r_profile(path: &PathBuf) {
             .param("envir", R_ENVS.global)
             .call
             .build();
-        r_top_level_exec(|| Rf_eval(call.sexp, R_ENVS.global))
+        harp::top_level_exec(|| Rf_eval(call.sexp, R_ENVS.global))
     };
 
     let Err(err) = result else {

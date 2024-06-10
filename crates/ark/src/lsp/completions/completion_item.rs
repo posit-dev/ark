@@ -281,7 +281,7 @@ pub(super) unsafe fn completion_item_from_promise(
         // important for functions, where we also set a `CompletionItem::command()`
         // to display function signature help after the completion.
         let object = r_promise_force_with_rollback(object)?;
-        return completion_item_from_object(name, object, envir, package, promise_strategy);
+        return completion_item_from_object(name, object.sexp, envir, package, promise_strategy);
     }
 
     // Otherwise we never want to force promises, so we return a fairly

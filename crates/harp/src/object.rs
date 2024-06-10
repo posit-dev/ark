@@ -9,7 +9,6 @@ use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::i32;
 use std::ops::Deref;
-use std::ops::DerefMut;
 use std::os::raw::c_char;
 use std::os::raw::c_int;
 use std::sync::Once;
@@ -468,12 +467,6 @@ impl Deref for RObject {
     type Target = SEXP;
     fn deref(&self) -> &Self::Target {
         &self.sexp
-    }
-}
-
-impl DerefMut for RObject {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.sexp
     }
 }
 
@@ -1024,6 +1017,17 @@ impl TryFrom<RObject> for HashMap<String, RObject> {
 
             Ok(map)
         }
+    }
+}
+
+pub fn r_null_or_try_into<T>(x: RObject) -> harp::Result<Option<T>>
+where
+    RObject: TryInto<T, Error = harp::Error>,
+{
+    if x.sexp == crate::r_null() {
+        Ok(None)
+    } else {
+        Ok(Some(x.try_into()?))
     }
 }
 

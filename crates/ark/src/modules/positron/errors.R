@@ -138,6 +138,7 @@ handle_error_base <- function(cnd) {
 
 #' @param traceback A list of calls.
 format_traceback <- function(calls = list()) {
+    # Calls the function of the same name in the harp namespace
     .ps.Call("ps_format_traceback", calls)
 }
 
