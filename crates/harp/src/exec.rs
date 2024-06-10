@@ -219,40 +219,39 @@ where
 
         // Run in lambda to collect errors more easily
         if let Err(err) = (|| -> harp::Result<()> {
-            unsafe {
+            let err: RObject = unsafe {
                 let call = RFunction::new("", "try_catch_handler")
                     .add(err)
                     .call
                     .build();
 
                 // Call without protection to avoid recursing here
-                let err: RObject = Rf_eval(call.sexp, HARP_ENV.unwrap()).into();
+                Rf_eval(call.sexp, HARP_ENV.unwrap()).into()
+            };
 
-                // Invariant of error slot: List of length 4 [message, call, class, trace],
-                // with `trace` possibly an empty string.
+            // Invariant of error slot: List of length 4 [message, call, class, trace],
+            // with `trace` possibly an empty string.
 
-                let message: String = RObject::view(r_list_get(err.sexp, 0)).try_into()?;
+            let message: String = RObject::view(r_list_get(err.sexp, 0)).try_into()?;
 
-                let call: Option<String> =
-                    r_null_or_try_into(RObject::view(r_list_get(err.sexp, 1)))?;
+            let call: Option<String> = r_null_or_try_into(RObject::view(r_list_get(err.sexp, 1)))?;
 
-                let class: Option<Vec<String>> =
-                    r_null_or_try_into(RObject::view(r_list_get(err.sexp, 2)))?;
+            let class: Option<Vec<String>> =
+                r_null_or_try_into(RObject::view(r_list_get(err.sexp, 2)))?;
 
-                let r_trace: String = RObject::view(r_list_get(err.sexp, 3)).try_into()?;
+            let r_trace: String = RObject::view(r_list_get(err.sexp, 3)).try_into()?;
 
-                let rust_trace = std::backtrace::Backtrace::force_capture();
+            let rust_trace = std::backtrace::Backtrace::force_capture();
 
-                *(data.res) = Some(Err(Error::TryCatchError {
-                    code: call,
-                    message,
-                    class,
-                    r_trace,
-                    rust_trace: Some(rust_trace),
-                }));
+            *(data.res) = Some(Err(Error::TryCatchError {
+                code: call,
+                message,
+                class,
+                r_trace,
+                rust_trace: Some(rust_trace),
+            }));
 
-                Ok(())
-            }
+            Ok(())
         })() {
             *(data.res) = Some(Err(Error::Anyhow(anyhow!(
                 "Internal error in `try_catch()`: {err:?}"
