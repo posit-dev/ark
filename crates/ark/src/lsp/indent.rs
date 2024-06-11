@@ -313,4 +313,41 @@ mod tests {
         assert_eq!(new_line_indent(&large_tab_cfg, 8), String::from("\t"));
         assert_eq!(new_line_indent(&large_tab_cfg, 12), String::from("\t    "));
     }
+
+    fn read_text_asset(path: &str) -> String {
+        let mut asset = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        asset.push("src");
+        asset.push(path);
+        std::fs::read_to_string(asset).unwrap()
+    }
+
+    fn write_asset(path: &str, text: &str) {
+        let mut asset = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        asset.push("src");
+        asset.push(path);
+        std::fs::write(asset, text).unwrap();
+    }
+
+    #[ignore] // Currently failing
+    #[test]
+    fn test_indent_snapshot() {
+        let orig = read_text_asset("lsp/snapshots/indent.R");
+
+        let doc = test_doc(&orig);
+
+        let mut text = orig.clone();
+        let n_lines = text.matches('\n').count();
+
+        for i in 0..n_lines {
+            if let Some(edit) = indent_edit(&doc, i).unwrap() {
+                apply_text_edits(edit, &mut text).unwrap();
+            }
+        }
+
+        write_asset("lsp/snapshots/indent.R", &text);
+
+        if orig != text {
+            panic!("Indentation snapshots have changed.\nPlease see git diff.");
+        }
+    }
 }
