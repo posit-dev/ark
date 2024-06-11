@@ -63,18 +63,20 @@ pub fn indent_edit(doc: &Document, line: usize) -> anyhow::Result<Option<Vec<Ark
     let node_line_indent = |point: tree_sitter::Node| -> usize {
         line_indent(text, point.start_position().row, config).0
     };
+    let brace_parent_indent =
+        |node: tree_sitter::Node| -> usize { node_line_indent(brace_parent(node)) };
 
     let brace_indent = |parent: tree_sitter::Node| -> (usize, usize) {
         // If we're looking at a closing delimiter, indent at the parent's
         // beginning of line
         if let Some(c) = text_at_indent().next() {
             if c == '}' {
-                return (node_line_indent(parent), 0);
+                return (brace_parent_indent(parent), 0);
             }
             // else fallthrough
         };
 
-        (node_line_indent(parent), config.indent_size)
+        (brace_parent_indent(parent), config.indent_size)
     };
 
     // Structured in two stages as in Emacs TS rules: first match, then
@@ -123,6 +125,21 @@ pub fn indent_edit(doc: &Document, line: usize) -> anyhow::Result<Option<Vec<Ark
     };
 
     Ok(Some(vec![edit]))
+}
+
+fn brace_parent(node: tree_sitter::Node) -> tree_sitter::Node {
+    let Some(parent) = node.parent() else {
+        return node;
+    };
+
+    match parent.node_type() {
+        crate::treesitter::NodeType::FunctionDefinition => parent,
+        crate::treesitter::NodeType::IfStatement => parent,
+        crate::treesitter::NodeType::ForStatement => parent,
+        crate::treesitter::NodeType::WhileStatement => parent,
+        crate::treesitter::NodeType::RepeatStatement => parent,
+        _ => node,
+    }
 }
 
 /// Returns indent as a pair of space size and byte size
@@ -311,6 +328,16 @@ mod tests {
         let edit = indent_edit(&doc, 1).unwrap().unwrap();
         apply_text_edits(edit, &mut text).unwrap();
         assert_eq!(text, String::from("{\n}"));
+    }
+
+    #[test]
+    fn test_line_indent_braced_expression_multiline() {
+        let mut text = String::from("function(\n        ) {\nfoo\n}");
+        let doc = test_doc(&text);
+
+        let edit = indent_edit(&doc, 2).unwrap().unwrap();
+        apply_text_edits(edit, &mut text).unwrap();
+        assert_eq!(text, String::from("function(\n        ) {\n  foo\n}"));
     }
 
     #[test]

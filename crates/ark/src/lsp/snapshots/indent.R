@@ -1,6 +1,7 @@
 declare(ark(diagnostics(enable = FALSE)))
 
 # From https://github.com/emacs-ess/ESS/blob/master/test/styles/RStudio-.R
+# Partially formatted by ark, still lots of work to do.
 
 
 ### Function declarations
@@ -9,8 +10,8 @@ declare(ark(diagnostics(enable = FALSE)))
 {
   fun <- function(argument1,
                   argument2) {
-                    body
-                  }
+    body
+  }
 }
 
 ## 2
@@ -342,8 +343,8 @@ fun_call(parameter1 = {
 }, parameter2 = {
   stuff3
 }, {
-    stuff4
-  },
+  stuff4
+},
 parameter3 =
   stuff5 ~
     stuff6 +
@@ -437,8 +438,8 @@ fun_call1(
 ## 17
 fun_call(argument, function(argument1,
                             argument2) {
-                              body
-                            }
+  body
+}
 )
 
 ## 18
@@ -446,8 +447,8 @@ fun_call(
   argument,
   function(argument1,
            argument2) {
-             body
-           }
+    body
+  }
 )
 
 ## 19
@@ -576,10 +577,10 @@ object[(
 
 ## 5
 {
-  for (sequence)
-{
-  stuff
-}
+  for (i in seq)
+  {
+    stuff
+  }
 }
 
 ## 6
@@ -655,8 +656,8 @@ fun_call(
   } else if (condition2) {
     stuff3
   } else {
-      stuff2
-    }
+    stuff2
+  }
 )
 
 ## 14
@@ -678,8 +679,8 @@ object <- fun_call(argument,
   } else if (condition2) {
     stuff3
   } else {
-      stuff2
-    }
+    stuff2
+  }
 )
 
 ## 16
@@ -861,8 +862,8 @@ stuff1 %>%
       stuff5
   } else {
     stuff6 %>%
-        stuff7 %>%
-        stuff8
+      stuff7 %>%
+      stuff8
   } %>%
            stuff9 %>%
            stuff10
@@ -984,10 +985,10 @@ object %>%
   } else if (condition3) {
     stuff6
   } else {
-      stuff7
-    } %>%
-             (fun_call2()) %>% fun_call3() %>%
-             fun_call3()
+    stuff7
+  } %>%
+           (fun_call2()) %>% fun_call3() %>%
+           fun_call3()
 
 ## 18
 `object`$`elem` <- stuff1 +
@@ -1273,8 +1274,8 @@ object <-
 ## 8
 if (condition1 || object1 %op% object2 ||
       condition3) {
-        stuff
-      }
+  stuff
+}
 
 ## 9
 any(condition1 |
