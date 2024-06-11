@@ -968,7 +968,10 @@ impl RDataExplorer {
             sort_keys: self.sort_keys.clone(),
             supported_features: SupportedFeatures {
                 get_column_profiles: GetColumnProfilesFeatures {
-                    supported: true,
+                    // Temporarily disabled for https://github.com/posit-dev/positron/issues/3490
+                    // on 6/11/2024. This will be enabled again when the UI has been reworked to
+                    // more fully support column profiles.
+                    supported: false,
                     supported_types: vec![
                         ColumnProfileType::NullCount,
                         ColumnProfileType::SummaryStats,
