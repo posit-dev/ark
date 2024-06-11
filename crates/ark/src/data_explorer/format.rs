@@ -110,7 +110,7 @@ fn format_object(x: SEXP) -> Vec<FormattedValue> {
                         // base::format defaults to using `trim=FALSE`
                         // so it will add spaces to the end of the strings so all elements of the vector
                         // have the same fixed width. We don't want this behavior in the data explorer,
-                        // We tried passing `trim=TRUE` but this is unfortunatelly is not supported for eg. `factors`:
+                        // We tried passing `trim=TRUE` but this is unfortunately not supported for eg. `factors`:
                         // > format(factor(c("aaaa", "a")), trim = TRUE)
                         // [1] "aaaa" "a   "
                         //
