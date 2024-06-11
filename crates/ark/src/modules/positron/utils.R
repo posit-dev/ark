@@ -128,3 +128,7 @@ ark_ns <- environment()
         NULL
     }
 }
+
+node_poke_cdr <- function(node, cdr) {
+    .ps.Call("ark_node_poke_cdr", node, cdr)
+}
