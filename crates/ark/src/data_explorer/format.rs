@@ -76,7 +76,7 @@ fn format_values(x: SEXP, format_options: &FormatOptions) -> anyhow::Result<Vec<
         STRSXP => Ok(format_chr(x)),
         LGLSXP => Ok(format_lgl(x)),
         CPLXSXP => Ok(format_cpl(x)),
-        VECSXP => Ok(format_vec(x)),
+        VECSXP => Ok(format_list(x)),
         _ => Err(anyhow::anyhow!("Unsupported column type")),
     }
 }
@@ -129,7 +129,7 @@ fn format_object(x: SEXP) -> Vec<FormattedValue> {
     }
 }
 
-fn format_vec(x: SEXP) -> Vec<FormattedValue> {
+fn format_list(x: SEXP) -> Vec<FormattedValue> {
     let len = r_length(x);
     let mut output = Vec::<FormattedValue>::with_capacity(len as usize);
 
@@ -138,7 +138,7 @@ fn format_vec(x: SEXP) -> Vec<FormattedValue> {
         let formatted = if r_is_null(elt) {
             FormattedValue::NULL
         } else {
-            FormattedValue::Value(format_vec_elt(elt))
+            FormattedValue::Value(format_list_elt(elt))
         };
         output.push(formatted);
     }
@@ -146,7 +146,7 @@ fn format_vec(x: SEXP) -> Vec<FormattedValue> {
     output
 }
 
-fn format_vec_elt(x: SEXP) -> String {
+fn format_list_elt(x: SEXP) -> String {
     // We don't use `r_classes` because we want to see, eg 'numeric' for
     // numeric vectors, not an empty value.
     let class: Vec<String> = RFunction::new("base", "class")
