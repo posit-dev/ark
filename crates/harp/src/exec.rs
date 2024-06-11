@@ -317,9 +317,7 @@ where
 ///
 /// - With top-level-exec, if an unhandled R-level error does occur during a
 ///   top-level context, the error message is normally printed in the R console,
-///   even if the calling code recovers from the failure. Since we turn off normal
-///   error printing via the `show.error.messages` global option though, that
-///   isn't normally the case in Ark.
+///   even if the calling code recovers from the failure.
 ///
 /// NOTE: Rust objects with `drop()` methods should be stored outside the
 /// `top_level_exec()` context. It's fine to longjump (e.g. throw an R error)
