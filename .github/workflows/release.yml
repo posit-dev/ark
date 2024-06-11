@@ -260,9 +260,9 @@ jobs:
 
                   # Compress and bundle licenses
                   ARCHIVE="$GITHUB_WORKSPACE/ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-darwin-universal.zip"
-                  LICENSE="$GITHUB_WORKSPACE/LICENSE"
-                  NOTICE="$GITHUB_WORKSPACE/crates/ark/NOTICE"
-                  zip -Xry $ARCHIVE ark $LICENSE $NOTICE
+                  cp "$GITHUB_WORKSPACE/LICENSE" LICENSE
+                  cp "$GITHUB_WORKSPACE/crates/ark/NOTICE" NOTICE
+                  zip -Xry $ARCHIVE ark LICENSE NOTICE
 
             - name: Upload macOS release artifact (universal)
               uses: actions/upload-release-asset@v1
