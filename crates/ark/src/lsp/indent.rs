@@ -7,6 +7,7 @@ use crate::lsp::offset::ArkPoint;
 use crate::lsp::offset::ArkRange;
 use crate::lsp::offset::ArkTextEdit;
 use crate::lsp::traits::node::NodeExt;
+use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
 /// Provide indentation corrections
@@ -124,7 +125,26 @@ pub fn indent_edit(doc: &Document, line: usize) -> anyhow::Result<Option<Vec<Ark
         new_text,
     };
 
-    Ok(Some(vec![edit]))
+    let mut edits = vec![edit];
+
+    // Indent closing delimiter to mitigate VS Code's indent-outdent behaviour
+    // https://github.com/posit-dev/positron/issues/3484
+    if bol_parent.is_braced_expression() {
+        // FIXME: Use named delim node once available
+        let n = bol_parent.child_count();
+        if n > 1 {
+            let close = bol_parent.child(n - 1).unwrap();
+            let close_line = close.start_position().row;
+
+            if close.node_type() == NodeType::Anonymous("}".into()) && close_line > line {
+                if let Some(ref mut close_edits) = indent_edit(doc, close_line)? {
+                    edits.append(close_edits);
+                }
+            }
+        }
+    }
+
+    Ok(Some(edits))
 }
 
 fn brace_parent(node: tree_sitter::Node) -> tree_sitter::Node {
@@ -133,11 +153,11 @@ fn brace_parent(node: tree_sitter::Node) -> tree_sitter::Node {
     };
 
     match parent.node_type() {
-        crate::treesitter::NodeType::FunctionDefinition => parent,
-        crate::treesitter::NodeType::IfStatement => parent,
-        crate::treesitter::NodeType::ForStatement => parent,
-        crate::treesitter::NodeType::WhileStatement => parent,
-        crate::treesitter::NodeType::RepeatStatement => parent,
+        NodeType::FunctionDefinition => parent,
+        NodeType::IfStatement => parent,
+        NodeType::ForStatement => parent,
+        NodeType::WhileStatement => parent,
+        NodeType::RepeatStatement => parent,
         _ => node,
     }
 }
@@ -328,6 +348,17 @@ mod tests {
         let edit = indent_edit(&doc, 1).unwrap().unwrap();
         apply_text_edits(edit, &mut text).unwrap();
         assert_eq!(text, String::from("{\n}"));
+    }
+
+    #[test]
+    fn test_line_indent_braced_expression_closing_multiline() {
+        // https://github.com/posit-dev/positron/issues/3484
+        let mut text = String::from("{\n\n    }");
+        let doc = test_doc(&text);
+
+        let edit = indent_edit(&doc, 1).unwrap().unwrap();
+        apply_text_edits(edit, &mut text).unwrap();
+        assert_eq!(text, String::from("{\n  \n}"));
     }
 
     #[test]
