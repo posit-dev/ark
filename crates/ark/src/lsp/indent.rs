@@ -328,7 +328,6 @@ mod tests {
         std::fs::write(asset, text).unwrap();
     }
 
-    #[ignore] // Currently failing
     #[test]
     fn test_indent_snapshot() {
         let orig = read_text_asset("lsp/snapshots/indent.R");
