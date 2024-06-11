@@ -79,27 +79,38 @@ pub fn indent_edit(doc: &Document, line: usize) -> anyhow::Result<Option<Vec<Ark
         (brace_parent_indent(parent), config.indent_size)
     };
 
-    // Structured in two stages as in Emacs TS rules: first match, then
-    // return anchor and indent size. We can add more rules here as needed.
-    let (anchor, indent) = match bol_parent {
-        // Indentation of top-level expressions. Fixes some problematic
-        // outdents:
-        // https://github.com/posit-dev/positron/issues/1880
-        // https://github.com/posit-dev/positron/issues/2764
-        parent if parent.is_program() => (parent.start_position().column, 0),
-        parent if parent.is_braced_expression() => brace_indent(parent),
+    let is_empty = text_at_indent()
+        .skip_while(|c| *c == '\r')
+        .next()
+        .map(|c| c == '\n')
+        .unwrap_or(false);
 
-        // Indentation of chained operators (aka pipelines):
-        // https://github.com/posit-dev/positron/issues/2707
-        parent if parent.is_binary_operator() => {
-            let anchor = node
-                .ancestors()
-                .find(|n| n.parent().map_or(true, |p| !p.is_binary_operator()))
-                .unwrap_or(parent); // Should not happen
+    let (anchor, indent) = if is_empty {
+        // Don't indent empty lines, no whitespace littering
+        (0, 0)
+    } else {
+        // Structured in two stages as in Emacs TS rules: first match, then
+        // return anchor and indent size. We can add more rules here as needed.
+        match bol_parent {
+            // Indentation of top-level expressions. Fixes some problematic
+            // outdents:
+            // https://github.com/posit-dev/positron/issues/1880
+            // https://github.com/posit-dev/positron/issues/2764
+            parent if parent.is_program() => (parent.start_position().column, 0),
+            parent if parent.is_braced_expression() => brace_indent(parent),
 
-            (anchor.start_position().column, config.indent_size)
-        },
-        _ => return Ok(None),
+            // Indentation of chained operators (aka pipelines):
+            // https://github.com/posit-dev/positron/issues/2707
+            parent if parent.is_binary_operator() => {
+                let anchor = node
+                    .ancestors()
+                    .find(|n| n.parent().map_or(true, |p| !p.is_binary_operator()))
+                    .unwrap_or(parent); // Should not happen
+
+                (anchor.start_position().column, config.indent_size)
+            },
+            _ => return Ok(None),
+        }
     };
 
     let new_indent = anchor + indent;
@@ -338,6 +349,13 @@ mod tests {
         let edit = indent_edit(&doc, 2).unwrap().unwrap();
         apply_text_edits(edit, &mut text).unwrap();
         assert_eq!(text, String::from("function(\n        ) {\n  foo\n}"));
+    }
+
+    #[test]
+    fn test_line_indent_empty() {
+        let text = String::from("{\n\n}");
+        let doc = test_doc(&text);
+        assert_match!(indent_edit(&doc, 1).unwrap(), None);
     }
 
     #[test]

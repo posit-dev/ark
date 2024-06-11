@@ -278,7 +278,7 @@ fun_call1(argument1, fun_call2(fun_call3(
 fun_call({
   stuff1
   stuff2
-  
+
   stuff3
 })
 
@@ -412,7 +412,7 @@ fun_call1(
 ## 13
 {
   stuff1
-  
+
   {
     stuff2
   }
@@ -468,7 +468,7 @@ fun_call1({
 ## 21
 fun_call(argument,
   function() {
-    
+
     stuff
   }
 }
@@ -720,7 +720,7 @@ funcall({
 ## 21
 fun_call(argument,
   function() {
-    
+
     if (cond) object1 <- object2
     else object3 <- object4
   })
@@ -934,7 +934,7 @@ object1 <-
 {
   (stuff) %>%
     fun_call()
-  
+
   {stuff} %>%
     fun_call()
 }
@@ -945,7 +945,7 @@ object1 <-
     stuff
   ) %>%
     fun_call()
-  
+
   object + {
     stuff
   } %>%
@@ -1108,11 +1108,11 @@ funcall(!stuff1 ||
 
 ## 37 (issue #857)
 fun_call({
-  
+
   stuff <-
     namespace:::fun_call() %>%
     fun_call()
-  
+
   stuff
 })
 
