@@ -107,7 +107,7 @@ pub fn indent_edit(doc: &Document, line: usize) -> anyhow::Result<Option<Vec<Ark
                     .find(|n| n.parent().map_or(true, |p| !p.is_binary_operator()))
                     .unwrap_or(parent); // Should not happen
 
-                (anchor.start_position().column, config.indent_size)
+                (node_line_indent(anchor), config.indent_size)
             },
             _ => return Ok(None),
         }
