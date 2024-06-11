@@ -33,6 +33,16 @@
 
 #' @export
 .ps.errors.globalErrorHandler <- function(cnd) {
+    # This reproduces the behaviour of R's default error handler:
+    # - Invoke `getOption("error")`
+    # - Save backtrace for `traceback()`
+    # - Jump to top-level
+    defer({
+        invoke_option_error_handler()
+        poke_traceback()
+        invokeRestart("abort")
+    })
+
     if (!.ps.is_installed("rlang")) {
         # rlang is not installed, no option except to use the base handler
         return(handle_error_base(cnd))
@@ -134,10 +144,6 @@ handle_error_base <- function(cnd) {
     traceback <- format_traceback(traceback)
 
     .ps.Call("ps_record_error", evalue, traceback)
-
-    # Prevent further error handling, including by R's internal handler that
-    # displays the error message
-    invokeRestart("abort")
 }
 
 #' @param traceback A list of calls.
@@ -161,10 +167,6 @@ handle_error_rlang <- function(cnd) {
     }
 
     .ps.Call("ps_record_error", evalue, traceback)
-
-    # Prevent further error handling, including by R's internal handler that
-    # displays the error message
-    invokeRestart("abort")
 }
 
 positron_option_error_entrace <- function() {
@@ -174,4 +176,37 @@ positron_option_error_entrace <- function() {
 
 rust_backtrace <- function() {
     .ps.Call("ps_rust_backtrace")
+}
+
+# Implements base R behaviour in options.c and errors.c
+invoke_option_error_handler <- function() {
+    handler <- getOption("error")
+
+    if (is.function(handler)) {
+        handler <- as.call(list(handler))
+    }
+
+    if (!is.expression(handler)) {
+        handler <- as.expression(list(handler))
+    }
+
+    for (hnd in handler) {
+        eval(hnd, globalenv())
+    }
+}
+
+poke_traceback <- function() {
+    traceback <- sys.calls()
+
+    # Remove handling context
+    traceback <- utils::head(traceback, -4)
+
+    # Reverse so that more recent calls are first
+    traceback <- rev(traceback)
+
+    # `traceback()` expects a pairlist
+    traceback <- as.pairlist(traceback)
+
+    # The CDR corresponds to SYMVALUE
+    node_poke_cdr(as.symbol(".Traceback"), traceback)
 }
