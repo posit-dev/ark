@@ -40,17 +40,20 @@ fetch_github_license_text <- function(repo_url, license) {
     repo_url <- gsub("(/tree/|/blob/)", "/", repo_url)
     repo_url <- gsub("(/pull/|/issues/|/commit/|/releases/|/compare/|/actions/|/projects/|/discussions/|/wiki/|/network/|/security/|/settings/|/packages/|/pulse/|/community/|/code/)", "/", repo_url)
 
-    # Check for LICENSE files
-    license_file_url <- paste0(repo_url, "/master/LICENSE")
-    response <- GET(license_file_url)
-    if (status_code(response) == 200) {
-      return(content(response, "text", encoding = "UTF-8"))
-    } else {
-      # Check for dual-license files
-      license_file_url <- paste0(repo_url, "/master/LICENSE-", license)
-      response <- GET(license_file_url)
-      if (status_code(response) == 200) {
-        return(content(response, "text", encoding = "UTF-8"))
+    # Heuristic approach to finding licenses on Github. Check common names for the primary branch
+    # for files ending in .txt or not, and for files with the name of the sought license.
+    branches <- c("master", "main")
+    extensions <- c(".txt", "")
+    filenames <- c("LICENSE", paste0("LICENSE-", license))
+    for (branch in branches) {
+      for (extension in extensions) {
+        for (filename in filenames) {
+          license_file_url <- paste0(repo_url, "/", branch, "/", filename, extension)
+          response <- GET(license_file_url)
+          if (status_code(response) == 200) {
+            return(content(response, "text", encoding = "UTF-8"))
+          }
+        }
       }
     }
   }
