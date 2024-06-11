@@ -37,13 +37,21 @@
         # rlang is not installed, no option except to use the base handler
         return(handle_error_base(cnd))
     }
+
     if (!inherits(cnd, "rlang_error") && !positron_option_error_entrace()) {
         # We have a non-rlang error, but the user requested we dont entrace it
         return(handle_error_base(cnd))
     }
 
     if (!inherits(cnd, "rlang_error")) {
+        base_cnd <- cnd
         cnd <- rlang::catch_cnd(rlang::entrace(cnd))
+
+        # rlang might decide not to entrace, e.g. when `recover` is set as
+        # global error handler
+        if (is.null(cnd)) {
+            return(handle_error_base(base_cnd))
+        }
     }
 
     handle_error_rlang(cnd)
