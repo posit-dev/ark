@@ -30,6 +30,7 @@ use harp::vector::NumericVector;
 use harp::vector::Vector;
 use libr::SEXP;
 use libr::*;
+use stdext::unwrap;
 
 use crate::modules::ARK_ENVS;
 
@@ -91,42 +92,43 @@ fn format_object(x: SEXP) -> Vec<FormattedValue> {
         Err(_) => return unknown_format(x),
     };
 
+    let formatted = formatted.into_iter().map(|v| {
+        // `base::format` defaults to using `trim=FALSE`
+        // So it will add spaces to the end of the strings causing all elements of the vector
+        // to have the same fixed width. We don't want this behavior in the data explorer,
+        // We tried passing `trim=TRUE` but this is unfortunately not supported for eg. `factors`:
+        // > format(factor(c("aaaa", "a")), trim = TRUE)
+        // [1] "aaaa" "a   "
+        //
+        // So we will just trim the spaces manually, which is not ideal, but it's better than
+        // having the values misaligned
+        FormattedValue::Value(v.trim_matches(|x| x == ' ').to_string())
+    });
+
     // But we also want to show special value codes. We call `base::is.na()` to dispatch
     // the `is.na()` function and then replace those with `FormattedValues::NA`.
     let is_na = RFunction::from("is_na_checked")
         .add(x)
         .call_in(ARK_ENVS.positron_ns);
 
-    match is_na {
-        Ok(is_na) => {
-            formatted
-                .into_iter()
-                .zip(unsafe { LogicalVector::new_unchecked(is_na.sexp).iter() })
-                .map(|(v, is_na)| {
-                    // We don't expect is.na to return NA's, but if it happens, we treat it as false
-                    if is_na.unwrap_or(false) {
-                        FormattedValue::NA
-                    } else {
-                        // `base::format` defaults to using `trim=FALSE`
-                        // So it will add spaces to the end of the strings causing all elements of the vector
-                        // to have the same fixed width. We don't want this behavior in the data explorer,
-                        // We tried passing `trim=TRUE` but this is unfortunately not supported for eg. `factors`:
-                        // > format(factor(c("aaaa", "a")), trim = TRUE)
-                        // [1] "aaaa" "a   "
-                        //
-                        // So we will just trim the spaces manually, which is not ideal, but it's better than
-                        // having the values misaligned
-                        FormattedValue::Value(v.trim_matches(|x| x == ' ').to_string())
-                    }
-                })
-                .collect()
-        },
-        Err(_) => {
-            // If we fail to get the is.na() values we will just return the formatted values
-            // without additional treatments.
-            formatted.into_iter().map(FormattedValue::Value).collect()
-        },
-    }
+    let is_na = unwrap!(is_na, Err(_) => {
+        // If we fail to evaluate `is.na()` we will just return the formatted values
+        // as is.
+        return formatted.collect();
+    });
+
+    unsafe { LogicalVector::new_unchecked(is_na.sexp) }
+        .iter()
+        .zip(formatted)
+        .map(|(is_na, v)| {
+            // We don't expect is.na to return NA's, but if it happens, we treat it as false
+            // and return the formatted values as is.
+            match is_na.unwrap_or(false) {
+                true => FormattedValue::NA,
+                false => v,
+            }
+        })
+        .collect()
 }
 
 fn format_list(x: SEXP) -> Vec<FormattedValue> {
