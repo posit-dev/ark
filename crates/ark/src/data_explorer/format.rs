@@ -324,28 +324,29 @@ fn apply_thousands_sep(x: String, sep: Option<String>) -> String {
         Some(sep) => {
             let mut formatted = String::new();
 
-            // find the decimal point if any
+            // Find the decimal point if any
             let decimal_point = x.find('.').unwrap_or(x.len());
 
-            // now walk from the decimal point until walk the string
-            // backwards adding the thousands separator
+            // Walk backwards on the string to add the thousands separator
             let mut count: usize = 0;
             for (i, c) in x.chars().rev().enumerate() {
-                // while before the decimal point, just copy the string
+                // Now walk backwards until we reach the decimal point.
+                // After the point, start adding the thousands separator.
                 if i < (x.len() - decimal_point) {
                     formatted.push(c);
                     continue;
                 }
 
-                // for negative numbers, break the iteration.
-                // continue should have the same effect as `break` as there shouldn't exist
+                // For negative numbers, break the iteration.
+                // `continue` should have the same effect as `break` as there shouldn't exist
                 // any character before `-`.
+                // This avoids '-100' to be formatted as '-,100'.
                 if c == '-' {
                     formatted.push(c);
                     continue;
                 }
 
-                // now start counting and add a `sep` every three
+                // Add a `sep` every three characters
                 if count % 3 == 0 && count != 0 {
                     formatted.push_str(&sep);
                 }
@@ -478,6 +479,18 @@ mod tests {
         assert_eq!(
             apply_thousands_sep("1000000.00".to_string(), None),
             "1000000.00"
+        );
+        assert_eq!(
+            apply_thousands_sep("-100".to_string(), Some(",".to_string())),
+            "-100"
+        );
+        assert_eq!(
+            apply_thousands_sep("-100000".to_string(), Some(",".to_string())),
+            "-100,000"
+        );
+        assert_eq!(
+            apply_thousands_sep("-100000.00".to_string(), Some(",".to_string())),
+            "-100,000.00"
         );
     }
 
