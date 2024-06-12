@@ -72,11 +72,17 @@ fn format_values(x: SEXP, format_options: &FormatOptions) -> anyhow::Result<Vec<
     }
 
     match r_typeof(x) {
-        REALSXP => Ok(format_dbl(x, format_options)),
-        INTSXP => Ok(format_int(x, format_options)),
-        STRSXP => Ok(format_chr(x)),
-        LGLSXP => Ok(format_lgl(x)),
-        CPLXSXP => Ok(format_cpl(x)),
+        REALSXP => Ok(format_dbl(
+            unsafe { NumericVector::new_unchecked(x) },
+            format_options,
+        )),
+        INTSXP => Ok(format_int(
+            unsafe { IntegerVector::new_unchecked(x) },
+            format_options,
+        )),
+        STRSXP => Ok(format_chr(unsafe { CharacterVector::new_unchecked(x) })),
+        LGLSXP => Ok(format_lgl(unsafe { LogicalVector::new_unchecked(x) })),
+        CPLXSXP => Ok(format_cpl(unsafe { ComplexVector::new_unchecked(x) })),
         VECSXP => Ok(format_list(x)),
         _ => Err(anyhow::anyhow!("Unsupported column type")),
     }
@@ -188,54 +194,38 @@ fn format_list_elt(x: SEXP) -> String {
     format!("<{} [{}]>", class_str, dim_str)
 }
 
-fn format_cpl(x: SEXP) -> Vec<FormattedValue> {
-    unsafe {
-        ComplexVector::new_unchecked(x)
-            .iter()
-            .map(|x| match x {
-                Some(v) => {
-                    FormattedValue::Value(format!("{}+{}i", v.r.to_string(), v.i.to_string()))
-                },
-                None => FormattedValue::NA,
-            })
-            .collect()
-    }
+fn format_cpl(x: ComplexVector) -> Vec<FormattedValue> {
+    x.iter()
+        .map(|x| match x {
+            Some(v) => FormattedValue::Value(format!("{}+{}i", v.r.to_string(), v.i.to_string())),
+            None => FormattedValue::NA,
+        })
+        .collect()
 }
 
-fn format_lgl(x: SEXP) -> Vec<FormattedValue> {
-    unsafe {
-        LogicalVector::new_unchecked(x)
-            .iter()
-            .map(|x| match x {
-                Some(v) => match v {
-                    true => FormattedValue::Value("TRUE".to_string()),
-                    false => FormattedValue::Value("FALSE".to_string()),
-                },
-                None => FormattedValue::NA,
-            })
-            .collect()
-    }
+fn format_lgl(x: LogicalVector) -> Vec<FormattedValue> {
+    x.iter()
+        .map(|x| match x {
+            Some(v) => match v {
+                true => FormattedValue::Value("TRUE".to_string()),
+                false => FormattedValue::Value("FALSE".to_string()),
+            },
+            None => FormattedValue::NA,
+        })
+        .collect()
 }
 
-fn format_chr(x: SEXP) -> Vec<FormattedValue> {
-    unsafe {
-        CharacterVector::new_unchecked(x)
-            .iter()
-            .map(|x| match x {
-                Some(v) => FormattedValue::Value(v),
-                None => FormattedValue::NA,
-            })
-            .collect()
-    }
+fn format_chr(x: CharacterVector) -> Vec<FormattedValue> {
+    x.iter()
+        .map(|x| match x {
+            Some(v) => FormattedValue::Value(v),
+            None => FormattedValue::NA,
+        })
+        .collect()
 }
 
-fn format_int(x: SEXP, options: &FormatOptions) -> Vec<FormattedValue> {
-    unsafe {
-        IntegerVector::new_unchecked(x)
-            .iter()
-            .map(|x| format_int_elt(x, options))
-            .collect()
-    }
+fn format_int(x: IntegerVector, options: &FormatOptions) -> Vec<FormattedValue> {
+    x.iter().map(|x| format_int_elt(x, options)).collect()
 }
 
 fn format_int_elt(x: Option<i32>, options: &FormatOptions) -> FormattedValue {
@@ -248,13 +238,8 @@ fn format_int_elt(x: Option<i32>, options: &FormatOptions) -> FormattedValue {
     }
 }
 
-fn format_dbl(x: SEXP, options: &FormatOptions) -> Vec<FormattedValue> {
-    unsafe {
-        NumericVector::new_unchecked(x)
-            .iter()
-            .map(|x| format_dbl_elt(x, options))
-            .collect()
-    }
+fn format_dbl(x: NumericVector, options: &FormatOptions) -> Vec<FormattedValue> {
+    x.iter().map(|x| format_dbl_elt(x, options)).collect()
 }
 
 fn format_dbl_elt(x: Option<f64>, options: &FormatOptions) -> FormattedValue {
