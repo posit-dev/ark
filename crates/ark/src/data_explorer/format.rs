@@ -34,6 +34,8 @@ use stdext::unwrap;
 
 use crate::modules::ARK_ENVS;
 
+const FALLBACK_FORMAT_STRING: &str = "????";
+
 // Used by the get_data_values method to format columns for displaying in the grid.
 pub fn format_column(x: SEXP, format_options: &FormatOptions) -> Vec<ColumnValue> {
     format(x, format_options)
@@ -51,7 +53,10 @@ pub fn format_stats(x: SEXP, format_options: &FormatOptions) -> HashMap<String, 
             .iter()
             .zip(out.into_iter())
             .for_each(|(nm, value)| {
-                stats.insert(nm.unwrap_or("????".to_string()), value.into());
+                stats.insert(
+                    nm.unwrap_or(FALLBACK_FORMAT_STRING.to_string()),
+                    value.into(),
+                );
             });
     }
     stats
@@ -167,7 +172,7 @@ fn format_list_elt(x: SEXP) -> String {
         .unwrap_or(vec![]);
 
     let class_str = if class.is_empty() {
-        "????:".to_string()
+        format!("{}:", FALLBACK_FORMAT_STRING)
     } else {
         class[0].clone()
     };
@@ -406,7 +411,7 @@ impl Into<String> for FormattedValue {
             FormattedValue::NaN => "NaN".to_string(),
             FormattedValue::Inf => "Inf".to_string(),
             FormattedValue::NegInf => "-Inf".to_string(),
-            FormattedValue::Unkown => "????".to_string(),
+            FormattedValue::Unkown => FALLBACK_FORMAT_STRING.to_string(),
             FormattedValue::Value(v) => v,
         }
     }
