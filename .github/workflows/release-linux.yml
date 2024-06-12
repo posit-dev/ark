@@ -11,20 +11,9 @@ on:
     workflow_dispatch:
 
 jobs:
-    license:
-        name: Copy license and notice
-        runs-on: ubuntu-latest
-        steps:
-            - name: Copy license and notice
-              run: |
-                  # Should happen only once to avoid cp errors in the matrix build
-                  cp "$GITHUB_WORKSPACE/LICENSE" LICENSE
-                  cp "$GITHUB_WORKSPACE/crates/ark/NOTICE" NOTICE
-
     build_linux:
         name: Build Linux
         runs-on: ubuntu-latest
-        needs: license
         timeout-minutes: 60
 
         env:
@@ -58,6 +47,8 @@ jobs:
 
                   # Compress the kernel to an archive
                   ARCHIVE="$GITHUB_WORKSPACE/ark-${{ inputs.version }}-${{ matrix.flavor }}-linux-x64.zip"
+                  mv "$GITHUB_WORKSPACE/LICENSE" LICENSE
+                  mv "$GITHUB_WORKSPACE/crates/ark/NOTICE" NOTICE
                   zip -Xry $ARCHIVE ark LICENSE NOTICE
 
                   popd
