@@ -325,8 +325,8 @@ mod tests {
             let rstudio_exports =
                 r_parse_eval0("as.environment('tools:rstudio')", R_ENVS.base).unwrap();
 
-            let positron_exports = Environment::new(positron_exports, EnvironmentFilter::default());
-            let rstudio_exports = Environment::new(rstudio_exports, EnvironmentFilter::default());
+            let positron_exports = Environment::new(positron_exports);
+            let rstudio_exports = Environment::new(rstudio_exports);
 
             assert!(positron_exports.is_locked());
             assert!(rstudio_exports.is_locked());

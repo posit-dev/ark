@@ -159,10 +159,8 @@ impl WorkspaceVariableDisplayValue {
 
     fn from_env(value: SEXP) -> Self {
         // Get the environment and its length (excluding hidden bindings)
-        let environment = Environment::new(
-            RObject::view(value),
-            EnvironmentFilter::ExcludeHiddenBindings,
-        );
+        let environment =
+            Environment::new_filtered(RObject::view(value), EnvironmentFilter::ExcludeHidden);
         let environment_length = environment.length();
 
         // If the environment is empty, return the empty display value. If the environment is
@@ -440,11 +438,10 @@ fn has_children(value: SEXP) -> bool {
         match r_typeof(value) {
             VECSXP | EXPRSXP => unsafe { Rf_xlength(value) != 0 },
             LISTSXP => true,
-            ENVSXP => !Environment::new(
-                RObject::view(value),
-                EnvironmentFilter::ExcludeHiddenBindings,
-            )
-            .is_empty(),
+            ENVSXP => {
+                !Environment::new_filtered(RObject::view(value), EnvironmentFilter::ExcludeHidden)
+                    .is_empty()
+            },
             LGLSXP | RAWSXP | STRSXP | INTSXP | REALSXP | CPLXSXP => unsafe {
                 Rf_xlength(value) > 1
             },
@@ -727,11 +724,8 @@ impl PositronVariable {
         match node {
             EnvironmentVariableNode::Artificial { object, name } => match name.as_str() {
                 "<private>" => {
-                    let env = Environment::new(object, EnvironmentFilter::IncludeHiddenBindings);
-                    let enclos = Environment::new(
-                        RObject::view(env.find(".__enclos_env__")?),
-                        EnvironmentFilter::IncludeHiddenBindings,
-                    );
+                    let env = Environment::new(object);
+                    let enclos = Environment::new(RObject::view(env.find(".__enclos_env__")?));
                     let private = RObject::view(enclos.find("private")?);
 
                     Self::inspect_environment(private)
@@ -922,16 +916,10 @@ impl PositronVariable {
                 EnvironmentVariableNode::Artificial { object, name } => {
                     match name.as_str() {
                         "<private>" => {
-                            let env =
-                                Environment::new(object, EnvironmentFilter::IncludeHiddenBindings);
-                            let enclos = Environment::new(
-                                RObject::view(env.find(".__enclos_env__")?),
-                                EnvironmentFilter::IncludeHiddenBindings,
-                            );
-                            let private = Environment::new(
-                                RObject::view(enclos.find("private")?),
-                                EnvironmentFilter::IncludeHiddenBindings,
-                            );
+                            let env = Environment::new(object);
+                            let enclos =
+                                Environment::new(RObject::view(env.find(".__enclos_env__")?));
+                            let private = Environment::new(RObject::view(enclos.find("private")?));
 
                             // TODO: it seems unlikely that private would host active bindings
                             //       so find() is fine, we can assume this is concrete
@@ -1133,18 +1121,15 @@ impl PositronVariable {
         let mut has_private = false;
         let mut has_methods = false;
 
-        let env = Environment::new(value, EnvironmentFilter::IncludeHiddenBindings);
+        let env = Environment::new(value);
         let mut childs: Vec<Variable> = env
             .iter()
             .filter_map(|b| b.ok())
             .filter(|b: &Binding| {
                 if b.name == ".__enclos_env__" {
                     if let BindingValue::Standard { object, .. } = &b.value {
-                        has_private = Environment::new(
-                            RObject::view(object.sexp),
-                            EnvironmentFilter::IncludeHiddenBindings,
-                        )
-                        .exists("private");
+                        has_private =
+                            Environment::new(RObject::view(object.sexp)).exists("private");
                     }
 
                     false
@@ -1211,7 +1196,7 @@ impl PositronVariable {
 
     fn inspect_environment(value: RObject) -> Result<Vec<Variable>, harp::error::Error> {
         let mut out: Vec<Variable> =
-            Environment::new(value, EnvironmentFilter::ExcludeHiddenBindings)
+            Environment::new_filtered(value, EnvironmentFilter::ExcludeHidden)
                 .iter()
                 .filter_map(|b| b.ok())
                 .map(|b| Self::new(&b).var())
@@ -1242,17 +1227,16 @@ impl PositronVariable {
     }
 
     fn inspect_r6_methods(value: RObject) -> Result<Vec<Variable>, harp::error::Error> {
-        let mut out: Vec<Variable> =
-            Environment::new(value, EnvironmentFilter::IncludeHiddenBindings)
-                .iter()
-                .filter_map(|b| b.ok())
-                .filter(|b: &Binding| match &b.value {
-                    BindingValue::Standard { object, .. } => r_typeof(object.sexp) == CLOSXP,
+        let mut out: Vec<Variable> = Environment::new(value)
+            .iter()
+            .filter_map(|b| b.ok())
+            .filter(|b: &Binding| match &b.value {
+                BindingValue::Standard { object, .. } => r_typeof(object.sexp) == CLOSXP,
 
-                    _ => false,
-                })
-                .map(|b| Self::new(&b).var())
-                .collect();
+                _ => false,
+            })
+            .map(|b| Self::new(&b).var())
+            .collect();
 
         out.sort_by(|a, b| a.display_name.cmp(&b.display_name));
 

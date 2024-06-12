@@ -27,13 +27,13 @@ pub struct Environment {
 
 #[derive(Clone)]
 pub enum EnvironmentFilter {
-    IncludeHiddenBindings,
-    ExcludeHiddenBindings,
+    None,
+    ExcludeHidden,
 }
 
 impl Default for EnvironmentFilter {
     fn default() -> Self {
-        Self::ExcludeHiddenBindings
+        Self::None
     }
 }
 
@@ -52,7 +52,11 @@ pub static R_ENVS: Lazy<REnvs> = Lazy::new(|| unsafe {
 });
 
 impl Environment {
-    pub fn new(env: RObject, filter: EnvironmentFilter) -> Self {
+    pub fn new(env: RObject) -> Self {
+        Self::new_filtered(env, EnvironmentFilter::default())
+    }
+
+    pub fn new_filtered(env: RObject, filter: EnvironmentFilter) -> Self {
         Self { inner: env, filter }
     }
 
@@ -69,7 +73,10 @@ impl Environment {
             if parent == R_ENVS.empty {
                 None
             } else {
-                Some(Self::new(RObject::new(parent), self.filter.clone()))
+                Some(Self::new_filtered(
+                    RObject::new(parent),
+                    self.filter.clone(),
+                ))
             }
         }
     }
@@ -107,8 +114,8 @@ impl Environment {
 
     pub fn is_empty(&self) -> bool {
         match self.filter {
-            EnvironmentFilter::IncludeHiddenBindings => self.inner.length() == 0,
-            EnvironmentFilter::ExcludeHiddenBindings => self
+            EnvironmentFilter::None => self.inner.length() == 0,
+            EnvironmentFilter::ExcludeHidden => self
                 .iter()
                 .filter_map(|b| b.ok())
                 .filter(|b| !b.is_hidden())
@@ -119,8 +126,8 @@ impl Environment {
 
     pub fn length(&self) -> usize {
         match self.filter {
-            EnvironmentFilter::IncludeHiddenBindings => self.inner.length() as usize,
-            EnvironmentFilter::ExcludeHiddenBindings => self
+            EnvironmentFilter::None => self.inner.length() as usize,
+            EnvironmentFilter::ExcludeHidden => self
                 .iter()
                 .filter_map(|b| b.ok())
                 .filter(|b| !b.is_hidden())
@@ -155,25 +162,14 @@ impl Environment {
     /// Returns the names of the bindings of the environment
     pub fn names(&self) -> Vec<String> {
         let all_names = match self.filter {
-            EnvironmentFilter::IncludeHiddenBindings => true,
-            EnvironmentFilter::ExcludeHiddenBindings => false,
+            EnvironmentFilter::None => Rboolean_TRUE,
+            EnvironmentFilter::ExcludeHidden => Rboolean_FALSE,
         };
 
-        let names = RFunction::new("base", "ls")
-            .param("envir", self.inner.sexp)
-            .param("all.names", all_names)
-            .call();
-
-        let names = unwrap!(names, Err(err) => {
-            log::error!("{err:?}");
-            return vec![]
-        });
-
-        let names: Result<Vec<String>, crate::error::Error> = names.try_into();
-        let names = unwrap!(names, Err(err) => {
-            log::error!("{err:?}");
-            return vec![];
-        });
+        // `all = all_names`, `sorted = false`
+        let names =
+            RObject::from(unsafe { R_lsInternal3(self.inner.sexp, all_names, Rboolean_FALSE) });
+        let names = Vec::<String>::try_from(names).unwrap_or(Vec::new());
 
         names
     }

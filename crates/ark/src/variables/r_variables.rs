@@ -452,7 +452,7 @@ impl RVariables {
 
     fn bindings(&self) -> RThreadSafe<Vec<Binding>> {
         let env = self.env.get().clone();
-        let env = Environment::new(env, EnvironmentFilter::ExcludeHiddenBindings);
+        let env = Environment::new_filtered(env, EnvironmentFilter::ExcludeHidden);
 
         let mut bindings: Vec<Binding> = env.iter().filter_map(|b| b.ok()).collect();
 

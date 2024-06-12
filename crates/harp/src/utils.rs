@@ -17,7 +17,6 @@ use regex::Regex;
 use crate::call::r_expr_quote;
 use crate::call::RArgument;
 use crate::environment::Environment;
-use crate::environment::EnvironmentFilter;
 use crate::environment::R_ENVS;
 use crate::error::Error;
 use crate::error::Result;
@@ -725,10 +724,7 @@ pub fn r_normalize_path(x: RObject) -> anyhow::Result<String> {
 pub fn save_rds(x: SEXP, path: &str) {
     let path = RObject::from(path);
 
-    let env = Environment::new(
-        r_parse_eval0("new.env()", R_ENVS.base).unwrap(),
-        EnvironmentFilter::default(),
-    );
+    let env = Environment::new(r_parse_eval0("new.env()", R_ENVS.base).unwrap());
     env.bind("x", x);
     env.bind("path", path);
 
@@ -755,10 +751,7 @@ pub fn push_rds(x: SEXP, path: &str, context: &str) {
     };
     let context = RObject::from(context);
 
-    let env = Environment::new(
-        r_parse_eval0("new.env()", R_ENVS.global).unwrap(),
-        EnvironmentFilter::default(),
-    );
+    let env = Environment::new(r_parse_eval0("new.env()", R_ENVS.global).unwrap());
 
     env.bind("x", x);
     env.bind("path", path);

@@ -196,7 +196,6 @@ mod tests {
     use libr::Rf_defineVar;
 
     use super::*;
-    use crate::environment::EnvironmentFilter;
     use crate::exec::RFunction;
     use crate::exec::RFunctionExt;
     use crate::r_symbol;
@@ -218,7 +217,7 @@ mod tests {
         let sym = r_symbol!("c");
         Rf_defineVar(sym, Rf_ScalarInteger(44), test_env.sexp);
 
-        let env = Environment::new(test_env, EnvironmentFilter::default());
+        let env = Environment::new(test_env);
         assert_eq!(env.iter().count(), 3);
     }
 
