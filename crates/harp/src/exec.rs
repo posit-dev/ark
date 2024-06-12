@@ -6,10 +6,10 @@
 //
 
 use std::ffi::CStr;
-use std::mem;
 use std::mem::take;
 use std::os::raw::c_void;
 
+use anyhow::anyhow;
 use libr::*;
 
 use crate::call::RCall;
@@ -19,19 +19,29 @@ use crate::error::Result;
 use crate::line_ending::convert_line_endings;
 use crate::line_ending::LineEnding;
 use crate::modules::HARP_ENV;
-use crate::object::r_list_get;
+use crate::object::r_null_or_try_into;
 use crate::object::RObject;
 use crate::protect::RProtect;
-use crate::r_null;
 use crate::r_string;
 use crate::r_symbol;
 use crate::utils::r_stringify;
-use crate::vector::CharacterVector;
-use crate::vector::Vector;
+
+pub enum ParseResult {
+    Complete(SEXP),
+    Incomplete,
+}
 
 pub struct RFunction {
     pub call: RCall,
     is_namespaced: bool,
+}
+
+struct CallbackData<'a, F, T>
+where
+    F: FnOnce() -> T + 'a,
+{
+    res: &'a mut Option<harp::Result<T>>,
+    closure: Option<F>,
 }
 
 impl RFunction {
@@ -84,47 +94,26 @@ impl RFunction {
 
     pub fn call_in(&mut self, env: SEXP) -> Result<RObject> {
         let user_call = self.call.build();
-        r_safe_eval(user_call, env.into())
+        try_eval(user_call.sexp, env)
     }
 }
 
-pub fn r_safe_eval(expr: RObject, env: RObject) -> crate::Result<RObject> {
-    // We could detect and cancel early exits from the r side, but we'd be at
-    // risk of very unlucky interrupts occurring between `rf_eval()` and our
-    // `on.exit()` handling. So stay on the safe side by wrapping in
-    // top-level-exec. This also insulates us from user handlers.
-    r_top_level_exec(|| unsafe {
-        let eval_call = RCall::new(r_symbol!("safe_evalq"))
-            .add(expr.sexp)
-            .add(env)
-            .build();
+/// Evaluate R code in a context protected from errors and longjumps
+///
+/// Calls `Rf_eval()` inside `try_catch()`.
+pub fn try_eval(expr: SEXP, env: SEXP) -> crate::Result<RObject> {
+    let mut res = try_catch(|| unsafe { Rf_eval(expr, env) }).map(RObject::from);
 
-        let result = RObject::new(Rf_eval(eval_call.sexp, HARP_ENV.unwrap()));
+    if let Err(Error::TryCatchError { ref mut code, .. }) = res {
+        *code = Some(unsafe { r_stringify(expr, "\n")? });
+    }
 
-        // Invariant of return value: List of length 2 [output, error].
-        // These are exclusive.
-        let out = r_list_get(result.sexp, 0);
-        let err = r_list_get(result.sexp, 1);
+    res
+}
 
-        if err != r_null() {
-            let code = r_stringify(expr.sexp, "\n")?;
-
-            // Invariant of error slot: Character vector of length 2 [message, trace],
-            // with `trace` possibly an empty string.
-            let err = CharacterVector::new(err)?;
-
-            let message = err.get_value(0)?;
-            let trace = err.get_value(1)?;
-
-            return Err(Error::EvaluationError {
-                code,
-                message,
-                trace,
-            });
-        }
-
-        Ok(RObject::new(out))
-    })?
+pub fn try_eval_silent(expr: SEXP, env: SEXP) -> crate::Result<RObject> {
+    let _guard = crate::raii::RLocalShowErrorMessageOption::new(false);
+    try_eval(expr, env)
 }
 
 impl From<&str> for RFunction {
@@ -174,168 +163,137 @@ impl<T: Into<RObject>> RFunctionExt<T> for RFunction {
     }
 }
 
-pub fn geterrmessage() -> String {
-    // SAFETY: Returns pointer to static memory buffer owned by R.
-    let buffer = unsafe { R_curErrorBuf() };
-
-    // SAFETY: The aforementioned buffer is never null.
-    let cstr = unsafe { CStr::from_ptr(buffer) };
-
-    match cstr.to_str() {
-        Ok(value) => return value.to_string(),
-        Err(_) => return "".to_string(),
-    }
-}
-
-// TODO: Reimplement around `r_safe_eval()` to gain backtraces
-
-/// Wrappers around R_tryCatch()
+/// Run closure in a context protected from errors and longjumps
 ///
-/// Takes a single closure that returns either a SEXP or `()`. If an R error is
-/// thrown this returns a an RError in the Err variant, otherwise it returns the
-/// result of the closure wrapped in an RObject.
+/// `try_catch()` runs a closure and captures any R-level errors with an R
+/// backtrace and Rust backtraces. Both backtraces are captured at the error
+/// site, not the catch site.
 ///
-/// The handler closure is not used per se, we just get the condition verbatim in the Err variant
+/// The closure is run inside `top_level_exec()` to inherit from its safety
+/// properties: insulating the closure from condition handlers and converting
+/// any unexpected longjumps into a Rust error.
 ///
-/// Safety: the body of the closure should be as simple as possible because in the event
-///         of an R error, R will jump and there is no rust unwinding, i.e. rust values
-///         are not dropped. A good rule of thumb is to consider the body of the closure
-///         as C code.
+/// Two kinds of `harp::Error` are potentially returned:
+/// - `EvaluationError` if an error was caught.
+/// - `TopLevelExecError` if an unexpected longjump was caught.
 ///
-/// ```ignore
-/// SEXP R_tryCatch(
-///     SEXP (*body)(void *), void *bdata,
-///     SEXP conds,
-///     SEXP (*handler)(SEXP, void *), void *hdata),
-///     void (*finally)(void*), void* fdata
-/// )
-/// ```
-pub unsafe fn r_try_catch_finally<F, R, S, Finally>(
-    fun: F,
-    classes: S,
-    finally: Finally,
-) -> Result<R>
+/// NOTE: Rust objects with `drop()` methods should be stored outside the
+/// `try_catch()` context. It's fine to longjump (e.g. throw an R error) over
+/// a Rust stack as long as it doesn't contain destructors.
+pub fn try_catch<'env, F, T>(fun: F) -> harp::Result<T>
 where
-    F: FnOnce() -> R,
-    Finally: FnOnce(),
-    S: Into<CharacterVector>,
+    F: FnOnce() -> T,
+    F: 'env,
 {
-    // C function that is passed as `body`. The actual closure is passed as
-    // void* data, along with the pointer to the result variable.
-    extern "C" fn body_fn<F, R>(arg: *mut c_void) -> SEXP
+    // Allocate stack memory for the result
+    let mut res: Option<harp::Result<T>> = None;
+
+    // Move function to the payload
+    let mut callback_data = CallbackData {
+        res: &mut res,
+        closure: Some(fun),
+    };
+    let payload = &mut callback_data as *mut _ as *mut c_void;
+
+    extern "C" fn callback<'env, F, T>(payload: *mut c_void) -> SEXP
     where
-        F: FnOnce() -> R,
+        F: FnOnce() -> T,
+        F: 'env,
     {
-        let data: &mut ClosureData<F, R> = unsafe { &mut *(arg as *mut ClosureData<F, R>) };
+        let data: &mut CallbackData<F, T> = unsafe { &mut *(payload as *mut CallbackData<F, T>) };
 
         // Move closure here so it can be called. Required since that's an `FnOnce`.
         let closure = take(&mut data.closure).unwrap();
 
-        // Move result to its stack space
-        *(data.res) = Some(closure());
+        // Call closure and move the result to its stack space
+        *(data.res) = Some(Ok(closure()));
 
-        // Return dummy SEXP value expected by `R_tryCatch()`
-        unsafe { R_NilValue }
+        harp::r_null()
     }
 
-    // Allocate stack memory for the output
-    let mut res: Option<R> = None;
-
-    let mut body_data = ClosureData {
-        res: &mut res,
-        closure: Some(fun),
-    };
-
-    // handler just returns the condition and sets success to false
-    // to signal that an error was caught
-    //
-    // This is similar to doing tryCatch(<C code>, error = force) in R
-    // except that we can handle the weird case where the code
-    // succeeds but returns a an error object
-    let mut success: bool = true;
-    let success_ptr: *mut bool = &mut success;
-
-    extern "C" fn handler_fn(condition: SEXP, arg: *mut c_void) -> SEXP {
-        // signal that there was an error
-        let success_ptr = arg as *mut bool;
-        unsafe {
-            *success_ptr = false;
-        }
-
-        // and return the R condition as is
-        condition
-    }
-
-    // C function that is passed as `finally`
-    // the actual closure is passed as a void* through arg
-    extern "C" fn finally_fn<Finally>(arg: *mut c_void)
+    extern "C" fn handler<'env, F, T>(err: SEXP, payload: *mut c_void) -> SEXP
     where
-        Finally: FnOnce(),
+        F: FnOnce() -> T,
+        F: 'env,
     {
-        // Extract the "closure" from the void* and move it here
-        let closure: &mut Option<Finally> = unsafe { mem::transmute(arg) };
-        let closure = take(closure).unwrap();
+        let data: &mut CallbackData<F, T> = unsafe { &mut *(payload as *mut CallbackData<F, T>) };
 
-        closure();
+        // Run in lambda to collect errors more easily
+        if let Err(err) = (|| -> harp::Result<()> {
+            let err: RObject = unsafe {
+                let call = RFunction::new("", "try_catch_handler")
+                    .add(err)
+                    .call
+                    .build();
+
+                // Call without protection to avoid recursing here
+                Rf_eval(call.sexp, HARP_ENV.unwrap()).into()
+            };
+
+            // Invariant of error slot: List of length 4 [message, call, class, trace],
+            // with `trace` possibly an empty string.
+
+            let message: String = RObject::view(harp::list_get(err.sexp, 0)).try_into()?;
+
+            let call: Option<String> =
+                r_null_or_try_into(RObject::view(harp::list_get(err.sexp, 1)))?;
+
+            let class: Option<Vec<String>> =
+                r_null_or_try_into(RObject::view(harp::list_get(err.sexp, 2)))?;
+
+            let r_trace: String = RObject::view(harp::list_get(err.sexp, 3)).try_into()?;
+
+            let rust_trace = std::backtrace::Backtrace::force_capture();
+
+            *(data.res) = Some(Err(Error::TryCatchError {
+                code: call,
+                message,
+                class,
+                r_trace,
+                rust_trace: Some(rust_trace),
+            }));
+
+            Ok(())
+        })() {
+            *(data.res) = Some(Err(Error::Anyhow(anyhow!(
+                "Internal error in `try_catch()`: {err:?}"
+            ))))
+        };
+
+        let call = {
+            // Create call to jump back to top-level-exec
+            RFunction::new("", "invokeRestart")
+                .add(String::from("abort"))
+                .call
+                .build()
+                .sexp
+        };
+
+        // We've dropped our non-POD types and are ready to jump
+        unsafe {
+            libr::Rf_protect(call);
+            libr::Rf_eval(call, R_ENVS.base);
+        }
+        unreachable!();
     }
 
-    // The actual finally closure is passed as a void*
-    let mut finally_data: Option<Finally> = Some(finally);
-    let finally_data = &mut finally_data;
+    let longjump = top_level_exec(|| unsafe {
+        libr::R_withCallingErrorHandler(
+            Some(callback::<F, T>),
+            payload,
+            Some(handler::<F, T>),
+            payload,
+        );
+    });
 
-    let classes = classes.into();
-
-    let result = R_tryCatch(
-        Some(body_fn::<F, R>),
-        &mut body_data as *mut _ as *mut c_void,
-        *classes,
-        Some(handler_fn),
-        success_ptr as *mut c_void,
-        Some(finally_fn::<Finally>),
-        finally_data as *mut _ as *mut c_void,
-    );
-
-    match success {
-        true => {
-            // the call to tryCatch() was successful, so we return the result
-            // as an RObject
-            Ok(res.unwrap())
-        },
-        false => {
-            // the call to tryCatch failed, so result is a condition
-            // from which we can extract classes and message via a call to conditionMessage()
-            let classes: Vec<String> =
-                RObject::from(Rf_getAttrib(result, R_ClassSymbol)).try_into()?;
-
-            let mut protect = RProtect::new();
-            let call = protect.add(Rf_lang2(r_symbol!("conditionMessage"), result));
-
-            // TODO: wrap the call to conditionMessage() in a tryCatch
-            //       but this cannot be another call to r_try_catch_error()
-            //       because it creates a recursion problem
-            let message: Vec<String> = RObject::from(Rf_eval(call, R_BaseEnv)).try_into()?;
-
-            Err(Error::TryCatchError { message, classes })
-        },
-    }
-}
-
-struct ClosureData<'a, F, T>
-where
-    F: FnOnce() -> T + 'a,
-{
-    res: &'a mut Option<T>,
-    closure: Option<F>,
-}
-
-pub unsafe fn r_try_catch<F, R>(fun: F) -> Result<RObject>
-where
-    F: FnMut() -> R,
-    RObject: From<R>,
-{
-    let vector = CharacterVector::create(["error"]);
-    let out = r_try_catch_finally(fun, vector, || {});
-    out.map(|x| RObject::from(x))
+    res.unwrap_or_else(|| {
+        // Return a `TopLevelExecError` if we end up here after an unexpected longjump
+        if let Err(err) = longjump {
+            Err(err)
+        } else {
+            Err(harp::Error::Anyhow(anyhow!("Unreachable")))
+        }
+    })
 }
 
 /// Run closure inside top-level context
@@ -350,69 +308,80 @@ where
 /// the C-level error buffer. It might or might not be related to the cause
 /// of the longjump. The error also carries a Rust backtrace.
 ///
-/// Note that if an unhandled R-level error does occur during a top-level
-/// context, the error message is normally printed in the R console, even
-/// if the calling code recovers from the failure. Since we turn off normal
-/// error printing via the `show.error.messages` global option though, that
-/// isn't normally the case in Ark. That said, if errors are expected, it's
-/// better to catch them with `r_try_catch()`.
-pub fn r_top_level_exec<'env, F, T>(fun: F) -> Result<T>
+/// `top_level_exec()` is a low-level operator. Prefer using `try_catch()`
+/// if possible:
+///
+/// - `try_catch()` uses a more robust strategy to catch R errors.
+///
+/// - `try_catch()` captures R-level and Rust-level backtraces at the R error site.
+///
+/// - With top-level-exec, if an unhandled R-level error does occur during a
+///   top-level context, the error message is normally printed in the R console,
+///   even if the calling code recovers from the failure.
+///
+/// NOTE: Rust objects with `drop()` methods should be stored outside the
+/// `top_level_exec()` context. It's fine to longjump (e.g. throw an R error)
+/// over a Rust stack as long as it doesn't contain destructors.
+pub fn top_level_exec<'env, F, T>(fun: F) -> harp::Result<T>
 where
     F: FnOnce() -> T,
     F: 'env,
 {
     // Allocate stack memory for the result
-    let mut res: Option<T> = None;
+    let mut res: Option<harp::Result<T>> = None;
 
-    // Because it's an `FnOnce`, the closure needs to be moved inside
-    // `c_fn()` so it can be called. However we must also pass it via a
-    // mutable borrow (void*), which prevents it from being moved. To work
-    // around this, we wrap it in an `Option` that allows us to move it
-    // with `take()`.
-    let mut c_data = ClosureData {
+    // Move function to the payload
+    let mut callback_data = CallbackData {
         res: &mut res,
         closure: Some(fun),
     };
-    let p_data = &mut c_data as *mut _ as *mut c_void;
+    let payload = &mut callback_data as *mut _ as *mut c_void;
 
-    // C function that is passed as `fun`. The actual closure is passed via
-    // void* data, along with the pointer to the result variable.
-    extern "C" fn c_fn<'env, F, T>(arg: *mut c_void)
+    extern "C" fn callback<'env, F, T>(args: *mut c_void)
     where
         F: FnOnce() -> T,
         F: 'env,
     {
-        let data: &mut ClosureData<F, T> = unsafe { &mut *(arg as *mut ClosureData<F, T>) };
+        let data: &mut CallbackData<F, T> = unsafe { &mut *(args as *mut CallbackData<F, T>) };
 
         // Move closure here so it can be called. Required since that's an `FnOnce`.
         let closure = take(&mut data.closure).unwrap();
 
         // Call closure and move the result to its stack space
-        *(data.res) = Some(closure());
+        *(data.res) = Some(Ok(closure()));
     }
 
-    let success = unsafe { R_ToplevelExec(Some(c_fn::<F, T>), p_data) };
+    unsafe { R_ToplevelExec(Some(callback::<F, T>), payload) };
 
-    if success == 1 {
-        Ok(res.unwrap())
-    } else {
-        let mut err_buf = geterrmessage();
+    match res {
+        Some(res) => res,
+        None => {
+            let mut err_buf = r_peek_error_buffer();
 
-        if err_buf.len() > 0 {
-            err_buf = format!("\nLikely caused by: {err_buf}");
-        }
+            if err_buf.len() > 0 {
+                err_buf = format!("\nLikely caused by:\n{err_buf}");
+            }
 
-        Err(Error::TopLevelExecError {
-            message: String::from(format!("Unexpected longjump{err_buf}")),
-            backtrace: std::backtrace::Backtrace::capture(),
-            span_trace: tracing_error::SpanTrace::capture(),
-        })
+            Err(Error::TopLevelExecError {
+                message: String::from(format!("Unexpected longjump{err_buf}")),
+                backtrace: std::backtrace::Backtrace::force_capture(),
+                span_trace: tracing_error::SpanTrace::capture(),
+            })
+        },
     }
 }
 
-pub enum ParseResult {
-    Complete(SEXP),
-    Incomplete(),
+pub fn r_peek_error_buffer() -> String {
+    // SAFETY: Returns pointer to static memory buffer owned by R.
+    let buffer = unsafe { R_curErrorBuf() };
+
+    // SAFETY: The aforementioned buffer is never null.
+    let cstr = unsafe { CStr::from_ptr(buffer) };
+
+    match cstr.to_str() {
+        Ok(value) => return value.to_string(),
+        Err(_) => return "".to_string(),
+    }
 }
 
 #[allow(non_upper_case_globals)]
@@ -421,11 +390,11 @@ pub unsafe fn r_parse_vector(code: &str) -> Result<ParseResult> {
     let mut protect = RProtect::new();
     let r_code = r_string!(convert_line_endings(code, LineEnding::Posix), &mut protect);
 
-    let result = r_try_catch(|| R_ParseVector(r_code, -1, &mut ps, R_NilValue))?;
+    let result: RObject = try_catch(|| R_ParseVector(r_code, -1, &mut ps, R_NilValue).into())?;
 
     match ps {
-        ParseStatus_PARSE_OK => Ok(ParseResult::Complete(*result)),
-        ParseStatus_PARSE_INCOMPLETE => Ok(ParseResult::Incomplete()),
+        ParseStatus_PARSE_OK => Ok(ParseResult::Complete(result.sexp)),
+        ParseStatus_PARSE_INCOMPLETE => Ok(ParseResult::Incomplete),
         ParseStatus_PARSE_ERROR => Err(Error::ParseSyntaxError {
             message: CStr::from_ptr(libr::get(R_ParseErrorMsg).as_ptr())
                 .to_string_lossy()
@@ -490,7 +459,7 @@ pub fn r_parse_exprs(code: &str) -> Result<RObject> {
         ParseResult::Complete(x) => {
             return Ok(RObject::from(x));
         },
-        ParseResult::Incomplete() => {
+        ParseResult::Incomplete => {
             return Err(Error::ParseError {
                 code: code.to_string(),
                 message: String::from("Incomplete code"),
@@ -543,7 +512,7 @@ where
     T: 'env,
 {
     let _scope = crate::raii::RLocalSandbox::new();
-    r_top_level_exec(f)
+    try_catch(f)
 }
 
 /// Unwrap Rust error and throw as R error
@@ -612,7 +581,7 @@ where
 /// algorithms from blowing the stack.
 pub fn r_check_stack(size: Option<usize>) -> Result<()> {
     unsafe {
-        let out = r_top_level_exec(|| {
+        let out = top_level_exec(|| {
             if let Some(size) = size {
                 R_CheckStack2(size);
             } else {
@@ -653,7 +622,6 @@ mod tests {
     use crate::assert_match;
     use crate::r_test;
     use crate::utils::r_envir_remove;
-    use crate::utils::r_is_null;
     use crate::utils::r_typeof;
 
     #[test]
@@ -683,9 +651,9 @@ mod tests {
                 .call();
 
             assert_match!(result, Err(err) => {
-                let msg = format!("{err}");
-                let re = regex::Regex::new("R backtrace:\n(.|\n)*1L [+] \"\"").unwrap();
-                assert!(re.is_match(&msg));
+                let re = regex::Regex::new("backtrace:\n(.|\n)*1L [+] \"\"").unwrap();
+                assert!(re.is_match(&format!("{err}")));
+                assert!(re.is_match(&format!("{err:?}")));
             });
         }
     }
@@ -734,42 +702,24 @@ mod tests {
         r_test! {
 
             // ok SEXP
-            let ok = r_try_catch(|| {
-                Rf_ScalarInteger(42)
+            let ok: harp::Result<RObject> = try_catch(|| {
+                Rf_ScalarInteger(42).into()
             });
             assert_match!(ok, Ok(value) => {
-                assert_eq!(r_typeof(*value), INTSXP as u32);
-                assert_eq!(INTEGER_ELT(*value, 0), 42);
+                assert_eq!(r_typeof(value.sexp), INTSXP as u32);
+                assert_eq!(INTEGER_ELT(value.sexp, 0), 42);
             });
 
-            // ok void
-            let void_ok = r_try_catch(|| {});
-            assert_match!(void_ok, Ok(value) => {
-                assert!(r_is_null(*value));
-            });
-
-            // ok something else, Vec<&str>
-            let value = r_try_catch(|| {
-                CharacterVector::create(["hello", "world"]).cast()
-            });
-
-            assert_match!(value, Ok(value) => {
-                assert_eq!(r_typeof(*value), STRSXP);
-                let value = CharacterVector::new(value);
-                assert_match!(value, Ok(value) => {
-                    assert_eq!(value, ["hello", "world"]);
-                })
-            });
-
-            // error
-            let out = r_try_catch(|| unsafe {
+            // Error case
+            let out = try_catch(|| unsafe {
+                // This leaks
                 let msg = CString::new("ouch").unwrap();
                 Rf_error(msg.as_ptr());
             });
 
-            assert_match!(out, Err(Error::TryCatchError { message, classes }) => {
-                assert_eq!(message, ["ouch"]);
-                assert_eq!(classes, ["simpleError", "error", "condition"]);
+            assert_match!(out, Err(Error::TryCatchError { message, class, .. }) => {
+                assert_eq!(message, "ouch");
+                assert_eq!(class.unwrap(), ["simpleError", "error", "condition"]);
             });
 
         }
@@ -778,7 +728,7 @@ mod tests {
     #[test]
     fn test_top_level_exec() {
         r_test! {
-            let ok = r_top_level_exec(|| { 42 });
+            let ok = top_level_exec(|| { 42 });
             assert_match!(ok, Ok(value) => {
                 assert_eq!(value, 42);
             });
@@ -789,7 +739,7 @@ mod tests {
             let msg = CString::new("my message").unwrap();
             let stop = CString::new("stop").unwrap();
 
-            let out = r_top_level_exec(|| unsafe {
+            let out = top_level_exec(|| unsafe {
                 let msg = Rf_protect(Rf_cons(Rf_mkString(msg.as_ptr()), R_NilValue));
                 let call = Rf_protect(Rf_lcons(Rf_install(stop.as_ptr()), msg));
                 Rf_eval(call, R_BaseEnv);
@@ -826,7 +776,7 @@ mod tests {
             // incomplete
             assert_match!(
                 r_parse_vector("force(42"),
-                Ok(ParseResult::Incomplete())
+                Ok(ParseResult::Incomplete)
             );
 
             // error
@@ -885,13 +835,13 @@ mod tests {
     #[test]
     fn test_r_unwrap() {
         r_test! {
-            let out: Result<RObject> = r_try_catch(|| {
+            let out: Result<RObject> = try_catch(|| {
                 r_unwrap(|| Err::<RObject, anyhow::Error>(anyhow::anyhow!("ouch")))
             });
 
-            assert_match!(out, Err(Error::TryCatchError { message, classes }) => {
-                assert_eq!(message, ["ouch"]);
-                assert_eq!(classes, ["simpleError", "error", "condition"]);
+            assert_match!(out, Err(Error::TryCatchError { message, class, .. }) => {
+                assert_eq!(message, "ouch");
+                assert_eq!(class.unwrap(), ["simpleError", "error", "condition"]);
             });
         }
     }

@@ -28,30 +28,40 @@
     )
     do.call(globalCallingHandlers, handlers)
 
-    # Tell rlang and base R not to print the error message, we will do it!
-    options(show.error.messages = FALSE)
-
     invisible(NULL)
 }
 
 #' @export
 .ps.errors.globalErrorHandler <- function(cnd) {
-    # Don't instrument errors if the option has been switched back on
-    if (isTRUE(getOption("show.error.messages", TRUE))) {
-        return()
-    }
+    # This reproduces the behaviour of R's default error handler:
+    # - Invoke `getOption("error")`
+    # - Save backtrace for `traceback()`
+    # - Jump to top-level
+    defer({
+        invoke_option_error_handler()
+        poke_traceback()
+        invokeRestart("abort")
+    })
 
     if (!.ps.is_installed("rlang")) {
         # rlang is not installed, no option except to use the base handler
         return(handle_error_base(cnd))
     }
+
     if (!inherits(cnd, "rlang_error") && !positron_option_error_entrace()) {
         # We have a non-rlang error, but the user requested we dont entrace it
         return(handle_error_base(cnd))
     }
 
     if (!inherits(cnd, "rlang_error")) {
+        base_cnd <- cnd
         cnd <- rlang::catch_cnd(rlang::entrace(cnd))
+
+        # rlang might decide not to entrace, e.g. when `recover` is set as
+        # global error handler
+        if (is.null(cnd)) {
+            return(handle_error_base(base_cnd))
+        }
     }
 
     handle_error_rlang(cnd)
@@ -138,6 +148,7 @@ handle_error_base <- function(cnd) {
 
 #' @param traceback A list of calls.
 format_traceback <- function(calls = list()) {
+    # Calls the function of the same name in the harp namespace
     .ps.Call("ps_format_traceback", calls)
 }
 
@@ -156,19 +167,6 @@ handle_error_rlang <- function(cnd) {
     }
 
     .ps.Call("ps_record_error", evalue, traceback)
-
-    if (!.ps.is_installed("rlang", "1.1.1.9000")) {
-        # In older versions of rlang, rlang did not respect `show.error.messages`
-        # and there was no way to keep it from printing to the console. To work
-        # around this, we throw a dummy base error after recording the rlang information.
-        # Nicely, this:
-        # - Won't print due to `show.error.messages = FALSE`
-        # - Prevents rlang from printing its own error
-        # However, this:
-        # - Causes `traceback()` to show the global calling handler frames
-        # - Causes `options(error = recover)` to show the global calling handler frames
-        stop("dummy")
-    }
 }
 
 positron_option_error_entrace <- function() {
@@ -178,4 +176,37 @@ positron_option_error_entrace <- function() {
 
 rust_backtrace <- function() {
     .ps.Call("ps_rust_backtrace")
+}
+
+# Implements base R behaviour in options.c and errors.c
+invoke_option_error_handler <- function() {
+    handler <- getOption("error")
+
+    if (is.function(handler)) {
+        handler <- as.call(list(handler))
+    }
+
+    if (!is.expression(handler)) {
+        handler <- as.expression(list(handler))
+    }
+
+    for (hnd in handler) {
+        eval(hnd, globalenv())
+    }
+}
+
+poke_traceback <- function() {
+    traceback <- sys.calls()
+
+    # Remove handling context
+    traceback <- utils::head(traceback, -4)
+
+    # Reverse so that more recent calls are first
+    traceback <- rev(traceback)
+
+    # `traceback()` expects a pairlist
+    traceback <- as.pairlist(traceback)
+
+    # The CDR corresponds to SYMVALUE
+    node_poke_cdr(as.symbol(".Traceback"), traceback)
 }

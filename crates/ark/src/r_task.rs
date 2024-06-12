@@ -193,7 +193,7 @@ where
         let status = status_rx.recv().unwrap();
 
         let RTaskStatus::Started = status else {
-            let trace = std::backtrace::Backtrace::capture();
+            let trace = std::backtrace::Backtrace::force_capture();
             panic!(
                 "Task `status` value must be `Started`: {status:?}\n\
                  Backtrace of calling thread:\n\n
@@ -205,7 +205,7 @@ where
         let status = status_rx.recv().unwrap();
 
         let RTaskStatus::Finished(status) = status else {
-            let trace = std::backtrace::Backtrace::capture();
+            let trace = std::backtrace::Backtrace::force_capture();
             panic!(
                 "Task `status` value must be `Finished`: {status:?}\n\
                  Backtrace of calling thread:\n\n
@@ -216,7 +216,7 @@ where
         // If the task failed send a backtrace of the current thread to the
         // main thread
         if let Err(err) = status {
-            let trace = std::backtrace::Backtrace::capture();
+            let trace = std::backtrace::Backtrace::force_capture();
             panic!(
                 "While running task: {err:?}\n\
                  Backtrace of calling thread:\n\n\

@@ -16,9 +16,7 @@ use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::r_symbol;
 use harp::utils::r_poke_option;
-use libr::R_NilValue;
 use libr::Rf_ScalarLogical;
-use libr::Rf_asInteger;
 use libr::SEXP;
 use once_cell::sync::Lazy;
 use rust_embed::RustEmbed;
@@ -290,15 +288,6 @@ fn r_poke_option_ark_testing() {
         let value = Rf_ScalarLogical(1);
         r_poke_option(r_symbol!("ark.testing"), value);
     }
-}
-
-#[harp::register]
-pub unsafe extern "C" fn ps_deep_sleep(secs: SEXP) -> anyhow::Result<SEXP> {
-    let secs = Rf_asInteger(secs);
-    let secs = std::time::Duration::from_secs(secs as u64);
-    std::thread::sleep(secs);
-
-    return Ok(R_NilValue);
 }
 
 #[cfg(test)]

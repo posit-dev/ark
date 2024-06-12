@@ -22,10 +22,17 @@ pub enum Error {
         code: String,
         message: String,
     },
-    EvaluationError {
-        code: String,
+    TryCatchError {
+        code: Option<String>,
         message: String,
-        trace: String,
+        class: Option<Vec<String>>,
+        r_trace: String,
+        rust_trace: Option<Backtrace>,
+    },
+    TopLevelExecError {
+        message: String,
+        backtrace: Backtrace,
+        span_trace: tracing_error::SpanTrace,
     },
     UnsafeEvaluationError(String),
     UnexpectedLength(usize, usize),
@@ -36,18 +43,6 @@ pub enum Error {
         max: i64,
     },
     InvalidUtf8(Utf8Error),
-    TryCatchError {
-        message: Vec<String>,
-        classes: Vec<String>,
-    },
-    TryEvalError {
-        message: String,
-    },
-    TopLevelExecError {
-        message: String,
-        backtrace: Backtrace,
-        span_trace: tracing_error::SpanTrace,
-    },
     ParseSyntaxError {
         message: String,
         line: i32,
@@ -64,10 +59,10 @@ pub enum Error {
         backtrace: Backtrace,
         span_trace: tracing_error::SpanTrace,
     },
-    Anyhow {
-        message: String,
-    },
+    Anyhow(anyhow::Error),
 }
+
+pub const R_BACKTRACE_HEADER: &str = "R thread backtrace:";
 
 // empty implementation required for 'anyhow'
 impl std::error::Error for Error {
@@ -95,18 +90,51 @@ impl fmt::Display for Error {
                 write!(f, "Error parsing {}: {}", code, message)
             },
 
-            Error::EvaluationError {
+            Error::TryCatchError {
                 code,
                 message,
-                trace,
+                r_trace,
+                rust_trace,
+                ..
             } => {
-                let mut msg = format!("Error evaluating {code}: {message}");
-
-                if !trace.is_empty() {
-                    msg = format!("{msg}\nR backtrace:\n{trace}");
+                if let Some(code) = code {
+                    write!(f, "Error evaluating '{code}': {message}")?;
+                } else {
+                    write!(f, "{message}")?;
                 }
 
-                write!(f, "{msg}")
+                // We display intercepting backtraces in Display instead of
+                // Debug because anyhow doesn't propagate the `?` flag:
+                // https://users.rust-lang.org/t/why-doesnt-anyhows-debug-formatter-include-the-underlying-debug-formatting/44227
+
+                if !r_trace.is_empty() {
+                    writeln!(f, "\n\nR backtrace:\n{r_trace}")?;
+                }
+
+                if let Some(rust_trace) = rust_trace {
+                    writeln!(f, "\n\n{R_BACKTRACE_HEADER}\n{rust_trace}")?;
+                }
+
+                Ok(())
+            },
+
+            Error::TopLevelExecError {
+                message,
+                span_trace,
+                backtrace,
+                ..
+            } => {
+                writeln!(f, "{message}")?;
+
+                if span_trace.status() == tracing_error::SpanTraceStatus::CAPTURED {
+                    writeln!(f, "\n\nIn spans:")?;
+                    span_trace.fmt(f)?;
+                }
+
+                writeln!(f, "\n\n{R_BACKTRACE_HEADER}\n{backtrace}")?;
+                fmt::Display::fmt(backtrace, f)?;
+
+                Ok(())
             },
 
             Error::UnsafeEvaluationError(code) => {
@@ -151,34 +179,6 @@ impl fmt::Display for Error {
                 write!(f, "Invalid UTF-8 in string: {}", error)
             },
 
-            Error::TryCatchError {
-                message,
-                classes: _,
-            } => {
-                let message = message.join("\n");
-                write!(f, "tryCatch error: {message}")
-            },
-
-            Error::TryEvalError { message } => {
-                write!(f, "`eval()` error: {}", message)
-            },
-
-            Error::TopLevelExecError {
-                message,
-                backtrace: _backtrace,
-                span_trace,
-            } => {
-                writeln!(f, "{message}")?;
-
-                writeln!(f)?;
-                writeln!(f, "In spans:")?;
-                span_trace.fmt(f)?;
-                writeln!(f)?;
-                writeln!(f)?;
-
-                Ok(())
-            },
-
             Error::ParseSyntaxError { message, line } => {
                 write!(f, "Syntax error on line {} when parsing: {}", line, message)
             },
@@ -195,9 +195,10 @@ impl fmt::Display for Error {
                 write!(f, "C stack usage too close to the limit")
             },
 
-            Error::Anyhow { message } => {
-                write!(f, "{message}")
+            Error::Anyhow(err) => {
+                write!(f, "{err:?}")
             },
+
             Error::MissingBindingError { name } => {
                 write!(f, "Can't find binding {name} in environment")
             },
@@ -213,6 +214,14 @@ macro_rules! anyhow {
             message,
         }
     }}
+}
+
+// We include R-level backtraces in `Display` because anyhow doesn't propagate the `?` flag:
+// https://users.rust-lang.org/t/why-doesnt-anyhows-debug-formatter-include-the-underlying-debug-formatting/44227
+impl fmt::Debug for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
+    }
 }
 
 // TODO: Macro variants of `check_` helpers that record function name, see
@@ -232,29 +241,6 @@ fn check(x: impl Into<libr::SEXP>, expected: libr::SEXPTYPE) -> crate::Result<()
 
 pub fn check_env(x: impl Into<libr::SEXP>) -> crate::Result<()> {
     check(x, libr::ENVSXP)
-}
-
-// NOTE: Debug is the same as Display but with backtrace printing.
-// This matches anyhow error formatters and we can still retrieve the
-// struct-style format with `{:#?}`.
-impl fmt::Debug for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(self, f)?;
-
-        match self {
-            Error::TopLevelExecError {
-                message: _,
-                backtrace,
-                span_trace: _,
-            } => {
-                // If you change this header, make sure to update the panic handler in main.rs
-                writeln!(f)?;
-                writeln!(f, "R thread Backtrace:")?;
-                fmt::Display::fmt(backtrace, f)
-            },
-            _ => Ok(()),
-        }
-    }
 }
 
 impl From<Utf8Error> for Error {

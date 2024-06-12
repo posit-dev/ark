@@ -5,6 +5,7 @@
 //
 //
 
+use harp::call::r_expr_quote;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::*;
@@ -143,7 +144,7 @@ fn list_variables(x: SEXP) -> Vec<RVariable> {
     let mut out = Vec::with_capacity(size);
 
     for (i, name) in names.into_iter().enumerate() {
-        let elt = r_list_get(x, i as R_xlen_t);
+        let elt = harp::list_get(x, i as R_xlen_t);
         let variable = object_variable(name, elt);
         out.push(variable);
     }
@@ -260,7 +261,7 @@ fn call_variable(name: String, x: SEXP) -> RVariable {
 
 fn call_value(x: SEXP) -> anyhow::Result<String> {
     let x = RFunction::from(".ps.environment.describeCall")
-        .add(x)
+        .add(r_expr_quote(x))
         .call()?;
 
     let x = String::try_from(x)?;

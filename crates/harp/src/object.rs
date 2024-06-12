@@ -9,7 +9,6 @@ use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::i32;
 use std::ops::Deref;
-use std::ops::DerefMut;
 use std::os::raw::c_char;
 use std::os::raw::c_int;
 use std::sync::Once;
@@ -175,8 +174,16 @@ pub fn r_cpl_get(x: SEXP, i: isize) -> Rcomplex {
 pub fn r_chr_get(x: SEXP, i: isize) -> SEXP {
     unsafe { STRING_ELT(x, i) }
 }
-pub fn r_list_get(x: SEXP, i: isize) -> SEXP {
+
+// TODO: Once we have a Rust list type, move this back to unsafe.
+// Should be unsafe because the type and bounds are not checked and
+// will result in a crash if used incorrectly.
+pub fn list_get(x: SEXP, i: isize) -> SEXP {
     unsafe { VECTOR_ELT(x, i) }
+}
+
+pub fn list_poke(x: SEXP, i: isize, value: SEXP) {
+    unsafe { SET_VECTOR_ELT(x, i, value) };
 }
 
 pub fn r_lgl_na() -> i32 {
@@ -428,12 +435,28 @@ impl RObject {
     /// Gets a named attribute from the object. Returns `None` if the attribute
     /// doesn't exist.
     pub fn attr(&self, name: &str) -> Option<RObject> {
-        // Get the attribute value.
         let val = unsafe { Rf_getAttrib(self.sexp, r_symbol!(name)) };
         if r_is_null(val) {
-            return None;
+            None
+        } else {
+            Some(unsafe { RObject::new(val) })
         }
-        Some(unsafe { RObject::new(val) })
+    }
+
+    pub fn set_attr(&self, name: &str, value: SEXP) {
+        unsafe {
+            Rf_protect(value);
+            Rf_setAttrib(self.sexp, r_symbol!(name), value);
+            Rf_unprotect(1);
+        }
+    }
+
+    pub fn duplicate(&self) -> RObject {
+        unsafe { RObject::new(libr::Rf_duplicate(self.sexp)) }
+    }
+
+    pub fn shallow_duplicate(&self) -> RObject {
+        unsafe { RObject::new(libr::Rf_shallow_duplicate(self.sexp)) }
     }
 }
 
@@ -468,12 +491,6 @@ impl Deref for RObject {
     type Target = SEXP;
     fn deref(&self) -> &Self::Target {
         &self.sexp
-    }
-}
-
-impl DerefMut for RObject {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.sexp
     }
 }
 
@@ -568,6 +585,18 @@ impl From<Vec<String>> for RObject {
                     cetype_t_CE_UTF8,
                 );
                 SET_STRING_ELT(vector.sexp, idx as isize, value_str);
+            }
+            return vector;
+        }
+    }
+}
+
+impl From<&Vec<i64>> for RObject {
+    fn from(values: &Vec<i64>) -> Self {
+        unsafe {
+            let vector = RObject::from(Rf_allocVector(INTSXP, values.len() as isize));
+            for idx in 0..values.len() {
+                SET_INTEGER_ELT(vector.sexp, idx as isize, values[idx] as c_int);
             }
             return vector;
         }
@@ -1012,6 +1041,17 @@ impl TryFrom<RObject> for HashMap<String, RObject> {
 
             Ok(map)
         }
+    }
+}
+
+pub fn r_null_or_try_into<T>(x: RObject) -> harp::Result<Option<T>>
+where
+    RObject: TryInto<T, Error = harp::Error>,
+{
+    if x.sexp == crate::r_null() {
+        Ok(None)
+    } else {
+        Ok(Some(x.try_into()?))
     }
 }
 

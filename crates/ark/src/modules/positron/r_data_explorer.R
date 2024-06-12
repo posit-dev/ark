@@ -47,13 +47,13 @@
 number_summary_stats <- function(column, filtered_indices) {
     col <- col_filter_indices(column, filtered_indices)
 
-    format(c(
+    c(
         min_value = min(col, na.rm = TRUE),
         max_value = max(col, na.rm = TRUE),
         mean = mean(col, na.rm = TRUE),
         median = stats::median(col, na.rm = TRUE),
         stdev = stats::sd(col, na.rm = TRUE)
-    ))
+    )
 }
 
 string_summary_stats <- function(column, filtered_indices) {
@@ -262,19 +262,45 @@ col_filter_indices <- function(col, idx = NULL) {
     x[i, j, drop = FALSE]
 }
 
-format_list_column <- function(x) {
-    map_chr(x, function(x) {
-        d <- dim(x)
-        if (is.null(d)) {
-            d <- length(x)
-        }
+is_na_checked <- function(x) {
+    result <- is.na(x)
+    stopifnot(is.logical(result), length(x) == length(result))
+    result
+}
 
-        paste0(
-            "<",
-            class(x)[1],
-            " [",
-            paste0(d, collapse = " x "),
-            "]>"
-        )
-    })
+export_selection <- function(x, format = c("csv", "tsv", "html"), include_header = TRUE) {
+    format <- match.arg(format)
+
+    if (format == "csv") {
+        write_delim(x, delim = ",", include_header)
+    } else if (format == "tsv") {
+        write_delim(x, delim = "\t", include_header)
+    } else if (format == "html") {
+        write_html(x, include_header)
+    } else {
+        stop("Unsupported format: ", format)
+    }
+}
+
+write_delim <- function(x, delim, include_header) {
+    tmp <- tempfile()
+    defer(unlink(tmp))
+
+    utils::write.table(x, tmp, sep = delim, row.names = FALSE, col.names = include_header, quote = FALSE, na = "")
+    # We use size - 1 because we don't want to read the last newline character
+    # that creates problems when pasting the content in spreadsheets
+    readChar(tmp, file.info(tmp)$size - 1L)
+}
+
+write_html <- function(x, include_header) {
+    # TODO: do not depend on knitr to render html tables
+    # kable takes NA to mean "use the default column names"
+    # and `NULL` means no column names
+    col_names <- if(include_header) {
+        NA
+    } else {
+        NULL
+    }
+    local_options(knitr.kable.NA = "") # use empty strings for NA's
+    knitr::kable(x, format = "html", row.names = FALSE, col.names = col_names)
 }

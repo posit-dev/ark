@@ -19,6 +19,7 @@ use tower_lsp::lsp_types::DiagnosticSeverity;
 use tree_sitter::Node;
 use tree_sitter::Range;
 
+use crate::lsp::declarations::top_level_declare;
 use crate::lsp::documents::Document;
 use crate::lsp::encoding::convert_tree_sitter_range_to_lsp_range;
 use crate::lsp::indexer;
@@ -28,6 +29,11 @@ use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 use crate::treesitter::UnmatchedDelimiterType;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DiagnosticsConfig {
+    pub enable: bool,
+}
 
 #[derive(Clone)]
 pub struct DiagnosticContext<'a> {
@@ -52,6 +58,12 @@ pub struct DiagnosticContext<'a> {
 
     // Whether or not we're inside of a call's arguments
     pub in_call: bool,
+}
+
+impl Default for DiagnosticsConfig {
+    fn default() -> Self {
+        Self { enable: true }
+    }
 }
 
 impl<'a> DiagnosticContext<'a> {
@@ -80,6 +92,17 @@ impl<'a> DiagnosticContext<'a> {
 
 pub(crate) fn generate_diagnostics(doc: Document, state: WorldState) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
+
+    if !state.config.diagnostics.enable {
+        return diagnostics;
+    }
+
+    // Check that diagnostics are not disabled in top-level declarations for
+    // this document
+    let decls = top_level_declare(&doc.ast, &doc.contents);
+    if !decls.diagnostics {
+        return diagnostics;
+    }
 
     {
         let mut context = DiagnosticContext {

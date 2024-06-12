@@ -115,7 +115,7 @@ impl Shell {
                 status: IsComplete::Complete,
                 indent: String::from(""),
             }),
-            Ok(ParseResult::Incomplete()) => Ok(IsCompleteReply {
+            Ok(ParseResult::Incomplete) => Ok(IsCompleteReply {
                 status: IsComplete::Incomplete,
                 indent: String::from("+"),
             }),
