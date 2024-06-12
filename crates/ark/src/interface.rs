@@ -1063,9 +1063,100 @@ This is a Positron limitation we plan to fix. In the meantime, you can:
             unreachable!();
         } else {
             trace!("Got R prompt '{}', completing execution", prompt);
-            peek_execute_response(req.exec_count)
+            self.peek_execute_response(req.exec_count)
         };
         req.response_tx.send(reply).unwrap();
+    }
+
+    // Gets response data from R state
+    fn peek_execute_response(&self, exec_count: u32) -> ExecuteResponse {
+        let main = RMain::get_mut();
+
+        // Save and reset error occurred flag
+        let error_occurred = main.error_occurred;
+        main.error_occurred = false;
+
+        // Error handlers are not called on stack overflow so the error flag
+        // isn't set. Instead we detect stack overflows by peeking at the error
+        // buffer. The message is explicitly not translated to save stack space
+        // so the matching should be reliable.
+        let err_buf = r_peek_error_buffer();
+        let stack_overflow_occurred = RE_STACK_OVERFLOW.is_match(&err_buf);
+
+        // Reset error buffer so we don't display this message again
+        if stack_overflow_occurred {
+            let _ = RFunction::new("base", "stop").call();
+        }
+
+        // Send the reply to the frontend
+        if error_occurred || stack_overflow_occurred {
+            // We don't fill out `ename` with anything meaningful because typically
+            // R errors don't have names. We could consider using the condition class
+            // here, which r-lib/tidyverse packages have been using more heavily.
+            let exception = if error_occurred {
+                Exception {
+                    ename: String::from(""),
+                    evalue: main.error_message.clone(),
+                    traceback: main.error_traceback.clone(),
+                }
+            } else {
+                // Call `base::traceback()` since we don't have a handled error
+                // object carrying a backtrace. This won't be formatted as a
+                // tree which is just as well since the recursive calls would
+                // push a tree too far to the right.
+                let traceback = r_traceback();
+                Exception {
+                    ename: String::from(""),
+                    evalue: err_buf.clone(),
+                    traceback,
+                }
+            };
+
+            log::info!("An R error occurred: {}", exception.evalue);
+
+            main.iopub_tx
+                .send(IOPubMessage::ExecuteError(ExecuteError {
+                    exception: exception.clone(),
+                }))
+                .or_log_warning(&format!("Could not publish error {} on iopub", exec_count));
+
+            new_execute_error_response(exception, exec_count)
+        } else {
+            // TODO: Implement rich printing of certain outputs.
+            // Will we need something similar to the RStudio model,
+            // where we implement custom print() methods? Or can
+            // we make the stub below behave sensibly even when
+            // streaming R output?
+            let mut data = serde_json::Map::new();
+            data.insert("text/plain".to_string(), json!(""));
+
+            // Include HTML representation of data.frame
+            unsafe {
+                let value = Rf_findVarInFrame(R_GlobalEnv, r_symbol!(".Last.value"));
+                if r_is_data_frame(value) {
+                    match to_html(value) {
+                        Ok(html) => data.insert("text/html".to_string(), json!(html)),
+                        Err(error) => {
+                            error!("{:?}", error);
+                            None
+                        },
+                    };
+                }
+            }
+
+            main.iopub_tx
+                .send(IOPubMessage::ExecuteResult(ExecuteResult {
+                    execution_count: exec_count,
+                    data: serde_json::Value::Object(data),
+                    metadata: json!({}),
+                }))
+                .or_log_warning(&format!(
+                    "Could not publish result of statement {} on iopub",
+                    exec_count
+                ));
+
+            new_execute_response(exec_count)
+        }
     }
 
     /// Sends a `Wait` message to IOPub, which responds when the IOPub thread
@@ -1360,97 +1451,6 @@ fn new_incomplete_response(req: &ExecuteRequest, exec_count: u32) -> ExecuteResp
 
 static RE_STACK_OVERFLOW: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"C stack usage [ 0-9]+ is too close to the limit\n").unwrap());
-
-// Gets response data from R state
-fn peek_execute_response(exec_count: u32) -> ExecuteResponse {
-    let main = RMain::get_mut();
-
-    // Save and reset error occurred flag
-    let error_occurred = main.error_occurred;
-    main.error_occurred = false;
-
-    // Error handlers are not called on stack overflow so the error flag
-    // isn't set. Instead we detect stack overflows by peeking at the error
-    // buffer. The message is explicitly not translated to save stack space
-    // so the matching should be reliable.
-    let err_buf = r_peek_error_buffer();
-    let stack_overflow_occurred = RE_STACK_OVERFLOW.is_match(&err_buf);
-
-    // Reset error buffer so we don't display this message again
-    if stack_overflow_occurred {
-        let _ = RFunction::new("base", "stop").call();
-    }
-
-    // Send the reply to the frontend
-    if error_occurred || stack_overflow_occurred {
-        // We don't fill out `ename` with anything meaningful because typically
-        // R errors don't have names. We could consider using the condition class
-        // here, which r-lib/tidyverse packages have been using more heavily.
-        let exception = if error_occurred {
-            Exception {
-                ename: String::from(""),
-                evalue: main.error_message.clone(),
-                traceback: main.error_traceback.clone(),
-            }
-        } else {
-            // Call `base::traceback()` since we don't have a handled error
-            // object carrying a backtrace. This won't be formatted as a
-            // tree which is just as well since the recursive calls would
-            // push a tree too far to the right.
-            let traceback = r_traceback();
-            Exception {
-                ename: String::from(""),
-                evalue: err_buf.clone(),
-                traceback,
-            }
-        };
-
-        log::info!("An R error occurred: {}", exception.evalue);
-
-        main.iopub_tx
-            .send(IOPubMessage::ExecuteError(ExecuteError {
-                exception: exception.clone(),
-            }))
-            .or_log_warning(&format!("Could not publish error {} on iopub", exec_count));
-
-        new_execute_error_response(exception, exec_count)
-    } else {
-        // TODO: Implement rich printing of certain outputs.
-        // Will we need something similar to the RStudio model,
-        // where we implement custom print() methods? Or can
-        // we make the stub below behave sensibly even when
-        // streaming R output?
-        let mut data = serde_json::Map::new();
-        data.insert("text/plain".to_string(), json!(""));
-
-        // Include HTML representation of data.frame
-        unsafe {
-            let value = Rf_findVarInFrame(R_GlobalEnv, r_symbol!(".Last.value"));
-            if r_is_data_frame(value) {
-                match to_html(value) {
-                    Ok(html) => data.insert("text/html".to_string(), json!(html)),
-                    Err(error) => {
-                        error!("{:?}", error);
-                        None
-                    },
-                };
-            }
-        }
-
-        main.iopub_tx
-            .send(IOPubMessage::ExecuteResult(ExecuteResult {
-                execution_count: exec_count,
-                data: serde_json::Value::Object(data),
-                metadata: json!({}),
-            }))
-            .or_log_warning(&format!(
-                "Could not publish result of statement {} on iopub",
-                exec_count
-            ));
-
-        new_execute_response(exec_count)
-    }
-}
 
 fn new_execute_response(exec_count: u32) -> ExecuteResponse {
     ExecuteResponse::Reply(ExecuteReply {
