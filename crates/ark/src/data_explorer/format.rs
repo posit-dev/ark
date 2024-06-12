@@ -12,7 +12,6 @@ use harp::exec::RFunctionExt;
 use harp::object::r_dbl_is_finite;
 use harp::object::r_dbl_is_nan;
 use harp::object::r_length;
-use harp::object::r_list_get;
 use harp::object::RObject;
 use harp::r_null;
 use harp::utils::r_classes;
@@ -134,7 +133,7 @@ fn format_list(x: SEXP) -> Vec<FormattedValue> {
     let mut output = Vec::<FormattedValue>::with_capacity(len as usize);
 
     for i in 0..len {
-        let elt = r_list_get(x, i);
+        let elt = harp::list_get(x, i);
         let formatted = if r_is_null(elt) {
             FormattedValue::NULL
         } else {
