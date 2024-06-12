@@ -989,7 +989,10 @@ impl RDataExplorer {
                         RowFilterType::NotNull,
                         RowFilterType::Search,
                     ],
-                    supports_conditions: true,
+                    // Temporarily disabled for https://github.com/posit-dev/positron/issues/3489
+                    // on 6/11/2024. This will be enabled again when the UI has been reworked to
+                    // support grouping.
+                    supports_conditions: false,
                 },
                 set_sort_columns: SetSortColumnsFeatures { supported: true },
                 export_data_selection: ExportDataSelectionFeatures { supported: true },
