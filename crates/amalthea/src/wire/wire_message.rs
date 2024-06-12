@@ -5,6 +5,8 @@
  *
  */
 
+use std::collections::HashMap;
+
 use generic_array::GenericArray;
 use hmac::Hmac;
 use log::trace;
@@ -37,7 +39,10 @@ pub struct WireMessage {
     /// The header for this message
     pub header: JupyterHeader,
 
-    /// The header of the message from which this message originated, if any
+    /// The header of the message from which this message originated, if any.
+    /// If none, it's serialized as an empty dict as required by the Jupyter
+    /// protocol.
+    #[serde(serialize_with = "serialize_none_as_empty_dict")]
     pub parent_header: Option<JupyterHeader>,
 
     /// Additional metadata, if any
@@ -248,7 +253,19 @@ impl WireMessage {
     fn to_raw_parts(&self) -> Result<Vec<Vec<u8>>, serde_json::Error> {
         let mut parts: Vec<Vec<u8>> = Vec::new();
         parts.push(serde_json::to_vec(&self.header)?);
-        parts.push(serde_json::to_vec(&self.parent_header)?);
+
+        // The Jupyter protocol states that orphan messages should have an empty
+        // dict as parent. We have a special `serialize_with` tag in the struct
+        // declaration to deal with that but since we're serialising the field
+        // directly here, this tag is not inspected. So we convert `None` to an
+        // empty dict manually.
+        if self.parent_header.is_some() {
+            parts.push(serde_json::to_vec(&self.parent_header)?);
+        } else {
+            let empty: HashMap<String, String> = HashMap::new();
+            parts.push(serde_json::to_vec(&empty)?);
+        }
+
         parts.push(serde_json::to_vec(&self.metadata)?);
         parts.push(serde_json::to_vec(&self.content)?);
         Ok(parts)
@@ -360,5 +377,20 @@ impl<T: ProtocolMessage> TryFrom<&JupyterMessage<T>> for WireMessage {
             metadata: json!({}),
             content,
         })
+    }
+}
+
+// Currently unused but better be safe
+fn serialize_none_as_empty_dict<S, T>(option: &Option<T>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+    T: serde::Serialize,
+{
+    match option {
+        Some(value) => value.serialize(serializer),
+        None => {
+            let empty: HashMap<String, String> = HashMap::new();
+            empty.serialize(serializer)
+        },
     }
 }
