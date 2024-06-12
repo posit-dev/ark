@@ -60,10 +60,10 @@ impl Environment {
         Self { inner: env, filter }
     }
 
-    pub fn view(env: SEXP, filter: EnvironmentFilter) -> Self {
+    pub fn view(env: SEXP) -> Self {
         Self {
             inner: RObject::view(env),
-            filter,
+            filter: EnvironmentFilter::default(),
         }
     }
 
@@ -259,7 +259,7 @@ unsafe impl Sync for REnvs {}
 pub extern "C" fn ark_env_unlock(env: SEXP) -> crate::error::Result<SEXP> {
     unsafe {
         crate::check_env(env)?;
-        Environment::view(env, EnvironmentFilter::default()).unlock();
+        Environment::view(env).unlock();
         Ok(libr::R_NilValue)
     }
 }

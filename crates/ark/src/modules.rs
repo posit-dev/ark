@@ -7,7 +7,6 @@
 
 use anyhow::anyhow;
 use harp::environment::Environment;
-use harp::environment::EnvironmentFilter;
 use harp::environment::R_ENVS;
 use harp::eval::r_parse_eval;
 use harp::exec::r_parse_exprs_with_srcrefs;
@@ -98,7 +97,7 @@ pub fn initialize(testing: bool) -> anyhow::Result<()> {
     // Needs to happen after the `r_source_in()` above. We don't lock the
     // bindings to make it easy to make updates by `source()`ing inside the
     // temporarily unlocked environment.
-    Environment::view(namespace.sexp, EnvironmentFilter::default()).lock(false);
+    Environment::view(namespace.sexp).lock(false);
 
     // Load the positron and rstudio namespaces and their exported functions
     for file in PositronModuleAsset::iter() {
@@ -293,7 +292,6 @@ fn r_poke_option_ark_testing() {
 #[cfg(test)]
 mod tests {
     use harp::environment::Environment;
-    use harp::environment::EnvironmentFilter;
     use harp::environment::R_ENVS;
     use harp::eval::r_parse_eval0;
     use libr::CLOENV;
@@ -303,7 +301,7 @@ mod tests {
     fn get_namespace(exports: Environment, fun: &str) -> Environment {
         let fun = exports.find(fun).unwrap();
         let ns = unsafe { CLOENV(fun) };
-        Environment::view(ns, EnvironmentFilter::default())
+        Environment::view(ns)
     }
 
     #[test]
