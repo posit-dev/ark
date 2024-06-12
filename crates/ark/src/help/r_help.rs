@@ -222,19 +222,27 @@ impl RHelp {
         let proxy_port = unsafe { browser::PORT };
         let replacement = format!("http://127.0.0.1:{}/", proxy_port);
 
-        let url = url.replace(prefix.as_str(), replacement.as_str());
+        let proxy_url = url.replace(prefix.as_str(), replacement.as_str());
+
+        log::info!(
+            "Sending frontend event `ShowHelp` with R url '{url}' and proxy url '{proxy_url}'"
+        );
+
         let msg = HelpFrontendEvent::ShowHelp(ShowHelpParams {
-            content: url,
+            content: proxy_url.clone(),
             kind: ShowHelpKind::Url,
             focus: true,
         });
         let json = serde_json::to_value(msg)?;
         self.comm.outgoing_tx.send(CommMsg::Data(json))?;
 
+        log::info!("Sent `ShowHelp` with proxy url '{proxy_url}'");
+
         // The URL was handled.
         Ok(true)
     }
 
+    #[tracing::instrument(level = "trace", skip(self))]
     fn show_help_topic(&self, topic: String) -> Result<bool> {
         let found = r_task(|| unsafe {
             RFunction::from(".ps.help.showHelpTopic")
