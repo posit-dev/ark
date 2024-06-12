@@ -120,9 +120,10 @@ fn format_object(x: SEXP) -> Vec<FormattedValue> {
         .map(|(is_na, v)| {
             // We don't expect is.na to return NA's, but if it happens, we treat it as false
             // and return the formatted values as is.
-            match is_na.unwrap_or(false) {
-                true => FormattedValue::NA,
-                false => v,
+            if is_na.unwrap_or(false) {
+                FormattedValue::NA
+            } else {
+                v
             }
         })
         .collect()
