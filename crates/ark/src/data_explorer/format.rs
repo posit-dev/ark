@@ -368,7 +368,7 @@ fn pad_exponent(x: String) -> String {
     }
 
     // add zeros to the exponent
-    let mut formatted = x.clone();
+    let mut formatted = x;
     formatted.insert(e_pos + 2, '0');
 
     formatted
