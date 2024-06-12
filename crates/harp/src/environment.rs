@@ -167,9 +167,12 @@ impl Environment {
         };
 
         // `all = all_names`, `sorted = false`
+        // We don't sort the elements when fetchhing from R, but sort them
+        // later in Rust
         let names =
             RObject::from(unsafe { R_lsInternal3(self.inner.sexp, all_names, Rboolean_FALSE) });
-        let names = Vec::<String>::try_from(names).unwrap_or(Vec::new());
+        let mut names = Vec::<String>::try_from(names).unwrap_or(Vec::new());
+        names.sort();
 
         names
     }
@@ -221,5 +224,68 @@ pub extern "C" fn ark_env_unlock(env: SEXP) -> crate::error::Result<SEXP> {
         crate::check_env(env)?;
         Environment::view(env, EnvironmentFilter::default()).unlock();
         Ok(libr::R_NilValue)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::eval::r_parse_eval0;
+    use crate::test::r_test;
+
+    #[test]
+    fn test_sorted_environment_names() {
+        r_test(|| {
+            let env =
+                r_parse_eval0("as.environment(list(c = 1, b = 2, a = 3))", R_ENVS.global).unwrap();
+            let names = Environment::new(env.clone()).names();
+            assert_eq!(names, vec!["a", "b", "c"]);
+
+            // Also assert that `.iter()` will be sorted
+            let expected = vec!["a", "b", "c"];
+            for (i, binding) in Environment::new(env).iter().enumerate() {
+                assert_eq!(binding.unwrap().name, expected[i]);
+            }
+        })
+    }
+
+    #[test]
+    fn test_environments_with_classes() {
+        // Here we are testing that environments iterators are not dispatching to
+        // S3 methods that might have been implemented for `length()` or `names()`
+        // which could cause issues if their len() didn't match.
+        // https://github.com/posit-dev/positron/issues/3229
+        r_test(|| {
+            let test_env: RObject = r_parse_eval0("new.env()", R_ENVS.global).unwrap();
+            let env = r_parse_eval0(
+                r#"
+            x <- structure(new.env(), class = "test_env")
+            names.test_env <- function(x) letters[1:3]
+            length.test_env <- function(x) 3
+            x
+            "#,
+                test_env.sexp,
+            )
+            .unwrap();
+
+            let env: Environment = Environment::new(env);
+
+            assert_eq!(env.names().len(), 0);
+            assert_eq!(env.is_empty(), true);
+            assert_eq!(env.length(), 0);
+
+            // Make sure that it would actually dispatch to the s3 methods we implemented
+            let names: Vec<String> = r_parse_eval0("names(x)", test_env.sexp)
+                .unwrap()
+                .try_into()
+                .unwrap();
+            assert_eq!(names.len(), 3);
+
+            let len: i32 = r_parse_eval0("length(x)", test_env.sexp)
+                .unwrap()
+                .try_into()
+                .unwrap();
+            assert_eq!(len, 3);
+        })
     }
 }
