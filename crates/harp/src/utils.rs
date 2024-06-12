@@ -679,17 +679,6 @@ pub fn r_poke_option(sym: SEXP, value: SEXP) -> SEXP {
     }
 }
 
-pub fn r_poke_option_show_error_messages(value: bool) -> bool {
-    unsafe {
-        let value = Rf_ScalarLogical(value as i32);
-        let old = r_poke_option(r_symbol!("show.error.messages"), value);
-
-        // This option is type-checked by R so we can assume a valid
-        // logical value
-        *LOGICAL(old) != 0
-    }
-}
-
 pub fn r_normalize_path(x: RObject) -> anyhow::Result<String> {
     if !r_is_string(x.sexp) {
         anyhow::bail!("Expected string for srcfile's filename");
