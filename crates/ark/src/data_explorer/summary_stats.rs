@@ -10,20 +10,29 @@ use std::collections::HashMap;
 use amalthea::comm::data_explorer_comm;
 use amalthea::comm::data_explorer_comm::ColumnDisplayType;
 use amalthea::comm::data_explorer_comm::ColumnSummaryStats;
+use amalthea::comm::data_explorer_comm::FormatOptions;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
+use harp::utils::r_names2;
+use harp::vector::CharacterVector;
+use harp::vector::Vector;
 use libr::SEXP;
 use stdext::unwrap;
 
+use crate::data_explorer::format::format_string;
 use crate::modules::ARK_ENVS;
 
-pub fn summary_stats(column: SEXP, display_type: ColumnDisplayType) -> ColumnSummaryStats {
-    match summary_stats_(column, display_type) {
+pub fn summary_stats(
+    column: SEXP,
+    display_type: ColumnDisplayType,
+    format_options: &FormatOptions,
+) -> ColumnSummaryStats {
+    match summary_stats_(column, display_type, format_options) {
         Ok(stats) => stats,
         Err(e) => {
-            // we want to log the error but return an empty summary stats so
-            // that the user can still see the rest of the data
+            // We want to log the error but return an empty summary stats so
+            // that the user can still see the rest of the data.
             log::error!("Error getting summary stats: {:?}", e);
             empty_column_summary_stats()
         },
@@ -33,9 +42,10 @@ pub fn summary_stats(column: SEXP, display_type: ColumnDisplayType) -> ColumnSum
 fn summary_stats_(
     column: SEXP,
     display_type: ColumnDisplayType,
+    format_options: &FormatOptions,
 ) -> anyhow::Result<ColumnSummaryStats> {
     match display_type {
-        ColumnDisplayType::Number => Ok(summary_stats_number(column)?.into()),
+        ColumnDisplayType::Number => Ok(summary_stats_number(column, format_options)?.into()),
         ColumnDisplayType::String => Ok(summary_stats_string(column)?.into()),
         ColumnDisplayType::Boolean => Ok(summary_stats_boolean(column)?.into()),
         ColumnDisplayType::Date => Ok(summary_stats_date(column)?.into()),
@@ -44,9 +54,23 @@ fn summary_stats_(
     }
 }
 
-fn summary_stats_number(column: SEXP) -> anyhow::Result<SummaryStatsNumber> {
-    let stats = call_summary_fn("summary_stats_number", column)?;
-    let r_stats: HashMap<String, String> = stats.try_into()?;
+fn summary_stats_number(
+    column: SEXP,
+    format_options: &FormatOptions,
+) -> anyhow::Result<SummaryStatsNumber> {
+    let r_stats = call_summary_fn("summary_stats_number", column)?;
+
+    let names = unsafe { CharacterVector::new_unchecked(r_names2(r_stats.sexp)) };
+    let values = format_string(r_stats.sexp, format_options);
+
+    let r_stats: HashMap<String, String> = names
+        .iter()
+        .zip(values.into_iter())
+        .map(|(name, value)| match name {
+            Some(name) => (name, value),
+            None => ("unk".to_string(), value),
+        })
+        .collect();
 
     Ok(SummaryStatsNumber(data_explorer_comm::SummaryStatsNumber {
         min_value: r_stats["min_value"].clone(),
@@ -204,18 +228,28 @@ mod tests {
     use super::*;
     use crate::test::r_test;
 
+    fn default_options() -> FormatOptions {
+        FormatOptions {
+            large_num_digits: 2,
+            small_num_digits: 4,
+            max_integral_digits: 7,
+            thousands_sep: Some(",".to_string()),
+        }
+    }
+
     #[test]
     fn test_numeric_summary() {
         r_test(|| {
             let column = r_parse_eval0("c(1,2,3,4,5, NA)", R_ENVS.global).unwrap();
-            let stats = summary_stats_(column.sexp, ColumnDisplayType::Number).unwrap();
+            let stats =
+                summary_stats_(column.sexp, ColumnDisplayType::Number, &default_options()).unwrap();
             let expected: ColumnSummaryStats =
                 SummaryStatsNumber(data_explorer_comm::SummaryStatsNumber {
-                    min_value: "1.000000".to_string(),
-                    max_value: "5.000000".to_string(),
-                    mean: "3.000000".to_string(),
-                    median: "3.000000".to_string(),
-                    stdev: "1.581139".to_string(),
+                    min_value: "1.00".to_string(),
+                    max_value: "5.00".to_string(),
+                    mean: "3.00".to_string(),
+                    median: "3.00".to_string(),
+                    stdev: "1.58".to_string(),
                 })
                 .into();
             assert_eq!(stats, expected);
@@ -226,7 +260,8 @@ mod tests {
     fn test_string_summary() {
         r_test(|| {
             let column = r_parse_eval0("c('a', 'b', 'c', 'd', '')", R_ENVS.global).unwrap();
-            let stats = summary_stats_(column.sexp, ColumnDisplayType::String).unwrap();
+            let stats =
+                summary_stats_(column.sexp, ColumnDisplayType::String, &default_options()).unwrap();
             let expected: ColumnSummaryStats =
                 SummaryStatsString(data_explorer_comm::SummaryStatsString {
                     num_empty: 1,
@@ -241,7 +276,8 @@ mod tests {
     fn test_boolean_summary() {
         r_test(|| {
             let column = r_parse_eval0("c(TRUE, FALSE, TRUE, TRUE, NA)", R_ENVS.global).unwrap();
-            let stats = summary_stats_(column.sexp, ColumnDisplayType::Boolean).unwrap();
+            let stats = summary_stats_(column.sexp, ColumnDisplayType::Boolean, &default_options())
+                .unwrap();
             let expected: ColumnSummaryStats =
                 SummaryStatsBoolean(data_explorer_comm::SummaryStatsBoolean {
                     true_count: 3,
@@ -260,7 +296,8 @@ mod tests {
                 R_ENVS.global,
             )
             .unwrap();
-            let stats = summary_stats_(column.sexp, ColumnDisplayType::Date).unwrap();
+            let stats =
+                summary_stats_(column.sexp, ColumnDisplayType::Date, &default_options()).unwrap();
             let expected: ColumnSummaryStats =
                 SummaryStatsDate(data_explorer_comm::SummaryStatsDate {
                     min_date: "2021-01-01".to_string(),
@@ -282,7 +319,9 @@ mod tests {
                 R_ENVS.global,
             )
             .unwrap();
-            let stats = summary_stats_(column.sexp, ColumnDisplayType::Datetime).unwrap();
+            let stats =
+                summary_stats_(column.sexp, ColumnDisplayType::Datetime, &default_options())
+                    .unwrap();
             let expected: ColumnSummaryStats =
                 SummaryStatsDatetime(data_explorer_comm::SummaryStatsDatetime {
                     num_unique: 2,

@@ -62,10 +62,7 @@ use harp::tbl_get_column;
 use harp::utils::r_inherits;
 use harp::utils::r_is_object;
 use harp::utils::r_is_s4;
-use harp::utils::r_names2;
 use harp::utils::r_typeof;
-use harp::vector::CharacterVector;
-use harp::vector::Vector;
 use harp::TableInfo;
 use harp::TableKind;
 use libr::*;
@@ -79,7 +76,6 @@ use uuid::Uuid;
 
 use crate::data_explorer::export_selection;
 use crate::data_explorer::format;
-use crate::data_explorer::format::format_string;
 use crate::data_explorer::summary_stats::summary_stats;
 use crate::interface::RMain;
 use crate::lsp::events::EVENTS;
@@ -681,7 +677,7 @@ impl RDataExplorer {
             None => column,
         };
 
-        Ok(summary_stats(filtered_column.sexp, dtype))
+        Ok(summary_stats(filtered_column.sexp, dtype, format_options))
     }
 
     /// Sort the rows of the data object according to the sort keys in
