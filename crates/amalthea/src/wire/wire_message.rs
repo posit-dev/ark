@@ -5,8 +5,6 @@
  *
  */
 
-use std::collections::HashMap;
-
 use generic_array::GenericArray;
 use hmac::Hmac;
 use log::trace;
@@ -262,8 +260,7 @@ impl WireMessage {
         if self.parent_header.is_some() {
             parts.push(serde_json::to_vec(&self.parent_header)?);
         } else {
-            let empty: HashMap<String, String> = HashMap::new();
-            parts.push(serde_json::to_vec(&empty)?);
+            parts.push(serde_json::to_vec(&serde_json::Map::new())?);
         }
 
         parts.push(serde_json::to_vec(&self.metadata)?);
@@ -388,9 +385,6 @@ where
 {
     match option {
         Some(value) => value.serialize(serializer),
-        None => {
-            let empty: HashMap<String, String> = HashMap::new();
-            empty.serialize(serializer)
-        },
+        None => serde_json::Map::new().serialize(serializer),
     }
 }
