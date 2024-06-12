@@ -47,13 +47,13 @@
 number_summary_stats <- function(column, filtered_indices) {
     col <- col_filter_indices(column, filtered_indices)
 
-    format(c(
+    c(
         min_value = min(col, na.rm = TRUE),
         max_value = max(col, na.rm = TRUE),
         mean = mean(col, na.rm = TRUE),
         median = stats::median(col, na.rm = TRUE),
         stdev = stats::sd(col, na.rm = TRUE)
-    ))
+    )
 }
 
 string_summary_stats <- function(column, filtered_indices) {
@@ -262,21 +262,10 @@ col_filter_indices <- function(col, idx = NULL) {
     x[i, j, drop = FALSE]
 }
 
-format_list_column <- function(x) {
-    map_chr(x, function(x) {
-        d <- dim(x)
-        if (is.null(d)) {
-            d <- length(x)
-        }
-
-        paste0(
-            "<",
-            class(x)[1],
-            " [",
-            paste0(d, collapse = " x "),
-            "]>"
-        )
-    })
+is_na_checked <- function(x) {
+    result <- is.na(x)
+    stopifnot(is.logical(result), length(x) == length(result))
+    result
 }
 
 export_selection <- function(x, format = c("csv", "tsv", "html"), include_header = TRUE) {

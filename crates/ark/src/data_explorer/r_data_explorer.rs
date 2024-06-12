@@ -27,6 +27,7 @@ use amalthea::comm::data_explorer_comm::ExportDataSelectionParams;
 use amalthea::comm::data_explorer_comm::ExportFormat;
 use amalthea::comm::data_explorer_comm::ExportedData;
 use amalthea::comm::data_explorer_comm::FilterResult;
+use amalthea::comm::data_explorer_comm::FormatOptions;
 use amalthea::comm::data_explorer_comm::GetColumnProfilesFeatures;
 use amalthea::comm::data_explorer_comm::GetColumnProfilesParams;
 use amalthea::comm::data_explorer_comm::GetDataValuesParams;
@@ -55,27 +56,15 @@ use crossbeam::channel::Sender;
 use crossbeam::select;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
-use harp::object::r_dbl_is_finite;
-use harp::object::r_dbl_is_nan;
-use harp::object::r_length;
 use harp::object::RObject;
 use harp::r_symbol;
 use harp::tbl_get_column;
-use harp::utils::r_classes;
-use harp::utils::r_format;
 use harp::utils::r_inherits;
-use harp::utils::r_is_null;
 use harp::utils::r_is_object;
 use harp::utils::r_is_s4;
+use harp::utils::r_names2;
 use harp::utils::r_typeof;
-use harp::vector::formatted_vector::FormattedVector;
-use harp::vector::formatted_vector::FormattedVectorCharacterOptions;
-use harp::vector::formatted_vector::FormattedVectorOptions;
 use harp::vector::CharacterVector;
-use harp::vector::ComplexVector;
-use harp::vector::IntegerVector;
-use harp::vector::LogicalVector;
-use harp::vector::NumericVector;
 use harp::vector::Vector;
 use harp::TableInfo;
 use harp::TableKind;
@@ -89,6 +78,8 @@ use stdext::unwrap;
 use uuid::Uuid;
 
 use crate::data_explorer::export_selection;
+use crate::data_explorer::format;
+use crate::data_explorer::format::format_string;
 use crate::interface::RMain;
 use crate::lsp::events::EVENTS;
 use crate::modules::ARK_ENVS;
@@ -453,7 +444,7 @@ impl RDataExplorer {
                 row_start_index,
                 num_rows,
                 column_indices,
-                format_options: _, // TODO: add support for format options
+                format_options,
             }) => {
                 // TODO: Support for data frames with over 2B rows
                 let row_start_index: i32 = row_start_index.try_into()?;
@@ -462,7 +453,14 @@ impl RDataExplorer {
                     .into_iter()
                     .map(i32::try_from)
                     .collect::<Result<Vec<i32>, _>>()?;
-                r_task(|| self.r_get_data_values(row_start_index, num_rows, column_indices))
+                r_task(|| {
+                    self.r_get_data_values(
+                        row_start_index,
+                        num_rows,
+                        column_indices,
+                        format_options,
+                    )
+                })
             },
             DataExplorerBackendRequest::SetSortColumns(SetSortColumnsParams {
                 sort_keys: keys,
@@ -505,7 +503,7 @@ impl RDataExplorer {
             },
             DataExplorerBackendRequest::GetColumnProfiles(GetColumnProfilesParams {
                 profiles: requests,
-                format_options: _, // TODO: add support for format options
+                format_options,
             }) => {
                 let profiles = requests
                     .into_iter()
@@ -531,8 +529,9 @@ impl RDataExplorer {
                             }
                         },
                         ColumnProfileType::SummaryStats => {
-                            let summary_stats =
-                                r_task(|| self.r_summary_stats(request.column_index as i32));
+                            let summary_stats = r_task(|| {
+                                self.r_summary_stats(request.column_index as i32, &format_options)
+                            });
                             ColumnProfileResult {
                                 null_count: None,
                                 summary_stats: match summary_stats {
@@ -663,7 +662,11 @@ impl RDataExplorer {
         Ok(result.try_into()?)
     }
 
-    fn r_summary_stats(&self, column_index: i32) -> anyhow::Result<ColumnSummaryStats> {
+    fn r_summary_stats(
+        &self,
+        column_index: i32,
+        format_options: &FormatOptions,
+    ) -> anyhow::Result<ColumnSummaryStats> {
         // Get the column to compute summary stats for
         let column = tbl_get_column(self.table.get().sexp, column_index, self.shape.kind)?;
         let dtype = display_type(column.sexp);
@@ -689,8 +692,19 @@ impl RDataExplorer {
 
         match dtype {
             ColumnDisplayType::Number => {
-                let r_stats: HashMap<String, String> =
-                    call_summary_fn("number_summary_stats")?.try_into()?;
+                let r_stats = call_summary_fn("number_summary_stats")?;
+
+                let names = unsafe { CharacterVector::new_unchecked(r_names2(r_stats.sexp)) };
+                let values = format_string(r_stats.sexp, format_options);
+
+                let r_stats: HashMap<String, String> = names
+                    .iter()
+                    .zip(values.into_iter())
+                    .map(|(name, value)| match name {
+                        Some(name) => (name, value),
+                        None => ("unk".to_string(), value),
+                    })
+                    .collect();
 
                 stats.number_stats = Some(SummaryStatsNumber {
                     min_value: r_stats["min_value"].clone(),
@@ -1009,6 +1023,7 @@ impl RDataExplorer {
         row_start_index: i32,
         num_rows: i32,
         column_indices: Vec<i32>,
+        format_options: FormatOptions,
     ) -> anyhow::Result<DataExplorerBackendReply> {
         let table = self.table.get().clone();
         let object = *table;
@@ -1051,7 +1066,7 @@ impl RDataExplorer {
         let mut column_data: Vec<Vec<ColumnValue>> = Vec::new();
         for i in 0..num_cols {
             let column = tbl_get_column(object.sexp, i, self.shape.kind)?;
-            let formatted = format_column(column.sexp)?;
+            let formatted = format::format_column(column.sexp, &format_options);
             column_data.push(formatted.clone());
         }
 
@@ -1096,45 +1111,6 @@ impl RDataExplorer {
             )
         })
     }
-}
-
-fn format_column(x: SEXP) -> anyhow::Result<Vec<ColumnValue>> {
-    let formatted: Vec<String> = match r_typeof(x) {
-        VECSXP => {
-            match r_classes(x) {
-                Some(_) => {
-                    // If column has a class, we just call format on it.
-                    RObject::from(r_format(x)?).try_into()?
-                },
-                None => {
-                    // For list columns we do something similar to tibbles, ie
-                    // show the element <class [length]>.
-                    RFunction::new("", "format_list_column")
-                        .add(x)
-                        .call_in(ARK_ENVS.positron_ns)?
-                        .try_into()?
-                },
-            }
-        },
-        _ => {
-            let formatter = FormattedVector::new_with_options(x, FormattedVectorOptions {
-                character: FormattedVectorCharacterOptions { quote: false },
-            })?;
-            formatter.iter().collect()
-        },
-    };
-
-    let special_value_codes = special_values(x);
-    let output = formatted
-        .into_iter()
-        .zip(special_value_codes.into_iter())
-        .map(|(val, code)| match code {
-            SpecialValueTypes::NotSpecial => ColumnValue::FormattedValue(val),
-            _ => ColumnValue::SpecialValueCode(code.into()),
-        })
-        .collect();
-
-    Ok(output)
 }
 
 // This returns the type of an _element_ of the column. In R atomic
@@ -1253,102 +1229,4 @@ pub unsafe extern "C" fn ps_view_data_frame(
     RDataExplorer::start(title, x, env_info, comm_manager_tx)?;
 
     Ok(R_NilValue)
-}
-
-#[derive(Clone)]
-enum SpecialValueTypes {
-    NotSpecial,
-    NULL,
-    NA,
-    NaN,
-    Inf,
-    NegInf,
-}
-
-// Find the special code values mapping to integer here:
-// https://github.com/posit-dev/positron/blob/46eb4dc0b071984be0f083c7836d74a19ef1509f/src/vs/workbench/services/positronDataExplorer/common/dataExplorerCache.ts#L59-L60
-impl Into<i64> for SpecialValueTypes {
-    fn into(self) -> i64 {
-        match self {
-            SpecialValueTypes::NotSpecial => -1,
-            SpecialValueTypes::NULL => 0,
-            SpecialValueTypes::NA => 1,
-            SpecialValueTypes::NaN => 2,
-            SpecialValueTypes::Inf => 10,
-            SpecialValueTypes::NegInf => 11,
-        }
-    }
-}
-
-// Returns an iterator that checks for special values in a vector.
-fn special_values(object: SEXP) -> Vec<SpecialValueTypes> {
-    match r_typeof(object) {
-        REALSXP => {
-            let data = unsafe { NumericVector::new_unchecked(object) };
-            data.iter()
-                .map(|x| match x {
-                    Some(v) => {
-                        if r_dbl_is_nan(v) {
-                            SpecialValueTypes::NaN
-                        } else if !r_dbl_is_finite(v) {
-                            if v < 0.0 {
-                                SpecialValueTypes::NegInf
-                            } else {
-                                SpecialValueTypes::Inf
-                            }
-                        } else {
-                            SpecialValueTypes::NotSpecial
-                        }
-                    },
-                    None => SpecialValueTypes::NA,
-                })
-                .collect()
-        },
-        STRSXP => {
-            let data = unsafe { CharacterVector::new_unchecked(object) };
-            data.iter()
-                .map(|x| match x {
-                    Some(_) => SpecialValueTypes::NotSpecial,
-                    None => SpecialValueTypes::NA,
-                })
-                .collect()
-        },
-        INTSXP => {
-            let data = unsafe { IntegerVector::new_unchecked(object) };
-            data.iter()
-                .map(|x| match x {
-                    Some(_) => SpecialValueTypes::NotSpecial,
-                    None => SpecialValueTypes::NA,
-                })
-                .collect()
-        },
-        LGLSXP => {
-            let data = unsafe { LogicalVector::new_unchecked(object) };
-            data.iter()
-                .map(|x| match x {
-                    Some(_) => SpecialValueTypes::NotSpecial,
-                    None => SpecialValueTypes::NA,
-                })
-                .collect()
-        },
-        CPLXSXP => {
-            let data = unsafe { ComplexVector::new_unchecked(object) };
-            data.iter()
-                .map(|x| match x {
-                    Some(_) => SpecialValueTypes::NotSpecial,
-                    None => SpecialValueTypes::NA,
-                })
-                .collect()
-        },
-        VECSXP => (0..r_length(object))
-            .map(|i| {
-                if r_is_null(harp::list_get(object, i)) {
-                    SpecialValueTypes::NULL
-                } else {
-                    SpecialValueTypes::NotSpecial
-                }
-            })
-            .collect(),
-        _ => vec![SpecialValueTypes::NotSpecial; unsafe { Rf_xlength(object) as usize }],
-    }
 }

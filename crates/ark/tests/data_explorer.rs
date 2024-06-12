@@ -207,9 +207,9 @@ fn test_data_explorer() {
                 DataExplorerBackendReply::GetDataValuesReply(data) => {
                     // The first three sorted rows should be 10.4, 10.4, and 13.3.
                     assert_eq!(data.columns.len(), 2);
-                    assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("10.4".to_string()));
-                    assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("10.4".to_string()));
-                    assert_eq!(data.columns[0][2], ColumnValue::FormattedValue("13.3".to_string()));
+                    assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("10.40".to_string()));
+                    assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("10.40".to_string()));
+                    assert_eq!(data.columns[0][2], ColumnValue::FormattedValue("13.30".to_string()));
 
                     // Row labels should be sorted as well.
                     if has_row_names {
@@ -254,9 +254,9 @@ fn test_data_explorer() {
             assert_match!(socket_rpc(&socket, req),
                 DataExplorerBackendReply::GetDataValuesReply(data) => {
                     assert_eq!(data.columns.len(), 2);
-                    assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("19.2".to_string()));
-                    assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("18.7".to_string()));
-                    assert_eq!(data.columns[0][2], ColumnValue::FormattedValue("17.3".to_string()));
+                    assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("19.20".to_string()));
+                    assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("18.70".to_string()));
+                    assert_eq!(data.columns[0][2], ColumnValue::FormattedValue("17.30".to_string()));
                 }
             );
         };
@@ -301,8 +301,8 @@ fn test_data_explorer() {
         assert_match!(socket_rpc(&socket, req),
             DataExplorerBackendReply::GetDataValuesReply(data) => {
                 assert_eq!(data.columns.len(), 2);
-                assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("58".to_string()));
-                assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("59".to_string()));
+                assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("58.00".to_string()));
+                assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("59.00".to_string()));
 
                 // Row labels should be present.
                 let labels = data.row_labels.unwrap();
@@ -380,8 +380,8 @@ fn test_data_explorer() {
                 // The first column (height) should contain the only two rows
                 // where the height is less than 60.
                 assert_eq!(data.columns.len(), 2);
-                assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("59".to_string()));
-                assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("58".to_string()));
+                assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("59.00".to_string()));
+                assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("58.00".to_string()));
 
                 // Row labels should be present. The row labels represent the
                 // rows in the original data set, so after sorting we expect the
@@ -461,9 +461,9 @@ fn test_data_explorer() {
         assert_match!(socket_rpc(&socket, req),
             DataExplorerBackendReply::GetDataValuesReply(data) => {
                 assert_eq!(data.columns.len(), 1);
-                assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("0".to_string()));
-                assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("1".to_string()));
-                assert_eq!(data.columns[0][2], ColumnValue::FormattedValue("2".to_string()));
+                assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("0.00".to_string()));
+                assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("1.00".to_string()));
+                assert_eq!(data.columns[0][2], ColumnValue::FormattedValue("2.00".to_string()));
             }
         );
 
@@ -494,9 +494,9 @@ fn test_data_explorer() {
         assert_match!(socket_rpc(&socket, req),
             DataExplorerBackendReply::GetDataValuesReply(data) => {
                 assert_eq!(data.columns.len(), 1);
-                assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("1".to_string()));
-                assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("2".to_string()));
-                assert_eq!(data.columns[0][2], ColumnValue::FormattedValue("3".to_string()));
+                assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("1.00".to_string()));
+                assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("2.00".to_string()));
+                assert_eq!(data.columns[0][2], ColumnValue::FormattedValue("3.00".to_string()));
             }
         );
 
@@ -608,10 +608,10 @@ fn test_data_explorer() {
         assert_match!(socket_rpc(&socket, req),
             DataExplorerBackendReply::GetDataValuesReply(data) => {
                 assert_eq!(data.columns.len(), 2);
-                assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("97".to_string()));
-                assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("97".to_string()));
-                assert_eq!(data.columns[0][2], ColumnValue::FormattedValue("98".to_string()));
-                assert_eq!(data.columns[0][3], ColumnValue::FormattedValue("98".to_string()));
+                assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("97.00".to_string()));
+                assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("97.00".to_string()));
+                assert_eq!(data.columns[0][2], ColumnValue::FormattedValue("98.00".to_string()));
+                assert_eq!(data.columns[0][3], ColumnValue::FormattedValue("98.00".to_string()));
             }
         );
 
@@ -790,11 +790,11 @@ fn test_data_explorer() {
                 assert!(number_stats.is_some());
                 let number_stats = number_stats.unwrap();
                 assert_eq!(number_stats, SummaryStatsNumber {
-                    min_value: String::from("1"),
-                    max_value: String::from("3"),
-                    mean: String::from("2"),
-                    median: String::from("2"),
-                    stdev: String::from("1"),
+                    min_value: String::from("1.00"),
+                    max_value: String::from("3.00"),
+                    mean: String::from("2.00"),
+                    median: String::from("2.00"),
+                    stdev: String::from("1.00"),
                 });
 
                 // The second column is a character column
@@ -1304,7 +1304,7 @@ fn test_data_explorer_special_values() {
             DataExplorerBackendReply::GetDataValuesReply(data) => {
                 assert_eq!(data.columns.len(), 6);
 
-                assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("1".to_string()));
+                assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("1.00".to_string()));
                 assert_eq!(data.columns[0][1], ColumnValue::SpecialValueCode(1));
                 assert_eq!(data.columns[0][2], ColumnValue::SpecialValueCode(2));
                 assert_eq!(data.columns[0][3], ColumnValue::SpecialValueCode(10));
