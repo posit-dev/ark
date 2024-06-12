@@ -374,4 +374,18 @@ mod tests {
             assert_eq!(len, 3);
         })
     }
+
+    #[test]
+    fn test_filtered_env() {
+        r_test(|| {
+            let env =
+                r_parse_eval0("as.environment(list(.a = 1, b = 2, c = 3))", R_ENVS.global).unwrap();
+            let env = Environment::new_filtered(env, EnvironmentFilter::ExcludeHidden);
+            assert_eq!(env.length(), 2);
+            assert_eq!(env.names(), vec!["b", "c"]);
+
+            // Make sure the iterator is also filtered
+            assert_eq!(env.iter().count(), 2);
+        })
+    }
 }
