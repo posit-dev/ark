@@ -49,6 +49,7 @@ use amalthea::wire::jupyter_message::Status;
 use amalthea::wire::originator::Originator;
 use amalthea::wire::stream::Stream;
 use amalthea::wire::stream::StreamOutput;
+use amalthea::Error;
 use anyhow::*;
 use bus::Bus;
 use crossbeam::channel::bounded;
@@ -58,8 +59,8 @@ use crossbeam::channel::Sender;
 use crossbeam::select;
 use harp::environment::Environment;
 use harp::environment::R_ENVS;
-use harp::exec::geterrmessage;
 use harp::exec::r_check_stack;
+use harp::exec::r_peek_error_buffer;
 use harp::exec::r_sandbox;
 use harp::exec::r_source;
 use harp::exec::RFunction;
@@ -67,11 +68,11 @@ use harp::exec::RFunctionExt;
 use harp::library::RLibraries;
 use harp::line_ending::convert_line_endings;
 use harp::line_ending::LineEnding;
+use harp::object::r_null_or_try_into;
 use harp::object::RObject;
 use harp::r_symbol;
 use harp::routines::r_register_routines;
 use harp::session::r_traceback;
-use harp::utils::r_get_option;
 use harp::utils::r_is_data_frame;
 use harp::utils::r_pairlist_any;
 use harp::utils::r_poke_option_show_error_messages;
@@ -116,6 +117,9 @@ use crate::request::RRequest;
 use crate::signals::initialize_signal_handlers;
 use crate::signals::interrupts_pending;
 use crate::signals::set_interrupts_pending;
+use crate::srcref::ns_populate_srcref;
+use crate::srcref::resource_loaded_namespaces;
+use crate::startup;
 use crate::sys::console::console_to_utf8;
 
 // --- Globals ---
@@ -124,7 +128,6 @@ use crate::sys::console::console_to_utf8;
 
 /// Ensures that the kernel is only ever initialized once
 static INIT: Once = Once::new();
-static INIT_KERNEL: Once = Once::new();
 
 // The global state used by R callbacks.
 //
@@ -171,6 +174,22 @@ pub fn start_r(
         ));
     });
 
+    let mut r_args = r_args.clone();
+
+    // Record if the user has requested that we don't load the site/user level R profiles
+    let ignore_site_r_profile = startup::should_ignore_site_r_profile(&r_args);
+    let ignore_user_r_profile = startup::should_ignore_user_r_profile(&r_args);
+
+    // We always manually load site/user level R profiles rather than letting R do it
+    // to ensure that ark is fully set up before running code that could potentially call
+    // back into ark internals.
+    if !ignore_site_r_profile {
+        startup::push_ignore_site_r_profile(&mut r_args);
+    }
+    if !ignore_user_r_profile {
+        startup::push_ignore_user_r_profile(&mut r_args);
+    }
+
     // Build the argument list from the command line arguments. The default
     // list is `--interactive` unless altered with the `--` passthrough
     // argument.
@@ -199,7 +218,7 @@ pub fn start_r(
         // Initialize harp (after routine registration)
         harp::initialize();
 
-        // Optionally run a user specified R startup script (after harp init)
+        // Optionally run a frontend specified R startup script (after harp init)
         if let Some(file) = &startup_file {
             r_source(file).or_log_error(&format!("Failed to source startup file '{file}' due to"));
         }
@@ -215,8 +234,35 @@ pub fn start_r(
             log::error!("Error registering some hooks: {err:?}");
         }
 
+        // Populate srcrefs for namespaces already loaded in the session.
+        // Namespaces of future loaded packages will be populated on load.
+        if do_resource_namespaces() {
+            if let Err(err) = resource_loaded_namespaces() {
+                log::error!("Can't populate srcrefs for loaded packages: {err:?}");
+            }
+        }
+
         // Set up the global error handler (after support function initialization)
         errors::initialize();
+    }
+
+    // Now that R has started (emitting any startup messages), and now that we have set
+    // up all hooks and handlers, officially finish the R initialization process to
+    // unblock the kernel-info request and also allow the LSP to start.
+    RMain::with_mut(|main| {
+        log::info!(
+            "R has started and ark handlers have been registered, completing initialization."
+        );
+        main.complete_initialization();
+    });
+
+    // Now that R has started and libr and ark have fully initialized, run site and user
+    // level R profiles, in that order
+    if !ignore_site_r_profile {
+        startup::source_site_r_profile(&r_home);
+    }
+    if !ignore_user_r_profile {
+        startup::source_user_r_profile();
     }
 
     // Does not return!
@@ -430,24 +476,38 @@ impl RMain {
         }
     }
 
+    pub fn with<F: FnOnce(&RMain)>(f: F) {
+        let main = Self::get();
+        f(main)
+    }
+
+    pub fn with_mut<F: FnOnce(&mut RMain)>(f: F) {
+        let main = Self::get_mut();
+        f(main)
+    }
+
     pub fn on_main_thread() -> bool {
         let thread = std::thread::current();
         thread.id() == unsafe { R_MAIN_THREAD_ID.unwrap() }
     }
 
     /// Completes the kernel's initialization
-    pub fn complete_initialization(&mut self, prompt_info: &PromptInfo) {
+    pub fn complete_initialization(&mut self) {
         if self.initializing {
             let version = unsafe {
                 let version = Rf_findVarInFrame(R_BaseNamespace, r_symbol!("R.version.string"));
                 RObject::new(version).to::<String>().unwrap()
             };
 
+            // Initial input and continuation prompts
+            let input_prompt: String = harp::get_option("prompt").try_into().unwrap();
+            let continuation_prompt: String = harp::get_option("continue").try_into().unwrap();
+
             let kernel_info = KernelInfo {
                 version: version.clone(),
                 banner: self.banner.clone(),
-                input_prompt: Some(prompt_info.input_prompt.clone()),
-                continuation_prompt: Some(prompt_info.continuation_prompt.clone()),
+                input_prompt: Some(input_prompt),
+                continuation_prompt: Some(continuation_prompt),
             };
 
             debug!("Sending kernel info: {}", version);
@@ -511,15 +571,6 @@ impl RMain {
         let info = Self::prompt_info(prompt);
         debug!("R prompt: {}", info.input_prompt);
 
-        INIT_KERNEL.call_once(|| {
-            self.complete_initialization(&info);
-
-            trace!(
-                "Got initial R prompt '{}', ready for execution requests",
-                info.input_prompt
-            );
-        });
-
         // Upon entering read-console, finalize any debug call text that we were capturing.
         // At this point, the user can either advance the debugger, causing us to capture
         // a new expression, or execute arbitrary code, where we will reuse a finalized
@@ -532,10 +583,7 @@ impl RMain {
         // NOTE: Should be able to overwrite the `Cleanup` frontend method.
         // This would also help with detecting normal exits versus crashes.
         if info.input_prompt.starts_with("Save workspace") {
-            let n = CString::new("n\n").unwrap();
-            unsafe {
-                libc::strcpy(buf as *mut c_char, n.as_ptr());
-            }
+            Self::on_console_input(buf, buflen, String::from("n"));
             return ConsoleResult::NewInput;
         }
 
@@ -575,6 +623,10 @@ impl RMain {
                 // `self.active_request` will be set to a fresh request), but
                 // we might also return here after an interrupt.
                 self.active_request = None;
+            }
+        } else {
+            if info.input_request {
+                return self.handle_invalid_input_request(buf, buflen);
             }
         }
 
@@ -676,7 +728,7 @@ impl RMain {
 
                 // A task woke us up, start next loop tick to yield to it
                 recv(self.tasks_interrupt_rx) -> task => {
-                    self.handle_task_concurrent(task.unwrap());
+                    self.handle_task_interrupt(task.unwrap());
                 }
                 recv(self.tasks_idle_rx) -> task => {
                     self.handle_task(task.unwrap());
@@ -725,7 +777,7 @@ impl RMain {
 
         // The request is incomplete if we see the continue prompt, except if
         // we're in a user request, e.g. `readline("+ ")`
-        let continuation_prompt = unsafe { r_get_option::<String>("continue").unwrap() };
+        let continuation_prompt: String = harp::get_option("continue").try_into().unwrap();
         let incomplete = !user_request && prompt == continuation_prompt;
 
         if incomplete {
@@ -804,6 +856,44 @@ impl RMain {
         }
     }
 
+    /// Handle an `input_request` received outside of an `execute_request` context
+    ///
+    /// We believe it is always invalid to receive an `input_request` that isn't
+    /// nested within an `execute_request`. However, this can happen at R
+    /// startup when sourcing an `.Rprofile` that calls `readline()` or `menu()`.
+    /// Both of these are explicitly forbidden by `?Startup` in R as
+    /// "interaction with the user during startup", so when we detect this
+    /// invalid `input_request` case we throw an R error and assume that it
+    /// came from a `readline()` or `menu()` call during startup.
+    ///
+    /// We make a single exception for preexisting renv `activate.R` scripts,
+    /// which used to call `readline()` from within `.Rprofile`. In those cases,
+    /// we return `"n"` which allows older versions of renv to at least startup.
+    /// https://github.com/posit-dev/positron/issues/2070
+    /// https://github.com/rstudio/renv/blob/5d0d52c395e569f7f24df4288d949cef95efca4e/inst/resources/activate.R#L85-L87
+    fn handle_invalid_input_request(&self, buf: *mut c_uchar, buflen: c_int) -> ConsoleResult {
+        if Self::in_renv_autoloader() {
+            log::info!("Detected `readline()` call in renv autoloader. Returning `'n'`.");
+            Self::on_console_input(buf, buflen, String::from("n"));
+            return ConsoleResult::NewInput;
+        }
+
+        log::info!("Detected invalid `input_request` outside an `execute_request`. Preparing to throw an R error.");
+
+        let message = vec![
+            "Can't request input from the user at this time.",
+            "Are you calling `readline()` or `menu()` from an `.Rprofile` or `.Rprofile.site` file? If so, that is the issue and you should remove that code."
+        ].join("\n");
+
+        return ConsoleResult::Error(Error::InvalidInputRequest(message));
+    }
+
+    fn in_renv_autoloader() -> bool {
+        harp::get_option("renv.autoloader.running")
+            .try_into()
+            .unwrap_or(false)
+    }
+
     fn handle_input_reply(
         &self,
         reply: amalthea::Result<InputReply>,
@@ -820,12 +910,16 @@ impl RMain {
         }
     }
 
-    /// Handle a concurrent (non idle) task.
+    /// Handle a task at interrupt time.
     ///
     /// Wrapper around `handle_task()` that does some extra logging to record
     /// how long a task waited before being picked up by the R or ReadConsole
     /// event loop.
-    fn handle_task_concurrent(&mut self, mut task: RTask) {
+    ///
+    /// Since tasks running during interrupt checks block the R thread while
+    /// they are running, they should return very quickly. The log message helps
+    /// monitor excessively long-running tasks.
+    fn handle_task_interrupt(&mut self, mut task: RTask) {
         if let Some(start_info) = task.start_info_mut() {
             // Log excessive waiting before starting task
             if start_info.start_time.elapsed() > std::time::Duration::from_millis(50) {
@@ -841,15 +935,27 @@ impl RMain {
             start_info.start_time = std::time::Instant::now();
         }
 
-        self.handle_task(task)
+        let finished_task_info = self.handle_task(task);
+
+        // We only log long task durations in the interrupt case since we expect
+        // idle tasks to take longer. Use the tracing profiler to monitor the
+        // duration of idle tasks.
+        if let Some(info) = finished_task_info {
+            if info.elapsed() > std::time::Duration::from_millis(50) {
+                info.span.in_scope(|| {
+                    log::info!("task took {} milliseconds.", info.elapsed().as_millis());
+                })
+            }
+        }
     }
 
-    fn handle_task(&mut self, task: RTask) {
+    /// Returns start information when the task has been completed
+    fn handle_task(&mut self, task: RTask) -> Option<RTaskStartInfo> {
         // Background tasks can't take any user input, so we set R_Interactive
         // to 0 to prevent `readline()` from blocking the task.
         let _interactive = harp::raii::RLocalInteractive::new(false);
 
-        let start_info = match task {
+        match task {
             RTask::Sync(task) => {
                 // Immediately let caller know we have started so it can set up the
                 // timeout
@@ -878,13 +984,6 @@ impl RMain {
             },
 
             RTask::Parked(waker) => self.poll_task(None, waker),
-        };
-
-        if let Some(info) = start_info {
-            if info.elapsed() > std::time::Duration::from_millis(50) {
-                let _s = info.span.enter();
-                log::info!("task took {} milliseconds.", info.elapsed().as_millis());
-            }
         }
     }
 
@@ -945,9 +1044,8 @@ impl RMain {
         let buflen = buflen - 2;
 
         if input.len() > buflen {
-            let dropped = &input[buflen..input.len()];
-            log::error!("Console input too large for buffer. Input has been trimmed, dropping: '{dropped}'.");
-            input = input[..buflen].to_string();
+            log::error!("Console input too large for buffer, writing R error.");
+            input = Self::buffer_overflow_call();
         }
 
         // Push `\n`
@@ -959,6 +1057,22 @@ impl RMain {
         unsafe {
             libc::strcpy(buf as *mut c_char, input.as_ptr());
         }
+    }
+
+    // Temporary patch for https://github.com/posit-dev/positron/issues/2675.
+    // We write an informative `stop()` call rather than the user's actual input.
+    fn buffer_overflow_call() -> String {
+        let message = r#"
+Can't pass console input on to R, it exceeds R's internal console buffer size.
+This is a Positron limitation we plan to fix. In the meantime, you can:
+- Break the command you sent to the console into smaller chunks, if possible.
+- Otherwise, send the whole script to the console using `source()`.
+        "#;
+
+        let message = message.trim();
+        let message = format!("stop(\"{message}\")");
+
+        message
     }
 
     // Reply to the previously active request. The current prompt type and
@@ -1132,7 +1246,7 @@ impl RMain {
         // slowed down
         for _ in 0..3 {
             if let Ok(task) = self.tasks_interrupt_rx.try_recv() {
-                self.handle_task_concurrent(task);
+                self.handle_task_interrupt(task);
             } else {
                 break;
             }
@@ -1283,7 +1397,7 @@ fn peek_execute_response(exec_count: u32) -> ExecuteResponse {
     // isn't set. Instead we detect stack overflows by peeking at the error
     // buffer. The message is explicitly not translated to save stack space
     // so the matching should be reliable.
-    let err_buf = geterrmessage();
+    let err_buf = r_peek_error_buffer();
     let stack_overflow_occurred = RE_STACK_OVERFLOW.is_match(&err_buf);
 
     // Reset error buffer so we don't display this message again
@@ -1448,17 +1562,8 @@ pub extern "C" fn r_read_console(
             // error message comes from the frontend and might be corrupted.
             static mut ERROR_BUF: Option<CString> = None;
 
-            {
-                let err_cstring = new_cstring(format!("{err:?}"));
-                unsafe {
-                    ERROR_BUF = Some(
-                        CString::new(format!(
-                            "Error while reading input: {}",
-                            err_cstring.into_string().unwrap()
-                        ))
-                        .unwrap(),
-                    );
-                }
+            unsafe {
+                ERROR_BUF = Some(new_cstring(format!("\n{err}")));
             }
 
             unsafe { Rf_error(ERROR_BUF.as_ref().unwrap().as_ptr()) };
@@ -1492,4 +1597,34 @@ pub extern "C" fn r_busy(which: i32) {
 pub unsafe extern "C" fn r_polled_events() {
     let main = RMain::get_mut();
     main.polled_events();
+}
+
+// This hook is called like a user onLoad hook but for every package to be
+// loaded in the session
+#[harp::register]
+unsafe extern "C" fn ps_onload_hook(pkg: SEXP, _path: SEXP) -> anyhow::Result<SEXP> {
+    // NOTE: `_path` might be NULL for a compat reason, see comments on the R side
+
+    let pkg: String = RObject::view(pkg).try_into()?;
+
+    // Need to reset parent as this might run in the context of another thread's R task
+    let _span = tracing::trace_span!(parent: None, "onload_hook", pkg = pkg).entered();
+
+    // Populate fake source refs if needed
+    if do_resource_namespaces() {
+        r_task::spawn_idle(|| async move {
+            if let Err(err) = ns_populate_srcref(pkg.clone()).await {
+                log::error!("Can't populate srcref for `{pkg}`: {err:?}");
+            }
+        });
+    }
+
+    Ok(RObject::null().sexp)
+}
+
+fn do_resource_namespaces() -> bool {
+    let opt: Option<bool> = r_null_or_try_into(harp::get_option("ark.resource_namespaces"))
+        .ok()
+        .flatten();
+    opt.unwrap_or(true)
 }

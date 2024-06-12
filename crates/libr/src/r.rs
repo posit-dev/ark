@@ -87,6 +87,13 @@ functions::generate! {
         data: *mut std::ffi::c_void
     ) -> Rboolean;
 
+    pub fn R_withCallingErrorHandler(
+        body: Option<unsafe extern "C" fn(args: *mut std::ffi::c_void) -> SEXP>,
+        bdata: *mut std::ffi::c_void,
+        handler: Option<unsafe extern "C" fn(err: SEXP, args: *mut std::ffi::c_void) -> SEXP>,
+        hdata: *mut std::ffi::c_void
+    ) -> SEXP;
+
     pub fn R_altrep_data1(x: SEXP) -> SEXP;
 
     pub fn R_altrep_data2(x: SEXP) -> SEXP;
@@ -97,19 +104,7 @@ functions::generate! {
 
     pub fn R_lsInternal(arg1: SEXP, arg2: Rboolean) -> SEXP;
 
-    pub fn R_lsInternal3(arg1: SEXP, arg2: Rboolean, arg3: Rboolean) -> SEXP;
-
-    pub fn R_tryCatch(
-        arg1: Option<unsafe extern "C" fn(arg1: *mut std::ffi::c_void) -> SEXP>,
-        arg2: *mut std::ffi::c_void,
-        arg3: SEXP,
-        arg4: Option<unsafe extern "C" fn(arg1: SEXP, arg2: *mut std::ffi::c_void) -> SEXP>,
-        arg5: *mut std::ffi::c_void,
-        arg6: Option<unsafe extern "C" fn(arg1: *mut std::ffi::c_void)>,
-        arg7: *mut std::ffi::c_void
-    ) -> SEXP;
-
-    pub fn R_tryEvalSilent(arg1: SEXP, arg2: SEXP, arg3: *mut std::ffi::c_int) -> SEXP;
+    pub fn R_lsInternal3(x: SEXP, all: Rboolean, sorted: Rboolean) -> SEXP;
 
     pub fn Rf_GetOption1(arg1: SEXP) -> SEXP;
 
@@ -138,6 +133,10 @@ functions::generate! {
     pub fn Rf_findVarInFrame(arg1: SEXP, arg2: SEXP) -> SEXP;
 
     pub fn Rf_getAttrib(arg1: SEXP, arg2: SEXP) -> SEXP;
+
+    pub fn Rf_duplicate(arg: SEXP) -> SEXP;
+
+    pub fn Rf_shallow_duplicate(arg: SEXP) -> SEXP;
 
     pub fn Rf_inherits(arg1: SEXP, arg2: *const std::ffi::c_char) -> Rboolean;
 
@@ -213,6 +212,8 @@ functions::generate! {
 
     pub fn ENCLOS(x: SEXP) -> SEXP;
 
+    pub fn SET_ENCLOS(x: SEXP, v: SEXP) -> SEXP;
+
     pub fn FORMALS(x: SEXP) -> SEXP;
 
     pub fn FRAME(x: SEXP) -> SEXP;
@@ -234,6 +235,8 @@ functions::generate! {
     pub fn PRINTNAME(x: SEXP) -> SEXP;
 
     pub fn PRVALUE(x: SEXP) -> SEXP;
+
+    pub fn IS_S4_OBJECT(x: SEXP) -> std::ffi::c_int;
 
     pub fn RAW(x: SEXP) -> *mut Rbyte;
 
@@ -291,16 +294,30 @@ functions::generate! {
 
     pub fn CLOENV(x: SEXP) -> SEXP;
 
+    pub fn BODY(x: SEXP) -> SEXP;
+
+    pub fn SET_BODY(x: SEXP, v: SEXP);
+
+    pub fn R_ClosureExpr(x: SEXP) -> SEXP;
+
     pub fn Rf_PrintValue(x: SEXP);
 
     pub fn R_PromiseExpr(p: SEXP) -> SEXP;
 
     pub fn R_BytecodeExpr(e: SEXP) -> SEXP;
 
+    pub fn Rf_installChar(x: SEXP) -> SEXP;
+
     /// R >= 4.2.0
     pub fn R_existsVarInFrame(rho: SEXP, symbol: SEXP) -> Rboolean;
 
     pub fn R_ActiveBindingFunction(sym: SEXP, env: SEXP) -> SEXP;
+
+    pub fn R_LockBinding(sym: SEXP, env: SEXP) -> SEXP;
+
+    pub fn R_unLockBinding(sym: SEXP, env: SEXP) -> SEXP;
+
+    pub fn R_BindingIsLocked(sym: SEXP, env: SEXP) -> Rboolean;
 
     // -----------------------------------------------------------------------------------
     // Unix

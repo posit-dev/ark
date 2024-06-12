@@ -5,6 +5,9 @@
 //
 //
 
+use anyhow::anyhow;
+use dashmap::DashMap;
+use once_cell::sync::Lazy;
 use serde_json::Value;
 use stdext::unwrap;
 use struct_field_names_as_array::FieldNamesAsArray;
@@ -38,6 +41,7 @@ use tree_sitter::Point;
 use crate::lsp;
 use crate::lsp::completions::provide_completions;
 use crate::lsp::completions::resolve_completion;
+use crate::lsp::config::VscDiagnosticsConfig;
 use crate::lsp::config::VscDocumentConfig;
 use crate::lsp::definitions::goto_definition;
 use crate::lsp::document_context::DocumentContext;
@@ -60,6 +64,16 @@ use crate::lsp::statement_range::StatementRangeResponse;
 use crate::lsp::symbols;
 use crate::r_task;
 
+pub static ARK_VDOC_REQUEST: &'static str = "ark/internal/virtualDocument";
+
+#[derive(Debug, Eq, PartialEq, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct VirtualDocumentParams {
+    pub path: String,
+}
+
+pub(crate) type VirtualDocumentResponse = String;
+
 // Handlers that do not mutate the world state. They take a sharing reference or
 // a clone of the state.
 
@@ -79,18 +93,17 @@ pub(crate) async fn handle_initialized(
         // Note that some settings, such as editor indentation properties, may be
         // changed by extensions or by the user without changing the actual
         // underlying setting. Unfortunately we don't receive updates in that case.
-        let mut config_regs: Vec<Registration> = VscDocumentConfig::FIELD_NAMES_AS_ARRAY
-            .into_iter()
-            .map(|field| Registration {
-                id: uuid::Uuid::new_v4().to_string(),
-                method: String::from("workspace/didChangeConfiguration"),
-                register_options: Some(
-                    serde_json::json!({ "section": VscDocumentConfig::section_from_key(field) }),
-                ),
-            })
-            .collect();
+        let mut config_document_regs = collect_regs(
+            VscDocumentConfig::FIELD_NAMES_AS_ARRAY.to_vec(),
+            VscDocumentConfig::section_from_key,
+        );
+        let mut config_diagnostics_regs: Vec<Registration> = collect_regs(
+            VscDiagnosticsConfig::FIELD_NAMES_AS_ARRAY.to_vec(),
+            VscDiagnosticsConfig::section_from_key,
+        );
 
-        regs.append(&mut config_regs)
+        regs.append(&mut config_document_regs);
+        regs.append(&mut config_diagnostics_regs);
     }
 
     client
@@ -98,6 +111,17 @@ pub(crate) async fn handle_initialized(
         .instrument(span.exit())
         .await?;
     Ok(())
+}
+
+fn collect_regs(fields: Vec<&str>, into_section: impl Fn(&str) -> &str) -> Vec<Registration> {
+    fields
+        .into_iter()
+        .map(|field| Registration {
+            id: uuid::Uuid::new_v4().to_string(),
+            method: String::from("workspace/didChangeConfiguration"),
+            register_options: Some(serde_json::json!({ "section": into_section(field) })),
+        })
+        .collect()
 }
 
 #[tracing::instrument(level = "info", skip_all)]
@@ -355,4 +379,17 @@ pub(crate) fn handle_indent(
     Result::map(res, |opt| {
         Option::map(opt, |edits| edits.into_lsp_offset(&doc.contents))
     })
+}
+
+// TODO: Should be in WorldState and updated via message passing
+pub static mut ARK_VDOCS: Lazy<DashMap<String, String>> = Lazy::new(|| DashMap::new());
+
+pub(crate) fn handle_virtual_document(
+    params: VirtualDocumentParams,
+) -> anyhow::Result<VirtualDocumentResponse> {
+    if let Some(doc) = unsafe { ARK_VDOCS.get(&params.path) } {
+        Ok(doc.clone())
+    } else {
+        Err(anyhow!("Can't find virtual document {}", params.path))
+    }
 }

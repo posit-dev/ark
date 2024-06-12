@@ -10,6 +10,7 @@ use std::sync::Once;
 use libr::*;
 use stdext::unwrap;
 
+use crate::environment::R_ENVS;
 use crate::exec::RFunction;
 use crate::exec::RFunctionExt;
 use crate::modules::HARP_ENV;
@@ -17,7 +18,6 @@ use crate::object::RObject;
 use crate::protect::RProtect;
 use crate::r_lang;
 use crate::r_symbol;
-use crate::utils::r_try_eval_silent;
 use crate::utils::r_typeof;
 use crate::vector::integer_vector::IntegerVector;
 use crate::vector::Vector;
@@ -28,39 +28,39 @@ static mut NFRAME_CALL: Option<SEXP> = None;
 static mut SYS_CALLS_CALL: Option<SEXP> = None;
 static mut SYS_FRAMES_CALL: Option<SEXP> = None;
 
-pub fn r_n_frame() -> crate::error::Result<i32> {
+pub fn r_n_frame() -> crate::Result<i32> {
     SESSION_INIT.call_once(init_interface);
 
     unsafe {
-        let ffi = r_try_eval_silent(NFRAME_CALL.unwrap_unchecked(), R_BaseEnv)?;
+        let ffi = harp::try_eval_silent(NFRAME_CALL.unwrap_unchecked(), R_ENVS.base)?;
         let n_frame = IntegerVector::new(ffi)?;
         Ok(n_frame.get_unchecked_elt(0))
     }
 }
 
-pub fn r_sys_calls() -> crate::error::Result<SEXP> {
+pub fn r_sys_calls() -> crate::Result<RObject> {
     SESSION_INIT.call_once(init_interface);
 
     unsafe {
-        Ok(r_try_eval_silent(
+        Ok(harp::try_eval_silent(
             SYS_CALLS_CALL.unwrap_unchecked(),
             R_BaseEnv,
         )?)
     }
 }
 
-pub fn r_sys_frames() -> crate::error::Result<SEXP> {
+pub fn r_sys_frames() -> crate::Result<RObject> {
     SESSION_INIT.call_once(init_interface);
 
     unsafe {
-        Ok(r_try_eval_silent(
+        Ok(harp::try_eval_silent(
             SYS_FRAMES_CALL.unwrap_unchecked(),
             R_BaseEnv,
         )?)
     }
 }
 
-pub fn r_sys_functions() -> crate::error::Result<SEXP> {
+pub fn r_sys_functions() -> crate::Result<SEXP> {
     unsafe {
         let mut protect = RProtect::new();
 
@@ -80,19 +80,23 @@ pub fn r_sys_functions() -> crate::error::Result<SEXP> {
             let call = r_lang!(fun, index);
             protect.add(call);
 
-            SET_VECTOR_ELT(out, i as isize, r_try_eval_silent(call, R_BaseEnv)?);
+            SET_VECTOR_ELT(
+                out,
+                i as isize,
+                harp::try_eval_silent(call, R_BaseEnv)?.sexp,
+            );
         }
 
         Ok(out)
     }
 }
 
-pub fn r_sys_frame(n: std::ffi::c_int) -> crate::error::Result<SEXP> {
+pub fn r_sys_frame(n: std::ffi::c_int) -> crate::Result<RObject> {
     unsafe {
         let mut protect = RProtect::new();
         let n = protect.add(Rf_ScalarInteger(n));
         let call = protect.add(r_lang!(r_symbol!("sys.frame"), n));
-        Ok(r_try_eval_silent(call, R_BaseEnv)?)
+        Ok(harp::try_eval_silent(call, R_BaseEnv)?)
     }
 }
 

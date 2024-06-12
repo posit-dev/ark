@@ -47,7 +47,9 @@ jobs:
 
                   # Compress the kernel to an archive
                   ARCHIVE="$GITHUB_WORKSPACE/ark-${{ inputs.version }}-${{ matrix.flavor }}-linux-x64.zip"
-                  zip -Xry $ARCHIVE ark
+                  cp "$GITHUB_WORKSPACE/LICENSE" LICENSE
+                  cp "$GITHUB_WORKSPACE/crates/ark/NOTICE" NOTICE
+                  zip -Xry $ARCHIVE ark LICENSE NOTICE
 
                   popd
 

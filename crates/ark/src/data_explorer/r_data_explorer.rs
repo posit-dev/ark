@@ -22,6 +22,7 @@ use amalthea::comm::data_explorer_comm::DataExplorerBackendReply;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendRequest;
 use amalthea::comm::data_explorer_comm::DataExplorerFrontendEvent;
 use amalthea::comm::data_explorer_comm::DataSelection;
+use amalthea::comm::data_explorer_comm::ExportDataSelectionFeatures;
 use amalthea::comm::data_explorer_comm::ExportDataSelectionParams;
 use amalthea::comm::data_explorer_comm::ExportFormat;
 use amalthea::comm::data_explorer_comm::ExportedData;
@@ -36,6 +37,7 @@ use amalthea::comm::data_explorer_comm::RowFilterType;
 use amalthea::comm::data_explorer_comm::SearchSchemaFeatures;
 use amalthea::comm::data_explorer_comm::SetRowFiltersFeatures;
 use amalthea::comm::data_explorer_comm::SetRowFiltersParams;
+use amalthea::comm::data_explorer_comm::SetSortColumnsFeatures;
 use amalthea::comm::data_explorer_comm::SetSortColumnsParams;
 use amalthea::comm::data_explorer_comm::SummaryStatsBoolean;
 use amalthea::comm::data_explorer_comm::SummaryStatsNumber;
@@ -983,7 +985,10 @@ impl RDataExplorer {
                     supported: true,
                     supported_types: vec![
                         ColumnProfileType::NullCount,
-                        ColumnProfileType::SummaryStats,
+                        // Temporarily disabled for https://github.com/posit-dev/positron/issues/3490
+                        // on 6/11/2024. This will be enabled again when the UI has been reworked to
+                        // more fully support column profiles.
+                        // ColumnProfileType::SummaryStats,
                     ],
                 },
                 search_schema: SearchSchemaFeatures { supported: false },
@@ -1001,8 +1006,13 @@ impl RDataExplorer {
                         RowFilterType::NotNull,
                         RowFilterType::Search,
                     ],
-                    supports_conditions: true,
+                    // Temporarily disabled for https://github.com/posit-dev/positron/issues/3489
+                    // on 6/11/2024. This will be enabled again when the UI has been reworked to
+                    // support grouping.
+                    supports_conditions: false,
                 },
+                set_sort_columns: SetSortColumnsFeatures { supported: true },
+                export_data_selection: ExportDataSelectionFeatures { supported: true },
             },
         };
         Ok(DataExplorerBackendReply::GetStateReply(state))

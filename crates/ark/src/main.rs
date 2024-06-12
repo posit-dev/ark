@@ -7,6 +7,7 @@
 
 #![allow(unused_unsafe)]
 
+use std::cell::Cell;
 use std::env;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -42,6 +43,10 @@ enum SessionMode {
 
     /// A background session, typically not connected to any UI.
     Background,
+}
+
+thread_local! {
+    pub static ON_R_THREAD: Cell<bool> = Cell::new(false);
 }
 
 fn start_kernel(
@@ -252,6 +257,8 @@ Available options:
 }
 
 fn main() {
+    ON_R_THREAD.set(true);
+
     // Block signals in this thread (and any child threads).
     initialize_signal_block();
 
@@ -457,12 +464,15 @@ fn main() {
         };
 
         let append_trace = |info: &str| -> String {
-            // Top-level-exec errors already contain a backtrace
-            if info.contains("\nR thread Backtrace") {
+            // Top-level-exec and try-catch errors already contain a backtrace
+            // for the R thread so don't repeat it if we see one. Only perform
+            // this check on the R thread because we do want other threads'
+            // backtraces if the panic occurred elsewhere.
+            if ON_R_THREAD.get() && info.contains("\n{R_BACKTRACE_HEADER}\n") {
                 String::from("")
             } else {
                 format!(
-                    "\nBacktrace:\n{}",
+                    "\n\nBacktrace:\n{}",
                     std::backtrace::Backtrace::force_capture()
                 )
             }

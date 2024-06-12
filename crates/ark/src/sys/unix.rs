@@ -8,5 +8,6 @@
 pub mod console;
 pub mod control;
 pub mod interface;
+pub mod path;
 pub mod signals;
 pub mod traps;

@@ -168,7 +168,7 @@ jobs:
               run: |
                   # Compress the kernel to an archive
                   $params = @{
-                    Path = "target\${{ matrix.rust_target_prefix }}-pc-windows-msvc\${{ matrix.flavor }}\ark.exe"
+                    Path = "target\${{ matrix.rust_target_prefix }}-pc-windows-msvc\${{ matrix.flavor }}\ark.exe", "LICENSE", "crates\ark\NOTICE"
                     DestinationPath = "ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ matrix.flavor }}-windows-${{ matrix.arch }}.zip"
                   }
                   Compress-Archive @params
@@ -258,9 +258,11 @@ jobs:
                   # Create a universal binary
                   lipo -create x64/ark arm64/ark -output ark
 
-                  # Compress
+                  # Compress and bundle licenses
                   ARCHIVE="$GITHUB_WORKSPACE/ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-darwin-universal.zip"
-                  zip -Xry $ARCHIVE ark
+                  cp "$GITHUB_WORKSPACE/LICENSE" LICENSE
+                  cp "$GITHUB_WORKSPACE/crates/ark/NOTICE" NOTICE
+                  zip -Xry $ARCHIVE ark LICENSE NOTICE
 
             - name: Upload macOS release artifact (universal)
               uses: actions/upload-release-asset@v1
