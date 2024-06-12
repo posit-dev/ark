@@ -7,6 +7,7 @@ use crate::lsp::offset::ArkPoint;
 use crate::lsp::offset::ArkRange;
 use crate::lsp::offset::ArkTextEdit;
 use crate::lsp::traits::node::NodeExt;
+use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
 /// Provide indentation corrections
@@ -53,9 +54,30 @@ pub fn indent_edit(doc: &Document, line: usize) -> anyhow::Result<Option<Vec<Ark
     // log::trace!("node: {node:?}");
     // log::trace!("bol_parent: {bol_parent:?}");
 
+    // Iterator over characters following `line`'s indent
+    let text_at_indent = || {
+        text.chars_at(text.line_to_char(line))
+            .skip_while(|c| *c == ' ' || *c == '\t')
+    };
+
     // The indentation of the line the node starts on
     let node_line_indent = |point: tree_sitter::Node| -> usize {
         line_indent(text, point.start_position().row, config).0
+    };
+    let brace_parent_indent =
+        |node: tree_sitter::Node| -> usize { node_line_indent(brace_parent(node)) };
+
+    let brace_indent = |parent: tree_sitter::Node| -> (usize, usize) {
+        // If we're looking at a closing delimiter, indent at the parent's
+        // beginning of line
+        if let Some(c) = text_at_indent().next() {
+            if c == '}' {
+                return (brace_parent_indent(parent), 0);
+            }
+            // else fallthrough
+        };
+
+        (brace_parent_indent(parent), config.indent_size)
     };
 
     // Structured in two stages as in Emacs TS rules: first match, then
@@ -66,7 +88,7 @@ pub fn indent_edit(doc: &Document, line: usize) -> anyhow::Result<Option<Vec<Ark
         // https://github.com/posit-dev/positron/issues/1880
         // https://github.com/posit-dev/positron/issues/2764
         parent if parent.is_program() => (parent.start_position().column, 0),
-        parent if parent.is_braced_expression() => (node_line_indent(parent), config.indent_size),
+        parent if parent.is_braced_expression() => brace_indent(parent),
 
         // Indentation of chained operators (aka pipelines):
         // https://github.com/posit-dev/positron/issues/2707
@@ -76,7 +98,7 @@ pub fn indent_edit(doc: &Document, line: usize) -> anyhow::Result<Option<Vec<Ark
                 .find(|n| n.parent().map_or(true, |p| !p.is_binary_operator()))
                 .unwrap_or(parent); // Should not happen
 
-            (anchor.start_position().column, config.indent_size)
+            (node_line_indent(anchor), config.indent_size)
         },
         _ => return Ok(None),
     };
@@ -103,7 +125,41 @@ pub fn indent_edit(doc: &Document, line: usize) -> anyhow::Result<Option<Vec<Ark
         new_text,
     };
 
-    Ok(Some(vec![edit]))
+    let mut edits = vec![edit];
+
+    // Indent closing delimiter to mitigate VS Code's indent-outdent behaviour
+    // https://github.com/posit-dev/positron/issues/3484
+    if bol_parent.is_braced_expression() {
+        // FIXME: Use named delim node once available
+        let n = bol_parent.child_count();
+        if n > 1 {
+            let close = bol_parent.child(n - 1).unwrap();
+            let close_line = close.start_position().row;
+
+            if close.node_type() == NodeType::Anonymous("}".into()) && close_line > line {
+                if let Some(ref mut close_edits) = indent_edit(doc, close_line)? {
+                    edits.append(close_edits);
+                }
+            }
+        }
+    }
+
+    Ok(Some(edits))
+}
+
+fn brace_parent(node: tree_sitter::Node) -> tree_sitter::Node {
+    let Some(parent) = node.parent() else {
+        return node;
+    };
+
+    match parent.node_type() {
+        NodeType::FunctionDefinition => parent,
+        NodeType::IfStatement => parent,
+        NodeType::ForStatement => parent,
+        NodeType::WhileStatement => parent,
+        NodeType::RepeatStatement => parent,
+        _ => node,
+    }
 }
 
 /// Returns indent as a pair of space size and byte size
@@ -285,6 +341,47 @@ mod tests {
     }
 
     #[test]
+    fn test_line_indent_braced_expression_closing() {
+        let mut text = String::from("{\n  }");
+        let doc = test_doc(&text);
+
+        let edit = indent_edit(&doc, 1).unwrap().unwrap();
+        apply_text_edits(edit, &mut text).unwrap();
+        assert_eq!(text, String::from("{\n}"));
+    }
+
+    #[test]
+    fn test_line_indent_braced_expression_closing_multiline() {
+        // https://github.com/posit-dev/positron/issues/3484
+        let mut text = String::from("{\n\n    }");
+        let doc = test_doc(&text);
+
+        let edit = indent_edit(&doc, 1).unwrap().unwrap();
+        apply_text_edits(edit, &mut text).unwrap();
+        assert_eq!(text, String::from("{\n  \n}"));
+    }
+
+    #[test]
+    fn test_line_indent_braced_expression_multiline() {
+        let mut text = String::from("function(\n        ) {\nfoo\n}");
+        let doc = test_doc(&text);
+
+        let edit = indent_edit(&doc, 2).unwrap().unwrap();
+        apply_text_edits(edit, &mut text).unwrap();
+        assert_eq!(text, String::from("function(\n        ) {\n  foo\n}"));
+    }
+
+    #[test]
+    fn test_line_indent_braced_expression_multiline_empty() {
+        let mut text = String::from("function(\n        ) {\n\n}");
+        let doc = test_doc(&text);
+
+        let edit = indent_edit(&doc, 2).unwrap().unwrap();
+        apply_text_edits(edit, &mut text).unwrap();
+        assert_eq!(text, String::from("function(\n        ) {\n  \n}"));
+    }
+
+    #[test]
     fn test_new_line_indent() {
         let tab_cfg = IndentationConfig {
             indent_style: IndentStyle::Tab,
@@ -312,5 +409,41 @@ mod tests {
         );
         assert_eq!(new_line_indent(&large_tab_cfg, 8), String::from("\t"));
         assert_eq!(new_line_indent(&large_tab_cfg, 12), String::from("\t    "));
+    }
+
+    fn read_text_asset(path: &str) -> String {
+        let mut asset = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        asset.push("src");
+        asset.push(path);
+        std::fs::read_to_string(asset).unwrap()
+    }
+
+    fn write_asset(path: &str, text: &str) {
+        let mut asset = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        asset.push("src");
+        asset.push(path);
+        std::fs::write(asset, text).unwrap();
+    }
+
+    #[test]
+    fn test_indent_snapshot() {
+        let orig = read_text_asset("lsp/snapshots/indent.R");
+
+        let doc = test_doc(&orig);
+
+        let mut text = orig.clone();
+        let n_lines = text.matches('\n').count();
+
+        for i in 0..n_lines {
+            if let Some(edit) = indent_edit(&doc, i).unwrap() {
+                apply_text_edits(edit, &mut text).unwrap();
+            }
+        }
+
+        write_asset("lsp/snapshots/indent.R", &text);
+
+        if orig != text {
+            panic!("Indentation snapshots have changed.\nPlease see git diff.");
+        }
     }
 }
