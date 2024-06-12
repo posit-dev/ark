@@ -60,7 +60,10 @@ use harp::tbl_get_column;
 use harp::utils::r_inherits;
 use harp::utils::r_is_object;
 use harp::utils::r_is_s4;
+use harp::utils::r_names2;
 use harp::utils::r_typeof;
+use harp::vector::CharacterVector;
+use harp::vector::Vector;
 use harp::TableInfo;
 use harp::TableKind;
 use libr::*;
@@ -74,7 +77,7 @@ use uuid::Uuid;
 
 use crate::data_explorer::export_selection;
 use crate::data_explorer::format;
-use crate::data_explorer::format::format_stats;
+use crate::data_explorer::format::format_string;
 use crate::interface::RMain;
 use crate::lsp::events::EVENTS;
 use crate::modules::ARK_ENVS;
@@ -687,10 +690,19 @@ impl RDataExplorer {
 
         match dtype {
             ColumnDisplayType::Number => {
-                let r_stats: HashMap<String, String> = format_stats(
-                    call_summary_fn("number_summary_stats")?.sexp,
-                    &format_options,
-                );
+                let r_stats = call_summary_fn("number_summary_stats")?;
+
+                let names = unsafe { CharacterVector::new_unchecked(r_names2(r_stats.sexp)) };
+                let values = format_string(r_stats.sexp, format_options);
+
+                let r_stats: HashMap<String, String> = names
+                    .iter()
+                    .zip(values.into_iter())
+                    .map(|(name, value)| match name {
+                        Some(name) => (name, value),
+                        None => ("unk".to_string(), value),
+                    })
+                    .collect();
 
                 stats.number_stats = Some(SummaryStatsNumber {
                     min_value: r_stats["min_value"].clone(),

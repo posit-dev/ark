@@ -5,8 +5,6 @@
 //
 //
 
-use std::collections::HashMap;
-
 use amalthea::comm::data_explorer_comm::ColumnValue;
 use amalthea::comm::data_explorer_comm::FormatOptions;
 use harp::exec::RFunction;
@@ -20,7 +18,6 @@ use harp::r_null;
 use harp::utils::r_classes;
 use harp::utils::r_format;
 use harp::utils::r_is_null;
-use harp::utils::r_names2;
 use harp::utils::r_typeof;
 use harp::vector::CharacterVector;
 use harp::vector::ComplexVector;
@@ -45,21 +42,11 @@ pub fn format_column(x: SEXP, format_options: &FormatOptions) -> Vec<ColumnValue
 }
 
 // Used by the summary_profile method to format the summary statistics for display.
-pub fn format_stats(x: SEXP, format_options: &FormatOptions) -> HashMap<String, String> {
-    let out = format(x, format_options);
-    let mut stats = HashMap::new();
-    unsafe {
-        CharacterVector::new_unchecked(r_names2(x))
-            .iter()
-            .zip(out.into_iter())
-            .for_each(|(nm, value)| {
-                stats.insert(
-                    nm.unwrap_or(FALLBACK_FORMAT_STRING.to_string()),
-                    value.into(),
-                );
-            });
-    }
-    stats
+pub fn format_string(x: SEXP, format_options: &FormatOptions) -> Vec<String> {
+    format(x, format_options)
+        .into_iter()
+        .map(Into::into)
+        .collect()
 }
 
 fn format(x: SEXP, format_options: &FormatOptions) -> Vec<FormattedValue> {
