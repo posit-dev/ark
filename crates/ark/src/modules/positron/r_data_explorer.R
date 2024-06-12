@@ -294,11 +294,13 @@ export_selection <- function(x, format = c("csv", "tsv", "html"), include_header
 }
 
 write_delim <- function(x, delim, include_header) {
-    con <- textConnection("text_val", "w", encoding="UTF-8")
-    defer(close(con))
+    tmp <- tempfile()
+    defer(unlink(tmp))
 
-    utils::write.table(x, con, sep = delim, row.names = FALSE, col.names = include_header, quote = FALSE, na = "")
-    paste0(textConnectionValue(con), collapse = "\n")
+    utils::write.table(x, tmp, sep = delim, row.names = FALSE, col.names = include_header, quote = FALSE, na = "")
+    # We use size - 1 because we don't want to read the last newline character
+    # that creates problems when pasting the content in spreadsheets
+    readChar(tmp, file.info(tmp)$size - 1L)
 }
 
 write_html <- function(x, include_header) {
