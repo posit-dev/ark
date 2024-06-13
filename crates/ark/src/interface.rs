@@ -296,9 +296,13 @@ pub struct RMain {
     /// Execution request counter used to populate `In[n]` and `Out[n]` prompts
     execution_count: u32,
 
-    stdout: String,
-    stderr: String,
-    banner: String,
+    /// Accumulated top-level output for the current execution.
+    /// This is the output emitted by R's autoprint and propagated as
+    /// `execute_result` Jupyter messages instead of `stream` messages.
+    autoprint_output: String,
+
+    /// Accumulated output during startup
+    banner_output: String,
 
     /// Channel to send and receive tasks from `RTask`s
     tasks_interrupt_rx: Receiver<RTask>,
@@ -410,9 +414,8 @@ impl RMain {
             kernel_init_tx,
             active_request: None,
             execution_count: 0,
-            stdout: String::new(),
-            stderr: String::new(),
-            banner: String::new(),
+            autoprint_output: String::new(),
+            banner_output: String::new(),
             kernel,
             error_occurred: false,
             error_message: String::new(),
@@ -498,7 +501,7 @@ impl RMain {
 
             let kernel_info = KernelInfo {
                 version: version.clone(),
-                banner: self.banner.clone(),
+                banner: self.banner_output.clone(),
                 input_prompt: Some(input_prompt),
                 continuation_prompt: Some(continuation_prompt),
             };
@@ -517,9 +520,8 @@ impl RMain {
     }
 
     fn init_execute_request(&mut self, req: &ExecuteRequest) -> (ConsoleInput, u32) {
-        // Initialize stdout, stderr
-        self.stdout = String::new();
-        self.stderr = String::new();
+        // Reset the autoprint buffer
+        self.autoprint_output = String::new();
 
         // Increment counter if we are storing this execution in history
         if req.store_history {
@@ -580,7 +582,7 @@ impl RMain {
             return ConsoleResult::NewInput;
         }
 
-        if let Some(req) = &self.active_request {
+        if let Some(req) = std::mem::take(&mut self.active_request) {
             if info.input_request {
                 // Request input. We'll wait for a reply in the `select!` below.
                 self.request_input(req.orig.clone(), info.input_prompt.to_string());
@@ -604,12 +606,14 @@ impl RMain {
                     input_prompt: info.input_prompt.clone(),
                     continuation_prompt: info.continuation_prompt.clone(),
                 });
-                let kernel = self.kernel.lock().unwrap();
-                kernel.send_ui_event(event);
+                {
+                    let kernel = self.kernel.lock().unwrap();
+                    kernel.send_ui_event(event);
+                }
 
                 // Let frontend know the last request is complete. This turns us
                 // back to Idle.
-                self.reply_execute_request(req, info.clone());
+                self.reply_execute_request(req, &info);
 
                 // Clear active request. This doesn't matter if we return here
                 // after receiving an `ExecuteCode` request (as
@@ -1053,8 +1057,8 @@ This is a Positron limitation we plan to fix. In the meantime, you can:
 
     // Reply to the previously active request. The current prompt type and
     // whether an error has occurred defines the response kind.
-    fn reply_execute_request(&self, req: &ActiveReadConsoleRequest, prompt_info: PromptInfo) {
-        let prompt = prompt_info.input_prompt;
+    fn reply_execute_request(&mut self, req: ActiveReadConsoleRequest, prompt_info: &PromptInfo) {
+        let prompt = &prompt_info.input_prompt;
 
         let reply = if prompt_info.incomplete {
             trace!("Got prompt {} signaling incomplete request", prompt);
@@ -1063,18 +1067,16 @@ This is a Positron limitation we plan to fix. In the meantime, you can:
             unreachable!();
         } else {
             trace!("Got R prompt '{}', completing execution", prompt);
-            self.peek_execute_response(req.exec_count)
+            self.make_execute_response(req.exec_count)
         };
         req.response_tx.send(reply).unwrap();
     }
 
     // Gets response data from R state
-    fn peek_execute_response(&self, exec_count: u32) -> ExecuteResponse {
-        let main = RMain::get_mut();
-
+    fn make_execute_response(&mut self, exec_count: u32) -> ExecuteResponse {
         // Save and reset error occurred flag
-        let error_occurred = main.error_occurred;
-        main.error_occurred = false;
+        let error_occurred = self.error_occurred;
+        self.error_occurred = false;
 
         // Error handlers are not called on stack overflow so the error flag
         // isn't set. Instead we detect stack overflows by peeking at the error
@@ -1096,8 +1098,8 @@ This is a Positron limitation we plan to fix. In the meantime, you can:
             let exception = if error_occurred {
                 Exception {
                     ename: String::from(""),
-                    evalue: main.error_message.clone(),
-                    traceback: main.error_traceback.clone(),
+                    evalue: self.error_message.clone(),
+                    traceback: self.error_traceback.clone(),
                 }
             } else {
                 // Call `base::traceback()` since we don't have a handled error
@@ -1114,7 +1116,7 @@ This is a Positron limitation we plan to fix. In the meantime, you can:
 
             log::info!("An R error occurred: {}", exception.evalue);
 
-            main.iopub_tx
+            self.iopub_tx
                 .send(IOPubMessage::ExecuteError(ExecuteError {
                     exception: exception.clone(),
                 }))
@@ -1130,6 +1132,20 @@ This is a Positron limitation we plan to fix. In the meantime, you can:
             let mut data = serde_json::Map::new();
             data.insert("text/plain".to_string(), json!(""));
 
+            // The output generated by autoprint is emitted as an
+            // `execute_result` message.
+            let mut autoprint = std::mem::take(&mut self.autoprint_output);
+
+            if autoprint.ends_with('\n') {
+                // Remove the trailing newlines that R adds to outputs but that
+                // Jupyter frontends are not expecting. Is it worth taking a
+                // mutable self ref across calling methods to avoid the clone?
+                autoprint.pop();
+            }
+            if autoprint.len() != 0 {
+                data.insert("text/plain".to_string(), json!(autoprint));
+            }
+
             // Include HTML representation of data.frame
             unsafe {
                 let value = Rf_findVarInFrame(R_GlobalEnv, r_symbol!(".Last.value"));
@@ -1144,7 +1160,7 @@ This is a Positron limitation we plan to fix. In the meantime, you can:
                 }
             }
 
-            main.iopub_tx
+            self.iopub_tx
                 .send(IOPubMessage::ExecuteResult(ExecuteResult {
                     execution_count: exec_count,
                     data: serde_json::Value::Object(data),
@@ -1228,7 +1244,7 @@ This is a Positron limitation we plan to fix. In the meantime, you can:
 
         if self.initializing {
             // During init, consider all output to be part of the startup banner
-            self.banner.push_str(&content);
+            self.banner_output.push_str(&content);
             return;
         }
 
@@ -1240,13 +1256,19 @@ This is a Positron limitation we plan to fix. In the meantime, you can:
             }
         }
 
-        let buffer = match stream {
-            Stream::Stdout => &mut self.stdout,
-            Stream::Stderr => &mut self.stderr,
-        };
+        // If we are at top-level, this is the output printed by the R REPL
+        // when the result of the top-level `eval()` is visible. We
+        // accumulate this output (it typically comes in multiple parts) so
+        // we can emit it later on as part of execution results.
+        let n_frame = harp::session::r_n_frame().unwrap();
+        let frame = harp::session::r_sys_frame(n_frame).unwrap();
+        let browser = harp::session::r_env_is_browsed(frame.sexp).unwrap();
+        let top_level = n_frame == 0 || browser;
 
-        // Append content to buffer.
-        buffer.push_str(&content);
+        if top_level {
+            self.autoprint_output.push_str(&content);
+            return;
+        }
 
         // Stream output via the IOPub channel.
         let message = IOPubMessage::Stream(StreamOutput {
