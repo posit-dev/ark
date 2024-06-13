@@ -11,6 +11,7 @@ use amalthea::comm::data_explorer_comm;
 use amalthea::comm::data_explorer_comm::ColumnDisplayType;
 use amalthea::comm::data_explorer_comm::ColumnSummaryStats;
 use amalthea::comm::data_explorer_comm::FormatOptions;
+use anyhow::anyhow;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
@@ -73,11 +74,11 @@ fn summary_stats_number(
         .collect();
 
     Ok(SummaryStatsNumber(data_explorer_comm::SummaryStatsNumber {
-        min_value: r_stats["min_value"].clone(),
-        max_value: r_stats["max_value"].clone(),
-        mean: r_stats["mean"].clone(),
-        median: r_stats["median"].clone(),
-        stdev: r_stats["stdev"].clone(),
+        min_value: get_stat(&r_stats, "min_value")?,
+        max_value: get_stat(&r_stats, "max_value")?,
+        mean: get_stat(&r_stats, "mean")?,
+        median: get_stat(&r_stats, "median")?,
+        stdev: get_stat(&r_stats, "stdev")?,
     }))
 }
 
@@ -86,8 +87,8 @@ fn summary_stats_string(column: SEXP) -> anyhow::Result<SummaryStatsString> {
     let r_stats: HashMap<String, i32> = stats.try_into()?;
 
     Ok(SummaryStatsString(data_explorer_comm::SummaryStatsString {
-        num_empty: r_stats["num_empty"].clone() as i64,
-        num_unique: r_stats["num_unique"].clone() as i64,
+        num_empty: get_stat(&r_stats, "num_empty")? as i64,
+        num_unique: get_stat(&r_stats, "num_unique")? as i64,
     }))
 }
 
@@ -97,8 +98,8 @@ fn summary_stats_boolean(column: SEXP) -> anyhow::Result<SummaryStatsBoolean> {
 
     Ok(SummaryStatsBoolean(
         data_explorer_comm::SummaryStatsBoolean {
-            true_count: r_stats["true_count"].clone() as i64,
-            false_count: r_stats["false_count"].clone() as i64,
+            true_count: get_stat(&r_stats, "true_count")? as i64,
+            false_count: get_stat(&r_stats, "false_count")? as i64,
         },
     ))
 }
@@ -107,13 +108,13 @@ fn summary_stats_date(column: SEXP) -> anyhow::Result<SummaryStatsDate> {
     let r_stats: HashMap<String, RObject> =
         call_summary_fn("summary_stats_date", column)?.try_into()?;
 
-    let num_unique: i32 = r_stats["num_unique"].clone().try_into()?;
+    let num_unique: i32 = get_stat(&r_stats, "num_unique")?.try_into()?;
 
     Ok(SummaryStatsDate(data_explorer_comm::SummaryStatsDate {
-        min_date: robj_to_string(&r_stats["min_date"]),
-        mean_date: robj_to_string(&r_stats["mean_date"]),
-        median_date: robj_to_string(&r_stats["median_date"]),
-        max_date: robj_to_string(&r_stats["max_date"]),
+        min_date: robj_to_string(&get_stat(&r_stats, "min_date")?),
+        mean_date: robj_to_string(&get_stat(&r_stats, "mean_date")?),
+        median_date: robj_to_string(&get_stat(&r_stats, "median_date")?),
+        max_date: robj_to_string(&get_stat(&r_stats, "max_date")?),
         num_unique: num_unique as i64,
     }))
 }
@@ -131,10 +132,10 @@ fn summary_stats_datetime(column: SEXP) -> anyhow::Result<SummaryStatsDatetime> 
 
     Ok(SummaryStatsDatetime(
         data_explorer_comm::SummaryStatsDatetime {
-            min_date: robj_to_string(&r_stats["min_date"]),
-            mean_date: robj_to_string(&r_stats["mean_date"]),
-            median_date: robj_to_string(&r_stats["median_date"]),
-            max_date: robj_to_string(&r_stats["max_date"]),
+            min_date: robj_to_string(&get_stat(&r_stats, "min_date")?),
+            mean_date: robj_to_string(&get_stat(&r_stats, "mean_date")?),
+            median_date: robj_to_string(&get_stat(&r_stats, "median_date")?),
+            max_date: robj_to_string(&get_stat(&r_stats, "max_date")?),
             num_unique: num_unique as i64,
             timezone,
         },
@@ -216,6 +217,15 @@ fn empty_column_summary_stats() -> data_explorer_comm::ColumnSummaryStats {
         boolean_stats: None,
         date_stats: None,
         datetime_stats: None,
+    }
+}
+
+fn get_stat<T: Clone>(stats: &HashMap<String, T>, name: &str) -> anyhow::Result<T> {
+    let value = stats.get(name);
+
+    match value {
+        Some(value) => Ok(value.clone()),
+        None => Err(anyhow!("Missing stat {}", name)),
     }
 }
 
