@@ -1,6 +1,9 @@
-# Amalthea
+ark <img src="logo.webp" align="right" height=150 width=150 />
+=======================================================
 
 ## About
+
+TODO
 
 Experimental kernel framework and R kernel for Jupyter and Positron, written in Rust.
 
