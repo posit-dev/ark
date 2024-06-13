@@ -100,6 +100,15 @@ pub fn r_sys_frame(n: std::ffi::c_int) -> crate::Result<RObject> {
     }
 }
 
+pub fn r_sys_call(n: std::ffi::c_int) -> crate::Result<RObject> {
+    unsafe {
+        let mut protect = RProtect::new();
+        let n = protect.add(Rf_ScalarInteger(n));
+        let call = protect.add(r_lang!(r_symbol!("sys.call"), n));
+        Ok(harp::try_eval_silent(call, R_BaseEnv)?)
+    }
+}
+
 pub fn r_env_is_browsed(env: SEXP) -> anyhow::Result<bool> {
     if r_typeof(env) != ENVSXP {
         anyhow::bail!("`env` must be an environment");
