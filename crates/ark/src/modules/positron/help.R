@@ -31,9 +31,12 @@ help <- function(topic, package = NULL) {
   }
 }
 
-# Start R's dynamic HTTP help server; returns the chosen port (invisibly)
+#' Start R's dynamic HTTP help server; returns the chosen port (invisibly)
+#'
+#' If the help server is already started, the port already in use is returned
+#' (due to using `start = NA`).
 #' @export
-.ps.help.startHelpServer <- function() {
+.ps.help.startOrReconnectToHelpServer <- function() {
     suppressMessages(tools::startDynamicHelp(start = NA))
 }
 

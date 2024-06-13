@@ -37,18 +37,19 @@ use bus::BusReader;
 use crossbeam::channel::unbounded;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
+use harp::environment::R_ENVS;
 use harp::exec::r_parse_vector;
 use harp::exec::ParseResult;
 use harp::line_ending::convert_line_endings;
 use harp::line_ending::LineEnding;
 use harp::object::RObject;
-use libr::R_GlobalEnv;
 use log::*;
 use serde_json::json;
 use stdext::spawn;
 use stdext::unwrap;
 
 use crate::help::r_help::RHelp;
+use crate::help_proxy;
 use crate::interface::KernelInfo;
 use crate::interface::RMain;
 use crate::kernel::Kernel;
@@ -271,44 +272,73 @@ impl ShellHandler for Shell {
     /// Handles a request to open a new comm channel
     async fn handle_comm_open(&self, target: Comm, comm: CommSocket) -> Result<bool, Exception> {
         match target {
-            Comm::Variables => r_task(|| unsafe {
-                let global_env = RObject::view(R_GlobalEnv);
-                RVariables::start(global_env, comm.clone(), self.comm_manager_tx.clone());
-                Ok(true)
-            }),
-            Comm::Ui => {
-                // Create a frontend to wrap the comm channel we were just given. This starts
-                // a thread that proxies messages to the frontend.
-                let ui_comm_tx = UiComm::start(comm.clone(), self.stdin_request_tx.clone());
-
-                // Send the frontend event channel to the execution thread so it can emit
-                // events to the frontend.
-                if let Err(err) = self
-                    .kernel_request_tx
-                    .send(KernelRequest::EstablishUiCommChannel(ui_comm_tx.clone()))
-                {
-                    log::error!("Could not deliver UI comm channel to execution thread: {err:?}");
-                };
-                Ok(true)
-            },
-            Comm::Help => {
-                // Start the R Help handler
-                let (help_event_tx, help_port) = unwrap!(RHelp::start(comm.clone()), Err(err) => {
-                    log::warn!("Could not start R Help handler: {err:?}");
-                    return Ok(false);
-                });
-
-                // Send the help event channel to the main R thread so it can
-                // emit help events, to be delivered over the help comm.
-                r_task(|| {
-                    RMain::with_mut(|main| main.set_help_fields(help_event_tx, help_port));
-                });
-
-                Ok(true)
-            },
+            Comm::Variables => handle_comm_open_variables(comm, self.comm_manager_tx.clone()),
+            Comm::Ui => handle_comm_open_ui(
+                comm,
+                self.stdin_request_tx.clone(),
+                self.kernel_request_tx.clone(),
+            ),
+            Comm::Help => handle_comm_open_help(comm),
             _ => Ok(false),
         }
     }
+}
+
+fn handle_comm_open_variables(
+    comm: CommSocket,
+    comm_manager_tx: Sender<CommManagerEvent>,
+) -> Result<bool, Exception> {
+    r_task(|| {
+        let global_env = RObject::view(R_ENVS.global);
+        RVariables::start(global_env, comm, comm_manager_tx);
+        Ok(true)
+    })
+}
+
+fn handle_comm_open_ui(
+    comm: CommSocket,
+    stdin_request_tx: Sender<StdInRequest>,
+    kernel_request_tx: Sender<KernelRequest>,
+) -> Result<bool, Exception> {
+    // Create a frontend to wrap the comm channel we were just given. This starts
+    // a thread that proxies messages to the frontend.
+    let ui_comm_tx = UiComm::start(comm, stdin_request_tx);
+
+    // Send the frontend event channel to the execution thread so it can emit
+    // events to the frontend.
+    if let Err(err) = kernel_request_tx.send(KernelRequest::EstablishUiCommChannel(ui_comm_tx)) {
+        log::error!("Could not deliver UI comm channel to execution thread: {err:?}");
+    };
+
+    Ok(true)
+}
+
+fn handle_comm_open_help(comm: CommSocket) -> Result<bool, Exception> {
+    r_task(|| {
+        // Ensure the R help server is started, and get its port
+        let r_port = unwrap!(RHelp::r_start_or_reconnect_to_help_server(), Err(err) => {
+            log::error!("Could not start R help server: {err:?}");
+            return Ok(false);
+        });
+
+        // Ensure our proxy help server is started, and get its port
+        let proxy_port = unwrap!(help_proxy::start(r_port), Err(err) => {
+            log::error!("Could not start R help proxy server: {err:?}");
+            return Ok(false);
+        });
+
+        // Start the R Help handler that routes help requests
+        let help_event_tx = unwrap!(RHelp::start(comm, r_port, proxy_port), Err(err) => {
+            log::error!("Could not start R Help handler: {err:?}");
+            return Ok(false);
+        });
+
+        // Send the help event channel to the main R thread so it can
+        // emit help events, to be delivered over the help comm.
+        RMain::with_mut(|main| main.set_help_fields(help_event_tx, r_port));
+
+        Ok(true)
+    })
 }
 
 // Kernel is shared with the main R thread
