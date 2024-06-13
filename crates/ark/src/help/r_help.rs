@@ -232,7 +232,7 @@ impl RHelp {
         );
 
         let msg = HelpFrontendEvent::ShowHelp(ShowHelpParams {
-            content: proxy_url.clone(),
+            content: proxy_url,
             kind: ShowHelpKind::Url,
             focus: true,
         });
