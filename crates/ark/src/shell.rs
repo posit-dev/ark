@@ -46,6 +46,7 @@ use libr::R_GlobalEnv;
 use log::*;
 use serde_json::json;
 use stdext::spawn;
+use stdext::unwrap;
 
 use crate::help::r_help::RHelp;
 use crate::interface::KernelInfo;
@@ -292,20 +293,15 @@ impl ShellHandler for Shell {
             },
             Comm::Help => {
                 // Start the R Help handler
-                let (help_request_tx, help_reply_rx) = match RHelp::start(comm.clone()) {
-                    Ok(tx) => tx,
-                    Err(err) => {
-                        warn!("Could not start R Help handler: {}", err);
-                        return Ok(false);
-                    },
-                };
+                let (help_event_tx, help_port) = unwrap!(RHelp::start(comm.clone()), Err(err) => {
+                    log::warn!("Could not start R Help handler: {err:?}");
+                    return Ok(false);
+                });
 
-                // Send the help request channel to the main R thread so it can
+                // Send the help event channel to the main R thread so it can
                 // emit help events, to be delivered over the help comm.
                 r_task(|| {
-                    let main = RMain::get_mut();
-                    main.help_tx = Some(help_request_tx.clone());
-                    main.help_rx = Some(help_reply_rx.clone());
+                    RMain::with_mut(|main| main.set_help_fields(help_event_tx, help_port));
                 });
 
                 Ok(true)
