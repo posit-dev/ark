@@ -457,7 +457,7 @@ pub struct SetRowFiltersFeatures {
 	pub support_status: SupportStatus,
 
 	/// Whether AND/OR filter conditions are supported
-	pub supports_conditions: bool,
+	pub supports_conditions: SupportStatus,
 
 	/// A list of supported types
 	pub supported_types: Vec<RowFilterTypeSupportStatus>
