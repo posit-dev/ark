@@ -1125,7 +1125,7 @@ This is a Positron limitation we plan to fix. In the meantime, you can:
         // We don't fill out `ename` with anything meaningful because typically
         // R errors don't have names. We could consider using the condition class
         // here, which r-lib/tidyverse packages have been using more heavily.
-        let exception = if error_occurred {
+        let mut exception = if error_occurred {
             Exception {
                 ename: String::from(""),
                 evalue: self.error_message.clone(),
@@ -1143,6 +1143,16 @@ This is a Positron limitation we plan to fix. In the meantime, you can:
                 traceback,
             }
         };
+
+        // Jupyter clients typically discard the `evalue` when a `traceback` is
+        // present.  Jupyter-Console even disregards `evalue` in all cases. So
+        // include it here if we are in Notebook mode. But should Positron
+        // implement similar behaviour as the other frontends eventually? The
+        // first component of `traceback` could be compared to `evalue` and
+        // discarded from the traceback if the same.
+        if let SessionMode::Notebook = self.session_mode {
+            exception.traceback.insert(0, exception.evalue.clone())
+        }
 
         let response = new_execute_response_error(exception.clone(), exec_count);
         let result = IOPubMessage::ExecuteError(ExecuteError { exception });
