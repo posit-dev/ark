@@ -668,7 +668,7 @@ impl RDataExplorer {
         let column = tbl_get_column(self.table.get().sexp, column_index, self.shape.kind)?;
         let dtype = display_type(column.sexp);
 
-        // Filter the column if we have filtered indices before computing the summmary.
+        // Filter the column if we have filtered indices before computing the summmary
         let filtered_column = match &self.filtered_indices {
             Some(indices) => RFunction::from("col_filter_indices")
                 .add(column)
