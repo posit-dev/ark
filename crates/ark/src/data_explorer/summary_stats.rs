@@ -120,11 +120,12 @@ fn summary_stats_date(column: SEXP) -> anyhow::Result<SummaryStatsDate> {
 }
 
 fn summary_stats_datetime(column: SEXP) -> anyhow::Result<SummaryStatsDatetime> {
-    // use the same implementationas the date
+    // Use the same implementationas the date summary stats
+    // but add the timezone.
     let r_stats: HashMap<String, RObject> =
         call_summary_fn("summary_stats_date", column)?.try_into()?;
 
-    let num_unique: i32 = r_stats["num_unique"].clone().try_into()?;
+    let num_unique: i32 = get_stat(&r_stats, "num_unique")?.try_into()?;
     let timezone: Option<String> = RFunction::from("summary_stats_get_timezone")
         .add(column)
         .call_in(ARK_ENVS.positron_ns)?
