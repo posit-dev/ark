@@ -160,8 +160,9 @@ impl WorkspaceVariableDisplayValue {
 
     fn from_env(value: SEXP) -> Self {
         // Get the environment and its length (excluding hidden bindings)
-        let environment = Environment::new(RObject::view(value));
-        let environment_length = environment.length(EnvironmentFilter::ExcludeHiddenBindings);
+        let environment =
+            Environment::new_filtered(RObject::view(value), EnvironmentFilter::ExcludeHidden);
+        let environment_length = environment.length();
 
         // If the environment is empty, return the empty display value. If the environment is
         // large, return the large display value (because it may be too expensive to sort the
@@ -438,8 +439,10 @@ fn has_children(value: SEXP) -> bool {
         match r_typeof(value) {
             VECSXP | EXPRSXP => unsafe { Rf_xlength(value) != 0 },
             LISTSXP => true,
-            ENVSXP => !Environment::new(RObject::view(value))
-                .is_empty(EnvironmentFilter::ExcludeHiddenBindings),
+            ENVSXP => {
+                !Environment::new_filtered(RObject::view(value), EnvironmentFilter::ExcludeHidden)
+                    .is_empty()
+            },
             LGLSXP | RAWSXP | STRSXP | INTSXP | REALSXP | CPLXSXP => unsafe {
                 Rf_xlength(value) > 1
             },
@@ -1202,12 +1205,12 @@ impl PositronVariable {
     }
 
     fn inspect_environment(value: RObject) -> Result<Vec<Variable>, harp::error::Error> {
-        let mut out: Vec<Variable> = Environment::new(value)
-            .iter()
-            .filter_map(|b| b.ok())
-            .filter(|b: &Binding| !b.is_hidden())
-            .map(|b| Self::new(&b).var())
-            .collect();
+        let mut out: Vec<Variable> =
+            Environment::new_filtered(value, EnvironmentFilter::ExcludeHidden)
+                .iter()
+                .filter_map(|b| b.ok())
+                .map(|b| Self::new(&b).var())
+                .collect();
 
         out.sort_by(|a, b| a.display_name.cmp(&b.display_name));
 
