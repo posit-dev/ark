@@ -21,7 +21,7 @@ pub static mut PORT: u16 = 0;
 #[harp::register]
 pub unsafe extern "C" fn ps_browse_url(url: SEXP) -> Result<SEXP> {
     ps_browse_url_impl(url).or_else(|err| {
-        log::error!("{err:?}");
+        log::error!("Failed to browse url due to: {err}");
         Ok(Rf_ScalarLogical(0))
     })
 }
@@ -60,19 +60,22 @@ unsafe fn handle_help_url(url: &str) -> Result<bool> {
 unsafe fn ps_browse_url_impl(url: SEXP) -> Result<SEXP> {
     // Extract URL.
     let url = RObject::view(url).to::<String>()?;
+    let _span = tracing::trace_span!("browseURL", url = %url).entered();
 
     // Handle help server requests.
     if handle_help_url(&url)? {
+        log::trace!("Help is handling URL");
         return Ok(Rf_ScalarLogical(1));
+    } else {
+        log::trace!("Help is not handling URL");
     }
 
     // For all other URLs, create a ShowUrl event and send it to the main
     // thread; Positron will handle it.
     let params = ShowUrlParams { url };
-
-    let main = RMain::get();
     let event = UiFrontendEvent::ShowUrl(params);
-    main.send_frontend_event(event);
+
+    RMain::with(|main| main.send_frontend_event(event));
 
     Ok(Rf_ScalarLogical(1))
 }

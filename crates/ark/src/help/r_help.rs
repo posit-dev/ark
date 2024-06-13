@@ -187,7 +187,10 @@ impl RHelp {
         }
     }
 
+    #[tracing::instrument(level = "trace", skip_all, fields(message = %message))]
     fn handle_request(&self, message: HelpRequest) -> Result<()> {
+        log::trace!("{message:#?}");
+
         match message {
             HelpRequest::ShowHelpUrlRequest(url) => {
                 let found = match self.show_help_url(&url) {
@@ -222,9 +225,14 @@ impl RHelp {
         let proxy_port = unsafe { browser::PORT };
         let replacement = format!("http://127.0.0.1:{}/", proxy_port);
 
-        let url = url.replace(prefix.as_str(), replacement.as_str());
+        let proxy_url = url.replace(prefix.as_str(), replacement.as_str());
+
+        log::trace!(
+            "Sending frontend event `ShowHelp` with R url '{url}' and proxy url '{proxy_url}'"
+        );
+
         let msg = HelpFrontendEvent::ShowHelp(ShowHelpParams {
-            content: url,
+            content: proxy_url,
             kind: ShowHelpKind::Url,
             focus: true,
         });
@@ -235,6 +243,7 @@ impl RHelp {
         Ok(true)
     }
 
+    #[tracing::instrument(level = "trace", skip(self))]
     fn show_help_topic(&self, topic: String) -> Result<bool> {
         let found = r_task(|| unsafe {
             RFunction::from(".ps.help.showHelpTopic")
