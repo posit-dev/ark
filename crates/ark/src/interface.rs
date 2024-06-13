@@ -1292,7 +1292,7 @@ This is a Positron limitation we plan to fix. In the meantime, you can:
         RHelp::is_help_url(url, port)
     }
 
-    pub(crate) fn send_lsp_notification(&self, event: KernelNotification) {
+    fn send_lsp_notification(&self, event: KernelNotification) {
         if let Some(ref tx) = self.lsp_events_tx {
             tx.send(Event::Kernel(event)).unwrap();
         }
