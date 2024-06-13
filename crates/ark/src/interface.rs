@@ -122,6 +122,18 @@ use crate::srcref::resource_loaded_namespaces;
 use crate::startup;
 use crate::sys::console::console_to_utf8;
 
+/// An enum representing the different modes in which the R session can run.
+pub enum SessionMode {
+    /// A session with an interactive console (REPL), such as in Positron.
+    Console,
+
+    /// A session in a Jupyter or Jupyter-like notebook.
+    Notebook,
+
+    /// A background session, typically not connected to any UI.
+    Background,
+}
+
 // --- Globals ---
 // These values must be global in order for them to be accessible from R
 // callbacks, which do not have a facility for passing or returning context.
@@ -149,6 +161,7 @@ pub fn start_r(
     iopub_tx: Sender<IOPubMessage>,
     kernel_init_tx: Bus<KernelInfo>,
     dap: Arc<Mutex<Dap>>,
+    session_mode: SessionMode,
 ) {
     // Initialize global state (ensure we only do this once!)
     INIT.call_once(|| unsafe {
@@ -171,6 +184,7 @@ pub fn start_r(
             iopub_tx,
             kernel_init_tx,
             dap,
+            session_mode,
         ));
     });
 
@@ -272,6 +286,9 @@ pub fn start_r(
 pub struct RMain {
     initializing: bool,
     kernel_init_tx: Bus<KernelInfo>,
+
+    /// Whether we are running in Console, Notebook, or Background mode.
+    session_mode: SessionMode,
 
     /// Channel used to send along messages relayed on the open comms.
     comm_manager_tx: Sender<CommManagerEvent>,
@@ -404,6 +421,7 @@ impl RMain {
         iopub_tx: Sender<IOPubMessage>,
         kernel_init_tx: Bus<KernelInfo>,
         dap: Arc<Mutex<Dap>>,
+        session_mode: SessionMode,
     ) -> Self {
         Self {
             initializing: true,
@@ -429,6 +447,7 @@ impl RMain {
             tasks_interrupt_rx,
             tasks_idle_rx,
             pending_futures: HashMap::new(),
+            session_mode,
         }
     }
 
@@ -812,13 +831,19 @@ impl RMain {
         self.error_occurred = false;
 
         match input {
-            ConsoleInput::Input(code) => {
+            ConsoleInput::Input(mut code) => {
                 // Handle commands for the debug interpreter
                 if self.dap.is_debugging() {
                     let continue_cmds = vec!["n", "f", "c", "cont"];
                     if continue_cmds.contains(&&code[..]) {
                         self.dap.send_dap(DapBackendEvent::Continued);
                     }
+                }
+
+                // In notebooks, wrap in braces so that only the last complete
+                // expression is auto-printed
+                if let SessionMode::Notebook = self.session_mode {
+                    code = format!("{{ {code} }}");
                 }
 
                 Self::on_console_input(buf, buflen, code);
