@@ -187,7 +187,10 @@ impl RHelp {
         }
     }
 
+    #[tracing::instrument(level = "trace", skip_all, fields(message = %message))]
     fn handle_request(&self, message: HelpRequest) -> Result<()> {
+        log::trace!("{message:#?}");
+
         match message {
             HelpRequest::ShowHelpUrlRequest(url) => {
                 let found = match self.show_help_url(&url) {
@@ -224,7 +227,7 @@ impl RHelp {
 
         let proxy_url = url.replace(prefix.as_str(), replacement.as_str());
 
-        log::info!(
+        log::trace!(
             "Sending frontend event `ShowHelp` with R url '{url}' and proxy url '{proxy_url}'"
         );
 
@@ -235,8 +238,6 @@ impl RHelp {
         });
         let json = serde_json::to_value(msg)?;
         self.comm.outgoing_tx.send(CommMsg::Data(json))?;
-
-        log::info!("Sent `ShowHelp` with proxy url '{proxy_url}'");
 
         // The URL was handled.
         Ok(true)

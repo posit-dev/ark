@@ -60,23 +60,22 @@ unsafe fn handle_help_url(url: &str) -> Result<bool> {
 unsafe fn ps_browse_url_impl(url: SEXP) -> Result<SEXP> {
     // Extract URL.
     let url = RObject::view(url).to::<String>()?;
+    let _span = tracing::trace_span!("browseURL", url = %url).entered();
 
     // Handle help server requests.
     if handle_help_url(&url)? {
-        log::info!("Help is handling URL: '{url}'");
+        log::trace!("Help is handling URL");
         return Ok(Rf_ScalarLogical(1));
     } else {
-        log::info!("Help is not handling URL: '{url}'");
+        log::trace!("Help is not handling URL");
     }
 
     // For all other URLs, create a ShowUrl event and send it to the main
     // thread; Positron will handle it.
-    let params = ShowUrlParams { url: url.clone() };
+    let params = ShowUrlParams { url };
     let event = UiFrontendEvent::ShowUrl(params);
 
-    log::info!("Sending `ShowUrl` event for URL: '{url}'");
     RMain::with(|main| main.send_frontend_event(event));
-    log::info!("Sent `ShowUrl` event for URL: '{url}'");
 
     Ok(Rf_ScalarLogical(1))
 }

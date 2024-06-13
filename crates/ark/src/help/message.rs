@@ -22,3 +22,11 @@ pub enum HelpReply {
     /// shown.
     ShowHelpUrlReply(bool),
 }
+
+impl std::fmt::Display for HelpRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            HelpRequest::ShowHelpUrlRequest(_) => write!(f, "ShowHelpUrlRequest"),
+        }
+    }
+}
