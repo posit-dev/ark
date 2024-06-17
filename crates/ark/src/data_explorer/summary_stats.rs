@@ -24,7 +24,6 @@ use harp::utils::r_names2;
 use harp::vector::CharacterVector;
 use harp::vector::Vector;
 use libr::SEXP;
-use stdext::unwrap;
 
 use crate::data_explorer::format::format_string;
 use crate::modules::ARK_ENVS;
@@ -125,10 +124,10 @@ fn summary_stats_date(column: SEXP) -> anyhow::Result<SummaryStatsDate> {
     let num_unique: i32 = get_stat(&r_stats, "num_unique")?.try_into()?;
 
     Ok(SummaryStatsDate {
-        min_date: robj_to_string(&get_stat(&r_stats, "min_date")?),
-        mean_date: robj_to_string(&get_stat(&r_stats, "mean_date")?),
-        median_date: robj_to_string(&get_stat(&r_stats, "median_date")?),
-        max_date: robj_to_string(&get_stat(&r_stats, "max_date")?),
+        min_date: get_stat(&r_stats, "min_date")?.try_into()?,
+        mean_date: get_stat(&r_stats, "mean_date")?.try_into()?,
+        median_date: get_stat(&r_stats, "median_date")?.try_into()?,
+        max_date: get_stat(&r_stats, "max_date")?.try_into()?,
         num_unique: num_unique as i64,
     })
 }
@@ -146,28 +145,13 @@ fn summary_stats_datetime(column: SEXP) -> anyhow::Result<SummaryStatsDatetime> 
         .try_into()?;
 
     Ok(SummaryStatsDatetime {
-        min_date: robj_to_string(&get_stat(&r_stats, "min_date")?),
-        mean_date: robj_to_string(&get_stat(&r_stats, "mean_date")?),
-        median_date: robj_to_string(&get_stat(&r_stats, "median_date")?),
-        max_date: robj_to_string(&get_stat(&r_stats, "max_date")?),
+        min_date: get_stat(&r_stats, "min_date")?.try_into()?,
+        mean_date: get_stat(&r_stats, "mean_date")?.try_into()?,
+        median_date: get_stat(&r_stats, "median_date")?.try_into()?,
+        max_date: get_stat(&r_stats, "max_date")?.try_into()?,
         num_unique: num_unique as i64,
         timezone,
     })
-}
-
-fn robj_to_string(robj: &RObject) -> String {
-    let string: Option<String> = unwrap!(robj.clone().try_into(), Err(e) => {
-        log::error!("Date stats: Error converting RObject to String: {e}");
-        None
-    });
-
-    match string {
-        Some(s) => s,
-        None => {
-            log::warn!("Date stats: Expected a string, got NA");
-            "NA".to_string()
-        },
-    }
 }
 
 fn call_summary_fn(function: &str, column: SEXP) -> anyhow::Result<RObject> {
