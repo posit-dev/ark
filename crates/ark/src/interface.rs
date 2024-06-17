@@ -1662,7 +1662,8 @@ fn do_resource_namespaces() -> bool {
 /// the first frame on the stack is a call to `print()` with the function
 /// inlined in CAR (it just so happens that this is how R constructs this call
 /// for objects requiring dispatch - this heuristic can lead to unexpected
-/// behaviour in edge cases).
+/// behaviour in edge cases). See:
+/// https://github.com/wch/r-source/blob/bb7081cde24feeb59de9542018e31c14641e019e/src/main/print.c#L359-L38
 ///
 /// We don't currently detect auto-printing in browser sessions as this is a bit
 /// tricky.
