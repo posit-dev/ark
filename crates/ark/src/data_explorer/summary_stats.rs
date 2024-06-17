@@ -34,7 +34,7 @@ pub fn summary_stats(
         Err(e) => {
             // We want to log the error but return an empty summary stats so
             // that the user can still see the rest of the data.
-            log::error!("Error getting summary stats: {:?}", e);
+            log::error!("Error getting summary stats: {e:?}");
             empty_column_summary_stats()
         },
     }

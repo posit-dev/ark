@@ -84,17 +84,19 @@ summary_stats_get_timezone <- function(x) {
         }
     }
 
-    if (inherits(x, "POSIXt")) {
-        timezone <- tz(x)
-        # when the timezone is reported as "", it will actually be formatted
-        # using the system timzeone, so we report it instead.
-        if (timezone == "") {
-            timezone <- Sys.timezone()
-        }
-        timezone
-    } else {
+    if (!inherits(x, "POSIXt")) {
         stop("Timezone can't be obtained for this object type")
     }
+    
+    timezone <- tz(x)
+
+    # When the timezone is reported as "", it will actually be formatted
+    # using the system timzeone, so we report it instead.
+    if (timezone == "") {
+        timezone <- Sys.timezone()
+    }
+
+    timezone
 }
 
 col_filter_indices <- function(col, idx = NULL) {
