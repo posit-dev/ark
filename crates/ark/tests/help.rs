@@ -13,9 +13,8 @@ use amalthea::comm::help_comm::HelpBackendRequest;
 use amalthea::comm::help_comm::ShowHelpTopicParams;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
-use ark::help::message::HelpReply;
-use ark::help::message::HelpRequest;
 use ark::help::r_help::RHelp;
+use ark::help_proxy;
 use ark::r_task::r_task;
 use ark::test::r_test;
 use harp::exec::RFunction;
@@ -37,10 +36,12 @@ fn test_help_comm() {
         let incoming_tx = comm.incoming_tx.clone();
         let outgoing_rx = comm.outgoing_rx.clone();
 
-        // Start the help comm. It's important to save the help request sender so
+        // Start the help comm. It's important to save the help event sender so
         // that the help comm doesn't exit before we're done with it; allowing the
         // sender to be dropped signals the help comm to exit.
-        let (help_request_tx, help_reply_rx) = RHelp::start(comm).unwrap();
+        let r_port = RHelp::r_start_or_reconnect_to_help_server().unwrap();
+        let proxy_port = help_proxy::start(r_port).unwrap();
+        let _help_event_tx = RHelp::start(comm, r_port, proxy_port).unwrap();
 
         // Utility function for testing `ShowHelpTopic` requests
         let test_topic = |topic: &str, id: &str| {
@@ -80,19 +81,6 @@ fn test_help_comm() {
         // an internal function
         test_topic("utils:::find", "help-test-id-3");
 
-        let duration = std::time::Duration::from_secs(1);
-
-        // Send a request to show a help URL. This URL isn't in help format, so we
-        // don't expect it to be handled.
-        let url = String::from("https://www.example.com");
-        let request = HelpRequest::ShowHelpUrlRequest(url);
-        help_request_tx.send(request).unwrap();
-        let response = help_reply_rx.recv_timeout(duration).unwrap();
-        let handled = match response {
-            HelpReply::ShowHelpUrlReply(handled) => handled,
-        };
-        assert_eq!(handled, false);
-
         // Figure out which port the R help server is running on (or would run on)
         let r_help_port = r_task(|| unsafe {
             RFunction::new_internal("tools", "httpdPort")
@@ -101,18 +89,15 @@ fn test_help_comm() {
         })
         .unwrap();
 
-        // Send a request to show a help URL with a valid help URL. This one should
-        // be handled.
+        // This URL isn't in help format, so we don't expect it to be handled.
+        let url = String::from("https://www.example.com");
+        assert!(!RHelp::is_help_url(url.as_str(), r_help_port));
+
+        // This one should be handled.
         let url = format!(
             "http://127.0.0.1:{}/library/base/html/plot.html",
             r_help_port
         );
-        let request = HelpRequest::ShowHelpUrlRequest(url);
-        help_request_tx.send(request).unwrap();
-        let response = help_reply_rx.recv_timeout(duration).unwrap();
-        let handled = match response {
-            HelpReply::ShowHelpUrlReply(handled) => handled,
-        };
-        assert_eq!(handled, true);
+        assert!(RHelp::is_help_url(url.as_str(), r_help_port));
     })
 }

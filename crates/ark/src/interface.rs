@@ -98,8 +98,8 @@ use crate::dap::dap::DapBackendEvent;
 use crate::dap::dap_r_main::RMainDap;
 use crate::dap::Dap;
 use crate::errors;
-use crate::help::message::HelpReply;
-use crate::help::message::HelpRequest;
+use crate::help::message::HelpEvent;
+use crate::help::r_help::RHelp;
 use crate::kernel::Kernel;
 use crate::lsp::events::EVENTS;
 use crate::lsp::main_loop::Event;
@@ -337,9 +337,10 @@ pub struct RMain {
     pub error_message: String, // `evalue` in the Jupyter protocol
     pub error_traceback: Vec<String>,
 
-    // Channels to communicate with the Help thread
-    pub help_tx: Option<Sender<HelpRequest>>,
-    pub help_rx: Option<Receiver<HelpReply>>,
+    /// Channel to communicate with the Help thread
+    help_event_tx: Option<Sender<HelpEvent>>,
+    /// R help port
+    help_port: Option<u16>,
 
     /// Event channel for notifying the LSP. In principle, could be a Jupyter comm.
     lsp_events_tx: Option<TokioUnboundedSender<Event>>,
@@ -440,8 +441,8 @@ impl RMain {
             error_occurred: false,
             error_message: String::new(),
             error_traceback: Vec::new(),
-            help_tx: None,
-            help_rx: None,
+            help_event_tx: None,
+            help_port: None,
             lsp_events_tx: None,
             dap: RMainDap::new(dap),
             is_busy: false,
@@ -493,12 +494,18 @@ impl RMain {
         }
     }
 
-    pub fn with<F: FnOnce(&RMain)>(f: F) {
+    pub fn with<F, T>(f: F) -> T
+    where
+        F: FnOnce(&RMain) -> T,
+    {
         let main = Self::get();
         f(main)
     }
 
-    pub fn with_mut<F: FnOnce(&mut RMain)>(f: F) {
+    pub fn with_mut<F, T>(f: F) -> T
+    where
+        F: FnOnce(&mut RMain) -> T,
+    {
         let main = Self::get_mut();
         f(main)
     }
@@ -1404,6 +1411,33 @@ This is a Positron limitation we plan to fix. In the meantime, you can:
 
     pub fn get_kernel(&self) -> &Arc<Mutex<Kernel>> {
         &self.kernel
+    }
+
+    pub(crate) fn set_help_fields(&mut self, help_event_tx: Sender<HelpEvent>, help_port: u16) {
+        self.help_event_tx = Some(help_event_tx);
+        self.help_port = Some(help_port);
+    }
+
+    pub(crate) fn send_help_event(&self, event: HelpEvent) -> anyhow::Result<()> {
+        let Some(ref tx) = self.help_event_tx else {
+            return Err(anyhow!("No help channel available to handle help event. Is the help comm open? Event {event:?}."));
+        };
+
+        if let Err(err) = tx.send(event) {
+            return Err(anyhow!("Failed to send help message: {err:?}"));
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn is_help_url(&self, url: &str) -> bool {
+        let Some(port) = self.help_port else {
+            log::error!("No help port is available to check if '{url}' is a help url. Is the help comm open?");
+            // Fail to recognize this as a help url, allow any fallbacks methods to run instead.
+            return false;
+        };
+
+        RHelp::is_help_url(url, port)
     }
 
     fn send_lsp_notification(&self, event: KernelNotification) {
