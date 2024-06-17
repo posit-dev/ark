@@ -669,13 +669,7 @@ impl RDataExplorer {
         let dtype = display_type(column.sexp);
 
         // Filter the column if we have filtered indices before computing the summmary
-        let filtered_column = match &self.filtered_indices {
-            Some(indices) => RFunction::from("col_filter_indices")
-                .add(column)
-                .add(RObject::try_from(indices)?)
-                .call_in(ARK_ENVS.positron_ns)?,
-            None => column,
-        };
+        let filtered_column = r_filter_indices(column, &self.filtered_indices)?;
 
         Ok(summary_stats(filtered_column.sexp, dtype, format_options))
     }
@@ -1135,6 +1129,16 @@ fn display_type(x: SEXP) -> ColumnDisplayType {
 
 fn table_info_or_bail(x: SEXP) -> anyhow::Result<TableInfo> {
     harp::table_info(x).ok_or(anyhow!("Unsupported type for data viewer"))
+}
+
+fn r_filter_indices(x: RObject, indices: &Option<Vec<i32>>) -> anyhow::Result<RObject> {
+    Ok(match &indices {
+        Some(indices) => RFunction::from("col_filter_indices")
+            .add(x)
+            .add(RObject::try_from(indices)?)
+            .call_in(ARK_ENVS.positron_ns)?,
+        None => x,
+    })
 }
 
 /// Open an R object in the data viewer.
