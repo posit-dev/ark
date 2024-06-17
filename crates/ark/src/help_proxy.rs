@@ -23,7 +23,6 @@ use stdext::spawn;
 use stdext::unwrap;
 use url::Url;
 
-use crate::browser;
 use crate::r_task;
 
 // Embed `resources/help/` which is where replacement resources can be found.
@@ -37,23 +36,24 @@ struct PreviewRdParams {
 }
 
 // Starts the help proxy.
-pub fn start(target_port: u16) {
+pub fn start(target_port: u16) -> anyhow::Result<u16> {
+    let source_port = HelpProxy::get_os_assigned_port()?;
+
     spawn!("ark-help-proxy", move || {
-        match task(target_port) {
+        match task(source_port, target_port) {
             Ok(value) => log::info!("Help proxy server exited with value: {:?}", value),
             Err(error) => log::error!("Help proxy server exited unexpectedly: {}", error),
         }
     });
+
+    Ok(source_port)
 }
 
 // The help proxy main entry point.
 #[tokio::main]
-async fn task(target_port: u16) -> anyhow::Result<()> {
+async fn task(source_port: u16, target_port: u16) -> anyhow::Result<()> {
     // Create the help proxy.
-    let help_proxy = HelpProxy::new(target_port)?;
-
-    // Set the help proxy port.
-    unsafe { browser::PORT = help_proxy.source_port };
+    let help_proxy = HelpProxy::new(source_port, target_port)?;
 
     // Run the help proxy.
     Ok(help_proxy.run().await?)
@@ -62,27 +62,27 @@ async fn task(target_port: u16) -> anyhow::Result<()> {
 // AppState struct.
 #[derive(Clone)]
 struct AppState {
-    pub target_port: u16,
+    target_port: u16,
 }
 
 // HelpProxy struct.
 struct HelpProxy {
-    pub source_port: u16,
-    pub target_port: u16,
+    source_port: u16,
+    target_port: u16,
 }
 
 // HelpProxy implementation.
 impl HelpProxy {
     // Creates a new HelpProxy.
-    pub fn new(target_port: u16) -> anyhow::Result<Self> {
+    fn new(source_port: u16, target_port: u16) -> anyhow::Result<Self> {
         Ok(HelpProxy {
-            source_port: TcpListener::bind("127.0.0.1:0")?.local_addr()?.port(),
+            source_port,
             target_port,
         })
     }
 
     // Runs the HelpProxy.
-    pub async fn run(&self) -> anyhow::Result<()> {
+    async fn run(&self) -> anyhow::Result<()> {
         // Create the app state.
         let app_state = web::Data::new(AppState {
             target_port: self.target_port,
@@ -100,6 +100,10 @@ impl HelpProxy {
 
         // Run the server.
         Ok(server.run().await?)
+    }
+
+    fn get_os_assigned_port() -> std::io::Result<u16> {
+        Ok(TcpListener::bind("127.0.0.1:0")?.local_addr()?.port())
     }
 }
 

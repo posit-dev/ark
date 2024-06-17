@@ -15,8 +15,6 @@ use crate::help::message::HelpEvent;
 use crate::help::message::ShowHelpUrlParams;
 use crate::interface::RMain;
 
-pub static mut PORT: u16 = 0;
-
 #[harp::register]
 pub unsafe extern "C" fn ps_browse_url(url: SEXP) -> anyhow::Result<SEXP> {
     ps_browse_url_impl(url).or_else(|err| {

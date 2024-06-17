@@ -23,10 +23,8 @@ use log::trace;
 use log::warn;
 use stdext::spawn;
 
-use crate::browser;
 use crate::help::message::HelpEvent;
 use crate::help::message::ShowHelpUrlParams;
-use crate::help_proxy;
 use crate::r_task;
 
 /**
@@ -35,7 +33,8 @@ use crate::r_task;
  */
 pub struct RHelp {
     comm: CommSocket,
-    r_help_port: u16,
+    r_port: u16,
+    proxy_port: u16,
     help_event_rx: Receiver<HelpEvent>,
 }
 
@@ -45,38 +44,14 @@ impl RHelp {
      * the help thread.
      *
      * - `comm`: The socket for communicating with the frontend.
+     * - `r_port`: The R help server port.
+     * - `proxy_port`: Our proxy help server port.
      */
-    pub fn start(comm: CommSocket) -> anyhow::Result<(Sender<HelpEvent>, u16)> {
-        // Check to see whether the help server has started. We set the port
-        // number when it starts, so if it's still at the default value (0), it
-        // hasn't started.
-        let mut started = false;
-        let r_help_port: u16;
-        unsafe {
-            if browser::PORT != 0 {
-                started = true;
-            }
-        }
-
-        if started {
-            // We have already started the help server; get the port number.
-            r_help_port =
-                r_task(|| unsafe { RFunction::new("tools", "httpdPort").call()?.to::<u16>() })?;
-            trace!(
-                "Help comm {} started; reconnected help server on port {}",
-                comm.comm_id,
-                r_help_port
-            );
-        } else {
-            // If we haven't started the help server, start it now.
-            r_help_port = RHelp::start_help_server()?;
-            trace!(
-                "Help comm {} started; started help server on port {}",
-                comm.comm_id,
-                r_help_port
-            );
-        }
-
+    pub fn start(
+        comm: CommSocket,
+        r_port: u16,
+        proxy_port: u16,
+    ) -> anyhow::Result<Sender<HelpEvent>> {
         // Create the channel that will be used to send help events from other threads.
         let (help_event_tx, help_event_rx) = crossbeam::channel::unbounded();
 
@@ -85,16 +60,16 @@ impl RHelp {
         spawn!("ark-help", move || {
             let help = Self {
                 comm,
-                r_help_port,
+                r_port,
+                proxy_port,
                 help_event_rx,
             };
 
             help.execution_thread();
         });
 
-        // Return the channel for sending help events to the help thread,
-        // and the R help port for use with `is_help_url()`.
-        Ok((help_event_tx, r_help_port))
+        // Return the channel for sending help events to the help thread
+        Ok(help_event_tx)
     }
 
     /// Public associated function so that callers of `start()` can cheaply check if
@@ -209,18 +184,16 @@ impl RHelp {
     fn handle_show_help_url(&self, params: ShowHelpUrlParams) -> anyhow::Result<()> {
         let url = params.url;
 
-        if !Self::is_help_url(url.as_str(), self.r_help_port) {
-            let prefix = Self::help_url_prefix(self.r_help_port);
+        if !Self::is_help_url(url.as_str(), self.r_port) {
+            let prefix = Self::help_url_prefix(self.r_port);
             return Err(anyhow!(
                 "Help URL '{url}' doesn't have expected prefix '{prefix}'."
             ));
         }
 
         // Re-direct the help event to our help proxy server.
-        let proxy_port = unsafe { browser::PORT };
-
-        let r_prefix = Self::help_url_prefix(self.r_help_port);
-        let proxy_prefix = Self::help_url_prefix(proxy_port);
+        let r_prefix = Self::help_url_prefix(self.r_port);
+        let proxy_prefix = Self::help_url_prefix(self.proxy_port);
 
         let proxy_url = url.replace(r_prefix.as_str(), proxy_prefix.as_str());
 
@@ -251,16 +224,11 @@ impl RHelp {
         Ok(found)
     }
 
-    fn start_help_server() -> anyhow::Result<u16> {
-        // Start the R side of the help server
-        let help_server_port = r_task(|| unsafe {
-            RFunction::from(".ps.help.startHelpServer")
-                .call()?
-                .to::<u16>()
-        })?;
-
-        // Start the help proxy server
-        help_proxy::start(help_server_port);
-        Ok(help_server_port)
+    pub fn r_start_or_reconnect_to_help_server() -> harp::Result<u16> {
+        // Start the R help server.
+        // If it is already started, it just returns the preexisting port number.
+        RFunction::from(".ps.help.startOrReconnectToHelpServer")
+            .call()
+            .and_then(|x| x.try_into())
     }
 }
