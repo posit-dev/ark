@@ -1297,7 +1297,12 @@ This is a Positron limitation we plan to fix. In the meantime, you can:
         // the R REPL. We accumulate this output (it typically comes in
         // multiple parts) so we can emit it later on as part of execution
         // results.
-        if is_auto_printing() {
+        //
+        // Note that warnings emitted lazily on stdout will appear to be part of
+        // autoprint. We currently emit them on stderr, which allows us to
+        // differentiate, but that could change in the future:
+        // https://github.com/posit-dev/positron/issues/1881
+        if otype == 0 && is_auto_printing() {
             self.autoprint_output.push_str(&content);
             return;
         }
