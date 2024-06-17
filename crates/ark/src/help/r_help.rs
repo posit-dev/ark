@@ -55,7 +55,7 @@ impl RHelp {
         // Create the channel that will be used to send help events from other threads.
         let (help_event_tx, help_event_rx) = crossbeam::channel::unbounded();
 
-        // Start the help thread and wait for requests from the front end or events
+        // Start the help thread and wait for requests from the frontend or events
         // from another thread.
         spawn!("ark-help", move || {
             let help = Self {
