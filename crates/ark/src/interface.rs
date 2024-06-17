@@ -57,6 +57,7 @@ use crossbeam::channel::unbounded;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use crossbeam::select;
+use harp::environment::r_ns_env;
 use harp::environment::Environment;
 use harp::environment::R_ENVS;
 use harp::exec::r_check_stack;
@@ -75,6 +76,7 @@ use harp::routines::r_register_routines;
 use harp::session::r_traceback;
 use harp::utils::r_is_data_frame;
 use harp::utils::r_pairlist_any;
+use harp::utils::r_typeof;
 use harp::R_MAIN_THREAD_ID;
 use libr::R_BaseNamespace;
 use libr::R_GlobalEnv;
@@ -121,6 +123,18 @@ use crate::srcref::resource_loaded_namespaces;
 use crate::startup;
 use crate::sys::console::console_to_utf8;
 
+/// An enum representing the different modes in which the R session can run.
+pub enum SessionMode {
+    /// A session with an interactive console (REPL), such as in Positron.
+    Console,
+
+    /// A session in a Jupyter or Jupyter-like notebook.
+    Notebook,
+
+    /// A background session, typically not connected to any UI.
+    Background,
+}
+
 // --- Globals ---
 // These values must be global in order for them to be accessible from R
 // callbacks, which do not have a facility for passing or returning context.
@@ -148,6 +162,7 @@ pub fn start_r(
     iopub_tx: Sender<IOPubMessage>,
     kernel_init_tx: Bus<KernelInfo>,
     dap: Arc<Mutex<Dap>>,
+    session_mode: SessionMode,
 ) {
     // Initialize global state (ensure we only do this once!)
     INIT.call_once(|| unsafe {
@@ -170,6 +185,7 @@ pub fn start_r(
             iopub_tx,
             kernel_init_tx,
             dap,
+            session_mode,
         ));
     });
 
@@ -272,6 +288,9 @@ pub struct RMain {
     initializing: bool,
     kernel_init_tx: Bus<KernelInfo>,
 
+    /// Whether we are running in Console, Notebook, or Background mode.
+    session_mode: SessionMode,
+
     /// Channel used to send along messages relayed on the open comms.
     comm_manager_tx: Sender<CommManagerEvent>,
 
@@ -296,9 +315,13 @@ pub struct RMain {
     /// Execution request counter used to populate `In[n]` and `Out[n]` prompts
     execution_count: u32,
 
-    stdout: String,
-    stderr: String,
-    banner: String,
+    /// Accumulated top-level output for the current execution.
+    /// This is the output emitted by R's autoprint and propagated as
+    /// `execute_result` Jupyter messages instead of `stream` messages.
+    autoprint_output: String,
+
+    /// Accumulated output during startup
+    banner_output: String,
 
     /// Channel to send and receive tasks from `RTask`s
     tasks_interrupt_rx: Receiver<RTask>,
@@ -399,6 +422,7 @@ impl RMain {
         iopub_tx: Sender<IOPubMessage>,
         kernel_init_tx: Bus<KernelInfo>,
         dap: Arc<Mutex<Dap>>,
+        session_mode: SessionMode,
     ) -> Self {
         Self {
             initializing: true,
@@ -410,9 +434,8 @@ impl RMain {
             kernel_init_tx,
             active_request: None,
             execution_count: 0,
-            stdout: String::new(),
-            stderr: String::new(),
-            banner: String::new(),
+            autoprint_output: String::new(),
+            banner_output: String::new(),
             kernel,
             error_occurred: false,
             error_message: String::new(),
@@ -425,6 +448,7 @@ impl RMain {
             tasks_interrupt_rx,
             tasks_idle_rx,
             pending_futures: HashMap::new(),
+            session_mode,
         }
     }
 
@@ -498,7 +522,7 @@ impl RMain {
 
             let kernel_info = KernelInfo {
                 version: version.clone(),
-                banner: self.banner.clone(),
+                banner: self.banner_output.clone(),
                 input_prompt: Some(input_prompt),
                 continuation_prompt: Some(continuation_prompt),
             };
@@ -517,9 +541,8 @@ impl RMain {
     }
 
     fn init_execute_request(&mut self, req: &ExecuteRequest) -> (ConsoleInput, u32) {
-        // Initialize stdout, stderr
-        self.stdout = String::new();
-        self.stderr = String::new();
+        // Reset the autoprint buffer
+        self.autoprint_output = String::new();
 
         // Increment counter if we are storing this execution in history
         if req.store_history {
@@ -580,47 +603,40 @@ impl RMain {
             return ConsoleResult::NewInput;
         }
 
-        if let Some(req) = &self.active_request {
-            if info.input_request {
-                // Request input. We'll wait for a reply in the `select!` below.
+        if info.input_request {
+            if let Some(req) = &self.active_request {
+                // Send request to frontend.  We'll wait for an `input_reply`
+                // from the frontend in the event loop below. The active request
+                // remains active.
                 self.request_input(req.orig.clone(), info.input_prompt.to_string());
-
-                // Note that since we're here due to `readline()` or similar, we
-                // preserve the current active request. While we are requesting
-                // an input and waiting for the reply, the outer
-                // `execute_request` remains active and the shell remains busy.
             } else {
-                // We got a prompt request marking the end of the previous
-                // execution. We can now send a reply to unblock the active Shell
-                // request.
-
-                // FIXME: Race condition between the comm and shell socket threads.
-                //
-                // Send info for the next prompt to frontend. This handles
-                // custom prompts set by users, e.g. `options(prompt = ,
-                // continue = )`, as well as debugging prompts, e.g. after a
-                // call to `browser()`.
-                let event = UiFrontendEvent::PromptState(PromptStateParams {
-                    input_prompt: info.input_prompt.clone(),
-                    continuation_prompt: info.continuation_prompt.clone(),
-                });
-                let kernel = self.kernel.lock().unwrap();
-                kernel.send_ui_event(event);
-
-                // Let frontend know the last request is complete. This turns us
-                // back to Idle.
-                self.reply_execute_request(req, info.clone());
-
-                // Clear active request. This doesn't matter if we return here
-                // after receiving an `ExecuteCode` request (as
-                // `self.active_request` will be set to a fresh request), but
-                // we might also return here after an interrupt.
-                self.active_request = None;
-            }
-        } else {
-            if info.input_request {
+                // Invalid input request, propagate error to R
                 return self.handle_invalid_input_request(buf, buflen);
             }
+        } else if let Some(req) = std::mem::take(&mut self.active_request) {
+            // We got a prompt request marking the end of the previous
+            // execution. We took and cleared the active request as we're about
+            // to complete it and send a reply to unblock the active Shell
+            // request.
+
+            // FIXME: Race condition between the comm and shell socket threads.
+            //
+            // Send info for the next prompt to frontend. This handles
+            // custom prompts set by users, e.g. `options(prompt = ,
+            // continue = )`, as well as debugging prompts, e.g. after a
+            // call to `browser()`.
+            let event = UiFrontendEvent::PromptState(PromptStateParams {
+                input_prompt: info.input_prompt.clone(),
+                continuation_prompt: info.continuation_prompt.clone(),
+            });
+            {
+                let kernel = self.kernel.lock().unwrap();
+                kernel.send_ui_event(event);
+            }
+
+            // Let frontend know the last request is complete. This turns us
+            // back to Idle.
+            self.reply_execute_request(req, &info);
         }
 
         // In the future we'll also send browser information, see
@@ -816,13 +832,19 @@ impl RMain {
         self.error_occurred = false;
 
         match input {
-            ConsoleInput::Input(code) => {
+            ConsoleInput::Input(mut code) => {
                 // Handle commands for the debug interpreter
                 if self.dap.is_debugging() {
                     let continue_cmds = vec!["n", "f", "c", "cont"];
                     if continue_cmds.contains(&&code[..]) {
                         self.dap.send_dap(DapBackendEvent::Continued);
                     }
+                }
+
+                // In notebooks, wrap in braces so that only the last complete
+                // expression is auto-printed
+                if let SessionMode::Notebook = self.session_mode {
+                    code = format!("{{ {code} }}");
                 }
 
                 Self::on_console_input(buf, buflen, code);
@@ -1053,19 +1075,142 @@ This is a Positron limitation we plan to fix. In the meantime, you can:
 
     // Reply to the previously active request. The current prompt type and
     // whether an error has occurred defines the response kind.
-    fn reply_execute_request(&self, req: &ActiveReadConsoleRequest, prompt_info: PromptInfo) {
-        let prompt = prompt_info.input_prompt;
+    fn reply_execute_request(&mut self, req: ActiveReadConsoleRequest, prompt_info: &PromptInfo) {
+        let prompt = &prompt_info.input_prompt;
 
-        let reply = if prompt_info.incomplete {
-            trace!("Got prompt {} signaling incomplete request", prompt);
-            new_incomplete_response(&req.request, req.exec_count)
+        let (response, result) = if prompt_info.incomplete {
+            log::trace!("Got prompt {} signaling incomplete request", prompt);
+            (new_incomplete_response(&req.request, req.exec_count), None)
         } else if prompt_info.input_request {
             unreachable!();
         } else {
-            trace!("Got R prompt '{}', completing execution", prompt);
-            peek_execute_response(req.exec_count)
+            log::trace!("Got R prompt '{}', completing execution", prompt);
+
+            self.make_execute_response_error(req.exec_count)
+                .unwrap_or_else(|| self.make_execute_response_result(req.exec_count))
         };
-        req.response_tx.send(reply).unwrap();
+
+        if let Some(result) = result {
+            self.iopub_tx.send(result).unwrap();
+        }
+
+        log::trace!("Sending `execute_response`: {response:?}");
+        req.response_tx.send(response).unwrap();
+    }
+
+    fn make_execute_response_error(
+        &mut self,
+        exec_count: u32,
+    ) -> Option<(ExecuteResponse, Option<IOPubMessage>)> {
+        // Save and reset error occurred flag
+        let error_occurred = self.error_occurred;
+        self.error_occurred = false;
+
+        // Error handlers are not called on stack overflow so the error flag
+        // isn't set. Instead we detect stack overflows by peeking at the error
+        // buffer. The message is explicitly not translated to save stack space
+        // so the matching should be reliable.
+        let err_buf = r_peek_error_buffer();
+        let stack_overflow_occurred = RE_STACK_OVERFLOW.is_match(&err_buf);
+
+        // Reset error buffer so we don't display this message again
+        if stack_overflow_occurred {
+            let _ = RFunction::new("base", "stop").call();
+        }
+
+        // Send the reply to the frontend
+        if !error_occurred && !stack_overflow_occurred {
+            return None;
+        }
+
+        // We don't fill out `ename` with anything meaningful because typically
+        // R errors don't have names. We could consider using the condition class
+        // here, which r-lib/tidyverse packages have been using more heavily.
+        let mut exception = if error_occurred {
+            Exception {
+                ename: String::from(""),
+                evalue: self.error_message.clone(),
+                traceback: self.error_traceback.clone(),
+            }
+        } else {
+            // Call `base::traceback()` since we don't have a handled error
+            // object carrying a backtrace. This won't be formatted as a
+            // tree which is just as well since the recursive calls would
+            // push a tree too far to the right.
+            let traceback = r_traceback();
+            Exception {
+                ename: String::from(""),
+                evalue: err_buf.clone(),
+                traceback,
+            }
+        };
+
+        // Jupyter clients typically discard the `evalue` when a `traceback` is
+        // present.  Jupyter-Console even disregards `evalue` in all cases. So
+        // include it here if we are in Notebook mode. But should Positron
+        // implement similar behaviour as the other frontends eventually? The
+        // first component of `traceback` could be compared to `evalue` and
+        // discarded from the traceback if the same.
+        if let SessionMode::Notebook = self.session_mode {
+            exception.traceback.insert(0, exception.evalue.clone())
+        }
+
+        let response = new_execute_response_error(exception.clone(), exec_count);
+        let result = IOPubMessage::ExecuteError(ExecuteError { exception });
+
+        Some((response, Some(result)))
+    }
+
+    fn make_execute_response_result(
+        &mut self,
+        exec_count: u32,
+    ) -> (ExecuteResponse, Option<IOPubMessage>) {
+        // TODO: Implement rich printing of certain outputs.
+        // Will we need something similar to the RStudio model,
+        // where we implement custom print() methods? Or can
+        // we make the stub below behave sensibly even when
+        // streaming R output?
+        let mut data = serde_json::Map::new();
+
+        // The output generated by autoprint is emitted as an
+        // `execute_result` message.
+        let mut autoprint = std::mem::take(&mut self.autoprint_output);
+
+        if autoprint.ends_with('\n') {
+            // Remove the trailing newlines that R adds to outputs but that
+            // Jupyter frontends are not expecting. Is it worth taking a
+            // mutable self ref across calling methods to avoid the clone?
+            autoprint.pop();
+        }
+        if autoprint.len() != 0 {
+            data.insert("text/plain".to_string(), json!(autoprint));
+        }
+
+        // Include HTML representation of data.frame
+        unsafe {
+            let value = Rf_findVarInFrame(R_GlobalEnv, r_symbol!(".Last.value"));
+            if r_is_data_frame(value) {
+                match to_html(value) {
+                    Ok(html) => data.insert("text/html".to_string(), json!(html)),
+                    Err(err) => {
+                        log::error!("{:?}", err);
+                        None
+                    },
+                };
+            }
+        }
+
+        let response = new_execute_response(exec_count);
+
+        let result = (data.len() > 0).then(|| {
+            IOPubMessage::ExecuteResult(ExecuteResult {
+                execution_count: exec_count,
+                data: serde_json::Value::Object(data),
+                metadata: json!({}),
+            })
+        });
+
+        (response, result)
     }
 
     /// Sends a `Wait` message to IOPub, which responds when the IOPub thread
@@ -1137,7 +1282,7 @@ This is a Positron limitation we plan to fix. In the meantime, you can:
 
         if self.initializing {
             // During init, consider all output to be part of the startup banner
-            self.banner.push_str(&content);
+            self.banner_output.push_str(&content);
             return;
         }
 
@@ -1149,23 +1294,26 @@ This is a Positron limitation we plan to fix. In the meantime, you can:
             }
         }
 
-        let buffer = match stream {
-            Stream::Stdout => &mut self.stdout,
-            Stream::Stderr => &mut self.stderr,
-        };
-
-        // Append content to buffer.
-        buffer.push_str(&content);
+        // If we are at top-level, we're handling visible output auto-printed by
+        // the R REPL. We accumulate this output (it typically comes in
+        // multiple parts) so we can emit it later on as part of execution
+        // results.
+        //
+        // Note that warnings emitted lazily on stdout will appear to be part of
+        // autoprint. We currently emit them on stderr, which allows us to
+        // differentiate, but that could change in the future:
+        // https://github.com/posit-dev/positron/issues/1881
+        if otype == 0 && is_auto_printing() {
+            self.autoprint_output.push_str(&content);
+            return;
+        }
 
         // Stream output via the IOPub channel.
         let message = IOPubMessage::Stream(StreamOutput {
             name: stream,
             text: content,
         });
-
-        unwrap!(self.iopub_tx.send(message), Err(error) => {
-            log::error!("{}", error);
-        });
+        self.iopub_tx.send(message).unwrap();
     }
 
     /// Invoked by R to change busy state
@@ -1361,97 +1509,6 @@ fn new_incomplete_response(req: &ExecuteRequest, exec_count: u32) -> ExecuteResp
 static RE_STACK_OVERFLOW: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"C stack usage [ 0-9]+ is too close to the limit\n").unwrap());
 
-// Gets response data from R state
-fn peek_execute_response(exec_count: u32) -> ExecuteResponse {
-    let main = RMain::get_mut();
-
-    // Save and reset error occurred flag
-    let error_occurred = main.error_occurred;
-    main.error_occurred = false;
-
-    // Error handlers are not called on stack overflow so the error flag
-    // isn't set. Instead we detect stack overflows by peeking at the error
-    // buffer. The message is explicitly not translated to save stack space
-    // so the matching should be reliable.
-    let err_buf = r_peek_error_buffer();
-    let stack_overflow_occurred = RE_STACK_OVERFLOW.is_match(&err_buf);
-
-    // Reset error buffer so we don't display this message again
-    if stack_overflow_occurred {
-        let _ = RFunction::new("base", "stop").call();
-    }
-
-    // Send the reply to the frontend
-    if error_occurred || stack_overflow_occurred {
-        // We don't fill out `ename` with anything meaningful because typically
-        // R errors don't have names. We could consider using the condition class
-        // here, which r-lib/tidyverse packages have been using more heavily.
-        let exception = if error_occurred {
-            Exception {
-                ename: String::from(""),
-                evalue: main.error_message.clone(),
-                traceback: main.error_traceback.clone(),
-            }
-        } else {
-            // Call `base::traceback()` since we don't have a handled error
-            // object carrying a backtrace. This won't be formatted as a
-            // tree which is just as well since the recursive calls would
-            // push a tree too far to the right.
-            let traceback = r_traceback();
-            Exception {
-                ename: String::from(""),
-                evalue: err_buf.clone(),
-                traceback,
-            }
-        };
-
-        log::info!("An R error occurred: {}", exception.evalue);
-
-        main.iopub_tx
-            .send(IOPubMessage::ExecuteError(ExecuteError {
-                exception: exception.clone(),
-            }))
-            .or_log_warning(&format!("Could not publish error {} on iopub", exec_count));
-
-        new_execute_error_response(exception, exec_count)
-    } else {
-        // TODO: Implement rich printing of certain outputs.
-        // Will we need something similar to the RStudio model,
-        // where we implement custom print() methods? Or can
-        // we make the stub below behave sensibly even when
-        // streaming R output?
-        let mut data = serde_json::Map::new();
-        data.insert("text/plain".to_string(), json!(""));
-
-        // Include HTML representation of data.frame
-        unsafe {
-            let value = Rf_findVarInFrame(R_GlobalEnv, r_symbol!(".Last.value"));
-            if r_is_data_frame(value) {
-                match to_html(value) {
-                    Ok(html) => data.insert("text/html".to_string(), json!(html)),
-                    Err(error) => {
-                        error!("{:?}", error);
-                        None
-                    },
-                };
-            }
-        }
-
-        main.iopub_tx
-            .send(IOPubMessage::ExecuteResult(ExecuteResult {
-                execution_count: exec_count,
-                data: serde_json::Value::Object(data),
-                metadata: json!({}),
-            }))
-            .or_log_warning(&format!(
-                "Could not publish result of statement {} on iopub",
-                exec_count
-            ));
-
-        new_execute_response(exec_count)
-    }
-}
-
 fn new_execute_response(exec_count: u32) -> ExecuteResponse {
     ExecuteResponse::Reply(ExecuteReply {
         status: Status::Ok,
@@ -1459,7 +1516,7 @@ fn new_execute_response(exec_count: u32) -> ExecuteResponse {
         user_expressions: json!({}),
     })
 }
-fn new_execute_error_response(exception: Exception, exec_count: u32) -> ExecuteResponse {
+fn new_execute_response_error(exception: Exception, exec_count: u32) -> ExecuteResponse {
     ExecuteResponse::ReplyException(ExecuteReplyException {
         status: Status::Error,
         execution_count: exec_count,
@@ -1603,4 +1660,63 @@ fn do_resource_namespaces() -> bool {
         .ok()
         .flatten();
     opt.unwrap_or(true)
+}
+
+/// Are we auto-printing?
+///
+/// We consider that we are auto-printing when the call stack is empty or when
+/// the first frame on the stack is a call to `print()` with the function
+/// inlined in CAR (it just so happens that this is how R constructs this call
+/// for objects requiring dispatch - this heuristic can lead to unexpected
+/// behaviour in edge cases). See:
+/// https://github.com/wch/r-source/blob/bb7081cde24feeb59de9542018e31c14641e019e/src/main/print.c#L359-L38
+///
+/// We don't currently detect auto-printing in browser sessions as this is a bit
+/// tricky.
+///
+/// Ideally R would pass this information as part of an extended
+/// `WriteConsoleExt()` method so that we don't have to rely on these fragile
+/// and incomplete inferences.
+fn is_auto_printing() -> bool {
+    let n_frame = harp::session::r_n_frame().unwrap();
+
+    // The call-stack is empty so this must be R auto-printing an unclassed object
+    if n_frame == 0 {
+        return true;
+    }
+
+    // Disabled for now because it might cause unexpected output behaviour in Positron
+    // // Are we auto-printing in a browser session? Incomplete heuristic.
+    // let last_frame = harp::session::r_sys_frame(n_frame).unwrap();
+    // let browser = harp::session::r_env_is_browsed(last_frame.sexp).unwrap();
+
+    // Detect the `print()` call generated by auto-print with classed objects.
+    // In tat case the first frame of the stack is a call to `print()` with the
+    // function inlined in CAR. This inlining disambiguates with the user typing
+    // a `print()` call at top-level. (Similar logic for the S4 generic `show()`.)
+    let call = harp::session::r_sys_call(1).unwrap();
+
+    // For safety
+    if r_typeof(call.sexp) != libr::LANGSXP {
+        return false;
+    }
+
+    unsafe {
+        let car = libr::CAR(call.sexp);
+
+        let Ok(print_fun) = harp::try_eval(r_symbol!("print"), R_ENVS.base) else {
+            return false;
+        };
+        if car == print_fun.sexp {
+            return true;
+        }
+
+        let Ok(methods_ns) = r_ns_env("methods") else {
+            return false;
+        };
+        let Ok(show_fun) = harp::try_eval(r_symbol!("show"), methods_ns.into()) else {
+            return false;
+        };
+        car == show_fun.sexp
+    }
 }

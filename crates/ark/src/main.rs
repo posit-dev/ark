@@ -18,6 +18,7 @@ use amalthea::kernel_spec::KernelSpec;
 use amalthea::socket::stdin::StdInRequest;
 use ark::control::Control;
 use ark::dap;
+use ark::interface::SessionMode;
 use ark::logger;
 use ark::lsp;
 use ark::request::KernelRequest;
@@ -33,18 +34,6 @@ use log::*;
 use notify::Watcher;
 use stdext::unwrap;
 
-/// An enum representing the different modes in which the R session can run.
-enum SessionMode {
-    /// A session with an interactive console (REPL), such as in Positron.
-    Console,
-
-    /// A session in a Jupyter or Jupyter-like notebook.
-    Notebook,
-
-    /// A background session, typically not connected to any UI.
-    Background,
-}
-
 thread_local! {
     pub static ON_R_THREAD: Cell<bool> = Cell::new(false);
 }
@@ -53,7 +42,7 @@ fn start_kernel(
     connection_file: ConnectionFile,
     r_args: Vec<String>,
     startup_file: Option<String>,
-    _session_mode: SessionMode, // TODO: Pass this to R to set the session mode
+    session_mode: SessionMode,
     capture_streams: bool,
 ) {
     // Create a new kernel from the connection file
@@ -149,6 +138,7 @@ fn start_kernel(
         iopub_tx,
         kernel_init_tx,
         dap,
+        session_mode,
     )
 }
 
@@ -176,6 +166,8 @@ fn install_kernel_spec() {
             String::from(exe_path.to_string_lossy()),
             String::from("--connection_file"),
             String::from("{connection_file}"),
+            String::from("--session-mode"),
+            String::from("notebook"),
         ],
         language: String::from("R"),
         display_name: String::from("Amalthea R Kernel (ARK)"),
