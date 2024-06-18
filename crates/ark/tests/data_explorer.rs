@@ -1058,9 +1058,9 @@ DataExplorerBackendReply::SetSortColumnsReply() => {});
         assert_match!(socket_rpc(&socket, req),
             DataExplorerBackendReply::GetDataValuesReply(data) => {
                 assert_eq!(data.columns.len(), 1);
-                assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("0".to_string()));
-                assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("1".to_string()));
-                assert_eq!(data.columns[0][2], ColumnValue::FormattedValue("2".to_string()));
+                assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("0.00".to_string()));
+                assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("1.00".to_string()));
+                assert_eq!(data.columns[0][2], ColumnValue::FormattedValue("2.00".to_string()));
             }
         );
 
@@ -1091,9 +1091,9 @@ DataExplorerBackendReply::SetSortColumnsReply() => {});
         assert_match!(socket_rpc(&socket, req),
             DataExplorerBackendReply::GetDataValuesReply(data) => {
                 assert_eq!(data.columns.len(), 1);
-                assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("1".to_string()));
-                assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("2".to_string()));
-                assert_eq!(data.columns[0][2], ColumnValue::FormattedValue("3".to_string()));
+                assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("1.00".to_string()));
+                assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("2.00".to_string()));
+                assert_eq!(data.columns[0][2], ColumnValue::FormattedValue("3.00".to_string()));
             }
         );
 
