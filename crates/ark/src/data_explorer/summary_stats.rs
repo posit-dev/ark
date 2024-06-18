@@ -89,11 +89,11 @@ fn summary_stats_number(
         .collect();
 
     Ok(SummaryStatsNumber {
-        min_value: get_stat(&r_stats, "min_value")?,
-        max_value: get_stat(&r_stats, "max_value")?,
-        mean: get_stat(&r_stats, "mean")?,
-        median: get_stat(&r_stats, "median")?,
-        stdev: get_stat(&r_stats, "stdev")?,
+        min_value: r_stats.get("min_value").cloned(),
+        max_value: r_stats.get("max_value").cloned(),
+        mean: r_stats.get("mean").cloned(),
+        median: r_stats.get("median").cloned(),
+        stdev: r_stats.get("stdev").cloned(),
     })
 }
 
@@ -205,11 +205,11 @@ mod tests {
             let stats =
                 summary_stats_(column.sexp, ColumnDisplayType::Number, &default_options()).unwrap();
             let expected = SummaryStatsNumber {
-                min_value: "1.00".to_string(),
-                max_value: "5.00".to_string(),
-                mean: "3.00".to_string(),
-                median: "3.00".to_string(),
-                stdev: "1.58".to_string(),
+                min_value: Some("1.00".to_string()),
+                max_value: Some("5.00".to_string()),
+                mean: Some("3.00".to_string()),
+                median: Some("3.00".to_string()),
+                stdev: Some("1.58".to_string()),
             };
             assert_eq!(stats.number_stats, Some(expected));
         })
