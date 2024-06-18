@@ -13,6 +13,7 @@ use amalthea::comm::data_explorer_comm::BackendState;
 use amalthea::comm::data_explorer_comm::ColumnDisplayType;
 use amalthea::comm::data_explorer_comm::ColumnProfileResult;
 use amalthea::comm::data_explorer_comm::ColumnProfileType;
+use amalthea::comm::data_explorer_comm::ColumnProfileTypeSupportStatus;
 use amalthea::comm::data_explorer_comm::ColumnSchema;
 use amalthea::comm::data_explorer_comm::ColumnSortKey;
 use amalthea::comm::data_explorer_comm::ColumnSummaryStats;
@@ -34,6 +35,7 @@ use amalthea::comm::data_explorer_comm::GetDataValuesParams;
 use amalthea::comm::data_explorer_comm::GetSchemaParams;
 use amalthea::comm::data_explorer_comm::RowFilter;
 use amalthea::comm::data_explorer_comm::RowFilterType;
+use amalthea::comm::data_explorer_comm::RowFilterTypeSupportStatus;
 use amalthea::comm::data_explorer_comm::SearchSchemaFeatures;
 use amalthea::comm::data_explorer_comm::SetRowFiltersFeatures;
 use amalthea::comm::data_explorer_comm::SetRowFiltersParams;
@@ -42,6 +44,7 @@ use amalthea::comm::data_explorer_comm::SetSortColumnsParams;
 use amalthea::comm::data_explorer_comm::SummaryStatsBoolean;
 use amalthea::comm::data_explorer_comm::SummaryStatsNumber;
 use amalthea::comm::data_explorer_comm::SummaryStatsString;
+use amalthea::comm::data_explorer_comm::SupportStatus;
 use amalthea::comm::data_explorer_comm::SupportedFeatures;
 use amalthea::comm::data_explorer_comm::TableData;
 use amalthea::comm::data_explorer_comm::TableSchema;
@@ -707,11 +710,11 @@ impl RDataExplorer {
                     .collect();
 
                 stats.number_stats = Some(SummaryStatsNumber {
-                    min_value: r_stats["min_value"].clone(),
-                    max_value: r_stats["max_value"].clone(),
-                    mean: r_stats["mean"].clone(),
-                    median: r_stats["median"].clone(),
-                    stdev: r_stats["stdev"].clone(),
+                    min_value: Some(r_stats["min_value"].clone()),
+                    max_value: Some(r_stats["max_value"].clone()),
+                    mean: Some(r_stats["mean"].clone()),
+                    median: Some(r_stats["median"].clone()),
+                    stdev: Some(r_stats["stdev"].clone()),
                 });
             },
             ColumnDisplayType::String => {
@@ -982,18 +985,26 @@ impl RDataExplorer {
             sort_keys: self.sort_keys.clone(),
             supported_features: SupportedFeatures {
                 get_column_profiles: GetColumnProfilesFeatures {
-                    supported: true,
+                    support_status: SupportStatus::Supported,
                     supported_types: vec![
-                        ColumnProfileType::NullCount,
+                        ColumnProfileTypeSupportStatus {
+                            profile_type: ColumnProfileType::NullCount,
+                            support_status: SupportStatus::Supported,
+                        },
                         // Temporarily disabled for https://github.com/posit-dev/positron/issues/3490
                         // on 6/11/2024. This will be enabled again when the UI has been reworked to
                         // more fully support column profiles.
-                        // ColumnProfileType::SummaryStats,
+                        ColumnProfileTypeSupportStatus {
+                            profile_type: ColumnProfileType::SummaryStats,
+                            support_status: SupportStatus::Experimental,
+                        },
                     ],
                 },
-                search_schema: SearchSchemaFeatures { supported: false },
+                search_schema: SearchSchemaFeatures {
+                    support_status: SupportStatus::Unsupported,
+                },
                 set_row_filters: SetRowFiltersFeatures {
-                    supported: true,
+                    support_status: SupportStatus::Supported,
                     supported_types: vec![
                         RowFilterType::Between,
                         RowFilterType::Compare,
@@ -1005,14 +1016,24 @@ impl RDataExplorer {
                         RowFilterType::NotEmpty,
                         RowFilterType::NotNull,
                         RowFilterType::Search,
-                    ],
+                    ]
+                    .iter()
+                    .map(|row_filter_type| RowFilterTypeSupportStatus {
+                        row_filter_type: row_filter_type.clone(),
+                        support_status: SupportStatus::Supported,
+                    })
+                    .collect(),
                     // Temporarily disabled for https://github.com/posit-dev/positron/issues/3489
                     // on 6/11/2024. This will be enabled again when the UI has been reworked to
                     // support grouping.
-                    supports_conditions: false,
+                    supports_conditions: SupportStatus::Unsupported,
                 },
-                set_sort_columns: SetSortColumnsFeatures { supported: true },
-                export_data_selection: ExportDataSelectionFeatures { supported: true },
+                set_sort_columns: SetSortColumnsFeatures {
+                    support_status: SupportStatus::Supported,
+                },
+                export_data_selection: ExportDataSelectionFeatures {
+                    support_status: SupportStatus::Supported,
+                },
             },
         };
         Ok(DataExplorerBackendReply::GetStateReply(state))

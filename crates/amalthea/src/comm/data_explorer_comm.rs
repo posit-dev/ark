@@ -178,6 +178,16 @@ pub struct RowFilter {
 	pub set_membership_params: Option<SetMembershipFilterParams>
 }
 
+/// Support status for a row filter type
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct RowFilterTypeSupportStatus {
+	/// Type of row filter
+	pub row_filter_type: RowFilterType,
+
+	/// The support status for this row filter type
+	pub support_status: SupportStatus
+}
+
 /// Parameters for the 'between' and 'not_between' filter types
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct BetweenFilterParams {
@@ -231,6 +241,16 @@ pub struct ColumnProfileRequest {
 	pub profile_type: ColumnProfileType
 }
 
+/// Support status for a given column profile type
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ColumnProfileTypeSupportStatus {
+	/// The type of analytical column profile
+	pub profile_type: ColumnProfileType,
+
+	/// The support status for this column profile type
+	pub support_status: SupportStatus
+}
+
 /// Result of computing column profile
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ColumnProfileResult {
@@ -274,19 +294,19 @@ pub struct ColumnSummaryStats {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SummaryStatsNumber {
 	/// Minimum value as string
-	pub min_value: String,
+	pub min_value: Option<String>,
 
 	/// Maximum value as string
-	pub max_value: String,
+	pub max_value: Option<String>,
 
 	/// Average value as string
-	pub mean: String,
+	pub mean: Option<String>,
 
 	/// Sample median (50% value) value as string
-	pub median: String,
+	pub median: Option<String>,
 
 	/// Sample standard deviation as a string
-	pub stdev: String
+	pub stdev: Option<String>
 }
 
 /// SummaryStatsBoolean in Schemas
@@ -426,45 +446,45 @@ pub struct SupportedFeatures {
 /// Feature flags for 'search_schema' RPC
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SearchSchemaFeatures {
-	/// Whether this RPC method is supported at all
-	pub supported: bool
+	/// The support status for this RPC method
+	pub support_status: SupportStatus
 }
 
 /// Feature flags for 'set_row_filters' RPC
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SetRowFiltersFeatures {
-	/// Whether this RPC method is supported at all
-	pub supported: bool,
+	/// The support status for this RPC method
+	pub support_status: SupportStatus,
 
 	/// Whether AND/OR filter conditions are supported
-	pub supports_conditions: bool,
+	pub supports_conditions: SupportStatus,
 
 	/// A list of supported types
-	pub supported_types: Vec<RowFilterType>
+	pub supported_types: Vec<RowFilterTypeSupportStatus>
 }
 
 /// Feature flags for 'get_column_profiles' RPC
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct GetColumnProfilesFeatures {
-	/// Whether this RPC method is supported at all
-	pub supported: bool,
+	/// The support status for this RPC method
+	pub support_status: SupportStatus,
 
 	/// A list of supported types
-	pub supported_types: Vec<ColumnProfileType>
+	pub supported_types: Vec<ColumnProfileTypeSupportStatus>
 }
 
 /// Feature flags for 'export_data_selction' RPC
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ExportDataSelectionFeatures {
-	/// Whether this RPC method is supported at all
-	pub supported: bool
+	/// The support status for this RPC method
+	pub support_status: SupportStatus
 }
 
 /// Feature flags for 'set_sort_columns' RPC
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SetSortColumnsFeatures {
-	/// Whether this RPC method is supported at all
-	pub supported: bool
+	/// The support status for this RPC method
+	pub support_status: SupportStatus
 }
 
 /// A selection on the data grid, for copying to the clipboard or other
@@ -689,6 +709,19 @@ pub enum ExportFormat {
 
 	#[serde(rename = "html")]
 	Html
+}
+
+/// Possible values for SupportStatus
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub enum SupportStatus {
+	#[serde(rename = "unsupported")]
+	Unsupported,
+
+	#[serde(rename = "supported")]
+	Supported,
+
+	#[serde(rename = "experimental")]
+	Experimental
 }
 
 /// Union type ColumnValue
