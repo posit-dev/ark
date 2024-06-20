@@ -44,9 +44,7 @@
     }
 }
 
-number_summary_stats <- function(column, filtered_indices) {
-    col <- col_filter_indices(column, filtered_indices)
-
+summary_stats_number <- function(col) {
     c(
         min_value = min(col, na.rm = TRUE),
         max_value = max(col, na.rm = TRUE),
@@ -56,14 +54,49 @@ number_summary_stats <- function(column, filtered_indices) {
     )
 }
 
-string_summary_stats <- function(column, filtered_indices) {
-    col <- col_filter_indices(column, filtered_indices)
+summary_stats_string <- function(col) {
     c(num_empty = sum(!nzchar(col)), num_unique = length(unique(col)))
 }
 
-boolean_summary_stats <- function(column, filtered_indices) {
-    col <- col_filter_indices(column, filtered_indices)
+summary_stats_boolean <- function(col) {
     c(true_count = sum(col, na.rm = TRUE), false_count = sum(!col, na.rm = TRUE))
+}
+
+summary_stats_date <- function(col) {
+    list(
+        min_date = as.character(min(col, na.rm = TRUE)),
+        mean_date = as.character(mean(col, na.rm = TRUE)),
+        median_date = as.character(stats::median(col, na.rm = TRUE)),
+        max_date = as.character(max(col, na.rm = TRUE)),
+        num_unique = length(unique(col))
+    )
+}
+
+summary_stats_get_timezone <- function(x) {
+    # this is the implementation in lubridate for POSIXt objects
+    tz <- function (x) {
+        tzone <- attr(x, "tzone")
+        if (is.null(tzone)) {
+            ""
+        }
+        else {
+            tzone[[1]]
+        }
+    }
+
+    if (!inherits(x, "POSIXt")) {
+        stop("Timezone can't be obtained for this object type")
+    }
+    
+    timezone <- tz(x)
+
+    # When the timezone is reported as "", it will actually be formatted
+    # using the system timzeone, so we report it instead.
+    if (timezone == "") {
+        timezone <- Sys.timezone()
+    }
+
+    timezone
 }
 
 col_filter_indices <- function(col, idx = NULL) {
