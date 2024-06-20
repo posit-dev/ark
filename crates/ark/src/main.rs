@@ -170,7 +170,7 @@ fn install_kernel_spec() {
             String::from("notebook"),
         ],
         language: String::from("R"),
-        display_name: String::from("Amalthea R Kernel (ARK)"),
+        display_name: String::from("Ark R Kernel"),
         env,
     };
 
