@@ -1,61 +1,57 @@
-ark <img src="logo.webp" align="right" height=160 width=160 />
-=======================================================
+Ark, the R Kernel <img src="logo.webp" align="right" height=160 width=160 />
+============================================================================
 
-R kernel for Jupyter and Positron, written in Rust.
+Ark is an [R](https://www.r-project.org) kernel for Jupyter applications. It was created to serve as the interface between R and the [Positron](https://github.com/posit-dev/positron) IDE and is compatible with all frontends implementing the Jupyter protocol.
 
-TODO
+Ark aims at providing a complete set of reusable and interoperable tools for implementing IDEs for R:
+
+- It is a [Jupyter kernel](https://jupyter.org) that provides structured interaction (inputs and outputs) between R and a frontend.
+
+- It is an [LSP server](https://microsoft.github.io/language-server-protocol) that powers intellisense features such as completions, jump-to-definition, find-references, diagnostics, etc. It also has some formatting capabilities that we plan to develop over time.
+
+- It a [DAP server](https://microsoft.github.io/debug-adapter-protocol) for sophisticated step-debugging of R functions. It manages source references, creating them on the spot if needed, and integrates tightly with the Jupyter kernel to step through R code transparently and inspect local variables. Note: Support for breakpoints is currently missing but you can use `debug()`, `debugonce()`, or `browser()` to drop into the debugger.
+
+The LSP and DAP features are currently only available in Positron but will be made available to other frontends in the future.
 
 
 ## Usage
 
-### Building
-
-Install Rust. If you don't already have it, use `rustup`, following the [installation instructions at rustup.rs](https://rustup.rs/). In brief:
-
-```bash
-$ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-$ source $HOME/.cargo/env
-```
-
-Assuming you have a working Rust toolchain, you can just run `cargo build`:
-
-```bash
-$ cargo build
-```
-
-### Standalone
-
-To use ARK as a standalone kernel (outside Positron), install the kernelspec. From the repository root:
-
-```bash
-$ ./target/debug/ark --install
-```
-
-This installs a JSON file to the Jupyter kernel registry. After it completes, the Amalthea R kernel (ARK) will be available on all Jupyter frontends on your system (Notebook, Lab, Positron, etc.).
-
-You will usually want to tweak the **ark** environment for development; add this to `~/Library/Jupyter/kernels/ark/kernel.json`:
-
-```json
-  "env": {
-    "RUST_LOG": "trace",
-    "R_HOME": "/Library/Frameworks/R.framework/Resources"
-  }
-```
-
-where `R_HOME` is the location of your R installation. If you're unsure where this is, run `R RHOME`
-and it will be printed to the console.
-
-More fine-grained control of logging is available for `RUST_LOG` as documented in [env_logger](https://docs.rs/env_logger/0.9.0/env_logger/#enabling-logging).
-
-
 ### In Positron
 
-By default, the Amalthea kernel is included in Positron's `positron-r` extension, as a submodule; it
-powers the R experience in Positron.
+The easiest way to try Ark without any installation or configuration is by running it in Positron. This is currently the only practical way to use the more advanced features of Ark that are provided by our LSP and DAP (that will change in the future).
+
+<p align="center">
+    <img src="doc/positron.png" />
+</p>
+
+
+### In Jupyter applications
+
+Download a [release](https://github.com/posit-dev/ark/releases) of Ark to a location of your choice, such as `/usr/local/bin/ark` on macOS or Linux. Then install the Jupyter kernel specification file with:
+
+```sh
+$ ark --install
+```
+
+Ark should now be available in jupyter applications, e.g. in Jupyter Lab:
+
+<p align="center">
+    <img src="doc/lab.png" width=400/>
+</p>
+
+Or at the command line (if Jupyter Console is installed):
+
+```sh
+$ jupyter console --kernel=ark
+```
 
 
 ## Related Projects
 
-[Positron](https://github.com/rstudio/positron), a next-generation data science IDE
+- [Positron](https://github.com/posit-dev/positron), a next-generation data science IDE. The R language pack in Positron interfaces with the Ark kernel for interactive evaluation of R code and collecting outputs and plots. It also connects to the Ark LSP for intellisense features like completions, jump-to-definition, find-references, etc, and to the Ark DAP for transparent debugging.
 
-[IRKernel](https://github.com/IRkernel/IRkernel), a kernel for R written primarily in R itself
+- [IRKernel](https://github.com/IRkernel/IRkernel), a Jupyter kernel for R written primarily in R itself. IRkernel is an R package easily installable from CRAN that provides a level of integration to R similar to [R Markdown](https://rmarkdown.rstudio.com) or [Quarto](https://quarto.org). As our main goal for Ark was to be used in Console mode rather than Notebook mode, we implemented it as a native frontend to R. In other words, it binds natively to the exported C API of R intended for frontends like RStudio and the experience it provides is very close to the one you get when running R in the terminal or RStudio.
+
+- [languageserver](https://github.com/REditorSupport/languageserver), a server that implements the [LSP protocol](https://microsoft.github.io/language-server-protocol/) for R, written primarily in R itself. We decided to create our own LSP written in Rust for two reasons. Initially, we needed to tightly integrate with the Jupyter kernel to provide introspective features based on the current state of the R session. And in the longer term we plan to move towards sophisticated static analysis of R code. The Rust ecosystem is a great place for implementing powerful language servers thanks to frameworks like [Tower-LSP](https://github.com/ebkalderon/tower-lsp) or the libraries for static analysis and incremental computation such as those contributed by the authors of [Rust Analyzer](https://github.com/rust-lang/rust-analyzer).
+
+- [vscDebugger](https://manuelhentschel.github.io/vscDebugger), a server that implements the [DAP protocol](https://microsoft.github.io/debug-adapter-protocol) for R, also written in R as an R package. By comparison our DAP server is tightly integrated into our Jupyter kernel. This makes it possible to smoothly integrate with the currently running R session and start debugging at any time without any prerequisite steps.
