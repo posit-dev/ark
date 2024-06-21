@@ -4,7 +4,7 @@
 
 ```mermaid
 flowchart TD
-a[Amalthea] <--Message Handlers--> ark(((Amalthea R Kernel - ark)))
+a[Amalthea] <--Message Handlers--> ark(((Ark R Kernel)))
 a <--ZeroMQ--> jf[Jupyter Frontend]
 ark <--> lsp[Language Protocol Server]
 ark <--> h[harp R wrapper]

@@ -1,4 +1,4 @@
-Ark, the R Kernel <img src="logo.webp" align="right" height=160 width=160 />
+Ark, an R Kernel <img src="logo.webp" align="right" height=160 width=160 />
 ============================================================================
 
 Ark is an [R](https://www.r-project.org) kernel for Jupyter applications. It was created to serve as the interface between R and the [Positron](https://github.com/posit-dev/positron) IDE and is compatible with all frontends implementing the Jupyter protocol.

@@ -225,7 +225,7 @@ fn parse_file(
 }
 
 fn print_usage() {
-    println!("Ark {}, the Amalthea R Kernel.", env!("CARGO_PKG_VERSION"));
+    println!("Ark {}, an R Kernel.", env!("CARGO_PKG_VERSION"));
     println!(
         r#"
 Usage: ark [OPTIONS]

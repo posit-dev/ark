@@ -22,7 +22,7 @@ To use ARK as a standalone kernel (outside Positron), install the kernelspec. Fr
 $ ./target/debug/ark --install
 ```
 
-This installs a JSON file to the Jupyter kernel registry. After it completes, the Amalthea R kernel (ARK) will be available on all Jupyter frontends on your system (Notebook, Lab, etc.).
+This installs a JSON file to the Jupyter kernel registry. After it completes, the Ark R kernel will be available on all Jupyter frontends on your system (Notebook, Lab, etc.).
 
 You will usually want to tweak the **ark** environment for development; add this to `~/Library/Jupyter/kernels/ark/kernel.json`:
 

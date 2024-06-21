@@ -1,6 +1,6 @@
 This repository contains several individual projects, which are evolving together.
 
-- **ark**, the Amalthea R Kernel. Ark is a native kernel for R built on the Amalthea framework that interacts with the R interpreter in the same way RStudio does (i.e. it's implemented on top of the frontend API of R). It also implements the Language Server Protocol, using [tower-lsp](https://github.com/ebkalderon/tower-lsp).
+- **ark**, the Ark R Kernel. Ark is a native kernel for R built on the Amalthea framework that interacts with the R interpreter in the same way RStudio does (i.e. it's implemented on top of the frontend API of R). It also implements the Language Server Protocol, using [tower-lsp](https://github.com/ebkalderon/tower-lsp).
 
 - **harp**, Rust wrappers for R objects and interfaces. This is intended as an internal utility library for Ark rather than a general purpose API for R like [extendr](https://github.com/extendr/extendr).
 
