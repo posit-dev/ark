@@ -39,6 +39,7 @@ use amalthea::comm::data_explorer_comm::SummaryStatsNumber;
 use amalthea::comm::data_explorer_comm::SummaryStatsString;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::socket;
+use amalthea::socket::comm::CommSocket;
 use ark::data_explorer::r_data_explorer::DataObjectEnvInfo;
 use ark::data_explorer::r_data_explorer::RDataExplorer;
 use ark::lsp::events::EVENTS;
@@ -85,11 +86,22 @@ fn open_data_explorer(dataset: String) -> socket::comm::CommSocket {
     }
 }
 
-fn open_data_explorer_from_expression(expr: &str) -> anyhow::Result<socket::comm::CommSocket> {
+fn open_data_explorer_from_expression(
+    expr: &str,
+    bind: Option<&str>,
+) -> anyhow::Result<socket::comm::CommSocket> {
     let object = r_parse_eval0(expr, R_ENVS.global)?;
 
+    let binding = match bind {
+        Some(name) => Some(DataObjectEnvInfo {
+            name: name.to_string(),
+            env: RThreadSafe::new(RObject::view(R_ENVS.global)),
+        }),
+        None => None,
+    };
+
     let (comm_manager_tx, comm_manager_rx) = bounded::<CommManagerEvent>(0);
-    RDataExplorer::start(String::from("obj"), object, None, comm_manager_tx).unwrap();
+    RDataExplorer::start(String::from("obj"), object, binding, comm_manager_tx).unwrap();
 
     // Wait for the new comm to show up.
     let msg = comm_manager_rx
@@ -126,84 +138,75 @@ fn default_format_options() -> FormatOptions {
     }
 }
 
-/// Runs the data explorer tests.
-///
-/// Note that these are all run in one single test instead of being split out
-/// into multiple tests since they must be run serially.
-#[test]
-fn test_data_explorer() {
-    r_test(|| {
-        // --- mtcars ---
+fn test_mtcars_sort(socket: CommSocket, has_row_names: bool, display_name: String) {
+    // Get the schema for the test data set.
+    let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
+        num_columns: 11,
+        start_index: 0,
+    });
 
-        let test_mtcars_sort = |socket, has_row_names: bool, display_name: String| {
-            // Get the schema for the test data set.
-            let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
-                num_columns: 11,
-                start_index: 0,
-            });
+    // Check that we got the right number of columns.
+    assert_match!(socket_rpc(&socket, req),
+        DataExplorerBackendReply::GetSchemaReply(schema) => {
+            // mtcars is a data frame with 11 columns, so we should get
+            // 11 columns back.
+            assert_eq!(schema.columns.len(), 11);
+        }
+    );
 
-            // Check that we got the right number of columns.
-            assert_match!(socket_rpc(&socket, req),
-                DataExplorerBackendReply::GetSchemaReply(schema) => {
-                    // mtcars is a data frame with 11 columns, so we should get
-                    // 11 columns back.
-                    assert_eq!(schema.columns.len(), 11);
-                }
-            );
+    // Get 5 rows of data from the middle of the test data set.
+    let req = DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
+        row_start_index: 5,
+        num_rows: 5,
+        column_indices: vec![0, 1, 2, 3, 4],
+        format_options: default_format_options(),
+    });
 
-            // Get 5 rows of data from the middle of the test data set.
-            let req = DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
-                row_start_index: 5,
-                num_rows: 5,
-                column_indices: vec![0, 1, 2, 3, 4],
-                format_options: default_format_options(),
-            });
+    // Check that we got the right columns and row labels.
+    assert_match!(socket_rpc(&socket, req),
+        DataExplorerBackendReply::GetDataValuesReply(data) => {
+            assert_eq!(data.columns.len(), 5);
+            if has_row_names {
+                let labels = data.row_labels.unwrap();
+                assert_eq!(labels[0][0], "Valiant");
+                assert_eq!(labels[0][1], "Duster 360");
+                assert_eq!(labels[0][2], "Merc 240D");
+            }
+        }
+    );
 
-            // Check that we got the right columns and row labels.
-            assert_match!(socket_rpc(&socket, req),
-                DataExplorerBackendReply::GetDataValuesReply(data) => {
-                    assert_eq!(data.columns.len(), 5);
-                    if has_row_names {
-                        let labels = data.row_labels.unwrap();
-                        assert_eq!(labels[0][0], "Valiant");
-                        assert_eq!(labels[0][1], "Duster 360");
-                        assert_eq!(labels[0][2], "Merc 240D");
-                    }
-                }
-            );
+    // Create a request to sort the data set by the 'mpg' column.
+    let mpg_sort_keys = vec![ColumnSortKey {
+        column_index: 0,
+        ascending: true,
+    }];
+    let req = DataExplorerBackendRequest::SetSortColumns(SetSortColumnsParams {
+        sort_keys: mpg_sort_keys.clone(),
+    });
 
-            // Create a request to sort the data set by the 'mpg' column.
-            let mpg_sort_keys = vec![ColumnSortKey {
-                column_index: 0,
-                ascending: true,
-            }];
-            let req = DataExplorerBackendRequest::SetSortColumns(SetSortColumnsParams {
-                sort_keys: mpg_sort_keys.clone(),
-            });
+    // We should get a SetSortColumnsReply back.
+    assert_match!(socket_rpc(&socket, req),
+DataExplorerBackendReply::SetSortColumnsReply() => {});
 
-            // We should get a SetSortColumnsReply back.
-            assert_match!(socket_rpc(&socket, req),
-        DataExplorerBackendReply::SetSortColumnsReply() => {});
+    // Get the table state and ensure that the backend returns the sort keys
+    let req = DataExplorerBackendRequest::GetState;
+    assert_match!(socket_rpc(&socket, req),
+        DataExplorerBackendReply::GetStateReply(state) => {
+            assert_eq!(state.display_name, display_name);
+            assert_eq!(state.sort_keys, mpg_sort_keys);
+        }
+    );
 
-            // Get the table state and ensure that the backend returns the sort keys
-            let req = DataExplorerBackendRequest::GetState;
-            assert_match!(socket_rpc(&socket, req),
-                DataExplorerBackendReply::GetStateReply(state) => {
-                    assert_eq!(state.display_name, display_name);
-                    assert_eq!(state.sort_keys, mpg_sort_keys);
-                }
-            );
+    // Get the first three rows of data from the sorted data set.
+    let req = DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
+        row_start_index: 0,
+        num_rows: 3,
+        column_indices: vec![0, 1],
+        format_options: default_format_options(),
+    });
 
-            // Get the first three rows of data from the sorted data set.
-            let req = DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
-                row_start_index: 0,
-                num_rows: 3,
-                column_indices: vec![0, 1],
-                format_options: default_format_options(),
-            });
-
-            // Check that sorted values were correctly returned.
-            assert_match!(socket_rpc(&socket, req),
+    // Check that sorted values were correctly returned.
+    assert_match!(socket_rpc(&socket, req),
                 DataExplorerBackendReply::GetDataValuesReply(data) => {
                     // The first three sorted rows should be 10.4, 10.4, and 13.3.
                     assert_eq!(data.columns.len(), 2);
@@ -211,55 +214,60 @@ fn test_data_explorer() {
                     assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("10.40".to_string()));
                     assert_eq!(data.columns[0][2], ColumnValue::FormattedValue("13.30".to_string()));
 
-                    // Row labels should be sorted as well.
-                    if has_row_names {
-                        let labels = data.row_labels.unwrap();
-                        assert_eq!(labels[0][0], "Cadillac Fleetwood");
-                        assert_eq!(labels[0][1], "Lincoln Continental");
-                        assert_eq!(labels[0][2], "Camaro Z28");
-                    }
-                }
-            );
+            // Row labels should be sorted as well.
+            if has_row_names {
+                let labels = data.row_labels.unwrap();
+                assert_eq!(labels[0][0], "Cadillac Fleetwood");
+                assert_eq!(labels[0][1], "Lincoln Continental");
+                assert_eq!(labels[0][2], "Camaro Z28");
+            }
+        }
+    );
 
-            // A more complicated sort: sort by 'cyl' in descending order, then by 'mpg'
-            // also in descending order.
-            let descending_sort_keys = vec![
-                ColumnSortKey {
-                    column_index: 1,
-                    ascending: false,
-                },
-                ColumnSortKey {
-                    column_index: 0,
-                    ascending: false,
-                },
-            ];
+    // A more complicated sort: sort by 'cyl' in descending order, then by 'mpg'
+    // also in descending order.
+    let descending_sort_keys = vec![
+        ColumnSortKey {
+            column_index: 1,
+            ascending: false,
+        },
+        ColumnSortKey {
+            column_index: 0,
+            ascending: false,
+        },
+    ];
 
-            let req = DataExplorerBackendRequest::SetSortColumns(SetSortColumnsParams {
-                sort_keys: descending_sort_keys.clone(),
-            });
+    let req = DataExplorerBackendRequest::SetSortColumns(SetSortColumnsParams {
+        sort_keys: descending_sort_keys.clone(),
+    });
 
-            // We should get a SetSortColumnsReply back.
-            assert_match!(socket_rpc(&socket, req),
-        DataExplorerBackendReply::SetSortColumnsReply() => {});
+    // We should get a SetSortColumnsReply back.
+    assert_match!(socket_rpc(&socket, req),
+DataExplorerBackendReply::SetSortColumnsReply() => {});
 
-            // Get the first three rows of data from the sorted data set.
-            let req = DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
-                row_start_index: 0,
-                num_rows: 3,
-                column_indices: vec![0, 1],
-                format_options: default_format_options(),
-            });
+    // Get the first three rows of data from the sorted data set.
+    let req = DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
+        row_start_index: 0,
+        num_rows: 3,
+        column_indices: vec![0, 1],
+        format_options: default_format_options(),
+    });
 
-            // Check that sorted values were correctly returned.
-            assert_match!(socket_rpc(&socket, req),
-                DataExplorerBackendReply::GetDataValuesReply(data) => {
-                    assert_eq!(data.columns.len(), 2);
-                    assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("19.20".to_string()));
-                    assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("18.70".to_string()));
-                    assert_eq!(data.columns[0][2], ColumnValue::FormattedValue("17.30".to_string()));
-                }
-            );
-        };
+    // Check that sorted values were correctly returned.
+    assert_match!(socket_rpc(&socket, req),
+        DataExplorerBackendReply::GetDataValuesReply(data) => {
+            assert_eq!(data.columns.len(), 2);
+            assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("19.20".to_string()));
+            assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("18.70".to_string()));
+            assert_eq!(data.columns[0][2], ColumnValue::FormattedValue("17.30".to_string()));
+        }
+    );
+}
+
+#[test]
+fn test_basic_mtcars() {
+    r_test(|| {
+        // --- mtcars ---
 
         // Test with the regular mtcars data set.
         test_mtcars_sort(
@@ -267,7 +275,12 @@ fn test_data_explorer() {
             true,
             String::from("mtcars"),
         );
+    });
+}
 
+#[test]
+fn test_tibble_support() {
+    r_test(|| {
         let mtcars_tibble = r_parse_eval0("mtcars_tib <- tibble::as_tibble(mtcars)", R_ENVS.global);
 
         // Now test with a tibble. This might fail if tibble is not installed
@@ -281,9 +294,16 @@ fn test_data_explorer() {
                 );
                 r_parse_eval0("rm(mtcars_tib)", R_ENVS.global).unwrap();
             },
-            Err(_) => (),
+            Err(_) => {
+                // tibble is not available for testing
+            },
         }
+    })
+}
 
+#[test]
+fn test_women_dataset() {
+    r_test(|| {
         // --- women ---
 
         // Open the women data set in the data explorer.
@@ -391,178 +411,12 @@ fn test_data_explorer() {
                 assert_eq!(labels[0][1], "1");
             }
         );
+    })
+}
 
-        // --- live updates ---
-
-        // Create a tiny data frame to test live updates.
-        let tiny = r_parse_eval0(
-            "x <- data.frame(y = c(3, 2, 1), z = c(4, 5, 6))",
-            R_ENVS.global,
-        )
-        .unwrap();
-
-        // Open a data explorer for the tiny data frame and supply a binding to the
-        // global environment.
-        let (comm_manager_tx, comm_manager_rx) = bounded::<CommManagerEvent>(0);
-        let binding = DataObjectEnvInfo {
-            name: String::from("x"),
-            env: RThreadSafe::new(RObject::view(R_ENVS.global)),
-        };
-        RDataExplorer::start(String::from("tiny"), tiny, Some(binding), comm_manager_tx).unwrap();
-
-        // Wait for the new comm to show up.
-        let msg = comm_manager_rx
-            .recv_timeout(std::time::Duration::from_secs(1))
-            .unwrap();
-        let socket = match msg {
-            CommManagerEvent::Opened(socket, _value) => {
-                assert_eq!(socket.comm_name, "positron.dataExplorer");
-                socket
-            },
-            _ => panic!("Unexpected Comm Manager Event"),
-        };
-
-        // Make a data-level change to the data set.
-        r_parse_eval0("x[1, 1] <- 0", R_ENVS.global).unwrap();
-
-        // Emit a console prompt event; this should tickle the data explorer to
-        // check for changes.
-        EVENTS.console_prompt.emit(());
-
-        // Wait for an update event to arrive
-        assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
-            CommMsg::Data(value) => {
-                // Make sure it's a data update event.
-                assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
-                    DataExplorerFrontendEvent::DataUpdate
-                );
-        });
-
-        // Create a request to sort the data set by the 'y' column.
-        let sort_keys = vec![ColumnSortKey {
-            column_index: 0,
-            ascending: true,
-        }];
-        let req = DataExplorerBackendRequest::SetSortColumns(SetSortColumnsParams {
-            sort_keys: sort_keys.clone(),
-        });
-
-        // We should get a SetSortColumnsReply back.
-        assert_match!(socket_rpc(&socket, req),
-        DataExplorerBackendReply::SetSortColumnsReply() => {});
-
-        // Get the values from the first column.
-        let req = DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
-            row_start_index: 0,
-            num_rows: 3,
-            column_indices: vec![0],
-            format_options: default_format_options(),
-        });
-        assert_match!(socket_rpc(&socket, req),
-            DataExplorerBackendReply::GetDataValuesReply(data) => {
-                assert_eq!(data.columns.len(), 1);
-                assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("0.00".to_string()));
-                assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("1.00".to_string()));
-                assert_eq!(data.columns[0][2], ColumnValue::FormattedValue("2.00".to_string()));
-            }
-        );
-
-        // Make another data-level change to the data set.
-        r_parse_eval0("x[1, 1] <- 3", R_ENVS.global).unwrap();
-
-        // Emit a console prompt event; this should tickle the data explorer to
-        // check for changes.
-        EVENTS.console_prompt.emit(());
-
-        // Wait for an update event to arrive
-        assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
-            CommMsg::Data(value) => {
-                // Make sure it's a data update event.
-                assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
-                    DataExplorerFrontendEvent::DataUpdate
-                );
-        });
-
-        // Get the values from the first column again. Because a sort is applied,
-        // the new value we wrote should be at the end.
-        let req = DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
-            row_start_index: 0,
-            num_rows: 3,
-            column_indices: vec![0],
-            format_options: default_format_options(),
-        });
-        assert_match!(socket_rpc(&socket, req),
-            DataExplorerBackendReply::GetDataValuesReply(data) => {
-                assert_eq!(data.columns.len(), 1);
-                assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("1.00".to_string()));
-                assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("2.00".to_string()));
-                assert_eq!(data.columns[0][2], ColumnValue::FormattedValue("3.00".to_string()));
-            }
-        );
-
-        // Now, replace 'x' with an entirely different data set. This should trigger
-        // a schema-level update.
-        r_parse_eval0(
-            "x <- data.frame(y = 'y', z = 'z', three = '3')",
-            R_ENVS.global,
-        )
-        .unwrap();
-
-        // Emit a console prompt event to trigger change detection
-        EVENTS.console_prompt.emit(());
-
-        // This should trigger a schema update event.
-        assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
-            CommMsg::Data(value) => {
-                // Make sure it's schema update event.
-                assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
-                    DataExplorerFrontendEvent::SchemaUpdate);
-        });
-
-        // Get the schema again to make sure it updated. We added a new column, so
-        // we should get 3 columns back.
-        let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
-            num_columns: 3,
-            start_index: 0,
-        });
-
-        // Check that we got the right number of columns.
-        assert_match!(socket_rpc(&socket, req),
-            DataExplorerBackendReply::GetSchemaReply(schema) => {
-                assert_eq!(schema.columns.len(), 3);
-            }
-        );
-
-        // Now, delete 'x' entirely. This should cause the comm to close.
-        r_parse_eval0("rm(x)", R_ENVS.global).unwrap();
-
-        // Emit a console prompt event to trigger change detection
-        EVENTS.console_prompt.emit(());
-
-        // Wait for an close event to arrive
-        assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
-            CommMsg::Close => {}
-        );
-
-        // --- mtcars (as a data.table) ---
-
-        let mtcars_data_table =
-            r_parse_eval0("mtcars_dt <- data.table::data.table(mtcars)", R_ENVS.global);
-
-        // Now test with a data.table. This might fail if data.table is not installed
-        // locally. Just skip the test in that case.
-        match mtcars_data_table {
-            Ok(_) => {
-                test_mtcars_sort(
-                    open_data_explorer(String::from("mtcars_dt")),
-                    false,
-                    String::from("mtcars_dt"),
-                );
-                r_parse_eval0("rm(mtcars_dt)", R_ENVS.global).unwrap();
-            },
-            Err(_) => (),
-        }
-
+#[test]
+fn test_matrix_support() {
+    r_test(|| {
         // --- volcano (a matrix) ---
 
         // Open the volcano data set in the data explorer. This data set is a matrix.
@@ -643,19 +497,45 @@ fn test_data_explorer() {
         ) => {
             assert_eq!(num_rows, 8);
         });
+    })
+}
 
+#[test]
+fn test_data_table_support() {
+    r_test(|| {
+        // --- mtcars (as a data.table) ---
+
+        let mtcars_data_table =
+            r_parse_eval0("mtcars_dt <- data.table::data.table(mtcars)", R_ENVS.global);
+
+        // Now test with a data.table. This might fail if data.table is not installed
+        // locally. Just skip the test in that case.
+        match mtcars_data_table {
+            Ok(_) => {
+                test_mtcars_sort(
+                    open_data_explorer(String::from("mtcars_dt")),
+                    false,
+                    String::from("mtcars_dt"),
+                );
+                r_parse_eval0("rm(mtcars_dt)", R_ENVS.global).unwrap();
+            },
+            Err(_) => (),
+        }
+    })
+}
+
+#[test]
+fn test_null_counts() {
+    r_test(|| {
         // --- null count ---
 
         // Create a data frame with the Fibonacci sequence, including some NA values
         // where a number in the sequence has been omitted.
-        r_parse_eval0(
+        let socket = open_data_explorer_from_expression(
             "fibo <- data.frame(col = c(1, NA, 2, 3, 5, NA, 13, 21, NA))",
-            R_ENVS.global,
+            None,
         )
         .unwrap();
-
-        // Open the fibo data set in the data explorer.
-        let socket = open_data_explorer(String::from("fibo"));
 
         // Get the schema of the data set.
         let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
@@ -754,7 +634,12 @@ fn test_data_explorer() {
         ) => {
             assert_eq!(num_rows, 3);
         });
+    })
+}
 
+#[test]
+fn test_summary_stats() {
+    r_test(|| {
         // --- summary stats ---
 
         // Create a data frame with some numbers, characters and booleans to test
@@ -819,7 +704,12 @@ fn test_data_explorer() {
 
            }
         );
+    })
+}
 
+#[test]
+fn test_search_filters() {
+    r_test(|| {
         // --- search filters ---
 
         // Create a data frame with a bunch of words to use for regex testing.
@@ -1120,45 +1010,281 @@ fn test_data_explorer() {
     });
 }
 
+#[test]
+fn test_live_updates() {
+    r_test(|| {
+        let socket = open_data_explorer_from_expression(
+            "x <- data.frame(y = c(3, 2, 1), z = c(4, 5, 6))",
+            Some("x"),
+        )
+        .unwrap();
+
+        // Make a data-level change to the data set.
+        r_parse_eval0("x[1, 1] <- 0", R_ENVS.global).unwrap();
+
+        // Emit a console prompt event; this should tickle the data explorer to
+        // check for changes.
+        EVENTS.console_prompt.emit(());
+
+        // Wait for an update event to arrive
+        assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
+            CommMsg::Data(value) => {
+                // Make sure it's a data update event.
+                assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
+                    DataExplorerFrontendEvent::DataUpdate
+                );
+        });
+
+        // Create a request to sort the data set by the 'y' column.
+        let sort_keys = vec![ColumnSortKey {
+            column_index: 0,
+            ascending: true,
+        }];
+        let req = DataExplorerBackendRequest::SetSortColumns(SetSortColumnsParams {
+            sort_keys: sort_keys.clone(),
+        });
+
+        // We should get a SetSortColumnsReply back.
+        assert_match!(socket_rpc(&socket, req),
+DataExplorerBackendReply::SetSortColumnsReply() => {});
+
+        // Get the values from the first column.
+        let req = DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
+            row_start_index: 0,
+            num_rows: 3,
+            column_indices: vec![0],
+            format_options: default_format_options(),
+        });
+        assert_match!(socket_rpc(&socket, req),
+            DataExplorerBackendReply::GetDataValuesReply(data) => {
+                assert_eq!(data.columns.len(), 1);
+                assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("0.00".to_string()));
+                assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("1.00".to_string()));
+                assert_eq!(data.columns[0][2], ColumnValue::FormattedValue("2.00".to_string()));
+            }
+        );
+
+        // Make another data-level change to the data set.
+        r_parse_eval0("x[1, 1] <- 3", R_ENVS.global).unwrap();
+
+        // Emit a console prompt event; this should tickle the data explorer to
+        // check for changes.
+        EVENTS.console_prompt.emit(());
+
+        // Wait for an update event to arrive
+        assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
+            CommMsg::Data(value) => {
+                // Make sure it's a data update event.
+                assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
+                    DataExplorerFrontendEvent::DataUpdate
+                );
+        });
+
+        // Get the values from the first column again. Because a sort is applied,
+        // the new value we wrote should be at the end.
+        let req = DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
+            row_start_index: 0,
+            num_rows: 3,
+            column_indices: vec![0],
+            format_options: default_format_options(),
+        });
+        assert_match!(socket_rpc(&socket, req),
+            DataExplorerBackendReply::GetDataValuesReply(data) => {
+                assert_eq!(data.columns.len(), 1);
+                assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("1.00".to_string()));
+                assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("2.00".to_string()));
+                assert_eq!(data.columns[0][2], ColumnValue::FormattedValue("3.00".to_string()));
+            }
+        );
+
+        // Now, replace 'x' with an entirely different data set. This should trigger
+        // a schema-level update.
+        r_parse_eval0(
+            "x <- data.frame(y = 'y', z = 'z', three = '3')",
+            R_ENVS.global,
+        )
+        .unwrap();
+
+        // Emit a console prompt event to trigger change detection
+        EVENTS.console_prompt.emit(());
+
+        // This should trigger a schema update event.
+        assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
+            CommMsg::Data(value) => {
+                // Make sure it's schema update event.
+                assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
+                    DataExplorerFrontendEvent::SchemaUpdate);
+        });
+
+        // Get the schema again to make sure it updated. We added a new column, so
+        // we should get 3 columns back.
+        let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
+            num_columns: 3,
+            start_index: 0,
+        });
+
+        // Check that we got the right number of columns.
+        assert_match!(socket_rpc(&socket, req),
+            DataExplorerBackendReply::GetSchemaReply(schema) => {
+                assert_eq!(schema.columns.len(), 3);
+            }
+        );
+
+        // Now, delete 'x' entirely. This should cause the comm to close.
+        r_parse_eval0("rm(x)", R_ENVS.global).unwrap();
+
+        // Emit a console prompt event to trigger change detection
+        EVENTS.console_prompt.emit(());
+
+        // Wait for an close event to arrive
+        assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
+            CommMsg::Close => {}
+        );
+    })
+}
+
+#[test]
+fn test_boolean_filters() {
+    r_test(|| {
+        // --- boolean filters ---
+
+        // Create a data frame with a series of boolean values.
+        r_parse_eval0(
+            r#"test_bools <- data.frame(bool = c(
+                    TRUE,
+                    TRUE,
+                    FALSE,
+                    NA,
+                    TRUE,
+                    FALSE
+            ))"#,
+            R_ENVS.global,
+        )
+        .unwrap();
+
+        // Open the data set in the data explorer.
+        let socket = open_data_explorer(String::from("test_bools"));
+
+        // Get the schema of the data set.
+        let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
+            num_columns: 1,
+            start_index: 0,
+        });
+
+        let schema_reply = socket_rpc(&socket, req);
+        let schema = match schema_reply {
+            DataExplorerBackendReply::GetSchemaReply(schema) => schema,
+            _ => panic!("Unexpected reply: {:?}", schema_reply),
+        };
+
+        // Next, apply a filter to the data set. Check for rows that are TRUE.
+        let true_filter = RowFilter {
+            column_schema: schema.columns[0].clone(),
+            filter_type: RowFilterType::IsTrue,
+            filter_id: "16B3E3E7-44D0-4003-B6BD-46EE0629F067".to_string(),
+            condition: RowFilterCondition::And,
+            is_valid: None,
+            compare_params: None,
+            between_params: None,
+            search_params: None,
+            set_membership_params: None,
+            error_message: None,
+        };
+        let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
+            filters: vec![true_filter.clone()],
+        });
+
+        // We should get a SetRowFiltersReply back. There are 3 rows where the
+        // value is TRUE.
+        assert_match!(socket_rpc(&socket, req),
+        DataExplorerBackendReply::SetRowFiltersReply(
+            FilterResult { selected_num_rows: num_rows, had_errors: Some(false)}
+        ) => {
+            assert_eq!(num_rows, 3);
+        });
+    })
+}
+
+#[test]
+fn test_invalid_filters() {
+    r_test(|| {
+        // --- invalid filters ---
+
+        // Create a data frame with a bunch of dates.
+        let socket = open_data_explorer_from_expression(
+            r#"test_dates <- data.frame(date = as.POSIXct(c(
+                    "2024-01-01 01:00:00",
+                    "2024-01-02 02:00:00",
+                    "2024-01-03 03:00:00"))
+                    )"#,
+            None,
+        )
+        .unwrap();
+
+        // Get the schema of the data set.
+        let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
+            num_columns: 1,
+            start_index: 0,
+        });
+
+        let schema_reply = socket_rpc(&socket, req);
+        let schema = match schema_reply {
+            DataExplorerBackendReply::GetSchemaReply(schema) => schema,
+            _ => panic!("Unexpected reply: {:?}", schema_reply),
+        };
+
+        // Next, apply a filter to the data set. Check for rows that are greater than
+        // "marshmallows". This is an invalid filter because the column is a date.
+        let year_filter = RowFilter {
+            column_schema: schema.columns[0].clone(),
+            filter_type: RowFilterType::Compare,
+            filter_id: "0DB2F23D-B299-4068-B8D5-A2B513A93330".to_string(),
+            condition: RowFilterCondition::And,
+            is_valid: None,
+            compare_params: Some(CompareFilterParams {
+                op: CompareFilterParamsOp::Gt,
+                value: "marshmallows".to_string(),
+            }),
+            between_params: None,
+            search_params: None,
+            set_membership_params: None,
+            error_message: None,
+        };
+        let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
+            filters: vec![year_filter.clone()],
+        });
+
+        // We should get a SetRowFiltersReply back. Because the filter is invalid,
+        // the number of selected rows should be 3 (all the rows in the data set)
+        assert_match!(socket_rpc(&socket, req),
+        DataExplorerBackendReply::SetRowFiltersReply(
+            FilterResult { selected_num_rows: num_rows, had_errors: Some(true)}
+        ) => {
+            assert_eq!(num_rows, 3);
+        });
+
+        // We also want to make sure that invalid filters are marked along with their
+        // error messages.
+        let req = DataExplorerBackendRequest::GetState;
+        assert_match!(socket_rpc(&socket, req),
+            DataExplorerBackendReply::GetStateReply(state) => {
+                assert_eq!(state.row_filters[0].is_valid, Some(false));
+                assert!(state.row_filters[0].error_message.is_some());
+            }
+        );
+    })
+}
+
 // Tests that invalid filters are preserved after a live update that removes the column
 // Refer to https://github.com/posit-dev/positron/issues/3141 for more info.
 #[test]
 fn test_invalid_filters_preserved() {
     r_test(|| {
-        // Create a small data frame with a bunch of dates.
-        let test_df = r_parse_eval0(
+        let socket = open_data_explorer_from_expression(
             r#"test_df <- data.frame(x = c('','a', 'b'), y = c(1, 2, 3))"#,
-            R_ENVS.global,
+            Some("test_df"),
         )
         .unwrap();
-
-        // Open a data explorer for the tiny data frame and supply a binding to the
-        // global environment.
-        let (comm_manager_tx, comm_manager_rx) = bounded::<CommManagerEvent>(0);
-        let binding = DataObjectEnvInfo {
-            name: String::from("test_df"),
-            env: RThreadSafe::new(RObject::view(R_ENVS.global)),
-        };
-        RDataExplorer::start(
-            String::from("test_df"),
-            test_df,
-            Some(binding),
-            comm_manager_tx,
-        )
-        .unwrap();
-
-        // Wait for the new comm to show up.
-        let msg = comm_manager_rx
-            .recv_timeout(std::time::Duration::from_secs(1))
-            .unwrap();
-
-        let socket = match msg {
-            CommManagerEvent::Opened(socket, _value) => {
-                assert_eq!(socket.comm_name, "positron.dataExplorer");
-                socket
-            },
-            _ => panic!("Unexpected Comm Manager Event"),
-        };
 
         // Get the schema of the data set.
         let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
@@ -1288,7 +1414,7 @@ fn test_data_explorer_special_values() {
             f = list(NULL, list(1,2,3), list(4,5,6), list(7,8,9), list(10,11,12))
         )";
 
-        let socket = match open_data_explorer_from_expression(code) {
+        let socket = match open_data_explorer_from_expression(code, None) {
             Ok(socket) => socket,
             Err(_) => return, // Skip test if tibble is not installed
         };
@@ -1337,6 +1463,7 @@ fn test_export_data() {
                 c = c(TRUE, FALSE, TRUE)
             )
         "#,
+            None,
         )
         .unwrap();
 
