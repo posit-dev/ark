@@ -36,10 +36,19 @@ pub fn indent_edit(doc: &Document, line: usize) -> anyhow::Result<Option<Vec<Ark
         column: 0,
     };
 
-    let node = ast
-        .root_node()
-        .find_smallest_spanning_node(indent_pos)
-        .unwrap(); // Can only happen if `line` is OOB, which it isn't
+    let node = ast.root_node().find_smallest_spanning_node(indent_pos);
+
+    // FIXME: Remove this as soon as https://github.com/r-lib/tree-sitter-r/pull/126
+    // is merged and we have synced with upstream tree-sitter-r.
+    // Due to a tree-sitter-r bug, if there are leading newlines in a document, they are
+    // consumed before the `program` node is created, meaning that rows at the beginning
+    // of a document before the first token can look OOB and won't be contained by any
+    // node. There should be no indent adjustment required in these cases.
+    if node.is_none() {
+        return Ok(None);
+    }
+
+    let node = node.unwrap(); // Can only happen if `line` is OOB, which it isn't
 
     // Get the parent node of the beginning of line
     let mut bol_parent = node;
