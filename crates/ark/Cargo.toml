@@ -2,7 +2,7 @@
 name = "ark"
 version = "0.1.111"
 description = """
-The Amalthea R Kernel.
+Ark, an R Kernel.
 """
 
 authors.workspace = true

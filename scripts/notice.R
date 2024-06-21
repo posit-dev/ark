@@ -116,7 +116,7 @@ if (is.null(dependencies)) {
 notice_file <- "NOTICE"
 file.create(notice_file)
 
-cat("Amalthea R Kernel (ark) includes other open source software components.\n", file = notice_file, append = TRUE)
+cat("The Ark R Kernel (ark) includes other open source software components.\n", file = notice_file, append = TRUE)
 cat("The following is a list of each component and its license.\n\n", file = notice_file, append = TRUE)
 
 # Process each dependency
@@ -140,4 +140,3 @@ for (package_name in names(dependencies)) {
 }
 
 cat("NOTICE file created successfully.\n")
-
