@@ -16,13 +16,13 @@ $ cargo build
 
 ## Standalone usage
 
-To use ARK as a standalone kernel (outside Positron), install the kernelspec. From the repository root:
+To use ARK as a standalone kernel (outside Positron), install the kernelspec. From the repository root after running `cargo build`:
 
 ```sh
 $ ./target/debug/ark --install
 ```
 
-This installs a JSON file to the Jupyter kernel registry. After it completes, the Amalthea R kernel (ARK) will be available on all Jupyter frontends on your system (Notebook, Lab, Positron, etc.).
+This installs a JSON file to the Jupyter kernel registry. After it completes, the Amalthea R kernel (ARK) will be available on all Jupyter frontends on your system (Notebook, Lab, etc.).
 
 You will usually want to tweak the **ark** environment for development; add this to `~/Library/Jupyter/kernels/ark/kernel.json`:
 
@@ -33,4 +33,4 @@ You will usually want to tweak the **ark** environment for development; add this
   }
 ```
 
-This enables backtrace capturing in [anyhow](https://docs.rs/anyhow) errors and sets internal crates to log at TRACE level and external dependencies to log at WARN. Setting the latter to more verbose levels can dramatically impact performance. See the documentation in the [tracing_subscriber](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html) crate for more fine-grained tuning of the `RUST_LOG` environment variable.
+This enables backtrace capturing in [anyhow](https://docs.rs/anyhow) errors and sets internal crates to log at TRACE level and external dependencies to log at WARN. Setting the latter to more verbose levels can dramatically decrease performance. See the documentation in the [tracing_subscriber](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html) crate for more fine-grained tuning of the `RUST_LOG` environment variable.

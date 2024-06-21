@@ -26,7 +26,7 @@ This is a Jupyter kernel framework; Amalthea is [one of Jupiter's moons](https:/
 
 ## Related Projects
 
-[Positron](https://github.com/rstudio/positron), a next-generation data science IDE
+[Positron](https://github.com/posit-dev/positron), a next-generation data science IDE
 
 [Xeus](https://github.com/jupyter-xeus/xeus), a C++ base/reference kernel implementation
 
