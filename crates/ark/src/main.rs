@@ -155,6 +155,15 @@ fn install_kernel_spec() {
         serde_json::Value::String(r_version.r_home.clone()),
     );
 
+    // Point `LD_LIBRARY_PATH` to a folder with some `libR.so`. It doesn't
+    // matter which one, but the linker needs to be able to find a file of that
+    // name, even though we won't use it for symbol resolution.
+    // https://github.com/posit-dev/positron/issues/1619#issuecomment-1971552522
+    if cfg!(target_os = "linux") {
+        let lib = format!("{}/lib", r_version.r_home.clone());
+        env.insert("LD_LIBRARY_PATH".into(), serde_json::Value::String(lib));
+    }
+
     // Create the kernelspec
     let exe_path = unwrap!(env::current_exe(), Err(error) => {
         eprintln!("Failed to determine path to Ark. {}", error);
