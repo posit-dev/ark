@@ -16,8 +16,6 @@ lsp <--> libr
 lsp <--> tower[Tower-LSP]
 ```
 
-For more information on the system's architecture, see the [Amalthea Architecture](https://connect.rstudioservices.com/positron-wiki/amalthea-architecture.html) section of the Positron Wiki.
-
 
 ## What's with the name?
 
