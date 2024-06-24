@@ -55,3 +55,13 @@ $ jupyter console --kernel=ark
 - [languageserver](https://github.com/REditorSupport/languageserver), a server that implements the [LSP protocol](https://microsoft.github.io/language-server-protocol/) for R, written primarily in R itself. We decided to create our own LSP written in Rust for two reasons. Initially, we needed to tightly integrate with the Jupyter kernel to provide introspective features based on the current state of the R session. In the longer term, we plan to move towards sophisticated static analysis of R code. The Rust ecosystem is a great place for implementing powerful language servers thanks to frameworks like [Tower-LSP](https://github.com/ebkalderon/tower-lsp) or the libraries for static analysis and incremental computation such as those contributed by the authors of [Rust Analyzer](https://github.com/rust-lang/rust-analyzer).
 
 - [vscDebugger](https://manuelhentschel.github.io/vscDebugger), a server that implements the [DAP protocol](https://microsoft.github.io/debug-adapter-protocol) for R, also written in R as an R package. By comparison, our DAP server is tightly integrated into our Jupyter kernel. This makes it possible to smoothly integrate with the currently running R session and start debugging at any time without any prerequisite steps.
+
+## Code of Conduct
+
+Please note that this project is released with a [Contributor Code of
+Conduct](https://github.com/posit-dev/ark?tab=coc-ov-file). By participating
+in this project you agree to abide by its terms.
+
+## License
+
+Ark is licensed under the [MIT License](https://github.com/posit-dev/ark?tab=MIT-1-ov-file).
