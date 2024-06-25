@@ -9,7 +9,7 @@ Ark aims to provide a complete set of reusable and interoperable tools for imple
 
 - It is an [LSP server](https://microsoft.github.io/language-server-protocol) that powers intellisense features such as completions, jump-to-definition, find-references, diagnostics, etc. It also has some formatting capabilities that we plan to develop over time.
 
-- It a [DAP server](https://microsoft.github.io/debug-adapter-protocol) for sophisticated step-debugging of R functions. It manages source references, creating them on the spot if needed, and integrates tightly with the Jupyter kernel to step through R code transparently and inspect local variables. Note: Support for breakpoints is currently missing but you can use `debug()`, `debugonce()`, or `browser()` to drop into the debugger.
+- It is a [DAP server](https://microsoft.github.io/debug-adapter-protocol) for sophisticated step-debugging of R functions. It manages source references, creating them on the spot if needed, and integrates tightly with the Jupyter kernel to step through R code transparently and inspect local variables. Note: Support for breakpoints is currently missing but you can use `debug()`, `debugonce()`, or `browser()` to drop into the debugger.
 
 The LSP and DAP features are currently only available in Positron but will be made available to other frontends in the future.
 
