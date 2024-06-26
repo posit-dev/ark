@@ -14,15 +14,15 @@
     <key>com.apple.security.automation.apple-events</key>
     <true/>
 
-    <!--- Allow debugging compiled code in R and R packages -->
+    <!-- Allow debugging compiled code in R and R packages -->
     <key>com.apple.security.get-task-allow</key>
     <true/>
 
-    <! -- Needed to open the R shared library with libloading -->
+    <!-- Needed to open the R shared library with libloading -->
     <key>com.apple.security.cs.disable-library-validation</key>
     <true/>
 
-    <! -- TODO: What EXACTLY was this for? https://github.com/posit-dev/positron/pull/958 -->
+    <!-- TODO: What EXACTLY was this for? https://github.com/posit-dev/positron/pull/958 -->
     <key>com.apple.security.cs.disable-executable-page-protection</key>
     <true/>
 </dict>
