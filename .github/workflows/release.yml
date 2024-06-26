@@ -152,7 +152,7 @@ jobs:
 
                 # Compress the kernel to a zip. We must upload a zip file to Apple and
                 # can't simply upload the binary as is.
-                NOTARIZATION_TARGET="$GITHUB_WORKSPACE/ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ matrix.flavor }}-darwin-${{ matrix.arch }}-notarize.zip"
+                NOTARIZATION_TARGET="$GITHUB_WORKSPACE/ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ matrix.flavor }}-darwin-${{ matrix.arch }}.zip"
                 zip -Xry $NOTARIZATION_TARGET ark
 
                 # Submit the zip to Apple's notarization service. This consumes the
@@ -191,17 +191,17 @@ jobs:
 
                 popd
 
-            # Compress notarized kernel to a zip file
-            - name: Create archive
-              run: |
-                  # Enter the build directory
-                  pushd target/${{ matrix.rust_target_prefix }}-apple-darwin/${{ matrix.flavor }}
-
-                  # Compress the kernel to an archive
-                  ARCHIVE="$GITHUB_WORKSPACE/ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ matrix.flavor }}-darwin-${{ matrix.arch }}.zip"
-                  zip -Xry $ARCHIVE ark
-
-                  popd
+#             # Compress notarized kernel to a zip file
+#             - name: Create archive
+#               run: |
+#                   # Enter the build directory
+#                   pushd target/${{ matrix.rust_target_prefix }}-apple-darwin/${{ matrix.flavor }}
+#
+#                   # Compress the kernel to an archive
+#                   ARCHIVE="$GITHUB_WORKSPACE/ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ matrix.flavor }}-darwin-${{ matrix.arch }}.zip"
+#                   zip -Xry $ARCHIVE ark
+#
+#                   popd
 
             # Create build artifact
             - name: Upload client archive
