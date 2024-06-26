@@ -130,12 +130,16 @@ jobs:
                 echo "${{ secrets.MACOS_DEVELOPER_CERTIFICATE }}" | base64 -D > ${{ runner.temp }}/cert.p12
                 security import ${{ runner.temp }}/cert.p12 -k ${{ runner.temp }}/buildagent.keychain -P "${{ secrets.MACOS_DEVELOPER_CERTIFICATE_KEY }}" -T /usr/bin/codesign
 
+                # Pull the code-signing identity out of the Developer ID certificate
+                CODESIGN_IDENTITY=$(security find-identity -v -p codesigning ${{ runner.temp }}/buildagent.keychain | grep -oEi "([0-9A-F]{40})" | head -n 1)
+
                 # Actually sign the binary and set hardened runtime entitlements
                 codesign \
                     --options runtime \
                     --timestamp \
+                    --verbose \
                     --entitlements "$GITHUB_WORKSPACE/package/osx/entitlements.plist" \
-                    -s - \
+                    -s $CODESIGN_IDENTITY \
                     ark
 
                 popd
