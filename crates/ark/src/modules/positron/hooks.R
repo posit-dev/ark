@@ -100,9 +100,43 @@ ark_onload_hook <- function(pkg, path) {
     if (missing(path)) {
         path <- NULL
     }
+
+    # Just in case
+    if (!is_string(pkg) || !is_string(path)) {
+        return()
+    }
+
+    if (pkg == "cli") {
+        the$cli_version <- utils::packageVersion("cli")
+    }
+
+    check_version(pkg)
+
     .ps.Call("ps_onload_hook", pkg, path)
 }
+
 ark_onload_hook <- structure(
     ark_onload_hook,
     class = c("ark_onload_hook", "function")
 )
+
+check_version <- function(pkg) {
+    version <- utils::packageVersion(pkg)
+
+    switch(
+        pkg,
+        roxygen2 = if (version <= "7.3.1") {
+            writeLines(c(
+                sprintf(
+                    "%s You are using roxygen %s. It is recommended to update to roxygen >= 7.3.2 when running inside Ark.",
+                    ansi_info(),
+                    version
+                ),
+                sprintf(
+                    "%s See https://github.com/posit-dev/positron/issues/3053",
+                    ansi_info()
+                )
+            ))
+        }
+    )
+}
