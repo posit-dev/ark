@@ -135,8 +135,7 @@ jobs:
                     --options runtime \
                     --timestamp \
                     --entitlements "$GITHUB_WORKSPACE/package/osx/entitlements.plist" \
-                    --force \
-                    --deep \
+                    -s - \
                     ark
 
                 popd
