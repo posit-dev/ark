@@ -187,7 +187,7 @@ jobs:
                 # validation with Gatekeeper. You can't staple the ticket to a zip file,
                 # so we staple it directly to the binary and then recompress that into
                 # a new zip that becomes our build artifact.
-                xcrun stapler staple ark
+                # xcrun stapler staple ark
 
                 popd
 
