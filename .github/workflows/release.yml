@@ -114,7 +114,81 @@ jobs:
                   cargo clean
                   cargo build ${{ matrix.flavor == 'release' && '--release' || '' }} --target ${{ matrix.rust_target_prefix }}-apple-darwin
 
-            # Compress kernel to a zip file
+            # Sign the binary and set the hardened entitlements
+            - name: Sign binary
+              run: |
+                # Enter the build directory
+                pushd target/${{ matrix.rust_target_prefix }}-apple-darwin/${{ matrix.flavor }}
+
+                # Create a temporary keychain to hold the Developer ID certificate
+                security create-keychain -p pwd ${{ runner.temp }}/buildagent.keychain
+                security default-keychain -s ${{ runner.temp }}/buildagent.keychain
+                security unlock-keychain -p pwd ${{ runner.temp }}/buildagent.keychain
+
+                # Import the Developer ID certificate from Github Secrets. This
+                # certificate is stored in a base64 encoded blob.
+                echo "${{ secrets.MACOS_DEVELOPER_CERTIFICATE }}" | base64 -D > ${{ runner.temp }}/cert.p12
+                security import ${{ runner.temp }}/cert.p12 -k ${{ runner.temp }}/buildagent.keychain -P "${{ secrets.MACOS_DEVELOPER_CERTIFICATE_KEY }}" -T /usr/bin/codesign
+
+                # Actually sign the binary and set hardened runtime entitlements
+                codesign \
+                    --options runtime \
+                    --timestamp \
+                    --entitlements "$GITHUB_WORKSPACE/package/osx/entitlements.plist" \
+                    --force \
+                    --deep \
+                    ark
+
+                popd
+
+            # Notarize the build using an Apple service
+            - name: Notarize binary
+              run: |
+                # Enter the build directory
+                pushd target/${{ matrix.rust_target_prefix }}-apple-darwin/${{ matrix.flavor }}
+
+                # Compress the kernel to a zip. We must upload a zip file to Apple and
+                # can't simply upload the binary as is.
+                NOTARIZATION_TARGET="$GITHUB_WORKSPACE/ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ matrix.flavor }}-darwin-${{ matrix.arch }}-notarize.zip"
+                zip -Xry $NOTARIZATION_TARGET ark
+
+                # Submit the zip to Apple's notarization service. This consumes the
+                # user name and password of an Apple account under which to perform
+                # the notarization. The team ID `FYF2F5GFX4` provided below should
+                # match the team ID of the Developer ID certificate.
+                #
+                # The `--wait` argument causes `xcrun` to return only when the
+                # service has completed notarization.
+                NOTARIZATION_OUTPUT=$(xcrun notarytool submit \
+                    --wait \
+                    --apple-id "${{ secrets.MACOS_NOTARIZATION_USER_NAME }}" \
+                    --password "${{ secrets.MACOS_NOTARIZATION_USER_PASSWORD }}" \
+                    --team-id FYF2F5GFX4 \
+                    --progress $NOTARIZATION_TARGET)
+                echo $NOTARIZATION_OUTPUT
+
+                # Extract the notarization ID. This comes from a line of output that looks like:
+                # id: 4baf5d9e-d1e8-48ed-8f33-1f0ae06e7ad1
+                NOTARIZATION_ID=$(echo $NOTARIZATION_OUTPUT | sed -n -e 's/.*[[:space:]]*id:[[:space:]]*\([^ ]*\).*/\1/p' | head -1)
+
+                # Extract and print the notarization log.
+                xcrun notarytool log \
+                    --apple-id "${{ secrets.MACOS_NOTARIZATION_USER_NAME }}" \
+                    --password "${{ secrets.MACOS_NOTARIZATION_USER_PASSWORD }}" \
+                    --team-id FYF2F5GFX4 \
+                    $NOTARIZATION_ID \
+                    notarization-$NOTARIZATION_ID.log
+                cat notarization-$NOTARIZATION_ID.log
+
+                # Staple the notarization ticket to the binary. This allows for offline
+                # validation with Gatekeeper. You can't staple the ticket to a zip file,
+                # so we staple it directly to the binary and then recompress that into
+                # a new zip that becomes our build artifact.
+                xcrun stapler staple ark
+
+                popd
+
+            # Compress notarized kernel to a zip file
             - name: Create archive
               run: |
                   # Enter the build directory
