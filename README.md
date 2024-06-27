@@ -67,4 +67,6 @@ in this project you agree to abide by its terms.
 
 ## License
 
-Ark is licensed under the [MIT License](https://github.com/posit-dev/ark?tab=MIT-1-ov-file).
+Copyright (C) Posit Software, PBC. All rights reserved.
+
+Ark is licensed under the [MIT License](https://github.com/posit-dev/ark?tab=MIT-1-ov-file). 
