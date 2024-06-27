@@ -2,13 +2,13 @@ Some packages require fixes for better integration in Ark. We recommend running 
 
 ```r
 # Important
-pak::pak("cli", "r-lib/roxygen")
+pak::pak("cli", "r-lib/roxygen2")
 
 # Nice to have
 pak::pak(c("rlang", "r-lib/pkgload"))
 ```
 
-### roxygen:
+### roxygen2:
 
 - Set `cli.hyperlink = FALSE` in `local_reproducible_output()`: <https://github.com/r-lib/roxygen2/pull/1621>
     - Bugfix for <https://github.com/posit-dev/positron/issues/3053>
@@ -54,6 +54,6 @@ pak::pak(c("rlang", "r-lib/pkgload"))
     - **Unreleased**
 
 - Fix NSE in `shim_help(package = )` <https://github.com/r-lib/pkgload/pull/267>
-    - Bugfix fo
+    - Bugfix for dev help
     - Worked around in <https://github.com/posit-dev/ark/pull/233>
     - **Unreleased**
