@@ -126,7 +126,8 @@ check_version <- function(pkg) {
     switch(
         pkg,
         roxygen2 = if (version <= "7.3.1") {
-            writeLines(c(
+            message(paste(
+                sep = "\n",
                 sprintf(
                     "%s You are using roxygen %s. It is recommended to update to roxygen >= 7.3.2 when running inside Ark.",
                     ansi_info(),
