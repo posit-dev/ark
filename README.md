@@ -33,6 +33,9 @@ Download a [release](https://github.com/posit-dev/ark/releases) of Ark to a loca
 $ ark --install
 ```
 
+> [!NOTE]
+> Ark is currently not signed and notarized, so on macOS you will likely need to go to `System Settings -> Privacy and Security -> Click Allow Anyways for ark`, otherwise macOS will prevent you from running it. We are working on improving this. This does not apply when using the version of ark bundled within Positron.
+
 Ark should now be available in jupyter applications, e.g. in Jupyter Lab:
 
 <p align="center">
