@@ -158,3 +158,11 @@ local_unlock <- function(env, frame = parent.frame()) {
         defer(lockEnvironment(env), envir = frame)
     }
 }
+
+# Singleton for cached objects. Only create it if it doesn't exist because
+# `init.R` might be sourced multiple times.
+if (!exists("the", inherits = FALSE)) {
+    the <- new.env(parent = emptyenv())
+
+    the$cli_version <- NULL
+}
