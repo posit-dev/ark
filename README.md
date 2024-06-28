@@ -49,6 +49,11 @@ $ jupyter console --kernel=ark
 ```
 
 
+## Reporting issues
+
+We currently use the issue tracker of [Positron](https://github.com/posit-dev/positron). Please report bugs and feature requests at <https://github.com/posit-dev/positron/issues>, and feel free to tag your issue with the `lang: r` and `area: kernels` labels.
+
+
 ## Related Projects
 
 - [Positron](https://github.com/posit-dev/positron), a next-generation data science IDE. The R language pack in Positron interfaces with the Ark kernel for interactive evaluation of R code and collecting outputs and plots. It also connects to the Ark LSP for intellisense features like completions, jump-to-definition, find-references, etc, and to the Ark DAP for transparent debugging.
@@ -69,4 +74,4 @@ in this project you agree to abide by its terms.
 
 Copyright (C) Posit Software, PBC. All rights reserved.
 
-Ark is licensed under the [MIT License](https://github.com/posit-dev/ark?tab=MIT-1-ov-file). 
+Ark is licensed under the [MIT License](https://github.com/posit-dev/ark?tab=MIT-1-ov-file).
