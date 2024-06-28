@@ -2,10 +2,10 @@ Some packages require fixes for better integration in Ark. We recommend running 
 
 ```r
 # Important
-pak::pak("cli", "r-lib/roxygen2")
+pak::pak("cli", "roxygen2")
 
 # Nice to have
-pak::pak(c("rlang", "r-lib/pkgload"))
+pak::pak(c("rlang", "pkgload"))
 ```
 
 ### roxygen2:
@@ -13,11 +13,11 @@ pak::pak(c("rlang", "r-lib/pkgload"))
 - Set `cli.hyperlink = FALSE` in `local_reproducible_output()`: <https://github.com/r-lib/roxygen2/pull/1621>
     - Bugfix for <https://github.com/posit-dev/positron/issues/3053>
     - Ark warns on load because this bug disruptive to dev workflow
-    - **Unreleased**
+    - Fixed in roxygen2 7.3.2 (2024-06-27)
 
 - Use more generic x-r-run over `ide:run`: <https://github.com/r-lib/roxygen2/pull/1604>
     - Enhancement: Hyperlink support
-    - **Unreleased**
+    - Fixed in roxygen2 7.3.2 (2024-06-27)
 
 
 ### cli
@@ -46,14 +46,14 @@ pak::pak(c("rlang", "r-lib/pkgload"))
 
 - Check if rstudioapi is available <https://github.com/r-lib/pkgload/pull/277>
     - Enhancement: Support for dev help implemented in <https://github.com/posit-dev/ark/pull/347>
-    - **Unreleased**
+    - Fixed in pkgload 1.4.0 (2024-06-27)
 
 - Pass library path in user hook <https://github.com/r-lib/pkgload/commit/b4e178bd>
     - Bugfix for an error during `load_all()` due to an interaction with our custom onload hook
     - Worked around in <https://github.com/posit-dev/ark/commit/a03766e2>
-    - **Unreleased**
+    - Fixed in pkgload 1.4.0 (2024-06-27)
 
 - Fix NSE in `shim_help(package = )` <https://github.com/r-lib/pkgload/pull/267>
     - Bugfix for dev help
     - Worked around in <https://github.com/posit-dev/ark/pull/233>
-    - **Unreleased**
+    - Fixed in pkgload 1.4.0 (2024-06-27)
