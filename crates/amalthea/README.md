@@ -30,8 +30,6 @@ This is a Jupyter kernel framework; Amalthea is [one of Jupiter's moons](https:/
 
 [EvCxR Kernel](https://github.com/google/evcxr/tree/main/evcxr_jupyter), a kernel for Rust written in Rust
 
-[Myriac Console](https://github.com/rstudio/myriac-console), an experimental Jupyter frontend
-
 [tower-lsp](https://github.com/ebkalderon/tower-lsp), an LSP framework built on [Tower](https://github.com/tower-rs/tower), which is itself built on [tokio](https://tokio.rs/).
 
 [tower-lsp-boilerplate](https://github.com/IWANABETHATGUY/tower-lsp-boilerplate), an example LSP built with `tower-lsp`
