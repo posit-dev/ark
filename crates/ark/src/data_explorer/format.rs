@@ -81,7 +81,7 @@ fn format_values(x: SEXP, format_options: &FormatOptions) -> anyhow::Result<Vec<
 
 fn format_object(x: SEXP) -> Vec<FormattedValue> {
     // We call r_format() to dispatch the format method
-    let formatted: Vec<String> = match r_format(x) {
+    let formatted: Vec<Option<String>> = match r_format(x) {
         Ok(fmt) => match RObject::from(fmt).try_into() {
             Ok(x) => x,
             Err(_) => return unknown_format(x),
@@ -89,17 +89,24 @@ fn format_object(x: SEXP) -> Vec<FormattedValue> {
         Err(_) => return unknown_format(x),
     };
 
-    let formatted = formatted.into_iter().map(|v| {
-        // `base::format` defaults to using `trim=FALSE`
-        // So it will add spaces to the end of the strings causing all elements of the vector
-        // to have the same fixed width. We don't want this behavior in the data explorer,
-        // We tried passing `trim=TRUE` but this is unfortunately not supported for eg. `factors`:
-        // > format(factor(c("aaaa", "a")), trim = TRUE)
-        // [1] "aaaa" "a   "
-        //
-        // So we will just trim the spaces manually, which is not ideal, but it's better than
-        // having the values misaligned
-        FormattedValue::Value(v.trim_matches(|x| x == ' ').to_string())
+    let formatted = formatted.into_iter().map(|x| {
+        match x {
+            Some(v) => {
+                // `base::format` defaults to using `trim=FALSE`
+                // So it will add spaces to the end of the strings causing all elements of the vector
+                // to have the same fixed width. We don't want this behavior in the data explorer,
+                // We tried passing `trim=TRUE` but this is unfortunately not supported for eg. `factors`:
+                // > format(factor(c("aaaa", "a")), trim = TRUE)
+                // [1] "aaaa" "a   "
+                //
+                // So we will just trim the spaces manually, which is not ideal, but it's better than
+                // having the values misaligned
+                FormattedValue::Value(v.trim_matches(|x| x == ' ').to_string())
+            },
+            // In some cases `format()` will return `NA` for values it can't format instead of `"NA"`.
+            // For example, with `format(as.POSIXct(c(NA)))`.
+            None => FormattedValue::NA,
+        }
     });
 
     // But we also want to show special value codes. We call `base::is.na()` to dispatch
@@ -682,6 +689,23 @@ mod tests {
                 ColumnValue::FormattedValue("TRUE".to_string()),
                 ColumnValue::FormattedValue("FALSE".to_string()),
                 ColumnValue::FormattedValue("TRUE".to_string())
+            ]);
+        })
+    }
+
+    #[test]
+    fn test_date_formatting() {
+        r_test(|| {
+            let data = r_parse_eval0(
+                r#"as.POSIXct(c("2012-01-01", NA, "2017-05-27"))"#,
+                R_ENVS.global,
+            )
+            .unwrap();
+            let formatted = format_column(data.sexp, &default_options());
+            assert_eq!(formatted, vec![
+                ColumnValue::FormattedValue("2012-01-01".to_string()),
+                FormattedValue::NA.into(),
+                ColumnValue::FormattedValue("2017-05-27".to_string())
             ]);
         })
     }
