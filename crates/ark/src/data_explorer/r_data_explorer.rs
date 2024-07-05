@@ -18,7 +18,6 @@ use amalthea::comm::data_explorer_comm::ColumnSchema;
 use amalthea::comm::data_explorer_comm::ColumnSortKey;
 use amalthea::comm::data_explorer_comm::ColumnSummaryStats;
 use amalthea::comm::data_explorer_comm::ColumnValue;
-use amalthea::comm::data_explorer_comm::CompareFilterParamsOp;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendReply;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendRequest;
 use amalthea::comm::data_explorer_comm::DataExplorerFrontendEvent;
@@ -27,6 +26,7 @@ use amalthea::comm::data_explorer_comm::ExportDataSelectionFeatures;
 use amalthea::comm::data_explorer_comm::ExportDataSelectionParams;
 use amalthea::comm::data_explorer_comm::ExportFormat;
 use amalthea::comm::data_explorer_comm::ExportedData;
+use amalthea::comm::data_explorer_comm::FilterComparisonOp;
 use amalthea::comm::data_explorer_comm::FilterResult;
 use amalthea::comm::data_explorer_comm::FormatOptions;
 use amalthea::comm::data_explorer_comm::GetColumnProfilesFeatures;
@@ -34,6 +34,7 @@ use amalthea::comm::data_explorer_comm::GetColumnProfilesParams;
 use amalthea::comm::data_explorer_comm::GetDataValuesParams;
 use amalthea::comm::data_explorer_comm::GetSchemaParams;
 use amalthea::comm::data_explorer_comm::RowFilter;
+use amalthea::comm::data_explorer_comm::RowFilterParams;
 use amalthea::comm::data_explorer_comm::RowFilterType;
 use amalthea::comm::data_explorer_comm::RowFilterTypeSupportStatus;
 use amalthea::comm::data_explorer_comm::SearchSchemaFeatures;
@@ -790,11 +791,13 @@ impl RDataExplorer {
                 Ok(display_type == &ColumnDisplayType::String)
             },
             RowFilterType::Compare => {
-                if let Some(compare_params) = &filter.compare_params {
-                    let compare_op = &compare_params.op;
-                    match compare_op {
-                        CompareFilterParamsOp::Eq | CompareFilterParamsOp::NotEq => Ok(true),
-                        _ => Ok(is_compare_supported(display_type)),
+                if let Some(params) = &filter.params {
+                    match params {
+                        RowFilterParams::Comparison(comparison) => match comparison.op {
+                            FilterComparisonOp::Eq | FilterComparisonOp::NotEq => Ok(true),
+                            _ => Ok(is_compare_supported(display_type)),
+                        },
+                        _ => Err(anyhow!("Missing compare filter params")),
                     }
                 } else {
                     Err(anyhow!("Missing compare_params for filter"))
@@ -934,6 +937,7 @@ impl RDataExplorer {
                 },
                 search_schema: SearchSchemaFeatures {
                     support_status: SupportStatus::Unsupported,
+                    supported_types: vec![],
                 },
                 set_row_filters: SetRowFiltersFeatures {
                     support_status: SupportStatus::Supported,
@@ -965,6 +969,7 @@ impl RDataExplorer {
                 },
                 export_data_selection: ExportDataSelectionFeatures {
                     support_status: SupportStatus::Supported,
+                    supported_formats: vec![],
                 },
             },
         };
