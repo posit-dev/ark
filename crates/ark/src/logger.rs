@@ -43,8 +43,8 @@ pub fn init(log_file: Option<&str>, profile_file: Option<&str>) {
         }
 
         // Spawn appender thread for non-blocking writes
-        static mut LOG_GUARD: OnceCell<WorkerGuard> = OnceCell::new();
-        let log_writer = non_blocking(log_file, unsafe { &mut LOG_GUARD });
+        static LOG_GUARD: OnceCell<WorkerGuard> = OnceCell::new();
+        let log_writer = non_blocking(log_file, &LOG_GUARD);
 
         let log = tracing_subscriber::fmt::layer()
             // Use pretty representation. This has more spacing
@@ -76,8 +76,8 @@ pub fn init(log_file: Option<&str>, profile_file: Option<&str>) {
 
         // Only log profile if requested
         if profile_file.is_some() {
-            static mut PROFILE_GUARD: OnceCell<WorkerGuard> = OnceCell::new();
-            let profile_writer = non_blocking(profile_file, unsafe { &mut PROFILE_GUARD });
+            static PROFILE_GUARD: OnceCell<WorkerGuard> = OnceCell::new();
+            let profile_writer = non_blocking(profile_file, &PROFILE_GUARD);
 
             // Profile anything taking over 50ms by default
             let config = std::env::var("ARK_PROFILE").unwrap_or("*>50".into());
@@ -91,7 +91,7 @@ pub fn init(log_file: Option<&str>, profile_file: Option<&str>) {
 }
 
 // Returns a boxed value for genericity
-fn non_blocking(file: Option<&str>, cell: &mut OnceCell<WorkerGuard>) -> BoxMakeWriter {
+fn non_blocking(file: Option<&str>, cell: &OnceCell<WorkerGuard>) -> BoxMakeWriter {
     let file = file.and_then(|file| {
         std::fs::OpenOptions::new()
             .write(true)
