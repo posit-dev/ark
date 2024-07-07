@@ -82,8 +82,16 @@ pub fn completions_from_custom_source_impl(
     let signature = signatures.signatures.get(0).into_result()?;
     let mut name = signature.label.clone();
     let parameters = signature.parameters.as_ref().into_result()?;
-    let index = signature.active_parameter.into_result()?;
-    let parameter = parameters.get(index as usize).into_result()?;
+    let index = signature.active_parameter.into_result()? as usize;
+    // TODO: Currently, argument matching is not very accurate. This is just a
+    // workaround to supresses the error rather than showing a cryptic error
+    // message to users, but there should be some better option.
+    //
+    // cf. https://github.com/posit-dev/positron/issues/3467
+    if index >= parameters.len() {
+        return Ok(None);
+    }
+    let parameter = parameters.get(index).into_result()?;
 
     // Extract the argument text.
     let argument = match parameter.label.clone() {
