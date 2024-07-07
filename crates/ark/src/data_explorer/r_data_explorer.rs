@@ -969,7 +969,11 @@ impl RDataExplorer {
                 },
                 export_data_selection: ExportDataSelectionFeatures {
                     support_status: SupportStatus::Supported,
-                    supported_formats: vec![],
+                    supported_formats: vec![
+                        ExportFormat::Csv,
+                        ExportFormat::Tsv,
+                        ExportFormat::Html,
+                    ],
                 },
             },
         };
