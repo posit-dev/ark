@@ -139,32 +139,18 @@ impl FormattedVector {
 
     pub fn get_unchecked(&self, index: isize) -> String {
         match self {
-            FormattedVector::Raw { vector } => vector.format_elt_unchecked(index),
-            FormattedVector::Logical { vector } => vector.format_elt_unchecked(index),
-            FormattedVector::Integer { vector } => vector.format_elt_unchecked(index),
-            FormattedVector::Numeric { vector } => vector.format_elt_unchecked(index),
+            FormattedVector::Raw { vector } => vector.format_elt_unchecked(index, None),
+            FormattedVector::Logical { vector } => vector.format_elt_unchecked(index, None),
+            FormattedVector::Integer { vector } => vector.format_elt_unchecked(index, None),
+            FormattedVector::Numeric { vector } => vector.format_elt_unchecked(index, None),
             FormattedVector::Character { vector, options } => {
-                let value = vector.format_elt_unchecked(index);
-                self.format_with_string_options(value, options)
+                vector.format_elt_unchecked(index, Some(options))
             },
-            FormattedVector::Complex { vector } => vector.format_elt_unchecked(index),
-            FormattedVector::Factor { vector } => vector.format_elt_unchecked(index),
+            FormattedVector::Complex { vector } => vector.format_elt_unchecked(index, None),
+            FormattedVector::Factor { vector } => vector.format_elt_unchecked(index, None),
             FormattedVector::FormattedVector { vector, options } => {
-                let value = vector.format_elt_unchecked(index);
-                self.format_with_string_options(value, options)
+                vector.format_elt_unchecked(index, Some(options))
             },
-        }
-    }
-
-    fn format_with_string_options(
-        &self,
-        value: String,
-        options: &FormattedVectorCharacterOptions,
-    ) -> String {
-        if options.quote {
-            format!("\"{}\"", value.replace("\"", "\\\""))
-        } else {
-            value
         }
     }
 
