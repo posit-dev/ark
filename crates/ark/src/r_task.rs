@@ -277,21 +277,21 @@ where
 
 /// Channel for sending tasks to `R_MAIN`. Initialized by `initialize()`, but
 /// is otherwise only accessed to create `RTask`s.
-static mut R_MAIN_TASKS_INTERRUPT_TX: OnceLock<Sender<RTask>> = OnceLock::new();
-static mut R_MAIN_TASKS_IDLE_TX: OnceLock<Sender<RTask>> = OnceLock::new();
+static R_MAIN_TASKS_INTERRUPT_TX: OnceLock<Sender<RTask>> = OnceLock::new();
+static R_MAIN_TASKS_IDLE_TX: OnceLock<Sender<RTask>> = OnceLock::new();
 
 pub fn initialize(tasks_tx: Sender<RTask>, tasks_idle_tx: Sender<RTask>) {
-    unsafe { R_MAIN_TASKS_INTERRUPT_TX.set(tasks_tx).unwrap() };
-    unsafe { R_MAIN_TASKS_IDLE_TX.set(tasks_idle_tx).unwrap() };
+    R_MAIN_TASKS_INTERRUPT_TX.set(tasks_tx).unwrap();
+    R_MAIN_TASKS_IDLE_TX.set(tasks_idle_tx).unwrap();
 }
 
 // Be defensive for the case an auxiliary thread runs a task before R is initialized
 // by `start_r()`, which calls `r_task::initialize()`
 fn get_tasks_interrupt_tx() -> &'static Sender<RTask> {
-    get_tx(unsafe { &R_MAIN_TASKS_INTERRUPT_TX })
+    get_tx(&R_MAIN_TASKS_INTERRUPT_TX)
 }
 fn get_tasks_idle_tx() -> &'static Sender<RTask> {
-    get_tx(unsafe { &R_MAIN_TASKS_IDLE_TX })
+    get_tx(&R_MAIN_TASKS_IDLE_TX)
 }
 
 fn get_tx(once_tx: &'static OnceLock<Sender<RTask>>) -> &'static Sender<RTask> {
