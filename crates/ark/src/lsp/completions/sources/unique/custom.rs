@@ -18,6 +18,7 @@ use stdext::unwrap;
 use stdext::IntoResult;
 use tower_lsp::lsp_types::CompletionItem;
 
+use crate::lsp;
 use crate::lsp::completions::completion_item::completion_item;
 use crate::lsp::completions::completion_item::completion_item_from_dataset;
 use crate::lsp::completions::completion_item::completion_item_from_package;
@@ -89,6 +90,7 @@ pub fn completions_from_custom_source_impl(
     //
     // cf. https://github.com/posit-dev/positron/issues/3467
     if index >= parameters.len() {
+        lsp::log_error!("Index {index} is out of bounds of the arguments of `{name}`");
         return Ok(None);
     }
     let parameter = parameters.get(index).into_result()?;
