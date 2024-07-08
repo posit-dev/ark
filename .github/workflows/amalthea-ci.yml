@@ -9,13 +9,22 @@ on:
 jobs:
 
   linux:
-    name: Unit Tests on Linux
     runs-on: ubuntu-latest
+    name: "Unit Tests on Linux (rust: ${{ matrix.config.rust }})"
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - { rust: 'stable'  }
+          - { rust: 'nightly' }
     timeout-minutes: 30
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@nightly
+        if: matrix.config.rust == 'nightly'
 
       - name: Setup Build Environment
         run: |
