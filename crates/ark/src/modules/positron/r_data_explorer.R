@@ -87,7 +87,7 @@ summary_stats_get_timezone <- function(x) {
     if (!inherits(x, "POSIXt")) {
         stop("Timezone can't be obtained for this object type")
     }
-    
+
     timezone <- tz(x)
 
     # When the timezone is reported as "", it will actually be formatted
@@ -110,15 +110,6 @@ col_filter_indices <- function(col, idx = NULL) {
     # Are we working with a matrix here?
     is_matrix <- is.matrix(table)
 
-    # Mapping of filter types to parameter arguments
-    filter_params <- list(
-        compare = "compare_params",
-        between = "between_params",
-        not_between = "between_params",
-        search = "search_params",
-        set_membership = "set_membership_params"
-    )
-
     # Create the initial set of indices
     indices <- rep(TRUE, nrow(table))
     row_filters_errors <- character(length(row_filters))
@@ -137,12 +128,7 @@ col_filter_indices <- function(col, idx = NULL) {
 
         # Get the parameters for the filter function. Not all functions have
         # parameters.
-        param_name <- filter_params[[row_filter$filter_type]]
-        params <- if (is.null(param_name)) {
-            NULL
-        } else {
-            row_filter[[param_name]]
-        }
+        params <- row_filter$params
 
         # Each filter function accepts the column and the parameters as
         # arguments.

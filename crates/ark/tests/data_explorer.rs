@@ -10,8 +10,6 @@ use amalthea::comm::data_explorer_comm::ColumnProfileRequest;
 use amalthea::comm::data_explorer_comm::ColumnProfileType;
 use amalthea::comm::data_explorer_comm::ColumnSortKey;
 use amalthea::comm::data_explorer_comm::ColumnValue;
-use amalthea::comm::data_explorer_comm::CompareFilterParams;
-use amalthea::comm::data_explorer_comm::CompareFilterParamsOp;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendReply;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendRequest;
 use amalthea::comm::data_explorer_comm::DataExplorerFrontendEvent;
@@ -21,22 +19,25 @@ use amalthea::comm::data_explorer_comm::DataSelectionSingleCell;
 use amalthea::comm::data_explorer_comm::ExportDataSelectionParams;
 use amalthea::comm::data_explorer_comm::ExportFormat;
 use amalthea::comm::data_explorer_comm::ExportedData;
+use amalthea::comm::data_explorer_comm::FilterComparison;
+use amalthea::comm::data_explorer_comm::FilterComparisonOp;
 use amalthea::comm::data_explorer_comm::FilterResult;
+use amalthea::comm::data_explorer_comm::FilterTextSearch;
 use amalthea::comm::data_explorer_comm::FormatOptions;
 use amalthea::comm::data_explorer_comm::GetColumnProfilesParams;
 use amalthea::comm::data_explorer_comm::GetDataValuesParams;
 use amalthea::comm::data_explorer_comm::GetSchemaParams;
 use amalthea::comm::data_explorer_comm::RowFilter;
 use amalthea::comm::data_explorer_comm::RowFilterCondition;
+use amalthea::comm::data_explorer_comm::RowFilterParams;
 use amalthea::comm::data_explorer_comm::RowFilterType;
-use amalthea::comm::data_explorer_comm::SearchFilterParams;
-use amalthea::comm::data_explorer_comm::SearchFilterType;
 use amalthea::comm::data_explorer_comm::Selection;
 use amalthea::comm::data_explorer_comm::SetRowFiltersParams;
 use amalthea::comm::data_explorer_comm::SetSortColumnsParams;
 use amalthea::comm::data_explorer_comm::SummaryStatsBoolean;
 use amalthea::comm::data_explorer_comm::SummaryStatsNumber;
 use amalthea::comm::data_explorer_comm::SummaryStatsString;
+use amalthea::comm::data_explorer_comm::TextSearchType;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::socket;
 use amalthea::socket::comm::CommSocket;
@@ -362,17 +363,14 @@ fn test_women_dataset() {
             filters: vec![RowFilter {
                 column_schema: schema.columns[0].clone(),
                 filter_type: RowFilterType::Compare,
-                compare_params: Some(CompareFilterParams {
-                    op: CompareFilterParamsOp::Lt,
+                params: Some(RowFilterParams::Comparison(FilterComparison {
+                    op: FilterComparisonOp::Lt,
                     value: "60".to_string(),
-                }),
+                })),
                 filter_id: "A11876D6-7CF3-435F-874D-E96892B25C9A".to_string(),
                 error_message: None,
                 condition: RowFilterCondition::And,
                 is_valid: None,
-                between_params: None,
-                search_params: None,
-                set_membership_params: None,
             }],
         });
 
@@ -475,17 +473,14 @@ fn test_matrix_support() {
             filters: vec![RowFilter {
                 column_schema: schema.columns[0].clone(),
                 filter_type: RowFilterType::Compare,
-                compare_params: Some(CompareFilterParams {
-                    op: CompareFilterParamsOp::Lt,
+                params: Some(RowFilterParams::Comparison(FilterComparison {
+                    op: FilterComparisonOp::Lt,
                     value: "100".to_string(),
-                }),
+                })),
                 filter_id: "F5D5FE28-04D9-4010-8C77-84094D9B8E2C".to_string(),
                 condition: RowFilterCondition::And,
                 error_message: None,
                 is_valid: None,
-                between_params: None,
-                search_params: None,
-                set_membership_params: None,
             }],
         });
 
@@ -574,11 +569,8 @@ fn test_null_counts() {
                 filter_id: "048D4D03-A7B5-4825-BEB1-769B70DE38A6".to_string(),
                 condition: RowFilterCondition::And,
                 is_valid: None,
-                compare_params: None,
-                between_params: None,
-                search_params: None,
-                set_membership_params: None,
                 error_message: None,
+                params: None,
             }],
         });
 
@@ -618,10 +610,7 @@ fn test_null_counts() {
                 filter_id: "87E2E016-C853-4928-8914-8774125E3C87".to_string(),
                 condition: RowFilterCondition::And,
                 is_valid: None,
-                compare_params: None,
-                between_params: None,
-                search_params: None,
-                set_membership_params: None,
+                params: None,
                 error_message: None,
             }],
         });
@@ -750,14 +739,11 @@ fn test_search_filters() {
             filter_id: "A58A4497-29E0-4407-BC25-67FEF73F6224".to_string(),
             condition: RowFilterCondition::And,
             is_valid: None,
-            compare_params: None,
-            between_params: None,
-            search_params: Some(SearchFilterParams {
+            params: Some(RowFilterParams::TextSearch(FilterTextSearch {
                 case_sensitive: false,
-                search_type: SearchFilterType::Contains,
+                search_type: TextSearchType::Contains,
                 term: ".".to_string(),
-            }),
-            set_membership_params: None,
+            })),
             error_message: None,
         };
         let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
@@ -781,14 +767,11 @@ fn test_search_filters() {
             filter_id: "4BA46699-EF41-4FA8-A927-C8CD88520D6E".to_string(),
             condition: RowFilterCondition::Or,
             is_valid: None,
-            compare_params: None,
-            between_params: None,
-            search_params: Some(SearchFilterParams {
+            params: Some(RowFilterParams::TextSearch(FilterTextSearch {
                 case_sensitive: false,
-                search_type: SearchFilterType::EndsWith,
+                search_type: TextSearchType::EndsWith,
                 term: "ent".to_string(),
-            }),
-            set_membership_params: None,
+            })),
             error_message: None,
         };
 
@@ -812,10 +795,7 @@ fn test_search_filters() {
             filter_id: "3F032747-4667-40CB-9013-AA659AE37F1C".to_string(),
             condition: RowFilterCondition::And,
             is_valid: None,
-            compare_params: None,
-            between_params: None,
-            search_params: None,
-            set_membership_params: None,
+            params: None,
             error_message: None,
         };
 
@@ -877,13 +857,10 @@ fn test_search_filters() {
             filter_id: "0DB2F23D-B299-4068-B8D5-A2B513A93330".to_string(),
             condition: RowFilterCondition::And,
             is_valid: None,
-            compare_params: Some(CompareFilterParams {
-                op: CompareFilterParamsOp::Gt,
+            params: Some(RowFilterParams::Comparison(FilterComparison {
+                op: FilterComparisonOp::Gt,
                 value: "marshmallows".to_string(),
-            }),
-            between_params: None,
-            search_params: None,
-            set_membership_params: None,
+            })),
             error_message: None,
         };
         let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
@@ -947,10 +924,7 @@ fn test_search_filters() {
             filter_id: "16B3E3E7-44D0-4003-B6BD-46EE0629F067".to_string(),
             condition: RowFilterCondition::And,
             is_valid: None,
-            compare_params: None,
-            between_params: None,
-            search_params: None,
-            set_membership_params: None,
+            params: None,
             error_message: None,
         };
         let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
@@ -1184,10 +1158,7 @@ fn test_boolean_filters() {
             filter_id: "16B3E3E7-44D0-4003-B6BD-46EE0629F067".to_string(),
             condition: RowFilterCondition::And,
             is_valid: None,
-            compare_params: None,
-            between_params: None,
-            search_params: None,
-            set_membership_params: None,
+            params: None,
             error_message: None,
         };
         let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
@@ -1241,13 +1212,10 @@ fn test_invalid_filters() {
             filter_id: "0DB2F23D-B299-4068-B8D5-A2B513A93330".to_string(),
             condition: RowFilterCondition::And,
             is_valid: None,
-            compare_params: Some(CompareFilterParams {
-                op: CompareFilterParamsOp::Gt,
+            params: Some(RowFilterParams::Comparison(FilterComparison {
+                op: FilterComparisonOp::Gt,
                 value: "marshmallows".to_string(),
-            }),
-            between_params: None,
-            search_params: None,
-            set_membership_params: None,
+            })),
             error_message: None,
         };
         let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
@@ -1306,10 +1274,7 @@ fn test_invalid_filters_preserved() {
             filter_id: "0DB2F23D-B299-4068-B8D5-A2B513A93330".to_string(),
             condition: RowFilterCondition::And,
             is_valid: None,
-            compare_params: None,
-            between_params: None,
-            search_params: None,
-            set_membership_params: None,
+            params: None,
             error_message: None,
         };
 
@@ -1519,10 +1484,7 @@ fn test_export_data() {
                 filter_id: "1".to_string(),
                 condition: RowFilterCondition::And,
                 is_valid: None,
-                compare_params: None,
-                between_params: None,
-                search_params: None,
-                set_membership_params: None,
+                params: None,
                 error_message: None,
             }],
         });

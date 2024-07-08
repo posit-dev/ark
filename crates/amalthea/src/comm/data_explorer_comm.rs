@@ -17,7 +17,7 @@ pub struct SearchSchemaResult {
 	/// A schema containing matching columns up to the max_results limit
 	pub matches: Option<TableSchema>,
 
-	/// The total number of columns matching the search term
+	/// The total number of columns matching the filter
 	pub total_num_matches: i64
 }
 
@@ -165,17 +165,8 @@ pub struct RowFilter {
 	/// Optional error message when the filter is invalid
 	pub error_message: Option<String>,
 
-	/// Parameters for the 'between' and 'not_between' filter types
-	pub between_params: Option<BetweenFilterParams>,
-
-	/// Parameters for the 'compare' filter type
-	pub compare_params: Option<CompareFilterParams>,
-
-	/// Parameters for the 'search' filter type
-	pub search_params: Option<SearchFilterParams>,
-
-	/// Parameters for the 'set_membership' filter type
-	pub set_membership_params: Option<SetMembershipFilterParams>
+	/// The row filter type-specific parameters
+	pub params: Option<RowFilterParams>
 }
 
 /// Support status for a row filter type
@@ -190,7 +181,7 @@ pub struct RowFilterTypeSupportStatus {
 
 /// Parameters for the 'between' and 'not_between' filter types
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct BetweenFilterParams {
+pub struct FilterBetween {
 	/// The lower limit for filtering
 	pub left_value: String,
 
@@ -200,9 +191,9 @@ pub struct BetweenFilterParams {
 
 /// Parameters for the 'compare' filter type
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct CompareFilterParams {
+pub struct FilterComparison {
 	/// String representation of a binary comparison
-	pub op: CompareFilterParamsOp,
+	pub op: FilterComparisonOp,
 
 	/// A stringified column value for a comparison filter
 	pub value: String
@@ -210,8 +201,8 @@ pub struct CompareFilterParams {
 
 /// Parameters for the 'set_membership' filter type
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct SetMembershipFilterParams {
-	/// Array of column values for a set membership filter
+pub struct FilterSetMembership {
+	/// Array of values for a set membership filter
 	pub values: Vec<String>,
 
 	/// Filter by including only values passed (true) or excluding (false)
@@ -220,15 +211,43 @@ pub struct SetMembershipFilterParams {
 
 /// Parameters for the 'search' filter type
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct SearchFilterParams {
+pub struct FilterTextSearch {
 	/// Type of search to perform
-	pub search_type: SearchFilterType,
+	pub search_type: TextSearchType,
 
-	/// String value/regex to search for in stringified data
+	/// String value/regex to search for
 	pub term: String,
 
 	/// If true, do a case-sensitive search, otherwise case-insensitive
 	pub case_sensitive: bool
+}
+
+/// Parameters for the 'match_data_types' filter type
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct FilterMatchDataTypes {
+	/// Column display types to match
+	pub display_types: Vec<ColumnDisplayType>
+}
+
+/// A filter that selects a subset of columns by name, type, or other
+/// criteria
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ColumnFilter {
+	/// Type of column filter to apply
+	pub filter_type: ColumnFilterType,
+
+	/// Parameters for column filter
+	pub params: ColumnFilterParams
+}
+
+/// Support status for a column filter type
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ColumnFilterTypeSupportStatus {
+	/// Type of column filter
+	pub column_filter_type: ColumnFilterType,
+
+	/// The support status for this column filter type
+	pub support_status: SupportStatus
 }
 
 /// A single column profile request
@@ -447,7 +466,10 @@ pub struct SupportedFeatures {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SearchSchemaFeatures {
 	/// The support status for this RPC method
-	pub support_status: SupportStatus
+	pub support_status: SupportStatus,
+
+	/// A list of supported types
+	pub supported_types: Vec<ColumnFilterTypeSupportStatus>
 }
 
 /// Feature flags for 'set_row_filters' RPC
@@ -477,7 +499,10 @@ pub struct GetColumnProfilesFeatures {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ExportDataSelectionFeatures {
 	/// The support status for this RPC method
-	pub support_status: SupportStatus
+	pub support_status: SupportStatus,
+
+	/// Export formats supported
+	pub supported_formats: Vec<ExportFormat>
 }
 
 /// Feature flags for 'set_sort_columns' RPC
@@ -622,9 +647,9 @@ pub enum RowFilterType {
 	SetMembership
 }
 
-/// Possible values for Op in CompareFilterParams
+/// Possible values for Op in FilterComparison
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub enum CompareFilterParamsOp {
+pub enum FilterComparisonOp {
 	#[serde(rename = "=")]
 	Eq,
 
@@ -644,9 +669,9 @@ pub enum CompareFilterParamsOp {
 	GtEq
 }
 
-/// Possible values for SearchFilterType
+/// Possible values for TextSearchType
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub enum SearchFilterType {
+pub enum TextSearchType {
 	#[serde(rename = "contains")]
 	Contains,
 
@@ -658,6 +683,16 @@ pub enum SearchFilterType {
 
 	#[serde(rename = "regex_match")]
 	RegexMatch
+}
+
+/// Possible values for ColumnFilterType
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub enum ColumnFilterType {
+	#[serde(rename = "text_search")]
+	TextSearch,
+
+	#[serde(rename = "match_data_types")]
+	MatchDataTypes
 }
 
 /// Possible values for ColumnProfileType
@@ -733,6 +768,30 @@ pub enum ColumnValue {
 	FormattedValue(String)
 }
 
+/// Union type RowFilterParams
+/// Union of row filter parameters
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum RowFilterParams {
+	Between(FilterBetween),
+
+	Comparison(FilterComparison),
+
+	TextSearch(FilterTextSearch),
+
+	SetMembership(FilterSetMembership)
+}
+
+/// Union type ColumnFilterParams
+/// Union of column filter type-specific parameters
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum ColumnFilterParams {
+	TextSearch(FilterTextSearch),
+
+	MatchDataTypes(FilterMatchDataTypes)
+}
+
 /// Union type Selection in Properties
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
@@ -760,10 +819,10 @@ pub struct GetSchemaParams {
 /// Parameters for the SearchSchema method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SearchSchemaParams {
-	/// Substring to match for (currently case insensitive)
-	pub search_term: String,
+	/// Column filters to apply when searching
+	pub filters: Vec<ColumnFilter>,
 
-	/// Index (starting from zero) of first result to fetch
+	/// Index (starting from zero) of first result to fetch (for paging)
 	pub start_index: i64,
 
 	/// Maximum number of resulting column schemas to fetch from the start
@@ -835,7 +894,7 @@ pub enum DataExplorerBackendRequest {
 	#[serde(rename = "get_schema")]
 	GetSchema(GetSchemaParams),
 
-	/// Search schema by column name
+	/// Search schema with column filters
 	///
 	/// Search schema for column names matching a passed substring
 	#[serde(rename = "search_schema")]
