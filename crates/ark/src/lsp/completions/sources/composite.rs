@@ -160,9 +160,11 @@ fn is_identifier_like(x: Node) -> bool {
 mod tests {
     use tree_sitter::Point;
 
+    use crate::lsp::completions::sources::completions_from_composite_sources;
     use crate::lsp::completions::sources::composite::is_identifier_like;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
+    use crate::lsp::state::WorldState;
     use crate::test::r_test;
     use crate::treesitter::NodeType;
     use crate::treesitter::NodeTypeExt;
@@ -183,6 +185,23 @@ mod tests {
                     NodeType::Anonymous(keyword.to_string())
                 );
             }
+        })
+    }
+
+    #[test]
+    fn test_unique_completion_from_string_in_composite() {
+        r_test(|| {
+            // Before or after the `''`, i.e. `|''` or `''|`.
+            // Still considered part of the string node.
+            let point = Point { row: 0, column: 2 };
+
+            // Assume home directory is not empty
+            let document = Document::new("'~/'", None);
+
+            // `None` trigger -> Return file completions
+            let context = DocumentContext::new(&document, point, None);
+            let res = completions_from_composite_sources(&context, &WorldState::default()).unwrap();
+            assert!(!res.is_empty());
         })
     }
 }

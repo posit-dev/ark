@@ -49,7 +49,6 @@ mod tests {
     use harp::assert_match;
     use tree_sitter::Point;
 
-    use crate::lsp::completions::sources::completions_from_unique_sources;
     use crate::lsp::completions::sources::unique::string::completions_from_string;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
@@ -104,10 +103,6 @@ mod tests {
             // `Some` trigger -> Should return empty completion set
             let context = DocumentContext::new(&document, point, Some(String::from("$")));
             let res = completions_from_string(&context).unwrap();
-            assert_match!(res, Some(items) => { assert!(items.len() == 0) });
-
-            // Check one level up too
-            let res = completions_from_unique_sources(&context).unwrap();
             assert_match!(res, Some(items) => { assert!(items.len() == 0) });
         })
     }
