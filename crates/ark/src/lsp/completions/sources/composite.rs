@@ -31,6 +31,11 @@ use tower_lsp::lsp_types::CompletionItemKind;
 use tree_sitter::Node;
 use workspace::completions_from_workspace;
 
+// TODO: string can be either a unique case (e.g. file path) or a composite case
+// (e.g. a variable name in `[` operator). To handle the both case, use this in
+// the code for composite cases because otherwise it returns early and never
+// visits the latter case.
+use super::unique::string::completions_from_string;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::state::WorldState;
 use crate::treesitter::NodeType;
@@ -58,6 +63,11 @@ pub fn completions_from_composite_sources(
 
     // Try subset completions (`[` or `[[`)
     if let Some(mut additional_completions) = completions_from_subset(context)? {
+        completions.append(&mut additional_completions);
+    }
+
+    // Try string (like file path) completions
+    if let Some(mut additional_completions) = completions_from_string(context)? {
         completions.append(&mut additional_completions);
     }
 

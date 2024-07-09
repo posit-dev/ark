@@ -26,10 +26,11 @@ pub(super) fn completions_from_subset(
 ) -> Result<Option<Vec<CompletionItem>>> {
     log::info!("completions_from_subset()");
 
-    const ENQUOTE: bool = true;
-
     let mut node = context.node;
     let mut subset_type = None;
+
+    // Wrap the variable quote only when the user doesn't yet do it by themselves.
+    let enquote = !node.is_string();
 
     loop {
         let node_type = node.node_type();
@@ -70,7 +71,7 @@ pub(super) fn completions_from_subset(
 
     let text = context.document.contents.node_slice(&child)?.to_string();
 
-    completions_from_evaluated_object_names(&text, ENQUOTE)
+    completions_from_evaluated_object_names(&text, enquote)
 }
 
 fn is_within_subset_delimiters(x: &Point, subset_node: &Node, subset_type: &NodeType) -> bool {
