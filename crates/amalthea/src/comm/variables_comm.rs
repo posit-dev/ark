@@ -91,55 +91,70 @@ pub struct Variable {
 }
 
 /// Possible values for Format in ClipboardFormat
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
 pub enum ClipboardFormatFormat {
 	#[serde(rename = "text/html")]
+	#[strum(to_string = "text/html")]
 	TextHtml,
 
 	#[serde(rename = "text/plain")]
+	#[strum(to_string = "text/plain")]
 	TextPlain
 }
 
 /// Possible values for Kind in Variable
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
 pub enum VariableKind {
 	#[serde(rename = "boolean")]
+	#[strum(to_string = "boolean")]
 	Boolean,
 
 	#[serde(rename = "bytes")]
+	#[strum(to_string = "bytes")]
 	Bytes,
 
 	#[serde(rename = "class")]
+	#[strum(to_string = "class")]
 	Class,
 
 	#[serde(rename = "collection")]
+	#[strum(to_string = "collection")]
 	Collection,
 
 	#[serde(rename = "empty")]
+	#[strum(to_string = "empty")]
 	Empty,
 
 	#[serde(rename = "function")]
+	#[strum(to_string = "function")]
 	Function,
 
 	#[serde(rename = "map")]
+	#[strum(to_string = "map")]
 	Map,
 
 	#[serde(rename = "number")]
+	#[strum(to_string = "number")]
 	Number,
 
 	#[serde(rename = "other")]
+	#[strum(to_string = "other")]
 	Other,
 
 	#[serde(rename = "string")]
+	#[strum(to_string = "string")]
 	String,
 
 	#[serde(rename = "table")]
+	#[strum(to_string = "table")]
 	Table,
 
 	#[serde(rename = "lazy")]
+	#[strum(to_string = "lazy")]
 	Lazy,
 
 	#[serde(rename = "connection")]
+	#[strum(to_string = "connection")]
 	Connection
 }
 

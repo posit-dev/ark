@@ -567,195 +567,246 @@ pub struct DataSelectionIndices {
 }
 
 /// Possible values for ColumnDisplayType
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
 pub enum ColumnDisplayType {
 	#[serde(rename = "number")]
+	#[strum(to_string = "number")]
 	Number,
 
 	#[serde(rename = "boolean")]
+	#[strum(to_string = "boolean")]
 	Boolean,
 
 	#[serde(rename = "string")]
+	#[strum(to_string = "string")]
 	String,
 
 	#[serde(rename = "date")]
+	#[strum(to_string = "date")]
 	Date,
 
 	#[serde(rename = "datetime")]
+	#[strum(to_string = "datetime")]
 	Datetime,
 
 	#[serde(rename = "time")]
+	#[strum(to_string = "time")]
 	Time,
 
 	#[serde(rename = "object")]
+	#[strum(to_string = "object")]
 	Object,
 
 	#[serde(rename = "array")]
+	#[strum(to_string = "array")]
 	Array,
 
 	#[serde(rename = "struct")]
+	#[strum(to_string = "struct")]
 	Struct,
 
 	#[serde(rename = "unknown")]
+	#[strum(to_string = "unknown")]
 	Unknown
 }
 
 /// Possible values for Condition in RowFilter
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
 pub enum RowFilterCondition {
 	#[serde(rename = "and")]
+	#[strum(to_string = "and")]
 	And,
 
 	#[serde(rename = "or")]
+	#[strum(to_string = "or")]
 	Or
 }
 
 /// Possible values for RowFilterType
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
 pub enum RowFilterType {
 	#[serde(rename = "between")]
+	#[strum(to_string = "between")]
 	Between,
 
 	#[serde(rename = "compare")]
+	#[strum(to_string = "compare")]
 	Compare,
 
 	#[serde(rename = "is_empty")]
+	#[strum(to_string = "is_empty")]
 	IsEmpty,
 
 	#[serde(rename = "is_false")]
+	#[strum(to_string = "is_false")]
 	IsFalse,
 
 	#[serde(rename = "is_null")]
+	#[strum(to_string = "is_null")]
 	IsNull,
 
 	#[serde(rename = "is_true")]
+	#[strum(to_string = "is_true")]
 	IsTrue,
 
 	#[serde(rename = "not_between")]
+	#[strum(to_string = "not_between")]
 	NotBetween,
 
 	#[serde(rename = "not_empty")]
+	#[strum(to_string = "not_empty")]
 	NotEmpty,
 
 	#[serde(rename = "not_null")]
+	#[strum(to_string = "not_null")]
 	NotNull,
 
 	#[serde(rename = "search")]
+	#[strum(to_string = "search")]
 	Search,
 
 	#[serde(rename = "set_membership")]
+	#[strum(to_string = "set_membership")]
 	SetMembership
 }
 
 /// Possible values for Op in FilterComparison
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
 pub enum FilterComparisonOp {
 	#[serde(rename = "=")]
+	#[strum(to_string = "=")]
 	Eq,
 
 	#[serde(rename = "!=")]
+	#[strum(to_string = "!=")]
 	NotEq,
 
 	#[serde(rename = "<")]
+	#[strum(to_string = "<")]
 	Lt,
 
 	#[serde(rename = "<=")]
+	#[strum(to_string = "<=")]
 	LtEq,
 
 	#[serde(rename = ">")]
+	#[strum(to_string = ">")]
 	Gt,
 
 	#[serde(rename = ">=")]
+	#[strum(to_string = ">=")]
 	GtEq
 }
 
 /// Possible values for TextSearchType
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
 pub enum TextSearchType {
 	#[serde(rename = "contains")]
+	#[strum(to_string = "contains")]
 	Contains,
 
 	#[serde(rename = "starts_with")]
+	#[strum(to_string = "starts_with")]
 	StartsWith,
 
 	#[serde(rename = "ends_with")]
+	#[strum(to_string = "ends_with")]
 	EndsWith,
 
 	#[serde(rename = "regex_match")]
+	#[strum(to_string = "regex_match")]
 	RegexMatch
 }
 
 /// Possible values for ColumnFilterType
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
 pub enum ColumnFilterType {
 	#[serde(rename = "text_search")]
+	#[strum(to_string = "text_search")]
 	TextSearch,
 
 	#[serde(rename = "match_data_types")]
+	#[strum(to_string = "match_data_types")]
 	MatchDataTypes
 }
 
 /// Possible values for ColumnProfileType
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
 pub enum ColumnProfileType {
 	#[serde(rename = "null_count")]
+	#[strum(to_string = "null_count")]
 	NullCount,
 
 	#[serde(rename = "summary_stats")]
+	#[strum(to_string = "summary_stats")]
 	SummaryStats,
 
 	#[serde(rename = "frequency_table")]
+	#[strum(to_string = "frequency_table")]
 	FrequencyTable,
 
 	#[serde(rename = "histogram")]
+	#[strum(to_string = "histogram")]
 	Histogram
 }
 
 /// Possible values for Kind in DataSelection
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
 pub enum DataSelectionKind {
 	#[serde(rename = "single_cell")]
+	#[strum(to_string = "single_cell")]
 	SingleCell,
 
 	#[serde(rename = "cell_range")]
+	#[strum(to_string = "cell_range")]
 	CellRange,
 
 	#[serde(rename = "column_range")]
+	#[strum(to_string = "column_range")]
 	ColumnRange,
 
 	#[serde(rename = "row_range")]
+	#[strum(to_string = "row_range")]
 	RowRange,
 
 	#[serde(rename = "column_indices")]
+	#[strum(to_string = "column_indices")]
 	ColumnIndices,
 
 	#[serde(rename = "row_indices")]
+	#[strum(to_string = "row_indices")]
 	RowIndices
 }
 
 /// Possible values for ExportFormat
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
 pub enum ExportFormat {
 	#[serde(rename = "csv")]
+	#[strum(to_string = "csv")]
 	Csv,
 
 	#[serde(rename = "tsv")]
+	#[strum(to_string = "tsv")]
 	Tsv,
 
 	#[serde(rename = "html")]
+	#[strum(to_string = "html")]
 	Html
 }
 
 /// Possible values for SupportStatus
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
 pub enum SupportStatus {
 	#[serde(rename = "unsupported")]
+	#[strum(to_string = "unsupported")]
 	Unsupported,
 
 	#[serde(rename = "supported")]
+	#[strum(to_string = "supported")]
 	Supported,
 
 	#[serde(rename = "experimental")]
+	#[strum(to_string = "experimental")]
 	Experimental
 }
 

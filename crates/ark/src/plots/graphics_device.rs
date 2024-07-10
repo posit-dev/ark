@@ -387,7 +387,7 @@ impl DeviceContext {
                 .param("width", RObject::try_from(width)?)
                 .param("height", RObject::try_from(height)?)
                 .param("dpr", pixel_ratio)
-                .param("format", format.to_string().to_lowercase())
+                .param("format", format.to_string())
                 .call()?
                 .to::<String>()
         });

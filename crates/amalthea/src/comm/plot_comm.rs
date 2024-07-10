@@ -25,15 +25,19 @@ pub struct PlotResult {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
 pub enum RenderFormat {
 	#[serde(rename = "png")]
+	#[strum(to_string = "png")]
 	Png,
 
 	#[serde(rename = "jpeg")]
+	#[strum(to_string = "jpeg")]
 	Jpeg,
 
 	#[serde(rename = "svg")]
+	#[strum(to_string = "svg")]
 	Svg,
 
 	#[serde(rename = "pdf")]
+	#[strum(to_string = "pdf")]
 	Pdf
 }
 
@@ -108,3 +112,4 @@ pub enum PlotFrontendEvent {
 	Show,
 
 }
+
