@@ -216,7 +216,7 @@ pub(crate) unsafe fn r_signature_help(
     // parameters, so we can more easily record offsets.
     let mut label = String::new();
     label.push_str(code.as_str());
-    label.push_str("(");
+    label.push('(');
 
     // Get the available parameters.
     let mut parameters = vec![];
@@ -260,7 +260,7 @@ pub(crate) unsafe fn r_signature_help(
     }
 
     // Add a closing parenthesis.
-    label.push_str(")");
+    label.push(')');
 
     // Finally, if we don't have an offset, figure it out now.
     if offset.is_none() {

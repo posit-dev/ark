@@ -187,7 +187,7 @@ pub fn register(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
     // Get the name (as a C string).
     let mut name = ident.to_string();
-    name.push_str("\0");
+    name.push('\0');
     let name = syn::LitByteStr::new(name.as_bytes(), ident.span());
 
     // Give a name to the registration function.
