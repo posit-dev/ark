@@ -82,6 +82,6 @@ impl Vector for ComplexVector {
     }
 
     fn format_one(&self, x: Self::Type) -> String {
-        format!("{}+{}i", x.r.to_string(), x.i.to_string())
+        format!("{}+{}i", x.r, x.i)
     }
 }
