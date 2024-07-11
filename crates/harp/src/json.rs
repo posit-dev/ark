@@ -245,9 +245,7 @@ impl TryFrom<RObject> for Value {
                                             // The value is not an array; create
                                             // one and append the new nad
                                             // existing values.
-                                            let mut arr = Vec::<Value>::new();
-                                            arr.push(existing.clone());
-                                            arr.push(val);
+                                            let arr = vec![existing.clone(), val];
                                             map.insert(key, Value::Array(arr));
                                         },
                                     },
