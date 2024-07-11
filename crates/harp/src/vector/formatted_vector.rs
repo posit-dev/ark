@@ -26,6 +26,7 @@ use crate::utils::r_typeof;
 use crate::vector::CharacterVector;
 use crate::vector::ComplexVector;
 use crate::vector::Factor;
+use crate::vector::FormatOptions;
 use crate::vector::IntegerVector;
 use crate::vector::LogicalVector;
 use crate::vector::NumericVector;
@@ -60,13 +61,6 @@ pub enum FormattedVector {
         vector: CharacterVector,
         options: FormatOptions,
     },
-}
-
-// Formatting options for character vectors
-pub struct FormatOptions {
-    // Wether to quote the strings or not (defaults to `true`)
-    // If `true`, elements will be quoted during format so, eg: c("a", "b") becomes ("\"a\"", "\"b\"") in Rust
-    pub quote: bool,
 }
 
 // Formatting options for vectors
@@ -237,9 +231,9 @@ mod tests {
     use crate::object::RObject;
     use crate::r_assert_type;
     use crate::test::r_test;
-    use crate::vector::formatted_vector::FormatOptions;
     use crate::vector::formatted_vector::FormattedVector;
     use crate::vector::formatted_vector::FormattedVectorOptions;
+    use crate::vector::FormatOptions;
 
     #[test]
     fn test_unconforming_format_method() {

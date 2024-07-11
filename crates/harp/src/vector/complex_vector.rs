@@ -15,7 +15,7 @@ use libr::DATAPTR;
 use libr::SEXP;
 
 use crate::object::RObject;
-use crate::vector::formatted_vector::FormatOptions;
+use crate::vector::FormatOptions;
 use crate::vector::Vector;
 
 #[derive(Debug, PartialEq, Clone, Copy)]

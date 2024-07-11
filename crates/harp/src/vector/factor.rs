@@ -16,7 +16,7 @@ use libr::SEXP;
 
 use crate::object::RObject;
 use crate::r_symbol;
-use crate::vector::formatted_vector::FormatOptions;
+use crate::vector::FormatOptions;
 use crate::vector::CharacterVector;
 use crate::vector::Vector;
 

@@ -18,7 +18,7 @@ use libr::STRSXP;
 
 use crate::object::RObject;
 use crate::utils::r_str_to_owned_utf8_unchecked;
-use crate::vector::formatted_vector::FormatOptions;
+use crate::vector::FormatOptions;
 use crate::vector::Vector;
 
 #[harp_macros::vector]

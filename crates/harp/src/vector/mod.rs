@@ -12,7 +12,6 @@ use libr::SEXP;
 use crate::error::Result;
 use crate::utils::r_assert_capacity;
 use crate::utils::r_assert_type;
-use crate::vector::formatted_vector::FormatOptions;
 
 pub mod character_vector;
 pub use character_vector::CharacterVector;
@@ -37,6 +36,13 @@ pub use raw_vector::RawVector;
 
 pub mod formatted_vector;
 pub mod names;
+
+// Formatting options for character vectors
+pub struct FormatOptions {
+    // Wether to quote the strings or not (defaults to `true`)
+    // If `true`, elements will be quoted during format so, eg: c("a", "b") becomes ("\"a\"", "\"b\"") in Rust
+    pub quote: bool,
+}
 
 pub trait Vector {
     type Type;

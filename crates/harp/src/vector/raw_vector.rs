@@ -13,7 +13,7 @@ use libr::RAW_ELT;
 use libr::SEXP;
 
 use crate::object::RObject;
-use crate::vector::formatted_vector::FormatOptions;
+use crate::vector::FormatOptions;
 use crate::vector::Vector;
 
 #[harp_macros::vector]
