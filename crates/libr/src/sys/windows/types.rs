@@ -193,14 +193,11 @@ pub struct structRstart {
 impl structRstart {
     #[inline]
     pub fn NoRenviron(&self) -> Rboolean {
-        unsafe { ::std::mem::transmute(self._bitfield_1.get(0usize, 16u8) as u32) }
+        self._bitfield_1.get(0usize, 16u8) as u32
     }
     #[inline]
     pub fn set_NoRenviron(&mut self, val: Rboolean) {
-        unsafe {
-            let val: u32 = ::std::mem::transmute(val);
-            self._bitfield_1.set(0usize, 16u8, val as u64)
-        }
+        unsafe { self._bitfield_1.set(0usize, 16u8, val as u64) }
     }
     #[inline]
     pub fn RstartVersion(&self) -> ::std::os::raw::c_int {
@@ -219,10 +216,7 @@ impl structRstart {
         RstartVersion: ::std::os::raw::c_int,
     ) -> __BindgenBitfieldUnit<[u8; 4usize]> {
         let mut __bindgen_bitfield_unit: __BindgenBitfieldUnit<[u8; 4usize]> = Default::default();
-        __bindgen_bitfield_unit.set(0usize, 16u8, {
-            let NoRenviron: u32 = unsafe { ::std::mem::transmute(NoRenviron) };
-            NoRenviron as u64
-        });
+        __bindgen_bitfield_unit.set(0usize, 16u8, { NoRenviron as u64 });
         __bindgen_bitfield_unit.set(16usize, 16u8, {
             let RstartVersion: u32 = unsafe { ::std::mem::transmute(RstartVersion) };
             RstartVersion as u64
