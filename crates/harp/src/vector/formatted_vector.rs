@@ -232,6 +232,8 @@ mod tests {
     use crate::environment::Environment;
     use crate::eval::r_parse_eval0;
     use crate::modules::HARP_ENV;
+    use crate::object::r_chr_poke;
+    use crate::object::r_str_na;
     use crate::object::RObject;
     use crate::r_assert_type;
     use crate::test::r_test;
@@ -269,8 +271,14 @@ mod tests {
     #[test]
     fn test_formatting_option() {
         r_test(|| {
-            let x = RObject::from(vec![String::from("1"), String::from("2")]);
+            let x = RObject::from(vec![
+                String::from("1"),
+                String::from("2"),
+                String::from("NA"), // This is not a character "NA", not a missing value
+                String::from("NA"), // This will be replaced with the sentinel value of r_str_na() later
+            ]);
             r_assert_type(x.sexp, &[STRSXP]).unwrap();
+            r_chr_poke(x.sexp, 3, r_str_na());
 
             let formatted = FormattedVector::new_with_options(x.sexp, FormattedVectorOptions {
                 character: FormatOptions { quote: false },
@@ -278,15 +286,16 @@ mod tests {
             .unwrap();
 
             let out = formatted.iter().join(" ");
-            assert_eq!(out, String::from("1 2"));
+            assert_eq!(out, String::from("1 2 NA NA"));
 
             let formatted = FormattedVector::new_with_options(x.sexp, FormattedVectorOptions {
                 character: FormatOptions { quote: true },
             })
             .unwrap();
 
+            // NA is always unquoted regardless of the quote option
             let out = formatted.iter().join(" ");
-            assert_eq!(out, String::from("\"1\" \"2\""));
+            assert_eq!(out, String::from("\"1\" \"2\" \"NA\" NA"));
         })
     }
 }
