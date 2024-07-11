@@ -81,7 +81,7 @@ fn summary_stats_number(
 
     let r_stats: HashMap<String, String> = names
         .iter()
-        .zip(values.into_iter())
+        .zip(values)
         .map(|(name, value)| match name {
             Some(name) => (name, value),
             None => ("unk".to_string(), value),

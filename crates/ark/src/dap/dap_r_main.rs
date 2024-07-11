@@ -227,7 +227,7 @@ impl RMainDap {
                 .add(calls)
                 .call_in(ARK_ENVS.positron_ns)?;
 
-            let n: isize = Rf_xlength(info.sexp).try_into()?;
+            let n: isize = Rf_xlength(info.sexp);
 
             let mut out = Vec::with_capacity(n as usize);
 

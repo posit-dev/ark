@@ -274,13 +274,13 @@ impl WireMessage {
                 if let Value::Object(map) = &self.content {
                     let comm_id = Self::comm_msg_id(map.get("comm_id"));
                     let comm_msg_type = Self::comm_msg_type(map.get("data"));
-                    return String::from(format!("comm_msg/{comm_id}/{comm_msg_type}"));
+                    return format!("comm_msg/{comm_id}/{comm_msg_type}");
                 }
             },
             "status" => {
                 if let Value::Object(map) = &self.content {
                     if let Some(Value::String(execution_state)) = map.get("execution_state") {
-                        return String::from(format!("status/{execution_state}"));
+                        return format!("status/{execution_state}");
                     }
                 }
             },

@@ -765,7 +765,7 @@ impl RMain {
         // still inside a browser state. Should also handle cases like `debug(readline)`
         // followed by `n`.
         // https://github.com/posit-dev/positron/issues/2310
-        let frames = RObject::from(harp::session::r_sys_frames().unwrap());
+        let frames = harp::session::r_sys_frames().unwrap();
         let browser = r_pairlist_any(frames.sexp, |frame| {
             harp::session::r_env_is_browsed(frame).unwrap()
         });
