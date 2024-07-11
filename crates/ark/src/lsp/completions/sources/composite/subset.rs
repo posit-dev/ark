@@ -139,10 +139,10 @@ mod tests {
 
             // Set up a list with names
             r_parse_eval("foo <- list(b = 1, a = 2)", options.clone()).unwrap();
+            let document = Document::new("foo[]", None);
 
             // Right after the `[`
             let point = Point { row: 0, column: 4 };
-            let document = Document::new("foo[]", None);
             let context = DocumentContext::new(&document, point, None);
 
             let completions = completions_from_subset(&context).unwrap().unwrap();
@@ -153,8 +153,20 @@ mod tests {
             assert_eq!(completion.insert_text.as_ref().unwrap(), r#""b""#);
 
             let completion = completions.get(1).unwrap();
-            assert_eq!(completion.label, "a".to_string());
+            assert_eq!(&completion.label, "a");
             assert_eq!(completion.insert_text.as_ref().unwrap(), r#""a""#);
+
+            // Right before the `[`
+            let point = Point { row: 0, column: 3 };
+            let context = DocumentContext::new(&document, point, None);
+            let completions = completions_from_subset(&context).unwrap();
+            assert!(completions.is_none());
+
+            // Right after the `]`
+            let point = Point { row: 0, column: 5 };
+            let context = DocumentContext::new(&document, point, None);
+            let completions = completions_from_subset(&context).unwrap();
+            assert!(completions.is_none());
 
             // Right after the `[` and inside ""
             let point = Point { row: 0, column: 5 };
@@ -165,26 +177,12 @@ mod tests {
             assert_eq!(completions.len(), 2);
 
             let completion = completions.get(0).unwrap();
-            assert_eq!(completion.label, "b".to_string());
+            assert_eq!(&completion.label, "b");
             assert!(completion.insert_text.is_none()); // returns the unquoted result
 
             let completion = completions.get(1).unwrap();
-            assert_eq!(completion.label, "a".to_string());
+            assert_eq!(&completion.label, "a");
             assert!(completion.insert_text.is_none());
-
-            // Right before the `[`
-            let point = Point { row: 0, column: 3 };
-            let document = Document::new("foo[]", None);
-            let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_subset(&context).unwrap();
-            assert!(completions.is_none());
-
-            // Right after the `]`
-            let point = Point { row: 0, column: 5 };
-            let document = Document::new("foo[]", None);
-            let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_subset(&context).unwrap();
-            assert!(completions.is_none());
 
             // Clean up
             r_parse_eval("remove(foo)", options.clone()).unwrap();
