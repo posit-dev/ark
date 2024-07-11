@@ -149,10 +149,28 @@ mod tests {
             assert_eq!(completions.len(), 2);
 
             let completion = completions.get(0).unwrap();
-            assert_eq!(completion.label, "b".to_string());
+            assert_eq!(&completion.label, "b");
+            assert_eq!(completion.insert_text.as_ref().unwrap(), r#""b""#);
 
             let completion = completions.get(1).unwrap();
             assert_eq!(completion.label, "a".to_string());
+            assert_eq!(completion.insert_text.as_ref().unwrap(), r#""a""#);
+
+            // Right after the `[` and inside ""
+            let point = Point { row: 0, column: 5 };
+            let document = Document::new(r#"foo[""]"#, None);
+            let context = DocumentContext::new(&document, point, None);
+
+            let completions = completions_from_subset(&context).unwrap().unwrap();
+            assert_eq!(completions.len(), 2);
+
+            let completion = completions.get(0).unwrap();
+            assert_eq!(completion.label, "b".to_string());
+            assert!(completion.insert_text.is_none()); // returns the unquoted result
+
+            let completion = completions.get(1).unwrap();
+            assert_eq!(completion.label, "a".to_string());
+            assert!(completion.insert_text.is_none());
 
             // Right before the `[`
             let point = Point { row: 0, column: 3 };
