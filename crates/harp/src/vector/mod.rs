@@ -12,7 +12,7 @@ use libr::SEXP;
 use crate::error::Result;
 use crate::utils::r_assert_capacity;
 use crate::utils::r_assert_type;
-use crate::vector::formatted_vector::FormattedVectorCharacterOptions;
+use crate::vector::formatted_vector::FormatOptions;
 
 pub mod character_vector;
 pub use character_vector::CharacterVector;
@@ -101,28 +101,16 @@ pub trait Vector {
         Rf_xlength(self.data()) as usize
     }
 
-    fn format_one(
-        &self,
-        x: Self::Type,
-        options: Option<&FormattedVectorCharacterOptions>,
-    ) -> String;
+    fn format_one(&self, x: Self::Type, options: Option<&FormatOptions>) -> String;
 
-    fn format_elt_unchecked(
-        &self,
-        index: isize,
-        options: Option<&FormattedVectorCharacterOptions>,
-    ) -> String {
+    fn format_elt_unchecked(&self, index: isize, options: Option<&FormatOptions>) -> String {
         match self.get_unchecked(index) {
             Some(x) => self.format_one(x, options),
             None => String::from("NA"),
         }
     }
 
-    fn format_with_string_options(
-        &self,
-        value: String,
-        options: &FormattedVectorCharacterOptions,
-    ) -> String {
+    fn format_with_options(&self, value: String, options: &FormatOptions) -> String {
         if options.quote {
             format!("\"{}\"", value.replace("\"", "\\\""))
         } else {

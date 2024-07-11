@@ -14,7 +14,7 @@ use libr::REAL_ELT;
 use libr::SEXP;
 
 use crate::object::RObject;
-use crate::vector::formatted_vector::FormattedVectorCharacterOptions;
+use crate::vector::formatted_vector::FormatOptions;
 use crate::vector::Vector;
 
 #[harp_macros::vector]
@@ -69,11 +69,7 @@ impl Vector for NumericVector {
         *x
     }
 
-    fn format_one(
-        &self,
-        x: Self::Type,
-        _option: Option<&FormattedVectorCharacterOptions>,
-    ) -> String {
+    fn format_one(&self, x: Self::Type, _option: Option<&FormatOptions>) -> String {
         x.to_string()
     }
 }

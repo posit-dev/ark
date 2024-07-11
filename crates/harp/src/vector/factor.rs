@@ -16,7 +16,7 @@ use libr::SEXP;
 
 use crate::object::RObject;
 use crate::r_symbol;
-use crate::vector::formatted_vector::FormattedVectorCharacterOptions;
+use crate::vector::formatted_vector::FormatOptions;
 use crate::vector::CharacterVector;
 use crate::vector::Vector;
 
@@ -74,11 +74,7 @@ impl Vector for Factor {
         *x
     }
 
-    fn format_one(
-        &self,
-        x: Self::Type,
-        _option: Option<&FormattedVectorCharacterOptions>,
-    ) -> String {
+    fn format_one(&self, x: Self::Type, _option: Option<&FormatOptions>) -> String {
         self.levels.get_unchecked((x - 1) as isize).unwrap()
     }
 }

@@ -47,7 +47,7 @@ pub enum FormattedVector {
     },
     Character {
         vector: CharacterVector,
-        options: FormattedVectorCharacterOptions,
+        options: FormatOptions,
     },
     Complex {
         vector: ComplexVector,
@@ -58,12 +58,12 @@ pub enum FormattedVector {
     },
     FormattedVector {
         vector: CharacterVector,
-        options: FormattedVectorCharacterOptions,
+        options: FormatOptions,
     },
 }
 
 // Formatting options for character vectors
-pub struct FormattedVectorCharacterOptions {
+pub struct FormatOptions {
     // Wether to quote the strings or not (defaults to `true`)
     // If `true`, elements will be quoted during format so, eg: c("a", "b") becomes ("\"a\"", "\"b\"") in Rust
     pub quote: bool,
@@ -73,10 +73,10 @@ pub struct FormattedVectorCharacterOptions {
 #[derive(Default)]
 pub struct FormattedVectorOptions {
     // Formatting options for character vectors
-    pub character: FormattedVectorCharacterOptions,
+    pub character: FormatOptions,
 }
 
-impl Default for FormattedVectorCharacterOptions {
+impl Default for FormatOptions {
     fn default() -> Self {
         Self { quote: true }
     }
@@ -235,8 +235,8 @@ mod tests {
     use crate::object::RObject;
     use crate::r_assert_type;
     use crate::test::r_test;
+    use crate::vector::formatted_vector::FormatOptions;
     use crate::vector::formatted_vector::FormattedVector;
-    use crate::vector::formatted_vector::FormattedVectorCharacterOptions;
     use crate::vector::formatted_vector::FormattedVectorOptions;
 
     #[test]
@@ -273,7 +273,7 @@ mod tests {
             r_assert_type(x.sexp, &[STRSXP]).unwrap();
 
             let formatted = FormattedVector::new_with_options(x.sexp, FormattedVectorOptions {
-                character: FormattedVectorCharacterOptions { quote: false },
+                character: FormatOptions { quote: false },
             })
             .unwrap();
 
@@ -281,7 +281,7 @@ mod tests {
             assert_eq!(out, String::from("1 2"));
 
             let formatted = FormattedVector::new_with_options(x.sexp, FormattedVectorOptions {
-                character: FormattedVectorCharacterOptions { quote: true },
+                character: FormatOptions { quote: true },
             })
             .unwrap();
 
