@@ -115,12 +115,4 @@ pub trait Vector {
             None => String::from("NA"),
         }
     }
-
-    fn format_with_options(&self, value: String, options: &FormatOptions) -> String {
-        if options.quote {
-            format!("\"{}\"", value.replace("\"", "\\\""))
-        } else {
-            value
-        }
-    }
 }

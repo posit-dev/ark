@@ -82,9 +82,14 @@ impl Vector for CharacterVector {
     }
 
     fn format_one(&self, x: Self::Type, options: Option<&FormatOptions>) -> String {
-        match options {
-            Some(options) => self.format_with_options(x, options),
-            None => x,
+        if let Some(&FormatOptions { quote, .. }) = options {
+            if quote {
+                format!(r#""{}""#, x.replace('"', r#"\""#))
+            } else {
+                x
+            }
+        } else {
+            x
         }
     }
 }
