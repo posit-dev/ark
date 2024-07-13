@@ -104,13 +104,19 @@ fn eval_pipe_root(name: &str) -> Option<RObject> {
 
     // If we get an `UnsafeEvaluationError` here from setting
     // `forbid_function_calls`, we don't want that to prevent
-    // other sources from contributing completions
+    // other sources from contributing completions.
+    // If we get a `TryCatchError`, that is typically an 'object not found' error resulting
+    // from the user typing pseudocode. Log those at info level without a full backtrace.
     let value = match value {
         Ok(value) => value,
         Err(err) => match err {
             Error::UnsafeEvaluationError(_) => return None,
+            Error::TryCatchError { message, .. } => {
+                log::info!("Can't evaluate pipe root: {message}");
+                return None;
+            },
             _ => {
-                log::error!("{err:?}");
+                log::error!("Can't evaluate pipe root: {err:?}");
                 return None;
             },
         },

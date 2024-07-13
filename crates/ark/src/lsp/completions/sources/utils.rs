@@ -182,20 +182,21 @@ pub(super) fn completions_from_evaluated_object_names(
     // Try to evaluate the object
     let object = r_parse_eval(name, options);
 
-    // If the user is writing pseudocode, this object might not exist yet,
-    // in which case we just want to ignore the error from trying to evaluate it
-    // and just provide typical completions.
     // If we get an `UnsafeEvaluationError` here from setting
     // `forbid_function_calls`, we don't even log that one, as that is
     // expected to happen with complex inputs.
+    // If we get a `TryCatchError`, that is typically an 'object not found' error resulting
+    // from the user typing pseudocode. Log those at info level without a full backtrace.
     let object = match object {
         Ok(object) => object,
         Err(err) => match err {
             Error::UnsafeEvaluationError(_) => return Ok(None),
+            Error::TryCatchError { message, .. } => {
+                log::info!("Can't evaluate object: {message}");
+                return Ok(None);
+            },
             _ => {
-                log::info!(
-                    "completions_from_evaluated_object_names(): Failed to evaluate first argument: {err}"
-                );
+                log::error!("Can't evaluate object: {err}");
                 return Ok(None);
             },
         },
