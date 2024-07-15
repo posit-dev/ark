@@ -26,6 +26,7 @@ use crate::utils::r_typeof;
 use crate::vector::CharacterVector;
 use crate::vector::ComplexVector;
 use crate::vector::Factor;
+use crate::vector::FormatOptions;
 use crate::vector::IntegerVector;
 use crate::vector::LogicalVector;
 use crate::vector::NumericVector;
@@ -47,7 +48,7 @@ pub enum FormattedVector {
     },
     Character {
         vector: CharacterVector,
-        options: FormattedVectorCharacterOptions,
+        options: FormatOptions,
     },
     Complex {
         vector: ComplexVector,
@@ -58,25 +59,18 @@ pub enum FormattedVector {
     },
     FormattedVector {
         vector: CharacterVector,
-        options: FormattedVectorCharacterOptions,
+        options: FormatOptions,
     },
-}
-
-// Formatting options for character vectors
-pub struct FormattedVectorCharacterOptions {
-    // Wether to quote the strings or not (defaults to `true`)
-    // If `true`, elements will be quoted during format so, eg: c("a", "b") becomes ("\"a\"", "\"b\"") in Rust
-    pub quote: bool,
 }
 
 // Formatting options for vectors
 #[derive(Default)]
 pub struct FormattedVectorOptions {
     // Formatting options for character vectors
-    pub character: FormattedVectorCharacterOptions,
+    pub character: FormatOptions,
 }
 
-impl Default for FormattedVectorCharacterOptions {
+impl Default for FormatOptions {
     fn default() -> Self {
         Self { quote: true }
     }
@@ -139,32 +133,18 @@ impl FormattedVector {
 
     pub fn get_unchecked(&self, index: isize) -> String {
         match self {
-            FormattedVector::Raw { vector } => vector.format_elt_unchecked(index),
-            FormattedVector::Logical { vector } => vector.format_elt_unchecked(index),
-            FormattedVector::Integer { vector } => vector.format_elt_unchecked(index),
-            FormattedVector::Numeric { vector } => vector.format_elt_unchecked(index),
+            FormattedVector::Raw { vector } => vector.format_elt_unchecked(index, None),
+            FormattedVector::Logical { vector } => vector.format_elt_unchecked(index, None),
+            FormattedVector::Integer { vector } => vector.format_elt_unchecked(index, None),
+            FormattedVector::Numeric { vector } => vector.format_elt_unchecked(index, None),
             FormattedVector::Character { vector, options } => {
-                let value = vector.format_elt_unchecked(index);
-                self.format_with_string_options(value, options)
+                vector.format_elt_unchecked(index, Some(options))
             },
-            FormattedVector::Complex { vector } => vector.format_elt_unchecked(index),
-            FormattedVector::Factor { vector } => vector.format_elt_unchecked(index),
+            FormattedVector::Complex { vector } => vector.format_elt_unchecked(index, None),
+            FormattedVector::Factor { vector } => vector.format_elt_unchecked(index, None),
             FormattedVector::FormattedVector { vector, options } => {
-                let value = vector.format_elt_unchecked(index);
-                self.format_with_string_options(value, options)
+                vector.format_elt_unchecked(index, Some(options))
             },
-        }
-    }
-
-    fn format_with_string_options(
-        &self,
-        value: String,
-        options: &FormattedVectorCharacterOptions,
-    ) -> String {
-        if options.quote {
-            format!("\"{}\"", value.replace("\"", "\\\""))
-        } else {
-            value
         }
     }
 
@@ -244,14 +224,14 @@ mod tests {
     use libr::STRSXP;
 
     use crate::environment::Environment;
+    use crate::environment::R_ENVS;
     use crate::eval::r_parse_eval0;
     use crate::modules::HARP_ENV;
-    use crate::object::RObject;
     use crate::r_assert_type;
     use crate::test::r_test;
     use crate::vector::formatted_vector::FormattedVector;
-    use crate::vector::formatted_vector::FormattedVectorCharacterOptions;
     use crate::vector::formatted_vector::FormattedVectorOptions;
+    use crate::vector::FormatOptions;
 
     #[test]
     fn test_unconforming_format_method() {
@@ -283,24 +263,26 @@ mod tests {
     #[test]
     fn test_formatting_option() {
         r_test(|| {
-            let x = RObject::from(vec![String::from("1"), String::from("2")]);
+            let x =
+                r_parse_eval0(r#"c("1", "2", '"a"', "NA", NA_character_)"#, R_ENVS.base).unwrap();
             r_assert_type(x.sexp, &[STRSXP]).unwrap();
 
             let formatted = FormattedVector::new_with_options(x.sexp, FormattedVectorOptions {
-                character: FormattedVectorCharacterOptions { quote: false },
+                character: FormatOptions { quote: false },
             })
             .unwrap();
 
             let out = formatted.iter().join(" ");
-            assert_eq!(out, String::from("1 2"));
+            assert_eq!(out, String::from(r#"1 2 "a" NA NA"#));
 
             let formatted = FormattedVector::new_with_options(x.sexp, FormattedVectorOptions {
-                character: FormattedVectorCharacterOptions { quote: true },
+                character: FormatOptions { quote: true },
             })
             .unwrap();
 
+            // NA is always unquoted regardless of the quote option
             let out = formatted.iter().join(" ");
-            assert_eq!(out, String::from("\"1\" \"2\""));
+            assert_eq!(out, String::from(r#""1" "2" "\"a\"" "NA" NA"#));
         })
     }
 }

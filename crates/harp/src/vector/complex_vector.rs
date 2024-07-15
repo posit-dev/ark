@@ -15,6 +15,7 @@ use libr::DATAPTR;
 use libr::SEXP;
 
 use crate::object::RObject;
+use crate::vector::FormatOptions;
 use crate::vector::Vector;
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -81,7 +82,7 @@ impl Vector for ComplexVector {
         *x
     }
 
-    fn format_one(&self, x: Self::Type) -> String {
+    fn format_one(&self, x: Self::Type, _option: Option<&FormatOptions>) -> String {
         format!("{}+{}i", x.r.to_string(), x.i.to_string())
     }
 }

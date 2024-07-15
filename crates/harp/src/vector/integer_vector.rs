@@ -14,6 +14,7 @@ use libr::INTSXP;
 use libr::SEXP;
 
 use crate::object::RObject;
+use crate::vector::FormatOptions;
 use crate::vector::Vector;
 
 #[harp_macros::vector]
@@ -68,7 +69,7 @@ impl Vector for IntegerVector {
         *x
     }
 
-    fn format_one(&self, x: Self::Type) -> String {
+    fn format_one(&self, x: Self::Type, _option: Option<&FormatOptions>) -> String {
         x.to_string()
     }
 }

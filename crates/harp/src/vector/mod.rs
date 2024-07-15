@@ -37,6 +37,14 @@ pub use raw_vector::RawVector;
 pub mod formatted_vector;
 pub mod names;
 
+// Formatting options for character vectors
+pub struct FormatOptions {
+    // Wether to quote the strings or not (defaults to `true`)
+    // If `true`, elements will be quoted during format so, eg: c("a", "b") becomes ("\"a\"", "\"b\"") in Rust
+    // Currently, this option is meaningful only for a character vector and is ignored on other types
+    pub quote: bool,
+}
+
 pub trait Vector {
     type Type;
     type Item: ?Sized;
@@ -100,11 +108,11 @@ pub trait Vector {
         Rf_xlength(self.data()) as usize
     }
 
-    fn format_one(&self, x: Self::Type) -> String;
+    fn format_one(&self, x: Self::Type, options: Option<&FormatOptions>) -> String;
 
-    fn format_elt_unchecked(&self, index: isize) -> String {
+    fn format_elt_unchecked(&self, index: isize, options: Option<&FormatOptions>) -> String {
         match self.get_unchecked(index) {
-            Some(x) => self.format_one(x),
+            Some(x) => self.format_one(x, options),
             None => String::from("NA"),
         }
     }
