@@ -9,6 +9,7 @@ use libr::*;
 
 use crate::exec::RFunction;
 use crate::exec::RFunctionExt;
+use crate::modules::HARP_ENV;
 use crate::object::RObject;
 use crate::r_symbol;
 use crate::utils::r_typeof;
@@ -64,6 +65,16 @@ pub fn r_expr_quote(x: impl Into<SEXP>) -> RObject {
         SYMSXP | LANGSXP => return RFunction::new("base", "quote").add(x).call.build(),
         _ => return x.into(),
     }
+}
+
+pub fn r_expr_deparse(x: SEXP) -> harp::Result<String> {
+    let x = RFunction::from("expr_deparse")
+        .add(r_expr_quote(x))
+        .call_in(unsafe { HARP_ENV.unwrap() })?;
+
+    let x = String::try_from(x)?;
+
+    Ok(x)
 }
 
 pub struct RArgument {

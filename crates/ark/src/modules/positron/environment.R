@@ -14,15 +14,3 @@
 
     readLines(tf)
 }
-
-#' @export
-.ps.environment.describeCall <- function(expr, width.cutoff = 500L, nlines = -1L) {
-    # TODO: take inspiration from .rs.deparse() in rstudio
-    deparsed <- deparse(
-        expr,
-        width.cutoff = width.cutoff,
-        nlines       = nlines
-    )
-
-    paste(deparsed, collapse = " ")
-}

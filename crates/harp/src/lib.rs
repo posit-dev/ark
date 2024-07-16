@@ -18,6 +18,7 @@ pub mod line_ending;
 pub mod modules;
 pub mod object;
 pub mod polled_events;
+pub mod pretty;
 pub mod protect;
 pub mod r_version;
 pub mod raii;
