@@ -78,6 +78,10 @@ pub fn r_null() -> libr::SEXP {
     unsafe { libr::R_NilValue }
 }
 
+pub fn r_missing() -> libr::SEXP {
+    unsafe { libr::R_MissingArg }
+}
+
 #[macro_export]
 macro_rules! with_vector_impl {
     ($x:expr, $class:ident, $variable:ident, $($code:tt)*) => {{
