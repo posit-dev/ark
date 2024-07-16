@@ -264,6 +264,8 @@ functions::generate! {
 
     pub fn SET_REAL_ELT(x: SEXP, i: R_xlen_t, v: f64);
 
+    pub fn SET_COMPLEX_ELT(x: SEXP, i: R_xlen_t, v: Rcomplex);
+
     pub fn SET_TAG(x: SEXP, y: SEXP);
 
     pub fn SET_TYPEOF(x: SEXP, v: std::ffi::c_int);
