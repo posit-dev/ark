@@ -444,7 +444,7 @@ mod tests {
     use harp::exec::RFunctionExt;
     use harp::object::*;
     use harp::r_char;
-    use harp::utils::r_envir_set;
+    use harp::utils::r_env_poke;
     use libr::*;
 
     use crate::dap::dap_variables::env_binding_variable;
@@ -459,7 +459,7 @@ mod tests {
                 .unwrap();
 
             let a = RObject::from(Rf_ScalarInteger(1));
-            r_envir_set("a", a.sexp, env.sexp);
+            r_env_poke(env.sexp, "a", a.sexp);
             let variable = env_binding_variable(String::from("a"), env.sexp).unwrap();
             assert_eq!(variable.name, String::from("a"));
             assert_eq!(variable.value, String::from("1L"));
@@ -479,7 +479,7 @@ mod tests {
                 .unwrap();
 
             let a = RObject::from(Rf_ScalarInteger(1));
-            r_envir_set("a", a.sexp, env.sexp);
+            r_env_poke(env.sexp, "a", a.sexp);
 
             let class = RObject::from(r_char!("foo"));
             let class = RObject::from(Rf_ScalarString(class.sexp));

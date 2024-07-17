@@ -7,6 +7,7 @@
 
 use std::ffi::CStr;
 use std::ffi::CString;
+use std::sync::Once;
 
 use c2rust_bitfields::BitfieldStruct;
 use itertools::Itertools;
@@ -21,6 +22,7 @@ use crate::environment::R_ENVS;
 use crate::error::Error;
 use crate::error::Result;
 use crate::eval::r_parse_eval0;
+use crate::exec::r_parse;
 use crate::exec::RFunction;
 use crate::exec::RFunctionExt;
 use crate::modules::HARP_ENV;
@@ -41,6 +43,7 @@ use crate::r_null;
 use crate::r_symbol;
 use crate::string::r_is_string;
 use crate::symbol::RSymbol;
+use crate::try_eval;
 use crate::vector::CharacterVector;
 use crate::vector::IntegerVector;
 use crate::vector::Vector;
@@ -403,8 +406,8 @@ pub fn r_envir_get(symbol: &str, envir: SEXP) -> Option<SEXP> {
     }
 }
 
-pub unsafe fn r_envir_set(symbol: &str, value: SEXP, envir: SEXP) {
-    Rf_defineVar(r_symbol!(symbol), value, envir);
+pub fn r_env_poke(env: SEXP, symbol: &str, value: SEXP) {
+    unsafe { Rf_defineVar(r_symbol!(symbol), value, env) };
 }
 
 pub unsafe fn r_envir_remove(symbol: &str, envir: SEXP) {
@@ -572,6 +575,11 @@ pub unsafe fn r_promise_is_lazy_load_binding(x: SEXP) -> bool {
 
 pub fn r_bytecode_expr(x: SEXP) -> SEXP {
     unsafe { R_BytecodeExpr(x) }
+}
+
+pub fn r_alloc_environment(size: i32, parent: SEXP) -> SEXP {
+    let hash = 1;
+    unsafe { R_NewEnv(parent, hash, size) }
 }
 
 pub fn r_env_names(env: SEXP) -> SEXP {
@@ -749,13 +757,33 @@ pub fn r_printf(x: &str) {
     }
 }
 
+pub fn try_eval_with_x(expr: SEXP, x: SEXP, parent: SEXP) -> harp::Result<RObject> {
+    let env = RObject::from(r_alloc_environment(1, parent));
+    r_env_poke(env.sexp, "x", x);
+    try_eval(expr, env.sexp)
+}
+
+pub fn r_preserve(x: SEXP) {
+    unsafe { R_PreserveObject(x) }
+}
+
 pub fn r_format(x: SEXP) -> Result<SEXP> {
-    unsafe {
-        let out = RFunction::new("", "harp_format")
-            .add(x)
-            .call_in(HARP_ENV.unwrap())?;
-        Ok(out.sexp)
-    }
+    static R_FORMAT_TEXT: &str = "harp_format(x)";
+    static R_FORMAT_ONCE: Once = Once::new();
+    static mut R_FORMAT_CALL: Option<SEXP> = None;
+
+    R_FORMAT_ONCE.call_once(|| {
+        let call = r_parse(R_FORMAT_TEXT).unwrap();
+        r_preserve(call.sexp);
+        unsafe { R_FORMAT_CALL = Some(call.sexp) };
+    });
+
+    let call = unsafe { R_FORMAT_CALL.unwrap() };
+    let parent = unsafe { HARP_ENV.unwrap() };
+
+    let out = try_eval_with_x(call, x, parent)?;
+
+    Ok(out.sexp)
 }
 
 #[cfg(test)]

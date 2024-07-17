@@ -24,8 +24,8 @@ use harp::exec::RFunctionExt;
 use harp::object::RObject;
 use harp::r_symbol;
 use harp::test::start_r;
+use harp::utils::r_env_poke;
 use harp::utils::r_envir_remove;
-use harp::utils::r_envir_set;
 use libr::R_EmptyEnv;
 use libr::R_lsInternal;
 use libr::Rboolean_TRUE;
@@ -141,7 +141,7 @@ fn test_environment_list() {
     // Create another variable
     r_task(|| unsafe {
         let test_env = test_env.get().clone();
-        r_envir_set("nothing", Rf_ScalarInteger(43), *test_env);
+        r_env_poke(*test_env, "nothing", Rf_ScalarInteger(43));
         r_envir_remove("everything", *test_env);
     });
 
