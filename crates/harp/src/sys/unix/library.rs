@@ -6,9 +6,7 @@
  */
 
 use std::path::PathBuf;
-use std::process::Command;
 
-use anyhow::anyhow;
 use libloading::os::unix::Library;
 use libloading::os::unix::RTLD_GLOBAL;
 use libloading::os::unix::RTLD_LAZY;
@@ -22,9 +20,16 @@ pub struct RLibraries {
 
 impl RLibraries {
     pub fn from_r_home_path(path: &PathBuf) -> Self {
-        // Before we open the libraries, set `DYLD_FALLBACK_LIBRARY_PATH` or
-        // `LD_LIBRARY_PATH` as needed
-        set_library_path_env_var(path);
+        // On macOS and Linux, we rely on the fact that the parent process that
+        // starts ark should have set `DYLD_FALLBACK_LIBRARY_PATH` or `LD_LIBRARY_PATH`
+        // respectively already, referencing R's `{R_HOME}/etc/ldpaths` script to generate
+        // the correct environment variable to set (which includes info about Java related
+        // paths as well). Setting these env vars is critical, as they add `{R_HOME}/lib/`
+        // to a place that `dlopen()` can find. Even though we open libR with
+        // `RTLD_GLOBAL`, it seems that the path to libR (and other libraries in
+        // `{R_HOME}/lib`) recorded in package info is often relative rather than absolute
+        // on both Linux and macOS, and the env var ends up being the only way to reliably
+        // locate libR when the package is being loaded.
 
         let r_path = find_r_shared_library(&path, "R");
         let r = open_and_leak_r_shared_library(&r_path);
@@ -77,90 +82,4 @@ pub fn open_r_shared_library(path: &PathBuf) -> Result<libloading::Library, libl
 
 pub fn find_r_shared_library_folder(path: &PathBuf) -> PathBuf {
     path.join("lib")
-}
-
-#[cfg(target_os = "macos")]
-const LIBRARY_PATH_ENVVAR: &'static str = "DYLD_FALLBACK_LIBRARY_PATH";
-#[cfg(target_os = "linux")]
-const LIBRARY_PATH_ENVVAR: &'static str = "LD_LIBRARY_PATH";
-
-fn set_library_path_env_var(path: &PathBuf) {
-    // In the future, we may add additional paths to the env var beyond just what R
-    // gives us, like RStudio does.
-    // https://github.com/rstudio/rstudio/blob/50d1a034a04188b42cf7560a86a268a95e62d129/src/cpp/core/r_util/REnvironmentPosix.cpp#L817
-
-    let mut paths = Vec::new();
-
-    // Expect that this includes the existing env var value, if there was one
-    match source_ldpaths_script(path) {
-        Ok(path) => paths.push(path),
-        Err(err) => log::error!("Failed to source `ldpaths` script: {err:?}."),
-    }
-
-    // Only set if we have something
-    if paths.is_empty() {
-        return;
-    }
-
-    let paths = paths.join(":");
-
-    log::info!("Setting '{LIBRARY_PATH_ENVVAR}' env var to '{paths}'.");
-
-    std::env::set_var(LIBRARY_PATH_ENVVAR, paths);
-}
-
-/// Source `{R_HOME}/etc/ldpaths`
-///
-/// - On macOS, this is for `DYLD_FALLBACK_LIBRARY_PATH`
-/// - On linux, this is for `LD_LIBRARY_PATH`
-///
-/// This is a file that R provides which adds the `{R_HOME}/lib/` directory and a Java
-/// related directory (relevant for rJava, apparently) to the relevant library path env
-/// var.
-///
-/// Adding R's `lib/` directory to the front of `LD_LIBRARY_PATH` is particularly
-/// important. We open `libR` with `RTLD_GLOBAL`, but there are other libs shipped by R
-/// in that `lib/` folder that other packages might link to, and having the `lib/` folder
-/// included in `LD_LIBRARY_PATH` is how those packages will find those libs.
-fn source_ldpaths_script(path: &PathBuf) -> anyhow::Result<String> {
-    let ldpaths = path.join("etc").join("ldpaths");
-
-    let Some(ldpaths) = ldpaths.to_str() else {
-        let ldpaths = ldpaths.to_string_lossy();
-        return Err(anyhow!(
-            "Failed to convert `ldpaths` path to UTF-8 string: '{ldpaths}'"
-        ));
-    };
-
-    // Source (i.e. `.`) the `ldpaths` file into the current bash session, and then
-    // print out the relevant env var that it set. `printf` is more portable than `echo -n`.
-    let command = format!(". {ldpaths} && printf '%s' \"${LIBRARY_PATH_ENVVAR}\"");
-
-    // Need to ensure `R_HOME` is set, as `ldpaths` references it.
-    // Expect that `ldpaths` appends to an existing env var if there is one,
-    // rather than overwriting it, so we don't have to do that.
-    let output = Command::new("sh")
-        .env("R_HOME", &path)
-        .arg("-c")
-        .arg(command)
-        .output()?;
-
-    if !output.status.success() {
-        let status = output.status;
-        return Err(anyhow!("Failed with status: {status}"));
-    }
-    if !output.stderr.is_empty() {
-        let stderr = String::from_utf8(output.stderr)?;
-        return Err(anyhow!("Unexpected output on stderr: '{stderr}'"));
-    }
-
-    let value = String::from_utf8(output.stdout)?;
-
-    if value.is_empty() {
-        return Err(anyhow!(
-            "Empty string returned for '{LIBRARY_PATH_ENVVAR}'. Expected at least one path."
-        ));
-    }
-
-    Ok(value)
 }
