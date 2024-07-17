@@ -13,7 +13,6 @@ use amalthea::wire::shutdown_reply::ShutdownReply;
 use amalthea::wire::shutdown_request::ShutdownRequest;
 use async_trait::async_trait;
 use crossbeam::channel::Sender;
-use log::*;
 
 use crate::request::RRequest;
 
@@ -35,7 +34,7 @@ impl ControlHandler for Control {
         &self,
         msg: &ShutdownRequest,
     ) -> Result<ShutdownReply, Exception> {
-        debug!("Received shutdown request: {:?}", msg);
+        log::info!("Received shutdown request: {msg:?}");
 
         // According to the Jupyter protocol we should block here until the
         // shutdown is complete. However AFAICS ipykernel doesn't wait
@@ -56,7 +55,7 @@ impl ControlHandler for Control {
     }
 
     async fn handle_interrupt_request(&self) -> Result<InterruptReply, Exception> {
-        debug!("Received interrupt request");
+        log::info!("Received interrupt request");
         crate::sys::control::handle_interrupt_request();
         Ok(InterruptReply { status: Status::Ok })
     }

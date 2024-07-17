@@ -30,7 +30,6 @@ use ark::version::detect_r;
 use bus::Bus;
 use crossbeam::channel::bounded;
 use crossbeam::channel::unbounded;
-use log::*;
 use notify::Watcher;
 use stdext::unwrap;
 
@@ -48,8 +47,8 @@ fn start_kernel(
     // Create a new kernel from the connection file
     let mut kernel = match Kernel::new("ark", connection_file) {
         Ok(k) => k,
-        Err(e) => {
-            error!("Failed to create kernel: {}", e);
+        Err(err) => {
+            log::error!("Failed to create kernel: {err}");
             return;
         },
     };
@@ -211,11 +210,8 @@ fn parse_file(
 ) {
     match ConnectionFile::from_file(connection_file) {
         Ok(connection) => {
-            info!(
-                "Loaded connection information from frontend in {}",
-                connection_file
-            );
-            debug!("Connection data: {:?}", connection);
+            log::info!("Loaded connection information from frontend in {connection_file}");
+            log::info!("Connection data: {:?}", connection);
             start_kernel(
                 connection,
                 r_args,
@@ -225,10 +221,7 @@ fn parse_file(
             );
         },
         Err(error) => {
-            error!(
-                "Couldn't read connection file {}: {:?}",
-                connection_file, error
-            );
+            log::error!("Couldn't read connection file {connection_file}: {error:?}");
         },
     }
 }

@@ -13,9 +13,6 @@ use crossbeam::channel::Receiver;
 use crossbeam::channel::SendError;
 use crossbeam::channel::Sender;
 use futures::executor::block_on;
-use log::debug;
-use log::trace;
-use log::warn;
 use serde_json::json;
 use stdext::result::ResultOrLog;
 
@@ -117,12 +114,12 @@ impl Shell {
     pub fn listen(&mut self) {
         // Begin listening for shell messages
         loop {
-            trace!("Waiting for shell messages");
+            log::trace!("Waiting for shell messages");
             // Attempt to read the next message from the ZeroMQ socket
             let message = match Message::read_from_socket(&self.socket) {
                 Ok(m) => m,
                 Err(err) => {
-                    warn!("Could not read message from shell socket: {}", err);
+                    log::warn!("Could not read message from shell socket: {err}");
                     continue;
                 },
             };
@@ -134,7 +131,7 @@ impl Shell {
             // delivered to the client instead of reported up the stack, so the
             // only errors likely here are "can't deliver to client"
             if let Err(err) = self.process_message(message) {
-                warn!("Could not handle shell message: {}", err);
+                log::warn!("Could not handle shell message: {err}");
             }
         }
     }
@@ -183,7 +180,7 @@ impl Shell {
 
         // Enter the kernel-busy state in preparation for handling the message.
         if let Err(err) = self.send_state(req.clone(), ExecutionState::Busy) {
-            warn!("Failed to change kernel status to busy: {}", err)
+            log::warn!("Failed to change kernel status to busy: {err}")
         }
 
         // Lock the shell handler object on this thread
@@ -202,7 +199,7 @@ impl Shell {
         // error, since many frontends won't submit additional messages until
         // the kernel is marked idle.
         if let Err(err) = self.send_state(req, ExecutionState::Idle) {
-            warn!("Failed to restore kernel status to idle: {}", err)
+            log::warn!("Failed to restore kernel status to idle: {err}")
         }
         result
     }
@@ -227,11 +224,11 @@ impl Shell {
         handler: &mut dyn ShellHandler,
         req: JupyterMessage<ExecuteRequest>,
     ) -> Result<(), Error> {
-        debug!("Received execution request {:?}", req);
+        log::info!("Received execution request {req:?}");
         let originator = Originator::from(&req);
         match block_on(handler.handle_execute_request(Some(originator), &req.content)) {
             Ok(reply) => {
-                trace!("Got execution reply, delivering to frontend: {:?}", reply);
+                log::info!("Got execution reply, delivering to frontend: {reply:?}");
                 let r = req.send_reply(reply, &self.socket);
                 r
             },
@@ -245,7 +242,7 @@ impl Shell {
         handler: &dyn ShellHandler,
         req: JupyterMessage<IsCompleteRequest>,
     ) -> Result<(), Error> {
-        debug!("Received request to test code for completeness: {:?}", req);
+        log::info!("Received request to test code for completeness: {req:?}");
         match block_on(handler.handle_is_complete_request(&req.content)) {
             Ok(reply) => req.send_reply(reply, &self.socket),
             Err(err) => req.send_error::<IsCompleteReply>(err, &self.socket),
@@ -258,7 +255,7 @@ impl Shell {
         handler: &mut dyn ShellHandler,
         req: JupyterMessage<KernelInfoRequest>,
     ) -> Result<(), Error> {
-        debug!("Received shell information request: {:?}", req);
+        log::info!("Received shell kernel information request: {req:?}");
         match block_on(handler.handle_info_request(&req.content)) {
             Ok(reply) => req.send_reply(reply, &self.socket),
             Err(err) => req.send_error::<KernelInfoReply>(err, &self.socket),
@@ -271,7 +268,7 @@ impl Shell {
         handler: &dyn ShellHandler,
         req: JupyterMessage<CompleteRequest>,
     ) -> Result<(), Error> {
-        debug!("Received request to complete code: {:?}", req);
+        log::info!("Received request to complete code: {req:?}");
         match block_on(handler.handle_complete_request(&req.content)) {
             Ok(reply) => req.send_reply(reply, &self.socket),
             Err(err) => req.send_error::<CompleteReply>(err, &self.socket),
@@ -284,7 +281,7 @@ impl Shell {
         _handler: &dyn ShellHandler,
         req: JupyterMessage<CommInfoRequest>,
     ) -> Result<(), Error> {
-        debug!("Received request for open comms: {:?}", req);
+        log::info!("Received request for open comms: {req:?}");
 
         // Convert our internal map of open comms to a JSON object
         let mut info = serde_json::Map::new();
@@ -309,11 +306,11 @@ impl Shell {
 
     /// Handle a request to open a comm
     fn handle_comm_open(&mut self, req: JupyterMessage<CommOpen>) -> Result<(), Error> {
-        debug!("Received request to open comm: {:?}", req);
+        log::info!("Received request to open comm: {req:?}");
 
         // Enter the kernel-busy state in preparation for handling the message.
         if let Err(err) = self.send_state(req.clone(), ExecutionState::Busy) {
-            warn!("Failed to change kernel status to busy: {}", err)
+            log::warn!("Failed to change kernel status to busy: {err}")
         }
 
         // Process the comm open request
@@ -321,7 +318,7 @@ impl Shell {
 
         // Return kernel to idle state
         if let Err(err) = self.send_state(req, ExecutionState::Idle) {
-            warn!("Failed to restore kernel status to idle: {}", err)
+            log::warn!("Failed to restore kernel status to idle: {err}")
         }
 
         // Return the result
@@ -336,11 +333,11 @@ impl Shell {
         _handler: &dyn ShellHandler,
         req: JupyterMessage<CommWireMsg>,
     ) -> Result<(), Error> {
-        debug!("Received request to send a message on a comm: {:?}", req);
+        log::info!("Received request to send a message on a comm: {req:?}");
 
         // Enter the kernel-busy state in preparation for handling the message.
         if let Err(err) = self.send_state(req.clone(), ExecutionState::Busy) {
-            warn!("Failed to change kernel status to busy: {}", err)
+            log::warn!("Failed to change kernel status to busy: {err}")
         }
 
         // Store this message as a pending RPC request so that when the comm
@@ -357,7 +354,7 @@ impl Shell {
 
         // Return kernel to idle state
         if let Err(err) = self.send_state(req, ExecutionState::Idle) {
-            warn!("Failed to restore kernel status to idle: {}", err)
+            log::warn!("Failed to restore kernel status to idle: {err}")
         }
         Ok(())
     }
@@ -379,9 +376,10 @@ impl Shell {
                     // If the target name starts with "positron." but we don't
                     // recognize the remainder of the string, consider that name
                     // to be invalid and return an error.
-                    warn!(
+                    log::warn!(
                         "Failed to open comm; target name '{}' is unrecognized: {}",
-                        &req.content.target_name, err
+                        &req.content.target_name,
+                        err
                     );
                     return Err(Error::UnknownCommName(req.content.target_name));
                 },
@@ -534,7 +532,9 @@ impl Shell {
             Ok(init_rx)
         } else {
             // If we don't have the corresponding handler, return an error
-            warn!("Client attempted to start LSP or DAP, but no handler was provided by kernel.");
+            log::error!(
+                "Client attempted to start LSP or DAP, but no handler was provided by kernel."
+            );
             Err(Error::UnknownCommName(req.content.target_name.clone()))
         }
     }
@@ -542,11 +542,11 @@ impl Shell {
     /// Handle a request to close a comm
     fn handle_comm_close(&mut self, req: JupyterMessage<CommClose>) -> Result<(), Error> {
         // Look for the comm in our open comms
-        debug!("Received request to close comm: {:?}", req);
+        log::info!("Received request to close comm: {req:?}");
 
         // Enter the kernel-busy state in preparation for handling the message.
         if let Err(err) = self.send_state(req.clone(), ExecutionState::Busy) {
-            warn!("Failed to change kernel status to busy: {}", err)
+            log::warn!("Failed to change kernel status to busy: {err}")
         }
 
         // Send a notification to the comm message listener thread notifying it that
@@ -557,7 +557,7 @@ impl Shell {
 
         // Return kernel to idle state
         if let Err(err) = self.send_state(req, ExecutionState::Idle) {
-            warn!("Failed to restore kernel status to idle: {}", err)
+            log::warn!("Failed to restore kernel status to idle: {err}")
         }
 
         Ok(())
@@ -569,7 +569,7 @@ impl Shell {
         handler: &dyn ShellHandler,
         req: JupyterMessage<InspectRequest>,
     ) -> Result<(), Error> {
-        debug!("Received request to introspect code: {:?}", req);
+        log::info!("Received request to introspect code: {req:?}");
         match block_on(handler.handle_inspect_request(&req.content)) {
             Ok(reply) => req.send_reply(reply, &self.socket),
             Err(err) => req.send_error::<InspectReply>(err, &self.socket),
