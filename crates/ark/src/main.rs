@@ -94,6 +94,7 @@ fn start_kernel(
         kernel_init_rx,
         kernel_request_tx,
         kernel_request_rx,
+        session_mode.clone(),
     );
 
     // Create the control handler; this is used to handle shutdown/interrupt and

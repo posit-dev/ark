@@ -1,7 +1,7 @@
 //
 // graphics_device.rs
 //
-// Copyright (C) 2022 by Posit Software, PBC
+// Copyright (C) 2022-2024 by Posit Software, PBC
 //
 
 ///
@@ -133,13 +133,13 @@ impl DeviceContext {
         &mut self,
         comm_manager_tx: Sender<CommManagerEvent>,
         iopub_tx: Sender<IOPubMessage>,
-        positron_connected: bool,
+        dynamic_plots: bool,
     ) {
         // After R code has completed execution, we use this to check if any graphics
         // need to be created
         if self._changes {
             self._changes = false;
-            self.process_changes(comm_manager_tx, iopub_tx, positron_connected);
+            self.process_changes(comm_manager_tx, iopub_tx, dynamic_plots);
         }
     }
 
@@ -450,9 +450,9 @@ pub unsafe fn on_process_events() {
 pub unsafe fn on_did_execute_request(
     comm_manager_tx: Sender<CommManagerEvent>,
     iopub_tx: Sender<IOPubMessage>,
-    positron_connected: bool,
+    dynamic_plots: bool,
 ) {
-    DEVICE_CONTEXT.on_did_execute_request(comm_manager_tx, iopub_tx, positron_connected);
+    DEVICE_CONTEXT.on_did_execute_request(comm_manager_tx, iopub_tx, dynamic_plots);
 }
 
 // NOTE: May be called when rendering a plot to file, since this is done by

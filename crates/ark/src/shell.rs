@@ -1,7 +1,7 @@
 //
 // shell.rs
 //
-// Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2022-2024 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -52,6 +52,7 @@ use crate::help::r_help::RHelp;
 use crate::help_proxy;
 use crate::interface::KernelInfo;
 use crate::interface::RMain;
+use crate::interface::SessionMode;
 use crate::kernel::Kernel;
 use crate::plots::graphics_device;
 use crate::r_task;
@@ -69,6 +70,7 @@ pub struct Shell {
     kernel_request_tx: Sender<KernelRequest>,
     kernel_init_rx: BusReader<KernelInfo>,
     kernel_info: Option<KernelInfo>,
+    session_mode: SessionMode,
 }
 
 #[derive(Debug)]
@@ -86,6 +88,7 @@ impl Shell {
         kernel_init_rx: BusReader<KernelInfo>,
         kernel_request_tx: Sender<KernelRequest>,
         kernel_request_rx: Receiver<KernelRequest>,
+        session_mode: SessionMode,
     ) -> Self {
         // Start building the kernel object. It is shared by the shell, LSP, and main threads.
         let kernel = Kernel::new();
@@ -104,6 +107,7 @@ impl Shell {
             kernel_request_tx,
             kernel_init_rx,
             kernel_info: None,
+            session_mode,
         }
     }
 
@@ -235,7 +239,7 @@ impl ShellHandler for Shell {
             graphics_device::on_did_execute_request(
                 self.comm_manager_tx.clone(),
                 self.iopub_tx.clone(),
-                kernel.ui_connected(),
+                kernel.ui_connected() && self.session_mode == SessionMode::Console,
             )
         };
 
