@@ -290,7 +290,7 @@ pub struct RMain {
     kernel_init_tx: Bus<KernelInfo>,
 
     /// Whether we are running in Console, Notebook, or Background mode.
-    session_mode: SessionMode,
+    pub session_mode: SessionMode,
 
     /// Channel used to send along messages relayed on the open comms.
     comm_manager_tx: Sender<CommManagerEvent>,

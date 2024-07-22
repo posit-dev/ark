@@ -5,6 +5,8 @@
 //
 //
 
+use amalthea::comm::ui_comm::ShowHtmlFileParams;
+use amalthea::comm::ui_comm::UiFrontendEvent;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::display_data::DisplayData;
 use anyhow::Result;
@@ -14,12 +16,13 @@ use libr::R_NilValue;
 use libr::SEXP;
 
 use crate::interface::RMain;
+use crate::interface::SessionMode;
 
 /// Emit HTML output on IOPub for delivery to the client
 ///
 /// - `iopub_tx` - The IOPub channel to send the output on
 /// - `path` - The path to the HTML file to display
-fn emit_html_output(iopub_tx: Sender<IOPubMessage>, path: String) -> Result<()> {
+fn emit_html_output_jupyter(iopub_tx: Sender<IOPubMessage>, path: String) -> Result<()> {
     // Read the contents of the file
     let contents = std::fs::read_to_string(path)?;
 
@@ -41,17 +44,41 @@ fn emit_html_output(iopub_tx: Sender<IOPubMessage>, path: String) -> Result<()> 
 }
 
 #[harp::register]
-pub unsafe extern "C" fn ps_html_viewer(url: SEXP) -> anyhow::Result<SEXP> {
+pub unsafe extern "C" fn ps_html_viewer(
+    url: SEXP,
+    kind: SEXP,
+    is_plot: SEXP,
+) -> anyhow::Result<SEXP> {
     // Convert url to a string; note that we are only passed URLs that
     // correspond to files in the temporary directory.
     let path = RObject::view(url).to::<String>();
     match path {
         Ok(path) => {
-            // Emit the HTML output
+            // Emit HTML output
             let main = RMain::get();
-            let iopub_tx = main.get_iopub_tx().clone();
-            if let Err(err) = emit_html_output(iopub_tx, path) {
-                log::error!("Failed to emit HTML output: {:?}", err);
+            if main.session_mode == SessionMode::Notebook {
+                // In notebook mode, send the output as a Jupyter display_data message
+                let iopub_tx = main.get_iopub_tx().clone();
+                if let Err(err) = emit_html_output_jupyter(iopub_tx, path) {
+                    log::error!("Failed to emit HTML output: {:?}", err);
+                }
+            } else {
+                // In console mode, send the output as a ShowHtmlFile event for Positron
+                // to display
+                let kind = RObject::view(kind).to::<String>();
+                let is_plot = RObject::view(is_plot).to::<bool>();
+                let params = ShowHtmlFileParams {
+                    path,
+                    kind: match kind {
+                        Ok(kind) => kind,
+                        Err(_) => String::new(),
+                    },
+                    is_plot: match is_plot {
+                        Ok(plot) => plot,
+                        Err(_) => false,
+                    },
+                };
+                main.send_frontend_event(UiFrontendEvent::ShowHtmlFile(params));
             }
         },
         Err(err) => {

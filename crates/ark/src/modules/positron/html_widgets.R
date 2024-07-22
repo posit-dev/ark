@@ -9,18 +9,24 @@
     # Render the widget to a tag list.
     rendered <- htmltools::as.tags(x, standalone = TRUE)
 
-    # Resolve the dependencies for the widget (scripts, stylesheets, etc.).
-    dependencies <- htmltools::resolveDependencies(
-        attr(rendered, "html_dependencies", exact = TRUE))
+    # Render the tag list to a temproary file using html_print. Don't view the
+    # file yet; we'll do that in a bit.
+    tmp_file <- htmltools::html_print(rendered, viewer = NULL)
+
+    # Guess whether this is a plot or plot-like object. The default is to treat
+    # figures as plots, but if the viewer pane height is set to 'maximize', then
+    # we treat it as a non-plot object.
+    is_plot <- x$sizingPolicy$knitr$figure
+    if (identical(x$sizingPolicy$viewer$paneHeight, 'maximize')) {
+        is_plot <- FALSE
+    }
 
     # Pass the widget to the viewer. Positron will assemble the final HTML
     # document from these components.
-    .ps.Call("ps_html_widget",
+    .ps.Call("ps_html_viewer",
+        tmp_file,
         class(x)[1],
-        list(
-            tags = rendered,
-            dependencies = dependencies,
-            sizing_policy = x$sizingPolicy))
+        is_plot)
 }
 
 #' @export
