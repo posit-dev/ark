@@ -124,6 +124,7 @@ use crate::startup;
 use crate::sys::console::console_to_utf8;
 
 /// An enum representing the different modes in which the R session can run.
+#[derive(PartialEq, Clone)]
 pub enum SessionMode {
     /// A session with an interactive console (REPL), such as in Positron.
     Console,
