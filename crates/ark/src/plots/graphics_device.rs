@@ -221,7 +221,7 @@ impl DeviceContext {
         &mut self,
         comm_manager_tx: Sender<CommManagerEvent>,
         iopub_tx: Sender<IOPubMessage>,
-        positron_connected: bool,
+        dynamic_plots: bool,
     ) {
         let id = unwrap!(self._id.clone(), None => {
             log::error!("Unexpected uninitialized `id`.");
@@ -230,9 +230,9 @@ impl DeviceContext {
 
         if self._new_page {
             self._new_page = false;
-            self.process_new_plot(id.as_str(), comm_manager_tx, iopub_tx, positron_connected);
+            self.process_new_plot(id.as_str(), comm_manager_tx, iopub_tx, dynamic_plots);
         } else {
-            self.process_update_plot(id.as_str(), iopub_tx, positron_connected);
+            self.process_update_plot(id.as_str(), iopub_tx, dynamic_plots);
         }
     }
 
@@ -241,9 +241,9 @@ impl DeviceContext {
         id: &str,
         comm_manager_tx: Sender<CommManagerEvent>,
         iopub_tx: Sender<IOPubMessage>,
-        positron_connected: bool,
+        dynamic_plots: bool,
     ) {
-        if positron_connected {
+        if dynamic_plots {
             self.process_new_plot_positron(id, comm_manager_tx);
         } else {
             self.process_new_plot_jupyter_protocol(id, iopub_tx);
@@ -354,8 +354,8 @@ impl DeviceContext {
 
     fn create_display_data_plot(&mut self, id: &str) -> Result<serde_json::Value, anyhow::Error> {
         // TODO: Take these from R global options? Like `ark.plot.width`?
-        let width = 400;
-        let height = 650;
+        let width = 800;
+        let height = 600;
         let pixel_ratio = 1.0;
         let format = RenderFormat::Png;
 
