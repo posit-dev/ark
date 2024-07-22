@@ -251,6 +251,19 @@ pub struct ShowUrlParams {
 	pub url: String,
 }
 
+/// Parameters for the ShowHtmlFile method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ShowHtmlFileParams {
+	/// The fully qualified filesystem path to the HTML file to display
+	pub path: String,
+
+	/// If known, the kind of content being displayed, e.g. 'plotly' or 'vega'
+	pub kind: String,
+
+	/// Whether the HTML file is a plot-like object
+	pub is_plot: bool,
+}
+
 /**
  * Backend RPC request types for the ui comm
  */
@@ -421,6 +434,10 @@ pub enum UiFrontendEvent {
 	/// Viewer pane visible.
 	#[serde(rename = "show_url")]
 	ShowUrl(ShowUrlParams),
+
+	/// Causes the HTML file to be shown in Positron.
+	#[serde(rename = "show_html_file")]
+	ShowHtmlFile(ShowHtmlFileParams),
 
 }
 
