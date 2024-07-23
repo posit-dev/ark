@@ -1,7 +1,7 @@
 //
 // lib.rs
 //
-// Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2024 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -13,7 +13,6 @@ pub mod data_explorer;
 pub mod errors;
 pub mod help;
 pub mod help_proxy;
-pub mod html_widget;
 pub mod interface;
 pub mod json;
 pub mod kernel;
