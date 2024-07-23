@@ -13,12 +13,13 @@
     # file yet; we'll do that in a bit.
     tmp_file <- htmltools::html_print(rendered, viewer = NULL)
 
-    # Guess whether this is a plot or plot-like object. The default is to treat
-    # figures as plots, but if the viewer pane height is set to 'maximize', then
-    # we treat it as a non-plot object.
+    # Derive the height of the viewer pane from the sizing policy of the widget.
     is_plot <- x$sizingPolicy$knitr$figure
-    if (identical(x$sizingPolicy$viewer$paneHeight, 'maximize')) {
-        is_plot <- FALSE
+    height <- x$sizingPolicy$viewer$paneHeight
+    if (identical(height, 'maximize')) {
+        height <- -1
+    } else if (is.null(height)) {
+        height <- 0
     }
 
     # Pass the widget to the viewer. Positron will assemble the final HTML
@@ -26,6 +27,7 @@
     .ps.Call("ps_html_viewer",
         tmp_file,
         class(x)[1],
+        height,
         is_plot)
 }
 
@@ -49,3 +51,23 @@ unloadEvent <- packageEvent("htmlwidgets", "onUnload")
 setHook(unloadEvent, function(...) {
    .ps.viewer.removeOverrides()
 }, action = "append")
+
+# Implementation for rstudioapi::viewer
+.rs.api.viewer <- function (url, height = NULL) {
+    if (!is.character(url) || (length(url) != 1))
+        stop("url must be a single element character vector.")
+    if (identical(height, "maximize"))
+        height <- -1
+    if (!is.null(height) && (!is.numeric(height) || (length(height) !=
+        1)))
+        stop("height must be a single element numeric vector or 'maximize'.")
+    if (is.null(height)) {
+        height <- 0
+    }
+    invisible(.Call("ps_html_viewer",
+        url, # The URL of the file to view
+        "",  # The kind of object being viewed; unknown since viewer() was called directly
+        height,  # The desired height
+        FALSE,   # Whether the object is a plot; guess FALSE
+        PACKAGE = "(embedding)"))
+}

@@ -47,6 +47,7 @@ fn emit_html_output_jupyter(iopub_tx: Sender<IOPubMessage>, path: String) -> Res
 pub unsafe extern "C" fn ps_html_viewer(
     url: SEXP,
     kind: SEXP,
+    height: SEXP,
     is_plot: SEXP,
 ) -> anyhow::Result<SEXP> {
     // Convert url to a string; note that we are only passed URLs that
@@ -67,11 +68,16 @@ pub unsafe extern "C" fn ps_html_viewer(
                 // to display
                 let kind = RObject::view(kind).to::<String>();
                 let is_plot = RObject::view(is_plot).to::<bool>();
+                let height = RObject::view(height).to::<i32>();
                 let params = ShowHtmlFileParams {
                     path,
                     kind: match kind {
                         Ok(kind) => kind,
                         Err(_) => String::new(),
+                    },
+                    height: match height {
+                        Ok(height) => height.into(),
+                        Err(_) => 0,
                     },
                     is_plot: match is_plot {
                         Ok(plot) => plot,

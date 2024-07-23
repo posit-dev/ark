@@ -262,6 +262,11 @@ pub struct ShowHtmlFileParams {
 
 	/// Whether the HTML file is a plot-like object
 	pub is_plot: bool,
+
+	/// The desired height of the HTML viewer, in pixels. The special value 0
+	/// indicates that no particular height is desired, and -1 indicates that
+	/// the viewer should be as tall as possible.
+	pub height: i64,
 }
 
 /**
