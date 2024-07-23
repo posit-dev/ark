@@ -51,23 +51,3 @@ unloadEvent <- packageEvent("htmlwidgets", "onUnload")
 setHook(unloadEvent, function(...) {
    .ps.viewer.removeOverrides()
 }, action = "append")
-
-# Implementation for rstudioapi::viewer
-.rs.api.viewer <- function (url, height = NULL) {
-    if (!is.character(url) || (length(url) != 1))
-        stop("url must be a single element character vector.")
-    if (identical(height, "maximize"))
-        height <- -1
-    if (!is.null(height) && (!is.numeric(height) || (length(height) !=
-        1)))
-        stop("height must be a single element numeric vector or 'maximize'.")
-    if (is.null(height)) {
-        height <- 0
-    }
-    invisible(.Call("ps_html_viewer",
-        url, # The URL of the file to view
-        "",  # The kind of object being viewed; unknown since viewer() was called directly
-        height,  # The desired height
-        FALSE,   # Whether the object is a plot; guess FALSE
-        PACKAGE = "(embedding)"))
-}
