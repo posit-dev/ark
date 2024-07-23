@@ -195,6 +195,7 @@ mod tests {
             small_num_digits: 4,
             max_integral_digits: 7,
             thousands_sep: Some(",".to_string()),
+            max_value_length: 100,
         }
     }
 

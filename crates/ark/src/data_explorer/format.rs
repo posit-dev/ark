@@ -49,7 +49,33 @@ pub fn format_string(x: SEXP, format_options: &FormatOptions) -> Vec<String> {
 }
 
 fn format(x: SEXP, format_options: &FormatOptions) -> Vec<FormattedValue> {
-    format_values(x, format_options).unwrap_or(unknown_format(x))
+    let mut formatted = format_values(x, format_options).unwrap_or(unknown_format(x));
+
+    // Truncate the values if they are too long
+    formatted.iter_mut().for_each(|v| {
+        if let FormattedValue::Value(x) = v {
+            truncate_inplace(x, format_options.max_value_length);
+        }
+    });
+
+    formatted
+}
+
+// Truncating strings in Rust is more complicated that one would imagine.
+// If you index using eg s[..6] that would take 6 bytes, which is not necessarily 6 characters.
+// We need to iterate over the characters and truncate the string at the right character.
+// See also https://doc.rust-lang.org/book/ch08-02-strings.html
+fn truncate_inplace(s: &mut String, max_len: i64) {
+    // Returns the indice of the nth character in the string if it exists
+    let index = s.char_indices().nth(max_len as usize);
+
+    // If an index is found, truncate the string to that index
+    match index {
+        // truncate is an in-place operation that takes the new max index as input
+        // but looking the string as a sequence of bytes, not chars.
+        Some((i, _)) => s.truncate(i),
+        None => (),
+    }
 }
 
 fn unknown_format(x: SEXP) -> Vec<FormattedValue> {
@@ -425,6 +451,7 @@ mod tests {
             small_num_digits: 4,
             max_integral_digits: 7,
             thousands_sep: Some(",".to_string()),
+            max_value_length: 100,
         }
     }
 
@@ -514,6 +541,7 @@ mod tests {
                 small_num_digits: 4,
                 max_integral_digits: 7,
                 thousands_sep: None,
+                max_value_length: 100,
             };
             let expected = vec![
                 "0.00",
@@ -540,6 +568,7 @@ mod tests {
                 small_num_digits: 4,
                 max_integral_digits: 7,
                 thousands_sep: Some("_".to_string()),
+                max_value_length: 100,
             };
 
             let expected = vec![
@@ -707,6 +736,35 @@ mod tests {
                 FormattedValue::NA.into(),
                 ColumnValue::FormattedValue("2017-05-27".to_string())
             ]);
+        })
+    }
+
+    #[test]
+    fn test_truncation() {
+        r_test(|| {
+            let mut options = default_options();
+            options.max_value_length = 3;
+
+            let data = r_parse_eval0(r#"c("aaaaa", "aaaaaaaa", "aa")"#, R_ENVS.global).unwrap();
+            let formatted = format_column(data.sexp, &options);
+            assert_eq!(formatted, vec![
+                ColumnValue::FormattedValue("aaa".to_string()),
+                ColumnValue::FormattedValue("aaa".to_string()),
+                ColumnValue::FormattedValue("aa".to_string()),
+            ]);
+
+            let data = r_parse_eval0(r#"c("ボルテックス")"#, R_ENVS.global).unwrap();
+            let formatted = format_column(data.sexp, &options);
+            assert_eq!(formatted, vec![ColumnValue::FormattedValue(
+                "ボルテ".to_string()
+            ),]);
+
+            options.max_value_length = 4;
+            let data = r_parse_eval0(r#"c("नमस्ते")"#, R_ENVS.global).unwrap();
+            let formatted = format_column(data.sexp, &options);
+            assert_eq!(formatted, vec![ColumnValue::FormattedValue(
+                "नमस्".to_string()
+            ),]);
         })
     }
 }
