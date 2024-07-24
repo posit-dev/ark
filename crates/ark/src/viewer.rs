@@ -9,6 +9,8 @@ use amalthea::comm::ui_comm::ShowHtmlFileParams;
 use amalthea::comm::ui_comm::UiFrontendEvent;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::display_data::DisplayData;
+use amalthea::wire::stream::Stream;
+use amalthea::wire::stream::StreamOutput;
 use anyhow::Result;
 use crossbeam::channel::Sender;
 use harp::object::RObject;
@@ -66,9 +68,9 @@ pub unsafe extern "C" fn ps_html_viewer(
         Ok(path) => {
             // Emit HTML output
             let main = RMain::get();
+            let iopub_tx = main.get_iopub_tx().clone();
             if main.session_mode == SessionMode::Notebook {
                 // In notebook mode, send the output as a Jupyter display_data message
-                let iopub_tx = main.get_iopub_tx().clone();
                 if let Err(err) = emit_html_output_jupyter(iopub_tx, path, kind) {
                     log::error!("Failed to emit HTML output: {:?}", err);
                 }
@@ -77,7 +79,7 @@ pub unsafe extern "C" fn ps_html_viewer(
                 let height = RObject::view(height).to::<i32>();
                 let params = ShowHtmlFileParams {
                     path,
-                    kind,
+                    kind: kind.clone(),
                     height: match height {
                         Ok(height) => height.into(),
                         Err(_) => 0,
@@ -88,6 +90,12 @@ pub unsafe extern "C" fn ps_html_viewer(
                     },
                 };
                 main.send_frontend_event(UiFrontendEvent::ShowHtmlFile(params));
+
+                let message = IOPubMessage::Stream(StreamOutput {
+                    name: Stream::Stdout,
+                    text: format!("<{}>", kind),
+                });
+                iopub_tx.send(message)?;
             }
         },
         Err(err) => {

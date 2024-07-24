@@ -19,6 +19,13 @@ options("viewer" = function(url, height = NULL, ...) {
         if (identical(fname, "index.html") || identical(fname, "index.htm")) {
             fname <- basename(dirname(url))
         }
+
+        # R HTML widgets get printed to temporary files starting with the name
+        # "viewhtml". This makes an ugly label, so we give it a nicer one.
+        if (startsWith(fname, "viewhtml")) {
+            fname <- "R HTML widget"
+        }
+
         # If so, open it in the HTML viewer.
         .ps.Call("ps_html_viewer", url, fname, height, FALSE)
     } else {
