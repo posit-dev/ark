@@ -51,7 +51,7 @@ $ jupyter console --kernel=ark
 
 ## Reporting issues
 
-We currently use the issue tracker of [Positron](https://github.com/posit-dev/positron). Please report bugs and feature requests at <https://github.com/posit-dev/positron/issues>, and feel free to tag your issue with the `lang: r` and `area: kernels` labels.
+We currently use the issue tracker of [Positron](https://github.com/posit-dev/positron). Please report bugs and feature requests at <https://github.com/posit-dev/positron/issues>.
 
 
 ## Related Projects
