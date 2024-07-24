@@ -22,11 +22,18 @@
         height <- 0
     }
 
+    # Attempt to derive a label for the widget from its class. If the class is
+    # empty, use a default label.
+    label <- class(x)[1]
+    if (!nzchar(label)) {
+        label <- "R htmlwidget"
+    }
+
     # Pass the widget to the viewer. Positron will assemble the final HTML
     # document from these components.
     .ps.Call("ps_html_viewer",
         tmp_file,
-        class(x)[1],
+        label,
         height,
         is_plot)
 }

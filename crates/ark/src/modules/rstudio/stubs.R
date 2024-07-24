@@ -49,9 +49,13 @@
     if (is.null(height)) {
         height <- 0
     }
+    fname <- tolower(basename(url))
+    if (identical(fname, "index.html") || identical(fname, "index.htm")) {
+        fname <- basename(dirname(url))
+    }
     invisible(.Call("ps_html_viewer",
-        url, # The URL of the file to view
-        "",  # The kind of object being viewed; unknown since viewer() was called directly
+        url,     # The URL of the file to view
+        fname,   # The name of the file to display in the viewer
         height,  # The desired height
         FALSE,   # Whether the object is a plot; guess FALSE
         PACKAGE = "(embedding)"))
