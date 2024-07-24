@@ -6,8 +6,13 @@
 #
 
 options("viewer" = function(url, height = NULL, ...) {
+    # Normalize paths for comparison. This is necessary because on e.g. macOS,
+    # the `tempdir()` may contain `//` or other non-standard path separators.
+    normalizedPath <- normalizePath(url, mustWork = FALSE)
+    normalizedTempdir <- normalizePath(tempdir(), mustWork = FALSE)
+
     # Is the URL a temporary file?
-    if (startsWith(url, tempdir())) {
+    if (startsWith(normalizedPath, normalizedTempdir)) {
         # Use the filename as the label, unless it's an index file, in which
         # case use the directory name.
         fname <- tolower(basename(url))
