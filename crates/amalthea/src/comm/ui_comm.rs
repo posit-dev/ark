@@ -257,8 +257,9 @@ pub struct ShowHtmlFileParams {
 	/// The fully qualified filesystem path to the HTML file to display
 	pub path: String,
 
-	/// If known, the kind of content being displayed, e.g. 'plotly' or 'vega'
-	pub kind: String,
+	/// A title to be displayed in the viewer. May be empty, and can be
+	/// superseded by the title in the HTML file.
+	pub title: String,
 
 	/// Whether the HTML file is a plot-like object
 	pub is_plot: bool,

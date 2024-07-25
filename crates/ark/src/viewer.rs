@@ -53,15 +53,15 @@ fn emit_html_output_jupyter(
 #[harp::register]
 pub unsafe extern "C" fn ps_html_viewer(
     url: SEXP,
-    kind: SEXP,
+    label: SEXP,
     height: SEXP,
     is_plot: SEXP,
 ) -> anyhow::Result<SEXP> {
     // Convert url to a string; note that we are only passed URLs that
     // correspond to files in the temporary directory.
     let path = RObject::view(url).to::<String>();
-    let kind = match RObject::view(kind).to::<String>() {
-        Ok(kind) => kind,
+    let label = match RObject::view(label).to::<String>() {
+        Ok(label) => label,
         Err(_) => String::from("R"),
     };
     match path {
@@ -71,7 +71,7 @@ pub unsafe extern "C" fn ps_html_viewer(
             let iopub_tx = main.get_iopub_tx().clone();
             if main.session_mode == SessionMode::Notebook {
                 // In notebook mode, send the output as a Jupyter display_data message
-                if let Err(err) = emit_html_output_jupyter(iopub_tx, path, kind) {
+                if let Err(err) = emit_html_output_jupyter(iopub_tx, path, label) {
                     log::error!("Failed to emit HTML output: {:?}", err);
                 }
             } else {
@@ -79,7 +79,7 @@ pub unsafe extern "C" fn ps_html_viewer(
                 let height = RObject::view(height).to::<i32>();
                 let params = ShowHtmlFileParams {
                     path,
-                    kind: kind.clone(),
+                    title: label.clone(),
                     height: match height {
                         Ok(height) => height.into(),
                         Err(_) => 0,
@@ -93,7 +93,7 @@ pub unsafe extern "C" fn ps_html_viewer(
 
                 let message = IOPubMessage::Stream(StreamOutput {
                     name: Stream::Stdout,
-                    text: format!("<{}>", kind),
+                    text: format!("<{}>", label),
                 });
                 iopub_tx.send(message)?;
             }
