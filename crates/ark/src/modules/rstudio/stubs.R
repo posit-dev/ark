@@ -36,3 +36,21 @@
     path <- normalizePath(path)
     invisible(.ps.ui.openWorkspace(path, newSession))
 }
+
+#' @export
+.rs.api.viewer <- function (url, height = NULL) {
+    # Validate arguments
+    if (!is.character(url) || (length(url) != 1))
+        stop("url must be a single element character vector.")
+    height <- .ps.validate.viewer.height(height)
+
+    # Derive a title for the viewer from the path.
+    title <- .ps.viewer.title(normalizedPath)
+
+    invisible(.Call("ps_html_viewer",
+        url,     # The URL of the file to view
+        fname,   # The name of the file to display in the viewer
+        height,  # The desired height
+        FALSE,   # Whether the object is a plot; guess FALSE
+        PACKAGE = "(embedding)"))
+}
