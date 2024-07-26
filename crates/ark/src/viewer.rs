@@ -1,7 +1,7 @@
 //
 // viewer.rs
 //
-// Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2024 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -9,8 +9,6 @@ use amalthea::comm::ui_comm::ShowHtmlFileParams;
 use amalthea::comm::ui_comm::UiFrontendEvent;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::display_data::DisplayData;
-use amalthea::wire::stream::Stream;
-use amalthea::wire::stream::StreamOutput;
 use anyhow::Result;
 use crossbeam::channel::Sender;
 use harp::object::RObject;
@@ -69,33 +67,36 @@ pub unsafe extern "C" fn ps_html_viewer(
             // Emit HTML output
             let main = RMain::get();
             let iopub_tx = main.get_iopub_tx().clone();
-            if main.session_mode == SessionMode::Notebook {
-                // In notebook mode, send the output as a Jupyter display_data message
-                if let Err(err) = emit_html_output_jupyter(iopub_tx, path, label) {
-                    log::error!("Failed to emit HTML output: {:?}", err);
-                }
-            } else {
-                let is_plot = RObject::view(is_plot).to::<bool>();
-                let height = RObject::view(height).to::<i32>();
-                let params = ShowHtmlFileParams {
-                    path,
-                    title: label.clone(),
-                    height: match height {
-                        Ok(height) => height.into(),
-                        Err(_) => 0,
-                    },
-                    is_plot: match is_plot {
-                        Ok(plot) => plot,
-                        Err(_) => false,
-                    },
-                };
-                main.send_frontend_event(UiFrontendEvent::ShowHtmlFile(params));
-
-                let message = IOPubMessage::Stream(StreamOutput {
-                    name: Stream::Stdout,
-                    text: format!("<{}>", label),
-                });
-                iopub_tx.send(message)?;
+            match main.session_mode {
+                SessionMode::Notebook | SessionMode::Background => {
+                    // In notebook mode, send the output as a Jupyter display_data message
+                    if let Err(err) = emit_html_output_jupyter(iopub_tx, path, label) {
+                        log::error!("Failed to emit HTML output: {:?}", err);
+                    }
+                },
+                SessionMode::Console => {
+                    let is_plot = RObject::view(is_plot).to::<bool>();
+                    let height = RObject::view(height).to::<i32>();
+                    let params = ShowHtmlFileParams {
+                        path,
+                        title: label.clone(),
+                        height: match height {
+                            Ok(height) => height.into(),
+                            Err(err) => {
+                                log::warn!("Can't convert `height` into an i32, using `0` as a fallback: {err:?}");
+                                0
+                            },
+                        },
+                        is_plot: match is_plot {
+                            Ok(plot) => plot,
+                            Err(err) => {
+                                log::warn!("Can't convert `is_plot` into a bool, using `false` as a fallback: {err:?}");
+                                false
+                            },
+                        },
+                    };
+                    main.send_frontend_event(UiFrontendEvent::ShowHtmlFile(params));
+                },
             }
         },
         Err(err) => {
