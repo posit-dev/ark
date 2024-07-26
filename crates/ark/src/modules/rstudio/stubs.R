@@ -39,20 +39,14 @@
 
 #' @export
 .rs.api.viewer <- function (url, height = NULL) {
+    # Validate arguments
     if (!is.character(url) || (length(url) != 1))
         stop("url must be a single element character vector.")
-    if (identical(height, "maximize"))
-        height <- -1
-    if (!is.null(height) && (!is.numeric(height) || (length(height) !=
-        1)))
-        stop("height must be a single element numeric vector or 'maximize'.")
-    if (is.null(height)) {
-        height <- 0
-    }
-    fname <- tolower(basename(url))
-    if (identical(fname, "index.html") || identical(fname, "index.htm")) {
-        fname <- basename(dirname(url))
-    }
+    height <- .ps.validate.viewer.height(height)
+
+    # Derive a title for the viewer from the path.
+    title <- .ps.viewer.title(normalizedPath)
+
     invisible(.Call("ps_html_viewer",
         url,     # The URL of the file to view
         fname,   # The name of the file to display in the viewer
