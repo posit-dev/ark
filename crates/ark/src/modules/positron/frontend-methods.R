@@ -74,6 +74,11 @@
 }
 
 #' @export
+.ps.ui.evaluateWhenClause <- function(whenClause) {
+    .ps.Call("ps_ui_evaluate_when_clause", whenClause)
+}
+
+#' @export
 .ps.ui.debugSleep <- function(ms) {
     # stopifnot(is.numeric(ms) && length(ms) == 1 && !is.na(ms))
     .ps.Call("ps_ui_debug_sleep", ms)
