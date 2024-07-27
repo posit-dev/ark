@@ -33,6 +33,7 @@ use amalthea::comm::data_explorer_comm::GetColumnProfilesFeatures;
 use amalthea::comm::data_explorer_comm::GetColumnProfilesParams;
 use amalthea::comm::data_explorer_comm::GetDataValuesParams;
 use amalthea::comm::data_explorer_comm::GetSchemaParams;
+use amalthea::comm::data_explorer_comm::GetTableSchemaParams;
 use amalthea::comm::data_explorer_comm::RowFilter;
 use amalthea::comm::data_explorer_comm::RowFilterParams;
 use amalthea::comm::data_explorer_comm::RowFilterType;
@@ -66,6 +67,7 @@ use harp::utils::r_is_s4;
 use harp::utils::r_typeof;
 use harp::TableInfo;
 use harp::TableKind;
+use itertools::Itertools;
 use libr::*;
 use serde::Deserialize;
 use serde::Serialize;
@@ -437,6 +439,10 @@ impl RDataExplorer {
                 let num_columns: i32 = num_columns.try_into()?;
                 let start_index: i32 = start_index.try_into()?;
                 self.get_schema(start_index, num_columns)
+            },
+            DataExplorerBackendRequest::GetTableSchema(GetTableSchemaParams { column_indices }) => {
+                // Note: Supports data frames with over 2B rows.
+                self.get_table_schema(column_indices)
             },
             DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
                 row_start_index,
@@ -900,6 +906,39 @@ impl RDataExplorer {
         };
 
         Ok(DataExplorerBackendReply::GetSchemaReply(response))
+    }
+
+    /// Get the table schema for a vector of columns in the data object.
+    ///
+    /// - `column_indices`: The vector of columns in the data object.
+    fn get_table_schema(
+        &self,
+        column_indices: Vec<i64>,
+    ) -> anyhow::Result<DataExplorerBackendReply> {
+        // Get the columns length. (Does Rust optimize loop invariants well?)
+        let columns_len = self.shape.columns.len();
+
+        // Gather the column schemas to return.
+        let mut columns: Vec<ColumnSchema> = Vec::new();
+        for column_index in column_indices
+            .into_iter()
+            .sorted()
+            .filter(|&column_index| column_index >= 0)
+            .map(|column_index| column_index as usize)
+        {
+            // Break from loop if the column index exceeds the number of columns.
+            if column_index >= columns_len {
+                break;
+            }
+
+            // Push the column schema.
+            columns.push(self.shape.columns[column_index].clone());
+        }
+
+        // Return the table schema.
+        Ok(DataExplorerBackendReply::GetSchemaReply(TableSchema {
+            columns,
+        }))
     }
 
     fn r_get_state(&self) -> anyhow::Result<DataExplorerBackendReply> {
