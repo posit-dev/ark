@@ -1017,6 +1017,7 @@ pub enum DataExplorerBackendRequest {
 pub enum DataExplorerBackendReply {
 	GetSchemaReply(TableSchema),
 
+	/// The table schema
 	GetTableSchemaReply(TableSchema),
 
 	SearchSchemaReply(SearchSchemaResult),
