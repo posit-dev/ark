@@ -920,13 +920,19 @@ impl RDataExplorer {
 
         // Gather the column schemas to return.
         let mut columns: Vec<ColumnSchema> = Vec::new();
-        for column_index in column_indices
-            .into_iter()
-            .sorted()
-            .filter(|&column_index| column_index >= 0)
-            .map(|column_index| column_index as usize)
-        {
-            // Break from loop if the column index exceeds the number of columns.
+        for incoming_column_index in column_indices.into_iter().sorted() {
+            // Validate that the incoming column index isn't negative.
+            if incoming_column_index < 0 {
+                return Err(anyhow!(
+                    "Column index out of range {0}",
+                    incoming_column_index
+                ));
+            }
+
+            // Get the column index.
+            let column_index = incoming_column_index as usize;
+
+            // Break from the loop if the column index exceeds the number of columns.
             if column_index >= columns_len {
                 break;
             }
