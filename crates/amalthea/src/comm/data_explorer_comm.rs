@@ -956,9 +956,9 @@ pub enum DataExplorerBackendRequest {
 	#[serde(rename = "get_schema")]
 	GetSchema(GetSchemaParams),
 
-	/// Request schema
+	/// Gets table schema
 	///
-	/// Request full schema for a table-like object
+	/// Gets table schema for a table-like object
 	#[serde(rename = "get_table_schema")]
 	GetTableSchema(GetTableSchemaParams),
 
