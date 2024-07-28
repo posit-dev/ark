@@ -6,7 +6,14 @@
         "activateTerminal" = "workbench.action.terminal.focus",
         # This command includes untitled files in RStudio:
         "saveAllSourceDocs" = "workbench.action.files.saveAll",
-        "vcsRefresh" = "git.refresh",
+        # This command is a silent no-op in RStudio when there is no git repo:
+        "vcsRefresh" = {
+            if (.ps.ui.evaluateWhenClause("gitOpenRepositoryCount >= 1")) {
+                "git.refresh"
+            } else {
+                return()
+            }
+        },
         "refreshFiles" = "workbench.files.action.refreshFilesExplorer",
         {
             if (!quiet) {
