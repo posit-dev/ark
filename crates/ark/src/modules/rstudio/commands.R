@@ -8,7 +8,7 @@
         "saveAllSourceDocs" = "workbench.action.files.saveAll",
         # This command is a silent no-op in RStudio when there is no git repo:
         "vcsRefresh" = {
-            if (.ps.ui.evaluateWhenClause("gitOpenRepositoryCount >= 1")) {
+            if (.ps.ui.evaluateWhenClause("gitOpenRepositoryCount > 0")) {
                 "git.refresh"
             } else {
                 return()
