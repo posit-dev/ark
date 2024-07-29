@@ -9,7 +9,7 @@
         # https://github.com/posit-dev/positron/issues/2697
         # This command is a silent no-op in RStudio when there is no git repo:
         "vcsRefresh" = {
-            if (.ps.ui.evaluateWhenClause("gitOpenRepositoryCount > 0")) {
+            if (.ps.ui.evaluateWhenClause("config.git.enabled && gitOpenRepositoryCount > 0")) {
                 "git.refresh"
             } else {
                 return()
