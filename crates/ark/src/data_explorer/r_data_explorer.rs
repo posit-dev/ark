@@ -434,14 +434,15 @@ impl RDataExplorer {
                 start_index,
                 num_columns,
             }) => {
-                // TODO: Support for data frames with over 2B rows. Note that neither base R nor
-                // tidyverse support long vectors in data frames, but data.table does.
+                // TODO: Support for data frames with over 2B columns. Note
+                // that neither base R nor tidyverse support long vectors in
+                // data frames, but data.table does.
                 let num_columns: i32 = num_columns.try_into()?;
                 let start_index: i32 = start_index.try_into()?;
                 self.get_schema(start_index, num_columns)
             },
             DataExplorerBackendRequest::GetTableSchema(GetTableSchemaParams { column_indices }) => {
-                // Note: Supports data frames with over 2B rows.
+                // Note: Supports data frames with over 2B columns.
                 self.get_table_schema(column_indices)
             },
             DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
