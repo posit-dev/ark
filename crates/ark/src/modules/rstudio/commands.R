@@ -6,7 +6,15 @@
         "activateTerminal" = "workbench.action.terminal.focus",
         # This command includes untitled files in RStudio:
         "saveAllSourceDocs" = "workbench.action.files.saveAll",
-        "vcsRefresh" = "git.refresh",
+        # https://github.com/posit-dev/positron/issues/2697
+        # This command is a silent no-op in RStudio when there is no git repo:
+        "vcsRefresh" = {
+            if (.ps.ui.evaluateWhenClause("config.git.enabled && gitOpenRepositoryCount > 0")) {
+                "git.refresh"
+            } else {
+                return()
+            }
+        },
         "refreshFiles" = "workbench.files.action.refreshFilesExplorer",
         {
             if (!quiet) {
