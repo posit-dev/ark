@@ -122,6 +122,10 @@ pub struct FormatOptions {
 	/// scientific notation
 	pub max_integral_digits: i64,
 
+	/// Maximum size of formatted value, for truncating large strings or other
+	/// large formatted values
+	pub max_value_length: i64,
+
 	/// Thousands separator string
 	pub thousands_sep: Option<String>
 }
