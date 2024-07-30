@@ -54,6 +54,7 @@ use harp::environment::R_ENVS;
 use harp::eval::r_parse_eval0;
 use harp::object::RObject;
 use harp::r_symbol;
+use itertools::Itertools;
 use libr::R_GlobalEnv;
 use libr::Rf_eval;
 
@@ -421,11 +422,7 @@ fn test_matrix_support() {
 
         // Get the schema for the test data set.
         let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
-            column_indices: vec![
-                0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
-                23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43,
-                44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60,
-            ],
+            column_indices: (0..61).collect_vec(),
         });
 
         // Check that we got the right number of columns.
