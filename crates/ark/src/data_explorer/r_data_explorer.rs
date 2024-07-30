@@ -66,6 +66,7 @@ use harp::utils::r_is_s4;
 use harp::utils::r_typeof;
 use harp::TableInfo;
 use harp::TableKind;
+use itertools::Itertools;
 use libr::*;
 use serde::Deserialize;
 use serde::Serialize;
@@ -428,15 +429,8 @@ impl RDataExplorer {
         req: DataExplorerBackendRequest,
     ) -> anyhow::Result<DataExplorerBackendReply> {
         match req {
-            DataExplorerBackendRequest::GetSchema(GetSchemaParams {
-                start_index,
-                num_columns,
-            }) => {
-                // TODO: Support for data frames with over 2B rows. Note that neither base R nor
-                // tidyverse support long vectors in data frames, but data.table does.
-                let num_columns: i32 = num_columns.try_into()?;
-                let start_index: i32 = start_index.try_into()?;
-                self.get_schema(start_index, num_columns)
+            DataExplorerBackendRequest::GetSchema(GetSchemaParams { column_indices }) => {
+                self.get_schema(column_indices)
             },
             DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
                 row_start_index,
@@ -879,27 +873,40 @@ impl RDataExplorer {
         self.view_indices = Some(view_indices);
     }
 
-    /// Get the schema for a range of columns in the data object.
+    /// Get the schema for a vector of columns in the data object.
     ///
-    /// - `start_index`: The index of the first column to return.
-    /// - `num_columns`: The number of columns to return.
-    fn get_schema(
-        &self,
-        start_index: i32,
-        num_columns: i32,
-    ) -> anyhow::Result<DataExplorerBackendReply> {
-        // Clip the range of columns requested to the actual number of columns
-        // in the data object
-        let total_num_columns = self.shape.columns.len() as i32;
-        let lower_bound = cmp::min(start_index, total_num_columns);
-        let upper_bound = cmp::min(total_num_columns, start_index + num_columns);
+    /// - `column_indices`: The vector of columns in the data object.
+    fn get_schema(&self, column_indices: Vec<i64>) -> anyhow::Result<DataExplorerBackendReply> {
+        // Get the columns length. (Does Rust optimize loop invariants well?)
+        let columns_len = self.shape.columns.len();
 
-        // Return the schema for the requested columns
-        let response = TableSchema {
-            columns: self.shape.columns[lower_bound as usize..upper_bound as usize].to_vec(),
-        };
+        // Gather the column schemas to return.
+        let mut columns: Vec<ColumnSchema> = Vec::new();
+        for incoming_column_index in column_indices.into_iter().sorted() {
+            // Validate that the incoming column index isn't negative.
+            if incoming_column_index < 0 {
+                return Err(anyhow!(
+                    "Column index out of range {0}",
+                    incoming_column_index
+                ));
+            }
 
-        Ok(DataExplorerBackendReply::GetSchemaReply(response))
+            // Get the column index.
+            let column_index = incoming_column_index as usize;
+
+            // Break from the loop if the column index exceeds the number of columns.
+            if column_index >= columns_len {
+                break;
+            }
+
+            // Push the column schema.
+            columns.push(self.shape.columns[column_index].clone());
+        }
+
+        // Return the table schema.
+        Ok(DataExplorerBackendReply::GetSchemaReply(TableSchema {
+            columns,
+        }))
     }
 
     fn r_get_state(&self) -> anyhow::Result<DataExplorerBackendReply> {

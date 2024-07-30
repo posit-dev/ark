@@ -54,6 +54,7 @@ use harp::environment::R_ENVS;
 use harp::eval::r_parse_eval0;
 use harp::object::RObject;
 use harp::r_symbol;
+use itertools::Itertools;
 use libr::R_GlobalEnv;
 use libr::Rf_eval;
 
@@ -143,8 +144,7 @@ fn default_format_options() -> FormatOptions {
 fn test_mtcars_sort(socket: CommSocket, has_row_names: bool, display_name: String) {
     // Get the schema for the test data set.
     let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
-        num_columns: 11,
-        start_index: 0,
+        column_indices: vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
     });
 
     // Check that we got the right number of columns.
@@ -348,8 +348,7 @@ fn test_women_dataset() {
 
         // Get the schema of the data set.
         let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
-            num_columns: 2,
-            start_index: 0,
+            column_indices: vec![0, 1],
         });
 
         let schema_reply = socket_rpc(&socket, req);
@@ -423,8 +422,7 @@ fn test_matrix_support() {
 
         // Get the schema for the test data set.
         let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
-            num_columns: 61,
-            start_index: 0,
+            column_indices: (0..61).collect_vec(),
         });
 
         // Check that we got the right number of columns.
@@ -535,8 +533,7 @@ fn test_null_counts() {
 
         // Get the schema of the data set.
         let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
-            num_columns: 1,
-            start_index: 0,
+            column_indices: vec![0],
         });
 
         let schema_reply = socket_rpc(&socket, req);
@@ -722,8 +719,7 @@ fn test_search_filters() {
 
         // Get the schema of the data set.
         let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
-            num_columns: 1,
-            start_index: 0,
+            column_indices: vec![0],
         });
 
         let schema_reply = socket_rpc(&socket, req);
@@ -840,8 +836,7 @@ fn test_search_filters() {
 
         // Get the schema of the data set.
         let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
-            num_columns: 1,
-            start_index: 0,
+            column_indices: vec![0],
         });
 
         let schema_reply = socket_rpc(&socket, req);
@@ -908,8 +903,7 @@ fn test_search_filters() {
 
         // Get the schema of the data set.
         let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
-            num_columns: 1,
-            start_index: 0,
+            column_indices: vec![0],
         });
 
         let schema_reply = socket_rpc(&socket, req);
@@ -1094,8 +1088,7 @@ DataExplorerBackendReply::SetSortColumnsReply() => {});
         // Get the schema again to make sure it updated. We added a new column, so
         // we should get 3 columns back.
         let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
-            num_columns: 3,
-            start_index: 0,
+            column_indices: vec![0, 1, 2],
         });
 
         // Check that we got the right number of columns.
@@ -1142,8 +1135,7 @@ fn test_boolean_filters() {
 
         // Get the schema of the data set.
         let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
-            num_columns: 1,
-            start_index: 0,
+            column_indices: vec![0],
         });
 
         let schema_reply = socket_rpc(&socket, req);
@@ -1195,8 +1187,7 @@ fn test_invalid_filters() {
 
         // Get the schema of the data set.
         let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
-            num_columns: 1,
-            start_index: 0,
+            column_indices: vec![0],
         });
 
         let schema_reply = socket_rpc(&socket, req);
@@ -1257,8 +1248,7 @@ fn test_invalid_filters_preserved() {
 
         // Get the schema of the data set.
         let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
-            num_columns: 1,
-            start_index: 0,
+            column_indices: vec![0],
         });
 
         let schema_reply = socket_rpc(&socket, req);
@@ -1470,8 +1460,7 @@ fn test_export_data() {
 
         // now filter the data frame
         let schemas_req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
-            num_columns: 3,
-            start_index: 0,
+            column_indices: vec![0, 1, 2],
         });
         let schema = match socket_rpc(&socket, schemas_req) {
             DataExplorerBackendReply::GetSchemaReply(schema) => schema,
