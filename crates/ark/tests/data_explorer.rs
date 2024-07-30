@@ -142,7 +142,7 @@ fn default_format_options() -> FormatOptions {
 
 fn test_mtcars_sort(socket: CommSocket, has_row_names: bool, display_name: String) {
     // Get the schema for the test data set.
-    let req = DataExplorerBackendRequest::GetTableSchema(GetSchemaParams {
+    let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
         column_indices: vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
     });
 
@@ -346,7 +346,7 @@ fn test_women_dataset() {
         assert_match!(socket_rpc(&socket, req), DataExplorerBackendReply::SetSortColumnsReply() => {});
 
         // Get the schema of the data set.
-        let req = DataExplorerBackendRequest::GetTableSchema(GetSchemaParams {
+        let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
             column_indices: vec![0, 1],
         });
 
@@ -420,7 +420,7 @@ fn test_matrix_support() {
         let socket = open_data_explorer(String::from("volcano"));
 
         // Get the schema for the test data set.
-        let req = DataExplorerBackendRequest::GetTableSchema(GetSchemaParams {
+        let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
             column_indices: vec![
                 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
                 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43,
@@ -535,7 +535,7 @@ fn test_null_counts() {
         .unwrap();
 
         // Get the schema of the data set.
-        let req = DataExplorerBackendRequest::GetTableSchema(GetSchemaParams {
+        let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
             column_indices: vec![0],
         });
 
@@ -721,7 +721,7 @@ fn test_search_filters() {
         let socket = open_data_explorer(String::from("words"));
 
         // Get the schema of the data set.
-        let req = DataExplorerBackendRequest::GetTableSchema(GetSchemaParams {
+        let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
             column_indices: vec![0],
         });
 
@@ -838,7 +838,7 @@ fn test_search_filters() {
         let socket = open_data_explorer(String::from("test_dates"));
 
         // Get the schema of the data set.
-        let req = DataExplorerBackendRequest::GetTableSchema(GetSchemaParams {
+        let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
             column_indices: vec![0],
         });
 
@@ -905,7 +905,7 @@ fn test_search_filters() {
         let socket = open_data_explorer(String::from("test_bools"));
 
         // Get the schema of the data set.
-        let req = DataExplorerBackendRequest::GetTableSchema(GetSchemaParams {
+        let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
             column_indices: vec![0],
         });
 
@@ -1090,7 +1090,7 @@ DataExplorerBackendReply::SetSortColumnsReply() => {});
 
         // Get the schema again to make sure it updated. We added a new column, so
         // we should get 3 columns back.
-        let req = DataExplorerBackendRequest::GetTableSchema(GetSchemaParams {
+        let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
             column_indices: vec![0, 1, 2],
         });
 
@@ -1137,7 +1137,7 @@ fn test_boolean_filters() {
         let socket = open_data_explorer(String::from("test_bools"));
 
         // Get the schema of the data set.
-        let req = DataExplorerBackendRequest::GetTableSchema(GetSchemaParams {
+        let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
             column_indices: vec![0],
         });
 
@@ -1189,7 +1189,7 @@ fn test_invalid_filters() {
         .unwrap();
 
         // Get the schema of the data set.
-        let req = DataExplorerBackendRequest::GetTableSchema(GetSchemaParams {
+        let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
             column_indices: vec![0],
         });
 
@@ -1250,7 +1250,7 @@ fn test_invalid_filters_preserved() {
         .unwrap();
 
         // Get the schema of the data set.
-        let req = DataExplorerBackendRequest::GetTableSchema(GetSchemaParams {
+        let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
             column_indices: vec![0],
         });
 
@@ -1462,7 +1462,7 @@ fn test_export_data() {
         );
 
         // now filter the data frame
-        let schemas_req = DataExplorerBackendRequest::GetTableSchema(GetSchemaParams {
+        let schemas_req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
             column_indices: vec![0, 1, 2],
         });
         let schema = match socket_rpc(&socket, schemas_req) {
