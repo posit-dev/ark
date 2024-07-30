@@ -201,6 +201,13 @@ pub struct ExecuteCommandParams {
 	pub command: String,
 }
 
+/// Parameters for the EvaluateWhenClause method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct EvaluateWhenClauseParams {
+	/// The values for context keys, as a `when` clause
+	pub when_clause: String,
+}
+
 /// Parameters for the ExecuteCode method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ExecuteCodeParams {
@@ -328,6 +335,12 @@ pub enum UiFrontendRequest {
 	#[serde(rename = "debug_sleep")]
 	DebugSleep(DebugSleepParams),
 
+	/// Get a logical for a `when` clause (a set of context keys)
+	///
+	/// Use this to evaluate a `when` clause of context keys in the frontend
+	#[serde(rename = "evaluate_when_clause")]
+	EvaluateWhenClause(EvaluateWhenClauseParams),
+
 	/// Execute code in a Positron runtime
 	///
 	/// Use this to execute code in a Positron runtime
@@ -373,6 +386,9 @@ pub enum UiFrontendReply {
 
 	/// Reply for the debug_sleep method (no result)
 	DebugSleepReply(),
+
+	/// Whether the `when` clause evaluates as true or false
+	EvaluateWhenClauseReply(bool),
 
 	/// Reply for the execute_code method (no result)
 	ExecuteCodeReply(),
@@ -459,6 +475,7 @@ pub fn ui_frontend_reply_from_value(
 		UiFrontendRequest::ShowQuestion(_) => Ok(UiFrontendReply::ShowQuestionReply(serde_json::from_value(reply)?)),
 		UiFrontendRequest::ShowDialog(_) => Ok(UiFrontendReply::ShowDialogReply()),
 		UiFrontendRequest::DebugSleep(_) => Ok(UiFrontendReply::DebugSleepReply()),
+		UiFrontendRequest::EvaluateWhenClause(_) => Ok(UiFrontendReply::EvaluateWhenClauseReply(serde_json::from_value(reply)?)),
 		UiFrontendRequest::ExecuteCode(_) => Ok(UiFrontendReply::ExecuteCodeReply()),
 		UiFrontendRequest::WorkspaceFolder => Ok(UiFrontendReply::WorkspaceFolderReply(serde_json::from_value(reply)?)),
 		UiFrontendRequest::ModifyEditorSelections(_) => Ok(UiFrontendReply::ModifyEditorSelectionsReply()),
