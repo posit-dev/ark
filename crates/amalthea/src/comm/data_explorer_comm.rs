@@ -863,17 +863,6 @@ pub enum Selection {
 /// Parameters for the GetSchema method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct GetSchemaParams {
-	/// First column schema to fetch (inclusive)
-	pub start_index: i64,
-
-	/// Number of column schemas to fetch from start index. May extend beyond
-	/// end of table
-	pub num_columns: i64,
-}
-
-/// Parameters for the GetTableSchema method.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct GetTableSchemaParams {
 	/// The column indices to fetch
 	pub column_indices: Vec<i64>,
 }
@@ -956,12 +945,6 @@ pub enum DataExplorerBackendRequest {
 	#[serde(rename = "get_schema")]
 	GetSchema(GetSchemaParams),
 
-	/// Gets table schema
-	///
-	/// Gets table schema for a table-like object
-	#[serde(rename = "get_table_schema")]
-	GetTableSchema(GetTableSchemaParams),
-
 	/// Search schema with column filters
 	///
 	/// Search schema for column names matching a passed substring
@@ -1016,9 +999,6 @@ pub enum DataExplorerBackendRequest {
 #[serde(tag = "method", content = "result")]
 pub enum DataExplorerBackendReply {
 	GetSchemaReply(TableSchema),
-
-	/// The table schema
-	GetTableSchemaReply(TableSchema),
 
 	SearchSchemaReply(SearchSchemaResult),
 
