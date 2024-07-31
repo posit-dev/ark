@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::data_explorer_comm::BackendState;
 use amalthea::comm::data_explorer_comm::ColumnDisplayType;
+use amalthea::comm::data_explorer_comm::ColumnProfileRequest;
 use amalthea::comm::data_explorer_comm::ColumnProfileResult;
 use amalthea::comm::data_explorer_comm::ColumnProfileType;
 use amalthea::comm::data_explorer_comm::ColumnProfileTypeSupportStatus;
@@ -499,59 +500,7 @@ impl RDataExplorer {
             }) => {
                 let profiles = requests
                     .into_iter()
-                    .map(|request| match request.profile_type {
-                        ColumnProfileType::NullCount => {
-                            let null_count =
-                                r_task(|| self.r_null_count(request.column_index as i32));
-                            ColumnProfileResult {
-                                null_count: match null_count {
-                                    Err(err) => {
-                                        log::error!(
-                                            "Error getting null count for column {}: {}",
-                                            request.column_index,
-                                            err
-                                        );
-                                        None
-                                    },
-                                    Ok(count) => Some(count as i64),
-                                },
-                                summary_stats: None,
-                                histogram: None,
-                                frequency_table: None,
-                            }
-                        },
-                        ColumnProfileType::SummaryStats => {
-                            let summary_stats = r_task(|| {
-                                self.r_summary_stats(request.column_index as i32, &format_options)
-                            });
-                            ColumnProfileResult {
-                                null_count: None,
-                                summary_stats: match summary_stats {
-                                    Err(err) => {
-                                        log::error!(
-                                            "Error getting summary stats for column {}: {}",
-                                            request.column_index,
-                                            err
-                                        );
-                                        None
-                                    },
-                                    Ok(stats) => Some(stats),
-                                },
-                                histogram: None,
-                                frequency_table: None,
-                            }
-                        },
-                        _ => {
-                            // Other kinds of column profiles are not yet
-                            // implemented in R
-                            ColumnProfileResult {
-                                null_count: None,
-                                summary_stats: None,
-                                histogram: None,
-                                frequency_table: None,
-                            }
-                        },
-                    })
+                    .map(|request| self.r_get_column_profile(request, &format_options))
                     .collect::<Vec<ColumnProfileResult>>();
                 Ok(DataExplorerBackendReply::GetColumnProfilesReply(profiles))
             },
@@ -628,6 +577,58 @@ impl RDataExplorer {
                 num_rows,
             })
         }
+    }
+
+    fn r_get_column_profile(
+        &self,
+        request: ColumnProfileRequest,
+        format_options: &FormatOptions,
+    ) -> ColumnProfileResult {
+        let mut output = ColumnProfileResult {
+            null_count: None,
+            summary_stats: None,
+            histogram: None,
+            frequency_table: None,
+        };
+
+        for profile_req in request.profiles {
+            match profile_req.profile_type {
+                ColumnProfileType::NullCount => {
+                    let null_count = r_task(|| self.r_null_count(request.column_index as i32));
+                    output.null_count = match null_count {
+                        Err(err) => {
+                            log::error!(
+                                "Error getting null count for column {}: {}",
+                                request.column_index,
+                                err
+                            );
+                            None
+                        },
+                        Ok(count) => Some(count as i64),
+                    };
+                },
+                ColumnProfileType::SummaryStats => {
+                    let summary_stats = r_task(|| {
+                        self.r_summary_stats(request.column_index as i32, &format_options)
+                    });
+                    output.summary_stats = match summary_stats {
+                        Err(err) => {
+                            log::error!(
+                                "Error getting summary stats for column {}: {}",
+                                request.column_index,
+                                err
+                            );
+                            None
+                        },
+                        Ok(stats) => Some(stats),
+                    };
+                },
+                _ => {
+                    // Other types are not supported yet
+                },
+            };
+        }
+        output
     }
 
     /// Counts the number of nulls in a column. As the intent is to provide an
@@ -938,6 +939,14 @@ impl RDataExplorer {
                         // more fully support column profiles.
                         ColumnProfileTypeSupportStatus {
                             profile_type: ColumnProfileType::SummaryStats,
+                            support_status: SupportStatus::Experimental,
+                        },
+                        ColumnProfileTypeSupportStatus {
+                            profile_type: ColumnProfileType::Histogram,
+                            support_status: SupportStatus::Experimental,
+                        },
+                        ColumnProfileTypeSupportStatus {
+                            profile_type: ColumnProfileType::FrequencyTable,
                             support_status: SupportStatus::Experimental,
                         },
                     ],
