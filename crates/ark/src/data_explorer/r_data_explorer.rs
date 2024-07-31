@@ -943,11 +943,11 @@ impl RDataExplorer {
                         },
                         ColumnProfileTypeSupportStatus {
                             profile_type: ColumnProfileType::Histogram,
-                            support_status: SupportStatus::Experimental,
+                            support_status: SupportStatus::Unsupported,
                         },
                         ColumnProfileTypeSupportStatus {
                             profile_type: ColumnProfileType::FrequencyTable,
-                            support_status: SupportStatus::Experimental,
+                            support_status: SupportStatus::Unsupported,
                         },
                     ],
                 },
