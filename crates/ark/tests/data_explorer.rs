@@ -7,6 +7,7 @@
 
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::data_explorer_comm::ColumnProfileRequest;
+use amalthea::comm::data_explorer_comm::ColumnProfileSpec;
 use amalthea::comm::data_explorer_comm::ColumnProfileType;
 use amalthea::comm::data_explorer_comm::ColumnSortKey;
 use amalthea::comm::data_explorer_comm::ColumnValue;
@@ -546,7 +547,10 @@ fn test_null_counts() {
         let req = DataExplorerBackendRequest::GetColumnProfiles(GetColumnProfilesParams {
             profiles: vec![ColumnProfileRequest {
                 column_index: 0,
-                profile_type: ColumnProfileType::NullCount,
+                profiles: vec![ColumnProfileSpec {
+                    profile_type: ColumnProfileType::NullCount,
+                    params: None,
+                }],
             }],
             format_options: default_format_options(),
         });
@@ -586,7 +590,10 @@ fn test_null_counts() {
         let req = DataExplorerBackendRequest::GetColumnProfiles(GetColumnProfilesParams {
             profiles: vec![ColumnProfileRequest {
                 column_index: 0,
-                profile_type: ColumnProfileType::NullCount,
+                profiles: vec![ColumnProfileSpec {
+                    profile_type: ColumnProfileType::NullCount,
+                    params: None,
+                }],
             }],
             format_options: default_format_options(),
         });
@@ -645,7 +652,10 @@ fn test_summary_stats() {
             profiles: (0..3)
                 .map(|i| ColumnProfileRequest {
                     column_index: i,
-                    profile_type: ColumnProfileType::SummaryStats,
+                    profiles: vec![ColumnProfileSpec {
+                        profile_type: ColumnProfileType::SummaryStats,
+                        params: None,
+                    }],
                 })
                 .collect(),
             format_options: default_format_options(),

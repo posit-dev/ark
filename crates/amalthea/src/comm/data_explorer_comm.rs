@@ -260,8 +260,18 @@ pub struct ColumnProfileRequest {
 	/// The ordinal column index to profile
 	pub column_index: i64,
 
-	/// The type of analytical column profile
-	pub profile_type: ColumnProfileType
+	/// Column profiles needed
+	pub profiles: Vec<ColumnProfileSpec>
+}
+
+/// Parameters for a single column profile for a request for profiles
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ColumnProfileSpec {
+	/// Type of column profile
+	pub profile_type: ColumnProfileType,
+
+	/// Extra parameters for different profile types
+	pub params: Option<ColumnProfileParams>
 }
 
 /// Support status for a given column profile type
@@ -393,40 +403,56 @@ pub struct SummaryStatsDatetime {
 	pub timezone: Option<String>
 }
 
+/// Parameters for a column histogram profile request
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ColumnHistogramParams {
+	/// Number of bins in the computed histogram
+	pub num_bins: i64,
+
+	/// Sample quantiles (numbers between 0 and 1) to compute along with the
+	/// histogram
+	pub quantiles: Option<Vec<f64>>
+}
+
 /// Result from a histogram profile request
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ColumnHistogram {
-	/// Absolute count of values in each histogram bin
-	pub bin_sizes: Vec<i64>,
+	/// String-formatted versions of the bin edges, there are N + 1 where N is
+	/// the number of bins
+	pub bin_edges: Vec<String>,
 
-	/// Absolute floating-point width of a histogram bin
-	pub bin_width: f64
+	/// Absolute count of values in each histogram bin
+	pub bin_counts: Vec<i64>,
+
+	/// Sample quantiles that were also requested
+	pub quantiles: Vec<ColumnQuantileValue>
+}
+
+/// Parameters for a frequency_table profile request
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ColumnFrequencyTableParams {
+	/// Number of most frequently-occurring values to return. The K in TopK
+	pub limit: i64
 }
 
 /// Result from a frequency_table profile request
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ColumnFrequencyTable {
-	/// Counts of distinct values in column
-	pub counts: Vec<ColumnFrequencyTableItem>,
+	/// The formatted top values
+	pub values: Vec<String>,
 
-	/// Number of other values not accounted for in counts. May be 0
-	pub other_count: i64
-}
+	/// Counts of top values
+	pub counts: Vec<i64>,
 
-/// Entry in a column's frequency table
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct ColumnFrequencyTableItem {
-	/// Stringified value
-	pub value: String,
-
-	/// Number of occurrences of value
-	pub count: i64
+	/// Number of other values not accounted for in counts, excluding nulls/NA
+	/// values. May be omitted
+	pub other_count: Option<i64>
 }
 
 /// An exact or approximate quantile value from a column
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ColumnQuantileValue {
-	/// Quantile number (percentile). E.g. 1 for 1%, 50 for median
+	/// Quantile number; a number between 0 and 1
 	pub q: f64,
 
 	/// Stringified quantile value
@@ -845,6 +871,16 @@ pub enum ColumnFilterParams {
 	TextSearch(FilterTextSearch),
 
 	MatchDataTypes(FilterMatchDataTypes)
+}
+
+/// Union type ColumnProfileParams
+/// Extra parameters for different profile types
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum ColumnProfileParams {
+	Histogram(ColumnHistogramParams),
+
+	FrequencyTable(ColumnFrequencyTableParams)
 }
 
 /// Union type Selection in Properties
