@@ -19,18 +19,63 @@ pub struct RLibraries {
 }
 
 impl RLibraries {
+    /// We are about to dynamically load libR into the Ark process using `dlopen()` on
+    /// Unix / `LibraryLoad()` on Windows. This is a bit unusual as ordinarily frontends
+    /// link to R at launch-time. The goal is to get full control of symbol access, making
+    /// it easy to provide compatibility implementations on older versions of R. However
+    /// this does require some precautions on Unixes to ensure the behaviour is as close
+    /// as possible to launch-time linking.
+    ///
+    /// - We set the `RTLD_GLOBAL` option to expose all libR symbols to subsequently
+    ///   loaded plugins. This is similar to how linking to a library at launch time
+    ///   exposes symbols globally, including to loaded plugins.
+    ///
+    /// - Despite being loaded with global scope, libR is not considered opened by the
+    ///   dynamic loader. This is problematic when loading package libraries because they
+    ///   typically link against libR. Even though we have exposed all the symbols they
+    ///   need, and opening a libR file would normally won't have any further effect (it
+    ///   could in special cases involving version mismatches), the linker will fail to
+    ///   load the package library if it can't find a libR file.
+    ///
+    ///   To work correctly with the variety of ways package libraries are linked against
+    ///   R, with relative (common on Linux) or absolute (common on macOS) paths, Ark
+    ///   should be launched in an environment where `LD_LIBRARY_PATH` (Linux) and
+    ///   `DYLD_LIBRARY_PATH` / `DYLD_FALLBACK_LIBRARY_PATH` (macOS) point to the `lib`
+    ///   folder of the target `R_HOME`. This will allow package libraries to link against
+    ///   a libR library. This library will never be used in practice as the symbols
+    ///   exposed via `RTLD_GLOBAL` will have precedence.
+    ///
+    ///   In the edge case where a package is compiled against a newer version of R and
+    ///   linked with an absolute path, having opened the older R first will prevent the
+    ///   newer R from being loaded, and the newer symbols from being resolved into that
+    ///   different library. In this case users get undefined symbols errors on load
+    ///   instead of undefined behaviour and crashes.
+    ///
+    ///   Alternatively we could link to an empty libR shipped with Ark. Linking to the
+    ///   real one is more convenient and also takes care of other libraries in there such
+    ///   as libRblas.
+    ///
+    /// - On macOS we really want to add `{R_HOME}/lib` to `DYLD_LIBRARY_PATH` and not
+    ///   `DYLD_FALLBACK_LIBRARY_PATH`. The former ensures our libR is always selected.
+    ///   The latter would allow a package linked with an absolute path to a different
+    ///   version of R to open that different libR, causing potential UB instead of
+    ///   undefined symbol errors.
+    ///
+    /// - On macOS, your build of Ark needs the `allow-dyld-environment-variables`
+    ///   entitlement to allow the Ark process to inherit the `DYLD_LIBRARY_PATH`
+    ///   environment variable.
+    ///
+    /// - In addition to `{R_HOME}/lib`, it's also useful for the caller of Ark to include
+    ///   `R_JAVA_LD_LIBRARY_PATH` in the load list. This time on macOS it makes sense to
+    ///   use `DYLD_FALLBACK_LIBRARY_PATH`, if only to be consistent with
+    ///   `{R_HOME}/etc/ldpaths`, where this envvar is normally defined. Note that this
+    ///   might cause a package linked to Java with an absolute path to decide for all
+    ///   subsequently loaded packages which version of Java Ark is linked with.
+    ///
+    /// - Windows doesn't need these precautions because symbol lookup is namespaced to
+    ///   the library. On Unix, symbol lookup is global and resolved via a global linked
+    ///   list of library namespaces.
     pub fn from_r_home_path(path: &PathBuf) -> Self {
-        // On macOS and Linux, we rely on the fact that the parent process that
-        // starts ark should have set `DYLD_FALLBACK_LIBRARY_PATH` or `LD_LIBRARY_PATH`
-        // respectively already, referencing R's `{R_HOME}/etc/ldpaths` script to generate
-        // the correct environment variable to set (which includes info about Java related
-        // paths as well). Setting these env vars is critical, as they add `{R_HOME}/lib/`
-        // to a place that `dlopen()` can find. Even though we open libR with
-        // `RTLD_GLOBAL`, it seems that the path to libR (and other libraries in
-        // `{R_HOME}/lib`) recorded in package info is often relative rather than absolute
-        // on both Linux and macOS, and the env var ends up being the only way to reliably
-        // locate libR when the package is being loaded.
-
         let r_path = find_r_shared_library(&path, "R");
         let r = open_and_leak_r_shared_library(&r_path);
 
