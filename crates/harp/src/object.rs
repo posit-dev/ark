@@ -233,6 +233,9 @@ pub fn r_int_poke(x: SEXP, i: R_xlen_t, value: i32) {
 pub fn r_dbl_poke(x: SEXP, i: R_xlen_t, value: f64) {
     unsafe { SET_REAL_ELT(x, i, value) }
 }
+pub fn r_cpl_poke(x: SEXP, i: R_xlen_t, value: Rcomplex) {
+    unsafe { SET_COMPLEX_ELT(x, i, value) }
+}
 pub fn r_chr_poke(x: SEXP, i: R_xlen_t, value: SEXP) {
     unsafe { SET_STRING_ELT(x, i, value) }
 }

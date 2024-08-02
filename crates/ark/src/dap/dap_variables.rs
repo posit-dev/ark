@@ -5,15 +5,13 @@
 //
 //
 
-use harp::call::r_expr_quote;
-use harp::exec::RFunction;
-use harp::exec::RFunctionExt;
+use harp::call::r_expr_deparse;
 use harp::object::*;
+use harp::pretty::r_s3_pretty_class;
 use harp::r_symbol;
 use harp::symbol::RSymbol;
 use harp::utils::*;
 use harp::vec_format::vec_format;
-use harp::vector::Vector;
 use libr::*;
 use stdext::unwrap;
 
@@ -163,11 +161,14 @@ fn object_variable(name: String, x: SEXP) -> RVariable {
 fn object_variable_classed(name: String, x: SEXP) -> RVariable {
     // TODO: Eventually add some support for classed values.
     // Right now we just display the class name.
-    let class = object_class(x);
+    let class = r_s3_pretty_class(x);
 
     let (value, type_field) = match class {
-        Some(class) => (class.clone(), class.clone()),
-        None => (String::from(""), String::from("<???>")),
+        Ok(class) => (class.clone(), class.clone()),
+        Err(err) => {
+            log::error!("{err:?}");
+            (String::from(""), String::from("<???>"))
+        },
     };
 
     RVariableBuilder::new(name)
@@ -246,7 +247,7 @@ fn symbol_variable(name: String, x: SEXP) -> RVariable {
 // TODO: It might be nice to treat the call like a pairlist with children,
 // since the debugger is mostly a development tool where introspection is valuable.
 fn call_variable(name: String, x: SEXP) -> RVariable {
-    let value = unwrap!(call_value(x), Err(err) => {
+    let value = unwrap!(r_expr_deparse(x), Err(err) => {
         log::error!("Failed to format call value: {err:?}");
         String::from("<call>")
     });
@@ -257,16 +258,6 @@ fn call_variable(name: String, x: SEXP) -> RVariable {
         .value(value)
         .type_field(type_field)
         .build()
-}
-
-fn call_value(x: SEXP) -> anyhow::Result<String> {
-    let x = RFunction::from(".ps.environment.describeCall")
-        .add(r_expr_quote(x))
-        .call()?;
-
-    let x = String::try_from(x)?;
-
-    Ok(x)
 }
 
 fn promise_variable(name: String, x: SEXP) -> RVariable {
@@ -361,31 +352,6 @@ fn active_binding_variable(name: String) -> RVariable {
         .value(String::from("<active binding>"))
         .type_field(String::from("<active binding>"))
         .build()
-}
-
-fn object_class(x: SEXP) -> Option<String> {
-    let Some(classes) = r_classes(x) else {
-        // We've seen OBJECTs with no class attribute before
-        return None;
-    };
-
-    let Ok(class) = classes.get(0) else {
-        // Error means OOB error here (our weird Vector API, should probably be an Option?).
-        log::error!("Detected length 0 class vector.");
-        return None;
-    };
-
-    let Some(class) = class else {
-        // `None` here means `NA` class value.
-        log::error!("Detected `NA_character_` in a class vector.");
-        return None;
-    };
-
-    let mut out = "<".to_string();
-    out.push_str(&class);
-    out.push_str(">");
-
-    Some(out)
 }
 
 /// Return the names of a vector

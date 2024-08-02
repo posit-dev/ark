@@ -8,7 +8,11 @@
 use libr::*;
 
 use crate::object::*;
-use crate::r_str_to_owned_utf8;
+use crate::pretty::r_cpl_to_pretty_string;
+use crate::pretty::r_dbl_to_pretty_string;
+use crate::pretty::r_int_to_pretty_string;
+use crate::pretty::r_lgl_to_pretty_string;
+use crate::pretty::r_str_to_pretty_string;
 use crate::r_type2char;
 use crate::r_typeof;
 
@@ -35,7 +39,7 @@ fn lgl_format(x: SEXP, limit: Option<R_xlen_t>) -> String {
 
     for i in 0..size {
         let elt = r_lgl_get(x, i);
-        let elt = lgl_to_string(elt);
+        let elt = r_lgl_to_pretty_string(elt);
         out.push_str(&elt);
 
         if i != size - 1 {
@@ -61,7 +65,7 @@ fn int_format(x: SEXP, limit: Option<R_xlen_t>) -> String {
 
     for i in 0..size {
         let elt = r_int_get(x, i);
-        let elt = int_to_string(elt);
+        let elt = r_int_to_pretty_string(elt);
         out.push_str(&elt);
 
         if i != size - 1 {
@@ -87,7 +91,7 @@ fn dbl_format(x: SEXP, limit: Option<R_xlen_t>) -> String {
 
     for i in 0..size {
         let elt = r_dbl_get(x, i);
-        let elt = dbl_to_string(elt);
+        let elt = r_dbl_to_pretty_string(elt);
         out.push_str(&elt);
 
         if i != size - 1 {
@@ -113,7 +117,7 @@ fn cpl_format(x: SEXP, limit: Option<R_xlen_t>) -> String {
 
     for i in 0..size {
         let elt = r_cpl_get(x, i);
-        let elt = cpl_to_string(elt);
+        let elt = r_cpl_to_pretty_string(elt);
         out.push_str(&elt);
 
         if i != size - 1 {
@@ -139,7 +143,7 @@ fn chr_format(x: SEXP, limit: Option<R_xlen_t>) -> String {
 
     for i in 0..size {
         let elt = r_chr_get(x, i);
-        let elt = str_to_string(elt);
+        let elt = r_str_to_pretty_string(elt);
         out.push_str(&elt);
 
         if i != size - 1 {
@@ -170,143 +174,13 @@ fn compute_format_size(x: SEXP, limit: Option<R_xlen_t>) -> (R_xlen_t, bool) {
     (size, trimmed)
 }
 
-fn lgl_to_string(x: i32) -> String {
-    if x == r_lgl_na() {
-        String::from("NA")
-    } else if x == 0 {
-        String::from("FALSE")
-    } else {
-        String::from("TRUE")
-    }
-}
-
-fn int_to_string(x: i32) -> String {
-    if x == r_int_na() {
-        String::from("NA")
-    } else {
-        x.to_string() + "L"
-    }
-}
-
-fn dbl_to_string(x: f64) -> String {
-    if r_dbl_is_na(x) {
-        String::from("NA")
-    } else if r_dbl_is_nan(x) {
-        String::from("NaN")
-    } else if !r_dbl_is_finite(x) {
-        if x.is_sign_positive() {
-            String::from("Inf")
-        } else {
-            String::from("-Inf")
-        }
-    } else {
-        x.to_string()
-    }
-}
-
-fn cpl_to_string(x: Rcomplex) -> String {
-    let mut out = String::from("");
-
-    let real = dbl_to_string(x.r);
-    out.push_str(&real);
-
-    // If `x.i < 0`, use `-` from converting the dbl to string
-    if r_dbl_is_na(x.i) || r_dbl_is_nan(x.i) || x.i >= 0.0 {
-        out.push_str("+");
-    }
-
-    let imaginary = dbl_to_string(x.i);
-    out.push_str(&imaginary);
-    out.push_str("i");
-
-    out
-}
-
-fn str_to_string(x: SEXP) -> String {
-    if x == r_str_na() {
-        String::from("NA")
-    } else {
-        let mut out = String::from("\"");
-        let elt = r_str_to_owned_utf8(x).unwrap_or(String::from("???"));
-        out.push_str(&elt);
-        out.push_str("\"");
-        out
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use harp::object::*;
     use harp::r_char;
-    use libr::*;
 
     use crate::test::r_test;
-    use crate::vec_format::cpl_to_string;
-    use crate::vec_format::dbl_to_string;
-    use crate::vec_format::int_to_string;
-    use crate::vec_format::lgl_to_string;
-    use crate::vec_format::str_to_string;
     use crate::vec_format::vec_format;
-
-    #[test]
-    fn test_to_string_methods() {
-        r_test(|| unsafe {
-            assert_eq!(lgl_to_string(1), String::from("TRUE"));
-            assert_eq!(lgl_to_string(0), String::from("FALSE"));
-            assert_eq!(lgl_to_string(r_lgl_na()), String::from("NA"));
-
-            assert_eq!(int_to_string(1), String::from("1L"));
-            assert_eq!(int_to_string(0), String::from("0L"));
-            assert_eq!(int_to_string(-1), String::from("-1L"));
-            assert_eq!(int_to_string(r_int_na()), String::from("NA"));
-
-            assert_eq!(dbl_to_string(1.5), String::from("1.5"));
-            assert_eq!(dbl_to_string(0.0), String::from("0"));
-            assert_eq!(dbl_to_string(-1.5), String::from("-1.5"));
-            assert_eq!(dbl_to_string(r_dbl_na()), String::from("NA"));
-            assert_eq!(dbl_to_string(r_dbl_nan()), String::from("NaN"));
-            assert_eq!(
-                dbl_to_string(r_dbl_positive_infinity()),
-                String::from("Inf")
-            );
-            assert_eq!(
-                dbl_to_string(r_dbl_negative_infinity()),
-                String::from("-Inf")
-            );
-
-            assert_eq!(
-                cpl_to_string(Rcomplex { r: 1.5, i: 2.5 }),
-                String::from("1.5+2.5i")
-            );
-            assert_eq!(
-                cpl_to_string(Rcomplex { r: 0.0, i: 0.0 }),
-                String::from("0+0i")
-            );
-            assert_eq!(
-                cpl_to_string(Rcomplex { r: 1.0, i: -2.0 }),
-                String::from("1-2i")
-            );
-            assert_eq!(
-                cpl_to_string(Rcomplex {
-                    r: r_dbl_na(),
-                    i: r_dbl_nan()
-                }),
-                String::from("NA+NaNi")
-            );
-            assert_eq!(
-                cpl_to_string(Rcomplex {
-                    r: r_dbl_positive_infinity(),
-                    i: r_dbl_negative_infinity()
-                }),
-                String::from("Inf-Infi")
-            );
-
-            let x = RObject::from(r_char!("abc"));
-            assert_eq!(str_to_string(x.sexp), String::from("\"abc\""));
-            let x = RObject::from(r_str_na());
-            assert_eq!(str_to_string(x.sexp), String::from("NA"));
-        })
-    }
 
     #[test]
     fn test_vec_format_methods() {
