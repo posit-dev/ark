@@ -13,7 +13,7 @@ use amalthea::wire::jupyter_message::Message;
 use amalthea::wire::jupyter_message::ProtocolMessage;
 
 pub struct Frontend {
-    pub control_socket: Socket,
+    pub _control_socket: Socket,
     pub shell_socket: Socket,
     pub iopub_socket: Socket,
     pub stdin_socket: Socket,
@@ -103,7 +103,7 @@ impl Frontend {
             session,
             key,
             control_port,
-            control_socket: control,
+            _control_socket: control,
             shell_port,
             shell_socket: shell,
             iopub_port,
