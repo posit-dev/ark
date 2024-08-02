@@ -177,7 +177,7 @@ asRangeList <- function(location) {
 #' @export
 .rs.api.documentSaveAll <- function() {
     # This function excludes untitled files in RStudio:
-    invisible(.ps.ui.executeCommand("workbench.action.files.saveAllTitled"))
+    .ps.ui.executeCommandAwait("workbench.action.files.saveAllTitled")
 }
 
 #' @export
@@ -185,5 +185,5 @@ asRangeList <- function(location) {
     # TODO: Support document IDs
     stopifnot(is.null(id))
 
-    invisible(.ps.ui.executeCommand("workbench.action.files.save"))
+    .ps.ui.executeCommandAwait("workbench.action.files.save")
 }

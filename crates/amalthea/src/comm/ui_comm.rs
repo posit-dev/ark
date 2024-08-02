@@ -201,6 +201,13 @@ pub struct ExecuteCommandParams {
 	pub command: String,
 }
 
+/// Parameters for the ExecuteCommandAwait method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ExecuteCommandAwaitParams {
+	/// The command to execute
+	pub command: String,
+}
+
 /// Parameters for the EvaluateWhenClause method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct EvaluateWhenClauseParams {
@@ -335,6 +342,13 @@ pub enum UiFrontendRequest {
 	#[serde(rename = "debug_sleep")]
 	DebugSleep(DebugSleepParams),
 
+	/// Execute a Positron command and wait for it to return
+	///
+	/// Use this to execute a Positron command from the backend (like from a
+	/// runtime) and wait for it to return
+	#[serde(rename = "execute_command_await")]
+	ExecuteCommandAwait(ExecuteCommandAwaitParams),
+
 	/// Get a logical for a `when` clause (a set of context keys)
 	///
 	/// Use this to evaluate a `when` clause of context keys in the frontend
@@ -386,6 +400,9 @@ pub enum UiFrontendReply {
 
 	/// Reply for the debug_sleep method (no result)
 	DebugSleepReply(),
+
+	/// Evaluates to true when the command has been executed
+	ExecuteCommandAwaitReply(bool),
 
 	/// Whether the `when` clause evaluates as true or false
 	EvaluateWhenClauseReply(bool),
@@ -475,6 +492,7 @@ pub fn ui_frontend_reply_from_value(
 		UiFrontendRequest::ShowQuestion(_) => Ok(UiFrontendReply::ShowQuestionReply(serde_json::from_value(reply)?)),
 		UiFrontendRequest::ShowDialog(_) => Ok(UiFrontendReply::ShowDialogReply()),
 		UiFrontendRequest::DebugSleep(_) => Ok(UiFrontendReply::DebugSleepReply()),
+		UiFrontendRequest::ExecuteCommandAwait(_) => Ok(UiFrontendReply::ExecuteCommandAwaitReply(serde_json::from_value(reply)?)),
 		UiFrontendRequest::EvaluateWhenClause(_) => Ok(UiFrontendReply::EvaluateWhenClauseReply(serde_json::from_value(reply)?)),
 		UiFrontendRequest::ExecuteCode(_) => Ok(UiFrontendReply::ExecuteCodeReply()),
 		UiFrontendRequest::WorkspaceFolder => Ok(UiFrontendReply::WorkspaceFolderReply(serde_json::from_value(reply)?)),

@@ -7,6 +7,7 @@
 
 use amalthea::comm::ui_comm::DebugSleepParams;
 use amalthea::comm::ui_comm::ExecuteCodeParams;
+use amalthea::comm::ui_comm::ExecuteCommandAwaitParams;
 use amalthea::comm::ui_comm::ModifyEditorSelectionsParams;
 use amalthea::comm::ui_comm::NewDocumentParams;
 use amalthea::comm::ui_comm::ShowDialogParams;
@@ -104,6 +105,17 @@ pub unsafe extern "C" fn ps_ui_new_document(
 
     let main = RMain::get();
     let out = main.call_frontend_method(UiFrontendRequest::NewDocument(params))?;
+    Ok(out.sexp)
+}
+
+#[harp::register]
+pub unsafe extern "C" fn ps_ui_execute_command_await(command: SEXP) -> anyhow::Result<SEXP> {
+    let params = ExecuteCommandAwaitParams {
+        command: RObject::view(command).try_into()?,
+    };
+
+    let main = RMain::get();
+    let out = main.call_frontend_method(UiFrontendRequest::ExecuteCommandAwait(params))?;
     Ok(out.sexp)
 }
 
