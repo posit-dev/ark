@@ -1517,8 +1517,7 @@ fn test_update_data_filters_reapplied() {
 
         // Get the schema of the data set.
         let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
-            num_columns: 1,
-            start_index: 0,
+            column_indices: vec![0],
         });
 
         let schema_reply = socket_rpc(&socket, req);
