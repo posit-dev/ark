@@ -346,3 +346,60 @@ write_html <- function(x, include_header) {
     local_options(knitr.kable.NA = "") # use empty strings for NA's
     knitr::kable(x, format = "html", row.names = FALSE, col.names = col_names)
 }
+
+profile_histogram <- function(x, num_bins, quantiles) {
+  # If we have a Date variable, we convert it to POSIXct, in order to be able to have equal
+  # width bins - that can be fractions of dates.
+  if (inherits(x, "Date")) {
+    x <- as.POSIXct(x)
+  }
+
+  min_value <- min(x, na.rm = TRUE)
+  max_value <- max(x, na.rm = TRUE)
+  range <- max_value - min_value
+
+  # If any of those are NA, it means that all values are NA's,
+  # so there are no bins to be computed and we return an empty vector.
+  if (is.na(min_value) || is.na(max_value)) {
+      return(list(
+          bin_edges = c(),
+          bin_counts = c(),
+          quantiles = c()
+      ))
+  }
+
+  if (!is.null(quantiles)) {
+    quantiles <- quantile(x, probs = quantiles, na.rm = TRUE)
+  } else {
+    quantiles <- c() # we otherwise return an empty quantiles vector
+  }
+
+  # If the range is 0, ie the column is constant, we early return a single bin with
+  # repeated `bin_edges`.
+  if (as.numeric(range) == 0) {
+    return(list(
+        bin_edges = c(min_value, max_value),
+        bin_counts = length(x),
+        quantiles = quantiles
+    ))
+  }
+
+  # For dates (internally stored as integers - even if in numeric vectors)
+  # if the data range is smaller than `num_bins`, we will create `range` breaks.
+  # This avoids creating intermediate bins that wouldn't show any value. For `Date`, it avoids creating
+  # invalid dates, eg `as.POSIXct("2001-01-01 00:00:00") + 0.5` is the same as date as `as.POSIXct("2001-01-01 00:00:00")`
+  # but if compared using `==` they yield FALSE.
+  if (inherits(x, "POSIXct") && as.integer(range) < num_bins) {
+    num_bins <- as.integer(range) + 1L
+  }
+
+  # We now compute the breaks that we will use when doing cut.
+  bin_edges <- seq(min_value, max_value, length.out = num_bins + 1)
+  bin_counts <- table(cut(x, breaks = bin_edges, include.lowest = TRUE))
+
+  list(
+      bin_edges = bin_edges,
+      bin_counts = bin_counts,
+      quantiles = quantiles
+  )
+}

@@ -13,6 +13,9 @@ use amalthea::comm::data_explorer_comm::ArraySelection;
 use amalthea::comm::data_explorer_comm::BackendState;
 use amalthea::comm::data_explorer_comm::ColumnDisplayType;
 use amalthea::comm::data_explorer_comm::ColumnFilter;
+use amalthea::comm::data_explorer_comm::ColumnHistogram;
+use amalthea::comm::data_explorer_comm::ColumnHistogramParams;
+use amalthea::comm::data_explorer_comm::ColumnProfileParams;
 use amalthea::comm::data_explorer_comm::ColumnProfileRequest;
 use amalthea::comm::data_explorer_comm::ColumnProfileResult;
 use amalthea::comm::data_explorer_comm::ColumnProfileType;
@@ -85,6 +88,7 @@ use uuid::Uuid;
 use crate::data_explorer::export_selection;
 use crate::data_explorer::format;
 use crate::data_explorer::format::format_string;
+use crate::data_explorer::histogram::profile_histogram;
 use crate::data_explorer::summary_stats::summary_stats;
 use crate::data_explorer::utils::tbl_subset_with_view_indices;
 use crate::interface::RMain;
@@ -632,6 +636,33 @@ impl RDataExplorer {
                         Ok(stats) => Some(stats),
                     };
                 },
+                ColumnProfileType::Histogram => {
+                    let params = unwrap!(profile_req.params, None => {
+                        log::error!("No parameters provided for computing the histogram. Column {}", request.column_index);
+                        continue; // Jump to the next profile
+                    });
+                    let params = match params {
+                        ColumnProfileParams::Histogram(v) => v,
+                        _ => {
+                            log::error!(
+                                "Wrong set of parameters for computing the histogram. Column {}",
+                                request.column_index
+                            );
+                            continue; // Jump to the next profile
+                        },
+                    };
+                    let histogram = r_task(|| {
+                        self.r_histogram(request.column_index as i32, &params, format_options)
+                    });
+                    output.histogram = Some(unwrap!(histogram, Err(err) => {
+                        log::error!(
+                            "Wrong set of parameters for computing the histogram. Column {}: {}",
+                            request.column_index,
+                            err
+                        );
+                        continue;
+                    }));
+                },
                 _ => {
                     // Other types are not supported yet
                 },
@@ -677,6 +708,17 @@ impl RDataExplorer {
         let filtered_column = r_filter_indices(column, &self.filtered_indices)?;
 
         Ok(summary_stats(filtered_column.sexp, dtype, format_options))
+    }
+
+    fn r_histogram(
+        &self,
+        column_index: i32,
+        params: &ColumnHistogramParams,
+        format_options: &FormatOptions,
+    ) -> anyhow::Result<ColumnHistogram> {
+        let column = tbl_get_column(self.table.get().sexp, column_index, self.shape.kind)?;
+        let histogram = profile_histogram(column.sexp, params, format_options)?;
+        Ok(histogram)
     }
 
     /// Sort the rows of the data object according to the sort keys in
