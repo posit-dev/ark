@@ -1498,3 +1498,118 @@ fn test_export_data() {
         );
     })
 }
+
+// Tests that filters and sorts are reapplied to new data after a Data Update event.
+// A regression test for https://github.com/posit-dev/positron/issues/4170
+#[test]
+fn test_update_data_filters_reapplied() {
+    r_test(|| {
+        let socket = open_data_explorer_from_expression(
+            r#"
+            x <- data.frame(
+                a = c(3, 3, 3, 1),
+                b = c('a', 'b', 'c', 'd')
+            )
+        "#,
+            Some("x"),
+        )
+        .unwrap();
+
+        // Get the schema of the data set.
+        let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
+            column_indices: vec![0],
+        });
+
+        let schema_reply = socket_rpc(&socket, req);
+        let schema = match schema_reply {
+            DataExplorerBackendReply::GetSchemaReply(schema) => schema,
+            _ => panic!("Unexpected reply: {:?}", schema_reply),
+        };
+
+        // Apply filter by the `a` columns. Expecting to get 3 rows larger than 1.
+        let x_gt_1 = RowFilter {
+            column_schema: schema.columns[0].clone(),
+            filter_type: RowFilterType::Compare,
+            filter_id: "0DB2F23D-B299-4068-B8D5-A2B513A93330".to_string(),
+            condition: RowFilterCondition::And,
+            is_valid: None,
+            params: Some(RowFilterParams::Comparison(FilterComparison {
+                op: FilterComparisonOp::Gt,
+                value: "1".to_string(),
+            })),
+            error_message: None,
+        };
+        let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
+            filters: vec![x_gt_1.clone()],
+        });
+        // Set filters should display 3 rows that are greater than 1.
+        assert_match!(socket_rpc(&socket, req.clone()),
+        DataExplorerBackendReply::SetRowFiltersReply(
+            FilterResult { selected_num_rows: num_rows, had_errors: Some(false)}
+        ) => {
+            assert_eq!(num_rows, 3);
+        });
+
+        // Also add a sorting to check that data will be sorted in the correct way
+        // after the data update.
+        // Create a request to sort the data set by the 'mpg' column.
+        let sort_keys = vec![ColumnSortKey {
+            column_index: 0,
+            ascending: true,
+        }];
+        let req = DataExplorerBackendRequest::SetSortColumns(SetSortColumnsParams {
+            sort_keys: sort_keys.clone(),
+        });
+        // We should get a SetSortColumnsReply back.
+        assert_match!(socket_rpc(&socket, req), DataExplorerBackendReply::SetSortColumnsReply() => {});
+
+        // Check the number of rows when using the GetData method
+        let expect_get_data_rows = |n, values| {
+            // Getting data out of the data explorer should have the filters applied
+            let req = DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
+                row_start_index: 0,
+                num_rows: 5,
+                column_indices: vec![0, 1, 2],
+                format_options: default_format_options(),
+            });
+
+            // Check that we got the right columns and row labels.
+            assert_match!(socket_rpc(&socket, req),
+                DataExplorerBackendReply::GetDataValuesReply(data) => {
+                    assert_eq!(data.columns[0].len(), n);
+                    assert_eq!(data.columns[1], values);
+                }
+            );
+        };
+
+        // GetData should also display 2 rows only
+        expect_get_data_rows(3, vec![
+            ColumnValue::FormattedValue("a".to_string()),
+            ColumnValue::FormattedValue("b".to_string()),
+            ColumnValue::FormattedValue("c".to_string()),
+        ]);
+
+        // Now make the filter invalid because of the data type has changed
+        r_parse_eval0("x$a <- c(3, 2, 1, 1)", R_ENVS.global).unwrap();
+        // Emit a console prompt event; this should tickle the data explorer to
+        // check for changes.
+        EVENTS.console_prompt.emit(());
+
+        // Wait for an update event to arrive
+        // Since only data changed, we expect a Data Update Event
+        assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
+            CommMsg::Data(value) => {
+                // Make sure it's a data update event.
+                assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
+                    DataExplorerFrontendEvent::DataUpdate
+                );
+        });
+
+        // We now expect 2 rows when getting data
+        // It should also be sorted differently
+        expect_get_data_rows(2, vec![
+            ColumnValue::FormattedValue("b".to_string()),
+            ColumnValue::FormattedValue("a".to_string()),
+        ]);
+    });
+}
