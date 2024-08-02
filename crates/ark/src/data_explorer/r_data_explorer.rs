@@ -382,10 +382,9 @@ impl RDataExplorer {
                 self.sorted_indices = Some(r_task(|| self.r_sort_rows())?);
             }
 
-            // This is a no-op if there are no filters to be applied.
+            // Recompute and apply filters and sorts.
             let (indices, _) = self.row_filters_compute()?;
             self.filtered_indices = indices;
-
             self.apply_sorts_and_filters();
 
             DataExplorerFrontendEvent::DataUpdate
