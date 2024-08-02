@@ -6,9 +6,7 @@
  */
 
 use std::path::PathBuf;
-use std::process::Command;
 
-use anyhow::anyhow;
 use libloading::os::unix::Library;
 use libloading::os::unix::RTLD_GLOBAL;
 use libloading::os::unix::RTLD_LAZY;
@@ -21,11 +19,63 @@ pub struct RLibraries {
 }
 
 impl RLibraries {
+    /// We are about to dynamically load libR into the Ark process using `dlopen()` on
+    /// Unix / `LibraryLoad()` on Windows. This is a bit unusual as ordinarily frontends
+    /// link to R at launch-time. The goal is to get full control of symbol access, making
+    /// it easy to provide compatibility implementations on older versions of R. However
+    /// this does require some precautions on Unixes to ensure the behaviour is as close
+    /// as possible to launch-time linking.
+    ///
+    /// - We set the `RTLD_GLOBAL` option to expose all libR symbols to subsequently
+    ///   loaded plugins. This is similar to how linking to a library at launch time
+    ///   exposes symbols globally, including to loaded plugins.
+    ///
+    /// - Despite being loaded with global scope, libR is not considered opened by the
+    ///   dynamic loader. This is problematic when loading package libraries because they
+    ///   typically link against libR. Even though we have exposed all the symbols they
+    ///   need, and opening a libR file would normally won't have any further effect (it
+    ///   could in special cases involving version mismatches), the linker will fail to
+    ///   load the package library if it can't find a libR file.
+    ///
+    ///   To work correctly with the variety of ways package libraries are linked against
+    ///   R, with relative (common on Linux) or absolute (common on macOS) paths, Ark
+    ///   should be launched in an environment where `LD_LIBRARY_PATH` (Linux) and
+    ///   `DYLD_LIBRARY_PATH` / `DYLD_FALLBACK_LIBRARY_PATH` (macOS) point to the `lib`
+    ///   folder of the target `R_HOME`. This will allow package libraries to link against
+    ///   a libR library. This library will never be used in practice as the symbols
+    ///   exposed via `RTLD_GLOBAL` will have precedence.
+    ///
+    ///   In the edge case where a package is compiled against a newer version of R and
+    ///   linked with an absolute path, having opened the older R first will prevent the
+    ///   newer R from being loaded, and the newer symbols from being resolved into that
+    ///   different library. In this case users get undefined symbols errors on load
+    ///   instead of undefined behaviour and crashes.
+    ///
+    ///   Alternatively we could link to an empty libR shipped with Ark. Linking to the
+    ///   real one is more convenient and also takes care of other libraries in there such
+    ///   as libRblas.
+    ///
+    /// - On macOS we really want to add `{R_HOME}/lib` to `DYLD_LIBRARY_PATH` and not
+    ///   `DYLD_FALLBACK_LIBRARY_PATH`. The former ensures our libR is always selected.
+    ///   The latter would allow a package linked with an absolute path to a different
+    ///   version of R to open that different libR, causing potential UB instead of
+    ///   undefined symbol errors.
+    ///
+    /// - On macOS, your build of Ark needs the `allow-dyld-environment-variables`
+    ///   entitlement to allow the Ark process to inherit the `DYLD_LIBRARY_PATH`
+    ///   environment variable.
+    ///
+    /// - In addition to `{R_HOME}/lib`, it's also useful for the caller of Ark to include
+    ///   `R_JAVA_LD_LIBRARY_PATH` in the load list. This time on macOS it makes sense to
+    ///   use `DYLD_FALLBACK_LIBRARY_PATH`, if only to be consistent with
+    ///   `{R_HOME}/etc/ldpaths`, where this envvar is normally defined. Note that this
+    ///   might cause a package linked to Java with an absolute path to decide for all
+    ///   subsequently loaded packages which version of Java Ark is linked with.
+    ///
+    /// - Windows doesn't need these precautions because symbol lookup is namespaced to
+    ///   the library. On Unix, symbol lookup is global and resolved via a global linked
+    ///   list of library namespaces.
     pub fn from_r_home_path(path: &PathBuf) -> Self {
-        // Before we open the libraries, set `DYLD_FALLBACK_LIBRARY_PATH` or
-        // `LD_LIBRARY_PATH` as needed
-        set_library_path_env_var(path);
-
         let r_path = find_r_shared_library(&path, "R");
         let r = open_and_leak_r_shared_library(&r_path);
 
@@ -77,90 +127,4 @@ pub fn open_r_shared_library(path: &PathBuf) -> Result<libloading::Library, libl
 
 pub fn find_r_shared_library_folder(path: &PathBuf) -> PathBuf {
     path.join("lib")
-}
-
-#[cfg(target_os = "macos")]
-const LIBRARY_PATH_ENVVAR: &'static str = "DYLD_FALLBACK_LIBRARY_PATH";
-#[cfg(target_os = "linux")]
-const LIBRARY_PATH_ENVVAR: &'static str = "LD_LIBRARY_PATH";
-
-fn set_library_path_env_var(path: &PathBuf) {
-    // In the future, we may add additional paths to the env var beyond just what R
-    // gives us, like RStudio does.
-    // https://github.com/rstudio/rstudio/blob/50d1a034a04188b42cf7560a86a268a95e62d129/src/cpp/core/r_util/REnvironmentPosix.cpp#L817
-
-    let mut paths = Vec::new();
-
-    // Expect that this includes the existing env var value, if there was one
-    match source_ldpaths_script(path) {
-        Ok(path) => paths.push(path),
-        Err(err) => log::error!("Failed to source `ldpaths` script: {err:?}."),
-    }
-
-    // Only set if we have something
-    if paths.is_empty() {
-        return;
-    }
-
-    let paths = paths.join(":");
-
-    log::info!("Setting '{LIBRARY_PATH_ENVVAR}' env var to '{paths}'.");
-
-    std::env::set_var(LIBRARY_PATH_ENVVAR, paths);
-}
-
-/// Source `{R_HOME}/etc/ldpaths`
-///
-/// - On macOS, this is for `DYLD_FALLBACK_LIBRARY_PATH`
-/// - On linux, this is for `LD_LIBRARY_PATH`
-///
-/// This is a file that R provides which adds the `{R_HOME}/lib/` directory and a Java
-/// related directory (relevant for rJava, apparently) to the relevant library path env
-/// var.
-///
-/// Adding R's `lib/` directory to the front of `LD_LIBRARY_PATH` is particularly
-/// important. We open `libR` with `RTLD_GLOBAL`, but there are other libs shipped by R
-/// in that `lib/` folder that other packages might link to, and having the `lib/` folder
-/// included in `LD_LIBRARY_PATH` is how those packages will find those libs.
-fn source_ldpaths_script(path: &PathBuf) -> anyhow::Result<String> {
-    let ldpaths = path.join("etc").join("ldpaths");
-
-    let Some(ldpaths) = ldpaths.to_str() else {
-        let ldpaths = ldpaths.to_string_lossy();
-        return Err(anyhow!(
-            "Failed to convert `ldpaths` path to UTF-8 string: '{ldpaths}'"
-        ));
-    };
-
-    // Source (i.e. `.`) the `ldpaths` file into the current bash session, and then
-    // print out the relevant env var that it set. `printf` is more portable than `echo -n`.
-    let command = format!(". {ldpaths} && printf '%s' \"${LIBRARY_PATH_ENVVAR}\"");
-
-    // Need to ensure `R_HOME` is set, as `ldpaths` references it.
-    // Expect that `ldpaths` appends to an existing env var if there is one,
-    // rather than overwriting it, so we don't have to do that.
-    let output = Command::new("sh")
-        .env("R_HOME", &path)
-        .arg("-c")
-        .arg(command)
-        .output()?;
-
-    if !output.status.success() {
-        let status = output.status;
-        return Err(anyhow!("Failed with status: {status}"));
-    }
-    if !output.stderr.is_empty() {
-        let stderr = String::from_utf8(output.stderr)?;
-        return Err(anyhow!("Unexpected output on stderr: '{stderr}'"));
-    }
-
-    let value = String::from_utf8(output.stdout)?;
-
-    if value.is_empty() {
-        return Err(anyhow!(
-            "Empty string returned for '{LIBRARY_PATH_ENVVAR}'. Expected at least one path."
-        ));
-    }
-
-    Ok(value)
 }
