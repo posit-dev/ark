@@ -86,7 +86,6 @@ use libr::Rf_error;
 use libr::Rf_findVarInFrame;
 use libr::Rf_onintr;
 use libr::SEXP;
-use log::*;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde_json::json;
@@ -535,11 +534,11 @@ impl RMain {
                 continuation_prompt: Some(continuation_prompt),
             };
 
-            debug!("Sending kernel info: {}", version);
+            log::info!("Sending kernel info: {version}");
             self.kernel_init_tx.broadcast(kernel_info);
             self.initializing = false;
         } else {
-            warn!("Initialization already complete!");
+            log::warn!("Initialization already complete!");
         }
     }
 
@@ -564,9 +563,10 @@ impl RMain {
                 code: req.code.clone(),
                 execution_count: self.execution_count,
             })) {
-                warn!(
+                log::warn!(
                     "Could not broadcast execution input {} to all frontends: {}",
-                    self.execution_count, err
+                    self.execution_count,
+                    err
                 );
             }
         }
@@ -593,7 +593,7 @@ impl RMain {
         _hist: c_int,
     ) -> ConsoleResult {
         let info = Self::prompt_info(prompt);
-        debug!("R prompt: {}", info.input_prompt);
+        log::trace!("R prompt: {}", info.input_prompt);
 
         // Upon entering read-console, finalize any debug call text that we were capturing.
         // At this point, the user can either advance the debugger, causing us to capture
@@ -667,7 +667,7 @@ impl RMain {
                 Ok(stack) => {
                     self.dap.start_debug(stack);
                 },
-                Err(err) => error!("ReadConsole: Can't get stack info: {err}"),
+                Err(err) => log::error!("ReadConsole: Can't get stack info: {err}"),
             };
         } else {
             if self.dap.is_debugging() {
@@ -752,7 +752,7 @@ impl RMain {
     // bad state (e.g. causing freezes)
     fn prompt_info(prompt_c: *const c_char) -> PromptInfo {
         let n_frame = harp::session::r_n_frame().unwrap();
-        trace!("prompt_info(): n_frame = '{}'", n_frame);
+        log::trace!("prompt_info(): n_frame = '{n_frame}'");
 
         let prompt_slice = unsafe { CStr::from_ptr(prompt_c) };
         let prompt = prompt_slice.to_string_lossy().into_owned();
@@ -781,9 +781,9 @@ impl RMain {
         let incomplete = !user_request && prompt == continuation_prompt;
 
         if incomplete {
-            trace!("Got R prompt '{}', marking request incomplete", prompt);
+            log::trace!("Got R prompt '{prompt}', marking request incomplete");
         } else if user_request {
-            trace!("Got R prompt '{}', asking user for input", prompt);
+            log::trace!("Got R prompt '{prompt}', asking user for input");
         }
 
         return PromptInfo {

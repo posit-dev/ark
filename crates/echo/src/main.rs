@@ -20,9 +20,6 @@ use amalthea::kernel_spec::KernelSpec;
 use amalthea::socket::stdin::StdInRequest;
 use crossbeam::channel::bounded;
 use crossbeam::channel::unbounded;
-use log::debug;
-use log::error;
-use log::info;
 
 use crate::control::Control;
 use crate::shell::Shell;
@@ -98,18 +95,12 @@ fn install_kernel_spec() {
 fn parse_file(connection_file: &String) {
     match ConnectionFile::from_file(connection_file) {
         Ok(connection) => {
-            info!(
-                "Loaded connection information from front-end in {}",
-                connection_file
-            );
-            debug!("Connection data: {:?}", connection);
+            log::info!("Loaded connection information from front-end in {connection_file}");
+            log::info!("Connection data: {connection:?}");
             start_kernel(connection);
         },
         Err(error) => {
-            error!(
-                "Couldn't read connection file {}: {:?}",
-                connection_file, error
-            );
+            log::error!("Couldn't read connection file {connection_file}: {error:?}");
         },
     }
 }

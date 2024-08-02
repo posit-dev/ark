@@ -33,9 +33,6 @@ use harp::vector::Vector;
 use libr::R_GlobalEnv;
 use libr::Rf_ScalarLogical;
 use libr::ENVSXP;
-use log::debug;
-use log::error;
-use log::warn;
 use stdext::spawn;
 
 use crate::data_explorer::r_data_explorer::DataObjectEnvInfo;
@@ -81,9 +78,8 @@ impl RVariables {
     pub fn start(env: RObject, comm: CommSocket, comm_manager_tx: Sender<CommManagerEvent>) {
         // Validate that the RObject we were passed is actually an environment
         if let Err(err) = r_assert_type(env.sexp, &[ENVSXP]) {
-            warn!(
-                "Environment: Attempt to monitor or list non-environment object {:?} ({:?})",
-                env, err
+            log::warn!(
+                "Environment: Attempt to monitor or list non-environment object {env:?} ({err:?})"
             );
         }
 
@@ -146,25 +142,24 @@ impl RVariables {
                 recv(&self.comm.incoming_rx) -> msg => {
                     let msg = match msg {
                         Ok(msg) => msg,
-                        Err(e) => {
+                        Err(err) => {
                             // We failed to receive a message from the frontend. This
                             // is usually not a transient issue and indicates that the
                             // channel is closed, so allowing the thread to exit is
                             // appropriate. Retrying is likely to just lead to a busy
                             // loop.
-                            error!(
-                                "Environment: Error receiving message from frontend: {:?}",
-                                e
+                            log::error!(
+                                "Environment: Error receiving message from frontend: {err:?}"
                             );
 
                             break;
                         },
                     };
-                    debug!("Environment: Received message from frontend: {:?}", msg);
+                    log::info!("Environment: Received message from frontend: {msg:?}");
 
                     // Break out of the loop if the frontend has closed the channel
                     if let CommMsg::Close = msg {
-                        debug!("Environment: Closing down after receiving comm_close from frontend.");
+                        log::info!("Environment: Closing down after receiving comm_close from frontend.");
 
                         // Remember that the user initiated the close so that we can
                         // avoid sending a duplicate close message from the back end
@@ -357,7 +352,7 @@ impl RVariables {
                 self.comm.outgoing_tx.send(comm_msg).unwrap()
             },
             Err(err) => {
-                error!("Environment: Failed to serialize environment data: {}", err);
+                log::error!("Environment: Failed to serialize environment data: {err}");
             },
         }
     }
