@@ -141,18 +141,21 @@ fn get_first_argument(context: &DocumentContext, node: &Node) -> Result<Option<R
     // Try to evaluate the first argument
     let value = r_parse_eval(text.as_str(), options);
 
-    // If the user is writing pseudocode, this object might not exist yet,
-    // in which case we just want to ignore the error from trying to evaluate it
-    // and just provide typical completions.
     // If we get an `UnsafeEvaluationError` here from setting
     // `forbid_function_calls`, we don't even log that one, as that is
     // expected to happen with complex first inputs that call functions.
+    // If we get a `TryCatchError`, that is typically an 'object not found' error resulting
+    // from the user typing pseudocode. Log those at info level without a full backtrace.
     let value = match value {
         Ok(value) => value,
         Err(err) => match err {
             Error::UnsafeEvaluationError(_) => return Ok(None),
+            Error::TryCatchError { message, .. } => {
+                log::info!("Can't evaluate first argument: {message}");
+                return Ok(None);
+            },
             _ => {
-                log::info!("get_first_argument(): Failed to evaluate first argument: {err}");
+                log::error!("Can't evaluate first argument: {err}");
                 return Ok(None);
             },
         },
