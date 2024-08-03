@@ -482,7 +482,7 @@ fn recurse_parameters(
 
         let location = name.range();
 
-        context.add_defined_variable(symbol.as_str(), location.into());
+        context.add_defined_variable(symbol.as_str(), location);
     }
 
     ().ok()
@@ -738,7 +738,7 @@ fn check_unmatched_closing_token(
     let range = node.range();
     let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
     let message = format!("unmatched closing {name} '{token}'");
-    let diagnostic = Diagnostic::new_simple(range, message.into());
+    let diagnostic = Diagnostic::new_simple(range, message);
     diagnostics.push(diagnostic);
 
     true.ok()
@@ -852,7 +852,7 @@ fn check_syntax_error(
     let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
     let text = context.contents.node_slice(&node)?.to_string();
     let message = format!("Syntax error: unexpected token '{}'", text);
-    let diagnostic = Diagnostic::new_simple(range, message.into());
+    let diagnostic = Diagnostic::new_simple(range, message);
     diagnostics.push(diagnostic);
 
     true.ok()
@@ -891,7 +891,7 @@ fn check_unclosed_arguments(
     let range = lhs.range();
     let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
     let message = format!("unmatched opening bracket '{}'", open);
-    let diagnostic = Diagnostic::new_simple(range, message.into());
+    let diagnostic = Diagnostic::new_simple(range, message);
     diagnostics.push(diagnostic);
 
     true.ok()
@@ -970,7 +970,7 @@ fn check_symbol_in_scope(
     let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
     let identifier = context.contents.node_slice(&node)?.to_string();
     let message = format!("no symbol named '{}' in scope", identifier);
-    let mut diagnostic = Diagnostic::new_simple(range, message.into());
+    let mut diagnostic = Diagnostic::new_simple(range, message);
     diagnostic.severity = Some(DiagnosticSeverity::WARNING);
     diagnostics.push(diagnostic);
 

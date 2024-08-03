@@ -1265,9 +1265,7 @@ pub fn is_binding_fancy(binding: &Binding) -> bool {
 pub fn plain_binding_force_with_rollback(binding: &Binding) -> anyhow::Result<RObject> {
     match &binding.value {
         BindingValue::Standard { object, .. } => Ok(object.clone()),
-        BindingValue::Promise { promise, .. } => {
-            Ok(r_promise_force_with_rollback(promise.sexp).map(|x| x.into())?)
-        },
+        BindingValue::Promise { promise, .. } => Ok(r_promise_force_with_rollback(promise.sexp)?),
         _ => Err(anyhow!("Unexpected binding type")),
     }
 }

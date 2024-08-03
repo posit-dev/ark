@@ -315,7 +315,6 @@ pub fn r_altrep_class(object: SEXP) -> String {
 pub fn r_typeof(object: SEXP) -> u32 {
     // SAFETY: The type of an R object is typically considered constant,
     // and TYPEOF merely queries the R type directly from the SEXPREC struct.
-    let object = object.into();
     unsafe { TYPEOF(object) as u32 }
 }
 
