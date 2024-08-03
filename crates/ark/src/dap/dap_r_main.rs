@@ -170,7 +170,7 @@ impl RMainDap {
             DebugCallText::Finalized(call_text) => Some(call_text),
         };
 
-        let last_start_line = self.last_start_line.clone();
+        let last_start_line = self.last_start_line;
 
         let frames = self.r_stack_info(call_text, last_start_line)?;
 

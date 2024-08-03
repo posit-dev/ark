@@ -136,7 +136,7 @@ impl<'tree> NodeExt for Node<'tree> {
         //    |           |
         //    x           x
         //
-        let mut node = self.clone();
+        let mut node = *self;
         while node.prev_sibling().is_none() {
             node = match node.parent() {
                 Some(parent) => parent,
@@ -170,7 +170,7 @@ impl<'tree> NodeExt for Node<'tree> {
         //    |           |
         //    x           x
         //
-        let mut node = self.clone();
+        let mut node = *self;
         while node.next_sibling().is_none() {
             node = match node.parent() {
                 Some(parent) => parent,
@@ -192,11 +192,11 @@ impl<'tree> NodeExt for Node<'tree> {
     }
 
     fn fwd_leaf_iter(&self) -> FwdLeafIterator<'_> {
-        FwdLeafIterator { node: self.clone() }
+        FwdLeafIterator { node: *self }
     }
 
     fn bwd_leaf_iter(&self) -> BwdLeafIterator<'_> {
-        BwdLeafIterator { node: self.clone() }
+        BwdLeafIterator { node: *self }
     }
 
     // From rowan. Note that until we switch to rowan, each `parent()` call
@@ -204,7 +204,7 @@ impl<'tree> NodeExt for Node<'tree> {
     // We could do better in the future:
     // https://github.com/tree-sitter/tree-sitter/pull/3214
     fn ancestors(&self) -> impl Iterator<Item = Node<'tree>> {
-        std::iter::successors(Some(self.clone()), |p| p.parent())
+        std::iter::successors(Some(*self), |p| p.parent())
     }
 }
 
