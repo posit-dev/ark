@@ -1055,7 +1055,7 @@ impl RMain {
         }
 
         // Push `\n`
-        input.push_str("\n");
+        input.push('\n');
 
         // Push `\0` (automatically, as it converts to a C string)
         let input = CString::new(input).unwrap();

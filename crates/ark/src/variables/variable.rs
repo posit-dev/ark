@@ -140,7 +140,7 @@ impl WorkspaceVariableDisplayValue {
             }
         }
 
-        display_value.push_str("]");
+        display_value.push(']');
         Self::new(display_value, is_truncated)
     }
 
@@ -192,7 +192,7 @@ impl WorkspaceVariableDisplayValue {
             display_value.push_str(format!("{env_name}: ").as_str())
         }
 
-        display_value.push_str("{");
+        display_value.push('{');
 
         let mut is_truncated = false;
         for (i, name) in names
@@ -225,7 +225,7 @@ impl WorkspaceVariableDisplayValue {
             }
         }
 
-        display_value.push_str("}");
+        display_value.push('}');
 
         // Return the display value.
         Self::new(display_value, is_truncated)
@@ -245,7 +245,7 @@ impl WorkspaceVariableDisplayValue {
         unsafe {
             let dim = IntegerVector::new_unchecked(Rf_getAttrib(value, R_DimSymbol));
             let n_col = dim.get_unchecked(1).unwrap() as isize;
-            display_value.push_str("[");
+            display_value.push('[');
             for i in 0..n_col {
                 if first {
                     first = false;
@@ -253,7 +253,7 @@ impl WorkspaceVariableDisplayValue {
                     display_value.push_str(", ");
                 }
 
-                display_value.push_str("[");
+                display_value.push('[');
                 let display_column = formatted.column_iter(i).join(" ");
                 if display_column.len() > MAX_DISPLAY_VALUE_LENGTH {
                     is_truncated = true;
@@ -261,7 +261,7 @@ impl WorkspaceVariableDisplayValue {
                     //       of the first n (MAX_WIDTH?) characters in that case ?
                 }
                 display_value.push_str(display_column.as_str());
-                display_value.push_str("]");
+                display_value.push(']');
 
                 if display_value.len() > MAX_DISPLAY_VALUE_LENGTH {
                     is_truncated = true;
@@ -270,7 +270,7 @@ impl WorkspaceVariableDisplayValue {
                     break;
                 }
             }
-            display_value.push_str("]");
+            display_value.push(']');
         }
         Self::new(display_value, is_truncated)
     }
@@ -288,7 +288,7 @@ impl WorkspaceVariableDisplayValue {
             if first {
                 first = false;
             } else {
-                display_value.push_str(" ");
+                display_value.push(' ');
             }
             display_value.push_str(&x);
             if display_value.len() > MAX_DISPLAY_VALUE_LENGTH {

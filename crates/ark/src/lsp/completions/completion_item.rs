@@ -69,7 +69,7 @@ pub(super) fn completion_item_from_file(entry: DirEntry) -> Result<CompletionIte
 
 pub(super) fn completion_item_from_directory(entry: DirEntry) -> Result<CompletionItem> {
     let mut name = entry.file_name().to_string_lossy().to_string();
-    name.push_str("/");
+    name.push('/');
 
     let mut item = completion_item(&name, CompletionData::Directory { path: entry.path() })?;
 
