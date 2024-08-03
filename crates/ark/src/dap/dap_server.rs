@@ -436,10 +436,8 @@ impl<R: Read, W: Write> DapServer<R, W> {
             .copied()
             .unwrap_or(0);
 
-        let mut scopes = Vec::new();
-
         // Only 1 overarching scope for now
-        scopes.push(Scope {
+        let scopes = vec![Scope {
             name: String::from("Locals"),
             presentation_hint: Some(ScopePresentationhint::Locals),
             variables_reference,
@@ -451,7 +449,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
             column: None,
             end_line: None,
             end_column: None,
-        });
+        }];
 
         let rsp = req.success(ResponseBody::Scopes(ScopesResponse { scopes }));
 

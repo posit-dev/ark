@@ -212,12 +212,12 @@ fn cpl_to_string(x: Rcomplex) -> String {
 
     // If `x.i < 0`, use `-` from converting the dbl to string
     if r_dbl_is_na(x.i) || r_dbl_is_nan(x.i) || x.i >= 0.0 {
-        out.push_str("+");
+        out.push('+');
     }
 
     let imaginary = dbl_to_string(x.i);
     out.push_str(&imaginary);
-    out.push_str("i");
+    out.push('i');
 
     out
 }
@@ -229,7 +229,7 @@ fn str_to_string(x: SEXP) -> String {
         let mut out = String::from("\"");
         let elt = r_str_to_owned_utf8(x).unwrap_or(String::from("???"));
         out.push_str(&elt);
-        out.push_str("\"");
+        out.push('"');
         out
     }
 }

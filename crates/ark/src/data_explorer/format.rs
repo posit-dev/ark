@@ -222,7 +222,7 @@ fn format_list_elt(x: SEXP) -> String {
 fn format_cpl(x: ComplexVector) -> Vec<FormattedValue> {
     x.iter()
         .map(|x| match x {
-            Some(v) => FormattedValue::Value(format!("{}+{}i", v.r.to_string(), v.i.to_string())),
+            Some(v) => FormattedValue::Value(format!("{}+{}i", v.r, v.i)),
             None => FormattedValue::NA,
         })
         .collect()

@@ -314,7 +314,7 @@ fn object_variable_bare_default(name: String, x_type: SEXPTYPE) -> RVariable {
 
     let mut value = "<".to_string();
     value.push_str(&class);
-    value.push_str(">");
+    value.push('>');
 
     let type_field = value.clone();
 
@@ -383,7 +383,7 @@ fn object_class(x: SEXP) -> Option<String> {
 
     let mut out = "<".to_string();
     out.push_str(&class);
-    out.push_str(">");
+    out.push('>');
 
     Some(out)
 }

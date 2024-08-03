@@ -110,7 +110,7 @@ impl IOPub {
 
         // Flush the active stream (either stdout or stderr) at regular
         // intervals
-        let flush_interval = StreamBuffer::interval().clone();
+        let flush_interval = *StreamBuffer::interval();
         let flush_interval = tick(flush_interval);
 
         loop {
@@ -342,7 +342,7 @@ impl StreamBuffer {
         self.buffer.clear();
 
         StreamOutput {
-            name: self.name.clone(),
+            name: self.name,
             text,
         }
     }

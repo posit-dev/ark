@@ -170,7 +170,7 @@ impl RMainDap {
             DebugCallText::Finalized(call_text) => Some(call_text),
         };
 
-        let last_start_line = self.last_start_line.clone();
+        let last_start_line = self.last_start_line;
 
         let frames = self.r_stack_info(call_text, last_start_line)?;
 
@@ -227,7 +227,7 @@ impl RMainDap {
                 .add(calls)
                 .call_in(ARK_ENVS.positron_ns)?;
 
-            let n: isize = Rf_xlength(info.sexp).try_into()?;
+            let n: isize = Rf_xlength(info.sexp);
 
             let mut out = Vec::with_capacity(n as usize);
 
