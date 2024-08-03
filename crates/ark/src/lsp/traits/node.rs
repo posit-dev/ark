@@ -20,11 +20,11 @@ fn _dump_impl(cursor: &mut TreeCursor, source: &str, indent: &str, output: &mut 
         output.push_str(
             format!(
                 "{} - {} - {} ({} -- {})\n",
-                indent.to_string(),
+                indent,
                 node.utf8_text(source.as_bytes()).unwrap(),
-                node.kind().to_string(),
-                node.start_position().to_string(),
-                node.end_position().to_string(),
+                node.kind(),
+                node.start_position(),
+                node.end_position(),
             )
             .as_str(),
         );
