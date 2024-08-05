@@ -158,7 +158,7 @@ fn get_data_values_request(
             column_index,
             spec: ArraySelection::SelectRange(DataSelectionRange {
                 first_index: row_start_index,
-                last_index: row_start_index + num_rows,
+                last_index: row_start_index + num_rows - 1,
             }),
         })
         .collect();
@@ -241,6 +241,7 @@ fn test_mtcars_sort(socket: CommSocket, has_row_names: bool, display_name: Strin
                 DataExplorerBackendReply::GetDataValuesReply(data) => {
                     // The first three sorted rows should be 10.4, 10.4, and 13.3.
                     assert_eq!(data.columns.len(), 2);
+                    assert_eq!(data.columns[0].len(), 3);
                     assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("10.40".to_string()));
                     assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("10.40".to_string()));
                     assert_eq!(data.columns[0][2], ColumnValue::FormattedValue("13.30".to_string()));
