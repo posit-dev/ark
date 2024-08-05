@@ -9,3 +9,4 @@ pub mod export_selection;
 pub mod format;
 pub mod r_data_explorer;
 pub mod summary_stats;
+pub mod utils;
