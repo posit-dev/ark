@@ -59,6 +59,7 @@ use harp::environment::R_ENVS;
 use harp::eval::r_parse_eval0;
 use harp::object::RObject;
 use harp::r_symbol;
+use itertools::enumerate;
 use itertools::Itertools;
 use libr::R_GlobalEnv;
 use libr::Rf_eval;
@@ -1610,4 +1611,50 @@ fn test_update_data_filters_reapplied() {
             ColumnValue::FormattedValue("a".to_string()),
         ]);
     });
+}
+
+#[test]
+fn test_get_data_values_by_indices() {
+    r_test(|| {
+        let socket = open_data_explorer_from_expression(
+            "data.frame(x = c(1:10), y = letters[1:10], z = seq(0,1, length.out = 10))",
+            None,
+        )
+        .unwrap();
+
+        let make_req = |column_indices: Vec<i64>, row_indices: Vec<i64>| {
+            let columns = column_indices
+                .into_iter()
+                .map(|column_index| ColumnSelection {
+                    column_index,
+                    spec: ArraySelection::SelectIndices(DataSelectionIndices {
+                        indices: row_indices.clone(),
+                    }),
+                })
+                .collect();
+
+            DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
+                columns,
+                format_options: default_format_options(),
+            })
+        };
+
+        let expect_get_data_values = |column_indices, row_indices, results: Vec<Vec<&str>>| {
+            assert_match!(socket_rpc(&socket, make_req(column_indices, row_indices)),
+                DataExplorerBackendReply::GetDataValuesReply(data) => {
+                    for (i, value) in enumerate(data.columns.iter()) {
+                        let formatted_results: Vec<Vec<ColumnValue>> = results.clone().into_iter().map(|inner| {
+                            inner.into_iter().map(|v| ColumnValue::FormattedValue(v.to_string())).collect()
+                        }).collect();
+                        assert_eq!(*value, formatted_results[i]);
+                    }
+                }
+            );
+        };
+
+        expect_get_data_values(vec![0], vec![0, 9], vec![vec!["1", "10"]]);
+        expect_get_data_values(vec![1], vec![2, 4], vec![vec!["c", "e"]]);
+        expect_get_data_values(vec![2], vec![0, 9], vec![vec!["0.00", "1.00"]]);
+        expect_get_data_values(vec![2], vec![0, 10], vec![vec!["0.00"]]); // Ignore oout of bounds
+    })
 }
