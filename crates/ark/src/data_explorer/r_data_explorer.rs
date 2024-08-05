@@ -1083,8 +1083,7 @@ impl RDataExplorer {
         match selection {
             ArraySelection::SelectRange(range) => {
                 let lower_bound = cmp::min(range.first_index, num_view_rows);
-                let upper_bound = cmp::min(range.last_index, num_view_rows);
-
+                let upper_bound = cmp::min(range.last_index + 1, num_view_rows);
                 (lower_bound..upper_bound).collect()
             },
             ArraySelection::SelectIndices(indices) => indices
