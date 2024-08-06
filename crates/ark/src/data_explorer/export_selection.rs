@@ -5,19 +5,20 @@
 //
 //
 
-use amalthea::comm::data_explorer_comm::DataSelection;
 use amalthea::comm::data_explorer_comm::DataSelectionCellRange;
 use amalthea::comm::data_explorer_comm::DataSelectionIndices;
-use amalthea::comm::data_explorer_comm::DataSelectionKind;
 use amalthea::comm::data_explorer_comm::DataSelectionRange;
 use amalthea::comm::data_explorer_comm::DataSelectionSingleCell;
 use amalthea::comm::data_explorer_comm::ExportFormat;
 use amalthea::comm::data_explorer_comm::Selection;
+use amalthea::comm::data_explorer_comm::TableSelection;
+use amalthea::comm::data_explorer_comm::TableSelectionKind;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
 use libr::SEXP;
 
+use crate::data_explorer::utils::tbl_subset_with_view_indices;
 use crate::modules::ARK_ENVS;
 
 // Returns the data frame exported in the requested format as a string
@@ -30,8 +31,8 @@ use crate::modules::ARK_ENVS;
 // - format: The format to export the data frame to (csv, tsv and html are currently supported).
 pub fn export_selection(
     data: SEXP,
-    view_indices: Option<Vec<i32>>,
-    selection: DataSelection,
+    view_indices: &Option<Vec<i32>>,
+    selection: TableSelection,
     format: ExportFormat,
 ) -> anyhow::Result<String> {
     let region = get_selection(data, view_indices, selection.clone())?;
@@ -41,12 +42,12 @@ pub fn export_selection(
         ExportFormat::Html => "html",
     };
     let include_header = match selection.kind {
-        DataSelectionKind::SingleCell => false,
-        DataSelectionKind::CellRange => true,
-        DataSelectionKind::RowRange => true,
-        DataSelectionKind::ColumnRange => true,
-        DataSelectionKind::ColumnIndices => true,
-        DataSelectionKind::RowIndices => true,
+        TableSelectionKind::SingleCell => false,
+        TableSelectionKind::CellRange => true,
+        TableSelectionKind::RowRange => true,
+        TableSelectionKind::ColumnRange => true,
+        TableSelectionKind::ColumnIndices => true,
+        TableSelectionKind::RowIndices => true,
     };
     Ok(RFunction::from("export_selection")
         .param("x", region)
@@ -58,18 +59,18 @@ pub fn export_selection(
 
 fn get_selection(
     data: SEXP,
-    view_indices: Option<Vec<i32>>,
-    selection: DataSelection,
+    view_indices: &Option<Vec<i32>>,
+    selection: TableSelection,
 ) -> anyhow::Result<RObject> {
     let (i, j) = match selection.kind {
-        DataSelectionKind::SingleCell => match selection.selection {
+        TableSelectionKind::SingleCell => match selection.selection {
             Selection::SingleCell(DataSelectionSingleCell {
                 row_index,
                 column_index,
             }) => (Some(vec![row_index]), Some(vec![column_index])),
             _ => panic!("Invalid selection kind"),
         },
-        DataSelectionKind::CellRange => match selection.selection {
+        TableSelectionKind::CellRange => match selection.selection {
             Selection::CellRange(DataSelectionCellRange {
                 first_row_index,
                 last_row_index,
@@ -81,75 +82,35 @@ fn get_selection(
             ),
             _ => panic!("Invalid selection kind"),
         },
-        DataSelectionKind::RowRange => match selection.selection {
+        TableSelectionKind::RowRange => match selection.selection {
             Selection::IndexRange(DataSelectionRange {
                 first_index,
                 last_index,
             }) => (Some((first_index..=last_index).collect()), None),
             _ => panic!("Invalid selection kind"),
         },
-        DataSelectionKind::ColumnRange => match selection.selection {
+        TableSelectionKind::ColumnRange => match selection.selection {
             Selection::IndexRange(DataSelectionRange {
                 first_index,
                 last_index,
             }) => (None, Some((first_index..=last_index).collect())),
             _ => panic!("Invalid selection kind"),
         },
-        DataSelectionKind::ColumnIndices => match selection.selection {
+        TableSelectionKind::ColumnIndices => match selection.selection {
             Selection::Indices(DataSelectionIndices { indices }) => (None, Some(indices)),
             _ => panic!("Invalid selection kind"),
         },
-        DataSelectionKind::RowIndices => match selection.selection {
+        TableSelectionKind::RowIndices => match selection.selection {
             Selection::Indices(DataSelectionIndices { indices }) => (Some(indices), None),
             _ => panic!("Invalid selection kind"),
         },
     };
 
-    subset_with_view_indices(data, view_indices, i, j)
-}
-
-// This is responsible for converting 0-based indexes to 1-based indexes.
-// Except for view_indices that are already 1-based.
-fn subset_with_view_indices(
-    x: SEXP,
-    view_indices: Option<Vec<i32>>,
-    i: Option<Vec<i64>>,
-    j: Option<Vec<i64>>,
-) -> anyhow::Result<RObject> {
-    let i = match view_indices {
-        Some(view_indices) => match i {
-            Some(i) => Some(i.iter().map(|i| view_indices[*i as usize] as i64).collect()),
-            None => None,
-        },
-        None => match i {
-            Some(i) => Some(i.iter().map(|i| i + 1).collect()),
-            None => None,
-        },
-    };
-    let j = match j {
-        Some(j) => Some(j.iter().map(|j| j + 1).collect()),
-        None => None,
-    };
-    r_table_subset(x, i, j)
-}
-
-fn r_table_subset(x: SEXP, i: Option<Vec<i64>>, j: Option<Vec<i64>>) -> anyhow::Result<RObject> {
-    let mut call = RFunction::from(".ps.table_subset");
-    call.param("x", x);
-    if let Some(i) = i {
-        call.param("i", &i);
-    }
-    if let Some(j) = j {
-        call.param("j", &j);
-    }
-
-    Ok(call.call_in(ARK_ENVS.positron_ns)?)
+    tbl_subset_with_view_indices(data, view_indices, i, j)
 }
 
 #[cfg(test)]
 mod tests {
-    use amalthea::comm::data_explorer_comm::DataSelection;
-    use amalthea::comm::data_explorer_comm::DataSelectionKind;
     use amalthea::comm::data_explorer_comm::DataSelectionSingleCell;
     use amalthea::comm::data_explorer_comm::ExportFormat;
     use amalthea::comm::data_explorer_comm::Selection;
@@ -160,24 +121,24 @@ mod tests {
     use super::*;
     use crate::test::r_test;
 
-    fn export_selection_helper(data: RObject, selection: DataSelection) -> String {
+    fn export_selection_helper(data: RObject, selection: TableSelection) -> String {
         export_selection_helper_with_format(data, selection, ExportFormat::Csv)
     }
 
     fn export_selection_helper_with_format(
         data: RObject,
-        selection: DataSelection,
+        selection: TableSelection,
         format: ExportFormat,
     ) -> String {
-        export_selection(data.sexp, None, selection, format).unwrap()
+        export_selection(data.sexp, &None, selection, format).unwrap()
     }
 
     fn export_selection_helper_with_view_indices(
         data: RObject,
         view_indices: Vec<i32>,
-        selection: DataSelection,
+        selection: TableSelection,
     ) -> String {
-        export_selection(data.sexp, Some(view_indices), selection, ExportFormat::Csv).unwrap()
+        export_selection(data.sexp, &Some(view_indices), selection, ExportFormat::Csv).unwrap()
     }
 
     fn small_test_data() -> RObject {
@@ -204,8 +165,8 @@ mod tests {
         r_test(|| {
             let data = small_test_data();
 
-            let single_cell_selection = |i, j| DataSelection {
-                kind: DataSelectionKind::SingleCell,
+            let single_cell_selection = |i, j| TableSelection {
+                kind: TableSelectionKind::SingleCell,
                 selection: Selection::SingleCell(DataSelectionSingleCell {
                     row_index: i,
                     column_index: j,
@@ -255,8 +216,8 @@ mod tests {
         r_test(|| {
             let data = small_test_data();
 
-            let cell_range_selection = |i1, i2, j1, j2| DataSelection {
-                kind: DataSelectionKind::CellRange,
+            let cell_range_selection = |i1, i2, j1, j2| TableSelection {
+                kind: TableSelectionKind::CellRange,
                 selection: Selection::CellRange(DataSelectionCellRange {
                     first_row_index: i1,
                     last_row_index: i2,
@@ -300,8 +261,8 @@ mod tests {
         r_test(|| {
             let data = small_test_data();
 
-            let row_range_selection = |i1, i2| DataSelection {
-                kind: DataSelectionKind::RowRange,
+            let row_range_selection = |i1, i2| TableSelection {
+                kind: TableSelectionKind::RowRange,
                 selection: Selection::IndexRange(DataSelectionRange {
                     first_index: i1,
                     last_index: i2,
@@ -333,8 +294,8 @@ mod tests {
         r_test(|| {
             let data = small_test_data();
 
-            let col_range_selection = |j1, j2| DataSelection {
-                kind: DataSelectionKind::ColumnRange,
+            let col_range_selection = |j1, j2| TableSelection {
+                kind: TableSelectionKind::ColumnRange,
                 selection: Selection::IndexRange(DataSelectionRange {
                     first_index: j1,
                     last_index: j2,
@@ -366,8 +327,8 @@ mod tests {
         r_test(|| {
             let data = small_test_data();
 
-            let row_indices_selection = |indices| DataSelection {
-                kind: DataSelectionKind::RowIndices,
+            let row_indices_selection = |indices| TableSelection {
+                kind: TableSelectionKind::RowIndices,
                 selection: Selection::Indices(DataSelectionIndices { indices }),
             };
 
@@ -396,8 +357,8 @@ mod tests {
         r_test(|| {
             let data = small_test_data();
 
-            let col_indices_selection = |indices| DataSelection {
-                kind: DataSelectionKind::ColumnIndices,
+            let col_indices_selection = |indices| TableSelection {
+                kind: TableSelectionKind::ColumnIndices,
                 selection: Selection::Indices(DataSelectionIndices { indices }),
             };
 
@@ -426,8 +387,8 @@ mod tests {
         r_test(|| {
             let data = small_test_data();
 
-            let single_cell_selection = |i, j| DataSelection {
-                kind: DataSelectionKind::SingleCell,
+            let single_cell_selection = |i, j| TableSelection {
+                kind: TableSelectionKind::SingleCell,
                 selection: Selection::SingleCell(DataSelectionSingleCell {
                     row_index: i,
                     column_index: j,

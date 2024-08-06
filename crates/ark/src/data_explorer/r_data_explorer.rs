@@ -9,20 +9,22 @@ use std::cmp;
 use std::collections::HashMap;
 
 use amalthea::comm::comm_channel::CommMsg;
+use amalthea::comm::data_explorer_comm::ArraySelection;
 use amalthea::comm::data_explorer_comm::BackendState;
 use amalthea::comm::data_explorer_comm::ColumnDisplayType;
+use amalthea::comm::data_explorer_comm::ColumnFilter;
 use amalthea::comm::data_explorer_comm::ColumnProfileRequest;
 use amalthea::comm::data_explorer_comm::ColumnProfileResult;
 use amalthea::comm::data_explorer_comm::ColumnProfileType;
 use amalthea::comm::data_explorer_comm::ColumnProfileTypeSupportStatus;
 use amalthea::comm::data_explorer_comm::ColumnSchema;
+use amalthea::comm::data_explorer_comm::ColumnSelection;
 use amalthea::comm::data_explorer_comm::ColumnSortKey;
 use amalthea::comm::data_explorer_comm::ColumnSummaryStats;
 use amalthea::comm::data_explorer_comm::ColumnValue;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendReply;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendRequest;
 use amalthea::comm::data_explorer_comm::DataExplorerFrontendEvent;
-use amalthea::comm::data_explorer_comm::DataSelection;
 use amalthea::comm::data_explorer_comm::ExportDataSelectionFeatures;
 use amalthea::comm::data_explorer_comm::ExportDataSelectionParams;
 use amalthea::comm::data_explorer_comm::ExportFormat;
@@ -39,6 +41,7 @@ use amalthea::comm::data_explorer_comm::RowFilterParams;
 use amalthea::comm::data_explorer_comm::RowFilterType;
 use amalthea::comm::data_explorer_comm::RowFilterTypeSupportStatus;
 use amalthea::comm::data_explorer_comm::SearchSchemaFeatures;
+use amalthea::comm::data_explorer_comm::SetColumnFiltersFeatures;
 use amalthea::comm::data_explorer_comm::SetRowFiltersFeatures;
 use amalthea::comm::data_explorer_comm::SetRowFiltersParams;
 use amalthea::comm::data_explorer_comm::SetSortColumnsFeatures;
@@ -46,7 +49,9 @@ use amalthea::comm::data_explorer_comm::SetSortColumnsParams;
 use amalthea::comm::data_explorer_comm::SupportStatus;
 use amalthea::comm::data_explorer_comm::SupportedFeatures;
 use amalthea::comm::data_explorer_comm::TableData;
+use amalthea::comm::data_explorer_comm::TableRowLabels;
 use amalthea::comm::data_explorer_comm::TableSchema;
+use amalthea::comm::data_explorer_comm::TableSelection;
 use amalthea::comm::data_explorer_comm::TableShape;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::socket::comm::CommInitiator;
@@ -79,7 +84,9 @@ use uuid::Uuid;
 
 use crate::data_explorer::export_selection;
 use crate::data_explorer::format;
+use crate::data_explorer::format::format_string;
 use crate::data_explorer::summary_stats::summary_stats;
+use crate::data_explorer::utils::tbl_subset_with_view_indices;
 use crate::interface::RMain;
 use crate::lsp::events::EVENTS;
 use crate::modules::ARK_ENVS;
@@ -125,6 +132,9 @@ pub struct RDataExplorer {
 
     /// A cache containing the current set of row filters.
     row_filters: Vec<RowFilter>,
+
+    /// A cache containing the current set of column filters
+    col_filters: Vec<ColumnFilter>,
 
     /// The set of sorted row indices, if any sorts are applied. This always
     /// includes all row indices.
@@ -188,6 +198,7 @@ impl RDataExplorer {
                         view_indices: None,
                         sort_keys: vec![],
                         row_filters: vec![],
+                        col_filters: vec![],
                         comm,
                         comm_manager_tx,
                     };
@@ -438,27 +449,9 @@ impl RDataExplorer {
                 self.get_schema(column_indices)
             },
             DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
-                row_start_index,
-                num_rows,
-                column_indices,
+                columns,
                 format_options,
-            }) => {
-                // TODO: Support for data frames with over 2B rows
-                let row_start_index: i32 = row_start_index.try_into()?;
-                let num_rows: i32 = num_rows.try_into()?;
-                let column_indices: Vec<i32> = column_indices
-                    .into_iter()
-                    .map(i32::try_from)
-                    .collect::<Result<Vec<i32>, _>>()?;
-                r_task(|| {
-                    self.r_get_data_values(
-                        row_start_index,
-                        num_rows,
-                        column_indices,
-                        format_options,
-                    )
-                })
-            },
+            }) => r_task(|| self.r_get_data_values(columns, format_options)),
             DataExplorerBackendRequest::SetSortColumns(SetSortColumnsParams {
                 sort_keys: keys,
             }) => {
@@ -510,7 +503,19 @@ impl RDataExplorer {
             },
             DataExplorerBackendRequest::GetState => r_task(|| self.r_get_state()),
             DataExplorerBackendRequest::SearchSchema(_) => {
-                bail!("Data Viewer: Not yet implemented")
+                return Err(anyhow!("Data Explorer: Not yet supported"));
+            },
+            DataExplorerBackendRequest::SetColumnFilters(_) => {
+                return Err(anyhow!("Data Explorer: Not yet supported"));
+            },
+            DataExplorerBackendRequest::GetRowLabels(req) => {
+                let row_labels =
+                    r_task(|| self.r_get_row_labels(req.selection, &req.format_options))?;
+                Ok(DataExplorerBackendReply::GetRowLabelsReply(
+                    TableRowLabels {
+                        row_labels: vec![row_labels],
+                    },
+                ))
             },
             DataExplorerBackendRequest::ExportDataSelection(ExportDataSelectionParams {
                 selection,
@@ -929,7 +934,12 @@ impl RDataExplorer {
                 num_columns: self.shape.columns.len() as i64,
             },
             row_filters: self.row_filters.clone(),
+            column_filters: self.col_filters.clone(),
             sort_keys: self.sort_keys.clone(),
+            has_row_labels: match self.table.get().attr("row.names") {
+                Some(_) => true,
+                None => false,
+            },
             supported_features: SupportedFeatures {
                 get_column_profiles: GetColumnProfilesFeatures {
                     support_status: SupportStatus::Supported,
@@ -984,6 +994,10 @@ impl RDataExplorer {
                     // support grouping.
                     supports_conditions: SupportStatus::Unsupported,
                 },
+                set_column_filters: SetColumnFiltersFeatures {
+                    support_status: SupportStatus::Unsupported,
+                    supported_types: vec![],
+                },
                 set_sort_columns: SetSortColumnsFeatures {
                     support_status: SupportStatus::Supported,
                 },
@@ -1002,92 +1016,93 @@ impl RDataExplorer {
 
     fn r_get_data_values(
         &self,
-        row_start_index: i32,
-        num_rows: i32,
-        column_indices: Vec<i32>,
+        columns: Vec<ColumnSelection>,
         format_options: FormatOptions,
     ) -> anyhow::Result<DataExplorerBackendReply> {
-        let table = self.table.get().clone();
-        let object = *table;
+        let mut column_data: Vec<Vec<ColumnValue>> = Vec::with_capacity(columns.len());
+        for selection in columns {
+            let tbl = tbl_subset_with_view_indices(
+                self.table.get().sexp,
+                &self.view_indices,
+                Some(self.get_row_selection_indices(selection.spec)),
+                Some(vec![selection.column_index]),
+            )?;
 
-        let total_num_cols = self.shape.columns.len() as i32;
-        let num_view_rows = match self.view_indices {
-            Some(ref indices) => indices.len() as i32,
-            None => self.shape.num_rows,
-        };
-        let lower_bound = cmp::min(row_start_index, num_view_rows) as isize;
-        let upper_bound = cmp::min(row_start_index + num_rows, num_view_rows) as isize;
-
-        // Create R indices
-        let cols_r_idx: Vec<i32> = column_indices
-            .into_iter()
-            // For now we skip any columns requested beyond last one
-            .filter(|x| *x < total_num_cols)
-            .map(|x| x + 1)
-            .collect();
-        let cols_r_idx = RObject::try_from(&cols_r_idx)?;
-        let num_cols = cols_r_idx.length() as i32;
-
-        // Select the rows to subset; use the view indices if they exist,
-        // otherwise use all rows
-        let row_indices = match &self.view_indices {
-            Some(indices) => indices[lower_bound as usize..upper_bound as usize].to_vec(),
-            None => ((lower_bound + 1) as i32..(upper_bound + 1) as i32).collect(),
-        };
-        let rows_r_idx = RObject::try_from(&row_indices)?;
-
-        // Subset rows in advance, including unmaterialized row names. Also
-        // subset spend time creating subsetting columns that we don't need.
-        // Supports dispatch and should be vectorised in most implementations.
-        let object = RFunction::new("", ".ps.table_subset")
-            .add(object)
-            .add(rows_r_idx.sexp)
-            .add(cols_r_idx.sexp)
-            .call_in(ARK_ENVS.positron_ns)?;
-
-        let mut column_data: Vec<Vec<ColumnValue>> = Vec::new();
-        for i in 0..num_cols {
-            let column = tbl_get_column(object.sexp, i, self.shape.kind)?;
+            // The column will be always at index 0 because we already selected a single column above.
+            let column = tbl_get_column(tbl.sexp, 0, self.shape.kind)?;
             let formatted = format::format_column(column.sexp, &format_options);
             column_data.push(formatted.clone());
         }
 
-        // Look for the row names attribute and include them if present
-        // (if not, let the front end generate automatic row names)
-        let row_names = object.attr("row.names");
-        let row_labels = match row_names {
-            Some(names) => match names.kind() {
-                STRSXP => {
-                    let labels: Vec<String> = names.try_into()?;
-                    Some(vec![labels])
-                },
-                _ => {
-                    // Create row names by using the row indices of the subset
-                    // rows
-                    let labels: Vec<String> = row_indices.iter().map(|x| x.to_string()).collect();
-                    Some(vec![labels])
-                },
-            },
-            None => None,
-        };
-
         let response = TableData {
             columns: column_data,
-            row_labels,
         };
 
         Ok(DataExplorerBackendReply::GetDataValuesReply(response))
     }
 
+    fn r_get_row_labels(
+        &self,
+        selection: ArraySelection,
+        format_options: &FormatOptions,
+    ) -> anyhow::Result<Vec<String>> {
+        let tbl = tbl_subset_with_view_indices(
+            self.table.get().sexp,
+            &self.view_indices,
+            Some(self.get_row_selection_indices(selection)),
+            Some(vec![]), // Use empty vec, because we only need the row names.
+        )?;
+
+        let row_names = RFunction::new("base", "row.names")
+            .add(tbl)
+            .call_in(ARK_ENVS.positron_ns)?;
+
+        match row_names.kind() {
+            STRSXP => {
+                let labels = format_string(row_names.sexp, format_options);
+                Ok(labels)
+            },
+            _ => {
+                return Err(anyhow!(
+                    "`row.names` should be strings, got {:?}",
+                    row_names.kind()
+                ))
+            },
+        }
+    }
+
+    // Given an ArraySelection, this materializes the indices that will actually be used.
+    // Also does some sanity checks to avoid OOB access.
+    fn get_row_selection_indices(&self, selection: ArraySelection) -> Vec<i64> {
+        let num_view_rows = match self.view_indices {
+            Some(ref indices) => indices.len() as i32,
+            None => self.shape.num_rows,
+        } as i64;
+
+        // Returns the indices that will be collected
+        match selection {
+            ArraySelection::SelectRange(range) => {
+                let lower_bound = cmp::min(range.first_index, num_view_rows);
+                let upper_bound = cmp::min(range.last_index + 1, num_view_rows);
+                (lower_bound..upper_bound).collect()
+            },
+            ArraySelection::SelectIndices(indices) => indices
+                .indices
+                .into_iter()
+                .filter(|v| *v < num_view_rows)
+                .collect(),
+        }
+    }
+
     fn r_export_data_selection(
         &self,
-        selection: DataSelection,
+        selection: TableSelection,
         format: ExportFormat,
     ) -> anyhow::Result<String> {
         r_task(|| {
             export_selection::export_selection(
                 self.table.get().sexp,
-                self.view_indices.clone(),
+                &self.view_indices,
                 selection,
                 format,
             )

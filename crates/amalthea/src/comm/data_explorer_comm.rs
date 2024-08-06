@@ -15,7 +15,7 @@ use serde::Serialize;
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SearchSchemaResult {
 	/// A schema containing matching columns up to the max_results limit
-	pub matches: Option<TableSchema>,
+	pub matches: TableSchema,
 
 	/// The total number of columns matching the filter
 	pub total_num_matches: i64
@@ -47,16 +47,23 @@ pub struct BackendState {
 	/// Variable name or other string to display for tab name in UI
 	pub display_name: String,
 
-	/// Number of rows and columns in table with filters applied
+	/// Number of rows and columns in table with row/column filters applied
 	pub table_shape: TableShape,
 
 	/// Number of rows and columns in table without any filters applied
 	pub table_unfiltered_shape: TableShape,
 
-	/// The set of currently applied row filters
+	/// Indicates whether table has row labels or whether rows should be
+	/// labeled by ordinal position
+	pub has_row_labels: bool,
+
+	/// The currently applied column filters
+	pub column_filters: Vec<ColumnFilter>,
+
+	/// The currently applied row filters
 	pub row_filters: Vec<RowFilter>,
 
-	/// The set of currently applied sorts
+	/// The currently applied column sort keys
 	pub sort_keys: Vec<ColumnSortKey>,
 
 	/// The features currently supported by the backend instance
@@ -69,7 +76,7 @@ pub struct ColumnSchema {
 	/// Name of column as UTF-8 string
 	pub column_name: String,
 
-	/// The position of the column within the schema
+	/// The position of the column within the table without any column filters
 	pub column_index: i64,
 
 	/// Exact name of data type used by underlying table
@@ -101,10 +108,14 @@ pub struct ColumnSchema {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct TableData {
 	/// The columns of data
-	pub columns: Vec<Vec<ColumnValue>>,
+	pub columns: Vec<Vec<ColumnValue>>
+}
 
+/// Formatted table row labels formatted as strings
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct TableRowLabels {
 	/// Zero or more arrays of row labels
-	pub row_labels: Option<Vec<Vec<String>>>
+	pub row_labels: Vec<Vec<String>>
 }
 
 /// Formatting options for returning data values as strings
@@ -257,7 +268,7 @@ pub struct ColumnFilterTypeSupportStatus {
 /// A single column profile request
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ColumnProfileRequest {
-	/// The ordinal column index to profile
+	/// The column index (absolute, relative to unfiltered table) to profile
 	pub column_index: i64,
 
 	/// Column profiles needed
@@ -466,7 +477,7 @@ pub struct ColumnQuantileValue {
 /// Specifies a column to sort by
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ColumnSortKey {
-	/// Column index to sort by
+	/// Column index (absolute, relative to unfiltered table) to sort by
 	pub column_index: i64,
 
 	/// Sort order, ascending (true) or descending (false)
@@ -478,6 +489,9 @@ pub struct ColumnSortKey {
 pub struct SupportedFeatures {
 	/// Support for 'search_schema' RPC and its features
 	pub search_schema: SearchSchemaFeatures,
+
+	/// Support ofr 'set_column_filters' RPC and its features
+	pub set_column_filters: SetColumnFiltersFeatures,
 
 	/// Support for 'set_row_filters' RPC and its features
 	pub set_row_filters: SetRowFiltersFeatures,
@@ -495,6 +509,16 @@ pub struct SupportedFeatures {
 /// Feature flags for 'search_schema' RPC
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SearchSchemaFeatures {
+	/// The support status for this RPC method
+	pub support_status: SupportStatus,
+
+	/// A list of supported types
+	pub supported_types: Vec<ColumnFilterTypeSupportStatus>
+}
+
+/// Feature flags for 'set_column_filters' RPC
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SetColumnFiltersFeatures {
 	/// The support status for this RPC method
 	pub support_status: SupportStatus,
 
@@ -545,9 +569,9 @@ pub struct SetSortColumnsFeatures {
 /// A selection on the data grid, for copying to the clipboard or other
 /// actions
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct DataSelection {
-	/// Type of selection
-	pub kind: DataSelectionKind,
+pub struct TableSelection {
+	/// Type of selection, all indices relative to filtered row/column indices
+	pub kind: TableSelectionKind,
 
 	/// A union of selection types
 	pub selection: Selection
@@ -594,6 +618,16 @@ pub struct DataSelectionRange {
 pub struct DataSelectionIndices {
 	/// The selected indices
 	pub indices: Vec<i64>
+}
+
+/// A union of different selection types for column values
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ColumnSelection {
+	/// Column index (relative to unfiltered schema) to select data from
+	pub column_index: i64,
+
+	/// Union of selection specifications for array_selection
+	pub spec: ArraySelection
 }
 
 /// Possible values for ColumnDisplayType
@@ -780,9 +814,9 @@ pub enum ColumnProfileType {
 	Histogram
 }
 
-/// Possible values for Kind in DataSelection
+/// Possible values for Kind in TableSelection
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
-pub enum DataSelectionKind {
+pub enum TableSelectionKind {
 	#[serde(rename = "single_cell")]
 	#[strum(to_string = "single_cell")]
 	SingleCell,
@@ -896,10 +930,21 @@ pub enum Selection {
 	Indices(DataSelectionIndices)
 }
 
+/// Union type ArraySelection
+/// Union of selection specifications for array_selection
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum ArraySelection {
+	SelectRange(DataSelectionRange),
+
+	SelectIndices(DataSelectionIndices)
+}
+
 /// Parameters for the GetSchema method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct GetSchemaParams {
-	/// The column indices to fetch
+	/// The column indices (relative to the filtered/selected columns) to
+	/// fetch
 	pub column_indices: Vec<i64>,
 }
 
@@ -920,18 +965,20 @@ pub struct SearchSchemaParams {
 /// Parameters for the GetDataValues method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct GetDataValuesParams {
-	/// First row to fetch (inclusive)
-	pub row_start_index: i64,
-
-	/// Number of rows to fetch from start index. May extend beyond end of
-	/// table
-	pub num_rows: i64,
-
-	/// Indices to select, which can be a sequential, sparse, or random
-	/// selection
-	pub column_indices: Vec<i64>,
+	/// Array of column selections
+	pub columns: Vec<ColumnSelection>,
 
 	/// Formatting options for returning data values as strings
+	pub format_options: FormatOptions,
+}
+
+/// Parameters for the GetRowLabels method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct GetRowLabelsParams {
+	/// Selection of row labels
+	pub selection: ArraySelection,
+
+	/// Formatting options for returning labels as strings
 	pub format_options: FormatOptions,
 }
 
@@ -939,10 +986,17 @@ pub struct GetDataValuesParams {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ExportDataSelectionParams {
 	/// The data selection
-	pub selection: DataSelection,
+	pub selection: TableSelection,
 
 	/// Result string format
 	pub format: ExportFormat,
+}
+
+/// Parameters for the SetColumnFilters method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SetColumnFiltersParams {
+	/// Column filters to apply (or pass empty array to clear column filters)
+	pub filters: Vec<ColumnFilter>,
 }
 
 /// Parameters for the SetRowFilters method.
@@ -977,21 +1031,28 @@ pub struct GetColumnProfilesParams {
 pub enum DataExplorerBackendRequest {
 	/// Request schema
 	///
-	/// Request full schema for a table-like object
+	/// Request subset of column schemas for a table-like object
 	#[serde(rename = "get_schema")]
 	GetSchema(GetSchemaParams),
 
-	/// Search schema with column filters
+	/// Search full, unfiltered table schema with column filters
 	///
-	/// Search schema for column names matching a passed substring
+	/// Search full, unfiltered table schema for column names matching one or
+	/// more column filters
 	#[serde(rename = "search_schema")]
 	SearchSchema(SearchSchemaParams),
 
-	/// Get a rectangle of data values
+	/// Request formatted values from table columns
 	///
-	/// Request a rectangular subset of data with values formatted as strings
+	/// Request data from table columns with values formatted as strings
 	#[serde(rename = "get_data_values")]
 	GetDataValues(GetDataValuesParams),
+
+	/// Request formatted row labels from table
+	///
+	/// Request formatted row labels from table
+	#[serde(rename = "get_row_labels")]
+	GetRowLabels(GetRowLabelsParams),
 
 	/// Export data selection as a string in different formats
 	///
@@ -1000,9 +1061,15 @@ pub enum DataExplorerBackendRequest {
 	#[serde(rename = "export_data_selection")]
 	ExportDataSelection(ExportDataSelectionParams),
 
+	/// Set column filters to select subset of table columns
+	///
+	/// Set or clear column filters on table, replacing any previous filters
+	#[serde(rename = "set_column_filters")]
+	SetColumnFilters(SetColumnFiltersParams),
+
 	/// Set row filters based on column values
 	///
-	/// Set or clear row filters on table, replacing any previous filters
+	/// Row filters to apply (or pass empty array to clear row filters)
 	#[serde(rename = "set_row_filters")]
 	SetRowFilters(SetRowFiltersParams),
 
@@ -1021,7 +1088,7 @@ pub enum DataExplorerBackendRequest {
 
 	/// Get the state
 	///
-	/// Request the current backend state (shape, filters, sort keys,
+	/// Request the current backend state (table metadata, explorer state, and
 	/// features)
 	#[serde(rename = "get_state")]
 	GetState,
@@ -1038,11 +1105,17 @@ pub enum DataExplorerBackendReply {
 
 	SearchSchemaReply(SearchSchemaResult),
 
-	/// Table values formatted as strings
+	/// Requested values formatted as strings
 	GetDataValuesReply(TableData),
+
+	/// Requested formatted row labels
+	GetRowLabelsReply(TableRowLabels),
 
 	/// Exported result
 	ExportDataSelectionReply(ExportedData),
+
+	/// Reply for the set_column_filters method (no result)
+	SetColumnFiltersReply(),
 
 	/// The result of applying filters to a table
 	SetRowFiltersReply(FilterResult),

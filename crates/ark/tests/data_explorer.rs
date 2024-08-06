@@ -4,18 +4,19 @@
 // Copyright (C) 2024 Posit Software, PBC. All rights reserved.
 //
 //
-
 use amalthea::comm::comm_channel::CommMsg;
+use amalthea::comm::data_explorer_comm::ArraySelection;
 use amalthea::comm::data_explorer_comm::ColumnProfileRequest;
 use amalthea::comm::data_explorer_comm::ColumnProfileSpec;
 use amalthea::comm::data_explorer_comm::ColumnProfileType;
+use amalthea::comm::data_explorer_comm::ColumnSelection;
 use amalthea::comm::data_explorer_comm::ColumnSortKey;
 use amalthea::comm::data_explorer_comm::ColumnValue;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendReply;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendRequest;
 use amalthea::comm::data_explorer_comm::DataExplorerFrontendEvent;
-use amalthea::comm::data_explorer_comm::DataSelection;
-use amalthea::comm::data_explorer_comm::DataSelectionKind;
+use amalthea::comm::data_explorer_comm::DataSelectionIndices;
+use amalthea::comm::data_explorer_comm::DataSelectionRange;
 use amalthea::comm::data_explorer_comm::DataSelectionSingleCell;
 use amalthea::comm::data_explorer_comm::ExportDataSelectionParams;
 use amalthea::comm::data_explorer_comm::ExportFormat;
@@ -27,6 +28,7 @@ use amalthea::comm::data_explorer_comm::FilterTextSearch;
 use amalthea::comm::data_explorer_comm::FormatOptions;
 use amalthea::comm::data_explorer_comm::GetColumnProfilesParams;
 use amalthea::comm::data_explorer_comm::GetDataValuesParams;
+use amalthea::comm::data_explorer_comm::GetRowLabelsParams;
 use amalthea::comm::data_explorer_comm::GetSchemaParams;
 use amalthea::comm::data_explorer_comm::RowFilter;
 use amalthea::comm::data_explorer_comm::RowFilterCondition;
@@ -38,6 +40,8 @@ use amalthea::comm::data_explorer_comm::SetSortColumnsParams;
 use amalthea::comm::data_explorer_comm::SummaryStatsBoolean;
 use amalthea::comm::data_explorer_comm::SummaryStatsNumber;
 use amalthea::comm::data_explorer_comm::SummaryStatsString;
+use amalthea::comm::data_explorer_comm::TableSelection;
+use amalthea::comm::data_explorer_comm::TableSelectionKind;
 use amalthea::comm::data_explorer_comm::TextSearchType;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::socket;
@@ -55,6 +59,7 @@ use harp::environment::R_ENVS;
 use harp::eval::r_parse_eval0;
 use harp::object::RObject;
 use harp::r_symbol;
+use itertools::enumerate;
 use itertools::Itertools;
 use libr::R_GlobalEnv;
 use libr::Rf_eval;
@@ -142,6 +147,29 @@ fn default_format_options() -> FormatOptions {
     }
 }
 
+fn get_data_values_request(
+    row_start_index: i64,
+    num_rows: i64,
+    column_indices: Vec<i64>,
+    format_options: FormatOptions,
+) -> DataExplorerBackendRequest {
+    let columns = column_indices
+        .into_iter()
+        .map(|column_index| ColumnSelection {
+            column_index,
+            spec: ArraySelection::SelectRange(DataSelectionRange {
+                first_index: row_start_index,
+                last_index: row_start_index + num_rows - 1,
+            }),
+        })
+        .collect();
+
+    DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
+        columns,
+        format_options,
+    })
+}
+
 fn test_mtcars_sort(socket: CommSocket, has_row_names: bool, display_name: String) {
     // Get the schema for the test data set.
     let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
@@ -158,25 +186,32 @@ fn test_mtcars_sort(socket: CommSocket, has_row_names: bool, display_name: Strin
     );
 
     // Get 5 rows of data from the middle of the test data set.
-    let req = DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
-        row_start_index: 5,
-        num_rows: 5,
-        column_indices: vec![0, 1, 2, 3, 4],
-        format_options: default_format_options(),
-    });
+    let req = get_data_values_request(5, 5, vec![0, 1, 2, 3, 4], default_format_options());
 
     // Check that we got the right columns and row labels.
     assert_match!(socket_rpc(&socket, req),
         DataExplorerBackendReply::GetDataValuesReply(data) => {
             assert_eq!(data.columns.len(), 5);
-            if has_row_names {
-                let labels = data.row_labels.unwrap();
+        }
+    );
+
+    // Check row names are present
+    if has_row_names {
+        let req = DataExplorerBackendRequest::GetRowLabels(GetRowLabelsParams {
+            selection: ArraySelection::SelectIndices(DataSelectionIndices {
+                indices: vec![5, 6, 7, 8, 9],
+            }),
+            format_options: default_format_options(),
+        });
+        assert_match!(socket_rpc(&socket, req),
+            DataExplorerBackendReply::GetRowLabelsReply(row_labels) => {
+                let labels = row_labels.row_labels;
                 assert_eq!(labels[0][0], "Valiant");
                 assert_eq!(labels[0][1], "Duster 360");
                 assert_eq!(labels[0][2], "Merc 240D");
             }
-        }
-    );
+        );
+    }
 
     // Create a request to sort the data set by the 'mpg' column.
     let mpg_sort_keys = vec![ColumnSortKey {
@@ -188,8 +223,7 @@ fn test_mtcars_sort(socket: CommSocket, has_row_names: bool, display_name: Strin
     });
 
     // We should get a SetSortColumnsReply back.
-    assert_match!(socket_rpc(&socket, req),
-DataExplorerBackendReply::SetSortColumnsReply() => {});
+    assert_match!(socket_rpc(&socket, req), DataExplorerBackendReply::SetSortColumnsReply() => {});
 
     // Get the table state and ensure that the backend returns the sort keys
     let req = DataExplorerBackendRequest::GetState;
@@ -201,31 +235,37 @@ DataExplorerBackendReply::SetSortColumnsReply() => {});
     );
 
     // Get the first three rows of data from the sorted data set.
-    let req = DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
-        row_start_index: 0,
-        num_rows: 3,
-        column_indices: vec![0, 1],
-        format_options: default_format_options(),
-    });
+    let req = get_data_values_request(0, 3, vec![0, 1], default_format_options());
 
     // Check that sorted values were correctly returned.
     assert_match!(socket_rpc(&socket, req),
                 DataExplorerBackendReply::GetDataValuesReply(data) => {
                     // The first three sorted rows should be 10.4, 10.4, and 13.3.
                     assert_eq!(data.columns.len(), 2);
+                    assert_eq!(data.columns[0].len(), 3);
                     assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("10.40".to_string()));
                     assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("10.40".to_string()));
                     assert_eq!(data.columns[0][2], ColumnValue::FormattedValue("13.30".to_string()));
+        }
+    );
 
-            // Row labels should be sorted as well.
-            if has_row_names {
-                let labels = data.row_labels.unwrap();
+    // Row labels should be sorted as well.
+    if has_row_names {
+        let req = DataExplorerBackendRequest::GetRowLabels(GetRowLabelsParams {
+            selection: ArraySelection::SelectIndices(DataSelectionIndices {
+                indices: vec![0, 1, 2],
+            }),
+            format_options: default_format_options(),
+        });
+        assert_match!(socket_rpc(&socket, req),
+            DataExplorerBackendReply::GetRowLabelsReply(row_labels) => {
+                let labels = row_labels.row_labels;
                 assert_eq!(labels[0][0], "Cadillac Fleetwood");
                 assert_eq!(labels[0][1], "Lincoln Continental");
                 assert_eq!(labels[0][2], "Camaro Z28");
             }
-        }
-    );
+        );
+    }
 
     // A more complicated sort: sort by 'cyl' in descending order, then by 'mpg'
     // also in descending order.
@@ -249,12 +289,7 @@ DataExplorerBackendReply::SetSortColumnsReply() => {});
 DataExplorerBackendReply::SetSortColumnsReply() => {});
 
     // Get the first three rows of data from the sorted data set.
-    let req = DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
-        row_start_index: 0,
-        num_rows: 3,
-        column_indices: vec![0, 1],
-        format_options: default_format_options(),
-    });
+    let req = get_data_values_request(0, 3, vec![0, 1], default_format_options());
 
     // Check that sorted values were correctly returned.
     assert_match!(socket_rpc(&socket, req),
@@ -313,12 +348,7 @@ fn test_women_dataset() {
         let socket = open_data_explorer(String::from("women"));
 
         // Get 2 rows of data from the beginning of the test data set.
-        let req = DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
-            row_start_index: 0,
-            num_rows: 2,
-            column_indices: vec![0, 1],
-            format_options: default_format_options(),
-        });
+        let req = get_data_values_request(0, 2, vec![0, 1], default_format_options());
 
         // Spot check the data values.
         assert_match!(socket_rpc(&socket, req),
@@ -326,11 +356,22 @@ fn test_women_dataset() {
                 assert_eq!(data.columns.len(), 2);
                 assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("58.00".to_string()));
                 assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("59.00".to_string()));
+            }
+        );
 
-                // Row labels should be present.
-                let labels = data.row_labels.unwrap();
+        // Also check row names
+        let req = DataExplorerBackendRequest::GetRowLabels(GetRowLabelsParams {
+            selection: ArraySelection::SelectIndices(DataSelectionIndices {
+                indices: vec![0, 1, 2],
+            }),
+            format_options: default_format_options(),
+        });
+        assert_match!(socket_rpc(&socket, req),
+            DataExplorerBackendReply::GetRowLabelsReply(row_labels) => {
+                let labels = row_labels.row_labels;
                 assert_eq!(labels[0][0], "1");
                 assert_eq!(labels[0][1], "2");
+                assert_eq!(labels[0][2], "3");
             }
         );
 
@@ -386,12 +427,7 @@ fn test_women_dataset() {
 
         // Get 2 rows of data. These rows should be both sorted and filtered
         // since we have applied both a sort and a filter.
-        let req = DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
-            row_start_index: 0,
-            num_rows: 2,
-            column_indices: vec![0, 1],
-            format_options: default_format_options(),
-        });
+        let req = get_data_values_request(0, 2, vec![0, 1], default_format_options());
 
         // Spot check the data values.
         assert_match!(socket_rpc(&socket, req),
@@ -401,13 +437,6 @@ fn test_women_dataset() {
                 assert_eq!(data.columns.len(), 2);
                 assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("59.00".to_string()));
                 assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("58.00".to_string()));
-
-                // Row labels should be present. The row labels represent the
-                // rows in the original data set, so after sorting we expect the
-                // first two rows to be 2 and 1.
-                let labels = data.row_labels.unwrap();
-                assert_eq!(labels[0][0], "2");
-                assert_eq!(labels[0][1], "1");
             }
         );
     })
@@ -449,12 +478,7 @@ fn test_matrix_support() {
         DataExplorerBackendReply::SetSortColumnsReply() => {});
 
         // Get the first three rows of data from the sorted matrix.
-        let req = DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
-            row_start_index: 0,
-            num_rows: 4,
-            column_indices: vec![0, 1],
-            format_options: default_format_options(),
-        });
+        let req = get_data_values_request(0, 4, vec![0, 1], default_format_options());
 
         // Check the data values.
         assert_match!(socket_rpc(&socket, req),
@@ -961,12 +985,7 @@ fn test_search_filters() {
 
                 // Get the values from the first column again. Because a sort is applied,
                 // the new value we wrote should be at the end.
-                let req = DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
-                    row_start_index: 0,
-                    num_rows: 4,
-                    column_indices: vec![0, 1],
-                    format_options: default_format_options(),
-                });
+                let req = get_data_values_request(0, 4, vec![0, 1], default_format_options());
                 assert_match!(socket_rpc(&socket, req),
                     DataExplorerBackendReply::GetDataValuesReply(data) => {
                         assert_eq!(data.columns.len(), 2);
@@ -1028,12 +1047,7 @@ fn test_live_updates() {
 DataExplorerBackendReply::SetSortColumnsReply() => {});
 
         // Get the values from the first column.
-        let req = DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
-            row_start_index: 0,
-            num_rows: 3,
-            column_indices: vec![0],
-            format_options: default_format_options(),
-        });
+        let req = get_data_values_request(0, 3, vec![0], default_format_options());
         assert_match!(socket_rpc(&socket, req),
             DataExplorerBackendReply::GetDataValuesReply(data) => {
                 assert_eq!(data.columns.len(), 1);
@@ -1061,12 +1075,7 @@ DataExplorerBackendReply::SetSortColumnsReply() => {});
 
         // Get the values from the first column again. Because a sort is applied,
         // the new value we wrote should be at the end.
-        let req = DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
-            row_start_index: 0,
-            num_rows: 3,
-            column_indices: vec![0],
-            format_options: default_format_options(),
-        });
+        let req = get_data_values_request(0, 3, vec![0], default_format_options());
         assert_match!(socket_rpc(&socket, req),
             DataExplorerBackendReply::GetDataValuesReply(data) => {
                 assert_eq!(data.columns.len(), 1);
@@ -1385,12 +1394,7 @@ fn test_data_explorer_special_values() {
             Err(_) => return, // Skip test if tibble is not installed
         };
 
-        let req = DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
-            row_start_index: 0,
-            num_rows: 5,
-            column_indices: vec![0, 1, 2, 3, 4, 5],
-            format_options: default_format_options(),
-        });
+        let req = get_data_values_request(0, 5, vec![0, 1, 2, 3, 4, 5], default_format_options());
 
         assert_match!(socket_rpc(&socket, req),
             DataExplorerBackendReply::GetDataValuesReply(data) => {
@@ -1436,8 +1440,8 @@ fn test_export_data() {
         let selection_req =
             DataExplorerBackendRequest::ExportDataSelection(ExportDataSelectionParams {
                 format: ExportFormat::Csv,
-                selection: DataSelection {
-                    kind: DataSelectionKind::SingleCell,
+                selection: TableSelection {
+                    kind: TableSelectionKind::SingleCell,
                     selection: Selection::SingleCell(DataSelectionSingleCell {
                         row_index: 1,
                         column_index: 1,
@@ -1566,12 +1570,7 @@ fn test_update_data_filters_reapplied() {
         // Check the number of rows when using the GetData method
         let expect_get_data_rows = |n, values| {
             // Getting data out of the data explorer should have the filters applied
-            let req = DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
-                row_start_index: 0,
-                num_rows: 5,
-                column_indices: vec![0, 1, 2],
-                format_options: default_format_options(),
-            });
+            let req = get_data_values_request(0, 5, vec![0, 1], default_format_options());
 
             // Check that we got the right columns and row labels.
             assert_match!(socket_rpc(&socket, req),
@@ -1612,4 +1611,50 @@ fn test_update_data_filters_reapplied() {
             ColumnValue::FormattedValue("a".to_string()),
         ]);
     });
+}
+
+#[test]
+fn test_get_data_values_by_indices() {
+    r_test(|| {
+        let socket = open_data_explorer_from_expression(
+            "data.frame(x = c(1:10), y = letters[1:10], z = seq(0,1, length.out = 10))",
+            None,
+        )
+        .unwrap();
+
+        let make_req = |column_indices: Vec<i64>, row_indices: Vec<i64>| {
+            let columns = column_indices
+                .into_iter()
+                .map(|column_index| ColumnSelection {
+                    column_index,
+                    spec: ArraySelection::SelectIndices(DataSelectionIndices {
+                        indices: row_indices.clone(),
+                    }),
+                })
+                .collect();
+
+            DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
+                columns,
+                format_options: default_format_options(),
+            })
+        };
+
+        let expect_get_data_values = |column_indices, row_indices, results: Vec<Vec<&str>>| {
+            assert_match!(socket_rpc(&socket, make_req(column_indices, row_indices)),
+                DataExplorerBackendReply::GetDataValuesReply(data) => {
+                    for (i, value) in enumerate(data.columns.iter()) {
+                        let formatted_results: Vec<Vec<ColumnValue>> = results.clone().into_iter().map(|inner| {
+                            inner.into_iter().map(|v| ColumnValue::FormattedValue(v.to_string())).collect()
+                        }).collect();
+                        assert_eq!(*value, formatted_results[i]);
+                    }
+                }
+            );
+        };
+
+        expect_get_data_values(vec![0], vec![0, 9], vec![vec!["1", "10"]]);
+        expect_get_data_values(vec![1], vec![2, 4], vec![vec!["c", "e"]]);
+        expect_get_data_values(vec![2], vec![0, 9], vec![vec!["0.00", "1.00"]]);
+        expect_get_data_values(vec![2], vec![0, 10], vec![vec!["0.00"]]); // Ignore oout of bounds
+    })
 }
