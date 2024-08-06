@@ -348,28 +348,32 @@ write_html <- function(x, include_header) {
 }
 
 profile_histogram <- function(x, num_bins, quantiles) {
+
+  # We only use finite values for building this histogram.
+  # This removes NA's, Inf, NaN and -Inf
+  x <- x[is.finite(x)]
+
+  # No-non finite values, we early return as there's nothing we can compute.
+  if (length(x) == 0) {
+      return(list(
+          bin_edges = c(),
+          bin_counts = c(),
+          quantiles = rep(NA_real_, length(quantiles))
+      ))
+  }
+
   # If we have a Date variable, we convert it to POSIXct, in order to be able to have equal
   # width bins - that can be fractions of dates.
   if (inherits(x, "Date")) {
     x <- as.POSIXct(x)
   }
 
-  min_value <- min(x, na.rm = TRUE)
-  max_value <- max(x, na.rm = TRUE)
+  min_value <- min(x)
+  max_value <- max(x)
   range <- max_value - min_value
 
-  # If any of those are NA, it means that all values are NA's,
-  # so there are no bins to be computed and we return an empty vector.
-  if (is.na(min_value) || is.na(max_value)) {
-      return(list(
-          bin_edges = c(),
-          bin_counts = c(),
-          quantiles = c()
-      ))
-  }
-
   if (!is.null(quantiles)) {
-    quantiles <- quantile(x, probs = quantiles, na.rm = TRUE)
+    quantiles <- stats::quantile(x, probs = quantiles)
   } else {
     quantiles <- c() # we otherwise return an empty quantiles vector
   }

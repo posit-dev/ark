@@ -72,7 +72,7 @@ pub fn profile_histogram(
     .clone()
     .try_into()?;
 
-    if bin_counts.len() != (bin_edges_formatted.len() - 1) {
+    if bin_counts.len() > 0 && bin_counts.len() != (bin_edges_formatted.len() - 1) {
         return Err(anyhow!(
             "`bin_counts` not compatible with `bin_edges`. `bin_counts.len()` ({}) and `bin_edges_formatted.len()` ({})",
             bin_counts.len(),
@@ -104,8 +104,10 @@ pub fn profile_histogram(
 
 #[cfg(test)]
 mod tests {
+    use harp::assert_match;
     use harp::environment::R_ENVS;
     use harp::eval::r_parse_eval0;
+    use harp::object::RObject;
 
     use super::*;
     use crate::test::r_test;
@@ -138,6 +140,32 @@ mod tests {
             bin_counts,
             quantiles: vec![]
         })
+    }
+
+    fn test_quantiles<T>(code: &str, quantiles: Vec<f64>, expected: T)
+    where
+        RObject: From<T>,
+    {
+        let column = r_parse_eval0(code, R_ENVS.global).unwrap();
+
+        let hist = profile_histogram(
+            column.sexp,
+            &ColumnHistogramParams {
+                num_bins: 100,
+                quantiles: Some(quantiles),
+            },
+            &default_options(),
+        )
+        .unwrap();
+
+        assert_match!(hist, ColumnHistogram { quantiles, .. }  => {
+            format_string(RObject::try_from(expected).unwrap().sexp, &default_options()).
+            into_iter().
+            zip(quantiles.into_iter()).
+            for_each(|(expected, quantile)| {
+                assert_eq!(expected, quantile.value);
+            });
+        });
     }
 
     #[test]
@@ -242,6 +270,67 @@ mod tests {
                     "2017-05-17 00:00:03",
                 ],
                 vec![10, 10, 10, 10],
+            );
+        })
+    }
+
+    #[test]
+    fn test_quantile_numerics() {
+        r_test(|| {
+            test_quantiles("c(1,2,3,4,5)", vec![0.5], &vec![3.0]);
+            test_quantiles("c(1L,2L,3L,4L,5L)", vec![0.5], &vec![3.0]);
+            test_quantiles("c(0.1,0.1,0.1,0.1,0.1)", vec![0.5, 0.9], &vec![0.1, 0.1]);
+            test_quantiles("c(1, 2)", vec![0., 0.5, 1.], &vec![1., 1.5, 2.]);
+
+            // Get NA's when data is just NA's
+            test_quantiles(
+                "c(NA_real_, NA_real_)",
+                vec![0.5, 0.9],
+                r_parse_eval0("c(NA_real_, NA_real_)", R_ENVS.global).unwrap(),
+            );
+
+            // Get constant value when there's a single non-na value
+            test_quantiles(
+                "c(1, NA_real_)",
+                vec![0.5, 0.9],
+                r_parse_eval0("c(1, 1)", R_ENVS.global).unwrap(),
+            );
+
+            // Make sure Inf, -Inf and NaN are also ignored
+            test_quantiles(
+                "c(1, NaN, Inf, -Inf)",
+                vec![0.5, 0.9],
+                r_parse_eval0("c(1, 1)", R_ENVS.global).unwrap(),
+            );
+        });
+    }
+
+    #[test]
+    fn test_quantiles_dates() {
+        r_test(|| {
+            test_quantiles(
+                "as.Date(c('2010-01-01', '2010-01-02', '2010-01-03'))",
+                vec![0.5],
+                r_parse_eval0("as.Date('2010-01-02')", R_ENVS.global).unwrap(),
+            );
+            test_quantiles(
+                "as.Date(c('2010-01-01', '2010-01-02'))",
+                vec![0.5],
+                r_parse_eval0("as.POSIXct('2010-01-01 12:00:00')", R_ENVS.global).unwrap(),
+            );
+
+            // What happens when there's no representable dates between min and max.
+            test_quantiles(
+                "as.POSIXct(c('2010-01-01 00:00:01', '2010-01-01 00:00:02'))",
+                vec![0.5],
+                r_parse_eval0("as.POSIXct('2010-01-01 00:00:01')", R_ENVS.global).unwrap(),
+            );
+
+            // NA's are ignored
+            test_quantiles(
+                "as.Date(c('2010-01-01', '2010-01-02', NA))",
+                vec![0.5],
+                r_parse_eval0("as.POSIXct('2010-01-01 12:00:00')", R_ENVS.global).unwrap(),
             );
         })
     }
