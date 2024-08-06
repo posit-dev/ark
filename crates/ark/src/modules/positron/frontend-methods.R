@@ -49,11 +49,6 @@
 }
 
 #' @export
-.ps.ui.executeCommandAwait <- function(command) {
-    .ps.Call("ps_ui_execute_command_await", command)
-}
-
-#' @export
 .ps.ui.executeCode <- function(code, focus) {
     .ps.Call("ps_ui_execute_code", code, focus)
 }
