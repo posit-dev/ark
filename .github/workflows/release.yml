@@ -81,6 +81,11 @@ jobs:
                       rust_target_prefix: x86_64
 
         steps:
+            - name: Install Rust toolchain
+              run: |
+                rustup update --no-self-update stable
+                rustup default stable
+
             # Checkout sources
             - name: Checkout sources
               uses: actions/checkout@v4
