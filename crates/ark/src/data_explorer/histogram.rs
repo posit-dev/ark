@@ -155,6 +155,27 @@ mod tests {
         })
     }
 
+    fn test_histogram_sturges(code: &str, bin_edges: Vec<&str>, bin_counts: Vec<i64>) {
+        let column = r_parse_eval0(code, R_ENVS.global).unwrap();
+
+        let hist = profile_histogram(
+            column.sexp,
+            &ColumnHistogramParams {
+                method: ColumnHistogramParamsMethod::Sturges,
+                num_bins: None,
+                quantiles: None,
+            },
+            &default_options(),
+        )
+        .unwrap();
+
+        assert_eq!(hist, ColumnHistogram {
+            bin_edges: bin_edges.into_iter().map(|v| v.to_string()).collect(),
+            bin_counts,
+            quantiles: vec![]
+        })
+    }
+
     fn test_quantiles<T>(code: &str, quantiles: Vec<f64>, expected: T)
     where
         RObject: From<T>,
@@ -188,8 +209,8 @@ mod tests {
             test_histogram(
                 "0:10",
                 4,
-                vec!["0.00", "2.50", "5.00", "7.50", "10.00"],
-                vec![3, 3, 2, 3],
+                vec!["0.00", "2.00", "4.00", "6.00", "8.00", "10.00"],
+                vec![3, 2, 2, 2, 2],
             );
         })
     }
@@ -207,7 +228,7 @@ mod tests {
                     "2000-01-08 12:00:00",
                     "2000-01-11 00:00:00",
                 ],
-                vec![3, 2, 3, 3],
+                vec![3, 3, 2, 3],
             );
 
             test_histogram(
@@ -232,13 +253,26 @@ mod tests {
                 ],
                 vec![100, 0, 100],
             );
+
+            test_histogram_sturges(
+                "rep(seq(as.Date('2000-01-01'), by = 2, length.out = 2), 100)",
+                vec![
+                    "2000-01-01 00:00:00",
+                    "2000-01-01 16:00:00",
+                    "2000-01-02 08:00:00",
+                    "2000-01-03 00:00:00",
+                ],
+                vec![100, 0, 100],
+            );
         })
     }
 
     #[test]
     fn test_constant_column() {
         r_test(|| {
-            test_histogram("c(1, 1, 1)", 4, vec!["1.00", "1.00"], vec![3]);
+            // This is the default `hist` behavior, single bin containing all info.
+            test_histogram("c(1, 1, 1)", 4, vec!["0.00", "1.00"], vec![3]);
+            test_histogram_sturges("c(1, 1, 1)", vec!["0.00", "1.00"], vec![3])
         })
     }
 
@@ -255,15 +289,21 @@ mod tests {
             test_histogram(
                 "rep(c(1L, 3L), 100)",
                 3,
-                vec!["1.00", "1.67", "2.33", "3.00"],
-                vec![100, 0, 100],
+                vec!["1.00", "1.50", "2.00", "2.50", "3.00"],
+                vec![100, 0, 0, 100],
             );
 
-            test_histogram(
+            test_histogram("rep(c(1L, 3L), 100)", 2, vec!["1", "2", "3"], vec![
+                100, 100,
+            ]);
+
+            test_histogram_sturges(
                 "rep(c(1L, 3L), 100)",
-                2,
-                vec!["1.00", "2.00", "3.00"],
-                vec![100, 100],
+                vec![
+                    "1.00", "1.20", "1.40", "1.60", "1.80", "2.00", "2.20", "2.40", "2.60", "2.80",
+                    "3.00",
+                ],
+                vec![100, 0, 0, 0, 0, 0, 0, 0, 0, 100],
             );
         })
     }
@@ -276,6 +316,18 @@ mod tests {
                 // R doesn't distinguish changes in the decimal places as different dates
                 "rep(seq(as.POSIXct('2017-05-17 00:00:00'), by = '1 sec', length.out = 4), 10)",
                 10,
+                vec![
+                    "2017-05-17 00:00:00",
+                    "2017-05-17 00:00:00",
+                    "2017-05-17 00:00:01",
+                    "2017-05-17 00:00:02",
+                    "2017-05-17 00:00:03",
+                ],
+                vec![10, 10, 10, 10],
+            );
+
+            test_histogram_sturges(
+                "rep(seq(as.POSIXct('2017-05-17 00:00:00'), by = '1 sec', length.out = 4), 10)",
                 vec![
                     "2017-05-17 00:00:00",
                     "2017-05-17 00:00:00",

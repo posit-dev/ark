@@ -736,6 +736,18 @@ mod tests {
                 FormattedValue::NA.into(),
                 ColumnValue::FormattedValue("2017-05-27".to_string())
             ]);
+
+            let data = r_parse_eval0(
+                r#"as.POSIXct(c("2012-01-01 00:01:00", NA, "2017-05-27 00:00:01"))"#,
+                R_ENVS.global,
+            )
+            .unwrap();
+            let formatted = format_column(data.sexp, &default_options());
+            assert_eq!(formatted, vec![
+                ColumnValue::FormattedValue("2012-01-01 00:01:00".to_string()),
+                FormattedValue::NA.into(),
+                ColumnValue::FormattedValue("2017-05-27 00:00:01".to_string())
+            ]);
         })
     }
 

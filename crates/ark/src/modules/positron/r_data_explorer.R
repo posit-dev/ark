@@ -348,14 +348,6 @@ write_html <- function(x, include_header) {
 }
 
 profile_histogram <- function(x, method = c("fixed", "sturges"), num_bins = NULL, quantiles=NULL) {
-  method <- match.arg(method)
-
-  if (method == "fixed") {
-    stopifnot(!is.null(num_bins))
-  } else if (method == "sturges") {
-    stop("Not implemented yet")
-  }
-
   # We only use finite values for building this histogram.
   # This removes NA's, Inf, NaN and -Inf
   x <- x[is.finite(x)]
@@ -375,38 +367,55 @@ profile_histogram <- function(x, method = c("fixed", "sturges"), num_bins = NULL
     x <- as.POSIXct(x)
   }
 
-  min_value <- min(x)
-  max_value <- max(x)
-  range <- max_value - min_value
-
   if (!is.null(quantiles)) {
     quantiles <- stats::quantile(x, probs = quantiles)
   } else {
     quantiles <- c() # we otherwise return an empty quantiles vector
   }
 
-  # If the range is 0, ie the column is constant, we early return a single bin with
-  # repeated `bin_edges`.
-  if (as.numeric(range) == 0) {
-    return(list(
-        bin_edges = c(min_value, max_value),
-        bin_counts = length(x),
-        quantiles = quantiles
-    ))
+  method <- match.arg(method)
+  # For dates, `hist` does not compute the number of breaks automatically
+  # using default methods.
+  # We force something considering the integer representation.
+  if (inherits(x, "POSIXct")) {
+    if (method == "sturges") {
+        num_bins <- grDevices::nclass.Sturges(x)
+    }
+
+    # The pretty bins algorithm doesn't really make sense for dates,
+    # so we generate our own bin_edges for them.
+    min_value <- min(x)
+    max_value <- max(x)
+    range <- max_value - min_value
+
+    if (inherits(x, "POSIXct") && as.integer(range) < num_bins) {
+     num_bins <- as.integer(range) + 1L
+    }
+
+    breaks <- seq(min_value, max_value, length.out = num_bins + 1)
+  } else if (method == "sturges") {
+    breaks <- "Sturges"
+  } else if (method == "fixed") {
+    # Note that with fixed, the number of bins can be slightly different in some cases
+    # due to R building pretty bin_edges. From `hist` docs:
+    # > In the last three cases the number is a suggestion only; as the breakpoints will
+    # > be set to `pretty` values.
+    breaks <- num_bins
+    stopifnot(is.integer(breaks) && length(breaks) == 1)
   }
 
-  # For dates (internally stored as integers - even if in numeric vectors)
-  # if the data range is smaller than `num_bins`, we will create `range` breaks.
-  # This avoids creating intermediate bins that wouldn't show any value. For `Date`, it avoids creating
-  # invalid dates, eg `as.POSIXct("2001-01-01 00:00:00") + 0.5` is the same as date as `as.POSIXct("2001-01-01 00:00:00")`
-  # but if compared using `==` they yield FALSE.
-  if (inherits(x, "POSIXct") && as.integer(range) < num_bins) {
-    num_bins <- as.integer(range) + 1L
-  }
+  # A warning is raised when computing the histogram for dates due to
+  # integer overflow in when computing n cell midpoints, but we don't
+  # use it, so it can be safely ignored.
+  suppressWarnings(h <- graphics::hist(x, breaks = breaks, plot = FALSE))
 
-  # We now compute the breaks that we will use when doing cut.
-  bin_edges <- seq(min_value, max_value, length.out = num_bins + 1)
-  bin_counts <- table(cut(x, breaks = bin_edges, include.lowest = TRUE))
+  bin_edges <- h$breaks
+  bin_counts <- h$counts
+
+  # For dates, we convert back the breaks to the date representation.
+  if (inherits(x, "POSIXct")) {
+    bin_edges <- as.POSIXct(h$breaks, tz = attr(x, "tzone"))
+  }
 
   list(
       bin_edges = bin_edges,
