@@ -347,7 +347,14 @@ write_html <- function(x, include_header) {
     knitr::kable(x, format = "html", row.names = FALSE, col.names = col_names)
 }
 
-profile_histogram <- function(x, num_bins, quantiles) {
+profile_histogram <- function(x, method = c("fixed", "sturges"), num_bins = NULL, quantiles=NULL) {
+  method <- match.arg(method)
+
+  if (method == "fixed") {
+    stopifnot(!is.null(num_bins))
+  } else if (method == "sturges") {
+    stop("Not implemented yet")
+  }
 
   # We only use finite values for building this histogram.
   # This removes NA's, Inf, NaN and -Inf

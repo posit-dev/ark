@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use amalthea::comm::data_explorer_comm::ColumnHistogram;
 use amalthea::comm::data_explorer_comm::ColumnHistogramParams;
+use amalthea::comm::data_explorer_comm::ColumnHistogramParamsMethod;
 use amalthea::comm::data_explorer_comm::ColumnQuantileValue;
 use amalthea::comm::data_explorer_comm::FormatOptions;
 use anyhow::anyhow;
@@ -45,9 +46,20 @@ pub fn profile_histogram(
         },
     }
 
+    let num_bins: RObject = match params.num_bins {
+        Some(v) => (v as i32).into(),
+        None => r_null().into(),
+    };
+
+    let method: RObject = match params.method {
+        ColumnHistogramParamsMethod::Fixed => "fixed".into(),
+        ColumnHistogramParamsMethod::Sturges => "sturges".into(),
+    };
+
     let results: HashMap<String, RObject> = RFunction::from("profile_histogram")
         .add(column)
-        .add(params.num_bins as i32)
+        .add(method)
+        .add(num_bins)
         .add(quantiles)
         .call_in(ARK_ENVS.positron_ns)?
         .try_into()?;
@@ -128,7 +140,8 @@ mod tests {
         let hist = profile_histogram(
             column.sexp,
             &ColumnHistogramParams {
-                num_bins,
+                method: ColumnHistogramParamsMethod::Fixed,
+                num_bins: Some(num_bins),
                 quantiles: None,
             },
             &default_options(),
@@ -151,7 +164,8 @@ mod tests {
         let hist = profile_histogram(
             column.sexp,
             &ColumnHistogramParams {
-                num_bins: 100,
+                method: ColumnHistogramParamsMethod::Fixed,
+                num_bins: Some(100),
                 quantiles: Some(quantiles),
             },
             &default_options(),
