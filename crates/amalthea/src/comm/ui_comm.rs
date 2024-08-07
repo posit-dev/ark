@@ -335,6 +335,13 @@ pub enum UiFrontendRequest {
 	#[serde(rename = "debug_sleep")]
 	DebugSleep(DebugSleepParams),
 
+	/// Execute a Positron command
+	///
+	/// Use this to execute a Positron command from the backend (like from a
+	/// runtime), and wait for the command to finish
+	#[serde(rename = "execute_command")]
+	ExecuteCommand(ExecuteCommandParams),
+
 	/// Get a logical for a `when` clause (a set of context keys)
 	///
 	/// Use this to evaluate a `when` clause of context keys in the frontend
@@ -386,6 +393,9 @@ pub enum UiFrontendReply {
 
 	/// Reply for the debug_sleep method (no result)
 	DebugSleepReply(),
+
+	/// Reply for the execute_command method (no result)
+	ExecuteCommandReply(),
 
 	/// Whether the `when` clause evaluates as true or false
 	EvaluateWhenClauseReply(bool),
@@ -439,11 +449,6 @@ pub enum UiFrontendEvent {
 	#[serde(rename = "working_directory")]
 	WorkingDirectory(WorkingDirectoryParams),
 
-	/// Use this to execute a Positron command from the backend (like from a
-	/// runtime)
-	#[serde(rename = "execute_command")]
-	ExecuteCommand(ExecuteCommandParams),
-
 	/// Use this to open a workspace in Positron
 	#[serde(rename = "open_workspace")]
 	OpenWorkspace(OpenWorkspaceParams),
@@ -475,6 +480,7 @@ pub fn ui_frontend_reply_from_value(
 		UiFrontendRequest::ShowQuestion(_) => Ok(UiFrontendReply::ShowQuestionReply(serde_json::from_value(reply)?)),
 		UiFrontendRequest::ShowDialog(_) => Ok(UiFrontendReply::ShowDialogReply()),
 		UiFrontendRequest::DebugSleep(_) => Ok(UiFrontendReply::DebugSleepReply()),
+		UiFrontendRequest::ExecuteCommand(_) => Ok(UiFrontendReply::ExecuteCommandReply()),
 		UiFrontendRequest::EvaluateWhenClause(_) => Ok(UiFrontendReply::EvaluateWhenClauseReply(serde_json::from_value(reply)?)),
 		UiFrontendRequest::ExecuteCode(_) => Ok(UiFrontendReply::ExecuteCodeReply()),
 		UiFrontendRequest::WorkspaceFolder => Ok(UiFrontendReply::WorkspaceFolderReply(serde_json::from_value(reply)?)),

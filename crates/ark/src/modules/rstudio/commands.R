@@ -12,7 +12,7 @@
             if (.ps.ui.evaluateWhenClause("config.git.enabled && gitOpenRepositoryCount > 0")) {
                 "git.refresh"
             } else {
-                return()
+                return(NULL)
             }
         },
         "refreshFiles" = "workbench.files.action.refreshFilesExplorer",
