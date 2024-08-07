@@ -417,8 +417,11 @@ pub struct SummaryStatsDatetime {
 /// Parameters for a column histogram profile request
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ColumnHistogramParams {
+	/// Method for determining number of bins
+	pub method: ColumnHistogramParamsMethod,
+
 	/// Number of bins in the computed histogram
-	pub num_bins: i64,
+	pub num_bins: Option<i64>,
 
 	/// Sample quantiles (numbers between 0 and 1) to compute along with the
 	/// histogram
@@ -812,6 +815,18 @@ pub enum ColumnProfileType {
 	#[serde(rename = "histogram")]
 	#[strum(to_string = "histogram")]
 	Histogram
+}
+
+/// Possible values for Method in ColumnHistogramParams
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
+pub enum ColumnHistogramParamsMethod {
+	#[serde(rename = "sturges")]
+	#[strum(to_string = "sturges")]
+	Sturges,
+
+	#[serde(rename = "fixed")]
+	#[strum(to_string = "fixed")]
+	Fixed
 }
 
 /// Possible values for Kind in TableSelection
