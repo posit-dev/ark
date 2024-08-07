@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use amalthea::comm::data_explorer_comm::ColumnFrequencyTable;
+use amalthea::comm::data_explorer_comm::ColumnFrequencyTableParams;
 use amalthea::comm::data_explorer_comm::ColumnHistogram;
 use amalthea::comm::data_explorer_comm::ColumnHistogramParams;
 use amalthea::comm::data_explorer_comm::ColumnHistogramParamsMethod;
@@ -114,6 +116,46 @@ pub fn profile_histogram(
     })
 }
 
+pub fn profile_frequency_table(
+    column: SEXP,
+    params: &ColumnFrequencyTableParams,
+    format_options: &FormatOptions,
+) -> anyhow::Result<ColumnFrequencyTable> {
+    let results: HashMap<String, RObject> = RFunction::from("profile_frequency_table")
+        .add(column)
+        .add(params.limit as i32)
+        .call_in(ARK_ENVS.positron_ns)?
+        .try_into()?;
+
+    let values = unwrap!(results.get("values"), None => {
+        return Err(anyhow!("Something went wrong when computing `values`"));
+    });
+    let values_formatted = format_string(values.sexp, format_options);
+
+    let counts: Vec<i32> = unwrap!(results.get("counts"), None => {
+        return Err(anyhow!("Something went wrong when computing `counts`"));
+    })
+    .clone()
+    .try_into()?;
+
+    let other_count = if counts.len() == params.limit as usize {
+        let val: i32 = unwrap!(results.get("other_count"), None => {
+            return Err(anyhow!("Something went wrong when computing `others_count`"))
+        })
+        .clone()
+        .try_into()?;
+        Some(val as i64)
+    } else {
+        None
+    };
+
+    Ok(ColumnFrequencyTable {
+        values: values_formatted,
+        counts: counts.into_iter().map(|v| v as i64).collect(),
+        other_count,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use harp::assert_match;
@@ -200,6 +242,30 @@ mod tests {
             for_each(|(expected, quantile)| {
                 assert_eq!(expected, quantile.value);
             });
+        });
+    }
+
+    fn test_frequency_table<T>(
+        code: &str,
+        limit: i64,
+        values: T,
+        counts: Vec<i64>,
+        other_count: Option<i64>,
+    ) where
+        RObject: From<T>,
+    {
+        let column = r_parse_eval0(code, R_ENVS.global).unwrap();
+        let freq_table = profile_frequency_table(
+            column.sexp,
+            &ColumnFrequencyTableParams { limit },
+            &default_options(),
+        )
+        .unwrap();
+
+        assert_eq!(freq_table, ColumnFrequencyTable {
+            values: format_string(RObject::try_from(values).unwrap().sexp, &default_options()),
+            counts,
+            other_count
         });
     }
 
@@ -397,6 +463,107 @@ mod tests {
                 "as.Date(c('2010-01-01', '2010-01-02', NA))",
                 vec![0.5],
                 r_parse_eval0("as.POSIXct('2010-01-01 12:00:00')", R_ENVS.global).unwrap(),
+            );
+        })
+    }
+
+    #[test]
+    fn test_frequency_table_strings() {
+        r_test(|| {
+            test_frequency_table(
+                "c(rep('a', 100), rep('b', 200), rep('c', 150))",
+                10,
+                r_parse_eval0("c('b', 'c', 'a')", R_ENVS.global).unwrap(),
+                vec![200, 150, 100],
+                None,
+            );
+            test_frequency_table(
+                "c(rep('a', 100), rep('b', 200), rep('c', 150))",
+                2,
+                r_parse_eval0("c('b', 'c')", R_ENVS.global).unwrap(),
+                vec![200, 150],
+                Some(100),
+            );
+
+            // NA's do not count
+            test_frequency_table(
+                "c(rep('a', 100), rep('b', 200), rep('c', 150), NA)",
+                10,
+                r_parse_eval0("c('b', 'c', 'a')", R_ENVS.global).unwrap(),
+                vec![200, 150, 100],
+                None,
+            );
+        })
+    }
+
+    #[test]
+    fn test_frequency_table_factors() {
+        r_test(|| {
+            test_frequency_table(
+                "factor(c(rep('a', 100), rep('b', 200), rep('c', 150)))",
+                10,
+                r_parse_eval0("c('b', 'c', 'a')", R_ENVS.global).unwrap(),
+                vec![200, 150, 100],
+                None,
+            );
+            test_frequency_table(
+                "factor(c(rep('a', 100), rep('b', 200), rep('c', 150)))",
+                2,
+                r_parse_eval0("c('b', 'c')", R_ENVS.global).unwrap(),
+                vec![200, 150],
+                Some(100),
+            );
+        })
+    }
+
+    #[test]
+    fn test_frequency_table_numerics_and_dates() {
+        r_test(|| {
+            test_frequency_table(
+                "rep(0:10/10, 1:11)",
+                100,
+                r_parse_eval0("10:0/10", R_ENVS.global).unwrap(),
+                vec![11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1],
+                None,
+            );
+
+            test_frequency_table(
+                "rep(0:10/10, 1:11)",
+                5,
+                r_parse_eval0("10:6/10", R_ENVS.global).unwrap(),
+                vec![11, 10, 9, 8, 7],
+                Some(21),
+            );
+
+            // Inf and -Inf appear as levels but not NA's or NaN
+            test_frequency_table(
+                "c(NaN, Inf, -Inf, NA)",
+                5,
+                r_parse_eval0("c(Inf, -Inf)", R_ENVS.global).unwrap(),
+                vec![1, 1],
+                None,
+            );
+
+            // Works with integers
+            test_frequency_table(
+                "rep(0:10, 1:11)",
+                5,
+                r_parse_eval0("10:6", R_ENVS.global).unwrap(),
+                vec![11, 10, 9, 8, 7],
+                Some(21),
+            );
+
+            // Works with dates
+            test_frequency_table(
+                "rep(as.POSIXct(c('2010-01-01', '2017-05-17 11:00:00')), c(100, 200))",
+                5,
+                r_parse_eval0(
+                    "as.POSIXct(c('2017-05-17 11:00:00','2010-01-01'))",
+                    R_ENVS.global,
+                )
+                .unwrap(),
+                vec![200, 100],
+                None,
             );
         })
     }

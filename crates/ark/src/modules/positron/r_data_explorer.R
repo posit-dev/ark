@@ -423,3 +423,33 @@ profile_histogram <- function(x, method = c("fixed", "sturges"), num_bins = NULL
       quantiles = quantiles
   )
 }
+
+profile_frequency_table <- function(x, limit) {
+    x <- x[!is.na(x)]
+
+    if (length(x) == 0) {
+        return(list(
+            values = c(),
+            counts = c(),
+            other_count = 0
+        ))
+    }
+
+    # We don't use `table` directly because we don't want to loose the type
+    # of value types so they can be formatted with our formatting routines.
+    values <- unique(x)
+    f <- factor(x, levels = values)
+    counts <- tabulate(f)
+
+    index <- utils::head(order(counts, decreasing = TRUE), limit)
+    values <- values[index]
+    counts <- counts[index]
+    other_count <- length(x) - sum(counts)
+
+    # Sorting and trimming to a `limit` is defered to the Rust side
+    list(
+        values = values,
+        counts = counts,
+        other_count = other_count
+    )
+}
