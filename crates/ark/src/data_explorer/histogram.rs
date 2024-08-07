@@ -555,7 +555,7 @@ mod tests {
 
             // Works with dates
             test_frequency_table(
-                "rep(as.POSIXct(c('2010-01-01', '2017-05-17 11:00:00')), c(100, 200))",
+                "as.POSIXct(rep(c('2010-01-01', '2017-05-17 11:00:00'), c(100, 200)))",
                 5,
                 r_parse_eval0(
                     "as.POSIXct(c('2017-05-17 11:00:00','2010-01-01'))",
