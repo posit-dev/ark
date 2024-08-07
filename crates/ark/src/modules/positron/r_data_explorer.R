@@ -438,7 +438,7 @@ profile_frequency_table <- function(x, limit) {
     # We don't use `table` directly because we don't want to loose the type
     # of value types so they can be formatted with our formatting routines.
     values <- unique(x)
-    f <- factor(x, levels = values)
+    f <- factor(unclass(x), levels = unclass(values))
     counts <- tabulate(f)
 
     index <- utils::head(order(counts, decreasing = TRUE), limit)
