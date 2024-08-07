@@ -45,7 +45,6 @@ use amalthea::comm::data_explorer_comm::TableSelectionKind;
 use amalthea::comm::data_explorer_comm::TextSearchType;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::socket;
-use amalthea::socket::comm::CommSocket;
 use ark::data_explorer::r_data_explorer::DataObjectEnvInfo;
 use ark::data_explorer::r_data_explorer::RDataExplorer;
 use ark::lsp::events::EVENTS;
@@ -64,6 +63,16 @@ use itertools::Itertools;
 use libr::R_GlobalEnv;
 use libr::Rf_eval;
 
+struct DataExplorerSocket {
+    socket: socket::comm::CommSocket,
+}
+
+impl Drop for DataExplorerSocket {
+    fn drop(&mut self) {
+        self.socket.incoming_tx.send(CommMsg::Close).unwrap();
+    }
+}
+
 /// Test helper method to open a built-in dataset in the data explorer.
 ///
 /// Parameters:
@@ -71,7 +80,7 @@ use libr::Rf_eval;
 ///   dataset names returned by `data()`.
 ///
 /// Returns a comm socket that can be used to communicate with the data explorer.
-fn open_data_explorer(dataset: String) -> socket::comm::CommSocket {
+fn open_data_explorer(dataset: String) -> DataExplorerSocket {
     // Create a dummy comm manager channel.
     let (comm_manager_tx, comm_manager_rx) = bounded::<CommManagerEvent>(0);
 
@@ -88,7 +97,7 @@ fn open_data_explorer(dataset: String) -> socket::comm::CommSocket {
     match msg {
         CommManagerEvent::Opened(socket, _value) => {
             assert_eq!(socket.comm_name, "positron.dataExplorer");
-            socket
+            DataExplorerSocket { socket }
         },
         _ => panic!("Unexpected Comm Manager Event"),
     }
@@ -97,7 +106,7 @@ fn open_data_explorer(dataset: String) -> socket::comm::CommSocket {
 fn open_data_explorer_from_expression(
     expr: &str,
     bind: Option<&str>,
-) -> anyhow::Result<socket::comm::CommSocket> {
+) -> anyhow::Result<DataExplorerSocket> {
     let object = r_parse_eval0(expr, R_ENVS.global)?;
 
     let binding = match bind {
@@ -119,7 +128,7 @@ fn open_data_explorer_from_expression(
     match msg {
         CommManagerEvent::Opened(socket, _value) => {
             assert_eq!(socket.comm_name, "positron.dataExplorer");
-            Ok(socket)
+            Ok(DataExplorerSocket { socket })
         },
         _ => panic!("Unexpected Comm Manager Event"),
     }
@@ -131,10 +140,10 @@ fn open_data_explorer_from_expression(
 /// - socket: The comm socket to use for communication.
 /// - req: The request to send.
 fn socket_rpc(
-    socket: &socket::comm::CommSocket,
+    socket: &DataExplorerSocket,
     req: DataExplorerBackendRequest,
 ) -> DataExplorerBackendReply {
-    socket_rpc_request::<DataExplorerBackendRequest, DataExplorerBackendReply>(&socket, req)
+    socket_rpc_request::<DataExplorerBackendRequest, DataExplorerBackendReply>(&socket.socket, req)
 }
 
 fn default_format_options() -> FormatOptions {
@@ -170,7 +179,7 @@ fn get_data_values_request(
     })
 }
 
-fn test_mtcars_sort(socket: CommSocket, has_row_names: bool, display_name: String) {
+fn test_mtcars_sort(socket: DataExplorerSocket, has_row_names: bool, display_name: String) {
     // Get the schema for the test data set.
     let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
         column_indices: vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
@@ -1025,7 +1034,7 @@ fn test_live_updates() {
         EVENTS.console_prompt.emit(());
 
         // Wait for an update event to arrive
-        assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
+        assert_match!(socket.socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
             CommMsg::Data(value) => {
                 // Make sure it's a data update event.
                 assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
@@ -1065,7 +1074,7 @@ DataExplorerBackendReply::SetSortColumnsReply() => {});
         EVENTS.console_prompt.emit(());
 
         // Wait for an update event to arrive
-        assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
+        assert_match!(socket.socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
             CommMsg::Data(value) => {
                 // Make sure it's a data update event.
                 assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
@@ -1097,7 +1106,7 @@ DataExplorerBackendReply::SetSortColumnsReply() => {});
         EVENTS.console_prompt.emit(());
 
         // This should trigger a schema update event.
-        assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
+        assert_match!(socket.socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
             CommMsg::Data(value) => {
                 // Make sure it's schema update event.
                 assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
@@ -1124,7 +1133,7 @@ DataExplorerBackendReply::SetSortColumnsReply() => {});
         EVENTS.console_prompt.emit(());
 
         // Wait for an close event to arrive
-        assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
+        assert_match!(socket.socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
             CommMsg::Close => {}
         );
     })
@@ -1309,7 +1318,7 @@ fn test_invalid_filters_preserved() {
         EVENTS.console_prompt.emit(());
 
         // Wait for an update event to arrive
-        assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
+        assert_match!(socket.socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
             CommMsg::Data(value) => {
                 // Make sure it's a data update event.
                 assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
@@ -1333,7 +1342,7 @@ fn test_invalid_filters_preserved() {
         // check for changes.
         EVENTS.console_prompt.emit(());
         // Wait for an update event to arrive
-        assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
+        assert_match!(socket.socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
             CommMsg::Data(value) => {
                 // Make sure it's a data update event.
                 assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
@@ -1356,7 +1365,7 @@ fn test_invalid_filters_preserved() {
         // check for changes.
         EVENTS.console_prompt.emit(());
         // Wait for an update event to arrive
-        assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
+        assert_match!(socket.socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
             CommMsg::Data(value) => {
                 // Make sure it's a data update event.
                 assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
@@ -1596,7 +1605,7 @@ fn test_update_data_filters_reapplied() {
 
         // Wait for an update event to arrive
         // Since only data changed, we expect a Data Update Event
-        assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
+        assert_match!(socket.socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
             CommMsg::Data(value) => {
                 // Make sure it's a data update event.
                 assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
