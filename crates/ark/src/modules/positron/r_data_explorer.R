@@ -435,23 +435,11 @@ profile_frequency_table <- function(x, limit) {
         ))
     }
 
-    # We don't use `table` directly because we don't want to loose the type
-    # of value types so they can be formatted with our formatting routines.
     if (!is.factor(x)) {
-        # This does more or less the same as `table` does with some small differences:
-        # - `table` calls `factor` without setting the levels, which triggers `factor` to
-        #   order the labels. Thhus we then loose the original values, as they are converted
-        #   to strings.
-        # - For dates, this is specially problematic as it's possible for two different
-        #   values to have the same string representation.
+        # We don't use `table` directly because we don't want to loose the type
+        # of value types so they can be formatted with our formatting routines.
         values <- unique(x)
-        if (inherits(x, "Date") || inherits(x, "POSIXt")) {
-            f <- factor(unclass(x), levels = unclass(values))
-        } else {
-            f <- factor(x, levels = values)
-        }
-
-        counts <- tabulate(f)
+        counts <- tabulate(match(x, values))
     } else {
         values <- levels(x)
         counts <- table(x)
