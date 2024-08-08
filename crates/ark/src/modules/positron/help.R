@@ -139,6 +139,11 @@ getHtmlHelpContentsInstalled <- function(helpFiles, package) {
 
   rd <- utils:::.getHelpFile(helpFile)
 
+  # Reject helps unrelated to a function usage
+  if (length(tools:::.Rd_get_section(rd, "usage")) == 0) {
+    return(NULL)
+  }
+
   # Set 'package' now if it was unknown.
   if (is.null(package)) {
     pattern <- "/library/([^/]+)/"
