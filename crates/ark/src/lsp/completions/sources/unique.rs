@@ -11,7 +11,12 @@ mod custom;
 mod extractor;
 mod file_path;
 mod namespace;
-mod string;
+
+// TODO: string can be either a unique case (e.g. file path) or a composite case
+// (e.g. a variable name in `[` operator). To handle the both case, use this in
+// the code for composite cases because otherwise it returns early and never
+// visits the latter case.
+pub(crate) mod string;
 
 use anyhow::Result;
 use colon::completions_from_single_colon;
@@ -20,7 +25,6 @@ use custom::completions_from_custom_source;
 use extractor::completions_from_at;
 use extractor::completions_from_dollar;
 use namespace::completions_from_namespace;
-use string::completions_from_string;
 use tower_lsp::lsp_types::CompletionItem;
 
 use crate::lsp::document_context::DocumentContext;
@@ -38,11 +42,6 @@ pub fn completions_from_unique_sources(
 
     // Try comment / roxygen2 completions
     if let Some(completions) = completions_from_comment(context)? {
-        return Ok(Some(completions));
-    }
-
-    // Try string (like file path) completions
-    if let Some(completions) = completions_from_string(context)? {
         return Ok(Some(completions));
     }
 

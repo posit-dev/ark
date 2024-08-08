@@ -31,6 +31,11 @@ use tower_lsp::lsp_types::CompletionItemKind;
 use tree_sitter::Node;
 use workspace::completions_from_workspace;
 
+// TODO: string can be either a unique case (e.g. file path) or a composite case
+// (e.g. a variable name in `[` operator). To handle the both case, use this in
+// the code for composite cases because otherwise it returns early and never
+// visits the latter case.
+use super::unique::string::completions_from_string;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::state::WorldState;
 use crate::treesitter::NodeType;
@@ -58,6 +63,11 @@ pub fn completions_from_composite_sources(
 
     // Try subset completions (`[` or `[[`)
     if let Some(mut additional_completions) = completions_from_subset(context)? {
+        completions.append(&mut additional_completions);
+    }
+
+    // Try string (like file path) completions
+    if let Some(mut additional_completions) = completions_from_string(context)? {
         completions.append(&mut additional_completions);
     }
 
@@ -150,9 +160,11 @@ fn is_identifier_like(x: Node) -> bool {
 mod tests {
     use tree_sitter::Point;
 
+    use crate::lsp::completions::sources::completions_from_composite_sources;
     use crate::lsp::completions::sources::composite::is_identifier_like;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
+    use crate::lsp::state::WorldState;
     use crate::test::r_test;
     use crate::treesitter::NodeType;
     use crate::treesitter::NodeTypeExt;
@@ -173,6 +185,23 @@ mod tests {
                     NodeType::Anonymous(keyword.to_string())
                 );
             }
+        })
+    }
+
+    #[test]
+    fn test_unique_completion_from_string_in_composite() {
+        r_test(|| {
+            // Before or after the `''`, i.e. `|''` or `''|`.
+            // Still considered part of the string node.
+            let point = Point { row: 0, column: 2 };
+
+            // Assume home directory is not empty
+            let document = Document::new("'~/'", None);
+
+            // `None` trigger -> Return file completions
+            let context = DocumentContext::new(&document, point, None);
+            let res = completions_from_composite_sources(&context, &WorldState::default()).unwrap();
+            assert!(!res.is_empty());
         })
     }
 }
