@@ -513,6 +513,15 @@ mod tests {
                 vec![200, 150],
                 Some(100),
             );
+
+            // Account for all factor levels, even if they don't appear in the data
+            test_frequency_table(
+                "factor(rep(c('a', 'b'), c(100, 200)), levels = c('a', 'b', 'c'))",
+                10,
+                r_parse_eval0("c('b', 'a', 'c')", R_ENVS.global).unwrap(),
+                vec![200, 100, 0],
+                None,
+            );
         })
     }
 
