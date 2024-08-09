@@ -446,7 +446,6 @@ profile_frequency_table <- function(x, limit) {
     counts <- counts[index]
     other_count <- length(x) - sum(counts)
 
-    # Sorting and trimming to a `limit` is defered to the Rust side
     list(
         values = values,
         counts = counts,
