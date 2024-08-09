@@ -36,12 +36,8 @@
     invisible(.ps.Call("ps_view_data_frame", x, title, var, env))
 }
 
-.ps.null_count <- function(column, filtered_indices) {
-    if (is.null(filtered_indices)) {
-        sum(is.na(column))
-    } else {
-        sum(is.na(column[filtered_indices]))
-    }
+.ps.null_count <- function(column) {
+    sum(is.na(column))
 }
 
 summary_stats_number <- function(col) {
@@ -322,4 +318,114 @@ write_html <- function(x, include_header) {
     }
     local_options(knitr.kable.NA = "") # use empty strings for NA's
     knitr::kable(x, format = "html", row.names = FALSE, col.names = col_names)
+}
+
+profile_histogram <- function(x, method = c("fixed", "sturges"), num_bins = NULL, quantiles=NULL) {
+  # We only use finite values for building this histogram.
+  # This removes NA's, Inf, NaN and -Inf
+  x <- x[is.finite(x)]
+
+  # No-non finite values, we early return as there's nothing we can compute.
+  if (length(x) == 0) {
+      return(list(
+          bin_edges = c(),
+          bin_counts = c(),
+          quantiles = rep(NA_real_, length(quantiles))
+      ))
+  }
+
+  # If we have a Date variable, we convert it to POSIXct, in order to be able to have equal
+  # width bins - that can be fractions of dates.
+  if (inherits(x, "Date")) {
+    x <- as.POSIXct(x)
+  }
+
+  if (!is.null(quantiles)) {
+    quantiles <- stats::quantile(x, probs = quantiles)
+  } else {
+    quantiles <- c() # we otherwise return an empty quantiles vector
+  }
+
+  method <- match.arg(method)
+  # For dates, `hist` does not compute the number of breaks automatically
+  # using default methods.
+  # We force something considering the integer representation.
+  if (inherits(x, "POSIXct")) {
+    if (method == "sturges") {
+        num_bins <- grDevices::nclass.Sturges(x)
+    }
+
+    # The pretty bins algorithm doesn't really make sense for dates,
+    # so we generate our own bin_edges for them.
+    min_value <- min(x)
+    max_value <- max(x)
+    range <- max_value - min_value
+
+    if (inherits(x, "POSIXct") && as.integer(range) < num_bins) {
+     num_bins <- as.integer(range) + 1L
+    }
+
+    breaks <- seq(min_value, max_value, length.out = num_bins + 1)
+  } else if (method == "sturges") {
+    breaks <- "Sturges"
+  } else if (method == "fixed") {
+    # Note that with fixed, the number of bins can be slightly different in some cases
+    # due to R building pretty bin_edges. From `hist` docs:
+    # > In the last three cases the number is a suggestion only; as the breakpoints will
+    # > be set to `pretty` values.
+    breaks <- num_bins
+    stopifnot(is.integer(breaks) && length(breaks) == 1)
+  }
+
+  # A warning is raised when computing the histogram for dates due to
+  # integer overflow in when computing n cell midpoints, but we don't
+  # use it, so it can be safely ignored.
+  suppressWarnings(h <- graphics::hist(x, breaks = breaks, plot = FALSE))
+
+  bin_edges <- h$breaks
+  bin_counts <- h$counts
+
+  # For dates, we convert back the breaks to the date representation.
+  if (inherits(x, "POSIXct")) {
+    bin_edges <- as.POSIXct(h$breaks, tz = attr(x, "tzone"))
+  }
+
+  list(
+      bin_edges = bin_edges,
+      bin_counts = bin_counts,
+      quantiles = quantiles
+  )
+}
+
+profile_frequency_table <- function(x, limit) {
+    x <- x[!is.na(x)]
+
+    if (length(x) == 0) {
+        return(list(
+            values = c(),
+            counts = c(),
+            other_count = 0
+        ))
+    }
+
+    if (!is.factor(x)) {
+        # We don't use `table` directly because we don't want to loose the type
+        # of value types so they can be formatted with our formatting routines.
+        values <- unique(x)
+        counts <- tabulate(match(x, values))
+    } else {
+        values <- levels(x)
+        counts <- table(x)
+    }
+
+    index <- utils::head(order(counts, decreasing = TRUE), limit)
+    values <- values[index]
+    counts <- counts[index]
+    other_count <- length(x) - sum(counts)
+
+    list(
+        values = values,
+        counts = counts,
+        other_count = other_count
+    )
 }

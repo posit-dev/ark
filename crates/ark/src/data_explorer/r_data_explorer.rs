@@ -13,6 +13,7 @@ use amalthea::comm::data_explorer_comm::ArraySelection;
 use amalthea::comm::data_explorer_comm::BackendState;
 use amalthea::comm::data_explorer_comm::ColumnDisplayType;
 use amalthea::comm::data_explorer_comm::ColumnFilter;
+use amalthea::comm::data_explorer_comm::ColumnProfileParams;
 use amalthea::comm::data_explorer_comm::ColumnProfileRequest;
 use amalthea::comm::data_explorer_comm::ColumnProfileResult;
 use amalthea::comm::data_explorer_comm::ColumnProfileType;
@@ -85,6 +86,8 @@ use uuid::Uuid;
 use crate::data_explorer::export_selection;
 use crate::data_explorer::format;
 use crate::data_explorer::format::format_string;
+use crate::data_explorer::histogram::profile_frequency_table;
+use crate::data_explorer::histogram::profile_histogram;
 use crate::data_explorer::summary_stats::summary_stats;
 use crate::data_explorer::utils::tbl_subset_with_view_indices;
 use crate::interface::RMain;
@@ -497,8 +500,9 @@ impl RDataExplorer {
             }) => {
                 let profiles = requests
                     .into_iter()
-                    .map(|request| self.r_get_column_profile(request, &format_options))
+                    .map(|request| r_task(|| self.r_get_column_profile(request, &format_options)))
                     .collect::<Vec<ColumnProfileResult>>();
+
                 Ok(DataExplorerBackendReply::GetColumnProfilesReply(profiles))
             },
             DataExplorerBackendRequest::GetState => r_task(|| self.r_get_state()),
@@ -600,10 +604,22 @@ impl RDataExplorer {
             frequency_table: None,
         };
 
+        let filtered_column = unwrap!(tbl_get_filtered_column(
+            self.table.get(),
+            request.column_index,
+            &self.filtered_indices,
+            self.shape.kind,
+        ), Err(e) =>  {
+            // In the case something goes wrong here we log the error and return an empty output.
+            // This might still work for the other columns in the request.
+            log::error!("Error applying filter indices for column: {}. Err: {e}", request.column_index);
+            return output;
+        });
+
         for profile_req in request.profiles {
             match profile_req.profile_type {
                 ColumnProfileType::NullCount => {
-                    let null_count = r_task(|| self.r_null_count(request.column_index as i32));
+                    let null_count = self.r_null_count(filtered_column.clone());
                     output.null_count = match null_count {
                         Err(err) => {
                             log::error!(
@@ -617,9 +633,8 @@ impl RDataExplorer {
                     };
                 },
                 ColumnProfileType::SummaryStats => {
-                    let summary_stats = r_task(|| {
-                        self.r_summary_stats(request.column_index as i32, &format_options)
-                    });
+                    let summary_stats =
+                        self.r_summary_stats(filtered_column.clone(), &format_options);
                     output.summary_stats = match summary_stats {
                         Err(err) => {
                             log::error!(
@@ -632,8 +647,71 @@ impl RDataExplorer {
                         Ok(stats) => Some(stats),
                     };
                 },
-                _ => {
-                    // Other types are not supported yet
+                ColumnProfileType::Histogram => {
+                    let params = match profile_req.params {
+                        None => Err("Missing parameters for the histogram"),
+                        Some(par) => match par {
+                            ColumnProfileParams::Histogram(p) => Ok(p),
+                            _ => Err("Wrong type of parameters for the histogram."),
+                        },
+                    };
+
+                    let params = unwrap!(params, Err(err) => {
+                        log::error!(
+                            "Unable to compute the histogram for column {}. Missing parameters {}",
+                            request.column_index,
+                            err
+                        );
+                        continue; // Go to next profile
+                    });
+
+                    let histogram =
+                        profile_histogram(filtered_column.sexp, &params, &format_options);
+
+                    output.histogram = match histogram {
+                        Ok(hist) => Some(hist),
+                        Err(err) => {
+                            log::error!(
+                                "Error getting histogram for column {}: {}",
+                                request.column_index,
+                                err
+                            );
+                            None
+                        },
+                    }
+                },
+                ColumnProfileType::FrequencyTable => {
+                    let params = match profile_req.params {
+                        None => Err("Missing parameters for the frequency table"),
+                        Some(par) => match par {
+                            ColumnProfileParams::FrequencyTable(p) => Ok(p),
+                            _ => Err("Wrong type of parameters for the frequency table."),
+                        },
+                    };
+
+                    let params = unwrap!(params, Err(err) => {
+                        log::error!(
+                            "Unable to compute the frequency table for column {}. Missing parameters {}",
+                            request.column_index,
+                            err
+                        );
+                        continue; // Go to next profile
+                    });
+
+                    let frequency_table =
+                        profile_frequency_table(filtered_column.sexp, &params, &format_options);
+
+                    output.frequency_table = match frequency_table {
+                        Ok(hist) => Some(hist),
+                        Err(err) => {
+                            log::error!(
+                                "Error getting frequency table for column {}: {}",
+                                request.column_index,
+                                err
+                            );
+                            None
+                        },
+                    }
                 },
             };
         }
@@ -644,20 +722,13 @@ impl RDataExplorer {
     /// idea of how complete the data is, NA values are considered to be null
     /// for the purposes of these stats.
     ///
-    /// If a filter is applied, only the nulls in the filtered rows are counted.
+    /// Expects data to be filtered by the view indices.
     ///
     /// - `column_index`: The index of the column to count nulls in; 0-based.
-    fn r_null_count(&self, column_index: i32) -> anyhow::Result<i32> {
-        // Get the column to count nulls in
-        let column = tbl_get_column(self.table.get().sexp, column_index, self.shape.kind)?;
-
+    fn r_null_count(&self, column: RObject) -> anyhow::Result<i32> {
         // Compute the number of nulls in the column
         let result = RFunction::new("", ".ps.null_count")
             .param("column", column)
-            .param("filtered_indices", match &self.filtered_indices {
-                Some(indices) => RObject::try_from(indices)?,
-                None => RObject::null(),
-            })
             .call_in(ARK_ENVS.positron_ns)?;
 
         // Return the count of nulls and NA values
@@ -666,17 +737,12 @@ impl RDataExplorer {
 
     fn r_summary_stats(
         &self,
-        column_index: i32,
+        column: RObject,
         format_options: &FormatOptions,
     ) -> anyhow::Result<ColumnSummaryStats> {
         // Get the column to compute summary stats for
-        let column = tbl_get_column(self.table.get().sexp, column_index, self.shape.kind)?;
         let dtype = display_type(column.sexp);
-
-        // Filter the column if we have filtered indices before computing the summmary
-        let filtered_column = r_filter_indices(column, &self.filtered_indices)?;
-
-        Ok(summary_stats(filtered_column.sexp, dtype, format_options))
+        Ok(summary_stats(column.sexp, dtype, format_options))
     }
 
     /// Sort the rows of the data object according to the sort keys in
@@ -1175,13 +1241,20 @@ fn table_info_or_bail(x: SEXP) -> anyhow::Result<TableInfo> {
     harp::table_info(x).ok_or(anyhow!("Unsupported type for data viewer"))
 }
 
-fn r_filter_indices(x: RObject, indices: &Option<Vec<i32>>) -> anyhow::Result<RObject> {
+fn tbl_get_filtered_column(
+    x: &RObject,
+    column_index: i64,
+    indices: &Option<Vec<i32>>,
+    kind: TableKind,
+) -> anyhow::Result<RObject> {
+    let column = tbl_get_column(x.sexp, column_index as i32, kind)?;
+
     Ok(match &indices {
         Some(indices) => RFunction::from("col_filter_indices")
-            .add(x)
+            .add(column)
             .add(RObject::try_from(indices)?)
             .call_in(ARK_ENVS.positron_ns)?,
-        None => x,
+        None => column,
     })
 }
 
