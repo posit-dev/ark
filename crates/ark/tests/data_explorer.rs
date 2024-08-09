@@ -6,6 +6,10 @@
 //
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::data_explorer_comm::ArraySelection;
+use amalthea::comm::data_explorer_comm::ColumnHistogram;
+use amalthea::comm::data_explorer_comm::ColumnHistogramParams;
+use amalthea::comm::data_explorer_comm::ColumnHistogramParamsMethod;
+use amalthea::comm::data_explorer_comm::ColumnProfileParams;
 use amalthea::comm::data_explorer_comm::ColumnProfileRequest;
 use amalthea::comm::data_explorer_comm::ColumnProfileSpec;
 use amalthea::comm::data_explorer_comm::ColumnProfileType;
@@ -45,6 +49,7 @@ use amalthea::comm::data_explorer_comm::TableSelectionKind;
 use amalthea::comm::data_explorer_comm::TextSearchType;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::socket;
+use ark::data_explorer::format::format_string;
 use ark::data_explorer::r_data_explorer::DataObjectEnvInfo;
 use ark::data_explorer::r_data_explorer::RDataExplorer;
 use ark::lsp::events::EVENTS;
@@ -1665,5 +1670,41 @@ fn test_get_data_values_by_indices() {
         expect_get_data_values(vec![1], vec![2, 4], vec![vec!["c", "e"]]);
         expect_get_data_values(vec![2], vec![0, 9], vec![vec!["0.00", "1.00"]]);
         expect_get_data_values(vec![2], vec![0, 10], vec![vec!["0.00"]]); // Ignore oout of bounds
+    })
+}
+
+#[test]
+fn test_histogram() {
+    r_test(|| {
+        let socket =
+            open_data_explorer_from_expression("data.frame(x = rep(1:10, 10:1))", None).unwrap();
+
+        let make_histogram_req = |column_index, method, num_bins, quantiles| {
+            DataExplorerBackendRequest::GetColumnProfiles(GetColumnProfilesParams {
+                profiles: vec![ColumnProfileRequest {
+                    column_index,
+                    profiles: vec![ColumnProfileSpec {
+                        profile_type: ColumnProfileType::Histogram,
+                        params: Some(ColumnProfileParams::Histogram(ColumnHistogramParams {
+                            method,
+                            num_bins,
+                            quantiles,
+                        })),
+                    }],
+                }],
+                format_options: default_format_options(),
+            })
+        };
+
+        let req = make_histogram_req(0, ColumnHistogramParamsMethod::Fixed, Some(10), None);
+
+        assert_match!(socket_rpc(&socket, req), DataExplorerBackendReply::GetColumnProfilesReply(profiles) => {
+            let histogram = profiles[0].histogram.clone().unwrap();
+            assert_eq!(histogram, ColumnHistogram {
+                bin_edges: format_string(r_parse_eval0("c(1:10)", R_ENVS.global).unwrap().sexp, &default_format_options()),
+                bin_counts: vec![19, 8, 7, 6, 5, 4, 3, 2, 1], // Pretty bind edges unite the first two intervals
+                quantiles: vec![],
+            });
+        });
     })
 }
