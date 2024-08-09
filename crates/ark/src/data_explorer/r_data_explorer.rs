@@ -86,6 +86,7 @@ use uuid::Uuid;
 use crate::data_explorer::export_selection;
 use crate::data_explorer::format;
 use crate::data_explorer::format::format_string;
+use crate::data_explorer::histogram::profile_frequency_table;
 use crate::data_explorer::histogram::profile_histogram;
 use crate::data_explorer::summary_stats::summary_stats;
 use crate::data_explorer::utils::tbl_subset_with_view_indices;
@@ -657,7 +658,7 @@ impl RDataExplorer {
 
                     let params = unwrap!(params, Err(err) => {
                         log::error!(
-                            "Unable to compute the histogram for column {}. Missing parmaeters {}",
+                            "Unable to compute the histogram for column {}. Missing parameters {}",
                             request.column_index,
                             err
                         );
@@ -679,8 +680,38 @@ impl RDataExplorer {
                         },
                     }
                 },
-                _ => {
-                    // Other types are not supported yet
+                ColumnProfileType::FrequencyTable => {
+                    let params = match profile_req.params {
+                        None => Err("Missing parameters for the frequency table"),
+                        Some(par) => match par {
+                            ColumnProfileParams::FrequencyTable(p) => Ok(p),
+                            _ => Err("Wrong type of parameters for the frequency table."),
+                        },
+                    };
+
+                    let params = unwrap!(params, Err(err) => {
+                        log::error!(
+                            "Unable to compute the frequency table for column {}. Missing parameters {}",
+                            request.column_index,
+                            err
+                        );
+                        continue; // Go to next profile
+                    });
+
+                    let frequency_table =
+                        profile_frequency_table(filtered_column.sexp, &params, &format_options);
+
+                    output.frequency_table = match frequency_table {
+                        Ok(hist) => Some(hist),
+                        Err(err) => {
+                            log::error!(
+                                "Error getting frequency table for column {}: {}",
+                                request.column_index,
+                                err
+                            );
+                            None
+                        },
+                    }
                 },
             };
         }

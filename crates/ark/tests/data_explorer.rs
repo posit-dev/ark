@@ -6,6 +6,8 @@
 //
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::data_explorer_comm::ArraySelection;
+use amalthea::comm::data_explorer_comm::ColumnFrequencyTable;
+use amalthea::comm::data_explorer_comm::ColumnFrequencyTableParams;
 use amalthea::comm::data_explorer_comm::ColumnHistogram;
 use amalthea::comm::data_explorer_comm::ColumnHistogramParams;
 use amalthea::comm::data_explorer_comm::ColumnHistogramParamsMethod;
@@ -1704,6 +1706,41 @@ fn test_histogram() {
                 bin_edges: format_string(r_parse_eval0("c(1:10)", R_ENVS.global).unwrap().sexp, &default_format_options()),
                 bin_counts: vec![19, 8, 7, 6, 5, 4, 3, 2, 1], // Pretty bind edges unite the first two intervals
                 quantiles: vec![],
+            });
+        });
+    })
+}
+
+#[test]
+fn test_frequency_table() {
+    r_test(|| {
+        let socket =
+            open_data_explorer_from_expression("data.frame(x = rep(letters[1:10], 10:1))", None)
+                .unwrap();
+
+        let make_freq_table_req = |column_index, limit| {
+            DataExplorerBackendRequest::GetColumnProfiles(GetColumnProfilesParams {
+                profiles: vec![ColumnProfileRequest {
+                    column_index,
+                    profiles: vec![ColumnProfileSpec {
+                        profile_type: ColumnProfileType::FrequencyTable,
+                        params: Some(ColumnProfileParams::FrequencyTable(
+                            ColumnFrequencyTableParams { limit },
+                        )),
+                    }],
+                }],
+                format_options: default_format_options(),
+            })
+        };
+
+        let req = make_freq_table_req(0, 5);
+
+        assert_match!(socket_rpc(&socket, req), DataExplorerBackendReply::GetColumnProfilesReply(profiles) => {
+            let freq_table = profiles[0].frequency_table.clone().unwrap();
+            assert_eq!(freq_table, ColumnFrequencyTable {
+                values: format_string(r_parse_eval0("letters[1:5]", R_ENVS.global).unwrap().sexp, &default_format_options()),
+                counts: vec![10, 9, 8, 7, 6],
+                other_count: Some(5 + 4 + 3 + 2 + 1)
             });
         });
     })
