@@ -13,9 +13,6 @@ use amalthea::comm::data_explorer_comm::ArraySelection;
 use amalthea::comm::data_explorer_comm::BackendState;
 use amalthea::comm::data_explorer_comm::ColumnDisplayType;
 use amalthea::comm::data_explorer_comm::ColumnFilter;
-use amalthea::comm::data_explorer_comm::ColumnHistogram;
-use amalthea::comm::data_explorer_comm::ColumnHistogramParams;
-use amalthea::comm::data_explorer_comm::ColumnProfileParams;
 use amalthea::comm::data_explorer_comm::ColumnProfileRequest;
 use amalthea::comm::data_explorer_comm::ColumnProfileResult;
 use amalthea::comm::data_explorer_comm::ColumnProfileType;
@@ -88,7 +85,6 @@ use uuid::Uuid;
 use crate::data_explorer::export_selection;
 use crate::data_explorer::format;
 use crate::data_explorer::format::format_string;
-use crate::data_explorer::histogram::profile_histogram;
 use crate::data_explorer::summary_stats::summary_stats;
 use crate::data_explorer::utils::tbl_subset_with_view_indices;
 use crate::interface::RMain;
@@ -501,9 +497,13 @@ impl RDataExplorer {
             }) => {
                 let profiles = requests
                     .into_iter()
-                    .map(|request| self.r_get_column_profile(request, &format_options))
-                    .collect::<Vec<ColumnProfileResult>>();
-                Ok(DataExplorerBackendReply::GetColumnProfilesReply(profiles))
+                    .map(|request| r_task(|| self.r_get_column_profile(request, &format_options)))
+                    .collect::<anyhow::Result<Vec<ColumnProfileResult>>>();
+
+                match profiles {
+                    Ok(p) => Ok(DataExplorerBackendReply::GetColumnProfilesReply(p)),
+                    Err(err) => return Err(anyhow!(err)),
+                }
             },
             DataExplorerBackendRequest::GetState => r_task(|| self.r_get_state()),
             DataExplorerBackendRequest::SearchSchema(_) => {
@@ -596,7 +596,7 @@ impl RDataExplorer {
         &self,
         request: ColumnProfileRequest,
         format_options: &FormatOptions,
-    ) -> ColumnProfileResult {
+    ) -> anyhow::Result<ColumnProfileResult> {
         let mut output = ColumnProfileResult {
             null_count: None,
             summary_stats: None,
@@ -604,10 +604,19 @@ impl RDataExplorer {
             frequency_table: None,
         };
 
+        let filtered_column = r_filter_indices(
+            tbl_get_column(
+                self.table.get().sexp,
+                request.column_index as i32,
+                self.shape.kind,
+            )?,
+            &self.filtered_indices,
+        )?;
+
         for profile_req in request.profiles {
             match profile_req.profile_type {
                 ColumnProfileType::NullCount => {
-                    let null_count = r_task(|| self.r_null_count(request.column_index as i32));
+                    let null_count = self.r_null_count(filtered_column.clone());
                     output.null_count = match null_count {
                         Err(err) => {
                             log::error!(
@@ -621,9 +630,8 @@ impl RDataExplorer {
                     };
                 },
                 ColumnProfileType::SummaryStats => {
-                    let summary_stats = r_task(|| {
-                        self.r_summary_stats(request.column_index as i32, &format_options)
-                    });
+                    let summary_stats =
+                        self.r_summary_stats(filtered_column.clone(), &format_options);
                     output.summary_stats = match summary_stats {
                         Err(err) => {
                             log::error!(
@@ -636,59 +644,25 @@ impl RDataExplorer {
                         Ok(stats) => Some(stats),
                     };
                 },
-                ColumnProfileType::Histogram => {
-                    let params = unwrap!(profile_req.params, None => {
-                        log::error!("No parameters provided for computing the histogram. Column {}", request.column_index);
-                        continue; // Jump to the next profile
-                    });
-                    let params = match params {
-                        ColumnProfileParams::Histogram(v) => v,
-                        _ => {
-                            log::error!(
-                                "Wrong set of parameters for computing the histogram. Column {}",
-                                request.column_index
-                            );
-                            continue; // Jump to the next profile
-                        },
-                    };
-                    let histogram = r_task(|| {
-                        self.r_histogram(request.column_index as i32, &params, format_options)
-                    });
-                    output.histogram = Some(unwrap!(histogram, Err(err) => {
-                        log::error!(
-                            "Wrong set of parameters for computing the histogram. Column {}: {}",
-                            request.column_index,
-                            err
-                        );
-                        continue;
-                    }));
-                },
                 _ => {
                     // Other types are not supported yet
                 },
             };
         }
-        output
+        Ok(output)
     }
 
     /// Counts the number of nulls in a column. As the intent is to provide an
     /// idea of how complete the data is, NA values are considered to be null
     /// for the purposes of these stats.
     ///
-    /// If a filter is applied, only the nulls in the filtered rows are counted.
+    /// Expects data to be filtered by the view indices.
     ///
     /// - `column_index`: The index of the column to count nulls in; 0-based.
-    fn r_null_count(&self, column_index: i32) -> anyhow::Result<i32> {
-        // Get the column to count nulls in
-        let column = tbl_get_column(self.table.get().sexp, column_index, self.shape.kind)?;
-
+    fn r_null_count(&self, column: RObject) -> anyhow::Result<i32> {
         // Compute the number of nulls in the column
         let result = RFunction::new("", ".ps.null_count")
             .param("column", column)
-            .param("filtered_indices", match &self.filtered_indices {
-                Some(indices) => RObject::try_from(indices)?,
-                None => RObject::null(),
-            })
             .call_in(ARK_ENVS.positron_ns)?;
 
         // Return the count of nulls and NA values
@@ -697,28 +671,12 @@ impl RDataExplorer {
 
     fn r_summary_stats(
         &self,
-        column_index: i32,
+        column: RObject,
         format_options: &FormatOptions,
     ) -> anyhow::Result<ColumnSummaryStats> {
         // Get the column to compute summary stats for
-        let column = tbl_get_column(self.table.get().sexp, column_index, self.shape.kind)?;
         let dtype = display_type(column.sexp);
-
-        // Filter the column if we have filtered indices before computing the summmary
-        let filtered_column = r_filter_indices(column, &self.filtered_indices)?;
-
-        Ok(summary_stats(filtered_column.sexp, dtype, format_options))
-    }
-
-    fn r_histogram(
-        &self,
-        column_index: i32,
-        params: &ColumnHistogramParams,
-        format_options: &FormatOptions,
-    ) -> anyhow::Result<ColumnHistogram> {
-        let column = tbl_get_column(self.table.get().sexp, column_index, self.shape.kind)?;
-        let histogram = profile_histogram(column.sexp, params, format_options)?;
-        Ok(histogram)
+        Ok(summary_stats(column.sexp, dtype, format_options))
     }
 
     /// Sort the rows of the data object according to the sort keys in

@@ -36,12 +36,8 @@
     invisible(.ps.Call("ps_view_data_frame", x, title, var, env))
 }
 
-.ps.null_count <- function(column, filtered_indices) {
-    if (is.null(filtered_indices)) {
-        sum(is.na(column))
-    } else {
-        sum(is.na(column[filtered_indices]))
-    }
+.ps.null_count <- function(column) {
+    sum(is.na(column))
 }
 
 summary_stats_number <- function(col) {
