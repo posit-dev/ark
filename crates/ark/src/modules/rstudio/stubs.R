@@ -44,9 +44,10 @@
         stop("url must be a single element character vector.")
     height <- .ps.validate.viewer.height(height)
 
+    url <- normalizePath(url, mustWork = FALSE)
+    
     # Derive a title for the viewer from the path.
-    normalizedPath <- normalizePath(url, mustWork = FALSE)
-    title <- .ps.viewer.title(normalizedPath)
+    title <- .ps.viewer.title(url)
 
     invisible(.Call("ps_html_viewer",
         url,     # The URL of the file to view
