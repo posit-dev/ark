@@ -190,11 +190,17 @@ impl DeviceContext {
         plot_id: &String,
     ) -> anyhow::Result<PlotBackendReply> {
         match message {
+            PlotBackendRequest::GetIntrinsicSize => {
+                Ok(PlotBackendReply::GetIntrinsicSizeReply(None))
+            },
             PlotBackendRequest::Render(plot_meta) => {
+                let size = unwrap!(plot_meta.size, None => {
+                    bail!("Intrinsically sized plots are not yet supported.");
+                });
                 let data = self.render_plot(
                     &plot_id,
-                    plot_meta.width,
-                    plot_meta.height,
+                    size.width,
+                    size.height,
                     plot_meta.pixel_ratio,
                     &plot_meta.format,
                 )?;
