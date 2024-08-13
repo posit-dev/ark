@@ -138,19 +138,3 @@ pub unsafe extern "C" fn ps_reticulate_open() -> Result<SEXP, anyhow::Error> {
 
     Ok(R_NilValue)
 }
-
-#[harp::register]
-pub unsafe extern "C" fn ps_reticulate_focus(id: SEXP) -> Result<SEXP, anyhow::Error> {
-    let main = RMain::get();
-    let comm_id: String = RObject::view(id).to::<String>()?;
-
-    main.get_comm_manager_tx().send(CommManagerEvent::Message(
-        comm_id,
-        CommMsg::Data(json!({
-            "method": "focus",
-            "params": {}
-        })),
-    ))?;
-
-    Ok(R_NilValue)
-}
