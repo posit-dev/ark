@@ -1,9 +1,13 @@
+use std::sync::Mutex;
+
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
+use anyhow::anyhow;
 use crossbeam::channel::Sender;
 use harp::RObject;
+use lazy_static::lazy_static;
 use libr::R_NilValue;
 use libr::SEXP;
 use serde_json::json;
@@ -12,6 +16,10 @@ use stdext::unwrap;
 use uuid::Uuid;
 
 use crate::interface::RMain;
+
+lazy_static! {
+    static ref RETICULATE_COMM_ID: Mutex<Option<String>> = Mutex::new(None);
+}
 
 pub struct ReticulateService {
     comm: CommSocket,
@@ -33,7 +41,7 @@ impl ReticulateService {
 
         let event = CommManagerEvent::Opened(service.comm.clone(), serde_json::Value::Null);
         unwrap!(service.comm_manager_tx.send(event), Err(e) => {
-            log::error!("Reticulate: Could not open comm.");
+            log::error!("Reticulate: Could not open comm. Error {e}");
         });
 
         spawn!(format!("ark-reticulate-{}", comm_id), move || {
@@ -69,6 +77,19 @@ impl ReticulateService {
             log::error!("Reticulate: Error while sending comm_close to front end: {err:?}");
         }
 
+        let mut comm_id_guard = unwrap!(
+            RETICULATE_COMM_ID.try_lock(),
+            Err(e) => {
+                return Err(anyhow!("Could not access comm_id. Error {}", e));
+            }
+        );
+        log::info!(
+            "Reticulate Thread closing {}",
+            (*comm_id_guard).clone().unwrap()
+        );
+
+        *comm_id_guard = None;
+
         Ok(())
     }
 }
@@ -79,25 +100,43 @@ impl ReticulateService {
 // the comm_id that is returned by this function.
 #[harp::register]
 pub unsafe extern "C" fn ps_reticulate_open() -> Result<SEXP, anyhow::Error> {
-    let id = Uuid::new_v4().to_string();
+    let main = RMain::get();
 
-    // If RMain is not initialized, we are probably in testing mode, so we just don't start the connection
-    // and let the testing code manually do it
-    if RMain::initialized() {
-        let main = RMain::get();
-
-        unwrap! (
-            ReticulateService::start(id.clone(), main.get_comm_manager_tx().clone()),
-            Err(err) => {
-                log::error!("Reticulate: Failed to start connection: {err:?}");
-                return Err(err);
-            }
-        );
-    } else {
-        log::warn!("Reticulate: RMain is not initialized. Connection will not be started.");
+    if !RMain::initialized() {
+        return Ok(R_NilValue);
     }
 
-    Ok(RObject::from(id).into())
+    // If there's an id already registered, we just need to send the focus event
+    let mut comm_id_guard = unwrap!(
+        RETICULATE_COMM_ID.try_lock(),
+        Err(e) => {
+            return Err(anyhow!("Could not access comm_id. Error {}", e));
+        }
+    );
+
+    if let Some(id) = (*comm_id_guard).clone() {
+        // There's a comm_id registered, we just send the focus event
+        main.get_comm_manager_tx().send(CommManagerEvent::Message(
+            id,
+            CommMsg::Data(json!({
+                "method": "focus",
+                "params": {}
+            })),
+        ))?;
+        return Ok(R_NilValue);
+    }
+
+    let id = Uuid::new_v4().to_string();
+    *comm_id_guard = Some(id.clone());
+    unwrap! (
+        ReticulateService::start(id, main.get_comm_manager_tx().clone()),
+        Err(err) => {
+            log::error!("Reticulate: Failed to start connection: {err:?}");
+            return Err(err);
+        }
+    );
+
+    Ok(R_NilValue)
 }
 
 #[harp::register]
