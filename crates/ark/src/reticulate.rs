@@ -6,7 +6,6 @@ use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
 use anyhow::anyhow;
 use crossbeam::channel::Sender;
-use harp::RObject;
 use lazy_static::lazy_static;
 use libr::R_NilValue;
 use libr::SEXP;
