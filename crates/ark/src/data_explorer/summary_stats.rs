@@ -217,6 +217,23 @@ mod tests {
     }
 
     #[test]
+    fn test_numeric_all_nas() {
+        r_test(|| {
+            let column = r_parse_eval0("c(NA_real_, NA_real_, NA_real_)", R_ENVS.global).unwrap();
+            let stats =
+                summary_stats_(column.sexp, ColumnDisplayType::Number, &default_options()).unwrap();
+            let expected = SummaryStatsNumber {
+                min_value: None,
+                max_value: None,
+                mean: None,
+                median: None,
+                stdev: None,
+            };
+            assert_eq!(stats.number_stats, Some(expected));
+        })
+    }
+
+    #[test]
     fn test_string_summary() {
         r_test(|| {
             let column = r_parse_eval0("c('a', 'b', 'c', 'd', '')", R_ENVS.global).unwrap();
