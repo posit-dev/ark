@@ -45,6 +45,14 @@
 }
 
 summary_stats_number <- function(col) {
+
+    col <- col[!is.na(col)]
+
+    # Don't compute stats if the column is all NA's or empty.
+    if (length(col) == 0) {
+        return(numeric(0))
+    }
+
     c(
         min_value = min(col, na.rm = TRUE),
         max_value = max(col, na.rm = TRUE),
@@ -63,13 +71,19 @@ summary_stats_boolean <- function(col) {
 }
 
 summary_stats_date <- function(col) {
-    list(
-        min_date = as.character(min(col, na.rm = TRUE)),
-        mean_date = as.character(mean(col, na.rm = TRUE)),
-        median_date = as.character(stats::median(col, na.rm = TRUE)),
-        max_date = as.character(max(col, na.rm = TRUE)),
-        num_unique = length(unique(col))
-    )
+    # We have to suppress warnings here because malformed datetimes, eg:
+    # x <- as.POSIXct(c("2010-01-01 00:00:00"), tz = "+01:00")
+    # When calling `min` on `x` woudl raise a warnings.
+    # Turns out, some Parquet files might generate malformed timezones too.
+    suppressWarnings({
+        list(
+            min_date = as.character(min(col, na.rm = TRUE)),
+            mean_date = as.character(mean(col, na.rm = TRUE)),
+            median_date = as.character(stats::median(col, na.rm = TRUE)),
+            max_date = as.character(max(col, na.rm = TRUE)),
+            num_unique = length(unique(col))
+        )
+    })
 }
 
 summary_stats_get_timezone <- function(x) {
