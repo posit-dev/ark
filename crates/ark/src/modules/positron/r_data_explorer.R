@@ -73,7 +73,7 @@ summary_stats_boolean <- function(col) {
 summary_stats_date <- function(col) {
     # We have to suppress warnings here because malformed datetimes, eg:
     # x <- as.POSIXct(c("2010-01-01 00:00:00"), tz = "+01:00")
-    # When calling `min` on `x` woudl raise a warnings.
+    # When calling `min` on `x` would raise a warning.
     # Turns out, some Parquet files might generate malformed timezones too.
     suppressWarnings({
         list(
