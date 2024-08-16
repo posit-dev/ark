@@ -6,6 +6,6 @@
 }
 
 #' @export
-.ps.reticulate_open <- function(id) {
+.ps.reticulate_open <- function() {
     .ps.Call("ps_reticulate_open")
 }
