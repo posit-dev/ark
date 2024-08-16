@@ -1020,11 +1020,11 @@ impl RDataExplorer {
                         },
                         ColumnProfileTypeSupportStatus {
                             profile_type: ColumnProfileType::Histogram,
-                            support_status: SupportStatus::Unsupported,
+                            support_status: SupportStatus::Experimental,
                         },
                         ColumnProfileTypeSupportStatus {
                             profile_type: ColumnProfileType::FrequencyTable,
-                            support_status: SupportStatus::Unsupported,
+                            support_status: SupportStatus::Experimental,
                         },
                     ],
                 },
