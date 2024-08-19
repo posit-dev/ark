@@ -308,6 +308,9 @@ functions::generate! {
 
     pub fn Rf_installChar(x: SEXP) -> SEXP;
 
+    /// R >= 4.1.0
+    pub fn R_NewEnv(enclos: SEXP, hash: std::ffi::c_int, size: std::ffi::c_int) -> SEXP;
+
     /// R >= 4.2.0
     pub fn R_existsVarInFrame(rho: SEXP, symbol: SEXP) -> Rboolean;
 
