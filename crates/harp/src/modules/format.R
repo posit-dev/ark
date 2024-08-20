@@ -9,7 +9,7 @@
 # hard to recover from failed assumptions, including by unclassing and
 # reformatting with the default method.
 harp_format <- function(x, ...) {
-    if (is.object(x)) {
+    if (is.object(x) && !inherits(x, "formula")) {
         format_oo(x, ...)
     } else {
         base::format(x, ...)
