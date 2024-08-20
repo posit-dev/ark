@@ -283,7 +283,10 @@ col_filter_indices <- function(col, idx = NULL) {
     # Search for the term anywhere in the column's values, as a regular
     # expression
     else if (identical(params$search_type, "regex_match")) {
-        grepl(pattern = params$term, col, ignore.case = !params$case_sensitive)
+        # We suppress warnings because invalid regex will raise both an error and a warning.
+        # We already catch the error when calling this functions, but the warning leaks to
+        # the user console.
+        suppressWarnings(grepl(pattern = params$term, col, ignore.case = !params$case_sensitive))
     }
 
     # Unsupported search type
