@@ -7,8 +7,8 @@
 
 use crate::environment::R_ENVS;
 use crate::error::Error;
-use crate::exec::r_parse_exprs;
 use crate::object::RObject;
+use crate::r_parse_exprs;
 
 #[derive(Clone)]
 pub struct RParseEvalOptions {

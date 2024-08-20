@@ -18,6 +18,7 @@ pub mod library;
 pub mod line_ending;
 pub mod modules;
 pub mod object;
+pub mod parse;
 pub mod polled_events;
 pub mod protect;
 pub mod r_version;
@@ -36,6 +37,7 @@ pub mod vec_format;
 pub mod vector;
 
 // Reexport API
+pub use parse::*;
 pub use table::*;
 
 // Necessary for the `harp::` references in macros, e.g. `harp::register`, to

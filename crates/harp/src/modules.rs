@@ -6,9 +6,9 @@ use rust_embed::RustEmbed;
 
 use crate::call::RCall;
 use crate::environment::R_ENVS;
-use crate::exec::r_parse_exprs;
-use crate::exec::r_source_str_in;
 use crate::exec::top_level_exec;
+use crate::r_parse_exprs;
+use crate::r_source_str_in;
 use crate::r_symbol;
 
 pub static mut HARP_ENV: Option<SEXP> = None;
