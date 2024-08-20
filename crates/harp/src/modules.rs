@@ -7,8 +7,6 @@ use rust_embed::RustEmbed;
 use crate::call::RCall;
 use crate::environment::R_ENVS;
 use crate::exec::top_level_exec;
-use crate::r_parse_exprs;
-use crate::r_source_str_in;
 use crate::r_symbol;
 
 pub static mut HARP_ENV: Option<SEXP> = None;
@@ -42,7 +40,7 @@ pub fn init_modules() -> anyhow::Result<()> {
 
     // We don't have `safe_eval()` yet so source the init file manually
     with_asset::<HarpModuleAsset, _>("init.R", |source| {
-        let exprs = r_parse_exprs(source)?;
+        let exprs = harp::parse_exprs(source)?;
         unsafe {
             let source_call = RCall::new(r_symbol!("source"))
                 .param("exprs", exprs)
@@ -55,7 +53,9 @@ pub fn init_modules() -> anyhow::Result<()> {
 
     // It's alright to source the init file twice
     for file in HarpModuleAsset::iter() {
-        with_asset::<HarpModuleAsset, _>(&file, |source| Ok(r_source_str_in(source, namespace)?))?;
+        with_asset::<HarpModuleAsset, _>(&file, |source| {
+            Ok(harp::source_str_in(source, namespace)?)
+        })?;
     }
 
     Ok(())

@@ -11,8 +11,6 @@ use harp::environment::R_ENVS;
 use harp::eval::r_parse_eval;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
-use harp::r_parse_exprs_with_srcrefs;
-use harp::r_source_str_in;
 use harp::r_symbol;
 use harp::utils::r_poke_option;
 use libr::Rf_ScalarLogical;
@@ -30,7 +28,7 @@ struct RStudioModuleAsset;
 
 fn source_asset<T: RustEmbed>(file: &str, fun: &str, env: SEXP) -> anyhow::Result<()> {
     with_asset::<T, _>(file, |source| {
-        let exprs = r_parse_exprs_with_srcrefs(source)?;
+        let exprs = harp::parse_exprs_with_srcrefs(source)?;
         RFunction::new("", fun).param("exprs", exprs).call_in(env)?;
         Ok(())
     })
@@ -90,7 +88,7 @@ pub fn initialize(testing: bool) -> anyhow::Result<()> {
 
     // Load initial utils into the namespace
     with_asset::<PositronModuleAsset, _>("init.R", |source| {
-        Ok(r_source_str_in(source, namespace.sexp)?)
+        Ok(harp::source_str_in(source, namespace.sexp)?)
     })?;
 
     // Lock the environment. It will be unlocked automatically when updating.

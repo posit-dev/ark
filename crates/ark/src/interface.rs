@@ -70,7 +70,6 @@ use harp::line_ending::convert_line_endings;
 use harp::line_ending::LineEnding;
 use harp::object::r_null_or_try_into;
 use harp::object::RObject;
-use harp::r_source;
 use harp::r_symbol;
 use harp::routines::r_register_routines;
 use harp::session::r_traceback;
@@ -235,7 +234,8 @@ pub fn start_r(
 
         // Optionally run a frontend specified R startup script (after harp init)
         if let Some(file) = &startup_file {
-            r_source(file).or_log_error(&format!("Failed to source startup file '{file}' due to"));
+            harp::source(file)
+                .or_log_error(&format!("Failed to source startup file '{file}' due to"));
         }
 
         // Initialize support functions (after routine registration)

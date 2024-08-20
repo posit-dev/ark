@@ -41,7 +41,6 @@ use harp::environment::R_ENVS;
 use harp::line_ending::convert_line_endings;
 use harp::line_ending::LineEnding;
 use harp::object::RObject;
-use harp::r_parse_vector;
 use harp::ParseResult;
 use log::*;
 use serde_json::json;
@@ -116,7 +115,7 @@ impl Shell {
         &self,
         req: &IsCompleteRequest,
     ) -> Result<IsCompleteReply, Exception> {
-        match r_parse_vector(req.code.as_str()) {
+        match harp::parse_vector(req.code.as_str()) {
             Ok(ParseResult::Complete(_)) => Ok(IsCompleteReply {
                 status: IsComplete::Complete,
                 indent: String::from(""),

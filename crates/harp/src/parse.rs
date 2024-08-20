@@ -25,7 +25,7 @@ pub enum ParseResult {
 }
 
 #[allow(non_upper_case_globals)]
-pub unsafe fn r_parse_vector(code: &str) -> crate::Result<ParseResult> {
+pub unsafe fn parse_vector(code: &str) -> crate::Result<ParseResult> {
     let mut ps: libr::ParseStatus = libr::ParseStatus_PARSE_NULL;
     let mut protect = RProtect::new();
     let r_code = r_string!(convert_line_endings(code, LineEnding::Posix), &mut protect);
@@ -52,11 +52,11 @@ pub unsafe fn r_parse_vector(code: &str) -> crate::Result<ParseResult> {
     }
 }
 
-pub fn r_source(file: &str) -> crate::Result<()> {
-    r_source_in(file, R_ENVS.base)
+pub fn source(file: &str) -> crate::Result<()> {
+    source_in(file, R_ENVS.base)
 }
 
-pub fn r_source_in(file: &str, env: SEXP) -> crate::Result<()> {
+pub fn source_in(file: &str, env: SEXP) -> crate::Result<()> {
     RFunction::new("base", "sys.source")
         .param("file", file)
         .param("envir", env)
@@ -65,21 +65,21 @@ pub fn r_source_in(file: &str, env: SEXP) -> crate::Result<()> {
     Ok(())
 }
 
-pub fn r_source_str(code: &str) -> crate::Result<()> {
-    r_source_str_in(code, R_ENVS.base)
+pub fn source_str(code: &str) -> crate::Result<()> {
+    source_str_in(code, R_ENVS.base)
 }
 
-pub fn r_source_str_in(code: &str, env: impl Into<SEXP>) -> crate::Result<()> {
-    let exprs = r_parse_exprs(code)?;
-    r_source_exprs_in(exprs, env)?;
+pub fn source_str_in(code: &str, env: impl Into<SEXP>) -> crate::Result<()> {
+    let exprs = parse_exprs(code)?;
+    source_exprs_in(exprs, env)?;
     Ok(())
 }
 
-pub fn r_source_exprs(exprs: impl Into<SEXP>) -> crate::Result<()> {
-    r_source_exprs_in(exprs, R_ENVS.base)
+pub fn source_exprs(exprs: impl Into<SEXP>) -> crate::Result<()> {
+    source_exprs_in(exprs, R_ENVS.base)
 }
 
-pub fn r_source_exprs_in(exprs: impl Into<SEXP>, env: impl Into<SEXP>) -> crate::Result<()> {
+pub fn source_exprs_in(exprs: impl Into<SEXP>, env: impl Into<SEXP>) -> crate::Result<()> {
     let exprs = exprs.into();
     let env = env.into();
 
@@ -95,8 +95,8 @@ pub fn r_source_exprs_in(exprs: impl Into<SEXP>, env: impl Into<SEXP>) -> crate:
 }
 
 /// Returns an EXPRSXP vector
-pub fn r_parse_exprs(code: &str) -> crate::Result<RObject> {
-    match unsafe { r_parse_vector(code)? } {
+pub fn parse_exprs(code: &str) -> crate::Result<RObject> {
+    match unsafe { parse_vector(code)? } {
         ParseResult::Complete(x) => {
             return Ok(RObject::from(x));
         },
@@ -110,7 +110,7 @@ pub fn r_parse_exprs(code: &str) -> crate::Result<RObject> {
 }
 
 /// This uses the R-level function `parse()` to create the srcrefs
-pub fn r_parse_exprs_with_srcrefs(code: &str) -> crate::Result<RObject> {
+pub fn parse_exprs_with_srcrefs(code: &str) -> crate::Result<RObject> {
     unsafe {
         let mut protect = RProtect::new();
 
@@ -126,9 +126,9 @@ pub fn r_parse_exprs_with_srcrefs(code: &str) -> crate::Result<RObject> {
 }
 
 /// Returns a single expression
-pub fn r_parse(code: &str) -> crate::Result<RObject> {
+pub fn parse(code: &str) -> crate::Result<RObject> {
     unsafe {
-        let exprs = r_parse_exprs(code)?;
+        let exprs = parse_exprs(code)?;
 
         let n = libr::Rf_xlength(*exprs);
         if n != 1 {
@@ -146,7 +146,7 @@ pub fn r_parse(code: &str) -> crate::Result<RObject> {
 #[cfg(test)]
 mod tests {
     use crate::assert_match;
-    use crate::r_parse_vector;
+    use crate::parse_vector;
     use crate::r_stringify;
     use crate::r_symbol;
     use crate::r_test;
@@ -158,7 +158,7 @@ mod tests {
         r_test! {
             // complete
             assert_match!(
-                r_parse_vector("force(42)"),
+                parse_vector("force(42)"),
                 Ok(ParseResult::Complete(out)) => {
                     assert_eq!(r_typeof(out), libr::EXPRSXP as u32);
 
@@ -175,19 +175,19 @@ mod tests {
 
             // incomplete
             assert_match!(
-                r_parse_vector("force(42"),
+                parse_vector("force(42"),
                 Ok(ParseResult::Incomplete)
             );
 
             // error
             assert_match!(
-                r_parse_vector("42 + _"),
+                parse_vector("42 + _"),
                 Err(_) => {}
             );
 
             // "normal" syntax error
             assert_match!(
-                r_parse_vector("1+1\n*42"),
+                parse_vector("1+1\n*42"),
                 Err(crate::Error::ParseSyntaxError {message, line}) => {
                     assert!(message.contains("unexpected"));
                     assert_eq!(line, 2);
@@ -196,7 +196,7 @@ mod tests {
 
             // CRLF in the code string, like a file with CRLF line endings
             assert_match!(
-                r_parse_vector("x<-\r\n1\r\npi"),
+                parse_vector("x<-\r\n1\r\npi"),
                 Ok(ParseResult::Complete(out)) => {
                     assert_eq!(r_typeof(out), libr::EXPRSXP as u32);
                     assert_eq!(r_stringify(out, "").unwrap(), "expression(x <- 1, pi)");
@@ -205,7 +205,7 @@ mod tests {
 
             // CRLF inside a string literal in the code
             assert_match!(
-                r_parse_vector(r#"'a\r\nb'"#),
+                parse_vector(r#"'a\r\nb'"#),
                 Ok(ParseResult::Complete(out)) => {
                     assert_eq!(r_typeof(out), libr::EXPRSXP as u32);
                     assert_eq!(r_stringify(out, "").unwrap(), r#"expression("a\r\nb")"#);
