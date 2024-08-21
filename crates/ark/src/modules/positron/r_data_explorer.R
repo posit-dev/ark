@@ -343,7 +343,7 @@ write_html <- function(x, include_header) {
     knitr::kable(x, format = "html", row.names = FALSE, col.names = col_names)
 }
 
-profile_histogram <- function(x, method = c("fixed", "sturges"), num_bins = NULL, quantiles=NULL) {
+profile_histogram <- function(x, method = c("fixed", "sturges"), num_bins = NULL, quantiles = NULL) {
   # We only use finite values for building this histogram.
   # This removes NA's, Inf, NaN and -Inf
   x <- x[is.finite(x)]
@@ -366,7 +366,7 @@ profile_histogram <- function(x, method = c("fixed", "sturges"), num_bins = NULL
   if (!is.null(quantiles)) {
     quantiles <- stats::quantile(x, probs = quantiles)
   } else {
-    quantiles <- c() # we otherwise return an empty quantiles vector
+    quantiles <- NULL  # We otherwise return an empty quantiles vector
   }
 
   method <- match.arg(method)
@@ -375,7 +375,7 @@ profile_histogram <- function(x, method = c("fixed", "sturges"), num_bins = NULL
   # We force something considering the integer representation.
   if (inherits(x, "POSIXct")) {
     if (method == "sturges") {
-        num_bins <- grDevices::nclass.Sturges(x)
+      num_bins <- grDevices::nclass.Sturges(x)
     }
 
     # The pretty bins algorithm doesn't really make sense for dates,
@@ -385,7 +385,7 @@ profile_histogram <- function(x, method = c("fixed", "sturges"), num_bins = NULL
     range <- max_value - min_value
 
     if (inherits(x, "POSIXct") && as.integer(range) < num_bins) {
-     num_bins <- as.integer(range) + 1L
+      num_bins <- as.integer(range) + 1L
     }
 
     breaks <- seq(min_value, max_value, length.out = num_bins + 1)
@@ -397,7 +397,7 @@ profile_histogram <- function(x, method = c("fixed", "sturges"), num_bins = NULL
     # > In the last three cases the number is a suggestion only; as the breakpoints will
     # > be set to `pretty` values.
     breaks <- num_bins
-    stopifnot(is.integer(breaks) && length(breaks) == 1)
+    stopifnot(is.integer(breaks), length(breaks) == 1)
   }
 
   # A warning is raised when computing the histogram for dates due to
@@ -425,8 +425,8 @@ profile_frequency_table <- function(x, limit) {
 
     if (length(x) == 0) {
         return(list(
-            values = c(),
-            counts = c(),
+            values = NULL,
+            counts = NULL,
             other_count = 0
         ))
     }
