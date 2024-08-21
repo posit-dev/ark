@@ -63,6 +63,12 @@ summary_stats_number <- function(col) {
 }
 
 summary_stats_string <- function(col) {
+    if(is.factor(col)) {
+        # We could have an optimization here to get unique and empty values
+        # from levels, but probably not worth it.
+        col <- as.character(col)
+    }
+
     c(num_empty = sum(!nzchar(col)), num_unique = length(unique(col)))
 }
 

@@ -248,6 +248,20 @@ mod tests {
     }
 
     #[test]
+    fn test_string_summary_for_factors() {
+        r_test(|| {
+            let column = r_parse_eval0("factor(c('a', 'b', 'c', 'd', ''))", R_ENVS.global).unwrap();
+            let stats =
+                summary_stats_(column.sexp, ColumnDisplayType::String, &default_options()).unwrap();
+            let expected = SummaryStatsString {
+                num_empty: 1,
+                num_unique: 5,
+            };
+            assert_eq!(stats.string_stats, Some(expected));
+        })
+    }
+
+    #[test]
     fn test_boolean_summary() {
         r_test(|| {
             let column = r_parse_eval0("c(TRUE, FALSE, TRUE, TRUE, NA)", R_ENVS.global).unwrap();
