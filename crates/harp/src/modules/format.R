@@ -19,11 +19,6 @@ harp_format <- function(x, ...) {
 format_oo <- function(x, ...) {
     out <- base::format(x, ...)
 
-    if (inherits(x, "formula")) {
-        # Need special handling for this scalar type
-        return(out)
-    }
-
     if (!is.character(out)) {
         log_trace(sprintf(
             "`format()` method for <%s> should return a character vector.",
