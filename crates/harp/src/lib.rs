@@ -26,6 +26,7 @@ pub mod raii;
 pub mod routines;
 pub mod session;
 pub mod size;
+pub mod source;
 pub mod string;
 pub mod symbol;
 pub mod sys;
@@ -38,6 +39,7 @@ pub mod vector;
 
 // Reexport API
 pub use parse::*;
+pub use source::*;
 pub use table::*;
 
 // Necessary for the `harp::` references in macros, e.g. `harp::register`, to
