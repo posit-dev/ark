@@ -1058,7 +1058,6 @@ mod tests {
 
     use super::*;
     use crate::assert_match;
-    use crate::environment::R_ENVS;
     use crate::r_char;
     use crate::r_test;
 
@@ -1473,7 +1472,7 @@ mod tests {
             assert_eq!(out.get("pineapple").unwrap(), "NOT OK");
 
 
-            let v = harp::parse_eval0("c(x = 'a', y = 'b', z = 'c')", R_ENVS.global).unwrap();
+            let v = harp::parse_eval_global("c(x = 'a', y = 'b', z = 'c')").unwrap();
             let out: HashMap<String, String> = v.try_into().unwrap();
             assert_eq!(out["x"], "a"); // duplicated name is ignored and first is kept
             assert_eq!(out["y"], "b");
@@ -1485,7 +1484,7 @@ mod tests {
     fn test_tryfrom_RObject_hashmap_i32() {
         r_test! {
             // Create a map of pizza toppings to their acceptability.
-            let v = harp::parse_eval0("list(x = 1L, y = 2L, x = 3L)", R_ENVS.global).unwrap();
+            let v = harp::parse_eval_global("list(x = 1L, y = 2L, x = 3L)").unwrap();
             assert_eq!(v.length(), 3 as isize);
 
             // Ensure we created an object of the same size as the map.
@@ -1495,7 +1494,7 @@ mod tests {
             assert_eq!(out["x"], 1); // duplicated name is ignored and first is kept
             assert_eq!(out["y"], 2);
 
-            let v = harp::parse_eval0("c(x = 1L, y = 2L, x = 3L)", R_ENVS.global).unwrap();
+            let v = harp::parse_eval_global("c(x = 1L, y = 2L, x = 3L)").unwrap();
             let out: HashMap<String, i32> = v.try_into().unwrap();
             assert_eq!(out["x"], 1); // duplicated name is ignored and first is kept
             assert_eq!(out["y"], 2);
@@ -1507,7 +1506,7 @@ mod tests {
     fn test_tryfrom_RObject_hashmap_Robject() {
         r_test! {
             // Create a map of pizza toppings to their acceptability.
-            let v = harp::parse_eval0("list(x = c(1L, 2L), y = c('a', 'b'))", R_ENVS.global).unwrap();
+            let v = harp::parse_eval_global("list(x = c(1L, 2L), y = c('a', 'b'))").unwrap();
             assert_eq!(v.length(), 2 as isize);
 
             // Ensure we can convert the object back into a map with the same values.
@@ -1605,7 +1604,7 @@ mod tests {
     #[allow(non_snake_case)]
     fn test_tryfrom_RObject_Vec_RObject() {
         r_test! {
-            let v = harp::parse_eval0("list(c(1L, NA), c(10L, 20L))", R_ENVS.global).unwrap();
+            let v = harp::parse_eval_global("list(c(1L, NA), c(10L, 20L))").unwrap();
             let w = Vec::<RObject>::try_from(v).unwrap();
 
             assert_match!(

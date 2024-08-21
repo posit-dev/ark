@@ -31,6 +31,20 @@ pub fn parse_eval0(code: &str, env: impl Into<RObject>) -> harp::Result<RObject>
     })
 }
 
+pub fn parse_eval_global(code: &str) -> harp::Result<RObject> {
+    harp::parse_eval(code, RParseEvalOptions {
+        env: R_ENVS.global.into(),
+        ..Default::default()
+    })
+}
+
+pub fn parse_eval_base(code: &str) -> harp::Result<RObject> {
+    harp::parse_eval(code, RParseEvalOptions {
+        env: R_ENVS.base.into(),
+        ..Default::default()
+    })
+}
+
 pub fn parse_eval(code: &str, options: RParseEvalOptions) -> harp::Result<RObject> {
     // Forbid certain kinds of evaluation if requested.
     if options.forbid_function_calls && code.find('(').is_some() {

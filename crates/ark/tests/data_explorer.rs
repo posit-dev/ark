@@ -113,7 +113,7 @@ fn open_data_explorer_from_expression(
     expr: &str,
     bind: Option<&str>,
 ) -> anyhow::Result<DataExplorerSocket> {
-    let object = harp::parse_eval0(expr, R_ENVS.global)?;
+    let object = harp::parse_eval_global(expr)?;
 
     let binding = match bind {
         Some(name) => Some(DataObjectEnvInfo {
@@ -334,8 +334,7 @@ fn test_basic_mtcars() {
 #[test]
 fn test_tibble_support() {
     r_test(|| {
-        let mtcars_tibble =
-            harp::parse_eval0("mtcars_tib <- tibble::as_tibble(mtcars)", R_ENVS.global);
+        let mtcars_tibble = harp::parse_eval_global("mtcars_tib <- tibble::as_tibble(mtcars)");
 
         // Now test with a tibble. This might fail if tibble is not installed
         // locally. Just skip the test in that case.
@@ -346,7 +345,7 @@ fn test_tibble_support() {
                     false,
                     String::from("mtcars_tib"),
                 );
-                harp::parse_eval0("rm(mtcars_tib)", R_ENVS.global).unwrap();
+                harp::parse_eval_global("rm(mtcars_tib)").unwrap();
             },
             Err(_) => {
                 // tibble is not available for testing
@@ -541,7 +540,7 @@ fn test_data_table_support() {
         // --- mtcars (as a data.table) ---
 
         let mtcars_data_table =
-            harp::parse_eval0("mtcars_dt <- data.table::data.table(mtcars)", R_ENVS.global);
+            harp::parse_eval_global("mtcars_dt <- data.table::data.table(mtcars)");
 
         // Now test with a data.table. This might fail if data.table is not installed
         // locally. Just skip the test in that case.
@@ -552,7 +551,7 @@ fn test_data_table_support() {
                     false,
                     String::from("mtcars_dt"),
                 );
-                harp::parse_eval0("rm(mtcars_dt)", R_ENVS.global).unwrap();
+                harp::parse_eval_global("rm(mtcars_dt)").unwrap();
             },
             Err(_) => (),
         }
@@ -678,10 +677,8 @@ fn test_summary_stats() {
 
         // Create a data frame with some numbers, characters and booleans to test
         // summary statistics.
-        harp::parse_eval0(
-            "df <- data.frame(num = c(1, 2, 3, NA), char = c('a', 'a', '', NA), bool = c(TRUE, TRUE, FALSE, NA))",
-            R_ENVS.global,
-        )
+        harp::parse_eval_global(
+            "df <- data.frame(num = c(1, 2, 3, NA), char = c('a', 'a', '', NA), bool = c(TRUE, TRUE, FALSE, NA))")
         .unwrap();
 
         // Open the fibo data set in the data explorer.
@@ -750,7 +747,7 @@ fn test_search_filters() {
         // --- search filters ---
 
         // Create a data frame with a bunch of words to use for regex testing.
-        harp::parse_eval0(
+        harp::parse_eval_global(
             r#"words <- data.frame(text = c(
                 "lambent",
                 "incandescent",
@@ -760,7 +757,6 @@ fn test_search_filters() {
                 "weasel",
                 "refrigerator"
             ))"#,
-            R_ENVS.global,
         )
         .unwrap();
 
@@ -871,13 +867,12 @@ fn test_search_filters() {
         // --- invalid filters ---
 
         // Create a data frame with a bunch of dates.
-        harp::parse_eval0(
+        harp::parse_eval_global(
             r#"test_dates <- data.frame(date = as.POSIXct(c(
                     "2024-01-01 01:00:00",
                     "2024-01-02 02:00:00",
                     "2024-01-03 03:00:00"))
             )"#,
-            R_ENVS.global,
         )
         .unwrap();
 
@@ -935,7 +930,7 @@ fn test_search_filters() {
         // --- boolean filters ---
 
         // Create a data frame with a series of boolean values.
-        harp::parse_eval0(
+        harp::parse_eval_global(
             r#"test_bools <- data.frame(bool = c(
                     TRUE,
                     TRUE,
@@ -944,7 +939,6 @@ fn test_search_filters() {
                     TRUE,
                     FALSE
             ))"#,
-            R_ENVS.global,
         )
         .unwrap();
 
@@ -986,12 +980,11 @@ fn test_search_filters() {
         });
 
         // ---- formatting of list columns ----
-        let val = harp::parse_eval0(
+        let val = harp::parse_eval_global(
             r#"list_cols <- tibble::tibble(
                 list_col = list(c(1,2,3,4), tibble::tibble(x = 1, b = 2), matrix(1:4, nrow = 2), c(TRUE, FALSE)),
                 list_col_class = vctrs::list_of(1,2,3, 4)
             )"#,
-            R_ENVS.global,
         );
 
         match val {
@@ -1034,7 +1027,7 @@ fn test_live_updates() {
         .unwrap();
 
         // Make a data-level change to the data set.
-        harp::parse_eval0("x[1, 1] <- 0", R_ENVS.global).unwrap();
+        harp::parse_eval_global("x[1, 1] <- 0").unwrap();
 
         // Emit a console prompt event; this should tickle the data explorer to
         // check for changes.
@@ -1074,7 +1067,7 @@ DataExplorerBackendReply::SetSortColumnsReply() => {});
         );
 
         // Make another data-level change to the data set.
-        harp::parse_eval0("x[1, 1] <- 3", R_ENVS.global).unwrap();
+        harp::parse_eval_global("x[1, 1] <- 3").unwrap();
 
         // Emit a console prompt event; this should tickle the data explorer to
         // check for changes.
@@ -1103,11 +1096,7 @@ DataExplorerBackendReply::SetSortColumnsReply() => {});
 
         // Now, replace 'x' with an entirely different data set. This should trigger
         // a schema-level update.
-        harp::parse_eval0(
-            "x <- data.frame(y = 'y', z = 'z', three = '3')",
-            R_ENVS.global,
-        )
-        .unwrap();
+        harp::parse_eval_global("x <- data.frame(y = 'y', z = 'z', three = '3')").unwrap();
 
         // Emit a console prompt event to trigger change detection
         EVENTS.console_prompt.emit(());
@@ -1134,7 +1123,7 @@ DataExplorerBackendReply::SetSortColumnsReply() => {});
         );
 
         // Now, delete 'x' entirely. This should cause the comm to close.
-        harp::parse_eval0("rm(x)", R_ENVS.global).unwrap();
+        harp::parse_eval_global("rm(x)").unwrap();
 
         // Emit a console prompt event to trigger change detection
         EVENTS.console_prompt.emit(());
@@ -1152,7 +1141,7 @@ fn test_boolean_filters() {
         // --- boolean filters ---
 
         // Create a data frame with a series of boolean values.
-        harp::parse_eval0(
+        harp::parse_eval_global(
             r#"test_bools <- data.frame(bool = c(
                     TRUE,
                     TRUE,
@@ -1161,7 +1150,6 @@ fn test_boolean_filters() {
                     TRUE,
                     FALSE
             ))"#,
-            R_ENVS.global,
         )
         .unwrap();
 
@@ -1318,7 +1306,7 @@ fn test_invalid_filters_preserved() {
 
         // Now let's update the data frame removing the 'x' column, the filter should
         // now be invalid.
-        harp::parse_eval0("test_df$x <- NULL", R_ENVS.global).unwrap();
+        harp::parse_eval_global("test_df$x <- NULL").unwrap();
 
         // Emit a console prompt event; this should tickle the data explorer to
         // check for changes.
@@ -1344,7 +1332,7 @@ fn test_invalid_filters_preserved() {
         );
 
         // we now re-assign the column to make the filter valid again and see if it's re-applied
-        harp::parse_eval0("test_df$x <- c('','a', 'b')", R_ENVS.global).unwrap();
+        harp::parse_eval_global("test_df$x <- c('','a', 'b')").unwrap();
         // Emit a console prompt event; this should tickle the data explorer to
         // check for changes.
         EVENTS.console_prompt.emit(());
@@ -1367,7 +1355,7 @@ fn test_invalid_filters_preserved() {
         );
 
         // now make the filter invalid because of the data type has changed
-        harp::parse_eval0("test_df$x <- c(1, 2, 3)", R_ENVS.global).unwrap();
+        harp::parse_eval_global("test_df$x <- c(1, 2, 3)").unwrap();
         // Emit a console prompt event; this should tickle the data explorer to
         // check for changes.
         EVENTS.console_prompt.emit(());
@@ -1389,7 +1377,7 @@ fn test_invalid_filters_preserved() {
             }
         );
 
-        harp::parse_eval0("rm(test_df)", R_ENVS.global).unwrap();
+        harp::parse_eval_global("rm(test_df)").unwrap();
     });
 }
 
@@ -1431,7 +1419,7 @@ fn test_data_explorer_special_values() {
             }
 
         );
-        harp::parse_eval0("rm(x)", R_ENVS.global).unwrap();
+        harp::parse_eval_global("rm(x)").unwrap();
     });
 }
 
@@ -1605,7 +1593,7 @@ fn test_update_data_filters_reapplied() {
         ]);
 
         // Now make the filter invalid because of the data type has changed
-        harp::parse_eval0("x$a <- c(3, 2, 1, 1)", R_ENVS.global).unwrap();
+        harp::parse_eval_global("x$a <- c(3, 2, 1, 1)").unwrap();
         // Emit a console prompt event; this should tickle the data explorer to
         // check for changes.
         EVENTS.console_prompt.emit(());
@@ -1699,7 +1687,7 @@ fn test_data_update_num_rows() {
 
         // Now change the number of rows. The schema didn't change, so we should
         // recieve a data update event.
-        harp::parse_eval0("x <- utils::tail(x, 2)", R_ENVS.global).unwrap();
+        harp::parse_eval_global("x <- utils::tail(x, 2)").unwrap();
 
         // Emit a console prompt event; this should tickle the data explorer to
         // check for changes.
@@ -1750,7 +1738,7 @@ fn test_histogram() {
         assert_match!(socket_rpc(&socket, req), DataExplorerBackendReply::GetColumnProfilesReply(profiles) => {
             let histogram = profiles[0].small_histogram.clone().unwrap();
             assert_eq!(histogram, ColumnHistogram {
-                bin_edges: format_string(harp::parse_eval0("seq(1, 10, length.out=11)", R_ENVS.global).unwrap().sexp, &default_format_options()),
+                bin_edges: format_string(harp::parse_eval_global("seq(1, 10, length.out=11)").unwrap().sexp, &default_format_options()),
                 bin_counts: vec![10, 9, 8, 7, 6, 5, 4, 3, 2, 1], // Pretty bind edges unite the first two intervals
                 quantiles: vec![],
             });
@@ -1785,7 +1773,7 @@ fn test_frequency_table() {
         assert_match!(socket_rpc(&socket, req), DataExplorerBackendReply::GetColumnProfilesReply(profiles) => {
             let freq_table = profiles[0].small_frequency_table.clone().unwrap();
             assert_eq!(freq_table, ColumnFrequencyTable {
-                values: format_string(harp::parse_eval0("letters[1:5]", R_ENVS.global).unwrap().sexp, &default_format_options()),
+                values: format_string(harp::parse_eval_global("letters[1:5]").unwrap().sexp, &default_format_options()),
                 counts: vec![10, 9, 8, 7, 6],
                 other_count: Some(5 + 4 + 3 + 2 + 1)
             });

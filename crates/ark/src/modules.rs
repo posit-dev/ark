@@ -289,7 +289,6 @@ fn r_poke_option_ark_testing() {
 #[cfg(test)]
 mod tests {
     use harp::environment::Environment;
-    use harp::environment::R_ENVS;
     use libr::CLOENV;
 
     use crate::test::r_test;
@@ -304,9 +303,8 @@ mod tests {
     fn test_environments_are_locked() {
         r_test(|| {
             let positron_exports =
-                harp::parse_eval0("as.environment('tools:positron')", R_ENVS.base).unwrap();
-            let rstudio_exports =
-                harp::parse_eval0("as.environment('tools:rstudio')", R_ENVS.base).unwrap();
+                harp::parse_eval_base("as.environment('tools:positron')").unwrap();
+            let rstudio_exports = harp::parse_eval_base("as.environment('tools:rstudio')").unwrap();
 
             let positron_exports = Environment::new(positron_exports);
             let rstudio_exports = Environment::new(rstudio_exports);

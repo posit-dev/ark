@@ -224,7 +224,6 @@ mod tests {
     use libr::STRSXP;
 
     use crate::environment::Environment;
-    use crate::environment::R_ENVS;
     use crate::eval::parse_eval0;
     use crate::modules::HARP_ENV;
     use crate::r_assert_type;
@@ -263,8 +262,7 @@ mod tests {
     #[test]
     fn test_formatting_option() {
         r_test(|| {
-            let x =
-                harp::parse_eval0(r#"c("1", "2", '"a"', "NA", NA_character_)"#, R_ENVS.base).unwrap();
+            let x = harp::parse_eval_base(r#"c("1", "2", '"a"', "NA", NA_character_)"#).unwrap();
             r_assert_type(x.sexp, &[STRSXP]).unwrap();
 
             let formatted = FormattedVector::new_with_options(x.sexp, FormattedVectorOptions {

@@ -463,7 +463,7 @@ mod tests {
                 .call()
                 .unwrap();
 
-            let function = harp::parse_eval0("function() stop('oh no')", R_ENVS.base).unwrap();
+            let function = harp::parse_eval_base("function() stop('oh no')").unwrap();
 
             let _ = RFunction::new("base", "makeActiveBinding")
                 .param("sym", "a")

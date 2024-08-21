@@ -166,9 +166,6 @@ fn get_stat<T: Clone>(stats: &HashMap<String, T>, name: &str) -> anyhow::Result<
 
 #[cfg(test)]
 mod tests {
-
-    use harp::environment::R_ENVS;
-
     use super::*;
     use crate::test::r_test;
 
@@ -185,7 +182,7 @@ mod tests {
     #[test]
     fn test_numeric_summary() {
         r_test(|| {
-            let column = harp::parse_eval0("c(1,2,3,4,5, NA)", R_ENVS.global).unwrap();
+            let column = harp::parse_eval_global("c(1,2,3,4,5, NA)").unwrap();
             let stats =
                 summary_stats(column.sexp, ColumnDisplayType::Number, &default_options()).unwrap();
             let expected = SummaryStatsNumber {
@@ -202,8 +199,7 @@ mod tests {
     #[test]
     fn test_numeric_all_nas() {
         r_test(|| {
-            let column =
-                harp::parse_eval0("c(NA_real_, NA_real_, NA_real_)", R_ENVS.global).unwrap();
+            let column = harp::parse_eval_global("c(NA_real_, NA_real_, NA_real_)").unwrap();
             let stats =
                 summary_stats(column.sexp, ColumnDisplayType::Number, &default_options()).unwrap();
             let expected = SummaryStatsNumber {
@@ -220,7 +216,7 @@ mod tests {
     #[test]
     fn test_string_summary() {
         r_test(|| {
-            let column = harp::parse_eval0("c('a', 'b', 'c', 'd', '')", R_ENVS.global).unwrap();
+            let column = harp::parse_eval_global("c('a', 'b', 'c', 'd', '')").unwrap();
             let stats =
                 summary_stats(column.sexp, ColumnDisplayType::String, &default_options()).unwrap();
             let expected = SummaryStatsString {
@@ -234,8 +230,7 @@ mod tests {
     #[test]
     fn test_string_summary_for_factors() {
         r_test(|| {
-            let column =
-                harp::parse_eval0("factor(c('a', 'b', 'c', 'd', ''))", R_ENVS.global).unwrap();
+            let column = harp::parse_eval_global("factor(c('a', 'b', 'c', 'd', ''))").unwrap();
             let stats =
                 summary_stats(column.sexp, ColumnDisplayType::String, &default_options()).unwrap();
             let expected = SummaryStatsString {
@@ -249,8 +244,7 @@ mod tests {
     #[test]
     fn test_boolean_summary() {
         r_test(|| {
-            let column =
-                harp::parse_eval0("c(TRUE, FALSE, TRUE, TRUE, NA)", R_ENVS.global).unwrap();
+            let column = harp::parse_eval_global("c(TRUE, FALSE, TRUE, TRUE, NA)").unwrap();
             let stats =
                 summary_stats(column.sexp, ColumnDisplayType::Boolean, &default_options()).unwrap();
             let expected = SummaryStatsBoolean {
@@ -264,9 +258,8 @@ mod tests {
     #[test]
     fn test_date_summary() {
         r_test(|| {
-            let column = harp::parse_eval0(
+            let column = harp::parse_eval_global(
                 "as.Date(c('2021-01-01', '2021-01-02', '2021-01-03', '2021-01-04', NA))",
-                R_ENVS.global,
             )
             .unwrap();
             let stats =
@@ -285,9 +278,8 @@ mod tests {
     #[test]
     fn test_datetime_summary() {
         r_test(|| {
-            let column = harp::parse_eval0(
+            let column = harp::parse_eval_global(
                 "as.POSIXct(c('2015-07-24 23:15:07', '2015-07-24 23:15:07', NA), tz = 'Japan')",
-                R_ENVS.global,
             )
             .unwrap();
             let stats = summary_stats(column.sexp, ColumnDisplayType::Datetime, &default_options())

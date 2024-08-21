@@ -512,7 +512,6 @@ fn call_label(x: SEXP) -> String {
 #[cfg(test)]
 mod tests {
     use harp::call::RCall;
-    use harp::environment::R_ENVS;
     use harp::object::*;
     use harp::r_char;
     use harp::r_null;
@@ -582,7 +581,7 @@ fn <- function(
   lst = list(1, 2)
 ) { }
 "#;
-            harp::parse_eval0(fun, R_ENVS.global).unwrap();
+            harp::parse_eval_global(fun).unwrap();
 
             let (text, point) = point_from_cursor("fn(@)");
             let document = Document::new(&text, None);
@@ -600,7 +599,7 @@ fn <- function(
             );
 
             // Clean up
-            harp::parse_eval0("rm(fn)", R_ENVS.global).unwrap();
+            harp::parse_eval_global("rm(fn)").unwrap();
         })
     }
 

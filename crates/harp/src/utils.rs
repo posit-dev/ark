@@ -17,10 +17,8 @@ use regex::Regex;
 use crate::call::r_expr_quote;
 use crate::call::RArgument;
 use crate::environment::Environment;
-use crate::environment::R_ENVS;
 use crate::error::Error;
 use crate::error::Result;
-use crate::eval::parse_eval0;
 use crate::exec::RFunction;
 use crate::exec::RFunctionExt;
 use crate::modules::HARP_ENV;
@@ -704,7 +702,7 @@ pub fn r_normalize_path(x: RObject) -> anyhow::Result<String> {
 pub fn save_rds(x: SEXP, path: &str) {
     let path = RObject::from(path);
 
-    let env = Environment::new(parse_eval0("new.env()", R_ENVS.base).unwrap());
+    let env = Environment::new(harp::parse_eval_base("new.env()").unwrap());
     env.bind("x".into(), x);
     env.bind("path".into(), path);
 
@@ -731,7 +729,7 @@ pub fn push_rds(x: SEXP, path: &str, context: &str) {
     };
     let context = RObject::from(context);
 
-    let env = Environment::new(parse_eval0("new.env()", R_ENVS.global).unwrap());
+    let env = Environment::new(harp::parse_eval_base("new.env()").unwrap());
 
     env.bind("x".into(), x);
     env.bind("path".into(), path);

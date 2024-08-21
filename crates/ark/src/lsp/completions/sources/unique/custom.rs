@@ -215,7 +215,6 @@ pub fn completions_from_custom_source_impl(
 
 #[cfg(test)]
 mod tests {
-    use harp::environment::R_ENVS;
     use tree_sitter::Point;
 
     use crate::lsp::completions::sources::unique::custom::completions_from_custom_source_impl;
@@ -227,7 +226,7 @@ mod tests {
     fn test_completion_custom_library() {
         r_test(|| {
             let n_packages = {
-                let n = harp::parse_eval0("length(base::.packages(TRUE))", R_ENVS.global).unwrap();
+                let n = harp::parse_eval_global("length(base::.packages(TRUE))").unwrap();
                 let n = i32::try_from(n).unwrap();
                 usize::try_from(n).unwrap()
             };
