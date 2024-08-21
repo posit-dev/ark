@@ -24,6 +24,55 @@ pub enum ParseResult {
     Incomplete,
 }
 
+/// Returns a single expression
+pub fn parse(code: &str) -> crate::Result<RObject> {
+    unsafe {
+        let exprs = parse_exprs(code)?;
+
+        let n = libr::Rf_xlength(*exprs);
+        if n != 1 {
+            return Err(crate::Error::ParseError {
+                code: code.to_string(),
+                message: String::from("Expected a single expression, got {n}"),
+            });
+        }
+
+        let expr = libr::VECTOR_ELT(*exprs, 0);
+        Ok(expr.into())
+    }
+}
+
+/// Returns an EXPRSXP vector
+pub fn parse_exprs(code: &str) -> crate::Result<RObject> {
+    match unsafe { parse_vector(code)? } {
+        ParseResult::Complete(x) => {
+            return Ok(RObject::from(x));
+        },
+        ParseResult::Incomplete => {
+            return Err(crate::Error::ParseError {
+                code: code.to_string(),
+                message: String::from("Incomplete code"),
+            });
+        },
+    };
+}
+
+/// This uses the R-level function `parse()` to create the srcrefs
+pub fn parse_exprs_with_srcrefs(code: &str) -> crate::Result<RObject> {
+    unsafe {
+        let mut protect = RProtect::new();
+
+        // Because `parse(text =)` doesn't allow `\r\n` even on Windows
+        let code = convert_line_endings(code, LineEnding::Posix);
+        let code = r_string!(code, protect);
+
+        RFunction::new("base", "parse")
+            .param("text", code)
+            .param("keep.source", true)
+            .call()
+    }
+}
+
 #[allow(non_upper_case_globals)]
 pub unsafe fn parse_vector(code: &str) -> crate::Result<ParseResult> {
     let mut ps: libr::ParseStatus = libr::ParseStatus_PARSE_NULL;
@@ -92,55 +141,6 @@ pub fn source_exprs_in(exprs: impl Into<SEXP>, env: impl Into<SEXP>) -> crate::R
         .call()?;
 
     Ok(())
-}
-
-/// Returns an EXPRSXP vector
-pub fn parse_exprs(code: &str) -> crate::Result<RObject> {
-    match unsafe { parse_vector(code)? } {
-        ParseResult::Complete(x) => {
-            return Ok(RObject::from(x));
-        },
-        ParseResult::Incomplete => {
-            return Err(crate::Error::ParseError {
-                code: code.to_string(),
-                message: String::from("Incomplete code"),
-            });
-        },
-    };
-}
-
-/// This uses the R-level function `parse()` to create the srcrefs
-pub fn parse_exprs_with_srcrefs(code: &str) -> crate::Result<RObject> {
-    unsafe {
-        let mut protect = RProtect::new();
-
-        // Because `parse(text =)` doesn't allow `\r\n` even on Windows
-        let code = convert_line_endings(code, LineEnding::Posix);
-        let code = r_string!(code, protect);
-
-        RFunction::new("base", "parse")
-            .param("text", code)
-            .param("keep.source", true)
-            .call()
-    }
-}
-
-/// Returns a single expression
-pub fn parse(code: &str) -> crate::Result<RObject> {
-    unsafe {
-        let exprs = parse_exprs(code)?;
-
-        let n = libr::Rf_xlength(*exprs);
-        if n != 1 {
-            return Err(crate::Error::ParseError {
-                code: code.to_string(),
-                message: String::from("Expected a single expression, got {n}"),
-            });
-        }
-
-        let expr = libr::VECTOR_ELT(*exprs, 0);
-        Ok(expr.into())
-    }
 }
 
 #[cfg(test)]
