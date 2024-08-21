@@ -107,6 +107,14 @@ impl Sxpinfo {
 }
 
 #[harp::register]
+pub extern "C" fn harp_log_trace(msg: SEXP) -> crate::error::Result<SEXP> {
+    let msg = String::try_from(RObject::view(msg))?;
+    log::trace!("{msg}");
+
+    unsafe { Ok(libr::R_NilValue) }
+}
+
+#[harp::register]
 pub extern "C" fn harp_log_warning(msg: SEXP) -> crate::error::Result<SEXP> {
     let msg = String::try_from(RObject::view(msg))?;
     log::warn!("{msg}");

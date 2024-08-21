@@ -25,7 +25,7 @@ format_oo <- function(x, ...) {
     }
 
     if (!is.character(out)) {
-        log_warning(sprintf(
+        log_trace(sprintf(
             "`format()` method for <%s> should return a character vector.",
             class_collapsed(x)
         ))
@@ -33,7 +33,7 @@ format_oo <- function(x, ...) {
     }
 
     if (length(x) != length(out)) {
-        log_warning(sprintf(
+        log_trace(sprintf(
             "`format()` method for <%s> should return the same number of elements.",
             class_collapsed(x)
         ))
@@ -43,7 +43,7 @@ format_oo <- function(x, ...) {
     # Try to recover if dimensions don't agree (for example `format.Surv()`
     # doesn't preserve dimensions, see https://github.com/posit-dev/positron/issues/1862)
     if (!identical(dim(x), dim(out))) {
-        log_warning(sprintf(
+        log_trace(sprintf(
             "`format()` method for <%s> should return conforming dimensions.",
             class_collapsed(x)
         ))
@@ -60,13 +60,13 @@ format_fallback <- function(x, ...) {
 
     # Shouldn't happen but just in case
     if (!is.character(out)) {
-        stop("Unexpected type from `base::format()`.")
+        log_trace("Unexpected type from `base::format()`.")
     }
     if (length(x) != length(out)) {
-        stop("Unexpected length from `base::format()`.")
+        log_trace("Unexpected length from `base::format()`.")
     }
     if (!identical(dim(x), dim(out))) {
-        stop("Unexpected dimensions from `base::format()`.")
+        log_trace("Unexpected dimensions from `base::format()`.")
     }
 
     out
