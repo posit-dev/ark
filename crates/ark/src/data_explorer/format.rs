@@ -440,7 +440,6 @@ impl Into<String> for FormattedValue {
 #[cfg(test)]
 mod tests {
     use harp::environment::R_ENVS;
-    use harp::eval::r_parse_eval0;
 
     use super::*;
     use crate::test::r_test;
@@ -513,7 +512,7 @@ mod tests {
             // this test needs to match the Python equivalent in
             // https://github.com/posit-dev/positron/blob/5192792967b6778608d643b821e84ebb6d5f7025/extensions/positron-python/python_files/positron/positron_ipykernel/tests/test_data_explorer.py#L742-L743
             let assert_float_formatting = |options: FormatOptions, expected: Vec<ColumnValue>| {
-                let testing_values = r_parse_eval0(
+                let testing_values = harp::parse_eval0(
                     r#"c(
                                 0,
                                 1.0,
@@ -596,7 +595,7 @@ mod tests {
     #[test]
     fn test_float_special_values() {
         r_test(|| {
-            let data = r_parse_eval0(
+            let data = harp::parse_eval0(
                 "c(NA_real_, NaN, Inf, -Inf, 0, 1, 1000000000, -1000000000)",
                 R_ENVS.global,
             )
@@ -618,7 +617,7 @@ mod tests {
     #[test]
     fn test_list_formatting() {
         r_test(|| {
-            let data = r_parse_eval0("list(0, NULL, NA_real_)", R_ENVS.global).unwrap();
+            let data = harp::parse_eval0("list(0, NULL, NA_real_)", R_ENVS.global).unwrap();
             let formatted = format_column(data.sexp, &default_options());
             assert_eq!(formatted, vec![
                 ColumnValue::FormattedValue("<numeric [1]>".to_string()),
@@ -631,7 +630,7 @@ mod tests {
     #[test]
     fn test_integer_formatting() {
         r_test(|| {
-            let data = r_parse_eval0(
+            let data = harp::parse_eval0(
                 "as.integer(c(1, 1000, 0, -100000, NA, 1000000))",
                 R_ENVS.global,
             )
@@ -651,7 +650,7 @@ mod tests {
     #[test]
     fn test_chr_formatting() {
         r_test(|| {
-            let data = r_parse_eval0("c('a', 'b', 'c', NA, 'd', 'e')", R_ENVS.global).unwrap();
+            let data = harp::parse_eval0("c('a', 'b', 'c', NA, 'd', 'e')", R_ENVS.global).unwrap();
             let formatted = format_column(data.sexp, &default_options());
             assert_eq!(formatted, vec![
                 ColumnValue::FormattedValue("a".to_string()),
@@ -668,7 +667,8 @@ mod tests {
     fn test_factors_formatting() {
         r_test(|| {
             let data =
-                r_parse_eval0("factor(c('aaaaa', 'b', 'c', NA, 'd', 'e'))", R_ENVS.global).unwrap();
+                harp::parse_eval0("factor(c('aaaaa', 'b', 'c', NA, 'd', 'e'))", R_ENVS.global)
+                    .unwrap();
             let formatted = format_column(data.sexp, &default_options());
             assert_eq!(formatted, vec![
                 ColumnValue::FormattedValue("aaaaa".to_string()),
@@ -688,7 +688,7 @@ mod tests {
         // > 1000000000+1000000000i
         // [1] 1e+09+1e+09i
         r_test(|| {
-            let data = r_parse_eval0(
+            let data = harp::parse_eval0(
                 "c(1+1i, 2+2i, 3+3i, NA, 1000000000+1000000000i, 5+5i)",
                 R_ENVS.global,
             )
@@ -709,7 +709,7 @@ mod tests {
     fn test_lgl_formatting() {
         r_test(|| {
             let data =
-                r_parse_eval0("c(TRUE, FALSE, NA, TRUE, FALSE, TRUE)", R_ENVS.global).unwrap();
+                harp::parse_eval0("c(TRUE, FALSE, NA, TRUE, FALSE, TRUE)", R_ENVS.global).unwrap();
             let formatted = format_column(data.sexp, &default_options());
             assert_eq!(formatted, vec![
                 ColumnValue::FormattedValue("TRUE".to_string()),
@@ -725,7 +725,7 @@ mod tests {
     #[test]
     fn test_date_formatting() {
         r_test(|| {
-            let data = r_parse_eval0(
+            let data = harp::parse_eval0(
                 r#"as.POSIXct(c("2012-01-01", NA, "2017-05-27"))"#,
                 R_ENVS.global,
             )
@@ -737,7 +737,7 @@ mod tests {
                 ColumnValue::FormattedValue("2017-05-27".to_string())
             ]);
 
-            let data = r_parse_eval0(
+            let data = harp::parse_eval0(
                 r#"as.POSIXct(c("2012-01-01 00:01:00", NA, "2017-05-27 00:00:01"))"#,
                 R_ENVS.global,
             )
@@ -757,7 +757,7 @@ mod tests {
             let mut options = default_options();
             options.max_value_length = 3;
 
-            let data = r_parse_eval0(r#"c("aaaaa", "aaaaaaaa", "aa")"#, R_ENVS.global).unwrap();
+            let data = harp::parse_eval0(r#"c("aaaaa", "aaaaaaaa", "aa")"#, R_ENVS.global).unwrap();
             let formatted = format_column(data.sexp, &options);
             assert_eq!(formatted, vec![
                 ColumnValue::FormattedValue("aaa".to_string()),
@@ -765,14 +765,14 @@ mod tests {
                 ColumnValue::FormattedValue("aa".to_string()),
             ]);
 
-            let data = r_parse_eval0(r#"c("ボルテックス")"#, R_ENVS.global).unwrap();
+            let data = harp::parse_eval0(r#"c("ボルテックス")"#, R_ENVS.global).unwrap();
             let formatted = format_column(data.sexp, &options);
             assert_eq!(formatted, vec![ColumnValue::FormattedValue(
                 "ボルテ".to_string()
             ),]);
 
             options.max_value_length = 4;
-            let data = r_parse_eval0(r#"c("नमस्ते")"#, R_ENVS.global).unwrap();
+            let data = harp::parse_eval0(r#"c("नमस्ते")"#, R_ENVS.global).unwrap();
             let formatted = format_column(data.sexp, &options);
             assert_eq!(formatted, vec![ColumnValue::FormattedValue(
                 "नमस्".to_string()

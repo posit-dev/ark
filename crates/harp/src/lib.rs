@@ -38,6 +38,7 @@ pub mod vec_format;
 pub mod vector;
 
 // Reexport API
+pub use eval::*;
 pub use parse::*;
 pub use source::*;
 pub use table::*;

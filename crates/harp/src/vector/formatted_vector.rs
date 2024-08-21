@@ -225,7 +225,7 @@ mod tests {
 
     use crate::environment::Environment;
     use crate::environment::R_ENVS;
-    use crate::eval::r_parse_eval0;
+    use crate::eval::parse_eval0;
     use crate::modules::HARP_ENV;
     use crate::r_assert_type;
     use crate::test::r_test;
@@ -241,7 +241,7 @@ mod tests {
 
             // From src/modules/format.R
             let objs =
-                Environment::new(r_parse_eval0("init_test_format()", HARP_ENV.unwrap()).unwrap());
+                Environment::new(parse_eval0("init_test_format()", HARP_ENV.unwrap()).unwrap());
 
             // Unconforming dims (posit-dev/positron#1862)
             let x = FormattedVector::new(objs.find("unconforming_dims").unwrap()).unwrap();
@@ -264,7 +264,7 @@ mod tests {
     fn test_formatting_option() {
         r_test(|| {
             let x =
-                r_parse_eval0(r#"c("1", "2", '"a"', "NA", NA_character_)"#, R_ENVS.base).unwrap();
+                harp::parse_eval0(r#"c("1", "2", '"a"', "NA", NA_character_)"#, R_ENVS.base).unwrap();
             r_assert_type(x.sexp, &[STRSXP]).unwrap();
 
             let formatted = FormattedVector::new_with_options(x.sexp, FormattedVectorOptions {

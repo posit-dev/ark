@@ -159,7 +159,6 @@ pub fn profile_frequency_table(
 mod tests {
     use harp::assert_match;
     use harp::environment::R_ENVS;
-    use harp::eval::r_parse_eval0;
     use harp::object::RObject;
 
     use super::*;
@@ -176,7 +175,7 @@ mod tests {
     }
 
     fn test_histogram(code: &str, num_bins: i64, bin_edges: Vec<&str>, bin_counts: Vec<i64>) {
-        let column = r_parse_eval0(code, R_ENVS.global).unwrap();
+        let column = harp::parse_eval0(code, R_ENVS.global).unwrap();
 
         let hist = profile_histogram(
             column.sexp,
@@ -207,7 +206,7 @@ mod tests {
             panic!("No method with this name");
         };
 
-        let column = r_parse_eval0(code, R_ENVS.global).unwrap();
+        let column = harp::parse_eval0(code, R_ENVS.global).unwrap();
 
         let hist = profile_histogram(
             column.sexp,
@@ -231,7 +230,7 @@ mod tests {
     where
         RObject: From<T>,
     {
-        let column = r_parse_eval0(code, R_ENVS.global).unwrap();
+        let column = harp::parse_eval0(code, R_ENVS.global).unwrap();
 
         let hist = profile_histogram(
             column.sexp,
@@ -263,7 +262,7 @@ mod tests {
     ) where
         RObject: From<T>,
     {
-        let column = r_parse_eval0(code, R_ENVS.global).unwrap();
+        let column = harp::parse_eval0(code, R_ENVS.global).unwrap();
         let freq_table = profile_frequency_table(
             column.sexp,
             &ColumnFrequencyTableParams { limit },
@@ -453,21 +452,21 @@ mod tests {
             test_quantiles(
                 "c(NA_real_, NA_real_)",
                 vec![0.5, 0.9],
-                r_parse_eval0("c(NA_real_, NA_real_)", R_ENVS.global).unwrap(),
+                harp::parse_eval0("c(NA_real_, NA_real_)", R_ENVS.global).unwrap(),
             );
 
             // Get constant value when there's a single non-na value
             test_quantiles(
                 "c(1, NA_real_)",
                 vec![0.5, 0.9],
-                r_parse_eval0("c(1, 1)", R_ENVS.global).unwrap(),
+                harp::parse_eval0("c(1, 1)", R_ENVS.global).unwrap(),
             );
 
             // Make sure Inf, -Inf and NaN are also ignored
             test_quantiles(
                 "c(1, NaN, Inf, -Inf)",
                 vec![0.5, 0.9],
-                r_parse_eval0("c(1, 1)", R_ENVS.global).unwrap(),
+                harp::parse_eval0("c(1, 1)", R_ENVS.global).unwrap(),
             );
         });
     }
@@ -478,26 +477,26 @@ mod tests {
             test_quantiles(
                 "as.Date(c('2010-01-01', '2010-01-02', '2010-01-03'))",
                 vec![0.5],
-                r_parse_eval0("as.Date('2010-01-02')", R_ENVS.global).unwrap(),
+                harp::parse_eval0("as.Date('2010-01-02')", R_ENVS.global).unwrap(),
             );
             test_quantiles(
                 "as.Date(c('2010-01-01', '2010-01-02'))",
                 vec![0.5],
-                r_parse_eval0("as.POSIXct('2010-01-01 12:00:00')", R_ENVS.global).unwrap(),
+                harp::parse_eval0("as.POSIXct('2010-01-01 12:00:00')", R_ENVS.global).unwrap(),
             );
 
             // What happens when there's no representable dates between min and max.
             test_quantiles(
                 "as.POSIXct(c('2010-01-01 00:00:01', '2010-01-01 00:00:02'))",
                 vec![0.5],
-                r_parse_eval0("as.POSIXct('2010-01-01 00:00:01')", R_ENVS.global).unwrap(),
+                harp::parse_eval0("as.POSIXct('2010-01-01 00:00:01')", R_ENVS.global).unwrap(),
             );
 
             // NA's are ignored
             test_quantiles(
                 "as.Date(c('2010-01-01', '2010-01-02', NA))",
                 vec![0.5],
-                r_parse_eval0("as.POSIXct('2010-01-01 12:00:00')", R_ENVS.global).unwrap(),
+                harp::parse_eval0("as.POSIXct('2010-01-01 12:00:00')", R_ENVS.global).unwrap(),
             );
         })
     }
@@ -508,14 +507,14 @@ mod tests {
             test_frequency_table(
                 "c(rep('a', 100), rep('b', 200), rep('c', 150))",
                 10,
-                r_parse_eval0("c('b', 'c', 'a')", R_ENVS.global).unwrap(),
+                harp::parse_eval0("c('b', 'c', 'a')", R_ENVS.global).unwrap(),
                 vec![200, 150, 100],
                 None,
             );
             test_frequency_table(
                 "c(rep('a', 100), rep('b', 200), rep('c', 150))",
                 2,
-                r_parse_eval0("c('b', 'c')", R_ENVS.global).unwrap(),
+                harp::parse_eval0("c('b', 'c')", R_ENVS.global).unwrap(),
                 vec![200, 150],
                 Some(100),
             );
@@ -524,7 +523,7 @@ mod tests {
             test_frequency_table(
                 "c(rep('a', 100), rep('b', 200), rep('c', 150), NA)",
                 10,
-                r_parse_eval0("c('b', 'c', 'a')", R_ENVS.global).unwrap(),
+                harp::parse_eval0("c('b', 'c', 'a')", R_ENVS.global).unwrap(),
                 vec![200, 150, 100],
                 None,
             );
@@ -537,14 +536,14 @@ mod tests {
             test_frequency_table(
                 "factor(c(rep('a', 100), rep('b', 200), rep('c', 150)))",
                 10,
-                r_parse_eval0("c('b', 'c', 'a')", R_ENVS.global).unwrap(),
+                harp::parse_eval0("c('b', 'c', 'a')", R_ENVS.global).unwrap(),
                 vec![200, 150, 100],
                 None,
             );
             test_frequency_table(
                 "factor(c(rep('a', 100), rep('b', 200), rep('c', 150)))",
                 2,
-                r_parse_eval0("c('b', 'c')", R_ENVS.global).unwrap(),
+                harp::parse_eval0("c('b', 'c')", R_ENVS.global).unwrap(),
                 vec![200, 150],
                 Some(100),
             );
@@ -553,7 +552,7 @@ mod tests {
             test_frequency_table(
                 "factor(rep(c('a', 'b'), c(100, 200)), levels = c('a', 'b', 'c'))",
                 10,
-                r_parse_eval0("c('b', 'a', 'c')", R_ENVS.global).unwrap(),
+                harp::parse_eval0("c('b', 'a', 'c')", R_ENVS.global).unwrap(),
                 vec![200, 100, 0],
                 None,
             );
@@ -566,7 +565,7 @@ mod tests {
             test_frequency_table(
                 "rep(0:10/10, 1:11)",
                 100,
-                r_parse_eval0("10:0/10", R_ENVS.global).unwrap(),
+                harp::parse_eval0("10:0/10", R_ENVS.global).unwrap(),
                 vec![11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1],
                 None,
             );
@@ -574,7 +573,7 @@ mod tests {
             test_frequency_table(
                 "rep(0:10/10, 1:11)",
                 5,
-                r_parse_eval0("10:6/10", R_ENVS.global).unwrap(),
+                harp::parse_eval0("10:6/10", R_ENVS.global).unwrap(),
                 vec![11, 10, 9, 8, 7],
                 Some(21),
             );
@@ -583,7 +582,7 @@ mod tests {
             test_frequency_table(
                 "c(NaN, Inf, -Inf, NA)",
                 5,
-                r_parse_eval0("c(Inf, -Inf)", R_ENVS.global).unwrap(),
+                harp::parse_eval0("c(Inf, -Inf)", R_ENVS.global).unwrap(),
                 vec![1, 1],
                 None,
             );
@@ -592,7 +591,7 @@ mod tests {
             test_frequency_table(
                 "rep(0:10, 1:11)",
                 5,
-                r_parse_eval0("10:6", R_ENVS.global).unwrap(),
+                harp::parse_eval0("10:6", R_ENVS.global).unwrap(),
                 vec![11, 10, 9, 8, 7],
                 Some(21),
             );
@@ -601,7 +600,7 @@ mod tests {
             test_frequency_table(
                 "as.POSIXct(rep(c('2010-01-01', '2017-05-17 11:00:00'), c(100, 200)))",
                 5,
-                r_parse_eval0(
+                harp::parse_eval0(
                     "as.POSIXct(c('2017-05-17 11:00:00','2010-01-01'))",
                     R_ENVS.global,
                 )

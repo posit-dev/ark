@@ -1,7 +1,7 @@
 //
 // eval.rs
 //
-// Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2022-2024 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -24,14 +24,14 @@ impl Default for RParseEvalOptions {
     }
 }
 
-pub fn r_parse_eval0(code: &str, env: impl Into<RObject>) -> harp::Result<RObject> {
-    r_parse_eval(code, RParseEvalOptions {
+pub fn parse_eval0(code: &str, env: impl Into<RObject>) -> harp::Result<RObject> {
+    harp::parse_eval(code, RParseEvalOptions {
         env: env.into(),
         ..Default::default()
     })
 }
 
-pub fn r_parse_eval(code: &str, options: RParseEvalOptions) -> harp::Result<RObject> {
+pub fn parse_eval(code: &str, options: RParseEvalOptions) -> harp::Result<RObject> {
     // Forbid certain kinds of evaluation if requested.
     if options.forbid_function_calls && code.find('(').is_some() {
         return Err(Error::UnsafeEvaluationError(code.to_string()));

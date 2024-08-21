@@ -7,7 +7,6 @@
 
 use anyhow::Result;
 use harp::error::Error;
-use harp::eval::r_parse_eval;
 use harp::eval::RParseEvalOptions;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
@@ -180,7 +179,7 @@ pub(super) fn completions_from_evaluated_object_names(
     };
 
     // Try to evaluate the object
-    let object = r_parse_eval(name, options);
+    let object = harp::parse_eval(name, options);
 
     // If we get an `UnsafeEvaluationError` here from setting
     // `forbid_function_calls`, we don't even log that one, as that is

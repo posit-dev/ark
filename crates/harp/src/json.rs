@@ -372,7 +372,6 @@ mod tests {
 
     use super::*;
     use crate::environment::R_ENVS;
-    use crate::eval::r_parse_eval0;
     use crate::exec::RFunction;
     use crate::exec::RFunctionExt;
     use crate::r_test;
@@ -381,7 +380,7 @@ mod tests {
     // and converts it to a JSON value. We use this extensively in the tests
     // below to ensure that the R objects are serialized to JSON correctly.
     fn r_to_json(expr: &str) -> Value {
-        let evaluated = r_parse_eval0(expr, R_ENVS.global).unwrap();
+        let evaluated = harp::parse_eval0(expr, R_ENVS.global).unwrap();
 
         // Convert the evaluated expression to a JSON value
         Value::try_from(evaluated).unwrap()

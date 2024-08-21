@@ -119,7 +119,6 @@ fn is_within_subset_delimiters(x: &Point, subset_node: &Node, subset_type: &Node
 
 #[cfg(test)]
 mod tests {
-    use harp::eval::r_parse_eval;
     use harp::eval::RParseEvalOptions;
     use tree_sitter::Point;
 
@@ -137,7 +136,7 @@ mod tests {
             };
 
             // Set up a list with names
-            r_parse_eval("foo <- list(b = 1, a = 2)", options.clone()).unwrap();
+            harp::parse_eval("foo <- list(b = 1, a = 2)", options.clone()).unwrap();
 
             // Right after the `[`
             let point = Point { row: 0, column: 4 };
@@ -168,7 +167,7 @@ mod tests {
             assert!(completions.is_none());
 
             // Clean up
-            r_parse_eval("remove(foo)", options.clone()).unwrap();
+            harp::parse_eval("remove(foo)", options.clone()).unwrap();
         })
     }
 }

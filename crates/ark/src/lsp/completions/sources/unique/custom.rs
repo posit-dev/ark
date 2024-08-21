@@ -9,8 +9,8 @@ use anyhow::Result;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
-use harp::utils::sym_quote_invalid;
 use harp::utils::r_typeof;
+use harp::utils::sym_quote_invalid;
 use libr::R_NilValue;
 use libr::VECSXP;
 use libr::VECTOR_ELT;
@@ -216,7 +216,6 @@ pub fn completions_from_custom_source_impl(
 #[cfg(test)]
 mod tests {
     use harp::environment::R_ENVS;
-    use harp::eval::r_parse_eval0;
     use tree_sitter::Point;
 
     use crate::lsp::completions::sources::unique::custom::completions_from_custom_source_impl;
@@ -228,7 +227,7 @@ mod tests {
     fn test_completion_custom_library() {
         r_test(|| {
             let n_packages = {
-                let n = r_parse_eval0("length(base::.packages(TRUE))", R_ENVS.global).unwrap();
+                let n = harp::parse_eval0("length(base::.packages(TRUE))", R_ENVS.global).unwrap();
                 let n = i32::try_from(n).unwrap();
                 usize::try_from(n).unwrap()
             };

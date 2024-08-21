@@ -8,7 +8,6 @@
 use anyhow::anyhow;
 use harp::environment::Environment;
 use harp::environment::R_ENVS;
-use harp::eval::r_parse_eval;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::r_symbol;
@@ -45,14 +44,14 @@ where
 }
 
 pub static ARK_ENVS: Lazy<ArkEnvs> = Lazy::new(|| {
-    let positron_ns = r_parse_eval(
+    let positron_ns = harp::parse_eval(
         "environment(as.environment('tools:positron')$.ps.internal)",
         Default::default(),
     )
     .unwrap()
     .sexp;
 
-    let rstudio_ns = r_parse_eval(
+    let rstudio_ns = harp::parse_eval(
         "as.environment('tools:rstudio')$.__rstudio_ns__.",
         Default::default(),
     )
@@ -291,7 +290,6 @@ fn r_poke_option_ark_testing() {
 mod tests {
     use harp::environment::Environment;
     use harp::environment::R_ENVS;
-    use harp::eval::r_parse_eval0;
     use libr::CLOENV;
 
     use crate::test::r_test;
@@ -306,9 +304,9 @@ mod tests {
     fn test_environments_are_locked() {
         r_test(|| {
             let positron_exports =
-                r_parse_eval0("as.environment('tools:positron')", R_ENVS.base).unwrap();
+                harp::parse_eval0("as.environment('tools:positron')", R_ENVS.base).unwrap();
             let rstudio_exports =
-                r_parse_eval0("as.environment('tools:rstudio')", R_ENVS.base).unwrap();
+                harp::parse_eval0("as.environment('tools:rstudio')", R_ENVS.base).unwrap();
 
             let positron_exports = Environment::new(positron_exports);
             let rstudio_exports = Environment::new(rstudio_exports);

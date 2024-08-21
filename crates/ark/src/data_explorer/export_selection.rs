@@ -115,7 +115,6 @@ mod tests {
     use amalthea::comm::data_explorer_comm::ExportFormat;
     use amalthea::comm::data_explorer_comm::Selection;
     use harp::environment::R_ENVS;
-    use harp::eval::r_parse_eval0;
     use harp::object::RObject;
 
     use super::*;
@@ -142,7 +141,7 @@ mod tests {
     }
 
     fn small_test_data() -> RObject {
-        r_parse_eval0(
+        harp::parse_eval0(
             "data.frame(a = 1:3, b = c(4,5,NA), c = letters[1:3])",
             R_ENVS.global,
         )
@@ -150,10 +149,11 @@ mod tests {
     }
 
     fn has_knitr() -> bool {
-        let res: Option<bool> = r_parse_eval0(r#".ps.is_installed("knitr")"#, ARK_ENVS.positron_ns)
-            .unwrap()
-            .try_into()
-            .unwrap();
+        let res: Option<bool> =
+            harp::parse_eval0(r#".ps.is_installed("knitr")"#, ARK_ENVS.positron_ns)
+                .unwrap()
+                .try_into()
+                .unwrap();
         match res {
             Some(res) => res,
             None => false,
