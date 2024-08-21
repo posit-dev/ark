@@ -1665,5 +1665,52 @@ fn test_get_data_values_by_indices() {
         expect_get_data_values(vec![1], vec![2, 4], vec![vec!["c", "e"]]);
         expect_get_data_values(vec![2], vec![0, 9], vec![vec!["0.00", "1.00"]]);
         expect_get_data_values(vec![2], vec![0, 10], vec![vec!["0.00"]]); // Ignore oout of bounds
+    });
+}
+
+#[test]
+fn test_data_update_num_rows() {
+    // Regression test for https://github.com/posit-dev/positron/issues/4286
+    // We test that after sending the data update event we also correctly update the
+    // new number of rows.
+    r_test(|| {
+        let socket = open_data_explorer_from_expression(
+            r#"
+                x <- data.frame(
+                    a = c(3, 3, 3, 1),
+                    b = c('a', 'b', 'c', 'd')
+                )
+            "#,
+            Some("x"),
+        )
+        .unwrap();
+
+        let req = DataExplorerBackendRequest::GetState;
+        assert_match!(socket_rpc(&socket, req), DataExplorerBackendReply::GetStateReply(backend_state) => {
+            assert_eq!(backend_state.table_shape.num_rows, 4);
+        });
+
+        // Now change the number of rows. The schema didn't change, so we should
+        // recieve a data update event.
+        r_parse_eval0("x <- utils::tail(x, 2)", R_ENVS.global).unwrap();
+
+        // Emit a console prompt event; this should tickle the data explorer to
+        // check for changes.
+        EVENTS.console_prompt.emit(());
+
+        // Wait for an update event to arrive
+        assert_match!(socket.socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
+            CommMsg::Data(value) => {
+                // Make sure it's a data update event.
+                assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
+                    DataExplorerFrontendEvent::DataUpdate
+                );
+        });
+
+        // Now get the shape and check num rows.
+        let req = DataExplorerBackendRequest::GetState;
+        assert_match!(socket_rpc(&socket, req), DataExplorerBackendReply::GetStateReply(backend_state) => {
+            assert_eq!(backend_state.table_shape.num_rows, 2);
+        });
     })
 }

@@ -387,6 +387,10 @@ impl RDataExplorer {
 
             DataExplorerFrontendEvent::SchemaUpdate
         } else {
+            // The schema didn't change, but the number of rows might have
+            // so we need to set the shape to the new_shape
+            self.shape = new_shape;
+
             // Columns didn't change, but the data has. If there are sort
             // keys, we need to sort the rows again to reflect the new data.
             if self.sort_keys.len() > 0 {
