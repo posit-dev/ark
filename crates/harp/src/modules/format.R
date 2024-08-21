@@ -9,7 +9,7 @@
 # hard to recover from failed assumptions, including by unclassing and
 # reformatting with the default method.
 harp_format <- function(x, ...) {
-    if (is.object(x) && !inherits(x, "formula")) {
+    if (is.object(x)) {
         format_oo(x, ...)
     } else {
         base::format(x, ...)
@@ -18,6 +18,11 @@ harp_format <- function(x, ...) {
 
 format_oo <- function(x, ...) {
     out <- base::format(x, ...)
+
+    if (inherits(x, "formula")) {
+        # Need special handling for this scalar type
+        return(out)
+    }
 
     if (!is.character(out)) {
         log_warning(sprintf(
