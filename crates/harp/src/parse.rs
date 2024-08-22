@@ -9,8 +9,6 @@ use std::ffi::CStr;
 
 use libr::SEXP;
 
-use crate::exec::RFunction;
-use crate::exec::RFunctionExt;
 use crate::line_ending::convert_line_endings;
 use crate::line_ending::LineEnding;
 use crate::protect::RProtect;
@@ -54,32 +52,22 @@ pub fn parse_expr(code: &str) -> crate::Result<RObject> {
 
 /// Returns an EXPRSXP vector
 pub fn parse_exprs(code: &str) -> crate::Result<RObject> {
-    match parse_status(code, Default::default())? {
-        ParseResult::Complete(x) => {
-            return Ok(RObject::from(x));
-        },
-        ParseResult::Incomplete => {
-            return Err(crate::Error::ParseError {
-                code: code.to_string(),
-                message: String::from("Incomplete code"),
-            });
-        },
-    };
+    parse_exprs_ext(code, Default::default())
 }
 
-/// This uses the R-level function `parse()` to create the srcrefs
+/// Same but creates srcrefs
 pub fn parse_exprs_with_srcrefs(code: &str) -> crate::Result<RObject> {
-    unsafe {
-        let mut protect = RProtect::new();
+    parse_exprs_ext(code, RParseOptions { srcref: true })
+}
 
-        // Because `parse(text =)` doesn't allow `\r\n` even on Windows
-        let code = convert_line_endings(code, LineEnding::Posix);
-        let code = r_string!(code, protect);
-
-        RFunction::new("base", "parse")
-            .param("text", code)
-            .param("keep.source", true)
-            .call()
+fn parse_exprs_ext(code: &str, opts: RParseOptions) -> crate::Result<RObject> {
+    let status = parse_status(code, opts)?;
+    match status {
+        ParseResult::Complete(x) => Ok(RObject::from(x)),
+        ParseResult::Incomplete => Err(crate::Error::ParseError {
+            code: code.to_string(),
+            message: String::from("Incomplete code"),
+        }),
     }
 }
 
