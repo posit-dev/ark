@@ -56,6 +56,8 @@ pub fn profile_histogram(
     let method: RObject = match params.method {
         ColumnHistogramParamsMethod::Fixed => "fixed".into(),
         ColumnHistogramParamsMethod::Sturges => "sturges".into(),
+        ColumnHistogramParamsMethod::FreedmanDiaconis => "fd".into(),
+        ColumnHistogramParamsMethod::Scott => "scott".into(),
     };
 
     let results: HashMap<String, RObject> = RFunction::from("profile_histogram")
@@ -197,13 +199,23 @@ mod tests {
         })
     }
 
-    fn test_histogram_sturges(code: &str, bin_edges: Vec<&str>, bin_counts: Vec<i64>) {
+    fn test_histogram_method(code: &str, method: &str, bin_edges: Vec<&str>, bin_counts: Vec<i64>) {
+        let method = if method == "sturges" {
+            ColumnHistogramParamsMethod::Sturges
+        } else if method == "fd" {
+            ColumnHistogramParamsMethod::FreedmanDiaconis
+        } else if method == "scott" {
+            ColumnHistogramParamsMethod::Scott
+        } else {
+            panic!("No method with this name");
+        };
+
         let column = r_parse_eval0(code, R_ENVS.global).unwrap();
 
         let hist = profile_histogram(
             column.sexp,
             &ColumnHistogramParams {
-                method: ColumnHistogramParamsMethod::Sturges,
+                method,
                 num_bins: None,
                 quantiles: None,
             },
@@ -272,12 +284,19 @@ mod tests {
     #[test]
     fn test_basic_histograms() {
         r_test(|| {
-            test_histogram(
+            test_histogram("0:10", 5, vec!["0", "2", "4", "6", "8", "10"], vec![
+                3, 2, 2, 2, 2,
+            ]);
+            test_histogram_method(
                 "0:10",
-                4,
-                vec!["0.00", "2.00", "4.00", "6.00", "8.00", "10.00"],
+                "sturges",
+                vec!["0", "2", "4", "6", "8", "10"],
                 vec![3, 2, 2, 2, 2],
             );
+            test_histogram_method("0:10", "scott", vec!["0", "5", "10"], vec![6, 5]);
+            test_histogram_method("0:10", "fd", vec!["0.00", "3.33", "6.67", "10.00"], vec![
+                4, 3, 4,
+            ]);
         })
     }
 
@@ -320,8 +339,9 @@ mod tests {
                 vec![100, 0, 100],
             );
 
-            test_histogram_sturges(
+            test_histogram_method(
                 "rep(seq(as.Date('2000-01-01'), by = 2, length.out = 2), 100)",
+                "sturges",
                 vec![
                     "2000-01-01 00:00:00",
                     "2000-01-01 16:00:00",
@@ -329,6 +349,25 @@ mod tests {
                     "2000-01-03 00:00:00",
                 ],
                 vec![100, 0, 100],
+            );
+
+            test_histogram_method(
+                "rep(seq(as.Date('2000-01-01'), by = 2, length.out = 2), 100)",
+                "fd",
+                vec![
+                    "2000-01-01 00:00:00",
+                    "2000-01-01 16:00:00",
+                    "2000-01-02 08:00:00",
+                    "2000-01-03 00:00:00",
+                ],
+                vec![100, 0, 100],
+            );
+
+            test_histogram_method(
+                "rep(seq(as.Date('2000-01-01'), by = 2, length.out = 2), 100)",
+                "scott",
+                vec!["2000-01-01", "2000-01-03"],
+                vec![200],
             );
         })
     }
@@ -338,7 +377,7 @@ mod tests {
         r_test(|| {
             // This is the default `hist` behavior, single bin containing all info.
             test_histogram("c(1, 1, 1)", 4, vec!["0.00", "1.00"], vec![3]);
-            test_histogram_sturges("c(1, 1, 1)", vec!["0.00", "1.00"], vec![3])
+            test_histogram_method("c(1, 1, 1)", "sturges", vec!["0.00", "1.00"], vec![3])
         })
     }
 
@@ -348,28 +387,26 @@ mod tests {
             test_histogram(
                 "rep(c(1L, 2L), 100)",
                 5,
-                vec!["1.00", "1.20", "1.40", "1.60", "1.80", "2.00"],
-                vec![100, 0, 0, 0, 100],
+                vec!["1.00", "1.50", "2.00"],
+                vec![100, 100],
             );
 
             test_histogram(
                 "rep(c(1L, 3L), 100)",
                 3,
-                vec!["1.00", "1.50", "2.00", "2.50", "3.00"],
-                vec![100, 0, 0, 100],
+                vec!["1.00", "1.67", "2.33", "3.00"],
+                vec![100, 0, 100],
             );
 
             test_histogram("rep(c(1L, 3L), 100)", 2, vec!["1", "2", "3"], vec![
                 100, 100,
             ]);
 
-            test_histogram_sturges(
+            test_histogram_method(
                 "rep(c(1L, 3L), 100)",
-                vec![
-                    "1.00", "1.20", "1.40", "1.60", "1.80", "2.00", "2.20", "2.40", "2.60", "2.80",
-                    "3.00",
-                ],
-                vec![100, 0, 0, 0, 0, 0, 0, 0, 0, 100],
+                "sturges",
+                vec!["1.00", "1.67", "2.33", "3.00"],
+                vec![100, 0, 100],
             );
         })
     }
@@ -392,8 +429,9 @@ mod tests {
                 vec![10, 10, 10, 10],
             );
 
-            test_histogram_sturges(
+            test_histogram_method(
                 "rep(seq(as.POSIXct('2017-05-17 00:00:00'), by = '1 sec', length.out = 4), 10)",
+                "sturges",
                 vec![
                     "2017-05-17 00:00:00",
                     "2017-05-17 00:00:00",

@@ -304,7 +304,7 @@ pub struct ColumnProfileResult {
 	/// Results from summary_stats request
 	pub summary_stats: Option<ColumnSummaryStats>,
 
-	/// Results from summary_stats request
+	/// Results from histogram request
 	pub histogram: Option<ColumnHistogram>,
 
 	/// Results from frequency_table request
@@ -823,6 +823,14 @@ pub enum ColumnHistogramParamsMethod {
 	#[serde(rename = "sturges")]
 	#[strum(to_string = "sturges")]
 	Sturges,
+
+	#[serde(rename = "freedman_diaconis")]
+	#[strum(to_string = "freedman_diaconis")]
+	FreedmanDiaconis,
+
+	#[serde(rename = "scott")]
+	#[strum(to_string = "scott")]
+	Scott,
 
 	#[serde(rename = "fixed")]
 	#[strum(to_string = "fixed")]

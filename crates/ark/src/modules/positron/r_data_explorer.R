@@ -343,7 +343,7 @@ write_html <- function(x, include_header) {
     knitr::kable(x, format = "html", row.names = FALSE, col.names = col_names)
 }
 
-profile_histogram <- function(x, method = c("fixed", "sturges"), num_bins = NULL, quantiles = NULL) {
+profile_histogram <- function(x, method = c("fixed", "sturges", "fd", "scott"), num_bins = NULL, quantiles = NULL) {
   # We only use finite values for building this histogram.
   # This removes NA's, Inf, NaN and -Inf
   x <- x[is.finite(x)]
@@ -370,32 +370,16 @@ profile_histogram <- function(x, method = c("fixed", "sturges"), num_bins = NULL
   }
 
   method <- match.arg(method)
+  num_bins <- histogram_num_bins(x, method, num_bins)
+
   # For dates, `hist` does not compute the number of breaks automatically
   # using default methods.
   # We force something considering the integer representation.
-  if (inherits(x, "POSIXct")) {
-    if (method == "sturges") {
-      num_bins <- grDevices::nclass.Sturges(x)
-    }
-
+  if (inherits(x, "POSIXct") || is.integer(x)) {
     # The pretty bins algorithm doesn't really make sense for dates,
     # so we generate our own bin_edges for them.
-    min_value <- min(x)
-    max_value <- max(x)
-    range <- max_value - min_value
-
-    if (inherits(x, "POSIXct") && as.integer(range) < num_bins) {
-      num_bins <- as.integer(range) + 1L
-    }
-
-    breaks <- seq(min_value, max_value, length.out = num_bins + 1)
-  } else if (method == "sturges") {
-    breaks <- "Sturges"
-  } else if (method == "fixed") {
-    # Note that with fixed, the number of bins can be slightly different in some cases
-    # due to R building pretty bin_edges. From `hist` docs:
-    # > In the last three cases the number is a suggestion only; as the breakpoints will
-    # > be set to `pretty` values.
+    breaks <- seq(min(x), max(x), length.out = num_bins + 1L)
+  } else {
     breaks <- num_bins
     stopifnot(is.integer(breaks), length(breaks) == 1)
   }
@@ -451,4 +435,33 @@ profile_frequency_table <- function(x, limit) {
         counts = counts,
         other_count = other_count
     )
+}
+
+histogram_num_bins <- function(x, method, fixed_num_bins) {
+    num_bins <- if (method == "sturges") {
+      grDevices::nclass.Sturges(x)
+    } else if (method == "fd") {
+      # FD calls into signif, which is not implemented for Dates
+      grDevices::nclass.FD(unclass(x))
+    } else if (method == "scott") {
+      grDevices::nclass.scott(x)
+    } else if (method == "fixed") {
+      fixed_num_bins
+    } else {
+      stop("Unknow method :", method)
+    }
+
+    if (is.integer(x) || inherits(x, "POSIXct")) {
+      # For integers, we don't want num_bins to be larger than the width of the range
+      # so we replace it if necessary.
+      min_value <- min(x)
+      max_value <- max(x)
+      width <- max_value - min_value
+
+      if (as.integer(width) < num_bins) {
+        num_bins <- as.integer(width) + 1L
+      }
+    }
+
+    as.integer(num_bins)
 }

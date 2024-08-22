@@ -1703,8 +1703,8 @@ fn test_histogram() {
         assert_match!(socket_rpc(&socket, req), DataExplorerBackendReply::GetColumnProfilesReply(profiles) => {
             let histogram = profiles[0].histogram.clone().unwrap();
             assert_eq!(histogram, ColumnHistogram {
-                bin_edges: format_string(r_parse_eval0("c(1:10)", R_ENVS.global).unwrap().sexp, &default_format_options()),
-                bin_counts: vec![19, 8, 7, 6, 5, 4, 3, 2, 1], // Pretty bind edges unite the first two intervals
+                bin_edges: format_string(r_parse_eval0("seq(1, 10, length.out=11)", R_ENVS.global).unwrap().sexp, &default_format_options()),
+                bin_counts: vec![10, 9, 8, 7, 6, 5, 4, 3, 2, 1], // Pretty bind edges unite the first two intervals
                 quantiles: vec![],
             });
         });
