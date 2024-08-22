@@ -85,7 +85,7 @@ pub fn parse_exprs_with_srcrefs(code: &str) -> crate::Result<RObject> {
 
 pub fn parse_status(code: &str, opts: RParseOptions) -> crate::Result<ParseResult> {
     unsafe {
-        let mut ps: libr::ParseStatus = libr::ParseStatus_PARSE_NULL;
+        let mut status: libr::ParseStatus = libr::ParseStatus_PARSE_NULL;
         let mut protect = RProtect::new();
         let r_code = r_string!(convert_line_endings(code, LineEnding::Posix), &mut protect);
 
@@ -96,9 +96,9 @@ pub fn parse_status(code: &str, opts: RParseOptions) -> crate::Result<ParseResul
         };
 
         let result: RObject =
-            try_catch(|| libr::R_ParseVector(r_code, -1, &mut ps, srcfile.sexp).into())?;
+            try_catch(|| libr::R_ParseVector(r_code, -1, &mut status, srcfile.sexp).into())?;
 
-        match ps {
+        match status {
             libr::ParseStatus_PARSE_OK => Ok(ParseResult::Complete(result.sexp)),
             libr::ParseStatus_PARSE_INCOMPLETE => Ok(ParseResult::Incomplete),
             libr::ParseStatus_PARSE_ERROR => Err(crate::Error::ParseSyntaxError {
@@ -108,7 +108,7 @@ pub fn parse_status(code: &str, opts: RParseOptions) -> crate::Result<ParseResul
                 line: libr::get(libr::R_ParseError) as i32,
             }),
             _ => {
-                // should not get here
+                // Should not get here
                 Err(crate::Error::ParseError {
                     code: code.to_string(),
                     message: String::from("Unknown parse error"),
