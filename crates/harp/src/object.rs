@@ -237,6 +237,10 @@ pub fn r_dbl_begin(x: SEXP) -> *mut f64 {
     unsafe { REAL(x) }
 }
 
+pub fn list_cbegin(x: SEXP) -> *const SEXP {
+    unsafe { libr::DATAPTR_RO(x) as *const SEXP }
+}
+
 // TODO: Make these wrappers robust to allocation failures
 // https://github.com/posit-dev/positron/issues/2600
 pub fn r_alloc_logical(size: R_xlen_t) -> SEXP {
@@ -254,8 +258,25 @@ pub fn r_alloc_complex(size: R_xlen_t) -> SEXP {
 pub fn r_alloc_character(size: R_xlen_t) -> SEXP {
     unsafe { Rf_allocVector(STRSXP, size) }
 }
-pub fn r_alloc_list(size: R_xlen_t) -> SEXP {
-    unsafe { Rf_allocVector(VECSXP, size) }
+
+pub fn alloc_list(size: usize) -> crate::Result<SEXP> {
+    let size = as_r_ssize(size)?;
+    let res = crate::try_catch(|| unsafe { Rf_allocVector(VECSXP, size) });
+
+    match res {
+        Ok(_) => res,
+        Err(_) => Err(crate::Error::OutOfMemory {
+            size: std::mem::size_of::<*const SEXP>() * size as usize,
+        }),
+    }
+}
+
+pub fn as_r_ssize(size: usize) -> crate::Result<R_xlen_t> {
+    if size > unsafe { harp::as_error(libr::R_XLEN_T_MAX.try_into())? } {
+        return Err(crate::anyhow!("`size` is larger than `R_XLEN_T_MAX`"));
+    }
+
+    Ok(size as R_xlen_t)
 }
 
 pub fn r_node_car(x: SEXP) -> SEXP {
@@ -266,6 +287,11 @@ pub fn r_node_tag(x: SEXP) -> SEXP {
 }
 pub fn r_node_cdr(x: SEXP) -> SEXP {
     unsafe { CDR(x) }
+}
+
+pub fn is_identical(x: SEXP, y: SEXP) -> bool {
+    // 16 corresponds to the default arguments of the R-level `identical()`
+    unsafe { libr::R_compute_identical(x, y, 16) != 0 }
 }
 
 impl RObject {

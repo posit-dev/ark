@@ -39,9 +39,11 @@ pub mod vector;
 
 // Reexport API
 pub use eval::*;
+pub use object::*;
 pub use parse::*;
 pub use source::*;
 pub use table::*;
+pub use vector::list::*;
 
 // Necessary for the `harp::` references in macros, e.g. `harp::register`, to
 // resolve to the correct symbols

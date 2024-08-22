@@ -1,7 +1,7 @@
 //
 // error.rs
 //
-// Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2022-2024 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -50,6 +50,9 @@ pub enum Error {
     MissingValueError,
     MissingBindingError {
         name: String,
+    },
+    OutOfMemory {
+        size: usize,
     },
     InspectError {
         path: Vec<String>,
@@ -202,6 +205,13 @@ impl fmt::Display for Error {
             Error::MissingBindingError { name } => {
                 write!(f, "Can't find binding {name} in environment")
             },
+
+            Error::OutOfMemory { size } => {
+                write!(
+                    f,
+                    "Can't allocate object of size {size} as the system is out of memory"
+                )
+            },
         }
     }
 }
@@ -212,6 +222,16 @@ macro_rules! anyhow {
         let message = anyhow::anyhow!($($rest, )*);
         crate::error::Error::Anyhow(message)
     }}
+}
+
+pub fn as_error<T, E>(res: std::result::Result<T, E>) -> crate::Result<T>
+where
+    E: std::fmt::Debug,
+{
+    match res {
+        Ok(x) => Ok(x),
+        Err(err) => Err(crate::anyhow!("{err:?}")),
+    }
 }
 
 // We include R-level backtraces in `Display` because anyhow doesn't propagate the `?` flag:

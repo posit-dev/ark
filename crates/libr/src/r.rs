@@ -212,6 +212,8 @@ functions::generate! {
 
     pub fn DATAPTR(x: SEXP) -> *mut std::ffi::c_void;
 
+    pub fn DATAPTR_RO(x: SEXP) -> *const std::ffi::c_void;
+
     pub fn ENCLOS(x: SEXP) -> SEXP;
 
     pub fn EXTPTR_PROT(x: SEXP) -> SEXP;
@@ -315,6 +317,8 @@ functions::generate! {
     pub fn R_BytecodeExpr(e: SEXP) -> SEXP;
 
     pub fn Rf_installChar(x: SEXP) -> SEXP;
+
+    pub fn R_compute_identical(x: SEXP, y: SEXP, flags: i32) -> Rboolean;
 
     /// R >= 4.2.0
     pub fn R_existsVarInFrame(rho: SEXP, symbol: SEXP) -> Rboolean;
@@ -632,6 +636,9 @@ constant_globals::generate! {
     #[doc = "\"\" as a STRSXP"]
     #[default = std::ptr::null_mut()]
     pub static R_BlankScalarString: SEXP;
+
+    #[default = 4503599627370496]
+    pub static R_XLEN_T_MAX: u64;
 }
 
 mutable_globals::generate! {
