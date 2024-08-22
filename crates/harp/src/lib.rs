@@ -27,6 +27,7 @@ pub mod routines;
 pub mod session;
 pub mod size;
 pub mod source;
+pub mod srcref;
 pub mod string;
 pub mod symbol;
 pub mod sys;
@@ -42,6 +43,7 @@ pub use eval::*;
 pub use object::*;
 pub use parse::*;
 pub use source::*;
+pub use srcref::*;
 pub use table::*;
 pub use vector::list::*;
 
