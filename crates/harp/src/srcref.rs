@@ -15,6 +15,8 @@ use crate::vector::IntegerVector;
 use crate::vector::Vector;
 use crate::RObject;
 
+/// Structured representation of `srcref` integer vectors
+/// 0-based offsets.
 #[derive(Debug)]
 pub struct SrcRef {
     /// Lines and parsed lines may differ if a `#line` directive is used in code:
@@ -55,27 +57,27 @@ impl TryFrom<RObject> for SrcRef {
         let value = unsafe { IntegerVector::new(value)? };
 
         let line = std::ops::Range {
-            start: value.get_value(0)?,
-            end: value.get_value(2)?,
+            start: value.get_value(0)? - 1,
+            end: value.get_value(2)? - 1,
         };
 
         let line_parsed = if unsafe { value.len() >= 8 } {
             std::ops::Range {
-                start: value.get_value(6)?,
-                end: value.get_value(7)?,
+                start: value.get_value(6)? - 1,
+                end: value.get_value(7)? - 1,
             }
         } else {
             line.clone()
         };
 
         let column = std::ops::Range {
-            start: value.get_value(4)?,
-            end: value.get_value(5)?,
+            start: value.get_value(4)? - 1,
+            end: value.get_value(5)? - 1,
         };
 
         let column_byte = std::ops::Range {
-            start: value.get_value(1)?,
-            end: value.get_value(3)?,
+            start: value.get_value(1)? - 1,
+            end: value.get_value(3)? - 1,
         };
 
         Ok(Self {
@@ -112,22 +114,22 @@ mod tests {
             let utf8 = &srcrefs[1];
             let bar = &srcrefs[2];
 
-            assert_eq!(foo.line, Range { start: 1, end: 1 });
-            assert_eq!(foo.line_parsed, Range { start: 1, end: 1 });
-            assert_eq!(foo.column, Range { start: 1, end: 3 });
-            assert_eq!(foo.column_byte, Range { start: 1, end: 3 });
+            assert_eq!(foo.line, Range { start: 0, end: 0 });
+            assert_eq!(foo.line_parsed, Range { start: 0, end: 0 });
+            assert_eq!(foo.column, Range { start: 0, end: 2 });
+            assert_eq!(foo.column_byte, Range { start: 0, end: 2 });
 
             // `column_byte` is different because the character takes up two bytes
-            assert_eq!(utf8.line, Range { start: 3, end: 3 });
-            assert_eq!(utf8.line_parsed, Range { start: 3, end: 3 });
-            assert_eq!(utf8.column, Range { start: 1, end: 1 });
-            assert_eq!(utf8.column_byte, Range { start: 1, end: 2 });
+            assert_eq!(utf8.line, Range { start: 2, end: 2 });
+            assert_eq!(utf8.line_parsed, Range { start: 2, end: 2 });
+            assert_eq!(utf8.column, Range { start: 0, end: 0 });
+            assert_eq!(utf8.column_byte, Range { start: 0, end: 1 });
 
             // Ends on different lines
-            assert_eq!(bar.line, Range { start: 4, end: 6 });
-            assert_eq!(bar.line_parsed, Range { start: 4, end: 6 });
-            assert_eq!(bar.column, Range { start: 1, end: 1 });
-            assert_eq!(bar.column_byte, Range { start: 1, end: 1 });
+            assert_eq!(bar.line, Range { start: 3, end: 5 });
+            assert_eq!(bar.line_parsed, Range { start: 3, end: 5 });
+            assert_eq!(bar.column, Range { start: 0, end: 0 });
+            assert_eq!(bar.column_byte, Range { start: 0, end: 0 });
         })
     }
 
@@ -139,12 +141,12 @@ mod tests {
             let foo = &srcrefs[0];
             let bar = &srcrefs[1];
 
-            assert_eq!(foo.line, Range { start: 1, end: 1 });
-            assert_eq!(foo.line_parsed, Range { start: 1, end: 1 });
+            assert_eq!(foo.line, Range { start: 0, end: 0 });
+            assert_eq!(foo.line_parsed, Range { start: 0, end: 0 });
 
             // Custom line via directive
-            assert_eq!(bar.line, Range { start: 5, end: 5 });
-            assert_eq!(bar.line_parsed, Range { start: 3, end: 3 });
+            assert_eq!(bar.line, Range { start: 4, end: 4 });
+            assert_eq!(bar.line_parsed, Range { start: 2, end: 2 });
         })
     }
 }
