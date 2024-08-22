@@ -25,6 +25,10 @@ pub struct ListIter {
 }
 
 impl List {
+    pub fn new(xs: impl Into<RObject>) -> Self {
+        Self { inner: xs.into() }
+    }
+
     pub fn create<T>(data: T) -> crate::Result<Self>
     where
         T: IntoIterator,
