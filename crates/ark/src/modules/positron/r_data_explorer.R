@@ -415,14 +415,14 @@ profile_frequency_table <- function(x, limit) {
         ))
     }
 
-    if (!is.factor(x)) {
+    if (is.factor(x)) {
+        values <- levels(x)
+        counts <- table(x)
+    } else {
         # We don't use `table` directly because we don't want to loose the type
         # of value types so they can be formatted with our formatting routines.
         values <- unique(x)
         counts <- tabulate(match(x, values))
-    } else {
-        values <- levels(x)
-        counts <- table(x)
     }
 
     index <- utils::head(order(counts, decreasing = TRUE), limit)
@@ -439,28 +439,28 @@ profile_frequency_table <- function(x, limit) {
 
 histogram_num_bins <- function(x, method, fixed_num_bins) {
     num_bins <- if (method == "sturges") {
-      grDevices::nclass.Sturges(x)
+        grDevices::nclass.Sturges(x)
     } else if (method == "fd") {
-      # FD calls into signif, which is not implemented for Dates
-      grDevices::nclass.FD(unclass(x))
+        # FD calls into signif, which is not implemented for Dates
+        grDevices::nclass.FD(unclass(x))
     } else if (method == "scott") {
-      grDevices::nclass.scott(x)
+        grDevices::nclass.scott(x)
     } else if (method == "fixed") {
-      fixed_num_bins
+        fixed_num_bins
     } else {
-      stop("Unknow method :", method)
+        stop("Unknow method :", method)
     }
 
     if (is.integer(x) || inherits(x, "POSIXct")) {
-      # For integers, we don't want num_bins to be larger than the width of the range
-      # so we replace it if necessary.
-      min_value <- min(x)
-      max_value <- max(x)
-      width <- max_value - min_value
+        # For integers, we don't want num_bins to be larger than the width of the range
+        # so we replace it if necessary.
+        min_value <- min(x)
+        max_value <- max(x)
+        width <- max_value - min_value
 
-      if (as.integer(width) < num_bins) {
+        if (as.integer(width) < num_bins) {
         num_bins <- as.integer(width) + 1L
-      }
+        }
     }
 
     as.integer(num_bins)
