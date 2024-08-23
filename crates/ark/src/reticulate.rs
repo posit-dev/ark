@@ -8,6 +8,7 @@ use anyhow::anyhow;
 use crossbeam::channel::Sender;
 use harp::environment::R_ENVS;
 use harp::eval::r_parse_eval0;
+use harp::RObject;
 use lazy_static::lazy_static;
 use libr::R_NilValue;
 use libr::SEXP;
@@ -107,12 +108,15 @@ pub unsafe extern "C" fn ps_reticulate_r_main() {
 // Further actions that reticulate can ask the front-end can be requested through
 // the comm_id that is returned by this function.
 #[harp::register]
-pub unsafe extern "C" fn ps_reticulate_open() -> Result<SEXP, anyhow::Error> {
+pub unsafe extern "C" fn ps_reticulate_open(input: SEXP) -> Result<SEXP, anyhow::Error> {
     let main = RMain::get();
 
     if !RMain::initialized() {
         return Ok(R_NilValue);
     }
+
+    let input = RObject::try_from(input)?;
+    let input_code: String = input.try_into()?;
 
     // If there's an id already registered, we just need to send the focus event
     let mut comm_id_guard = unwrap!(
@@ -128,7 +132,9 @@ pub unsafe extern "C" fn ps_reticulate_open() -> Result<SEXP, anyhow::Error> {
             id,
             CommMsg::Data(json!({
                 "method": "focus",
-                "params": {}
+                "params": {
+                    "input": input_code
+                }
             })),
         ))?;
         return Ok(R_NilValue);
