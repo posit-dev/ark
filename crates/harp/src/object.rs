@@ -112,6 +112,12 @@ pub struct RObject {
     pub cell: SEXP,
 }
 
+impl AsRef<SEXP> for RObject {
+    fn as_ref(&self) -> &SEXP {
+        &self.sexp
+    }
+}
+
 pub trait RObjectExt<T> {
     unsafe fn elt(&self, index: T) -> crate::error::Result<RObject>;
 }
