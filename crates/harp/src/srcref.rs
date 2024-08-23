@@ -31,11 +31,9 @@ pub struct SrcRef {
 
 // Takes user-facing object as input. The srcrefs are retrieved from
 // attributes.
-impl TryFrom<RObject> for Vec<SrcRef> {
-    type Error = anyhow::Error;
-
-    fn try_from(value: RObject) -> anyhow::Result<Self> {
-        let srcref = unwrap!(value.attr("srcref"), None => {
+impl RObject {
+    pub fn srcrefs(&self) -> anyhow::Result<Vec<SrcRef>> {
+        let srcref = unwrap!(self.attr("srcref"), None => {
             return Err(anyhow!("Can't find `srcref` attribute"));
         });
 
@@ -111,7 +109,7 @@ mod tests {
     fn test_srcref() {
         r_test(|| {
             let exprs = crate::parse_exprs_with_srcrefs("foo\n\nś\nbar(\n\n)").unwrap();
-            let srcrefs: Vec<SrcRef> = exprs.try_into().unwrap();
+            let srcrefs: Vec<SrcRef> = exprs.srcrefs().unwrap();
             let foo = &srcrefs[0];
             let utf8 = &srcrefs[1];
             let bar = &srcrefs[2];
@@ -139,7 +137,7 @@ mod tests {
     fn test_srcref_line_directive() {
         r_test(|| {
             let exprs = crate::parse_exprs_with_srcrefs("foo\n#line 5\nbar").unwrap();
-            let srcrefs: Vec<SrcRef> = exprs.try_into().unwrap();
+            let srcrefs: Vec<SrcRef> = exprs.srcrefs().unwrap();
             let foo = &srcrefs[0];
             let bar = &srcrefs[1];
 
