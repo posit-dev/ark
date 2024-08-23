@@ -7,8 +7,6 @@
 
 use std::ffi::CStr;
 
-use libr::SEXP;
-
 use crate::line_ending::convert_line_endings;
 use crate::line_ending::LineEnding;
 use crate::protect::RProtect;
@@ -22,7 +20,7 @@ pub struct RParseOptions {
 }
 
 pub enum ParseResult {
-    Complete(SEXP),
+    Complete(RObject),
     Incomplete,
 }
 
@@ -87,7 +85,7 @@ pub fn parse_status(code: &str, opts: RParseOptions) -> crate::Result<ParseResul
             try_catch(|| libr::R_ParseVector(r_code, -1, &mut status, srcfile.sexp).into())?;
 
         match status {
-            libr::ParseStatus_PARSE_OK => Ok(ParseResult::Complete(result.sexp)),
+            libr::ParseStatus_PARSE_OK => Ok(ParseResult::Complete(result)),
             libr::ParseStatus_PARSE_INCOMPLETE => Ok(ParseResult::Incomplete),
             libr::ParseStatus_PARSE_ERROR => Err(crate::Error::ParseSyntaxError {
                 message: CStr::from_ptr(libr::get(libr::R_ParseErrorMsg).as_ptr())
@@ -123,9 +121,9 @@ mod tests {
             assert_match!(
                 parse_status("force(42)", Default::default()),
                 Ok(ParseResult::Complete(out)) => {
-                    assert_eq!(r_typeof(out), libr::EXPRSXP as u32);
+                    assert_eq!(r_typeof(out.sexp), libr::EXPRSXP as u32);
 
-                    let call = libr::VECTOR_ELT(out, 0);
+                    let call = libr::VECTOR_ELT(out.sexp, 0);
                     assert_eq!(r_typeof(call), libr::LANGSXP as u32);
                     assert_eq!(libr::Rf_xlength(call), 2);
                     assert_eq!(libr::CAR(call), r_symbol!("force"));
@@ -161,8 +159,8 @@ mod tests {
             assert_match!(
                 parse_status("x<-\r\n1\r\npi", Default::default()),
                 Ok(ParseResult::Complete(out)) => {
-                    assert_eq!(r_typeof(out), libr::EXPRSXP as u32);
-                    assert_eq!(r_stringify(out, "").unwrap(), "expression(x <- 1, pi)");
+                    assert_eq!(r_typeof(out.sexp), libr::EXPRSXP as u32);
+                    assert_eq!(r_stringify(out.sexp, "").unwrap(), "expression(x <- 1, pi)");
                 }
             );
 
@@ -170,8 +168,8 @@ mod tests {
             assert_match!(
                 parse_status(r#"'a\r\nb'"#, Default::default()),
                 Ok(ParseResult::Complete(out)) => {
-                    assert_eq!(r_typeof(out), libr::EXPRSXP as u32);
-                    assert_eq!(r_stringify(out, "").unwrap(), r#"expression("a\r\nb")"#);
+                    assert_eq!(r_typeof(out.sexp), libr::EXPRSXP as u32);
+                    assert_eq!(r_stringify(out.sexp, "").unwrap(), r#"expression("a\r\nb")"#);
                 }
             );
         }
