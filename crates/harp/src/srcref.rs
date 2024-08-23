@@ -39,10 +39,12 @@ impl TryFrom<RObject> for Vec<SrcRef> {
             return Err(anyhow!("Can't find `srcref` attribute"));
         });
 
-        crate::List::new(srcref.sexp)
-            .iter()
-            .map(|x| SrcRef::try_from(RObject::view(x)))
-            .collect()
+        unsafe {
+            crate::List::new(srcref.sexp)?
+                .iter()
+                .map(|x| SrcRef::try_from(RObject::view(x)))
+                .collect()
+        }
     }
 }
 
