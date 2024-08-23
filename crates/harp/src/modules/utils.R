@@ -1,3 +1,8 @@
+log_trace <- function(msg) {
+    stopifnot(is_string(msg))
+    .Call("harp_log_trace", msg)
+}
+
 log_warning <- function(msg) {
     stopifnot(is_string(msg))
     .Call("harp_log_warning", msg)

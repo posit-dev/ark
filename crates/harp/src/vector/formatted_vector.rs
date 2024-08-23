@@ -18,7 +18,7 @@ use libr::STRSXP;
 
 use crate::error::Error;
 use crate::error::Result;
-use crate::r_format;
+use crate::r_format_vec;
 use crate::utils::r_assert_type;
 use crate::utils::r_inherits;
 use crate::utils::r_is_null;
@@ -119,7 +119,7 @@ impl FormattedVector {
                         vector: Factor::new_unchecked(vector),
                     })
                 } else {
-                    let formatted = r_format(vector)?;
+                    let formatted = r_format_vec(vector)?;
 
                     r_assert_type(formatted, &[STRSXP])?;
                     Ok(Self::FormattedVector {
