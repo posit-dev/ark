@@ -116,7 +116,7 @@ pub unsafe extern "C" fn ps_reticulate_open(input: SEXP) -> Result<SEXP, anyhow:
     }
 
     let input = RObject::try_from(input)?;
-    let input_code: String = input.try_into()?;
+    let input_code: Option<String> = input.try_into()?;
 
     // If there's an id already registered, we just need to send the focus event
     let mut comm_id_guard = unwrap!(
