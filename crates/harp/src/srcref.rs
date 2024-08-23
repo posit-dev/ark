@@ -74,12 +74,12 @@ impl TryFrom<RObject> for SrcRef {
 
         let column = std::ops::Range {
             start: value.get_value(4)? - 1,
-            end: value.get_value(5)? - 1,
+            end: value.get_value(5)?,
         };
 
         let column_byte = std::ops::Range {
             start: value.get_value(1)? - 1,
-            end: value.get_value(3)? - 1,
+            end: value.get_value(3)?,
         };
 
         Ok(Self {
@@ -118,20 +118,20 @@ mod tests {
 
             assert_eq!(foo.line, Range { start: 0, end: 0 });
             assert_eq!(foo.line_parsed, Range { start: 0, end: 0 });
-            assert_eq!(foo.column, Range { start: 0, end: 2 });
-            assert_eq!(foo.column_byte, Range { start: 0, end: 2 });
+            assert_eq!(foo.column, Range { start: 0, end: 3 });
+            assert_eq!(foo.column_byte, Range { start: 0, end: 3 });
 
             // `column_byte` is different because the character takes up two bytes
             assert_eq!(utf8.line, Range { start: 2, end: 2 });
             assert_eq!(utf8.line_parsed, Range { start: 2, end: 2 });
-            assert_eq!(utf8.column, Range { start: 0, end: 0 });
-            assert_eq!(utf8.column_byte, Range { start: 0, end: 1 });
+            assert_eq!(utf8.column, Range { start: 0, end: 1 });
+            assert_eq!(utf8.column_byte, Range { start: 0, end: 2 });
 
             // Ends on different lines
             assert_eq!(bar.line, Range { start: 3, end: 5 });
             assert_eq!(bar.line_parsed, Range { start: 3, end: 5 });
-            assert_eq!(bar.column, Range { start: 0, end: 0 });
-            assert_eq!(bar.column_byte, Range { start: 0, end: 0 });
+            assert_eq!(bar.column, Range { start: 0, end: 1 });
+            assert_eq!(bar.column_byte, Range { start: 0, end: 1 });
         })
     }
 
