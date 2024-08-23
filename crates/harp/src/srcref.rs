@@ -21,12 +21,12 @@ use crate::RObject;
 pub struct SrcRef {
     /// Lines and parsed lines may differ if a `#line` directive is used in code:
     /// the former will respect the directive, the latter will just count lines.
-    pub line: std::ops::Range<i32>,
-    pub line_parsed: std::ops::Range<i32>,
+    pub line: std::ops::Range<usize>,
+    pub line_parsed: std::ops::Range<usize>,
 
     /// Bytes and columns may be different due to multibyte characters.
-    pub column: std::ops::Range<i32>,
-    pub column_byte: std::ops::Range<i32>,
+    pub column: std::ops::Range<usize>,
+    pub column_byte: std::ops::Range<usize>,
 }
 
 // Takes user-facing object as input. The srcrefs are retrieved from
@@ -57,27 +57,27 @@ impl TryFrom<RObject> for SrcRef {
         let value = unsafe { IntegerVector::new(value)? };
 
         let line = std::ops::Range {
-            start: value.get_value(0)? - 1,
-            end: value.get_value(2)? - 1,
+            start: (value.get_value(0)? - 1) as usize,
+            end: (value.get_value(2)? - 1) as usize,
         };
 
         let line_parsed = if unsafe { value.len() >= 8 } {
             std::ops::Range {
-                start: value.get_value(6)? - 1,
-                end: value.get_value(7)? - 1,
+                start: (value.get_value(6)? - 1) as usize,
+                end: (value.get_value(7)? - 1) as usize,
             }
         } else {
             line.clone()
         };
 
         let column = std::ops::Range {
-            start: value.get_value(4)? - 1,
-            end: value.get_value(5)?,
+            start: (value.get_value(4)? - 1) as usize,
+            end: value.get_value(5)? as usize,
         };
 
         let column_byte = std::ops::Range {
-            start: value.get_value(1)? - 1,
-            end: value.get_value(3)?,
+            start: (value.get_value(1)? - 1) as usize,
+            end: value.get_value(3)? as usize,
         };
 
         Ok(Self {
