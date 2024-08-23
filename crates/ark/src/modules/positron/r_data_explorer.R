@@ -459,7 +459,7 @@ histogram_num_bins <- function(x, method, fixed_num_bins) {
         width <- max_value - min_value
 
         if (as.integer(width) < num_bins) {
-        num_bins <- as.integer(width) + 1L
+            num_bins <- as.integer(width) + 1L
         }
     }
 
