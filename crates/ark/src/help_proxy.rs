@@ -109,20 +109,24 @@ impl HelpProxy {
 
 // Proxies a request.
 async fn proxy_request(req: HttpRequest, app_state: web::Data<AppState>) -> HttpResponse {
-    // Get the URL path.
+    // Get the URL path and query.
     let path = req.path();
+    let query = req.query_string();
 
     // Construct the target URL string.
     let target_url_string = format!("http://localhost:{}{}", app_state.target_port, path);
 
     // Parse the target URL string into the target URL.
-    let target_url = match Url::parse(&target_url_string) {
+    let mut target_url = match Url::parse(&target_url_string) {
         Ok(url) => url,
         Err(error) => {
             log::error!("Error proxying {}: {}", target_url_string, error);
             return HttpResponse::BadGateway().finish();
         },
     };
+
+    // Add query from original request back to URL.
+    target_url.set_query(Some(query));
 
     // Get the target URL.
     match reqwest::get(target_url.clone()).await {
