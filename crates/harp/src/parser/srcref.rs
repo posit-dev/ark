@@ -5,6 +5,8 @@
 //
 //
 
+use core::f64;
+
 use anyhow::anyhow;
 use libr::SEXP;
 use stdext::unwrap;
@@ -92,10 +94,19 @@ impl TryFrom<RObject> for SrcRef {
 
 /// Creates the same sort of srcfile object as with `parse(text = )`.
 /// Takes code as an R string containing newlines, or as a R vector of lines.
-pub fn new_srcfile_virtual(code: SEXP) -> crate::Result<RObject> {
+pub fn new_srcfile_virtual(text: &str) -> crate::Result<RObject> {
+    let input = crate::as_parse_text(text);
     RFunction::new("base", "srcfilecopy")
         .param("filename", "<text>")
-        .param("lines", code)
+        .param("lines", input)
+        .call()
+}
+
+pub fn srcfile_lines(srcfile: SEXP) -> crate::Result<RObject> {
+    RFunction::new("base", "getSrcLines")
+        .add(srcfile)
+        .param("first", 1)
+        .param("last", f64::INFINITY)
         .call()
 }
 
