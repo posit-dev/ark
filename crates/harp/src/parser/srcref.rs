@@ -19,10 +19,11 @@ use crate::RObject;
 /// 0-based offsets.
 #[derive(Debug)]
 pub struct SrcRef {
-    /// Lines and parsed lines may differ if a `#line` directive is used in code:
-    /// the former will respect the directive, the latter will just count lines.
+    /// Lines and virtual lines may differ if a `#line` directive is used in code:
+    /// the former just counts actual lines, the latter respects the directive.
+    /// `line` corresponds to `line_parsed` in the original base R srcref vector.
     pub line: std::ops::Range<usize>,
-    pub line_parsed: std::ops::Range<usize>,
+    pub line_virtual: std::ops::Range<usize>,
 
     /// Bytes and columns may be different due to multibyte characters.
     pub column: std::ops::Range<usize>,
@@ -81,8 +82,8 @@ impl TryFrom<RObject> for SrcRef {
         };
 
         Ok(Self {
-            line,
-            line_parsed,
+            line: line_parsed,
+            line_virtual: line,
             column,
             column_byte,
         })
@@ -115,19 +116,19 @@ mod tests {
             let bar = &srcrefs[2];
 
             assert_eq!(foo.line, Range { start: 0, end: 0 });
-            assert_eq!(foo.line_parsed, Range { start: 0, end: 0 });
+            assert_eq!(foo.line_virtual, Range { start: 0, end: 0 });
             assert_eq!(foo.column, Range { start: 0, end: 3 });
             assert_eq!(foo.column_byte, Range { start: 0, end: 3 });
 
             // `column_byte` is different because the character takes up two bytes
             assert_eq!(utf8.line, Range { start: 2, end: 2 });
-            assert_eq!(utf8.line_parsed, Range { start: 2, end: 2 });
+            assert_eq!(utf8.line_virtual, Range { start: 2, end: 2 });
             assert_eq!(utf8.column, Range { start: 0, end: 1 });
             assert_eq!(utf8.column_byte, Range { start: 0, end: 2 });
 
             // Ends on different lines
             assert_eq!(bar.line, Range { start: 3, end: 5 });
-            assert_eq!(bar.line_parsed, Range { start: 3, end: 5 });
+            assert_eq!(bar.line_virtual, Range { start: 3, end: 5 });
             assert_eq!(bar.column, Range { start: 0, end: 1 });
             assert_eq!(bar.column_byte, Range { start: 0, end: 1 });
         })
@@ -142,11 +143,11 @@ mod tests {
             let bar = &srcrefs[1];
 
             assert_eq!(foo.line, Range { start: 0, end: 0 });
-            assert_eq!(foo.line_parsed, Range { start: 0, end: 0 });
+            assert_eq!(foo.line_virtual, Range { start: 0, end: 0 });
 
             // Custom line via directive
-            assert_eq!(bar.line, Range { start: 4, end: 4 });
-            assert_eq!(bar.line_parsed, Range { start: 2, end: 2 });
+            assert_eq!(bar.line, Range { start: 2, end: 2 });
+            assert_eq!(bar.line_virtual, Range { start: 4, end: 4 });
         })
     }
 }
