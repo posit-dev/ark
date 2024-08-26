@@ -59,6 +59,9 @@ impl TryFrom<RObject> for SrcRef {
 
         let value = unsafe { IntegerVector::new(value)? };
 
+        // The srcref values are adjusted to produce a `[ )` range as expected
+        // by `std::ops::Range`
+
         let line = std::ops::Range {
             start: (value.get_value(0)? - 1) as usize,
             end: (value.get_value(2)? - 1) as usize,
