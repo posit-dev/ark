@@ -301,7 +301,7 @@ impl WorkspaceVariableDisplayValue {
     }
 
     fn from_error(err: Error) -> Self {
-        log::warn!("Error while formatting variable: {err:?}");
+        log::trace!("Error while formatting variable: {err:?}");
         Self::new(String::from("??"), true)
     }
 }

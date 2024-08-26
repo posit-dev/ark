@@ -15,7 +15,7 @@ use harp::object::r_length;
 use harp::object::RObject;
 use harp::r_null;
 use harp::utils::r_classes;
-use harp::utils::r_format;
+use harp::utils::r_format_vec;
 use harp::utils::r_is_null;
 use harp::utils::r_typeof;
 use harp::vector::CharacterVector;
@@ -106,8 +106,8 @@ fn format_values(x: SEXP, format_options: &FormatOptions) -> anyhow::Result<Vec<
 }
 
 fn format_object(x: SEXP) -> Vec<FormattedValue> {
-    // We call r_format() to dispatch the format method
-    let formatted: Vec<Option<String>> = match r_format(x) {
+    // We call r_format_vec() to dispatch the format method
+    let formatted: Vec<Option<String>> = match r_format_vec(x) {
         Ok(fmt) => match RObject::from(fmt).try_into() {
             Ok(x) => x,
             Err(_) => return unknown_format(x),

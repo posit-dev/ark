@@ -8,7 +8,7 @@
 # Works around possibly unconforming methods in `base::format()`. Tries
 # hard to recover from failed assumptions, including by unclassing and
 # reformatting with the default method.
-harp_format <- function(x, ...) {
+harp_format_vec <- function(x, ...) {
     if (is.object(x)) {
         format_oo(x, ...)
     } else {
@@ -20,7 +20,7 @@ format_oo <- function(x, ...) {
     out <- base::format(x, ...)
 
     if (!is.character(out)) {
-        log_warning(sprintf(
+        log_trace(sprintf(
             "`format()` method for <%s> should return a character vector.",
             class_collapsed(x)
         ))
@@ -28,7 +28,7 @@ format_oo <- function(x, ...) {
     }
 
     if (length(x) != length(out)) {
-        log_warning(sprintf(
+        log_trace(sprintf(
             "`format()` method for <%s> should return the same number of elements.",
             class_collapsed(x)
         ))
@@ -38,7 +38,7 @@ format_oo <- function(x, ...) {
     # Try to recover if dimensions don't agree (for example `format.Surv()`
     # doesn't preserve dimensions, see https://github.com/posit-dev/positron/issues/1862)
     if (!identical(dim(x), dim(out))) {
-        log_warning(sprintf(
+        log_trace(sprintf(
             "`format()` method for <%s> should return conforming dimensions.",
             class_collapsed(x)
         ))
