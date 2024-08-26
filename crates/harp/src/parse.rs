@@ -108,6 +108,7 @@ pub fn parse_status(code: &str, opts: RParseOptions) -> crate::Result<ParseResul
 mod tests {
     use crate::assert_match;
     use crate::parse_status;
+    use crate::r_length;
     use crate::r_stringify;
     use crate::r_symbol;
     use crate::r_test;
@@ -117,6 +118,14 @@ mod tests {
     #[test]
     fn test_parse_status() {
         r_test! {
+            assert_match!(
+                parse_status("", Default::default()),
+                Ok(ParseResult::Complete(out)) => {
+                    assert_eq!(r_typeof(out.sexp), libr::EXPRSXP as u32);
+                    assert_eq!(r_length(out.sexp), 0);
+                }
+            );
+
             // complete
             assert_match!(
                 parse_status("force(42)", Default::default()),

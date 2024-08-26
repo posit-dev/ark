@@ -102,8 +102,8 @@ pub fn new_srcfile_virtual(code: SEXP) -> crate::Result<RObject> {
 mod tests {
     use std::ops::Range;
 
+    use crate::srcref::SrcRef;
     use crate::test::r_test;
-    use crate::SrcRef;
 
     #[test]
     fn test_srcref() {
