@@ -60,30 +60,48 @@ impl TryFrom<RObject> for SrcRef {
         let value = unsafe { IntegerVector::new(value)? };
 
         // The srcref values are adjusted to produce a `[ )` range as expected
-        // by `std::ops::Range`
+        // by `std::ops::Range` that counts from 0. This is in contrast to the
+        // ranges in `srcref` vectors which are 1-based `[ ]`.
+
+        // Change from 1-based to 0-based counting
+        let adjust_start = |i| (i - 1) as usize;
+
+        // Change from 1-based to 0-based counting (-1) and make it an exclusive
+        // boundary (+1). So essentially a no-op.
+        let adjust_end = |i| i as usize;
+
+        let line_start = adjust_start(value.get_value(0)?);
+        let column_start = adjust_start(value.get_value(4)?);
+        let column_byte_start = adjust_start(value.get_value(1)?);
+
+        let line_end = adjust_end(value.get_value(2)?);
+        let column_end = adjust_end(value.get_value(5)?);
+        let column_byte_end = adjust_end(value.get_value(3)?);
 
         let line = std::ops::Range {
-            start: (value.get_value(0)? - 1) as usize,
-            end: (value.get_value(2)?) as usize,
+            start: line_start,
+            end: line_end,
         };
 
         let line_parsed = if unsafe { value.len() >= 8 } {
+            let line_parsed_start = adjust_start(value.get_value(6)?);
+            let line_parsed_end = adjust_end(value.get_value(7)?);
             std::ops::Range {
-                start: (value.get_value(6)? - 1) as usize,
-                end: (value.get_value(7)?) as usize,
+                start: line_parsed_start,
+                end: line_parsed_end,
             }
         } else {
             line.clone()
         };
 
         let column = std::ops::Range {
-            start: (value.get_value(4)? - 1) as usize,
-            end: value.get_value(5)? as usize,
+            start: column_start,
+            end: column_end,
         };
 
         let column_byte = std::ops::Range {
-            start: (value.get_value(1)? - 1) as usize,
-            end: value.get_value(3)? as usize,
+            start: column_byte_start,
+            end: column_byte_end,
         };
 
         Ok(Self {
