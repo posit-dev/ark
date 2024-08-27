@@ -7,6 +7,7 @@
 
 use std::cmp;
 use std::collections::HashMap;
+use std::time::Duration;
 
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::data_explorer_comm::ArraySelection;
@@ -40,6 +41,7 @@ use amalthea::comm::data_explorer_comm::GetColumnProfilesFeatures;
 use amalthea::comm::data_explorer_comm::GetColumnProfilesParams;
 use amalthea::comm::data_explorer_comm::GetDataValuesParams;
 use amalthea::comm::data_explorer_comm::GetSchemaParams;
+use amalthea::comm::data_explorer_comm::ReturnColumnProfilesParams;
 use amalthea::comm::data_explorer_comm::RowFilter;
 use amalthea::comm::data_explorer_comm::RowFilterParams;
 use amalthea::comm::data_explorer_comm::RowFilterType;
@@ -86,6 +88,7 @@ use stdext::spawn;
 use stdext::unwrap;
 use uuid::Uuid;
 
+use crate::data_explorer::async_channels::AsyncTaskSocket;
 use crate::data_explorer::export_selection;
 use crate::data_explorer::format;
 use crate::data_explorer::format::format_string;
@@ -161,8 +164,11 @@ pub struct RDataExplorer {
 
     /// A channel to send messages to the CommManager.
     comm_manager_tx: Sender<CommManagerEvent>,
-}
 
+    // A socket used to pass information between the worker thread and main
+    // execution thread when running the GetColumnProfile RPC method.
+    profiles_socket: AsyncTaskSocket<(ColumnProfileRequest, FormatOptions), ColumnProfileResult>,
+}
 #[derive(Deserialize, Serialize)]
 struct Metadata {
     title: String,
@@ -207,6 +213,7 @@ impl RDataExplorer {
                         col_filters: vec![],
                         comm,
                         comm_manager_tx,
+                        profiles_socket: AsyncTaskSocket::default(),
                     };
 
                     // Start the data viewer's execution thread
@@ -302,6 +309,26 @@ impl RDataExplorer {
 
                     let comm = self.comm.clone();
                     comm.handle_request(msg, |req| self.handle_rpc(req));
+                },
+
+                // When we get a ColumnProfileRequest, from the async handler
+                recv(self.profiles_socket.main.rx) -> msg => {
+                    let (callback_id, (request, format_options)) = unwrap!(msg, Err(e) => {
+                        log::trace!("Data Viewer: Error receiving column profile request: {e:?}");
+                        continue;
+                    });
+
+                    let profile = self.r_get_column_profile(request, &format_options);
+
+                    let channel = unwrap!(self.profiles_socket.get_worker_channel(&callback_id), None => {
+                        log::error!("Unable to send response back to {}. No channel found.", callback_id);
+                        continue;
+                    });
+
+                    unwrap!(channel.tx.send(profile), Err(err) => {
+                        log::error!("Unable to send request to the worker thread. {err}");
+                        continue;
+                    });
                 }
             }
         }
@@ -502,15 +529,64 @@ impl RDataExplorer {
                 }))
             },
             DataExplorerBackendRequest::GetColumnProfiles(GetColumnProfilesParams {
+                callback_id,
                 profiles: requests,
                 format_options,
             }) => {
-                let profiles = requests
-                    .into_iter()
-                    .map(|request| r_task(|| self.r_get_column_profile(request, &format_options)))
-                    .collect::<Vec<ColumnProfileResult>>();
+                // We respond imediately to this request, but first we launch a new thread the will schedule each
+                // column profile as a different request that is handled sequentially by the main data explorer
+                // execution thread.
 
-                Ok(DataExplorerBackendReply::GetColumnProfilesReply(profiles))
+                let comm = self.comm.clone();
+                let worker_channels = self.profiles_socket.new_worker_channel(callback_id.clone());
+                let main_channels = self.profiles_socket.main.clone();
+                let thread_name = format!("ark-data-viewer-get_profile-{}", callback_id.clone());
+
+                spawn!(thread_name, move || {
+                    let timeout = Duration::from_secs(5);
+
+                    // We send profile requests for each column sequentially so we give time for the main
+                    // data explorer execution thread to execute other types of requests that might be
+                    // on the queue, such as GetDataRequests.
+                    // See https://github.com/posit-dev/positron/pull/4326 for more details.
+                    let profiles = requests
+                        .into_iter()
+                        .map(|request| -> anyhow::Result<_> {
+                            main_channels
+                                .tx
+                                .send((callback_id.clone(), (request, format_options.clone())))?;
+                            Ok(worker_channels.rx.recv_timeout(timeout)?)
+                        })
+                        .filter_map(|x| match x {
+                            Ok(value) => Some(value),
+                            Err(err) => {
+                                log::error!("Could not compute profile results. {err}");
+                                None
+                            },
+                        })
+                        .collect_vec();
+
+                    let event = DataExplorerFrontendEvent::ReturnColumnProfiles(
+                        ReturnColumnProfilesParams {
+                            callback_id,
+                            profiles,
+                        },
+                    );
+
+                    let json_event = match serde_json::to_value(event) {
+                        Ok(value) => value,
+                        Err(err) => {
+                            log::error!("Failed to serialize response to json: {err}");
+                            return;
+                        },
+                    };
+
+                    comm.outgoing_tx
+                        .send(CommMsg::Data(json_event))
+                        .or_log_error("Failed to send event to front-end");
+                });
+
+                Ok(DataExplorerBackendReply::GetColumnProfilesReply())
             },
             DataExplorerBackendRequest::GetState => r_task(|| self.r_get_state()),
             DataExplorerBackendRequest::SearchSchema(_) => {

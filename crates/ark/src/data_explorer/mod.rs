@@ -5,6 +5,7 @@
 //
 //
 
+pub mod async_channels;
 pub mod export_selection;
 pub mod format;
 pub mod histogram;
