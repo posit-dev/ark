@@ -36,12 +36,8 @@
     invisible(.ps.Call("ps_view_data_frame", x, title, var, env))
 }
 
-.ps.null_count <- function(column, filtered_indices) {
-    if (is.null(filtered_indices)) {
-        sum(is.na(column))
-    } else {
-        sum(is.na(column[filtered_indices]))
-    }
+.ps.null_count <- function(column) {
+    sum(is.na(column))
 }
 
 summary_stats_number <- function(col) {
@@ -345,4 +341,127 @@ write_html <- function(x, include_header) {
     }
     local_options(knitr.kable.NA = "") # use empty strings for NA's
     knitr::kable(x, format = "html", row.names = FALSE, col.names = col_names)
+}
+
+profile_histogram <- function(x, method = c("fixed", "sturges", "fd", "scott"), num_bins = NULL, quantiles = NULL) {
+  # We only use finite values for building this histogram.
+  # This removes NA's, Inf, NaN and -Inf
+  x <- x[is.finite(x)]
+
+  # No-non finite values, we early return as there's nothing we can compute.
+  if (length(x) == 0) {
+      return(list(
+          bin_edges = c(),
+          bin_counts = c(),
+          quantiles = rep(NA_real_, length(quantiles))
+      ))
+  }
+
+  # If we have a Date variable, we convert it to POSIXct, in order to be able to have equal
+  # width bins - that can be fractions of dates.
+  if (inherits(x, "Date")) {
+    x <- as.POSIXct(x)
+  }
+
+  if (!is.null(quantiles)) {
+    quantiles <- stats::quantile(x, probs = quantiles)
+  } else {
+    quantiles <- NULL  # We otherwise return an empty quantiles vector
+  }
+
+  method <- match.arg(method)
+  num_bins <- histogram_num_bins(x, method, num_bins)
+
+  # For dates, `hist` does not compute the number of breaks automatically
+  # using default methods.
+  # We force something considering the integer representation.
+  if (inherits(x, "POSIXct") || is.integer(x)) {
+    # The pretty bins algorithm doesn't really make sense for dates,
+    # so we generate our own bin_edges for them.
+    breaks <- seq(min(x), max(x), length.out = num_bins + 1L)
+  } else {
+    breaks <- num_bins
+    stopifnot(is.integer(breaks), length(breaks) == 1)
+  }
+
+  # A warning is raised when computing the histogram for dates due to
+  # integer overflow in when computing n cell midpoints, but we don't
+  # use it, so it can be safely ignored.
+  suppressWarnings(h <- graphics::hist(x, breaks = breaks, plot = FALSE))
+
+  bin_edges <- h$breaks
+  bin_counts <- h$counts
+
+  # For dates, we convert back the breaks to the date representation.
+  if (inherits(x, "POSIXct")) {
+    bin_edges <- as.POSIXct(h$breaks, tz = attr(x, "tzone"))
+  }
+
+  list(
+      bin_edges = bin_edges,
+      bin_counts = bin_counts,
+      quantiles = quantiles
+  )
+}
+
+profile_frequency_table <- function(x, limit) {
+    x <- x[!is.na(x)]
+
+    if (length(x) == 0) {
+        return(list(
+            values = NULL,
+            counts = NULL,
+            other_count = 0
+        ))
+    }
+
+    if (is.factor(x)) {
+        values <- levels(x)
+        counts <- table(x)
+    } else {
+        # We don't use `table` directly because we don't want to loose the type
+        # of value types so they can be formatted with our formatting routines.
+        values <- unique(x)
+        counts <- tabulate(match(x, values))
+    }
+
+    index <- utils::head(order(counts, decreasing = TRUE), limit)
+    values <- values[index]
+    counts <- counts[index]
+    other_count <- length(x) - sum(counts)
+
+    list(
+        values = values,
+        counts = counts,
+        other_count = other_count
+    )
+}
+
+histogram_num_bins <- function(x, method, fixed_num_bins) {
+    num_bins <- if (method == "sturges") {
+        grDevices::nclass.Sturges(x)
+    } else if (method == "fd") {
+        # FD calls into signif, which is not implemented for Dates
+        grDevices::nclass.FD(unclass(x))
+    } else if (method == "scott") {
+        grDevices::nclass.scott(x)
+    } else if (method == "fixed") {
+        fixed_num_bins
+    } else {
+        stop("Unknow method :", method)
+    }
+
+    if (is.integer(x) || inherits(x, "POSIXct")) {
+        # For integers, we don't want num_bins to be larger than the width of the range
+        # so we replace it if necessary.
+        min_value <- min(x)
+        max_value <- max(x)
+        width <- max_value - min_value
+
+        if (as.integer(width) < num_bins) {
+            num_bins <- as.integer(width) + 1L
+        }
+    }
+
+    as.integer(num_bins)
 }

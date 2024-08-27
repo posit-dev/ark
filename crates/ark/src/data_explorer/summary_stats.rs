@@ -32,22 +32,6 @@ pub fn summary_stats(
     column: SEXP,
     display_type: ColumnDisplayType,
     format_options: &FormatOptions,
-) -> ColumnSummaryStats {
-    match summary_stats_(column, display_type, format_options) {
-        Ok(stats) => stats,
-        Err(e) => {
-            // We want to log the error but return an empty summary stats so
-            // that the user can still see the rest of the data.
-            log::error!("Error getting summary stats: {e:?}");
-            empty_column_summary_stats()
-        },
-    }
-}
-
-fn summary_stats_(
-    column: SEXP,
-    display_type: ColumnDisplayType,
-    format_options: &FormatOptions,
 ) -> anyhow::Result<ColumnSummaryStats> {
     let mut stats = empty_column_summary_stats();
     stats.type_display = display_type;
@@ -204,7 +188,7 @@ mod tests {
         r_test(|| {
             let column = r_parse_eval0("c(1,2,3,4,5, NA)", R_ENVS.global).unwrap();
             let stats =
-                summary_stats_(column.sexp, ColumnDisplayType::Number, &default_options()).unwrap();
+                summary_stats(column.sexp, ColumnDisplayType::Number, &default_options()).unwrap();
             let expected = SummaryStatsNumber {
                 min_value: Some("1.00".to_string()),
                 max_value: Some("5.00".to_string()),
@@ -221,7 +205,7 @@ mod tests {
         r_test(|| {
             let column = r_parse_eval0("c(NA_real_, NA_real_, NA_real_)", R_ENVS.global).unwrap();
             let stats =
-                summary_stats_(column.sexp, ColumnDisplayType::Number, &default_options()).unwrap();
+                summary_stats(column.sexp, ColumnDisplayType::Number, &default_options()).unwrap();
             let expected = SummaryStatsNumber {
                 min_value: None,
                 max_value: None,
@@ -238,7 +222,7 @@ mod tests {
         r_test(|| {
             let column = r_parse_eval0("c('a', 'b', 'c', 'd', '')", R_ENVS.global).unwrap();
             let stats =
-                summary_stats_(column.sexp, ColumnDisplayType::String, &default_options()).unwrap();
+                summary_stats(column.sexp, ColumnDisplayType::String, &default_options()).unwrap();
             let expected = SummaryStatsString {
                 num_empty: 1,
                 num_unique: 5,
@@ -252,7 +236,7 @@ mod tests {
         r_test(|| {
             let column = r_parse_eval0("factor(c('a', 'b', 'c', 'd', ''))", R_ENVS.global).unwrap();
             let stats =
-                summary_stats_(column.sexp, ColumnDisplayType::String, &default_options()).unwrap();
+                summary_stats(column.sexp, ColumnDisplayType::String, &default_options()).unwrap();
             let expected = SummaryStatsString {
                 num_empty: 1,
                 num_unique: 5,
@@ -265,8 +249,8 @@ mod tests {
     fn test_boolean_summary() {
         r_test(|| {
             let column = r_parse_eval0("c(TRUE, FALSE, TRUE, TRUE, NA)", R_ENVS.global).unwrap();
-            let stats = summary_stats_(column.sexp, ColumnDisplayType::Boolean, &default_options())
-                .unwrap();
+            let stats =
+                summary_stats(column.sexp, ColumnDisplayType::Boolean, &default_options()).unwrap();
             let expected = SummaryStatsBoolean {
                 true_count: 3,
                 false_count: 1,
@@ -284,7 +268,7 @@ mod tests {
             )
             .unwrap();
             let stats =
-                summary_stats_(column.sexp, ColumnDisplayType::Date, &default_options()).unwrap();
+                summary_stats(column.sexp, ColumnDisplayType::Date, &default_options()).unwrap();
             let expected = SummaryStatsDate {
                 min_date: "2021-01-01".to_string(),
                 mean_date: "2021-01-02".to_string(),
@@ -304,9 +288,8 @@ mod tests {
                 R_ENVS.global,
             )
             .unwrap();
-            let stats =
-                summary_stats_(column.sexp, ColumnDisplayType::Datetime, &default_options())
-                    .unwrap();
+            let stats = summary_stats(column.sexp, ColumnDisplayType::Datetime, &default_options())
+                .unwrap();
             let expected = SummaryStatsDatetime {
                 num_unique: 2,
                 min_date: "2015-07-24 23:15:07".to_string(),
