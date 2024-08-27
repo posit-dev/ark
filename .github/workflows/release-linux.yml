@@ -19,11 +19,13 @@ jobs:
         env:
             GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
             DEBUG_FLAG: ${{ matrix.flavor == 'debug' && '-debug' || '' }}
+            TARGET_FLAG: ${{ matrix.flavor == 'release' && '--release' || '' }}
+            GLIBC_MAX_VERSION: '2.26'  # Sufficiently old for all our target platforms
 
         strategy:
             matrix:
                 arch: [x64]
-                flavor: [debug, release]
+                flavor: [release]
 
         steps:
             - name: Checkout sources
@@ -34,16 +36,40 @@ jobs:
                   sudo apt-get update
                   sudo apt-get install -y cargo
 
+                  # We're linking with zig to select the libc version
+                  cargo install --locked cargo-zigbuild
+                  sudo apt install python3-pip
+                  pip3 install ziglang
+
+                  # Install static OpenSSL
+                  sudo apt-get install -y libssl-dev
+
+                  # The openssl-sys crate expects to see all headers in one place but
+                  # Ubuntu puts configured headers in an arch-specific folder. We
+                  # merge these folders as a workaround.
+                  sudo cp /usr/include/x86_64-linux-gnu/openssl/* /usr/include/openssl
+
             - name: Compile ARK (${{ matrix.flavor }})
               run: |
                   cargo clean
-                  cargo build ${{ matrix.flavor == 'release' && '--release' || '' }}
+
+                  # Instruct the openssl-sys crate to link to libssl statically.
+                  # This is important for portability because distributions have
+                  # various requirements for their dynamic libssl libraries.
+                  export OPENSSL_STATIC=yes
+                  export OPENSSL_LIB_DIR=/usr/lib/x86_64-linux-gnu
+                  export OPENSSL_INCLUDE_DIR=/usr/include
+
+                  # Use the zig linker. This allows linking to a specific version of glibc.
+                  # We use a sufficiently old version that is available on all platforms we target.
+                  # See https://github.com/ziglang/glibc-abi-tool
+                  cargo zigbuild --target x86_64-unknown-linux-gnu.$GLIBC_MAX_VERSION $TARGET_FLAG
 
             # Compress kernel to a zip file
             - name: Create archive
               run: |
                   # Enter the build directory
-                  pushd target/${{ matrix.flavor }}
+                  pushd target/x86_64-unknown-linux-gnu/${{ matrix.flavor }}
 
                   # Compress the kernel to an archive
                   ARCHIVE="$GITHUB_WORKSPACE/ark-${{ inputs.version }}-${{ matrix.flavor }}-linux-x64.zip"
