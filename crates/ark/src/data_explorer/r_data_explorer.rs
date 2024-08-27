@@ -13,9 +13,12 @@ use amalthea::comm::data_explorer_comm::ArraySelection;
 use amalthea::comm::data_explorer_comm::BackendState;
 use amalthea::comm::data_explorer_comm::ColumnDisplayType;
 use amalthea::comm::data_explorer_comm::ColumnFilter;
+use amalthea::comm::data_explorer_comm::ColumnFrequencyTable;
+use amalthea::comm::data_explorer_comm::ColumnHistogram;
 use amalthea::comm::data_explorer_comm::ColumnProfileParams;
 use amalthea::comm::data_explorer_comm::ColumnProfileRequest;
 use amalthea::comm::data_explorer_comm::ColumnProfileResult;
+use amalthea::comm::data_explorer_comm::ColumnProfileSpec;
 use amalthea::comm::data_explorer_comm::ColumnProfileType;
 use amalthea::comm::data_explorer_comm::ColumnProfileTypeSupportStatus;
 use amalthea::comm::data_explorer_comm::ColumnSchema;
@@ -600,8 +603,10 @@ impl RDataExplorer {
         let mut output = ColumnProfileResult {
             null_count: None,
             summary_stats: None,
-            histogram: None,
-            frequency_table: None,
+            small_histogram: None,
+            small_frequency_table: None,
+            large_histogram: None,
+            large_frequency_table: None,
         };
 
         let filtered_column = unwrap!(tbl_get_filtered_column(
@@ -619,103 +624,131 @@ impl RDataExplorer {
         for profile_req in request.profiles {
             match profile_req.profile_type {
                 ColumnProfileType::NullCount => {
-                    let null_count = self.r_null_count(filtered_column.clone());
-                    output.null_count = match null_count {
-                        Err(err) => {
-                            log::error!(
-                                "Error getting null count for column {}: {}",
-                                request.column_index,
-                                err
-                            );
-                            None
-                        },
-                        Ok(count) => Some(count as i64),
-                    };
-                },
-                ColumnProfileType::SummaryStats => {
-                    let summary_stats =
-                        self.r_summary_stats(filtered_column.clone(), &format_options);
-                    output.summary_stats = match summary_stats {
-                        Err(err) => {
+                    output.null_count = self
+                        .profile_null_count(filtered_column.clone())
+                        .map_err(|err| {
                             log::error!(
                                 "Error getting summary stats for column {}: {}",
                                 request.column_index,
                                 err
                             );
-                            None
-                        },
-                        Ok(stats) => Some(stats),
-                    };
+                        })
+                        .ok();
                 },
-                ColumnProfileType::Histogram => {
-                    let params = match profile_req.params {
-                        None => Err("Missing parameters for the histogram"),
-                        Some(par) => match par {
-                            ColumnProfileParams::Histogram(p) => Ok(p),
-                            _ => Err("Wrong type of parameters for the histogram."),
-                        },
-                    };
-
-                    let params = unwrap!(params, Err(err) => {
-                        log::error!(
-                            "Unable to compute the histogram for column {}. Missing parameters {}",
-                            request.column_index,
-                            err
-                        );
-                        continue; // Go to next profile
-                    });
-
-                    let histogram =
-                        profile_histogram(filtered_column.sexp, &params, &format_options);
-
-                    output.histogram = match histogram {
-                        Ok(hist) => Some(hist),
-                        Err(err) => {
+                ColumnProfileType::SummaryStats => {
+                    output.summary_stats = self
+                        .profile_summary_stats(filtered_column.clone(), format_options)
+                        .map_err(|err| {
+                            log::error!(
+                                "Error getting null count for column {}: {}",
+                                request.column_index,
+                                err
+                            );
+                        })
+                        .ok()
+                },
+                ColumnProfileType::SmallHistogram | ColumnProfileType::LargeHistogram => {
+                    let histogram = self
+                        .profile_histogram(filtered_column.clone(), format_options, &profile_req)
+                        .map_err(|err| {
                             log::error!(
                                 "Error getting histogram for column {}: {}",
                                 request.column_index,
                                 err
                             );
-                            None
+                        })
+                        .ok();
+
+                    match profile_req.profile_type {
+                        ColumnProfileType::SmallHistogram => {
+                            output.small_histogram = histogram;
+                        },
+                        ColumnProfileType::LargeHistogram => {
+                            output.large_histogram = histogram;
+                        },
+                        _ => {
+                            // This is technically unreachable!(), but not worth panicking if
+                            // this happens.
                         },
                     }
                 },
-                ColumnProfileType::FrequencyTable => {
-                    let params = match profile_req.params {
-                        None => Err("Missing parameters for the frequency table"),
-                        Some(par) => match par {
-                            ColumnProfileParams::FrequencyTable(p) => Ok(p),
-                            _ => Err("Wrong type of parameters for the frequency table."),
-                        },
-                    };
-
-                    let params = unwrap!(params, Err(err) => {
-                        log::error!(
-                            "Unable to compute the frequency table for column {}. Missing parameters {}",
-                            request.column_index,
-                            err
-                        );
-                        continue; // Go to next profile
-                    });
-
-                    let frequency_table =
-                        profile_frequency_table(filtered_column.sexp, &params, &format_options);
-
-                    output.frequency_table = match frequency_table {
-                        Ok(hist) => Some(hist),
-                        Err(err) => {
+                ColumnProfileType::SmallFrequencyTable | ColumnProfileType::LargeFrequencyTable => {
+                    let frequency_table = self
+                        .profile_frequency_table(
+                            filtered_column.clone(),
+                            format_options,
+                            &profile_req,
+                        )
+                        .map_err(|err| {
                             log::error!(
                                 "Error getting frequency table for column {}: {}",
                                 request.column_index,
                                 err
                             );
-                            None
+                        })
+                        .ok();
+
+                    match profile_req.profile_type {
+                        ColumnProfileType::SmallFrequencyTable => {
+                            output.small_frequency_table = frequency_table;
+                        },
+                        ColumnProfileType::LargeFrequencyTable => {
+                            output.large_frequency_table = frequency_table;
+                        },
+                        _ => {
+                            // This is technically unreachable!(), but not worth panicking if
+                            // this happens.
                         },
                     }
                 },
             };
         }
         output
+    }
+
+    fn profile_frequency_table(
+        &self,
+        column: RObject,
+        format_options: &FormatOptions,
+        profile_spec: &ColumnProfileSpec,
+    ) -> anyhow::Result<ColumnFrequencyTable> {
+        let params = match &profile_spec.params {
+            None => return Err(anyhow!("Missing parameters for the frequency table")),
+            Some(par) => match par {
+                ColumnProfileParams::SmallFrequencyTable(p) => p,
+                ColumnProfileParams::LargeFrequencyTable(p) => p,
+                _ => return Err(anyhow!("Wrong type of parameters for the frequency table.")),
+            },
+        };
+        let frequency_table = profile_frequency_table(column.sexp, &params, &format_options)?;
+        Ok(frequency_table)
+    }
+
+    fn profile_histogram(
+        &self,
+        column: RObject,
+        format_options: &FormatOptions,
+        profile_spec: &ColumnProfileSpec,
+    ) -> anyhow::Result<ColumnHistogram> {
+        let params = match &profile_spec.params {
+            None => return Err(anyhow!("Missing parameters for the histogram")),
+            Some(par) => match par {
+                ColumnProfileParams::SmallHistogram(p) => p,
+                ColumnProfileParams::LargeHistogram(p) => p,
+                _ => return Err(anyhow!("Wrong type of parameters for the histogram.")),
+            },
+        };
+        let histogram = profile_histogram(column.sexp, &params, &format_options)?;
+        Ok(histogram)
+    }
+
+    fn profile_summary_stats(
+        &self,
+        column: RObject,
+        format_options: &FormatOptions,
+    ) -> anyhow::Result<ColumnSummaryStats> {
+        let dtype = display_type(column.sexp);
+        Ok(summary_stats(column.sexp, dtype, format_options)?)
     }
 
     /// Counts the number of nulls in a column. As the intent is to provide an
@@ -725,24 +758,15 @@ impl RDataExplorer {
     /// Expects data to be filtered by the view indices.
     ///
     /// - `column_index`: The index of the column to count nulls in; 0-based.
-    fn r_null_count(&self, column: RObject) -> anyhow::Result<i32> {
+    fn profile_null_count(&self, column: RObject) -> anyhow::Result<i64> {
         // Compute the number of nulls in the column
-        let result = RFunction::new("", ".ps.null_count")
+        let result: i32 = RFunction::new("", ".ps.null_count")
             .param("column", column)
-            .call_in(ARK_ENVS.positron_ns)?;
+            .call_in(ARK_ENVS.positron_ns)?
+            .try_into()?;
 
         // Return the count of nulls and NA values
         Ok(result.try_into()?)
-    }
-
-    fn r_summary_stats(
-        &self,
-        column: RObject,
-        format_options: &FormatOptions,
-    ) -> anyhow::Result<ColumnSummaryStats> {
-        // Get the column to compute summary stats for
-        let dtype = display_type(column.sexp);
-        Ok(summary_stats(column.sexp, dtype, format_options))
     }
 
     /// Sort the rows of the data object according to the sort keys in
@@ -1019,11 +1043,19 @@ impl RDataExplorer {
                             support_status: SupportStatus::Supported,
                         },
                         ColumnProfileTypeSupportStatus {
-                            profile_type: ColumnProfileType::Histogram,
+                            profile_type: ColumnProfileType::SmallHistogram,
                             support_status: SupportStatus::Experimental,
                         },
                         ColumnProfileTypeSupportStatus {
-                            profile_type: ColumnProfileType::FrequencyTable,
+                            profile_type: ColumnProfileType::SmallFrequencyTable,
+                            support_status: SupportStatus::Experimental,
+                        },
+                        ColumnProfileTypeSupportStatus {
+                            profile_type: ColumnProfileType::LargeHistogram,
+                            support_status: SupportStatus::Experimental,
+                        },
+                        ColumnProfileTypeSupportStatus {
+                            profile_type: ColumnProfileType::LargeFrequencyTable,
                             support_status: SupportStatus::Experimental,
                         },
                     ],

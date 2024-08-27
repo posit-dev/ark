@@ -48,10 +48,7 @@ pub fn profile_histogram(
         },
     }
 
-    let num_bins: RObject = match params.num_bins {
-        Some(v) => (v as i32).into(),
-        None => r_null().into(),
-    };
+    let num_bins: RObject = (params.num_bins as i32).into();
 
     let method: RObject = match params.method {
         ColumnHistogramParamsMethod::Fixed => "fixed".into(),
@@ -185,7 +182,7 @@ mod tests {
             column.sexp,
             &ColumnHistogramParams {
                 method: ColumnHistogramParamsMethod::Fixed,
-                num_bins: Some(num_bins),
+                num_bins,
                 quantiles: None,
             },
             &default_options(),
@@ -216,7 +213,7 @@ mod tests {
             column.sexp,
             &ColumnHistogramParams {
                 method,
-                num_bins: None,
+                num_bins: 100000,
                 quantiles: None,
             },
             &default_options(),
@@ -240,7 +237,7 @@ mod tests {
             column.sexp,
             &ColumnHistogramParams {
                 method: ColumnHistogramParamsMethod::Fixed,
-                num_bins: Some(100),
+                num_bins: 100,
                 quantiles: Some(quantiles),
             },
             &default_options(),

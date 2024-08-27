@@ -304,11 +304,17 @@ pub struct ColumnProfileResult {
 	/// Results from summary_stats request
 	pub summary_stats: Option<ColumnSummaryStats>,
 
-	/// Results from histogram request
-	pub histogram: Option<ColumnHistogram>,
+	/// Results from small histogram request
+	pub small_histogram: Option<ColumnHistogram>,
 
-	/// Results from frequency_table request
-	pub frequency_table: Option<ColumnFrequencyTable>
+	/// Results from large histogram request
+	pub large_histogram: Option<ColumnHistogram>,
+
+	/// Results from small frequency_table request
+	pub small_frequency_table: Option<ColumnFrequencyTable>,
+
+	/// Results from large frequency_table request
+	pub large_frequency_table: Option<ColumnFrequencyTable>
 }
 
 /// Profile result containing summary stats for a column based on the data
@@ -420,8 +426,8 @@ pub struct ColumnHistogramParams {
 	/// Method for determining number of bins
 	pub method: ColumnHistogramParamsMethod,
 
-	/// Number of bins in the computed histogram
-	pub num_bins: Option<i64>,
+	/// Maximum number of bins in the computed histogram.
+	pub num_bins: i64,
 
 	/// Sample quantiles (numbers between 0 and 1) to compute along with the
 	/// histogram
@@ -808,13 +814,21 @@ pub enum ColumnProfileType {
 	#[strum(to_string = "summary_stats")]
 	SummaryStats,
 
-	#[serde(rename = "frequency_table")]
-	#[strum(to_string = "frequency_table")]
-	FrequencyTable,
+	#[serde(rename = "small_frequency_table")]
+	#[strum(to_string = "small_frequency_table")]
+	SmallFrequencyTable,
 
-	#[serde(rename = "histogram")]
-	#[strum(to_string = "histogram")]
-	Histogram
+	#[serde(rename = "large_frequency_table")]
+	#[strum(to_string = "large_frequency_table")]
+	LargeFrequencyTable,
+
+	#[serde(rename = "small_histogram")]
+	#[strum(to_string = "small_histogram")]
+	SmallHistogram,
+
+	#[serde(rename = "large_histogram")]
+	#[strum(to_string = "large_histogram")]
+	LargeHistogram
 }
 
 /// Possible values for Method in ColumnHistogramParams
@@ -935,9 +949,13 @@ pub enum ColumnFilterParams {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
 pub enum ColumnProfileParams {
-	Histogram(ColumnHistogramParams),
+	SmallHistogram(ColumnHistogramParams),
 
-	FrequencyTable(ColumnFrequencyTableParams)
+	LargeHistogram(ColumnHistogramParams),
+
+	SmallFrequencyTable(ColumnFrequencyTableParams),
+
+	LargeFrequencyTable(ColumnFrequencyTableParams)
 }
 
 /// Union type Selection in Properties

@@ -1686,8 +1686,8 @@ fn test_histogram() {
                 profiles: vec![ColumnProfileRequest {
                     column_index,
                     profiles: vec![ColumnProfileSpec {
-                        profile_type: ColumnProfileType::Histogram,
-                        params: Some(ColumnProfileParams::Histogram(ColumnHistogramParams {
+                        profile_type: ColumnProfileType::SmallHistogram,
+                        params: Some(ColumnProfileParams::SmallHistogram(ColumnHistogramParams {
                             method,
                             num_bins,
                             quantiles,
@@ -1698,10 +1698,10 @@ fn test_histogram() {
             })
         };
 
-        let req = make_histogram_req(0, ColumnHistogramParamsMethod::Fixed, Some(10), None);
+        let req = make_histogram_req(0, ColumnHistogramParamsMethod::Fixed, 10, None);
 
         assert_match!(socket_rpc(&socket, req), DataExplorerBackendReply::GetColumnProfilesReply(profiles) => {
-            let histogram = profiles[0].histogram.clone().unwrap();
+            let histogram = profiles[0].small_histogram.clone().unwrap();
             assert_eq!(histogram, ColumnHistogram {
                 bin_edges: format_string(r_parse_eval0("seq(1, 10, length.out=11)", R_ENVS.global).unwrap().sexp, &default_format_options()),
                 bin_counts: vec![10, 9, 8, 7, 6, 5, 4, 3, 2, 1], // Pretty bind edges unite the first two intervals
@@ -1723,8 +1723,8 @@ fn test_frequency_table() {
                 profiles: vec![ColumnProfileRequest {
                     column_index,
                     profiles: vec![ColumnProfileSpec {
-                        profile_type: ColumnProfileType::FrequencyTable,
-                        params: Some(ColumnProfileParams::FrequencyTable(
+                        profile_type: ColumnProfileType::SmallFrequencyTable,
+                        params: Some(ColumnProfileParams::SmallFrequencyTable(
                             ColumnFrequencyTableParams { limit },
                         )),
                     }],
@@ -1736,7 +1736,7 @@ fn test_frequency_table() {
         let req = make_freq_table_req(0, 5);
 
         assert_match!(socket_rpc(&socket, req), DataExplorerBackendReply::GetColumnProfilesReply(profiles) => {
-            let freq_table = profiles[0].frequency_table.clone().unwrap();
+            let freq_table = profiles[0].small_frequency_table.clone().unwrap();
             assert_eq!(freq_table, ColumnFrequencyTable {
                 values: format_string(r_parse_eval0("letters[1:5]", R_ENVS.global).unwrap().sexp, &default_format_options()),
                 counts: vec![10, 9, 8, 7, 6],
