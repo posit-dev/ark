@@ -152,6 +152,8 @@ functions::generate! {
 
     pub fn Rf_isString(s: SEXP) -> Rboolean;
 
+    pub fn Rf_isVector(arg1: SEXP) -> Rboolean;
+
     pub fn Rf_lang1(arg1: SEXP) -> SEXP;
 
     pub fn Rf_lang2(arg1: SEXP, arg2: SEXP) -> SEXP;
@@ -211,6 +213,10 @@ functions::generate! {
     pub fn DATAPTR(x: SEXP) -> *mut std::ffi::c_void;
 
     pub fn ENCLOS(x: SEXP) -> SEXP;
+
+    pub fn EXTPTR_PROT(x: SEXP) -> SEXP;
+
+    pub fn EXTPTR_TAG(x: SEXP) -> SEXP;
 
     pub fn SET_ENCLOS(x: SEXP, v: SEXP) -> SEXP;
 

@@ -23,6 +23,7 @@ pub mod r_version;
 pub mod raii;
 pub mod routines;
 pub mod session;
+pub mod size;
 pub mod string;
 pub mod symbol;
 pub mod sys;
