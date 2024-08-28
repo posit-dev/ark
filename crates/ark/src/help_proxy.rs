@@ -16,6 +16,7 @@ use actix_web::HttpResponse;
 use actix_web::HttpServer;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
+use http::uri::PathAndQuery;
 use mime_guess::from_path;
 use reqwest::Client;
 use reqwest_middleware::ClientBuilder;
@@ -113,24 +114,25 @@ impl HelpProxy {
 
 // Proxies a request.
 async fn proxy_request(req: HttpRequest, app_state: web::Data<AppState>) -> HttpResponse {
-    // Get the URL path and query.
-    let path = req.path();
-    let query = req.query_string();
+    let target_port = app_state.target_port;
+
+    let target_path_and_query = req
+        .uri()
+        .path_and_query()
+        .map(PathAndQuery::as_str)
+        .unwrap_or_default();
 
     // Construct the target URL string.
-    let target_url_string = format!("http://localhost:{}{}", app_state.target_port, path);
+    let target_url_string = format!("http://localhost:{target_port}{target_path_and_query}");
 
     // Parse the target URL string into the target URL.
-    let mut target_url = match Url::parse(&target_url_string) {
+    let target_url = match Url::parse(&target_url_string) {
         Ok(url) => url,
         Err(error) => {
             log::error!("Error proxying {}: {}", target_url_string, error);
             return HttpResponse::BadGateway().finish();
         },
     };
-
-    // Add query from original request back to URL.
-    target_url.set_query(Some(query));
 
     // Set up reqwest client with 3 retries (posit-dev/positron#3753).
     let retry_policy = ExponentialBackoff::builder().build_with_max_retries(3);
