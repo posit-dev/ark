@@ -8,7 +8,6 @@
 use std::collections::HashSet;
 use std::ffi::c_void;
 use std::os::raw::c_int;
-use std::ptr::null;
 use std::u32;
 
 use libc::c_double;
@@ -49,7 +48,6 @@ use crate::object::r_length;
 use crate::r_is_altrep;
 use crate::r_is_vector;
 use crate::r_symbol;
-use crate::r_type2char;
 use crate::r_typeof;
 
 // A re-implementation of lobstr obj_size
@@ -89,6 +87,11 @@ fn obj_size_tree(
     seen: &mut HashSet<SEXP>,
     depth: u32,
 ) -> usize {
+    // In case there's a nullptr, return 0
+    if x.is_null() {
+        return 0;
+    }
+
     // NILSXP is a singleton, so occupies no space. Similarly SPECIAL and
     // BUILTIN are fixed and unchanging
     match r_typeof(x) {
@@ -114,22 +117,23 @@ fn obj_size_tree(
         size += 3 * size_of::<SEXP>();
 
         size += obj_size_tree(klass, base_env, sizeof_node, sizeof_vector, seen, depth + 1);
-        let data1 = unsafe { libr::R_altrep_data1(x) };
-        if !data1.is_null() {
-            size += obj_size_tree(
-                unsafe { libr::R_altrep_data1(x) },
-                base_env,
-                sizeof_node,
-                sizeof_vector,
-                seen,
-                depth + 1,
-            );
-        }
 
-        let data2 = unsafe { libr::R_altrep_data2(x) };
-        if !data2.is_null() {
-            size += obj_size_tree(data2, base_env, sizeof_node, sizeof_vector, seen, depth + 1);
-        }
+        size += obj_size_tree(
+            unsafe { libr::R_altrep_data1(x) },
+            base_env,
+            sizeof_node,
+            sizeof_vector,
+            seen,
+            depth + 1,
+        );
+        size += obj_size_tree(
+            unsafe { libr::R_altrep_data2(x) },
+            base_env,
+            sizeof_node,
+            sizeof_vector,
+            seen,
+            depth + 1,
+        );
 
         return size;
     }
@@ -162,10 +166,6 @@ fn obj_size_tree(
         STRSXP => {
             size += v_size(r_length(x) as usize, size_of::<SEXP>());
             for i in 0..r_length(x) {
-                let char = r_chr_get(x, i);
-                if char.is_null() {
-                    continue;
-                }
                 size += obj_size_tree(
                     r_chr_get(x, i),
                     base_env,
