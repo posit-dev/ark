@@ -6,6 +6,12 @@
 //
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::data_explorer_comm::ArraySelection;
+use amalthea::comm::data_explorer_comm::ColumnFrequencyTable;
+use amalthea::comm::data_explorer_comm::ColumnFrequencyTableParams;
+use amalthea::comm::data_explorer_comm::ColumnHistogram;
+use amalthea::comm::data_explorer_comm::ColumnHistogramParams;
+use amalthea::comm::data_explorer_comm::ColumnHistogramParamsMethod;
+use amalthea::comm::data_explorer_comm::ColumnProfileParams;
 use amalthea::comm::data_explorer_comm::ColumnProfileRequest;
 use amalthea::comm::data_explorer_comm::ColumnProfileSpec;
 use amalthea::comm::data_explorer_comm::ColumnProfileType;
@@ -45,6 +51,7 @@ use amalthea::comm::data_explorer_comm::TableSelectionKind;
 use amalthea::comm::data_explorer_comm::TextSearchType;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::socket;
+use ark::data_explorer::format::format_string;
 use ark::data_explorer::r_data_explorer::DataObjectEnvInfo;
 use ark::data_explorer::r_data_explorer::RDataExplorer;
 use ark::lsp::events::EVENTS;
@@ -1711,6 +1718,77 @@ fn test_data_update_num_rows() {
         let req = DataExplorerBackendRequest::GetState;
         assert_match!(socket_rpc(&socket, req), DataExplorerBackendReply::GetStateReply(backend_state) => {
             assert_eq!(backend_state.table_shape.num_rows, 2);
+        });
+    })
+}
+
+#[test]
+fn test_histogram() {
+    r_test(|| {
+        let socket =
+            open_data_explorer_from_expression("data.frame(x = rep(1:10, 10:1))", None).unwrap();
+
+        let make_histogram_req = |column_index, method, num_bins, quantiles| {
+            DataExplorerBackendRequest::GetColumnProfiles(GetColumnProfilesParams {
+                profiles: vec![ColumnProfileRequest {
+                    column_index,
+                    profiles: vec![ColumnProfileSpec {
+                        profile_type: ColumnProfileType::SmallHistogram,
+                        params: Some(ColumnProfileParams::SmallHistogram(ColumnHistogramParams {
+                            method,
+                            num_bins,
+                            quantiles,
+                        })),
+                    }],
+                }],
+                format_options: default_format_options(),
+            })
+        };
+
+        let req = make_histogram_req(0, ColumnHistogramParamsMethod::Fixed, 10, None);
+
+        assert_match!(socket_rpc(&socket, req), DataExplorerBackendReply::GetColumnProfilesReply(profiles) => {
+            let histogram = profiles[0].small_histogram.clone().unwrap();
+            assert_eq!(histogram, ColumnHistogram {
+                bin_edges: format_string(r_parse_eval0("seq(1, 10, length.out=11)", R_ENVS.global).unwrap().sexp, &default_format_options()),
+                bin_counts: vec![10, 9, 8, 7, 6, 5, 4, 3, 2, 1], // Pretty bind edges unite the first two intervals
+                quantiles: vec![],
+            });
+        });
+    })
+}
+
+#[test]
+fn test_frequency_table() {
+    r_test(|| {
+        let socket =
+            open_data_explorer_from_expression("data.frame(x = rep(letters[1:10], 10:1))", None)
+                .unwrap();
+
+        let make_freq_table_req = |column_index, limit| {
+            DataExplorerBackendRequest::GetColumnProfiles(GetColumnProfilesParams {
+                profiles: vec![ColumnProfileRequest {
+                    column_index,
+                    profiles: vec![ColumnProfileSpec {
+                        profile_type: ColumnProfileType::SmallFrequencyTable,
+                        params: Some(ColumnProfileParams::SmallFrequencyTable(
+                            ColumnFrequencyTableParams { limit },
+                        )),
+                    }],
+                }],
+                format_options: default_format_options(),
+            })
+        };
+
+        let req = make_freq_table_req(0, 5);
+
+        assert_match!(socket_rpc(&socket, req), DataExplorerBackendReply::GetColumnProfilesReply(profiles) => {
+            let freq_table = profiles[0].small_frequency_table.clone().unwrap();
+            assert_eq!(freq_table, ColumnFrequencyTable {
+                values: format_string(r_parse_eval0("letters[1:5]", R_ENVS.global).unwrap().sexp, &default_format_options()),
+                counts: vec![10, 9, 8, 7, 6],
+                other_count: Some(5 + 4 + 3 + 2 + 1)
+            });
         });
     })
 }

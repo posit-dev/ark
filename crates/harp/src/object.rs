@@ -13,6 +13,7 @@ use std::os::raw::c_char;
 use std::os::raw::c_int;
 use std::sync::Once;
 
+use libc::c_double;
 use libr::*;
 
 use crate::error::Error;
@@ -597,6 +598,18 @@ impl From<&Vec<i64>> for RObject {
             let vector = RObject::from(Rf_allocVector(INTSXP, values.len() as isize));
             for idx in 0..values.len() {
                 SET_INTEGER_ELT(vector.sexp, idx as isize, values[idx] as c_int);
+            }
+            return vector;
+        }
+    }
+}
+
+impl From<&Vec<f64>> for RObject {
+    fn from(values: &Vec<f64>) -> Self {
+        unsafe {
+            let vector = RObject::from(Rf_allocVector(REALSXP, values.len() as isize));
+            for idx in 0..values.len() {
+                SET_REAL_ELT(vector.sexp, idx as isize, values[idx] as c_double);
             }
             return vector;
         }
