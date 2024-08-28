@@ -17,6 +17,10 @@ use actix_web::HttpServer;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use mime_guess::from_path;
+use reqwest::Client;
+use reqwest_middleware::ClientBuilder;
+use reqwest_retry::policies::ExponentialBackoff;
+use reqwest_retry::RetryTransientMiddleware;
 use rust_embed::RustEmbed;
 use serde::Deserialize;
 use stdext::spawn;
@@ -128,8 +132,14 @@ async fn proxy_request(req: HttpRequest, app_state: web::Data<AppState>) -> Http
     // Add query from original request back to URL.
     target_url.set_query(Some(query));
 
+    // Set up reqwest client with 3 retries.
+    let retry_policy = ExponentialBackoff::builder().build_with_max_retries(3);
+    let client = ClientBuilder::new(Client::new())
+        .with(RetryTransientMiddleware::new_with_policy(retry_policy))
+        .build();
+
     // Get the target URL.
-    match reqwest::get(target_url.clone()).await {
+    match client.get(target_url.clone()).send().await {
         // OK.
         Ok(response) => {
             // We only handle OK. Everything else is unexpected.
@@ -151,8 +161,9 @@ async fn proxy_request(req: HttpRequest, app_state: web::Data<AppState>) -> Http
 
             // Build and return the response.
             let mut http_response_builder = HttpResponse::Ok();
-            if content_type.is_some() {
-                http_response_builder.content_type(content_type.unwrap());
+            if let Some(content_type) = content_type {
+                let content_type = convert_header_value(content_type);
+                http_response_builder.content_type(content_type);
             }
 
             // Certain resources are replaced.
@@ -241,4 +252,23 @@ async fn preview_img(params: web::Query<PreviewRdParams>) -> HttpResponse {
     };
 
     HttpResponse::Ok().content_type(mime_str).body(content)
+}
+
+// Conversion helper between reqwest and actix-web's `HeaderValue`
+//
+// Both point to a re-exported `HeaderValue` from the http crate, but they come from
+// different versions of the http crate, so they look different to Rust and we need a
+// small conversion helper.
+// - reqwest re-exports http 1.0.0's `HeaderValue`
+// - actix-web re-exports http 0.2.7's `HeaderValue`
+fn convert_header_value(x: &reqwest::header::HeaderValue) -> actix_web::http::header::HeaderValue {
+    let out = actix_web::http::header::HeaderValue::from_bytes(x.as_bytes());
+
+    // We've checked these are the same underlying structure, so assert that this works.
+    let mut out = out.unwrap();
+
+    // Set the one other field that defaults to `false`, just in case.
+    out.set_sensitive(x.is_sensitive());
+
+    out
 }
