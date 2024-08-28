@@ -440,7 +440,7 @@ fn vec_label(x: SEXP, elt_to_pretty_string: fn(SEXP, isize) -> String) -> String
     }
 
     if !scalar {
-        out.push_str(")");
+        out.push(')');
     }
 
     out
