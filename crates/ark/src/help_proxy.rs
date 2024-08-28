@@ -132,7 +132,7 @@ async fn proxy_request(req: HttpRequest, app_state: web::Data<AppState>) -> Http
     // Add query from original request back to URL.
     target_url.set_query(Some(query));
 
-    // Set up reqwest client with 3 retries.
+    // Set up reqwest client with 3 retries (posit-dev/positron#3753).
     let retry_policy = ExponentialBackoff::builder().build_with_max_retries(3);
     let client = ClientBuilder::new(Client::new())
         .with(RetryTransientMiddleware::new_with_policy(retry_policy))
