@@ -79,7 +79,7 @@ pub fn r_null() -> libr::SEXP {
     unsafe { libr::R_NilValue }
 }
 
-pub fn r_missing() -> libr::SEXP {
+pub fn missing() -> libr::SEXP {
     unsafe { libr::R_MissingArg }
 }
 

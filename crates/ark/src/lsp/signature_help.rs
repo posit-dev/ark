@@ -10,7 +10,6 @@ use harp::eval::r_parse_eval;
 use harp::eval::RParseEvalOptions;
 use harp::object::*;
 use harp::pretty::*;
-use harp::r_missing;
 use harp::r_null;
 use harp::utils::r_formals;
 use harp::utils::r_is_function;
@@ -356,7 +355,7 @@ fn argument_label(name: String, value: SEXP) -> String {
     // Specially handle `R_MissingArg`, which looks like a `SYMSXP`,
     // but we don't want to add `=` to it. This is what we see when
     // there is no default argument (and also for `...`).
-    if value == r_missing() {
+    if value == harp::missing() {
         return name;
     }
 
@@ -463,7 +462,7 @@ fn chr_to_pretty_string(x: SEXP, i: isize) -> String {
 }
 
 fn sym_label(x: SEXP) -> String {
-    if x == r_missing() {
+    if x == harp::missing() {
         panic!("`R_MissingArg` should have been handled earlier.");
     }
 
@@ -491,7 +490,6 @@ mod tests {
     use harp::eval::r_parse_eval0;
     use harp::object::*;
     use harp::r_char;
-    use harp::r_missing;
     use harp::r_null;
     use harp::r_symbol;
     use harp::test::r_test;
@@ -592,7 +590,7 @@ fn <- function(
     #[test]
     fn test_argument_label_missing() {
         r_test(|| {
-            let x = r_missing();
+            let x = harp::missing();
             let label = argument_label(String::from("x"), x);
             assert_eq!(label, String::from("x"));
         })
