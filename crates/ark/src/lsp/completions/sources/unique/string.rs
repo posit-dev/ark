@@ -8,7 +8,8 @@
 use anyhow::Result;
 use tower_lsp::lsp_types::CompletionItem;
 
-use super::file_path::completions_from_file_path;
+use super::file_path::completions_from_string_file_path;
+use crate::lsp::completions::sources::unique::subset::completions_from_string_subset;
 use crate::lsp::document_context::DocumentContext;
 use crate::treesitter::NodeTypeExt;
 
@@ -27,9 +28,9 @@ pub fn completions_from_string(context: &DocumentContext) -> Result<Option<Vec<C
         return Ok(None);
     }
 
-    // Even if we don't find any completions, we were inside a string so we
+    // Even if we don't find any completions, we know we were inside a string so we
     // don't want to provide completions for anything else, so we always at
-    // least return an empty `completions` vector from here.
+    // least return an empty `completions` vector from here on.
     let mut completions: Vec<CompletionItem> = vec![];
 
     // Return empty set if we are here due to a trigger character like `$`.
@@ -38,8 +39,15 @@ pub fn completions_from_string(context: &DocumentContext) -> Result<Option<Vec<C
         return Ok(Some(completions));
     }
 
-    // Try file path completions
-    completions.append(&mut completions_from_file_path(context)?);
+    // Check if we are doing string subsetting, like `x["<tab>"]`. This is a very unique
+    // case that takes priority over file path completions.
+    if let Some(mut candidates) = completions_from_string_subset(context)? {
+        completions.append(&mut candidates);
+        return Ok(Some(completions));
+    }
+
+    // If no special string cases are hit, we show file path completions
+    completions.append(&mut completions_from_string_file_path(context)?);
 
     Ok(Some(completions))
 }
