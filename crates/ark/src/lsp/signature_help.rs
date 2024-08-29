@@ -422,6 +422,12 @@ fn vec_label(x: SEXP, elt_to_pretty_string: fn(SEXP, isize) -> String) -> String
     let size = r_length(x);
     let scalar = size == 1;
 
+    const TRUNCATE_SIZE: isize = 10;
+    let truncate = size > TRUNCATE_SIZE;
+
+    // Cap `size` if needed
+    let size = if truncate { TRUNCATE_SIZE } else { size };
+
     let mut out = String::from("");
 
     if !scalar {
@@ -435,6 +441,10 @@ fn vec_label(x: SEXP, elt_to_pretty_string: fn(SEXP, isize) -> String) -> String
         if i != size - 1 {
             out.push_str(", ");
         }
+    }
+
+    if truncate {
+        out.push_str(", ...");
     }
 
     if !scalar {
@@ -493,6 +503,7 @@ mod tests {
     use harp::r_symbol;
     use harp::test::r_test;
     use harp::RObject;
+    use libr::R_xlen_t;
     use tower_lsp::lsp_types::ParameterLabel;
 
     use crate::lsp::document_context::DocumentContext;
@@ -665,6 +676,23 @@ fn <- function(
             r_chr_poke(x.sexp, 2, r_str_na());
             let label = argument_label(String::from("x"), x.sexp);
             assert_eq!(label, String::from("x = c(\"hi\", \"there\", NA)"));
+        })
+    }
+
+    #[test]
+    fn test_argument_label_vector_truncate() {
+        r_test(|| {
+            let x = RObject::from(r_alloc_integer(12));
+            for i in 0..12 {
+                r_lgl_poke(x.sexp, R_xlen_t::try_from(i).unwrap(), i);
+            }
+
+            let label = argument_label(String::from("x"), x.sexp);
+
+            assert_eq!(
+                label,
+                String::from("x = c(0L, 1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 9L, ...)")
+            );
         })
     }
 
