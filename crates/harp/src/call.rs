@@ -67,8 +67,8 @@ pub fn r_expr_quote(x: impl Into<SEXP>) -> RObject {
     }
 }
 
-pub fn r_expr_deparse(x: SEXP) -> harp::Result<String> {
-    let x = RFunction::from("expr_deparse")
+pub fn expr_deparse_collapse(x: SEXP) -> harp::Result<String> {
+    let x = RFunction::from("expr_deparse_collapse")
         .add(r_expr_quote(x))
         .call_in(unsafe { HARP_ENV.unwrap() })?;
 

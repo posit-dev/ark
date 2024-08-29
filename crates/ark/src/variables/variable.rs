@@ -12,7 +12,6 @@ use amalthea::comm::variables_comm::ClipboardFormatFormat;
 use amalthea::comm::variables_comm::Variable;
 use amalthea::comm::variables_comm::VariableKind;
 use anyhow::anyhow;
-use harp::call::r_expr_deparse;
 use harp::environment::Binding;
 use harp::environment::BindingValue;
 use harp::environment::Environment;
@@ -528,7 +527,7 @@ impl PositronVariable {
                         if fun == "lazyLoadDBfetch" {
                             return Ok(String::from("(unevaluated)"))
                         }
-                        r_expr_deparse(code)
+                        harp::call::expr_deparse_collapse(code)
                     },
                     _ => Err(Error::UnexpectedType(r_typeof(code), vec!(SYMSXP, LANGSXP)))
                 }

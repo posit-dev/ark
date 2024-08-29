@@ -5,7 +5,6 @@
 //
 //
 
-use harp::call::r_expr_deparse;
 use harp::eval::r_parse_eval;
 use harp::eval::RParseEvalOptions;
 use harp::object::*;
@@ -474,7 +473,7 @@ fn sym_label(x: SEXP) -> String {
 }
 
 fn call_label(x: SEXP) -> String {
-    match r_expr_deparse(x) {
+    match harp::call::expr_deparse_collapse(x) {
         Ok(x) => x,
         Err(err) => {
             log::error!("Can't convert call to text: {err:?}.");

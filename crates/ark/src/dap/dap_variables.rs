@@ -5,7 +5,6 @@
 //
 //
 
-use harp::call::r_expr_deparse;
 use harp::object::*;
 use harp::pretty::r_s3_pretty_class;
 use harp::r_symbol;
@@ -247,7 +246,7 @@ fn symbol_variable(name: String, x: SEXP) -> RVariable {
 // TODO: It might be nice to treat the call like a pairlist with children,
 // since the debugger is mostly a development tool where introspection is valuable.
 fn call_variable(name: String, x: SEXP) -> RVariable {
-    let value = unwrap!(r_expr_deparse(x), Err(err) => {
+    let value = unwrap!(harp::call::expr_deparse_collapse(x), Err(err) => {
         log::error!("Failed to format call value: {err:?}");
         String::from("<call>")
     });
