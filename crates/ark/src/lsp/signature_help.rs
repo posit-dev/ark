@@ -370,7 +370,11 @@ fn argument_label_truncate(x: String) -> String {
     // Safer than `x.truncate()` which would panic if we are between `char` boundaries
     match x.char_indices().nth(MAX_CHARS) {
         None => x,
-        Some((idx, _)) => x[..idx].to_string(),
+        Some((idx, _)) => {
+            let mut x = x[..idx].to_string();
+            x.push_str("...");
+            x
+        },
     }
 }
 
@@ -652,8 +656,12 @@ fn <- function(
         r_test(|| {
             let x = harp::missing();
             let name = "x".repeat(300);
+
+            let mut expect = "x".repeat(200);
+            expect.push_str("...");
+
             let label = argument_label(name, x);
-            assert_eq!(label, "x".repeat(200));
+            assert_eq!(label, expect);
         })
     }
 
