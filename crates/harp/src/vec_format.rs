@@ -7,12 +7,12 @@
 
 use libr::*;
 
+use crate::format::cpl_to_string;
+use crate::format::dbl_to_string;
+use crate::format::int_to_string;
+use crate::format::lgl_to_string;
+use crate::format::str_to_string;
 use crate::object::*;
-use crate::pretty::r_cpl_to_pretty_string;
-use crate::pretty::r_dbl_to_pretty_string;
-use crate::pretty::r_int_to_pretty_string;
-use crate::pretty::r_lgl_to_pretty_string;
-use crate::pretty::r_str_to_pretty_string;
 use crate::r_type2char;
 use crate::r_typeof;
 
@@ -39,7 +39,7 @@ fn lgl_format(x: SEXP, limit: Option<R_xlen_t>) -> String {
 
     for i in 0..size {
         let elt = r_lgl_get(x, i);
-        let elt = r_lgl_to_pretty_string(elt);
+        let elt = lgl_to_string(elt);
         out.push_str(&elt);
 
         if i != size - 1 {
@@ -65,7 +65,7 @@ fn int_format(x: SEXP, limit: Option<R_xlen_t>) -> String {
 
     for i in 0..size {
         let elt = r_int_get(x, i);
-        let elt = r_int_to_pretty_string(elt);
+        let elt = int_to_string(elt);
         out.push_str(&elt);
 
         if i != size - 1 {
@@ -91,7 +91,7 @@ fn dbl_format(x: SEXP, limit: Option<R_xlen_t>) -> String {
 
     for i in 0..size {
         let elt = r_dbl_get(x, i);
-        let elt = r_dbl_to_pretty_string(elt);
+        let elt = dbl_to_string(elt);
         out.push_str(&elt);
 
         if i != size - 1 {
@@ -117,7 +117,7 @@ fn cpl_format(x: SEXP, limit: Option<R_xlen_t>) -> String {
 
     for i in 0..size {
         let elt = r_cpl_get(x, i);
-        let elt = r_cpl_to_pretty_string(elt);
+        let elt = cpl_to_string(elt);
         out.push_str(&elt);
 
         if i != size - 1 {
@@ -143,7 +143,7 @@ fn chr_format(x: SEXP, limit: Option<R_xlen_t>) -> String {
 
     for i in 0..size {
         let elt = r_chr_get(x, i);
-        let elt = r_str_to_pretty_string(elt);
+        let elt = str_to_string(elt);
         out.push_str(&elt);
 
         if i != size - 1 {

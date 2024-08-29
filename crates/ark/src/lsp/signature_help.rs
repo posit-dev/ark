@@ -8,7 +8,6 @@
 use harp::eval::r_parse_eval;
 use harp::eval::RParseEvalOptions;
 use harp::object::*;
-use harp::pretty::*;
 use harp::r_null;
 use harp::utils::r_formals;
 use harp::utils::r_is_function;
@@ -400,7 +399,7 @@ fn type_label(x: SEXP) -> String {
 }
 
 fn s3_label(x: SEXP) -> String {
-    match r_s3_pretty_class(x) {
+    match harp::format::s3_class_to_string(x) {
         Ok(class) => class,
         Err(err) => {
             log::error!("{err:?}");
@@ -410,7 +409,7 @@ fn s3_label(x: SEXP) -> String {
 }
 
 fn null_label() -> String {
-    r_null_to_pretty_string()
+    harp::format::null_to_string()
 }
 
 fn list_label() -> String {
@@ -445,19 +444,19 @@ fn vec_label(x: SEXP, elt_to_pretty_string: fn(SEXP, isize) -> String) -> String
 }
 
 fn lgl_to_pretty_string(x: SEXP, i: isize) -> String {
-    r_lgl_to_pretty_string(r_lgl_get(x, i))
+    harp::format::lgl_to_string(r_lgl_get(x, i))
 }
 fn int_to_pretty_string(x: SEXP, i: isize) -> String {
-    r_int_to_pretty_string(r_int_get(x, i))
+    harp::format::int_to_string(r_int_get(x, i))
 }
 fn dbl_to_pretty_string(x: SEXP, i: isize) -> String {
-    r_dbl_to_pretty_string(r_dbl_get(x, i))
+    harp::format::dbl_to_string(r_dbl_get(x, i))
 }
 fn cpl_to_pretty_string(x: SEXP, i: isize) -> String {
-    r_cpl_to_pretty_string(r_cpl_get(x, i))
+    harp::format::cpl_to_string(r_cpl_get(x, i))
 }
 fn chr_to_pretty_string(x: SEXP, i: isize) -> String {
-    r_str_to_pretty_string(r_chr_get(x, i))
+    harp::format::str_to_string(r_chr_get(x, i))
 }
 
 fn sym_label(x: SEXP) -> String {

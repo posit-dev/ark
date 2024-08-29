@@ -6,7 +6,6 @@
 //
 
 use harp::object::*;
-use harp::pretty::r_s3_pretty_class;
 use harp::r_symbol;
 use harp::symbol::RSymbol;
 use harp::utils::*;
@@ -160,7 +159,7 @@ fn object_variable(name: String, x: SEXP) -> RVariable {
 fn object_variable_classed(name: String, x: SEXP) -> RVariable {
     // TODO: Eventually add some support for classed values.
     // Right now we just display the class name.
-    let class = r_s3_pretty_class(x);
+    let class = harp::format::s3_class_to_string(x);
 
     let (value, type_field) = match class {
         Ok(class) => (class.clone(), class.clone()),
