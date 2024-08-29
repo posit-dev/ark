@@ -105,8 +105,54 @@ use crate::r_task;
 use crate::thread::RThreadSafe;
 use crate::variables::variable::WorkspaceVariableDisplayType;
 
+// Stores the table R objects objects that contain the data for each
+// data explorer instance.
+// This allows for background threads to easilly access the
+// instance related data without having to rely on the lifetime
+// of data explorer execution thread.
+// Since this is a DashMap, it's safe to access it's underlying data from
+// background threads, without the need for synchronization.
 static DATA_EXPLORER_TABLES: Lazy<DashMap<String, RThreadSafe<RObject>>> =
     Lazy::new(|| DashMap::new());
+
+// Abstracts away details on accessing the data explorer instance table.
+// It's trivially copyable and cloneable since it's just a string, so
+// it can be easily moved to background threads.
+// Call `get()` to obtain the RObject for the table and `set` to modify
+// the current value.
+// Note: When a Table instance is deleted, nothing happens to the global store
+// of tables, thus one must explictly call `Table.delete` before loosing the refence for it.
+// In our case, we guarantee that the table is deleted by implementing `Drop` for the
+// Data Explorer instance.
+#[derive(Clone)]
+struct Table {
+    comm_id: String,
+}
+
+impl Table {
+    fn new(comm_id: String, data: RObject) -> Self {
+        let table = Self { comm_id };
+        table.set(data);
+        table
+    }
+    // `get` can only be called from the R main thread and will panick
+    // otherwise.
+    fn get(&self) -> anyhow::Result<RObject> {
+        DATA_EXPLORER_TABLES
+            .get(&self.comm_id)
+            .and_then(|x| Some(x.get().clone()))
+            .ok_or(anyhow!("Data explorer table has been deleted"))
+    }
+    fn set(&self, data: RObject) {
+        DATA_EXPLORER_TABLES.insert(self.comm_id.clone(), RThreadSafe::new(data));
+    }
+    fn delete(&self) {
+        if let None = DATA_EXPLORER_TABLES.remove(&self.comm_id) {
+            log::warn!("The table no longer exists");
+        }
+    }
+}
+
 /// A name/value binding pair in an environment.
 ///
 /// We use this to keep track of the data object that the data viewer is
@@ -129,8 +175,8 @@ pub struct RDataExplorer {
     title: String,
 
     /// The data object that the data viewer is currently viewing.
-    comm_id: String,
-    //table: RThreadSafe<RObject>,
+    table: Table,
+
     /// An optional binding to the environment containing the data object.
     /// This can be omitted for cases wherein the data object isn't in an
     /// environment (e.g. a temporary or unnamed object)
@@ -178,6 +224,13 @@ struct Metadata {
     title: String,
 }
 
+impl Drop for RDataExplorer {
+    fn drop(&mut self) {
+        // We guarantee that the table is deleted from the global store.
+        self.table.delete();
+    }
+}
+
 impl RDataExplorer {
     pub fn start(
         title: String,
@@ -195,12 +248,8 @@ impl RDataExplorer {
 
         // To be able to `Send` the `data` to the thread to be owned by the data
         // viewer, it needs to be made thread safe
-        let data = RThreadSafe::new(data);
-        let shape = r_task(|| Self::r_get_shape(data.get().clone()));
-
-        DATA_EXPLORER_TABLES.insert(id.clone(), data);
-
-        let comm_id = id.clone();
+        let table = Table::new(id.clone(), data);
+        let shape = r_task(|| Self::r_get_shape(table.get()?));
 
         spawn!(format!("ark-data-viewer-{}-{}", title, id), move || {
             // Get the initial set of column schemas for the data object
@@ -211,8 +260,7 @@ impl RDataExplorer {
                     // Create the initial state for the data viewer
                     let viewer = Self {
                         title,
-                        comm_id,
-                        //table: data,
+                        table,
                         binding,
                         shape,
                         sorted_indices: None,
@@ -246,15 +294,7 @@ impl RDataExplorer {
             }
         });
 
-        Ok(id.clone())
-    }
-
-    pub fn table(&self) -> RObject {
-        DATA_EXPLORER_TABLES
-            .get(&self.comm_id)
-            .unwrap()
-            .get() // This will panic if not called from the main R thread.
-            .clone()
+        Ok(id)
     }
 
     pub fn execution_thread(mut self) {
@@ -370,9 +410,9 @@ impl RDataExplorer {
             return Ok(true);
         }
 
-        // See if the value has changed; this block returns a new value if it
-        // has changed, or None if it hasn't
-        let new = r_task(|| {
+        // See if the value has changed; this block returns true if the value has changed
+        // or false otherwise. It also sets the new value correctly.
+        let changed = r_task(|| {
             let binding = self.binding.as_ref().unwrap();
             let env = binding.env.get().sexp;
 
@@ -381,29 +421,37 @@ impl RDataExplorer {
                 Rf_findVarInFrame(env, sym)
             };
 
-            let old = self.table().sexp;
-            if new == old {
-                None
+            let old = self.table.get();
+            let old = unwrap!(old, Err(_) => {
+                // This is AFAICT impossible because the table is only deleted when the data explorer instance is
+                // deleted and this method belongs to that data explorer instance.
+                log::error!("Old table has been deleted? This is unexpected, but we'll update the data explorer table.");
+                // It's `unsafe` because we RObject::new calls protect, and it shouldn't
+                // be called outside of the R main thread.
+                self.table.set(unsafe { RObject::new(new) });
+                return true;
+            });
+
+            if new == old.sexp {
+                false
             } else {
-                Some(RThreadSafe::new(unsafe { RObject::new(new) }))
+                // Safety is same as above. We guarantee this is the R main thread.
+                self.table.set(unsafe { RObject::new(new) });
+                true
             }
         });
 
         // No change to the value, so we're done
-        if new.is_none() {
+        if !changed {
             return Ok(true);
         }
-
-        // Update the value
-        DATA_EXPLORER_TABLES.insert(self.comm_id.clone(), new.unwrap());
-        //self.table = new.unwrap();
 
         // Now we need to check to see if the schema has changed or just a data
         // value. Regenerate the schema.
         //
         // Consider: there may be a cheaper way to test the schema for changes
         // than regenerating it, but it'd be a lot more complicated.
-        let new_shape = match r_task(|| Self::r_get_shape(self.table())) {
+        let new_shape = match r_task(|| Self::r_get_shape(self.table.get()?.clone())) {
             Ok(shape) => shape,
             Err(_) => {
                 // The most likely cause of this error is that the object is no
@@ -560,11 +608,11 @@ impl RDataExplorer {
                 // column profile as a different request that is handled sequentially by the main data explorer
                 // execution thread.
 
-                let id = self.comm_id.clone();
+                let table = self.table.clone();
                 r_task(|| {
                     r_task::spawn_idle(|| async move {
-                        let table = DATA_EXPLORER_TABLES.get(&id).unwrap();
-                        let r_table = table.get();
+                        let table = table;
+                        let _r_table = table.get();
                     });
                 });
 
@@ -725,8 +773,13 @@ impl RDataExplorer {
             large_frequency_table: None,
         };
 
+        let table = unwrap!(self.table.get(), Err(_) => {
+            log::error!("Table no longer exists? This is unexpected, returning empty results for the get_profile request.");
+            return output;
+        });
+
         let filtered_column = unwrap!(tbl_get_filtered_column(
-            &self.table(),
+            &table,
             request.column_index,
             &self.filtered_indices,
             self.shape.kind,
@@ -899,7 +952,7 @@ impl RDataExplorer {
         for key in &self.sort_keys {
             // Get the column to sort by
             order.add(tbl_get_column(
-                self.table().sexp,
+                self.table.get()?.sexp,
                 key.column_index as i32,
                 self.shape.kind,
             )?);
@@ -945,7 +998,7 @@ impl RDataExplorer {
         // Pass the row filters to R and get the resulting row indices
         let filters = RObject::try_from(filters)?;
         let result: HashMap<String, RObject> = RFunction::new("", ".ps.filter_rows")
-            .param("table", self.table().sexp)
+            .param("table", self.table.get()?.sexp)
             .param("row_filters", filters)
             .call_in(ARK_ENVS.positron_ns)?
             .try_into()?;
@@ -1142,7 +1195,7 @@ impl RDataExplorer {
             row_filters: self.row_filters.clone(),
             column_filters: self.col_filters.clone(),
             sort_keys: self.sort_keys.clone(),
-            has_row_labels: match self.table().attr("row.names") {
+            has_row_labels: match self.table.get()?.attr("row.names") {
                 Some(_) => true,
                 None => false,
             },
@@ -1233,7 +1286,7 @@ impl RDataExplorer {
         let mut column_data: Vec<Vec<ColumnValue>> = Vec::with_capacity(columns.len());
         for selection in columns {
             let tbl = tbl_subset_with_view_indices(
-                self.table().sexp,
+                self.table.get()?.sexp,
                 &self.view_indices,
                 Some(self.get_row_selection_indices(selection.spec)),
                 Some(vec![selection.column_index]),
@@ -1258,7 +1311,7 @@ impl RDataExplorer {
         format_options: &FormatOptions,
     ) -> anyhow::Result<Vec<String>> {
         let tbl = tbl_subset_with_view_indices(
-            self.table().sexp,
+            self.table.get()?.sexp,
             &self.view_indices,
             Some(self.get_row_selection_indices(selection)),
             Some(vec![]), // Use empty vec, because we only need the row names.
@@ -1312,7 +1365,7 @@ impl RDataExplorer {
     ) -> anyhow::Result<String> {
         r_task(|| {
             export_selection::export_selection(
-                self.table().sexp,
+                self.table.get()?.sexp,
                 &self.view_indices,
                 selection,
                 format,
