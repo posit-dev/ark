@@ -199,10 +199,6 @@ pub fn r_is_matrix(value: SEXP) -> bool {
     unsafe { Rf_isMatrix(value) == Rboolean_TRUE }
 }
 
-pub fn r_is_vector(value: SEXP) -> bool {
-    unsafe { Rf_isVector(value) == Rboolean_TRUE }
-}
-
 pub fn r_classes(value: SEXP) -> Option<CharacterVector> {
     unsafe {
         let classes = RObject::from(Rf_getAttrib(value, R_ClassSymbol));

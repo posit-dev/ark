@@ -11,42 +11,14 @@ use std::os::raw::c_int;
 use std::u32;
 
 use libc::c_double;
-use libr::R_BaseEnv;
-use libr::R_EmptyEnv;
-use libr::R_GlobalEnv;
-use libr::R_MissingArg;
-use libr::Rcomplex;
-use libr::BCODESXP;
-use libr::BUILTINSXP;
-use libr::CHARSXP;
-use libr::CLOSXP;
-use libr::CPLXSXP;
-use libr::DOTSXP;
-use libr::ENVSXP;
-use libr::EXPRSXP;
-use libr::EXTPTRSXP;
-use libr::INTSXP;
-use libr::LANGSXP;
-use libr::LGLSXP;
-use libr::LISTSXP;
-use libr::NILSXP;
-use libr::PROMSXP;
-use libr::RAWSXP;
-use libr::REALSXP;
-use libr::S4SXP;
-use libr::SEXP;
-use libr::SPECIALSXP;
-use libr::STRSXP;
-use libr::SYMSXP;
-use libr::VECSXP;
-use libr::WEAKREFSXP;
+use libr::*;
 
+use crate::environment::R_ENVS;
 use crate::eval::r_parse_eval0;
 use crate::list_get;
 use crate::object::r_chr_get;
 use crate::object::r_length;
 use crate::r_is_altrep;
-use crate::r_is_vector;
 use crate::r_symbol;
 use crate::r_typeof;
 
@@ -59,18 +31,21 @@ use crate::r_typeof;
 pub fn r_size(x: SEXP) -> usize {
     let mut seen: HashSet<SEXP> = HashSet::new();
 
-    let sizeof_node: f64 = r_parse_eval0("as.vector(utils::object.size(quote(expr = )))", unsafe {
-        R_BaseEnv
-    })
+    let sizeof_node: f64 = r_parse_eval0(
+        "as.vector(utils::object.size(quote(expr = )))",
+        R_ENVS.global,
+    )
     .and_then(|x| x.try_into())
     .unwrap_or(0.);
 
-    let sizeof_vector: f64 = r_parse_eval0("as.vector(utils::object.size(logical()))", R_ENVS.global)
-    .map_or(0., |x| x.try_into().unwrap_or(0.));
+    let sizeof_vector: f64 =
+        r_parse_eval0("as.vector(utils::object.size(logical()))", R_ENVS.global)
+            .and_then(|x| x.try_into())
+            .unwrap_or(0.);
 
     obj_size_tree(
         x,
-        unsafe { R_GlobalEnv },
+        R_ENVS.global,
         sizeof_node as usize,
         sizeof_vector as usize,
         &mut seen,
@@ -105,7 +80,7 @@ fn obj_size_tree(
 
     // Use sizeof(SEXPREC) and sizeof(VECTOR_SEXPREC) computed in R.
     // CHARSXP are treated as vectors for this purpose
-    let mut size = if r_is_vector(x) || r_typeof(x) == CHARSXP {
+    let mut size = if unsafe { Rf_isVector(x) == Rboolean_TRUE } || r_typeof(x) == CHARSXP {
         sizeof_vector
     } else {
         sizeof_node
@@ -197,7 +172,7 @@ fn obj_size_tree(
         // All have enough space for three SEXP pointers
         DOTSXP | LISTSXP | LANGSXP => {
             // Needed for DOTSXP
-            if unsafe { x != R_MissingArg } {
+            if unsafe { x != libr::R_MissingArg } {
                 let mut cons = x;
                 while is_linked_list(cons) {
                     if cons != x {
@@ -253,13 +228,12 @@ fn obj_size_tree(
         },
         // Environments
         ENVSXP => {
-            if unsafe {
-                x == R_BaseEnv ||
-                    x == R_GlobalEnv ||
-                    x == R_EmptyEnv ||
-                    x == base_env ||
-                    is_namespace(x)
-            } {
+            if x == R_ENVS.base ||
+                x == R_ENVS.global ||
+                x == R_ENVS.empty ||
+                x == base_env ||
+                is_namespace(x)
+            {
                 return 0;
             }
 
@@ -385,10 +359,10 @@ fn is_linked_list(x: SEXP) -> bool {
 }
 
 fn is_namespace(x: SEXP) -> bool {
-    unsafe {
-        x == libr::R_BaseNamespace ||
-            (libr::Rf_findVarInFrame(x, r_symbol!(".__NAMESPACE__.")) != libr::R_UnboundValue)
-    }
+    x == R_ENVS.base_ns ||
+        unsafe {
+            libr::Rf_findVarInFrame(x, r_symbol!(".__NAMESPACE__.")) != libr::R_UnboundValue
+        }
 }
 
 fn v_size(n: usize, element_size: usize) -> usize {
