@@ -5,7 +5,6 @@
 //
 //
 
-use anyhow::anyhow;
 use libr::Rcomplex;
 use libr::SEXP;
 
@@ -90,23 +89,17 @@ pub fn str_to_string(x: SEXP) -> String {
 pub fn s3_class_to_string(x: SEXP) -> harp::Result<String> {
     let Some(classes) = r_classes(x) else {
         // We've seen OBJECTs with no class attribute before
-        return Err(harp::Error::Anyhow(anyhow!(
-            "`x` is an OBJECT missing a class attribute."
-        )));
+        return Err(harp::anyhow!("`x` is an OBJECT missing a class attribute."));
     };
 
     let Ok(class) = classes.get(0) else {
         // Error means OOB error here (our weird Vector API, should probably be an Option?).
-        return Err(harp::Error::Anyhow(anyhow!(
-            "Detected length 0 class vector."
-        )));
+        return Err(harp::anyhow!("Detected length 0 class vector."));
     };
 
     let Some(class) = class else {
         // `None` here means `NA` class value.
-        return Err(harp::Error::Anyhow(anyhow!(
-            "Detected `NA_character_` in a class vector."
-        )));
+        return Err(harp::anyhow!("Detected `NA_character_` in a class vector."));
     };
 
     let mut out = "<".to_string();
