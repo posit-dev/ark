@@ -62,11 +62,10 @@ pub fn r_size(x: SEXP) -> usize {
     let sizeof_node: f64 = r_parse_eval0("as.vector(utils::object.size(quote(expr = )))", unsafe {
         R_BaseEnv
     })
-    .map_or(0., |x| x.try_into().unwrap_or(0.));
+    .and_then(|x| x.try_into())
+    .unwrap_or(0.);
 
-    let sizeof_vector: f64 = r_parse_eval0("as.vector(utils::object.size(logical()))", unsafe {
-        R_BaseEnv
-    })
+    let sizeof_vector: f64 = r_parse_eval0("as.vector(utils::object.size(logical()))", R_ENVS.global)
     .map_or(0., |x| x.try_into().unwrap_or(0.));
 
     obj_size_tree(
