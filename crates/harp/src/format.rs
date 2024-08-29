@@ -135,6 +135,8 @@ mod tests {
             assert_eq!(int_to_string(r_int_na()), String::from("NA"));
 
             assert_eq!(dbl_to_string(1.5), String::from("1.5"));
+            assert_eq!(dbl_to_string(1.6), String::from("1.6"));
+            assert_eq!(dbl_to_string(1.6888), String::from("1.6888"));
             assert_eq!(dbl_to_string(0.0), String::from("0"));
             assert_eq!(dbl_to_string(-1.5), String::from("-1.5"));
             assert_eq!(dbl_to_string(r_dbl_na()), String::from("NA"));
