@@ -82,7 +82,7 @@ jobs:
 
     create_release:
         name: Create Release
-        runs-on: [self-hosted, macos, arm64]
+        runs-on: ubuntu-latest
         needs: [do_release, get_version, build_macos, build_windows, build_linux]
         env:
             GITHUB_TOKEN: ${{ github.token }}
@@ -101,7 +101,7 @@ jobs:
     # Uploads binaries, if we created a release
     upload_release_binaries:
         name: Upload Release Binaries
-        runs-on: [self-hosted, macos, arm64]
+        runs-on: macos-latest
         needs: [create_release, get_version]
         env:
             GITHUB_TOKEN: ${{ github.token }}
@@ -189,7 +189,7 @@ jobs:
 
     status:
         if: ${{ failure() }}
-        runs-on: self-hosted
+        runs-on: ubuntu-latest
         needs: [build_macos, build_windows, get_version]
         steps:
             - name: Notify slack if build fails
