@@ -413,7 +413,8 @@ fn null_label() -> String {
 }
 
 fn list_label() -> String {
-    // TODO: Should we try and do better? I doubt an inlined list is that common.
+    // We probably don't want to do anything more here. An inlined list should be rare
+    // and might come from something massive like a data frame or model object.
     String::from("<list>")
 }
 
