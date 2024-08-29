@@ -25,7 +25,7 @@ jobs:
         strategy:
             matrix:
                 arch: [x64]
-                flavor: [release]
+                flavor: [debug, release]
 
         steps:
             - name: Checkout sources
@@ -41,24 +41,9 @@ jobs:
                   sudo apt install python3-pip
                   pip3 install ziglang
 
-                  # Install static OpenSSL
-                  sudo apt-get install -y libssl-dev
-
-                  # The openssl-sys crate expects to see all headers in one place but
-                  # Ubuntu puts configured headers in an arch-specific folder. We
-                  # merge these folders as a workaround.
-                  sudo cp /usr/include/x86_64-linux-gnu/openssl/* /usr/include/openssl
-
             - name: Compile ARK (${{ matrix.flavor }})
               run: |
                   cargo clean
-
-                  # Instruct the openssl-sys crate to link to libssl statically.
-                  # This is important for portability because distributions have
-                  # various requirements for their dynamic libssl libraries.
-                  export OPENSSL_STATIC=yes
-                  export OPENSSL_LIB_DIR=/usr/lib/x86_64-linux-gnu
-                  export OPENSSL_INCLUDE_DIR=/usr/include
 
                   # Use the zig linker. This allows linking to a specific version of glibc.
                   # We use a sufficiently old version that is available on all platforms we target.
