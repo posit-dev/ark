@@ -21,6 +21,7 @@ use crate::exec::RFunction;
 use crate::exec::RFunctionExt;
 use crate::protect::RProtect;
 use crate::r_symbol;
+use crate::size::r_size;
 use crate::utils::r_assert_capacity;
 use crate::utils::r_assert_length;
 use crate::utils::r_assert_type;
@@ -129,26 +130,6 @@ impl<T: Into<RObject>> RObjectExt<T> for RObject {
             .add(self.sexp)
             .add(index)
             .call()
-    }
-}
-
-// TODO: borrow implementation from lobstr instead
-//       of calling object.size()
-fn r_size(x: SEXP) -> usize {
-    if r_is_null(x) {
-        return 0;
-    }
-    if r_is_altrep(x) {
-        return unsafe { r_size(R_altrep_data1(x)) + r_size(R_altrep_data2(x)) };
-    }
-    let size = RFunction::new("utils", "object.size").add(x).call();
-
-    match size {
-        Err(_) => 0,
-        Ok(size) => {
-            let value = unsafe { REAL_ELT(*size, 0) };
-            value as usize
-        },
     }
 }
 
