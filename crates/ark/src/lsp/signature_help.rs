@@ -354,10 +354,24 @@ fn argument_label(name: String, value: SEXP) -> String {
     // but we don't want to add `=` to it. This is what we see when
     // there is no default argument (and also for `...`).
     if value == harp::missing() {
-        return name;
+        return argument_label_truncate(name);
     }
 
-    name + " = " + obj_label(value).as_str()
+    let out = name + " = " + obj_label(value).as_str();
+
+    argument_label_truncate(out)
+}
+
+fn argument_label_truncate(x: String) -> String {
+    // Max of 200 Unicode Scalar Values seems reasonable to prevent any argument from
+    // overwhelming the pop up
+    const MAX_CHARS: usize = 200;
+
+    // Safer than `x.truncate()` which would panic if we are between `char` boundaries
+    match x.char_indices().nth(MAX_CHARS) {
+        None => x,
+        Some((idx, _)) => x[..idx].to_string(),
+    }
 }
 
 fn obj_label(x: SEXP) -> String {
@@ -630,6 +644,16 @@ fn <- function(
             };
             let label = argument_label(String::from("x"), x.sexp);
             assert_eq!(label, String::from("x = source(exprs, local = is_local)"));
+        })
+    }
+
+    #[test]
+    fn test_argument_label_truncate() {
+        r_test(|| {
+            let x = harp::missing();
+            let name = "x".repeat(300);
+            let label = argument_label(name, x);
+            assert_eq!(label, "x".repeat(200));
         })
     }
 
