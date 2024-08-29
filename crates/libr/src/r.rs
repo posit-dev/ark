@@ -152,6 +152,8 @@ functions::generate! {
 
     pub fn Rf_isString(s: SEXP) -> Rboolean;
 
+    pub fn Rf_isVector(arg1: SEXP) -> Rboolean;
+
     pub fn Rf_lang1(arg1: SEXP) -> SEXP;
 
     pub fn Rf_lang2(arg1: SEXP, arg2: SEXP) -> SEXP;
@@ -212,6 +214,10 @@ functions::generate! {
 
     pub fn ENCLOS(x: SEXP) -> SEXP;
 
+    pub fn EXTPTR_PROT(x: SEXP) -> SEXP;
+
+    pub fn EXTPTR_TAG(x: SEXP) -> SEXP;
+
     pub fn SET_ENCLOS(x: SEXP, v: SEXP) -> SEXP;
 
     pub fn FORMALS(x: SEXP) -> SEXP;
@@ -263,6 +269,8 @@ functions::generate! {
     pub fn SET_INTEGER_ELT(x: SEXP, i: R_xlen_t, v: std::ffi::c_int);
 
     pub fn SET_REAL_ELT(x: SEXP, i: R_xlen_t, v: f64);
+
+    pub fn SET_COMPLEX_ELT(x: SEXP, i: R_xlen_t, v: Rcomplex);
 
     pub fn SET_TAG(x: SEXP, y: SEXP);
 
