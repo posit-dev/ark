@@ -7,9 +7,7 @@ edition = "2021"
 proc-macro = true
 
 [dependencies]
-proc-macro2 = "*"
 quote = "*"
 syn = { version = "*", features = ["full"] }
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-

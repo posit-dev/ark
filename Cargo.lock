@@ -297,20 +297,16 @@ dependencies = [
  "futures",
  "harp",
  "home",
- "html5ever",
  "http 0.2.9",
- "hyper 0.14.26",
  "itertools",
  "lazy_static",
  "libc",
  "libr",
- "lock_api",
  "log",
  "mime_guess",
  "nix",
  "notify",
  "once_cell",
- "parking_lot 0.12.1",
  "regex",
  "reqwest",
  "reqwest-middleware",
@@ -329,7 +325,6 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-error",
- "tracing-log",
  "tracing-subscriber",
  "tree-sitter",
  "tree-sitter-r",
@@ -1116,14 +1111,11 @@ dependencies = [
  "ctor",
  "harp-macros",
  "itertools",
- "lazy_static",
  "libc",
  "libloading",
  "libr",
- "lock_api",
  "log",
  "once_cell",
- "parking_lot 0.12.1",
  "regex",
  "rust-embed",
  "semver",
@@ -1137,7 +1129,6 @@ dependencies = [
 name = "harp-macros"
 version = "0.1.0"
 dependencies = [
- "proc-macro2",
  "quote",
  "syn 2.0.32",
 ]
@@ -1237,17 +1228,6 @@ dependencies = [
 
 [[package]]
 name = "http-body"
-version = "0.4.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d5f38f16d184e36f2408a55281cd658ecbd3ca05cce6d6510a176eca393e26d1"
-dependencies = [
- "bytes",
- "http 0.2.9",
- "pin-project-lite",
-]
-
-[[package]]
-name = "http-body"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1efedce1fb8e6913f23e0c92de8e62cd5b772a67e7b3946df930a62566c93184"
@@ -1265,7 +1245,7 @@ dependencies = [
  "bytes",
  "futures-util",
  "http 1.1.0",
- "http-body 1.0.1",
+ "http-body",
  "pin-project-lite",
 ]
 
@@ -1289,30 +1269,6 @@ checksum = "9a3a5bfb195931eeb336b2a7b4d761daec841b97f947d34394601737a7bba5e4"
 
 [[package]]
 name = "hyper"
-version = "0.14.26"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab302d72a6f11a3b910431ff93aae7e773078c769f0a3ef15fb9ec692ed147d4"
-dependencies = [
- "bytes",
- "futures-channel",
- "futures-core",
- "futures-util",
- "h2",
- "http 0.2.9",
- "http-body 0.4.5",
- "httparse",
- "httpdate",
- "itoa",
- "pin-project-lite",
- "socket2 0.4.9",
- "tokio",
- "tower-service",
- "tracing",
- "want",
-]
-
-[[package]]
-name = "hyper"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fb5aa53871fc917b1a9ed87b683a5d86db645e23acb32c2e0785a353e522fb75"
@@ -1321,7 +1277,7 @@ dependencies = [
  "futures-channel",
  "futures-util",
  "http 1.1.0",
- "http-body 1.0.1",
+ "http-body",
  "httparse",
  "itoa",
  "pin-project-lite",
@@ -1339,8 +1295,8 @@ dependencies = [
  "futures-channel",
  "futures-util",
  "http 1.1.0",
- "http-body 1.0.1",
- "hyper 1.1.0",
+ "http-body",
+ "hyper",
  "pin-project-lite",
  "socket2 0.5.4",
  "tokio",
@@ -2272,9 +2228,9 @@ dependencies = [
  "futures-core",
  "futures-util",
  "http 1.1.0",
- "http-body 1.0.1",
+ "http-body",
  "http-body-util",
- "hyper 1.1.0",
+ "hyper",
  "hyper-util",
  "ipnet",
  "js-sys",
@@ -2322,7 +2278,7 @@ dependencies = [
  "futures",
  "getrandom 0.2.9",
  "http 1.1.0",
- "hyper 1.1.0",
+ "hyper",
  "parking_lot 0.11.2",
  "reqwest",
  "reqwest-middleware",
@@ -2680,7 +2636,6 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 name = "stdext"
 version = "0.1.0"
 dependencies = [
- "libc",
  "log",
 ]
 
