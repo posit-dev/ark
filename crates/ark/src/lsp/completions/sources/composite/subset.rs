@@ -148,9 +148,11 @@ mod tests {
 
             let completion = completions.get(0).unwrap();
             assert_eq!(completion.label, "b".to_string());
+            assert_eq!(completion.insert_text, Some("\"b\"".to_string()));
 
             let completion = completions.get(1).unwrap();
             assert_eq!(completion.label, "a".to_string());
+            assert_eq!(completion.insert_text, Some("\"a\"".to_string()));
 
             // Right before the `[`
             let point = Point { row: 0, column: 3 };
