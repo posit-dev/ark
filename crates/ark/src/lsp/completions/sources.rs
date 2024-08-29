@@ -5,6 +5,7 @@
 //
 //
 
+mod common;
 mod composite;
 mod unique;
 mod utils;
