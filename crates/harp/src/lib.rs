@@ -12,6 +12,7 @@ pub mod error;
 pub mod eval;
 pub mod exec;
 pub mod external_ptr;
+pub mod format;
 pub mod json;
 pub mod library;
 pub mod line_ending;
@@ -77,6 +78,10 @@ pub static mut R_MAIN_THREAD_ID: Option<std::thread::ThreadId> = None;
 
 pub fn r_null() -> libr::SEXP {
     unsafe { libr::R_NilValue }
+}
+
+pub fn missing() -> libr::SEXP {
+    unsafe { libr::R_MissingArg }
 }
 
 #[macro_export]
