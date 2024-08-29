@@ -67,6 +67,7 @@ use anyhow::bail;
 use crossbeam::channel::unbounded;
 use crossbeam::channel::Sender;
 use crossbeam::select;
+use dashmap::DashMap;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
@@ -80,6 +81,7 @@ use harp::TableInfo;
 use harp::TableKind;
 use itertools::Itertools;
 use libr::*;
+use once_cell::sync::Lazy;
 use serde::Deserialize;
 use serde::Serialize;
 use stdext::local;
@@ -103,6 +105,8 @@ use crate::r_task;
 use crate::thread::RThreadSafe;
 use crate::variables::variable::WorkspaceVariableDisplayType;
 
+static DATA_EXPLORER_TABLES: Lazy<DashMap<String, RThreadSafe<RObject>>> =
+    Lazy::new(|| DashMap::new());
 /// A name/value binding pair in an environment.
 ///
 /// We use this to keep track of the data object that the data viewer is
@@ -125,8 +129,8 @@ pub struct RDataExplorer {
     title: String,
 
     /// The data object that the data viewer is currently viewing.
-    table: RThreadSafe<RObject>,
-
+    comm_id: String,
+    //table: RThreadSafe<RObject>,
     /// An optional binding to the environment containing the data object.
     /// This can be omitted for cases wherein the data object isn't in an
     /// environment (e.g. a temporary or unnamed object)
@@ -192,17 +196,23 @@ impl RDataExplorer {
         // To be able to `Send` the `data` to the thread to be owned by the data
         // viewer, it needs to be made thread safe
         let data = RThreadSafe::new(data);
+        let shape = r_task(|| Self::r_get_shape(data.get().clone()));
+
+        DATA_EXPLORER_TABLES.insert(id.clone(), data);
+
+        let comm_id = id.clone();
 
         spawn!(format!("ark-data-viewer-{}-{}", title, id), move || {
             // Get the initial set of column schemas for the data object
-            let shape = r_task(|| Self::r_get_shape(&data));
+            //let shape = r_task(|| Self::r_get_shape(&data));
             match shape {
                 // shape the columns; start the data viewer
                 Ok(shape) => {
                     // Create the initial state for the data viewer
                     let viewer = Self {
                         title,
-                        table: data,
+                        comm_id,
+                        //table: data,
                         binding,
                         shape,
                         sorted_indices: None,
@@ -236,7 +246,15 @@ impl RDataExplorer {
             }
         });
 
-        Ok(id)
+        Ok(id.clone())
+    }
+
+    pub fn table(&self) -> RObject {
+        DATA_EXPLORER_TABLES
+            .get(&self.comm_id)
+            .unwrap()
+            .get() // This will panic if not called from the main R thread.
+            .clone()
     }
 
     pub fn execution_thread(mut self) {
@@ -363,7 +381,7 @@ impl RDataExplorer {
                 Rf_findVarInFrame(env, sym)
             };
 
-            let old = self.table.get().sexp;
+            let old = self.table().sexp;
             if new == old {
                 None
             } else {
@@ -377,14 +395,15 @@ impl RDataExplorer {
         }
 
         // Update the value
-        self.table = new.unwrap();
+        DATA_EXPLORER_TABLES.insert(self.comm_id.clone(), new.unwrap());
+        //self.table = new.unwrap();
 
         // Now we need to check to see if the schema has changed or just a data
         // value. Regenerate the schema.
         //
         // Consider: there may be a cheaper way to test the schema for changes
         // than regenerating it, but it'd be a lot more complicated.
-        let new_shape = match r_task(|| Self::r_get_shape(&self.table)) {
+        let new_shape = match r_task(|| Self::r_get_shape(self.table())) {
             Ok(shape) => shape,
             Err(_) => {
                 // The most likely cause of this error is that the object is no
@@ -485,10 +504,12 @@ impl RDataExplorer {
             DataExplorerBackendRequest::GetSchema(GetSchemaParams { column_indices }) => {
                 self.get_schema(column_indices)
             },
+
             DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
                 columns,
                 format_options,
             }) => r_task(|| self.r_get_data_values(columns, format_options)),
+
             DataExplorerBackendRequest::SetSortColumns(SetSortColumnsParams {
                 sort_keys: keys,
             }) => {
@@ -507,6 +528,7 @@ impl RDataExplorer {
 
                 Ok(DataExplorerBackendReply::SetSortColumnsReply())
             },
+
             DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams { filters }) => {
                 // Save the new row filters
                 self.row_filters = filters;
@@ -528,6 +550,7 @@ impl RDataExplorer {
                     }
                 }))
             },
+
             DataExplorerBackendRequest::GetColumnProfiles(GetColumnProfilesParams {
                 callback_id,
                 profiles: requests,
@@ -536,6 +559,14 @@ impl RDataExplorer {
                 // We respond imediately to this request, but first we launch a new thread the will schedule each
                 // column profile as a different request that is handled sequentially by the main data explorer
                 // execution thread.
+
+                let id = self.comm_id.clone();
+                r_task(|| {
+                    r_task::spawn_idle(|| async move {
+                        let table = DATA_EXPLORER_TABLES.get(&id).unwrap();
+                        let r_table = table.get();
+                    });
+                });
 
                 let comm = self.comm.clone();
                 let worker_channels = self.profiles_socket.new_worker_channel(callback_id.clone());
@@ -588,13 +619,17 @@ impl RDataExplorer {
 
                 Ok(DataExplorerBackendReply::GetColumnProfilesReply())
             },
+
             DataExplorerBackendRequest::GetState => r_task(|| self.r_get_state()),
+
             DataExplorerBackendRequest::SearchSchema(_) => {
                 return Err(anyhow!("Data Explorer: Not yet supported"));
             },
+
             DataExplorerBackendRequest::SetColumnFilters(_) => {
                 return Err(anyhow!("Data Explorer: Not yet supported"));
             },
+
             DataExplorerBackendRequest::GetRowLabels(req) => {
                 let row_labels =
                     r_task(|| self.r_get_row_labels(req.selection, &req.format_options))?;
@@ -604,6 +639,7 @@ impl RDataExplorer {
                     },
                 ))
             },
+
             DataExplorerBackendRequest::ExportDataSelection(ExportDataSelectionParams {
                 selection,
                 format,
@@ -619,9 +655,9 @@ impl RDataExplorer {
 
 // Methods that must be run on the main R thread
 impl RDataExplorer {
-    fn r_get_shape(table: &RThreadSafe<RObject>) -> anyhow::Result<DataObjectShape> {
+    fn r_get_shape(table: RObject) -> anyhow::Result<DataObjectShape> {
         unsafe {
-            let table = table.get().clone();
+            let table = table.clone();
             let object = *table;
 
             let info = table_info_or_bail(object)?;
@@ -690,7 +726,7 @@ impl RDataExplorer {
         };
 
         let filtered_column = unwrap!(tbl_get_filtered_column(
-            self.table.get(),
+            &self.table(),
             request.column_index,
             &self.filtered_indices,
             self.shape.kind,
@@ -863,7 +899,7 @@ impl RDataExplorer {
         for key in &self.sort_keys {
             // Get the column to sort by
             order.add(tbl_get_column(
-                self.table.get().sexp,
+                self.table().sexp,
                 key.column_index as i32,
                 self.shape.kind,
             )?);
@@ -909,7 +945,7 @@ impl RDataExplorer {
         // Pass the row filters to R and get the resulting row indices
         let filters = RObject::try_from(filters)?;
         let result: HashMap<String, RObject> = RFunction::new("", ".ps.filter_rows")
-            .param("table", self.table.get().sexp)
+            .param("table", self.table().sexp)
             .param("row_filters", filters)
             .call_in(ARK_ENVS.positron_ns)?
             .try_into()?;
@@ -1106,7 +1142,7 @@ impl RDataExplorer {
             row_filters: self.row_filters.clone(),
             column_filters: self.col_filters.clone(),
             sort_keys: self.sort_keys.clone(),
-            has_row_labels: match self.table.get().attr("row.names") {
+            has_row_labels: match self.table().attr("row.names") {
                 Some(_) => true,
                 None => false,
             },
@@ -1197,7 +1233,7 @@ impl RDataExplorer {
         let mut column_data: Vec<Vec<ColumnValue>> = Vec::with_capacity(columns.len());
         for selection in columns {
             let tbl = tbl_subset_with_view_indices(
-                self.table.get().sexp,
+                self.table().sexp,
                 &self.view_indices,
                 Some(self.get_row_selection_indices(selection.spec)),
                 Some(vec![selection.column_index]),
@@ -1222,7 +1258,7 @@ impl RDataExplorer {
         format_options: &FormatOptions,
     ) -> anyhow::Result<Vec<String>> {
         let tbl = tbl_subset_with_view_indices(
-            self.table.get().sexp,
+            self.table().sexp,
             &self.view_indices,
             Some(self.get_row_selection_indices(selection)),
             Some(vec![]), // Use empty vec, because we only need the row names.
@@ -1276,7 +1312,7 @@ impl RDataExplorer {
     ) -> anyhow::Result<String> {
         r_task(|| {
             export_selection::export_selection(
-                self.table.get().sexp,
+                self.table().sexp,
                 &self.view_indices,
                 selection,
                 format,
