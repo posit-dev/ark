@@ -43,7 +43,7 @@ pub fn parse_expr(code: &str) -> crate::Result<RObject> {
 
 /// Returns an EXPRSXP vector
 pub fn parse_exprs(code: &str) -> crate::Result<RObject> {
-    match unsafe { parse_status(code)? } {
+    match parse_status(code)? {
         ParseResult::Complete(x) => {
             return Ok(RObject::from(x));
         },
@@ -72,31 +72,32 @@ pub fn parse_exprs_with_srcrefs(code: &str) -> crate::Result<RObject> {
     }
 }
 
-#[allow(non_upper_case_globals)]
-pub unsafe fn parse_status(code: &str) -> crate::Result<ParseResult> {
-    let mut ps: libr::ParseStatus = libr::ParseStatus_PARSE_NULL;
-    let mut protect = RProtect::new();
-    let r_code = r_string!(convert_line_endings(code, LineEnding::Posix), &mut protect);
+pub fn parse_status(code: &str) -> crate::Result<ParseResult> {
+    unsafe {
+        let mut ps: libr::ParseStatus = libr::ParseStatus_PARSE_NULL;
+        let mut protect = RProtect::new();
+        let r_code = r_string!(convert_line_endings(code, LineEnding::Posix), &mut protect);
 
-    let result: RObject =
-        try_catch(|| libr::R_ParseVector(r_code, -1, &mut ps, libr::R_NilValue).into())?;
+        let result: RObject =
+            try_catch(|| libr::R_ParseVector(r_code, -1, &mut ps, libr::R_NilValue).into())?;
 
-    match ps {
-        libr::ParseStatus_PARSE_OK => Ok(ParseResult::Complete(result.sexp)),
-        libr::ParseStatus_PARSE_INCOMPLETE => Ok(ParseResult::Incomplete),
-        libr::ParseStatus_PARSE_ERROR => Err(crate::Error::ParseSyntaxError {
-            message: CStr::from_ptr(libr::get(libr::R_ParseErrorMsg).as_ptr())
-                .to_string_lossy()
-                .to_string(),
-            line: libr::get(libr::R_ParseError) as i32,
-        }),
-        _ => {
-            // should not get here
-            Err(crate::Error::ParseError {
-                code: code.to_string(),
-                message: String::from("Unknown parse error"),
-            })
-        },
+        match ps {
+            libr::ParseStatus_PARSE_OK => Ok(ParseResult::Complete(result.sexp)),
+            libr::ParseStatus_PARSE_INCOMPLETE => Ok(ParseResult::Incomplete),
+            libr::ParseStatus_PARSE_ERROR => Err(crate::Error::ParseSyntaxError {
+                message: CStr::from_ptr(libr::get(libr::R_ParseErrorMsg).as_ptr())
+                    .to_string_lossy()
+                    .to_string(),
+                line: libr::get(libr::R_ParseError) as i32,
+            }),
+            _ => {
+                // should not get here
+                Err(crate::Error::ParseError {
+                    code: code.to_string(),
+                    message: String::from("Unknown parse error"),
+                })
+            },
+        }
     }
 }
 
