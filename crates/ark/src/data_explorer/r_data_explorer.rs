@@ -14,18 +14,12 @@ use amalthea::comm::data_explorer_comm::ArraySelection;
 use amalthea::comm::data_explorer_comm::BackendState;
 use amalthea::comm::data_explorer_comm::ColumnDisplayType;
 use amalthea::comm::data_explorer_comm::ColumnFilter;
-use amalthea::comm::data_explorer_comm::ColumnFrequencyTable;
-use amalthea::comm::data_explorer_comm::ColumnHistogram;
-use amalthea::comm::data_explorer_comm::ColumnProfileParams;
-use amalthea::comm::data_explorer_comm::ColumnProfileRequest;
 use amalthea::comm::data_explorer_comm::ColumnProfileResult;
-use amalthea::comm::data_explorer_comm::ColumnProfileSpec;
 use amalthea::comm::data_explorer_comm::ColumnProfileType;
 use amalthea::comm::data_explorer_comm::ColumnProfileTypeSupportStatus;
 use amalthea::comm::data_explorer_comm::ColumnSchema;
 use amalthea::comm::data_explorer_comm::ColumnSelection;
 use amalthea::comm::data_explorer_comm::ColumnSortKey;
-use amalthea::comm::data_explorer_comm::ColumnSummaryStats;
 use amalthea::comm::data_explorer_comm::ColumnValue;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendReply;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendRequest;
@@ -73,10 +67,6 @@ use harp::exec::RFunctionExt;
 use harp::object::RObject;
 use harp::r_symbol;
 use harp::tbl_get_column;
-use harp::utils::r_inherits;
-use harp::utils::r_is_object;
-use harp::utils::r_is_s4;
-use harp::utils::r_typeof;
 use harp::TableInfo;
 use harp::TableKind;
 use itertools::Itertools;
@@ -90,13 +80,12 @@ use stdext::spawn;
 use stdext::unwrap;
 use uuid::Uuid;
 
-use crate::data_explorer::async_channels::AsyncTaskSocket;
+use crate::data_explorer::column_profile::empty_column_profile_result;
+use crate::data_explorer::column_profile::profile_column;
 use crate::data_explorer::export_selection;
 use crate::data_explorer::format;
 use crate::data_explorer::format::format_string;
-use crate::data_explorer::histogram::profile_frequency_table;
-use crate::data_explorer::histogram::profile_histogram;
-use crate::data_explorer::summary_stats::summary_stats;
+use crate::data_explorer::utils::display_type;
 use crate::data_explorer::utils::tbl_subset_with_view_indices;
 use crate::interface::RMain;
 use crate::lsp::events::EVENTS;
@@ -214,10 +203,6 @@ pub struct RDataExplorer {
 
     /// A channel to send messages to the CommManager.
     comm_manager_tx: Sender<CommManagerEvent>,
-
-    // A socket used to pass information between the worker thread and main
-    // execution thread when running the GetColumnProfile RPC method.
-    profiles_socket: AsyncTaskSocket<(ColumnProfileRequest, FormatOptions), ColumnProfileResult>,
 }
 #[derive(Deserialize, Serialize)]
 struct Metadata {
@@ -271,7 +256,6 @@ impl RDataExplorer {
                         col_filters: vec![],
                         comm,
                         comm_manager_tx,
-                        profiles_socket: AsyncTaskSocket::default(),
                     };
 
                     // Start the data viewer's execution thread
@@ -368,26 +352,6 @@ impl RDataExplorer {
                     let comm = self.comm.clone();
                     comm.handle_request(msg, |req| self.handle_rpc(req));
                 },
-
-                // When we get a ColumnProfileRequest, from the async handler
-                recv(self.profiles_socket.main.rx) -> msg => {
-                    let (callback_id, (request, format_options)) = unwrap!(msg, Err(e) => {
-                        log::trace!("Data Viewer: Error receiving column profile request: {e:?}");
-                        continue;
-                    });
-
-                    let profile = self.r_get_column_profile(request, &format_options);
-
-                    let channel = unwrap!(self.profiles_socket.get_worker_channel(&callback_id), None => {
-                        log::error!("Unable to send response back to {}. No channel found.", callback_id);
-                        continue;
-                    });
-
-                    unwrap!(channel.tx.send(profile), Err(err) => {
-                        log::error!("Unable to send request to the worker thread. {err}");
-                        continue;
-                    });
-                }
             }
         }
 
@@ -604,46 +568,54 @@ impl RDataExplorer {
                 profiles: requests,
                 format_options,
             }) => {
-                // We respond imediately to this request, but first we launch a new thread the will schedule each
-                // column profile as a different request that is handled sequentially by the main data explorer
-                // execution thread.
+                // We respond imediately to this request, but first we launch a new thread that will
+                // be responsible for scheduling R idle tasks that compute summary profiles when the
+                // R session is idle.
+                // We don't send a single R session request because otherwise we can endup blocking
+                // the R session for too long, and it won't be available to respond the other data
+                // explorer requests.
 
+                // We send the table object. Which is actually a very lightweight object that knows
+                // how to query the actual R table.
                 let table = self.table.clone();
-                r_task(|| {
-                    r_task::spawn_idle(|| async move {
-                        let table = table;
-                        let _r_table = table.get();
-                    });
-                });
+                let kind = self.shape.kind.clone();
 
+                // We will send the filter indices to the thread for computation
+                let filter_indices = self.filtered_indices.clone();
+
+                // We send the comm to the background thread to be able to send the results back to
+                // to the fron-end once we're done with all the computations.
                 let comm = self.comm.clone();
-                let worker_channels = self.profiles_socket.new_worker_channel(callback_id.clone());
-                let main_channels = self.profiles_socket.main.clone();
-                let thread_name = format!("ark-data-viewer-get_profile-{}", callback_id.clone());
 
-                spawn!(thread_name, move || {
-                    let timeout = Duration::from_secs(5);
+                println!("Spawning idle task!");
+                r_task::spawn_idle(move || async move {
+                    println!("executing idle task");
+                    let span = tracing::trace_span!("get_profile", ns = callback_id);
+                    // This is an R thread, so we can actually get the data frame.
+                    // If it fails we quickly return an empty result set and end the task.
+                    let data = unwrap!(table.get(), Err(_)=> {
+                        log::error!("No table found. This is unexpected, but we'll return an empty profile.");
+                        return;
+                    });
 
-                    // We send profile requests for each column sequentially so we give time for the main
-                    // data explorer execution thread to execute other types of requests that might be
-                    // on the queue, such as GetDataRequests.
-                    // See https://github.com/posit-dev/positron/pull/4326 for more details.
-                    let profiles = requests
-                        .into_iter()
-                        .map(|request| -> anyhow::Result<_> {
-                            main_channels
-                                .tx
-                                .send((callback_id.clone(), (request, format_options.clone())))?;
-                            Ok(worker_channels.rx.recv_timeout(timeout)?)
-                        })
-                        .filter_map(|x| match x {
-                            Ok(value) => Some(value),
-                            Err(err) => {
-                                log::error!("Could not compute profile results. {err}");
-                                None
-                            },
-                        })
-                        .collect_vec();
+                    let mut profiles: Vec<ColumnProfileResult> = Vec::with_capacity(requests.len());
+
+                    for profile in requests.into_iter() {
+                        span.in_scope(|| {
+                            let results = profile_column(
+                                data.clone(),
+                                filter_indices.clone(),
+                                profile,
+                                &format_options,
+                                kind,
+                            );
+                            profiles.push(results);
+                        });
+                        // Yield to the R event loop
+                        println!("yielding");
+                        tokio::task::yield_now().await;
+                        println!("finished yielding");
+                    }
 
                     let event = DataExplorerFrontendEvent::ReturnColumnProfiles(
                         ReturnColumnProfilesParams {
@@ -664,7 +636,7 @@ impl RDataExplorer {
                         .send(CommMsg::Data(json_event))
                         .or_log_error("Failed to send event to front-end");
                 });
-
+                println!("idle task spawned, returning!");
                 Ok(DataExplorerBackendReply::GetColumnProfilesReply())
             },
 
@@ -757,185 +729,6 @@ impl RDataExplorer {
                 num_rows,
             })
         }
-    }
-
-    fn r_get_column_profile(
-        &self,
-        request: ColumnProfileRequest,
-        format_options: &FormatOptions,
-    ) -> ColumnProfileResult {
-        let mut output = ColumnProfileResult {
-            null_count: None,
-            summary_stats: None,
-            small_histogram: None,
-            small_frequency_table: None,
-            large_histogram: None,
-            large_frequency_table: None,
-        };
-
-        let table = unwrap!(self.table.get(), Err(_) => {
-            log::error!("Table no longer exists? This is unexpected, returning empty results for the get_profile request.");
-            return output;
-        });
-
-        let filtered_column = unwrap!(tbl_get_filtered_column(
-            &table,
-            request.column_index,
-            &self.filtered_indices,
-            self.shape.kind,
-        ), Err(e) =>  {
-            // In the case something goes wrong here we log the error and return an empty output.
-            // This might still work for the other columns in the request.
-            log::error!("Error applying filter indices for column: {}. Err: {e}", request.column_index);
-            return output;
-        });
-
-        for profile_req in request.profiles {
-            match profile_req.profile_type {
-                ColumnProfileType::NullCount => {
-                    output.null_count = self
-                        .profile_null_count(filtered_column.clone())
-                        .map_err(|err| {
-                            log::error!(
-                                "Error getting summary stats for column {}: {}",
-                                request.column_index,
-                                err
-                            );
-                        })
-                        .ok();
-                },
-                ColumnProfileType::SummaryStats => {
-                    output.summary_stats = self
-                        .profile_summary_stats(filtered_column.clone(), format_options)
-                        .map_err(|err| {
-                            log::error!(
-                                "Error getting null count for column {}: {}",
-                                request.column_index,
-                                err
-                            );
-                        })
-                        .ok()
-                },
-                ColumnProfileType::SmallHistogram | ColumnProfileType::LargeHistogram => {
-                    let histogram = self
-                        .profile_histogram(filtered_column.clone(), format_options, &profile_req)
-                        .map_err(|err| {
-                            log::error!(
-                                "Error getting histogram for column {}: {}",
-                                request.column_index,
-                                err
-                            );
-                        })
-                        .ok();
-
-                    match profile_req.profile_type {
-                        ColumnProfileType::SmallHistogram => {
-                            output.small_histogram = histogram;
-                        },
-                        ColumnProfileType::LargeHistogram => {
-                            output.large_histogram = histogram;
-                        },
-                        _ => {
-                            // This is technically unreachable!(), but not worth panicking if
-                            // this happens.
-                        },
-                    }
-                },
-                ColumnProfileType::SmallFrequencyTable | ColumnProfileType::LargeFrequencyTable => {
-                    let frequency_table = self
-                        .profile_frequency_table(
-                            filtered_column.clone(),
-                            format_options,
-                            &profile_req,
-                        )
-                        .map_err(|err| {
-                            log::error!(
-                                "Error getting frequency table for column {}: {}",
-                                request.column_index,
-                                err
-                            );
-                        })
-                        .ok();
-
-                    match profile_req.profile_type {
-                        ColumnProfileType::SmallFrequencyTable => {
-                            output.small_frequency_table = frequency_table;
-                        },
-                        ColumnProfileType::LargeFrequencyTable => {
-                            output.large_frequency_table = frequency_table;
-                        },
-                        _ => {
-                            // This is technically unreachable!(), but not worth panicking if
-                            // this happens.
-                        },
-                    }
-                },
-            };
-        }
-        output
-    }
-
-    fn profile_frequency_table(
-        &self,
-        column: RObject,
-        format_options: &FormatOptions,
-        profile_spec: &ColumnProfileSpec,
-    ) -> anyhow::Result<ColumnFrequencyTable> {
-        let params = match &profile_spec.params {
-            None => return Err(anyhow!("Missing parameters for the frequency table")),
-            Some(par) => match par {
-                ColumnProfileParams::SmallFrequencyTable(p) => p,
-                ColumnProfileParams::LargeFrequencyTable(p) => p,
-                _ => return Err(anyhow!("Wrong type of parameters for the frequency table.")),
-            },
-        };
-        let frequency_table = profile_frequency_table(column.sexp, &params, &format_options)?;
-        Ok(frequency_table)
-    }
-
-    fn profile_histogram(
-        &self,
-        column: RObject,
-        format_options: &FormatOptions,
-        profile_spec: &ColumnProfileSpec,
-    ) -> anyhow::Result<ColumnHistogram> {
-        let params = match &profile_spec.params {
-            None => return Err(anyhow!("Missing parameters for the histogram")),
-            Some(par) => match par {
-                ColumnProfileParams::SmallHistogram(p) => p,
-                ColumnProfileParams::LargeHistogram(p) => p,
-                _ => return Err(anyhow!("Wrong type of parameters for the histogram.")),
-            },
-        };
-        let histogram = profile_histogram(column.sexp, &params, &format_options)?;
-        Ok(histogram)
-    }
-
-    fn profile_summary_stats(
-        &self,
-        column: RObject,
-        format_options: &FormatOptions,
-    ) -> anyhow::Result<ColumnSummaryStats> {
-        let dtype = display_type(column.sexp);
-        Ok(summary_stats(column.sexp, dtype, format_options)?)
-    }
-
-    /// Counts the number of nulls in a column. As the intent is to provide an
-    /// idea of how complete the data is, NA values are considered to be null
-    /// for the purposes of these stats.
-    ///
-    /// Expects data to be filtered by the view indices.
-    ///
-    /// - `column_index`: The index of the column to count nulls in; 0-based.
-    fn profile_null_count(&self, column: RObject) -> anyhow::Result<i64> {
-        // Compute the number of nulls in the column
-        let result: i32 = RFunction::new("", ".ps.null_count")
-            .param("column", column)
-            .call_in(ARK_ENVS.positron_ns)?
-            .try_into()?;
-
-        // Return the count of nulls and NA values
-        Ok(result.try_into()?)
     }
 
     /// Sort the rows of the data object according to the sort keys in
@@ -1374,86 +1167,8 @@ impl RDataExplorer {
     }
 }
 
-// This returns the type of an _element_ of the column. In R atomic
-// vectors do not have a distinct internal type but we pretend that they
-// do for the purpose of integrating with Positron types.
-fn display_type(x: SEXP) -> ColumnDisplayType {
-    if r_is_s4(x) {
-        return ColumnDisplayType::Unknown;
-    }
-
-    if r_is_object(x) {
-        if r_inherits(x, "logical") {
-            return ColumnDisplayType::Boolean;
-        }
-
-        if r_inherits(x, "integer") {
-            return ColumnDisplayType::Number;
-        }
-        if r_inherits(x, "double") {
-            return ColumnDisplayType::Number;
-        }
-        if r_inherits(x, "complex") {
-            return ColumnDisplayType::Number;
-        }
-        if r_inherits(x, "numeric") {
-            return ColumnDisplayType::Number;
-        }
-
-        if r_inherits(x, "character") {
-            return ColumnDisplayType::String;
-        }
-        if r_inherits(x, "factor") {
-            return ColumnDisplayType::String;
-        }
-
-        if r_inherits(x, "Date") {
-            return ColumnDisplayType::Date;
-        }
-        if r_inherits(x, "POSIXct") {
-            return ColumnDisplayType::Datetime;
-        }
-        if r_inherits(x, "POSIXlt") {
-            return ColumnDisplayType::Datetime;
-        }
-
-        // TODO: vctrs's list_of
-        if r_inherits(x, "list") {
-            return ColumnDisplayType::Unknown;
-        }
-
-        // Catch-all, including for data frame
-        return ColumnDisplayType::Unknown;
-    }
-
-    match r_typeof(x) {
-        LGLSXP => return ColumnDisplayType::Boolean,
-        INTSXP | REALSXP | CPLXSXP => return ColumnDisplayType::Number,
-        STRSXP => return ColumnDisplayType::String,
-        VECSXP => return ColumnDisplayType::Unknown,
-        _ => return ColumnDisplayType::Unknown,
-    }
-}
-
 fn table_info_or_bail(x: SEXP) -> anyhow::Result<TableInfo> {
     harp::table_info(x).ok_or(anyhow!("Unsupported type for data viewer"))
-}
-
-fn tbl_get_filtered_column(
-    x: &RObject,
-    column_index: i64,
-    indices: &Option<Vec<i32>>,
-    kind: TableKind,
-) -> anyhow::Result<RObject> {
-    let column = tbl_get_column(x.sexp, column_index as i32, kind)?;
-
-    Ok(match &indices {
-        Some(indices) => RFunction::from("col_filter_indices")
-            .add(column)
-            .add(RObject::try_from(indices)?)
-            .call_in(ARK_ENVS.positron_ns)?,
-        None => column,
-    })
 }
 
 /// Open an R object in the data viewer.

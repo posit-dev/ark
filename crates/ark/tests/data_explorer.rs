@@ -186,13 +186,31 @@ fn get_data_values_request(
     })
 }
 
-fn expect_column_profile_results(socket: &DataExplorerSocket, check: fn(Vec<ColumnProfileResult>)) {
+fn expect_column_profile_results(
+    socket: &DataExplorerSocket,
+    req: DataExplorerBackendRequest,
+    check: fn(Vec<ColumnProfileResult>),
+) {
+    // Randomly generate a unique ID for this request.
+    let id = uuid::Uuid::new_v4().to_string();
+
+    // Serialize the message for the wire
+    let json = serde_json::to_value(req).unwrap();
+    println!("--> {:?}", json);
+
+    // Convert the request to a CommMsg and send it.
+    let msg = CommMsg::Rpc(id, json);
+    socket.socket.incoming_tx.send(msg).unwrap();
+
     let msg = socket
         .socket
         .outgoing_rx
         .recv_timeout(std::time::Duration::from_secs(1))
         .unwrap();
 
+    // Because during tests, no threads are created with r_task::spawn_idle, the messages are in
+    // an incorrect order. We first receive the DataExplorerFrontndEvent with the column profiles
+    // and then receive the results.
     assert_match!(
         msg,
         CommMsg::Data(value) => {
@@ -205,6 +223,23 @@ fn expect_column_profile_results(socket: &DataExplorerSocket, check: fn(Vec<Colu
             );
         }
     );
+
+    let msg = socket
+        .socket
+        .outgoing_rx
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .unwrap();
+
+    let reply: DataExplorerBackendReply = match msg {
+        CommMsg::Rpc(_id, value) => {
+            println!("<-- {:?}", value);
+            let reply = serde_json::from_value(value).unwrap();
+            reply
+        },
+        _ => panic!("Unexpected Comm Message"),
+    };
+
+    assert_eq!(reply, DataExplorerBackendReply::GetColumnProfilesReply());
 }
 
 fn test_mtcars_sort(socket: DataExplorerSocket, has_row_names: bool, display_name: String) {
@@ -617,12 +652,7 @@ fn test_null_counts() {
             format_options: default_format_options(),
         });
 
-        assert_eq!(
-            socket_rpc(&socket, req),
-            DataExplorerBackendReply::GetColumnProfilesReply()
-        );
-
-        expect_column_profile_results(&socket, |data| {
+        expect_column_profile_results(&socket, req, |data| {
             assert!(data.len() == 1);
             assert_eq!(data[0].null_count, Some(3));
         });
@@ -663,12 +693,7 @@ fn test_null_counts() {
             format_options: default_format_options(),
         });
 
-        assert_eq!(
-            socket_rpc(&socket, req),
-            DataExplorerBackendReply::GetColumnProfilesReply()
-        );
-
-        expect_column_profile_results(&socket, |data| {
+        expect_column_profile_results(&socket, req, |data| {
             // We asked for the null count of the first column, which has no
             // NA values after the filter.
             assert!(data.len() == 1);
@@ -728,12 +753,7 @@ fn test_summary_stats() {
             format_options: default_format_options(),
         });
 
-        assert_eq!(
-            socket_rpc(&socket, req),
-            DataExplorerBackendReply::GetColumnProfilesReply()
-        );
-
-        expect_column_profile_results(&socket, |data| {
+        expect_column_profile_results(&socket, req, |data| {
             // We asked for summary stats for all 3 columns
             assert!(data.len() == 3);
 
@@ -1768,13 +1788,9 @@ fn test_histogram() {
 
         let id = String::from("histogram_req");
         let req = make_histogram_req(id.clone(), 0, ColumnHistogramParamsMethod::Fixed, 10, None);
+        let req = make_histogram_req(id.clone(), 0, ColumnHistogramParamsMethod::Fixed, 10, None);
 
-        assert_eq!(
-            socket_rpc(&socket, req),
-            DataExplorerBackendReply::GetColumnProfilesReply()
-        );
-
-        expect_column_profile_results(&socket, |profiles| {
+        expect_column_profile_results(&socket, req, |profiles| {
             let histogram = profiles[0].small_histogram.clone().unwrap();
             assert_eq!(histogram, ColumnHistogram {
                 bin_edges: format_string(
@@ -1816,12 +1832,7 @@ fn test_frequency_table() {
         let id = String::from("freq_table");
         let req = make_freq_table_req(id.clone(), 0, 5);
 
-        assert_eq!(
-            socket_rpc(&socket, req),
-            DataExplorerBackendReply::GetColumnProfilesReply()
-        );
-
-        expect_column_profile_results(&socket, |profiles| {
+        expect_column_profile_results(&socket, req, |profiles| {
             let freq_table = profiles[0].small_frequency_table.clone().unwrap();
             assert_eq!(freq_table, ColumnFrequencyTable {
                 values: format_string(
