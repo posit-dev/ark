@@ -7,7 +7,6 @@
 
 use std::cmp;
 use std::collections::HashMap;
-use std::time::Duration;
 
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::data_explorer_comm::ArraySelection;
@@ -80,7 +79,6 @@ use stdext::spawn;
 use stdext::unwrap;
 use uuid::Uuid;
 
-use crate::data_explorer::column_profile::empty_column_profile_result;
 use crate::data_explorer::column_profile::profile_column;
 use crate::data_explorer::export_selection;
 use crate::data_explorer::format;
@@ -587,9 +585,7 @@ impl RDataExplorer {
                 // to the fron-end once we're done with all the computations.
                 let comm = self.comm.clone();
 
-                println!("Spawning idle task!");
                 r_task::spawn_idle(move || async move {
-                    println!("executing idle task");
                     let span = tracing::trace_span!("get_profile", ns = callback_id);
                     // This is an R thread, so we can actually get the data frame.
                     // If it fails we quickly return an empty result set and end the task.
@@ -612,9 +608,7 @@ impl RDataExplorer {
                             profiles.push(results);
                         });
                         // Yield to the R event loop
-                        println!("yielding");
                         tokio::task::yield_now().await;
-                        println!("finished yielding");
                     }
 
                     let event = DataExplorerFrontendEvent::ReturnColumnProfiles(
@@ -636,7 +630,6 @@ impl RDataExplorer {
                         .send(CommMsg::Data(json_event))
                         .or_log_error("Failed to send event to front-end");
                 });
-                println!("idle task spawned, returning!");
                 Ok(DataExplorerBackendReply::GetColumnProfilesReply())
             },
 

@@ -1788,7 +1788,6 @@ fn test_histogram() {
 
         let id = String::from("histogram_req");
         let req = make_histogram_req(id.clone(), 0, ColumnHistogramParamsMethod::Fixed, 10, None);
-        let req = make_histogram_req(id.clone(), 0, ColumnHistogramParamsMethod::Fixed, 10, None);
 
         expect_column_profile_results(&socket, req, |profiles| {
             let histogram = profiles[0].small_histogram.clone().unwrap();
