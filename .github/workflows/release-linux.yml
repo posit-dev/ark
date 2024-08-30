@@ -54,7 +54,7 @@ jobs:
                   popd
 
             - name: Upload archive
-              uses: actions/upload-artifact@v3
+              uses: actions/upload-artifact@v4
               with:
                   name: ark-${{ matrix.flavor }}-linux-x64-archive
                   path: ark-${{ inputs.version }}-${{ matrix.flavor }}-linux-x64.zip
