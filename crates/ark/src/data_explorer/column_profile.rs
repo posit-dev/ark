@@ -50,7 +50,7 @@ pub async fn handle_columns_profiles_requests(
     Ok(())
 }
 
-pub async fn process_columns_profiles_requests(
+async fn process_columns_profiles_requests(
     params: ProcessColumnsProfilesParams,
 ) -> anyhow::Result<DataExplorerFrontendEvent> {
     let GetColumnProfilesParams {
@@ -66,15 +66,19 @@ pub async fn process_columns_profiles_requests(
     let mut results: Vec<ColumnProfileResult> = Vec::with_capacity(profiles.len());
 
     for profile in profiles.into_iter() {
-        span.in_scope(|| {
-            results.push(profile_column(
-                data.clone(),
-                params.indices.clone(),
-                profile,
-                &format_options,
-                params.kind,
-            ));
-        });
+        span.in_scope(|| async {
+            results.push(
+                profile_column(
+                    data.clone(),
+                    params.indices.clone(),
+                    profile,
+                    &format_options,
+                    params.kind,
+                )
+                .await,
+            );
+        })
+        .await;
         // Yield to the R event loop
         tokio::task::yield_now().await;
     }
@@ -87,7 +91,11 @@ pub async fn process_columns_profiles_requests(
     Ok(event)
 }
 
-pub fn profile_column(
+// This function does not return a Result because it must handle still handle other profile types
+// if one of them fails. Thus it needs to gracifully handle the errors that might have resulted
+// here.
+// It's an async function just because we want to yield to R between each profile type.
+async fn profile_column(
     table: RObject,
     filtered_indices: Option<Vec<i32>>,
     request: ColumnProfileRequest,
@@ -184,6 +192,9 @@ pub fn profile_column(
                 }
             },
         };
+
+        // Yield to the R console loop
+        tokio::task::yield_now().await;
     }
     output
 }
