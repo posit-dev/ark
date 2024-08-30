@@ -5,6 +5,7 @@
 //
 //
 
+use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::data_explorer_comm::ColumnFrequencyTable;
 use amalthea::comm::data_explorer_comm::ColumnHistogram;
 use amalthea::comm::data_explorer_comm::ColumnProfileParams;
@@ -13,7 +14,11 @@ use amalthea::comm::data_explorer_comm::ColumnProfileResult;
 use amalthea::comm::data_explorer_comm::ColumnProfileSpec;
 use amalthea::comm::data_explorer_comm::ColumnProfileType;
 use amalthea::comm::data_explorer_comm::ColumnSummaryStats;
+use amalthea::comm::data_explorer_comm::DataExplorerFrontendEvent;
 use amalthea::comm::data_explorer_comm::FormatOptions;
+use amalthea::comm::data_explorer_comm::GetColumnProfilesParams;
+use amalthea::comm::data_explorer_comm::ReturnColumnProfilesParams;
+use amalthea::socket::comm::CommSocket;
 use anyhow::anyhow;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
@@ -24,8 +29,63 @@ use stdext::unwrap;
 
 use crate::data_explorer::histogram;
 use crate::data_explorer::summary_stats::summary_stats;
+use crate::data_explorer::table::Table;
 use crate::data_explorer::utils::display_type;
 use crate::modules::ARK_ENVS;
+
+pub struct ProcessColumnsProfilesParams {
+    pub table: Table,
+    pub indices: Option<Vec<i32>>,
+    pub kind: TableKind,
+    pub request: GetColumnProfilesParams,
+}
+
+pub async fn handle_columns_profiles_requests(
+    params: ProcessColumnsProfilesParams,
+    comm: CommSocket,
+) -> anyhow::Result<()> {
+    let event = process_columns_profiles_requests(params).await?;
+    let json_event = serde_json::to_value(event)?;
+    comm.outgoing_tx.send(CommMsg::Data(json_event))?;
+    Ok(())
+}
+
+pub async fn process_columns_profiles_requests(
+    params: ProcessColumnsProfilesParams,
+) -> anyhow::Result<DataExplorerFrontendEvent> {
+    let GetColumnProfilesParams {
+        callback_id,
+        profiles,
+        format_options,
+    } = params.request;
+    let span = tracing::trace_span!("get_profile", ns = callback_id);
+
+    // This is an R thread, so we can actually get the data frame.
+    // If it fails we quickly return an empty result set and end the task.
+    let data = params.table.get()?;
+    let mut results: Vec<ColumnProfileResult> = Vec::with_capacity(profiles.len());
+
+    for profile in profiles.into_iter() {
+        span.in_scope(|| {
+            results.push(profile_column(
+                data.clone(),
+                params.indices.clone(),
+                profile,
+                &format_options,
+                params.kind,
+            ));
+        });
+        // Yield to the R event loop
+        tokio::task::yield_now().await;
+    }
+
+    let event = DataExplorerFrontendEvent::ReturnColumnProfiles(ReturnColumnProfilesParams {
+        callback_id,
+        profiles: results,
+    });
+
+    Ok(event)
+}
 
 pub fn profile_column(
     table: RObject,

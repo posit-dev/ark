@@ -13,7 +13,6 @@ use amalthea::comm::data_explorer_comm::ArraySelection;
 use amalthea::comm::data_explorer_comm::BackendState;
 use amalthea::comm::data_explorer_comm::ColumnDisplayType;
 use amalthea::comm::data_explorer_comm::ColumnFilter;
-use amalthea::comm::data_explorer_comm::ColumnProfileResult;
 use amalthea::comm::data_explorer_comm::ColumnProfileType;
 use amalthea::comm::data_explorer_comm::ColumnProfileTypeSupportStatus;
 use amalthea::comm::data_explorer_comm::ColumnSchema;
@@ -34,7 +33,6 @@ use amalthea::comm::data_explorer_comm::GetColumnProfilesFeatures;
 use amalthea::comm::data_explorer_comm::GetColumnProfilesParams;
 use amalthea::comm::data_explorer_comm::GetDataValuesParams;
 use amalthea::comm::data_explorer_comm::GetSchemaParams;
-use amalthea::comm::data_explorer_comm::ReturnColumnProfilesParams;
 use amalthea::comm::data_explorer_comm::RowFilter;
 use amalthea::comm::data_explorer_comm::RowFilterParams;
 use amalthea::comm::data_explorer_comm::RowFilterType;
@@ -60,7 +58,6 @@ use anyhow::bail;
 use crossbeam::channel::unbounded;
 use crossbeam::channel::Sender;
 use crossbeam::select;
-use dashmap::DashMap;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
@@ -70,7 +67,6 @@ use harp::TableInfo;
 use harp::TableKind;
 use itertools::Itertools;
 use libr::*;
-use once_cell::sync::Lazy;
 use serde::Deserialize;
 use serde::Serialize;
 use stdext::local;
@@ -79,10 +75,12 @@ use stdext::spawn;
 use stdext::unwrap;
 use uuid::Uuid;
 
-use crate::data_explorer::column_profile::profile_column;
+use crate::data_explorer::column_profile::handle_columns_profiles_requests;
+use crate::data_explorer::column_profile::ProcessColumnsProfilesParams;
 use crate::data_explorer::export_selection;
 use crate::data_explorer::format;
 use crate::data_explorer::format::format_string;
+use crate::data_explorer::table::Table;
 use crate::data_explorer::utils::display_type;
 use crate::data_explorer::utils::tbl_subset_with_view_indices;
 use crate::interface::RMain;
@@ -91,54 +89,6 @@ use crate::modules::ARK_ENVS;
 use crate::r_task;
 use crate::thread::RThreadSafe;
 use crate::variables::variable::WorkspaceVariableDisplayType;
-
-// Stores the table R objects objects that contain the data for each
-// data explorer instance.
-// This allows for background threads to easilly access the
-// instance related data without having to rely on the lifetime
-// of data explorer execution thread.
-// Since this is a DashMap, it's safe to access it's underlying data from
-// background threads, without the need for synchronization.
-static DATA_EXPLORER_TABLES: Lazy<DashMap<String, RThreadSafe<RObject>>> =
-    Lazy::new(|| DashMap::new());
-
-// Abstracts away details on accessing the data explorer instance table.
-// It's trivially copyable and cloneable since it's just a string, so
-// it can be easily moved to background threads.
-// Call `get()` to obtain the RObject for the table and `set` to modify
-// the current value.
-// Note: When a Table instance is deleted, nothing happens to the global store
-// of tables, thus one must explictly call `Table.delete` before loosing the refence for it.
-// In our case, we guarantee that the table is deleted by implementing `Drop` for the
-// Data Explorer instance.
-#[derive(Clone)]
-struct Table {
-    comm_id: String,
-}
-
-impl Table {
-    fn new(comm_id: String, data: RObject) -> Self {
-        let table = Self { comm_id };
-        table.set(data);
-        table
-    }
-    // `get` can only be called from the R main thread and will panick
-    // otherwise.
-    fn get(&self) -> anyhow::Result<RObject> {
-        DATA_EXPLORER_TABLES
-            .get(&self.comm_id)
-            .and_then(|x| Some(x.get().clone()))
-            .ok_or(anyhow!("Data explorer table has been deleted"))
-    }
-    fn set(&self, data: RObject) {
-        DATA_EXPLORER_TABLES.insert(self.comm_id.clone(), RThreadSafe::new(data));
-    }
-    fn delete(&self) {
-        if let None = DATA_EXPLORER_TABLES.remove(&self.comm_id) {
-            log::warn!("The table no longer exists");
-        }
-    }
-}
 
 /// A name/value binding pair in an environment.
 ///
@@ -561,75 +511,12 @@ impl RDataExplorer {
                 }))
             },
 
-            DataExplorerBackendRequest::GetColumnProfiles(GetColumnProfilesParams {
-                callback_id,
-                profiles: requests,
-                format_options,
-            }) => {
-                // We respond imediately to this request, but first we launch a new thread that will
-                // be responsible for scheduling R idle tasks that compute summary profiles when the
-                // R session is idle.
-                // We don't send a single R session request because otherwise we can endup blocking
-                // the R session for too long, and it won't be available to respond the other data
-                // explorer requests.
-
-                // We send the table object. Which is actually a very lightweight object that knows
-                // how to query the actual R table.
-                let table = self.table.clone();
-                let kind = self.shape.kind.clone();
-
-                // We will send the filter indices to the thread for computation
-                let filter_indices = self.filtered_indices.clone();
-
-                // We send the comm to the background thread to be able to send the results back to
-                // to the fron-end once we're done with all the computations.
-                let comm = self.comm.clone();
-
-                r_task::spawn_idle(move || async move {
-                    let span = tracing::trace_span!("get_profile", ns = callback_id);
-                    // This is an R thread, so we can actually get the data frame.
-                    // If it fails we quickly return an empty result set and end the task.
-                    let data = unwrap!(table.get(), Err(_)=> {
-                        log::error!("No table found. This is unexpected, but we'll return an empty profile.");
-                        return;
-                    });
-
-                    let mut profiles: Vec<ColumnProfileResult> = Vec::with_capacity(requests.len());
-
-                    for profile in requests.into_iter() {
-                        span.in_scope(|| {
-                            let results = profile_column(
-                                data.clone(),
-                                filter_indices.clone(),
-                                profile,
-                                &format_options,
-                                kind,
-                            );
-                            profiles.push(results);
-                        });
-                        // Yield to the R event loop
-                        tokio::task::yield_now().await;
-                    }
-
-                    let event = DataExplorerFrontendEvent::ReturnColumnProfiles(
-                        ReturnColumnProfilesParams {
-                            callback_id,
-                            profiles,
-                        },
-                    );
-
-                    let json_event = match serde_json::to_value(event) {
-                        Ok(value) => value,
-                        Err(err) => {
-                            log::error!("Failed to serialize response to json: {err}");
-                            return;
-                        },
-                    };
-
-                    comm.outgoing_tx
-                        .send(CommMsg::Data(json_event))
-                        .or_log_error("Failed to send event to front-end");
-                });
+            DataExplorerBackendRequest::GetColumnProfiles(params) => {
+                // We respond imediately to this request, but first we launch an R idle task that will
+                // be responsible to compute the summary profiles.
+                // We yield to the main loop whenver possible, in order to allow for other requests to
+                // be computed.
+                self.launch_get_column_profiles_handler(params);
                 Ok(DataExplorerBackendReply::GetColumnProfilesReply())
             },
 
@@ -722,6 +609,21 @@ impl RDataExplorer {
                 num_rows,
             })
         }
+    }
+
+    fn launch_get_column_profiles_handler(&self, params: GetColumnProfilesParams) {
+        let params = ProcessColumnsProfilesParams {
+            table: self.table.clone(),
+            indices: self.filtered_indices.clone(),
+            kind: self.shape.kind,
+            request: params,
+        };
+        let comm = self.comm.clone();
+        r_task::spawn_idle(|| async {
+            handle_columns_profiles_requests(params, comm)
+                .await
+                .or_log_error("Could not process get comlumn profile request");
+        });
     }
 
     /// Sort the rows of the data object according to the sort keys in
