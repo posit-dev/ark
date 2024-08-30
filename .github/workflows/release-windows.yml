@@ -46,7 +46,7 @@ jobs:
                   # Compress the kernel to an archive
                   $params = @{
                     Path = "target\${{ matrix.rust_target_prefix }}-pc-windows-msvc\${{ matrix.flavor }}\ark.exe", "LICENSE", "crates\ark\NOTICE"
-                    DestinationPath = "ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ matrix.flavor }}-windows-${{ matrix.arch }}.zip"
+                    DestinationPath = "ark-${{ inputs.version }}-${{ matrix.flavor }}-windows-${{ matrix.arch }}.zip"
                   }
                   Compress-Archive @params
 
@@ -54,4 +54,4 @@ jobs:
               uses: actions/upload-artifact@v4
               with:
                   name: ark-${{ matrix.flavor }}-windows-${{ matrix.arch }}-archive
-                  path: ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ matrix.flavor }}-windows-${{ matrix.arch }}.zip
+                  path: ark-${{ inputs.version }}-${{ matrix.flavor }}-windows-${{ matrix.arch }}.zip

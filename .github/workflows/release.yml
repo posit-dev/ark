@@ -114,15 +114,10 @@ jobs:
 
         steps:
             # Download all binaries
-            - name: Download macOS arm64 kernel (${{ matrix.flavor }})
+            - name: Download macOS universal kernel (${{ matrix.flavor}})
               uses: actions/download-artifact@v4
               with:
-                  name: ark-${{ matrix.flavor }}-darwin-arm64-archive
-
-            - name: Download macOS x64 kernel (${{ matrix.flavor}})
-              uses: actions/download-artifact@v4
-              with:
-                  name: ark-${{ matrix.flavor }}-darwin-x64-archive
+                  name: ark-${{ matrix.flavor }}-darwin-universal-archive
 
             - name: Download Windows x64 kernel (${{ matrix.flavor}})
               uses: actions/download-artifact@v4
@@ -133,29 +128,6 @@ jobs:
               uses: actions/download-artifact@v4
               with:
                   name: ark-${{ matrix.flavor }}-linux-x64-archive
-
-
-            # Combine macOS binaries to a single binary with lipo
-            - name: Create macOS universal binary
-              run: |
-                  # Decompress x64 builds
-                  rm -rf x64 && mkdir x64 && pushd x64
-                  unzip ../ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ matrix.flavor }}-darwin-x64.zip
-                  popd
-
-                  # Decompress arm64 build
-                  rm -rf arm64 && mkdir arm64 && pushd arm64
-                  unzip ../ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ matrix.flavor }}-darwin-arm64.zip
-                  popd
-
-                  # Create a universal binary
-                  lipo -create x64/ark arm64/ark -output ark
-
-                  # Compress and bundle licenses
-                  ARCHIVE="$GITHUB_WORKSPACE/ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-darwin-universal.zip"
-                  [ -e LICENSE ] || cp "$GITHUB_WORKSPACE/LICENSE" LICENSE
-                  [ -e NOTICE ] || cp "$GITHUB_WORKSPACE/crates/ark/NOTICE" NOTICE
-                  zip -Xry $ARCHIVE ark LICENSE NOTICE
 
             - name: Upload macOS release artifact (universal)
               uses: actions/upload-release-asset@v1
