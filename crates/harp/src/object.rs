@@ -112,6 +112,8 @@ pub struct RObject {
     pub cell: SEXP,
 }
 
+// Needed to implement the Vector trait for List.
+// Can we do better to avoid this coercion?
 impl AsRef<SEXP> for RObject {
     fn as_ref(&self) -> &SEXP {
         &self.sexp
