@@ -53,12 +53,6 @@ jobs:
             - name: Checkout sources
               uses: actions/checkout@v4
 
-            - name: Install zeromq dependencies
-              id: install_zeromq_dependencies
-              run: |
-                  arch -${{matrix.arch_terminal}} /bin/bash -c "${{matrix.homebrew_folder}}/bin/brew install pkg-config"
-                  arch -${{matrix.arch_terminal}} /bin/bash -c "${{matrix.homebrew_folder}}/bin/brew install libsodium"
-
             # Zeromq calls whatever pkg-config version is findable on the PATH to be able to locate
             # libsodium, so we have to ensure the x86_64 version is first on the PATH when compiling for
             # that architecture, so that it finds the x86_64 version of libsodium for zeromq to link against.
