@@ -7,20 +7,36 @@
 
 use std::ffi::CStr;
 
-use libr::SEXP;
+use itertools::Itertools;
 
-use crate::exec::RFunction;
-use crate::exec::RFunctionExt;
 use crate::line_ending::convert_line_endings;
 use crate::line_ending::LineEnding;
 use crate::protect::RProtect;
 use crate::r_string;
+use crate::srcref;
 use crate::try_catch;
+use crate::vector::CharacterVector;
+use crate::vector::Vector;
 use crate::RObject;
 
+pub struct RParseOptions {
+    pub srcfile: Option<RObject>,
+}
+
 pub enum ParseResult {
-    Complete(SEXP),
+    Complete(RObject),
     Incomplete,
+}
+
+pub enum ParseInput<'a> {
+    Text(&'a str),
+    SrcFile(RObject),
+}
+
+impl Default for RParseOptions {
+    fn default() -> Self {
+        Self { srcfile: None }
+    }
 }
 
 /// Returns a single expression
@@ -42,47 +58,43 @@ pub fn parse_expr(code: &str) -> crate::Result<RObject> {
 }
 
 /// Returns an EXPRSXP vector
-pub fn parse_exprs(code: &str) -> crate::Result<RObject> {
-    match parse_status(code)? {
-        ParseResult::Complete(x) => {
-            return Ok(RObject::from(x));
-        },
-        ParseResult::Incomplete => {
-            return Err(crate::Error::ParseError {
-                code: code.to_string(),
-                message: String::from("Incomplete code"),
-            });
-        },
-    };
+pub fn parse_exprs(text: &str) -> crate::Result<RObject> {
+    parse_exprs_ext(&ParseInput::Text(text))
 }
 
-/// This uses the R-level function `parse()` to create the srcrefs
-pub fn parse_exprs_with_srcrefs(code: &str) -> crate::Result<RObject> {
-    unsafe {
-        let mut protect = RProtect::new();
+/// Same but creates srcrefs
+pub fn parse_exprs_with_srcrefs(text: &str) -> crate::Result<RObject> {
+    let srcfile = srcref::new_srcfile_virtual(text)?;
+    parse_exprs_ext(&ParseInput::SrcFile(srcfile))
+}
 
-        // Because `parse(text =)` doesn't allow `\r\n` even on Windows
-        let code = convert_line_endings(code, LineEnding::Posix);
-        let code = r_string!(code, protect);
-
-        RFunction::new("base", "parse")
-            .param("text", code)
-            .param("keep.source", true)
-            .call()
+fn parse_exprs_ext<'a>(input: &ParseInput<'a>) -> crate::Result<RObject> {
+    let status = parse_status(input)?;
+    match status {
+        ParseResult::Complete(x) => Ok(RObject::from(x)),
+        ParseResult::Incomplete => Err(crate::Error::ParseError {
+            code: parse_input_as_string(input).unwrap_or(String::from("Concersion error")),
+            message: String::from("Incomplete code"),
+        }),
     }
 }
 
-pub fn parse_status(code: &str) -> crate::Result<ParseResult> {
+pub fn parse_status<'a>(input: &ParseInput<'a>) -> crate::Result<ParseResult> {
     unsafe {
-        let mut ps: libr::ParseStatus = libr::ParseStatus_PARSE_NULL;
-        let mut protect = RProtect::new();
-        let r_code = r_string!(convert_line_endings(code, LineEnding::Posix), &mut protect);
+        // TODO: set keep.parse.data
+
+        let mut status: libr::ParseStatus = libr::ParseStatus_PARSE_NULL;
+
+        let (text, srcfile) = match input {
+            ParseInput::Text(text) => (as_parse_text(text), RObject::null()),
+            ParseInput::SrcFile(srcfile) => (srcref::srcfile_lines(srcfile.sexp)?, srcfile.clone()),
+        };
 
         let result: RObject =
-            try_catch(|| libr::R_ParseVector(r_code, -1, &mut ps, libr::R_NilValue).into())?;
+            try_catch(|| libr::R_ParseVector(text.sexp, -1, &mut status, srcfile.sexp).into())?;
 
-        match ps {
-            libr::ParseStatus_PARSE_OK => Ok(ParseResult::Complete(result.sexp)),
+        match status {
+            libr::ParseStatus_PARSE_OK => Ok(ParseResult::Complete(result)),
             libr::ParseStatus_PARSE_INCOMPLETE => Ok(ParseResult::Incomplete),
             libr::ParseStatus_PARSE_ERROR => Err(crate::Error::ParseSyntaxError {
                 message: CStr::from_ptr(libr::get(libr::R_ParseErrorMsg).as_ptr())
@@ -91,9 +103,9 @@ pub fn parse_status(code: &str) -> crate::Result<ParseResult> {
                 line: libr::get(libr::R_ParseError) as i32,
             }),
             _ => {
-                // should not get here
+                // Should not get here
                 Err(crate::Error::ParseError {
-                    code: code.to_string(),
+                    code: parse_input_as_string(input).unwrap_or(String::from("Conversion error")),
                     message: String::from("Unknown parse error"),
                 })
             },
@@ -101,26 +113,61 @@ pub fn parse_status(code: &str) -> crate::Result<ParseResult> {
     }
 }
 
+pub fn as_parse_text(text: &str) -> RObject {
+    unsafe {
+        let mut protect = RProtect::new();
+        let input = r_string!(convert_line_endings(text, LineEnding::Posix), &mut protect);
+        input.into()
+    }
+}
+
+fn parse_input_as_string<'a>(input: &ParseInput<'a>) -> crate::Result<String> {
+    Ok(match input {
+        ParseInput::Text(text) => text.to_string(),
+        ParseInput::SrcFile(srcfile) => {
+            let lines = srcref::srcfile_lines(srcfile.sexp)?;
+            let lines = unsafe { CharacterVector::new(lines)? };
+
+            lines
+                .iter()
+                .map(|x| x.unwrap_or(String::from("NA")))
+                .join("\n")
+        },
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use crate::assert_match;
+    use crate::parse::parse_input_as_string;
+    use crate::parse::ParseInput;
     use crate::parse_status;
+    use crate::r_length;
     use crate::r_stringify;
     use crate::r_symbol;
     use crate::r_test;
     use crate::r_typeof;
+    use crate::srcref;
     use crate::ParseResult;
 
     #[test]
     fn test_parse_status() {
         r_test! {
-            // complete
             assert_match!(
-                parse_status("force(42)"),
+                parse_status(&ParseInput::Text("")),
                 Ok(ParseResult::Complete(out)) => {
-                    assert_eq!(r_typeof(out), libr::EXPRSXP as u32);
+                    assert_eq!(r_typeof(out.sexp), libr::EXPRSXP as u32);
+                    assert_eq!(r_length(out.sexp), 0);
+                }
+            );
 
-                    let call = libr::VECTOR_ELT(out, 0);
+            // Complete
+            assert_match!(
+                parse_status(&ParseInput::Text("force(42)")),
+                Ok(ParseResult::Complete(out)) => {
+                    assert_eq!(r_typeof(out.sexp), libr::EXPRSXP as u32);
+
+                    let call = libr::VECTOR_ELT(out.sexp, 0);
                     assert_eq!(r_typeof(call), libr::LANGSXP as u32);
                     assert_eq!(libr::Rf_xlength(call), 2);
                     assert_eq!(libr::CAR(call), r_symbol!("force"));
@@ -131,21 +178,21 @@ mod tests {
                 }
             );
 
-            // incomplete
+            // Incomplete
             assert_match!(
-                parse_status("force(42"),
+                parse_status(&ParseInput::Text("force(42")),
                 Ok(ParseResult::Incomplete)
             );
 
-            // error
+            // Error
             assert_match!(
-                parse_status("42 + _"),
+                parse_status(&ParseInput::Text("42 + _")),
                 Err(_) => {}
             );
 
             // "normal" syntax error
             assert_match!(
-                parse_status("1+1\n*42"),
+                parse_status(&ParseInput::Text("1+1\n*42")),
                 Err(crate::Error::ParseSyntaxError {message, line}) => {
                     assert!(message.contains("unexpected"));
                     assert_eq!(line, 2);
@@ -154,20 +201,36 @@ mod tests {
 
             // CRLF in the code string, like a file with CRLF line endings
             assert_match!(
-                parse_status("x<-\r\n1\r\npi"),
+                parse_status(&ParseInput::Text("x<-\r\n1\r\npi")),
                 Ok(ParseResult::Complete(out)) => {
-                    assert_eq!(r_typeof(out), libr::EXPRSXP as u32);
-                    assert_eq!(r_stringify(out, "").unwrap(), "expression(x <- 1, pi)");
+                    assert_eq!(r_typeof(out.sexp), libr::EXPRSXP as u32);
+                    assert_eq!(r_stringify(out.sexp, "").unwrap(), "expression(x <- 1, pi)");
                 }
             );
 
             // CRLF inside a string literal in the code
             assert_match!(
-                parse_status(r#"'a\r\nb'"#),
+                parse_status(&ParseInput::Text(r#"'a\r\nb'"#)),
                 Ok(ParseResult::Complete(out)) => {
-                    assert_eq!(r_typeof(out), libr::EXPRSXP as u32);
-                    assert_eq!(r_stringify(out, "").unwrap(), r#"expression("a\r\nb")"#);
+                    assert_eq!(r_typeof(out.sexp), libr::EXPRSXP as u32);
+                    assert_eq!(r_stringify(out.sexp, "").unwrap(), r#"expression("a\r\nb")"#);
                 }
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_input_as_string() {
+        r_test! {
+            assert_eq!(
+                parse_input_as_string(&ParseInput::Text("foo\nbar")).unwrap(),
+                "foo\nbar"
+            );
+
+            let input = srcref::new_srcfile_virtual("foo\nbar").unwrap();
+            assert_eq!(
+                parse_input_as_string(&ParseInput::SrcFile(input)).unwrap(),
+                "foo\nbar"
             );
         }
     }

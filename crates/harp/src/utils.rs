@@ -138,8 +138,8 @@ pub fn r_assert_type(object: SEXP, expected: &[u32]) -> Result<u32> {
     Ok(actual)
 }
 
-pub unsafe fn r_assert_capacity(object: SEXP, required: usize) -> Result<usize> {
-    let actual = Rf_xlength(object) as usize;
+pub fn r_assert_capacity(object: SEXP, required: usize) -> Result<usize> {
+    let actual = unsafe { Rf_xlength(object) } as usize;
     if actual < required {
         return Err(Error::UnexpectedLength(actual, required));
     }

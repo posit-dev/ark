@@ -115,7 +115,7 @@ impl Shell {
         &self,
         req: &IsCompleteRequest,
     ) -> Result<IsCompleteReply, Exception> {
-        match harp::parse_status(req.code.as_str()) {
+        match harp::parse_status(&harp::ParseInput::Text(req.code.as_str())) {
             Ok(ParseResult::Complete(_)) => Ok(IsCompleteReply {
                 status: IsComplete::Complete,
                 indent: String::from(""),
