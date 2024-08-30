@@ -44,51 +44,67 @@ pub async fn handle_columns_profiles_requests(
     params: ProcessColumnsProfilesParams,
     comm: CommSocket,
 ) -> anyhow::Result<()> {
-    let event = process_columns_profiles_requests(params).await?;
+    let callback_id = params.request.callback_id;
+    let n_profiles = params.request.profiles.len();
+
+    let profiles = process_columns_profiles_requests(
+        params.table,
+        params.indices,
+        params.kind,
+        params.request.profiles,
+        params.request.format_options,
+    )
+    .await
+    .unwrap_or_else(|e| {
+        // In case something goes wrong whhile computing the profiles, we send
+        // an empty response. Ideally, we would have a way to comunicate an that
+        // an error happened but it's not implemented yet.
+        log::error!("Error while producing profiles: {e}");
+        std::iter::repeat(empty_column_profile_result())
+            .take(n_profiles)
+            .collect()
+    });
+
+    let event = DataExplorerFrontendEvent::ReturnColumnProfiles(ReturnColumnProfilesParams {
+        callback_id,
+        profiles,
+    });
+
     let json_event = serde_json::to_value(event)?;
     comm.outgoing_tx.send(CommMsg::Data(json_event))?;
     Ok(())
 }
 
 async fn process_columns_profiles_requests(
-    params: ProcessColumnsProfilesParams,
-) -> anyhow::Result<DataExplorerFrontendEvent> {
-    let GetColumnProfilesParams {
-        callback_id,
-        profiles,
-        format_options,
-    } = params.request;
-    let span = tracing::trace_span!("get_profile", ns = callback_id);
-
+    table: Table,
+    indices: Option<Vec<i32>>,
+    kind: TableKind,
+    profiles: Vec<ColumnProfileRequest>,
+    format_options: FormatOptions,
+) -> anyhow::Result<Vec<ColumnProfileResult>> {
     // This is an R thread, so we can actually get the data frame.
     // If it fails we quickly return an empty result set and end the task.
-    let data = params.table.get()?;
+    // This might happen if the task was spawned but the data explorer windows
+    // was later closed, before the task actually executed.
+    let data = table.get()?;
     let mut results: Vec<ColumnProfileResult> = Vec::with_capacity(profiles.len());
 
     for profile in profiles.into_iter() {
-        span.in_scope(|| async {
-            results.push(
-                profile_column(
-                    data.clone(),
-                    params.indices.clone(),
-                    profile,
-                    &format_options,
-                    params.kind,
-                )
-                .await,
-            );
-        })
-        .await;
+        results.push(
+            profile_column(
+                data.clone(),
+                indices.clone(),
+                profile,
+                &format_options,
+                kind,
+            )
+            .await,
+        );
         // Yield to the R event loop
         tokio::task::yield_now().await;
     }
 
-    let event = DataExplorerFrontendEvent::ReturnColumnProfiles(ReturnColumnProfilesParams {
-        callback_id,
-        profiles: results,
-    });
-
-    Ok(event)
+    Ok(results)
 }
 
 // This function does not return a Result because it must handle still handle other profile types
@@ -163,6 +179,7 @@ async fn profile_column(
                     _ => {
                         // This is technically unreachable!(), but not worth panicking if
                         // this happens.
+                        log::warn!("Unreachable");
                     },
                 }
             },

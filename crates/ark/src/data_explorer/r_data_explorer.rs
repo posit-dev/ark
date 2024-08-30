@@ -73,6 +73,7 @@ use stdext::local;
 use stdext::result::ResultOrLog;
 use stdext::spawn;
 use stdext::unwrap;
+use tracing::Instrument;
 use uuid::Uuid;
 
 use crate::data_explorer::column_profile::handle_columns_profiles_requests;
@@ -181,12 +182,11 @@ impl RDataExplorer {
 
         // To be able to `Send` the `data` to the thread to be owned by the data
         // viewer, it needs to be made thread safe
-        let table = Table::new(id.clone(), data);
-        let shape = r_task(|| Self::r_get_shape(table.get()?));
+        let table = Table::new(RThreadSafe::new(data));
 
         spawn!(format!("ark-data-viewer-{}-{}", title, id), move || {
             // Get the initial set of column schemas for the data object
-            //let shape = r_task(|| Self::r_get_shape(&data));
+            let shape = r_task(|| Self::r_get_shape(table.get()?));
             match shape {
                 // shape the columns; start the data viewer
                 Ok(shape) => {
@@ -338,9 +338,9 @@ impl RDataExplorer {
                 // This is AFAICT impossible because the table is only deleted when the data explorer instance is
                 // deleted and this method belongs to that data explorer instance.
                 log::error!("Old table has been deleted? This is unexpected, but we'll update the data explorer table.");
-                // It's `unsafe` because we RObject::new calls protect, and it shouldn't
+                // It's `unsafe` because RObject::new calls protect, and it shouldn't
                 // be called outside of the R main thread.
-                self.table.set(unsafe { RObject::new(new) });
+                self.table.set(RThreadSafe::new(unsafe { RObject::new(new) }));
                 return true;
             });
 
@@ -348,7 +348,8 @@ impl RDataExplorer {
                 false
             } else {
                 // Safety is same as above. We guarantee this is the R main thread.
-                self.table.set(unsafe { RObject::new(new) });
+                self.table
+                    .set(RThreadSafe::new(unsafe { RObject::new(new) }));
                 true
             }
         });
@@ -622,9 +623,10 @@ impl RDataExplorer {
         };
         let comm = self.comm.clone();
         r_task::spawn_idle(|| async move {
-            unwrap!(handle_columns_profiles_requests(params, comm).await, Err(err) => {
-                log::error!("Could not handle get_column_profile_request (callback_id: {id}): {err}");
-            });
+            handle_columns_profiles_requests(params, comm)
+                .instrument(tracing::info_span!("get_columns_profile", ns = id))
+                .await
+                .or_log_error("Unable to handle get_columns_profile");
         });
     }
 
