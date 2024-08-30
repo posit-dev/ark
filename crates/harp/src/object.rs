@@ -266,8 +266,12 @@ pub fn r_alloc_character(size: R_xlen_t) -> SEXP {
 }
 
 pub fn alloc_list(size: usize) -> crate::Result<SEXP> {
+    alloc_vector(VECSXP, size)
+}
+
+fn alloc_vector(kind: libr::SEXPTYPE, size: usize) -> crate::Result<SEXP> {
     let size = as_r_ssize(size)?;
-    let res = crate::try_catch(|| unsafe { Rf_allocVector(VECSXP, size) });
+    let res = crate::try_catch(|| unsafe { Rf_allocVector(kind, size) });
 
     match res {
         Ok(_) => res,
