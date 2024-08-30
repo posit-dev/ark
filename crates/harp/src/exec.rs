@@ -16,20 +16,11 @@ use crate::call::RCall;
 use crate::environment::R_ENVS;
 use crate::error::Error;
 use crate::error::Result;
-use crate::line_ending::convert_line_endings;
-use crate::line_ending::LineEnding;
 use crate::modules::HARP_ENV;
 use crate::object::r_null_or_try_into;
 use crate::object::RObject;
-use crate::protect::RProtect;
-use crate::r_string;
 use crate::r_symbol;
 use crate::utils::r_stringify;
-
-pub enum ParseResult {
-    Complete(SEXP),
-    Incomplete,
-}
 
 pub struct RFunction {
     pub call: RCall,
@@ -384,124 +375,6 @@ pub fn r_peek_error_buffer() -> String {
     }
 }
 
-#[allow(non_upper_case_globals)]
-pub unsafe fn r_parse_vector(code: &str) -> Result<ParseResult> {
-    let mut ps: ParseStatus = ParseStatus_PARSE_NULL;
-    let mut protect = RProtect::new();
-    let r_code = r_string!(convert_line_endings(code, LineEnding::Posix), &mut protect);
-
-    let result: RObject = try_catch(|| R_ParseVector(r_code, -1, &mut ps, R_NilValue).into())?;
-
-    match ps {
-        ParseStatus_PARSE_OK => Ok(ParseResult::Complete(result.sexp)),
-        ParseStatus_PARSE_INCOMPLETE => Ok(ParseResult::Incomplete),
-        ParseStatus_PARSE_ERROR => Err(Error::ParseSyntaxError {
-            message: CStr::from_ptr(libr::get(R_ParseErrorMsg).as_ptr())
-                .to_string_lossy()
-                .to_string(),
-            line: libr::get(R_ParseError) as i32,
-        }),
-        _ => {
-            // should not get here
-            Err(Error::ParseError {
-                code: code.to_string(),
-                message: String::from("Unknown parse error"),
-            })
-        },
-    }
-}
-
-pub fn r_source(file: &str) -> crate::Result<()> {
-    r_source_in(file, R_ENVS.base)
-}
-
-pub fn r_source_in(file: &str, env: SEXP) -> crate::Result<()> {
-    RFunction::new("base", "sys.source")
-        .param("file", file)
-        .param("envir", env)
-        .call()?;
-
-    Ok(())
-}
-
-pub fn r_source_str(code: &str) -> crate::Result<()> {
-    r_source_str_in(code, R_ENVS.base)
-}
-
-pub fn r_source_str_in(code: &str, env: impl Into<SEXP>) -> crate::Result<()> {
-    let exprs = r_parse_exprs(code)?;
-    harp::exec::r_source_exprs_in(exprs, env)?;
-    Ok(())
-}
-
-pub fn r_source_exprs(exprs: impl Into<SEXP>) -> crate::Result<()> {
-    r_source_exprs_in(exprs, R_ENVS.base)
-}
-
-pub fn r_source_exprs_in(exprs: impl Into<SEXP>, env: impl Into<SEXP>) -> crate::Result<()> {
-    let exprs = exprs.into();
-    let env = env.into();
-
-    // `exprs` is an EXPRSXP and doesn't need to be quoted when passed as
-    // literal argument. Only the R-level `eval()` function evaluates expression
-    // vectors.
-    RFunction::new("base", "source")
-        .param("exprs", exprs)
-        .param("local", env)
-        .call()?;
-
-    Ok(())
-}
-
-/// Returns an EXPRSXP vector
-pub fn r_parse_exprs(code: &str) -> Result<RObject> {
-    match unsafe { r_parse_vector(code)? } {
-        ParseResult::Complete(x) => {
-            return Ok(RObject::from(x));
-        },
-        ParseResult::Incomplete => {
-            return Err(Error::ParseError {
-                code: code.to_string(),
-                message: String::from("Incomplete code"),
-            });
-        },
-    };
-}
-
-/// This uses the R-level function `parse()` to create the srcrefs
-pub fn r_parse_exprs_with_srcrefs(code: &str) -> Result<RObject> {
-    unsafe {
-        let mut protect = RProtect::new();
-
-        // Because `parse(text =)` doesn't allow `\r\n` even on Windows
-        let code = convert_line_endings(code, LineEnding::Posix);
-        let code = r_string!(code, protect);
-
-        RFunction::new("base", "parse")
-            .param("text", code)
-            .param("keep.source", true)
-            .call()
-    }
-}
-
-/// Returns a single expression
-pub fn r_parse(code: &str) -> Result<RObject> {
-    unsafe {
-        let exprs = r_parse_exprs(code)?;
-
-        let n = Rf_xlength(*exprs);
-        if n != 1 {
-            return Err(Error::ParseError {
-                code: code.to_string(),
-                message: String::from("Expected a single expression, got {n}"),
-            });
-        }
-
-        let expr = VECTOR_ELT(*exprs, 0);
-        Ok(expr.into())
-    }
-}
-
 // TODO: Tasks also need a timeout. This could be implemented with R
 // interrupts but would require to unsafely jump over the Rust stack,
 // unless we wrapped all R API functions to return an Option.
@@ -750,67 +623,6 @@ mod tests {
                 assert!(message.contains("Unexpected longjump"));
                 assert!(message.contains("my message"));
             });
-        }
-    }
-
-    #[test]
-    fn test_parse_vector() {
-        r_test! {
-            // complete
-            assert_match!(
-                r_parse_vector("force(42)"),
-                Ok(ParseResult::Complete(out)) => {
-                    assert_eq!(r_typeof(out), EXPRSXP as u32);
-
-                    let call = VECTOR_ELT(out, 0);
-                    assert_eq!(r_typeof(call), LANGSXP as u32);
-                    assert_eq!(Rf_xlength(call), 2);
-                    assert_eq!(CAR(call), r_symbol!("force"));
-
-                    let arg = CADR(call);
-                    assert_eq!(r_typeof(arg), REALSXP as u32);
-                    assert_eq!(*REAL(arg), 42.0);
-                }
-            );
-
-            // incomplete
-            assert_match!(
-                r_parse_vector("force(42"),
-                Ok(ParseResult::Incomplete)
-            );
-
-            // error
-            assert_match!(
-                r_parse_vector("42 + _"),
-                Err(_) => {}
-            );
-
-            // "normal" syntax error
-            assert_match!(
-                r_parse_vector("1+1\n*42"),
-                Err(Error::ParseSyntaxError {message, line}) => {
-                    assert!(message.contains("unexpected"));
-                    assert_eq!(line, 2);
-                }
-            );
-
-            // CRLF in the code string, like a file with CRLF line endings
-            assert_match!(
-                r_parse_vector("x<-\r\n1\r\npi"),
-                Ok(ParseResult::Complete(out)) => {
-                    assert_eq!(r_typeof(out), EXPRSXP as u32);
-                    assert_eq!(r_stringify(out, "").unwrap(), "expression(x <- 1, pi)");
-                }
-            );
-
-            // CRLF inside a string literal in the code
-            assert_match!(
-                r_parse_vector(r#"'a\r\nb'"#),
-                Ok(ParseResult::Complete(out)) => {
-                    assert_eq!(r_typeof(out), EXPRSXP as u32);
-                    assert_eq!(r_stringify(out, "").unwrap(), r#"expression("a\r\nb")"#);
-                }
-            );
         }
     }
 

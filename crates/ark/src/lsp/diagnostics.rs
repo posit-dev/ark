@@ -979,7 +979,6 @@ fn check_symbol_in_scope(
 
 #[cfg(test)]
 mod tests {
-    use harp::eval::r_parse_eval;
     use harp::eval::RParseEvalOptions;
     use once_cell::sync::Lazy;
     use tower_lsp::lsp_types::Position;
@@ -1084,7 +1083,7 @@ mod tests {
             };
 
             // Put the LHS in scope
-            r_parse_eval("x <- NULL", options.clone()).unwrap();
+            harp::parse_eval("x <- NULL", options.clone()).unwrap();
             let state = current_state();
 
             let text = "x$foo";
@@ -1098,7 +1097,7 @@ mod tests {
             assert!(diagnostics.is_empty());
 
             // Clean up
-            r_parse_eval("remove(x)", options.clone()).unwrap();
+            harp::parse_eval("remove(x)", options.clone()).unwrap();
         })
     }
 

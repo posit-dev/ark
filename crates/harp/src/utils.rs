@@ -17,10 +17,8 @@ use regex::Regex;
 use crate::call::r_expr_quote;
 use crate::call::RArgument;
 use crate::environment::Environment;
-use crate::environment::R_ENVS;
 use crate::error::Error;
 use crate::error::Result;
-use crate::eval::r_parse_eval0;
 use crate::exec::RFunction;
 use crate::exec::RFunctionExt;
 use crate::modules::HARP_ENV;
@@ -704,11 +702,11 @@ pub fn r_normalize_path(x: RObject) -> anyhow::Result<String> {
 pub fn save_rds(x: SEXP, path: &str) {
     let path = RObject::from(path);
 
-    let env = Environment::new(r_parse_eval0("new.env()", R_ENVS.base).unwrap());
+    let env = Environment::new(harp::parse_eval_base("new.env()").unwrap());
     env.bind("x".into(), x);
     env.bind("path".into(), path);
 
-    let res = r_parse_eval0("base::saveRDS(x, path)", env);
+    let res = harp::parse_eval0("base::saveRDS(x, path)", env);
 
     // This is meant for internal use so report errors loudly
     res.unwrap();
@@ -731,13 +729,13 @@ pub fn push_rds(x: SEXP, path: &str, context: &str) {
     };
     let context = RObject::from(context);
 
-    let env = Environment::new(r_parse_eval0("new.env()", R_ENVS.global).unwrap());
+    let env = Environment::new(harp::parse_eval_base("new.env()").unwrap());
 
     env.bind("x".into(), x);
     env.bind("path".into(), path);
     env.bind("context".into(), context);
 
-    let res = r_parse_eval0(".ps.internal(push_rds(x, path, context))", env);
+    let res = harp::parse_eval0(".ps.internal(push_rds(x, path, context))", env);
 
     // This is meant for internal use so report errors loudly
     res.unwrap();
@@ -767,7 +765,6 @@ pub fn r_format_vec(x: SEXP) -> Result<SEXP> {
 
 #[cfg(test)]
 mod tests {
-    use harp::eval::r_parse_eval0;
     use libr::STRING_ELT;
 
     use crate::environment::R_ENVS;
@@ -798,7 +795,7 @@ mod tests {
                 x
             ";
 
-            let x = r_parse_eval0(code, env).unwrap();
+            let x = harp::parse_eval0(code, env).unwrap();
             let x = unsafe { STRING_ELT(x.sexp, 0) };
             let x = r_str_to_owned_utf8_unchecked(x);
 

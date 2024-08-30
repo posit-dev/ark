@@ -277,7 +277,6 @@ mod tests {
     use libr::Rf_defineVar;
 
     use super::*;
-    use crate::eval::r_parse_eval0;
     use crate::exec::RFunction;
     use crate::exec::RFunctionExt;
     use crate::object::r_length;
@@ -322,8 +321,7 @@ mod tests {
     #[test]
     fn test_sorted_environment_names() {
         r_test(|| {
-            let env =
-                r_parse_eval0("as.environment(list(c = 1, b = 2, a = 3))", R_ENVS.global).unwrap();
+            let env = harp::parse_eval_global("as.environment(list(c = 1, b = 2, a = 3))").unwrap();
             let names = Environment::new(env.clone()).names();
             assert_eq!(names, vec!["a", "b", "c"]);
 
@@ -342,8 +340,8 @@ mod tests {
         // which could cause issues if their len() didn't match.
         // https://github.com/posit-dev/positron/issues/3229
         r_test(|| {
-            let test_env: RObject = r_parse_eval0("new.env()", R_ENVS.global).unwrap();
-            let env = r_parse_eval0(
+            let test_env: RObject = harp::parse_eval_global("new.env()").unwrap();
+            let env = harp::parse_eval0(
                 r#"
             x <- structure(new.env(), class = "test_env")
             names.test_env <- function(x) letters[1:3]
@@ -361,13 +359,13 @@ mod tests {
             assert_eq!(env.length(), 0);
 
             // Make sure that it would actually dispatch to the s3 methods we implemented
-            let names: Vec<String> = r_parse_eval0("names(x)", test_env.sexp)
+            let names: Vec<String> = harp::parse_eval0("names(x)", test_env.sexp)
                 .unwrap()
                 .try_into()
                 .unwrap();
             assert_eq!(names.len(), 3);
 
-            let len: i32 = r_parse_eval0("length(x)", test_env.sexp)
+            let len: i32 = harp::parse_eval0("length(x)", test_env.sexp)
                 .unwrap()
                 .try_into()
                 .unwrap();
@@ -379,7 +377,7 @@ mod tests {
     fn test_filtered_env() {
         r_test(|| {
             let env =
-                r_parse_eval0("as.environment(list(.a = 1, b = 2, c = 3))", R_ENVS.global).unwrap();
+                harp::parse_eval_global("as.environment(list(.a = 1, b = 2, c = 3))").unwrap();
             let env = Environment::new_filtered(env, EnvironmentFilter::ExcludeHidden);
             assert_eq!(env.length(), 2);
             assert_eq!(env.names(), vec!["b", "c"]);

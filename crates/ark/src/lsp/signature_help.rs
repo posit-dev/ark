@@ -5,7 +5,6 @@
 //
 //
 
-use harp::eval::r_parse_eval;
 use harp::eval::RParseEvalOptions;
 use harp::object::*;
 use harp::r_null;
@@ -171,7 +170,7 @@ pub(crate) unsafe fn r_signature_help(
     // Try to figure out what R object it's associated with.
     let code = context.document.contents.node_slice(&callee)?.to_string();
 
-    let object = r_parse_eval(code.as_str(), RParseEvalOptions {
+    let object = harp::parse_eval(code.as_str(), RParseEvalOptions {
         forbid_function_calls: true,
         ..Default::default()
     });
@@ -513,8 +512,6 @@ fn call_label(x: SEXP) -> String {
 #[cfg(test)]
 mod tests {
     use harp::call::RCall;
-    use harp::environment::R_ENVS;
-    use harp::eval::r_parse_eval0;
     use harp::object::*;
     use harp::r_char;
     use harp::r_null;
@@ -584,7 +581,7 @@ fn <- function(
   lst = list(1, 2)
 ) { }
 "#;
-            r_parse_eval0(fun, R_ENVS.global).unwrap();
+            harp::parse_eval_global(fun).unwrap();
 
             let (text, point) = point_from_cursor("fn(@)");
             let document = Document::new(&text, None);
@@ -602,7 +599,7 @@ fn <- function(
             );
 
             // Clean up
-            r_parse_eval0("rm(fn)", R_ENVS.global).unwrap();
+            harp::parse_eval_global("rm(fn)").unwrap();
         })
     }
 

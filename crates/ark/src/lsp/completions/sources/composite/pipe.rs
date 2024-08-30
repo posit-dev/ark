@@ -7,7 +7,6 @@
 
 use anyhow::Result;
 use harp::error::Error;
-use harp::eval::r_parse_eval;
 use harp::eval::RParseEvalOptions;
 use harp::object::RObject;
 use stdext::local;
@@ -100,7 +99,7 @@ fn eval_pipe_root(name: &str) -> Option<RObject> {
         ..Default::default()
     };
 
-    let value = r_parse_eval(name, options);
+    let value = harp::parse_eval(name, options);
 
     // If we get an `UnsafeEvaluationError` here from setting
     // `forbid_function_calls`, we don't want that to prevent
@@ -190,7 +189,6 @@ fn is_pipe_operator(context: &DocumentContext, node: &Node) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use harp::eval::r_parse_eval;
     use harp::eval::RParseEvalOptions;
     use tree_sitter::Point;
 
@@ -242,14 +240,14 @@ mod tests {
             assert!(root.object.is_none());
 
             // Set up a real `x` and try again
-            r_parse_eval("x <- data.frame(a = 1)", options.clone()).unwrap();
+            harp::parse_eval("x <- data.frame(a = 1)", options.clone()).unwrap();
 
             let root = find_pipe_root(&context).unwrap();
             assert_eq!(root.name, "x".to_string());
             assert!(root.object.is_some());
 
             // Clean up
-            r_parse_eval("remove(x)", options.clone()).unwrap();
+            harp::parse_eval("remove(x)", options.clone()).unwrap();
         });
     }
 }

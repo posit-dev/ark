@@ -14,7 +14,6 @@ use libc::c_double;
 use libr::*;
 
 use crate::environment::R_ENVS;
-use crate::eval::r_parse_eval0;
 use crate::list_get;
 use crate::object::r_chr_get;
 use crate::object::r_length;
@@ -31,17 +30,16 @@ use crate::r_typeof;
 pub fn r_size(x: SEXP) -> usize {
     let mut seen: HashSet<SEXP> = HashSet::new();
 
-    let sizeof_node: f64 = r_parse_eval0(
+    let sizeof_node: f64 = harp::parse_eval0(
         "as.vector(utils::object.size(quote(expr = )))",
         R_ENVS.global,
     )
     .and_then(|x| x.try_into())
     .unwrap_or(0.);
 
-    let sizeof_vector: f64 =
-        r_parse_eval0("as.vector(utils::object.size(logical()))", R_ENVS.global)
-            .and_then(|x| x.try_into())
-            .unwrap_or(0.);
+    let sizeof_vector: f64 = harp::parse_eval_global("as.vector(utils::object.size(logical()))")
+        .and_then(|x| x.try_into())
+        .unwrap_or(0.);
 
     obj_size_tree(
         x,
@@ -396,13 +394,11 @@ fn v_size(n: usize, element_size: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use crate::environment::R_ENVS;
-    use crate::eval::r_parse_eval0;
     use crate::r_test;
     use crate::size::r_size;
 
     fn object_size(code: &str) -> usize {
-        let object = r_parse_eval0(code, R_ENVS.global).unwrap();
+        let object = harp::parse_eval_global(code).unwrap();
         r_size(object.sexp)
     }
 
@@ -412,13 +408,11 @@ mod tests {
     }
 
     fn expect_same(code: &str) {
-        let size_expected: f64 = r_parse_eval0(
-            format!("utils::object.size({code})").as_str(),
-            R_ENVS.global,
-        )
-        .unwrap()
-        .try_into()
-        .unwrap();
+        let size_expected: f64 =
+            harp::parse_eval_global(format!("utils::object.size({code})").as_str())
+                .unwrap()
+                .try_into()
+                .unwrap();
 
         expect_size(code, size_expected as usize);
     }

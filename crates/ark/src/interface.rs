@@ -63,7 +63,6 @@ use harp::environment::R_ENVS;
 use harp::exec::r_check_stack;
 use harp::exec::r_peek_error_buffer;
 use harp::exec::r_sandbox;
-use harp::exec::r_source;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::library::RLibraries;
@@ -235,7 +234,8 @@ pub fn start_r(
 
         // Optionally run a frontend specified R startup script (after harp init)
         if let Some(file) = &startup_file {
-            r_source(file).or_log_error(&format!("Failed to source startup file '{file}' due to"));
+            harp::source(file)
+                .or_log_error(&format!("Failed to source startup file '{file}' due to"));
         }
 
         // Initialize support functions (after routine registration)
