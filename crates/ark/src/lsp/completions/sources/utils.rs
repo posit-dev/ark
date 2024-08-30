@@ -256,8 +256,7 @@ fn completions_from_object_names_impl(
 
 #[cfg(test)]
 mod tests {
-    use harp::environment::R_ENVS;
-    use harp::eval::r_parse_eval0;
+    use harp::eval::parse_eval_global;
     use tree_sitter::Point;
 
     use crate::lsp::completions::sources::utils::call_node_position_type;
@@ -424,8 +423,8 @@ mod tests {
     fn test_completions_from_evaluated_object_names() {
         r_test(|| {
             // Vector with names
-            r_parse_eval0("x <- 1:2", R_ENVS.global).unwrap();
-            r_parse_eval0("names(x) <- c('a', 'b')", R_ENVS.global).unwrap();
+            parse_eval_global("x <- 1:2").unwrap();
+            parse_eval_global("names(x) <- c('a', 'b')").unwrap();
 
             let completions = completions_from_evaluated_object_names("x", false)
                 .unwrap()
@@ -434,10 +433,10 @@ mod tests {
             assert_eq!(completions.get(0).unwrap().label, String::from("a"));
             assert_eq!(completions.get(1).unwrap().label, String::from("b"));
 
-            r_parse_eval0("remove(x)", R_ENVS.global).unwrap();
+            parse_eval_global("remove(x)").unwrap();
 
             // Data frame
-            r_parse_eval0("x <- data.frame(a = 1, b = 2, c = 3)", R_ENVS.global).unwrap();
+            parse_eval_global("x <- data.frame(a = 1, b = 2, c = 3)").unwrap();
 
             let completions = completions_from_evaluated_object_names("x", false)
                 .unwrap()
@@ -447,11 +446,11 @@ mod tests {
             assert_eq!(completions.get(1).unwrap().label, String::from("b"));
             assert_eq!(completions.get(2).unwrap().label, String::from("c"));
 
-            r_parse_eval0("remove(x)", R_ENVS.global).unwrap();
+            parse_eval_global("remove(x)").unwrap();
 
             // 1D array with names
-            r_parse_eval0("x <- array(1:2)", R_ENVS.global).unwrap();
-            r_parse_eval0("names(x) <- c('a', 'b')", R_ENVS.global).unwrap();
+            parse_eval_global("x <- array(1:2)").unwrap();
+            parse_eval_global("names(x) <- c('a', 'b')").unwrap();
 
             let completions = completions_from_evaluated_object_names("x", false)
                 .unwrap()
@@ -460,12 +459,12 @@ mod tests {
             assert_eq!(completions.get(0).unwrap().label, String::from("a"));
             assert_eq!(completions.get(1).unwrap().label, String::from("b"));
 
-            r_parse_eval0("remove(x)", R_ENVS.global).unwrap();
+            parse_eval_global("remove(x)").unwrap();
 
             // Matrix with column names
-            r_parse_eval0("x <- array(1, dim = c(1, 1))", R_ENVS.global).unwrap();
-            r_parse_eval0("rownames(x) <- 'a'", R_ENVS.global).unwrap();
-            r_parse_eval0("colnames(x) <- 'b'", R_ENVS.global).unwrap();
+            parse_eval_global("x <- array(1, dim = c(1, 1))").unwrap();
+            parse_eval_global("rownames(x) <- 'a'").unwrap();
+            parse_eval_global("colnames(x) <- 'b'").unwrap();
 
             let completions = completions_from_evaluated_object_names("x", false)
                 .unwrap()
@@ -473,22 +472,22 @@ mod tests {
             assert_eq!(completions.len(), 1);
             assert_eq!(completions.get(0).unwrap().label, String::from("b"));
 
-            r_parse_eval0("remove(x)", R_ENVS.global).unwrap();
+            parse_eval_global("remove(x)").unwrap();
 
             // 3D array with column names
             // We currently decide not to return any names here. It is typically quite
             // ambiguous which axis's names you'd want when working with >=3D arrays.
             // But we did find an object, so we return an empty vector.
-            r_parse_eval0("x <- array(1, dim = c(1, 1, 1))", R_ENVS.global).unwrap();
-            r_parse_eval0("rownames(x) <- 'a'", R_ENVS.global).unwrap();
-            r_parse_eval0("colnames(x) <- 'b'", R_ENVS.global).unwrap();
+            parse_eval_global("x <- array(1, dim = c(1, 1, 1))").unwrap();
+            parse_eval_global("rownames(x) <- 'a'").unwrap();
+            parse_eval_global("colnames(x) <- 'b'").unwrap();
 
             let completions = completions_from_evaluated_object_names("x", false)
                 .unwrap()
                 .unwrap();
             assert!(completions.is_empty());
 
-            r_parse_eval0("remove(x)", R_ENVS.global).unwrap();
+            parse_eval_global("remove(x)").unwrap();
         })
     }
 }

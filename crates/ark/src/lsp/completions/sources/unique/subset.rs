@@ -158,8 +158,7 @@ fn node_is_c_call(x: &Node, contents: &Rope) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use harp::eval::r_parse_eval;
-    use harp::eval::RParseEvalOptions;
+    use harp::eval::parse_eval_global;
 
     use crate::lsp::completions::sources::unique::subset::completions_from_string_subset;
     use crate::lsp::document_context::DocumentContext;
@@ -170,13 +169,8 @@ mod tests {
     #[test]
     fn test_string_subset_completions() {
         r_test(|| {
-            let options = RParseEvalOptions {
-                forbid_function_calls: false,
-                ..Default::default()
-            };
-
             // Set up a list with names
-            r_parse_eval("foo <- list(b = 1, a = 2)", options.clone()).unwrap();
+            parse_eval_global("foo <- list(b = 1, a = 2)").unwrap();
 
             // Inside top level `""`
             let (text, point) = point_from_cursor(r#"foo["@"]"#);
@@ -249,21 +243,16 @@ mod tests {
             assert!(completions.is_empty());
 
             // Clean up
-            r_parse_eval("remove(foo)", options.clone()).unwrap();
+            parse_eval_global("remove(foo)").unwrap();
         })
     }
 
     #[test]
     fn test_string_subset_completions_on_matrix() {
         r_test(|| {
-            let options = RParseEvalOptions {
-                forbid_function_calls: false,
-                ..Default::default()
-            };
-
             // Set up a list with names
-            r_parse_eval("foo <- array(1, dim = c(2, 2))", options.clone()).unwrap();
-            r_parse_eval("colnames(foo) <- c('a', 'b')", options.clone()).unwrap();
+            parse_eval_global("foo <- array(1, dim = c(2, 2))").unwrap();
+            parse_eval_global("colnames(foo) <- c('a', 'b')").unwrap();
 
             let (text, point) = point_from_cursor(r#"foo[, "@"]"#);
             let document = Document::new(text.as_str(), None);
@@ -275,7 +264,7 @@ mod tests {
             assert_eq!(completions.get(1).unwrap().label, "b".to_string());
 
             // Clean up
-            r_parse_eval("remove(foo)", options.clone()).unwrap();
+            parse_eval_global("remove(foo)").unwrap();
         })
     }
 }
