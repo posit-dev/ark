@@ -21,7 +21,6 @@ jobs:
             GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
         strategy:
-            max-parallel: 1
             matrix:
                 arch: [arm64, x64]
                 flavor: [debug, release]
