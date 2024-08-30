@@ -278,7 +278,7 @@ pub fn alloc_list(size: usize) -> crate::Result<SEXP> {
 }
 
 pub fn as_r_ssize(size: usize) -> crate::Result<R_xlen_t> {
-    if size > unsafe { harp::as_error(libr::R_XLEN_T_MAX.try_into())? } {
+    if size > unsafe { harp::as_result(libr::R_XLEN_T_MAX.try_into())? } {
         return Err(crate::anyhow!("`size` is larger than `R_XLEN_T_MAX`"));
     }
 

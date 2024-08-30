@@ -224,7 +224,7 @@ macro_rules! anyhow {
     }}
 }
 
-pub fn as_error<T, E>(res: std::result::Result<T, E>) -> crate::Result<T>
+pub fn as_result<T, E>(res: std::result::Result<T, E>) -> crate::Result<T>
 where
     E: std::fmt::Debug,
 {
