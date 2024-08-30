@@ -21,8 +21,10 @@ use crate::lsp::completions::sources::utils::set_sort_text_by_words_first;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::traits::rope::RopeExt;
 
-pub(super) fn completions_from_file_path(context: &DocumentContext) -> Result<Vec<CompletionItem>> {
-    log::info!("completions_from_file_path()");
+pub(super) fn completions_from_string_file_path(
+    context: &DocumentContext,
+) -> Result<Vec<CompletionItem>> {
+    log::info!("completions_from_string_file_path()");
 
     let mut completions: Vec<CompletionItem> = vec![];
 

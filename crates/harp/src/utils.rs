@@ -193,8 +193,17 @@ pub fn r_is_simple_vector(value: SEXP) -> bool {
     }
 }
 
-pub fn r_is_matrix(value: SEXP) -> bool {
-    unsafe { Rf_isMatrix(value) == Rboolean_TRUE }
+/// Is `object` a matrix?
+///
+/// Notably returns `false` for 1D arrays and >=3D arrays.
+pub fn r_is_matrix(object: SEXP) -> bool {
+    let dim = r_dim(object);
+
+    if dim == r_null() {
+        return false;
+    }
+
+    r_length(dim) == 2
 }
 
 pub fn r_classes(value: SEXP) -> Option<CharacterVector> {

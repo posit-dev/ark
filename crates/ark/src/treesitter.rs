@@ -302,10 +302,14 @@ pub trait NodeTypeExt: Sized {
     fn is_identifier_or_string(&self) -> bool;
     fn is_keyword(&self) -> bool;
     fn is_call(&self) -> bool;
+    fn is_subset(&self) -> bool;
+    fn is_subset2(&self) -> bool;
     fn is_comment(&self) -> bool;
     fn is_braced_expression(&self) -> bool;
     fn is_function_definition(&self) -> bool;
     fn is_if_statement(&self) -> bool;
+    fn is_argument(&self) -> bool;
+    fn is_arguments(&self) -> bool;
     fn is_namespace_operator(&self) -> bool;
     fn is_namespace_internal_operator(&self) -> bool;
     fn is_unary_operator(&self) -> bool;
@@ -353,6 +357,14 @@ impl NodeTypeExt for Node<'_> {
         self.node_type() == NodeType::Call
     }
 
+    fn is_subset(&self) -> bool {
+        self.node_type() == NodeType::Subset
+    }
+
+    fn is_subset2(&self) -> bool {
+        self.node_type() == NodeType::Subset2
+    }
+
     fn is_comment(&self) -> bool {
         self.node_type() == NodeType::Comment
     }
@@ -367,6 +379,14 @@ impl NodeTypeExt for Node<'_> {
 
     fn is_if_statement(&self) -> bool {
         self.node_type() == NodeType::IfStatement
+    }
+
+    fn is_argument(&self) -> bool {
+        self.node_type() == NodeType::Argument
+    }
+
+    fn is_arguments(&self) -> bool {
+        self.node_type() == NodeType::Arguments
     }
 
     fn is_namespace_operator(&self) -> bool {

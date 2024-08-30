@@ -12,6 +12,7 @@ mod extractor;
 mod file_path;
 mod namespace;
 mod string;
+mod subset;
 
 use anyhow::Result;
 use colon::completions_from_single_colon;

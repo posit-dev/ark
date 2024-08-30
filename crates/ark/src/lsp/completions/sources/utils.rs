@@ -201,7 +201,14 @@ pub(super) fn completions_from_evaluated_object_names(
         },
     };
 
-    Ok(Some(completions_from_object_names(object, name, enquote)?))
+    let completions = if harp::utils::r_is_matrix(object.sexp) {
+        // Special case just for 2D arrays
+        completions_from_object_colnames(object, name, enquote)?
+    } else {
+        completions_from_object_names(object, name, enquote)?
+    };
+
+    Ok(Some(completions))
 }
 
 pub(super) fn completions_from_object_names(
@@ -209,18 +216,35 @@ pub(super) fn completions_from_object_names(
     name: &str,
     enquote: bool,
 ) -> Result<Vec<CompletionItem>> {
-    log::info!("completions_from_object_names({object:?})");
+    completions_from_object_names_impl(object, name, enquote, "names")
+}
+
+pub(super) fn completions_from_object_colnames(
+    object: RObject,
+    name: &str,
+    enquote: bool,
+) -> Result<Vec<CompletionItem>> {
+    completions_from_object_names_impl(object, name, enquote, "colnames")
+}
+
+fn completions_from_object_names_impl(
+    object: RObject,
+    name: &str,
+    enquote: bool,
+    function: &str,
+) -> Result<Vec<CompletionItem>> {
+    log::info!("completions_from_object_names_impl({object:?})");
 
     let mut completions = vec![];
 
     unsafe {
-        let variable_names = RFunction::new("base", "names")
+        let element_names = RFunction::new("base", function)
             .add(object)
             .call()?
             .to::<Vec<String>>()?;
 
-        for variable_name in variable_names {
-            match completion_item_from_data_variable(&variable_name, name, enquote) {
+        for element_name in element_names {
+            match completion_item_from_data_variable(&element_name, name, enquote) {
                 Ok(item) => completions.push(item),
                 Err(err) => log::error!("{err:?}"),
             }
@@ -232,12 +256,15 @@ pub(super) fn completions_from_object_names(
 
 #[cfg(test)]
 mod tests {
+    use harp::eval::parse_eval_global;
     use tree_sitter::Point;
 
     use crate::lsp::completions::sources::utils::call_node_position_type;
+    use crate::lsp::completions::sources::utils::completions_from_evaluated_object_names;
     use crate::lsp::completions::sources::utils::CallNodePositionType;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
+    use crate::test::r_test;
     use crate::treesitter::NodeType;
     use crate::treesitter::NodeTypeExt;
 
@@ -390,5 +417,77 @@ mod tests {
             call_node_position_type(&context.node, context.point),
             CallNodePositionType::Ambiguous
         );
+    }
+
+    #[test]
+    fn test_completions_from_evaluated_object_names() {
+        r_test(|| {
+            // Vector with names
+            parse_eval_global("x <- 1:2").unwrap();
+            parse_eval_global("names(x) <- c('a', 'b')").unwrap();
+
+            let completions = completions_from_evaluated_object_names("x", false)
+                .unwrap()
+                .unwrap();
+            assert_eq!(completions.len(), 2);
+            assert_eq!(completions.get(0).unwrap().label, String::from("a"));
+            assert_eq!(completions.get(1).unwrap().label, String::from("b"));
+
+            parse_eval_global("remove(x)").unwrap();
+
+            // Data frame
+            parse_eval_global("x <- data.frame(a = 1, b = 2, c = 3)").unwrap();
+
+            let completions = completions_from_evaluated_object_names("x", false)
+                .unwrap()
+                .unwrap();
+            assert_eq!(completions.len(), 3);
+            assert_eq!(completions.get(0).unwrap().label, String::from("a"));
+            assert_eq!(completions.get(1).unwrap().label, String::from("b"));
+            assert_eq!(completions.get(2).unwrap().label, String::from("c"));
+
+            parse_eval_global("remove(x)").unwrap();
+
+            // 1D array with names
+            parse_eval_global("x <- array(1:2)").unwrap();
+            parse_eval_global("names(x) <- c('a', 'b')").unwrap();
+
+            let completions = completions_from_evaluated_object_names("x", false)
+                .unwrap()
+                .unwrap();
+            assert_eq!(completions.len(), 2);
+            assert_eq!(completions.get(0).unwrap().label, String::from("a"));
+            assert_eq!(completions.get(1).unwrap().label, String::from("b"));
+
+            parse_eval_global("remove(x)").unwrap();
+
+            // Matrix with column names
+            parse_eval_global("x <- array(1, dim = c(1, 1))").unwrap();
+            parse_eval_global("rownames(x) <- 'a'").unwrap();
+            parse_eval_global("colnames(x) <- 'b'").unwrap();
+
+            let completions = completions_from_evaluated_object_names("x", false)
+                .unwrap()
+                .unwrap();
+            assert_eq!(completions.len(), 1);
+            assert_eq!(completions.get(0).unwrap().label, String::from("b"));
+
+            parse_eval_global("remove(x)").unwrap();
+
+            // 3D array with column names
+            // We currently decide not to return any names here. It is typically quite
+            // ambiguous which axis's names you'd want when working with >=3D arrays.
+            // But we did find an object, so we return an empty vector.
+            parse_eval_global("x <- array(1, dim = c(1, 1, 1))").unwrap();
+            parse_eval_global("rownames(x) <- 'a'").unwrap();
+            parse_eval_global("colnames(x) <- 'b'").unwrap();
+
+            let completions = completions_from_evaluated_object_names("x", false)
+                .unwrap()
+                .unwrap();
+            assert!(completions.is_empty());
+
+            parse_eval_global("remove(x)").unwrap();
+        })
     }
 }
