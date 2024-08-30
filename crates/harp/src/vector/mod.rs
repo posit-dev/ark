@@ -13,6 +13,8 @@ use crate::error::Result;
 use crate::utils::r_assert_capacity;
 use crate::utils::r_assert_type;
 
+pub mod list;
+
 pub mod character_vector;
 pub use character_vector::CharacterVector;
 
