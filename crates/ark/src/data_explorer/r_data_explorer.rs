@@ -513,9 +513,9 @@ impl RDataExplorer {
 
             DataExplorerBackendRequest::GetColumnProfiles(params) => {
                 // We respond imediately to this request, but first we launch an R idle task that will
-                // be responsible to compute the summary profiles.
-                // We yield to the main loop whenver possible, in order to allow for other requests to
-                // be computed.
+                // be responsible to compute the column profiles.
+                // This idle task yieldsß to the main event loop whenver possible, in order to allow for
+                // other requests to be computed.
                 self.launch_get_column_profiles_handler(params);
                 Ok(DataExplorerBackendReply::GetColumnProfilesReply())
             },
@@ -612,6 +612,8 @@ impl RDataExplorer {
     }
 
     fn launch_get_column_profiles_handler(&self, params: GetColumnProfilesParams) {
+        let id = params.callback_id.clone();
+
         let params = ProcessColumnsProfilesParams {
             table: self.table.clone(),
             indices: self.filtered_indices.clone(),
@@ -619,10 +621,10 @@ impl RDataExplorer {
             request: params,
         };
         let comm = self.comm.clone();
-        r_task::spawn_idle(|| async {
-            handle_columns_profiles_requests(params, comm)
-                .await
-                .or_log_error("Could not process get comlumn profile request");
+        r_task::spawn_idle(|| async move {
+            unwrap!(handle_columns_profiles_requests(params, comm).await, Err(err) => {
+                log::error!("Could not handle get_column_profile_request (callback_id: {id}): {err}");
+            });
         });
     }
 
