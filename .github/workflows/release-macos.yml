@@ -87,7 +87,7 @@ jobs:
                   pushd target/${{ matrix.rust_target_prefix }}-apple-darwin/${{ matrix.flavor }}
 
                   # Compress the kernel to an archive
-                  ARCHIVE="$GITHUB_WORKSPACE/ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ matrix.flavor }}-darwin-${{ matrix.arch }}.zip"
+                  ARCHIVE="$GITHUB_WORKSPACE/ark-${{ inputs.version }}-${{ matrix.flavor }}-darwin-${{ matrix.arch }}.zip"
                   zip -Xry $ARCHIVE ark
 
                   popd
@@ -97,4 +97,4 @@ jobs:
               uses: actions/upload-artifact@v4
               with:
                   name: ark-${{ matrix.flavor }}-darwin-${{ matrix.arch }}-archive
-                  path: ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ matrix.flavor }}-darwin-${{ matrix.arch }}.zip
+                  path: ark-${{ inputs.version }}-${{ matrix.flavor }}-darwin-${{ matrix.arch }}.zip
