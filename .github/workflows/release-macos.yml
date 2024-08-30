@@ -14,7 +14,7 @@ jobs:
     # Build ARK for macOS. Both arm64 (Apple Silicon) and x64 (Intel) hosts.
     build_macos:
         name: Build macOS
-        runs-on: [self-hosted-production, macos, arm64]
+        runs-on: macos-latest
         timeout-minutes: 40
 
         env:
@@ -41,12 +41,19 @@ jobs:
                 rustup update --no-self-update stable
                 rustup default stable
 
+            - name: Setup for x86 cross-compiling
+              if: matrix.arch == 'x64'
+              run: |
+                # Install x86 homebrew
+                arch -x86_64 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+                # Install x86 Rust target
+                rustup target add x86_64-apple-darwin
+
             # Checkout sources
             - name: Checkout sources
               uses: actions/checkout@v4
 
-            # These are already installed for both architectures, but would be required if we switch off
-            # a self-hosted runner, so we may as well leave them in
             - name: Install zeromq dependencies
               id: install_zeromq_dependencies
               run: |
