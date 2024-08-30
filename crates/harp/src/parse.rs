@@ -24,7 +24,7 @@ pub enum ParseResult {
 }
 
 /// Returns a single expression
-pub fn parse(code: &str) -> crate::Result<RObject> {
+pub fn parse_expr(code: &str) -> crate::Result<RObject> {
     unsafe {
         let exprs = parse_exprs(code)?;
 
