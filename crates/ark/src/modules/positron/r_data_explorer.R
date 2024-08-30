@@ -42,7 +42,7 @@
 
 summary_stats_number <- function(col) {
 
-    col <- col[!is.na(col)]
+    col <- drop_nas(col)
 
     # Don't compute stats if the column is all NA's or empty.
     if (length(col) == 0) {
@@ -50,11 +50,11 @@ summary_stats_number <- function(col) {
     }
 
     c(
-        min_value = min(col, na.rm = TRUE),
-        max_value = max(col, na.rm = TRUE),
-        mean = mean(col, na.rm = TRUE),
-        median = stats::median(col, na.rm = TRUE),
-        stdev = stats::sd(col, na.rm = TRUE)
+        min_value = min(col),
+        max_value = max(col),
+        mean = mean(col),
+        median = stats::median(col),
+        stdev = stats::sd(col)
     )
 }
 
@@ -69,7 +69,8 @@ summary_stats_string <- function(col) {
 }
 
 summary_stats_boolean <- function(col) {
-    c(true_count = sum(col, na.rm = TRUE), false_count = sum(!col, na.rm = TRUE))
+    col <- drop_nas(col)
+    c(true_count = sum(col), false_count = sum(!col))
 }
 
 summary_stats_date <- function(col) {
@@ -343,10 +344,10 @@ write_html <- function(x, include_header) {
     knitr::kable(x, format = "html", row.names = FALSE, col.names = col_names)
 }
 
-profile_histogram <- function(x, method = c("fixed", "sturges", "fd", "scott"), num_bins = NULL, quantiles = NULL) {
+profile_histogram <- function(x, method = c("fixed", "sturges", "fd", "scott"), max_num_bins = 1000, quantiles = NULL) {
   # We only use finite values for building this histogram.
   # This removes NA's, Inf, NaN and -Inf
-  x <- x[is.finite(x)]
+  x <- drop_non_finite(x)
 
   # No-non finite values, we early return as there's nothing we can compute.
   if (length(x) == 0) {
@@ -370,7 +371,7 @@ profile_histogram <- function(x, method = c("fixed", "sturges", "fd", "scott"), 
   }
 
   method <- match.arg(method)
-  num_bins <- histogram_num_bins(x, method, num_bins)
+  num_bins <- histogram_num_bins(x, method, max_num_bins)
 
   # For dates, `hist` does not compute the number of breaks automatically
   # using default methods.
@@ -405,7 +406,7 @@ profile_histogram <- function(x, method = c("fixed", "sturges", "fd", "scott"), 
 }
 
 profile_frequency_table <- function(x, limit) {
-    x <- x[!is.na(x)]
+    x <- drop_nas(x)
 
     if (length(x) == 0) {
         return(list(
@@ -437,7 +438,7 @@ profile_frequency_table <- function(x, limit) {
     )
 }
 
-histogram_num_bins <- function(x, method, fixed_num_bins) {
+histogram_num_bins <- function(x, method, max_num_bins) {
     num_bins <- if (method == "sturges") {
         grDevices::nclass.Sturges(x)
     } else if (method == "fd") {
@@ -446,9 +447,13 @@ histogram_num_bins <- function(x, method, fixed_num_bins) {
     } else if (method == "scott") {
         grDevices::nclass.scott(x)
     } else if (method == "fixed") {
-        fixed_num_bins
+        max_num_bins
     } else {
         stop("Unknow method :", method)
+    }
+
+    if (num_bins > max_num_bins) {
+        num_bins <- max_num_bins
     }
 
     if (is.integer(x) || inherits(x, "POSIXct")) {
@@ -464,4 +469,20 @@ histogram_num_bins <- function(x, method, fixed_num_bins) {
     }
 
     as.integer(num_bins)
+}
+
+drop_non_finite <- function(x) {
+    finite <- is.finite(x)
+    if (!all(finite)) {
+        x <- x[finite]
+    }
+    x
+}
+
+drop_nas <- function(x) {
+    nas <- is.na(x)
+    if (any(nas)) {
+        x <- x[!nas]
+    }
+    x
 }
