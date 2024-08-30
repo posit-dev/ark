@@ -252,4 +252,30 @@ mod tests {
             r_parse_eval("remove(foo)", options.clone()).unwrap();
         })
     }
+
+    #[test]
+    fn test_string_subset_completions_on_matrix() {
+        r_test(|| {
+            let options = RParseEvalOptions {
+                forbid_function_calls: false,
+                ..Default::default()
+            };
+
+            // Set up a list with names
+            r_parse_eval("foo <- array(1, dim = c(2, 2))", options.clone()).unwrap();
+            r_parse_eval("colnames(foo) <- c('a', 'b')", options.clone()).unwrap();
+
+            let (text, point) = point_from_cursor(r#"foo[, "@"]"#);
+            let document = Document::new(text.as_str(), None);
+            let context = DocumentContext::new(&document, point, None);
+
+            let completions = completions_from_string_subset(&context).unwrap().unwrap();
+            assert_eq!(completions.len(), 2);
+            assert_eq!(completions.get(0).unwrap().label, "a".to_string());
+            assert_eq!(completions.get(1).unwrap().label, "b".to_string());
+
+            // Clean up
+            r_parse_eval("remove(foo)", options.clone()).unwrap();
+        })
+    }
 }
