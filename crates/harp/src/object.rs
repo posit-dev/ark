@@ -122,7 +122,7 @@ impl AsRef<SEXP> for RObject {
 }
 
 pub trait RObjectExt<T> {
-    unsafe fn elt(&self, index: T) -> crate::error::Result<RObject>;
+    fn elt(&self, index: T) -> crate::error::Result<RObject>;
 }
 
 impl PartialEq for RObject {
@@ -135,7 +135,7 @@ impl PartialEq for RObject {
 impl Eq for RObject {}
 
 impl<T: Into<RObject>> RObjectExt<T> for RObject {
-    unsafe fn elt(&self, index: T) -> crate::error::Result<RObject> {
+    fn elt(&self, index: T) -> crate::error::Result<RObject> {
         let index: RObject = index.into();
         RFunction::new("base", "[[")
             .add(self.sexp)
@@ -451,7 +451,7 @@ impl RObject {
     /// attribute). Returns `None` if the object's value(s) don't have names.
     pub fn names(&self) -> Option<Vec<Option<String>>> {
         let names = unsafe { Rf_getAttrib(self.sexp, R_NamesSymbol) };
-        let names = RObject::view(names);
+        let names = RObject::from(names);
         match names.kind() {
             STRSXP => Vec::<Option<String>>::try_from(names).ok(),
             _ => None,

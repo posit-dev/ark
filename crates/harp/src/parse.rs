@@ -68,7 +68,7 @@ pub fn parse_exprs_with_srcrefs(text: &str) -> crate::Result<RObject> {
     parse_exprs_ext(&ParseInput::SrcFile(&srcfile))
 }
 
-fn parse_exprs_ext<'a>(input: &ParseInput<'a>) -> crate::Result<RObject> {
+pub(crate) fn parse_exprs_ext<'a>(input: &ParseInput<'a>) -> crate::Result<RObject> {
     let status = parse_status(input)?;
     match status {
         ParseResult::Complete(x) => Ok(RObject::from(x)),
@@ -81,7 +81,9 @@ fn parse_exprs_ext<'a>(input: &ParseInput<'a>) -> crate::Result<RObject> {
 
 pub fn parse_status<'a>(input: &ParseInput<'a>) -> crate::Result<ParseResult> {
     unsafe {
-        // TODO: set keep.parse.data
+        // If we're parsing with srcrefs, keep parse data as well. This is the
+        // default but it might have been overridden by the user.
+        let _guard = harp::raii::RLocalOptionBoolean::new("keep.parse.data", true);
 
         let mut status: libr::ParseStatus = libr::ParseStatus_PARSE_NULL;
 
