@@ -43,12 +43,7 @@ use crate::vector::CharacterVector;
 use crate::vector::IntegerVector;
 use crate::vector::Vector;
 
-pub fn init_utils() {
-    unsafe {
-        let options_fn = Rf_eval(r_symbol!("options"), R_BaseEnv);
-        OPTIONS_FN = Some(options_fn);
-    }
-}
+pub fn init_utils() {}
 
 // NOTE: Regex::new() is quite slow to compile, so it's much better to keep
 // a single singleton pattern and use that repeatedly for matches.
@@ -679,15 +674,13 @@ where
     return false;
 }
 
-static mut OPTIONS_FN: Option<SEXP> = None;
-
 // Note this might throw if wrong data types are passed in. The C-level
 // implementation of `options()` type-checks some base options.
 pub fn r_poke_option(sym: SEXP, value: SEXP) -> SEXP {
     unsafe {
         let mut protect = RProtect::new();
 
-        let call = r_lang!(OPTIONS_FN.unwrap_unchecked(), !!sym = value);
+        let call = r_lang!(r_symbol!("options"), !!sym = value);
         protect.add(call);
 
         // `options()` is guaranteed by R to return a list
