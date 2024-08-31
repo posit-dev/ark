@@ -30,7 +30,7 @@ pub enum ParseResult {
 
 pub enum ParseInput<'a> {
     Text(&'a str),
-    SrcFile(RObject),
+    SrcFile(srcref::SrcFile),
 }
 
 impl Default for RParseOptions {
@@ -64,7 +64,7 @@ pub fn parse_exprs(text: &str) -> crate::Result<RObject> {
 
 /// Same but creates srcrefs
 pub fn parse_exprs_with_srcrefs(text: &str) -> crate::Result<RObject> {
-    let srcfile = srcref::new_srcfile_virtual(text)?;
+    let srcfile = srcref::SrcFile::new_virtual(text)?;
     parse_exprs_ext(&ParseInput::SrcFile(srcfile))
 }
 
@@ -87,7 +87,7 @@ pub fn parse_status<'a>(input: &ParseInput<'a>) -> crate::Result<ParseResult> {
 
         let (text, srcfile) = match input {
             ParseInput::Text(text) => (as_parse_text(text), RObject::null()),
-            ParseInput::SrcFile(srcfile) => (srcref::srcfile_lines(srcfile.sexp)?, srcfile.clone()),
+            ParseInput::SrcFile(srcfile) => (srcfile.lines()?, srcfile.inner.clone()),
         };
 
         let result: RObject =
@@ -125,7 +125,7 @@ fn parse_input_as_string<'a>(input: &ParseInput<'a>) -> crate::Result<String> {
     Ok(match input {
         ParseInput::Text(text) => text.to_string(),
         ParseInput::SrcFile(srcfile) => {
-            let lines = srcref::srcfile_lines(srcfile.sexp)?;
+            let lines = srcfile.lines()?;
             let lines = unsafe { CharacterVector::new(lines)? };
 
             lines
@@ -227,7 +227,7 @@ mod tests {
                 "foo\nbar"
             );
 
-            let input = srcref::new_srcfile_virtual("foo\nbar").unwrap();
+            let input = srcref::SrcFile::new_virtual("foo\nbar").unwrap();
             assert_eq!(
                 parse_input_as_string(&ParseInput::SrcFile(input)).unwrap(),
                 "foo\nbar"

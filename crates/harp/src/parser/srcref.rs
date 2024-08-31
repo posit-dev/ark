@@ -8,7 +8,6 @@
 use core::f64;
 
 use anyhow::anyhow;
-use libr::SEXP;
 use stdext::unwrap;
 
 use crate::exec::RFunction;
@@ -30,6 +29,11 @@ pub struct SrcRef {
     /// Bytes and columns may be different due to multibyte characters.
     pub column: std::ops::Range<usize>,
     pub column_byte: std::ops::Range<usize>,
+}
+
+#[derive(Debug)]
+pub struct SrcFile {
+    pub inner: RObject,
 }
 
 // Takes user-facing object as input. The srcrefs are retrieved from
@@ -115,20 +119,24 @@ impl TryFrom<RObject> for SrcRef {
 
 /// Creates the same sort of srcfile object as with `parse(text = )`.
 /// Takes code as an R string containing newlines, or as a R vector of lines.
-pub fn new_srcfile_virtual(text: &str) -> crate::Result<RObject> {
-    let input = crate::as_parse_text(text);
-    RFunction::new("base", "srcfilecopy")
-        .param("filename", "<text>")
-        .param("lines", input)
-        .call()
-}
+impl SrcFile {
+    pub fn new_virtual(text: &str) -> harp::Result<Self> {
+        let input = crate::as_parse_text(text);
+        let inner = RFunction::new("base", "srcfilecopy")
+            .param("filename", "<text>")
+            .param("lines", input)
+            .call()?;
 
-pub fn srcfile_lines(srcfile: SEXP) -> crate::Result<RObject> {
-    RFunction::new("base", "getSrcLines")
-        .add(srcfile)
-        .param("first", 1)
-        .param("last", f64::INFINITY)
-        .call()
+        Ok(Self { inner })
+    }
+
+    pub fn lines(&self) -> harp::Result<RObject> {
+        RFunction::new("base", "getSrcLines")
+            .add(self.inner.sexp)
+            .param("first", 1)
+            .param("last", f64::INFINITY)
+            .call()
+    }
 }
 
 #[cfg(test)]
