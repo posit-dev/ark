@@ -126,6 +126,8 @@ pub trait RObjectExt<T> {
 }
 
 impl PartialEq for RObject {
+    // FIXME: At call sites, not obvious that this is doing identity comparisons.
+    // Can we require explicit `FOO.sexp == BAR.sexp`?
     fn eq(&self, other: &Self) -> bool {
         self.sexp == other.sexp
     }
@@ -491,6 +493,19 @@ impl RObject {
         }
 
         Ok(Some(class.try_into()?))
+    }
+
+    pub fn dim(&self) -> harp::Result<Option<Vec<usize>>> {
+        let dim: RObject = r_dim(self.sexp).into();
+
+        if dim.sexp == RObject::null().sexp {
+            return Ok(None);
+        }
+
+        let dim: Vec<i32> = dim.try_into()?;
+        let dim = dim.into_iter().map(|d| d as usize).collect();
+
+        Ok(Some(dim))
     }
 
     pub fn duplicate(&self) -> RObject {
