@@ -309,4 +309,21 @@ mod tests {
             assert_eq!(stats.datetime_stats, Some(expected));
         })
     }
+
+    #[test]
+    fn test_date_all_na() {
+        r_test(|| {
+            let column = harp::parse_eval_base("as.Date(NA)").unwrap();
+            let stats =
+                summary_stats(column.sexp, ColumnDisplayType::Date, &default_options()).unwrap();
+            let expected = SummaryStatsDate {
+                num_unique: Some(1),
+                min_date: None,
+                mean_date: None,
+                median_date: None,
+                max_date: None,
+            };
+            assert_eq!(stats.date_stats, Some(expected));
+        })
+    }
 }
