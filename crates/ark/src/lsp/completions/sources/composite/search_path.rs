@@ -9,9 +9,10 @@ use anyhow::Result;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::utils::r_env_is_pkg_env;
-use harp::utils::r_envir_name;
+use harp::utils::r_pkg_env_name;
 use harp::vector::CharacterVector;
 use harp::vector::Vector;
+use harp::RObject;
 use libr::R_EmptyEnv;
 use libr::R_GlobalEnv;
 use libr::R_lsInternal;
@@ -41,13 +42,23 @@ pub(super) fn completions_from_search_path(
         let mut envir = R_GlobalEnv;
 
         while envir != R_EmptyEnv {
-            // Get environment name
-            let name = r_envir_name(envir)?;
+            let is_pkg_env = r_env_is_pkg_env(envir);
+
+            // Get package environment name, if there is one
+            let name = if is_pkg_env {
+                let name = RObject::from(r_pkg_env_name(envir));
+                let name = String::try_from(name)?;
+                Some(name)
+            } else {
+                None
+            };
+
+            let name = name.as_deref();
 
             // If this is a package environment, we will need to force promises to give meaningful completions,
             // particularly with functions because we add a `CompletionItem::command()` that adds trailing `()` onto
             // the completion and triggers parameter completions.
-            let promise_strategy = if r_env_is_pkg_env(envir) {
+            let promise_strategy = if is_pkg_env {
                 PromiseStrategy::Force
             } else {
                 PromiseStrategy::Simple
@@ -71,12 +82,9 @@ pub(super) fn completions_from_search_path(
                 }
 
                 // Add the completion item.
-                let Some(item) = completion_item_from_symbol(
-                    symbol,
-                    envir,
-                    Some(name.as_str()),
-                    promise_strategy.clone(),
-                ) else {
+                let Some(item) =
+                    completion_item_from_symbol(symbol, envir, name, promise_strategy.clone())
+                else {
                     log::error!("Completion symbol '{symbol}' was unexpectedly not found.");
                     continue;
                 };
