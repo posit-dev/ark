@@ -37,6 +37,7 @@ pub enum Error {
     UnsafeEvaluationError(String),
     UnexpectedLength(usize, usize),
     UnexpectedType(u32, Vec<u32>),
+    UnexpectedClass(Option<Vec<String>>, String),
     ValueOutOfRange {
         value: i64,
         min: i64,
@@ -169,6 +170,18 @@ impl fmt::Display for Error {
                     f,
                     "Unexpected vector type (expected {}; got {})",
                     expected, actual
+                )
+            },
+
+            Error::UnexpectedClass(actual, expected) => {
+                let actual = if let Some(actual) = actual {
+                    actual.join("/")
+                } else {
+                    String::from("_unclassed_")
+                };
+                write!(
+                    f,
+                    "Unexpected class for R object (expected {expected}; got {actual})",
                 )
             },
 

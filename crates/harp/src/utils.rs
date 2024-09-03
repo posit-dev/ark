@@ -151,6 +151,15 @@ pub fn r_assert_length(object: SEXP, expected: usize) -> Result<usize> {
     Ok(actual)
 }
 
+pub fn assert_class(object: SEXP, expected: &str) -> Result<()> {
+    if !RObject::view(object).inherits(expected) {
+        let actual = RObject::view(object).class()?;
+        return Err(Error::UnexpectedClass(actual, expected.into()));
+    }
+
+    Ok(())
+}
+
 pub fn r_is_data_frame(object: SEXP) -> bool {
     r_typeof(object) == VECSXP && r_inherits(object, "data.frame")
 }
@@ -342,7 +351,7 @@ pub fn get_option(name: &str) -> RObject {
 
 pub fn r_inherits(object: SEXP, class: &str) -> bool {
     let class = CString::new(class).unwrap();
-    unsafe { Rf_inherits(object, class.as_ptr()) != 0 }
+    unsafe { libr::Rf_inherits(object, class.as_ptr()) != 0 }
 }
 
 pub fn r_is_function(object: SEXP) -> bool {

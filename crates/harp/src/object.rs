@@ -20,6 +20,7 @@ use crate::error::Error;
 use crate::exec::RFunction;
 use crate::exec::RFunctionExt;
 use crate::protect::RProtect;
+use crate::r_inherits;
 use crate::r_symbol;
 use crate::size::r_size;
 use crate::utils::r_assert_capacity;
@@ -472,6 +473,24 @@ impl RObject {
             Rf_setAttrib(self.sexp, r_symbol!(name), value);
             Rf_unprotect(1);
         }
+    }
+
+    pub fn inherits(&self, class: &str) -> bool {
+        return r_inherits(self.sexp, class);
+    }
+
+    pub fn class(&self) -> harp::Result<Option<Vec<String>>> {
+        let Some(class) = self.attr("class") else {
+            return Ok(None);
+        };
+
+        if !r_is_object(self.sexp) {
+            return Err(harp::anyhow!(
+                "Object has a class vector but `OBJECT` attribute is unset"
+            ));
+        }
+
+        Ok(Some(class.try_into()?))
     }
 
     pub fn duplicate(&self) -> RObject {
