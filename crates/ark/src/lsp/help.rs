@@ -365,3 +365,64 @@ fn for_each_section(doc: &Html, mut callback: impl FnMut(ElementRef, Vec<Element
         callback(header, elements);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::lsp::help::RHtmlHelp;
+    use crate::lsp::help::Status;
+    use crate::test::r_test;
+
+    #[test]
+    fn test_help_from_function() {
+        r_test(|| {
+            let help = unsafe { RHtmlHelp::from_function("match", None) };
+            let help = help.unwrap().unwrap();
+            assert!(help.function);
+
+            // Not found at all
+            let help = unsafe { RHtmlHelp::from_function("doesnt_exist", None) };
+            let help = help.unwrap();
+            assert!(help.is_none());
+
+            // Found, but not a function!
+            let help = unsafe { RHtmlHelp::from_function("plotmath", None) };
+            let help = help.unwrap();
+            assert!(help.is_none());
+            // It is a topic though
+            let help = unsafe { RHtmlHelp::from_topic("plotmath", None) };
+            let help = help.unwrap();
+            assert!(help.is_some());
+        });
+    }
+
+    #[test]
+    fn test_markdown_conversion() {
+        r_test(|| {
+            let help = unsafe { RHtmlHelp::from_function("match", None) };
+            let help = help.unwrap().unwrap();
+
+            let markdown = help.markdown().unwrap();
+            markdown.contains("### Usage");
+        });
+    }
+
+    #[test]
+    fn test_parameters_on_non_functions() {
+        r_test(|| {
+            let help = unsafe { RHtmlHelp::from_topic("plotmath", None) };
+            let help = help.unwrap().unwrap();
+            // Errors immediately
+            insta::assert_snapshot!(help.parameters(|_, _| Status::Done).unwrap_err());
+        });
+    }
+
+    #[test]
+    fn test_parameter_on_non_functions() {
+        r_test(|| {
+            let help = unsafe { RHtmlHelp::from_topic("plotmath", None) };
+            let help = help.unwrap().unwrap();
+            // Errors immediately
+            insta::assert_snapshot!(help.parameter("foo").unwrap_err());
+        });
+    }
+}

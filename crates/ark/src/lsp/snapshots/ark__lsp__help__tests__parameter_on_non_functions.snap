@@ -1,0 +1,5 @@
+---
+source: crates/ark/src/lsp/help.rs
+expression: "help.parameter(\"foo\").unwrap_err()"
+---
+Called `parameter()` on a topic that isn't a function.
