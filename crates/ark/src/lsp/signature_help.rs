@@ -210,13 +210,13 @@ pub(crate) unsafe fn r_signature_help(
         let package = callee.child_by_field_name("lhs").into_result()?;
         let package = context.document.contents.node_slice(&package)?.to_string();
 
-        let topic = callee.child_by_field_name("rhs").into_result()?;
-        let topic = context.document.contents.node_slice(&topic)?.to_string();
+        let name = callee.child_by_field_name("rhs").into_result()?;
+        let name = context.document.contents.node_slice(&name)?.to_string();
 
-        RHtmlHelp::new(topic.as_str(), Some(package.as_str()))
+        RHtmlHelp::from_function(name.as_str(), Some(package.as_str()))
     } else {
-        let topic = context.document.contents.node_slice(&callee)?.to_string();
-        RHtmlHelp::new(topic.as_str(), None)
+        let name = context.document.contents.node_slice(&callee)?.to_string();
+        RHtmlHelp::from_function(name.as_str(), None)
     };
 
     // The signature label. We generate this as we walk through the

@@ -5,7 +5,6 @@
 //
 //
 
-use anyhow::*;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::utils::r_typeof;
@@ -24,6 +23,9 @@ use crate::lsp::markdown::*;
 
 pub struct RHtmlHelp {
     html: Html,
+
+    /// Is this help page known to be for a function?
+    function: bool,
 }
 
 pub enum Status {
@@ -32,7 +34,31 @@ pub enum Status {
 }
 
 impl RHtmlHelp {
-    pub unsafe fn new(topic: &str, package: Option<&str>) -> Result<Option<Self>> {
+    pub unsafe fn from_topic(topic: &str, package: Option<&str>) -> anyhow::Result<Option<Self>> {
+        Self::get_help(topic, package).map(|html| {
+            html.map(|html| Self {
+                html,
+                function: false,
+            })
+        })
+    }
+
+    pub unsafe fn from_function(name: &str, package: Option<&str>) -> anyhow::Result<Option<Self>> {
+        Self::get_help(name, package).map(|html| {
+            html.and_then(|html| {
+                if Self::is_function(&html) {
+                    Some(Self {
+                        html,
+                        function: true,
+                    })
+                } else {
+                    None
+                }
+            })
+        })
+    }
+
+    unsafe fn get_help(topic: &str, package: Option<&str>) -> anyhow::Result<Option<Html>> {
         // trim off a package prefix if necessary
         let package = package.map(|s| s.replace("package:", ""));
 
@@ -42,12 +68,10 @@ impl RHtmlHelp {
             .param("package", package)
             .call();
 
-        if let Err(error) = contents {
-            log::error!("{}", error);
+        let contents = unwrap!(contents, Err(err) => {
+            log::error!("{err:?}");
             return Ok(None);
-        };
-
-        let contents = contents.unwrap_unchecked();
+        });
 
         // check for NULL (implies no help available)
         if r_typeof(*contents) == NILSXP {
@@ -57,7 +81,22 @@ impl RHtmlHelp {
         // parse as html
         let contents = contents.to::<String>()?;
         let html = Html::parse_document(contents.as_str());
-        Ok(Some(Self { html }))
+
+        Ok(Some(html))
+    }
+
+    /// Is this a help page for a function?
+    ///
+    /// Uses a heuristic of looking for a `Usage` section to determine if this looks like
+    /// function help or not. Can't look for `Arguments`, as some functions don't have
+    /// any!
+    fn is_function(x: &Html) -> bool {
+        // Find all h3 headers in the document
+        let selector = Selector::parse("h3").unwrap();
+        let mut headers = x.select(&selector);
+
+        // Do any have a usage section?
+        headers.any(|header| header.html() == "<h3>Usage</h3>")
     }
 
     pub fn topic(&self) -> Option<String> {
@@ -121,22 +160,32 @@ impl RHtmlHelp {
         Some(elements)
     }
 
+    /// Find and parse the arguments in the HTML help
+    ///
+    /// The help file has the structure:
+    ///
+    /// <h3>Arguments</h3>
+    ///
+    /// <table>
+    /// <tr style="vertical-align: top;"><td><code>parameter</code></td>
+    /// <td>
+    /// Parameter documentation.
+    /// </td></tr>
+    ///
+    /// Note that parameters might be parsed as part of different, multiple tables;
+    /// we need to iterate over all tables after the Arguments header.
+    ///
+    /// SAFETY: Errors if `self.function` is `false`.
     pub fn parameters(
         &self,
         mut callback: impl FnMut(&Vec<&str>, &ElementRef) -> Status,
-    ) -> Result<()> {
-        // Find and parse the arguments in the HTML help. The help file has the structure:
-        //
-        // <h3>Arguments</h3>
-        //
-        // <table>
-        // <tr style="vertical-align: top;"><td><code>parameter</code></td>
-        // <td>
-        // Parameter documentation.
-        // </td></tr>
-        //
-        // Note that parameters might be parsed as part of different, multiple tables;
-        // we need to iterate over all tables after the Arguments header.
+    ) -> anyhow::Result<()> {
+        if !self.function {
+            return Err(anyhow::anyhow!(
+                "Called `parameters()` on a topic that isn't a function."
+            ));
+        }
+
         let selector = Selector::parse("h3").unwrap();
         let mut headers = self.html.select(&selector);
         let header = headers
@@ -191,8 +240,18 @@ impl RHtmlHelp {
         Ok(())
     }
 
-    pub fn parameter(&self, name: &str) -> Result<Option<MarkupContent>> {
+    /// Extract content for an individual parameter by name
+    ///
+    /// SAFETY: Errors if `self.function` is `false`.
+    pub fn parameter(&self, name: &str) -> anyhow::Result<Option<MarkupContent>> {
+        if !self.function {
+            return Err(anyhow::anyhow!(
+                "Called `parameter()` on a topic that isn't a function."
+            ));
+        }
+
         let mut result = None;
+
         self.parameters(|params, node| {
             for param in params {
                 if *param == name {
@@ -210,7 +269,7 @@ impl RHtmlHelp {
         Ok(result)
     }
 
-    pub fn markdown(&self) -> Result<String> {
+    pub fn markdown(&self) -> anyhow::Result<String> {
         let mut markdown = String::new();
 
         // add topic

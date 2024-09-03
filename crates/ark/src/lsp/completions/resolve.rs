@@ -51,7 +51,7 @@ unsafe fn resolve_package_completion_item(
     package: &str,
 ) -> Result<bool> {
     let topic = join!(package, "-package");
-    let help = unwrap!(RHtmlHelp::new(topic.as_str(), Some(package))?, None => {
+    let help = unwrap!(RHtmlHelp::from_topic(topic.as_str(), Some(package))?, None => {
         return Ok(false);
     });
 
@@ -72,7 +72,7 @@ unsafe fn resolve_function_completion_item(
     name: &str,
     package: Option<&str>,
 ) -> Result<bool> {
-    let help = unwrap!(RHtmlHelp::new(name, package)?, None => {
+    let help = unwrap!(RHtmlHelp::from_function(name, package)?, None => {
         return Ok(false);
     });
 
@@ -95,7 +95,7 @@ unsafe fn resolve_parameter_completion_item(
     function: &str,
 ) -> Result<bool> {
     // Get help for this function.
-    let help = unwrap!(RHtmlHelp::new(function, None)?, None => {
+    let help = unwrap!(RHtmlHelp::from_function(function, None)?, None => {
         return Ok(false);
     });
 
