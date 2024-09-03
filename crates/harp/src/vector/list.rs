@@ -15,7 +15,7 @@ use crate::r_typeof;
 
 #[derive(Debug)]
 pub struct List {
-    pub inner: RObject,
+    pub obj: RObject,
     pub sexp: SEXP,
     pub ptr: *const SEXP,
 }
@@ -29,7 +29,7 @@ pub struct ListIter {
 
 impl List {
     pub fn iter(&self) -> ListIter {
-        unsafe { ListIter::new_unchecked(self.inner.sexp) }
+        unsafe { ListIter::new_unchecked(self.obj.sexp) }
     }
 }
 
@@ -45,14 +45,14 @@ impl super::Vector for List {
         let ptr = crate::list_cbegin(object);
 
         Self {
-            inner: object.into(),
+            obj: object.into(),
             sexp: object,
             ptr,
         }
     }
 
     fn data(&self) -> SEXP {
-        self.inner.sexp
+        self.obj.sexp
     }
 
     // Never missing. We can't treat `NULL` as missing because it would cause
@@ -91,7 +91,11 @@ impl super::Vector for List {
 
         let ptr = crate::list_cbegin(inner.sexp);
 
-        Self { inner, ptr, sexp }
+        Self {
+            obj: inner,
+            ptr,
+            sexp,
+        }
     }
 
     fn format_one(&self, _x: Self::Type, _options: Option<&super::FormatOptions>) -> String {
