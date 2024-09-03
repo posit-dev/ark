@@ -24,6 +24,7 @@ use harp::utils::r_names2;
 use harp::vector::CharacterVector;
 use harp::vector::Vector;
 use libr::SEXP;
+use stdext::unwrap;
 
 use crate::data_explorer::format::format_string;
 use crate::modules::ARK_ENVS;
@@ -86,8 +87,8 @@ fn summary_stats_string(column: SEXP) -> anyhow::Result<SummaryStatsString> {
     let r_stats: HashMap<String, i32> = stats.try_into()?;
 
     Ok(SummaryStatsString {
-        num_empty: get_stat(&r_stats, "num_empty")? as i64,
-        num_unique: get_stat(&r_stats, "num_unique")? as i64,
+        num_empty: get_stat(&r_stats, "num_empty")?,
+        num_unique: get_stat(&r_stats, "num_unique")?,
     })
 }
 
@@ -96,8 +97,8 @@ fn summary_stats_boolean(column: SEXP) -> anyhow::Result<SummaryStatsBoolean> {
     let r_stats: HashMap<String, i32> = stats.try_into()?;
 
     Ok(SummaryStatsBoolean {
-        true_count: get_stat(&r_stats, "true_count")? as i64,
-        false_count: get_stat(&r_stats, "false_count")? as i64,
+        true_count: get_stat(&r_stats, "true_count")?,
+        false_count: get_stat(&r_stats, "false_count")?,
     })
 }
 
@@ -105,14 +106,16 @@ fn summary_stats_date(column: SEXP) -> anyhow::Result<SummaryStatsDate> {
     let r_stats: HashMap<String, RObject> =
         call_summary_fn("summary_stats_date", column)?.try_into()?;
 
-    let num_unique: i32 = get_stat(&r_stats, "num_unique")?.try_into()?;
+    let num_unique: Option<i64> = get_stat::<i32, RObject>(&r_stats, "num_unique")
+        .ok()
+        .and_then(|x| Some(x as i64));
 
     Ok(SummaryStatsDate {
-        min_date: get_stat(&r_stats, "min_date")?.try_into()?,
-        mean_date: get_stat(&r_stats, "mean_date")?.try_into()?,
-        median_date: get_stat(&r_stats, "median_date")?.try_into()?,
-        max_date: get_stat(&r_stats, "max_date")?.try_into()?,
-        num_unique: num_unique as i64,
+        min_date: get_stat(&r_stats, "min_date").ok(),
+        mean_date: get_stat(&r_stats, "mean_date").ok(),
+        median_date: get_stat(&r_stats, "median_date").ok(),
+        max_date: get_stat(&r_stats, "max_date").ok(),
+        num_unique,
     })
 }
 
@@ -122,18 +125,21 @@ fn summary_stats_datetime(column: SEXP) -> anyhow::Result<SummaryStatsDatetime> 
     let r_stats: HashMap<String, RObject> =
         call_summary_fn("summary_stats_date", column)?.try_into()?;
 
-    let num_unique: i32 = get_stat(&r_stats, "num_unique")?.try_into()?;
+    let num_unique: Option<i64> = get_stat::<i32, RObject>(&r_stats, "num_unique")
+        .ok()
+        .and_then(|x| Some(x as i64));
+
     let timezone: Option<String> = RFunction::from("summary_stats_get_timezone")
         .add(column)
         .call_in(ARK_ENVS.positron_ns)?
         .try_into()?;
 
     Ok(SummaryStatsDatetime {
-        min_date: get_stat(&r_stats, "min_date")?.try_into()?,
-        mean_date: get_stat(&r_stats, "mean_date")?.try_into()?,
-        median_date: get_stat(&r_stats, "median_date")?.try_into()?,
-        max_date: get_stat(&r_stats, "max_date")?.try_into()?,
-        num_unique: num_unique as i64,
+        min_date: get_stat(&r_stats, "min_date").ok(),
+        mean_date: get_stat(&r_stats, "mean_date").ok(),
+        median_date: get_stat(&r_stats, "median_date").ok(),
+        max_date: get_stat(&r_stats, "max_date").ok(),
+        num_unique,
         timezone,
     })
 }
@@ -155,11 +161,19 @@ fn empty_column_summary_stats() -> data_explorer_comm::ColumnSummaryStats {
     }
 }
 
-fn get_stat<T: Clone>(stats: &HashMap<String, T>, name: &str) -> anyhow::Result<T> {
+fn get_stat<Return, T: Clone>(stats: &HashMap<String, T>, name: &str) -> anyhow::Result<Return>
+where
+    Return: TryFrom<T>,
+{
     let value = stats.get(name);
 
     match value {
-        Some(value) => Ok(value.clone()),
+        Some(value) => {
+            let value: Return = unwrap!(value.clone().try_into(), Err(_) => {
+                return Err(anyhow!("Can't cast to return type."))
+            });
+            Ok(value)
+        },
         None => Err(anyhow!("Missing stat {}", name)),
     }
 }
@@ -265,11 +279,11 @@ mod tests {
             let stats =
                 summary_stats(column.sexp, ColumnDisplayType::Date, &default_options()).unwrap();
             let expected = SummaryStatsDate {
-                min_date: "2021-01-01".to_string(),
-                mean_date: "2021-01-02".to_string(),
-                median_date: "2021-01-02".to_string(),
-                max_date: "2021-01-04".to_string(),
-                num_unique: 5,
+                min_date: Some("2021-01-01".to_string()),
+                mean_date: Some("2021-01-02".to_string()),
+                median_date: Some("2021-01-02".to_string()),
+                max_date: Some("2021-01-04".to_string()),
+                num_unique: Some(5),
             };
             assert_eq!(stats.date_stats, Some(expected));
         })
@@ -285,11 +299,11 @@ mod tests {
             let stats = summary_stats(column.sexp, ColumnDisplayType::Datetime, &default_options())
                 .unwrap();
             let expected = SummaryStatsDatetime {
-                num_unique: 2,
-                min_date: "2015-07-24 23:15:07".to_string(),
-                mean_date: "2015-07-24 23:15:07".to_string(),
-                median_date: "2015-07-24 23:15:07".to_string(),
-                max_date: "2015-07-24 23:15:07".to_string(),
+                num_unique: Some(2),
+                min_date: Some("2015-07-24 23:15:07".to_string()),
+                mean_date: Some("2015-07-24 23:15:07".to_string()),
+                median_date: Some("2015-07-24 23:15:07".to_string()),
+                max_date: Some("2015-07-24 23:15:07".to_string()),
                 timezone: Some("Japan".to_string()),
             };
             assert_eq!(stats.datetime_stats, Some(expected));
