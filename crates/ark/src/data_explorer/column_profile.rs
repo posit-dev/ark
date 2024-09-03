@@ -90,6 +90,7 @@ async fn process_columns_profiles_requests(
     let mut results: Vec<ColumnProfileResult> = Vec::with_capacity(profiles.len());
 
     for profile in profiles.into_iter() {
+        log::trace!("Processing column!");
         results.push(
             profile_column(
                 data.clone(),
