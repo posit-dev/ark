@@ -6,6 +6,7 @@
 //
 pub mod attrib;
 pub mod call;
+pub mod data_frame;
 pub mod environment;
 pub mod environment_iter;
 pub mod error;
