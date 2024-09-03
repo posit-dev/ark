@@ -13,9 +13,11 @@ use crate::object::r_list_poke;
 use crate::object::RObject;
 use crate::r_typeof;
 
+#[derive(Debug)]
 pub struct List {
-    inner: RObject,
-    ptr: *const SEXP,
+    pub inner: RObject,
+    pub sexp: SEXP,
+    pub ptr: *const SEXP,
 }
 
 pub struct ListIter {
@@ -44,6 +46,7 @@ impl super::Vector for List {
 
         Self {
             inner: object.into(),
+            sexp: object,
             ptr,
         }
     }
@@ -75,8 +78,8 @@ impl super::Vector for List {
         let mut data = data.into_iter();
 
         let size = data.len();
-        let inner = crate::alloc_list(size).unwrap();
-        let inner: RObject = inner.into();
+        let sexp = crate::alloc_list(size).unwrap();
+        let inner: RObject = sexp.into();
 
         for i in 0..size {
             unsafe {
@@ -88,7 +91,7 @@ impl super::Vector for List {
 
         let ptr = crate::list_cbegin(inner.sexp);
 
-        Self { inner, ptr }
+        Self { inner, ptr, sexp }
     }
 
     fn format_one(&self, _x: Self::Type, _options: Option<&super::FormatOptions>) -> String {
