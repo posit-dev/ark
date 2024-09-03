@@ -80,6 +80,7 @@ impl WorkspaceVariableDisplayValue {
             CLOSXP => Self::from_closure(value),
             ENVSXP => Self::from_env(value),
             _ if r_is_matrix(value) => Self::from_matrix(value),
+            _ if r_is_altrep(value) => Self::from_altrep(value),
             _ => Self::from_default(value),
         }
     }
@@ -272,6 +273,22 @@ impl WorkspaceVariableDisplayValue {
             display_value.push(']');
         }
         Self::new(display_value, is_truncated)
+    }
+
+    fn from_altrep(value: SEXP) -> Self {
+        // For ALTREP objects we first subset the first `MAX_DISPLAY_VALUE_LENGTH` values
+        // and only then try to format. This is due to a possible bug in the implementation of
+        // deferred string, for which once you try to acess a single element, it tries to allocate
+        // the full vector.
+        let subset = RFunction::new("utils", "head")
+            .add(value)
+            .add(MAX_DISPLAY_VALUE_LENGTH as i32)
+            .call();
+
+        match subset {
+            Ok(value) => Self::from_default(value.sexp),
+            Err(err) => Self::from_error(err),
+        }
     }
 
     fn from_default(value: SEXP) -> Self {
@@ -1262,5 +1279,75 @@ pub fn plain_binding_force_with_rollback(binding: &Binding) -> anyhow::Result<RO
         BindingValue::Standard { object, .. } => Ok(object.clone()),
         BindingValue::Promise { promise, .. } => Ok(r_promise_force_with_rollback(promise.sexp)?),
         _ => Err(anyhow!("Unexpected binding type")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use regex::Regex;
+
+    use crate::test::r_test;
+    use crate::variables::variable::WorkspaceVariableDisplayValue;
+
+    fn get_display_value(code: &str) -> String {
+        WorkspaceVariableDisplayValue::from(harp::parse_eval_base(code).unwrap().sexp).display_value
+    }
+
+    fn expect_display_value(code: &str, expected: &str) {
+        let display = get_display_value(code);
+        assert_eq!(display, expected.to_string());
+    }
+
+    #[test]
+    fn test_simple_display_values() {
+        r_test(|| {
+            expect_display_value("1", "1");
+            expect_display_value("1L", "1");
+            expect_display_value("'a'", "\"a\"");
+            expect_display_value("NULL", "NULL");
+            expect_display_value("TRUE", "TRUE");
+            expect_display_value("FALSE", "FALSE");
+            expect_display_value("1i", "0+1i");
+        })
+    }
+
+    #[test]
+    fn test_data_frame_display_value() {
+        r_test(|| {
+            expect_display_value("datasets::mtcars", "[32 rows x 11 columns] <data.frame>");
+            expect_display_value("matrix(1:4, ncol=2)", "[[1 2], [3 4]]");
+        })
+    }
+
+    #[test]
+    fn test_list_display_value() {
+        r_test(|| {
+            expect_display_value("list(x=1:4)", "[x = 1 2 3 4]");
+            expect_display_value("list(1:4)", "[1 2 3 4]");
+        })
+    }
+
+    #[test]
+    fn test_functions_display_value() {
+        r_test(|| {
+            expect_display_value("function() NULL", "function () ");
+            expect_display_value("function(a) NULL", "function (a) ");
+            expect_display_value("function(a, b) NULL", "function (a, b) ");
+            expect_display_value("function(a = 1, b) NULL", "function (a = 1, b) ");
+        })
+    }
+
+    #[test]
+    fn test_altrep_is_not_materialized() {
+        r_test(|| {
+            // This will panic! if the variables pane tries to materialize the full altrep vector.
+            let display = get_display_value("1:1e10");
+            assert!(Regex::new(r"^1 2 3.*").unwrap().is_match(display.as_str()));
+
+            let display = get_display_value("local({x = 1:1e10; names(x) = x; names(x)})");
+            assert!(Regex::new(r#"^"1" "2" "3""#)
+                .unwrap()
+                .is_match(display.as_str()));
+        })
     }
 }
