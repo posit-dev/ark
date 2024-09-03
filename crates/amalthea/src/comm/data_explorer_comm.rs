@@ -383,38 +383,38 @@ pub struct SummaryStatsString {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SummaryStatsDate {
 	/// The exact number of distinct values
-	pub num_unique: i64,
+	pub num_unique: Option<i64>,
 
 	/// Minimum date value as string
-	pub min_date: String,
+	pub min_date: Option<String>,
 
 	/// Average date value as string
-	pub mean_date: String,
+	pub mean_date: Option<String>,
 
 	/// Sample median (50% value) date value as string
-	pub median_date: String,
+	pub median_date: Option<String>,
 
 	/// Maximum date value as string
-	pub max_date: String
+	pub max_date: Option<String>
 }
 
 /// SummaryStatsDatetime in Schemas
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SummaryStatsDatetime {
 	/// The exact number of distinct values
-	pub num_unique: i64,
+	pub num_unique: Option<i64>,
 
 	/// Minimum date value as string
-	pub min_date: String,
+	pub min_date: Option<String>,
 
 	/// Average date value as string
-	pub mean_date: String,
+	pub mean_date: Option<String>,
 
 	/// Sample median (50% value) date value as string
-	pub median_date: String,
+	pub median_date: Option<String>,
 
 	/// Maximum date value as string
-	pub max_date: String,
+	pub max_date: Option<String>,
 
 	/// Time zone for timestamp with time zone
 	pub timezone: Option<String>
