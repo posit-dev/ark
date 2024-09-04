@@ -168,40 +168,64 @@ pub fn r_cpl_get(x: SEXP, i: isize) -> Rcomplex {
 pub fn r_chr_get(x: SEXP, i: isize) -> SEXP {
     unsafe { STRING_ELT(x, i) }
 }
-
-pub fn try_lgl_get(x: SEXP, i: isize) -> harp::Result<i32> {
-    Ok(r_lgl_get(x, i))
-}
-pub fn try_int_get(x: SEXP, i: isize) -> harp::Result<i32> {
-    Ok(r_int_get(x, i))
-}
-pub fn try_dbl_get(x: SEXP, i: isize) -> harp::Result<f64> {
-    Ok(r_dbl_get(x, i))
-}
-pub fn try_raw_get(x: SEXP, i: isize) -> harp::Result<Rbyte> {
-    Ok(r_raw_get(x, i))
-}
-pub fn try_cpl_get(x: SEXP, i: isize) -> harp::Result<Rcomplex> {
-    Ok(r_cpl_get(x, i))
-}
-pub fn try_chr_get(x: SEXP, i: isize) -> harp::Result<SEXP> {
-    if r_is_altrep(x) {
-        // Guard against ALTREP `Elt` methods throwing errors
-        // (Including OOM errors if they have to allocate)
-        top_level_exec(|| r_chr_get(x, i))
-    } else {
-        Ok(r_chr_get(x, i))
-    }
-}
-
 // TODO: Once we have a Rust list type, move this back to unsafe.
 // Should be unsafe because the type and bounds are not checked and
 // will result in a crash if used incorrectly.
 pub fn list_get(x: SEXP, i: isize) -> SEXP {
     unsafe { VECTOR_ELT(x, i) }
 }
+
+// These methods guard against the potential for ALTREP `Elt` methods throwing errors
+// (including OOM errors if they have to allocate).
+// They don't check the validity of the index though.
+pub fn try_lgl_get(x: SEXP, i: isize) -> harp::Result<i32> {
+    if r_is_altrep(x) {
+        top_level_exec(|| r_lgl_get(x, i))
+    } else {
+        Ok(r_lgl_get(x, i))
+    }
+}
+pub fn try_int_get(x: SEXP, i: isize) -> harp::Result<i32> {
+    if r_is_altrep(x) {
+        top_level_exec(|| r_int_get(x, i))
+    } else {
+        Ok(r_int_get(x, i))
+    }
+}
+pub fn try_dbl_get(x: SEXP, i: isize) -> harp::Result<f64> {
+    if r_is_altrep(x) {
+        top_level_exec(|| r_dbl_get(x, i))
+    } else {
+        Ok(r_dbl_get(x, i))
+    }
+}
+pub fn try_raw_get(x: SEXP, i: isize) -> harp::Result<Rbyte> {
+    if r_is_altrep(x) {
+        top_level_exec(|| r_raw_get(x, i))
+    } else {
+        Ok(r_raw_get(x, i))
+    }
+}
+pub fn try_cpl_get(x: SEXP, i: isize) -> harp::Result<Rcomplex> {
+    if r_is_altrep(x) {
+        top_level_exec(|| r_cpl_get(x, i))
+    } else {
+        Ok(r_cpl_get(x, i))
+    }
+}
+pub fn try_chr_get(x: SEXP, i: isize) -> harp::Result<SEXP> {
+    if r_is_altrep(x) {
+        top_level_exec(|| r_chr_get(x, i))
+    } else {
+        Ok(r_chr_get(x, i))
+    }
+}
 pub fn try_list_get(x: SEXP, i: isize) -> harp::Result<SEXP> {
-    Ok(list_get(x, i))
+    if r_is_altrep(x) {
+        top_level_exec(|| list_get(x, i))
+    } else {
+        Ok(list_get(x, i))
+    }
 }
 
 pub fn list_poke(x: SEXP, i: isize, value: SEXP) {
