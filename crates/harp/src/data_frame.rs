@@ -18,11 +18,13 @@ impl DataFrame {
         harp::assert_class(sexp, "data.frame")?;
 
         let Some(dim) = list.obj.dim()? else {
-            return Err(harp::anyhow!("Data frame doesn't have dimensions"));
+            return Err(harp::unexpected_structure!(
+                "Data frame doesn't have dimensions"
+            ));
         };
 
         if dim.len() != 2 {
-            return Err(harp::anyhow!(
+            return Err(harp::unexpected_structure!(
                 "Data frame must have 2 dimensions, instead it has {}",
                 dim.len()
             ));
@@ -34,10 +36,10 @@ impl DataFrame {
         let obj = RObject::view(sexp);
 
         let Some(names) = obj.names() else {
-            return Err(harp::anyhow!("Data frame doesn't have names"));
+            return Err(harp::unexpected_structure!("Data frame doesn't have names"));
         };
         let Ok(names) = harp::assert_non_optional(names) else {
-            return Err(harp::anyhow!("Data frame has missing names"));
+            return Err(harp::unexpected_structure!("Data frame has missing names"));
         };
 
         Ok(Self {
