@@ -7,6 +7,7 @@ pub struct DataFrame {
     pub list: List,
     pub obj: RObject,
 
+    pub names: Vec<String>,
     pub nrow: usize,
     pub ncol: usize,
 }
@@ -32,9 +33,17 @@ impl DataFrame {
         // SAFETY: Protected by `list`
         let obj = RObject::view(sexp);
 
+        let Some(names) = obj.names() else {
+            return Err(harp::anyhow!("Data frame doesn't have names"));
+        };
+        let Ok(names) = harp::assert_non_optional(names) else {
+            return Err(harp::anyhow!("Data frame has missing names"));
+        };
+
         Ok(Self {
             list,
             obj,
+            names,
             nrow,
             ncol,
         })

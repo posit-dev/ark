@@ -160,6 +160,13 @@ pub fn assert_class(object: SEXP, expected: &str) -> Result<()> {
     Ok(())
 }
 
+pub fn assert_non_optional<T>(object: Vec<Option<T>>) -> harp::Result<Vec<T>> {
+    let Some(non_optional): Option<Vec<T>> = object.into_iter().collect() else {
+        return Err(harp::anyhow!("Values are unexpectedly missing"));
+    };
+    Ok(non_optional)
+}
+
 pub fn r_is_data_frame(object: SEXP) -> bool {
     r_typeof(object) == VECSXP && r_inherits(object, "data.frame")
 }
