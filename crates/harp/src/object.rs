@@ -22,7 +22,7 @@ use crate::exec::RFunctionExt;
 use crate::protect::RProtect;
 use crate::r_symbol;
 use crate::size::r_size;
-use crate::top_level_exec;
+use crate::try_catch;
 use crate::utils::r_assert_capacity;
 use crate::utils::r_assert_length;
 use crate::utils::r_assert_type;
@@ -180,49 +180,49 @@ pub fn list_get(x: SEXP, i: isize) -> SEXP {
 // They don't check the validity of the index though.
 pub fn try_lgl_get(x: SEXP, i: isize) -> harp::Result<i32> {
     if r_is_altrep(x) {
-        top_level_exec(|| r_lgl_get(x, i))
+        try_catch(|| r_lgl_get(x, i))
     } else {
         Ok(r_lgl_get(x, i))
     }
 }
 pub fn try_int_get(x: SEXP, i: isize) -> harp::Result<i32> {
     if r_is_altrep(x) {
-        top_level_exec(|| r_int_get(x, i))
+        try_catch(|| r_int_get(x, i))
     } else {
         Ok(r_int_get(x, i))
     }
 }
 pub fn try_dbl_get(x: SEXP, i: isize) -> harp::Result<f64> {
     if r_is_altrep(x) {
-        top_level_exec(|| r_dbl_get(x, i))
+        try_catch(|| r_dbl_get(x, i))
     } else {
         Ok(r_dbl_get(x, i))
     }
 }
 pub fn try_raw_get(x: SEXP, i: isize) -> harp::Result<Rbyte> {
     if r_is_altrep(x) {
-        top_level_exec(|| r_raw_get(x, i))
+        try_catch(|| r_raw_get(x, i))
     } else {
         Ok(r_raw_get(x, i))
     }
 }
 pub fn try_cpl_get(x: SEXP, i: isize) -> harp::Result<Rcomplex> {
     if r_is_altrep(x) {
-        top_level_exec(|| r_cpl_get(x, i))
+        try_catch(|| r_cpl_get(x, i))
     } else {
         Ok(r_cpl_get(x, i))
     }
 }
 pub fn try_chr_get(x: SEXP, i: isize) -> harp::Result<SEXP> {
     if r_is_altrep(x) {
-        top_level_exec(|| r_chr_get(x, i))
+        try_catch(|| r_chr_get(x, i))
     } else {
         Ok(r_chr_get(x, i))
     }
 }
 pub fn try_list_get(x: SEXP, i: isize) -> harp::Result<SEXP> {
     if r_is_altrep(x) {
-        top_level_exec(|| list_get(x, i))
+        try_catch(|| list_get(x, i))
     } else {
         Ok(list_get(x, i))
     }
