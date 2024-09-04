@@ -35,12 +35,12 @@ if (is.null(repos) || !is.character(repos)) {
     if ("CRAN" %in% names(repos)) {
         if (identical(repos[["CRAN"]], "@CRAN@")) {
             repos[["CRAN"]] <- rstudio_cran
+            attr(repos, "IDE") <- TRUE
         }
     } else {
         repos <- c(CRAN = rstudio_cran, repos)
     }
 }
-attr(repos, "Positron") <- TRUE
 options(repos = repos)
 
 # Show Plumber apps in the viewer
