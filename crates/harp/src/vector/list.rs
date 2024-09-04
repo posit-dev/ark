@@ -11,6 +11,7 @@ use crate::object::list_cbegin;
 use crate::object::r_length;
 use crate::object::r_list_poke;
 use crate::object::RObject;
+use crate::r_null;
 use crate::r_typeof;
 
 pub struct List {
@@ -58,8 +59,12 @@ impl super::Vector for List {
         false
     }
 
-    fn get_unchecked_elt(&self, index: isize) -> Self::UnderlyingType {
-        unsafe { *self.ptr.wrapping_add(index as usize) }
+    fn get_unchecked_elt(&self, index: isize) -> harp::Result<Self::UnderlyingType> {
+        Ok(unsafe { *self.ptr.wrapping_add(index as usize) })
+    }
+
+    fn error_elt() -> Self::UnderlyingType {
+        r_null()
     }
 
     fn convert_value(x: &Self::UnderlyingType) -> Self::Type {

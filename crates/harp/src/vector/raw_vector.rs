@@ -9,10 +9,10 @@ use libr::R_xlen_t;
 use libr::Rf_allocVector;
 use libr::DATAPTR;
 use libr::RAWSXP;
-use libr::RAW_ELT;
 use libr::SEXP;
 
 use crate::object::RObject;
+use crate::try_raw_get;
 use crate::vector::FormatOptions;
 use crate::vector::Vector;
 
@@ -60,8 +60,12 @@ impl Vector for RawVector {
         false
     }
 
-    fn get_unchecked_elt(&self, index: isize) -> Self::UnderlyingType {
-        unsafe { RAW_ELT(self.data(), index as R_xlen_t) }
+    fn get_unchecked_elt(&self, index: isize) -> harp::Result<Self::UnderlyingType> {
+        try_raw_get(self.data(), R_xlen_t::from(index))
+    }
+
+    fn error_elt() -> Self::UnderlyingType {
+        Self::UnderlyingType::from(0)
     }
 
     fn convert_value(x: &Self::UnderlyingType) -> Self::Type {

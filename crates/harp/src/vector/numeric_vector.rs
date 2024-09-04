@@ -10,10 +10,11 @@ use libr::R_xlen_t;
 use libr::Rf_allocVector;
 use libr::DATAPTR;
 use libr::REALSXP;
-use libr::REAL_ELT;
 use libr::SEXP;
 
 use crate::object::RObject;
+use crate::r_dbl_na;
+use crate::try_dbl_get;
 use crate::vector::FormatOptions;
 use crate::vector::Vector;
 
@@ -61,8 +62,12 @@ impl Vector for NumericVector {
         unsafe { R_IsNA(*x) == 1 }
     }
 
-    fn get_unchecked_elt(&self, index: isize) -> Self::UnderlyingType {
-        unsafe { REAL_ELT(self.data(), index as R_xlen_t) }
+    fn get_unchecked_elt(&self, index: isize) -> harp::Result<Self::UnderlyingType> {
+        try_dbl_get(self.data(), R_xlen_t::from(index))
+    }
+
+    fn error_elt() -> Self::UnderlyingType {
+        r_dbl_na()
     }
 
     fn convert_value(x: &Self::UnderlyingType) -> Self::Type {

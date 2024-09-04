@@ -34,7 +34,7 @@ pub fn r_n_frame() -> crate::Result<i32> {
     unsafe {
         let ffi = harp::try_eval_silent(NFRAME_CALL.unwrap_unchecked(), R_ENVS.base)?;
         let n_frame = IntegerVector::new(ffi)?;
-        Ok(n_frame.get_unchecked_elt(0))
+        Ok(n_frame.get_unchecked(0).unwrap())
     }
 }
 

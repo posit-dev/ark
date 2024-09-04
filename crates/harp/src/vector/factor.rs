@@ -10,14 +10,15 @@ use libr::R_xlen_t;
 use libr::Rf_allocVector;
 use libr::Rf_getAttrib;
 use libr::DATAPTR;
-use libr::INTEGER_ELT;
 use libr::INTSXP;
 use libr::SEXP;
 
 use crate::object::RObject;
+use crate::r_int_na;
 use crate::r_symbol;
-use crate::vector::FormatOptions;
+use crate::try_int_get;
 use crate::vector::CharacterVector;
+use crate::vector::FormatOptions;
 use crate::vector::Vector;
 
 #[harp_macros::vector]
@@ -66,8 +67,12 @@ impl Vector for Factor {
         unsafe { *x == R_NaInt }
     }
 
-    fn get_unchecked_elt(&self, index: isize) -> Self::UnderlyingType {
-        unsafe { INTEGER_ELT(self.data(), index as R_xlen_t) }
+    fn get_unchecked_elt(&self, index: isize) -> harp::Result<Self::UnderlyingType> {
+        try_int_get(self.data(), R_xlen_t::from(index))
+    }
+
+    fn error_elt() -> Self::UnderlyingType {
+        r_int_na()
     }
 
     fn convert_value(x: &Self::UnderlyingType) -> Self::Type {

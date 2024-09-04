@@ -22,6 +22,7 @@ use crate::exec::RFunctionExt;
 use crate::protect::RProtect;
 use crate::r_symbol;
 use crate::size::r_size;
+use crate::top_level_exec;
 use crate::utils::r_assert_capacity;
 use crate::utils::r_assert_length;
 use crate::utils::r_assert_type;
@@ -158,6 +159,9 @@ pub fn r_int_get(x: SEXP, i: isize) -> i32 {
 pub fn r_dbl_get(x: SEXP, i: isize) -> f64 {
     unsafe { REAL_ELT(x, i) }
 }
+pub fn r_raw_get(x: SEXP, i: isize) -> Rbyte {
+    unsafe { RAW_ELT(x, i) }
+}
 pub fn r_cpl_get(x: SEXP, i: isize) -> Rcomplex {
     unsafe { COMPLEX_ELT(x, i) }
 }
@@ -165,11 +169,39 @@ pub fn r_chr_get(x: SEXP, i: isize) -> SEXP {
     unsafe { STRING_ELT(x, i) }
 }
 
+pub fn try_lgl_get(x: SEXP, i: isize) -> harp::Result<i32> {
+    Ok(r_lgl_get(x, i))
+}
+pub fn try_int_get(x: SEXP, i: isize) -> harp::Result<i32> {
+    Ok(r_int_get(x, i))
+}
+pub fn try_dbl_get(x: SEXP, i: isize) -> harp::Result<f64> {
+    Ok(r_dbl_get(x, i))
+}
+pub fn try_raw_get(x: SEXP, i: isize) -> harp::Result<Rbyte> {
+    Ok(r_raw_get(x, i))
+}
+pub fn try_cpl_get(x: SEXP, i: isize) -> harp::Result<Rcomplex> {
+    Ok(r_cpl_get(x, i))
+}
+pub fn try_chr_get(x: SEXP, i: isize) -> harp::Result<SEXP> {
+    if r_is_altrep(x) {
+        // Guard against ALTREP `Elt` methods throwing errors
+        // (Including OOM errors if they have to allocate)
+        top_level_exec(|| r_chr_get(x, i))
+    } else {
+        Ok(r_chr_get(x, i))
+    }
+}
+
 // TODO: Once we have a Rust list type, move this back to unsafe.
 // Should be unsafe because the type and bounds are not checked and
 // will result in a crash if used incorrectly.
 pub fn list_get(x: SEXP, i: isize) -> SEXP {
     unsafe { VECTOR_ELT(x, i) }
+}
+pub fn try_list_get(x: SEXP, i: isize) -> harp::Result<SEXP> {
+    Ok(list_get(x, i))
 }
 
 pub fn list_poke(x: SEXP, i: isize, value: SEXP) {
@@ -184,6 +216,12 @@ pub fn r_int_na() -> i32 {
 }
 pub fn r_dbl_na() -> f64 {
     unsafe { R_NaReal }
+}
+pub fn r_cpl_na() -> Rcomplex {
+    Rcomplex {
+        r: r_dbl_na(),
+        i: r_dbl_na(),
+    }
 }
 pub fn r_str_na() -> SEXP {
     unsafe { R_NaString }

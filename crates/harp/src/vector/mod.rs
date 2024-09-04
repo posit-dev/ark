@@ -8,6 +8,7 @@
 use libr::Rf_allocVector;
 use libr::Rf_xlength;
 use libr::SEXP;
+use stdext::unwrap;
 
 use crate::error::Result;
 use crate::utils::r_assert_capacity;
@@ -57,11 +58,30 @@ pub trait Vector {
     unsafe fn new_unchecked(object: impl Into<SEXP>) -> Self;
     fn data(&self) -> SEXP;
     fn is_na(x: &Self::UnderlyingType) -> bool;
-    fn get_unchecked_elt(&self, index: isize) -> Self::UnderlyingType;
+
+    /// Extract an element with no bounds checking
+    ///
+    /// Errors if the underlying extraction function errors, i.e. on an ALTREP object
+    /// who's `Elt` method may force an allocation that could error.
+    fn get_unchecked_elt(&self, index: isize) -> harp::Result<Self::UnderlyingType>;
+
+    /// Error value to use if `get_unchecked_elt()` returns an error
+    ///
+    /// We use an error value in place of propagating the error from `get_unchecked_elt()`
+    /// because it should be extremely rare and would be more painful than it is worth to
+    /// propagate the error through everywhere.
+    fn error_elt() -> Self::UnderlyingType;
+
     fn convert_value(x: &Self::UnderlyingType) -> Self::Type;
 
     fn get_unchecked(&self, index: isize) -> Option<Self::Type> {
         let x = self.get_unchecked_elt(index);
+
+        let x = unwrap!(x, Err(err) => {
+            log::error!("Failed to extract element in `get_unchecked()`. Using fallback element value.\n{err:?}");
+            Self::error_elt()
+        });
+
         match Self::is_na(&x) {
             true => None,
             false => Some(Self::convert_value(&x)),
