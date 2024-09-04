@@ -1048,19 +1048,19 @@ impl RDataExplorer {
                         },
                         ColumnProfileTypeSupportStatus {
                             profile_type: ColumnProfileType::SmallHistogram,
-                            support_status: SupportStatus::Experimental,
+                            support_status: SupportStatus::Supported,
                         },
                         ColumnProfileTypeSupportStatus {
                             profile_type: ColumnProfileType::SmallFrequencyTable,
-                            support_status: SupportStatus::Experimental,
+                            support_status: SupportStatus::Supported,
                         },
                         ColumnProfileTypeSupportStatus {
                             profile_type: ColumnProfileType::LargeHistogram,
-                            support_status: SupportStatus::Experimental,
+                            support_status: SupportStatus::Supported,
                         },
                         ColumnProfileTypeSupportStatus {
                             profile_type: ColumnProfileType::LargeFrequencyTable,
-                            support_status: SupportStatus::Experimental,
+                            support_status: SupportStatus::Supported,
                         },
                     ],
                 },
