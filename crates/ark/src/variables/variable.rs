@@ -45,6 +45,7 @@ use harp::vector::names::Names;
 use harp::vector::CharacterVector;
 use harp::vector::IntegerVector;
 use harp::vector::Vector;
+use harp::TableDim;
 use itertools::Itertools;
 use libr::*;
 use stdext::local;
@@ -96,7 +97,15 @@ impl WorkspaceVariableDisplayValue {
     }
 
     fn from_data_frame(value: SEXP) -> Self {
-        let dim = harp::df_dim(value);
+        let dim = match unsafe { harp::df_dim(value) } {
+            Ok(dim) => dim,
+            // FIXME: Needs more type safety
+            Err(_) => TableDim {
+                num_rows: -1,
+                num_cols: -1,
+            },
+        };
+
         let class = match r_classes(value) {
             None => String::from(""),
             Some(classes) => match classes.get_unchecked(0) {

@@ -40,6 +40,7 @@ pub mod vec_format;
 pub mod vector;
 
 // Reexport API
+pub use data_frame::*;
 pub use eval::*;
 pub use object::*;
 pub use parse::*;

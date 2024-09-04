@@ -4,6 +4,7 @@ use crate::exec::RFunction;
 use crate::exec::RFunctionExt;
 use crate::object::r_length;
 use crate::object::RObject;
+use crate::r_assert_type;
 use crate::utils::r_is_data_frame;
 use crate::utils::r_is_matrix;
 use crate::utils::r_typeof;
@@ -66,7 +67,7 @@ pub fn tbl_get_column(x: SEXP, column_index: i32, kind: TableKind) -> anyhow::Re
 
 pub fn df_info(x: SEXP) -> anyhow::Result<TableInfo> {
     unsafe {
-        let dims = df_dim(x);
+        let dims = df_dim(x)?;
         let col_names = ColumnNames::new(Rf_getAttrib(x, R_NamesSymbol));
 
         Ok(TableInfo {
@@ -95,18 +96,32 @@ pub struct TableDim {
     pub num_cols: i32,
 }
 
-pub fn df_dim(data: SEXP) -> TableDim {
-    unsafe {
-        let dims = RFunction::new("base", "dim.data.frame")
-            .add(data)
-            .call()
-            .unwrap();
+/// Safety: Assumes a data frame as input.
+/// TODO: Extract row info from attribute.
+pub unsafe fn df_dim(data: SEXP) -> harp::Result<TableDim> {
+    // FIXME: We shouldn't dispatch to methods here
+    let dims = RFunction::new("base", "dim.data.frame")
+        .add(data)
+        .call()
+        .unwrap();
 
-        TableDim {
-            num_rows: INTEGER_ELT(dims.sexp, 0),
-            num_cols: INTEGER_ELT(dims.sexp, 1),
-        }
+    let Ok(_) = r_assert_type(dims.sexp, &[libr::INTSXP]) else {
+        return Err(harp::unexpected_structure!(
+            "Data frame dimensions must be an integer vector, instead it has type `{}`",
+            harp::r_type2char(dims.kind())
+        ));
+    };
+    if dims.length() != 2 {
+        return Err(harp::unexpected_structure!(
+            "Data frame must have 2 dimensions, instead it has {}",
+            dims.length()
+        ));
     }
+
+    Ok(TableDim {
+        num_rows: INTEGER_ELT(dims.sexp, 0),
+        num_cols: INTEGER_ELT(dims.sexp, 1),
+    })
 }
 
 pub fn mat_dim(x: SEXP) -> TableDim {

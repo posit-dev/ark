@@ -17,23 +17,12 @@ impl DataFrame {
         let list = unsafe { List::new(sexp) }?;
         harp::assert_class(sexp, "data.frame")?;
 
-        let Some(dim) = list.obj.dim()? else {
-            return Err(harp::unexpected_structure!(
-                "Data frame doesn't have dimensions"
-            ));
-        };
-
-        if dim.len() != 2 {
-            return Err(harp::unexpected_structure!(
-                "Data frame must have 2 dimensions, instead it has {}",
-                dim.len()
-            ));
-        }
-        let nrow = *dim.get(0).unwrap();
-        let ncol = *dim.get(1).unwrap();
-
         // SAFETY: Protected by `list`
         let obj = RObject::view(sexp);
+
+        let dim = unsafe { harp::df_dim(obj.sexp) }?;
+        let nrow = dim.num_rows as usize;
+        let ncol = list.obj.length() as usize;
 
         let Some(names) = obj.names() else {
             return Err(harp::unexpected_structure!("Data frame doesn't have names"));
@@ -48,6 +37,30 @@ impl DataFrame {
             names,
             nrow,
             ncol,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::assert_match;
+    use crate::test::r_test;
+    use crate::DataFrame;
+    use crate::List;
+    use crate::RObject;
+
+    #[test]
+    fn test_data_frame_structure() {
+        r_test(|| {
+            let df = harp::parse_eval_base("data.frame(x = 1:2, y = 3:4)").unwrap();
+            let df = DataFrame::new(df.sexp).unwrap();
+
+            assert_match!(df.list, List { .. });
+            assert_match!(df.obj, RObject { .. });
+
+            assert_eq!(df.names, vec![String::from("x"), String::from("y")]);
+            assert_eq!(df.nrow, 2);
+            assert_eq!(df.ncol, 2);
         })
     }
 }
