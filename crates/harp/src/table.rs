@@ -106,13 +106,13 @@ pub unsafe fn df_dim(data: SEXP) -> harp::Result<TableDim> {
         .unwrap();
 
     let Ok(_) = r_assert_type(dims.sexp, &[libr::INTSXP]) else {
-        return Err(harp::unexpected_structure!(
+        return Err(harp::anyhow!(
             "Data frame dimensions must be an integer vector, instead it has type `{}`",
             harp::r_type2char(dims.kind())
         ));
     };
     if dims.length() != 2 {
-        return Err(harp::unexpected_structure!(
+        return Err(harp::anyhow!(
             "Data frame must have 2 dimensions, instead it has {}",
             dims.length()
         ));

@@ -38,12 +38,6 @@ pub enum Error {
     UnexpectedLength(usize, usize),
     UnexpectedType(u32, Vec<u32>),
     UnexpectedClass(Option<Vec<String>>, String),
-    /// Something in the structure of the object is unexpected, but that
-    /// something is described as an error message rather than as an enum
-    /// variant. `UnexpectedStructure` is more specific than an `Error::Anyhow`
-    /// in that it describes a problem in the internal structure of a classed
-    /// object.
-    UnexpectedStructure(String),
     ValueOutOfRange {
         value: i64,
         min: i64,
@@ -191,10 +185,6 @@ impl fmt::Display for Error {
                 )
             },
 
-            Error::UnexpectedStructure(message) => {
-                write!(f, "Unexpected structure for R object: {message}",)
-            },
-
             Error::ValueOutOfRange { value, min, max } => {
                 write!(
                     f,
@@ -246,14 +236,6 @@ macro_rules! anyhow {
     ($($rest: expr),*) => {{
         let message = anyhow::anyhow!($($rest, )*);
         crate::error::Error::Anyhow(message)
-    }}
-}
-
-#[macro_export]
-macro_rules! unexpected_structure {
-    ($($rest: expr),*) => {{
-        let message = format!($($rest, )*);
-        crate::error::Error::UnexpectedStructure(message)
     }}
 }
 

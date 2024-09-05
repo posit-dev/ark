@@ -31,12 +31,10 @@ impl DataFrame {
         let ncol = list.obj.length() as usize;
 
         let Some(names) = obj.names() else {
-            return Err(harp::unexpected_structure!("Data frame must have names"));
+            return Err(harp::anyhow!("Data frame must have names"));
         };
         let Ok(names) = harp::assert_non_optional(names) else {
-            return Err(harp::unexpected_structure!(
-                "Data frame can't have missing names"
-            ));
+            return Err(harp::anyhow!("Data frame can't have missing names"));
         };
 
         // Validate columns
@@ -44,13 +42,11 @@ impl DataFrame {
             let obj = RObject::view(obj);
 
             if unsafe { libr::Rf_isVector(obj.sexp) == 0 } {
-                return Err(harp::unexpected_structure!(
-                    "Data frame column must be a vector"
-                ));
+                return Err(harp::anyhow!("Data frame column must be a vector"));
             }
 
             if obj.length() as usize != nrow {
-                return Err(harp::unexpected_structure!(
+                return Err(harp::anyhow!(
                     "Data frame column must be the same size as the number of rows"
                 ));
             }
@@ -73,8 +69,6 @@ mod tests {
     use crate::r_chr_poke;
     use crate::r_list_poke;
     use crate::test::r_test;
-    use crate::vector::IntegerVector;
-    use crate::vector::Vector;
     use crate::DataFrame;
     use crate::List;
     use crate::RObject;
@@ -102,7 +96,6 @@ mod tests {
             let df = DataFrame::new(df.sexp);
 
             assert_match!(df, harp::Result::Err(err) => {
-                assert_match!(err, harp::Error::UnexpectedStructure(..));
                 assert!(format!("{err}").contains("must have names"))
             });
         })
@@ -119,7 +112,6 @@ mod tests {
             let df = DataFrame::new(df.sexp);
 
             assert_match!(df, harp::Result::Err(err) => {
-                assert_match!(err, harp::Error::UnexpectedStructure(..));
                 assert!(format!("{err}").contains("missing names"))
             });
         })
@@ -134,7 +126,6 @@ mod tests {
             let df = DataFrame::new(df.sexp);
 
             assert_match!(df, harp::Result::Err(err) => {
-                assert_match!(err, harp::Error::UnexpectedStructure(..));
                 assert!(format!("{err}").contains("must be a vector"))
             });
         })
@@ -150,7 +141,6 @@ mod tests {
             let df = DataFrame::new(df.sexp);
 
             assert_match!(df, harp::Result::Err(err) => {
-                assert_match!(err, harp::Error::UnexpectedStructure(..));
                 assert!(format!("{err}").contains("must be the same size"))
             });
         })
