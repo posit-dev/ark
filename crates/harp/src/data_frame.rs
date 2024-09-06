@@ -60,6 +60,17 @@ impl DataFrame {
             ncol,
         })
     }
+
+    pub fn col(&self, name: &str) -> harp::Result<RObject> {
+        let Some(idx) = self.names.iter().position(|n| n == name) else {
+            return Err(harp::Error::MissingColumnError { name: name.into() });
+        };
+
+        self.list
+            // FIXME: `get()` should take `usize`
+            .get(idx as isize)?
+            .ok_or_else(|| harp::unreachable!("missing column"))
+    }
 }
 
 #[cfg(test)]
@@ -69,6 +80,7 @@ mod tests {
     use crate::r_chr_poke;
     use crate::r_list_poke;
     use crate::test::r_test;
+    use crate::vector::Vector;
     use crate::DataFrame;
     use crate::List;
     use crate::RObject;
@@ -142,6 +154,24 @@ mod tests {
 
             assert_match!(df, harp::Result::Err(err) => {
                 assert!(format!("{err}").contains("must be the same size"))
+            });
+        })
+    }
+
+    #[test]
+    fn test_data_frame_col() {
+        r_test(|| {
+            let df = harp::parse_eval_base("data.frame(x = 1:2, y = 3:4)").unwrap();
+            let df = DataFrame::new(df.sexp).unwrap();
+
+            let col_y = df.col("y").unwrap();
+            assert_eq!(col_y.sexp, df.list.get_value(1).unwrap().sexp);
+
+            assert_match!(df.col("foo"), harp::Result::Err(err) => {
+                assert_match!(err, harp::Error::MissingColumnError { ref name } => {
+                    assert_eq!(name, "foo");
+                });
+                assert!(format!("{err}").contains("Can't find column `foo` in data frame"))
             });
         })
     }
