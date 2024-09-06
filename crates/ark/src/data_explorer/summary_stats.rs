@@ -5,6 +5,7 @@
 //
 //
 
+use core::fmt;
 use std::collections::HashMap;
 
 use amalthea::comm::data_explorer_comm;
@@ -164,13 +165,14 @@ fn empty_column_summary_stats() -> data_explorer_comm::ColumnSummaryStats {
 fn get_stat<Return, T: Clone>(stats: &HashMap<String, T>, name: &str) -> anyhow::Result<Return>
 where
     Return: TryFrom<T>,
+    Return::Error: fmt::Debug,
 {
     let value = stats.get(name);
 
     match value {
         Some(value) => {
-            let value: Return = unwrap!(value.clone().try_into(), Err(_) => {
-                return Err(anyhow!("Can't cast to return type."))
+            let value: Return = unwrap!(value.clone().try_into(), Err(err) => {
+                return Err(anyhow!("Can't cast to return type. {err:?}"))
             });
             Ok(value)
         },
