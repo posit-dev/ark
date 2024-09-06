@@ -6,8 +6,6 @@ use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
 use anyhow::anyhow;
 use crossbeam::channel::Sender;
-use harp::environment::R_ENVS;
-use harp::eval::r_parse_eval0;
 use harp::RObject;
 use lazy_static::lazy_static;
 use libr::R_NilValue;
@@ -18,7 +16,6 @@ use stdext::unwrap;
 use uuid::Uuid;
 
 use crate::interface::RMain;
-use crate::r_task;
 
 lazy_static! {
     static ref RETICULATE_COMM_ID: Mutex<Option<String>> = Mutex::new(None);
@@ -95,12 +92,6 @@ impl ReticulateService {
 
         Ok(())
     }
-}
-
-pub unsafe extern "C" fn ps_reticulate_r_main() {
-    r_task(|| {
-        r_parse_eval0("1 + 1", R_ENVS.global).unwrap();
-    })
 }
 
 // Creates a client instance reticulate can use to communicate with the front-end.

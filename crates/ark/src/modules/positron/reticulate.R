@@ -6,6 +6,6 @@
 }
 
 #' @export
-.ps.reticulate_open <- function() {
-    .ps.Call("ps_reticulate_open")
+.ps.reticulate_open <- function(input="") {
+    .ps.Call("ps_reticulate_open", input)
 }
