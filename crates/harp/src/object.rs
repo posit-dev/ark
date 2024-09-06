@@ -33,6 +33,8 @@ use crate::utils::r_is_object;
 use crate::utils::r_is_s4;
 use crate::utils::r_str_to_owned_utf8;
 use crate::utils::r_typeof;
+use crate::vector::LogicalVector;
+use crate::vector::Vector;
 
 // Objects are protected using a doubly-linked list,
 // allowing for quick insertion and removal of objects.
@@ -953,6 +955,35 @@ impl TryFrom<RObject> for Vec<i32> {
                     return Err(Error::MissingValueError);
                 }
                 result.push(res);
+            }
+
+            return Ok(result);
+        }
+    }
+}
+
+// TODO(harp-try-from-robject-ref): Move `RObject` method here
+impl TryFrom<&RObject> for Vec<i32> {
+    type Error = crate::error::Error;
+    fn try_from(value: &RObject) -> Result<Self, Self::Error> {
+        value.clone().try_into()
+    }
+}
+
+// TODO: Generalise this implementation for other vector types
+impl TryFrom<&RObject> for Vec<bool> {
+    type Error = crate::error::Error;
+
+    fn try_from(value: &RObject) -> Result<Self, Self::Error> {
+        unsafe {
+            let vec = LogicalVector::new(value.sexp)?;
+            let mut result: Vec<bool> = Vec::with_capacity(vec.len());
+
+            for val in vec.iter() {
+                let Some(x) = val else {
+                    return Err(Error::MissingValueError);
+                };
+                result.push(x);
             }
 
             return Ok(result);
