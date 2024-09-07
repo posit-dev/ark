@@ -916,14 +916,14 @@ impl TryFrom<RObject> for Vec<i32> {
 impl TryFrom<&RObject> for Vec<bool> {
     type Error = harp::Error;
     fn try_from(value: &RObject) -> harp::Result<Self> {
-        unsafe { LogicalVector::new(value.sexp) }?.try_into()
+        LogicalVector::new(value.sexp)?.try_into()
     }
 }
 
 impl TryFrom<&RObject> for Vec<i32> {
     type Error = harp::Error;
     fn try_from(value: &RObject) -> harp::Result<Self> {
-        unsafe { IntegerVector::new(value.sexp) }?.try_into()
+        IntegerVector::new(value.sexp)?.try_into()
     }
 }
 

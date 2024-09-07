@@ -126,7 +126,7 @@ fn parse_input_as_string<'a>(input: &ParseInput<'a>) -> crate::Result<String> {
         ParseInput::Text(text) => text.to_string(),
         ParseInput::SrcFile(srcfile) => {
             let lines = srcfile.lines()?;
-            let lines = unsafe { CharacterVector::new(lines)? };
+            let lines = CharacterVector::new(lines)?;
 
             lines
                 .iter()

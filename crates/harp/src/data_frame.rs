@@ -20,7 +20,7 @@ pub struct DataFrame {
 
 impl DataFrame {
     pub fn new(sexp: libr::SEXP) -> harp::Result<Self> {
-        let list = unsafe { List::new(sexp) }?;
+        let list = List::new(sexp)?;
         harp::assert_class(sexp, "data.frame")?;
 
         // SAFETY: Protected by `list`

@@ -44,12 +44,10 @@ impl RObject {
             return Err(anyhow!("Can't find `srcref` attribute"));
         });
 
-        unsafe {
-            crate::List::new(srcref.sexp)?
-                .iter()
-                .map(|x| SrcRef::try_from(RObject::view(x)))
-                .collect()
-        }
+        crate::List::new(srcref.sexp)?
+            .iter()
+            .map(|x| SrcRef::try_from(RObject::view(x)))
+            .collect()
     }
 }
 
@@ -61,7 +59,7 @@ impl TryFrom<RObject> for SrcRef {
         crate::r_assert_type(value.sexp, &[libr::INTSXP])?;
         crate::r_assert_capacity(value.sexp, 6)?;
 
-        let value = unsafe { IntegerVector::new(value)? };
+        let value = IntegerVector::new(value)?;
 
         // The srcref values are adjusted to produce a `[ )` range as expected
         // by `std::ops::Range` that counts from 0. This is in contrast to the

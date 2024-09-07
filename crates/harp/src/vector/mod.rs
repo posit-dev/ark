@@ -81,13 +81,13 @@ pub trait Vector: Sized {
         Ok(value)
     }
 
-    unsafe fn new(object: impl Into<SEXP>) -> Result<Self>
+    fn new(object: impl Into<SEXP>) -> Result<Self>
     where
         Self: Sized,
     {
         let object = object.into();
         r_assert_type(object, &[Self::SEXPTYPE])?;
-        Ok(Self::new_unchecked(object))
+        unsafe { Ok(Self::new_unchecked(object)) }
     }
 
     unsafe fn with_length(size: usize) -> Self
