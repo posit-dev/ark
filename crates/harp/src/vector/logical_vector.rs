@@ -77,3 +77,11 @@ impl Vector for LogicalVector {
         }
     }
 }
+
+impl TryFrom<LogicalVector> for Vec<bool> {
+    type Error = harp::Error;
+
+    fn try_from(value: LogicalVector) -> harp::Result<Self> {
+        super::try_vec_from_r_vector(value)
+    }
+}

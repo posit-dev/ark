@@ -73,3 +73,11 @@ impl Vector for IntegerVector {
         x.to_string()
     }
 }
+
+impl TryFrom<IntegerVector> for Vec<i32> {
+    type Error = harp::Error;
+
+    fn try_from(value: IntegerVector) -> harp::Result<Self> {
+        super::try_vec_from_r_vector(value)
+    }
+}

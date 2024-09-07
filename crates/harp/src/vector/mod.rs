@@ -161,3 +161,24 @@ where
         Some(item)
     }
 }
+
+// Can we integrate this in a generic `TryFrom` impl for `Vector` objects?
+pub(crate) fn try_vec_from_r_vector<VectorType>(
+    value: VectorType,
+) -> harp::Result<Vec<VectorType::Type>>
+where
+    VectorType: Vector,
+{
+    unsafe {
+        let mut result: Vec<VectorType::Type> = Vec::with_capacity(value.len());
+
+        for val in value.iter() {
+            let Some(x) = val else {
+                return Err(harp::Error::MissingValueError);
+            };
+            result.push(x);
+        }
+
+        return Ok(result);
+    }
+}

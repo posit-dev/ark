@@ -33,6 +33,7 @@ use crate::utils::r_is_object;
 use crate::utils::r_is_s4;
 use crate::utils::r_str_to_owned_utf8;
 use crate::utils::r_typeof;
+use crate::vector::IntegerVector;
 use crate::vector::LogicalVector;
 use crate::vector::Vector;
 
@@ -904,6 +905,28 @@ impl TryFrom<RObject> for f64 {
     }
 }
 
+// TODO(harp-try-from-robject-ref): Remove in favour of `&RObject`
+impl TryFrom<RObject> for Vec<i32> {
+    type Error = crate::error::Error;
+    fn try_from(value: RObject) -> Result<Self, Self::Error> {
+        (&value).try_into()
+    }
+}
+
+impl TryFrom<&RObject> for Vec<bool> {
+    type Error = harp::Error;
+    fn try_from(value: &RObject) -> harp::Result<Self> {
+        unsafe { LogicalVector::new(value.sexp) }?.try_into()
+    }
+}
+
+impl TryFrom<&RObject> for Vec<i32> {
+    type Error = harp::Error;
+    fn try_from(value: &RObject) -> harp::Result<Self> {
+        unsafe { IntegerVector::new(value.sexp) }?.try_into()
+    }
+}
+
 impl TryFrom<RObject> for Vec<String> {
     type Error = crate::error::Error;
     fn try_from(value: RObject) -> Result<Self, Self::Error> {
@@ -933,59 +956,6 @@ impl TryFrom<RObject> for Vec<Option<String>> {
             for i in 0..n {
                 result.push(value.get_string(i as isize)?);
             }
-            return Ok(result);
-        }
-    }
-}
-
-impl TryFrom<RObject> for Vec<i32> {
-    type Error = crate::error::Error;
-    fn try_from(value: RObject) -> Result<Self, Self::Error> {
-        unsafe {
-            r_assert_type(value.sexp, &[INTSXP, NILSXP])?;
-            if r_is_null(value.sexp) {
-                return Ok(Vec::new());
-            }
-
-            let n = Rf_xlength(value.sexp);
-            let mut result: Vec<i32> = Vec::with_capacity(n as usize);
-            for i in 0..n {
-                let res = INTEGER_ELT(value.sexp, i);
-                if res == R_NaInt {
-                    return Err(Error::MissingValueError);
-                }
-                result.push(res);
-            }
-
-            return Ok(result);
-        }
-    }
-}
-
-// TODO(harp-try-from-robject-ref): Move `RObject` method here
-impl TryFrom<&RObject> for Vec<i32> {
-    type Error = crate::error::Error;
-    fn try_from(value: &RObject) -> Result<Self, Self::Error> {
-        value.clone().try_into()
-    }
-}
-
-// TODO: Generalise this implementation for other vector types
-impl TryFrom<&RObject> for Vec<bool> {
-    type Error = crate::error::Error;
-
-    fn try_from(value: &RObject) -> Result<Self, Self::Error> {
-        unsafe {
-            let vec = LogicalVector::new(value.sexp)?;
-            let mut result: Vec<bool> = Vec::with_capacity(vec.len());
-
-            for val in vec.iter() {
-                let Some(x) = val else {
-                    return Err(Error::MissingValueError);
-                };
-                result.push(x);
-            }
-
             return Ok(result);
         }
     }
