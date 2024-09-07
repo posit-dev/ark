@@ -28,6 +28,8 @@ fn invalid_extern(stream: impl ToTokens) -> ! {
     );
 }
 
+// TODO: Can we move more of this to the `Vector` trait?
+
 #[proc_macro_attribute]
 pub fn vector(_attr: TokenStream, item: TokenStream) -> TokenStream {
     // TODO: How do we parse an attribute?
@@ -62,49 +64,6 @@ pub fn vector(_attr: TokenStream, item: TokenStream) -> TokenStream {
             type Error = crate::error::Error;
             fn try_from(value: libr::SEXP) -> Result<Self, Self::Error> {
                 unsafe { Self::new(value) }
-            }
-        }
-
-        pub struct VectorIter<'a> {
-            data: &'a #ident,
-            index: isize,
-            size: isize,
-        }
-
-        impl<'a> std::iter::Iterator for VectorIter<'a> {
-            type Item = Option<<#ident as Vector>::Type>;
-
-            fn next(&mut self) -> Option<Self::Item> {
-                if self.index == self.size {
-                    return None;
-                }
-
-                // TODO: having the iterator to call get_unchecked()
-                //       feels wrong because down the line this will
-                //       need to call REAL_ELT(), STRING_ELT() etc ...
-                //       which has some extra cost one the R side
-                //
-                //       This is the opposite problem of calling
-                //       DATAPTR() which gives a contiguous array
-                //       but has to materialize for it which might be
-                //       costly for ALTREP() vectors
-                //
-                //       The compromise that was used in cpp11 is to use
-                //       GET_REGION and work on partial materialization
-                let item = unsafe { self.data.get_unchecked(self.index) };
-                self.index = self.index + 1;
-                Some(item)
-            }
-        }
-
-        impl #ident {
-            pub fn iter(&self) -> VectorIter<'_> {
-                let size = unsafe { self.len() as isize };
-                VectorIter {
-                    data: self,
-                    index: 0,
-                    size: size,
-                }
             }
         }
 
