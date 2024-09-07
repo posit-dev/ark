@@ -1,7 +1,7 @@
 //
 // integer_vector.rs
 //
-// Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2022-2024 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -74,10 +74,10 @@ impl Vector for IntegerVector {
     }
 }
 
-impl TryFrom<IntegerVector> for Vec<i32> {
+impl TryFrom<&IntegerVector> for Vec<i32> {
     type Error = harp::Error;
 
-    fn try_from(value: IntegerVector) -> harp::Result<Self> {
+    fn try_from(value: &IntegerVector) -> harp::Result<Self> {
         super::try_vec_from_r_vector(value)
     }
 }

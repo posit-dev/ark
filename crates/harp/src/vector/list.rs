@@ -165,3 +165,11 @@ mod test {
         }
     }
 }
+
+impl TryFrom<&List> for Vec<RObject> {
+    type Error = harp::Error;
+
+    fn try_from(value: &List) -> harp::Result<Self> {
+        super::try_vec_from_r_vector(value)
+    }
+}

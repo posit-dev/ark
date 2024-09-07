@@ -1,7 +1,7 @@
 //
 // raw_vector.rs
 //
-// Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2022-2024 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -70,5 +70,13 @@ impl Vector for RawVector {
 
     fn format_one(&self, x: Self::Type, _option: Option<&FormatOptions>) -> String {
         format!("{:02x}", x)
+    }
+}
+
+impl TryFrom<&RawVector> for Vec<u8> {
+    type Error = harp::Error;
+
+    fn try_from(value: &RawVector) -> harp::Result<Self> {
+        super::try_vec_from_r_vector(value)
     }
 }

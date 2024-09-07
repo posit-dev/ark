@@ -1,7 +1,7 @@
 //
 // numeric_vector.rs
 //
-// Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2022-2024 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -71,5 +71,13 @@ impl Vector for NumericVector {
 
     fn format_one(&self, x: Self::Type, _option: Option<&FormatOptions>) -> String {
         x.to_string()
+    }
+}
+
+impl TryFrom<&NumericVector> for Vec<f64> {
+    type Error = harp::Error;
+
+    fn try_from(value: &NumericVector) -> harp::Result<Self> {
+        super::try_vec_from_r_vector(value)
     }
 }

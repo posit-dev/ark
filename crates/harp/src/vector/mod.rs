@@ -14,6 +14,7 @@ use crate::utils::r_assert_capacity;
 use crate::utils::r_assert_type;
 
 pub mod list;
+pub use list::List;
 
 pub mod character_vector;
 pub use character_vector::CharacterVector;
@@ -164,7 +165,7 @@ where
 
 // Can we integrate this in a generic `TryFrom` impl for `Vector` objects?
 pub(crate) fn try_vec_from_r_vector<VectorType>(
-    value: VectorType,
+    value: &VectorType,
 ) -> harp::Result<Vec<VectorType::Type>>
 where
     VectorType: Vector,

@@ -33,8 +33,6 @@ use crate::utils::r_is_object;
 use crate::utils::r_is_s4;
 use crate::utils::r_str_to_owned_utf8;
 use crate::utils::r_typeof;
-use crate::vector::IntegerVector;
-use crate::vector::LogicalVector;
 use crate::vector::Vector;
 
 // Objects are protected using a doubly-linked list,
@@ -916,32 +914,43 @@ impl TryFrom<RObject> for Vec<i32> {
 impl TryFrom<&RObject> for Vec<bool> {
     type Error = harp::Error;
     fn try_from(value: &RObject) -> harp::Result<Self> {
-        LogicalVector::new(value.sexp)?.try_into()
+        (&harp::vector::LogicalVector::new(value.sexp)?).try_into()
     }
 }
 
 impl TryFrom<&RObject> for Vec<i32> {
     type Error = harp::Error;
     fn try_from(value: &RObject) -> harp::Result<Self> {
-        IntegerVector::new(value.sexp)?.try_into()
+        (&harp::vector::IntegerVector::new(value.sexp)?).try_into()
     }
 }
 
+impl TryFrom<&RObject> for Vec<f64> {
+    type Error = crate::error::Error;
+    fn try_from(value: &RObject) -> Result<Self, Self::Error> {
+        (&harp::vector::NumericVector::new(value.sexp)?).try_into()
+    }
+}
+
+impl TryFrom<&RObject> for Vec<u8> {
+    type Error = crate::error::Error;
+    fn try_from(value: &RObject) -> Result<Self, Self::Error> {
+        (&harp::vector::RawVector::new(value.sexp)?).try_into()
+    }
+}
+
+// TODO(harp-try-from-robject-ref): Remove in favour of `&RObject`
 impl TryFrom<RObject> for Vec<String> {
     type Error = crate::error::Error;
     fn try_from(value: RObject) -> Result<Self, Self::Error> {
-        unsafe {
-            r_assert_type(*value, &[STRSXP, NILSXP])?;
+        (&value).try_into()
+    }
+}
 
-            let mut result: Vec<String> = Vec::new();
-            let n = Rf_xlength(*value);
-            for i in 0..n {
-                let res = r_chr_get_owned_utf8(*value, i)?;
-                result.push(res);
-            }
-
-            return Ok(result);
-        }
+impl TryFrom<&RObject> for Vec<String> {
+    type Error = crate::error::Error;
+    fn try_from(value: &RObject) -> Result<Self, Self::Error> {
+        (&harp::vector::CharacterVector::new(value.sexp)?).try_into()
     }
 }
 
@@ -961,21 +970,18 @@ impl TryFrom<RObject> for Vec<Option<String>> {
     }
 }
 
+// TODO(harp-try-from-robject-ref): Remove in favour of `&RObject`
 impl TryFrom<RObject> for Vec<RObject> {
     type Error = crate::error::Error;
     fn try_from(value: RObject) -> Result<Self, Self::Error> {
-        unsafe {
-            r_assert_type(value.sexp, &[VECSXP])?;
+        (&value).try_into()
+    }
+}
 
-            let n = Rf_xlength(value.sexp);
-            let mut result: Vec<RObject> = Vec::with_capacity(n as usize);
-            for i in 0..n {
-                let res = value.vector_elt(i)?;
-                result.push(res);
-            }
-
-            return Ok(result);
-        }
+impl TryFrom<&RObject> for Vec<RObject> {
+    type Error = crate::error::Error;
+    fn try_from(value: &RObject) -> Result<Self, Self::Error> {
+        (&harp::vector::List::new(value.sexp)?).try_into()
     }
 }
 
