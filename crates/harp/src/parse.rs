@@ -30,7 +30,7 @@ pub enum ParseResult {
 
 pub enum ParseInput<'a> {
     Text(&'a str),
-    SrcFile(srcref::SrcFile),
+    SrcFile(&'a srcref::SrcFile),
 }
 
 impl Default for RParseOptions {
@@ -65,7 +65,7 @@ pub fn parse_exprs(text: &str) -> crate::Result<RObject> {
 /// Same but creates srcrefs
 pub fn parse_exprs_with_srcrefs(text: &str) -> crate::Result<RObject> {
     let srcfile = srcref::SrcFile::new_virtual(text)?;
-    parse_exprs_ext(&ParseInput::SrcFile(srcfile))
+    parse_exprs_ext(&ParseInput::SrcFile(&srcfile))
 }
 
 fn parse_exprs_ext<'a>(input: &ParseInput<'a>) -> crate::Result<RObject> {
@@ -73,7 +73,7 @@ fn parse_exprs_ext<'a>(input: &ParseInput<'a>) -> crate::Result<RObject> {
     match status {
         ParseResult::Complete(x) => Ok(RObject::from(x)),
         ParseResult::Incomplete => Err(crate::Error::ParseError {
-            code: parse_input_as_string(input).unwrap_or(String::from("Concersion error")),
+            code: parse_input_as_string(input).unwrap_or(String::from("Conversion error")),
             message: String::from("Incomplete code"),
         }),
     }
@@ -229,7 +229,7 @@ mod tests {
 
             let input = srcref::SrcFile::new_virtual("foo\nbar").unwrap();
             assert_eq!(
-                parse_input_as_string(&ParseInput::SrcFile(input)).unwrap(),
+                parse_input_as_string(&ParseInput::SrcFile(&input)).unwrap(),
                 "foo\nbar"
             );
         }
