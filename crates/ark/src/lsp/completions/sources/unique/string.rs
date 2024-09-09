@@ -11,16 +11,17 @@ use tower_lsp::lsp_types::CompletionItem;
 use super::file_path::completions_from_string_file_path;
 use crate::lsp::completions::sources::unique::subset::completions_from_string_subset;
 use crate::lsp::document_context::DocumentContext;
-use crate::treesitter::NodeTypeExt;
+use crate::treesitter::node_find_string;
 
 pub fn completions_from_string(context: &DocumentContext) -> Result<Option<Vec<CompletionItem>>> {
     log::info!("completions_from_string()");
 
     let node = context.node;
 
-    if !node.is_string() {
+    // Find actual `NodeType::String` node. Needed in case we are in its children.
+    let Some(node) = node_find_string(&node) else {
         return Ok(None);
-    }
+    };
 
     // Must actually be "inside" the string, so these places don't count, even
     // though they are detected as part of the string nodes `|""|`
@@ -41,13 +42,13 @@ pub fn completions_from_string(context: &DocumentContext) -> Result<Option<Vec<C
 
     // Check if we are doing string subsetting, like `x["<tab>"]`. This is a very unique
     // case that takes priority over file path completions.
-    if let Some(mut candidates) = completions_from_string_subset(context)? {
+    if let Some(mut candidates) = completions_from_string_subset(&node, context)? {
         completions.append(&mut candidates);
         return Ok(Some(completions));
     }
 
     // If no special string cases are hit, we show file path completions
-    completions.append(&mut completions_from_string_file_path(context)?);
+    completions.append(&mut completions_from_string_file_path(&node, context)?);
 
     Ok(Some(completions))
 }
@@ -55,13 +56,14 @@ pub fn completions_from_string(context: &DocumentContext) -> Result<Option<Vec<C
 #[cfg(test)]
 mod tests {
     use harp::assert_match;
-    use tree_sitter::Point;
 
     use crate::lsp::completions::sources::completions_from_unique_sources;
     use crate::lsp::completions::sources::unique::string::completions_from_string;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
+    use crate::test::point_from_cursor;
     use crate::test::r_test;
+    use crate::treesitter::node_find_string;
     use crate::treesitter::NodeTypeExt;
 
     #[test]
@@ -69,11 +71,11 @@ mod tests {
         r_test(|| {
             // Before or after the `''`, i.e. `|''` or `''|`.
             // Still considered part of the string node.
-            let point = Point { row: 0, column: 0 };
-            let document = Document::new("''", None);
+            let (text, point) = point_from_cursor("@''");
+            let document = Document::new(text.as_str(), None);
             let context = DocumentContext::new(&document, point, None);
 
-            assert!(context.node.is_string());
+            assert!(node_find_string(&context.node).is_some());
             assert_eq!(completions_from_string(&context).unwrap(), None);
         })
     }
@@ -81,8 +83,8 @@ mod tests {
     #[test]
     fn test_not_string() {
         r_test(|| {
-            let point = Point { row: 0, column: 0 };
-            let document = Document::new("foo", None);
+            let (text, point) = point_from_cursor("@foo");
+            let document = Document::new(text.as_str(), None);
             let context = DocumentContext::new(&document, point, None);
 
             assert!(context.node.is_identifier());
@@ -93,12 +95,10 @@ mod tests {
     #[test]
     fn test_trigger() {
         r_test(|| {
-            // Before or after the `''`, i.e. `|''` or `''|`.
-            // Still considered part of the string node.
-            let point = Point { row: 0, column: 2 };
+            let (text, point) = point_from_cursor("'~/@'");
 
             // Assume home directory is not empty
-            let document = Document::new("'~/'", None);
+            let document = Document::new(text.as_str(), None);
 
             // `None` trigger -> Return file completions
             let context = DocumentContext::new(&document, point, None);

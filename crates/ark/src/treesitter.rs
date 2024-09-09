@@ -27,6 +27,8 @@ pub enum NodeType {
     Complex,
     Float,
     String,
+    StringContent,
+    EscapeSequence,
     Identifier,
     DotDotI,
     Dots,
@@ -71,6 +73,8 @@ fn node_type(x: &Node) -> NodeType {
         "complex" => NodeType::Complex,
         "float" => NodeType::Float,
         "string" => NodeType::String,
+        "string_content" => NodeType::StringContent,
+        "escape_sequence" => NodeType::EscapeSequence,
         "identifier" => NodeType::Identifier,
         "dot_dot_i" => NodeType::DotDotI,
         "dots" => NodeType::Dots,
@@ -314,6 +318,8 @@ pub trait NodeTypeExt: Sized {
     fn is_namespace_internal_operator(&self) -> bool;
     fn is_unary_operator(&self) -> bool;
     fn is_binary_operator(&self) -> bool;
+
+    fn find_parent<Callback: Fn(Node) -> bool>(&self, callback: Callback) -> Option<Node>;
 }
 
 impl NodeTypeExt for Node<'_> {
@@ -404,10 +410,35 @@ impl NodeTypeExt for Node<'_> {
     fn is_binary_operator(&self) -> bool {
         matches!(self.node_type(), NodeType::BinaryOperator(_))
     }
+
+    fn find_parent<Callback: Fn(Node) -> bool>(&self, callback: Callback) -> Option<Node> {
+        let mut node = *self;
+
+        while let Some(parent) = node.parent() {
+            if callback(parent) {
+                return Some(parent);
+            }
+            node = parent;
+        }
+
+        None
+    }
 }
 
 pub(crate) fn node_text(node: &Node, contents: &ropey::Rope) -> Option<String> {
     contents.node_slice(node).ok().map(|f| f.to_string())
+}
+
+pub(crate) fn node_find_string<'a>(node: &'a Node) -> Option<Node<'a>> {
+    if node.is_string() {
+        // Already on a string
+        return Some(*node);
+    }
+    // If we are on one of the following, we return the string parent:
+    // - Anonymous node inside a string, like `"'"`
+    // - `NodeType::StringContent`
+    // - `NodeType::EscapeSequence`
+    node.find_parent(|parent| parent.is_string())
 }
 
 pub(crate) fn node_is_call(node: &Node, name: &str, contents: &ropey::Rope) -> bool {

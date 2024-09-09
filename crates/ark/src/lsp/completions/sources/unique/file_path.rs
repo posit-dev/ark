@@ -15,6 +15,7 @@ use harp::utils::r_normalize_path;
 use stdext::unwrap;
 use stdext::IntoResult;
 use tower_lsp::lsp_types::CompletionItem;
+use tree_sitter::Node;
 
 use crate::lsp::completions::completion_item::completion_item_from_direntry;
 use crate::lsp::completions::sources::utils::set_sort_text_by_words_first;
@@ -22,6 +23,7 @@ use crate::lsp::document_context::DocumentContext;
 use crate::lsp::traits::rope::RopeExt;
 
 pub(super) fn completions_from_string_file_path(
+    node: &Node,
     context: &DocumentContext,
 ) -> Result<Vec<CompletionItem>> {
     log::info!("completions_from_string_file_path()");
@@ -33,11 +35,7 @@ pub(super) fn completions_from_string_file_path(
     // NOTE: This includes the quotation characters on the string, and so
     // also includes any internal escapes! We need to decode the R string
     // before searching the path entries.
-    let token = context
-        .document
-        .contents
-        .node_slice(&context.node)?
-        .to_string();
+    let token = context.document.contents.node_slice(&node)?.to_string();
     let contents = unsafe { r_string_decode(token.as_str()).into_result()? };
     log::info!("String value (decoded): {}", contents);
 
