@@ -423,6 +423,8 @@ fn recurse_assignment(
 
         // Handle assignments to dotty expressions, e.g. '.[a] <- 1'.
         let _: Result<()> = local! {
+
+            // Check that the lhs is a subset call of the form `.[]`.
             identifier.is_subset().into_result()?;
             let function = identifier.child_by_field_name("function").into_result()?;
             function.is_identifier_or_string().into_result()?;
@@ -430,6 +432,7 @@ fn recurse_assignment(
             (value == ".").into_result()?;
             let arguments = identifier.child_by_field_name("arguments").into_result()?;
 
+            // Iterate over each argument, and look for identifiers.
             let mut cursor = arguments.walk();
             for child in arguments.children_by_field_name("argument", &mut cursor) {
 
