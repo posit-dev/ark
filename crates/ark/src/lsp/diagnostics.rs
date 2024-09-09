@@ -414,7 +414,6 @@ fn recurse_assignment(
 ) -> Result<()> {
     // Check for newly-defined variable.
     if let Some(identifier) = identifier {
-
         // Handle assignments to identifiers, e.g. 'x <- 1'.
         if identifier.is_identifier_or_string() {
             let name = context.contents.node_slice(&identifier)?.to_string();
@@ -423,34 +422,36 @@ fn recurse_assignment(
         }
 
         // Handle assignments to dotty expressions, e.g. '.[a] <- 1'.
-        let dotty = || {
+        let _: Result<()> = local! {
             identifier.is_subset().into_result()?;
-            let function = identifier.child_by_field_name("function")?;
+            let function = identifier.child_by_field_name("function").into_result()?;
             function.is_identifier_or_string().into_result()?;
-            let value = context.contents.node_slice(&value)?.to_string();
+            let value = context.contents.node_slice(&function)?.to_string();
             (value == ".").into_result()?;
-            let arguments = identifier.child_by_field_name("arguments")?;
+            let arguments = identifier.child_by_field_name("arguments").into_result()?;
 
             let mut cursor = arguments.walk();
             for child in arguments.children_by_field_name("argument", &mut cursor) {
+
                 let name = child.child_by_field_name("name");
                 if let Some(name) = name {
-                    let name = context.contents.node_slice(&name)?.to_string();
                     let range = name.range();
+                    let name = context.contents.node_slice(&name)?.to_string();
                     context.add_defined_variable(name.as_str(), range);
-                    return Ok(());
                 }
 
                 let value = child.child_by_field_name("value");
-                if let Some(value) = value && value.is_identifier() {
-                    let name = context.contents.node_slice(&value)?.to_string();
-                    let range = name.range();
-                    context.add_defined_variable(name.as_str(), range);
-                    return Ok(());
+                if let Some(value) = value {
+                    if value.is_identifier_or_string() {
+                        let range = value.range();
+                        let name = context.contents.node_slice(&value)?.to_string();
+                        context.add_defined_variable(name.as_str(), range);
+                    }
                 }
             }
-        }();
 
+            Ok(())
+        };
     }
 
     // Recurse into expression for assignment.
