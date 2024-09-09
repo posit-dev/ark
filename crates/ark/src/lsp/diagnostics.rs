@@ -414,11 +414,43 @@ fn recurse_assignment(
 ) -> Result<()> {
     // Check for newly-defined variable.
     if let Some(identifier) = identifier {
+
+        // Handle assignments to identifiers, e.g. 'x <- 1'.
         if identifier.is_identifier_or_string() {
             let name = context.contents.node_slice(&identifier)?.to_string();
             let range = identifier.range();
             context.add_defined_variable(name.as_str(), range);
         }
+
+        // Handle assignments to dotty expressions, e.g. '.[a] <- 1'.
+        let dotty = || {
+            identifier.is_subset().into_result()?;
+            let function = identifier.child_by_field_name("function")?;
+            function.is_identifier_or_string().into_result()?;
+            let value = context.contents.node_slice(&value)?.to_string();
+            (value == ".").into_result()?;
+            let arguments = identifier.child_by_field_name("arguments")?;
+
+            let mut cursor = arguments.walk();
+            for child in arguments.children_by_field_name("argument", &mut cursor) {
+                let name = child.child_by_field_name("name");
+                if let Some(name) = name {
+                    let name = context.contents.node_slice(&name)?.to_string();
+                    let range = name.range();
+                    context.add_defined_variable(name.as_str(), range);
+                    return Ok(());
+                }
+
+                let value = child.child_by_field_name("value");
+                if let Some(value) = value && value.is_identifier() {
+                    let name = context.contents.node_slice(&value)?.to_string();
+                    let range = name.range();
+                    context.add_defined_variable(name.as_str(), range);
+                    return Ok(());
+                }
+            }
+        }();
+
     }
 
     // Recurse into expression for assignment.
