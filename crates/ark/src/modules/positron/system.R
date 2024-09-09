@@ -23,11 +23,10 @@ has_x11 <- function() {
 }
 
 #' Reports a list of environment variables for the R process.
-#' @returns List of all env vars, or optionally the subset that start with the
-#' given regex.
+#' @param x A character vector of environment variables. The default `NULL`
+#' will return *all* environment variables.
+#' @returns Values of the environment variables as a list.
 #' @export
-.ps.rpc.get_env_vars <- function(pattern = NULL) {
-    ev <- as.list(Sys.getenv())
-    m <- if (is.null(pattern)) TRUE else grep(pattern, names(ev))
-    ev[m]
-  }
+.ps.rpc.get_env_vars <- function(x = NULL) {
+    as.list(Sys.getenv(x))
+}
