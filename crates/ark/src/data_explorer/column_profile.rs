@@ -56,7 +56,7 @@ pub async fn handle_columns_profiles_requests(
     )
     .await
     .unwrap_or_else(|e| {
-        // In case something goes wrong whhile computing the profiles, we send
+        // In case something goes wrong while computing the profiles, we send
         // an empty response. Ideally, we would have a way to comunicate an that
         // an error happened but it's not implemented yet.
         log::error!("Error while producing profiles: {e}");
@@ -101,7 +101,7 @@ async fn process_columns_profiles_requests(
             )
             .await,
         );
-        // Yield to the R event loop
+        // Yield to the idle event loop
         tokio::task::yield_now().await;
     }
 
@@ -109,7 +109,7 @@ async fn process_columns_profiles_requests(
 }
 
 // This function does not return a Result because it must handle still handle other profile types
-// if one of them fails. Thus it needs to gracifully handle the errors that might have resulted
+// if one of them fails. Thus it needs to gracefully handle the errors that might have resulted
 // here.
 // It's an async function just because we want to yield to R between each profile type.
 async fn profile_column(
