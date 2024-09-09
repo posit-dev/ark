@@ -434,14 +434,13 @@ fn recurse_assignment(
             for child in arguments.children_by_field_name("argument", &mut cursor) {
 
                 let name = child.child_by_field_name("name");
+                let value = child.child_by_field_name("value");
                 if let Some(name) = name {
                     let range = name.range();
                     let name = context.contents.node_slice(&name)?.to_string();
                     context.add_defined_variable(name.as_str(), range);
                 }
-
-                let value = child.child_by_field_name("value");
-                if let Some(value) = value {
+                else if let Some(value) = value {
                     if value.is_identifier_or_string() {
                         let range = value.range();
                         let name = context.contents.node_slice(&value)?.to_string();
