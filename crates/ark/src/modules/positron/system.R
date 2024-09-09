@@ -22,11 +22,12 @@ has_x11 <- function() {
     c(LANG = Sys.getenv("LANG"), out)
 }
 
-#' Reports a vector of environment variables for the R process.
-#' @returns Named character vector of env vars that start with the given regex.
+#' Reports a list of environment variables for the R process.
+#' @returns List of all env vars, or optionally the subset that start with the
+#' given regex.
 #' @export
 .ps.rpc.get_env_vars <- function(pattern = NULL) {
-  ev <- as.list(Sys.getenv())
-  m <- if (is.null(pattern)) TRUE else grep(pattern, names(ev))
-  ev[m]
-}
+    ev <- as.list(Sys.getenv())
+    m <- if (is.null(pattern)) TRUE else grep(pattern, names(ev))
+    ev[m]
+  }
