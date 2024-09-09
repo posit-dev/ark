@@ -1057,24 +1057,11 @@ pub struct SetSortColumnsParams {
 /// Parameters for the GetColumnProfiles method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct GetColumnProfilesParams {
-	/// Async callback unique identifier
-	pub callback_id: String,
-
 	/// Array of requested profiles
 	pub profiles: Vec<ColumnProfileRequest>,
 
 	/// Formatting options for returning data values as strings
 	pub format_options: FormatOptions,
-}
-
-/// Parameters for the ReturnColumnProfiles method.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct ReturnColumnProfilesParams {
-	/// Async callback unique identifier
-	pub callback_id: String,
-
-	/// Array of individual column profile results
-	pub profiles: Vec<ColumnProfileResult>,
 }
 
 /**
@@ -1134,10 +1121,9 @@ pub enum DataExplorerBackendRequest {
 	#[serde(rename = "set_sort_columns")]
 	SetSortColumns(SetSortColumnsParams),
 
-	/// Async request a batch of column profiles
+	/// Request a batch of column profiles
 	///
-	/// Async request for a statistical summary or data profile for batch of
-	/// columns
+	/// Requests a statistical summary or data profile for batch of columns
 	#[serde(rename = "get_column_profiles")]
 	GetColumnProfiles(GetColumnProfilesParams),
 
@@ -1178,8 +1164,7 @@ pub enum DataExplorerBackendReply {
 	/// Reply for the set_sort_columns method (no result)
 	SetSortColumnsReply(),
 
-	/// Reply for the get_column_profiles method (no result)
-	GetColumnProfilesReply(),
+	GetColumnProfilesReply(Vec<ColumnProfileResult>),
 
 	/// The current backend state for the data explorer
 	GetStateReply(BackendState),
@@ -1216,10 +1201,6 @@ pub enum DataExplorerFrontendEvent {
 	/// and triggering a refresh/redraw.
 	#[serde(rename = "data_update")]
 	DataUpdate,
-
-	/// Return async result of get_column_profiles request
-	#[serde(rename = "return_column_profiles")]
-	ReturnColumnProfiles(ReturnColumnProfilesParams),
 
 }
 
