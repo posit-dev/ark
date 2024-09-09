@@ -206,6 +206,7 @@ async fn profile_column(
                     _ => {
                         // This is technically unreachable!(), but not worth panicking if
                         // this happens.
+                        log::warn!("Unreachable. Unknown profile type.")
                     },
                 }
             },
