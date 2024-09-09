@@ -33,7 +33,6 @@ use crate::utils::r_is_object;
 use crate::utils::r_is_s4;
 use crate::utils::r_str_to_owned_utf8;
 use crate::utils::r_typeof;
-use crate::vector::Vector;
 
 // Objects are protected using a doubly-linked list,
 // allowing for quick insertion and removal of objects.
@@ -914,28 +913,28 @@ impl TryFrom<RObject> for Vec<i32> {
 impl TryFrom<&RObject> for Vec<bool> {
     type Error = harp::Error;
     fn try_from(value: &RObject) -> harp::Result<Self> {
-        (&harp::vector::LogicalVector::new(value.sexp)?).try_into()
+        (&harp::vector::LogicalVector::try_from(value.sexp)?).try_into()
     }
 }
 
 impl TryFrom<&RObject> for Vec<i32> {
     type Error = harp::Error;
     fn try_from(value: &RObject) -> harp::Result<Self> {
-        (&harp::vector::IntegerVector::new(value.sexp)?).try_into()
+        (&harp::vector::IntegerVector::try_from(value.sexp)?).try_into()
     }
 }
 
 impl TryFrom<&RObject> for Vec<f64> {
     type Error = crate::error::Error;
     fn try_from(value: &RObject) -> Result<Self, Self::Error> {
-        (&harp::vector::NumericVector::new(value.sexp)?).try_into()
+        (&harp::vector::NumericVector::try_from(value.sexp)?).try_into()
     }
 }
 
 impl TryFrom<&RObject> for Vec<u8> {
     type Error = crate::error::Error;
     fn try_from(value: &RObject) -> Result<Self, Self::Error> {
-        (&harp::vector::RawVector::new(value.sexp)?).try_into()
+        (&harp::vector::RawVector::try_from(value.sexp)?).try_into()
     }
 }
 
@@ -950,7 +949,7 @@ impl TryFrom<RObject> for Vec<String> {
 impl TryFrom<&RObject> for Vec<String> {
     type Error = crate::error::Error;
     fn try_from(value: &RObject) -> Result<Self, Self::Error> {
-        (&harp::vector::CharacterVector::new(value.sexp)?).try_into()
+        (&harp::vector::CharacterVector::try_from(value.sexp)?).try_into()
     }
 }
 
@@ -981,7 +980,7 @@ impl TryFrom<RObject> for Vec<RObject> {
 impl TryFrom<&RObject> for Vec<RObject> {
     type Error = crate::error::Error;
     fn try_from(value: &RObject) -> Result<Self, Self::Error> {
-        (&harp::vector::List::new(value.sexp)?).try_into()
+        (&harp::vector::List::try_from(value.sexp)?).try_into()
     }
 }
 

@@ -63,7 +63,7 @@ pub fn vector(_attr: TokenStream, item: TokenStream) -> TokenStream {
         impl std::convert::TryFrom<libr::SEXP> for #ident {
             type Error = crate::error::Error;
             fn try_from(value: libr::SEXP) -> Result<Self, Self::Error> {
-                unsafe { Self::new(value) }
+                super::try_r_vector_from_r_sexp(value)
             }
         }
 

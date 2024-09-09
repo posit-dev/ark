@@ -183,3 +183,14 @@ where
         return Ok(result);
     }
 }
+
+pub(crate) fn try_r_vector_from_r_sexp<VectorType>(value: SEXP) -> harp::Result<VectorType>
+where
+    VectorType: Vector,
+{
+    if value == harp::RObject::null().sexp {
+        return Ok(unsafe { VectorType::with_length(0) });
+    }
+
+    VectorType::new(value)
+}
