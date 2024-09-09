@@ -25,7 +25,8 @@ has_x11 <- function() {
 #' Reports a vector of environment variables for the R process.
 #' @returns Named character vector of env vars that start with the given regex.
 #' @export
-.ps.rpc.get_env_vars <- function(pattern) {
-    matches <- grep(pattern, names(Sys.getenv()), value = TRUE)
-    as.list(vapply(matches, Sys.getenv, "string"))
+.ps.rpc.get_env_vars <- function(pattern = NULL) {
+  ev <- as.list(Sys.getenv())
+  m <- if (is.null(pattern)) TRUE else grep(pattern, names(ev))
+  ev[m]
 }
