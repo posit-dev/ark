@@ -778,6 +778,10 @@ pub enum TextSearchType {
 	#[strum(to_string = "contains")]
 	Contains,
 
+	#[serde(rename = "not_contains")]
+	#[strum(to_string = "not_contains")]
+	NotContains,
+
 	#[serde(rename = "starts_with")]
 	#[strum(to_string = "starts_with")]
 	StartsWith,
