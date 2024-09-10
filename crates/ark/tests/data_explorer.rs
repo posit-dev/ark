@@ -13,7 +13,6 @@ use amalthea::comm::data_explorer_comm::ColumnHistogramParams;
 use amalthea::comm::data_explorer_comm::ColumnHistogramParamsMethod;
 use amalthea::comm::data_explorer_comm::ColumnProfileParams;
 use amalthea::comm::data_explorer_comm::ColumnProfileRequest;
-use amalthea::comm::data_explorer_comm::ColumnProfileResult;
 use amalthea::comm::data_explorer_comm::ColumnProfileSpec;
 use amalthea::comm::data_explorer_comm::ColumnProfileType;
 use amalthea::comm::data_explorer_comm::ColumnSelection;
@@ -184,62 +183,6 @@ fn get_data_values_request(
         columns,
         format_options,
     })
-}
-
-fn expect_column_profile_results(
-    socket: &DataExplorerSocket,
-    req: DataExplorerBackendRequest,
-    check: fn(Vec<ColumnProfileResult>),
-) {
-    // Randomly generate a unique ID for this request.
-    let id = uuid::Uuid::new_v4().to_string();
-
-    // Serialize the message for the wire
-    let json = serde_json::to_value(req).unwrap();
-    println!("--> {:?}", json);
-
-    // Convert the request to a CommMsg and send it.
-    let msg = CommMsg::Rpc(id, json);
-    socket.socket.incoming_tx.send(msg).unwrap();
-
-    let msg = socket
-        .socket
-        .outgoing_rx
-        .recv_timeout(std::time::Duration::from_secs(1))
-        .unwrap();
-
-    // Because during tests, no threads are created with r_task::spawn_idle, the messages are in
-    // an incorrect order. We first receive the DataExplorerFrontndEvent with the column profiles
-    // and then receive the results.
-    assert_match!(
-        msg,
-        CommMsg::Data(value) => {
-            let event = serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap();
-            assert_match!(
-                event,
-                DataExplorerFrontendEvent::ReturnColumnProfiles(ev) => {
-                    check(ev.profiles);
-                }
-            );
-        }
-    );
-
-    let msg = socket
-        .socket
-        .outgoing_rx
-        .recv_timeout(std::time::Duration::from_secs(1))
-        .unwrap();
-
-    let reply: DataExplorerBackendReply = match msg {
-        CommMsg::Rpc(_id, value) => {
-            println!("<-- {:?}", value);
-            let reply = serde_json::from_value(value).unwrap();
-            reply
-        },
-        _ => panic!("Unexpected Comm Message"),
-    };
-
-    assert_eq!(reply, DataExplorerBackendReply::GetColumnProfilesReply());
 }
 
 fn test_mtcars_sort(socket: DataExplorerSocket, has_row_names: bool, display_name: String) {
@@ -641,7 +584,6 @@ fn test_null_counts() {
 
         // Ask for a count of nulls in the first column.
         let req = DataExplorerBackendRequest::GetColumnProfiles(GetColumnProfilesParams {
-            callback_id: String::from("id"),
             profiles: vec![ColumnProfileRequest {
                 column_index: 0,
                 profiles: vec![ColumnProfileSpec {
@@ -652,10 +594,13 @@ fn test_null_counts() {
             format_options: default_format_options(),
         });
 
-        expect_column_profile_results(&socket, req, |data| {
-            assert!(data.len() == 1);
-            assert_eq!(data[0].null_count, Some(3));
-        });
+        assert_match!(socket_rpc(&socket, req),
+           DataExplorerBackendReply::GetColumnProfilesReply(data) => {
+               // We asked for the null count of the first column, which has 3 NA values.
+               assert!(data.len() == 1);
+               assert_eq!(data[0].null_count, Some(3));
+           }
+        );
 
         // Next, apply a filter to the data set. Filter out all empty rows.
         let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
@@ -682,7 +627,6 @@ fn test_null_counts() {
         // Ask for a count of nulls in the first column again. Since a filter
         // has been applied, the null count should be 0.
         let req = DataExplorerBackendRequest::GetColumnProfiles(GetColumnProfilesParams {
-            callback_id: String::from("id"),
             profiles: vec![ColumnProfileRequest {
                 column_index: 0,
                 profiles: vec![ColumnProfileSpec {
@@ -693,12 +637,14 @@ fn test_null_counts() {
             format_options: default_format_options(),
         });
 
-        expect_column_profile_results(&socket, req, |data| {
-            // We asked for the null count of the first column, which has no
-            // NA values after the filter.
-            assert!(data.len() == 1);
-            assert_eq!(data[0].null_count, Some(0));
-        });
+        assert_match!(socket_rpc(&socket, req),
+           DataExplorerBackendReply::GetColumnProfilesReply(data) => {
+               // We asked for the null count of the first column, which has no
+                // NA values after the filter.
+               assert!(data.len() == 1);
+               assert_eq!(data[0].null_count, Some(0));
+           }
+        );
 
         // Let's look at JUST the empty rows.
         let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
@@ -740,7 +686,6 @@ fn test_summary_stats() {
 
         // Ask for summary stats for the columns
         let req = DataExplorerBackendRequest::GetColumnProfiles(GetColumnProfilesParams {
-            callback_id: String::from("id"),
             profiles: (0..3)
                 .map(|i| ColumnProfileRequest {
                     column_index: i,
@@ -753,44 +698,47 @@ fn test_summary_stats() {
             format_options: default_format_options(),
         });
 
-        expect_column_profile_results(&socket, req, |data| {
-            // We asked for summary stats for all 3 columns
-            assert!(data.len() == 3);
+        assert_match!(socket_rpc(&socket, req),
+           DataExplorerBackendReply::GetColumnProfilesReply(data) => {
+                // We asked for summary stats for all 3 columns
+                assert!(data.len() == 3);
 
-            // The first column is numeric and has 3 non-NA values.
-            assert!(data[0].summary_stats.is_some());
-            let number_stats = data[0].summary_stats.clone().unwrap().number_stats;
-            assert!(number_stats.is_some());
-            let number_stats = number_stats.unwrap();
-            assert_eq!(number_stats, SummaryStatsNumber {
-                min_value: Some(String::from("1.00")),
-                max_value: Some(String::from("3.00")),
-                mean: Some(String::from("2.00")),
-                median: Some(String::from("2.00")),
-                stdev: Some(String::from("1.00")),
-            });
+                // The first column is numeric and has 3 non-NA values.
+                assert!(data[0].summary_stats.is_some());
+                let number_stats = data[0].summary_stats.clone().unwrap().number_stats;
+                assert!(number_stats.is_some());
+                let number_stats = number_stats.unwrap();
+                assert_eq!(number_stats, SummaryStatsNumber {
+                    min_value: Some(String::from("1.00")),
+                    max_value: Some(String::from("3.00")),
+                    mean: Some(String::from("2.00")),
+                    median: Some(String::from("2.00")),
+                    stdev: Some(String::from("1.00")),
+                });
 
-            // The second column is a character column
-            assert!(data[1].summary_stats.is_some());
-            let string_stats = data[1].summary_stats.clone().unwrap().string_stats;
-            assert!(string_stats.is_some());
-            let string_stats = string_stats.unwrap();
-            assert_eq!(string_stats, SummaryStatsString {
-                num_empty: 1,
-                num_unique: 3, // NA's are counted as unique values
-            });
+                // The second column is a character column
+                assert!(data[1].summary_stats.is_some());
+                let string_stats = data[1].summary_stats.clone().unwrap().string_stats;
+                assert!(string_stats.is_some());
+                let string_stats = string_stats.unwrap();
+                assert_eq!(string_stats, SummaryStatsString {
+                    num_empty: 1,
+                    num_unique: 3, // NA's are counted as unique values
+                });
 
-            // The third column is boolean
-            assert!(data[2].summary_stats.is_some());
-            let boolean_stats = data[2].summary_stats.clone().unwrap().boolean_stats;
-            assert!(boolean_stats.is_some());
-            let boolean_stats = boolean_stats.unwrap();
-            assert_eq!(boolean_stats, SummaryStatsBoolean {
-                true_count: 2,
-                false_count: 1,
-            });
-        });
-    });
+                // The third column is boolean
+                assert!(data[2].summary_stats.is_some());
+                let boolean_stats = data[2].summary_stats.clone().unwrap().boolean_stats;
+                assert!(boolean_stats.is_some());
+                let boolean_stats = boolean_stats.unwrap();
+                assert_eq!(boolean_stats, SummaryStatsBoolean {
+                    true_count: 2,
+                    false_count: 1,
+                });
+
+           }
+        );
+    })
 }
 
 #[test]
@@ -1768,9 +1716,8 @@ fn test_histogram() {
         let socket =
             open_data_explorer_from_expression("data.frame(x = rep(1:10, 10:1))", None).unwrap();
 
-        let make_histogram_req = |id, column_index, method, num_bins, quantiles| {
+        let make_histogram_req = |column_index, method, num_bins, quantiles| {
             DataExplorerBackendRequest::GetColumnProfiles(GetColumnProfilesParams {
-                callback_id: id,
                 profiles: vec![ColumnProfileRequest {
                     column_index,
                     profiles: vec![ColumnProfileSpec {
@@ -1786,18 +1733,12 @@ fn test_histogram() {
             })
         };
 
-        let id = String::from("histogram_req");
-        let req = make_histogram_req(id.clone(), 0, ColumnHistogramParamsMethod::Fixed, 10, None);
+        let req = make_histogram_req(0, ColumnHistogramParamsMethod::Fixed, 10, None);
 
-        expect_column_profile_results(&socket, req, |profiles| {
+        assert_match!(socket_rpc(&socket, req), DataExplorerBackendReply::GetColumnProfilesReply(profiles) => {
             let histogram = profiles[0].small_histogram.clone().unwrap();
             assert_eq!(histogram, ColumnHistogram {
-                bin_edges: format_string(
-                    harp::parse_eval_global("seq(1, 10, length.out=11)")
-                        .unwrap()
-                        .sexp,
-                    &default_format_options()
-                ),
+                bin_edges: format_string(harp::parse_eval_global("seq(1, 10, length.out=11)").unwrap().sexp, &default_format_options()),
                 bin_counts: vec![10, 9, 8, 7, 6, 5, 4, 3, 2, 1], // Pretty bind edges unite the first two intervals
                 quantiles: vec![],
             });
@@ -1812,9 +1753,8 @@ fn test_frequency_table() {
             open_data_explorer_from_expression("data.frame(x = rep(letters[1:10], 10:1))", None)
                 .unwrap();
 
-        let make_freq_table_req = |id, column_index, limit| {
+        let make_freq_table_req = |column_index, limit| {
             DataExplorerBackendRequest::GetColumnProfiles(GetColumnProfilesParams {
-                callback_id: id,
                 profiles: vec![ColumnProfileRequest {
                     column_index,
                     profiles: vec![ColumnProfileSpec {
@@ -1828,16 +1768,12 @@ fn test_frequency_table() {
             })
         };
 
-        let id = String::from("freq_table");
-        let req = make_freq_table_req(id.clone(), 0, 5);
+        let req = make_freq_table_req(0, 5);
 
-        expect_column_profile_results(&socket, req, |profiles| {
+        assert_match!(socket_rpc(&socket, req), DataExplorerBackendReply::GetColumnProfilesReply(profiles) => {
             let freq_table = profiles[0].small_frequency_table.clone().unwrap();
             assert_eq!(freq_table, ColumnFrequencyTable {
-                values: format_string(
-                    harp::parse_eval_global("letters[1:5]").unwrap().sexp,
-                    &default_format_options()
-                ),
+                values: format_string(harp::parse_eval_global("letters[1:5]").unwrap().sexp, &default_format_options()),
                 counts: vec![10, 9, 8, 7, 6],
                 other_count: Some(5 + 4 + 3 + 2 + 1)
             });

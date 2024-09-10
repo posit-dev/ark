@@ -13,11 +13,18 @@ use amalthea::comm::data_explorer_comm::ArraySelection;
 use amalthea::comm::data_explorer_comm::BackendState;
 use amalthea::comm::data_explorer_comm::ColumnDisplayType;
 use amalthea::comm::data_explorer_comm::ColumnFilter;
+use amalthea::comm::data_explorer_comm::ColumnFrequencyTable;
+use amalthea::comm::data_explorer_comm::ColumnHistogram;
+use amalthea::comm::data_explorer_comm::ColumnProfileParams;
+use amalthea::comm::data_explorer_comm::ColumnProfileRequest;
+use amalthea::comm::data_explorer_comm::ColumnProfileResult;
+use amalthea::comm::data_explorer_comm::ColumnProfileSpec;
 use amalthea::comm::data_explorer_comm::ColumnProfileType;
 use amalthea::comm::data_explorer_comm::ColumnProfileTypeSupportStatus;
 use amalthea::comm::data_explorer_comm::ColumnSchema;
 use amalthea::comm::data_explorer_comm::ColumnSelection;
 use amalthea::comm::data_explorer_comm::ColumnSortKey;
+use amalthea::comm::data_explorer_comm::ColumnSummaryStats;
 use amalthea::comm::data_explorer_comm::ColumnValue;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendReply;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendRequest;
@@ -63,6 +70,10 @@ use harp::exec::RFunctionExt;
 use harp::object::RObject;
 use harp::r_symbol;
 use harp::tbl_get_column;
+use harp::utils::r_inherits;
+use harp::utils::r_is_object;
+use harp::utils::r_is_s4;
+use harp::utils::r_typeof;
 use harp::TableInfo;
 use harp::TableKind;
 use itertools::Itertools;
@@ -73,16 +84,14 @@ use stdext::local;
 use stdext::result::ResultOrLog;
 use stdext::spawn;
 use stdext::unwrap;
-use tracing::Instrument;
 use uuid::Uuid;
 
-use crate::data_explorer::column_profile::handle_columns_profiles_requests;
-use crate::data_explorer::column_profile::ProcessColumnsProfilesParams;
 use crate::data_explorer::export_selection;
 use crate::data_explorer::format;
 use crate::data_explorer::format::format_string;
-use crate::data_explorer::table::Table;
-use crate::data_explorer::utils::display_type;
+use crate::data_explorer::histogram::profile_frequency_table;
+use crate::data_explorer::histogram::profile_histogram;
+use crate::data_explorer::summary_stats::summary_stats;
 use crate::data_explorer::utils::tbl_subset_with_view_indices;
 use crate::interface::RMain;
 use crate::lsp::events::EVENTS;
@@ -113,7 +122,7 @@ pub struct RDataExplorer {
     title: String,
 
     /// The data object that the data viewer is currently viewing.
-    table: Table,
+    table: RThreadSafe<RObject>,
 
     /// An optional binding to the environment containing the data object.
     /// This can be omitted for cases wherein the data object isn't in an
@@ -153,16 +162,10 @@ pub struct RDataExplorer {
     /// A channel to send messages to the CommManager.
     comm_manager_tx: Sender<CommManagerEvent>,
 }
+
 #[derive(Deserialize, Serialize)]
 struct Metadata {
     title: String,
-}
-
-impl Drop for RDataExplorer {
-    fn drop(&mut self) {
-        // We guarantee that the table is deleted from the global store.
-        self.table.delete();
-    }
 }
 
 impl RDataExplorer {
@@ -182,18 +185,18 @@ impl RDataExplorer {
 
         // To be able to `Send` the `data` to the thread to be owned by the data
         // viewer, it needs to be made thread safe
-        let table = Table::new(RThreadSafe::new(data));
+        let data = RThreadSafe::new(data);
 
         spawn!(format!("ark-data-viewer-{}-{}", title, id), move || {
             // Get the initial set of column schemas for the data object
-            let shape = r_task(|| Self::r_get_shape(table.get()?));
+            let shape = r_task(|| Self::r_get_shape(&data));
             match shape {
                 // shape the columns; start the data viewer
                 Ok(shape) => {
                     // Create the initial state for the data viewer
                     let viewer = Self {
                         title,
-                        table,
+                        table: data,
                         binding,
                         shape,
                         sorted_indices: None,
@@ -299,7 +302,7 @@ impl RDataExplorer {
 
                     let comm = self.comm.clone();
                     comm.handle_request(msg, |req| self.handle_rpc(req));
-                },
+                }
             }
         }
 
@@ -322,9 +325,9 @@ impl RDataExplorer {
             return Ok(true);
         }
 
-        // See if the value has changed; this block returns true if the value has changed
-        // or false otherwise. It also sets the new value correctly.
-        let changed = r_task(|| {
+        // See if the value has changed; this block returns a new value if it
+        // has changed, or None if it hasn't
+        let new = r_task(|| {
             let binding = self.binding.as_ref().unwrap();
             let env = binding.env.get().sexp;
 
@@ -333,38 +336,28 @@ impl RDataExplorer {
                 Rf_findVarInFrame(env, sym)
             };
 
-            let old = self.table.get();
-            let old = unwrap!(old, Err(_) => {
-                // This is AFAICT impossible because the table is only deleted when the data explorer instance is
-                // deleted and this method belongs to that data explorer instance.
-                log::error!("Old table has been deleted? This is unexpected, but we'll update the data explorer table.");
-                // It's `unsafe` because RObject::new calls protect, and it shouldn't
-                // be called outside of the R main thread.
-                self.table.set(RThreadSafe::new(unsafe { RObject::new(new) }));
-                return true;
-            });
-
-            if new == old.sexp {
-                false
+            let old = self.table.get().sexp;
+            if new == old {
+                None
             } else {
-                // Safety is same as above. We guarantee this is the R main thread.
-                self.table
-                    .set(RThreadSafe::new(unsafe { RObject::new(new) }));
-                true
+                Some(RThreadSafe::new(unsafe { RObject::new(new) }))
             }
         });
 
         // No change to the value, so we're done
-        if !changed {
+        if new.is_none() {
             return Ok(true);
         }
+
+        // Update the value
+        self.table = new.unwrap();
 
         // Now we need to check to see if the schema has changed or just a data
         // value. Regenerate the schema.
         //
         // Consider: there may be a cheaper way to test the schema for changes
         // than regenerating it, but it'd be a lot more complicated.
-        let new_shape = match r_task(|| Self::r_get_shape(self.table.get()?.clone())) {
+        let new_shape = match r_task(|| Self::r_get_shape(&self.table)) {
             Ok(shape) => shape,
             Err(_) => {
                 // The most likely cause of this error is that the object is no
@@ -465,12 +458,10 @@ impl RDataExplorer {
             DataExplorerBackendRequest::GetSchema(GetSchemaParams { column_indices }) => {
                 self.get_schema(column_indices)
             },
-
             DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
                 columns,
                 format_options,
             }) => r_task(|| self.r_get_data_values(columns, format_options)),
-
             DataExplorerBackendRequest::SetSortColumns(SetSortColumnsParams {
                 sort_keys: keys,
             }) => {
@@ -489,7 +480,6 @@ impl RDataExplorer {
 
                 Ok(DataExplorerBackendReply::SetSortColumnsReply())
             },
-
             DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams { filters }) => {
                 // Save the new row filters
                 self.row_filters = filters;
@@ -511,26 +501,24 @@ impl RDataExplorer {
                     }
                 }))
             },
+            DataExplorerBackendRequest::GetColumnProfiles(GetColumnProfilesParams {
+                profiles: requests,
+                format_options,
+            }) => {
+                let profiles = requests
+                    .into_iter()
+                    .map(|request| r_task(|| self.r_get_column_profile(request, &format_options)))
+                    .collect::<Vec<ColumnProfileResult>>();
 
-            DataExplorerBackendRequest::GetColumnProfiles(params) => {
-                // We respond imediately to this request, but first we launch an R idle task that will
-                // be responsible to compute the column profiles.
-                // This idle task yieldsß to the main event loop whenver possible, in order to allow for
-                // other requests to be computed.
-                self.launch_get_column_profiles_handler(params);
-                Ok(DataExplorerBackendReply::GetColumnProfilesReply())
+                Ok(DataExplorerBackendReply::GetColumnProfilesReply(profiles))
             },
-
             DataExplorerBackendRequest::GetState => r_task(|| self.r_get_state()),
-
             DataExplorerBackendRequest::SearchSchema(_) => {
                 return Err(anyhow!("Data Explorer: Not yet supported"));
             },
-
             DataExplorerBackendRequest::SetColumnFilters(_) => {
                 return Err(anyhow!("Data Explorer: Not yet supported"));
             },
-
             DataExplorerBackendRequest::GetRowLabels(req) => {
                 let row_labels =
                     r_task(|| self.r_get_row_labels(req.selection, &req.format_options))?;
@@ -540,7 +528,6 @@ impl RDataExplorer {
                     },
                 ))
             },
-
             DataExplorerBackendRequest::ExportDataSelection(ExportDataSelectionParams {
                 selection,
                 format,
@@ -556,9 +543,9 @@ impl RDataExplorer {
 
 // Methods that must be run on the main R thread
 impl RDataExplorer {
-    fn r_get_shape(table: RObject) -> anyhow::Result<DataObjectShape> {
+    fn r_get_shape(table: &RThreadSafe<RObject>) -> anyhow::Result<DataObjectShape> {
         unsafe {
-            let table = table.clone();
+            let table = table.get().clone();
             let object = *table;
 
             let info = table_info_or_bail(object)?;
@@ -612,23 +599,178 @@ impl RDataExplorer {
         }
     }
 
-    fn launch_get_column_profiles_handler(&self, params: GetColumnProfilesParams) {
-        let id = params.callback_id.clone();
-
-        let params = ProcessColumnsProfilesParams {
-            table: self.table.clone(),
-            indices: self.filtered_indices.clone(),
-            kind: self.shape.kind,
-            request: params,
+    fn r_get_column_profile(
+        &self,
+        request: ColumnProfileRequest,
+        format_options: &FormatOptions,
+    ) -> ColumnProfileResult {
+        let mut output = ColumnProfileResult {
+            null_count: None,
+            summary_stats: None,
+            small_histogram: None,
+            small_frequency_table: None,
+            large_histogram: None,
+            large_frequency_table: None,
         };
-        let comm = self.comm.clone();
-        r_task::spawn_idle(|| async move {
-            log::trace!("Processing GetColumnProfile request: {id}");
-            handle_columns_profiles_requests(params, comm)
-                .instrument(tracing::info_span!("get_columns_profile", ns = id))
-                .await
-                .or_log_error("Unable to handle get_columns_profile");
+
+        let filtered_column = unwrap!(tbl_get_filtered_column(
+            self.table.get(),
+            request.column_index,
+            &self.filtered_indices,
+            self.shape.kind,
+        ), Err(e) =>  {
+            // In the case something goes wrong here we log the error and return an empty output.
+            // This might still work for the other columns in the request.
+            log::error!("Error applying filter indices for column: {}. Err: {e}", request.column_index);
+            return output;
         });
+
+        for profile_req in request.profiles {
+            match profile_req.profile_type {
+                ColumnProfileType::NullCount => {
+                    output.null_count = self
+                        .profile_null_count(filtered_column.clone())
+                        .map_err(|err| {
+                            log::error!(
+                                "Error getting summary stats for column {}: {}",
+                                request.column_index,
+                                err
+                            );
+                        })
+                        .ok();
+                },
+                ColumnProfileType::SummaryStats => {
+                    output.summary_stats = self
+                        .profile_summary_stats(filtered_column.clone(), format_options)
+                        .map_err(|err| {
+                            log::error!(
+                                "Error getting null count for column {}: {}",
+                                request.column_index,
+                                err
+                            );
+                        })
+                        .ok()
+                },
+                ColumnProfileType::SmallHistogram | ColumnProfileType::LargeHistogram => {
+                    let histogram = self
+                        .profile_histogram(filtered_column.clone(), format_options, &profile_req)
+                        .map_err(|err| {
+                            log::error!(
+                                "Error getting histogram for column {}: {}",
+                                request.column_index,
+                                err
+                            );
+                        })
+                        .ok();
+
+                    match profile_req.profile_type {
+                        ColumnProfileType::SmallHistogram => {
+                            output.small_histogram = histogram;
+                        },
+                        ColumnProfileType::LargeHistogram => {
+                            output.large_histogram = histogram;
+                        },
+                        _ => {
+                            // This is technically unreachable!(), but not worth panicking if
+                            // this happens.
+                        },
+                    }
+                },
+                ColumnProfileType::SmallFrequencyTable | ColumnProfileType::LargeFrequencyTable => {
+                    let frequency_table = self
+                        .profile_frequency_table(
+                            filtered_column.clone(),
+                            format_options,
+                            &profile_req,
+                        )
+                        .map_err(|err| {
+                            log::error!(
+                                "Error getting frequency table for column {}: {}",
+                                request.column_index,
+                                err
+                            );
+                        })
+                        .ok();
+
+                    match profile_req.profile_type {
+                        ColumnProfileType::SmallFrequencyTable => {
+                            output.small_frequency_table = frequency_table;
+                        },
+                        ColumnProfileType::LargeFrequencyTable => {
+                            output.large_frequency_table = frequency_table;
+                        },
+                        _ => {
+                            // This is technically unreachable!(), but not worth panicking if
+                            // this happens.
+                        },
+                    }
+                },
+            };
+        }
+        output
+    }
+
+    fn profile_frequency_table(
+        &self,
+        column: RObject,
+        format_options: &FormatOptions,
+        profile_spec: &ColumnProfileSpec,
+    ) -> anyhow::Result<ColumnFrequencyTable> {
+        let params = match &profile_spec.params {
+            None => return Err(anyhow!("Missing parameters for the frequency table")),
+            Some(par) => match par {
+                ColumnProfileParams::SmallFrequencyTable(p) => p,
+                ColumnProfileParams::LargeFrequencyTable(p) => p,
+                _ => return Err(anyhow!("Wrong type of parameters for the frequency table.")),
+            },
+        };
+        let frequency_table = profile_frequency_table(column.sexp, &params, &format_options)?;
+        Ok(frequency_table)
+    }
+
+    fn profile_histogram(
+        &self,
+        column: RObject,
+        format_options: &FormatOptions,
+        profile_spec: &ColumnProfileSpec,
+    ) -> anyhow::Result<ColumnHistogram> {
+        let params = match &profile_spec.params {
+            None => return Err(anyhow!("Missing parameters for the histogram")),
+            Some(par) => match par {
+                ColumnProfileParams::SmallHistogram(p) => p,
+                ColumnProfileParams::LargeHistogram(p) => p,
+                _ => return Err(anyhow!("Wrong type of parameters for the histogram.")),
+            },
+        };
+        let histogram = profile_histogram(column.sexp, &params, &format_options)?;
+        Ok(histogram)
+    }
+
+    fn profile_summary_stats(
+        &self,
+        column: RObject,
+        format_options: &FormatOptions,
+    ) -> anyhow::Result<ColumnSummaryStats> {
+        let dtype = display_type(column.sexp);
+        Ok(summary_stats(column.sexp, dtype, format_options)?)
+    }
+
+    /// Counts the number of nulls in a column. As the intent is to provide an
+    /// idea of how complete the data is, NA values are considered to be null
+    /// for the purposes of these stats.
+    ///
+    /// Expects data to be filtered by the view indices.
+    ///
+    /// - `column_index`: The index of the column to count nulls in; 0-based.
+    fn profile_null_count(&self, column: RObject) -> anyhow::Result<i64> {
+        // Compute the number of nulls in the column
+        let result: i32 = RFunction::new("", ".ps.null_count")
+            .param("column", column)
+            .call_in(ARK_ENVS.positron_ns)?
+            .try_into()?;
+
+        // Return the count of nulls and NA values
+        Ok(result.try_into()?)
     }
 
     /// Sort the rows of the data object according to the sort keys in
@@ -645,7 +787,7 @@ impl RDataExplorer {
         for key in &self.sort_keys {
             // Get the column to sort by
             order.add(tbl_get_column(
-                self.table.get()?.sexp,
+                self.table.get().sexp,
                 key.column_index as i32,
                 self.shape.kind,
             )?);
@@ -691,7 +833,7 @@ impl RDataExplorer {
         // Pass the row filters to R and get the resulting row indices
         let filters = RObject::try_from(filters)?;
         let result: HashMap<String, RObject> = RFunction::new("", ".ps.filter_rows")
-            .param("table", self.table.get()?.sexp)
+            .param("table", self.table.get().sexp)
             .param("row_filters", filters)
             .call_in(ARK_ENVS.positron_ns)?
             .try_into()?;
@@ -888,7 +1030,7 @@ impl RDataExplorer {
             row_filters: self.row_filters.clone(),
             column_filters: self.col_filters.clone(),
             sort_keys: self.sort_keys.clone(),
-            has_row_labels: match self.table.get()?.attr("row.names") {
+            has_row_labels: match self.table.get().attr("row.names") {
                 Some(_) => true,
                 None => false,
             },
@@ -979,7 +1121,7 @@ impl RDataExplorer {
         let mut column_data: Vec<Vec<ColumnValue>> = Vec::with_capacity(columns.len());
         for selection in columns {
             let tbl = tbl_subset_with_view_indices(
-                self.table.get()?.sexp,
+                self.table.get().sexp,
                 &self.view_indices,
                 Some(self.get_row_selection_indices(selection.spec)),
                 Some(vec![selection.column_index]),
@@ -1004,7 +1146,7 @@ impl RDataExplorer {
         format_options: &FormatOptions,
     ) -> anyhow::Result<Vec<String>> {
         let tbl = tbl_subset_with_view_indices(
-            self.table.get()?.sexp,
+            self.table.get().sexp,
             &self.view_indices,
             Some(self.get_row_selection_indices(selection)),
             Some(vec![]), // Use empty vec, because we only need the row names.
@@ -1058,7 +1200,7 @@ impl RDataExplorer {
     ) -> anyhow::Result<String> {
         r_task(|| {
             export_selection::export_selection(
-                self.table.get()?.sexp,
+                self.table.get().sexp,
                 &self.view_indices,
                 selection,
                 format,
@@ -1067,8 +1209,86 @@ impl RDataExplorer {
     }
 }
 
+// This returns the type of an _element_ of the column. In R atomic
+// vectors do not have a distinct internal type but we pretend that they
+// do for the purpose of integrating with Positron types.
+fn display_type(x: SEXP) -> ColumnDisplayType {
+    if r_is_s4(x) {
+        return ColumnDisplayType::Unknown;
+    }
+
+    if r_is_object(x) {
+        if r_inherits(x, "logical") {
+            return ColumnDisplayType::Boolean;
+        }
+
+        if r_inherits(x, "integer") {
+            return ColumnDisplayType::Number;
+        }
+        if r_inherits(x, "double") {
+            return ColumnDisplayType::Number;
+        }
+        if r_inherits(x, "complex") {
+            return ColumnDisplayType::Number;
+        }
+        if r_inherits(x, "numeric") {
+            return ColumnDisplayType::Number;
+        }
+
+        if r_inherits(x, "character") {
+            return ColumnDisplayType::String;
+        }
+        if r_inherits(x, "factor") {
+            return ColumnDisplayType::String;
+        }
+
+        if r_inherits(x, "Date") {
+            return ColumnDisplayType::Date;
+        }
+        if r_inherits(x, "POSIXct") {
+            return ColumnDisplayType::Datetime;
+        }
+        if r_inherits(x, "POSIXlt") {
+            return ColumnDisplayType::Datetime;
+        }
+
+        // TODO: vctrs's list_of
+        if r_inherits(x, "list") {
+            return ColumnDisplayType::Unknown;
+        }
+
+        // Catch-all, including for data frame
+        return ColumnDisplayType::Unknown;
+    }
+
+    match r_typeof(x) {
+        LGLSXP => return ColumnDisplayType::Boolean,
+        INTSXP | REALSXP | CPLXSXP => return ColumnDisplayType::Number,
+        STRSXP => return ColumnDisplayType::String,
+        VECSXP => return ColumnDisplayType::Unknown,
+        _ => return ColumnDisplayType::Unknown,
+    }
+}
+
 fn table_info_or_bail(x: SEXP) -> anyhow::Result<TableInfo> {
     harp::table_info(x).ok_or(anyhow!("Unsupported type for data viewer"))
+}
+
+fn tbl_get_filtered_column(
+    x: &RObject,
+    column_index: i64,
+    indices: &Option<Vec<i32>>,
+    kind: TableKind,
+) -> anyhow::Result<RObject> {
+    let column = tbl_get_column(x.sexp, column_index as i32, kind)?;
+
+    Ok(match &indices {
+        Some(indices) => RFunction::from("col_filter_indices")
+            .add(column)
+            .add(RObject::try_from(indices)?)
+            .call_in(ARK_ENVS.positron_ns)?,
+        None => column,
+    })
 }
 
 /// Open an R object in the data viewer.

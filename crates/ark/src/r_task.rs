@@ -253,7 +253,7 @@ where
     Fut: Future<Output = ()> + 'static,
 {
     // Idle tasks are always run from the read-console loop
-    if unsafe { R_TASK_BYPASS } {
+    if !only_idle && unsafe { R_TASK_BYPASS } {
         // Escape hatch for unit tests
         futures::executor::block_on(fun());
         return;
