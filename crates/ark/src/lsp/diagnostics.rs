@@ -155,6 +155,38 @@ pub(crate) fn generate_diagnostics(doc: Document, state: WorldState) -> Vec<Diag
     diagnostics
 }
 
+fn handle_dotty_assignment(lhs: Node, context: &mut DiagnosticContext) -> Result<()> {
+    // Check that the lhs is a subset call of the form `.[]`.
+    lhs.is_subset().into_result()?;
+    let function = lhs.child_by_field_name("function").into_result()?;
+    function.is_identifier_or_string().into_result()?;
+    let value = context.contents.node_slice(&function)?.to_string();
+    (value == ".").into_result()?;
+
+    // Iterate over each argument, and look for identifiers.
+    let arguments = lhs.child_by_field_name("arguments").into_result()?;
+    let mut cursor = arguments.walk();
+    for child in arguments.children_by_field_name("argument", &mut cursor) {
+        let name = child.child_by_field_name("name");
+        let value = child.child_by_field_name("value");
+        if let Some(name) = name {
+            let range = name.range();
+            let name = context.contents.node_slice(&name)?.to_string();
+            context.add_defined_variable(name.as_str(), range);
+        } else if let Some(value) = value {
+            if value.is_identifier_or_string() {
+                let range = value.range();
+                let name = context.contents.node_slice(&value)?.to_string();
+                context.add_defined_variable(name.as_str(), range);
+            } else if value.is_subset() {
+                let _ = handle_dotty_assignment(value, context);
+            }
+        }
+    }
+
+    ().ok()
+}
+
 fn recurse(
     node: Node,
     context: &mut DiagnosticContext,
@@ -422,38 +454,7 @@ fn recurse_assignment(
         }
 
         // Handle assignments to dotty expressions, e.g. '.[a] <- 1'.
-        let _: Result<()> = local! {
-
-            // Check that the lhs is a subset call of the form `.[]`.
-            identifier.is_subset().into_result()?;
-            let function = identifier.child_by_field_name("function").into_result()?;
-            function.is_identifier_or_string().into_result()?;
-            let value = context.contents.node_slice(&function)?.to_string();
-            (value == ".").into_result()?;
-            let arguments = identifier.child_by_field_name("arguments").into_result()?;
-
-            // Iterate over each argument, and look for identifiers.
-            let mut cursor = arguments.walk();
-            for child in arguments.children_by_field_name("argument", &mut cursor) {
-
-                let name = child.child_by_field_name("name");
-                let value = child.child_by_field_name("value");
-                if let Some(name) = name {
-                    let range = name.range();
-                    let name = context.contents.node_slice(&name)?.to_string();
-                    context.add_defined_variable(name.as_str(), range);
-                }
-                else if let Some(value) = value {
-                    if value.is_identifier_or_string() {
-                        let range = value.range();
-                        let name = context.contents.node_slice(&value)?.to_string();
-                        context.add_defined_variable(name.as_str(), range);
-                    }
-                }
-            }
-
-            Ok(())
-        };
+        let _ = handle_dotty_assignment(identifier, context);
     }
 
     // Recurse into expression for assignment.
@@ -1181,6 +1182,46 @@ mod tests {
             // Only marks the `x` before the `x <- 1`
             let diagnostic = diagnostics.get(0).unwrap();
             assert_eq!(diagnostic.range.start.line, 1)
+        })
+    }
+
+    #[test]
+    fn test_dotty_assignment_basic() {
+        r_test(|| {
+            let code = "
+                .[apple, banana] <- c(1, 2)
+                apple
+                banana
+                cherry
+            ";
+
+            let document = Document::new(code, None);
+
+            let diagnostics = generate_diagnostics(document.clone(), DEFAULT_STATE.clone());
+            assert_eq!(diagnostics.len(), 1);
+
+            let diagnostic = diagnostics.get(0).unwrap();
+            assert_eq!(diagnostic.range.start.line, 4);
+        })
+    }
+
+    #[test]
+    fn test_dotty_assignment_recursive() {
+        r_test(|| {
+            let code = "
+                .[apple, .[banana]] <- list(1, list(2))
+                apple
+                banana
+                cherry
+            ";
+
+            let document = Document::new(code, None);
+
+            let diagnostics = generate_diagnostics(document.clone(), DEFAULT_STATE.clone());
+            assert_eq!(diagnostics.len(), 1);
+
+            let diagnostic = diagnostics.get(0).unwrap();
+            assert_eq!(diagnostic.range.start.line, 4);
         })
     }
 }
