@@ -465,3 +465,29 @@ pub(crate) fn args_find_call_args<'tree>(
     let call = args_find_call(args, name, contents)?;
     call.child_by_field_name("arguments")
 }
+
+pub(crate) fn is_native_pipe_operator(node: &Node) -> bool {
+    return node.node_type() == NodeType::BinaryOperator(BinaryOperatorType::Pipe);
+}
+
+pub(crate) fn is_magrittr_pipe_operator(node: &Node, contents: &ropey::Rope) -> bool {
+    if node.node_type() != NodeType::BinaryOperator(BinaryOperatorType::Special) {
+        return false;
+    }
+
+    let Some(operator) = node.child_by_field_name("operator") else {
+        return false;
+    };
+
+    match contents.node_slice(&operator) {
+        Ok(slice) => return slice == "%>%",
+        Err(err) => {
+            log::error!("{err:?}");
+            return false;
+        },
+    }
+}
+
+pub(crate) fn is_pipe_operator(node: &Node, contents: &ropey::Rope) -> bool {
+    is_native_pipe_operator(node) || is_magrittr_pipe_operator(node, contents)
+}

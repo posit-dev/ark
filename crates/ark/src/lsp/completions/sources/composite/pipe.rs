@@ -17,8 +17,7 @@ use tree_sitter::Node;
 use crate::lsp::completions::sources::utils::completions_from_object_names;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::traits::rope::RopeExt;
-use crate::treesitter::BinaryOperatorType;
-use crate::treesitter::NodeType;
+use crate::treesitter::is_pipe_operator;
 use crate::treesitter::NodeTypeExt;
 
 #[derive(Clone)]
@@ -129,11 +128,11 @@ fn find_pipe_root_name(context: &DocumentContext, node: &Node) -> Option<String>
     let root = local! {
 
         let root = find_pipe_root_node(context, *node)?;
-        is_pipe_operator(context, &root).into_option()?;
+        is_pipe_operator(&root, &context.document.contents).into_option()?;
 
         // Get the left-hand side of the pipe expression.
         let mut lhs = root.child_by_field_name("lhs")?;
-        while is_pipe_operator(context, &lhs) {
+        while is_pipe_operator(&lhs, &context.document.contents) {
             lhs = lhs.child_by_field_name("lhs")?;
         }
 
@@ -150,7 +149,7 @@ fn find_pipe_root_node<'a>(context: &DocumentContext, mut node: Node<'a>) -> Opt
     let mut root = None;
 
     loop {
-        if is_pipe_operator(context, &node) {
+        if is_pipe_operator(&node, &context.document.contents) {
             root = Some(node);
         }
 
@@ -159,32 +158,6 @@ fn find_pipe_root_node<'a>(context: &DocumentContext, mut node: Node<'a>) -> Opt
             None => return root,
         }
     }
-}
-
-fn is_pipe_operator(context: &DocumentContext, node: &Node) -> bool {
-    let node_type = node.node_type();
-
-    if node_type == NodeType::BinaryOperator(BinaryOperatorType::Pipe) {
-        // Native pipe
-        return true;
-    }
-
-    if node_type == NodeType::BinaryOperator(BinaryOperatorType::Special) {
-        // magrittr pipe
-        let Some(node) = node.child_by_field_name("operator") else {
-            return false;
-        };
-
-        match context.document.contents.node_slice(&node) {
-            Ok(slice) => return slice == "%>%",
-            Err(err) => {
-                log::error!("{err:?}");
-                return false;
-            },
-        }
-    }
-
-    return false;
 }
 
 #[cfg(test)]

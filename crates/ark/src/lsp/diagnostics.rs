@@ -25,6 +25,7 @@ use crate::lsp::encoding::convert_tree_sitter_range_to_lsp_range;
 use crate::lsp::indexer;
 use crate::lsp::state::WorldState;
 use crate::lsp::traits::rope::RopeExt;
+use crate::treesitter::is_magrittr_pipe_operator;
 use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
@@ -155,6 +156,21 @@ pub(crate) fn generate_diagnostics(doc: Document, state: WorldState) -> Vec<Diag
     diagnostics
 }
 
+fn is_within_magrittr_pipe(node: Node, context: &mut DiagnosticContext) -> bool {
+    match node.parent() {
+        Some(parent) => {
+            if parent.is_braced_expression() {
+                return false;
+            } else if is_magrittr_pipe_operator(&node, &context.contents) {
+                return true;
+            } else {
+                return is_within_magrittr_pipe(parent, context);
+            }
+        },
+        None => return false,
+    }
+}
+
 fn handle_dotty_assignment(lhs: Node, context: &mut DiagnosticContext) -> Result<()> {
     // Check that the lhs is a subset call of the form `.[]`.
     lhs.is_subset().into_result()?;
@@ -162,6 +178,12 @@ fn handle_dotty_assignment(lhs: Node, context: &mut DiagnosticContext) -> Result
     function.is_identifier_or_string().into_result()?;
     let value = context.contents.node_slice(&function)?.to_string();
     (value == ".").into_result()?;
+
+    // Make sure we're not being invoked within a magrittr pipe, since
+    // '.' has special semantics in that scope.
+    if is_within_magrittr_pipe(lhs, context) {
+        return ().ok();
+    }
 
     // Iterate over each argument, and look for identifiers.
     let arguments = lhs.child_by_field_name("arguments").into_result()?;
@@ -1222,6 +1244,39 @@ mod tests {
 
             let diagnostic = diagnostics.get(0).unwrap();
             assert_eq!(diagnostic.range.start.line, 4);
+        })
+    }
+
+    #[test]
+    fn test_dotty_assignment_within_magrittr_pipe_braced_expr() {
+        r_test(|| {
+            let code = "
+                mtcars %>% list({ .[apple] <- 1; apple })
+                apple
+            ";
+
+            let document = Document::new(code, None);
+
+            let diagnostics = generate_diagnostics(document.clone(), DEFAULT_STATE.clone());
+            assert_eq!(diagnostics.len(), 1);
+
+            let diagnostic = diagnostics.get(0).unwrap();
+            assert_eq!(diagnostic.range.start.line, 2);
+        })
+    }
+
+    #[test]
+    fn test_dotty_assignment_within_native_pipe_braced_expr() {
+        r_test(|| {
+            let code = "
+                mtcars |> list({ .[apple] <- 1; apple })
+                # technically, 'apple' is defined here as well
+            ";
+
+            let document = Document::new(code, None);
+
+            let diagnostics = generate_diagnostics(document.clone(), DEFAULT_STATE.clone());
+            assert_eq!(diagnostics.len(), 0);
         })
     }
 }
