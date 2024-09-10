@@ -471,7 +471,7 @@ fun_call(argument,
     
     stuff
   }
-}
+)
 
 ## 22
 function_call()
@@ -519,7 +519,7 @@ object[(
   ][
     argument4,
     fun_call1(argument1,
-      argument2)
+      argument2),
     argument5
   ][
     argument6,
@@ -553,27 +553,29 @@ object[(
 }
 
 ## 3
-{
-  if (condition)
-  {
-    stuff1
-  } else
-  {
-    stuff2
-  }
-}
+# TODO: Needs https://github.com/r-lib/tree-sitter-r/pull/142 first.
+# {
+#   if (condition)
+#   {
+#     stuff1
+#   } else
+#   {
+#     stuff2
+#   }
+# }
 
 ## 4
-{
-  if (condition)
-  {
-    stuff1
-  }
-  else
-  {
-    stuff2
-  }
-}
+# TODO: Needs https://github.com/r-lib/tree-sitter-r/pull/142 first.
+# {
+#   if (condition)
+#   {
+#     stuff1
+#   }
+#   else
+#   {
+#     stuff2
+#   }
+# }
 
 ## 5
 {
@@ -585,7 +587,7 @@ object[(
 
 ## 6
 {
-  for (sequence) {
+  for (i in sequence) {
     stuff
   }
 }
@@ -595,7 +597,7 @@ if (condition)
   stuff
 
 ## 8
-for (sequence)
+for (i in sequence)
   stuff
 
 ## 9
@@ -755,13 +757,13 @@ else
 ## 23
 if (cond1)
   if (cond2)
-    for (sequence1)
+    for (i in sequence1)
       if (cond3)
         stuff1
 else
   stuff2
 else if (cond4)
-  for (sequence2)
+  for (i in sequence2)
     stuff3
 else
   if (cond5)
@@ -1292,8 +1294,3 @@ fun_call(
     ifelse(condition2, argument2,
       ifelse))
 )
-
-## 11
-1:10 |>
-  x => 2 ** x %>%
-  sum()
