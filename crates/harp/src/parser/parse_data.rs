@@ -37,6 +37,11 @@ impl ParseData {
         let data = RFunction::new("utils", "getParseData")
             .add(srcfile.inner.sexp)
             .call()?;
+
+        if data.sexp == harp::RObject::null().sexp {
+            return Err(harp::anyhow!("Can't find parse data in srcfile"));
+        }
+
         let data = harp::DataFrame::new(data.sexp)?;
 
         let mut nodes: Vec<ParseDataNode> = Vec::with_capacity(data.nrow);
@@ -108,8 +113,20 @@ impl ParseData {
 
     pub fn filter_top_level(mut self) -> Self {
         let nodes = std::mem::take(&mut self.nodes);
-        self.nodes = nodes.into_iter().filter(|node| node.parent == 0).collect();
+        self.nodes = nodes
+            .into_iter()
+            .filter(|node| matches!(node.kind, ParseDataKind::Node) && node.parent == 0)
+            .collect();
         self
+    }
+}
+
+impl ParseDataNode {
+    pub fn as_point_range(&self) -> std::ops::Range<(usize, usize)> {
+        std::ops::Range {
+            start: (self.line.start, self.column.start),
+            end: (self.line.end, self.column.end),
+        }
     }
 }
 

@@ -14,7 +14,7 @@ pub use tree_sitter::Point as ArkPoint;
 
 use crate::lsp::encoding::convert_point_to_position;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ArkRange {
     pub start: ArkPoint,
     pub end: ArkPoint,
