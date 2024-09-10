@@ -1121,6 +1121,18 @@ mod tests {
     }
 
     #[test]
+    fn test_no_diagnostic_for_dot_dot_i() {
+        r_test(|| {
+            let text = "..1 + ..2 + 3";
+            let document = Document::new(text, None);
+
+            let diagnostics = generate_diagnostics(document, DEFAULT_STATE.clone());
+
+            assert!(diagnostics.is_empty());
+        })
+    }
+
+    #[test]
     fn test_no_diagnostic_for_rhs_of_extractor() {
         r_test(|| {
             let options = RParseEvalOptions {
