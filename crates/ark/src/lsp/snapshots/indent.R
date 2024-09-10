@@ -697,19 +697,23 @@ while(condition)
   stuff
 
 ## 18
-if (condition1)
-  stuff1
-else
-  if (condition2) {
-    stuff2
-  }
+{
+  if (condition1)
+    stuff1
+  else
+    if (condition2) {
+      stuff2
+    }
+}
 
 ## 19
-object <-
-  if (condition)
-    fun_call()[index]
-else
-  stuff
+{
+  object <-
+    if (condition)
+      fun_call()[index]
+  else
+    stuff
+}
 
 ## 20
 funcall({
@@ -728,58 +732,64 @@ fun_call(argument,
   })
 
 ## 22
-if (cond1)
-  if (cond2)
-    if (cond3)
-      stuff1
-else if (cond4)
-  stuff2
-else
-  if (cond5)
-    stuff3
-else
-  stuff4
-else if (cond6)
-  stuff5
-else
-  if (cond7)
-    stuff6
-else
-  stuff7
-else if (cond8)
-  stuff8
-else
-  if (cond9)
-    stuff9
-else
-  stuff10
-
-## 23
-if (cond1)
-  if (cond2)
-    for (i in sequence1)
+{
+  if (cond1)
+    if (cond2)
       if (cond3)
         stuff1
-else
-  stuff2
-else if (cond4)
-  for (i in sequence2)
-    stuff3
-else
-  if (cond5)
-    fun_call(
-      argument
-    )
-else
-  stuff5
-else
-  stuff6
+  else if (cond4)
+    stuff2
+  else
+    if (cond5)
+      stuff3
+  else
+    stuff4
+  else if (cond6)
+    stuff5
+  else
+    if (cond7)
+      stuff6
+  else
+    stuff7
+  else if (cond8)
+    stuff8
+  else
+    if (cond9)
+      stuff9
+  else
+    stuff10
+}
+
+## 23
+{
+  if (cond1)
+    if (cond2)
+      for (i in sequence1)
+        if (cond3)
+          stuff1
+  else
+    stuff2
+  else if (cond4)
+    for (i in sequence2)
+      stuff3
+  else
+    if (cond5)
+      fun_call(
+        argument
+      )
+  else
+    stuff5
+  else
+    stuff6
+}
 
 ## 24
-object <- if(cond)
-            stuff1
-else
-  stuff2
+{
+  object <- if(cond)
+              stuff1
+  else
+    stuff2
+}
 
 ## 25
 if (condition) {
@@ -798,11 +808,13 @@ if (condition) {
 }
 
 ## 27
-object <- if (condition) {
-  stuff1
-}
-else {
-  stuff2
+{
+  object <- if (condition) {
+    stuff1
+  }
+  else {
+    stuff2
+  }
 }
 
 ## 28
@@ -811,15 +823,16 @@ if (condition)
     stuff
 
 ## 29
-if (condition1)
-  object <-
-    if (condition2)
-      stuff1
-else
-  stuff2
-else
-  stuff3
-
+{
+  if (condition1)
+    object <-
+      if (condition2)
+        stuff1
+  else
+    stuff2
+  else
+    stuff3
+}
 
 ### Continuation lines
 
