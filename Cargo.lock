@@ -3201,7 +3201,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter-r"
 version = "0.20.1"
-source = "git+https://github.com/r-lib/tree-sitter-r?rev=63ee9b10de3b1e4dfaf40e36b45e9ae3c9ed8a4f#63ee9b10de3b1e4dfaf40e36b45e9ae3c9ed8a4f"
+source = "git+https://github.com/r-lib/tree-sitter-r?rev=1370be1ef76a20a57bc38a28a2ab72ebeeab6342#1370be1ef76a20a57bc38a28a2ab72ebeeab6342"
 dependencies = [
  "cc",
  "tree-sitter",
