@@ -48,7 +48,7 @@ stdext = { path = "../stdext" }
 tokio = { version = "1.26.0", features = ["full"] }
 tower-lsp = "0.19.0"
 tree-sitter = "0.22.6"
-tree-sitter-r = { git = "https://github.com/r-lib/tree-sitter-r", rev = "9d1a68f8f239bc3749a481ac85e2163e24f6362c" }
+tree-sitter-r = { git = "https://github.com/r-lib/tree-sitter-r", rev = "63ee9b10de3b1e4dfaf40e36b45e9ae3c9ed8a4f" }
 uuid = "1.3.0"
 url = "2.4.1"
 walkdir = "2"
