@@ -28,5 +28,5 @@ has_x11 <- function() {
 #' @returns Values of the environment variables as a list.
 #' @export
 .ps.rpc.get_env_vars <- function(x = NULL) {
-    as.list(Sys.getenv(x))
+    as.list(Sys.getenv(x, names = TRUE))
 }
