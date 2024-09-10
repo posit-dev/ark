@@ -868,38 +868,52 @@ fn check_unclosed_arguments(
     context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<bool> {
-    let (open, close) = match node.node_type() {
-        NodeType::Call => ("(", ")"),
-        NodeType::Subset => ("[", "]"),
-        NodeType::Subset2 => ("[[", "]]"),
-        _ => return false.ok(),
+    let Some(open) = find_unclosed_argument_delimiter(node) else {
+        return Ok(false);
     };
 
-    let arguments = unwrap!(node.child_by_field_name("arguments"), None => {
-        return false.ok();
-    });
+    let token = match node.node_type() {
+        NodeType::Call => "(",
+        NodeType::Subset => "[",
+        NodeType::Subset2 => "[[",
+        _ => return Ok(false),
+    };
 
-    let n = arguments.child_count();
-    if n == 0 {
-        return false.ok();
-    }
-
-    let lhs = arguments.child(1 - 1).unwrap();
-    let rhs = arguments.child(n - 1).unwrap();
-
-    if lhs.node_type() == NodeType::Anonymous(String::from(open)) &&
-        rhs.node_type() == NodeType::Anonymous(String::from(close))
-    {
-        return false.ok();
-    }
-
-    let range = lhs.range();
+    let range = open.range();
     let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
-    let message = format!("unmatched opening bracket '{}'", open);
+    let message = format!("unmatched opening token '{token}'");
     let diagnostic = Diagnostic::new_simple(range, message);
     diagnostics.push(diagnostic);
 
     true.ok()
+}
+
+fn find_unclosed_argument_delimiter(node: Node) -> Option<Node> {
+    if !matches!(
+        node.node_type(),
+        NodeType::Call | NodeType::Subset | NodeType::Subset2
+    ) {
+        return None;
+    }
+
+    let Some(arguments) = node.child_by_field_name("arguments") else {
+        return None;
+    };
+
+    let Some(close) = arguments.child_by_field_name("close") else {
+        return None;
+    };
+
+    // If `close` is `MISSING`, it was error-recovered and this is an unclosed delimiter case
+    if !close.is_missing() {
+        return None;
+    }
+
+    let Some(open) = arguments.child_by_field_name("open") else {
+        return None;
+    };
+
+    Some(open)
 }
 
 fn check_unexpected_assignment_in_if_conditional(
@@ -989,11 +1003,14 @@ mod tests {
     use tower_lsp::lsp_types::Position;
 
     use crate::interface::console_inputs;
+    use crate::lsp::diagnostics::find_unclosed_argument_delimiter;
     use crate::lsp::diagnostics::generate_diagnostics;
     use crate::lsp::diagnostics::is_unmatched_block;
     use crate::lsp::documents::Document;
     use crate::lsp::state::WorldState;
     use crate::test::r_test;
+    use crate::treesitter::NodeType;
+    use crate::treesitter::NodeTypeExt;
 
     // Default state that includes installed packages and default scopes.
     static DEFAULT_STATE: Lazy<WorldState> = Lazy::new(|| current_state());
@@ -1006,6 +1023,30 @@ mod tests {
             installed_packages: inputs.installed_packages,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn test_unmatched_call_delimiter() {
+        let document = Document::new("match(a, b", None);
+        let node = document.ast.root_node().named_child(0).unwrap();
+        let open = find_unclosed_argument_delimiter(node).unwrap();
+        assert_eq!(open.node_type(), NodeType::Anonymous(String::from("(")));
+        assert_eq!(open.start_byte(), 5);
+        assert_eq!(open.end_byte(), 6);
+
+        let document = Document::new("foo[a, b", None);
+        let node = document.ast.root_node().named_child(0).unwrap();
+        let open = find_unclosed_argument_delimiter(node).unwrap();
+        assert_eq!(open.node_type(), NodeType::Anonymous(String::from("[")));
+        assert_eq!(open.start_byte(), 3);
+        assert_eq!(open.end_byte(), 4);
+
+        let document = Document::new("foo[[a, b", None);
+        let node = document.ast.root_node().named_child(0).unwrap();
+        let open = find_unclosed_argument_delimiter(node).unwrap();
+        assert_eq!(open.node_type(), NodeType::Anonymous(String::from("[[")));
+        assert_eq!(open.start_byte(), 3);
+        assert_eq!(open.end_byte(), 5);
     }
 
     #[test]

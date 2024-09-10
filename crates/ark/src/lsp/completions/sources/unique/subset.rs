@@ -85,10 +85,8 @@ fn node_find_object_for_string_subset<'tree>(
         }
     }
 
-    let node_type = node.node_type();
-
     // Only provide subset completions if you are actually within `x[<here>]` or `x[[<here>]]`
-    if !is_within_subset_delimiters(&context.point, &node, &node_type) {
+    if !is_within_subset_delimiters(&context.point, &node) {
         return None;
     }
 

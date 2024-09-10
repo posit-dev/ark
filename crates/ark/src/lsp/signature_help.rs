@@ -327,21 +327,12 @@ fn is_within_call_parentheses(x: &Point, node: &Node) -> bool {
         return false;
     };
 
-    let n_children = arguments.child_count();
-    if n_children < 2 {
-        log::error!("`arguments` node only has {n_children} children.");
+    let Some(open) = arguments.child_by_field_name("open") else {
         return false;
-    }
-
-    let open = arguments.child(1 - 1).unwrap();
-    let close = arguments.child(n_children - 1).unwrap();
-
-    if open.node_type() != NodeType::Anonymous(String::from("(")) {
+    };
+    let Some(close) = arguments.child_by_field_name("close") else {
         return false;
-    }
-    if close.node_type() != NodeType::Anonymous(String::from(")")) {
-        return false;
-    }
+    };
 
     x.is_after_or_equal(open.end_position()) && x.is_before_or_equal(close.start_position())
 }
