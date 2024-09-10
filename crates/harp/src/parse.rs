@@ -68,7 +68,7 @@ pub fn parse_exprs_with_srcrefs(text: &str) -> crate::Result<RObject> {
     parse_exprs_ext(&ParseInput::SrcFile(&srcfile))
 }
 
-pub(crate) fn parse_exprs_ext<'a>(input: &ParseInput<'a>) -> crate::Result<RObject> {
+pub fn parse_exprs_ext<'a>(input: &ParseInput<'a>) -> crate::Result<RObject> {
     let status = parse_status(input)?;
     match status {
         ParseResult::Complete(x) => Ok(RObject::from(x)),
