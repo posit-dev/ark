@@ -44,7 +44,6 @@ pub enum NodeType {
     Na(NaType),
     Comment,
     Comma,
-    UnmatchedDelimiter(UnmatchedDelimiterType),
     Error,
     Anonymous(String),
 }
@@ -90,7 +89,6 @@ fn node_type(x: &Node) -> NodeType {
         "na" => NodeType::Na(na_type(x)),
         "comment" => NodeType::Comment,
         "comma" => NodeType::Comma,
-        "unmatched_delimiter" => NodeType::UnmatchedDelimiter(unmatched_delimiter_type(x)),
         "ERROR" => NodeType::Error,
         anonymous => NodeType::Anonymous(anonymous.to_string()),
     }
@@ -274,27 +272,6 @@ fn na_type(x: &Node) -> NaType {
         "NA_complex_" => NaType::Complex,
         "NA_character_" => NaType::Character,
         _ => panic!("Unknown `na` kind {}.", x.kind()),
-    }
-}
-
-#[derive(Debug, PartialEq)]
-pub enum UnmatchedDelimiterType {
-    /// `}`
-    Brace,
-    /// `)`
-    Parenthesis,
-    /// `]`
-    Bracket,
-}
-
-fn unmatched_delimiter_type(x: &Node) -> UnmatchedDelimiterType {
-    let x = x.child(0).unwrap();
-
-    match x.kind() {
-        "}" => UnmatchedDelimiterType::Brace,
-        ")" => UnmatchedDelimiterType::Parenthesis,
-        "]" => UnmatchedDelimiterType::Bracket,
-        _ => panic!("Unknown `unmatched_delimiter` kind {}.", x.kind()),
     }
 }
 
