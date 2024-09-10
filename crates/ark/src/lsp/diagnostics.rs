@@ -29,7 +29,6 @@ use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 use crate::treesitter::UnaryOperatorType;
-use crate::treesitter::UnmatchedDelimiterType;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DiagnosticsConfig {
@@ -197,6 +196,7 @@ fn recurse(
             _ => recurse_default(node, context, diagnostics),
         },
         NodeType::NamespaceOperator(_) => recurse_namespace(node, context, diagnostics),
+        NodeType::Error => recurse_error(node, context, diagnostics),
         _ => recurse_default(node, context, diagnostics),
     }
 }
@@ -545,32 +545,21 @@ fn check_call_next_sibling(
     context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<()> {
-    let Some(next) = child.next_sibling() else {
-        return ().ok();
-    };
-
-    let ok = match next.node_type() {
-        NodeType::Comma => true,
-        NodeType::Anonymous(kind) if matches!(kind.as_str(), ")") => true,
-        NodeType::Comment => true,
-        _ => false,
-    };
-
-    if ok {
-        return ().ok();
-    }
-
-    let range = child.range();
-    let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
-    let message = "expected ',' after expression";
-    let diagnostic = Diagnostic::new_simple(range, message.into());
-    diagnostics.push(diagnostic);
-
-    ().ok()
+    check_call_like_next_sibling(child, &NodeType::Call, context, diagnostics)
 }
 
 fn check_subset_next_sibling(
     child: Node,
+    subset_type: &NodeType,
+    context: &mut DiagnosticContext,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<()> {
+    check_call_like_next_sibling(child, &subset_type, context, diagnostics)
+}
+
+fn check_call_like_next_sibling(
+    child: Node,
+    parent_type: &NodeType,
     context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<()> {
@@ -578,10 +567,19 @@ fn check_subset_next_sibling(
         return ().ok();
     };
 
+    let close = match parent_type {
+        NodeType::Call => ")",
+        NodeType::Subset => "]",
+        NodeType::Subset2 => "]]",
+        _ => bail!("Parent must be a call, subset, or subset2 node."),
+    };
+
     let ok = match next.node_type() {
         NodeType::Comma => true,
-        NodeType::Anonymous(kind) if matches!(kind.as_str(), "]" | "]]") => true,
+        NodeType::Anonymous(kind) if kind.as_str() == close => true,
         NodeType::Comment => true,
+        // Should be handled elsewhere
+        NodeType::Error => true,
         _ => false,
     };
 
@@ -589,9 +587,23 @@ fn check_subset_next_sibling(
         return ().ok();
     }
 
-    let range = child.range();
+    // Children can be arbitrarily large, so report the issue between the end of `child`
+    // and the start of `next` (it's not really the child's fault anyways,
+    // it's the fault of the thing right after it).
+    let start_byte = child.end_byte();
+    let start_point = child.end_position();
+    let end_byte = next.start_byte();
+    let end_point = next.start_position();
+
+    let range = Range {
+        start_byte,
+        start_point,
+        end_byte,
+        end_point,
+    };
+
     let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
-    let message = "expected ',' after expression";
+    let message = "expected ',' between expressions";
     let diagnostic = Diagnostic::new_simple(range, message.into());
     diagnostics.push(diagnostic);
 
@@ -669,13 +681,15 @@ fn recurse_subset(
         recurse(callee, context, diagnostics)?;
     }
 
+    let subset_type = node.node_type();
+
     // Recurse into arguments.
     if let Some(arguments) = node.child_by_field_name("arguments") {
         let mut cursor = arguments.walk();
         let children = arguments.children_by_field_name("argument", &mut cursor);
         for child in children {
             // Warn if the next sibling is neither a comma nor a closing ].
-            check_subset_next_sibling(child, context, diagnostics)?;
+            check_subset_next_sibling(child, &subset_type, context, diagnostics)?;
 
             // Recurse into values.
             if let Some(value) = child.child_by_field_name("value") {
@@ -704,49 +718,51 @@ fn recurse_default(
     ().ok()
 }
 
+// When we hit an `ERROR` node, i.e. a syntax error, it often has its own children
+// which can also be `ERROR`s. The goal is to target the deepest (most precise) `ERROR`
+// nodes and only report syntax errors for those.
+fn recurse_error(
+    node: Node,
+    context: &mut DiagnosticContext,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<()> {
+    let mut report = node.is_error();
+    let mut cursor = node.walk();
+
+    for child in node.children(&mut cursor) {
+        if child.has_error() {
+            // At least one child is also an `ERROR` node, so we
+            // definitely won't report ourselves as an `ERROR` anymore.
+            report = false;
+
+            recurse_error(child, context, diagnostics)?;
+        }
+    }
+
+    if report {
+        let range = node.range();
+        let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
+        let text = context.contents.node_slice(&node)?.to_string();
+        let message = format!("Syntax error: unexpected token '{}'", text);
+        let diagnostic = Diagnostic::new_simple(range, message);
+        diagnostics.push(diagnostic);
+    }
+
+    Ok(())
+}
+
 fn dispatch(node: Node, context: &mut DiagnosticContext, diagnostics: &mut Vec<Diagnostic>) {
     let result: Result<bool> = local! {
         check_invalid_na_comparison(node, context, diagnostics)?;
         check_symbol_in_scope(node, context, diagnostics)?;
-        check_syntax_error(node, context, diagnostics)?;
         check_unclosed_arguments(node, context, diagnostics)?;
         check_unexpected_assignment_in_if_conditional(node, context, diagnostics)?;
-        check_unmatched_closing_token(node, context, diagnostics)?;
         true.ok()
     };
 
     if let Err(error) = result {
         log::error!("{error}");
     }
-}
-
-fn check_unmatched_closing_token(
-    node: Node,
-    context: &mut DiagnosticContext,
-    diagnostics: &mut Vec<Diagnostic>,
-) -> Result<bool> {
-    // These should all be skipped over by function, if, for, while, and repeat
-    // handling, so if we ever get here then it means we didn't have an
-    // equivalent leading token (or there was some other syntax error that
-    // caused the parser to not recognize one of the aforementioned control flow
-    // operators, like `repeat { 1 + }`).
-    let NodeType::UnmatchedDelimiter(delimiter) = node.node_type() else {
-        return false.ok();
-    };
-
-    let (token, name) = match delimiter {
-        UnmatchedDelimiterType::Brace => ("}", "brace"),
-        UnmatchedDelimiterType::Parenthesis => (")", "parenthesis"),
-        UnmatchedDelimiterType::Bracket => ("]", "bracket"),
-    };
-
-    let range = node.range();
-    let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
-    let message = format!("unmatched closing {name} '{token}'");
-    let diagnostic = Diagnostic::new_simple(range, message);
-    diagnostics.push(diagnostic);
-
-    true.ok()
 }
 
 fn check_unmatched_opening_brace(
@@ -840,25 +856,6 @@ fn check_invalid_na_comparison(
             diagnostics.push(diagnostic);
         }
     }
-
-    true.ok()
-}
-
-fn check_syntax_error(
-    node: Node,
-    context: &mut DiagnosticContext,
-    diagnostics: &mut Vec<Diagnostic>,
-) -> Result<bool> {
-    if !node.is_error() {
-        return false.ok();
-    }
-
-    let range = node.range();
-    let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
-    let text = context.contents.node_slice(&node)?.to_string();
-    let message = format!("Syntax error: unexpected token '{}'", text);
-    let diagnostic = Diagnostic::new_simple(range, message);
-    diagnostics.push(diagnostic);
 
     true.ok()
 }
@@ -1110,13 +1107,85 @@ mod tests {
             let diagnostics = generate_diagnostics(document, DEFAULT_STATE.clone());
             assert_eq!(diagnostics.len(), 1);
 
+            // Diagnostic highlights between the `2` and `3`
             let diagnostic = diagnostics.get(0).unwrap();
             assert_eq!(
                 diagnostic.message,
-                "expected ',' after expression".to_string()
+                "expected ',' between expressions".to_string()
             );
-            assert_eq!(diagnostic.range.start, Position::new(0, 9));
-            assert_eq!(diagnostic.range.end, Position::new(0, 10));
+            assert_eq!(diagnostic.range.start, Position::new(0, 10));
+            assert_eq!(diagnostic.range.end, Position::new(0, 11));
+
+            // Expect 2 diagnostics
+            // - One about unmatched `(`
+            // - But the `)` is implied, meaning that between `2` and `identity` there should be a `,`
+            //   so we get a diagnostic for that too
+            let text = "
+match(1, 2
+
+identity(1)
+";
+            let document = Document::new(text, None);
+            let diagnostics = generate_diagnostics(document, DEFAULT_STATE.clone());
+            assert_eq!(diagnostics.len(), 2);
+
+            // Diagnostic highlights the unmatched `(`
+            let diagnostic = diagnostics.get(0).unwrap();
+            assert_eq!(
+                diagnostic.message,
+                "unmatched opening token '('".to_string()
+            );
+            assert_eq!(diagnostic.range.start, Position::new(1, 5));
+            assert_eq!(diagnostic.range.end, Position::new(1, 6));
+
+            // Diagnostic highlights the need for a `,`
+            let diagnostic = diagnostics.get(1).unwrap();
+            assert_eq!(
+                diagnostic.message,
+                "expected ',' between expressions".to_string()
+            );
+            assert_eq!(diagnostic.range.start, Position::new(1, 10));
+            assert_eq!(diagnostic.range.end, Position::new(3, 0));
+        })
+    }
+
+    #[test]
+    fn test_error_precision() {
+        r_test(|| {
+            let text = "sum(1 * 2 + )";
+            let document = Document::new(text, None);
+
+            let diagnostics = generate_diagnostics(document, DEFAULT_STATE.clone());
+
+            // TODO: This should report 1 error, a syntax error after the `+`.
+            // It will once we incorporate the error sentinel from:
+            // https://github.com/r-lib/tree-sitter-r/commit/6c5233638595152f7baaf866f3280f120d9d50a3
+            assert_eq!(diagnostics.len(), 0);
+        })
+    }
+
+    #[test]
+    fn test_unmatched_closing_token() {
+        r_test(|| {
+            let tokens = vec!["}", ")", "]"];
+
+            for token in tokens.iter() {
+                // i.e. `1 + 1 }`
+                let text = format!("1 + 1 {token}");
+                let document = Document::new(text.as_str(), None);
+
+                let diagnostics = generate_diagnostics(document, DEFAULT_STATE.clone());
+                assert_eq!(diagnostics.len(), 1);
+
+                // Diagnostic highlights the `{token}`
+                let diagnostic = diagnostics.get(0).unwrap();
+                assert_eq!(
+                    diagnostic.message,
+                    format!("Syntax error: unexpected token '{token}'")
+                );
+                assert_eq!(diagnostic.range.start, Position::new(0, 6));
+                assert_eq!(diagnostic.range.end, Position::new(0, 7));
+            }
         })
     }
 
