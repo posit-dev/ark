@@ -129,6 +129,11 @@ jobs:
               with:
                   name: ark-${{ matrix.flavor }}-linux-x64-archive
 
+            - name: Download Linux arm64 kernel (${{ matrix.flavor}})
+              uses: actions/download-artifact@v4
+              with:
+                  name: ark-${{ matrix.flavor }}-linux-arm64-archive
+
             - name: Upload macOS release artifact (universal)
               uses: actions/upload-release-asset@v1
               env:
@@ -157,6 +162,16 @@ jobs:
                   upload_url: ${{ needs.create_release.outputs.upload_url }}
                   asset_path: ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ matrix.flavor }}-linux-x64.zip
                   asset_name: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-linux-x64.zip
+                  asset_content_type: application/octet-stream
+
+            - name: Upload Linux release artifacts (arm64)
+              uses: actions/upload-release-asset@v1
+              env:
+                  GITHUB_TOKEN: ${{ github.token }}
+              with:
+                  upload_url: ${{ needs.create_release.outputs.upload_url }}
+                  asset_path: ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ matrix.flavor }}-linux-arm64.zip
+                  asset_name: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-linux-arm64.zip
                   asset_content_type: application/octet-stream
 
     status:
