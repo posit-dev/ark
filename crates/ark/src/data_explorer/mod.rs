@@ -5,9 +5,11 @@
 //
 //
 
+pub mod column_profile;
 pub mod export_selection;
 pub mod format;
 pub mod histogram;
 pub mod r_data_explorer;
 pub mod summary_stats;
+pub mod table;
 pub mod utils;
