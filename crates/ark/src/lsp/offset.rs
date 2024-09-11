@@ -20,6 +20,21 @@ pub struct ArkRange {
     pub end: ArkPoint,
 }
 
+impl From<harp::srcref::SrcRef> for ArkRange {
+    fn from(value: harp::srcref::SrcRef) -> Self {
+        ArkRange {
+            start: ArkPoint {
+                row: value.line.start,
+                column: value.column.start,
+            },
+            end: ArkPoint {
+                row: value.line.end,
+                column: value.column.end,
+            },
+        }
+    }
+}
+
 /// Like `TextEdit` from the lsp_types crate, but doen't expect positions to be
 /// encoded in UTF-16.
 #[derive(Clone, Debug)]
