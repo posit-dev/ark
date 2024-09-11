@@ -23,9 +23,11 @@ pub struct RParseOptions {
     pub srcfile: Option<RObject>,
 }
 
+#[derive(Clone, Debug)]
 pub enum ParseResult {
     Complete(RObject),
     Incomplete,
+    SyntaxError { message: String, line: i32 },
 }
 
 pub enum ParseInput<'a> {
@@ -76,6 +78,9 @@ pub fn parse_exprs_ext<'a>(input: &ParseInput<'a>) -> crate::Result<RObject> {
             code: parse_input_as_string(input).unwrap_or(String::from("Conversion error")),
             message: String::from("Incomplete code"),
         }),
+        ParseResult::SyntaxError { message, line } => {
+            Err(crate::Error::ParseSyntaxError { message, line })
+        },
     }
 }
 
@@ -98,7 +103,7 @@ pub fn parse_status<'a>(input: &ParseInput<'a>) -> crate::Result<ParseResult> {
         match status {
             libr::ParseStatus_PARSE_OK => Ok(ParseResult::Complete(result)),
             libr::ParseStatus_PARSE_INCOMPLETE => Ok(ParseResult::Incomplete),
-            libr::ParseStatus_PARSE_ERROR => Err(crate::Error::ParseSyntaxError {
+            libr::ParseStatus_PARSE_ERROR => Ok(ParseResult::SyntaxError {
                 message: CStr::from_ptr(libr::get(libr::R_ParseErrorMsg).as_ptr())
                     .to_string_lossy()
                     .to_string(),
@@ -107,7 +112,8 @@ pub fn parse_status<'a>(input: &ParseInput<'a>) -> crate::Result<ParseResult> {
             _ => {
                 // Should not get here
                 Err(crate::Error::ParseError {
-                    code: parse_input_as_string(input).unwrap_or(String::from("Conversion error")),
+                    code: parse_input_as_string(input)
+                        .unwrap_or(String::from("String conversion error")),
                     message: String::from("Unknown parse error"),
                 })
             },
@@ -195,7 +201,7 @@ mod tests {
             // "normal" syntax error
             assert_match!(
                 parse_status(&ParseInput::Text("1+1\n*42")),
-                Err(crate::Error::ParseSyntaxError {message, line}) => {
+                Ok(ParseResult::SyntaxError {message, line}) => {
                     assert!(message.contains("unexpected"));
                     assert_eq!(line, 2);
                 }

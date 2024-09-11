@@ -124,7 +124,7 @@ impl Shell {
                 status: IsComplete::Incomplete,
                 indent: String::from("+"),
             }),
-            Err(_) => Ok(IsCompleteReply {
+            Err(_) | Ok(ParseResult::SyntaxError { .. }) => Ok(IsCompleteReply {
                 status: IsComplete::Invalid,
                 indent: String::from(""),
             }),
