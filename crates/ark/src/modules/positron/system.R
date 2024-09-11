@@ -21,3 +21,12 @@ has_x11 <- function() {
     out <- as.list(vapply(cats, Sys.getlocale, "string", USE.NAMES = TRUE))
     c(LANG = Sys.getenv("LANG"), out)
 }
+
+#' Reports a list of environment variables for the R process.
+#' @param x A character vector of environment variables. The default `NULL`
+#' will return *all* environment variables.
+#' @returns Values of the environment variables as a list.
+#' @export
+.ps.rpc.get_env_vars <- function(x = NULL) {
+    as.list(Sys.getenv(x, names = TRUE))
+}
