@@ -5,9 +5,7 @@
 //
 //
 
-use harp::parse;
-use harp::parse_data::ParseData;
-use harp::srcref;
+use harp::ParseResult;
 
 use crate::lsp::offset::ArkPoint;
 use crate::lsp::offset::ArkRange;
@@ -20,12 +18,7 @@ pub struct ParseBoundaries {
 }
 
 pub fn parse_boundaries(text: &str) -> anyhow::Result<ParseBoundaries> {
-    let srcfile = srcref::SrcFile::new_virtual(text)?;
-
-    // Fill parse data in `srcfile` by side effect
-    let _status = parse::parse_status(&parse::ParseInput::SrcFile(&srcfile));
-
-    let parse_data = ParseData::from_srcfile(&srcfile)?;
+    let (status, parse_data) = harp::parse_with_parse_data(text)?;
     let top_level = parse_data.filter_top_level();
 
     let ranges: Vec<ArkRange> = top_level

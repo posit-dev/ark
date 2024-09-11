@@ -11,6 +11,7 @@ use itertools::Itertools;
 
 use crate::line_ending::convert_line_endings;
 use crate::line_ending::LineEnding;
+use crate::parse_data::ParseData;
 use crate::protect::RProtect;
 use crate::r_string;
 use crate::srcref;
@@ -82,6 +83,18 @@ pub fn parse_exprs_ext<'a>(input: &ParseInput<'a>) -> crate::Result<RObject> {
             Err(crate::Error::ParseSyntaxError { message, line })
         },
     }
+}
+
+// Return type would be clearer if syntax error was integrated in `ParseResult`
+pub fn parse_with_parse_data(text: &str) -> crate::Result<(ParseResult, ParseData)> {
+    let srcfile = srcref::SrcFile::new_virtual(text)?;
+
+    // Fill parse data in `srcfile` by side effect
+    let status = parse_status(&ParseInput::SrcFile(&srcfile))?;
+
+    let parse_data = ParseData::from_srcfile(&srcfile)?;
+
+    Ok((status, parse_data))
 }
 
 pub fn parse_status<'a>(input: &ParseInput<'a>) -> crate::Result<ParseResult> {
