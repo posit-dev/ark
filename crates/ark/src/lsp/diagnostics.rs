@@ -171,34 +171,44 @@ fn is_within_magrittr_pipe(node: Node, context: &mut DiagnosticContext) -> bool 
     }
 }
 
-fn handle_dotty_assignment(lhs: Node, context: &mut DiagnosticContext) -> Result<()> {
+fn handle_dotty_assignment(lhs: Node, context: &mut DiagnosticContext) -> Option<()> {
     // Check that the lhs is a subset call of the form `.[]`.
-    lhs.is_subset().into_result()?;
-    let function = lhs.child_by_field_name("function").into_result()?;
-    function.is_identifier_or_string().into_result()?;
-    let value = context.contents.node_slice(&function)?.to_string();
-    (value == ".").into_result()?;
+    if !lhs.is_subset() {
+        return None;
+    };
+
+    let function = lhs.child_by_field_name("function")?;
+    if !function.is_identifier_or_string() {
+        return None;
+    };
+
+    let value = context.contents.node_slice(&function).ok()?.to_string();
+    if value != "." {
+        return None;
+    };
 
     // Make sure we're not being invoked within a magrittr pipe, since
     // '.' has special semantics in that scope.
     if is_within_magrittr_pipe(lhs, context) {
-        return ().ok();
+        return None;
     }
 
     // Iterate over each argument, and look for identifiers.
-    let arguments = lhs.child_by_field_name("arguments").into_result()?;
+    let Some(arguments) = lhs.child_by_field_name("arguments") else {
+        return None;
+    };
     let mut cursor = arguments.walk();
     for child in arguments.children_by_field_name("argument", &mut cursor) {
         let name = child.child_by_field_name("name");
         let value = child.child_by_field_name("value");
         if let Some(name) = name {
             let range = name.range();
-            let name = context.contents.node_slice(&name)?.to_string();
+            let name = context.contents.node_slice(&name).ok()?.to_string();
             context.add_defined_variable(name.as_str(), range);
         } else if let Some(value) = value {
             if value.is_identifier_or_string() {
                 let range = value.range();
-                let name = context.contents.node_slice(&value)?.to_string();
+                let name = context.contents.node_slice(&value).ok()?.to_string();
                 context.add_defined_variable(name.as_str(), range);
             } else if value.is_subset() {
                 let _ = handle_dotty_assignment(value, context);
@@ -206,7 +216,7 @@ fn handle_dotty_assignment(lhs: Node, context: &mut DiagnosticContext) -> Result
         }
     }
 
-    ().ok()
+    Some(())
 }
 
 fn recurse(
