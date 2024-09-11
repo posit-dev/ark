@@ -264,6 +264,12 @@ col_filter_indices <- function(col, idx = NULL) {
         grepl(pattern = escaped_term, col, fixed = FALSE, ignore.case = !params$case_sensitive)
     }
 
+    # Search for the term not contained in the column's values
+    else if (identical(params$search_type, "not_contains")) {
+        escaped_term <- .ps.regex_escape(params$term)
+        !grepl(pattern = escaped_term, col, fixed = FALSE, ignore.case = !params$case_sensitive)
+    }
+
     # Search for the term at the beginning of the column's values
     else if (identical(params$search_type, "starts_with")) {
         escaped_term <- .ps.regex_escape(params$term)
