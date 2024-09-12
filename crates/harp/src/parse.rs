@@ -67,7 +67,7 @@ pub fn parse_exprs(text: &str) -> crate::Result<RObject> {
 
 /// Same but creates srcrefs
 pub fn parse_exprs_with_srcrefs(text: &str) -> crate::Result<RObject> {
-    let srcfile = srcref::SrcFile::new_virtual(text)?;
+    let srcfile = srcref::SrcFile::try_from(text)?;
     parse_exprs_ext(&ParseInput::SrcFile(&srcfile))
 }
 
@@ -87,7 +87,7 @@ pub fn parse_exprs_ext<'a>(input: &ParseInput<'a>) -> crate::Result<RObject> {
 
 // Return type would be clearer if syntax error was integrated in `ParseResult`
 pub fn parse_with_parse_data(text: &str) -> crate::Result<(ParseResult, ParseData)> {
-    let srcfile = srcref::SrcFile::new_virtual(text)?;
+    let srcfile = srcref::SrcFile::try_from(text)?;
 
     // Fill parse data in `srcfile` by side effect
     let status = parse_status(&ParseInput::SrcFile(&srcfile))?;
@@ -248,7 +248,7 @@ mod tests {
                 "foo\nbar"
             );
 
-            let input = srcref::SrcFile::new_virtual("foo\nbar").unwrap();
+            let input = srcref::SrcFile::try_from("foo\nbar").unwrap();
             assert_eq!(
                 parse_input_as_string(&ParseInput::SrcFile(&input)).unwrap(),
                 "foo\nbar"

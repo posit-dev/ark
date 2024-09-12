@@ -147,7 +147,7 @@ mod tests {
     #[test]
     fn test_parse_data() {
         r_test(|| {
-            let srcfile = srcref::SrcFile::new_virtual("foo\nbar").unwrap();
+            let srcfile = srcref::SrcFile::try_from("foo\nbar").unwrap();
             let exprs = parse::parse_exprs_ext(&parse::ParseInput::SrcFile(&srcfile)).unwrap();
             let srcrefs: Vec<harp::srcref::SrcRef> = exprs.srcrefs().unwrap();
 
