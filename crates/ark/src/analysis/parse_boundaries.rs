@@ -32,30 +32,27 @@ pub fn parse_boundaries(text: &str) -> anyhow::Result<ParseBoundaries> {
     let mut incomplete_end: Option<usize> = None;
     let mut error_end: Option<usize> = None;
 
+    let mut record_error = |start, error_end: &Option<usize>| {
+        if matches!(error, Some(_)) {
+            return;
+        }
+        let Some(end) = error_end else {
+            return;
+        };
+        error = Some(std::ops::Range { start, end: *end });
+    };
+
+    let mut record_incomplete = |start, incomplete_end: &Option<usize>| {
+        if matches!(incomplete, Some(_)) {
+            return;
+        }
+        let Some(end) = incomplete_end else {
+            return;
+        };
+        incomplete = Some(std::ops::Range { start, end: *end });
+    };
+
     for current_line in (0..n_lines).rev() {
-        let mut record_error = || {
-            if matches!(error, Some(_)) {
-                return;
-            }
-            let Some(end) = error_end else {
-                return;
-            };
-            error = Some(std::ops::Range {
-                start: current_line,
-                end,
-            });
-        };
-
-        let mut record_incomplete = || {
-            let Some(end) = incomplete_end else {
-                return;
-            };
-            incomplete = Some(std::ops::Range {
-                start: current_line,
-                end,
-            });
-        };
-
         let mut record_complete = |exprs: RObject| -> anyhow::Result<()> {
             let srcrefs = exprs.srcrefs()?;
             let ranges: Vec<std::ops::Range<usize>> =
@@ -77,29 +74,35 @@ pub fn parse_boundaries(text: &str) -> anyhow::Result<ParseBoundaries> {
 
         match harp::parse_status(&harp::ParseInput::SrcFile(&srcfile))? {
             ParseResult::Complete(exprs) => {
-                record_error();
-                record_incomplete();
                 record_complete(exprs)?;
+                record_incomplete(current_line + 1, &incomplete_end);
+                record_error(current_line + 1, &error_end);
                 break;
             },
 
             ParseResult::Incomplete => {
-                record_error();
+                record_error(current_line + 1, &error_end);
 
                 // Declare incomplete
                 if let None = incomplete_end {
-                    incomplete_end = Some(current_line);
+                    incomplete_end = Some(current_line + 1);
                 }
             },
 
             ParseResult::SyntaxError { .. } => {
                 // Declare error
                 if let None = error_end {
-                    error_end = Some(current_line);
+                    error_end = Some(current_line + 1);
                 }
             },
         };
     }
+
+    // Note that these are necessarily no-ops if we exited the loop after
+    // detected complete expressions since we already recorded the boundaries in
+    // that case.
+    record_incomplete(0, &incomplete_end);
+    record_error(0, &error_end);
 
     Ok(ParseBoundaries {
         complete,
@@ -194,6 +197,67 @@ mod tests {
             assert_eq!(boundaries.complete, expected_complete);
             assert_match!(boundaries.incomplete, None);
             assert_match!(boundaries.error, None);
+        });
+    }
+
+    #[test]
+    fn test_parse_boundaries_incomplete() {
+        r_test(|| {
+            let boundaries = parse_boundaries("foo +").unwrap();
+            assert_eq!(boundaries.complete.len(), 0);
+            assert_eq!(
+                boundaries.incomplete,
+                Some(std::ops::Range { start: 0, end: 1 })
+            );
+            assert_match!(boundaries.error, None);
+
+            let boundaries = parse_boundaries("\n\n  foo + \n  \n  ").unwrap();
+            assert_eq!(boundaries.complete.len(), 0);
+            assert_eq!(
+                boundaries.incomplete,
+                Some(std::ops::Range { start: 2, end: 5 })
+            );
+            assert_match!(boundaries.error, None);
+
+            let boundaries = parse_boundaries("foo\nbar; foo +").unwrap();
+            assert_eq!(boundaries.complete, vec![std::ops::Range {
+                start: 0,
+                end: 1
+            }]);
+            assert_eq!(
+                boundaries.incomplete,
+                Some(std::ops::Range { start: 1, end: 2 })
+            );
+            assert_match!(boundaries.error, None);
+        });
+    }
+
+    #[test]
+    fn test_parse_boundaries_error() {
+        r_test(|| {
+            let boundaries = parse_boundaries("foo )").unwrap();
+            assert_eq!(boundaries.complete.len(), 0);
+            assert_match!(boundaries.incomplete, None);
+            assert_eq!(boundaries.error, Some(std::ops::Range { start: 0, end: 1 }));
+
+            let boundaries = parse_boundaries("foo\nbar )\n  ").unwrap();
+            assert_eq!(boundaries.complete, vec![std::ops::Range {
+                start: 0,
+                end: 1
+            }]);
+            assert_match!(boundaries.incomplete, None);
+            assert_eq!(boundaries.error, Some(std::ops::Range { start: 1, end: 3 }));
+
+            let boundaries = parse_boundaries("foo\nbar +\nbaz )").unwrap();
+            assert_eq!(boundaries.complete, vec![std::ops::Range {
+                start: 0,
+                end: 1
+            }]);
+            assert_match!(
+                boundaries.incomplete,
+                Some(std::ops::Range { start: 1, end: 2 })
+            );
+            assert_eq!(boundaries.error, Some(std::ops::Range { start: 2, end: 3 }));
         });
     }
 }
