@@ -10,6 +10,7 @@ use harp::vector::Vector;
 use harp::ParseResult;
 use harp::RObject;
 
+/// Boundaries are ranges over lines of text.
 #[derive(Debug)]
 pub struct ParseBoundaries {
     pub complete: Vec<std::ops::Range<usize>>,
@@ -17,8 +18,28 @@ pub struct ParseBoundaries {
     pub error: Option<std::ops::Range<usize>>,
 }
 
+/// Parse boundaries of R inputs
+///
+/// Takes a string of R code and detects which lines parse as complete,
+/// incomplete, and error inputs.
+///
+/// Invariants:
+/// - There is always at least one range as the empty string is a complete input.
+/// - The ranges are sorted and non-overlapping.
+/// - Inputs are classified in complete, incomplete, and error sections. The
+///   sections are sorted in this order (there cannot be complete inputs after
+///   an incomplete or error one, there cannot be an incomplete input after
+///   an error one, and error inputs are always trailing).
+/// - There is only one incomplete and one error input in a set of inputs.
 pub fn parse_boundaries(text: &str) -> anyhow::Result<ParseBoundaries> {
-    let lines: Vec<&str> = text.lines().collect();
+    let mut lines: Vec<&str> = text.lines().collect();
+
+    // Rectify for `lines()` ignoring trailing empty lines
+    match text.chars().last() {
+        Some(last) if last == '\n' => lines.push(""),
+        None => lines.push(""),
+        _ => {},
+    }
 
     // Create a duplicate vector of lines on the R side too so we don't have to
     // reallocate memory each time we parse a new subset of lines
@@ -55,11 +76,8 @@ pub fn parse_boundaries(text: &str) -> anyhow::Result<ParseBoundaries> {
     for current_line in (0..n_lines).rev() {
         let mut record_complete = |exprs: RObject| -> anyhow::Result<()> {
             let srcrefs = exprs.srcrefs()?;
-            let ranges: Vec<std::ops::Range<usize>> =
+            let mut ranges: Vec<std::ops::Range<usize>> =
                 srcrefs.into_iter().map(|srcref| srcref.line).collect();
-
-            // Merge expressions separated by semicolons
-            let mut ranges = merge_overlapping(ranges);
 
             complete.append(&mut ranges);
             Ok(())
@@ -104,11 +122,19 @@ pub fn parse_boundaries(text: &str) -> anyhow::Result<ParseBoundaries> {
     record_incomplete(0, &incomplete_end);
     record_error(0, &error_end);
 
-    Ok(ParseBoundaries {
+    // Merge expressions separated by semicolons
+    let complete = merge_overlapping(complete);
+
+    let boundaries = ParseBoundaries {
         complete,
         incomplete,
         error,
-    })
+    };
+
+    // Fill any gaps with one-liner complete expressions
+    let boundaries = fill_gaps(boundaries, n_lines);
+
+    Ok(boundaries)
 }
 
 fn merge_overlapping<T>(ranges: Vec<std::ops::Range<T>>) -> Vec<std::ops::Range<T>>
@@ -136,6 +162,66 @@ where
     ranges.into_iter().fold(vec![], merge)
 }
 
+// Fill any gaps with one-liner complete expressions. This applies
+// to empty lines, with or without spaces and tabs, and possibly
+// with a trailing comment.
+fn fill_gaps(mut boundaries: ParseBoundaries, n_lines: usize) -> ParseBoundaries {
+    let mut filled = vec![];
+    let ranges = boundaries.complete;
+
+    let mut last_line = 0;
+
+    let range_from = |start| std::ops::Range {
+        start,
+        end: start + 1,
+    };
+
+    // Fill leading whitespace with empty input ranges
+    if let Some(first) = ranges
+        .get(0)
+        .or(boundaries.incomplete.as_ref())
+        .or(boundaries.error.as_ref())
+    {
+        for start in 0..first.start {
+            let range = range_from(start);
+            last_line = range.end;
+            filled.push(range)
+        }
+    }
+
+    // Fill gaps between complete expressions
+    {
+        let iter = ranges.into_iter();
+        for range in iter {
+            // We found a gap, fill ranges for lines in that gap
+            if !range.contains(&last_line) {
+                for start in last_line..range.start {
+                    filled.push(range_from(start))
+                }
+            }
+
+            last_line = range.end;
+            filled.push(range);
+        }
+    }
+
+    // Fill trailing whitespace (between complete and incomplete|error\eof)
+    let last_boundary = filled.last().map(|r| r.end).unwrap_or(0);
+    let next_boundary = boundaries
+        .incomplete
+        .as_ref()
+        .or(boundaries.error.as_ref())
+        .map(|r| r.start)
+        .unwrap_or(n_lines);
+
+    for start in last_boundary..next_boundary {
+        filled.push(range_from(start))
+    }
+
+    boundaries.complete = filled;
+    boundaries
+}
+
 #[cfg(test)]
 mod tests {
     use harp::assert_match;
@@ -146,30 +232,53 @@ mod tests {
     #[test]
     fn test_parse_boundaries_complete() {
         r_test(|| {
-            let boundaries = parse_boundaries("").unwrap();
-            let expected_complete: Vec<std::ops::Range<usize>> = vec![];
-            assert_eq!(boundaries.complete, expected_complete);
+            let boundaries = parse_boundaries("foo").unwrap();
+            #[rustfmt::skip]
+            assert_eq!(boundaries.complete, vec![
+                std::ops::Range { start: 0, end: 1 },
+            ]);
             assert_match!(boundaries.incomplete, None);
             assert_match!(boundaries.error, None);
 
-            let boundaries = parse_boundaries("\n\n  ").unwrap();
-            let expected_complete: Vec<std::ops::Range<usize>> = vec![];
-            assert_eq!(boundaries.complete, expected_complete);
+            let boundaries = parse_boundaries("foo\nbarbaz  ").unwrap();
+            assert_eq!(boundaries.complete, vec![
+                std::ops::Range { start: 0, end: 1 },
+                std::ops::Range { start: 1, end: 2 }
+            ]);
+            assert_match!(boundaries.incomplete, None);
+            assert_match!(boundaries.error, None);
+        })
+    }
+
+    #[test]
+    fn test_parse_boundaries_whitespace() {
+        r_test(|| {
+            let boundaries = parse_boundaries("").unwrap();
+            #[rustfmt::skip]
+            assert_eq!(boundaries.complete, vec![
+                std::ops::Range { start: 0, end: 1 },
+            ]);
+            assert_match!(boundaries.incomplete, None);
+            assert_match!(boundaries.error, None);
+
+            let boundaries = parse_boundaries("\n\n  \n").unwrap();
+            assert_eq!(boundaries.complete, vec![
+                std::ops::Range { start: 0, end: 1 },
+                std::ops::Range { start: 1, end: 2 },
+                std::ops::Range { start: 2, end: 3 },
+                std::ops::Range { start: 3, end: 4 },
+            ]);
             assert_match!(boundaries.incomplete, None);
             assert_match!(boundaries.error, None);
 
             let boundaries = parse_boundaries("\n  foo\n  \n\n").unwrap();
-            let expected_complete = vec![std::ops::Range { start: 1, end: 2 }];
-            assert_eq!(boundaries.complete, expected_complete);
-            assert_match!(boundaries.incomplete, None);
-            assert_match!(boundaries.error, None);
-
-            let boundaries = parse_boundaries("foo\nbarbaz  \n").unwrap();
-            let expected_complete = vec![std::ops::Range { start: 0, end: 1 }, std::ops::Range {
-                start: 1,
-                end: 2,
-            }];
-            assert_eq!(boundaries.complete, expected_complete);
+            assert_eq!(boundaries.complete, vec![
+                std::ops::Range { start: 0, end: 1 },
+                std::ops::Range { start: 1, end: 2 },
+                std::ops::Range { start: 2, end: 3 },
+                std::ops::Range { start: 3, end: 4 },
+                std::ops::Range { start: 4, end: 5 },
+            ]);
             assert_match!(boundaries.incomplete, None);
             assert_match!(boundaries.error, None);
         })
@@ -212,7 +321,10 @@ mod tests {
             assert_match!(boundaries.error, None);
 
             let boundaries = parse_boundaries("\n\n  foo + \n  \n  ").unwrap();
-            assert_eq!(boundaries.complete.len(), 0);
+            assert_eq!(boundaries.complete, vec![
+                std::ops::Range { start: 0, end: 1 },
+                std::ops::Range { start: 1, end: 2 },
+            ]);
             assert_eq!(
                 boundaries.incomplete,
                 Some(std::ops::Range { start: 2, end: 5 })
