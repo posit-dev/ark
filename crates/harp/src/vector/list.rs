@@ -69,7 +69,7 @@ impl super::Vector for List {
         (*x).into()
     }
 
-    unsafe fn create<T>(data: T) -> Self
+    fn create<T>(data: T) -> Self
     where
         T: IntoIterator,
         <T as IntoIterator>::IntoIter: ExactSizeIterator,

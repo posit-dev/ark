@@ -99,7 +99,7 @@ pub trait Vector: Sized {
         Self::new_unchecked(data)
     }
 
-    unsafe fn create<T>(data: T) -> Self
+    fn create<T>(data: T) -> Self
     where
         T: IntoIterator,
         <T as IntoIterator>::IntoIter: ExactSizeIterator,

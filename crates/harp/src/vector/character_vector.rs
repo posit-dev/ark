@@ -43,30 +43,32 @@ impl Vector for CharacterVector {
         }
     }
 
-    unsafe fn create<T>(data: T) -> Self
+    fn create<T>(data: T) -> Self
     where
         T: IntoIterator,
         <T as IntoIterator>::IntoIter: ExactSizeIterator,
         <T as IntoIterator>::Item: AsRef<Self::Item>,
     {
-        // convert into iterator
-        let mut data = data.into_iter();
+        unsafe {
+            // convert into iterator
+            let mut data = data.into_iter();
 
-        // build our character vector
-        let n = data.len();
-        let vector = CharacterVector::with_length(n);
-        for i in 0..data.len() {
-            let value = data.next().unwrap_unchecked();
-            let value = value.as_ref();
-            let charsexp = Rf_mkCharLenCE(
-                value.as_ptr() as *const c_char,
-                value.len() as i32,
-                cetype_t_CE_UTF8,
-            );
-            SET_STRING_ELT(vector.data(), i as R_xlen_t, charsexp);
+            // build our character vector
+            let n = data.len();
+            let vector = CharacterVector::with_length(n);
+            for i in 0..data.len() {
+                let value = data.next().unwrap_unchecked();
+                let value = value.as_ref();
+                let charsexp = Rf_mkCharLenCE(
+                    value.as_ptr() as *const c_char,
+                    value.len() as i32,
+                    cetype_t_CE_UTF8,
+                );
+                SET_STRING_ELT(vector.data(), i as R_xlen_t, charsexp);
+            }
+
+            vector
         }
-
-        vector
     }
 
     fn is_na(x: &Self::UnderlyingType) -> bool {
