@@ -478,7 +478,7 @@ fn recurse_namespace(
     if !context.installed_packages.contains(package.as_str()) {
         let range = lhs.range();
         let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
-        let message = format!("package '{}' is not installed", package);
+        let message = format!("Package '{}' is not installed.", package);
         let diagnostic = Diagnostic::new_simple(range, message);
         diagnostics.push(diagnostic);
     }
@@ -779,9 +779,9 @@ fn check_invalid_na_comparison(
 
         if matches!(contents, "NA" | "NaN" | "NULL") {
             let message = match contents {
-                "NA" => "consider using `is.na()` to check NA values",
-                "NaN" => "consider using `is.nan()` to check NaN values",
-                "NULL" => "consider using `is.null()` to check NULL values",
+                "NA" => "Consider using `is.na()` to check `NA` values",
+                "NaN" => "Consider using `is.nan()` to check `NaN` values.",
+                "NULL" => "Consider using `is.null()` to check `NULL` values.",
                 _ => continue,
             };
             let range = child.range();
@@ -820,7 +820,7 @@ fn check_unexpected_assignment_in_if_conditional(
 
     let range = condition.range();
     let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
-    let message = "unexpected '='; use '==' to compare values for equality";
+    let message = "Unexpected '='; use '==' to compare values for equality.";
     let diagnostic = Diagnostic::new_simple(range, message.into());
     diagnostics.push(diagnostic);
 
@@ -869,7 +869,7 @@ fn check_symbol_in_scope(
     let range = node.range();
     let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
     let identifier = context.contents.node_slice(&node)?.to_string();
-    let message = format!("no symbol named '{}' in scope", identifier);
+    let message = format!("No symbol named '{}' in scope.", identifier);
     let mut diagnostic = Diagnostic::new_simple(range, message);
     diagnostic.severity = Some(DiagnosticSeverity::WARNING);
     diagnostics.push(diagnostic);
