@@ -1,0 +1,451 @@
+//
+// diagnostics_syntactic.rs
+//
+// Copyright (C) 2024 Posit Software, PBC. All rights reserved.
+//
+//
+
+use tower_lsp::lsp_types::Diagnostic;
+use tree_sitter::Node;
+use tree_sitter::Range;
+
+use crate::lsp::diagnostics::DiagnosticContext;
+use crate::lsp::encoding::convert_tree_sitter_range_to_lsp_range;
+use crate::lsp::traits::rope::RopeExt;
+use crate::treesitter::NodeType;
+use crate::treesitter::NodeTypeExt;
+
+pub(crate) fn syntax_diagnostics(
+    node: Node,
+    context: &mut DiagnosticContext,
+) -> anyhow::Result<Vec<Diagnostic>> {
+    let mut diagnostics = Vec::new();
+
+    recurse(node, context, &mut diagnostics)?;
+
+    Ok(diagnostics)
+}
+
+fn recurse(
+    node: Node,
+    context: &mut DiagnosticContext,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> anyhow::Result<()> {
+    if !node.has_error() {
+        // No `ERROR` and no `MISSING`
+        return Ok(());
+    }
+
+    // `ERROR` handling stops recursion
+    if node.is_error() {
+        return diagnose_error(node, context, diagnostics);
+    }
+
+    // Look for contextual `MISSING` issues based on the node type
+    diagnose_missing(node, context, diagnostics)?;
+
+    recurse_children(node, context, diagnostics)
+}
+
+fn recurse_children(
+    node: Node,
+    context: &mut DiagnosticContext,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> anyhow::Result<()> {
+    let mut cursor = node.walk();
+
+    for child in node.children(&mut cursor) {
+        recurse(child, context, diagnostics)?;
+    }
+
+    Ok(())
+}
+
+// When we hit an `ERROR` node, i.e. a syntax error, it often has its own children
+// which can also be `ERROR`s. The goal is to target the deepest (most precise) `ERROR`
+// nodes and only report syntax errors for those.
+fn diagnose_error(
+    node: Node,
+    context: &mut DiagnosticContext,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> anyhow::Result<()> {
+    let mut report = node.is_error();
+    let mut cursor = node.walk();
+
+    for child in node.children(&mut cursor) {
+        if child.has_error() {
+            // At least one child is also an `ERROR` node, so we
+            // definitely won't report ourselves as an `ERROR` anymore.
+            report = false;
+
+            diagnose_error(child, context, diagnostics)?;
+        }
+    }
+
+    if report {
+        let range = node.range();
+        let message = String::from("Syntax error");
+        diagnostics.push(new_syntax_diagnostic(message, range, &context));
+    }
+
+    Ok(())
+}
+
+fn diagnose_missing(
+    node: Node,
+    context: &mut DiagnosticContext,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> anyhow::Result<()> {
+    match node.node_type() {
+        NodeType::Parameters => diagnose_missing_parameters(node, context, diagnostics),
+        NodeType::BracedExpression => {
+            diagnose_missing_braced_expression(node, context, diagnostics)
+        },
+        NodeType::ParenthesizedExpression => {
+            diagnose_missing_parenthesized_expression(node, context, diagnostics)
+        },
+        NodeType::Call => diagnose_missing_call(node, context, diagnostics),
+        NodeType::Subset => diagnose_missing_subset(node, context, diagnostics),
+        NodeType::Subset2 => diagnose_missing_subset2(node, context, diagnostics),
+        NodeType::BinaryOperator(_) => diagnose_missing_binary_operator(node, context, diagnostics),
+        _ => Ok(()),
+    }
+}
+
+fn diagnose_missing_parameters(
+    node: Node,
+    context: &mut DiagnosticContext,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> anyhow::Result<()> {
+    diagnose_missing_close(node, context, diagnostics, ")")
+}
+
+fn diagnose_missing_braced_expression(
+    node: Node,
+    context: &mut DiagnosticContext,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> anyhow::Result<()> {
+    diagnose_missing_close(node, context, diagnostics, "}")
+}
+
+fn diagnose_missing_parenthesized_expression(
+    node: Node,
+    context: &mut DiagnosticContext,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> anyhow::Result<()> {
+    diagnose_missing_close(node, context, diagnostics, ")")
+}
+
+fn diagnose_missing_call(
+    node: Node,
+    context: &mut DiagnosticContext,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> anyhow::Result<()> {
+    diagnose_missing_call_like(node, context, diagnostics, ")")
+}
+
+fn diagnose_missing_subset(
+    node: Node,
+    context: &mut DiagnosticContext,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> anyhow::Result<()> {
+    diagnose_missing_call_like(node, context, diagnostics, "]")
+}
+
+fn diagnose_missing_subset2(
+    node: Node,
+    context: &mut DiagnosticContext,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> anyhow::Result<()> {
+    diagnose_missing_call_like(node, context, diagnostics, "]]")
+}
+
+fn diagnose_missing_call_like(
+    node: Node,
+    context: &mut DiagnosticContext,
+    diagnostics: &mut Vec<Diagnostic>,
+    close_token: &str,
+) -> anyhow::Result<()> {
+    let Some(arguments) = node.child_by_field_name("arguments") else {
+        return Ok(());
+    };
+
+    diagnose_missing_close(arguments, context, diagnostics, close_token)
+}
+
+fn diagnose_missing_binary_operator(
+    node: Node,
+    context: &mut DiagnosticContext,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> anyhow::Result<()> {
+    let Some(rhs) = node.child_by_field_name("rhs") else {
+        return Ok(());
+    };
+
+    if !rhs.is_missing() {
+        // Everything is normal
+        return Ok(());
+    }
+
+    let Some(operator) = node.child_by_field_name("operator") else {
+        return Ok(());
+    };
+
+    let range = operator.range();
+
+    let text = context.contents.node_slice(&operator)?;
+    let message = format!("Invalid binary operator '{text}'. Missing a right hand side.");
+
+    diagnostics.push(new_syntax_diagnostic(message, range, context));
+
+    Ok(())
+}
+
+// For namespace operators, the RHS is actually optional in the grammar,
+// to help with autocomplete, so we are looking for when this is `None`.
+//
+// This means that `dplyr::` is actually "valid" R code according to the
+// grammar, so this issue won't ever show up in the syntactic path, even
+// though its a syntax problem. Instead we expose it from here and use it
+// in the semantic path.
+pub(crate) fn diagnose_missing_namespace_operator(
+    node: Node,
+    context: &mut DiagnosticContext,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> anyhow::Result<()> {
+    let None = node.child_by_field_name("rhs") else {
+        // Everything is normal
+        return Ok(());
+    };
+
+    let Some(operator) = node.child_by_field_name("operator") else {
+        return Ok(());
+    };
+
+    let range = operator.range();
+
+    let text = context.contents.node_slice(&operator)?;
+    let message = format!("Invalid namespace operator '{text}'. Missing a right hand side.");
+
+    diagnostics.push(new_syntax_diagnostic(message, range, context));
+
+    Ok(())
+}
+
+// `node` must have required `"open"` and `"close"` fields
+fn diagnose_missing_close(
+    node: Node,
+    context: &mut DiagnosticContext,
+    diagnostics: &mut Vec<Diagnostic>,
+    close_token: &str,
+) -> anyhow::Result<()> {
+    let Some(close) = node.child_by_field_name("close") else {
+        return Ok(());
+    };
+
+    if !close.is_missing() {
+        // Everything is normal
+        return Ok(());
+    }
+
+    let Some(open) = node.child_by_field_name("open") else {
+        return Ok(());
+    };
+
+    diagnostics.push(new_missing_close_diagnostic(
+        close_token,
+        open.range(),
+        context,
+    ));
+
+    Ok(())
+}
+
+fn new_missing_close_diagnostic(
+    close_token: &str,
+    range: Range,
+    context: &mut DiagnosticContext,
+) -> Diagnostic {
+    let message = format!("Unmatched opening token. Missing a closing '{close_token}'.");
+    new_syntax_diagnostic(message, range, context)
+}
+
+fn new_syntax_diagnostic(message: String, range: Range, context: &DiagnosticContext) -> Diagnostic {
+    let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
+    Diagnostic::new_simple(range, message)
+}
+
+#[cfg(test)]
+mod tests {
+    use tower_lsp::lsp_types::Diagnostic;
+    use tower_lsp::lsp_types::Position;
+
+    use crate::lsp::diagnostics::DiagnosticContext;
+    use crate::lsp::diagnostics_syntactic::syntax_diagnostics;
+    use crate::lsp::documents::Document;
+
+    fn text_diagnostics(text: &str) -> Vec<Diagnostic> {
+        let document = Document::new(text, None);
+        let mut context = DiagnosticContext::new(&document.contents);
+        let diagnostics = syntax_diagnostics(document.ast.root_node(), &mut context).unwrap();
+        diagnostics
+    }
+
+    #[test]
+    fn test_unmatched_call_delimiter() {
+        let diagnostics = text_diagnostics("match(a, b");
+        assert_eq!(diagnostics.len(), 1);
+        let diagnostic = diagnostics.get(0).unwrap();
+        assert_eq!(diagnostic.range.start, Position::new(0, 5));
+        assert_eq!(diagnostic.range.end, Position::new(0, 6));
+        assert!(diagnostic.message.starts_with("Unmatched opening"));
+
+        let diagnostics = text_diagnostics("foo[a, b");
+        assert_eq!(diagnostics.len(), 1);
+        let diagnostic = diagnostics.get(0).unwrap();
+        assert_eq!(diagnostic.range.start, Position::new(0, 3));
+        assert_eq!(diagnostic.range.end, Position::new(0, 4));
+        assert!(diagnostic.message.starts_with("Unmatched opening"));
+
+        let diagnostics = text_diagnostics("foo[[a, b");
+        assert_eq!(diagnostics.len(), 1);
+        let diagnostic = diagnostics.get(0).unwrap();
+        assert_eq!(diagnostic.range.start, Position::new(0, 3));
+        assert_eq!(diagnostic.range.end, Position::new(0, 5));
+        assert!(diagnostic.message.starts_with("Unmatched opening"));
+    }
+
+    #[test]
+    fn test_unmatched_call_delimiter_with_trailing_info() {
+        // Expect 2 diagnostics
+        // - One about unmatched `(`
+        // - But the `)` is implied, meaning that between `2` and `identity` there should be a `,`
+        //   so we get a diagnostic for that too
+        let text = "
+match(1, 2
+
+identity(1)
+";
+        let diagnostics = text_diagnostics(text);
+        assert_eq!(diagnostics.len(), 1);
+
+        // Diagnostic highlights the unmatched `(`
+        let diagnostic = diagnostics.get(0).unwrap();
+        assert!(diagnostic.message.starts_with("Unmatched opening"));
+        assert_eq!(diagnostic.range.start, Position::new(1, 5));
+        assert_eq!(diagnostic.range.end, Position::new(1, 6));
+    }
+
+    #[test]
+    fn test_unmatched_braces() {
+        let diagnostics = text_diagnostics("{");
+        assert_eq!(diagnostics.len(), 1);
+        assert!(diagnostics
+            .get(0)
+            .unwrap()
+            .message
+            .starts_with("Syntax error"));
+
+        let diagnostics = text_diagnostics("{ 1 + 2");
+        assert_eq!(diagnostics.len(), 1);
+        assert!(diagnostics
+            .get(0)
+            .unwrap()
+            .message
+            .starts_with("Unmatched opening"));
+
+        let diagnostics = text_diagnostics("{}");
+        assert!(diagnostics.is_empty());
+
+        let diagnostics = text_diagnostics("{ 1 + 2 }");
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn test_unmatched_parentheses() {
+        let diagnostics = text_diagnostics("(");
+        assert_eq!(diagnostics.len(), 1);
+        assert!(diagnostics
+            .get(0)
+            .unwrap()
+            .message
+            .starts_with("Syntax error"));
+
+        let diagnostics = text_diagnostics("( 1 + 2");
+        assert_eq!(diagnostics.len(), 1);
+        assert!(diagnostics
+            .get(0)
+            .unwrap()
+            .message
+            .starts_with("Unmatched opening"));
+
+        let diagnostics = text_diagnostics("()");
+        assert!(diagnostics.is_empty());
+
+        let diagnostics = text_diagnostics("( 1 + 2 )");
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn test_error_precision() {
+        let diagnostics = text_diagnostics("sum(1 * 2 + )");
+        assert_eq!(diagnostics.len(), 1);
+        let diagnostic = diagnostics.get(0).unwrap();
+        assert!(diagnostic.message.starts_with("Syntax error"));
+        assert_eq!(diagnostic.range.start, Position::new(0, 10));
+        assert_eq!(diagnostic.range.end, Position::new(0, 11));
+    }
+
+    #[test]
+    fn test_unmatched_closing_token() {
+        let tokens = vec!["}", ")", "]"];
+
+        for token in tokens.iter() {
+            // i.e. `1 + 1 }`
+            let text = format!("1 + 1 {token}");
+
+            let diagnostics = text_diagnostics(text.as_str());
+            assert_eq!(diagnostics.len(), 1);
+
+            // Diagnostic highlights the `{token}`
+            let diagnostic = diagnostics.get(0).unwrap();
+            assert_eq!(diagnostic.message, String::from("Syntax error"));
+            assert_eq!(diagnostic.range.start, Position::new(0, 6));
+            assert_eq!(diagnostic.range.end, Position::new(0, 7));
+        }
+    }
+
+    #[test]
+    fn test_unmatched_binary_operator() {
+        let text = "
+{
+ 1 +
+}";
+
+        let diagnostics = text_diagnostics(text);
+        assert_eq!(diagnostics.len(), 1);
+
+        let diagnostic = diagnostics.get(0).unwrap();
+        assert_eq!(
+            diagnostic.message,
+            String::from("Invalid binary operator '+'. Missing a right hand side.")
+        );
+        assert_eq!(diagnostic.range.start, Position::new(2, 3));
+        assert_eq!(diagnostic.range.end, Position::new(2, 4));
+    }
+
+    #[test]
+    fn test_unmatched_function_parameters_parentheses() {
+        let text = "
+function(x {
+}";
+
+        let diagnostics = text_diagnostics(text);
+        assert_eq!(diagnostics.len(), 1);
+
+        let diagnostic = diagnostics.get(0).unwrap();
+        assert!(diagnostic.message.starts_with("Unmatched opening token"));
+        assert_eq!(diagnostic.range.start, Position::new(1, 8));
+        assert_eq!(diagnostic.range.end, Position::new(1, 9));
+    }
+}
