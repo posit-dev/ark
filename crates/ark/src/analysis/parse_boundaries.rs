@@ -58,8 +58,12 @@ pub fn parse_boundaries(text: &str) -> anyhow::Result<ParseBoundaries> {
 
         let mut record_complete = |exprs: RObject| -> anyhow::Result<()> {
             let srcrefs = exprs.srcrefs()?;
-            let mut ranges: Vec<std::ops::Range<usize>> =
+            let ranges: Vec<std::ops::Range<usize>> =
                 srcrefs.into_iter().map(|srcref| srcref.line).collect();
+
+            // Merge expressions separated by semicolons
+            let mut ranges = merge_overlapping(ranges);
+
             complete.append(&mut ranges);
             Ok(())
         };
@@ -104,6 +108,31 @@ pub fn parse_boundaries(text: &str) -> anyhow::Result<ParseBoundaries> {
     })
 }
 
+fn merge_overlapping<T>(ranges: Vec<std::ops::Range<T>>) -> Vec<std::ops::Range<T>>
+where
+    T: PartialOrd + Ord + Copy,
+{
+    let merge = |mut merged: Vec<std::ops::Range<T>>, range: std::ops::Range<T>| {
+        if let Some(last) = merged.last_mut() {
+            // if range.start <= last.end {
+            if last.contains(&range.start) {
+                // Overlap, merge with last range
+                last.end = last.end.max(range.end);
+            } else {
+                // No overlap, push a new range
+                merged.push(range);
+            }
+        } else {
+            // First element, just add it
+            merged.push(range);
+        }
+
+        merged
+    };
+
+    ranges.into_iter().fold(vec![], merge)
+}
+
 #[cfg(test)]
 mod tests {
     use harp::assert_match;
@@ -141,5 +170,30 @@ mod tests {
             assert_match!(boundaries.incomplete, None);
             assert_match!(boundaries.error, None);
         })
+    }
+
+    #[test]
+    fn test_parse_boundaries_complete_semicolon() {
+        r_test(|| {
+            // These should only produce a single complete input range
+
+            let boundaries = parse_boundaries("foo;bar").unwrap();
+            let expected_complete = vec![std::ops::Range { start: 0, end: 1 }];
+            assert_eq!(boundaries.complete, expected_complete);
+            assert_match!(boundaries.incomplete, None);
+            assert_match!(boundaries.error, None);
+
+            let boundaries = parse_boundaries("foo;bar(\n)").unwrap();
+            let expected_complete = vec![std::ops::Range { start: 0, end: 2 }];
+            assert_eq!(boundaries.complete, expected_complete);
+            assert_match!(boundaries.incomplete, None);
+            assert_match!(boundaries.error, None);
+
+            let boundaries = parse_boundaries("foo(\n);bar").unwrap();
+            let expected_complete = vec![std::ops::Range { start: 0, end: 2 }];
+            assert_eq!(boundaries.complete, expected_complete);
+            assert_match!(boundaries.incomplete, None);
+            assert_match!(boundaries.error, None);
+        });
     }
 }
