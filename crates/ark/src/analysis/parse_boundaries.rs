@@ -5,113 +5,93 @@
 //
 //
 
-use anyhow::anyhow;
+use harp::vector::CharacterVector;
+use harp::vector::Vector;
 use harp::ParseResult;
 use harp::RObject;
 
-use crate::lsp::offset::ArkPoint;
-use crate::lsp::offset::ArkRange;
-
 #[derive(Debug)]
 pub struct ParseBoundaries {
-    pub complete: Vec<ArkRange>,
-    pub incomplete: Option<ArkRange>,
-    pub error: Option<ArkRange>,
+    pub complete: Vec<std::ops::Range<usize>>,
+    pub incomplete: Option<std::ops::Range<usize>>,
+    pub error: Option<std::ops::Range<usize>>,
 }
 
 pub fn parse_boundaries(text: &str) -> anyhow::Result<ParseBoundaries> {
-    let mut newlines: Vec<usize> = text
-        .chars()
-        .enumerate()
-        .filter(|(_, c)| *c == '\n')
-        .map(|(i, _)| i)
-        .collect();
+    let lines: Vec<&str> = text.lines().collect();
 
-    // Include last line
-    if let Some(last) = newlines.last() {
-        if *last < text.len() - 1 {
-            newlines.push(text.len() - 1)
-        }
-    }
+    // Create a duplicate vector of lines on the R side too so we don't have to
+    // reallocate memory each time we parse a new subset of lines
+    let lines_r = CharacterVector::create(lines.iter());
+    let n_lines = lines.len();
 
-    let n_lines = newlines.len();
+    let mut complete: Vec<std::ops::Range<usize>> = vec![];
+    let mut incomplete: Option<std::ops::Range<usize>> = None;
+    let mut error: Option<std::ops::Range<usize>> = None;
 
-    let mut complete: Vec<ArkRange> = vec![];
-    let mut incomplete: Option<ArkRange> = None;
-    let mut error: Option<ArkRange> = None;
+    let mut incomplete_end: Option<usize> = None;
+    let mut error_end: Option<usize> = None;
 
-    let mut incomplete_end: Option<ArkPoint> = None;
-    let mut error_end: Option<ArkPoint> = None;
-
-    for (i, current_end) in newlines.iter().rev().enumerate() {
-        let current_row = n_lines - i - 1;
-        let current_point = || -> anyhow::Result<ArkPoint> {
-            Ok(ArkPoint {
-                row: n_lines - i - 1,
-                column: get_line_width(text, n_lines - i - 1)?,
-            })
-        };
-
-        let mut record_error = || -> anyhow::Result<()> {
+    for current_line in (0..n_lines).rev() {
+        let mut record_error = || {
             if matches!(error, Some(_)) {
-                return Ok(());
+                return;
             }
             let Some(end) = error_end else {
-                return Ok(());
+                return;
             };
-            error = Some(ArkRange {
-                start: current_point()?,
+            error = Some(std::ops::Range {
+                start: current_line,
                 end,
             });
-            Ok(())
         };
 
-        let mut record_incomplete = || -> anyhow::Result<()> {
+        let mut record_incomplete = || {
             let Some(end) = incomplete_end else {
-                return Ok(());
+                return;
             };
-            incomplete = Some(ArkRange {
-                start: current_point()?,
+            incomplete = Some(std::ops::Range {
+                start: current_line,
                 end,
             });
-            Ok(())
         };
 
         let mut record_complete = |exprs: RObject| -> anyhow::Result<()> {
             let srcrefs = exprs.srcrefs()?;
-            let mut ranges: Vec<ArkRange> =
-                srcrefs.into_iter().map(|srcref| srcref.into()).collect();
+            let mut ranges: Vec<std::ops::Range<usize>> =
+                srcrefs.into_iter().map(|srcref| srcref.line).collect();
             complete.append(&mut ranges);
             Ok(())
         };
 
-        // Grab all code up to current line. Include `\n` as there might be a trailing `\r`.
-        let subset = &text[..current_end + 1];
+        // Grab all code up to current line
+        let subset = &lines_r.slice()[..current_line + 1];
+        let subset = CharacterVector::try_from(subset)?;
 
         // Parse within source file to get source references
-        let srcfile = harp::srcref::SrcFile::new_virtual(subset)?;
+        let srcfile = harp::srcref::SrcFile::try_from(&subset)?;
 
         match harp::parse_status(&harp::ParseInput::SrcFile(&srcfile))? {
             ParseResult::Complete(exprs) => {
-                record_error()?;
-                record_incomplete()?;
+                record_error();
+                record_incomplete();
                 record_complete(exprs)?;
                 break;
             },
 
             ParseResult::Incomplete => {
-                record_error()?;
+                record_error();
 
                 // Declare incomplete
                 if let None = incomplete_end {
-                    incomplete_end = Some(get_line_point(text, current_row)?);
+                    incomplete_end = Some(current_line);
                 }
             },
 
             ParseResult::SyntaxError { .. } => {
                 // Declare error
                 if let None = error_end {
-                    error_end = Some(get_line_point(text, n_lines - 1)?);
+                    error_end = Some(current_line);
                 }
             },
         };
@@ -121,21 +101,6 @@ pub fn parse_boundaries(text: &str) -> anyhow::Result<ParseBoundaries> {
         complete,
         incomplete,
         error,
-    })
-}
-
-fn get_line_width(text: &str, line: usize) -> anyhow::Result<usize> {
-    Ok(text
-        .lines()
-        .nth(line)
-        .ok_or_else(|| anyhow!("Can't find line {line}"))?
-        .len())
-}
-
-fn get_line_point(text: &str, line: usize) -> anyhow::Result<ArkPoint> {
-    Ok(ArkPoint {
-        row: line,
-        column: get_line_width(text, line)?,
     })
 }
 
@@ -150,37 +115,28 @@ mod tests {
     fn test_parse_boundaries_complete() {
         r_test(|| {
             let boundaries = parse_boundaries("").unwrap();
-            let expected_complete: Vec<ArkRange> = vec![];
+            let expected_complete: Vec<std::ops::Range<usize>> = vec![];
             assert_eq!(boundaries.complete, expected_complete);
             assert_match!(boundaries.incomplete, None);
             assert_match!(boundaries.error, None);
 
             let boundaries = parse_boundaries("\n\n  ").unwrap();
-            let expected_complete: Vec<ArkRange> = vec![];
+            let expected_complete: Vec<std::ops::Range<usize>> = vec![];
             assert_eq!(boundaries.complete, expected_complete);
             assert_match!(boundaries.incomplete, None);
             assert_match!(boundaries.error, None);
 
             let boundaries = parse_boundaries("\n  foo\n  \n\n").unwrap();
-            let expected_complete = vec![ArkRange {
-                start: ArkPoint { row: 1, column: 2 },
-                end: ArkPoint { row: 2, column: 5 },
-            }];
+            let expected_complete = vec![std::ops::Range { start: 1, end: 2 }];
             assert_eq!(boundaries.complete, expected_complete);
             assert_match!(boundaries.incomplete, None);
             assert_match!(boundaries.error, None);
 
             let boundaries = parse_boundaries("foo\nbarbaz  \n").unwrap();
-            let expected_complete = vec![
-                ArkRange {
-                    start: ArkPoint { row: 0, column: 0 },
-                    end: ArkPoint { row: 1, column: 3 },
-                },
-                ArkRange {
-                    start: ArkPoint { row: 1, column: 0 },
-                    end: ArkPoint { row: 2, column: 6 },
-                },
-            ];
+            let expected_complete = vec![std::ops::Range { start: 0, end: 1 }, std::ops::Range {
+                start: 1,
+                end: 2,
+            }];
             assert_eq!(boundaries.complete, expected_complete);
             assert_match!(boundaries.incomplete, None);
             assert_match!(boundaries.error, None);
