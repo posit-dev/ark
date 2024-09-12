@@ -148,30 +148,45 @@ pub(crate) fn generate_diagnostics(doc: Document, state: WorldState) -> Vec<Diag
     // Start iterating through the nodes.
     let root = doc.ast.root_node();
 
-    if root.has_error() {
-        // If there are `ERROR` or `MISSING` nodes inside, there's a syntax error.
-        // Only report diagnostics relevant for that until the user fixes them.
-        match syntax_diagnostics(root, &mut context) {
-            Ok(mut syntax_diagnostics) => diagnostics.append(&mut syntax_diagnostics),
-            Err(err) => log::error!("Error while generating syntax diagnostics: {err:?}"),
-        }
-    } else {
-        match semantic_diagnostics(root, &mut context) {
-            Ok(mut semantic_diagnostics) => diagnostics.append(&mut semantic_diagnostics),
-            Err(err) => log::error!("Error while generating semantic diagnostics: {err:?}"),
-        }
+    // Collect syntax related diagnostics for `ERROR` and `MISSING` nodes
+    match syntax_diagnostics(root, &mut context) {
+        Ok(mut syntax_diagnostics) => diagnostics.append(&mut syntax_diagnostics),
+        Err(err) => log::error!("Error while generating syntax diagnostics: {err:?}"),
+    }
+
+    // Collect semantic related diagnostics
+    match semantic_diagnostics(root, &mut context) {
+        Ok(mut semantic_diagnostics) => diagnostics.append(&mut semantic_diagnostics),
+        Err(err) => log::error!("Error while generating semantic diagnostics: {err:?}"),
     }
 
     diagnostics
 }
 
 fn semantic_diagnostics(
-    node: Node,
+    root: Node,
     context: &mut DiagnosticContext,
 ) -> anyhow::Result<Vec<Diagnostic>> {
     let mut diagnostics = Vec::new();
 
-    recurse(node, context, &mut diagnostics)?;
+    // For semantic diagnostics, we only compute diagnostics for a top level
+    // expression if that entire expression's subtree parsed successfully (i.e. if
+    // `node.has_error()` returns `false` for that subtree).
+    //
+    // If a subtree failed to parse successfully, syntax diagnostics will
+    // be reported for that subtree instead.
+    //
+    // This scheme allows us to emit some semantic diagnostics even when
+    // we see syntax errors in other parts of the file.
+    let mut cursor = root.walk();
+
+    for child in root.children(&mut cursor) {
+        if child.has_error() {
+            continue;
+        }
+
+        recurse(child, context, &mut diagnostics)?;
+    }
 
     Ok(diagnostics)
 }
@@ -217,7 +232,7 @@ fn recurse(
             _ => recurse_default(node, context, diagnostics),
         },
         NodeType::NamespaceOperator(_) => recurse_namespace(node, context, diagnostics),
-        NodeType::Error => bail!("`Error` nodes should have been handled separately."),
+        NodeType::Error => bail!("`Error` nodes should have been skipped entirely."),
         _ => recurse_default(node, context, diagnostics),
     }
 }
@@ -734,14 +749,21 @@ fn recurse_default(
 ) -> Result<()> {
     // Apply diagnostic functions to node.
     dispatch(node, context, diagnostics);
+    recurse_children(node, context, diagnostics)
+}
 
-    // Recurse into children.
+fn recurse_children(
+    node: Node,
+    context: &mut DiagnosticContext,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<()> {
     let mut cursor = node.walk();
+
     for child in node.children(&mut cursor) {
         recurse(child, context, diagnostics)?;
     }
 
-    ().ok()
+    Ok(())
 }
 
 fn dispatch(node: Node, context: &mut DiagnosticContext, diagnostics: &mut Vec<Diagnostic>) {
@@ -900,6 +922,31 @@ mod tests {
             installed_packages: inputs.installed_packages,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn test_mixed_syntax_and_semantic_diagnostics() {
+        r_test(|| {
+            // - `foo` is an unknown symbol
+            // - `}` is a syntax error, but localized to that line
+            let text = "
+foo
+
+1 }";
+            let document = Document::new(text, None);
+            let diagnostics = generate_diagnostics(document, DEFAULT_STATE.clone());
+            assert_eq!(diagnostics.len(), 2);
+
+            let diagnostic = diagnostics.get(0).unwrap();
+            assert!(diagnostic.message.starts_with("Syntax error"));
+            assert_eq!(diagnostic.range.start, Position::new(3, 2));
+            assert_eq!(diagnostic.range.end, Position::new(3, 3));
+
+            let diagnostic = diagnostics.get(1).unwrap();
+            assert!(diagnostic.message.starts_with("No symbol named 'foo'"));
+            assert_eq!(diagnostic.range.start, Position::new(1, 0));
+            assert_eq!(diagnostic.range.end, Position::new(1, 3));
+        })
     }
 
     #[test]

@@ -16,12 +16,12 @@ use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
 pub(crate) fn syntax_diagnostics(
-    node: Node,
+    root: Node,
     context: &mut DiagnosticContext,
 ) -> anyhow::Result<Vec<Diagnostic>> {
     let mut diagnostics = Vec::new();
 
-    recurse(node, context, &mut diagnostics)?;
+    recurse(root, context, &mut diagnostics)?;
 
     Ok(diagnostics)
 }
