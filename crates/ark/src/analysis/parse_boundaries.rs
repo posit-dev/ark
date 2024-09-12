@@ -5,6 +5,7 @@
 //
 //
 
+use anyhow::anyhow;
 use harp::ParseResult;
 use harp::RObject;
 
@@ -42,40 +43,38 @@ pub fn parse_boundaries(text: &str) -> anyhow::Result<ParseBoundaries> {
     let mut incomplete_end: Option<ArkPoint> = None;
     let mut error_end: Option<ArkPoint> = None;
 
-    let get_line_width = |line| text.lines().nth(line).unwrap().len();
-    let get_line_point = |line| ArkPoint {
-        row: line,
-        column: get_line_width(line),
-    };
-
     for (i, current_end) in newlines.iter().rev().enumerate() {
-        let current_row = n_lines - i;
-        let current_point = || ArkPoint {
-            row: n_lines - i - 1,
-            column: get_line_width(n_lines - i - 1),
+        let current_row = n_lines - i - 1;
+        let current_point = || -> anyhow::Result<ArkPoint> {
+            Ok(ArkPoint {
+                row: n_lines - i - 1,
+                column: get_line_width(text, n_lines - i - 1)?,
+            })
         };
 
-        let mut record_error = || {
+        let mut record_error = || -> anyhow::Result<()> {
             if matches!(error, Some(_)) {
-                return;
+                return Ok(());
             }
             let Some(end) = error_end else {
-                return;
+                return Ok(());
             };
             error = Some(ArkRange {
-                start: current_point(),
+                start: current_point()?,
                 end,
             });
+            Ok(())
         };
 
-        let mut record_incomplete = || {
+        let mut record_incomplete = || -> anyhow::Result<()> {
             let Some(end) = incomplete_end else {
-                return;
+                return Ok(());
             };
             incomplete = Some(ArkRange {
-                start: current_point(),
+                start: current_point()?,
                 end,
             });
+            Ok(())
         };
 
         let mut record_complete = |exprs: RObject| -> anyhow::Result<()> {
@@ -94,22 +93,26 @@ pub fn parse_boundaries(text: &str) -> anyhow::Result<ParseBoundaries> {
 
         match harp::parse_status(&harp::ParseInput::SrcFile(&srcfile))? {
             ParseResult::Complete(exprs) => {
-                record_error();
-                record_incomplete();
+                record_error()?;
+                record_incomplete()?;
                 record_complete(exprs)?;
                 break;
             },
 
             ParseResult::Incomplete => {
-                record_error();
+                record_error()?;
 
                 // Declare incomplete
-                incomplete_end = incomplete_end.or_else(|| Some(get_line_point(current_row)));
+                if let None = incomplete_end {
+                    incomplete_end = Some(get_line_point(text, current_row)?);
+                }
             },
 
             ParseResult::SyntaxError { .. } => {
                 // Declare error
-                error_end = error_end.or_else(|| Some(get_line_point(n_lines - 1)));
+                if let None = error_end {
+                    error_end = Some(get_line_point(text, n_lines - 1)?);
+                }
             },
         };
     }
@@ -118,6 +121,21 @@ pub fn parse_boundaries(text: &str) -> anyhow::Result<ParseBoundaries> {
         complete,
         incomplete,
         error,
+    })
+}
+
+fn get_line_width(text: &str, line: usize) -> anyhow::Result<usize> {
+    Ok(text
+        .lines()
+        .nth(line)
+        .ok_or_else(|| anyhow!("Can't find line {line}"))?
+        .len())
+}
+
+fn get_line_point(text: &str, line: usize) -> anyhow::Result<ArkPoint> {
+    Ok(ArkPoint {
+        row: line,
+        column: get_line_width(text, line)?,
     })
 }
 
@@ -152,7 +170,7 @@ mod tests {
             assert_match!(boundaries.incomplete, None);
             assert_match!(boundaries.error, None);
 
-            let boundaries = parse_boundaries("foo\nbarbaz").unwrap();
+            let boundaries = parse_boundaries("foo\nbarbaz  \n").unwrap();
             let expected_complete = vec![
                 ArkRange {
                     start: ArkPoint { row: 0, column: 0 },
