@@ -125,10 +125,39 @@ fn build_syntax_diagnostic_missing_open(
 }
 
 fn build_syntax_diagnostic_default(node: Node, context: &DiagnosticContext) -> Diagnostic {
-    // TODO: Incorporate cutoff limit
     let range = node.range();
+    let row_span = range.end_point.row - range.start_point.row;
+
+    if row_span >= 20 {
+        return build_syntax_diagnostic_truncated_default(range, context);
+    }
+
+    // The most common case, a localized syntax error that doesn't span too many rows
     let message = String::from("Syntax error");
     new_syntax_diagnostic(message, range, &context)
+}
+
+// If the syntax error spans more than 20 rows, just target the starting position
+// to avoid overwhelming the user.
+fn build_syntax_diagnostic_truncated_default(
+    range: Range,
+    context: &DiagnosticContext,
+) -> Diagnostic {
+    // In theory this is an empty range, as they are constructed like `[ )`, but it
+    // seems to work for the purpose of diagnostics, and getting the correct
+    // coordinates exactly right seems challenging.
+    let start_range = Range {
+        start_byte: range.start_byte,
+        start_point: range.start_point,
+        end_byte: range.start_byte,
+        end_point: range.start_point,
+    };
+
+    // `+1` because it is user facing and editor UI is 1-indexed
+    let end_row = range.end_point.row + 1;
+    let message = format!("Syntax error. Starts here and ends on row {end_row}.");
+
+    new_syntax_diagnostic(message, start_range, &context)
 }
 
 fn diagnose_missing(
@@ -338,6 +367,21 @@ mod tests {
         let context = DiagnosticContext::new(&document.contents);
         let diagnostics = syntax_diagnostics(document.ast.root_node(), &context).unwrap();
         diagnostics
+    }
+
+    #[test]
+    fn test_syntax_error_truncation() {
+        // Coded to truncate at 20 rows
+        let newlines = "\n".repeat(20);
+        let text = String::from("('") + newlines.as_str() + ")";
+        let diagnostics = text_diagnostics(text.as_str());
+        let diagnostic = diagnostics.get(0).unwrap();
+        assert_eq!(
+            diagnostic.message,
+            String::from("Syntax error. Starts here and ends on row 21.")
+        );
+        assert_eq!(diagnostic.range.start, Position::new(0, 0));
+        assert_eq!(diagnostic.range.end, Position::new(0, 0));
     }
 
     #[test]
