@@ -967,7 +967,7 @@ foo
     #[test]
     fn test_missing_namespace_rhs() {
         r_test(|| {
-            let text = "dplyr::";
+            let text = "base::";
             let document = Document::new(text, None);
             let diagnostics = generate_diagnostics(document, DEFAULT_STATE.clone());
             assert_eq!(diagnostics.len(), 1);
