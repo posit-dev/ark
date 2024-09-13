@@ -18,7 +18,7 @@ use crate::treesitter::NodeTypeExt;
 
 pub(crate) fn syntax_diagnostics(
     root: Node,
-    context: &mut DiagnosticContext,
+    context: &DiagnosticContext,
 ) -> anyhow::Result<Vec<Diagnostic>> {
     let mut diagnostics = Vec::new();
 
@@ -29,7 +29,7 @@ pub(crate) fn syntax_diagnostics(
 
 fn recurse(
     node: Node,
-    context: &mut DiagnosticContext,
+    context: &DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> anyhow::Result<()> {
     if !node_has_error(&node) {
@@ -50,7 +50,7 @@ fn recurse(
 
 fn recurse_children(
     node: Node,
-    context: &mut DiagnosticContext,
+    context: &DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> anyhow::Result<()> {
     let mut cursor = node.walk();
@@ -67,7 +67,7 @@ fn recurse_children(
 // nodes and only report syntax errors for those.
 fn diagnose_error(
     node: Node,
-    context: &mut DiagnosticContext,
+    context: &DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> anyhow::Result<()> {
     let mut report = node.is_error();
@@ -90,10 +90,7 @@ fn diagnose_error(
     Ok(())
 }
 
-fn build_syntax_diagnostic(
-    node: Node,
-    context: &mut DiagnosticContext,
-) -> anyhow::Result<Diagnostic> {
+fn build_syntax_diagnostic(node: Node, context: &DiagnosticContext) -> anyhow::Result<Diagnostic> {
     if let Some(diagnostic) = build_syntax_diagnostic_missing_open(node, context)? {
         return Ok(diagnostic);
     }
@@ -136,7 +133,7 @@ fn build_syntax_diagnostic_default(node: Node, context: &DiagnosticContext) -> D
 
 fn diagnose_missing(
     node: Node,
-    context: &mut DiagnosticContext,
+    context: &DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> anyhow::Result<()> {
     match node.node_type() {
@@ -157,7 +154,7 @@ fn diagnose_missing(
 
 fn diagnose_missing_parameters(
     node: Node,
-    context: &mut DiagnosticContext,
+    context: &DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> anyhow::Result<()> {
     diagnose_missing_close(node, context, diagnostics, ")")
@@ -165,7 +162,7 @@ fn diagnose_missing_parameters(
 
 fn diagnose_missing_braced_expression(
     node: Node,
-    context: &mut DiagnosticContext,
+    context: &DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> anyhow::Result<()> {
     diagnose_missing_close(node, context, diagnostics, "}")
@@ -173,7 +170,7 @@ fn diagnose_missing_braced_expression(
 
 fn diagnose_missing_parenthesized_expression(
     node: Node,
-    context: &mut DiagnosticContext,
+    context: &DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> anyhow::Result<()> {
     diagnose_missing_close(node, context, diagnostics, ")")
@@ -181,7 +178,7 @@ fn diagnose_missing_parenthesized_expression(
 
 fn diagnose_missing_call(
     node: Node,
-    context: &mut DiagnosticContext,
+    context: &DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> anyhow::Result<()> {
     diagnose_missing_call_like(node, context, diagnostics, ")")
@@ -189,7 +186,7 @@ fn diagnose_missing_call(
 
 fn diagnose_missing_subset(
     node: Node,
-    context: &mut DiagnosticContext,
+    context: &DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> anyhow::Result<()> {
     diagnose_missing_call_like(node, context, diagnostics, "]")
@@ -197,7 +194,7 @@ fn diagnose_missing_subset(
 
 fn diagnose_missing_subset2(
     node: Node,
-    context: &mut DiagnosticContext,
+    context: &DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> anyhow::Result<()> {
     diagnose_missing_call_like(node, context, diagnostics, "]]")
@@ -205,7 +202,7 @@ fn diagnose_missing_subset2(
 
 fn diagnose_missing_call_like(
     node: Node,
-    context: &mut DiagnosticContext,
+    context: &DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
     close_token: &str,
 ) -> anyhow::Result<()> {
@@ -218,7 +215,7 @@ fn diagnose_missing_call_like(
 
 fn diagnose_missing_binary_operator(
     node: Node,
-    context: &mut DiagnosticContext,
+    context: &DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> anyhow::Result<()> {
     let Some(rhs) = node.child_by_field_name("rhs") else {
@@ -253,7 +250,7 @@ fn diagnose_missing_binary_operator(
 // in the semantic path.
 pub(crate) fn diagnose_missing_namespace_operator(
     node: Node,
-    context: &mut DiagnosticContext,
+    context: &DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> anyhow::Result<()> {
     let None = node.child_by_field_name("rhs") else {
@@ -278,7 +275,7 @@ pub(crate) fn diagnose_missing_namespace_operator(
 // `node` must have required `"open"` and `"close"` fields
 fn diagnose_missing_close(
     node: Node,
-    context: &mut DiagnosticContext,
+    context: &DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
     close_token: &str,
 ) -> anyhow::Result<()> {
