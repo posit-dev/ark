@@ -150,7 +150,7 @@ pub(crate) fn generate_diagnostics(doc: Document, state: WorldState) -> Vec<Diag
     let root = doc.ast.root_node();
 
     // Collect syntax related diagnostics for `ERROR` and `MISSING` nodes
-    match syntax_diagnostics(root, &mut context) {
+    match syntax_diagnostics(root, &context) {
         Ok(mut syntax_diagnostics) => diagnostics.append(&mut syntax_diagnostics),
         Err(err) => log::error!("Error while generating syntax diagnostics: {err:?}"),
     }

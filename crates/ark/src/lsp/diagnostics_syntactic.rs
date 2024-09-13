@@ -335,8 +335,8 @@ mod tests {
 
     fn text_diagnostics(text: &str) -> Vec<Diagnostic> {
         let document = Document::new(text, None);
-        let mut context = DiagnosticContext::new(&document.contents);
-        let diagnostics = syntax_diagnostics(document.ast.root_node(), &mut context).unwrap();
+        let context = DiagnosticContext::new(&document.contents);
+        let diagnostics = syntax_diagnostics(document.ast.root_node(), &context).unwrap();
         diagnostics
     }
 
