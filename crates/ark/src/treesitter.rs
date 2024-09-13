@@ -392,6 +392,14 @@ pub(crate) fn node_text(node: &Node, contents: &ropey::Rope) -> Option<String> {
     contents.node_slice(node).ok().map(|f| f.to_string())
 }
 
+pub(crate) fn node_has_error(node: &Node) -> bool {
+    // According to the docs, `node.has_error()` should return `true`
+    // if `node` is itself an error, or if it contains any errors, but that
+    // doesn't seem to be the case for terminal ERROR nodes.
+    // https://github.com/tree-sitter/tree-sitter/issues/3623
+    node.is_error() || node.has_error()
+}
+
 pub(crate) fn node_find_string<'a>(node: &'a Node) -> Option<Node<'a>> {
     if node.is_string() {
         // Already on a string

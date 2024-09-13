@@ -26,6 +26,7 @@ use crate::lsp::encoding::convert_tree_sitter_range_to_lsp_range;
 use crate::lsp::indexer;
 use crate::lsp::state::WorldState;
 use crate::lsp::traits::rope::RopeExt;
+use crate::treesitter::node_has_error;
 use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
@@ -181,7 +182,7 @@ fn semantic_diagnostics(
     let mut cursor = root.walk();
 
     for child in root.children(&mut cursor) {
-        if child.has_error() {
+        if node_has_error(&child) {
             continue;
         }
 
@@ -938,7 +939,7 @@ foo
             assert_eq!(diagnostics.len(), 2);
 
             let diagnostic = diagnostics.get(0).unwrap();
-            assert!(diagnostic.message.starts_with("Syntax error"));
+            assert!(diagnostic.message.starts_with("Unmatched closing token"));
             assert_eq!(diagnostic.range.start, Position::new(3, 2));
             assert_eq!(diagnostic.range.end, Position::new(3, 3));
 

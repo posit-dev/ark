@@ -12,6 +12,7 @@ use tree_sitter::Range;
 use crate::lsp::diagnostics::DiagnosticContext;
 use crate::lsp::encoding::convert_tree_sitter_range_to_lsp_range;
 use crate::lsp::traits::rope::RopeExt;
+use crate::treesitter::node_has_error;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
@@ -31,7 +32,7 @@ fn recurse(
     context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> anyhow::Result<()> {
-    if !node.has_error() {
+    if !node_has_error(&node) {
         // No `ERROR` and no `MISSING`
         return Ok(());
     }
@@ -73,7 +74,7 @@ fn diagnose_error(
     let mut cursor = node.walk();
 
     for child in node.children(&mut cursor) {
-        if child.has_error() {
+        if node_has_error(&child) {
             // At least one child is also an `ERROR` node, so we
             // definitely won't report ourselves as an `ERROR` anymore.
             report = false;
@@ -83,12 +84,54 @@ fn diagnose_error(
     }
 
     if report {
-        let range = node.range();
-        let message = String::from("Syntax error");
-        diagnostics.push(new_syntax_diagnostic(message, range, &context));
+        diagnostics.push(build_syntax_diagnostic(node, context)?);
     }
 
     Ok(())
+}
+
+fn build_syntax_diagnostic(
+    node: Node,
+    context: &mut DiagnosticContext,
+) -> anyhow::Result<Diagnostic> {
+    if let Some(diagnostic) = build_syntax_diagnostic_missing_open(node, context)? {
+        return Ok(diagnostic);
+    }
+
+    Ok(build_syntax_diagnostic_default(node, context))
+}
+
+// Use a heuristic that if we see a syntax error and it just contains a `)`, `}`, or `]`,
+// then it is probably a case of missing a matching open token.
+fn build_syntax_diagnostic_missing_open(
+    node: Node,
+    context: &DiagnosticContext,
+) -> anyhow::Result<Option<Diagnostic>> {
+    let text = context.contents.node_slice(&node)?;
+
+    let open_token = if text == ")" {
+        "("
+    } else if text == "}" {
+        "{"
+    } else if text == "]" {
+        "["
+    } else {
+        // Not an unmatched closing token
+        return Ok(None);
+    };
+
+    let range = node.range();
+
+    Ok(Some(new_missing_open_diagnostic(
+        open_token, range, context,
+    )))
+}
+
+fn build_syntax_diagnostic_default(node: Node, context: &DiagnosticContext) -> Diagnostic {
+    // TODO: Incorporate cutoff limit
+    let range = node.range();
+    let message = String::from("Syntax error");
+    new_syntax_diagnostic(message, range, &context)
 }
 
 fn diagnose_missing(
@@ -261,10 +304,19 @@ fn diagnose_missing_close(
     Ok(())
 }
 
+fn new_missing_open_diagnostic(
+    open_token: &str,
+    range: Range,
+    context: &DiagnosticContext,
+) -> Diagnostic {
+    let message = format!("Unmatched closing token. Missing an opening '{open_token}'.");
+    new_syntax_diagnostic(message, range, context)
+}
+
 fn new_missing_close_diagnostic(
     close_token: &str,
     range: Range,
-    context: &mut DiagnosticContext,
+    context: &DiagnosticContext,
 ) -> Diagnostic {
     let message = format!("Unmatched opening token. Missing a closing '{close_token}'.");
     new_syntax_diagnostic(message, range, context)
@@ -398,21 +450,36 @@ identity(1)
 
     #[test]
     fn test_unmatched_closing_token() {
-        let tokens = vec!["}", ")", "]"];
+        let open = vec!["{", "(", "["];
+        let close = vec!["}", ")", "]"];
+        let iter = std::iter::zip(open.iter(), close.iter());
 
-        for token in tokens.iter() {
+        for (open, close) in iter {
             // i.e. `1 + 1 }`
-            let text = format!("1 + 1 {token}");
+            let text = format!("1 + 1 {close}");
 
             let diagnostics = text_diagnostics(text.as_str());
             assert_eq!(diagnostics.len(), 1);
 
             // Diagnostic highlights the `{token}`
+            let message = format!("Unmatched closing token. Missing an opening '{open}'.");
             let diagnostic = diagnostics.get(0).unwrap();
-            assert_eq!(diagnostic.message, String::from("Syntax error"));
+            assert_eq!(diagnostic.message, message);
             assert_eq!(diagnostic.range.start, Position::new(0, 6));
             assert_eq!(diagnostic.range.end, Position::new(0, 7));
         }
+    }
+
+    #[test]
+    fn test_unmatched_closing_token_precision() {
+        // Related to https://github.com/tree-sitter/tree-sitter/issues/3623
+        // Should target the `}` specifically, not `+ }`.
+        let text = "1 + }";
+        let diagnostics = text_diagnostics(text);
+        let diagnostic = diagnostics.get(0).unwrap();
+        assert!(diagnostic.message.starts_with("Unmatched closing token"));
+        assert_eq!(diagnostic.range.start, Position::new(0, 4));
+        assert_eq!(diagnostic.range.end, Position::new(0, 5));
     }
 
     #[test]
