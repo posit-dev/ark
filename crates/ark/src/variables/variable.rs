@@ -77,11 +77,10 @@ fn plural(text: &str, n: i32) -> String {
 impl WorkspaceVariableDisplayValue {
     pub fn from(value: SEXP) -> Self {
         // Try to use the display method if there's one available
-        match dispatch_variables_method(ArkVariablesMethods::VariableDisplayValue, value) {
-            Some(display_value) => return Self::from_untruncated_display_value(display_value),
-            None => {
-                // No method found, we can just continue
-            },
+        if let Some(display_value) =
+            dispatch_variables_method(ArkVariablesMethods::VariableDisplayValue, value)
+        {
+            return Self::from_untruncated_display_value(display_value);
         }
 
         match r_typeof(value) {
@@ -475,11 +474,10 @@ impl WorkspaceVariableDisplayType {
 
 fn has_children(value: SEXP) -> bool {
     // Try to use the display method if there's one available
-    match dispatch_variables_method(ArkVariablesMethods::VariableHasChildren, value) {
-        Some(has_children) => return has_children,
-        None => {
-            // Just continue, no method was found
-        },
+    if let Some(has_children) =
+        dispatch_variables_method(ArkVariablesMethods::VariableHasChildren, value)
+    {
+        return has_children;
     }
 
     if RObject::view(value).is_s4() {
