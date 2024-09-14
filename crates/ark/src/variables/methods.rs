@@ -17,8 +17,9 @@ use harp::utils::r_classes;
 use harp::RObject;
 use libr::SEXP;
 use once_cell::sync::Lazy;
+use stdext::result::ResultOrLog;
 
-pub static ARK_VARIABLES_METHODS: Lazy<RwLock<HashMap<String, HashMap<String, String>>>> =
+static ARK_VARIABLES_METHODS: Lazy<RwLock<HashMap<String, HashMap<String, String>>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
 
 fn register_variables_method(method: String, pkg: String, class: String) {
@@ -28,6 +29,17 @@ fn register_variables_method(method: String, pkg: String, class: String) {
         .entry(method)
         .or_insert_with(HashMap::new)
         .insert(class, pkg);
+}
+
+pub fn populate_methods_from_loaded_namespaces() -> anyhow::Result<()> {
+    let loaded = RFunction::new("base", "loadedNamespaces").call()?;
+    let loaded: Vec<String> = loaded.try_into()?;
+
+    for pkg in loaded.into_iter() {
+        populate_variable_methods_table(pkg).or_log_error("Failed populating methods");
+    }
+
+    Ok(())
 }
 
 pub fn populate_variable_methods_table(pkg: String) -> anyhow::Result<()> {
@@ -48,7 +60,8 @@ pub fn populate_variable_methods_table(pkg: String) -> anyhow::Result<()> {
                 register_variables_method(
                     String::from(method),
                     pkg.clone(),
-                    nm.trim_start_matches(method).to_string(),
+                    // 1.. is used to remove the `.` that follows the method name
+                    nm.trim_start_matches(method)[1..].to_string(),
                 );
                 break;
             }
@@ -58,7 +71,10 @@ pub fn populate_variable_methods_table(pkg: String) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn dispatch_variables_method(method: String, x: SEXP) -> Option<String> {
+pub fn dispatch_variables_method<T>(method: String, x: SEXP) -> Option<T>
+where
+    T: TryFrom<RObject>,
+{
     // If the object doesn't have classes, just return None
     let classes: harp::vector::CharacterVector = r_classes(x)?;
 
@@ -73,7 +89,7 @@ pub fn dispatch_variables_method(method: String, x: SEXP) -> Option<String> {
                     log::warn!("Failed dispatching `{pkg}::{method}.{class}`: {err}");
                     continue; // Try the method for the next class if there's any
                 },
-                Ok(value) => value,
+                Ok(value) => Some(value),
             };
         }
     }
