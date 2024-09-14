@@ -54,6 +54,7 @@ use stdext::unwrap;
 
 use crate::variables::methods::dispatch_variables_method;
 use crate::variables::methods::dispatch_variables_method_with_args;
+use crate::variables::methods::ArkVariablesMethods;
 
 // Constants.
 const MAX_DISPLAY_VALUE_ENTRIES: usize = 1_000;
@@ -75,7 +76,7 @@ fn plural(text: &str, n: i32) -> String {
 impl WorkspaceVariableDisplayValue {
     pub fn from(value: SEXP) -> Self {
         // Try to use the display method if there's one available
-        match dispatch_variables_method(String::from("ark_variable_display_value"), value) {
+        match dispatch_variables_method(ArkVariablesMethods::VariableDisplayValue, value) {
             Some(display_value) => return Self::from_untruncated_display_value(display_value),
             None => {
                 // No method found, we can just continue
@@ -447,7 +448,7 @@ impl WorkspaceVariableDisplayType {
         let mut args: HashMap<String, RObject> = HashMap::new();
         args.insert(String::from("include_length"), include_length.try_into()?);
         let display_type: Option<String> = dispatch_variables_method_with_args(
-            String::from("ark_variable_display_type"),
+            ArkVariablesMethods::VariableDisplayType,
             value,
             args,
         );
@@ -465,7 +466,7 @@ impl WorkspaceVariableDisplayType {
 
 fn has_children(value: SEXP) -> bool {
     // Try to use the display method if there's one available
-    match dispatch_variables_method(String::from("ark_variable_has_children"), value) {
+    match dispatch_variables_method(ArkVariablesMethods::VariableHasChildren, value) {
         Some(has_children) => return has_children,
         None => {
             // Just continue, no method was found
@@ -1304,7 +1305,7 @@ impl PositronVariable {
 }
 
 fn variable_kind_try_from_method(value: SEXP) -> anyhow::Result<VariableKind> {
-    let kind: String = dispatch_variables_method(String::from("ark_variable_kind"), value)
+    let kind: String = dispatch_variables_method(ArkVariablesMethods::VariableKind, value)
         .context("No kind found")?;
 
     Ok(serde_json::from_str(kind.as_str())?)

@@ -19,11 +19,49 @@ use harp::RObject;
 use libr::SEXP;
 use once_cell::sync::Lazy;
 use stdext::result::ResultOrLog;
+use strum::IntoEnumIterator;
+use strum_macros::Display;
+use strum_macros::EnumIter;
+use strum_macros::EnumString;
+use strum_macros::IntoStaticStr;
 
-static ARK_VARIABLES_METHODS: Lazy<RwLock<HashMap<String, HashMap<String, String>>>> =
+#[derive(Debug, PartialEq, EnumString, EnumIter, IntoStaticStr, Display, Eq, Hash, Clone)]
+pub enum ArkVariablesMethods {
+    #[strum(serialize = "ark_variable_display_value")]
+    VariableDisplayValue,
+
+    #[strum(serialize = "ark_variable_display_type")]
+    VariableDisplayType,
+
+    #[strum(serialize = "ark_variable_has_children")]
+    VariableHasChildren,
+
+    #[strum(serialize = "ark_variable_kind")]
+    VariableKind,
+}
+
+impl ArkVariablesMethods {
+    // Checks if a symbol name is a method and returns it's class
+    fn parse_method(name: &String) -> Option<(Self, String)> {
+        for method in ArkVariablesMethods::iter() {
+            let method_str: &str = method.clone().into();
+            if name.starts_with::<&str>(method_str) {
+                return Some((
+                    method,
+                    name.trim_start_matches::<&str>(method_str)
+                        .trim_start_matches('.')
+                        .to_string(),
+                ));
+            }
+        }
+        None
+    }
+}
+
+static ARK_VARIABLES_METHODS: Lazy<RwLock<HashMap<ArkVariablesMethods, HashMap<String, String>>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
 
-fn register_variables_method(method: String, pkg: String, class: String) {
+fn register_variables_method(method: ArkVariablesMethods, pkg: String, class: String) {
     let mut tables = ARK_VARIABLES_METHODS.write().unwrap();
     log::info!("Found method:{method} for class:{class} on pkg:{pkg}");
     tables
@@ -55,32 +93,16 @@ pub fn populate_variable_methods_table(pkg: String) -> anyhow::Result<()> {
         })
         .map(|b| -> String { b.name.into() });
 
-    let methods = vec![
-        "ark_variable_display_value",
-        "ark_variable_display_type",
-        "ark_variable_has_children",
-        "ark_variable_kind",
-    ];
-
-    for nm in symbol_names {
-        for method in methods.clone() {
-            if nm.starts_with(method) {
-                register_variables_method(
-                    String::from(method),
-                    pkg.clone(),
-                    // 1.. is used to remove the `.` that follows the method name
-                    nm.trim_start_matches(format!("{method}.").as_str())
-                        .to_string(),
-                );
-                break;
-            }
+    for name in symbol_names {
+        if let Some((method, class)) = ArkVariablesMethods::parse_method(&name) {
+            register_variables_method(method, pkg.clone(), class);
         }
     }
 
     Ok(())
 }
 
-pub fn dispatch_variables_method<T>(method: String, x: SEXP) -> Option<T>
+pub fn dispatch_variables_method<T>(method: ArkVariablesMethods, x: SEXP) -> Option<T>
 where
     T: TryFrom<RObject>,
 {
@@ -88,7 +110,7 @@ where
 }
 
 pub fn dispatch_variables_method_with_args<T>(
-    method: String,
+    method: ArkVariablesMethods,
     x: SEXP,
     args: HashMap<String, RObject>,
 ) -> Option<T>
@@ -117,7 +139,7 @@ where
 }
 
 fn call_method<T>(
-    method: String,
+    method: ArkVariablesMethods,
     pkg: String,
     class: String,
     x: SEXP,
