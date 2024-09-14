@@ -50,6 +50,8 @@ use libr::*;
 use stdext::local;
 use stdext::unwrap;
 
+use crate::variables::methods::dispatch_variables_method;
+
 // Constants.
 const MAX_DISPLAY_VALUE_ENTRIES: usize = 1_000;
 const MAX_DISPLAY_VALUE_LENGTH: usize = 100;
@@ -275,6 +277,12 @@ impl WorkspaceVariableDisplayValue {
     }
 
     fn from_default(value: SEXP) -> Self {
+        // Try to use the display method if there's one available
+        match dispatch_variables_method(String::from("ark_variables_display_value"), value) {
+            Some(display_value) => return Self::from_untruncated_display_value(display_value),
+            None => {},
+        }
+
         let formatted = unwrap!(FormattedVector::new(value), Err(err) => {
             return Self::from_error(err);
         });
@@ -302,6 +310,13 @@ impl WorkspaceVariableDisplayValue {
     fn from_error(err: Error) -> Self {
         log::trace!("Error while formatting variable: {err:?}");
         Self::new(String::from("??"), true)
+    }
+
+    fn from_untruncated_display_value(display_value: String) -> Self {
+        let mut display_value = display_value.clone();
+        let is_truncated = display_value.len() > MAX_DISPLAY_VALUE_LENGTH;
+        display_value.truncate(MAX_DISPLAY_VALUE_LENGTH);
+        Self::new(display_value, is_truncated)
     }
 }
 

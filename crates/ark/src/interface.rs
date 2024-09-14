@@ -120,6 +120,8 @@ use crate::srcref::ns_populate_srcref;
 use crate::srcref::resource_loaded_namespaces;
 use crate::startup;
 use crate::sys::console::console_to_utf8;
+use crate::variables::methods::populate_methods_from_loaded_namespaces;
+use crate::variables::methods::populate_variable_methods_table;
 
 /// An enum representing the different modes in which the R session can run.
 #[derive(PartialEq, Clone)]
@@ -256,6 +258,10 @@ pub fn start_r(
                 log::error!("Can't populate srcrefs for loaded packages: {err:?}");
             }
         }
+
+        // Populate methods from namespaces that are already laoded
+        populate_methods_from_loaded_namespaces()
+            .or_log_error("Can't populate variables pane methods from loaded packages");
 
         // Set up the global error handler (after support function initialization)
         errors::initialize();
@@ -1677,6 +1683,10 @@ unsafe extern "C" fn ps_onload_hook(pkg: SEXP, _path: SEXP) -> anyhow::Result<SE
 
     // Need to reset parent as this might run in the context of another thread's R task
     let _span = tracing::trace_span!(parent: None, "onload_hook", pkg = pkg).entered();
+
+    // Populate variables pane methods
+    populate_variable_methods_table(pkg.clone())
+        .or_log_error("Failed populating variables pane methods");
 
     // Populate fake source refs if needed
     if do_resource_namespaces() {
