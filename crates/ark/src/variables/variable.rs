@@ -671,11 +671,8 @@ impl PositronVariable {
             return VariableKind::Empty;
         }
 
-        match variable_kind_try_from_method(x) {
-            Ok(kind) => return kind,
-            Err(_) => {
-                // Continue to default operations
-            },
+        if let Ok(kind) = variable_kind_try_from_method(x) {
+            return kind;
         }
 
         let obj = RObject::view(x);
