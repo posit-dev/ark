@@ -5,6 +5,7 @@
 //
 //
 
+use std::collections::HashMap;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
@@ -12,6 +13,7 @@ use amalthea::comm::variables_comm::ClipboardFormatFormat;
 use amalthea::comm::variables_comm::Variable;
 use amalthea::comm::variables_comm::VariableKind;
 use anyhow::anyhow;
+use anyhow::Context;
 use harp::environment::Binding;
 use harp::environment::BindingValue;
 use harp::environment::Environment;
@@ -52,6 +54,7 @@ use stdext::local;
 use stdext::unwrap;
 
 use crate::variables::methods::dispatch_variables_method;
+use crate::variables::methods::dispatch_variables_method_with_args;
 
 // Constants.
 const MAX_DISPLAY_VALUE_ENTRIES: usize = 1_000;
@@ -72,6 +75,14 @@ fn plural(text: &str, n: i32) -> String {
 
 impl WorkspaceVariableDisplayValue {
     pub fn from(value: SEXP) -> Self {
+        // Try to use the display method if there's one available
+        match dispatch_variables_method(String::from("ark_variable_display_value"), value) {
+            Some(display_value) => return Self::from_untruncated_display_value(display_value),
+            None => {
+                // No method found, we can just continue
+            },
+        }
+
         match r_typeof(value) {
             NILSXP => Self::new(String::from("NULL"), false),
             VECSXP if r_inherits(value, "data.frame") => Self::from_data_frame(value),
@@ -286,12 +297,6 @@ impl WorkspaceVariableDisplayValue {
     }
 
     fn from_default(value: SEXP) -> Self {
-        // Try to use the display method if there's one available
-        match dispatch_variables_method(String::from("ark_variables_display_value"), value) {
-            Some(display_value) => return Self::from_untruncated_display_value(display_value),
-            None => {},
-        }
-
         let formatted = unwrap!(FormattedVector::new(value), Err(err) => {
             return Self::from_error(err);
         });
@@ -342,6 +347,13 @@ impl WorkspaceVariableDisplayType {
     /// - include_length: Whether to include the length of the object in the
     ///   display type.
     pub fn from(value: SEXP, include_length: bool) -> Self {
+        match Self::try_from_method(value, include_length) {
+            Ok(display_type) => return display_type,
+            Err(_) => {
+                // Continue on to the default approaches
+            },
+        }
+
         if r_is_null(value) {
             return Self::simple(String::from("NULL"));
         }
@@ -440,6 +452,18 @@ impl WorkspaceVariableDisplayType {
         }
     }
 
+    fn try_from_method(value: SEXP, include_length: bool) -> anyhow::Result<Self> {
+        let mut args: HashMap<String, RObject> = HashMap::new();
+        args.insert(String::from("include_length"), include_length.try_into()?);
+        let display_type: Option<String> = dispatch_variables_method_with_args(
+            String::from("ark_variable_display_type"),
+            value,
+            args,
+        );
+        let value: String = display_type.context("Empty display value")?;
+        Ok(Self::simple(value))
+    }
+
     fn new(display_type: String, type_info: String) -> Self {
         Self {
             display_type,
@@ -449,6 +473,14 @@ impl WorkspaceVariableDisplayType {
 }
 
 fn has_children(value: SEXP) -> bool {
+    // Try to use the display method if there's one available
+    match dispatch_variables_method(String::from("ark_variable_has_children"), value) {
+        Some(has_children) => return has_children,
+        None => {
+            // Just continue, no method was found
+        },
+    }
+
     if RObject::view(value).is_s4() {
         unsafe {
             let names = RFunction::new("methods", ".slotNames")
@@ -638,6 +670,13 @@ impl PositronVariable {
     fn variable_kind(x: SEXP) -> VariableKind {
         if x == unsafe { R_NilValue } {
             return VariableKind::Empty;
+        }
+
+        match variable_kind_try_from_method(x) {
+            Ok(kind) => return kind,
+            Err(_) => {
+                // Continue to default operations
+            },
         }
 
         let obj = RObject::view(x);
@@ -1279,6 +1318,13 @@ impl PositronVariable {
 
         Ok(out)
     }
+}
+
+fn variable_kind_try_from_method(value: SEXP) -> anyhow::Result<VariableKind> {
+    let kind: String = dispatch_variables_method(String::from("ark_variable_kind"), value)
+        .context("No kind found")?;
+
+    Ok(serde_json::from_str(kind.as_str())?)
 }
 
 pub fn is_binding_fancy(binding: &Binding) -> bool {
