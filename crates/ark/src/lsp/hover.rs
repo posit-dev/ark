@@ -81,7 +81,7 @@ pub(crate) fn r_hover(context: &DocumentContext) -> anyhow::Result<Option<Markup
     });
 
     // Currently, `hover_context()` restricts to only showing hover docs for functions,
-    // so we also use `RHtmlHelp::new_function()` here
+    // so we also use `RHtmlHelp::from_function()` here
     let help = match ctx {
         HoverContext::QualifiedTopic { package, topic } => {
             RHtmlHelp::from_function(topic.as_str(), Some(package.as_str()))?
