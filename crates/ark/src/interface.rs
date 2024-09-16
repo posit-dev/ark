@@ -1968,7 +1968,7 @@ unsafe extern "C" fn ps_onload_hook(pkg: SEXP, _path: SEXP) -> anyhow::Result<SE
     let _span = tracing::trace_span!(parent: None, "onload_hook", pkg = pkg).entered();
 
     // Populate variables pane methods
-    populate_variable_methods_table(pkg.clone())
+    populate_variable_methods_table(pkg.as_str())
         .or_log_error("Failed populating variables pane methods");
 
     // Populate fake source refs if needed
