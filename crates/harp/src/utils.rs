@@ -354,9 +354,9 @@ pub fn r_is_function(object: SEXP) -> bool {
     matches!(r_typeof(object), CLOSXP | BUILTINSXP | SPECIALSXP)
 }
 
-pub unsafe fn r_formals(object: SEXP) -> Result<Vec<RArgument>> {
+pub fn r_formals(object: SEXP) -> Result<Vec<RArgument>> {
     // convert primitive functions into equivalent closures
-    let mut object = RObject::new(object);
+    let mut object = unsafe { RObject::new(object) };
     if r_typeof(*object) == BUILTINSXP || r_typeof(*object) == SPECIALSXP {
         object = RFunction::new("base", "args").add(*object).call()?;
         if r_typeof(*object) != CLOSXP {
@@ -368,16 +368,18 @@ pub unsafe fn r_formals(object: SEXP) -> Result<Vec<RArgument>> {
     r_assert_type(*object, &[CLOSXP])?;
 
     // get the formals
-    let mut formals = FORMALS(*object);
+    let mut formals = unsafe { FORMALS(*object) };
 
     // iterate through the entries
     let mut arguments = Vec::new();
 
-    while formals != libr::R_NilValue {
-        let name = RObject::from(TAG(formals)).to::<String>()?;
-        let value = CAR(formals);
-        arguments.push(RArgument::new(name.as_str(), RObject::new(value)));
-        formals = CDR(formals);
+    unsafe {
+        while formals != r_null() {
+            let name = RObject::from(TAG(formals)).to::<String>()?;
+            let value = CAR(formals);
+            arguments.push(RArgument::new(name.as_str(), RObject::new(value)));
+            formals = CDR(formals);
+        }
     }
 
     Ok(arguments)

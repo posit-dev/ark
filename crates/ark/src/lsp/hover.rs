@@ -66,7 +66,7 @@ fn hover_context(node: Node, context: &DocumentContext) -> Result<Option<HoverCo
     Ok(None)
 }
 
-pub(crate) unsafe fn r_hover(context: &DocumentContext) -> anyhow::Result<Option<MarkupContent>> {
+pub(crate) fn r_hover(context: &DocumentContext) -> anyhow::Result<Option<MarkupContent>> {
     // get the node
     let node = &context.node;
 
@@ -80,12 +80,14 @@ pub(crate) unsafe fn r_hover(context: &DocumentContext) -> anyhow::Result<Option
         return Ok(None);
     });
 
+    // Currently, `hover_context()` restricts to only showing hover docs for functions,
+    // so we also use `RHtmlHelp::from_function()` here
     let help = match ctx {
         HoverContext::QualifiedTopic { package, topic } => {
-            RHtmlHelp::new(topic.as_str(), Some(package.as_str()))?
+            RHtmlHelp::from_function(topic.as_str(), Some(package.as_str()))?
         },
 
-        HoverContext::Topic { topic } => RHtmlHelp::new(topic.as_str(), None)?,
+        HoverContext::Topic { topic } => RHtmlHelp::from_function(topic.as_str(), None)?,
     };
 
     let help = unwrap!(help, None => {

@@ -135,6 +135,8 @@ getHtmlHelpContentsInstalled <- function(helpFiles, package) {
     return(NULL)
   }
 
+  # If there are multiple hits for the same topic, right now we just choose the first
+  # (which I believe goes with the most recently loaded package)
   helpFile <- helpFiles[[1L]]
 
   rd <- utils:::.getHelpFile(helpFile)

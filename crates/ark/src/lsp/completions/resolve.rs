@@ -16,7 +16,7 @@ use tower_lsp::lsp_types::MarkupKind;
 use crate::lsp::completions::types::CompletionData;
 use crate::lsp::help::RHtmlHelp;
 
-pub unsafe fn resolve_completion(item: &mut CompletionItem) -> Result<bool> {
+pub fn resolve_completion(item: &mut CompletionItem) -> Result<bool> {
     let Some(data) = item.data.clone() else {
         bail!("Completion '{}' has no associated data", item.label);
     };
@@ -46,12 +46,9 @@ pub unsafe fn resolve_completion(item: &mut CompletionItem) -> Result<bool> {
     }
 }
 
-unsafe fn resolve_package_completion_item(
-    item: &mut CompletionItem,
-    package: &str,
-) -> Result<bool> {
+fn resolve_package_completion_item(item: &mut CompletionItem, package: &str) -> Result<bool> {
     let topic = join!(package, "-package");
-    let help = unwrap!(RHtmlHelp::new(topic.as_str(), Some(package))?, None => {
+    let help = unwrap!(RHtmlHelp::from_topic(topic.as_str(), Some(package))?, None => {
         return Ok(false);
     });
 
@@ -67,12 +64,12 @@ unsafe fn resolve_package_completion_item(
     Ok(true)
 }
 
-unsafe fn resolve_function_completion_item(
+fn resolve_function_completion_item(
     item: &mut CompletionItem,
     name: &str,
     package: Option<&str>,
 ) -> Result<bool> {
-    let help = unwrap!(RHtmlHelp::new(name, package)?, None => {
+    let help = unwrap!(RHtmlHelp::from_function(name, package)?, None => {
         return Ok(false);
     });
 
@@ -89,13 +86,13 @@ unsafe fn resolve_function_completion_item(
 }
 
 // TODO: Include package as well here?
-unsafe fn resolve_parameter_completion_item(
+fn resolve_parameter_completion_item(
     item: &mut CompletionItem,
     name: &str,
     function: &str,
 ) -> Result<bool> {
     // Get help for this function.
-    let help = unwrap!(RHtmlHelp::new(function, None)?, None => {
+    let help = unwrap!(RHtmlHelp::from_function(function, None)?, None => {
         return Ok(false);
     });
 

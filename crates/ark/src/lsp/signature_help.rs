@@ -41,9 +41,7 @@ use crate::treesitter::NodeTypeExt;
 // that is a bit hard to follow.
 
 /// SAFETY: Requires access to the R runtime.
-pub(crate) unsafe fn r_signature_help(
-    context: &DocumentContext,
-) -> anyhow::Result<Option<SignatureHelp>> {
+pub(crate) fn r_signature_help(context: &DocumentContext) -> anyhow::Result<Option<SignatureHelp>> {
     // Get document AST + completion position.
     let ast = &context.document.ast;
 
@@ -210,13 +208,13 @@ pub(crate) unsafe fn r_signature_help(
         let package = callee.child_by_field_name("lhs").into_result()?;
         let package = context.document.contents.node_slice(&package)?.to_string();
 
-        let topic = callee.child_by_field_name("rhs").into_result()?;
-        let topic = context.document.contents.node_slice(&topic)?.to_string();
+        let name = callee.child_by_field_name("rhs").into_result()?;
+        let name = context.document.contents.node_slice(&name)?.to_string();
 
-        RHtmlHelp::new(topic.as_str(), Some(package.as_str()))
+        RHtmlHelp::from_function(name.as_str(), Some(package.as_str()))
     } else {
-        let topic = context.document.contents.node_slice(&callee)?.to_string();
-        RHtmlHelp::new(topic.as_str(), None)
+        let name = context.document.contents.node_slice(&callee)?.to_string();
+        RHtmlHelp::from_function(name.as_str(), None)
     };
 
     // The signature label. We generate this as we walk through the
@@ -534,7 +532,7 @@ mod tests {
             let document = Document::new(&text, None);
             let context = DocumentContext::new(&document, point, None);
 
-            let help = unsafe { r_signature_help(&context) };
+            let help = r_signature_help(&context);
             let help = help.unwrap().unwrap();
             assert_eq!(help.signatures.len(), 1);
 
@@ -551,14 +549,14 @@ mod tests {
             let (text, point) = point_from_cursor("library@()");
             let document = Document::new(&text, None);
             let context = DocumentContext::new(&document, point, None);
-            let help = unsafe { r_signature_help(&context) };
+            let help = r_signature_help(&context);
             let help = help.unwrap();
             assert!(help.is_none());
 
             let (text, point) = point_from_cursor("library()@");
             let document = Document::new(&text, None);
             let context = DocumentContext::new(&document, point, None);
-            let help = unsafe { r_signature_help(&context) };
+            let help = r_signature_help(&context);
             let help = help.unwrap();
             assert!(help.is_none());
         })
@@ -586,7 +584,7 @@ fn <- function(
             let (text, point) = point_from_cursor("fn(@)");
             let document = Document::new(&text, None);
             let context = DocumentContext::new(&document, point, None);
-            let help = unsafe { r_signature_help(&context) };
+            let help = r_signature_help(&context);
             let help = help.unwrap().unwrap();
 
             // Check expected signature label
