@@ -6,18 +6,18 @@
 //
 
 use std::collections::HashMap;
-use std::sync::RwLock;
+use std::str::FromStr;
 
 use anyhow::anyhow;
 use harp::environment::r_ns_env;
 use harp::environment::BindingValue;
-use harp::environment::R_ENVS;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
-use harp::utils::r_classes;
+use harp::r_null;
+use harp::r_symbol;
 use harp::RObject;
+use libr::Rf_lang3;
 use libr::SEXP;
-use once_cell::sync::Lazy;
 use stdext::result::ResultOrLog;
 use strum::IntoEnumIterator;
 use strum_macros::Display;
@@ -25,8 +25,10 @@ use strum_macros::EnumIter;
 use strum_macros::EnumString;
 use strum_macros::IntoStaticStr;
 
+use crate::modules::ARK_ENVS;
+
 #[derive(Debug, PartialEq, EnumString, EnumIter, IntoStaticStr, Display, Eq, Hash, Clone)]
-pub enum ArkVariablesMethods {
+pub enum ArkVariablesGenerics {
     #[strum(serialize = "ark_variable_display_value")]
     VariableDisplayValue,
 
@@ -40,10 +42,36 @@ pub enum ArkVariablesMethods {
     VariableKind,
 }
 
-impl ArkVariablesMethods {
+impl ArkVariablesGenerics {
+    fn register_method_from_package(
+        generic: Self,
+        class: &str,
+        package: &str,
+    ) -> anyhow::Result<()> {
+        let method = RObject::from(unsafe {
+            Rf_lang3(
+                r_symbol!(":::"),
+                r_symbol!(package),
+                r_symbol!(format!("{generic}.{class}")),
+            )
+        });
+        Self::register_method(generic, class, method)?;
+        Ok(())
+    }
+
+    fn register_method(generic: Self, class: &str, method: RObject) -> anyhow::Result<()> {
+        let generic_name: &str = generic.into();
+        RFunction::new("", "register_ark_method")
+            .add(RObject::try_from(generic_name)?)
+            .add(RObject::try_from(class)?)
+            .add(method)
+            .call_in(ARK_ENVS.positron_ns)?;
+        Ok(())
+    }
+
     // Checks if a symbol name is a method and returns it's class
     fn parse_method(name: &String) -> Option<(Self, String)> {
-        for method in ArkVariablesMethods::iter() {
+        for method in ArkVariablesGenerics::iter() {
             let method_str: &str = method.clone().into();
             if name.starts_with::<&str>(method_str) {
                 return Some((
@@ -58,31 +86,19 @@ impl ArkVariablesMethods {
     }
 }
 
-static ARK_VARIABLES_METHODS: Lazy<RwLock<HashMap<ArkVariablesMethods, HashMap<String, String>>>> =
-    Lazy::new(|| RwLock::new(HashMap::new()));
-
-fn register_variables_method(method: ArkVariablesMethods, pkg: String, class: String) {
-    let mut tables = ARK_VARIABLES_METHODS.write().unwrap();
-    log::info!("Found method:{method} for class:{class} on pkg:{pkg}");
-    tables
-        .entry(method)
-        .or_insert_with(HashMap::new)
-        .insert(class, pkg);
-}
-
 pub fn populate_methods_from_loaded_namespaces() -> anyhow::Result<()> {
     let loaded = RFunction::new("base", "loadedNamespaces").call()?;
     let loaded: Vec<String> = loaded.try_into()?;
 
     for pkg in loaded.into_iter() {
-        populate_variable_methods_table(pkg).or_log_error("Failed populating methods");
+        populate_variable_methods_table(pkg.as_str()).or_log_error("Failed populating methods");
     }
 
     Ok(())
 }
 
-pub fn populate_variable_methods_table(pkg: String) -> anyhow::Result<()> {
-    let ns = r_ns_env(&pkg)?;
+pub fn populate_variable_methods_table(package: &str) -> anyhow::Result<()> {
+    let ns = r_ns_env(package)?;
     let symbol_names = ns
         .iter()
         .filter_map(Result::ok)
@@ -94,71 +110,60 @@ pub fn populate_variable_methods_table(pkg: String) -> anyhow::Result<()> {
         .map(|b| -> String { b.name.into() });
 
     for name in symbol_names {
-        if let Some((method, class)) = ArkVariablesMethods::parse_method(&name) {
-            register_variables_method(method, pkg.clone(), class);
+        if let Some((generic, class)) = ArkVariablesGenerics::parse_method(&name) {
+            ArkVariablesGenerics::register_method_from_package(generic, class.as_str(), package)?;
         }
     }
 
     Ok(())
 }
 
-pub fn dispatch_variables_method<T>(method: ArkVariablesMethods, x: SEXP) -> Option<T>
+pub fn dispatch_variables_method<T>(generic: ArkVariablesGenerics, x: SEXP) -> anyhow::Result<T>
 where
     T: TryFrom<RObject>,
+    <T as TryFrom<RObject>>::Error: std::fmt::Debug,
 {
-    dispatch_variables_method_with_args(method, x, HashMap::new())
+    dispatch_variables_method_with_args(generic, x, HashMap::new())
 }
 
 pub fn dispatch_variables_method_with_args<T>(
-    method: ArkVariablesMethods,
-    x: SEXP,
-    args: HashMap<String, RObject>,
-) -> Option<T>
-where
-    T: TryFrom<RObject>,
-{
-    // If the object doesn't have classes, just return None
-    let classes: harp::vector::CharacterVector = r_classes(x)?;
-
-    // Get the method table, if there isn't one return an empty string
-    let tables = ARK_VARIABLES_METHODS.read().unwrap();
-    let method_table = tables.get(&method)?;
-
-    for class in classes.iter().filter_map(|x| x) {
-        if let Some(pkg) = method_table.get(&class) {
-            return match call_method(method.clone(), pkg.clone(), class.clone(), x, args.clone()) {
-                Err(err) => {
-                    log::warn!("Failed dispatching `{pkg}::{method}.{class}`: {err}");
-                    continue; // Try the method for the next class if there's any
-                },
-                Ok(value) => Some(value),
-            };
-        }
-    }
-    None
-}
-
-fn call_method<T>(
-    method: ArkVariablesMethods,
-    pkg: String,
-    class: String,
+    generic: ArkVariablesGenerics,
     x: SEXP,
     args: HashMap<String, RObject>,
 ) -> anyhow::Result<T>
 where
     T: TryFrom<RObject>,
+    <T as TryFrom<RObject>>::Error: std::fmt::Debug,
 {
-    let mut call = RFunction::new_internal(pkg.as_str(), format!("{method}.{class}").as_str());
+    let generic_name: &str = generic.into();
+    let mut call = RFunction::new("", "call_ark_method");
+
+    call.add(generic_name);
     call.add(x);
 
     for (name, value) in args.into_iter() {
         call.param(name.as_str(), value);
     }
 
-    let result = call.call_in(R_ENVS.global)?;
-
-    match result.try_into() {
-        Err(_) => Err(anyhow!("Failed converting to method return type.")),
+    match call.call_in(ARK_ENVS.positron_ns)?.try_into() {
         Ok(value) => Ok(value),
+        Err(err) => Err(anyhow!("Failed converting to type: {err:?}")),
     }
+}
+
+#[harp::register]
+extern "C" fn ps_register_ark_method(
+    generic: SEXP,
+    class: SEXP,
+    method: SEXP,
+) -> anyhow::Result<SEXP> {
+    let generic: String = RObject::from(generic).try_into()?;
+    let class: String = RObject::from(class).try_into()?;
+
+    ArkVariablesGenerics::register_method(
+        ArkVariablesGenerics::from_str(generic.as_str())?,
+        class.as_str(),
+        RObject::from(method),
+    )?;
+    Ok(r_null())
 }

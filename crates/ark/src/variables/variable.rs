@@ -55,7 +55,7 @@ use stdext::unwrap;
 
 use crate::variables::methods::dispatch_variables_method;
 use crate::variables::methods::dispatch_variables_method_with_args;
-use crate::variables::methods::ArkVariablesMethods;
+use crate::variables::methods::ArkVariablesGenerics;
 
 // Constants.
 const MAX_DISPLAY_VALUE_ENTRIES: usize = 1_000;
@@ -77,8 +77,8 @@ fn plural(text: &str, n: i32) -> String {
 impl WorkspaceVariableDisplayValue {
     pub fn from(value: SEXP) -> Self {
         // Try to use the display method if there's one available
-        if let Some(display_value) =
-            dispatch_variables_method(ArkVariablesMethods::VariableDisplayValue, value)
+        if let Ok(display_value) =
+            dispatch_variables_method(ArkVariablesGenerics::VariableDisplayValue, value)
         {
             return Self::from_untruncated_display_value(display_value);
         }
@@ -455,13 +455,12 @@ impl WorkspaceVariableDisplayType {
     fn try_from_method(value: SEXP, include_length: bool) -> anyhow::Result<Self> {
         let mut args: HashMap<String, RObject> = HashMap::new();
         args.insert(String::from("include_length"), include_length.try_into()?);
-        let display_type: Option<String> = dispatch_variables_method_with_args(
-            ArkVariablesMethods::VariableDisplayType,
+        let display_type: String = dispatch_variables_method_with_args(
+            ArkVariablesGenerics::VariableDisplayType,
             value,
             args,
-        );
-        let value: String = display_type.context("Empty display value")?;
-        Ok(Self::simple(value))
+        )?;
+        Ok(Self::simple(display_type))
     }
 
     fn new(display_type: String, type_info: String) -> Self {
@@ -474,8 +473,8 @@ impl WorkspaceVariableDisplayType {
 
 fn has_children(value: SEXP) -> bool {
     // Try to use the display method if there's one available
-    if let Some(has_children) =
-        dispatch_variables_method(ArkVariablesMethods::VariableHasChildren, value)
+    if let Ok(has_children) =
+        dispatch_variables_method(ArkVariablesGenerics::VariableHasChildren, value)
     {
         return has_children;
     }
@@ -1317,7 +1316,7 @@ impl PositronVariable {
 }
 
 fn variable_kind_try_from_method(value: SEXP) -> anyhow::Result<VariableKind> {
-    let kind: String = dispatch_variables_method(ArkVariablesMethods::VariableKind, value)
+    let kind: String = dispatch_variables_method(ArkVariablesGenerics::VariableKind, value)
         .context("No kind found")?;
 
     Ok(serde_json::from_str(kind.as_str())?)
