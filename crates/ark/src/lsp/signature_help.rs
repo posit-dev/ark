@@ -41,9 +41,7 @@ use crate::treesitter::NodeTypeExt;
 // that is a bit hard to follow.
 
 /// SAFETY: Requires access to the R runtime.
-pub(crate) unsafe fn r_signature_help(
-    context: &DocumentContext,
-) -> anyhow::Result<Option<SignatureHelp>> {
+pub(crate) fn r_signature_help(context: &DocumentContext) -> anyhow::Result<Option<SignatureHelp>> {
     // Get document AST + completion position.
     let ast = &context.document.ast;
 
@@ -534,7 +532,7 @@ mod tests {
             let document = Document::new(&text, None);
             let context = DocumentContext::new(&document, point, None);
 
-            let help = unsafe { r_signature_help(&context) };
+            let help = r_signature_help(&context);
             let help = help.unwrap().unwrap();
             assert_eq!(help.signatures.len(), 1);
 
@@ -551,14 +549,14 @@ mod tests {
             let (text, point) = point_from_cursor("library@()");
             let document = Document::new(&text, None);
             let context = DocumentContext::new(&document, point, None);
-            let help = unsafe { r_signature_help(&context) };
+            let help = r_signature_help(&context);
             let help = help.unwrap();
             assert!(help.is_none());
 
             let (text, point) = point_from_cursor("library()@");
             let document = Document::new(&text, None);
             let context = DocumentContext::new(&document, point, None);
-            let help = unsafe { r_signature_help(&context) };
+            let help = r_signature_help(&context);
             let help = help.unwrap();
             assert!(help.is_none());
         })
@@ -586,7 +584,7 @@ fn <- function(
             let (text, point) = point_from_cursor("fn(@)");
             let document = Document::new(&text, None);
             let context = DocumentContext::new(&document, point, None);
-            let help = unsafe { r_signature_help(&context) };
+            let help = r_signature_help(&context);
             let help = help.unwrap().unwrap();
 
             // Check expected signature label

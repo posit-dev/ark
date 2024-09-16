@@ -66,7 +66,7 @@ fn hover_context(node: Node, context: &DocumentContext) -> Result<Option<HoverCo
     Ok(None)
 }
 
-pub(crate) unsafe fn r_hover(context: &DocumentContext) -> anyhow::Result<Option<MarkupContent>> {
+pub(crate) fn r_hover(context: &DocumentContext) -> anyhow::Result<Option<MarkupContent>> {
     // get the node
     let node = &context.node;
 

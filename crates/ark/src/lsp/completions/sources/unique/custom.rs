@@ -75,7 +75,7 @@ pub fn completions_from_custom_source_impl(
     let node = context.node;
 
     // Use the signature help tools to figure out the necessary pieces.
-    let signatures = unsafe { r_signature_help(context)? };
+    let signatures = r_signature_help(context)?;
     let Some(signatures) = signatures else {
         return Ok(None);
     };
