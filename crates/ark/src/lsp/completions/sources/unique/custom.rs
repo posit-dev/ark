@@ -28,7 +28,7 @@ use crate::lsp::completions::sources::utils::CallNodePositionType;
 use crate::lsp::completions::types::CompletionData;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::signature_help::r_signature_help;
-use crate::treesitter::node_find_string;
+use crate::treesitter::node_in_string;
 use crate::treesitter::NodeTypeExt;
 
 pub fn completions_from_custom_source(
@@ -191,9 +191,7 @@ pub fn completions_from_custom_source_impl(
                     continue;
                 });
 
-                let in_string = node_find_string(&node).is_some();
-
-                if enquote && !in_string {
+                if enquote && !node_in_string(&node) {
                     item.insert_text = Some(format!("\"{value}\""));
                 } else {
                     let mut insert_text = sym_quote_invalid(value.as_str());

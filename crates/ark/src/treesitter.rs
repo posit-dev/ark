@@ -427,6 +427,10 @@ pub(crate) fn node_find_string<'a>(node: &'a Node) -> Option<Node<'a>> {
     node.ancestors().find(|parent| parent.is_string())
 }
 
+pub(crate) fn node_in_string(node: &Node) -> bool {
+    node_find_string(node).is_some()
+}
+
 pub(crate) fn node_is_call(node: &Node, name: &str, contents: &ropey::Rope) -> bool {
     if !node.is_call() {
         return false;
