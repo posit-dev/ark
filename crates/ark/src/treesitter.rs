@@ -1,5 +1,6 @@
 use tree_sitter::Node;
 
+use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::rope::RopeExt;
 
 #[derive(Debug, PartialEq)]
@@ -27,6 +28,8 @@ pub enum NodeType {
     Complex,
     Float,
     String,
+    StringContent,
+    EscapeSequence,
     Identifier,
     DotDotI,
     Dots,
@@ -71,6 +74,8 @@ fn node_type(x: &Node) -> NodeType {
         "complex" => NodeType::Complex,
         "float" => NodeType::Float,
         "string" => NodeType::String,
+        "string_content" => NodeType::StringContent,
+        "escape_sequence" => NodeType::EscapeSequence,
         "identifier" => NodeType::Identifier,
         "dot_dot_i" => NodeType::DotDotI,
         "dots" => NodeType::Dots,
@@ -408,6 +413,22 @@ impl NodeTypeExt for Node<'_> {
 
 pub(crate) fn node_text(node: &Node, contents: &ropey::Rope) -> Option<String> {
     contents.node_slice(node).ok().map(|f| f.to_string())
+}
+
+pub(crate) fn node_find_string<'a>(node: &'a Node) -> Option<Node<'a>> {
+    if node.is_string() {
+        // Already on a string
+        return Some(*node);
+    }
+    // If we are on one of the following, we return the string parent:
+    // - Anonymous node inside a string, like `"'"`
+    // - `NodeType::StringContent`
+    // - `NodeType::EscapeSequence`
+    node.ancestors().find(|parent| parent.is_string())
+}
+
+pub(crate) fn node_in_string(node: &Node) -> bool {
+    node_find_string(node).is_some()
 }
 
 pub(crate) fn node_is_call(node: &Node, name: &str, contents: &ropey::Rope) -> bool {

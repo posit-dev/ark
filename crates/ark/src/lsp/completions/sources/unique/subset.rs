@@ -29,6 +29,7 @@ use crate::treesitter::NodeTypeExt;
 /// of `""`, enquotes its completion items, and is composite so it meshes with other
 /// generic completions. We consider this a completely different path.
 pub(super) fn completions_from_string_subset(
+    node: &Node,
     context: &DocumentContext,
 ) -> Result<Option<Vec<CompletionItem>>> {
     log::info!("completions_from_string_subset()");
@@ -37,7 +38,7 @@ pub(super) fn completions_from_string_subset(
     const ENQUOTE: bool = false;
 
     // i.e. find `x` in `x[""]` or `x[c("foo", "")]`
-    let Some(node) = node_find_object_for_string_subset(context.node, context) else {
+    let Some(node) = node_find_object_for_string_subset(node, context) else {
         return Ok(None);
     };
 
@@ -56,14 +57,14 @@ pub(super) fn completions_from_string_subset(
 }
 
 fn node_find_object_for_string_subset<'tree>(
-    mut node: Node<'tree>,
+    node: &Node<'tree>,
     context: &DocumentContext,
 ) -> Option<Node<'tree>> {
     if !node.is_string() {
         return None;
     }
 
-    node = match node_find_parent_call(node) {
+    let mut node = match node_find_parent_call(node) {
         Some(node) => node,
         None => return None,
     };
@@ -74,7 +75,7 @@ fn node_find_object_for_string_subset<'tree>(
             return None;
         }
 
-        node = match node_find_parent_call(node) {
+        node = match node_find_parent_call(&node) {
             Some(node) => node,
             None => return None,
         };
@@ -105,7 +106,7 @@ fn node_find_object_for_string_subset<'tree>(
     return Some(node);
 }
 
-fn node_find_parent_call(x: Node) -> Option<Node> {
+fn node_find_parent_call<'tree>(x: &Node<'tree>) -> Option<Node<'tree>> {
     // Find the `Argument` node
     let Some(x) = x.parent() else {
         return None;
@@ -165,6 +166,7 @@ mod tests {
     use crate::lsp::documents::Document;
     use crate::test::point_from_cursor;
     use crate::test::r_test;
+    use crate::treesitter::node_find_string;
 
     #[test]
     fn test_string_subset_completions() {
@@ -176,8 +178,11 @@ mod tests {
             let (text, point) = point_from_cursor(r#"foo["@"]"#);
             let document = Document::new(text.as_str(), None);
             let context = DocumentContext::new(&document, point, None);
+            let node = node_find_string(&context.node).unwrap();
 
-            let completions = completions_from_string_subset(&context).unwrap().unwrap();
+            let completions = completions_from_string_subset(&node, &context)
+                .unwrap()
+                .unwrap();
             assert_eq!(completions.len(), 2);
 
             let completion = completions.get(0).unwrap();
@@ -194,28 +199,40 @@ mod tests {
             let (text, point) = point_from_cursor(r#"foo[["@"]]"#);
             let document = Document::new(text.as_str(), None);
             let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_string_subset(&context).unwrap().unwrap();
+            let node = node_find_string(&context.node).unwrap();
+            let completions = completions_from_string_subset(&node, &context)
+                .unwrap()
+                .unwrap();
             assert_eq!(completions.len(), 2);
 
             // Inside `""` as second argument
             let (text, point) = point_from_cursor(r#"foo[, "@"]"#);
             let document = Document::new(text.as_str(), None);
             let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_string_subset(&context).unwrap().unwrap();
+            let node = node_find_string(&context.node).unwrap();
+            let completions = completions_from_string_subset(&node, &context)
+                .unwrap()
+                .unwrap();
             assert_eq!(completions.len(), 2);
 
             // Inside `""` inside `c()`
             let (text, point) = point_from_cursor(r#"foo[c("@")]"#);
             let document = Document::new(text.as_str(), None);
             let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_string_subset(&context).unwrap().unwrap();
+            let node = node_find_string(&context.node).unwrap();
+            let completions = completions_from_string_subset(&node, &context)
+                .unwrap()
+                .unwrap();
             assert_eq!(completions.len(), 2);
 
             // Inside `""` inside `c()` with another string already specified
             let (text, point) = point_from_cursor(r#"foo[c("a", "@")]"#);
             let document = Document::new(text.as_str(), None);
             let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_string_subset(&context).unwrap().unwrap();
+            let node = node_find_string(&context.node).unwrap();
+            let completions = completions_from_string_subset(&node, &context)
+                .unwrap()
+                .unwrap();
             assert_eq!(completions.len(), 2);
 
             // Inside `""` inside `fn()` - no completions from string subset!
@@ -224,14 +241,8 @@ mod tests {
             let (text, point) = point_from_cursor(r#"foo[fn("@")]"#);
             let document = Document::new(text.as_str(), None);
             let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_string_subset(&context).unwrap();
-            assert!(completions.is_none());
-
-            // Right before the `[`
-            let (text, point) = point_from_cursor(r#"foo@[""]"#);
-            let document = Document::new(text.as_str(), None);
-            let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_string_subset(&context).unwrap();
+            let node = node_find_string(&context.node).unwrap();
+            let completions = completions_from_string_subset(&node, &context).unwrap();
             assert!(completions.is_none());
 
             // A fake object that we can't get object names for.
@@ -239,7 +250,10 @@ mod tests {
             let (text, point) = point_from_cursor(r#"not_real["@"]"#);
             let document = Document::new(text.as_str(), None);
             let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_string_subset(&context).unwrap().unwrap();
+            let node = node_find_string(&context.node).unwrap();
+            let completions = completions_from_string_subset(&node, &context)
+                .unwrap()
+                .unwrap();
             assert!(completions.is_empty());
 
             // Clean up
@@ -257,8 +271,11 @@ mod tests {
             let (text, point) = point_from_cursor(r#"foo[, "@"]"#);
             let document = Document::new(text.as_str(), None);
             let context = DocumentContext::new(&document, point, None);
+            let node = node_find_string(&context.node).unwrap();
 
-            let completions = completions_from_string_subset(&context).unwrap().unwrap();
+            let completions = completions_from_string_subset(&node, &context)
+                .unwrap()
+                .unwrap();
             assert_eq!(completions.len(), 2);
             assert_eq!(completions.get(0).unwrap().label, "a".to_string());
             assert_eq!(completions.get(1).unwrap().label, "b".to_string());
