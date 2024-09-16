@@ -101,7 +101,7 @@ impl fmt::Display for Error {
                 ..
             } => {
                 if let Some(code) = code {
-                    let code = truncate_lines(code.clone(), 10);
+                    let code = truncate_lines(code.clone(), 50);
                     write!(f, "Error evaluating '{code}': {message}")?;
                 } else {
                     write!(f, "{message}")?;
