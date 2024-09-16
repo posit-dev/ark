@@ -14,6 +14,7 @@ use crate::object::RObject;
 use crate::r_symbol;
 use crate::utils::r_typeof;
 
+#[derive(Clone)]
 pub struct RCall {
     function: RObject,
     arguments: Vec<RArgument>,
@@ -77,6 +78,7 @@ pub fn expr_deparse_collapse(x: SEXP) -> harp::Result<String> {
     Ok(x)
 }
 
+#[derive(Clone)]
 pub struct RArgument {
     pub name: String,
     pub value: RObject,

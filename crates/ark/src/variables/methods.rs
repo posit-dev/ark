@@ -25,6 +25,8 @@ use strum_macros::EnumIter;
 use strum_macros::EnumString;
 use strum_macros::IntoStaticStr;
 
+use crate::thread::RThreadSafe;
+
 #[derive(Debug, PartialEq, EnumString, EnumIter, IntoStaticStr, Display, Eq, Hash, Clone)]
 pub enum ArkVariablesMethods {
     #[strum(serialize = "ark_variable_display_value")]
@@ -41,6 +43,15 @@ pub enum ArkVariablesMethods {
 }
 
 impl ArkVariablesMethods {
+    fn register_method(generic: Self, class: String, method: RFunction) {
+        let mut tables = ARK_VARIABLES_METHODS.write().unwrap();
+        log::info!("Found method:{generic} for class:{class}.");
+        tables
+            .entry(generic)
+            .or_insert_with(HashMap::new)
+            .insert(class, RThreadSafe::new(method));
+    }
+
     // Checks if a symbol name is a method and returns it's class
     fn parse_method(name: &String) -> Option<(Self, String)> {
         for method in ArkVariablesMethods::iter() {
@@ -58,17 +69,9 @@ impl ArkVariablesMethods {
     }
 }
 
-static ARK_VARIABLES_METHODS: Lazy<RwLock<HashMap<ArkVariablesMethods, HashMap<String, String>>>> =
-    Lazy::new(|| RwLock::new(HashMap::new()));
-
-fn register_variables_method(method: ArkVariablesMethods, pkg: String, class: String) {
-    let mut tables = ARK_VARIABLES_METHODS.write().unwrap();
-    log::info!("Found method:{method} for class:{class} on pkg:{pkg}");
-    tables
-        .entry(method)
-        .or_insert_with(HashMap::new)
-        .insert(class, pkg);
-}
+static ARK_VARIABLES_METHODS: Lazy<
+    RwLock<HashMap<ArkVariablesMethods, HashMap<String, RThreadSafe<RFunction>>>>,
+> = Lazy::new(|| RwLock::new(HashMap::new()));
 
 pub fn populate_methods_from_loaded_namespaces() -> anyhow::Result<()> {
     let loaded = RFunction::new("base", "loadedNamespaces").call()?;
@@ -94,23 +97,27 @@ pub fn populate_variable_methods_table(pkg: String) -> anyhow::Result<()> {
         .map(|b| -> String { b.name.into() });
 
     for name in symbol_names {
-        if let Some((method, class)) = ArkVariablesMethods::parse_method(&name) {
-            register_variables_method(method, pkg.clone(), class);
+        if let Some((generic, class)) = ArkVariablesMethods::parse_method(&name) {
+            ArkVariablesMethods::register_method(
+                generic,
+                class,
+                RFunction::new_internal(pkg.as_str(), name.as_str()),
+            );
         }
     }
 
     Ok(())
 }
 
-pub fn dispatch_variables_method<T>(method: ArkVariablesMethods, x: SEXP) -> Option<T>
+pub fn dispatch_variables_method<T>(generic: ArkVariablesMethods, x: SEXP) -> Option<T>
 where
     T: TryFrom<RObject>,
 {
-    dispatch_variables_method_with_args(method, x, HashMap::new())
+    dispatch_variables_method_with_args(generic, x, HashMap::new())
 }
 
 pub fn dispatch_variables_method_with_args<T>(
-    method: ArkVariablesMethods,
+    generic: ArkVariablesMethods,
     x: SEXP,
     args: HashMap<String, RObject>,
 ) -> Option<T>
@@ -122,13 +129,13 @@ where
 
     // Get the method table, if there isn't one return an empty string
     let tables = ARK_VARIABLES_METHODS.read().unwrap();
-    let method_table = tables.get(&method)?;
+    let method_table = tables.get(&generic)?;
 
     for class in classes.iter().filter_map(|x| x) {
-        if let Some(pkg) = method_table.get(&class) {
-            return match call_method(method.clone(), pkg.clone(), class.clone(), x, args.clone()) {
+        if let Some(method) = method_table.get(&class) {
+            return match call_method(method.get(), x, args.clone()) {
                 Err(err) => {
-                    log::warn!("Failed dispatching `{pkg}::{method}.{class}`: {err}");
+                    log::warn!("Failed dispatching `{generic}.{class}`: {err}");
                     continue; // Try the method for the next class if there's any
                 },
                 Ok(value) => Some(value),
@@ -138,17 +145,11 @@ where
     None
 }
 
-fn call_method<T>(
-    method: ArkVariablesMethods,
-    pkg: String,
-    class: String,
-    x: SEXP,
-    args: HashMap<String, RObject>,
-) -> anyhow::Result<T>
+fn call_method<T>(method: &RFunction, x: SEXP, args: HashMap<String, RObject>) -> anyhow::Result<T>
 where
     T: TryFrom<RObject>,
 {
-    let mut call = RFunction::new_internal(pkg.as_str(), format!("{method}.{class}").as_str());
+    let mut call = method.clone();
     call.add(x);
 
     for (name, value) in args.into_iter() {

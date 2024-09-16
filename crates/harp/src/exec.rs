@@ -22,6 +22,7 @@ use crate::object::RObject;
 use crate::r_symbol;
 use crate::utils::r_stringify;
 
+#[derive(Clone)]
 pub struct RFunction {
     pub call: RCall,
     is_namespaced: bool,
