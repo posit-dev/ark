@@ -34,7 +34,8 @@ pub enum Status {
 }
 
 impl RHtmlHelp {
-    pub unsafe fn from_topic(topic: &str, package: Option<&str>) -> anyhow::Result<Option<Self>> {
+    /// SAFETY: Requires access to the R runtime.
+    pub fn from_topic(topic: &str, package: Option<&str>) -> anyhow::Result<Option<Self>> {
         Self::get_help(topic, package).map(|html| {
             html.map(|html| Self {
                 html,
@@ -43,7 +44,8 @@ impl RHtmlHelp {
         })
     }
 
-    pub unsafe fn from_function(name: &str, package: Option<&str>) -> anyhow::Result<Option<Self>> {
+    /// SAFETY: Requires access to the R runtime.
+    pub fn from_function(name: &str, package: Option<&str>) -> anyhow::Result<Option<Self>> {
         Self::get_help(name, package).map(|html| {
             html.and_then(|html| {
                 if Self::is_function(&html) {
@@ -58,7 +60,8 @@ impl RHtmlHelp {
         })
     }
 
-    unsafe fn get_help(topic: &str, package: Option<&str>) -> anyhow::Result<Option<Html>> {
+    /// SAFETY: Requires access to the R runtime.
+    fn get_help(topic: &str, package: Option<&str>) -> anyhow::Result<Option<Html>> {
         // trim off a package prefix if necessary
         let package = package.map(|s| s.replace("package:", ""));
 
@@ -79,7 +82,7 @@ impl RHtmlHelp {
         }
 
         // parse as html
-        let contents = contents.to::<String>()?;
+        let contents = String::try_from(&contents)?;
         let html = Html::parse_document(contents.as_str());
 
         Ok(Some(html))
@@ -375,21 +378,21 @@ mod tests {
     #[test]
     fn test_help_from_function() {
         r_test(|| {
-            let help = unsafe { RHtmlHelp::from_function("match", None) };
+            let help = RHtmlHelp::from_function("match", None);
             let help = help.unwrap().unwrap();
             assert!(help.function);
 
             // Not found at all
-            let help = unsafe { RHtmlHelp::from_function("doesnt_exist", None) };
+            let help = RHtmlHelp::from_function("doesnt_exist", None);
             let help = help.unwrap();
             assert!(help.is_none());
 
             // Found, but not a function!
-            let help = unsafe { RHtmlHelp::from_function("plotmath", None) };
+            let help = RHtmlHelp::from_function("plotmath", None);
             let help = help.unwrap();
             assert!(help.is_none());
             // It is a topic though
-            let help = unsafe { RHtmlHelp::from_topic("plotmath", None) };
+            let help = RHtmlHelp::from_topic("plotmath", None);
             let help = help.unwrap();
             assert!(help.is_some());
         });
@@ -398,7 +401,7 @@ mod tests {
     #[test]
     fn test_markdown_conversion() {
         r_test(|| {
-            let help = unsafe { RHtmlHelp::from_function("match", None) };
+            let help = RHtmlHelp::from_function("match", None);
             let help = help.unwrap().unwrap();
 
             let markdown = help.markdown().unwrap();
@@ -409,7 +412,7 @@ mod tests {
     #[test]
     fn test_parameters_on_non_functions() {
         r_test(|| {
-            let help = unsafe { RHtmlHelp::from_topic("plotmath", None) };
+            let help = RHtmlHelp::from_topic("plotmath", None);
             let help = help.unwrap().unwrap();
             // Errors immediately
             insta::assert_snapshot!(help.parameters(|_, _| Status::Done).unwrap_err());
@@ -419,7 +422,7 @@ mod tests {
     #[test]
     fn test_parameter_on_non_functions() {
         r_test(|| {
-            let help = unsafe { RHtmlHelp::from_topic("plotmath", None) };
+            let help = RHtmlHelp::from_topic("plotmath", None);
             let help = help.unwrap().unwrap();
             // Errors immediately
             insta::assert_snapshot!(help.parameter("foo").unwrap_err());

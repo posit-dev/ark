@@ -705,16 +705,23 @@ impl TryFrom<RObject> for Option<bool> {
 impl TryFrom<RObject> for Option<String> {
     type Error = crate::error::Error;
     fn try_from(value: RObject) -> Result<Self, Self::Error> {
+        Option::<String>::try_from(&value)
+    }
+}
+
+impl TryFrom<&RObject> for Option<String> {
+    type Error = crate::error::Error;
+    fn try_from(value: &RObject) -> Result<Self, Self::Error> {
         unsafe {
-            let charsexp = match r_typeof(*value) {
-                CHARSXP => *value,
+            let charsexp = match r_typeof(value.sexp) {
+                CHARSXP => value.sexp,
                 STRSXP => {
-                    r_assert_length(*value, 1)?;
-                    STRING_ELT(*value, 0)
+                    r_assert_length(value.sexp, 1)?;
+                    STRING_ELT(value.sexp, 0)
                 },
-                SYMSXP => PRINTNAME(*value),
+                SYMSXP => PRINTNAME(value.sexp),
                 _ => {
-                    return Err(Error::UnexpectedType(r_typeof(*value), vec![
+                    return Err(Error::UnexpectedType(r_typeof(value.sexp), vec![
                         CHARSXP, STRSXP, SYMSXP,
                     ]))
                 },
@@ -807,6 +814,13 @@ impl TryFrom<RObject> for Option<f64> {
 impl TryFrom<RObject> for String {
     type Error = crate::error::Error;
     fn try_from(value: RObject) -> Result<Self, Self::Error> {
+        String::try_from(&value)
+    }
+}
+
+impl TryFrom<&RObject> for String {
+    type Error = crate::error::Error;
+    fn try_from(value: &RObject) -> Result<Self, Self::Error> {
         match Option::<String>::try_from(value)? {
             Some(x) => Ok(x),
             None => Err(Error::MissingValueError),
