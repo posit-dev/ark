@@ -28,6 +28,7 @@ use crate::lsp::traits::rope::RopeExt;
 use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
+use crate::treesitter::UnaryOperatorType;
 use crate::treesitter::UnmatchedDelimiterType;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -172,6 +173,10 @@ fn recurse(
         },
         NodeType::Subset | NodeType::Subset2 => recurse_subset(node, context, diagnostics),
         NodeType::Call => recurse_call(node, context, diagnostics),
+        NodeType::UnaryOperator(op) => match op {
+            UnaryOperatorType::Tilde => recurse_formula(node, context, diagnostics),
+            _ => recurse_default(node, context, diagnostics),
+        },
         NodeType::BinaryOperator(op) => match op {
             BinaryOperatorType::Tilde => recurse_formula(node, context, diagnostics),
             BinaryOperatorType::LeftAssignment => {
@@ -1146,6 +1151,21 @@ mod tests {
             // Only marks the `x` before the `x <- 1`
             let diagnostic = diagnostics.get(0).unwrap();
             assert_eq!(diagnostic.range.start.line, 1)
+        })
+    }
+
+    #[test]
+    fn test_no_diagnostic_formula() {
+        r_test(|| {
+            let text = "
+                foo ~ bar
+                ~foo
+                identity(foo ~ bar)
+                identity(~foo)
+            ";
+            let document = Document::new(text, None);
+            let diagnostics = generate_diagnostics(document, DEFAULT_STATE.clone());
+            assert!(diagnostics.is_empty());
         })
     }
 }
