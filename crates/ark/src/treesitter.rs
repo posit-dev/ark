@@ -1,5 +1,6 @@
 use tree_sitter::Node;
 
+use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::rope::RopeExt;
 
 #[derive(Debug, PartialEq)]
@@ -318,8 +319,6 @@ pub trait NodeTypeExt: Sized {
     fn is_namespace_internal_operator(&self) -> bool;
     fn is_unary_operator(&self) -> bool;
     fn is_binary_operator(&self) -> bool;
-
-    fn find_parent<Callback: Fn(Node) -> bool>(&self, callback: Callback) -> Option<Node>;
 }
 
 impl NodeTypeExt for Node<'_> {
@@ -410,19 +409,6 @@ impl NodeTypeExt for Node<'_> {
     fn is_binary_operator(&self) -> bool {
         matches!(self.node_type(), NodeType::BinaryOperator(_))
     }
-
-    fn find_parent<Callback: Fn(Node) -> bool>(&self, callback: Callback) -> Option<Node> {
-        let mut node = *self;
-
-        while let Some(parent) = node.parent() {
-            if callback(parent) {
-                return Some(parent);
-            }
-            node = parent;
-        }
-
-        None
-    }
 }
 
 pub(crate) fn node_text(node: &Node, contents: &ropey::Rope) -> Option<String> {
@@ -438,7 +424,7 @@ pub(crate) fn node_find_string<'a>(node: &'a Node) -> Option<Node<'a>> {
     // - Anonymous node inside a string, like `"'"`
     // - `NodeType::StringContent`
     // - `NodeType::EscapeSequence`
-    node.find_parent(|parent| parent.is_string())
+    node.ancestors().find(|parent| parent.is_string())
 }
 
 pub(crate) fn node_is_call(node: &Node, name: &str, contents: &ropey::Rope) -> bool {
