@@ -85,7 +85,6 @@ pub fn parse_exprs_ext<'a>(input: &ParseInput<'a>) -> crate::Result<RObject> {
     }
 }
 
-// Return type would be clearer if syntax error was integrated in `ParseResult`
 pub fn parse_with_parse_data(text: &str) -> crate::Result<(ParseResult, ParseData)> {
     let srcfile = srcref::SrcFile::try_from(text)?;
 
