@@ -74,7 +74,8 @@ where
 }
 
 impl RLocalOption {
-    pub fn new(option: crate::RSymbol, new_value: libr::SEXP) -> RLocalOption {
+    pub fn new(option: &str, new_value: libr::SEXP) -> RLocalOption {
+        let option = crate::RSymbol::new_unchecked(unsafe { crate::r_symbol!(option) });
         let old_value = crate::r_poke_option(option.sexp, new_value);
 
         Self {
@@ -130,7 +131,7 @@ impl RLocalSandbox {
 }
 
 impl RLocalOptionBoolean {
-    pub fn new(option: crate::RSymbol, value: bool) -> Self {
+    pub fn new(option: &str, value: bool) -> Self {
         let new_value: crate::RObject = value.into();
 
         Self {
@@ -142,10 +143,7 @@ impl RLocalOptionBoolean {
 impl RLocalShowErrorMessageOption {
     pub fn new(value: bool) -> Self {
         Self {
-            _raii: RLocalOptionBoolean::new(
-                unsafe { crate::RSymbol::new_unchecked(crate::r_symbol!("show.error.messages")) },
-                value,
-            ),
+            _raii: RLocalOptionBoolean::new("show.error.messages", value),
         }
     }
 }

@@ -6,6 +6,7 @@
 //
 pub mod attrib;
 pub mod call;
+pub mod data_frame;
 pub mod environment;
 pub mod environment_iter;
 pub mod error;
@@ -39,6 +40,7 @@ pub mod vec_format;
 pub mod vector;
 
 // Reexport API
+pub use data_frame::*;
 pub use eval::*;
 pub use object::*;
 pub use parse::*;

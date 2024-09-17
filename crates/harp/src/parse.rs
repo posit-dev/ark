@@ -30,7 +30,7 @@ pub enum ParseResult {
 
 pub enum ParseInput<'a> {
     Text(&'a str),
-    SrcFile(RObject),
+    SrcFile(&'a srcref::SrcFile),
 }
 
 impl Default for RParseOptions {
@@ -64,16 +64,16 @@ pub fn parse_exprs(text: &str) -> crate::Result<RObject> {
 
 /// Same but creates srcrefs
 pub fn parse_exprs_with_srcrefs(text: &str) -> crate::Result<RObject> {
-    let srcfile = srcref::new_srcfile_virtual(text)?;
-    parse_exprs_ext(&ParseInput::SrcFile(srcfile))
+    let srcfile = srcref::SrcFile::new_virtual(text)?;
+    parse_exprs_ext(&ParseInput::SrcFile(&srcfile))
 }
 
-fn parse_exprs_ext<'a>(input: &ParseInput<'a>) -> crate::Result<RObject> {
+pub fn parse_exprs_ext<'a>(input: &ParseInput<'a>) -> crate::Result<RObject> {
     let status = parse_status(input)?;
     match status {
         ParseResult::Complete(x) => Ok(RObject::from(x)),
         ParseResult::Incomplete => Err(crate::Error::ParseError {
-            code: parse_input_as_string(input).unwrap_or(String::from("Concersion error")),
+            code: parse_input_as_string(input).unwrap_or(String::from("Conversion error")),
             message: String::from("Incomplete code"),
         }),
     }
@@ -81,13 +81,15 @@ fn parse_exprs_ext<'a>(input: &ParseInput<'a>) -> crate::Result<RObject> {
 
 pub fn parse_status<'a>(input: &ParseInput<'a>) -> crate::Result<ParseResult> {
     unsafe {
-        // TODO: set keep.parse.data
+        // If we're parsing with srcrefs, keep parse data as well. This is the
+        // default but it might have been overridden by the user.
+        let _guard = harp::raii::RLocalOptionBoolean::new("keep.parse.data", true);
 
         let mut status: libr::ParseStatus = libr::ParseStatus_PARSE_NULL;
 
         let (text, srcfile) = match input {
             ParseInput::Text(text) => (as_parse_text(text), RObject::null()),
-            ParseInput::SrcFile(srcfile) => (srcref::srcfile_lines(srcfile.sexp)?, srcfile.clone()),
+            ParseInput::SrcFile(srcfile) => (srcfile.lines()?, srcfile.inner.clone()),
         };
 
         let result: RObject =
@@ -125,8 +127,8 @@ fn parse_input_as_string<'a>(input: &ParseInput<'a>) -> crate::Result<String> {
     Ok(match input {
         ParseInput::Text(text) => text.to_string(),
         ParseInput::SrcFile(srcfile) => {
-            let lines = srcref::srcfile_lines(srcfile.sexp)?;
-            let lines = unsafe { CharacterVector::new(lines)? };
+            let lines = srcfile.lines()?;
+            let lines = CharacterVector::new(lines)?;
 
             lines
                 .iter()
@@ -227,9 +229,9 @@ mod tests {
                 "foo\nbar"
             );
 
-            let input = srcref::new_srcfile_virtual("foo\nbar").unwrap();
+            let input = srcref::SrcFile::new_virtual("foo\nbar").unwrap();
             assert_eq!(
-                parse_input_as_string(&ParseInput::SrcFile(input)).unwrap(),
+                parse_input_as_string(&ParseInput::SrcFile(&input)).unwrap(),
                 "foo\nbar"
             );
         }

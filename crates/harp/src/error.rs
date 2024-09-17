@@ -37,6 +37,7 @@ pub enum Error {
     UnsafeEvaluationError(String),
     UnexpectedLength(usize, usize),
     UnexpectedType(u32, Vec<u32>),
+    UnexpectedClass(Option<Vec<String>>, String),
     ValueOutOfRange {
         value: i64,
         min: i64,
@@ -48,6 +49,9 @@ pub enum Error {
         line: i32,
     },
     MissingValueError,
+    MissingColumnError {
+        name: String,
+    },
     MissingBindingError {
         name: String,
     },
@@ -172,6 +176,18 @@ impl fmt::Display for Error {
                 )
             },
 
+            Error::UnexpectedClass(actual, expected) => {
+                let actual = if let Some(actual) = actual {
+                    actual.join("/")
+                } else {
+                    String::from("_unclassed_")
+                };
+                write!(
+                    f,
+                    "Unexpected class for R object (expected {expected}; got {actual})",
+                )
+            },
+
             Error::ValueOutOfRange { value, min, max } => {
                 write!(
                     f,
@@ -204,8 +220,12 @@ impl fmt::Display for Error {
                 write!(f, "{err:?}")
             },
 
+            Error::MissingColumnError { name } => {
+                write!(f, "Can't find column `{name}` in data frame")
+            },
+
             Error::MissingBindingError { name } => {
-                write!(f, "Can't find binding {name} in environment")
+                write!(f, "Can't find binding `{name}` in environment")
             },
 
             Error::OutOfMemory { size } => {
@@ -223,6 +243,14 @@ macro_rules! anyhow {
     ($($rest: expr),*) => {{
         let message = anyhow::anyhow!($($rest, )*);
         crate::error::Error::Anyhow(message)
+    }}
+}
+
+#[macro_export]
+macro_rules! unreachable {
+    ($($rest: expr),*) => {{
+        let message = format!($($rest, )*);
+        harp::anyhow!("Internal error: {message}")
     }}
 }
 

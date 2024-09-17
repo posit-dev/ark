@@ -13,9 +13,11 @@ use crate::object::r_list_poke;
 use crate::object::RObject;
 use crate::r_typeof;
 
+#[derive(Debug)]
 pub struct List {
-    inner: RObject,
-    ptr: *const SEXP,
+    pub obj: RObject,
+    pub sexp: SEXP,
+    pub ptr: *const SEXP,
 }
 
 pub struct ListIter {
@@ -27,7 +29,7 @@ pub struct ListIter {
 
 impl List {
     pub fn iter(&self) -> ListIter {
-        unsafe { ListIter::new_unchecked(self.inner.sexp) }
+        unsafe { ListIter::new_unchecked(self.obj.sexp) }
     }
 }
 
@@ -43,13 +45,14 @@ impl super::Vector for List {
         let ptr = crate::list_cbegin(object);
 
         Self {
-            inner: object.into(),
+            obj: object.into(),
+            sexp: object,
             ptr,
         }
     }
 
     fn data(&self) -> SEXP {
-        self.inner.sexp
+        self.obj.sexp
     }
 
     // Never missing. We can't treat `NULL` as missing because it would cause
@@ -75,20 +78,20 @@ impl super::Vector for List {
         let mut data = data.into_iter();
 
         let size = data.len();
-        let inner = crate::alloc_list(size).unwrap();
-        let inner: RObject = inner.into();
+        let obj = RObject::new(harp::alloc_list(size).unwrap());
+        let sexp = obj.sexp;
 
         for i in 0..size {
             unsafe {
                 let value = data.next().unwrap_unchecked();
                 let value = value.as_ref();
-                r_list_poke(inner.sexp, i as libr::R_xlen_t, *value)
+                r_list_poke(sexp, i as libr::R_xlen_t, *value)
             }
         }
 
-        let ptr = crate::list_cbegin(inner.sexp);
+        let ptr = crate::list_cbegin(sexp);
 
-        Self { inner, ptr }
+        Self { obj, ptr, sexp }
     }
 
     fn format_one(&self, _x: Self::Type, _options: Option<&super::FormatOptions>) -> String {
@@ -156,5 +159,19 @@ mod test {
             assert!(crate::is_identical(it.next().unwrap(), RObject::from("foo").sexp));
             assert!(it.next().is_none());
         }
+    }
+}
+
+impl TryFrom<SEXP> for List {
+    type Error = harp::Error;
+    fn try_from(value: SEXP) -> harp::Result<Self> {
+        super::try_r_vector_from_r_sexp(value)
+    }
+}
+
+impl TryFrom<&List> for Vec<RObject> {
+    type Error = harp::Error;
+    fn try_from(value: &List) -> harp::Result<Self> {
+        super::try_vec_from_r_vector(value)
     }
 }

@@ -1,7 +1,7 @@
 //
 // character_vector.rs
 //
-// Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2022-2024 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -157,5 +157,13 @@ mod test {
             assert_eq!(s, alphabet);
 
         }
+    }
+}
+
+impl TryFrom<&CharacterVector> for Vec<String> {
+    type Error = harp::Error;
+
+    fn try_from(value: &CharacterVector) -> harp::Result<Self> {
+        super::try_vec_from_r_vector(value)
     }
 }

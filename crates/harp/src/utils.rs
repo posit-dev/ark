@@ -43,12 +43,7 @@ use crate::vector::CharacterVector;
 use crate::vector::IntegerVector;
 use crate::vector::Vector;
 
-pub fn init_utils() {
-    unsafe {
-        let options_fn = Rf_eval(r_symbol!("options"), R_BaseEnv);
-        OPTIONS_FN = Some(options_fn);
-    }
-}
+pub fn init_utils() {}
 
 // NOTE: Regex::new() is quite slow to compile, so it's much better to keep
 // a single singleton pattern and use that repeatedly for matches.
@@ -154,6 +149,22 @@ pub fn r_assert_length(object: SEXP, expected: usize) -> Result<usize> {
     }
 
     Ok(actual)
+}
+
+pub fn assert_class(object: SEXP, expected: &str) -> Result<()> {
+    if !RObject::view(object).inherits(expected) {
+        let actual = RObject::view(object).class()?;
+        return Err(Error::UnexpectedClass(actual, expected.into()));
+    }
+
+    Ok(())
+}
+
+pub fn assert_non_optional<T>(object: Vec<Option<T>>) -> harp::Result<Vec<T>> {
+    let Some(non_optional): Option<Vec<T>> = object.into_iter().collect() else {
+        return Err(harp::anyhow!("Values are unexpectedly missing"));
+    };
+    Ok(non_optional)
 }
 
 pub fn r_is_data_frame(object: SEXP) -> bool {
@@ -347,7 +358,7 @@ pub fn get_option(name: &str) -> RObject {
 
 pub fn r_inherits(object: SEXP, class: &str) -> bool {
     let class = CString::new(class).unwrap();
-    unsafe { Rf_inherits(object, class.as_ptr()) != 0 }
+    unsafe { libr::Rf_inherits(object, class.as_ptr()) != 0 }
 }
 
 pub fn r_is_function(object: SEXP) -> bool {
@@ -679,15 +690,13 @@ where
     return false;
 }
 
-static mut OPTIONS_FN: Option<SEXP> = None;
-
 // Note this might throw if wrong data types are passed in. The C-level
 // implementation of `options()` type-checks some base options.
 pub fn r_poke_option(sym: SEXP, value: SEXP) -> SEXP {
     unsafe {
         let mut protect = RProtect::new();
 
-        let call = r_lang!(OPTIONS_FN.unwrap_unchecked(), !!sym = value);
+        let call = r_lang!(r_symbol!("options"), !!sym = value);
         protect.add(call);
 
         // `options()` is guaranteed by R to return a list

@@ -20,6 +20,7 @@ use crate::error::Error;
 use crate::exec::RFunction;
 use crate::exec::RFunctionExt;
 use crate::protect::RProtect;
+use crate::r_inherits;
 use crate::r_symbol;
 use crate::size::r_size;
 use crate::utils::r_assert_capacity;
@@ -121,10 +122,12 @@ impl AsRef<SEXP> for RObject {
 }
 
 pub trait RObjectExt<T> {
-    unsafe fn elt(&self, index: T) -> crate::error::Result<RObject>;
+    fn elt(&self, index: T) -> crate::error::Result<RObject>;
 }
 
 impl PartialEq for RObject {
+    // FIXME: At call sites, not obvious that this is doing identity comparisons.
+    // Can we require explicit `FOO.sexp == BAR.sexp`?
     fn eq(&self, other: &Self) -> bool {
         self.sexp == other.sexp
     }
@@ -132,7 +135,7 @@ impl PartialEq for RObject {
 impl Eq for RObject {}
 
 impl<T: Into<RObject>> RObjectExt<T> for RObject {
-    unsafe fn elt(&self, index: T) -> crate::error::Result<RObject> {
+    fn elt(&self, index: T) -> crate::error::Result<RObject> {
         let index: RObject = index.into();
         RFunction::new("base", "[[")
             .add(self.sexp)
@@ -448,7 +451,7 @@ impl RObject {
     /// attribute). Returns `None` if the object's value(s) don't have names.
     pub fn names(&self) -> Option<Vec<Option<String>>> {
         let names = unsafe { Rf_getAttrib(self.sexp, R_NamesSymbol) };
-        let names = RObject::view(names);
+        let names = RObject::from(names);
         match names.kind() {
             STRSXP => Vec::<Option<String>>::try_from(names).ok(),
             _ => None,
@@ -472,6 +475,37 @@ impl RObject {
             Rf_setAttrib(self.sexp, r_symbol!(name), value);
             Rf_unprotect(1);
         }
+    }
+
+    pub fn inherits(&self, class: &str) -> bool {
+        return r_inherits(self.sexp, class);
+    }
+
+    pub fn class(&self) -> harp::Result<Option<Vec<String>>> {
+        let Some(class) = self.attr("class") else {
+            return Ok(None);
+        };
+
+        if !r_is_object(self.sexp) {
+            return Err(harp::anyhow!(
+                "Object has a class vector but `OBJECT` attribute is unset"
+            ));
+        }
+
+        Ok(Some(class.try_into()?))
+    }
+
+    pub fn dim(&self) -> harp::Result<Option<Vec<usize>>> {
+        let dim: RObject = r_dim(self.sexp).into();
+
+        if dim.sexp == harp::r_null() {
+            return Ok(None);
+        }
+
+        let dim: Vec<i32> = dim.try_into()?;
+        let dim = dim.into_iter().map(|d| d as usize).collect();
+
+        Ok(Some(dim))
     }
 
     pub fn duplicate(&self) -> RObject {
@@ -868,21 +902,54 @@ impl TryFrom<RObject> for f64 {
     }
 }
 
+// TODO(harp-try-from-robject-ref): Remove in favour of `&RObject`
+impl TryFrom<RObject> for Vec<i32> {
+    type Error = crate::error::Error;
+    fn try_from(value: RObject) -> Result<Self, Self::Error> {
+        (&value).try_into()
+    }
+}
+
+impl TryFrom<&RObject> for Vec<bool> {
+    type Error = harp::Error;
+    fn try_from(value: &RObject) -> harp::Result<Self> {
+        (&harp::vector::LogicalVector::try_from(value.sexp)?).try_into()
+    }
+}
+
+impl TryFrom<&RObject> for Vec<i32> {
+    type Error = harp::Error;
+    fn try_from(value: &RObject) -> harp::Result<Self> {
+        (&harp::vector::IntegerVector::try_from(value.sexp)?).try_into()
+    }
+}
+
+impl TryFrom<&RObject> for Vec<f64> {
+    type Error = crate::error::Error;
+    fn try_from(value: &RObject) -> Result<Self, Self::Error> {
+        (&harp::vector::NumericVector::try_from(value.sexp)?).try_into()
+    }
+}
+
+impl TryFrom<&RObject> for Vec<u8> {
+    type Error = crate::error::Error;
+    fn try_from(value: &RObject) -> Result<Self, Self::Error> {
+        (&harp::vector::RawVector::try_from(value.sexp)?).try_into()
+    }
+}
+
+// TODO(harp-try-from-robject-ref): Remove in favour of `&RObject`
 impl TryFrom<RObject> for Vec<String> {
     type Error = crate::error::Error;
     fn try_from(value: RObject) -> Result<Self, Self::Error> {
-        unsafe {
-            r_assert_type(*value, &[STRSXP, NILSXP])?;
+        (&value).try_into()
+    }
+}
 
-            let mut result: Vec<String> = Vec::new();
-            let n = Rf_xlength(*value);
-            for i in 0..n {
-                let res = r_chr_get_owned_utf8(*value, i)?;
-                result.push(res);
-            }
-
-            return Ok(result);
-        }
+impl TryFrom<&RObject> for Vec<String> {
+    type Error = crate::error::Error;
+    fn try_from(value: &RObject) -> Result<Self, Self::Error> {
+        (&harp::vector::CharacterVector::try_from(value.sexp)?).try_into()
     }
 }
 
@@ -902,45 +969,18 @@ impl TryFrom<RObject> for Vec<Option<String>> {
     }
 }
 
-impl TryFrom<RObject> for Vec<i32> {
-    type Error = crate::error::Error;
-    fn try_from(value: RObject) -> Result<Self, Self::Error> {
-        unsafe {
-            r_assert_type(value.sexp, &[INTSXP, NILSXP])?;
-            if r_is_null(value.sexp) {
-                return Ok(Vec::new());
-            }
-
-            let n = Rf_xlength(value.sexp);
-            let mut result: Vec<i32> = Vec::with_capacity(n as usize);
-            for i in 0..n {
-                let res = INTEGER_ELT(value.sexp, i);
-                if res == R_NaInt {
-                    return Err(Error::MissingValueError);
-                }
-                result.push(res);
-            }
-
-            return Ok(result);
-        }
-    }
-}
-
+// TODO(harp-try-from-robject-ref): Remove in favour of `&RObject`
 impl TryFrom<RObject> for Vec<RObject> {
     type Error = crate::error::Error;
     fn try_from(value: RObject) -> Result<Self, Self::Error> {
-        unsafe {
-            r_assert_type(value.sexp, &[VECSXP])?;
+        (&value).try_into()
+    }
+}
 
-            let n = Rf_xlength(value.sexp);
-            let mut result: Vec<RObject> = Vec::with_capacity(n as usize);
-            for i in 0..n {
-                let res = value.vector_elt(i)?;
-                result.push(res);
-            }
-
-            return Ok(result);
-        }
+impl TryFrom<&RObject> for Vec<RObject> {
+    type Error = crate::error::Error;
+    fn try_from(value: &RObject) -> Result<Self, Self::Error> {
+        (&harp::vector::List::try_from(value.sexp)?).try_into()
     }
 }
 

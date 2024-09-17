@@ -14,6 +14,7 @@ use crate::utils::r_assert_capacity;
 use crate::utils::r_assert_type;
 
 pub mod list;
+pub use list::List;
 
 pub mod character_vector;
 pub use character_vector::CharacterVector;
@@ -47,7 +48,7 @@ pub struct FormatOptions {
     pub quote: bool,
 }
 
-pub trait Vector {
+pub trait Vector: Sized {
     type Type;
     type Item: ?Sized;
     const SEXPTYPE: u32;
@@ -81,13 +82,13 @@ pub trait Vector {
         Ok(value)
     }
 
-    unsafe fn new(object: impl Into<SEXP>) -> Result<Self>
+    fn new(object: impl Into<SEXP>) -> Result<Self>
     where
         Self: Sized,
     {
         let object = object.into();
         r_assert_type(object, &[Self::SEXPTYPE])?;
-        Ok(Self::new_unchecked(object))
+        unsafe { Ok(Self::new_unchecked(object)) }
     }
 
     unsafe fn with_length(size: usize) -> Self
@@ -116,4 +117,80 @@ pub trait Vector {
             None => String::from("NA"),
         }
     }
+
+    fn iter(&self) -> harp::vector::VectorIterator<'_, Self> {
+        let size = unsafe { self.len() as isize };
+        harp::vector::VectorIterator {
+            data: self,
+            index: 0,
+            size,
+        }
+    }
+}
+
+pub struct VectorIterator<'a, VectorType> {
+    data: &'a VectorType,
+    index: isize,
+    size: isize,
+}
+
+impl<'a, T> std::iter::Iterator for VectorIterator<'a, T>
+where
+    T: Vector,
+{
+    type Item = Option<<T as Vector>::Type>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index == self.size {
+            return None;
+        }
+
+        // TODO: having the iterator to call get_unchecked()
+        //       feels wrong because down the line this will
+        //       need to call REAL_ELT(), STRING_ELT() etc ...
+        //       which has some extra cost one the R side
+        //
+        //       This is the opposite problem of calling
+        //       DATAPTR() which gives a contiguous array
+        //       but has to materialize for it which might be
+        //       costly for ALTREP() vectors
+        //
+        //       The compromise that was used in cpp11 is to use
+        //       GET_REGION and work on partial materialization
+        let item = self.data.get_unchecked(self.index);
+        self.index = self.index + 1;
+        Some(item)
+    }
+}
+
+// Can we integrate this in a generic `TryFrom` impl for `Vector` objects?
+pub(crate) fn try_vec_from_r_vector<VectorType>(
+    value: &VectorType,
+) -> harp::Result<Vec<VectorType::Type>>
+where
+    VectorType: Vector,
+{
+    unsafe {
+        let mut result: Vec<VectorType::Type> = Vec::with_capacity(value.len());
+
+        for val in value.iter() {
+            let Some(x) = val else {
+                return Err(harp::Error::MissingValueError);
+            };
+            result.push(x);
+        }
+
+        return Ok(result);
+    }
+}
+
+pub(crate) fn try_r_vector_from_r_sexp<VectorType>(value: SEXP) -> harp::Result<VectorType>
+where
+    VectorType: Vector,
+{
+    if value == harp::RObject::null().sexp {
+        return Ok(unsafe { VectorType::with_length(0) });
+    }
+
+    VectorType::new(value)
 }
