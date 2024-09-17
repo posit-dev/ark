@@ -36,6 +36,9 @@ pub fn r_size(x: SEXP) -> harp::Result<usize> {
     let sizeof_vector: f64 = harp::parse_eval_base("as.vector(utils::object.size(logical()))")
         .and_then(|x| x.try_into())?;
 
+    // The tree-walking implementation potentially violates R internals,
+    // so we protect against errors thrown by R (and hope for no crash).
+    // https://github.com/posit-dev/positron/issues/4686
     harp::try_catch(|| {
         obj_size_tree(
             x,
