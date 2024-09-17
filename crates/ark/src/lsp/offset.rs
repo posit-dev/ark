@@ -24,12 +24,12 @@ impl From<harp::srcref::SrcRef> for ArkRange {
     fn from(value: harp::srcref::SrcRef) -> Self {
         ArkRange {
             start: ArkPoint {
-                row: value.line.start,
-                column: value.column.start,
+                row: value.line.start as usize,
+                column: value.column.start as usize,
             },
             end: ArkPoint {
-                row: value.line.end,
-                column: value.column.end,
+                row: value.line.end as usize,
+                column: value.column.end as usize,
             },
         }
     }
@@ -130,6 +130,13 @@ fn line_offset(text: &str, line: usize) -> Option<usize> {
         .skip(line - 1)
         .next()
         .map(|res| res.0 + 1)
+}
+
+pub fn range_into_text_range<T>(range: std::ops::Range<T>) -> text_size::TextRange
+where
+    T: Into<text_size::TextSize>,
+{
+    text_size::TextRange::new(range.start.into(), range.end.into())
 }
 
 #[cfg(test)]

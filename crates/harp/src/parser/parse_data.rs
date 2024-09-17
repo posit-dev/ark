@@ -12,15 +12,15 @@ pub struct ParseData {
 pub struct ParseDataNode {
     /// Unlike `SrcRef`, parse data nodes don't include virtual line information
     /// created by `#line` directives. 0-based `[ )` range.
-    pub line: std::ops::Range<usize>,
+    pub line: std::ops::Range<u32>,
 
     /// Parse data nodes only contain column offset according to the text
     /// encoding used by the parser. 0-based `[ )` range.
-    pub column: std::ops::Range<usize>,
+    pub column: std::ops::Range<u32>,
 
     /// 0-based indices into the storage vector.
-    pub id: usize,
-    pub parent: usize,
+    pub id: u32,
+    pub parent: u32,
 
     /// Node kind.
     pub kind: ParseDataKind,
@@ -60,11 +60,11 @@ impl ParseData {
         // ranges in `srcref` vectors which are 1-based `[ ]`.
 
         // Change from 1-based to 0-based counting
-        let adjust_start = |i| (i - 1) as usize;
+        let adjust_start = |i| (i - 1) as u32;
 
         // Change from 1-based to 0-based counting (-1) and make it an exclusive
         // boundary (+1). So essentially a no-op.
-        let adjust_end = |i| i as usize;
+        let adjust_end = |i| i as u32;
 
         let row_iter = itertools::izip!(
             line1.into_iter(),
@@ -96,8 +96,8 @@ impl ParseData {
                     start: adjust_start(col1),
                     end: adjust_end(col2),
                 },
-                id: id as usize,
-                parent: parent as usize,
+                id: id as u32,
+                parent: parent as u32,
                 kind: if terminal {
                     ParseDataKind::Token(token)
                 } else {
@@ -122,7 +122,7 @@ impl ParseData {
 }
 
 impl ParseDataNode {
-    pub fn as_point_range(&self) -> std::ops::Range<(usize, usize)> {
+    pub fn as_point_range(&self) -> std::ops::Range<(u32, u32)> {
         std::ops::Range {
             start: (self.line.start, self.column.start),
             end: (self.line.end, self.column.end),
