@@ -509,6 +509,8 @@ fn test_statement_range() {
     // by tree-sitter. It is generally best to left align the string against the
     // far left margin to avoid unexpected whitespace and mimic real life.
     fn statement_range_test(x: &str) {
+        let original = x;
+
         let lines = x.split("\n").collect::<Vec<&str>>();
 
         let mut cursor: Option<Point> = None;
@@ -660,8 +662,8 @@ fn test_statement_range() {
 
         let node = find_statement_range_node(&root, cursor.unwrap().row).unwrap();
 
-        assert_eq!(node.start_position(), sel_start.unwrap());
-        assert_eq!(node.end_position(), sel_end.unwrap());
+        assert_eq!(node.start_position(), sel_start.unwrap(), "Failed on test {original}");
+        assert_eq!(node.end_position(), sel_end.unwrap(), "Failed on test {original}");
     }
 
     // Simple test
