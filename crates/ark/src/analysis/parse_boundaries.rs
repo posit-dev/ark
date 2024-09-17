@@ -373,6 +373,14 @@ mod tests {
                 Some(std::ops::Range { start: 1, end: 2 })
             );
             assert_eq!(boundaries.error, Some(std::ops::Range { start: 2, end: 3 }));
+
+            let boundaries = parse_boundaries("foo +\n  bar +;").unwrap();
+            assert_eq!(boundaries.complete.len(), 0);
+            assert_eq!(
+                boundaries.incomplete,
+                Some(std::ops::Range { start: 0, end: 1 })
+            );
+            assert_eq!(boundaries.error, Some(std::ops::Range { start: 1, end: 2 }));
         });
     }
 }
