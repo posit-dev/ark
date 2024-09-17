@@ -6,47 +6,48 @@
 #
 
 ark_methods_table <- new.env(parent = emptyenv())
+ark_methods_table$ark_variable_display_value <- new.env(parent = emptyenv())
+ark_methods_table$ark_variable_display_type <- new.env(parent = emptyenv())
+ark_methods_table$ark_variable_has_children <- new.env(parent = emptyenv())
+ark_methods_table$ark_variable_kind <- new.env(parent = emptyenv())
+lockEnvironment(ark_methods_table, TRUE)
 
-register_ark_method <- function(generic, class, method) {
-    method <- substitute(method)
-    if (!exists(generic, envir = ark_methods_table)) {
-        ark_methods_table[[generic]] <- new.env(parent = emptyenv())
-    }
-    ark_methods_table[[generic]][[class]] <- method
+#' Register the methods with the Positron runtime
+#'
+#' @param generic Generic function name as a character to register
+#' @param class Class name as a character
+#' @param method A method to be registered. Should be a call object.
+#' @export
+.ps.register_ark_method <- function(generic, class, method) {
+    stopifnot(
+        typeof(generic) == "character",
+        length(generic) == 1,
+        generic %in% c(
+            "ark_variable_display_value",
+            "ark_variable_display_type",
+            "ark_variable_has_children",
+            "ark_variable_kind"
+        ),
+        typeof(class) == "character"
+    )
+    for (cls in class)
+        assign(cls, method, envir = ark_methods_table[[generic]])
+
+    invisible()
 }
 
 call_ark_method <- function(generic, object, ...) {
     methods_table <- ark_methods_table[[generic]]
 
-    if (is.null(methods_table)) {
-        stop("No methods registered for generic '", generic, "'")
-    }
+    if (is.null(methods_table))
+        return(NULL)
 
     for (cl in class(object)) {
-        if (exists(cl, envir = methods_table)) {
-            return(do.call(eval(methods_table[[cl]], envir = globalenv()), list(object, ...)))
+        if (is.function(method <- get0(cl, envir = methods_table))) {
+            return(eval(as.call(list(method, object, ...)),
+                        envir = globalenv()))
         }
     }
 
-    stop("No methods found for object")
-}
-
-#' Register the methods with the Positron runtime
-#'
-#' @param generic Generic function name as a character to register
-#' @param class class name as a character
-#' @param method A method to be registered. Should be a call object.
-.ps.register_ark_method <- function(generic, class, method) {
-    # Even though methods are stored in an R environment, we call into Rust
-    # to make sure we have a single source of truth for generic names.
-
-    # Functions are inlined, so we always construct the call into them.
-    # this also allows registering with eg: `pkg::fun` without explicitly
-    # using the function from that namespace, which might change at points
-    # in time.
-    if (is.function(method)) {
-        method <- substitute(method)
-    }
-
-    .ps.Call("ps_register_ark_method", generic, class, substitute(method))
+    NULL
 }

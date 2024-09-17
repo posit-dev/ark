@@ -5,7 +5,6 @@
 //
 //
 
-use std::collections::HashMap;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
@@ -13,7 +12,6 @@ use amalthea::comm::variables_comm::ClipboardFormatFormat;
 use amalthea::comm::variables_comm::Variable;
 use amalthea::comm::variables_comm::VariableKind;
 use anyhow::anyhow;
-use anyhow::Context;
 use harp::environment::Binding;
 use harp::environment::BindingValue;
 use harp::environment::Environment;
@@ -76,10 +74,11 @@ fn plural(text: &str, n: i32) -> String {
 impl WorkspaceVariableDisplayValue {
     pub fn from(value: SEXP) -> Self {
         // Try to use the display method if there's one available
-        if let Ok(display_value) =
-            dispatch_variables_method(ArkVariablesGenerics::VariableDisplayValue, value)
-        {
-            return Self::from_untruncated_display_value(display_value);
+
+        match try_from_method_display_type(value, MAX_DISPLAY_VALUE_LENGTH) {
+            Err(e) => log::error!("Error from 'ark_variable_display_value' method: {e}"),
+            Ok(None) => {},
+            Ok(Some(display_value)) => return Self::new(display_value, false),
         }
 
         match r_typeof(value) {
@@ -316,13 +315,6 @@ impl WorkspaceVariableDisplayValue {
         log::trace!("Error while formatting variable: {err:?}");
         Self::new(String::from("??"), true)
     }
-
-    fn from_untruncated_display_value(display_value: String) -> Self {
-        let mut display_value = display_value.clone();
-        let is_truncated = display_value.len() > MAX_DISPLAY_VALUE_LENGTH;
-        display_value.truncate(MAX_DISPLAY_VALUE_LENGTH);
-        Self::new(display_value, is_truncated)
-    }
 }
 
 pub struct WorkspaceVariableDisplayType {
@@ -339,10 +331,9 @@ impl WorkspaceVariableDisplayType {
     ///   display type.
     pub fn from(value: SEXP, include_length: bool) -> Self {
         match Self::try_from_method(value, include_length) {
-            Ok(display_type) => return display_type,
-            Err(_) => {
-                // Continue on to the default approaches
-            },
+            Err(e) => log::error!("Error from 'ark_variable_display_type' method: {e}"),
+            Ok(None) => {},
+            Ok(Some(display_type)) => return display_type,
         }
 
         if r_is_null(value) {
@@ -443,15 +434,14 @@ impl WorkspaceVariableDisplayType {
         }
     }
 
-    fn try_from_method(value: SEXP, include_length: bool) -> anyhow::Result<Self> {
-        let mut args: HashMap<String, RObject> = HashMap::new();
-        args.insert(String::from("include_length"), include_length.try_into()?);
-        let display_type: String = dispatch_variables_method_with_args(
+    fn try_from_method(value: SEXP, include_length: bool) -> anyhow::Result<Option<Self>> {
+        let args = vec![(String::from("include_length"), include_length.try_into()?)];
+        let result: Option<String> = dispatch_variables_method_with_args(
             ArkVariablesGenerics::VariableDisplayType,
             value,
             args,
         )?;
-        Ok(Self::simple(display_type))
+        Ok(result.map(Self::simple))
     }
 
     fn new(display_type: String, type_info: String) -> Self {
@@ -464,10 +454,11 @@ impl WorkspaceVariableDisplayType {
 
 fn has_children(value: SEXP) -> bool {
     // Try to use the display method if there's one available
-    if let Ok(has_children) =
-        dispatch_variables_method(ArkVariablesGenerics::VariableHasChildren, value)
-    {
-        return has_children;
+
+    match try_from_method_has_children(value) {
+        Err(e) => log::error!("Error from 'ark_variable_has_children' method: {e}"),
+        Ok(None) => {},
+        Ok(Some(answer)) => return answer,
     }
 
     if RObject::view(value).is_s4() {
@@ -653,8 +644,10 @@ impl PositronVariable {
             return VariableKind::Empty;
         }
 
-        if let Ok(kind) = variable_kind_try_from_method(x) {
-            return kind;
+        match try_from_method_variable_kind(x) {
+            Err(e) => log::error!("Error from 'ark_variable_kind' method: {e}"),
+            Ok(None) => {},
+            Ok(Some(kind)) => return kind,
         }
 
         let obj = RObject::view(x);
@@ -1298,11 +1291,24 @@ impl PositronVariable {
     }
 }
 
-fn variable_kind_try_from_method(value: SEXP) -> anyhow::Result<VariableKind> {
-    let kind: String = dispatch_variables_method(ArkVariablesGenerics::VariableKind, value)
-        .context("No kind found")?;
+fn try_from_method_variable_kind(value: SEXP) -> anyhow::Result<Option<VariableKind>> {
+    let kind: Option<String> =
+        dispatch_variables_method(ArkVariablesGenerics::VariableKind, value)?;
+    match kind {
+        None => Ok(None),
+        Some(kind) => Ok(serde_json::from_str(kind.as_str())?),
+    }
+}
 
-    Ok(serde_json::from_str(kind.as_str())?)
+fn try_from_method_has_children(value: SEXP) -> anyhow::Result<Option<bool>> {
+    dispatch_variables_method(ArkVariablesGenerics::VariableHasChildren, value)
+}
+
+fn try_from_method_display_type(value: SEXP, width: usize) -> anyhow::Result<Option<String>> {
+    dispatch_variables_method_with_args(ArkVariablesGenerics::VariableDisplayType, value, vec![(
+        String::from("width"),
+        (width as i32).try_into()?,
+    )])
 }
 
 pub fn is_binding_fancy(binding: &Binding) -> bool {
