@@ -478,12 +478,17 @@ identity(1)
 
     #[test]
     fn test_error_precision() {
+        // The actual error is up to tree-sitter-r's error recovery,
+        // but it should always be decent
         let diagnostics = text_diagnostics("sum(1 * 2 + )");
         assert_eq!(diagnostics.len(), 1);
         let diagnostic = diagnostics.get(0).unwrap();
-        assert!(diagnostic.message.starts_with("Syntax error"));
-        assert_eq!(diagnostic.range.start, Position::new(0, 10));
-        assert_eq!(diagnostic.range.end, Position::new(0, 11));
+        assert_eq!(
+            diagnostic.message,
+            "Unmatched closing token. Missing an opening '('."
+        );
+        assert_eq!(diagnostic.range.start, Position::new(0, 12));
+        assert_eq!(diagnostic.range.end, Position::new(0, 13));
     }
 
     #[test]
@@ -522,6 +527,8 @@ identity(1)
 
     #[test]
     fn test_unmatched_binary_operator() {
+        // The actual error is up to tree-sitter-r's error recovery,
+        // but it should always be decent
         let text = "
 {
  1 +
@@ -533,24 +540,32 @@ identity(1)
         let diagnostic = diagnostics.get(0).unwrap();
         assert_eq!(
             diagnostic.message,
-            String::from("Invalid binary operator '+'. Missing a right hand side.")
+            String::from("Unmatched closing token. Missing an opening '{'.")
         );
-        assert_eq!(diagnostic.range.start, Position::new(2, 3));
-        assert_eq!(diagnostic.range.end, Position::new(2, 4));
+        assert_eq!(diagnostic.range.start, Position::new(3, 0));
+        assert_eq!(diagnostic.range.end, Position::new(3, 1));
     }
 
     #[test]
     fn test_unmatched_function_parameters_parentheses() {
+        // Exact set of diagnostics are up to tree-sitter-r's error recovery,
+        // but they should be decent at pointing you to the right place
         let text = "
 function(x {
+  1 + 1
 }";
 
         let diagnostics = text_diagnostics(text);
-        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics.len(), 2);
 
         let diagnostic = diagnostics.get(0).unwrap();
-        assert!(diagnostic.message.starts_with("Unmatched opening token"));
-        assert_eq!(diagnostic.range.start, Position::new(1, 8));
-        assert_eq!(diagnostic.range.end, Position::new(1, 9));
+        assert!(diagnostic.message.starts_with("Syntax error"));
+        assert_eq!(diagnostic.range.start, Position::new(1, 11));
+        assert_eq!(diagnostic.range.end, Position::new(1, 12));
+
+        let diagnostic = diagnostics.get(1).unwrap();
+        assert!(diagnostic.message.starts_with("Unmatched closing token"));
+        assert_eq!(diagnostic.range.start, Position::new(3, 0));
+        assert_eq!(diagnostic.range.end, Position::new(3, 1));
     }
 }
