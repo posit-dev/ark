@@ -156,7 +156,7 @@ mod tests {
         assert_eq!(selection.range.end_point, Point::new(3, 1));
 
         let selection = selection.parent.as_ref().unwrap();
-        assert_eq!(selection.range.start_point, Point::new(1, 0));
+        assert_eq!(selection.range.start_point, Point::new(0, 0));
         assert_eq!(selection.range.end_point, Point::new(6, 0));
         assert!(selection.parent.is_none());
     }
@@ -187,7 +187,7 @@ mod tests {
 
         // Just 1 selection, the whole document
         let selection = selections.get(0).unwrap();
-        assert_eq!(selection.range.start_point, Point::new(1, 0));
+        assert_eq!(selection.range.start_point, Point::new(0, 0));
         assert_eq!(selection.range.end_point, Point::new(6, 0));
         assert!(selection.parent.is_none());
     }
@@ -244,7 +244,7 @@ fn <- function(x, arg) {
 
         // Whole document
         let selection = selection.parent.as_ref().unwrap();
-        assert_eq!(selection.range.start_point, Point::new(1, 0));
+        assert_eq!(selection.range.start_point, Point::new(0, 0));
         assert_eq!(selection.range.end_point, Point::new(6, 0));
         assert!(selection.parent.is_none());
     }
