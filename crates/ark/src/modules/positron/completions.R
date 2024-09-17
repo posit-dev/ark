@@ -82,6 +82,15 @@ customCompletionHandlers <- new.env(parent = emptyenv())
     )
 })
 
+.ps.completions.registerCustomCompletionHandler("base", "Sys.unsetenv", "x", function(position) {
+    .ps.completions.createCustomCompletions(
+        values  = names(Sys.getenv()),
+        kind    = "unknown",
+        enquote = TRUE,
+        append  = ""
+    )
+})
+
 .ps.completions.registerCustomCompletionHandler("base", "Sys.setenv", "...", function(position) {
 
     if (position != "name")

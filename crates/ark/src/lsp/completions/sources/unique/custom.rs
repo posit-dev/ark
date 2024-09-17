@@ -308,6 +308,48 @@ mod tests {
     }
 
     #[test]
+    fn test_completion_custom_sys_unsetenv() {
+        r_test(|| {
+            let name = "ARK_TEST_ENVVAR";
+
+            harp::parse_eval_global(format!("Sys.setenv({name} = '1')").as_str()).unwrap();
+
+            let assert_has_ark_test_envvar_completion = |text: &str, point: Point| {
+                let document = Document::new(text, None);
+                let context = DocumentContext::new(&document, point, None);
+
+                let completions = completions_from_custom_source(&context).unwrap().unwrap();
+                let completion = completions
+                    .into_iter()
+                    .find(|completion| completion.label == name);
+                assert!(completion.is_some());
+
+                // Insert text is quoted!
+                let completion = completion.unwrap();
+                assert_eq!(completion.insert_text.unwrap(), format!("\"{name}\""));
+            };
+
+            // Inside the parentheses
+            let (text, point) = point_from_cursor("Sys.unsetenv(@)");
+            assert_has_ark_test_envvar_completion(text.as_str(), point);
+
+            // Typed some and then requested completions
+            let (text, point) = point_from_cursor("Sys.unsetenv(ARK_@)");
+            assert_has_ark_test_envvar_completion(text.as_str(), point);
+
+            // TODO: Technically `Sys.unsetenv()` takes a character vector, so we should probably provide
+            // completions for this too, but it probably isn't that common in practice
+            let (text, point) = point_from_cursor("Sys.unsetenv(c(@))");
+            let document = Document::new(text.as_str(), None);
+            let context = DocumentContext::new(&document, point, None);
+            let completions = completions_from_custom_source(&context).unwrap();
+            assert!(completions.is_none());
+
+            harp::parse_eval_global(format!("Sys.unsetenv('{name}')").as_str()).unwrap();
+        })
+    }
+
+    #[test]
     fn test_completion_custom_sys_setenv() {
         r_test(|| {
             let name = "ARK_TEST_ENVVAR";
