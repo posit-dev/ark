@@ -276,7 +276,7 @@ fn truncate_lines(text: String, max_lines: usize) -> String {
     }
 
     let mut text: String = text.lines().take(max_lines).collect();
-    text.push_str(&format!("... *Truncated {} lines*", n_lines - max_lines));
+    text.push_str(&format!("\n... *Truncated {} lines*", n_lines - max_lines));
 
     text
 }
