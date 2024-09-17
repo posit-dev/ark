@@ -114,13 +114,10 @@ impl TryFrom<&[SEXP]> for CharacterVector {
         unsafe {
             let vec = Self::with_length(value.len());
             let sexp = vec.object.sexp;
-            let mut iter = value.into_iter();
 
-            for i in 0..value.len() {
-                let value = iter.next().unwrap_unchecked();
-                r_assert_type(*value, &[libr::CHARSXP])?;
-
-                r_chr_poke(sexp, i as R_xlen_t, *value);
+            for (i, elt) in value.into_iter().enumerate() {
+                r_assert_type(*elt, &[libr::CHARSXP])?;
+                r_chr_poke(sexp, i as R_xlen_t, *elt);
             }
 
             Ok(vec)

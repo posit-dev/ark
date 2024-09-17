@@ -84,7 +84,7 @@ pub fn parse_boundaries(text: &str) -> anyhow::Result<ParseBoundaries> {
         };
 
         // Grab all code up to current line
-        let subset = &lines_r.slice()[..current_line + 1];
+        let subset = &lines_r.slice()[..=current_line];
         let subset = CharacterVector::try_from(subset)?;
 
         // Parse within source file to get source references
@@ -142,17 +142,18 @@ where
     T: PartialOrd + Ord + Copy,
 {
     let merge = |mut merged: Vec<std::ops::Range<T>>, range: std::ops::Range<T>| {
-        if let Some(last) = merged.last_mut() {
-            // if range.start <= last.end {
-            if last.contains(&range.start) {
-                // Overlap, merge with last range
-                last.end = last.end.max(range.end);
-            } else {
-                // No overlap, push a new range
-                merged.push(range);
-            }
-        } else {
+        let Some(last) = merged.last_mut() else {
             // First element, just add it
+            merged.push(range);
+            return merged;
+        };
+
+        // if range.start <= last.end {
+        if last.contains(&range.start) {
+            // Overlap, merge with last range
+            last.end = last.end.max(range.end);
+        } else {
+            // No overlap, push a new range
             merged.push(range);
         }
 
@@ -190,19 +191,16 @@ fn fill_gaps(mut boundaries: ParseBoundaries, n_lines: usize) -> ParseBoundaries
     }
 
     // Fill gaps between complete expressions
-    {
-        let iter = ranges.into_iter();
-        for range in iter {
-            // We found a gap, fill ranges for lines in that gap
-            if !range.contains(&last_line) {
-                for start in last_line..range.start {
-                    filled.push(range_from(start))
-                }
+    for range in ranges.into_iter() {
+        // We found a gap, fill ranges for lines in that gap
+        if !range.contains(&last_line) {
+            for start in last_line..range.start {
+                filled.push(range_from(start))
             }
-
-            last_line = range.end;
-            filled.push(range);
         }
+
+        last_line = range.end;
+        filled.push(range);
     }
 
     // Fill trailing whitespace (between complete and incomplete|error\eof)
