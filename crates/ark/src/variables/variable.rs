@@ -75,7 +75,7 @@ impl WorkspaceVariableDisplayValue {
     pub fn from(value: SEXP) -> Self {
         // Try to use the display method if there's one available
 
-        match try_from_method_display_type(value, MAX_DISPLAY_VALUE_LENGTH) {
+        match try_from_method_display_value(value, MAX_DISPLAY_VALUE_LENGTH) {
             Err(e) => log::error!("Error from 'ark_variable_display_value' method: {e}"),
             Ok(None) => {},
             Ok(Some(display_value)) => return Self::new(display_value, false),
@@ -1304,8 +1304,8 @@ fn try_from_method_has_children(value: SEXP) -> anyhow::Result<Option<bool>> {
     dispatch_variables_method(ArkVariablesGenerics::VariableHasChildren, value)
 }
 
-fn try_from_method_display_type(value: SEXP, width: usize) -> anyhow::Result<Option<String>> {
-    dispatch_variables_method_with_args(ArkVariablesGenerics::VariableDisplayType, value, vec![(
+fn try_from_method_display_value(value: SEXP, width: usize) -> anyhow::Result<Option<String>> {
+    dispatch_variables_method_with_args(ArkVariablesGenerics::VariableDisplayValue, value, vec![(
         String::from("width"),
         (width as i32).try_into()?,
     )])
