@@ -26,7 +26,7 @@ use strum_macros::IntoStaticStr;
 use crate::modules::ARK_ENVS;
 
 #[derive(Debug, PartialEq, EnumString, EnumIter, IntoStaticStr, Display, Eq, Hash, Clone)]
-pub enum ArkVariablesGenerics {
+pub enum ArkGenerics {
     #[strum(serialize = "ark_variable_display_value")]
     VariableDisplayValue,
 
@@ -40,8 +40,62 @@ pub enum ArkVariablesGenerics {
     VariableKind,
 }
 
-impl ArkVariablesGenerics {
-    fn register_method_from_package(
+impl ArkGenerics {
+    // Dispatches the method on `x`
+    // Returns
+    //   - `None` if no method was found,
+    //   - `Err` if method was found and errored
+    //   - T, if method was found and was succesfully executed
+    pub fn try_dispatch<T>(
+        &self,
+        x: SEXP,
+        args: Vec<(String, RObject)>,
+    ) -> anyhow::Result<Option<T>>
+    where
+        // Making this a generic allows us to handle the conversion to the expected output
+        // type within the dispatch, which is much more ergonomic.
+        T: TryFrom<RObject>,
+        <T as TryFrom<harp::RObject>>::Error: std::fmt::Debug,
+    {
+        if !r_is_object(x) {
+            return Ok(None);
+        }
+
+        let generic: &str = self.into();
+        let mut call = RFunction::new("", "call_ark_method");
+
+        call.add(generic);
+        call.add(x);
+
+        for (name, value) in args.into_iter() {
+            call.param(name.as_str(), value);
+        }
+
+        let result = call.call_in(ARK_ENVS.positron_ns)?;
+
+        // No method for that object
+        if result.sexp == r_null() {
+            return Ok(None);
+        }
+
+        // Convert the result to the expected return type
+        match result.try_into() {
+            Ok(value) => Ok(Some(value)),
+            Err(err) => Err(anyhow!("Conversion failed: {err:?}")),
+        }
+    }
+
+    pub fn register_method(generic: Self, class: &str, method: RObject) -> anyhow::Result<()> {
+        let generic_name: &str = generic.into();
+        RFunction::new("", ".ps.register_ark_method")
+            .add(RObject::try_from(generic_name)?)
+            .add(RObject::try_from(class)?)
+            .add(method)
+            .call_in(ARK_ENVS.positron_ns)?;
+        Ok(())
+    }
+
+    pub fn register_method_from_package(
         generic: Self,
         class: &str,
         package: &str,
@@ -57,19 +111,9 @@ impl ArkVariablesGenerics {
         Ok(())
     }
 
-    fn register_method(generic: Self, class: &str, method: RObject) -> anyhow::Result<()> {
-        let generic_name: &str = generic.into();
-        RFunction::new("", ".ps.register_ark_method")
-            .add(RObject::try_from(generic_name)?)
-            .add(RObject::try_from(class)?)
-            .add(method)
-            .call_in(ARK_ENVS.positron_ns)?;
-        Ok(())
-    }
-
     // Checks if a symbol name is a method and returns it's class
     fn parse_method(name: &String) -> Option<(Self, String)> {
-        for method in ArkVariablesGenerics::iter() {
+        for method in ArkGenerics::iter() {
             let method_str: &str = method.clone().into();
             if name.starts_with::<&str>(method_str) {
                 if let Some((_, class)) = name.split_once(".") {
@@ -105,52 +149,10 @@ pub fn populate_variable_methods_table(package: &str) -> anyhow::Result<()> {
         .map(|b| -> String { b.name.into() });
 
     for name in symbol_names {
-        if let Some((generic, class)) = ArkVariablesGenerics::parse_method(&name) {
-            ArkVariablesGenerics::register_method_from_package(generic, class.as_str(), package)?;
+        if let Some((generic, class)) = ArkGenerics::parse_method(&name) {
+            ArkGenerics::register_method_from_package(generic, class.as_str(), package)?;
         }
     }
 
     Ok(())
-}
-
-pub fn dispatch_variables_method<T>(
-    generic: ArkVariablesGenerics,
-    x: SEXP,
-) -> anyhow::Result<Option<T>>
-where
-    T: TryFrom<RObject>,
-    <T as TryFrom<RObject>>::Error: std::fmt::Debug,
-{
-    dispatch_variables_method_with_args(generic, x, Vec::new())
-}
-
-pub fn dispatch_variables_method_with_args<T>(
-    generic: ArkVariablesGenerics,
-    x: SEXP,
-    args: Vec<(String, RObject)>,
-) -> anyhow::Result<Option<T>>
-where
-    T: TryFrom<RObject>,
-    <T as TryFrom<RObject>>::Error: std::fmt::Debug,
-{
-    if !r_is_object(x) {
-        return Ok(None);
-    }
-    let generic: &str = generic.into();
-    let mut call = RFunction::new("", "call_ark_method");
-
-    call.add(generic);
-    call.add(x);
-
-    for (name, value) in args.into_iter() {
-        call.param(name.as_str(), value);
-    }
-
-    let result = call.call_in(ARK_ENVS.positron_ns)?;
-    if result.sexp == r_null() {
-        Ok(None)
-    } else {
-        let result = result.try_into().map_err(|e| anyhow!("{:?}", e))?;
-        Ok(Some(result))
-    }
 }
