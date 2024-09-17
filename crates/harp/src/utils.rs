@@ -367,7 +367,7 @@ pub fn r_is_function(object: SEXP) -> bool {
 
 pub fn r_formals(object: SEXP) -> Result<Vec<RArgument>> {
     // convert primitive functions into equivalent closures
-    let mut object = unsafe { RObject::new(object) };
+    let mut object = RObject::new(object);
     if r_typeof(*object) == BUILTINSXP || r_typeof(*object) == SPECIALSXP {
         object = RFunction::new("base", "args").add(*object).call()?;
         if r_typeof(*object) != CLOSXP {

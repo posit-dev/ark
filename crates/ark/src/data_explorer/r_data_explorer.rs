@@ -340,7 +340,7 @@ impl RDataExplorer {
                 log::error!("Old table has been deleted? This is unexpected, but we'll update the data explorer table.");
                 // It's `unsafe` because RObject::new calls protect, and it shouldn't
                 // be called outside of the R main thread.
-                self.table.set(RThreadSafe::new(unsafe { RObject::new(new) }));
+                self.table.set(RThreadSafe::new(RObject::new(new)));
                 return true;
             });
 
@@ -348,8 +348,7 @@ impl RDataExplorer {
                 false
             } else {
                 // Safety is same as above. We guarantee this is the R main thread.
-                self.table
-                    .set(RThreadSafe::new(unsafe { RObject::new(new) }));
+                self.table.set(RThreadSafe::new(RObject::new(new)));
                 true
             }
         });

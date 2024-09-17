@@ -314,10 +314,10 @@ pub fn is_identical(x: SEXP, y: SEXP) -> bool {
 }
 
 impl RObject {
-    pub unsafe fn new(data: SEXP) -> Self {
+    pub fn new(data: SEXP) -> Self {
         RObject {
             sexp: data,
-            cell: protect(data),
+            cell: unsafe { protect(data) },
         }
     }
 
@@ -469,7 +469,7 @@ impl RObject {
         if r_is_null(val) {
             None
         } else {
-            Some(unsafe { RObject::new(val) })
+            Some(RObject::new(val))
         }
     }
 
@@ -558,7 +558,7 @@ impl Deref for RObject {
 /// Convert other object types into RObjects.
 impl From<SEXP> for RObject {
     fn from(value: SEXP) -> Self {
-        unsafe { RObject::new(value) }
+        RObject::new(value)
     }
 }
 
