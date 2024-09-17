@@ -288,6 +288,10 @@ mod tests {
             let (text, point) = point_from_cursor("Sys.getenv(@)");
             assert_has_ark_test_envvar_completion(text.as_str(), point);
 
+            // Named argument
+            let (text, point) = point_from_cursor("Sys.getenv(x = @)");
+            assert_has_ark_test_envvar_completion(text.as_str(), point);
+
             // Typed some and then requested completions
             let (text, point) = point_from_cursor("Sys.getenv(ARK_@)");
             assert_has_ark_test_envvar_completion(text.as_str(), point);
@@ -331,6 +335,10 @@ mod tests {
 
             // Inside the parentheses
             let (text, point) = point_from_cursor("Sys.unsetenv(@)");
+            assert_has_ark_test_envvar_completion(text.as_str(), point);
+
+            // Named argument
+            let (text, point) = point_from_cursor("Sys.unsetenv(x = @)");
             assert_has_ark_test_envvar_completion(text.as_str(), point);
 
             // Typed some and then requested completions
@@ -411,6 +419,10 @@ mod tests {
 
             // Inside the parentheses
             let (text, point) = point_from_cursor("getOption(@)");
+            assert_has_ark_test_envvar_completion(text.as_str(), point);
+
+            // Named argument
+            let (text, point) = point_from_cursor("getOption(x = @)");
             assert_has_ark_test_envvar_completion(text.as_str(), point);
 
             // Typed some and then requested completions
