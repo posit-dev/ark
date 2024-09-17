@@ -83,9 +83,13 @@ pub fn parse_boundaries(text: &str) -> anyhow::Result<ParseBoundaries> {
             Ok(())
         };
 
-        // Grab all code up to current line
-        let subset = &lines_r.slice()[..=current_line];
-        let subset = CharacterVector::try_from(subset)?;
+        // Grab all code up to current line. We don't slice the vector in the
+        // first iteration as it's not needed.
+        let subset = if current_line == n_lines - 1 {
+            lines_r.clone()
+        } else {
+            CharacterVector::try_from(&lines_r.slice()[..=current_line])?
+        };
 
         // Parse within source file to get source references
         let srcfile = harp::srcref::SrcFile::try_from(&subset)?;

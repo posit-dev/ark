@@ -24,6 +24,7 @@ use crate::vector::FormatOptions;
 use crate::vector::Vector;
 
 #[harp_macros::vector]
+#[derive(Clone)]
 pub struct CharacterVector {
     pub object: RObject,
 }
