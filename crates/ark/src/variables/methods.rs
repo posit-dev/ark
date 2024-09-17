@@ -5,9 +5,6 @@
 //
 //
 
-use std::collections::HashMap;
-use std::str::FromStr;
-
 use anyhow::anyhow;
 use harp::environment::r_ns_env;
 use harp::environment::BindingValue;
@@ -15,6 +12,7 @@ use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::r_null;
 use harp::r_symbol;
+use harp::utils::r_is_object;
 use harp::RObject;
 use libr::Rf_lang3;
 use libr::SEXP;
@@ -61,7 +59,7 @@ impl ArkVariablesGenerics {
 
     fn register_method(generic: Self, class: &str, method: RObject) -> anyhow::Result<()> {
         let generic_name: &str = generic.into();
-        RFunction::new("", "register_ark_method")
+        RFunction::new("", ".ps.register_ark_method")
             .add(RObject::try_from(generic_name)?)
             .add(RObject::try_from(class)?)
             .add(method)
@@ -74,12 +72,9 @@ impl ArkVariablesGenerics {
         for method in ArkVariablesGenerics::iter() {
             let method_str: &str = method.clone().into();
             if name.starts_with::<&str>(method_str) {
-                return Some((
-                    method,
-                    name.trim_start_matches::<&str>(method_str)
-                        .trim_start_matches('.')
-                        .to_string(),
-                ));
+                if let Some((_, class)) = name.split_once(".") {
+                    return Some((method, class.to_string()));
+                }
             }
         }
         None
@@ -118,52 +113,44 @@ pub fn populate_variable_methods_table(package: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn dispatch_variables_method<T>(generic: ArkVariablesGenerics, x: SEXP) -> anyhow::Result<T>
+pub fn dispatch_variables_method<T>(
+    generic: ArkVariablesGenerics,
+    x: SEXP,
+) -> anyhow::Result<Option<T>>
 where
     T: TryFrom<RObject>,
     <T as TryFrom<RObject>>::Error: std::fmt::Debug,
 {
-    dispatch_variables_method_with_args(generic, x, HashMap::new())
+    dispatch_variables_method_with_args(generic, x, Vec::new())
 }
 
 pub fn dispatch_variables_method_with_args<T>(
     generic: ArkVariablesGenerics,
     x: SEXP,
-    args: HashMap<String, RObject>,
-) -> anyhow::Result<T>
+    args: Vec<(String, RObject)>,
+) -> anyhow::Result<Option<T>>
 where
     T: TryFrom<RObject>,
     <T as TryFrom<RObject>>::Error: std::fmt::Debug,
 {
-    let generic_name: &str = generic.into();
+    if !r_is_object(x) {
+        return Ok(None);
+    }
+    let generic: &str = generic.into();
     let mut call = RFunction::new("", "call_ark_method");
 
-    call.add(generic_name);
+    call.add(generic);
     call.add(x);
 
     for (name, value) in args.into_iter() {
         call.param(name.as_str(), value);
     }
 
-    match call.call_in(ARK_ENVS.positron_ns)?.try_into() {
-        Ok(value) => Ok(value),
-        Err(err) => Err(anyhow!("Failed converting to type: {err:?}")),
+    let result = call.call_in(ARK_ENVS.positron_ns)?;
+    if result.sexp == r_null() {
+        Ok(None)
+    } else {
+        let result = result.try_into().map_err(|e| anyhow!("{:?}", e))?;
+        Ok(Some(result))
     }
-}
-
-#[harp::register]
-extern "C" fn ps_register_ark_method(
-    generic: SEXP,
-    class: SEXP,
-    method: SEXP,
-) -> anyhow::Result<SEXP> {
-    let generic: String = RObject::from(generic).try_into()?;
-    let class: String = RObject::from(class).try_into()?;
-
-    ArkVariablesGenerics::register_method(
-        ArkVariablesGenerics::from_str(generic.as_str())?,
-        class.as_str(),
-        RObject::from(method),
-    )?;
-    Ok(r_null())
 }
