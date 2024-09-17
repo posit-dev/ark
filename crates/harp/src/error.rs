@@ -101,7 +101,7 @@ impl fmt::Display for Error {
                 ..
             } => {
                 if let Some(code) = code {
-                    let code = truncate_lines(code.clone(), 50);
+                    let code = truncate_lines(code.to_owned(), 50);
                     write!(f, "Error evaluating '{code}': {message}")?;
                 } else {
                     write!(f, "{message}")?;
@@ -112,7 +112,7 @@ impl fmt::Display for Error {
                 // https://users.rust-lang.org/t/why-doesnt-anyhows-debug-formatter-include-the-underlying-debug-formatting/44227
 
                 if !r_trace.is_empty() {
-                    let r_trace = truncate_lines(r_trace.clone(), 500);
+                    let r_trace = truncate_lines(r_trace.to_owned(), 500);
                     writeln!(f, "\n\nR backtrace:\n{r_trace}")?;
                 }
 
