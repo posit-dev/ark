@@ -23,14 +23,11 @@ impl DataFrame {
         let list = List::new(sexp)?;
         harp::assert_class(sexp, "data.frame")?;
 
-        // SAFETY: Protected by `list`
-        let obj = RObject::view(sexp);
-
-        let dim = unsafe { harp::df_dim(obj.sexp) }?;
+        let dim = unsafe { harp::df_dim(list.obj.sexp) }?;
         let nrow = dim.num_rows as usize;
         let ncol = list.obj.length() as usize;
 
-        let Some(names) = obj.names() else {
+        let Some(names) = list.obj.names() else {
             return Err(harp::anyhow!("Data frame must have names"));
         };
         let Ok(names) = harp::assert_non_optional(names) else {
@@ -51,6 +48,9 @@ impl DataFrame {
                 ));
             }
         }
+
+        // SAFETY: Protected by `list`
+        let obj = RObject::view(sexp);
 
         Ok(Self {
             list,
