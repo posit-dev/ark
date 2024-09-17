@@ -118,7 +118,7 @@ impl TryFrom<RObject> for SrcRef {
 /// Creates the same sort of srcfile object as with `parse(text = )`.
 /// Takes code as an R string containing newlines, or as a R vector of lines.
 impl SrcFile {
-    pub fn new_virtual(text: RObject) -> harp::Result<Self> {
+    fn new_virtual(text: RObject) -> harp::Result<Self> {
         let inner = RFunction::new("base", "srcfilecopy")
             .param("filename", "<text>")
             .param("lines", text)
