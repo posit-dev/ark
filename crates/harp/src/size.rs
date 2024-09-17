@@ -30,13 +30,10 @@ use crate::r_typeof;
 pub fn r_size(x: SEXP) -> harp::Result<usize> {
     let mut seen: HashSet<SEXP> = HashSet::new();
 
-    let sizeof_node: f64 = harp::parse_eval0(
-        "as.vector(utils::object.size(quote(expr = )))",
-        R_ENVS.global,
-    )
-    .and_then(|x| x.try_into())?;
+    let sizeof_node: f64 = harp::parse_eval_base("as.vector(utils::object.size(quote(expr = )))")
+        .and_then(|x| x.try_into())?;
 
-    let sizeof_vector: f64 = harp::parse_eval_global("as.vector(utils::object.size(logical()))")
+    let sizeof_vector: f64 = harp::parse_eval_base("as.vector(utils::object.size(logical()))")
         .and_then(|x| x.try_into())?;
 
     harp::try_catch(|| {
