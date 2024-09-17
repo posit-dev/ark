@@ -10,10 +10,11 @@ use libr::R_xlen_t;
 use libr::Rf_allocVector;
 use libr::DATAPTR;
 use libr::LGLSXP;
-use libr::LOGICAL_ELT;
 use libr::SEXP;
 
 use crate::object::RObject;
+use crate::r_lgl_na;
+use crate::try_lgl_get;
 use crate::vector::FormatOptions;
 use crate::vector::Vector;
 
@@ -61,8 +62,12 @@ impl Vector for LogicalVector {
         unsafe { *x == R_NaInt }
     }
 
-    fn get_unchecked_elt(&self, index: isize) -> Self::UnderlyingType {
-        unsafe { LOGICAL_ELT(self.data(), index as R_xlen_t) }
+    fn get_unchecked_elt(&self, index: isize) -> harp::Result<Self::UnderlyingType> {
+        try_lgl_get(self.data(), R_xlen_t::from(index))
+    }
+
+    fn error_elt() -> Self::UnderlyingType {
+        r_lgl_na()
     }
 
     fn convert_value(x: &Self::UnderlyingType) -> Self::Type {

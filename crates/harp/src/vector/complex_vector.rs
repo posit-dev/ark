@@ -9,12 +9,13 @@ use libr::R_IsNA;
 use libr::R_xlen_t;
 use libr::Rcomplex;
 use libr::Rf_allocVector;
-use libr::COMPLEX_ELT;
 use libr::CPLXSXP;
 use libr::DATAPTR;
 use libr::SEXP;
 
 use crate::object::RObject;
+use crate::r_cpl_na;
+use crate::try_cpl_get;
 use crate::vector::FormatOptions;
 use crate::vector::Vector;
 
@@ -74,8 +75,12 @@ impl Vector for ComplexVector {
         unsafe { R_IsNA(x.r) == 1 || R_IsNA(x.i) == 1 }
     }
 
-    fn get_unchecked_elt(&self, index: isize) -> Self::UnderlyingType {
-        unsafe { Complex::new(COMPLEX_ELT(self.data(), index as R_xlen_t)) }
+    fn get_unchecked_elt(&self, index: isize) -> harp::Result<Self::UnderlyingType> {
+        try_cpl_get(self.data(), R_xlen_t::from(index)).map(Complex::new)
+    }
+
+    fn error_elt() -> Self::UnderlyingType {
+        Complex::new(r_cpl_na())
     }
 
     fn convert_value(x: &Self::UnderlyingType) -> Self::Type {

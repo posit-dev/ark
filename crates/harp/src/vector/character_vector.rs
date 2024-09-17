@@ -13,10 +13,11 @@ use libr::R_xlen_t;
 use libr::Rf_mkCharLenCE;
 use libr::SET_STRING_ELT;
 use libr::SEXP;
-use libr::STRING_ELT;
 use libr::STRSXP;
 
 use crate::object::RObject;
+use crate::r_str_na;
+use crate::try_chr_get;
 use crate::utils::r_str_to_owned_utf8_unchecked;
 use crate::vector::FormatOptions;
 use crate::vector::Vector;
@@ -73,8 +74,12 @@ impl Vector for CharacterVector {
         unsafe { *x == R_NaString }
     }
 
-    fn get_unchecked_elt(&self, index: isize) -> Self::UnderlyingType {
-        unsafe { STRING_ELT(self.data(), index as R_xlen_t) }
+    fn get_unchecked_elt(&self, index: isize) -> harp::Result<Self::UnderlyingType> {
+        try_chr_get(self.data(), R_xlen_t::from(index))
+    }
+
+    fn error_elt() -> Self::UnderlyingType {
+        r_str_na()
     }
 
     fn convert_value(x: &Self::UnderlyingType) -> Self::Type {
