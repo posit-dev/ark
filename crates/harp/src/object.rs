@@ -498,7 +498,7 @@ impl RObject {
     pub fn dim(&self) -> harp::Result<Option<Vec<usize>>> {
         let dim: RObject = r_dim(self.sexp).into();
 
-        if dim.sexp == RObject::null().sexp {
+        if dim.sexp == harp::r_null() {
             return Ok(None);
         }
 
