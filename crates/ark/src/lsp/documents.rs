@@ -225,4 +225,11 @@ mod tests {
         let point = compute_point(Point::new(0, 0), "abcdefghi\n");
         assert_eq!(point, Point::new(1, 0));
     }
+
+    #[test]
+    fn test_document_starts_at_0_0_with_leading_whitespace() {
+        let document = Document::new("\n\n# hi there", None);
+        let root = document.ast.root_node();
+        assert_eq!(root.start_position(), Point::new(0, 0));
+    }
 }
