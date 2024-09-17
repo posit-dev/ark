@@ -321,7 +321,6 @@ dependencies = [
  "stdext",
  "struct-field-names-as-array",
  "strum 0.26.2",
- "text-size",
  "tokio",
  "tower-lsp",
  "tracing",
@@ -2852,12 +2851,6 @@ checksum = "be55cf8942feac5c765c2c993422806843c9a9a45d4d5c407ad6dd2ea95eb9b6"
 dependencies = [
  "winapi-util",
 ]
-
-[[package]]
-name = "text-size"
-version = "1.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f18aa187839b2bdb1ad2fa35ead8c4c2976b64e4363c386d45ac0f7ee85c9233"
 
 [[package]]
 name = "thiserror"

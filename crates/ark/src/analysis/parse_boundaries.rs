@@ -9,12 +9,8 @@ use harp::vector::CharacterVector;
 use harp::vector::Vector;
 use harp::ParseResult;
 use harp::RObject;
-use text_size::TextRange;
-use text_size::TextSize;
 
-use crate::lsp::coordinates::line_range;
-use crate::lsp::coordinates::LineRange;
-use crate::lsp::offset::range_into_text_range;
+use crate::coordinates::LineRange;
 
 /// Boundaries are ranges over lines of text.
 #[derive(Debug)]
@@ -66,7 +62,7 @@ pub fn parse_boundaries(text: &str) -> anyhow::Result<ParseBoundaries> {
         let Some(end) = error_end else {
             return;
         };
-        error = Some(line_range(start, *end));
+        error = Some(LineRange::new(start, *end));
     };
 
     let mut record_incomplete = |start, incomplete_end: &Option<u32>| {
@@ -76,16 +72,14 @@ pub fn parse_boundaries(text: &str) -> anyhow::Result<ParseBoundaries> {
         let Some(end) = incomplete_end else {
             return;
         };
-        incomplete = Some(line_range(start, *end));
+        incomplete = Some(LineRange::new(start, *end));
     };
 
     for current_line in (0..n_lines).rev() {
         let mut record_complete = |exprs: RObject| -> anyhow::Result<()> {
             let srcrefs = exprs.srcrefs()?;
-            let mut ranges: Vec<LineRange> = srcrefs
-                .into_iter()
-                .map(|srcref| range_into_text_range(srcref.line))
-                .collect();
+            let mut ranges: Vec<LineRange> =
+                srcrefs.into_iter().map(|srcref| srcref.into()).collect();
 
             complete.append(&mut ranges);
             Ok(())
@@ -149,8 +143,8 @@ pub fn parse_boundaries(text: &str) -> anyhow::Result<ParseBoundaries> {
     Ok(boundaries)
 }
 
-fn merge_overlapping(ranges: Vec<TextRange>) -> Vec<TextRange> {
-    let merge = |mut merged: Vec<TextRange>, range: TextRange| {
+fn merge_overlapping(ranges: Vec<LineRange>) -> Vec<LineRange> {
+    let merge = |mut merged: Vec<LineRange>, range: LineRange| {
         let Some(last) = merged.pop() else {
             // First element, just add it
             merged.push(range);
@@ -182,7 +176,7 @@ fn fill_gaps(mut boundaries: ParseBoundaries, n_lines: u32) -> ParseBoundaries {
 
     let mut last_line: u32 = 0;
 
-    let range_from = |start: u32| TextRange::new(start.into(), (start + 1).into());
+    let range_from = |start| LineRange::new(start, start + 1);
 
     // Fill leading whitespace with empty input ranges
     if let Some(first) = ranges
@@ -190,9 +184,9 @@ fn fill_gaps(mut boundaries: ParseBoundaries, n_lines: u32) -> ParseBoundaries {
         .or(boundaries.incomplete.as_ref())
         .or(boundaries.error.as_ref())
     {
-        for start in 0..u32::from(first.start()) {
+        for start in 0..first.start() {
             let range = range_from(start);
-            last_line = range.end().into();
+            last_line = range.end();
             filled.push(range)
         }
     }
@@ -200,30 +194,25 @@ fn fill_gaps(mut boundaries: ParseBoundaries, n_lines: u32) -> ParseBoundaries {
     // Fill gaps between complete expressions
     for range in ranges.into_iter() {
         // We found a gap, fill ranges for lines in that gap
-        if !range.contains(last_line.into()) {
-            for start in last_line..range.start().into() {
+        if !range.contains(last_line) {
+            for start in last_line..range.start() {
                 filled.push(range_from(start))
             }
         }
 
-        last_line = range.end().into();
+        last_line = range.end();
         filled.push(range);
     }
 
     // Fill trailing whitespace between complete expressions and the rest
     // (incomplete, error, or eof)
-    let last_boundary: u32 = filled
-        .last()
-        .map(|r| r.end())
-        .unwrap_or(TextSize::new(0))
-        .into();
-    let next_boundary: u32 = boundaries
+    let last_boundary = filled.last().map(|r| r.end()).unwrap_or(0);
+    let next_boundary = boundaries
         .incomplete
         .as_ref()
         .or(boundaries.error.as_ref())
         .map(|r| r.start())
-        .unwrap_or(TextSize::new(n_lines))
-        .into();
+        .unwrap_or(n_lines);
 
     for start in last_boundary..next_boundary {
         filled.push(range_from(start))
@@ -246,15 +235,15 @@ mod tests {
             let boundaries = parse_boundaries("foo").unwrap();
             #[rustfmt::skip]
             assert_eq!(boundaries.complete, vec![
-                line_range ( 0, 1 ),
+                LineRange::new(0, 1),
             ]);
             assert_match!(boundaries.incomplete, None);
             assert_match!(boundaries.error, None);
 
             let boundaries = parse_boundaries("foo\nbarbaz  ").unwrap();
             assert_eq!(boundaries.complete, vec![
-                line_range(0, 1),
-                line_range(1, 2)
+                LineRange::new(0, 1),
+                LineRange::new(1, 2)
             ]);
             assert_match!(boundaries.incomplete, None);
             assert_match!(boundaries.error, None);
@@ -267,28 +256,28 @@ mod tests {
             let boundaries = parse_boundaries("").unwrap();
             #[rustfmt::skip]
             assert_eq!(boundaries.complete, vec![
-                line_range ( 0, 1 ),
+                LineRange::new(0, 1),
             ]);
             assert_match!(boundaries.incomplete, None);
             assert_match!(boundaries.error, None);
 
             let boundaries = parse_boundaries("\n\n  \n").unwrap();
             assert_eq!(boundaries.complete, vec![
-                line_range(0, 1),
-                line_range(1, 2),
-                line_range(2, 3),
-                line_range(3, 4),
+                LineRange::new(0, 1),
+                LineRange::new(1, 2),
+                LineRange::new(2, 3),
+                LineRange::new(3, 4),
             ]);
             assert_match!(boundaries.incomplete, None);
             assert_match!(boundaries.error, None);
 
             let boundaries = parse_boundaries("\n  foo\n  \n\n").unwrap();
             assert_eq!(boundaries.complete, vec![
-                line_range(0, 1),
-                line_range(1, 2),
-                line_range(2, 3),
-                line_range(3, 4),
-                line_range(4, 5),
+                LineRange::new(0, 1),
+                LineRange::new(1, 2),
+                LineRange::new(2, 3),
+                LineRange::new(3, 4),
+                LineRange::new(4, 5),
             ]);
             assert_match!(boundaries.incomplete, None);
             assert_match!(boundaries.error, None);
@@ -301,19 +290,19 @@ mod tests {
             // These should only produce a single complete input range
 
             let boundaries = parse_boundaries("foo;bar").unwrap();
-            let expected_complete = vec![line_range(0, 1)];
+            let expected_complete = vec![LineRange::new(0, 1)];
             assert_eq!(boundaries.complete, expected_complete);
             assert_match!(boundaries.incomplete, None);
             assert_match!(boundaries.error, None);
 
             let boundaries = parse_boundaries("foo;bar(\n)").unwrap();
-            let expected_complete = vec![line_range(0, 2)];
+            let expected_complete = vec![LineRange::new(0, 2)];
             assert_eq!(boundaries.complete, expected_complete);
             assert_match!(boundaries.incomplete, None);
             assert_match!(boundaries.error, None);
 
             let boundaries = parse_boundaries("foo(\n);bar").unwrap();
-            let expected_complete = vec![line_range(0, 2)];
+            let expected_complete = vec![LineRange::new(0, 2)];
             assert_eq!(boundaries.complete, expected_complete);
             assert_match!(boundaries.incomplete, None);
             assert_match!(boundaries.error, None);
@@ -325,20 +314,20 @@ mod tests {
         r_test(|| {
             let boundaries = parse_boundaries("foo +").unwrap();
             assert_eq!(boundaries.complete.len(), 0);
-            assert_eq!(boundaries.incomplete, Some(line_range(0, 1)));
+            assert_eq!(boundaries.incomplete, Some(LineRange::new(0, 1)));
             assert_match!(boundaries.error, None);
 
             let boundaries = parse_boundaries("\n\n  foo + \n  \n  ").unwrap();
             assert_eq!(boundaries.complete, vec![
-                line_range(0, 1),
-                line_range(1, 2),
+                LineRange::new(0, 1),
+                LineRange::new(1, 2),
             ]);
-            assert_eq!(boundaries.incomplete, Some(line_range(2, 5)));
+            assert_eq!(boundaries.incomplete, Some(LineRange::new(2, 5)));
             assert_match!(boundaries.error, None);
 
             let boundaries = parse_boundaries("foo\nbar; foo +").unwrap();
-            assert_eq!(boundaries.complete, vec![line_range(0, 1)]);
-            assert_eq!(boundaries.incomplete, Some(line_range(1, 2)));
+            assert_eq!(boundaries.complete, vec![LineRange::new(0, 1)]);
+            assert_eq!(boundaries.incomplete, Some(LineRange::new(1, 2)));
             assert_match!(boundaries.error, None);
         });
     }
@@ -349,22 +338,22 @@ mod tests {
             let boundaries = parse_boundaries("foo )").unwrap();
             assert_eq!(boundaries.complete.len(), 0);
             assert_match!(boundaries.incomplete, None);
-            assert_eq!(boundaries.error, Some(line_range(0, 1)));
+            assert_eq!(boundaries.error, Some(LineRange::new(0, 1)));
 
             let boundaries = parse_boundaries("foo\nbar )\n  ").unwrap();
-            assert_eq!(boundaries.complete, vec![line_range(0, 1)]);
+            assert_eq!(boundaries.complete, vec![LineRange::new(0, 1)]);
             assert_match!(boundaries.incomplete, None);
-            assert_eq!(boundaries.error, Some(line_range(1, 3)));
+            assert_eq!(boundaries.error, Some(LineRange::new(1, 3)));
 
             let boundaries = parse_boundaries("foo\nbar +\nbaz )").unwrap();
-            assert_eq!(boundaries.complete, vec![line_range(0, 1)]);
-            assert_eq!(boundaries.incomplete, Some(line_range(1, 2)));
-            assert_eq!(boundaries.error, Some(line_range(2, 3)));
+            assert_eq!(boundaries.complete, vec![LineRange::new(0, 1)]);
+            assert_eq!(boundaries.incomplete, Some(LineRange::new(1, 2)));
+            assert_eq!(boundaries.error, Some(LineRange::new(2, 3)));
 
             let boundaries = parse_boundaries("foo +\n  bar +;").unwrap();
             assert_eq!(boundaries.complete.len(), 0);
-            assert_eq!(boundaries.incomplete, Some(line_range(0, 1)));
-            assert_eq!(boundaries.error, Some(line_range(1, 2)));
+            assert_eq!(boundaries.incomplete, Some(LineRange::new(0, 1)));
+            assert_eq!(boundaries.error, Some(LineRange::new(1, 2)));
         });
     }
 }

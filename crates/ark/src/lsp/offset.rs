@@ -132,13 +132,6 @@ fn line_offset(text: &str, line: usize) -> Option<usize> {
         .map(|res| res.0 + 1)
 }
 
-pub fn range_into_text_range<T>(range: std::ops::Range<T>) -> text_size::TextRange
-where
-    T: Into<text_size::TextSize>,
-{
-    text_size::TextRange::new(range.start.into(), range.end.into())
-}
-
 #[cfg(test)]
 mod tests {
     use harp::assert_match;
