@@ -64,9 +64,10 @@ impl Document {
     pub fn new(contents: &str, version: Option<i32>) -> Self {
         // A one-shot parser, assumes the `Document` won't be incrementally reparsed.
         // Useful for testing, `with_document()`, and `index_file()`.
-        let language = tree_sitter_r::language();
         let mut parser = Parser::new();
-        parser.set_language(&language).unwrap();
+        parser
+            .set_language(&tree_sitter_r::LANGUAGE.into())
+            .unwrap();
 
         Self::new_with_parser(contents, &mut parser, version)
     }
