@@ -101,6 +101,7 @@ impl fmt::Display for Error {
                 ..
             } => {
                 if let Some(code) = code {
+                    let code = truncate_lines(code.to_owned(), 50);
                     write!(f, "Error evaluating '{code}': {message}")?;
                 } else {
                     write!(f, "{message}")?;
@@ -111,6 +112,7 @@ impl fmt::Display for Error {
                 // https://users.rust-lang.org/t/why-doesnt-anyhows-debug-formatter-include-the-underlying-debug-formatting/44227
 
                 if !r_trace.is_empty() {
+                    let r_trace = truncate_lines(r_trace.to_owned(), 500);
                     writeln!(f, "\n\nR backtrace:\n{r_trace}")?;
                 }
 
@@ -265,4 +267,16 @@ impl From<Utf8Error> for Error {
     fn from(error: Utf8Error) -> Self {
         Self::InvalidUtf8(error)
     }
+}
+
+fn truncate_lines(text: String, max_lines: usize) -> String {
+    let n_lines = text.lines().count();
+    if n_lines <= max_lines {
+        return text;
+    }
+
+    let mut text: String = text.lines().take(max_lines).collect();
+    text.push_str(&format!("\n... *Truncated {} lines*", n_lines - max_lines));
+
+    text
 }
