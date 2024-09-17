@@ -17,13 +17,25 @@ use libr::STRING_ELT;
 use libr::STRSXP;
 
 use crate::object::RObject;
+use crate::r_assert_type;
+use crate::r_chr_poke;
 use crate::utils::r_str_to_owned_utf8_unchecked;
 use crate::vector::FormatOptions;
 use crate::vector::Vector;
 
 #[harp_macros::vector]
+#[derive(Clone)]
 pub struct CharacterVector {
-    object: RObject,
+    pub object: RObject,
+}
+
+impl CharacterVector {
+    pub fn slice(&self) -> &[SEXP] {
+        unsafe {
+            let data = harp::chr_cbegin(self.object.sexp);
+            std::slice::from_raw_parts(data, self.len())
+        }
+    }
 }
 
 impl Vector for CharacterVector {
@@ -43,30 +55,32 @@ impl Vector for CharacterVector {
         }
     }
 
-    unsafe fn create<T>(data: T) -> Self
+    fn create<T>(data: T) -> Self
     where
         T: IntoIterator,
         <T as IntoIterator>::IntoIter: ExactSizeIterator,
         <T as IntoIterator>::Item: AsRef<Self::Item>,
     {
-        // convert into iterator
-        let mut data = data.into_iter();
+        unsafe {
+            // convert into iterator
+            let mut data = data.into_iter();
 
-        // build our character vector
-        let n = data.len();
-        let vector = CharacterVector::with_length(n);
-        for i in 0..data.len() {
-            let value = data.next().unwrap_unchecked();
-            let value = value.as_ref();
-            let charsexp = Rf_mkCharLenCE(
-                value.as_ptr() as *const c_char,
-                value.len() as i32,
-                cetype_t_CE_UTF8,
-            );
-            SET_STRING_ELT(vector.data(), i as R_xlen_t, charsexp);
+            // build our character vector
+            let n = data.len();
+            let vector = CharacterVector::with_length(n);
+            for i in 0..data.len() {
+                let value = data.next().unwrap_unchecked();
+                let value = value.as_ref();
+                let charsexp = Rf_mkCharLenCE(
+                    value.as_ptr() as *const c_char,
+                    value.len() as i32,
+                    cetype_t_CE_UTF8,
+                );
+                SET_STRING_ELT(vector.data(), i as R_xlen_t, charsexp);
+            }
+
+            vector
         }
-
-        vector
     }
 
     fn is_na(x: &Self::UnderlyingType) -> bool {
@@ -91,6 +105,32 @@ impl Vector for CharacterVector {
         } else {
             x
         }
+    }
+}
+
+impl TryFrom<&[SEXP]> for CharacterVector {
+    type Error = harp::Error;
+
+    fn try_from(value: &[SEXP]) -> harp::Result<Self> {
+        unsafe {
+            let vec = Self::with_length(value.len());
+            let sexp = vec.object.sexp;
+
+            for (i, elt) in value.into_iter().enumerate() {
+                r_assert_type(*elt, &[libr::CHARSXP])?;
+                r_chr_poke(sexp, i as R_xlen_t, *elt);
+            }
+
+            Ok(vec)
+        }
+    }
+}
+
+impl TryFrom<&CharacterVector> for Vec<String> {
+    type Error = harp::Error;
+
+    fn try_from(value: &CharacterVector) -> harp::Result<Self> {
+        super::try_vec_from_r_vector(value)
     }
 }
 
@@ -157,13 +197,5 @@ mod test {
             assert_eq!(s, alphabet);
 
         }
-    }
-}
-
-impl TryFrom<&CharacterVector> for Vec<String> {
-    type Error = harp::Error;
-
-    fn try_from(value: &CharacterVector) -> harp::Result<Self> {
-        super::try_vec_from_r_vector(value)
     }
 }

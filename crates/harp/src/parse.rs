@@ -11,6 +11,7 @@ use itertools::Itertools;
 
 use crate::line_ending::convert_line_endings;
 use crate::line_ending::LineEnding;
+use crate::parse_data::ParseData;
 use crate::protect::RProtect;
 use crate::r_string;
 use crate::srcref;
@@ -23,9 +24,11 @@ pub struct RParseOptions {
     pub srcfile: Option<RObject>,
 }
 
+#[derive(Clone, Debug)]
 pub enum ParseResult {
     Complete(RObject),
     Incomplete,
+    SyntaxError { message: String, line: i32 },
 }
 
 pub enum ParseInput<'a> {
@@ -64,7 +67,7 @@ pub fn parse_exprs(text: &str) -> crate::Result<RObject> {
 
 /// Same but creates srcrefs
 pub fn parse_exprs_with_srcrefs(text: &str) -> crate::Result<RObject> {
-    let srcfile = srcref::SrcFile::new_virtual(text)?;
+    let srcfile = srcref::SrcFile::try_from(text)?;
     parse_exprs_ext(&ParseInput::SrcFile(&srcfile))
 }
 
@@ -76,7 +79,21 @@ pub fn parse_exprs_ext<'a>(input: &ParseInput<'a>) -> crate::Result<RObject> {
             code: parse_input_as_string(input).unwrap_or(String::from("Conversion error")),
             message: String::from("Incomplete code"),
         }),
+        ParseResult::SyntaxError { message, line } => {
+            Err(crate::Error::ParseSyntaxError { message, line })
+        },
     }
+}
+
+pub fn parse_with_parse_data(text: &str) -> crate::Result<(ParseResult, ParseData)> {
+    let srcfile = srcref::SrcFile::try_from(text)?;
+
+    // Fill parse data in `srcfile` by side effect
+    let status = parse_status(&ParseInput::SrcFile(&srcfile))?;
+
+    let parse_data = ParseData::from_srcfile(&srcfile)?;
+
+    Ok((status, parse_data))
 }
 
 pub fn parse_status<'a>(input: &ParseInput<'a>) -> crate::Result<ParseResult> {
@@ -98,7 +115,7 @@ pub fn parse_status<'a>(input: &ParseInput<'a>) -> crate::Result<ParseResult> {
         match status {
             libr::ParseStatus_PARSE_OK => Ok(ParseResult::Complete(result)),
             libr::ParseStatus_PARSE_INCOMPLETE => Ok(ParseResult::Incomplete),
-            libr::ParseStatus_PARSE_ERROR => Err(crate::Error::ParseSyntaxError {
+            libr::ParseStatus_PARSE_ERROR => Ok(ParseResult::SyntaxError {
                 message: CStr::from_ptr(libr::get(libr::R_ParseErrorMsg).as_ptr())
                     .to_string_lossy()
                     .to_string(),
@@ -107,7 +124,8 @@ pub fn parse_status<'a>(input: &ParseInput<'a>) -> crate::Result<ParseResult> {
             _ => {
                 // Should not get here
                 Err(crate::Error::ParseError {
-                    code: parse_input_as_string(input).unwrap_or(String::from("Conversion error")),
+                    code: parse_input_as_string(input)
+                        .unwrap_or(String::from("String conversion error")),
                     message: String::from("Unknown parse error"),
                 })
             },
@@ -195,7 +213,7 @@ mod tests {
             // "normal" syntax error
             assert_match!(
                 parse_status(&ParseInput::Text("1+1\n*42")),
-                Err(crate::Error::ParseSyntaxError {message, line}) => {
+                Ok(ParseResult::SyntaxError {message, line}) => {
                     assert!(message.contains("unexpected"));
                     assert_eq!(line, 2);
                 }
@@ -229,7 +247,7 @@ mod tests {
                 "foo\nbar"
             );
 
-            let input = srcref::SrcFile::new_virtual("foo\nbar").unwrap();
+            let input = srcref::SrcFile::try_from("foo\nbar").unwrap();
             assert_eq!(
                 parse_input_as_string(&ParseInput::SrcFile(&input)).unwrap(),
                 "foo\nbar"

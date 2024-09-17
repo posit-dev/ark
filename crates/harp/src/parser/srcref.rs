@@ -118,11 +118,10 @@ impl TryFrom<RObject> for SrcRef {
 /// Creates the same sort of srcfile object as with `parse(text = )`.
 /// Takes code as an R string containing newlines, or as a R vector of lines.
 impl SrcFile {
-    pub fn new_virtual(text: &str) -> harp::Result<Self> {
-        let input = crate::as_parse_text(text);
+    fn new_virtual(text: RObject) -> harp::Result<Self> {
         let inner = RFunction::new("base", "srcfilecopy")
             .param("filename", "<text>")
-            .param("lines", input)
+            .param("lines", text)
             .call()?;
 
         Ok(Self { inner })
@@ -134,6 +133,23 @@ impl SrcFile {
             .param("first", 1)
             .param("last", f64::INFINITY)
             .call()
+    }
+}
+
+impl TryFrom<&str> for SrcFile {
+    type Error = harp::Error;
+
+    fn try_from(value: &str) -> harp::Result<Self> {
+        let input = crate::as_parse_text(value);
+        SrcFile::new_virtual(input)
+    }
+}
+
+impl TryFrom<&harp::CharacterVector> for SrcFile {
+    type Error = harp::Error;
+
+    fn try_from(value: &harp::CharacterVector) -> harp::Result<Self> {
+        SrcFile::new_virtual(value.object.clone())
     }
 }
 

@@ -5,6 +5,7 @@
 //
 //
 
+pub mod analysis;
 pub mod browser;
 pub mod connections;
 pub mod control;

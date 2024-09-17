@@ -47,6 +47,7 @@ pub use parse::*;
 pub use parser::*;
 pub use source::*;
 pub use table::*;
+pub use vector::character_vector::*;
 pub use vector::list::*;
 
 // Necessary for the `harp::` references in macros, e.g. `harp::register`, to
