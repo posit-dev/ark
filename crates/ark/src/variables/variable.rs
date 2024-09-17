@@ -492,6 +492,14 @@ impl PositronVariable {
 
         let kind = Self::variable_kind(x);
 
+        let size = match RObject::view(x).size() {
+            Ok(size) => size as i64,
+            Err(err) => {
+                log::warn!("Can't compute size of object: {err}");
+                0
+            },
+        };
+
         Self {
             var: Variable {
                 access_key,
@@ -501,7 +509,7 @@ impl PositronVariable {
                 type_info,
                 kind,
                 length: Self::variable_length(x) as i64,
-                size: RObject::view(x).size() as i64,
+                size,
                 has_children: has_children(x),
                 is_truncated,
                 has_viewer: r_is_data_frame(x) || r_is_matrix(x),

@@ -27,28 +27,28 @@ use crate::r_typeof;
 // `utils::object.size()` is too slow on large datasets and this code path is used trough the
 // variables pane which required more performance.
 // See for more info.
-pub fn r_size(x: SEXP) -> usize {
+pub fn r_size(x: SEXP) -> harp::Result<usize> {
     let mut seen: HashSet<SEXP> = HashSet::new();
 
-    let sizeof_node: f64 = harp::parse_eval0(
-        "as.vector(utils::object.size(quote(expr = )))",
-        R_ENVS.global,
-    )
-    .and_then(|x| x.try_into())
-    .unwrap_or(0.);
+    let sizeof_node: f64 = harp::parse_eval_base("as.vector(utils::object.size(quote(expr = )))")
+        .and_then(|x| x.try_into())?;
 
-    let sizeof_vector: f64 = harp::parse_eval_global("as.vector(utils::object.size(logical()))")
-        .and_then(|x| x.try_into())
-        .unwrap_or(0.);
+    let sizeof_vector: f64 = harp::parse_eval_base("as.vector(utils::object.size(logical()))")
+        .and_then(|x| x.try_into())?;
 
-    obj_size_tree(
-        x,
-        R_ENVS.global,
-        sizeof_node as usize,
-        sizeof_vector as usize,
-        &mut seen,
-        0,
-    )
+    // The tree-walking implementation potentially violates R internals,
+    // so we protect against errors thrown by R (and hope for no crash).
+    // https://github.com/posit-dev/positron/issues/4686
+    harp::try_catch(|| {
+        obj_size_tree(
+            x,
+            R_ENVS.global,
+            sizeof_node as usize,
+            sizeof_vector as usize,
+            &mut seen,
+            0,
+        )
+    })
 }
 
 fn obj_size_tree(
@@ -399,7 +399,7 @@ mod tests {
 
     fn object_size(code: &str) -> usize {
         let object = harp::parse_eval_global(code).unwrap();
-        r_size(object.sexp)
+        r_size(object.sexp).unwrap()
     }
 
     fn expect_size(code: &str, expected: usize) {

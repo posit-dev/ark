@@ -345,7 +345,7 @@ impl RObject {
         r_is_object(self.sexp)
     }
 
-    pub fn size(&self) -> usize {
+    pub fn size(&self) -> harp::Result<usize> {
         r_size(self.sexp)
     }
 
