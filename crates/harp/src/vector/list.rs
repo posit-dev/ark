@@ -78,24 +78,20 @@ impl super::Vector for List {
         let mut data = data.into_iter();
 
         let size = data.len();
-        let sexp = crate::alloc_list(size).unwrap();
-        let inner: RObject = sexp.into();
+        let obj = RObject::new(harp::alloc_list(size).unwrap());
+        let sexp = obj.sexp;
 
         for i in 0..size {
             unsafe {
                 let value = data.next().unwrap_unchecked();
                 let value = value.as_ref();
-                r_list_poke(inner.sexp, i as libr::R_xlen_t, *value)
+                r_list_poke(sexp, i as libr::R_xlen_t, *value)
             }
         }
 
-        let ptr = crate::list_cbegin(inner.sexp);
+        let ptr = crate::list_cbegin(sexp);
 
-        Self {
-            obj: inner,
-            ptr,
-            sexp,
-        }
+        Self { obj, ptr, sexp }
     }
 
     fn format_one(&self, _x: Self::Type, _options: Option<&super::FormatOptions>) -> String {
