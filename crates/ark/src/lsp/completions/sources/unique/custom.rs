@@ -106,6 +106,13 @@ pub fn completions_from_custom_source_impl(
         tower_lsp::lsp_types::ParameterLabel::Simple(string) => string,
     };
 
+    // Argument text typically contains the argument name and its default value if there is one.
+    // Extract out just the argument name for matching purposes.
+    let argument = match argument.find("=") {
+        Some(byte) => &argument[..byte].trim(),
+        None => argument.as_str(),
+    };
+
     // Trim off the function arguments from the signature.
     if let Some(index) = name.find('(') {
         name = name[0..index].to_string();
