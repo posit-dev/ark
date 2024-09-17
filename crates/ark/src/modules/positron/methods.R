@@ -30,17 +30,18 @@ lockEnvironment(ark_methods_table, TRUE)
         ),
         typeof(class) == "character"
     )
-    for (cls in class)
+    for (cls in class) {
         assign(cls, method, envir = ark_methods_table[[generic]])
-
+    }
     invisible()
 }
 
 call_ark_method <- function(generic, object, ...) {
     methods_table <- ark_methods_table[[generic]]
 
-    if (is.null(methods_table))
+    if (is.null(methods_table)) {
         return(NULL)
+    }
 
     for (cl in class(object)) {
         if (is.function(method <- get0(cl, envir = methods_table))) {

@@ -50,9 +50,7 @@ use libr::*;
 use stdext::local;
 use stdext::unwrap;
 
-use crate::variables::methods::dispatch_variables_method;
-use crate::variables::methods::dispatch_variables_method_with_args;
-use crate::variables::methods::ArkVariablesGenerics;
+use crate::variables::methods::ArkGenerics;
 
 // Constants.
 const MAX_DISPLAY_VALUE_ENTRIES: usize = 1_000;
@@ -73,12 +71,9 @@ fn plural(text: &str, n: i32) -> String {
 
 impl WorkspaceVariableDisplayValue {
     pub fn from(value: SEXP) -> Self {
-        // Try to use the display method if there's one available
-
-        match try_from_method_display_value(value, MAX_DISPLAY_VALUE_LENGTH) {
-            Err(e) => log::error!("Error from 'ark_variable_display_value' method: {e}"),
-            Ok(None) => {},
-            Ok(Some(display_value)) => return Self::new(display_value, false),
+        // Try to use the display method if there's one available\
+        if let Some(display_value) = Self::try_from_method(value) {
+            return display_value;
         }
 
         match r_typeof(value) {
@@ -315,6 +310,24 @@ impl WorkspaceVariableDisplayValue {
         log::trace!("Error while formatting variable: {err:?}");
         Self::new(String::from("??"), true)
     }
+
+    fn try_from_method(value: SEXP) -> Option<Self> {
+        let display_value =
+            ArkGenerics::VariableDisplayValue.try_dispatch::<String>(value, vec![(
+                String::from("width"),
+                RObject::from(MAX_DISPLAY_VALUE_LENGTH as i32),
+            )]);
+
+        let display_value = unwrap!(display_value, Err(err) => {
+            log::error!("Failed to apply 'ark_variable_display_value': {err:?}");
+            return None;
+        });
+
+        match display_value {
+            None => None,
+            Some(value) => Some(Self::new(value, false)),
+        }
+    }
 }
 
 pub struct WorkspaceVariableDisplayType {
@@ -436,11 +449,7 @@ impl WorkspaceVariableDisplayType {
 
     fn try_from_method(value: SEXP, include_length: bool) -> anyhow::Result<Option<Self>> {
         let args = vec![(String::from("include_length"), include_length.try_into()?)];
-        let result: Option<String> = dispatch_variables_method_with_args(
-            ArkVariablesGenerics::VariableDisplayType,
-            value,
-            args,
-        )?;
+        let result: Option<String> = ArkGenerics::VariableDisplayType.try_dispatch(value, args)?;
         Ok(result.map(Self::simple))
     }
 
@@ -453,9 +462,7 @@ impl WorkspaceVariableDisplayType {
 }
 
 fn has_children(value: SEXP) -> bool {
-    // Try to use the display method if there's one available
-
-    match try_from_method_has_children(value) {
+    match ArkGenerics::VariableHasChildren.try_dispatch(value, vec![]) {
         Err(e) => log::error!("Error from 'ark_variable_has_children' method: {e}"),
         Ok(None) => {},
         Ok(Some(answer)) => return answer,
@@ -1292,23 +1299,11 @@ impl PositronVariable {
 }
 
 fn try_from_method_variable_kind(value: SEXP) -> anyhow::Result<Option<VariableKind>> {
-    let kind: Option<String> =
-        dispatch_variables_method(ArkVariablesGenerics::VariableKind, value)?;
+    let kind: Option<String> = ArkGenerics::VariableKind.try_dispatch(value, vec![])?;
     match kind {
         None => Ok(None),
         Some(kind) => Ok(serde_json::from_str(kind.as_str())?),
     }
-}
-
-fn try_from_method_has_children(value: SEXP) -> anyhow::Result<Option<bool>> {
-    dispatch_variables_method(ArkVariablesGenerics::VariableHasChildren, value)
-}
-
-fn try_from_method_display_value(value: SEXP, width: usize) -> anyhow::Result<Option<String>> {
-    dispatch_variables_method_with_args(ArkVariablesGenerics::VariableDisplayValue, value, vec![(
-        String::from("width"),
-        (width as i32).try_into()?,
-    )])
 }
 
 pub fn is_binding_fancy(binding: &Binding) -> bool {
