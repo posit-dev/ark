@@ -207,7 +207,8 @@ fn fill_gaps(mut boundaries: ParseBoundaries, n_lines: usize) -> ParseBoundaries
         filled.push(range);
     }
 
-    // Fill trailing whitespace (between complete and incomplete|error\eof)
+    // Fill trailing whitespace between complete expressions and the rest
+    // (incomplete, error, or eof)
     let last_boundary = filled.last().map(|r| r.end).unwrap_or(0);
     let next_boundary = boundaries
         .incomplete
