@@ -36,6 +36,22 @@ lockEnvironment(ark_methods_table, TRUE)
     invisible()
 }
 
+has_ark_method <- function(generic, object) {
+    methods_table <- ark_methods_table[[generic]]
+
+    if (is.null(methods_table)) {
+        return(FALSE)
+    }
+
+    for (cl in class(object)) {
+        if (is.function(method <- get0(cl, envir = methods_table))) {
+            return(TRUE)
+        }
+    }
+
+    FALSE
+}
+
 call_ark_method <- function(generic, object, ...) {
     methods_table <- ark_methods_table[[generic]]
 
@@ -45,8 +61,10 @@ call_ark_method <- function(generic, object, ...) {
 
     for (cl in class(object)) {
         if (is.function(method <- get0(cl, envir = methods_table))) {
-            return(eval(as.call(list(method, object, ...)),
-                        envir = globalenv()))
+            return(eval(
+                as.call(list(method, object, ...)),
+                envir = globalenv()
+            ))
         }
     }
 
