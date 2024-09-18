@@ -13,27 +13,53 @@ use harp::RObject;
 use crate::coordinates::LineRange;
 
 /// Boundaries are ranges over lines of text.
-#[derive(Debug)]
-pub struct ParseBoundaries {
-    pub complete: Vec<LineRange>,
-    pub incomplete: Option<LineRange>,
-    pub error: Option<LineRange>,
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ParseBoundary {
+    pub range: LineRange,
+    pub kind: ParseBoundaryKind,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ParseBoundaryKind {
+    Whitespace,
+    Complete,
+    Incomplete,
+    Invalid,
+}
+
+impl ParseBoundary {
+    fn new(range: LineRange, kind: ParseBoundaryKind) -> Self {
+        Self { range, kind }
+    }
+
+    pub fn whitespace(range: LineRange) -> Self {
+        Self::new(range, ParseBoundaryKind::Whitespace)
+    }
+    pub fn complete(range: LineRange) -> Self {
+        Self::new(range, ParseBoundaryKind::Complete)
+    }
+    pub fn incomplete(range: LineRange) -> Self {
+        Self::new(range, ParseBoundaryKind::Incomplete)
+    }
+    pub fn invalid(range: LineRange) -> Self {
+        Self::new(range, ParseBoundaryKind::Invalid)
+    }
 }
 
 /// Parse boundaries of R inputs
 ///
 /// Takes a string of R code and detects which lines parse as complete,
-/// incomplete, and error inputs.
+/// incomplete, and invalid inputs.
 ///
 /// Invariants:
 /// - There is always at least one range as the empty string is a complete input.
 /// - The ranges are sorted and non-overlapping.
-/// - Inputs are classified in complete, incomplete, and error sections. The
+/// - Inputs are classified in complete, incomplete, and invalid sections. The
 ///   sections are sorted in this order (there cannot be complete inputs after
-///   an incomplete or error one, there cannot be an incomplete input after
-///   an error one, and error inputs are always trailing).
-/// - There is only one incomplete and one error input in a set of inputs.
-pub fn parse_boundaries(text: &str) -> anyhow::Result<ParseBoundaries> {
+///   an incomplete or invalid one, there cannot be an incomplete input after
+///   an invalid one, and invalid inputs are always trailing).
+/// - There is only one incomplete and one invalid input in a set of inputs.
+pub fn parse_boundaries(text: &str) -> anyhow::Result<Vec<ParseBoundary>> {
     let mut lines: Vec<&str> = text.lines().collect();
 
     // Rectify for `lines()` ignoring trailing empty lines
@@ -50,19 +76,19 @@ pub fn parse_boundaries(text: &str) -> anyhow::Result<ParseBoundaries> {
 
     let mut complete: Vec<LineRange> = vec![];
     let mut incomplete: Option<LineRange> = None;
-    let mut error: Option<LineRange> = None;
+    let mut invalid: Option<LineRange> = None;
 
     let mut incomplete_end: Option<u32> = None;
-    let mut error_end: Option<u32> = None;
+    let mut invalid_end: Option<u32> = None;
 
-    let mut record_error = |start, error_end: &Option<u32>| {
-        if matches!(error, Some(_)) {
+    let mut record_invalid = |start, invalid_end: &Option<u32>| {
+        if matches!(invalid, Some(_)) {
             return;
         }
-        let Some(end) = error_end else {
+        let Some(end) = invalid_end else {
             return;
         };
-        error = Some(LineRange::new(start, *end));
+        invalid = Some(LineRange::new(start, *end));
     };
 
     let mut record_incomplete = |start, incomplete_end: &Option<u32>| {
@@ -100,12 +126,12 @@ pub fn parse_boundaries(text: &str) -> anyhow::Result<ParseBoundaries> {
             ParseResult::Complete(exprs) => {
                 record_complete(exprs)?;
                 record_incomplete(current_line + 1, &incomplete_end);
-                record_error(current_line + 1, &error_end);
+                record_invalid(current_line + 1, &invalid_end);
                 break;
             },
 
             ParseResult::Incomplete => {
-                record_error(current_line + 1, &error_end);
+                record_invalid(current_line + 1, &invalid_end);
 
                 // Declare incomplete
                 if let None = incomplete_end {
@@ -114,9 +140,9 @@ pub fn parse_boundaries(text: &str) -> anyhow::Result<ParseBoundaries> {
             },
 
             ParseResult::SyntaxError { .. } => {
-                // Declare error
-                if let None = error_end {
-                    error_end = Some(current_line + 1);
+                // Declare invalid
+                if let None = invalid_end {
+                    invalid_end = Some(current_line + 1);
                 }
             },
         };
@@ -126,19 +152,22 @@ pub fn parse_boundaries(text: &str) -> anyhow::Result<ParseBoundaries> {
     // detected complete expressions since we already recorded the boundaries in
     // that case.
     record_incomplete(0, &incomplete_end);
-    record_error(0, &error_end);
+    record_invalid(0, &invalid_end);
 
     // Merge expressions separated by semicolons
     let complete = merge_overlapping(complete);
 
-    let boundaries = ParseBoundaries {
-        complete,
-        incomplete,
-        error,
-    };
+    // Fill any gaps with one-liner complete expressions. Creates
+    // `ParseBoundary` elements of the right type (complete or whitespace)
+    let mut boundaries = fill_gaps(complete, &incomplete, &invalid, n_lines);
 
-    // Fill any gaps with one-liner complete expressions
-    let boundaries = fill_gaps(boundaries, n_lines);
+    // Now push incomplete and invalid boundaries, if any
+    if let Some(boundary) = incomplete {
+        boundaries.push(ParseBoundary::incomplete(boundary));
+    }
+    if let Some(boundary) = invalid {
+        boundaries.push(ParseBoundary::invalid(boundary));
+    }
 
     Ok(boundaries)
 }
@@ -151,7 +180,6 @@ fn merge_overlapping(ranges: Vec<LineRange>) -> Vec<LineRange> {
             return merged;
         };
 
-        // if range.start <= last.end {
         if last.contains(range.start()) {
             // Overlap, merge with last range
             merged.push(last.cover(range))
@@ -170,117 +198,111 @@ fn merge_overlapping(ranges: Vec<LineRange>) -> Vec<LineRange> {
 // Fill any gaps with one-liner complete expressions. This applies
 // to empty lines, with or without spaces and tabs, and possibly
 // with a trailing comment.
-fn fill_gaps(mut boundaries: ParseBoundaries, n_lines: u32) -> ParseBoundaries {
-    let mut filled = vec![];
-    let ranges = boundaries.complete;
-
+fn fill_gaps(
+    complete: Vec<LineRange>,
+    incomplete: &Option<LineRange>,
+    invalid: &Option<LineRange>,
+    n_lines: u32,
+) -> Vec<ParseBoundary> {
+    let mut filled: Vec<ParseBoundary> = vec![];
     let mut last_line: u32 = 0;
 
     let range_from = |start| LineRange::new(start, start + 1);
 
     // Fill leading whitespace with empty input ranges
-    if let Some(first) = ranges
-        .get(0)
-        .or(boundaries.incomplete.as_ref())
-        .or(boundaries.error.as_ref())
-    {
+    if let Some(first) = complete.get(0).or(incomplete.as_ref()).or(invalid.as_ref()) {
         for start in 0..first.start() {
             let range = range_from(start);
             last_line = range.end();
-            filled.push(range)
+            filled.push(ParseBoundary::whitespace(range))
         }
     }
 
     // Fill gaps between complete expressions
-    for range in ranges.into_iter() {
+    for range in complete.into_iter() {
         // We found a gap, fill ranges for lines in that gap
         if !range.contains(last_line) {
             for start in last_line..range.start() {
-                filled.push(range_from(start))
+                filled.push(ParseBoundary::whitespace(range_from(start)))
             }
         }
 
         last_line = range.end();
-        filled.push(range);
+        filled.push(ParseBoundary::complete(range));
     }
 
     // Fill trailing whitespace between complete expressions and the rest
-    // (incomplete, error, or eof)
-    let last_boundary = filled.last().map(|r| r.end()).unwrap_or(0);
-    let next_boundary = boundaries
-        .incomplete
+    // (incomplete, invalid, or eof)
+    let last_boundary = filled.last().map(|b| b.range.end()).unwrap_or(0);
+    let next_boundary = incomplete
         .as_ref()
-        .or(boundaries.error.as_ref())
+        .or(invalid.as_ref())
         .map(|r| r.start())
         .unwrap_or(n_lines);
 
     for start in last_boundary..next_boundary {
-        filled.push(range_from(start))
+        filled.push(ParseBoundary::whitespace(range_from(start)))
     }
 
-    boundaries.complete = filled;
-    boundaries
+    filled
 }
 
 #[cfg(test)]
 mod tests {
-    use harp::assert_match;
-
     use crate::analysis::parse_boundaries::*;
     use crate::test::r_test;
+
+    fn p(text: &str) -> Vec<ParseBoundary> {
+        parse_boundaries(text).unwrap()
+    }
+
+    fn boundary(start: u32, end: u32, kind: ParseBoundaryKind) -> ParseBoundary {
+        let range = LineRange::new(start, end);
+        ParseBoundary::new(range, kind)
+    }
+    fn whitespace(start: u32, end: u32) -> ParseBoundary {
+        boundary(start, end, ParseBoundaryKind::Whitespace)
+    }
+    fn complete(start: u32, end: u32) -> ParseBoundary {
+        boundary(start, end, ParseBoundaryKind::Complete)
+    }
+    fn incomplete(start: u32, end: u32) -> ParseBoundary {
+        boundary(start, end, ParseBoundaryKind::Incomplete)
+    }
+    fn invalid(start: u32, end: u32) -> ParseBoundary {
+        boundary(start, end, ParseBoundaryKind::Invalid)
+    }
 
     #[test]
     fn test_parse_boundaries_complete() {
         r_test(|| {
-            let boundaries = parse_boundaries("foo").unwrap();
-            #[rustfmt::skip]
-            assert_eq!(boundaries.complete, vec![
-                LineRange::new(0, 1),
-            ]);
-            assert_match!(boundaries.incomplete, None);
-            assert_match!(boundaries.error, None);
-
-            let boundaries = parse_boundaries("foo\nbarbaz  ").unwrap();
-            assert_eq!(boundaries.complete, vec![
-                LineRange::new(0, 1),
-                LineRange::new(1, 2)
-            ]);
-            assert_match!(boundaries.incomplete, None);
-            assert_match!(boundaries.error, None);
+            assert_eq!(p("foo"), vec![complete(0, 1),]);
+            assert_eq!(p("foo\nbarbaz  "), vec![complete(0, 1), complete(1, 2)]);
         })
     }
 
     #[test]
     fn test_parse_boundaries_whitespace() {
         r_test(|| {
-            let boundaries = parse_boundaries("").unwrap();
             #[rustfmt::skip]
-            assert_eq!(boundaries.complete, vec![
-                LineRange::new(0, 1),
+            assert_eq!(p(""), vec![
+                whitespace(0, 1),
             ]);
-            assert_match!(boundaries.incomplete, None);
-            assert_match!(boundaries.error, None);
 
-            let boundaries = parse_boundaries("\n\n  \n").unwrap();
-            assert_eq!(boundaries.complete, vec![
-                LineRange::new(0, 1),
-                LineRange::new(1, 2),
-                LineRange::new(2, 3),
-                LineRange::new(3, 4),
+            assert_eq!(p("\n\n  \n"), vec![
+                whitespace(0, 1),
+                whitespace(1, 2),
+                whitespace(2, 3),
+                whitespace(3, 4),
             ]);
-            assert_match!(boundaries.incomplete, None);
-            assert_match!(boundaries.error, None);
 
-            let boundaries = parse_boundaries("\n  foo\n  \n\n").unwrap();
-            assert_eq!(boundaries.complete, vec![
-                LineRange::new(0, 1),
-                LineRange::new(1, 2),
-                LineRange::new(2, 3),
-                LineRange::new(3, 4),
-                LineRange::new(4, 5),
+            assert_eq!(p("\n  foo\n  \n\n"), vec![
+                whitespace(0, 1),
+                complete(1, 2),
+                whitespace(2, 3),
+                whitespace(3, 4),
+                whitespace(4, 5),
             ]);
-            assert_match!(boundaries.incomplete, None);
-            assert_match!(boundaries.error, None);
         })
     }
 
@@ -288,72 +310,56 @@ mod tests {
     fn test_parse_boundaries_complete_semicolon() {
         r_test(|| {
             // These should only produce a single complete input range
-
-            let boundaries = parse_boundaries("foo;bar").unwrap();
-            let expected_complete = vec![LineRange::new(0, 1)];
-            assert_eq!(boundaries.complete, expected_complete);
-            assert_match!(boundaries.incomplete, None);
-            assert_match!(boundaries.error, None);
-
-            let boundaries = parse_boundaries("foo;bar(\n)").unwrap();
-            let expected_complete = vec![LineRange::new(0, 2)];
-            assert_eq!(boundaries.complete, expected_complete);
-            assert_match!(boundaries.incomplete, None);
-            assert_match!(boundaries.error, None);
-
-            let boundaries = parse_boundaries("foo(\n);bar").unwrap();
-            let expected_complete = vec![LineRange::new(0, 2)];
-            assert_eq!(boundaries.complete, expected_complete);
-            assert_match!(boundaries.incomplete, None);
-            assert_match!(boundaries.error, None);
+            assert_eq!(p("foo;bar"), vec![complete(0, 1)]);
+            assert_eq!(p("foo;bar(\n)"), vec![complete(0, 2)]);
+            assert_eq!(p("foo(\n);bar"), vec![complete(0, 2)]);
         });
     }
 
     #[test]
     fn test_parse_boundaries_incomplete() {
+        #[rustfmt::skip]
         r_test(|| {
-            let boundaries = parse_boundaries("foo +").unwrap();
-            assert_eq!(boundaries.complete.len(), 0);
-            assert_eq!(boundaries.incomplete, Some(LineRange::new(0, 1)));
-            assert_match!(boundaries.error, None);
-
-            let boundaries = parse_boundaries("\n\n  foo + \n  \n  ").unwrap();
-            assert_eq!(boundaries.complete, vec![
-                LineRange::new(0, 1),
-                LineRange::new(1, 2),
+            assert_eq!(p("foo +"), vec![
+                incomplete(0, 1),
             ]);
-            assert_eq!(boundaries.incomplete, Some(LineRange::new(2, 5)));
-            assert_match!(boundaries.error, None);
 
-            let boundaries = parse_boundaries("foo\nbar; foo +").unwrap();
-            assert_eq!(boundaries.complete, vec![LineRange::new(0, 1)]);
-            assert_eq!(boundaries.incomplete, Some(LineRange::new(1, 2)));
-            assert_match!(boundaries.error, None);
+            assert_eq!(p("\n\n  foo + \n  \n  "), vec![
+                whitespace(0, 1),
+                whitespace(1, 2),
+                incomplete(2, 5),
+            ]);
+
+            assert_eq!(p("foo\nbar; foo +"), vec![
+                complete(0, 1),
+                incomplete(1, 2),
+            ]);
         });
     }
 
     #[test]
-    fn test_parse_boundaries_error() {
+    fn test_parse_boundaries_invalid() {
+        #[rustfmt::skip]
         r_test(|| {
-            let boundaries = parse_boundaries("foo )").unwrap();
-            assert_eq!(boundaries.complete.len(), 0);
-            assert_match!(boundaries.incomplete, None);
-            assert_eq!(boundaries.error, Some(LineRange::new(0, 1)));
+            assert_eq!(p("foo )"), vec![
+                invalid(0, 1),
+            ]);
 
-            let boundaries = parse_boundaries("foo\nbar )\n  ").unwrap();
-            assert_eq!(boundaries.complete, vec![LineRange::new(0, 1)]);
-            assert_match!(boundaries.incomplete, None);
-            assert_eq!(boundaries.error, Some(LineRange::new(1, 3)));
+            assert_eq!(p("foo\nbar )\n  "), vec![
+                complete(0, 1),
+                invalid(1, 3),
+            ]);
 
-            let boundaries = parse_boundaries("foo\nbar +\nbaz )").unwrap();
-            assert_eq!(boundaries.complete, vec![LineRange::new(0, 1)]);
-            assert_eq!(boundaries.incomplete, Some(LineRange::new(1, 2)));
-            assert_eq!(boundaries.error, Some(LineRange::new(2, 3)));
+            assert_eq!(p("foo\nbar +\nbaz )"), vec![
+                complete(0, 1),
+                incomplete(1, 2),
+                invalid(2, 3),
+            ]);
 
-            let boundaries = parse_boundaries("foo +\n  bar +;").unwrap();
-            assert_eq!(boundaries.complete.len(), 0);
-            assert_eq!(boundaries.incomplete, Some(LineRange::new(0, 1)));
-            assert_eq!(boundaries.error, Some(LineRange::new(1, 2)));
+            assert_eq!(p("foo +\n  bar +;"), vec![
+                incomplete(0, 1),
+                invalid(1, 2),
+            ]);
         });
     }
 }
