@@ -1379,7 +1379,7 @@ mod tests {
 
             assert_eq!(
                 variable.var.display_value,
-                String::from("a".repeat(MAX_DISPLAY_VALUE_LENGTH))
+                "a".repeat(MAX_DISPLAY_VALUE_LENGTH)
             );
 
             assert_eq!(variable.var.display_type, String::from("foo (3)"));
@@ -1387,6 +1387,88 @@ mod tests {
             assert_eq!(variable.var.has_children, false);
 
             assert_eq!(variable.var.kind, VariableKind::Other);
+        })
+    }
+
+    #[test]
+    fn test_inspect_r6() {
+        r_test(|| {
+            // Skip test if R6 is not installed
+            if let Ok(false) = harp::parse_eval_global(r#".ps.is_installed("R6")"#)
+                .unwrap()
+                .try_into()
+            {
+                return;
+            }
+
+            // Create an environment that contains an R6 class and an instance
+            let env = harp::parse_eval_global("new.env()").unwrap();
+
+            harp::parse_eval0(
+                r#"
+            Person <- R6::R6Class("Person",
+                public = list(
+                    name = NULL,
+                    friend = NULL,
+                    initialize = function(name = NA, friend = NA) {
+                        self$name <- name
+                        self$friend <- friend
+                    },
+                    greet = function() {
+                        cat(paste0("Hello, my name is ", self$name, ".\n"))
+                    }
+                ),
+                private = list(
+                    get_friend = function() {
+                        self$friend
+                    }
+                ),
+                active = list(
+                    active_name = function() {
+                        stop("Variables pane should not evaluate active bindings.")
+                    }
+                )
+            )
+
+            x = Person$new("ann", NA)
+            "#,
+                env.clone(),
+            )
+            .unwrap();
+
+            // Inspect the class instance
+            let path = vec![String::from("x")];
+            let fields = PositronVariable::inspect(env.clone(), &path).unwrap();
+
+            // Is the active binding correctly handled?
+            assert_eq!(fields.len(), 5);
+            let n_active_bindings = fields
+                .iter()
+                .filter(|v| v.display_name.eq("active_name"))
+                .map(|v| {
+                    assert_eq!(v.display_value, "");
+                    assert_eq!(v.display_type, "active binding");
+                })
+                .count();
+            assert_eq!(n_active_bindings, 1);
+
+            // Can we inspect the list of methods?
+            let path = vec![String::from("x"), String::from("<methods>")];
+            let fields = PositronVariable::inspect(env.clone(), &path).unwrap();
+            assert_eq!(fields.len(), 3);
+            let names: Vec<String> = fields.iter().map(|v| v.display_name.clone()).collect();
+            assert_eq!(names, vec![
+                String::from("clone"),
+                String::from("greet"),
+                String::from("initialize")
+            ]);
+
+            // Can we get a list of private methods?
+            let path = vec![String::from("x"), String::from("<private>")];
+            let fields = PositronVariable::inspect(env.clone(), &path).unwrap();
+            assert_eq!(fields.len(), 1);
+            let names: Vec<String> = fields.iter().map(|v| v.display_name.clone()).collect();
+            assert_eq!(names, vec![String::from("get_friend"),]);
         })
     }
 }
