@@ -1471,4 +1471,85 @@ mod tests {
             assert_eq!(names, vec![String::from("get_friend"),]);
         })
     }
+
+    #[test]
+    fn test_inspect_list() {
+        r_test(|| {
+            // Create an environment that contains an R6 class and an instance
+            let env = harp::parse_eval_global("new.env()").unwrap();
+
+            harp::parse_eval0(
+                r#"
+                x <- list(
+                    a = 123,
+                    b = list(1,2,3),
+                    1,
+                    list(1,2,3)
+                )
+            "#,
+                env.clone(),
+            )
+            .unwrap();
+
+            // Inspect the list
+            let path = vec![String::from("x")];
+            let fields = PositronVariable::inspect(env.clone(), &path).unwrap();
+
+            assert_eq!(fields.len(), 4);
+
+            // Make sure we can see something with display_name a
+            assert_eq!(fields.iter().filter(|v| v.display_name.eq("a")).count(), 1);
+
+            // Check that the display value is correct for `a`
+            assert_eq!(fields[0].display_value, "123");
+
+            // Make sure empty named are formatted
+            assert_eq!(
+                fields.iter().filter(|v| v.display_name.eq("[[3]]")).count(),
+                1
+            );
+
+            // Can we inspect list internals
+            let path = vec![String::from("x"), String::from("1")];
+            let fields = PositronVariable::inspect(env.clone(), &path).unwrap();
+
+            assert_eq!(fields.len(), 3);
+            fields.iter().enumerate().for_each(|(index, value)| {
+                let index = index + 1; // R indexes start from 1
+                assert_eq!(value.display_name, format!("[[{index}]]"));
+            });
+        })
+    }
+
+    #[test]
+    fn test_inspect_s4() {
+        r_test(|| {
+            let env = harp::parse_eval_global("new.env()").unwrap();
+
+            harp::parse_eval0(
+                r#"
+                setClass("Person", representation(name = "character", age = "numeric", objects = "list"))
+                x <- new("Person", name = "x", age = 31, objects = list(1,2,3))
+            "#,
+                env.clone(),
+            )
+            .unwrap();
+
+            // Inspect the S4 object
+            let path = vec![String::from("x")];
+            let fields = PositronVariable::inspect(env.clone(), &path).unwrap();
+
+            assert_eq!(fields.len(), 3);
+
+            // Can we inspect `objects`?
+            let path = vec![String::from("x"), String::from("objects")];
+            let fields = PositronVariable::inspect(env.clone(), &path).unwrap();
+
+            assert_eq!(fields.len(), 3);
+            fields.iter().enumerate().for_each(|(index, value)| {
+                let index = index + 1; // R indexes start from 1
+                assert_eq!(value.display_name, format!("[[{index}]]"));
+            });
+        })
+    }
 }
