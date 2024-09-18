@@ -159,58 +159,27 @@ getHtmlHelpContentsInstalled <- function(helpFiles, package) {
   paste(contents, collapse = "\n")
 }
 
-getPackageNameFromHelpPath <- function(x) {
-  # Help paths are of the form:
-  # <libpath>/<package>/<etc>/<topic>
+getPackageNameFromHelpPath <- function(path) {
+  # Help paths are always of the form:
+  # <libpath>/<package>/help/<topic>
   #
-  # General idea is to strip the matching `.libPaths()` prefix from the help
-  # path. What remains starts with the package name!
+  # `<libpath>/<package>/help` should be a real path on the file system,
+  # and points to the folder where the Rd database is stored. Note that
+  # the full path of `<libpath>/<package>/help/<topic>` actually does NOT
+  # exist on the file system, it's just a convention!
+  #
+  # `utils:::.getHelpFile()` utilizes the fact that `<package>` is always
+  # relative to `<topic>` in a specific way, so we should be safe to do the
+  # same.
+  path_help <- dirname(path)
+  path_package <- dirname(path_help)
 
-  # Normalize paths everywhere to avoid any irrelevant path differences.
-  # Also, for `prefixes` it removes a potential trailing `/`, which we handle
-  # explicitly further below.
-  x <- normalizePath(x, mustWork = FALSE)
-
-  prefixes <- .libPaths()
-  prefixes <- normalizePath(prefixes, mustWork = FALSE)
-
-  loc <- which(startsWith(x, prefix = prefixes))
-
-  if (length(loc) == 0L) {
-    # Help path comes from an unknown place
+  if (!file.exists(path_package)) {
+    # Guard against nonexistent packages
     return(NULL)
   }
 
-  if (length(loc) > 1L) {
-    # If somehow there are multiple prefix matches, choose the most precise
-    # (longest) one
-    prefixes <- prefixes[loc]
-    loc <- which.max(nchar(prefixes))
-  }
-
-  prefix <- prefixes[[loc]]
-  prefix <- paste0(prefix, .Platform$file.sep)
-
-  # Strip off this prefix, including the `/`:
-  # <libpath>/<package>/<etc>/<topic>
-  # |--------|
-  x <- sub(
-    pattern = prefix,
-    replacement = "",
-    x = x,
-    fixed = TRUE
-  )
-
-  # Split by the file separator and take the first element,
-  # that should be the package name!
-  x <- strsplit(x, split = .Platform$file.sep, fixed = TRUE)[[1L]]
-
-  if (length(x) == 0L) {
-    # Extra defensive against `strsplit("")` returning `character()`
-    return(NULL)
-  }
-
-  package <- x[[1L]]
+  package <- basename(path_package)
 
   package
 }
