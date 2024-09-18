@@ -1,5 +1,5 @@
 //
-// parse_boundaries.rs
+// input_boundaries.rs
 //
 // Copyright (C) 2024 Posit Software, PBC. All rights reserved.
 //
@@ -15,43 +15,43 @@ use crate::coordinates::LineRange;
 
 /// Boundaries are ranges over lines of text.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub struct ParseBoundary {
+pub struct InputBoundary {
     pub range: LineRange,
 
     #[serde(flatten)]
-    pub kind: ParseBoundaryKind,
+    pub kind: InputBoundaryKind,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", content = "data")]
 #[serde(rename_all = "snake_case")]
-pub enum ParseBoundaryKind {
+pub enum InputBoundaryKind {
     Whitespace,
     Complete,
     Incomplete,
     Invalid { message: String },
 }
 
-impl ParseBoundary {
-    fn new(range: LineRange, kind: ParseBoundaryKind) -> Self {
+impl InputBoundary {
+    fn new(range: LineRange, kind: InputBoundaryKind) -> Self {
         Self { range, kind }
     }
 
     pub fn whitespace(range: LineRange) -> Self {
-        Self::new(range, ParseBoundaryKind::Whitespace)
+        Self::new(range, InputBoundaryKind::Whitespace)
     }
     pub fn complete(range: LineRange) -> Self {
-        Self::new(range, ParseBoundaryKind::Complete)
+        Self::new(range, InputBoundaryKind::Complete)
     }
     pub fn incomplete(range: LineRange) -> Self {
-        Self::new(range, ParseBoundaryKind::Incomplete)
+        Self::new(range, InputBoundaryKind::Incomplete)
     }
     pub fn invalid(range: LineRange, message: String) -> Self {
-        Self::new(range, ParseBoundaryKind::Invalid { message })
+        Self::new(range, InputBoundaryKind::Invalid { message })
     }
 }
 
-/// Parse boundaries of R inputs
+/// Input boundaries of R code
 ///
 /// Takes a string of R code and detects which lines parse as complete,
 /// incomplete, and invalid inputs.
@@ -64,7 +64,7 @@ impl ParseBoundary {
 ///   an incomplete or invalid one, there cannot be an incomplete input after
 ///   an invalid one, and invalid inputs are always trailing).
 /// - There is only one incomplete and one invalid input in a set of inputs.
-pub fn parse_boundaries(text: &str) -> anyhow::Result<Vec<ParseBoundary>> {
+pub fn input_boundaries(text: &str) -> anyhow::Result<Vec<InputBoundary>> {
     let mut lines: Vec<&str> = text.lines().collect();
 
     // Rectify for `lines()` ignoring trailing empty lines
@@ -165,16 +165,16 @@ pub fn parse_boundaries(text: &str) -> anyhow::Result<Vec<ParseBoundary>> {
     let complete = merge_overlapping(complete);
 
     // Fill any gaps with one-liner complete expressions. Creates
-    // `ParseBoundary` elements of the right type (complete or whitespace)
+    // `InputBoundary` elements of the right type (complete or whitespace)
     let mut boundaries = fill_gaps(complete, &incomplete, &invalid, n_lines);
 
     // Now push incomplete and invalid boundaries, if any
     if let Some(boundary) = incomplete {
-        boundaries.push(ParseBoundary::incomplete(boundary));
+        boundaries.push(InputBoundary::incomplete(boundary));
     }
     if let Some(boundary) = invalid {
         // SAFETY: `invalid_message` has to be `Some()` because `invalid` is `Some()`
-        boundaries.push(ParseBoundary::invalid(boundary, invalid_message.unwrap()));
+        boundaries.push(InputBoundary::invalid(boundary, invalid_message.unwrap()));
     }
 
     Ok(boundaries)
@@ -211,8 +211,8 @@ fn fill_gaps(
     incomplete: &Option<LineRange>,
     invalid: &Option<LineRange>,
     n_lines: u32,
-) -> Vec<ParseBoundary> {
-    let mut filled: Vec<ParseBoundary> = vec![];
+) -> Vec<InputBoundary> {
+    let mut filled: Vec<InputBoundary> = vec![];
     let mut last_line: u32 = 0;
 
     let range_from = |start| LineRange::new(start, start + 1);
@@ -222,7 +222,7 @@ fn fill_gaps(
         for start in 0..first.start() {
             let range = range_from(start);
             last_line = range.end();
-            filled.push(ParseBoundary::whitespace(range))
+            filled.push(InputBoundary::whitespace(range))
         }
     }
 
@@ -231,12 +231,12 @@ fn fill_gaps(
         // We found a gap, fill ranges for lines in that gap
         if !range.contains(last_line) {
             for start in last_line..range.start() {
-                filled.push(ParseBoundary::whitespace(range_from(start)))
+                filled.push(InputBoundary::whitespace(range_from(start)))
             }
         }
 
         last_line = range.end();
-        filled.push(ParseBoundary::complete(range));
+        filled.push(InputBoundary::complete(range));
     }
 
     // Fill trailing whitespace between complete expressions and the rest
@@ -249,7 +249,7 @@ fn fill_gaps(
         .unwrap_or(n_lines);
 
     for start in last_complete_boundary..next_boundary {
-        filled.push(ParseBoundary::whitespace(range_from(start)))
+        filled.push(InputBoundary::whitespace(range_from(start)))
     }
 
     filled
@@ -260,43 +260,43 @@ mod tests {
     use crate::analysis::input_boundaries::*;
     use crate::test::r_test;
 
-    fn p(text: &str) -> Vec<ParseBoundary> {
-        let mut boundaries = parse_boundaries(text).unwrap();
+    fn p(text: &str) -> Vec<InputBoundary> {
+        let mut boundaries = input_boundaries(text).unwrap();
 
         // Replace error messages with placeholder so they don't interfere with
         // equality tests
         if let Some(last) = boundaries.last() {
-            if let ParseBoundaryKind::Invalid { .. } = &last.kind {
+            if let InputBoundaryKind::Invalid { .. } = &last.kind {
                 let range = last.range.to_owned();
                 boundaries.pop();
-                boundaries.push(ParseBoundary::invalid(range, String::from("placeholder")))
+                boundaries.push(InputBoundary::invalid(range, String::from("placeholder")))
             }
         }
 
         boundaries
     }
 
-    fn boundary(start: u32, end: u32, kind: ParseBoundaryKind) -> ParseBoundary {
+    fn boundary(start: u32, end: u32, kind: InputBoundaryKind) -> InputBoundary {
         let range = LineRange::new(start, end);
-        ParseBoundary::new(range, kind)
+        InputBoundary::new(range, kind)
     }
-    fn whitespace(start: u32, end: u32) -> ParseBoundary {
-        boundary(start, end, ParseBoundaryKind::Whitespace)
+    fn whitespace(start: u32, end: u32) -> InputBoundary {
+        boundary(start, end, InputBoundaryKind::Whitespace)
     }
-    fn complete(start: u32, end: u32) -> ParseBoundary {
-        boundary(start, end, ParseBoundaryKind::Complete)
+    fn complete(start: u32, end: u32) -> InputBoundary {
+        boundary(start, end, InputBoundaryKind::Complete)
     }
-    fn incomplete(start: u32, end: u32) -> ParseBoundary {
-        boundary(start, end, ParseBoundaryKind::Incomplete)
+    fn incomplete(start: u32, end: u32) -> InputBoundary {
+        boundary(start, end, InputBoundaryKind::Incomplete)
     }
-    fn invalid(start: u32, end: u32) -> ParseBoundary {
-        boundary(start, end, ParseBoundaryKind::Invalid {
+    fn invalid(start: u32, end: u32) -> InputBoundary {
+        boundary(start, end, InputBoundaryKind::Invalid {
             message: String::from("placeholder"),
         })
     }
 
     #[test]
-    fn test_parse_boundaries_complete() {
+    fn test_input_boundaries_complete() {
         r_test(|| {
             assert_eq!(p("foo"), vec![complete(0, 1),]);
             assert_eq!(p("foo\nbarbaz  "), vec![complete(0, 1), complete(1, 2)]);
@@ -304,7 +304,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_boundaries_whitespace() {
+    fn test_input_boundaries_whitespace() {
         r_test(|| {
             #[rustfmt::skip]
             assert_eq!(p(""), vec![
@@ -329,7 +329,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_boundaries_complete_semicolon() {
+    fn test_input_boundaries_complete_semicolon() {
         r_test(|| {
             // These should only produce a single complete input range
             assert_eq!(p("foo;bar"), vec![complete(0, 1)]);
@@ -339,7 +339,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_boundaries_incomplete() {
+    fn test_input_boundaries_incomplete() {
         #[rustfmt::skip]
         r_test(|| {
             assert_eq!(p("foo +"), vec![
@@ -367,7 +367,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_boundaries_invalid() {
+    fn test_input_boundaries_invalid() {
         #[rustfmt::skip]
         r_test(|| {
             assert_eq!(p("foo )"), vec![
@@ -393,10 +393,10 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_boundaries_invalid_message() {
+    fn test_input_boundaries_invalid_message() {
         r_test(|| {
-            let boundaries = parse_boundaries("foo )").unwrap();
-            assert_eq!(boundaries, vec![ParseBoundary::invalid(
+            let boundaries = input_boundaries("foo )").unwrap();
+            assert_eq!(boundaries, vec![InputBoundary::invalid(
                 LineRange::new(0, 1),
                 String::from("unexpected ')'")
             ),]);
