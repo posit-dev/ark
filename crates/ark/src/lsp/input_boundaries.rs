@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use serde::Serialize;
 
-use crate::analysis::parse_boundaries::ParseBoundary;
+use crate::analysis::input_boundaries::ParseBoundary;
 
 pub static POSITRON_INPUT_BOUNDARIES_REQUEST: &'static str = "positron/inputBoundaries";
 

@@ -257,7 +257,7 @@ fn fill_gaps(
 
 #[cfg(test)]
 mod tests {
-    use crate::analysis::parse_boundaries::*;
+    use crate::analysis::input_boundaries::*;
     use crate::test::r_test;
 
     fn p(text: &str) -> Vec<ParseBoundary> {
