@@ -24,7 +24,7 @@ pub enum ParseBoundaryKind {
     Whitespace,
     Complete,
     Incomplete,
-    Invalid,
+    Invalid { message: String },
 }
 
 impl ParseBoundary {
@@ -41,8 +41,8 @@ impl ParseBoundary {
     pub fn incomplete(range: LineRange) -> Self {
         Self::new(range, ParseBoundaryKind::Incomplete)
     }
-    pub fn invalid(range: LineRange) -> Self {
-        Self::new(range, ParseBoundaryKind::Invalid)
+    pub fn invalid(range: LineRange, message: String) -> Self {
+        Self::new(range, ParseBoundaryKind::Invalid { message })
     }
 }
 
@@ -77,6 +77,7 @@ pub fn parse_boundaries(text: &str) -> anyhow::Result<Vec<ParseBoundary>> {
     let mut complete: Vec<LineRange> = vec![];
     let mut incomplete: Option<LineRange> = None;
     let mut invalid: Option<LineRange> = None;
+    let mut invalid_message: Option<String> = None;
 
     let mut incomplete_end: Option<u32> = None;
     let mut invalid_end: Option<u32> = None;
@@ -139,10 +140,11 @@ pub fn parse_boundaries(text: &str) -> anyhow::Result<Vec<ParseBoundary>> {
                 }
             },
 
-            ParseResult::SyntaxError { .. } => {
+            ParseResult::SyntaxError { message, .. } => {
                 // Declare invalid
                 if let None = invalid_end {
                     invalid_end = Some(current_line + 1);
+                    invalid_message = Some(message)
                 }
             },
         };
@@ -166,7 +168,7 @@ pub fn parse_boundaries(text: &str) -> anyhow::Result<Vec<ParseBoundary>> {
         boundaries.push(ParseBoundary::incomplete(boundary));
     }
     if let Some(boundary) = invalid {
-        boundaries.push(ParseBoundary::invalid(boundary));
+        boundaries.push(ParseBoundary::invalid(boundary, invalid_message.unwrap()));
     }
 
     Ok(boundaries)
@@ -253,7 +255,19 @@ mod tests {
     use crate::test::r_test;
 
     fn p(text: &str) -> Vec<ParseBoundary> {
-        parse_boundaries(text).unwrap()
+        let mut boundaries = parse_boundaries(text).unwrap();
+
+        // Replace error messages with placeholder so they don't interfere with
+        // equality tests
+        if let Some(last) = boundaries.last() {
+            if let ParseBoundaryKind::Invalid { .. } = &last.kind {
+                let range = last.range.to_owned();
+                boundaries.pop();
+                boundaries.push(ParseBoundary::invalid(range, String::from("placeholder")))
+            }
+        }
+
+        boundaries
     }
 
     fn boundary(start: u32, end: u32, kind: ParseBoundaryKind) -> ParseBoundary {
@@ -270,7 +284,9 @@ mod tests {
         boundary(start, end, ParseBoundaryKind::Incomplete)
     }
     fn invalid(start: u32, end: u32) -> ParseBoundary {
-        boundary(start, end, ParseBoundaryKind::Invalid)
+        boundary(start, end, ParseBoundaryKind::Invalid {
+            message: String::from("placeholder"),
+        })
     }
 
     #[test]
@@ -367,6 +383,17 @@ mod tests {
                 incomplete(0, 1),
                 invalid(1, 2),
             ]);
+        });
+    }
+
+    #[test]
+    fn test_parse_boundaries_invalid_message() {
+        r_test(|| {
+            let boundaries = parse_boundaries("foo )").unwrap();
+            assert_eq!(boundaries, vec![ParseBoundary::invalid(
+                LineRange::new(0, 1),
+                String::from("unexpected ')'")
+            ),]);
         });
     }
 }
