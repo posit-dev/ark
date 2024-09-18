@@ -168,6 +168,7 @@ pub fn parse_boundaries(text: &str) -> anyhow::Result<Vec<ParseBoundary>> {
         boundaries.push(ParseBoundary::incomplete(boundary));
     }
     if let Some(boundary) = invalid {
+        // SAFETY: `invalid_message` has to be `Some()` because `invalid` is `Some()`
         boundaries.push(ParseBoundary::invalid(boundary, invalid_message.unwrap()));
     }
 
@@ -235,14 +236,14 @@ fn fill_gaps(
 
     // Fill trailing whitespace between complete expressions and the rest
     // (incomplete, invalid, or eof)
-    let last_boundary = filled.last().map(|b| b.range.end()).unwrap_or(0);
+    let last_complete_boundary = filled.last().map(|b| b.range.end()).unwrap_or(0);
     let next_boundary = incomplete
         .as_ref()
         .or(invalid.as_ref())
         .map(|r| r.start())
         .unwrap_or(n_lines);
 
-    for start in last_boundary..next_boundary {
+    for start in last_complete_boundary..next_boundary {
         filled.push(ParseBoundary::whitespace(range_from(start)))
     }
 
