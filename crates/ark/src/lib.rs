@@ -33,6 +33,7 @@ pub mod signals;
 pub mod srcref;
 pub mod start;
 pub mod startup;
+pub mod strings;
 pub mod sys;
 pub mod thread;
 pub mod traps;
@@ -45,3 +46,5 @@ pub mod viewer;
 pub(crate) use r_task::r_task;
 
 pub const ARK_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+// pub use strings::*;

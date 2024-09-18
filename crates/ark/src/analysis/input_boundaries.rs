@@ -65,14 +65,7 @@ impl InputBoundary {
 ///   an invalid one, and invalid inputs are always trailing).
 /// - There is only one incomplete and one invalid input in a set of inputs.
 pub fn input_boundaries(text: &str) -> anyhow::Result<Vec<InputBoundary>> {
-    let mut lines: Vec<&str> = text.lines().collect();
-
-    // Rectify for `lines()` ignoring trailing empty lines
-    match text.chars().last() {
-        Some(last) if last == '\n' => lines.push(""),
-        None => lines.push(""),
-        _ => {},
-    }
+    let lines = crate::strings::lines(text);
 
     // Create a duplicate vector of lines on the R side too so we don't have to
     // reallocate memory each time we parse a new subset of lines
