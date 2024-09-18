@@ -400,6 +400,6 @@ pub(crate) fn handle_virtual_document(
 pub(crate) fn handle_input_boundaries(
     params: InputBoundariesParams,
 ) -> anyhow::Result<InputBoundariesResponse> {
-    let boundaries = parse_boundaries(&params.text)?;
+    let boundaries = r_task(|| parse_boundaries(&params.text))?;
     Ok(InputBoundariesResponse { boundaries })
 }
