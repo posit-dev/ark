@@ -118,6 +118,7 @@ use crate::signals::set_interrupts_pending;
 use crate::srcref::ns_populate_srcref;
 use crate::srcref::resource_loaded_namespaces;
 use crate::startup;
+use crate::strings::lines;
 use crate::sys::console::console_to_utf8;
 
 /// An enum representing the different modes in which the R session can run.
@@ -219,6 +220,8 @@ pub struct RMain {
     pub is_busy: bool,
 
     pub positron_ns: Option<RObject>,
+
+    pending_lines: Vec<String>,
 }
 
 /// Represents the currently active execution request from the frontend. It
@@ -891,6 +894,9 @@ impl RMain {
                     code = format!("{{ {code} }}");
                 }
 
+                // WIP: Split input into multiple lines
+                let code = self.handle_input(code);
+
                 Self::on_console_input(buf, buflen, code);
                 Some(ConsoleResult::NewInput)
             },
@@ -1059,6 +1065,20 @@ impl RMain {
                 None
             },
         }
+    }
+
+    fn handle_input(&mut self, input: String) -> String {
+        // TODO: Going back and forth from Vec<String> to iterator is not nice
+        let mut lines: Vec<String> = lines(&input).into_iter().rev().map(String::from).collect();
+
+        // SAFETY: There is always at least one line because
+        let first = lines.pop().unwrap();
+
+        // No-op if `lines` is empty
+        assert!(self.pending_lines.is_empty());
+        self.pending_lines.append(&mut lines);
+
+        first
     }
 
     /// Copy console input into R's internal input buffer
