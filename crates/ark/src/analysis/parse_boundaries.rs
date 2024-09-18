@@ -334,6 +334,13 @@ mod tests {
                 complete(0, 1),
                 incomplete(1, 2),
             ]);
+
+            assert_eq!(p("#\n# foo\n  # bar \nbaz +  \n # qux"), vec![
+                whitespace(0, 1),
+                whitespace(1, 2),
+                whitespace(2, 3),
+                incomplete(3, 5),
+            ]);
         });
     }
 
