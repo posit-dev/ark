@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use serde::Serialize;
 
-use crate::analysis::parse_boundaries::ParseBoundary;
+use crate::analysis::input_boundaries::InputBoundary;
 
 pub static POSITRON_INPUT_BOUNDARIES_REQUEST: &'static str = "positron/inputBoundaries";
 
@@ -13,5 +13,5 @@ pub struct InputBoundariesParams {
 
 #[derive(Debug, Eq, PartialEq, Clone, Serialize)]
 pub struct InputBoundariesResponse {
-    pub boundaries: Vec<ParseBoundary>,
+    pub boundaries: Vec<InputBoundary>,
 }
