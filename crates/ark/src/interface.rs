@@ -505,6 +505,7 @@ impl RMain {
             pending_futures: HashMap::new(),
             session_mode,
             positron_ns: None,
+            pending_lines: Vec::new(),
         }
     }
 
@@ -631,6 +632,10 @@ impl RMain {
         buflen: c_int,
         _hist: c_int,
     ) -> ConsoleResult {
+        if let Some(console_result) = self.handle_pending_line(buf, buflen) {
+            return console_result;
+        }
+
         let info = Self::prompt_info(prompt);
         log::trace!("R prompt: {}", info.input_prompt);
 
@@ -1067,6 +1072,24 @@ impl RMain {
         }
     }
 
+    fn handle_pending_line(&mut self, buf: *mut c_uchar, buflen: c_int) -> Option<ConsoleResult> {
+        if self.error_occurred {
+            // If an error has occurred, we've already sent a complete expression that resulted in
+            // an error. Flush the remaining lines and return to `read_console()`, who will handle
+            // that error.
+            self.pending_lines.clear();
+            return None;
+        }
+
+        let Some(input) = self.pending_lines.pop() else {
+            // No pending lines
+            return None;
+        };
+
+        Self::on_console_input(buf, buflen, input);
+        Some(ConsoleResult::NewInput)
+    }
+
     fn handle_input(&mut self, input: String) -> String {
         // TODO: Going back and forth from Vec<String> to iterator is not nice
         let mut lines: Vec<String> = lines(&input).into_iter().rev().map(String::from).collect();
@@ -1106,6 +1129,8 @@ impl RMain {
         let buflen = buflen - 2;
 
         if input.len() > buflen {
+            // TODO!: Probably want to clear the `pending_lines` if we get here
+            // TODO!: Also think about what happens if R gets left in an incomplete state (invokeRestart("abort")?)
             log::error!("Console input too large for buffer, writing R error.");
             input = Self::buffer_overflow_call();
         }
