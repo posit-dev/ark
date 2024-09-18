@@ -320,6 +320,19 @@ impl WorkspaceVariableDisplayValue {
         Self::new(String::from("??"), true)
     }
 
+    fn from_untruncated_string(value: String) -> Self {
+        let mut is_truncated = false;
+        let mut display_value = value.clone();
+
+        // If an index is found, truncate the string to that index
+        if let Some((index, _)) = value.char_indices().nth(MAX_DISPLAY_VALUE_LENGTH) {
+            display_value.truncate(index);
+            is_truncated = true;
+        }
+
+        Self::new(display_value, is_truncated)
+    }
+
     fn try_from_method(value: SEXP) -> Option<Self> {
         let display_value =
             ArkGenerics::VariableDisplayValue.try_dispatch::<String>(value, vec![(
@@ -334,7 +347,7 @@ impl WorkspaceVariableDisplayValue {
 
         match display_value {
             None => None,
-            Some(value) => Some(Self::new(value, false)),
+            Some(value) => Some(Self::from_untruncated_string(value)),
         }
     }
 }
@@ -1319,7 +1332,9 @@ fn try_from_method_variable_kind(value: SEXP) -> anyhow::Result<Option<VariableK
     let kind: Option<String> = ArkGenerics::VariableKind.try_dispatch(value, vec![])?;
     match kind {
         None => Ok(None),
-        Some(kind) => Ok(serde_json::from_str(kind.as_str())?),
+        // Enum reflection is not beautiful, we want to parse a VariableKind from it's
+        // string representation by reading from a json which is just `"{kind}"`.
+        Some(kind) => Ok(serde_json::from_str(format!(r#""{kind}""#).as_str())?),
     }
 }
 
@@ -1336,5 +1351,59 @@ pub fn plain_binding_force_with_rollback(binding: &Binding) -> anyhow::Result<RO
         BindingValue::Standard { object, .. } => Ok(object.clone()),
         BindingValue::Promise { promise, .. } => Ok(r_promise_force_with_rollback(promise.sexp)?),
         _ => Err(anyhow!("Unexpected binding type")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use harp;
+
+    use super::*;
+    use crate::test::r_test;
+
+    #[test]
+    fn test_variable_with_methods() {
+        r_test(|| {
+            // Register the display value method
+            harp::parse_eval_global(
+                r#"
+                .ps.register_ark_method("ark_variable_display_value", "foo", function(x, width) {
+                    # We return a large string and make sure it gets truncated.
+                    paste0(rep("a", length.out = 2*width), collapse="")
+                })
+
+                .ps.register_ark_method("ark_variable_display_type", "foo", function(x, include_length) {
+                    paste0("foo (", length(x), ")")
+                })
+
+                .ps.register_ark_method("ark_variable_has_children", "foo", function(x) {
+                    FALSE
+                })
+
+                .ps.register_ark_method("ark_variable_kind", "foo", function(x) {
+                    "other"
+                })
+
+                "#,
+            )
+            .unwrap();
+
+            // Create an object with that class in an env.
+            let obj = harp::parse_eval_base(r#"structure(list(1,2,3), class = "foo")"#).unwrap();
+
+            let variable =
+                PositronVariable::from(String::from("foo"), String::from("foo"), obj.sexp);
+
+            assert_eq!(
+                variable.var.display_value,
+                String::from("a".repeat(MAX_DISPLAY_VALUE_LENGTH))
+            );
+
+            assert_eq!(variable.var.display_type, String::from("foo (3)"));
+
+            assert_eq!(variable.var.has_children, false);
+
+            assert_eq!(variable.var.kind, VariableKind::Other);
+        })
     }
 }
