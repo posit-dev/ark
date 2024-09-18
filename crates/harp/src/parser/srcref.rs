@@ -23,12 +23,12 @@ pub struct SrcRef {
     /// Lines and virtual lines may differ if a `#line` directive is used in code:
     /// the former just counts actual lines, the latter respects the directive.
     /// `line` corresponds to `line_parsed` in the original base R srcref vector.
-    pub line: std::ops::Range<usize>,
-    pub line_virtual: std::ops::Range<usize>,
+    pub line: std::ops::Range<u32>,
+    pub line_virtual: std::ops::Range<u32>,
 
     /// Bytes and columns may be different due to multibyte characters.
-    pub column: std::ops::Range<usize>,
-    pub column_byte: std::ops::Range<usize>,
+    pub column: std::ops::Range<u32>,
+    pub column_byte: std::ops::Range<u32>,
 }
 
 #[derive(Debug)]
@@ -66,11 +66,11 @@ impl TryFrom<RObject> for SrcRef {
         // ranges in `srcref` vectors which are 1-based `[ ]`.
 
         // Change from 1-based to 0-based counting
-        let adjust_start = |i| (i - 1) as usize;
+        let adjust_start = |i| (i - 1) as u32;
 
         // Change from 1-based to 0-based counting (-1) and make it an exclusive
         // boundary (+1). So essentially a no-op.
-        let adjust_end = |i| i as usize;
+        let adjust_end = |i| i as u32;
 
         let line_start = adjust_start(value.get_value(0)?);
         let column_start = adjust_start(value.get_value(4)?);

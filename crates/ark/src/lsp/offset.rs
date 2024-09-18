@@ -24,12 +24,12 @@ impl From<harp::srcref::SrcRef> for ArkRange {
     fn from(value: harp::srcref::SrcRef) -> Self {
         ArkRange {
             start: ArkPoint {
-                row: value.line.start,
-                column: value.column.start,
+                row: value.line.start as usize,
+                column: value.column.start as usize,
             },
             end: ArkPoint {
-                row: value.line.end,
-                column: value.column.end,
+                row: value.line.end as usize,
+                column: value.column.end as usize,
             },
         }
     }

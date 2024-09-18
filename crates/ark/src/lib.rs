@@ -9,6 +9,7 @@ pub mod analysis;
 pub mod browser;
 pub mod connections;
 pub mod control;
+pub mod coordinates;
 pub mod dap;
 pub mod data_explorer;
 pub mod errors;
