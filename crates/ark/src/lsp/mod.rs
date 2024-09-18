@@ -23,6 +23,7 @@ pub mod help_topic;
 pub mod hover;
 pub mod indent;
 pub mod indexer;
+pub mod input_boundaries;
 pub mod main_loop;
 pub mod markdown;
 pub mod offset;

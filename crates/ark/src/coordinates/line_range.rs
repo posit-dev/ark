@@ -1,12 +1,14 @@
 use std::cmp;
 
+use serde::Serialize;
+
 /// Range over lines of text
 ///
 /// The API is (incompletely) modeled after `text_size::TextRange` but the inner
 /// types are not as opaque so it's easy to work with line numbers coming from
 /// external sources. The type name mentions "line" to be self-documenting about
 /// what the range represents.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize)]
 pub struct LineRange {
     start: u32,
     end: u32,

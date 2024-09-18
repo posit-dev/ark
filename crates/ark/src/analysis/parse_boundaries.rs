@@ -9,17 +9,22 @@ use harp::vector::CharacterVector;
 use harp::vector::Vector;
 use harp::ParseResult;
 use harp::RObject;
+use serde::Serialize;
 
 use crate::coordinates::LineRange;
 
 /// Boundaries are ranges over lines of text.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct ParseBoundary {
     pub range: LineRange,
+
+    #[serde(flatten)]
     pub kind: ParseBoundaryKind,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", content = "data")]
+#[serde(rename_all = "snake_case")]
 pub enum ParseBoundaryKind {
     Whitespace,
     Complete,
