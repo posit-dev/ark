@@ -143,11 +143,7 @@ getHtmlHelpContentsInstalled <- function(helpFiles, package) {
 
   # Set 'package' now if it was unknown.
   if (is.null(package)) {
-    pattern <- "/library/([^/]+)/"
-    m <- regexec(pattern, helpFile, perl = TRUE)
-    matches <- regmatches(helpFile, m)
-    if (length(matches) && length(matches[[1L]] == 2L))
-      package <- matches[[1L]][[2L]]
+    package <- getPackageNameFromHelpPath(helpFile)
   }
 
   # If still unknown, set to `""` for `Rd2HTML()`
@@ -161,6 +157,62 @@ getHtmlHelpContentsInstalled <- function(helpFiles, package) {
   tools::Rd2HTML(rd, out = htmlFile, package = package)
   contents <- readLines(htmlFile, warn = FALSE)
   paste(contents, collapse = "\n")
+}
+
+getPackageNameFromHelpPath <- function(x) {
+  # Help paths are of the form:
+  # <libpath>/<package>/<etc>/<topic>
+  #
+  # General idea is to strip the matching `.libPaths()` prefix from the help
+  # path. What remains starts with the package name!
+
+  # Normalize paths everywhere to avoid any irrelevant path differences.
+  # Also, for `prefixes` it removes a potential trailing `/`, which we handle
+  # explicitly further below.
+  x <- normalizePath(x, mustWork = FALSE)
+
+  prefixes <- .libPaths()
+  prefixes <- normalizePath(prefixes, mustWork = FALSE)
+
+  loc <- which(startsWith(x, prefix = prefixes))
+
+  if (length(loc) == 0L) {
+    # Help path comes from an unknown place
+    return(NULL)
+  }
+
+  if (length(loc) > 1L) {
+    # If somehow there are multiple prefix matches, choose the most precise
+    # (longest) one
+    prefixes <- prefixes[loc]
+    loc <- which.max(nchar(prefixes))
+  }
+
+  prefix <- prefixes[[loc]]
+  prefix <- paste0(prefix, .Platform$file.sep)
+
+  # Strip off this prefix, including the `/`:
+  # <libpath>/<package>/<etc>/<topic>
+  # |--------|
+  x <- sub(
+    pattern = prefix,
+    replacement = "",
+    x = x,
+    fixed = TRUE
+  )
+
+  # Split by the file separator and take the first element,
+  # that should be the package name!
+  x <- strsplit(x, split = .Platform$file.sep, fixed = TRUE)[[1L]]
+
+  if (length(x) == 0L) {
+    # Extra defensive against `strsplit("")` returning `character()`
+    return(NULL)
+  }
+
+  package <- x[[1L]]
+
+  package
 }
 
 getHtmlHelpContentsDev <- function(x) {
