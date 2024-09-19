@@ -10,6 +10,17 @@
     .ps.Call("ps_reticulate_open", input)
 }
 
+#' Used by the front-end to install reticulate
+#' @export
+.ps.rpc.install_reticulate <- function() {
+    tryCatch({
+        utils::install.packages("reticulate")
+        TRUE
+    }, error = function(err) {
+        FALSE
+    })
+}
+
 #' @export
 .ps.rpc.reticulate_start_kernel <- function(kernelPath, connectionFile, logFile, logLevel) {
     # We execute as interactive to allow reticulate to prompt for installation
