@@ -16,7 +16,7 @@
                     paste0("Posit team (", current_year, "). "),
                     "Positron: A next generation data science IDE. ",
                     "Posit Software, PBC, Boston, MA. ",
-                    "URL http://www.posit.co/.",
+                    "URL https://www.posit.co/.",
                     sep = ""
                 ),
             mheader = "To cite Positron in publications use:",
