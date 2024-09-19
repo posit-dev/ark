@@ -10,7 +10,7 @@
             organization = "Posit Software, PBC",
             address      = "Boston, MA",
             year         = current_year,
-            url          = "http://www.posit.co/",
+            url          = "https://www.posit.co/",
             textVersion =
                 paste(
                     paste0("Posit team (", current_year, "). "),
