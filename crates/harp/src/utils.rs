@@ -791,6 +791,7 @@ mod tests {
     use crate::exec::RFunction;
     use crate::exec::RFunctionExt;
     use crate::r_str_to_owned_utf8_unchecked;
+    use crate::r_typeof;
     use crate::test::r_test;
 
     #[test]
@@ -820,6 +821,20 @@ mod tests {
             let x = r_str_to_owned_utf8_unchecked(x);
 
             assert_eq!(x, String::from(std::char::REPLACEMENT_CHARACTER));
+        })
+    }
+
+    #[test]
+    fn test_sxpinfo_matches_typeof() {
+        r_test(|| {
+            let x = harp::parse_eval_base("c(1,2,3)").unwrap();
+            unsafe { assert_eq!((*x.sexp).info.sxp_type() as u32, r_typeof(x.sexp)) }
+
+            let x = harp::parse_eval_base(r#"c("a", "b", "c")"#).unwrap();
+            unsafe { assert_eq!((*x.sexp).info.sxp_type() as u32, r_typeof(x.sexp)) }
+
+            let x = harp::parse_eval_base(r#"function(x) x + 1"#).unwrap();
+            unsafe { assert_eq!((*x.sexp).info.sxp_type() as u32, r_typeof(x.sexp)) }
         })
     }
 }
