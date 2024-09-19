@@ -1092,8 +1092,8 @@ impl RMain {
     }
 
     fn handle_input(&mut self, input: String) -> String {
-        // TODO: Going back and forth from Vec<String> to iterator is not nice
-        let mut lines: Vec<String> = lines(&input).into_iter().rev().map(String::from).collect();
+        // Split into lines and reverse them to be able to `pop()` from the front
+        let mut lines: Vec<String> = lines(&input).rev().map(String::from).collect();
 
         // SAFETY: There is always at least one line because
         let first = lines.pop().unwrap();
