@@ -1386,15 +1386,30 @@ This is a Positron limitation we plan to fix. In the meantime, you can:
         }
 
         // If we are at top-level, we're handling visible output auto-printed by
-        // the R REPL. We accumulate this output (it typically comes in
-        // multiple parts) so we can emit it later on as part of execution
-        // results.
+        // the R REPL. We accumulate this output (it typically comes in multiple
+        // parts) so we can emit it later on as part of the execution reply
+        // message sent to Shell, as opposed to an Stdout message sent on IOPub.
+        //
+        // However, if autoprint is dealing with an intermediate expression
+        // (i.e. `a` and `b` in `a\nb\nc`), we should emit it on IOPub. We
+        // only accumulate autoprint output for the very last expression. The
+        // way to distinguish between these cases is whether there are still
+        // lines of input pending. In that case, that means we are on an
+        // intermediate expression.
+        //
+        // Note that we implement this behaviour (streaming autoprint results of
+        // intermediate expressions) specifically for Positron, and specifically
+        // for versions that send multiple expressions selected by the user in
+        // one request. Other Jupyter frontends do not want to see output for
+        // these intermediate expressions. And future versions of Positron will
+        // never send multiple expressions in one request
+        // (https://github.com/posit-dev/positron/issues/1326).
         //
         // Note that warnings emitted lazily on stdout will appear to be part of
         // autoprint. We currently emit them on stderr, which allows us to
         // differentiate, but that could change in the future:
         // https://github.com/posit-dev/positron/issues/1881
-        if otype == 0 && is_auto_printing() {
+        if otype == 0 && is_auto_printing() && self.pending_lines.is_empty() {
             r_main.autoprint_output.push_str(&content);
             return;
         }
