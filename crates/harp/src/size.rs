@@ -184,7 +184,7 @@ fn obj_size_tree(
                         seen,
                         depth + 1,
                     );
-                    if !is_immediate_binding(x) {
+                    if !is_immediate_binding(cons) {
                         size += obj_size_tree(
                             unsafe { libr::CAR(cons) },
                             base_env,
@@ -616,5 +616,43 @@ mod tests {
             let size = object_size("(function(...) function() NULL)(foo)");
             assert!(size != 0)
         });
+    }
+
+    // This is a regression test for:
+    // - https://github.com/posit-dev/positron/issues/4686
+    // - https://github.com/posit-dev/positron/issues/4741
+    // In both cases the R session crashed because we tried to call `CAR`
+    // in a immediate binding. More info in:
+    // https://github.com/posit-dev/positron/issues/4686#issuecomment-2352427239
+    #[test]
+    fn test_shinytest2_size() {
+        r_test!({
+            if let Ok(false) = harp::parse_eval_global("require('shiny') && require('shinytest2')")
+                .unwrap()
+                .try_into()
+            {
+                // Skip test if packages are not installed
+                return;
+            }
+
+            object_size(
+                r#"
+            local({
+                library(shiny)
+                library(shinytest2)
+
+                my_app <- shinyApp(
+                    ui = fluidPage(),
+                    server = function(input, output, session) {}
+                )
+
+                AppDriver$new(
+                    my_app,
+                    name = "block-submit-app",
+                    seed = 4323
+                )
+            })"#,
+            );
+        })
     }
 }
