@@ -1095,7 +1095,9 @@ impl RMain {
         // Split into lines and reverse them to be able to `pop()` from the front
         let mut lines: Vec<String> = lines(&input).rev().map(String::from).collect();
 
-        // SAFETY: There is always at least one line because
+        // SAFETY: There is always at least one line because:
+        // - `lines("")` returns 1 element containing `""`
+        // - `lines("\n")` returns 2 elements containing `""`
         let first = lines.pop().unwrap();
 
         // No-op if `lines` is empty
