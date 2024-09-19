@@ -43,6 +43,7 @@ pub enum Error {
     UnknownCommId(String),
     InvalidCommMessage(String, String, String),
     InvalidInputRequest(String),
+    InvalidConsoleInput(String),
 }
 
 impl std::error::Error for Error {}
@@ -191,6 +192,9 @@ impl fmt::Display for Error {
                 )
             },
             Error::InvalidInputRequest(message) => {
+                write!(f, "{message}")
+            },
+            Error::InvalidConsoleInput(message) => {
                 write!(f, "{message}")
             },
         }

@@ -902,8 +902,11 @@ impl RMain {
                     }
                 }
 
-                // TODO!: Check for incomplete inputs and immediately error
-                let code = self.handle_input(code);
+                if let Some(result) = Self::check_console_input(code.as_str()) {
+                    return Some(result);
+                }
+
+                let code = self.buffer_console_input(code.as_str());
 
                 Self::on_console_input(buf, buflen, code);
                 Some(ConsoleResult::NewInput)
@@ -1093,9 +1096,30 @@ impl RMain {
         Some(ConsoleResult::NewInput)
     }
 
-    fn handle_input(&mut self, input: String) -> String {
+    fn check_console_input(input: &str) -> Option<ConsoleResult> {
+        let status = unwrap!(harp::parse_status(&harp::ParseInput::Text(input)), Err(err) => {
+            // Failed to even attempt to parse the input, something is seriously wrong
+            return Some(ConsoleResult::Error(Error::InvalidConsoleInput(format!(
+                "Failed to parse input: {err:?}"
+            ))));
+        });
+
+        // - Incomplete inputs put R into a state where it expects more input that will never come, so we
+        //   immediately reject them. Positron should never send us these, but Jupyter Notebooks may.
+        // - Complete statements are obviously fine.
+        // - Syntax errors will cause R to throw an error, which is expected.
+        match status {
+            harp::ParseResult::Incomplete => Some(ConsoleResult::Error(
+                Error::InvalidConsoleInput(format!("Can't execute incomplete input:\n{input}")),
+            )),
+            harp::ParseResult::Complete(_) => None,
+            harp::ParseResult::SyntaxError { .. } => None,
+        }
+    }
+
+    fn buffer_console_input(&mut self, input: &str) -> String {
         // Split into lines and reverse them to be able to `pop()` from the front
-        let mut lines: Vec<String> = lines(&input).rev().map(String::from).collect();
+        let mut lines: Vec<String> = lines(input).rev().map(String::from).collect();
 
         // SAFETY: There is always at least one line because:
         // - `lines("")` returns 1 element containing `""`
@@ -1135,7 +1159,6 @@ impl RMain {
 
         if input.len() > buflen {
             // TODO!: Probably want to clear the `pending_lines` if we get here
-            // TODO!: Also think about what happens if R gets left in an incomplete state (invokeRestart("abort")?)
             log::error!("Console input too large for buffer, writing R error.");
             input = Self::buffer_overflow_call();
         }
