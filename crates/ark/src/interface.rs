@@ -1149,19 +1149,11 @@ impl RMain {
         }
     }
 
-    // Temporary patch for https://github.com/posit-dev/positron/issues/2675.
     // We write an informative `stop()` call rather than the user's actual input.
+    // Hitting this means a SINGLE line from the user was longer than the buffer size (>4000 characters).
     fn buffer_overflow_call() -> String {
-        let message = r#"
-Can't pass console input on to R, it exceeds R's internal console buffer size.
-This is a Positron limitation we plan to fix. In the meantime, you can:
-- Break the command you sent to the console into smaller chunks, if possible.
-- Otherwise, send the whole script to the console using `source()`.
-        "#;
-
-        let message = message.trim();
+        let message = "Can't pass console input on to R, a single line exceeds R's internal console buffer size.";
         let message = format!("stop(\"{message}\")");
-
         message
     }
 
