@@ -184,14 +184,16 @@ fn obj_size_tree(
                         seen,
                         depth + 1,
                     );
-                    size += obj_size_tree(
-                        unsafe { libr::CAR(cons) },
-                        base_env,
-                        sizeof_node,
-                        sizeof_vector,
-                        seen,
-                        depth + 1,
-                    );
+                    if !is_immediate_binding(x) {
+                        size += obj_size_tree(
+                            unsafe { libr::CAR(cons) },
+                            base_env,
+                            sizeof_node,
+                            sizeof_vector,
+                            seen,
+                            depth + 1,
+                        );
+                    }
                     cons = unsafe { libr::CDR(cons) };
                 }
                 // Handle non-nil CDRs
@@ -207,14 +209,16 @@ fn obj_size_tree(
                 seen,
                 depth + 1,
             );
-            size += obj_size_tree(
-                unsafe { libr::CAR(x) },
-                base_env,
-                sizeof_node,
-                sizeof_vector,
-                seen,
-                depth + 1,
-            );
+            if !is_immediate_binding(x) {
+                size += obj_size_tree(
+                    unsafe { libr::CAR(x) },
+                    base_env,
+                    sizeof_node,
+                    sizeof_vector,
+                    seen,
+                    depth + 1,
+                );
+            }
             size += obj_size_tree(
                 unsafe { libr::CDR(x) },
                 base_env,
@@ -390,6 +394,10 @@ fn v_size(n: usize, element_size: usize) -> usize {
     }
 
     size
+}
+
+fn is_immediate_binding(x: SEXP) -> bool {
+    unsafe { (*x).info.extra() != 0 }
 }
 
 #[cfg(test)]
