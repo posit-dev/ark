@@ -401,15 +401,13 @@ pub(crate) fn node_has_error(node: &Node) -> bool {
 }
 
 pub(crate) fn node_find_string<'a>(node: &'a Node) -> Option<Node<'a>> {
-    if node.is_string() {
-        // Already on a string
-        return Some(*node);
-    }
     // If we are on one of the following, we return the string parent:
     // - Anonymous node inside a string, like `"'"`
     // - `NodeType::StringContent`
     // - `NodeType::EscapeSequence`
-    node.ancestors().find(|parent| parent.is_string())
+    // Note that `ancestors()` is actually inclusive, so the original `node`
+    // is also considered as a potential string here.
+    node.ancestors().find(|node| node.is_string())
 }
 
 pub(crate) fn node_in_string(node: &Node) -> bool {
