@@ -26,6 +26,11 @@ pub fn r_test<F: FnOnce()>(f: F) {
     harp::test::r_test(f)
 }
 
+pub fn r_test_init() {
+    harp::test::r_test_init();
+    initialize_ark();
+}
+
 static INIT: Once = Once::new();
 
 fn initialize_ark() {

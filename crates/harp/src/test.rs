@@ -64,13 +64,13 @@ static INIT: Once = Once::new();
 pub fn r_test<F: FnOnce()>(f: F) {
     let guard = unsafe { R_RUNTIME_LOCK.lock() };
 
-    start_r();
+    r_test_init();
     f();
 
     drop(guard);
 }
 
-pub fn start_r() {
+pub fn r_test_init() {
     INIT.call_once(|| {
         unsafe {
             R_TASK_BYPASS = true;
