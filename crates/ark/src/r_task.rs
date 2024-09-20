@@ -14,6 +14,7 @@ use std::time::Duration;
 
 use crossbeam::channel::bounded;
 use crossbeam::channel::Sender;
+use harp::test::R_RUNTIME_LOCK;
 use harp::test::R_TASK_BYPASS;
 use uuid::Uuid;
 
@@ -147,6 +148,7 @@ where
 {
     // Escape hatch for unit tests
     if unsafe { R_TASK_BYPASS } {
+        let _lock = unsafe { R_RUNTIME_LOCK.lock() };
         return f();
     }
 

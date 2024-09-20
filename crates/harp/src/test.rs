@@ -16,7 +16,6 @@
 use std::os::raw::c_char;
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::Mutex;
 use std::sync::Once;
 
 use libr::setup_Rmainloop;
@@ -33,7 +32,8 @@ use crate::R_MAIN_THREAD_ID;
 // immediately in the current thread in unit tests. Since each test has its
 // own thread, they are synchronised via the `R_RUNTIME_LOCK` mutex.
 pub static mut R_TASK_BYPASS: bool = false;
-static mut R_RUNTIME_LOCK: Mutex<()> = Mutex::new(());
+pub static mut R_RUNTIME_LOCK: parking_lot::ReentrantMutex<()> =
+    parking_lot::ReentrantMutex::new(());
 
 // This global variable is a workaround to enable test-only features or
 // behaviour in integration tests (i.e. tests that live in `crate/tests/` as
