@@ -517,9 +517,9 @@ fn has_children(value: SEXP) -> bool {
 
 enum EnvironmentVariableNode {
     Concrete { object: RObject },
-    Artificial { object: RObject, name: String },
+    R6Node { object: RObject, name: String },
     Matrixcolumn { object: RObject, index: isize },
-    VectorElement { object: RObject, index: isize },
+    AtomicVectorElement { object: RObject, index: isize },
 }
 
 pub struct PositronVariable {
@@ -805,7 +805,7 @@ impl PositronVariable {
         let node = Self::resolve_object_from_path(env, &path)?;
 
         match node {
-            EnvironmentVariableNode::Artificial { object, name } => match name.as_str() {
+            EnvironmentVariableNode::R6Node { object, name } => match name.as_str() {
                 "<private>" => {
                     let env = Environment::new(object);
                     let enclos = Environment::new(RObject::view(env.find(".__enclos_env__")?));
@@ -848,7 +848,7 @@ impl PositronVariable {
             EnvironmentVariableNode::Matrixcolumn { object, index } => {
                 Self::inspect_matrix_column(*object, index)
             },
-            EnvironmentVariableNode::VectorElement { .. } => Ok(vec![]),
+            EnvironmentVariableNode::AtomicVectorElement { .. } => Ok(vec![]),
         }
     }
 
@@ -876,8 +876,8 @@ impl PositronVariable {
                     Ok(FormattedVector::new(*object)?.iter().join(" "))
                 }
             },
-            EnvironmentVariableNode::Artificial { .. } => Ok(String::from("")),
-            EnvironmentVariableNode::VectorElement { object, index } => {
+            EnvironmentVariableNode::R6Node { .. } => Ok(String::from("")),
+            EnvironmentVariableNode::AtomicVectorElement { object, index } => {
                 let formatted = FormattedVector::new(*object)?;
                 Ok(formatted.get_unchecked(index))
             },
@@ -955,7 +955,7 @@ impl PositronVariable {
         // R6 objects may be accessed with special elements called <methods> and <private>
         // for them, we'll have to build the next node artifically.
         if r_inherits(object.sexp, "R6") && name.starts_with("<") {
-            return Ok(EnvironmentVariableNode::Artificial {
+            return Ok(EnvironmentVariableNode::R6Node {
                 object,
                 name: name.clone(),
             });
@@ -986,7 +986,7 @@ impl PositronVariable {
                         index: name.parse::<isize>().unwrap(),
                     })
                 } else {
-                    Ok(EnvironmentVariableNode::VectorElement {
+                    Ok(EnvironmentVariableNode::AtomicVectorElement {
                         object,
                         index: name.parse::<isize>().unwrap(),
                     })
@@ -1005,7 +1005,7 @@ impl PositronVariable {
                 Self::get_concrete_child_node(object, path_elt)
             },
 
-            EnvironmentVariableNode::Artificial { object, name } => {
+            EnvironmentVariableNode::R6Node { object, name } => {
                 match name.as_str() {
                     "<private>" => {
                         let env = Environment::new(object);
@@ -1028,7 +1028,7 @@ impl PositronVariable {
                 }
             },
 
-            EnvironmentVariableNode::VectorElement { .. } => {
+            EnvironmentVariableNode::AtomicVectorElement { .. } => {
                 return Err(harp::Error::Anyhow(anyhow!(
                     "Can't subset an atomic vector even further, got {path_elt}"
                 )));
@@ -1042,7 +1042,7 @@ impl PositronVariable {
                 //       maybe use anyhow here instead ?
                 let row_index = path_elt.parse::<isize>().unwrap();
 
-                Ok(EnvironmentVariableNode::VectorElement {
+                Ok(EnvironmentVariableNode::AtomicVectorElement {
                     object,
                     index: n_row * index + row_index,
                 })
