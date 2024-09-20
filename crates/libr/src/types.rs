@@ -9,8 +9,6 @@
 #![allow(non_camel_case_types)]
 #![allow(non_upper_case_globals)]
 
-use bitfield_struct::bitfield;
-
 // Reexport all system specific R types
 #[cfg_attr(target_family = "unix", allow(unused_imports))]
 pub use crate::sys::types::*;
@@ -50,7 +48,6 @@ pub const FUNSXP: u32 = 99;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct SEXPREC {
-    pub info: sxpinfo_struct,
     _unused: [u8; 0],
 }
 pub type SEXP = *mut SEXPREC;
@@ -114,36 +111,3 @@ pub struct R_CallMethodDef {
 }
 
 pub type R_ExternalMethodDef = R_CallMethodDef;
-
-// The bitfield used as a header for SEXPREC.
-// See below for the C definition:
-// https://github.com/wch/r-source/blob/4a5e54e99fa50a9daa12e8d35b9b6b1ab40bf63a/src/include/Defn.h#L123-L141
-#[bitfield(u64)]
-pub struct sxpinfo_struct {
-    #[bits(5)]
-    pub sxp_type: usize,
-    #[bits(1)]
-    pub scalar: usize,
-    #[bits(1)]
-    pub obj: usize,
-    #[bits(1)]
-    pub alt: usize,
-    #[bits(16)]
-    pub gp: usize,
-    #[bits(1)]
-    pub mark: usize,
-    #[bits(1)]
-    pub debug: usize,
-    #[bits(1)]
-    pub trace: usize,
-    #[bits(1)]
-    pub spare: usize,
-    #[bits(1)]
-    pub gcgen: usize,
-    #[bits(3)]
-    pub gccls: usize,
-    #[bits(16)]
-    pub named: usize,
-    #[bits(16)]
-    pub extra: usize,
-}

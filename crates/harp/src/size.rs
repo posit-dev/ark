@@ -20,6 +20,7 @@ use crate::object::r_length;
 use crate::r_is_altrep;
 use crate::r_symbol;
 use crate::r_typeof;
+use crate::Sxpinfo;
 
 // A re-implementation of lobstr obj_size
 // https://github.com/r-lib/lobstr/blob/9ee1481c9d322fe0a5c798f3f20e608622ddc257/src/size.cpp#L201
@@ -397,7 +398,7 @@ fn v_size(n: usize, element_size: usize) -> usize {
 }
 
 fn is_immediate_binding(x: SEXP) -> bool {
-    unsafe { (*x).info.extra() != 0 }
+    Sxpinfo::interpret(&x).extra() != 0
 }
 
 #[cfg(test)]
