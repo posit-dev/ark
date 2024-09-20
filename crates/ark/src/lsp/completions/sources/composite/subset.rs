@@ -27,13 +27,13 @@ pub(super) fn completions_from_subset(
     const ENQUOTE: bool = true;
 
     let mut node = context.node;
-    let mut subset_type = None;
+    let mut needs_completions = false;
 
     loop {
         let node_type = node.node_type();
 
         if matches!(node_type, NodeType::Subset | NodeType::Subset2) {
-            subset_type = Some(node_type);
+            needs_completions = true;
             break;
         }
 
@@ -49,14 +49,14 @@ pub(super) fn completions_from_subset(
         };
     }
 
-    let Some(subset_type) = subset_type else {
+    if !needs_completions {
         // Didn't detect anything worth completing in this context,
         // let other sources add their own candidates instead
         return Ok(None);
     };
 
     // Only provide subset completions if you are actually within `x[<here>]` or `x[[<here>]]`
-    if !is_within_subset_delimiters(&context.point, &node, &subset_type) {
+    if !is_within_subset_delimiters(&context.point, &node) {
         return Ok(None);
     }
 
