@@ -152,7 +152,7 @@ fn syntax_diagnostic_truncated_default(range: Range, context: &DiagnosticContext
 
     // `+1` because it is user facing and editor UI is 1-indexed
     let end_row = range.end_point.row + 1;
-    let message = format!("Syntax error. Starts here and ends on row {end_row}.");
+    let message = format!("Syntax error. Starts here and ends on line {end_row}.");
 
     new_syntax_diagnostic(message, start_range, &context)
 }
@@ -375,7 +375,7 @@ mod tests {
         let diagnostic = diagnostics.get(0).unwrap();
         assert_eq!(
             diagnostic.message,
-            String::from("Syntax error. Starts here and ends on row 21.")
+            String::from("Syntax error. Starts here and ends on line 21.")
         );
         assert_eq!(diagnostic.range.start, Position::new(0, 0));
         assert_eq!(diagnostic.range.end, Position::new(0, 0));
