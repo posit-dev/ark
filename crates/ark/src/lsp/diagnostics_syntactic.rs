@@ -84,23 +84,23 @@ fn diagnose_error(
     }
 
     if report {
-        diagnostics.push(build_syntax_diagnostic(node, context)?);
+        diagnostics.push(syntax_diagnostic(node, context)?);
     }
 
     Ok(())
 }
 
-fn build_syntax_diagnostic(node: Node, context: &DiagnosticContext) -> anyhow::Result<Diagnostic> {
-    if let Some(diagnostic) = build_syntax_diagnostic_missing_open(node, context)? {
+fn syntax_diagnostic(node: Node, context: &DiagnosticContext) -> anyhow::Result<Diagnostic> {
+    if let Some(diagnostic) = syntax_diagnostic_missing_open(node, context)? {
         return Ok(diagnostic);
     }
 
-    Ok(build_syntax_diagnostic_default(node, context))
+    Ok(syntax_diagnostic_default(node, context))
 }
 
 // Use a heuristic that if we see a syntax error and it just contains a `)`, `}`, or `]`,
 // then it is probably a case of missing a matching open token.
-fn build_syntax_diagnostic_missing_open(
+fn syntax_diagnostic_missing_open(
     node: Node,
     context: &DiagnosticContext,
 ) -> anyhow::Result<Option<Diagnostic>> {
@@ -124,12 +124,12 @@ fn build_syntax_diagnostic_missing_open(
     )))
 }
 
-fn build_syntax_diagnostic_default(node: Node, context: &DiagnosticContext) -> Diagnostic {
+fn syntax_diagnostic_default(node: Node, context: &DiagnosticContext) -> Diagnostic {
     let range = node.range();
     let row_span = range.end_point.row - range.start_point.row;
 
     if row_span >= 20 {
-        return build_syntax_diagnostic_truncated_default(range, context);
+        return syntax_diagnostic_truncated_default(range, context);
     }
 
     // The most common case, a localized syntax error that doesn't span too many rows
@@ -139,10 +139,7 @@ fn build_syntax_diagnostic_default(node: Node, context: &DiagnosticContext) -> D
 
 // If the syntax error spans more than 20 rows, just target the starting position
 // to avoid overwhelming the user.
-fn build_syntax_diagnostic_truncated_default(
-    range: Range,
-    context: &DiagnosticContext,
-) -> Diagnostic {
+fn syntax_diagnostic_truncated_default(range: Range, context: &DiagnosticContext) -> Diagnostic {
     // In theory this is an empty range, as they are constructed like `[ )`, but it
     // seems to work for the purpose of diagnostics, and getting the correct
     // coordinates exactly right seems challenging.
