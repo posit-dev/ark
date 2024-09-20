@@ -785,7 +785,7 @@ impl PositronVariable {
     }
 
     pub fn inspect(env: RObject, path: &Vec<String>) -> Result<Vec<Variable>, harp::error::Error> {
-        let node = unsafe { Self::resolve_object_from_path(env, &path)? };
+        let node = Self::resolve_object_from_path(env, &path)?;
 
         match node {
             EnvironmentVariableNode::Artificial { object, name } => match name.as_str() {
@@ -840,7 +840,7 @@ impl PositronVariable {
         path: &Vec<String>,
         _format: &ClipboardFormatFormat,
     ) -> Result<String, harp::error::Error> {
-        let node = unsafe { Self::resolve_object_from_path(env, &path)? };
+        let node = Self::resolve_object_from_path(env, &path)?;
 
         match node {
             EnvironmentVariableNode::Concrete { object } => {
@@ -882,7 +882,7 @@ impl PositronVariable {
         env: RObject,
         path: &Vec<String>,
     ) -> Result<RObject, harp::error::Error> {
-        let resolved = unsafe { Self::resolve_object_from_path(env, path)? };
+        let resolved = Self::resolve_object_from_path(env, path)?;
 
         match resolved {
             EnvironmentVariableNode::Concrete { object } => Ok(object),
@@ -891,132 +891,156 @@ impl PositronVariable {
         }
     }
 
-    unsafe fn resolve_object_from_path(
+    fn get_envsxp_child_node_at(
+        object: RObject,
+        name: &String,
+    ) -> harp::Result<EnvironmentVariableNode> {
+        let symbol = unsafe { r_symbol!(name) };
+        let mut x = unsafe { Rf_findVarInFrame(*object, symbol) };
+
+        if r_typeof(x) == PROMSXP {
+            // if we are here, it means the promise is either evaluated
+            // already, i.e. PRVALUE() is bound or it is a promise to
+            // something that is not a call or a symbol because it would
+            // have been handled in Binding::new()
+
+            // Actual promises, i.e. unevaluated promises can't be
+            // expanded in the variables pane so we would not get here.
+
+            let value = unsafe { PRVALUE(x) };
+            if r_is_unbound(value) {
+                x = unsafe { PRCODE(x) };
+            } else {
+                x = value;
+            }
+        }
+
+        Ok(EnvironmentVariableNode::Concrete {
+            object: RObject::view(x),
+        })
+    }
+
+    fn get_concrete_child_node(
+        object: RObject,
+        name: &String,
+    ) -> harp::Result<EnvironmentVariableNode> {
+        // Concrete nodes are objects that are treated as is. Accessing an element from them,
+        // might result in special node types.
+
+        // For S4 objects, we acess child nodes using R_do_slot.
+        if object.is_s4() {
+            let name = unsafe { r_symbol!(name) };
+            let child: RObject =
+                harp::try_catch(|| unsafe { R_do_slot(object.sexp, name) }.into())?;
+            return Ok(EnvironmentVariableNode::Concrete { object: child });
+        }
+
+        // R6 objects may be accessed with special elements called <methods> and <private>
+        // for them, we'll have to build the next node artifically.
+        if r_inherits(object.sexp, "R6") && name.starts_with("<") {
+            return Ok(EnvironmentVariableNode::Artificial {
+                object,
+                name: name.clone(),
+            });
+        }
+
+        match r_typeof(*object) {
+            ENVSXP => Self::get_envsxp_child_node_at(object, name),
+            VECSXP | EXPRSXP => {
+                let index = name.parse::<isize>().unwrap();
+                Ok(EnvironmentVariableNode::Concrete {
+                    object: RObject::view(unsafe { VECTOR_ELT(object.sexp, index) }),
+                })
+            },
+            LISTSXP => {
+                let mut pairlist = *object;
+                let index = name.parse::<isize>().unwrap();
+                for _i in 0..index {
+                    pairlist = unsafe { CDR(pairlist) };
+                }
+                Ok(EnvironmentVariableNode::Concrete {
+                    object: RObject::view(unsafe { CAR(pairlist) }),
+                })
+            },
+            LGLSXP | RAWSXP | STRSXP | INTSXP | REALSXP | CPLXSXP => {
+                if r_is_matrix(object.sexp) {
+                    Ok(EnvironmentVariableNode::Matrixcolumn {
+                        object,
+                        index: name.parse::<isize>().unwrap(),
+                    })
+                } else {
+                    Ok(EnvironmentVariableNode::VectorElement {
+                        object,
+                        index: name.parse::<isize>().unwrap(),
+                    })
+                }
+            },
+            _ => Err(harp::Error::Anyhow(anyhow!("Unexpected child at {name}"))),
+        }
+    }
+
+    fn get_child_node_at(
+        node: EnvironmentVariableNode,
+        path_elt: &String,
+    ) -> harp::Result<EnvironmentVariableNode> {
+        match node {
+            EnvironmentVariableNode::Concrete { object } => {
+                Self::get_concrete_child_node(object, path_elt)
+            },
+
+            EnvironmentVariableNode::Artificial { object, name } => {
+                match name.as_str() {
+                    "<private>" => {
+                        let env = Environment::new(object);
+                        let enclos = Environment::new(RObject::view(env.find(".__enclos_env__")?));
+                        let private = Environment::new(RObject::view(enclos.find("private")?));
+
+                        // TODO: it seems unlikely that private would host active bindings
+                        //       so find() is fine, we can assume this is concrete
+                        Ok(EnvironmentVariableNode::Concrete {
+                            object: RObject::view(private.find(path_elt)?),
+                        })
+                    },
+
+                    _ => {
+                        //return Err(harp::Error::InspectError { path: path_elt });
+                        return Err(harp::Error::Anyhow(anyhow!(
+                            "You can only get children from <private>, got {path_elt}"
+                        )));
+                    },
+                }
+            },
+
+            EnvironmentVariableNode::VectorElement { .. } => {
+                return Err(harp::Error::Anyhow(anyhow!(
+                    "Can't subset an atomic vector even further, got {path_elt}"
+                )));
+            },
+
+            EnvironmentVariableNode::Matrixcolumn { object, index } => unsafe {
+                let dim = IntegerVector::new(Rf_getAttrib(*object, R_DimSymbol))?;
+                let n_row = dim.get_unchecked(0).unwrap() as isize;
+
+                // TODO: use ? here, but this does not return a crate::error::Error, so
+                //       maybe use anyhow here instead ?
+                let row_index = path_elt.parse::<isize>().unwrap();
+
+                Ok(EnvironmentVariableNode::VectorElement {
+                    object,
+                    index: n_row * index + row_index,
+                })
+            },
+        }
+    }
+
+    fn resolve_object_from_path(
         object: RObject,
         path: &Vec<String>,
     ) -> harp::Result<EnvironmentVariableNode> {
         let mut node = EnvironmentVariableNode::Concrete { object };
 
-        for path_element in path {
-            node = match node {
-                EnvironmentVariableNode::Concrete { object } => {
-                    if object.is_s4() {
-                        let name = r_symbol!(path_element);
-                        let child: RObject =
-                            harp::try_catch(|| R_do_slot(object.sexp, name).into())?;
-                        EnvironmentVariableNode::Concrete { object: child }
-                    } else {
-                        let rtype = r_typeof(*object);
-                        match rtype {
-                            ENVSXP => {
-                                if r_inherits(*object, "R6") && path_element.starts_with("<") {
-                                    EnvironmentVariableNode::Artificial {
-                                        object,
-                                        name: path_element.clone(),
-                                    }
-                                } else {
-                                    let symbol = r_symbol!(path_element);
-                                    let mut x = Rf_findVarInFrame(*object, symbol);
-
-                                    if r_typeof(x) == PROMSXP {
-                                        // if we are here, it means the promise is either evaluated
-                                        // already, i.e. PRVALUE() is bound or it is a promise to
-                                        // something that is not a call or a symbol because it would
-                                        // have been handled in Binding::new()
-
-                                        // Actual promises, i.e. unevaluated promises can't be
-                                        // expanded in the variables pane so we would not get here.
-
-                                        let value = PRVALUE(x);
-                                        if r_is_unbound(value) {
-                                            x = PRCODE(x);
-                                        } else {
-                                            x = value;
-                                        }
-                                    }
-
-                                    EnvironmentVariableNode::Concrete {
-                                        object: RObject::view(x),
-                                    }
-                                }
-                            },
-
-                            VECSXP | EXPRSXP => {
-                                let index = path_element.parse::<isize>().unwrap();
-                                EnvironmentVariableNode::Concrete {
-                                    object: RObject::view(VECTOR_ELT(*object, index)),
-                                }
-                            },
-
-                            LISTSXP => {
-                                let mut pairlist = *object;
-                                let index = path_element.parse::<isize>().unwrap();
-                                for _i in 0..index {
-                                    pairlist = CDR(pairlist);
-                                }
-                                EnvironmentVariableNode::Concrete {
-                                    object: RObject::view(CAR(pairlist)),
-                                }
-                            },
-
-                            LGLSXP | RAWSXP | STRSXP | INTSXP | REALSXP | CPLXSXP => {
-                                if r_is_matrix(*object) {
-                                    EnvironmentVariableNode::Matrixcolumn {
-                                        object,
-                                        index: path_element.parse::<isize>().unwrap(),
-                                    }
-                                } else {
-                                    EnvironmentVariableNode::VectorElement {
-                                        object,
-                                        index: path_element.parse::<isize>().unwrap(),
-                                    }
-                                }
-                            },
-
-                            _ => {
-                                return Err(harp::error::Error::InspectError { path: path.clone() })
-                            },
-                        }
-                    }
-                },
-
-                EnvironmentVariableNode::Artificial { object, name } => {
-                    match name.as_str() {
-                        "<private>" => {
-                            let env = Environment::new(object);
-                            let enclos =
-                                Environment::new(RObject::view(env.find(".__enclos_env__")?));
-                            let private = Environment::new(RObject::view(enclos.find("private")?));
-
-                            // TODO: it seems unlikely that private would host active bindings
-                            //       so find() is fine, we can assume this is concrete
-                            EnvironmentVariableNode::Concrete {
-                                object: RObject::view(private.find(path_element)?),
-                            }
-                        },
-
-                        _ => return Err(harp::error::Error::InspectError { path: path.clone() }),
-                    }
-                },
-
-                EnvironmentVariableNode::VectorElement { .. } => {
-                    return Err(harp::error::Error::InspectError { path: path.clone() });
-                },
-
-                EnvironmentVariableNode::Matrixcolumn { object, index } => unsafe {
-                    let dim = IntegerVector::new(Rf_getAttrib(*object, R_DimSymbol))?;
-                    let n_row = dim.get_unchecked(0).unwrap() as isize;
-
-                    // TODO: use ? here, but this does not return a crate::error::Error, so
-                    //       maybe use anyhow here instead ?
-                    let row_index = path_element.parse::<isize>().unwrap();
-
-                    EnvironmentVariableNode::VectorElement {
-                        object,
-                        index: n_row * index + row_index,
-                    }
-                },
-            }
+        for path_elt in path {
+            node = Self::get_child_node_at(node, path_elt)?
         }
 
         Ok(node)
