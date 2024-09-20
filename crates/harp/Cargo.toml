@@ -12,7 +12,6 @@ rust-version.workspace = true
 
 [dependencies]
 anyhow = "1.0.80"
-c2rust-bitfields = "0.17.0"
 cfg-if = "1.0.0"
 ctor = "0.1.26"
 harp-macros = { path = "./harp-macros" }

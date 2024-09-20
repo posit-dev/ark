@@ -458,26 +458,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "c2rust-bitfields"
-version = "0.17.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec83ed829620a77796c348b3c32bc3013f38dc612e1d8b4f4128dbdff85f9ca4"
-dependencies = [
- "c2rust-bitfields-derive",
-]
-
-[[package]]
-name = "c2rust-bitfields-derive"
-version = "0.17.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a516c617d800450f0941aaafe55bab206c2e8f6fff55fae1f1dfca505fe80a8d"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 1.0.109",
-]
-
-[[package]]
 name = "cc"
 version = "1.1.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1127,7 +1107,6 @@ name = "harp"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "c2rust-bitfields",
  "cfg-if",
  "ctor",
  "harp-macros",
