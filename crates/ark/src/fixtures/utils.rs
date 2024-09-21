@@ -8,6 +8,8 @@
 // Wrapper around `harp::r_test_impl()` that also initializes the ark level R
 // modules, so they can be utilized in the tests
 
+use std::sync::Mutex;
+use std::sync::MutexGuard;
 use std::sync::Once;
 
 use amalthea::comm::comm_channel::CommMsg;
@@ -17,6 +19,10 @@ use serde::Serialize;
 use tree_sitter::Point;
 
 use crate::modules;
+
+// Lock for tests that can't be run concurrently. Only needed for tests that use
+// `r_test_init()` instead of `r_test()` since the latter takes the R lock.
+static TEST_LOCK: Mutex<()> = Mutex::new(());
 
 pub fn r_test<F: FnOnce()>(f: F) {
     let f = || {
@@ -29,6 +35,11 @@ pub fn r_test<F: FnOnce()>(f: F) {
 pub fn r_test_init() {
     harp::test::r_test_init();
     initialize_ark();
+}
+
+pub fn r_test_init_lock() -> MutexGuard<'static, ()> {
+    r_test_init();
+    TEST_LOCK.lock().unwrap()
 }
 
 static INIT: Once = Once::new();
