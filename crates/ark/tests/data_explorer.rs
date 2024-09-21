@@ -589,7 +589,7 @@ fn test_data_table_support() {
 
     let has_data_table =
         r_task(|| harp::parse_eval_global("mtcars_dt <- data.table::data.table(mtcars)").is_ok());
-    if has_data_table {
+    if !has_data_table {
         return;
     }
 
