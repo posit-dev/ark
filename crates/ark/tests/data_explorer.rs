@@ -107,8 +107,8 @@ fn open_data_explorer_from_expression(
 ) -> anyhow::Result<socket::comm::CommSocket> {
     let (comm_manager_tx, comm_manager_rx) = bounded::<CommManagerEvent>(0);
 
-    r_task(|| {
-        let object = harp::parse_eval_global(expr).unwrap();
+    r_task(|| -> anyhow::Result<()> {
+        let object = harp::parse_eval_global(expr)?;
 
         let binding = match bind {
             Some(name) => Some(DataObjectEnvInfo {
@@ -118,7 +118,8 @@ fn open_data_explorer_from_expression(
             None => None,
         };
         RDataExplorer::start(String::from("obj"), object, binding, comm_manager_tx).unwrap();
-    });
+        Ok(())
+    })?;
 
     // Release the R lock and wait for the new comm to show up.
     let msg = comm_manager_rx
