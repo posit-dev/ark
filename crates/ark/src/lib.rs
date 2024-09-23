@@ -29,6 +29,7 @@ pub mod request;
 pub mod shell;
 pub mod signals;
 pub mod srcref;
+pub mod start;
 pub mod startup;
 pub mod sys;
 pub mod test;
