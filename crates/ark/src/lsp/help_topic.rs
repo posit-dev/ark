@@ -105,11 +105,9 @@ mod tests {
 
     #[test]
     fn test_locate_help_node() {
-        let language = tree_sitter_r::language();
-
         let mut parser = Parser::new();
         parser
-            .set_language(&language)
+            .set_language(&tree_sitter_r::LANGUAGE.into())
             .expect("failed to create parser");
 
         // On the RHS

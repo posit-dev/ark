@@ -139,11 +139,9 @@ mod tests {
 
         let (text, point) = point_from_cursor(text);
 
-        let language = tree_sitter_r::language();
-
         let mut parser = Parser::new();
         parser
-            .set_language(&language)
+            .set_language(&tree_sitter_r::LANGUAGE.into())
             .expect("failed to create parser");
 
         let tree = parser.parse(text, None).unwrap();
@@ -158,7 +156,7 @@ mod tests {
         assert_eq!(selection.range.end_point, Point::new(3, 1));
 
         let selection = selection.parent.as_ref().unwrap();
-        assert_eq!(selection.range.start_point, Point::new(1, 0));
+        assert_eq!(selection.range.start_point, Point::new(0, 0));
         assert_eq!(selection.range.end_point, Point::new(6, 0));
         assert!(selection.parent.is_none());
     }
@@ -176,11 +174,9 @@ mod tests {
 
         let (text, point) = point_from_cursor(text);
 
-        let language = tree_sitter_r::language();
-
         let mut parser = Parser::new();
         parser
-            .set_language(&language)
+            .set_language(&tree_sitter_r::LANGUAGE.into())
             .expect("failed to create parser");
 
         let tree = parser.parse(text, None).unwrap();
@@ -191,7 +187,7 @@ mod tests {
 
         // Just 1 selection, the whole document
         let selection = selections.get(0).unwrap();
-        assert_eq!(selection.range.start_point, Point::new(1, 0));
+        assert_eq!(selection.range.start_point, Point::new(0, 0));
         assert_eq!(selection.range.end_point, Point::new(6, 0));
         assert!(selection.parent.is_none());
     }
@@ -209,12 +205,10 @@ fn <- function(x, arg) {
 
         let (text, point) = point_from_cursor(text);
 
-        let language = tree_sitter_r::language();
-
         // create a parser for this document
         let mut parser = Parser::new();
         parser
-            .set_language(&language)
+            .set_language(&tree_sitter_r::LANGUAGE.into())
             .expect("failed to create parser");
 
         let tree = parser.parse(text, None).unwrap();
@@ -250,7 +244,7 @@ fn <- function(x, arg) {
 
         // Whole document
         let selection = selection.parent.as_ref().unwrap();
-        assert_eq!(selection.range.start_point, Point::new(1, 0));
+        assert_eq!(selection.range.start_point, Point::new(0, 0));
         assert_eq!(selection.range.end_point, Point::new(6, 0));
         assert!(selection.parent.is_none());
     }
@@ -258,11 +252,9 @@ fn <- function(x, arg) {
     #[test]
     #[rustfmt::skip]
     fn test_selection_range_assignment() {
-        let language = tree_sitter_r::language();
-
         let mut parser = Parser::new();
         parser
-            .set_language(&language)
+            .set_language(&tree_sitter_r::LANGUAGE.into())
             .expect("failed to create parser");
 
         let text = "
@@ -295,11 +287,9 @@ fn <- function() {
     #[test]
     #[rustfmt::skip]
     fn test_selection_range_call_arguments() {
-        let language = tree_sitter_r::language();
-
         let mut parser = Parser::new();
         parser
-            .set_language(&language)
+            .set_language(&tree_sitter_r::LANGUAGE.into())
             .unwrap();
 
         let text = "
@@ -337,11 +327,9 @@ fn(@a, b, c)
     #[test]
     #[rustfmt::skip]
     fn test_selection_range_subset_arguments() {
-        let language = tree_sitter_r::language();
-
         let mut parser = Parser::new();
         parser
-            .set_language(&language)
+            .set_language(&tree_sitter_r::LANGUAGE.into())
             .unwrap();
 
         let text = "
@@ -384,11 +372,9 @@ x[a, @fn(), c]
     #[test]
     #[rustfmt::skip]
     fn test_selection_range_subset2_arguments() {
-        let language = tree_sitter_r::language();
-
         let mut parser = Parser::new();
         parser
-            .set_language(&language)
+            .set_language(&tree_sitter_r::LANGUAGE.into())
             .unwrap();
 
         let text = "
@@ -431,11 +417,9 @@ x[[a, @fn(), c]]
     #[test]
     #[rustfmt::skip]
     fn test_selection_range_namespaced_calls() {
-        let language = tree_sitter_r::language();
-
         let mut parser = Parser::new();
         parser
-            .set_language(&language)
+            .set_language(&tree_sitter_r::LANGUAGE.into())
             .unwrap();
 
         let text = "

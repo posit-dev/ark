@@ -44,7 +44,6 @@ pub enum NodeType {
     Na(NaType),
     Comment,
     Comma,
-    UnmatchedDelimiter(UnmatchedDelimiterType),
     Error,
     Anonymous(String),
 }
@@ -90,7 +89,6 @@ fn node_type(x: &Node) -> NodeType {
         "na" => NodeType::Na(na_type(x)),
         "comment" => NodeType::Comment,
         "comma" => NodeType::Comma,
-        "unmatched_delimiter" => NodeType::UnmatchedDelimiter(unmatched_delimiter_type(x)),
         "ERROR" => NodeType::Error,
         anonymous => NodeType::Anonymous(anonymous.to_string()),
     }
@@ -277,27 +275,6 @@ fn na_type(x: &Node) -> NaType {
     }
 }
 
-#[derive(Debug, PartialEq)]
-pub enum UnmatchedDelimiterType {
-    /// `}`
-    Brace,
-    /// `)`
-    Parenthesis,
-    /// `]`
-    Bracket,
-}
-
-fn unmatched_delimiter_type(x: &Node) -> UnmatchedDelimiterType {
-    let x = x.child(0).unwrap();
-
-    match x.kind() {
-        "}" => UnmatchedDelimiterType::Brace,
-        ")" => UnmatchedDelimiterType::Parenthesis,
-        "]" => UnmatchedDelimiterType::Bracket,
-        _ => panic!("Unknown `unmatched_delimiter` kind {}.", x.kind()),
-    }
-}
-
 pub trait NodeTypeExt: Sized {
     fn node_type(&self) -> NodeType;
 
@@ -415,16 +392,22 @@ pub(crate) fn node_text(node: &Node, contents: &ropey::Rope) -> Option<String> {
     contents.node_slice(node).ok().map(|f| f.to_string())
 }
 
+pub(crate) fn node_has_error_or_missing(node: &Node) -> bool {
+    // According to the docs, `node.has_error()` should return `true`
+    // if `node` is itself an error, or if it contains any errors, but that
+    // doesn't seem to be the case for terminal ERROR nodes.
+    // https://github.com/tree-sitter/tree-sitter/issues/3623
+    node.is_error() || node.has_error()
+}
+
 pub(crate) fn node_find_string<'a>(node: &'a Node) -> Option<Node<'a>> {
-    if node.is_string() {
-        // Already on a string
-        return Some(*node);
-    }
     // If we are on one of the following, we return the string parent:
     // - Anonymous node inside a string, like `"'"`
     // - `NodeType::StringContent`
     // - `NodeType::EscapeSequence`
-    node.ancestors().find(|parent| parent.is_string())
+    // Note that `ancestors()` is actually inclusive, so the original `node`
+    // is also considered as a potential string here.
+    node.ancestors().find(|node| node.is_string())
 }
 
 pub(crate) fn node_in_string(node: &Node) -> bool {

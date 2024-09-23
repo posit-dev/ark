@@ -287,12 +287,10 @@ fn <- function(x, arg) {
 
         let (text, point) = point_from_cursor(text);
 
-        let language = tree_sitter_r::language();
-
         // create a parser for this document
         let mut parser = Parser::new();
         parser
-            .set_language(&language)
+            .set_language(&tree_sitter_r::LANGUAGE.into())
             .expect("failed to create parser");
 
         let tree = parser.parse(text, None).unwrap();

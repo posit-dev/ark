@@ -1,7 +1,7 @@
 //
 // diagnostics.rs
 //
-// Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2022-2024 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -20,16 +20,17 @@ use tree_sitter::Node;
 use tree_sitter::Range;
 
 use crate::lsp::declarations::top_level_declare;
+use crate::lsp::diagnostics_syntax::syntax_diagnostics;
 use crate::lsp::documents::Document;
 use crate::lsp::encoding::convert_tree_sitter_range_to_lsp_range;
 use crate::lsp::indexer;
 use crate::lsp::state::WorldState;
 use crate::lsp::traits::rope::RopeExt;
+use crate::treesitter::node_has_error_or_missing;
 use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 use crate::treesitter::UnaryOperatorType;
-use crate::treesitter::UnmatchedDelimiterType;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DiagnosticsConfig {
@@ -68,6 +69,18 @@ impl Default for DiagnosticsConfig {
 }
 
 impl<'a> DiagnosticContext<'a> {
+    pub fn new(contents: &'a Rope) -> Self {
+        Self {
+            contents,
+            document_symbols: Vec::new(),
+            session_symbols: HashSet::new(),
+            workspace_symbols: HashSet::new(),
+            installed_packages: HashSet::new(),
+            in_formula: false,
+            in_call: false,
+        }
+    }
+
     pub fn add_defined_variable(&mut self, name: &str, location: Range) {
         let symbols = self.document_symbols.last_mut().unwrap();
         symbols.insert(name.to_string(), location);
@@ -105,55 +118,78 @@ pub(crate) fn generate_diagnostics(doc: Document, state: WorldState) -> Vec<Diag
         return diagnostics;
     }
 
-    {
-        let mut context = DiagnosticContext {
-            contents: &doc.contents,
-            document_symbols: Vec::new(),
-            session_symbols: HashSet::new(),
-            workspace_symbols: HashSet::new(),
-            installed_packages: HashSet::new(),
-            in_formula: false,
-            in_call: false,
-        };
+    let mut context = DiagnosticContext::new(&doc.contents);
 
-        // Add a 'root' context for the document.
-        context.document_symbols.push(HashMap::new());
+    // Add a 'root' context for the document.
+    context.document_symbols.push(HashMap::new());
 
-        // Add the current workspace symbols.
-        indexer::map(|_path, _symbol, entry| match &entry.data {
-            indexer::IndexEntryData::Function { name, arguments: _ } => {
-                context.workspace_symbols.insert(name.to_string());
-            },
-            _ => {},
-        });
+    // Add the current workspace symbols.
+    indexer::map(|_path, _symbol, entry| match &entry.data {
+        indexer::IndexEntryData::Function { name, arguments: _ } => {
+            context.workspace_symbols.insert(name.to_string());
+        },
+        _ => {},
+    });
 
-        for scope in state.console_scopes.iter() {
-            for name in scope.iter() {
-                if is_symbol_valid(name.as_str()) {
-                    context.session_symbols.insert(name.clone());
-                } else {
-                    let name = sym_quote_invalid(name.as_str());
-                    context.session_symbols.insert(name.clone());
-                }
+    for scope in state.console_scopes.iter() {
+        for name in scope.iter() {
+            if is_symbol_valid(name.as_str()) {
+                context.session_symbols.insert(name.clone());
+            } else {
+                let name = sym_quote_invalid(name.as_str());
+                context.session_symbols.insert(name.clone());
             }
-        }
-
-        for pkg in state.installed_packages.iter() {
-            context.installed_packages.insert(pkg.clone());
-        }
-
-        // Start iterating through the nodes.
-        let root = doc.ast.root_node();
-        let result = recurse(root, &mut context, &mut diagnostics);
-        if let Err(error) = result {
-            log::error!(
-                "diagnostics: Error while generating: {error}\n{:#?}",
-                error.backtrace()
-            );
         }
     }
 
+    for pkg in state.installed_packages.iter() {
+        context.installed_packages.insert(pkg.clone());
+    }
+
+    // Start iterating through the nodes.
+    let root = doc.ast.root_node();
+
+    // Collect syntax related diagnostics for `ERROR` and `MISSING` nodes
+    match syntax_diagnostics(root, &context) {
+        Ok(mut syntax_diagnostics) => diagnostics.append(&mut syntax_diagnostics),
+        Err(err) => log::error!("Error while generating syntax diagnostics: {err:?}"),
+    }
+
+    // Collect semantic related diagnostics
+    match semantic_diagnostics(root, &mut context) {
+        Ok(mut semantic_diagnostics) => diagnostics.append(&mut semantic_diagnostics),
+        Err(err) => log::error!("Error while generating semantic diagnostics: {err:?}"),
+    }
+
     diagnostics
+}
+
+fn semantic_diagnostics(
+    root: Node,
+    context: &mut DiagnosticContext,
+) -> anyhow::Result<Vec<Diagnostic>> {
+    let mut diagnostics = Vec::new();
+
+    // For semantic diagnostics, we only compute diagnostics for a top level
+    // expression if that entire expression's subtree parsed successfully (i.e. if
+    // `node.has_error()` returns `false` for that subtree).
+    //
+    // If a subtree failed to parse successfully, syntax diagnostics will
+    // be reported for that subtree instead.
+    //
+    // This scheme allows us to emit some semantic diagnostics even when
+    // we see syntax errors in other parts of the file.
+    let mut cursor = root.walk();
+
+    for child in root.children(&mut cursor) {
+        if node_has_error_or_missing(&child) {
+            continue;
+        }
+
+        recurse(child, context, &mut diagnostics)?;
+    }
+
+    Ok(diagnostics)
 }
 
 fn recurse(
@@ -197,6 +233,7 @@ fn recurse(
             _ => recurse_default(node, context, diagnostics),
         },
         NodeType::NamespaceOperator(_) => recurse_namespace(node, context, diagnostics),
+        NodeType::Error => bail!("`Error` nodes should have been skipped entirely."),
         _ => recurse_default(node, context, diagnostics),
     }
 }
@@ -439,6 +476,15 @@ fn recurse_namespace(
     context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<()> {
+    // This is really a syntax issue, but the RHS is optional in the grammar,
+    // so `dplyr::` is technically allowed and we have to check for this in
+    // the semantic path instead.
+    crate::lsp::diagnostics_syntax::diagnose_missing_namespace_operator(
+        node,
+        context,
+        diagnostics,
+    )?;
+
     let lhs = unwrap!(node.child_by_field_name("lhs"), None => {
         return ().ok();
     });
@@ -448,7 +494,7 @@ fn recurse_namespace(
     if !context.installed_packages.contains(package.as_str()) {
         let range = lhs.range();
         let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
-        let message = format!("package '{}' is not installed", package);
+        let message = format!("Package '{}' is not installed.", package);
         let diagnostic = Diagnostic::new_simple(range, message);
         diagnostics.push(diagnostic);
     }
@@ -498,9 +544,6 @@ fn recurse_braced_expression(
     context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<()> {
-    // Check that the opening brace is balanced.
-    check_unmatched_opening_brace(node, context, diagnostics)?;
-
     // Recurse into body statements.
     let mut cursor = node.walk();
 
@@ -516,9 +559,6 @@ fn recurse_parenthesized_expression(
     context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<()> {
-    // Check that the opening parenthesis is balanced.
-    check_unmatched_opening_paren(node, context, diagnostics)?;
-
     let mut n = 0;
     let mut cursor = node.walk();
 
@@ -532,7 +572,7 @@ fn recurse_parenthesized_expression(
         // the user about this as it is not allowed by the R parser.
         let range = node.range();
         let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
-        let message = format!("expected at most 1 statement within parentheses, not {n}");
+        let message = format!("Expected at most 1 statement within parentheses, found {n}.");
         let diagnostic = Diagnostic::new_simple(range, message);
         diagnostics.push(diagnostic);
     }
@@ -545,32 +585,23 @@ fn check_call_next_sibling(
     context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<()> {
-    let Some(next) = child.next_sibling() else {
-        return ().ok();
-    };
-
-    let ok = match next.node_type() {
-        NodeType::Comma => true,
-        NodeType::Anonymous(kind) if matches!(kind.as_str(), ")") => true,
-        NodeType::Comment => true,
-        _ => false,
-    };
-
-    if ok {
-        return ().ok();
-    }
-
-    let range = child.range();
-    let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
-    let message = "expected ',' after expression";
-    let diagnostic = Diagnostic::new_simple(range, message.into());
-    diagnostics.push(diagnostic);
-
-    ().ok()
+    check_call_like_next_sibling(child, &NodeType::Call, context, diagnostics)
 }
 
 fn check_subset_next_sibling(
     child: Node,
+    subset_type: &NodeType,
+    context: &mut DiagnosticContext,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<()> {
+    check_call_like_next_sibling(child, &subset_type, context, diagnostics)
+}
+
+// TODO: This should be a syntax check, as the grammar should not allow
+// two `Argument` nodes side by side
+fn check_call_like_next_sibling(
+    child: Node,
+    parent_type: &NodeType,
     context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<()> {
@@ -578,10 +609,19 @@ fn check_subset_next_sibling(
         return ().ok();
     };
 
+    let close = match parent_type {
+        NodeType::Call => ")",
+        NodeType::Subset => "]",
+        NodeType::Subset2 => "]]",
+        _ => bail!("Parent must be a call, subset, or subset2 node."),
+    };
+
     let ok = match next.node_type() {
         NodeType::Comma => true,
-        NodeType::Anonymous(kind) if matches!(kind.as_str(), "]" | "]]") => true,
+        NodeType::Anonymous(kind) if kind.as_str() == close => true,
         NodeType::Comment => true,
+        // Should be handled elsewhere
+        NodeType::Error => true,
         _ => false,
     };
 
@@ -589,9 +629,23 @@ fn check_subset_next_sibling(
         return ().ok();
     }
 
-    let range = child.range();
+    // Children can be arbitrarily large, so report the issue between the end of `child`
+    // and the start of `next` (it's not really the child's fault anyways,
+    // it's the fault of the thing right after it).
+    let start_byte = child.end_byte();
+    let start_point = child.end_position();
+    let end_byte = next.start_byte();
+    let end_point = next.start_position();
+
+    let range = Range {
+        start_byte,
+        start_point,
+        end_byte,
+        end_point,
+    };
+
     let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
-    let message = "expected ',' after expression";
+    let message = "Expected ',' between expressions.";
     let diagnostic = Diagnostic::new_simple(range, message.into());
     diagnostics.push(diagnostic);
 
@@ -669,13 +723,15 @@ fn recurse_subset(
         recurse(callee, context, diagnostics)?;
     }
 
+    let subset_type = node.node_type();
+
     // Recurse into arguments.
     if let Some(arguments) = node.child_by_field_name("arguments") {
         let mut cursor = arguments.walk();
         let children = arguments.children_by_field_name("argument", &mut cursor);
         for child in children {
             // Warn if the next sibling is neither a comma nor a closing ].
-            check_subset_next_sibling(child, context, diagnostics)?;
+            check_subset_next_sibling(child, &subset_type, context, diagnostics)?;
 
             // Recurse into values.
             if let Some(value) = child.child_by_field_name("value") {
@@ -694,24 +750,28 @@ fn recurse_default(
 ) -> Result<()> {
     // Apply diagnostic functions to node.
     dispatch(node, context, diagnostics);
+    recurse_children(node, context, diagnostics)
+}
 
-    // Recurse into children.
+fn recurse_children(
+    node: Node,
+    context: &mut DiagnosticContext,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<()> {
     let mut cursor = node.walk();
+
     for child in node.children(&mut cursor) {
         recurse(child, context, diagnostics)?;
     }
 
-    ().ok()
+    Ok(())
 }
 
 fn dispatch(node: Node, context: &mut DiagnosticContext, diagnostics: &mut Vec<Diagnostic>) {
     let result: Result<bool> = local! {
         check_invalid_na_comparison(node, context, diagnostics)?;
         check_symbol_in_scope(node, context, diagnostics)?;
-        check_syntax_error(node, context, diagnostics)?;
-        check_unclosed_arguments(node, context, diagnostics)?;
         check_unexpected_assignment_in_if_conditional(node, context, diagnostics)?;
-        check_unmatched_closing_token(node, context, diagnostics)?;
         true.ok()
     };
 
@@ -720,93 +780,7 @@ fn dispatch(node: Node, context: &mut DiagnosticContext, diagnostics: &mut Vec<D
     }
 }
 
-fn check_unmatched_closing_token(
-    node: Node,
-    context: &mut DiagnosticContext,
-    diagnostics: &mut Vec<Diagnostic>,
-) -> Result<bool> {
-    // These should all be skipped over by function, if, for, while, and repeat
-    // handling, so if we ever get here then it means we didn't have an
-    // equivalent leading token (or there was some other syntax error that
-    // caused the parser to not recognize one of the aforementioned control flow
-    // operators, like `repeat { 1 + }`).
-    let NodeType::UnmatchedDelimiter(delimiter) = node.node_type() else {
-        return false.ok();
-    };
-
-    let (token, name) = match delimiter {
-        UnmatchedDelimiterType::Brace => ("}", "brace"),
-        UnmatchedDelimiterType::Parenthesis => (")", "parenthesis"),
-        UnmatchedDelimiterType::Bracket => ("]", "bracket"),
-    };
-
-    let range = node.range();
-    let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
-    let message = format!("unmatched closing {name} '{token}'");
-    let diagnostic = Diagnostic::new_simple(range, message);
-    diagnostics.push(diagnostic);
-
-    true.ok()
-}
-
-fn check_unmatched_opening_brace(
-    node: Node,
-    context: &mut DiagnosticContext,
-    diagnostics: &mut Vec<Diagnostic>,
-) -> Result<bool> {
-    if is_unmatched_block(&node, "{", "}")? {
-        let open = node.child(0).unwrap();
-        let range = open.range();
-        let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
-        let message = "unmatched opening brace '{'";
-        let diagnostic = Diagnostic::new_simple(range, message.into());
-        diagnostics.push(diagnostic);
-    }
-
-    true.ok()
-}
-
-fn check_unmatched_opening_paren(
-    node: Node,
-    context: &mut DiagnosticContext,
-    diagnostics: &mut Vec<Diagnostic>,
-) -> Result<bool> {
-    if is_unmatched_block(&node, "(", ")")? {
-        let open = node.child(0).unwrap();
-        let range = open.range();
-        let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
-        let message = "unmatched opening parenthesis '('";
-        let diagnostic = Diagnostic::new_simple(range, message.into());
-        diagnostics.push(diagnostic);
-    }
-
-    true.ok()
-}
-
-fn is_unmatched_block(node: &Node, open: &str, close: &str) -> Result<bool> {
-    let n = node.child_count();
-
-    if n == 0 {
-        // Required to have an anonymous `{` or `(` to start the node
-        bail!("A `{open}` node must have a minimum size of 1.");
-    }
-
-    if n == 1 {
-        // No `body` and no closing `token`. Definitely unmatched.
-        return true.ok();
-    }
-
-    // If `n >= 2`, might be multiple `body`s but still no closing `token`,
-    // so we check against the last child.
-    let lhs = node.child(1 - 1).unwrap();
-    let rhs = node.child(n - 1).unwrap();
-
-    let unmatched = lhs.node_type() == NodeType::Anonymous(open.to_string()) &&
-        rhs.node_type() != NodeType::Anonymous(close.to_string());
-
-    unmatched.ok()
-}
-
+// TODO: Move this to `recurse_binary_equal()` and get it out of `dispatch()`
 fn check_invalid_na_comparison(
     node: Node,
     context: &mut DiagnosticContext,
@@ -828,9 +802,9 @@ fn check_invalid_na_comparison(
 
         if matches!(contents, "NA" | "NaN" | "NULL") {
             let message = match contents {
-                "NA" => "consider using `is.na()` to check NA values",
-                "NaN" => "consider using `is.nan()` to check NaN values",
-                "NULL" => "consider using `is.null()` to check NULL values",
+                "NA" => "Consider using `is.na()` to check `NA` values",
+                "NaN" => "Consider using `is.nan()` to check `NaN` values.",
+                "NULL" => "Consider using `is.null()` to check `NULL` values.",
                 _ => continue,
             };
             let range = child.range();
@@ -844,78 +818,7 @@ fn check_invalid_na_comparison(
     true.ok()
 }
 
-fn check_syntax_error(
-    node: Node,
-    context: &mut DiagnosticContext,
-    diagnostics: &mut Vec<Diagnostic>,
-) -> Result<bool> {
-    if !node.is_error() {
-        return false.ok();
-    }
-
-    let range = node.range();
-    let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
-    let text = context.contents.node_slice(&node)?.to_string();
-    let message = format!("Syntax error: unexpected token '{}'", text);
-    let diagnostic = Diagnostic::new_simple(range, message);
-    diagnostics.push(diagnostic);
-
-    true.ok()
-}
-
-fn check_unclosed_arguments(
-    node: Node,
-    context: &mut DiagnosticContext,
-    diagnostics: &mut Vec<Diagnostic>,
-) -> Result<bool> {
-    let Some(open) = find_unclosed_argument_delimiter(node) else {
-        return Ok(false);
-    };
-
-    let token = match node.node_type() {
-        NodeType::Call => "(",
-        NodeType::Subset => "[",
-        NodeType::Subset2 => "[[",
-        _ => return Ok(false),
-    };
-
-    let range = open.range();
-    let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
-    let message = format!("unmatched opening token '{token}'");
-    let diagnostic = Diagnostic::new_simple(range, message);
-    diagnostics.push(diagnostic);
-
-    true.ok()
-}
-
-fn find_unclosed_argument_delimiter(node: Node) -> Option<Node> {
-    if !matches!(
-        node.node_type(),
-        NodeType::Call | NodeType::Subset | NodeType::Subset2
-    ) {
-        return None;
-    }
-
-    let Some(arguments) = node.child_by_field_name("arguments") else {
-        return None;
-    };
-
-    let Some(close) = arguments.child_by_field_name("close") else {
-        return None;
-    };
-
-    // If `close` is `MISSING`, it was error-recovered and this is an unclosed delimiter case
-    if !close.is_missing() {
-        return None;
-    }
-
-    let Some(open) = arguments.child_by_field_name("open") else {
-        return None;
-    };
-
-    Some(open)
-}
-
+// TODO: Move this to `recurse_if()` and get it out of `dispatch()`
 fn check_unexpected_assignment_in_if_conditional(
     node: Node,
     context: &mut DiagnosticContext,
@@ -940,13 +843,14 @@ fn check_unexpected_assignment_in_if_conditional(
 
     let range = condition.range();
     let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
-    let message = "unexpected '='; use '==' to compare values for equality";
+    let message = "Unexpected '='; use '==' to compare values for equality.";
     let diagnostic = Diagnostic::new_simple(range, message.into());
     diagnostics.push(diagnostic);
 
     true.ok()
 }
 
+// TODO: Move this to `recurse_identifier()` and get it out of `dispatch()`
 fn check_symbol_in_scope(
     node: Node,
     context: &mut DiagnosticContext,
@@ -988,7 +892,7 @@ fn check_symbol_in_scope(
     let range = node.range();
     let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
     let identifier = context.contents.node_slice(&node)?.to_string();
-    let message = format!("no symbol named '{}' in scope", identifier);
+    let message = format!("No symbol named '{}' in scope.", identifier);
     let mut diagnostic = Diagnostic::new_simple(range, message);
     diagnostic.severity = Some(DiagnosticSeverity::WARNING);
     diagnostics.push(diagnostic);
@@ -1003,14 +907,10 @@ mod tests {
     use tower_lsp::lsp_types::Position;
 
     use crate::interface::console_inputs;
-    use crate::lsp::diagnostics::find_unclosed_argument_delimiter;
     use crate::lsp::diagnostics::generate_diagnostics;
-    use crate::lsp::diagnostics::is_unmatched_block;
     use crate::lsp::documents::Document;
     use crate::lsp::state::WorldState;
     use crate::test::r_test;
-    use crate::treesitter::NodeType;
-    use crate::treesitter::NodeTypeExt;
 
     // Default state that includes installed packages and default scopes.
     static DEFAULT_STATE: Lazy<WorldState> = Lazy::new(|| current_state());
@@ -1026,65 +926,28 @@ mod tests {
     }
 
     #[test]
-    fn test_unmatched_call_delimiter() {
-        let document = Document::new("match(a, b", None);
-        let node = document.ast.root_node().named_child(0).unwrap();
-        let open = find_unclosed_argument_delimiter(node).unwrap();
-        assert_eq!(open.node_type(), NodeType::Anonymous(String::from("(")));
-        assert_eq!(open.start_byte(), 5);
-        assert_eq!(open.end_byte(), 6);
+    fn test_mixed_syntax_and_semantic_diagnostics() {
+        r_test(|| {
+            // - `foo` is an unknown symbol
+            // - `}` is a syntax error, but localized to that line
+            let text = "
+foo
 
-        let document = Document::new("foo[a, b", None);
-        let node = document.ast.root_node().named_child(0).unwrap();
-        let open = find_unclosed_argument_delimiter(node).unwrap();
-        assert_eq!(open.node_type(), NodeType::Anonymous(String::from("[")));
-        assert_eq!(open.start_byte(), 3);
-        assert_eq!(open.end_byte(), 4);
+1 }";
+            let document = Document::new(text, None);
+            let diagnostics = generate_diagnostics(document, DEFAULT_STATE.clone());
+            assert_eq!(diagnostics.len(), 2);
 
-        let document = Document::new("foo[[a, b", None);
-        let node = document.ast.root_node().named_child(0).unwrap();
-        let open = find_unclosed_argument_delimiter(node).unwrap();
-        assert_eq!(open.node_type(), NodeType::Anonymous(String::from("[[")));
-        assert_eq!(open.start_byte(), 3);
-        assert_eq!(open.end_byte(), 5);
-    }
+            let diagnostic = diagnostics.get(0).unwrap();
+            insta::assert_snapshot!(diagnostic.message);
+            assert_eq!(diagnostic.range.start, Position::new(3, 2));
+            assert_eq!(diagnostic.range.end, Position::new(3, 3));
 
-    #[test]
-    fn test_unmatched_braces() {
-        let document = Document::new("{", None);
-        let node = document.ast.root_node().named_child(0).unwrap();
-        assert!(is_unmatched_block(&node, "{", "}").unwrap());
-
-        let document = Document::new("{ 1 + 2", None);
-        let node = document.ast.root_node().named_child(0).unwrap();
-        assert!(is_unmatched_block(&node, "{", "}").unwrap());
-
-        let document = Document::new("{}", None);
-        let node = document.ast.root_node().named_child(0).unwrap();
-        assert!(!is_unmatched_block(&node, "{", "}").unwrap());
-
-        let document = Document::new("{ 1 + 2 }", None);
-        let node = document.ast.root_node().named_child(0).unwrap();
-        assert!(!is_unmatched_block(&node, "{", "}").unwrap());
-    }
-
-    #[test]
-    fn test_unmatched_parentheses() {
-        let document = Document::new("(", None);
-        let node = document.ast.root_node().named_child(0).unwrap();
-        assert!(is_unmatched_block(&node, "(", ")").unwrap());
-
-        let document = Document::new("( 1 + 2", None);
-        let node = document.ast.root_node().named_child(0).unwrap();
-        assert!(is_unmatched_block(&node, "(", ")").unwrap());
-
-        let document = Document::new("()", None);
-        let node = document.ast.root_node().named_child(0).unwrap();
-        assert!(!is_unmatched_block(&node, "(", ")").unwrap());
-
-        let document = Document::new("( 1 + 2 )", None);
-        let node = document.ast.root_node().named_child(0).unwrap();
-        assert!(!is_unmatched_block(&node, "(", ")").unwrap());
+            let diagnostic = diagnostics.get(1).unwrap();
+            insta::assert_snapshot!(diagnostic.message);
+            assert_eq!(diagnostic.range.start, Position::new(1, 0));
+            assert_eq!(diagnostic.range.end, Position::new(1, 3));
+        })
     }
 
     #[test]
@@ -1102,6 +965,18 @@ mod tests {
     }
 
     #[test]
+    fn test_missing_namespace_rhs() {
+        r_test(|| {
+            let text = "base::";
+            let document = Document::new(text, None);
+            let diagnostics = generate_diagnostics(document, DEFAULT_STATE.clone());
+            assert_eq!(diagnostics.len(), 1);
+            let diagnostic = diagnostics.get(0).unwrap();
+            insta::assert_snapshot!(diagnostic.message);
+        })
+    }
+
+    #[test]
     fn test_expression_after_call_argument() {
         r_test(|| {
             let text = "match(1, 2 3)";
@@ -1110,13 +985,11 @@ mod tests {
             let diagnostics = generate_diagnostics(document, DEFAULT_STATE.clone());
             assert_eq!(diagnostics.len(), 1);
 
+            // Diagnostic highlights between the `2` and `3`
             let diagnostic = diagnostics.get(0).unwrap();
-            assert_eq!(
-                diagnostic.message,
-                "expected ',' after expression".to_string()
-            );
-            assert_eq!(diagnostic.range.start, Position::new(0, 9));
-            assert_eq!(diagnostic.range.end, Position::new(0, 10));
+            insta::assert_snapshot!(diagnostic.message);
+            assert_eq!(diagnostic.range.start, Position::new(0, 10));
+            assert_eq!(diagnostic.range.end, Position::new(0, 11));
         })
     }
 
