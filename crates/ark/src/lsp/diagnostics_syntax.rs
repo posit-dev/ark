@@ -373,10 +373,7 @@ mod tests {
         let text = String::from("('") + newlines.as_str() + ")";
         let diagnostics = text_diagnostics(text.as_str());
         let diagnostic = diagnostics.get(0).unwrap();
-        assert_eq!(
-            diagnostic.message,
-            String::from("Syntax error. Starts here and ends on line 21.")
-        );
+        insta::assert_snapshot!(diagnostic.message);
         assert_eq!(diagnostic.range.start, Position::new(0, 0));
         assert_eq!(diagnostic.range.end, Position::new(0, 0));
     }
@@ -388,21 +385,21 @@ mod tests {
         let diagnostic = diagnostics.get(0).unwrap();
         assert_eq!(diagnostic.range.start, Position::new(0, 5));
         assert_eq!(diagnostic.range.end, Position::new(0, 6));
-        assert!(diagnostic.message.starts_with("Unmatched opening"));
+        insta::assert_snapshot!(diagnostic.message);
 
         let diagnostics = text_diagnostics("foo[a, b");
         assert_eq!(diagnostics.len(), 1);
         let diagnostic = diagnostics.get(0).unwrap();
         assert_eq!(diagnostic.range.start, Position::new(0, 3));
         assert_eq!(diagnostic.range.end, Position::new(0, 4));
-        assert!(diagnostic.message.starts_with("Unmatched opening"));
+        insta::assert_snapshot!(diagnostic.message);
 
         let diagnostics = text_diagnostics("foo[[a, b");
         assert_eq!(diagnostics.len(), 1);
         let diagnostic = diagnostics.get(0).unwrap();
         assert_eq!(diagnostic.range.start, Position::new(0, 3));
         assert_eq!(diagnostic.range.end, Position::new(0, 5));
-        assert!(diagnostic.message.starts_with("Unmatched opening"));
+        insta::assert_snapshot!(diagnostic.message);
     }
 
     #[test]
@@ -421,7 +418,7 @@ identity(1)
 
         // Diagnostic highlights the unmatched `(`
         let diagnostic = diagnostics.get(0).unwrap();
-        assert!(diagnostic.message.starts_with("Unmatched opening"));
+        insta::assert_snapshot!(diagnostic.message);
         assert_eq!(diagnostic.range.start, Position::new(1, 5));
         assert_eq!(diagnostic.range.end, Position::new(1, 6));
     }
@@ -430,19 +427,13 @@ identity(1)
     fn test_unmatched_braces() {
         let diagnostics = text_diagnostics("{");
         assert_eq!(diagnostics.len(), 1);
-        assert!(diagnostics
-            .get(0)
-            .unwrap()
-            .message
-            .starts_with("Syntax error"));
+        let diagnostic = diagnostics.get(0).unwrap();
+        insta::assert_snapshot!(diagnostic.message);
 
         let diagnostics = text_diagnostics("{ 1 + 2");
         assert_eq!(diagnostics.len(), 1);
-        assert!(diagnostics
-            .get(0)
-            .unwrap()
-            .message
-            .starts_with("Unmatched opening"));
+        let diagnostic = diagnostics.get(0).unwrap();
+        insta::assert_snapshot!(diagnostic.message);
 
         let diagnostics = text_diagnostics("{}");
         assert!(diagnostics.is_empty());
@@ -455,19 +446,13 @@ identity(1)
     fn test_unmatched_parentheses() {
         let diagnostics = text_diagnostics("(");
         assert_eq!(diagnostics.len(), 1);
-        assert!(diagnostics
-            .get(0)
-            .unwrap()
-            .message
-            .starts_with("Syntax error"));
+        let diagnostic = diagnostics.get(0).unwrap();
+        insta::assert_snapshot!(diagnostic.message);
 
         let diagnostics = text_diagnostics("( 1 + 2");
         assert_eq!(diagnostics.len(), 1);
-        assert!(diagnostics
-            .get(0)
-            .unwrap()
-            .message
-            .starts_with("Unmatched opening"));
+        let diagnostic = diagnostics.get(0).unwrap();
+        insta::assert_snapshot!(diagnostic.message);
 
         let diagnostics = text_diagnostics("()");
         assert!(diagnostics.is_empty());
@@ -483,31 +468,25 @@ identity(1)
         let diagnostics = text_diagnostics("sum(1 * 2 + )");
         assert_eq!(diagnostics.len(), 1);
         let diagnostic = diagnostics.get(0).unwrap();
-        assert_eq!(
-            diagnostic.message,
-            "Unmatched closing delimiter. Missing an opening '('."
-        );
+        insta::assert_snapshot!(diagnostic.message);
         assert_eq!(diagnostic.range.start, Position::new(0, 12));
         assert_eq!(diagnostic.range.end, Position::new(0, 13));
     }
 
     #[test]
     fn test_unmatched_closing_token() {
-        let open = vec!["{", "(", "["];
         let close = vec!["}", ")", "]"];
-        let iter = std::iter::zip(open.iter(), close.iter());
 
-        for (open, close) in iter {
+        for delimiter in close.iter() {
             // i.e. `1 + 1 }`
-            let text = format!("1 + 1 {close}");
+            let text = format!("1 + 1 {delimiter}");
 
             let diagnostics = text_diagnostics(text.as_str());
             assert_eq!(diagnostics.len(), 1);
 
             // Diagnostic highlights the `{delimiter}`
-            let message = format!("Unmatched closing delimiter. Missing an opening '{open}'.");
             let diagnostic = diagnostics.get(0).unwrap();
-            assert_eq!(diagnostic.message, message);
+            insta::assert_snapshot!(diagnostic.message);
             assert_eq!(diagnostic.range.start, Position::new(0, 6));
             assert_eq!(diagnostic.range.end, Position::new(0, 7));
         }
@@ -520,9 +499,7 @@ identity(1)
         let text = "1 + }";
         let diagnostics = text_diagnostics(text);
         let diagnostic = diagnostics.get(0).unwrap();
-        assert!(diagnostic
-            .message
-            .starts_with("Unmatched closing delimiter"));
+        insta::assert_snapshot!(diagnostic.message);
         assert_eq!(diagnostic.range.start, Position::new(0, 4));
         assert_eq!(diagnostic.range.end, Position::new(0, 5));
     }
@@ -540,10 +517,7 @@ identity(1)
         assert_eq!(diagnostics.len(), 1);
 
         let diagnostic = diagnostics.get(0).unwrap();
-        assert_eq!(
-            diagnostic.message,
-            String::from("Unmatched closing delimiter. Missing an opening '{'.")
-        );
+        insta::assert_snapshot!(diagnostic.message);
         assert_eq!(diagnostic.range.start, Position::new(3, 0));
         assert_eq!(diagnostic.range.end, Position::new(3, 1));
     }
@@ -561,14 +535,12 @@ function(x {
         assert_eq!(diagnostics.len(), 2);
 
         let diagnostic = diagnostics.get(0).unwrap();
-        assert!(diagnostic.message.starts_with("Syntax error"));
+        insta::assert_snapshot!(diagnostic.message);
         assert_eq!(diagnostic.range.start, Position::new(1, 11));
         assert_eq!(diagnostic.range.end, Position::new(1, 12));
 
         let diagnostic = diagnostics.get(1).unwrap();
-        assert!(diagnostic
-            .message
-            .starts_with("Unmatched closing delimiter"));
+        insta::assert_snapshot!(diagnostic.message);
         assert_eq!(diagnostic.range.start, Position::new(3, 0));
         assert_eq!(diagnostic.range.end, Position::new(3, 1));
     }

@@ -1,0 +1,5 @@
+---
+source: crates/ark/src/lsp/diagnostics_syntax.rs
+expression: diagnostic.message
+---
+Unmatched opening delimiter. Missing a closing ']'.

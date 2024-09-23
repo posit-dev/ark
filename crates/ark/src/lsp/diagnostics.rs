@@ -939,14 +939,12 @@ foo
             assert_eq!(diagnostics.len(), 2);
 
             let diagnostic = diagnostics.get(0).unwrap();
-            assert!(diagnostic
-                .message
-                .starts_with("Unmatched closing delimiter"));
+            insta::assert_snapshot!(diagnostic.message);
             assert_eq!(diagnostic.range.start, Position::new(3, 2));
             assert_eq!(diagnostic.range.end, Position::new(3, 3));
 
             let diagnostic = diagnostics.get(1).unwrap();
-            assert!(diagnostic.message.starts_with("No symbol named 'foo'"));
+            insta::assert_snapshot!(diagnostic.message);
             assert_eq!(diagnostic.range.start, Position::new(1, 0));
             assert_eq!(diagnostic.range.end, Position::new(1, 3));
         })
@@ -974,7 +972,7 @@ foo
             let diagnostics = generate_diagnostics(document, DEFAULT_STATE.clone());
             assert_eq!(diagnostics.len(), 1);
             let diagnostic = diagnostics.get(0).unwrap();
-            assert!(diagnostic.message.contains("Missing a right hand side"));
+            insta::assert_snapshot!(diagnostic.message);
         })
     }
 
@@ -989,10 +987,7 @@ foo
 
             // Diagnostic highlights between the `2` and `3`
             let diagnostic = diagnostics.get(0).unwrap();
-            assert_eq!(
-                diagnostic.message,
-                "Expected ',' between expressions.".to_string()
-            );
+            insta::assert_snapshot!(diagnostic.message);
             assert_eq!(diagnostic.range.start, Position::new(0, 10));
             assert_eq!(diagnostic.range.end, Position::new(0, 11));
         })
