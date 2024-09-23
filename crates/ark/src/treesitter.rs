@@ -296,6 +296,9 @@ pub trait NodeTypeExt: Sized {
     fn is_namespace_internal_operator(&self) -> bool;
     fn is_unary_operator(&self) -> bool;
     fn is_binary_operator(&self) -> bool;
+    fn is_native_pipe_operator(&self) -> bool;
+    fn is_magrittr_pipe_operator(&self, contents: &ropey::Rope) -> anyhow::Result<bool>;
+    fn is_pipe_operator(&self, contents: &ropey::Rope) -> anyhow::Result<bool>;
 }
 
 impl NodeTypeExt for Node<'_> {
@@ -385,6 +388,36 @@ impl NodeTypeExt for Node<'_> {
 
     fn is_binary_operator(&self) -> bool {
         matches!(self.node_type(), NodeType::BinaryOperator(_))
+    }
+
+    fn is_native_pipe_operator(&self) -> bool {
+        self.node_type() == NodeType::BinaryOperator(BinaryOperatorType::Pipe)
+    }
+
+    fn is_magrittr_pipe_operator(&self, contents: &ropey::Rope) -> anyhow::Result<bool> {
+        if self.node_type() != NodeType::BinaryOperator(BinaryOperatorType::Special) {
+            return Ok(false);
+        }
+
+        let Some(operator) = self.child_by_field_name("operator") else {
+            return Ok(false);
+        };
+
+        let text = contents.node_slice(&operator)?;
+
+        Ok(text == "%>%")
+    }
+
+    fn is_pipe_operator(&self, contents: &ropey::Rope) -> anyhow::Result<bool> {
+        if self.is_native_pipe_operator() {
+            return Ok(true);
+        }
+
+        if self.is_magrittr_pipe_operator(contents)? {
+            return Ok(true);
+        }
+
+        Ok(false)
     }
 }
 
