@@ -10,6 +10,8 @@ ark_methods_table$ark_variable_display_value <- new.env(parent = emptyenv())
 ark_methods_table$ark_variable_display_type <- new.env(parent = emptyenv())
 ark_methods_table$ark_variable_has_children <- new.env(parent = emptyenv())
 ark_methods_table$ark_variable_kind <- new.env(parent = emptyenv())
+ark_methods_table$ark_variable_get_child_at <- new.env(parent = emptyenv())
+ark_methods_table$ark_variable_get_children <- new.env(parent = emptyenv())
 lockEnvironment(ark_methods_table, TRUE)
 
 #' Register the methods with the Positron runtime
@@ -26,7 +28,9 @@ lockEnvironment(ark_methods_table, TRUE)
             "ark_variable_display_value",
             "ark_variable_display_type",
             "ark_variable_has_children",
-            "ark_variable_kind"
+            "ark_variable_kind",
+            "ark_variable_get_child_at",
+            "ark_variable_get_children"
         ),
         typeof(class) == "character"
     )
