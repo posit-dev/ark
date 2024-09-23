@@ -12,7 +12,13 @@ fn spawn_r() -> DummyFrontend {
     let connection_file = frontend.get_connection_file();
 
     spawn!("dummy_kernel", || {
-        ark::start::start_kernel(connection_file, vec![], None, SessionMode::Console, false);
+        ark::start::start_kernel(
+            connection_file,
+            vec![String::from("--no-save"), String::from("--no-restore")],
+            None,
+            SessionMode::Console,
+            false,
+        );
     });
 
     // Can we do better?
