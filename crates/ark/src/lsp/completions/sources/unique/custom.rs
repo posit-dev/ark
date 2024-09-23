@@ -91,13 +91,13 @@ pub fn completions_from_custom_source_impl(
     //
     // cf. https://github.com/posit-dev/positron/issues/3467
     if index >= parameters.len() {
-        lsp::log_error!("Index {index} is out of bounds of the arguments of `{name}`");
+        lsp::log_error!("Index {index} is out of bounds of the parameters of `{name}`");
         return Ok(None);
     }
     let parameter = parameters.get(index).into_result()?;
 
-    // Extract the argument text.
-    let argument = match parameter.label.clone() {
+    // Extract the parameter text.
+    let parameter = match parameter.label.clone() {
         tower_lsp::lsp_types::ParameterLabel::LabelOffsets([start, end]) => {
             let label = signature.label.as_str();
             let substring = label.get((start as usize)..(end as usize));
@@ -106,14 +106,14 @@ pub fn completions_from_custom_source_impl(
         tower_lsp::lsp_types::ParameterLabel::Simple(string) => string,
     };
 
-    // Argument text typically contains the argument name and its default value if there is one.
-    // Extract out just the argument name for matching purposes.
-    let argument = match argument.find("=") {
-        Some(loc) => &argument[..loc].trim(),
-        None => argument.as_str(),
+    // Parameter text typically contains the parameter name and its default value if there is one.
+    // Extract out just the parameter name for matching purposes.
+    let parameter = match parameter.find("=") {
+        Some(loc) => &parameter[..loc].trim(),
+        None => parameter.as_str(),
     };
 
-    // Trim off the function arguments from the signature.
+    // Trim off the function parameters from the signature.
     if let Some(index) = name.find('(') {
         name = name[0..index].to_string();
     }
@@ -152,7 +152,7 @@ pub fn completions_from_custom_source_impl(
         // Call our custom completion function.
         let r_completions = RFunction::from(".ps.completions.getCustomCallCompletions")
             .param("name", name)
-            .param("argument", argument)
+            .param("argument", parameter)
             .param("position", position)
             .call()?;
 
