@@ -803,6 +803,14 @@ impl PositronVariable {
             },
 
             EnvironmentVariableNode::Concrete { object } => {
+                // First try to dispatch `ark_variable_get_children` method and construct
+                // variables from it.
+                match Self::try_inspect_custom_method(object.sexp) {
+                    Err(err) => log::error!("Failed to inspect with custom method: {err}"),
+                    Ok(None) => {},
+                    Ok(Some(variables)) => return Ok(variables),
+                }
+
                 if object.is_s4() {
                     Self::inspect_s4(*object)
                 } else {
@@ -927,6 +935,19 @@ impl PositronVariable {
         // Concrete nodes are objects that are treated as is. Accessing an element from them,
         // might result in special node types.
 
+        // First try to get child using a generic method
+        // VariableGetChildAt returns an RObject that should always be treated as a concrete node.
+        let result = ArkGenerics::VariableGetChildAt.try_dispatch::<RObject>(object.sexp, vec![(
+            String::from("name"),
+            RObject::from(name.clone()),
+        )]);
+
+        match result {
+            Err(err) => log::error!("Failed dispatching `ark_variable_get_child_at`: {err}"),
+            Ok(None) => {}, // No method for `object`.
+            Ok(Some(child)) => return Ok(EnvironmentVariableNode::Concrete { object: child }),
+        };
+
         // For S4 objects, we acess child nodes using R_do_slot.
         if object.is_s4() {
             let name = unsafe { r_symbol!(name) };
@@ -1003,7 +1024,8 @@ impl PositronVariable {
                     },
 
                     _ => {
-                        //return Err(harp::Error::InspectError { path: path_elt });
+                        // Technically we'd also implement this for `<methods>`, but because `methods`
+                        // are all functions which always `have_children=false` we don't need to.
                         return Err(harp::Error::Anyhow(anyhow!(
                             "You can only get children from <private>, got {path_elt}"
                         )));
@@ -1333,6 +1355,25 @@ impl PositronVariable {
 
         Ok(out)
     }
+
+    fn try_inspect_custom_method(value: SEXP) -> Result<Option<Vec<Variable>>, harp::Error> {
+        let result: Option<RObject> = ArkGenerics::VariableGetChildren
+            .try_dispatch(value, vec![])
+            .map_err(|err| harp::Error::Anyhow(err))?;
+
+        match result {
+            None => Ok(None),
+            Some(value) => {
+                // Make sure value is a list before using inspect_list
+                if !r_typeof(value.sexp) == LISTSXP {
+                    return Err(harp::Error::Anyhow(anyhow!(
+                        "Expected `ark_variable_get_children` to return a list."
+                    )));
+                }
+                Ok(Some(Self::inspect_list(value.sexp)?))
+            },
+        }
+    }
 }
 
 fn try_from_method_variable_kind(value: SEXP) -> anyhow::Result<Option<VariableKind>> {
@@ -1384,11 +1425,27 @@ mod tests {
                 })
 
                 .ps.register_ark_method("ark_variable_has_children", "foo", function(x) {
-                    FALSE
+                    TRUE
                 })
 
                 .ps.register_ark_method("ark_variable_kind", "foo", function(x) {
                     "other"
+                })
+
+                .ps.register_ark_method("ark_variable_get_children", "foo", function(x) {
+                    list(
+                        "hello" = list(a = 1, b = 2),
+                        "bye" = "testing",
+                        c(1, 2, 3)
+                    )
+                })
+
+                .ps.register_ark_method("ark_variable_get_child_at", "foo", function(x, name) {
+                    list(
+                        "hello" = list(a = 1, b = 2),
+                        "bye" = "testing",
+                        c(1, 2, 3)
+                    )[[name]]
                 })
 
                 "#,
@@ -1396,21 +1453,41 @@ mod tests {
             .unwrap();
 
             // Create an object with that class in an env.
-            let obj = harp::parse_eval_base(r#"structure(list(1,2,3), class = "foo")"#).unwrap();
+            let env = harp::parse_eval_base(
+                r#"
+            local({
+                env <- new.env(parent = emptyenv())
+                env$x <- structure(list(1,2,3), class = "foo")
+                env
+            })
+            "#,
+            )
+            .unwrap();
 
-            let variable =
-                PositronVariable::from(String::from("foo"), String::from("foo"), obj.sexp);
+            let path = vec![];
+            let variables = PositronVariable::inspect(env.clone(), &path).unwrap();
 
-            assert_eq!(
-                variable.var.display_value,
-                "a".repeat(MAX_DISPLAY_VALUE_LENGTH)
-            );
+            assert_eq!(variables.len(), 1);
+            let variable = variables[0].clone();
 
-            assert_eq!(variable.var.display_type, String::from("foo (3)"));
+            assert_eq!(variable.display_value, "a".repeat(MAX_DISPLAY_VALUE_LENGTH));
 
-            assert_eq!(variable.var.has_children, false);
+            assert_eq!(variable.display_type, String::from("foo (3)"));
 
-            assert_eq!(variable.var.kind, VariableKind::Other);
+            assert_eq!(variable.has_children, true);
+
+            assert_eq!(variable.kind, VariableKind::Other);
+
+            // Now inspect `x`
+            let path = vec![String::from("x")];
+            let variables = PositronVariable::inspect(env.clone(), &path).unwrap();
+
+            assert_eq!(variables.len(), 3);
+
+            // Now inspect a list inside x
+            let path = vec![String::from("x"), String::from("hello")];
+            let variables = PositronVariable::inspect(env, &path).unwrap();
+            assert_eq!(variables.len(), 2);
         })
     }
 
