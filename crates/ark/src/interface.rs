@@ -904,8 +904,8 @@ impl RMain {
 
                 // If the input is invalid (e.g. incomplete), don't send it to R
                 // at all, reply with an error right away
-                if let Some(result) = Self::check_console_input(code.as_str()) {
-                    return Some(result);
+                if let Err(err) = Self::check_console_input(code.as_str()) {
+                    return Some(ConsoleResult::Error(err));
                 }
 
                 // Split input by lines, retrieve first line, and store
@@ -1105,12 +1105,12 @@ impl RMain {
         Some(ConsoleResult::NewInput)
     }
 
-    fn check_console_input(input: &str) -> Option<ConsoleResult> {
+    fn check_console_input(input: &str) -> amalthea::Result<()> {
         let status = unwrap!(harp::parse_status(&harp::ParseInput::Text(input)), Err(err) => {
             // Failed to even attempt to parse the input, something is seriously wrong
-            return Some(ConsoleResult::Error(Error::InvalidConsoleInput(format!(
+            return Err(Error::InvalidConsoleInput(format!(
                 "Failed to parse input: {err:?}"
-            ))));
+            )));
         });
 
         // - Incomplete inputs put R into a state where it expects more input that will never come, so we
@@ -1118,11 +1118,11 @@ impl RMain {
         // - Complete statements are obviously fine.
         // - Syntax errors will cause R to throw an error, which is expected.
         match status {
-            harp::ParseResult::Incomplete => Some(ConsoleResult::Error(
-                Error::InvalidConsoleInput(format!("Can't execute incomplete input:\n{input}")),
-            )),
-            harp::ParseResult::Complete(_) => None,
-            harp::ParseResult::SyntaxError { .. } => None,
+            harp::ParseResult::Incomplete => Err(Error::InvalidConsoleInput(format!(
+                "Can't execute incomplete input:\n{input}"
+            ))),
+            harp::ParseResult::Complete(_) => Ok(()),
+            harp::ParseResult::SyntaxError { .. } => Ok(()),
         }
     }
 
