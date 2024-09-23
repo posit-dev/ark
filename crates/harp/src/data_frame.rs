@@ -75,7 +75,8 @@ impl DataFrame {
 
 #[cfg(test)]
 mod tests {
-    use crate::assert_match;
+    use stdext::assert_match;
+
     use crate::r_alloc_integer;
     use crate::r_chr_poke;
     use crate::r_list_poke;

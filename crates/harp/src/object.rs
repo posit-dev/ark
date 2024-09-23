@@ -1151,9 +1151,9 @@ where
 #[cfg(test)]
 mod tests {
     use libr::SET_STRING_ELT;
+    use stdext::assert_match;
 
     use super::*;
-    use crate::assert_match;
     use crate::r_char;
     use crate::r_test;
 

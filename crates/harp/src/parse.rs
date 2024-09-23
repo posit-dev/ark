@@ -158,7 +158,8 @@ fn parse_input_as_string<'a>(input: &ParseInput<'a>) -> crate::Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use crate::assert_match;
+    use stdext::assert_match;
+
     use crate::parse::parse_input_as_string;
     use crate::parse::ParseInput;
     use crate::parse_status;

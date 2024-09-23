@@ -134,7 +134,7 @@ fn line_offset(text: &str, line: usize) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
-    use harp::assert_match;
+    use stdext::assert_match;
 
     use crate::lsp::offset::apply_text_edits;
     use crate::lsp::offset::line_offset;

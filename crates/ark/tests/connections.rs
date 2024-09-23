@@ -17,9 +17,9 @@ use ark::r_task::r_task;
 use ark::test::r_test;
 use ark::test::socket_rpc_request;
 use crossbeam::channel::bounded;
-use harp::assert_match;
 use harp::exec::RFunction;
 use harp::object::RObject;
+use stdext::assert_match;
 
 fn open_dummy_connection() -> socket::comm::CommSocket {
     print!("testing!\n");

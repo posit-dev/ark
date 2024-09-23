@@ -41,6 +41,39 @@ macro_rules! cstr {
     }};
 }
 
+/// Asserts that the given expression matches the given pattern
+/// and optionally some further assertions.
+///
+/// To use until `assert_matches()` stabilises
+///
+/// # Examples
+///
+/// ```
+/// #[macro_use] extern crate stdext;
+/// # fn main() {
+/// assert_match!(1 + 1, 2);
+/// assert_match!(1 + 1, 2 => {
+///    assert_eq!(40 + 2, 42)
+/// });
+/// # }
+/// ```
+#[macro_export]
+macro_rules! assert_match {
+    ($expression:expr, $pattern:pat_param => $code:block) => {
+        assert!(match $expression {
+            $pattern => {
+                $code
+                true
+            },
+            _ => false
+        })
+    };
+
+    ($expression:expr, $pattern:pat_param) => {
+        assert!(matches!($expression, $pattern))
+    };
+}
+
 #[cfg(test)]
 mod tests {
 

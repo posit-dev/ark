@@ -157,8 +157,8 @@ pub fn profile_frequency_table(
 
 #[cfg(test)]
 mod tests {
-    use harp::assert_match;
     use harp::object::RObject;
+    use stdext::assert_match;
 
     use super::*;
     use crate::test::r_test;

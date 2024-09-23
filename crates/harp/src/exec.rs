@@ -492,7 +492,7 @@ mod tests {
     use std::ffi::CString;
 
     use super::*;
-    use crate::assert_match;
+    use stdext::assert_match;
     use crate::r_test;
     use crate::utils::r_envir_remove;
     use crate::utils::r_typeof;

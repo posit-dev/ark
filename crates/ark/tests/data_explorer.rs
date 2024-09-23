@@ -61,7 +61,6 @@ use ark::test::r_test;
 use ark::test::socket_rpc_request;
 use ark::thread::RThreadSafe;
 use crossbeam::channel::bounded;
-use harp::assert_match;
 use harp::environment::R_ENVS;
 use harp::object::RObject;
 use harp::r_symbol;
@@ -69,6 +68,7 @@ use itertools::enumerate;
 use itertools::Itertools;
 use libr::R_GlobalEnv;
 use libr::Rf_eval;
+use stdext::assert_match;
 
 struct DataExplorerSocket {
     socket: socket::comm::CommSocket,

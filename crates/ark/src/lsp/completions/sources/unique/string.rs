@@ -55,7 +55,7 @@ pub fn completions_from_string(context: &DocumentContext) -> Result<Option<Vec<C
 
 #[cfg(test)]
 mod tests {
-    use harp::assert_match;
+    use stdext::assert_match;
 
     use crate::lsp::completions::sources::completions_from_unique_sources;
     use crate::lsp::completions::sources::unique::string::completions_from_string;
