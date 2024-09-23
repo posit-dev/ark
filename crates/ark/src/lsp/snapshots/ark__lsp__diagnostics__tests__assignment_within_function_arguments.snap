@@ -1,0 +1,5 @@
+---
+source: crates/ark/src/lsp/diagnostics.rs
+expression: diagnostic.message
+---
+No symbol named 'x' in scope.
