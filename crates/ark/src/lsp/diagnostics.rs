@@ -20,7 +20,7 @@ use tree_sitter::Node;
 use tree_sitter::Range;
 
 use crate::lsp::declarations::top_level_declare;
-use crate::lsp::diagnostics_syntactic::syntax_diagnostics;
+use crate::lsp::diagnostics_syntax::syntax_diagnostics;
 use crate::lsp::documents::Document;
 use crate::lsp::encoding::convert_tree_sitter_range_to_lsp_range;
 use crate::lsp::indexer;
@@ -479,7 +479,7 @@ fn recurse_namespace(
     // This is really a syntax issue, but the RHS is optional in the grammar,
     // so `dplyr::` is technically allowed and we have to check for this in
     // the semantic path instead.
-    crate::lsp::diagnostics_syntactic::diagnose_missing_namespace_operator(
+    crate::lsp::diagnostics_syntax::diagnose_missing_namespace_operator(
         node,
         context,
         diagnostics,

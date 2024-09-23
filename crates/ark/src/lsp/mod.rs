@@ -12,7 +12,7 @@ mod config;
 mod declarations;
 pub mod definitions;
 pub mod diagnostics;
-pub mod diagnostics_syntactic;
+pub mod diagnostics_syntax;
 pub mod document_context;
 pub mod documents;
 pub mod encoding;

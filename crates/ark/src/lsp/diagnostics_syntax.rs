@@ -1,5 +1,5 @@
 //
-// diagnostics_syntactic.rs
+// diagnostics_syntax.rs
 //
 // Copyright (C) 2024 Posit Software, PBC. All rights reserved.
 //
@@ -356,7 +356,7 @@ mod tests {
     use tower_lsp::lsp_types::Position;
 
     use crate::lsp::diagnostics::DiagnosticContext;
-    use crate::lsp::diagnostics_syntactic::syntax_diagnostics;
+    use crate::lsp::diagnostics_syntax::syntax_diagnostics;
     use crate::lsp::documents::Document;
 
     fn text_diagnostics(text: &str) -> Vec<Diagnostic> {
