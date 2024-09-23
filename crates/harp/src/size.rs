@@ -13,6 +13,8 @@ use std::u32;
 use libc::c_double;
 use libr::*;
 
+use crate::environment::BindingValue;
+use crate::environment::Environment;
 use crate::environment::R_ENVS;
 use crate::list_get;
 use crate::object::r_chr_get;
@@ -20,7 +22,7 @@ use crate::object::r_length;
 use crate::r_is_altrep;
 use crate::r_symbol;
 use crate::r_typeof;
-use crate::Sxpinfo;
+use crate::RObject;
 
 // A re-implementation of lobstr obj_size
 // https://github.com/r-lib/lobstr/blob/9ee1481c9d322fe0a5c798f3f20e608622ddc257/src/size.cpp#L201
@@ -185,16 +187,14 @@ fn obj_size_tree(
                         seen,
                         depth + 1,
                     );
-                    if !is_immediate_binding(cons) {
-                        size += obj_size_tree(
-                            unsafe { libr::CAR(cons) },
-                            base_env,
-                            sizeof_node,
-                            sizeof_vector,
-                            seen,
-                            depth + 1,
-                        );
-                    }
+                    size += obj_size_tree(
+                        unsafe { libr::CAR(cons) },
+                        base_env,
+                        sizeof_node,
+                        sizeof_vector,
+                        seen,
+                        depth + 1,
+                    );
                     cons = unsafe { libr::CDR(cons) };
                 }
                 // Handle non-nil CDRs
@@ -210,16 +210,14 @@ fn obj_size_tree(
                 seen,
                 depth + 1,
             );
-            if !is_immediate_binding(x) {
-                size += obj_size_tree(
-                    unsafe { libr::CAR(x) },
-                    base_env,
-                    sizeof_node,
-                    sizeof_vector,
-                    seen,
-                    depth + 1,
-                );
-            }
+            size += obj_size_tree(
+                unsafe { libr::CAR(x) },
+                base_env,
+                sizeof_node,
+                sizeof_vector,
+                seen,
+                depth + 1,
+            );
             size += obj_size_tree(
                 unsafe { libr::CDR(x) },
                 base_env,
@@ -240,24 +238,63 @@ fn obj_size_tree(
                 return 0;
             }
 
-            size += obj_size_tree(
-                unsafe { libr::FRAME(x) },
-                base_env,
-                sizeof_node,
-                sizeof_vector,
-                seen,
-                depth + 1,
-            );
+            // We can't access environment bindings values using `CAR` because this requires knowledge
+            // about internals of environments.
+            // This also means we won't count the size of internal implementation details of environments,
+            // such as the pre-allocated size of hash tables, etc.
+
+            for binding in Environment::new(RObject::view(x))
+                .iter()
+                .filter_map(|x| x.ok())
+            {
+                // `binding.name`s are SYMSXP, for which we don't need to add to size.
+                // We do add a node size for each binding though, because that's
+                // the size the internal pairlist uses for each element.
+                size += sizeof_node;
+
+                size += match binding.value {
+                    // For active bindings, we compute the size of the function
+                    BindingValue::Active { fun } => {
+                        obj_size_tree(fun.sexp, base_env, sizeof_node, sizeof_vector, seen, depth)
+                    },
+                    // `obj_size_tree` is aware of altrep objects.
+                    BindingValue::Altrep { object, .. } => obj_size_tree(
+                        object.sexp,
+                        base_env,
+                        sizeof_node,
+                        sizeof_vector,
+                        seen,
+                        depth + 1,
+                    ),
+                    // `object_size_tree` is aware of promise objects.
+                    // The environment iterator will automatically return `PRVALUE` as
+                    // a `Standard` binding though. So this is only seeing unevaluated promises.
+                    // For evaluated promises, we are not counting the size of `PRCODE`, but hopefully
+                    // their sizes are neglegible, mostly just symbols or small expressions.
+                    BindingValue::Promise { promise } => obj_size_tree(
+                        promise.sexp,
+                        base_env,
+                        sizeof_node,
+                        sizeof_vector,
+                        seen,
+                        depth + 1,
+                    ),
+                    // Immediate bindings are expanded, thus we might overestimate the size of
+                    // environments that use this kind of bindings.
+                    // See more in https://github.com/r-devel/r-svn/blob/31340c871c7df54e45bfc7c4f49d09bb5806ec70/doc/notes/immbnd.md
+                    BindingValue::Standard { object, .. } => obj_size_tree(
+                        object.sexp,
+                        base_env,
+                        sizeof_node,
+                        sizeof_vector,
+                        seen,
+                        depth,
+                    ),
+                }
+            }
+
             size += obj_size_tree(
                 unsafe { libr::ENCLOS(x) },
-                base_env,
-                sizeof_node,
-                sizeof_vector,
-                seen,
-                depth + 1,
-            );
-            size += obj_size_tree(
-                unsafe { libr::HASHTAB(x) },
                 base_env,
                 sizeof_node,
                 sizeof_vector,
@@ -395,10 +432,6 @@ fn v_size(n: usize, element_size: usize) -> usize {
     }
 
     size
-}
-
-fn is_immediate_binding(x: SEXP) -> bool {
-    Sxpinfo::interpret(&x).extra() != 0
 }
 
 #[cfg(test)]
@@ -615,6 +648,19 @@ mod tests {
         r_test(|| {
             // Check it doesn't error
             let size = object_size("(function(...) function() NULL)(foo)");
+            assert!(size != 0)
+        });
+    }
+
+    #[test]
+    fn test_immediate_bindings() {
+        r_test!({
+            let size = object_size(
+                "local({
+                    f <- compiler::cmpfun(function() for (i in 1:3) return(environment()))
+                    f()
+                })",
+            );
             assert!(size != 0)
         });
     }
