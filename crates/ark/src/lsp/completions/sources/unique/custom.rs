@@ -235,7 +235,7 @@ mod tests {
     fn test_completion_custom_library() {
         r_test(|| {
             let n_packages = {
-                let n = harp::parse_eval_global("length(base::.packages(TRUE))").unwrap();
+                let n = harp::parse_eval_base("length(base::.packages(TRUE))").unwrap();
                 let n = i32::try_from(n).unwrap();
                 usize::try_from(n).unwrap()
             };
@@ -267,7 +267,7 @@ mod tests {
         r_test(|| {
             let name = "ARK_TEST_ENVVAR";
 
-            harp::parse_eval_global(format!("Sys.setenv({name} = '1')").as_str()).unwrap();
+            harp::parse_eval_base(format!("Sys.setenv({name} = '1')").as_str()).unwrap();
 
             let assert_has_ark_test_envvar_completion = |text: &str, point: Point| {
                 let document = Document::new(text, None);
@@ -307,7 +307,7 @@ mod tests {
             let completions = completions_from_custom_source(&context).unwrap();
             assert!(completions.is_none());
 
-            harp::parse_eval_global(format!("Sys.unsetenv('{name}')").as_str()).unwrap();
+            harp::parse_eval_base(format!("Sys.unsetenv('{name}')").as_str()).unwrap();
         })
     }
 
@@ -316,7 +316,7 @@ mod tests {
         r_test(|| {
             let name = "ARK_TEST_ENVVAR";
 
-            harp::parse_eval_global(format!("Sys.setenv({name} = '1')").as_str()).unwrap();
+            harp::parse_eval_base(format!("Sys.setenv({name} = '1')").as_str()).unwrap();
 
             let assert_has_ark_test_envvar_completion = |text: &str, point: Point| {
                 let document = Document::new(text, None);
@@ -353,7 +353,7 @@ mod tests {
             let completions = completions_from_custom_source(&context).unwrap();
             assert!(completions.is_none());
 
-            harp::parse_eval_global(format!("Sys.unsetenv('{name}')").as_str()).unwrap();
+            harp::parse_eval_base(format!("Sys.unsetenv('{name}')").as_str()).unwrap();
         })
     }
 
@@ -362,7 +362,7 @@ mod tests {
         r_test(|| {
             let name = "ARK_TEST_ENVVAR";
 
-            harp::parse_eval_global(format!("Sys.setenv({name} = '1')").as_str()).unwrap();
+            harp::parse_eval_base(format!("Sys.setenv({name} = '1')").as_str()).unwrap();
 
             let assert_has_ark_test_envvar_completion = |text: &str, point: Point| {
                 let document = Document::new(text, None);
@@ -391,7 +391,7 @@ mod tests {
             let (text, point) = point_from_cursor("Sys.setenv(foo = 'bar', @)");
             assert_has_ark_test_envvar_completion(text.as_str(), point);
 
-            harp::parse_eval_global(format!("Sys.unsetenv('{name}')").as_str()).unwrap();
+            harp::parse_eval_base(format!("Sys.unsetenv('{name}')").as_str()).unwrap();
         })
     }
 
@@ -400,7 +400,7 @@ mod tests {
         r_test(|| {
             let name = "ARK_TEST_OPTION";
 
-            harp::parse_eval_global(format!("options({name} = '1')").as_str()).unwrap();
+            harp::parse_eval_base(format!("options({name} = '1')").as_str()).unwrap();
 
             let assert_has_ark_test_envvar_completion = |text: &str, point: Point| {
                 let document = Document::new(text, None);
@@ -440,7 +440,7 @@ mod tests {
             let completions = completions_from_custom_source(&context).unwrap();
             assert!(completions.is_none());
 
-            harp::parse_eval_global(format!("options({name} = NULL)").as_str()).unwrap();
+            harp::parse_eval_base(format!("options({name} = NULL)").as_str()).unwrap();
         })
     }
 
@@ -449,7 +449,7 @@ mod tests {
         r_test(|| {
             let name = "ARK_TEST_OPTION";
 
-            harp::parse_eval_global(format!("options({name} = '1')").as_str()).unwrap();
+            harp::parse_eval_base(format!("options({name} = '1')").as_str()).unwrap();
 
             let assert_has_ark_test_option_completion = |text: &str, point: Point| {
                 let document = Document::new(text, None);
@@ -478,7 +478,7 @@ mod tests {
             let (text, point) = point_from_cursor("options(foo = 'bar', @)");
             assert_has_ark_test_option_completion(text.as_str(), point);
 
-            harp::parse_eval_global(format!("options({name} = NULL)").as_str()).unwrap();
+            harp::parse_eval_base(format!("options({name} = NULL)").as_str()).unwrap();
         })
     }
 }
