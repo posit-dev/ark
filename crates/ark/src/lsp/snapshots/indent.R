@@ -1098,11 +1098,11 @@ fun_call(object1 + object2 ~ object3 +
            argument)
 
 ## 32
-fun_call(object ~
+fun_call(~ object
   )
 
 ## 33
-fun_call(object +
+fun_call(object + object2
   )
 
 ## 34
