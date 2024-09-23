@@ -392,7 +392,7 @@ pub(crate) fn node_text(node: &Node, contents: &ropey::Rope) -> Option<String> {
     contents.node_slice(node).ok().map(|f| f.to_string())
 }
 
-pub(crate) fn node_has_error(node: &Node) -> bool {
+pub(crate) fn node_has_error_or_missing(node: &Node) -> bool {
     // According to the docs, `node.has_error()` should return `true`
     // if `node` is itself an error, or if it contains any errors, but that
     // doesn't seem to be the case for terminal ERROR nodes.

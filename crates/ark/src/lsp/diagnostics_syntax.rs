@@ -12,7 +12,7 @@ use tree_sitter::Range;
 use crate::lsp::diagnostics::DiagnosticContext;
 use crate::lsp::encoding::convert_tree_sitter_range_to_lsp_range;
 use crate::lsp::traits::rope::RopeExt;
-use crate::treesitter::node_has_error;
+use crate::treesitter::node_has_error_or_missing;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
@@ -27,67 +27,49 @@ pub(crate) fn syntax_diagnostics(
     Ok(diagnostics)
 }
 
+// When we hit an `ERROR` node, i.e. a syntax error, it often has its own children
+// which can also be `ERROR`s. The goal is to target the deepest (most precise) `ERROR`
+// nodes and only report syntax errors for those. We accomplish this by recursing
+// into children first and bailing if we find any children that we reported an error for.
 fn recurse(
     node: Node,
     context: &DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
-) -> anyhow::Result<()> {
-    if !node_has_error(&node) {
-        // No `ERROR` and no `MISSING`
-        return Ok(());
+) -> anyhow::Result<bool> {
+    if !node_has_error_or_missing(&node) {
+        // Stop recursion if this branch of the tree doesn't have issues
+        return Ok(false);
     }
 
-    // `ERROR` handling stops recursion
-    if node.is_error() {
-        return diagnose_error(node, context, diagnostics);
-    }
-
-    // Look for contextual `MISSING` issues based on the node type
+    // Always look for contextual `MISSING` issues based on the current node type
     diagnose_missing(node, context, diagnostics)?;
 
-    recurse_children(node, context, diagnostics)
+    let mut any_errors = recurse_children(node, context, diagnostics)?;
+
+    // Report an error when:
+    // - No children were `ERROR`s
+    // - We are an `ERROR`
+    if !any_errors && node.is_error() {
+        diagnostics.push(syntax_diagnostic(node, context)?);
+        any_errors = true;
+    }
+
+    Ok(any_errors)
 }
 
 fn recurse_children(
     node: Node,
     context: &DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
+    let mut any_errors = false;
     let mut cursor = node.walk();
 
     for child in node.children(&mut cursor) {
-        recurse(child, context, diagnostics)?;
+        any_errors |= recurse(child, context, diagnostics)?;
     }
 
-    Ok(())
-}
-
-// When we hit an `ERROR` node, i.e. a syntax error, it often has its own children
-// which can also be `ERROR`s. The goal is to target the deepest (most precise) `ERROR`
-// nodes and only report syntax errors for those.
-fn diagnose_error(
-    node: Node,
-    context: &DiagnosticContext,
-    diagnostics: &mut Vec<Diagnostic>,
-) -> anyhow::Result<()> {
-    let mut report = node.is_error();
-    let mut cursor = node.walk();
-
-    for child in node.children(&mut cursor) {
-        if node_has_error(&child) {
-            // At least one child is also an `ERROR` node, so we
-            // definitely won't report ourselves as an `ERROR` anymore.
-            report = false;
-
-            diagnose_error(child, context, diagnostics)?;
-        }
-    }
-
-    if report {
-        diagnostics.push(syntax_diagnostic(node, context)?);
-    }
-
-    Ok(())
+    Ok(any_errors)
 }
 
 fn syntax_diagnostic(node: Node, context: &DiagnosticContext) -> anyhow::Result<Diagnostic> {
