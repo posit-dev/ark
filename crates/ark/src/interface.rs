@@ -902,12 +902,20 @@ impl RMain {
                     }
                 }
 
+                // If the input is invalid (e.g. incomplete), don't send it to R
+                // at all, reply with an error right away
                 if let Some(result) = Self::check_console_input(code.as_str()) {
                     return Some(result);
                 }
 
+                // Split input by lines, retrieve first line, and store
+                // remaining lines in a buffer. This helps with long inputs
+                // because R has a fixed input buffer size of 4096 bytes at the
+                // time of writing.
                 let code = self.buffer_console_input(code.as_str());
 
+                // Store input in R's buffer and return sentinel indicating some
+                // new input is ready
                 Self::on_console_input(buf, buflen, code);
                 Some(ConsoleResult::NewInput)
             },
