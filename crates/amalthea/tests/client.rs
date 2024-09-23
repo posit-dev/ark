@@ -15,6 +15,7 @@ use amalthea::kernel::StreamBehavior;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
 use amalthea::socket::stdin::StdInRequest;
+use amalthea::test::dummy_frontend::DummyFrontend;
 use amalthea::wire::comm_close::CommClose;
 use amalthea::wire::comm_info_reply::CommInfoTargetName;
 use amalthea::wire::comm_info_request::CommInfoRequest;
@@ -38,12 +39,11 @@ use log::info;
 use serde_json;
 
 mod control;
-mod frontend;
 mod shell;
 
 #[test]
 fn test_kernel() {
-    let frontend = frontend::DummyFrontend::new();
+    let frontend = DummyFrontend::new();
     let connection_file = frontend.get_connection_file();
     let mut kernel = Kernel::new("amalthea", connection_file).unwrap();
 

@@ -1,16 +1,16 @@
 /*
- * mod.rs
+ * dummy_frontend.rs
  *
- * Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+ * Copyright (C) 2022-2024 Posit Software, PBC. All rights reserved.
  *
  */
 
-use amalthea::connection_file::ConnectionFile;
-use amalthea::session::Session;
-use amalthea::socket::socket::Socket;
-use amalthea::wire::jupyter_message::JupyterMessage;
-use amalthea::wire::jupyter_message::Message;
-use amalthea::wire::jupyter_message::ProtocolMessage;
+use crate::connection_file::ConnectionFile;
+use crate::session::Session;
+use crate::socket::socket::Socket;
+use crate::wire::jupyter_message::JupyterMessage;
+use crate::wire::jupyter_message::Message;
+use crate::wire::jupyter_message::ProtocolMessage;
 
 pub struct DummyFrontend {
     pub _control_socket: Socket,
