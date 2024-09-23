@@ -215,7 +215,16 @@ pub fn start_r(
     // Get `R_HOME`, set by Positron / CI / kernel specification
     let r_home = match std::env::var("R_HOME") {
         Ok(home) => PathBuf::from(home),
-        Err(err) => panic!("Can't find `R_HOME`: {err:?}"),
+        Err(_) => {
+            // Get `R_HOME` from `PATH`, via R
+            let Ok(result) = std::process::Command::new("R").arg("RHOME").output() else {
+                panic!("Can't find R or `R_HOME`");
+            };
+            let r_home = String::from_utf8(result.stdout).unwrap();
+            let r_home = r_home.trim();
+            std::env::set_var("R_HOME", r_home);
+            PathBuf::from(r_home)
+        },
     };
 
     let libraries = RLibraries::from_r_home_path(&r_home);

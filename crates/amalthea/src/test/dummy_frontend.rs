@@ -5,12 +5,15 @@
  *
  */
 
+use stdext::assert_match;
+
 use crate::connection_file::ConnectionFile;
 use crate::session::Session;
 use crate::socket::socket::Socket;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
 use crate::wire::jupyter_message::ProtocolMessage;
+use crate::wire::status::ExecutionState;
 
 pub struct DummyFrontend {
     pub _control_socket: Socket,
@@ -144,6 +147,24 @@ impl DummyFrontend {
     /// Receives a Jupyter message from the IOPub socket
     pub fn receive_iopub(&self) -> Message {
         Message::read_from_socket(&self.iopub_socket).unwrap()
+    }
+
+    /// Receive from IOPub and assert Busy message
+    pub fn receive_iopub_busy(&self) -> () {
+        let msg = Message::read_from_socket(&self.iopub_socket).unwrap();
+
+        assert_match!(msg, Message::Status(status) => {
+            assert_eq!(status.content.execution_state, ExecutionState::Busy);
+        });
+    }
+
+    /// Receive from IOPub and assert Idle message
+    pub fn receive_iopub_idle(&self) -> () {
+        let msg = Message::read_from_socket(&self.iopub_socket).unwrap();
+
+        assert_match!(msg, Message::Status(status) => {
+            assert_eq!(status.content.execution_state, ExecutionState::Idle);
+        });
     }
 
     /// Receives a Jupyter message from the Stdin socket
