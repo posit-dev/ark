@@ -332,7 +332,7 @@ fn new_missing_open_diagnostic(
     range: Range,
     context: &DiagnosticContext,
 ) -> Diagnostic {
-    let message = format!("Unmatched closing token. Missing an opening '{open_token}'.");
+    let message = format!("Unmatched closing delimiter. Missing an opening '{open_token}'.");
     new_syntax_diagnostic(message, range, context)
 }
 
@@ -341,7 +341,7 @@ fn new_missing_close_diagnostic(
     range: Range,
     context: &DiagnosticContext,
 ) -> Diagnostic {
-    let message = format!("Unmatched opening token. Missing a closing '{close_token}'.");
+    let message = format!("Unmatched opening delimiter. Missing a closing '{close_token}'.");
     new_syntax_diagnostic(message, range, context)
 }
 
@@ -485,7 +485,7 @@ identity(1)
         let diagnostic = diagnostics.get(0).unwrap();
         assert_eq!(
             diagnostic.message,
-            "Unmatched closing token. Missing an opening '('."
+            "Unmatched closing delimiter. Missing an opening '('."
         );
         assert_eq!(diagnostic.range.start, Position::new(0, 12));
         assert_eq!(diagnostic.range.end, Position::new(0, 13));
@@ -504,8 +504,8 @@ identity(1)
             let diagnostics = text_diagnostics(text.as_str());
             assert_eq!(diagnostics.len(), 1);
 
-            // Diagnostic highlights the `{token}`
-            let message = format!("Unmatched closing token. Missing an opening '{open}'.");
+            // Diagnostic highlights the `{delimiter}`
+            let message = format!("Unmatched closing delimiter. Missing an opening '{open}'.");
             let diagnostic = diagnostics.get(0).unwrap();
             assert_eq!(diagnostic.message, message);
             assert_eq!(diagnostic.range.start, Position::new(0, 6));
@@ -520,7 +520,9 @@ identity(1)
         let text = "1 + }";
         let diagnostics = text_diagnostics(text);
         let diagnostic = diagnostics.get(0).unwrap();
-        assert!(diagnostic.message.starts_with("Unmatched closing token"));
+        assert!(diagnostic
+            .message
+            .starts_with("Unmatched closing delimiter"));
         assert_eq!(diagnostic.range.start, Position::new(0, 4));
         assert_eq!(diagnostic.range.end, Position::new(0, 5));
     }
@@ -540,7 +542,7 @@ identity(1)
         let diagnostic = diagnostics.get(0).unwrap();
         assert_eq!(
             diagnostic.message,
-            String::from("Unmatched closing token. Missing an opening '{'.")
+            String::from("Unmatched closing delimiter. Missing an opening '{'.")
         );
         assert_eq!(diagnostic.range.start, Position::new(3, 0));
         assert_eq!(diagnostic.range.end, Position::new(3, 1));
@@ -564,7 +566,9 @@ function(x {
         assert_eq!(diagnostic.range.end, Position::new(1, 12));
 
         let diagnostic = diagnostics.get(1).unwrap();
-        assert!(diagnostic.message.starts_with("Unmatched closing token"));
+        assert!(diagnostic
+            .message
+            .starts_with("Unmatched closing delimiter"));
         assert_eq!(diagnostic.range.start, Position::new(3, 0));
         assert_eq!(diagnostic.range.end, Position::new(3, 1));
     }

@@ -939,7 +939,9 @@ foo
             assert_eq!(diagnostics.len(), 2);
 
             let diagnostic = diagnostics.get(0).unwrap();
-            assert!(diagnostic.message.starts_with("Unmatched closing token"));
+            assert!(diagnostic
+                .message
+                .starts_with("Unmatched closing delimiter"));
             assert_eq!(diagnostic.range.start, Position::new(3, 2));
             assert_eq!(diagnostic.range.end, Position::new(3, 3));
 
