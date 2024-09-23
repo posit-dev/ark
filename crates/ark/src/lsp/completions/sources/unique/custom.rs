@@ -109,7 +109,7 @@ pub fn completions_from_custom_source_impl(
     // Argument text typically contains the argument name and its default value if there is one.
     // Extract out just the argument name for matching purposes.
     let argument = match argument.find("=") {
-        Some(byte) => &argument[..byte].trim(),
+        Some(loc) => &argument[..loc].trim(),
         None => argument.as_str(),
     };
 
