@@ -47,14 +47,14 @@ fn test_kernel() {
     let connection_file = frontend.get_connection_file();
     let mut kernel = Kernel::new("amalthea", connection_file).unwrap();
 
-    let shell_tx = kernel.create_iopub_tx();
+    let iopub_tx = kernel.create_iopub_tx();
     let comm_manager_tx = kernel.create_comm_manager_tx();
 
     let (stdin_request_tx, stdin_request_rx) = bounded::<StdInRequest>(1);
     let (stdin_reply_tx, stdin_reply_rx) = unbounded();
 
     let shell = Arc::new(Mutex::new(shell::Shell::new(
-        shell_tx,
+        iopub_tx,
         stdin_request_tx,
         stdin_reply_rx,
     )));
