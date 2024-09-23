@@ -1193,7 +1193,12 @@ impl RMain {
         let buflen = buflen - 2;
 
         if input.len() > buflen {
-            // TODO!: Probably want to clear the `pending_lines` if we get here
+            // Throw error if input is too large.
+            // TODO!: What should we do if R is waiting for a continuation?
+            // Writing `stop()` to the buffer only works if R is waiting for
+            // a whole R input, not a completing one.
+            // Also, we might be responding to a readline prompt.
+            // We should probably call `stop()` from our POD frame instead.
             log::error!("Console input too large for buffer, writing R error.");
             input = Self::buffer_overflow_call();
         }
