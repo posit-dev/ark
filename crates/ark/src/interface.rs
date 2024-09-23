@@ -634,8 +634,37 @@ impl RMain {
         buflen: c_int,
         _hist: c_int,
     ) -> ConsoleResult {
-        // TODO!: Document why incomplete is fine (vec is necessarily empty, if
-        // there's a syntax error R will throw and vec will be flushed)
+        // We get called here everytime R needs more input. This handler
+        // represents the driving event of a small state machine that manages
+        // communication between R and the frontend:
+        //
+        // - If the vector of pending lines is empty, and if the prompt is for
+        //   new R code, we close the active ExecuteRequest and send a response to
+        //   the frontend.
+        //
+        // - If the vector of pending lines is not empty, R might be waiting for
+        //   us to complete an incomplete expression, or we might just have
+        //   completed an intermediate expression (e.g. from an ExecuteRequest
+        //   like `foo\nbar` where `foo` is intermediate and `bar` is final).
+        //   Send the next line to R.
+        //
+        // This state machine depends on being able to reliably distinguish
+        // between readline prompts (from `readline()`, `scan()`, or `menu()`),
+        // and actual R code prompts (either top-level or from a nested debug
+        // REPL).  A readline prompt should never change our state (in
+        // particular our vector of pending inputs). We think we are making this
+        // distinction sufficiently robustly but ideally R would let us know the
+        // prompt type so there is no ambiguity at all.
+        //
+        // R might throw an error at any time while we are working on our vector
+        // of pending lines, either from a syntax error or from an evaluation
+        // error. When this happens, we abort evaluation and clear the pending
+        // lines.
+        //
+        // If the vector of pending lines is empty and we detect an incomplete
+        // prompt, this is a panic. We check ahead of time for complete
+        // expressions before breaking up an ExecuteRequest in multiple lines,
+        // so this should not happen.
 
         // TODO!: If we detect an incomplete prompt and we no longer have any
         // inputs to send, then it's a panic. We should have replied with an
