@@ -553,29 +553,27 @@ object[(
 }
 
 ## 3
-# TODO: Needs https://github.com/r-lib/tree-sitter-r/pull/142 first.
-# {
-#   if (condition)
-#   {
-#     stuff1
-#   } else
-#   {
-#     stuff2
-#   }
-# }
+{
+  if (condition)
+  {
+    stuff1
+  } else
+  {
+    stuff2
+  }
+}
 
 ## 4
-# TODO: Needs https://github.com/r-lib/tree-sitter-r/pull/142 first.
-# {
-#   if (condition)
-#   {
-#     stuff1
-#   }
-#   else
-#   {
-#     stuff2
-#   }
-# }
+{
+  if (condition)
+  {
+    stuff1
+  }
+  else
+  {
+    stuff2
+  }
+}
 
 ## 5
 {
