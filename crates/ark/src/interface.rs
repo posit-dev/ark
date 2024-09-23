@@ -666,16 +666,19 @@ impl RMain {
         // expressions before breaking up an ExecuteRequest in multiple lines,
         // so this should not happen.
 
-        // TODO!: If we detect an incomplete prompt and we no longer have any
-        // inputs to send, then it's a panic. We should have replied with an
-        // error to the frontend ahead of time.
-
         if let Some(console_result) = self.handle_pending_line(buf, buflen) {
             return console_result;
         }
 
         let info = Self::prompt_info(prompt);
         log::trace!("R prompt: {}", info.input_prompt);
+
+        // An incomplete prompt when we no longer have any inputs to send should
+        // never happen because we check for incomplete inputs ahead of time and
+        // respond to the frontend with an error.
+        if info.incomplete && self.pending_lines.is_empty() {
+            unreachable!("Incomplete input in `ReadConsole` handler");
+        }
 
         // Upon entering read-console, finalize any debug call text that we were capturing.
         // At this point, the user can either advance the debugger, causing us to capture
@@ -861,12 +864,6 @@ impl RMain {
         // we're in a user request, e.g. `readline("+ ")`
         let continuation_prompt: String = harp::get_option("continue").try_into().unwrap();
         let incomplete = !user_request && prompt == continuation_prompt;
-
-        if incomplete {
-            log::trace!("Got R prompt '{prompt}', marking request incomplete");
-        } else if user_request {
-            log::trace!("Got R prompt '{prompt}', asking user for input");
-        }
 
         return PromptInfo {
             input_prompt: prompt,
