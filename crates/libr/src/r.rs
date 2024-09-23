@@ -726,6 +726,9 @@ mutable_globals::generate! {
     #[cfg(target_family = "unix")]
     pub static mut ptr_R_Busy: Option<unsafe extern "C" fn(arg1: std::ffi::c_int)>;
 
+    #[cfg(target_family = "unix")]
+    pub static mut ptr_R_Suicide: Option<unsafe extern "C" fn(arg1: *const std::ffi::c_char)>;
+
     // -----------------------------------------------------------------------------------
     // Windows
 

@@ -11,6 +11,7 @@ use std::os::raw::c_char;
 use libr::ptr_R_Busy;
 use libr::ptr_R_ReadConsole;
 use libr::ptr_R_ShowMessage;
+use libr::ptr_R_Suicide;
 use libr::ptr_R_WriteConsole;
 use libr::ptr_R_WriteConsoleEx;
 use libr::run_Rmainloop;
@@ -32,6 +33,7 @@ use crate::interface::r_busy;
 use crate::interface::r_polled_events;
 use crate::interface::r_read_console;
 use crate::interface::r_show_message;
+use crate::interface::r_suicide;
 use crate::interface::r_write_console;
 use crate::signals::initialize_signal_handlers;
 
@@ -64,6 +66,7 @@ pub fn setup_r(mut args: Vec<*mut c_char>) {
         libr::set(ptr_R_ReadConsole, Some(r_read_console));
         libr::set(ptr_R_ShowMessage, Some(r_show_message));
         libr::set(ptr_R_Busy, Some(r_busy));
+        libr::set(ptr_R_Suicide, Some(r_suicide));
 
         // Set up main loop
         setup_Rmainloop();

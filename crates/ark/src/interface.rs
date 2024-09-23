@@ -1671,6 +1671,12 @@ pub extern "C" fn r_busy(which: i32) {
 }
 
 #[no_mangle]
+pub extern "C" fn r_suicide(buf: *const c_char) {
+    let msg = unsafe { CStr::from_ptr(buf) };
+    panic!("Suicide: {}", msg.to_str().unwrap());
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn r_polled_events() {
     let main = RMain::get_mut();
     main.polled_events();
