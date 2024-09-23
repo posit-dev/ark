@@ -12,7 +12,7 @@ use amalthea::wire::jupyter_message::JupyterMessage;
 use amalthea::wire::jupyter_message::Message;
 use amalthea::wire::jupyter_message::ProtocolMessage;
 
-pub struct Frontend {
+pub struct DummyFrontend {
     pub _control_socket: Socket,
     pub shell_socket: Socket,
     pub iopub_socket: Socket,
@@ -27,7 +27,7 @@ pub struct Frontend {
     heartbeat_port: u16,
 }
 
-impl Frontend {
+impl DummyFrontend {
     pub fn new() -> Self {
         use rand::Rng;
 

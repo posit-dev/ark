@@ -43,7 +43,7 @@ mod shell;
 
 #[test]
 fn test_kernel() {
-    let frontend = frontend::Frontend::new();
+    let frontend = frontend::DummyFrontend::new();
     let connection_file = frontend.get_connection_file();
     let mut kernel = Kernel::new("amalthea", connection_file).unwrap();
 
