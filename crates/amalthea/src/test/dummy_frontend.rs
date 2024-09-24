@@ -10,6 +10,7 @@ use stdext::assert_match;
 use crate::connection_file::ConnectionFile;
 use crate::session::Session;
 use crate::socket::socket::Socket;
+use crate::wire::execute_request::ExecuteRequest;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
 use crate::wire::jupyter_message::ProtocolMessage;
@@ -131,6 +132,17 @@ impl DummyFrontend {
         let id = message.header.msg_id.clone();
         message.send(&self.shell_socket).unwrap();
         id
+    }
+
+    pub fn send_execute_request(&self, code: &str) -> String {
+        self.send_shell(ExecuteRequest {
+            code: String::from(code),
+            silent: false,
+            store_history: true,
+            user_expressions: serde_json::Value::Null,
+            allow_stdin: false,
+            stop_on_error: false,
+        })
     }
 
     /// Sends a Jupyter message on the Stdin socket

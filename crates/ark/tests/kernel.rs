@@ -24,15 +24,7 @@ fn test_kernel_info() {
 fn test_execute_request() {
     let frontend = DummyArkFrontend::lock();
 
-    frontend.send_shell(ExecuteRequest {
-        code: "42".to_string(),
-        silent: false,
-        store_history: true,
-        user_expressions: serde_json::Value::Null,
-        allow_stdin: false,
-        stop_on_error: false,
-    });
-
+    frontend.send_execute_request("42");
     frontend.receive_iopub_busy();
 
     // Input rebroadcast
