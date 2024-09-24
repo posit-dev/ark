@@ -702,7 +702,7 @@ fn <- function(
         r_test(|| {
             let x = RObject::from(r_alloc_integer(12));
             for i in 0..12 {
-                r_lgl_poke(x.sexp, R_xlen_t::try_from(i).unwrap(), i);
+                r_int_poke(x.sexp, R_xlen_t::try_from(i).unwrap(), i);
             }
 
             let label = argument_label(String::from("x"), x.sexp);
