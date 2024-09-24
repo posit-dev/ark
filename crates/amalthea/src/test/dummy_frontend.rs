@@ -199,4 +199,20 @@ impl DummyFrontend {
             key: self.key.clone(),
         }
     }
+
+    /// Asserts that no socket has incoming data
+    pub fn assert_no_incoming(&self) {
+        if self.iopub_socket.has_incoming_data().unwrap() {
+            panic!("IOPub has incoming data");
+        }
+        if self.shell_socket.has_incoming_data().unwrap() {
+            panic!("Shell has incoming data");
+        }
+        if self.stdin_socket.has_incoming_data().unwrap() {
+            panic!("StdIn has incoming data");
+        }
+        if self.heartbeat_socket.has_incoming_data().unwrap() {
+            panic!("Heartbeat has incoming data");
+        }
+    }
 }
