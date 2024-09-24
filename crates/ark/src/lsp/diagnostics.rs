@@ -454,13 +454,12 @@ fn recurse_assignment(
     context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<()> {
-    // Check for newly-defined variable.
     if let Some(identifier) = identifier {
-        if identifier.is_identifier_or_string() {
-            let name = context.contents.node_slice(&identifier)?.to_string();
-            let range = identifier.range();
-            context.add_defined_variable(name.as_str(), range);
-        }
+        // Check for newly-defined variable
+        handle_assignment_variable(&identifier, context)?;
+
+        // Check for dotty assignment
+        handle_assignment_dotty(&identifier, context)?;
     }
 
     // Recurse into expression for assignment.
@@ -469,6 +468,131 @@ fn recurse_assignment(
     }
 
     ().ok()
+}
+
+fn handle_assignment_variable(
+    identifier: &Node,
+    context: &mut DiagnosticContext,
+) -> anyhow::Result<()> {
+    if !identifier.is_identifier_or_string() {
+        return Ok(());
+    }
+
+    let name = context.contents.node_slice(&identifier)?.to_string();
+    let range = identifier.range();
+    context.add_defined_variable(name.as_str(), range);
+
+    Ok(())
+}
+
+/// Support for dotty assignment
+///
+/// Comes in a few forms
+/// - `.[x, y] <- list(1, 2)`
+/// - `.[one, .., five] <- list(1, 2, 3, 4, 5)`
+/// - `.[foo = y] <- list(x = 1, y = 2, z = 3)`
+/// - `.[x, .[y, .[z]]] <- list(1, list(2, list(3)))`
+///
+/// https://cran.r-project.org/web/packages/dotty/index.html
+fn handle_assignment_dotty(
+    identifier: &Node,
+    context: &mut DiagnosticContext,
+) -> anyhow::Result<()> {
+    if !identifier.is_subset() {
+        // Not a subset call of the form `.[]`
+        return Ok(());
+    };
+
+    let Some(dot) = identifier.child_by_field_name("function") else {
+        return Ok(());
+    };
+    if !dot.is_identifier() {
+        return Ok(());
+    };
+
+    let dot = context.contents.node_slice(&dot)?;
+    if dot != "." {
+        return Ok(());
+    };
+
+    // Make sure we're not being invoked within a magrittr pipe, since
+    // '.' has special semantics in that scope.
+    if node_is_within_magrittr_pipe(identifier, context)? {
+        return Ok(());
+    }
+
+    // Iterate over each argument, and look for identifiers.
+    let Some(arguments) = identifier.child_by_field_name("arguments") else {
+        return Ok(());
+    };
+
+    let mut cursor = arguments.walk();
+
+    for child in arguments.children_by_field_name("argument", &mut cursor) {
+        // i.e. `.[foo = x] <- lst`
+        // If we find a name, we are done. The above example means "extract x from lst as foo",
+        // so we don't want to define a variable for `x` there.
+        if let Some(name) = child.child_by_field_name("name") {
+            let range = name.range();
+            let name = context.contents.node_slice(&name)?.to_string();
+            context.add_defined_variable(name.as_str(), range);
+            continue;
+        };
+
+        let Some(value) = child.child_by_field_name("value") else {
+            continue;
+        };
+
+        // i.e. `.[x, y]` where `value` is just a name that dotty assigns to
+        if value.is_identifier() {
+            let range = value.range();
+            let name = context.contents.node_slice(&value)?.to_string();
+            context.add_defined_variable(name.as_str(), range);
+            continue;
+        }
+
+        // i.e. `.[x, .[y]]` where unpacking is recursive
+        if value.is_subset() {
+            handle_assignment_dotty(&value, context)?;
+            continue;
+        }
+    }
+
+    Ok(())
+}
+
+fn node_is_within_magrittr_pipe(node: &Node, context: &DiagnosticContext) -> anyhow::Result<bool> {
+    // Start search with the parent so we don't return `true` if we are already on the `%>%`
+    let Some(node) = node.parent() else {
+        return Ok(false);
+    };
+
+    match node_find_magrittr_pipe(&node, context)? {
+        Some(_) => Ok(true),
+        None => Ok(false),
+    }
+}
+
+fn node_find_magrittr_pipe<'tree>(
+    node: &Node<'tree>,
+    context: &DiagnosticContext,
+) -> anyhow::Result<Option<Node<'tree>>> {
+    if node.is_magrittr_pipe_operator(&context.contents)? {
+        // Found one!
+        return Ok(Some(*node));
+    }
+
+    if node.is_braced_expression() {
+        // Stop recursion if we hit a brace
+        return Ok(None);
+    }
+
+    let Some(node) = node.parent() else {
+        // Stop recursion if no parent
+        return Ok(None);
+    };
+
+    node_find_magrittr_pipe(&node, context)
 }
 
 fn recurse_namespace(
@@ -1092,6 +1216,146 @@ foo
             let document = Document::new(text, None);
             let diagnostics = generate_diagnostics(document, DEFAULT_STATE.clone());
             assert!(diagnostics.is_empty());
+        })
+    }
+
+    #[test]
+    fn test_dotty_assignment_basic() {
+        r_test(|| {
+            let code = "
+                .[apple, banana] <- c(1, 2)
+                apple
+                banana
+                cherry
+            ";
+
+            let document = Document::new(code, None);
+
+            let diagnostics = generate_diagnostics(document.clone(), DEFAULT_STATE.clone());
+            assert_eq!(diagnostics.len(), 1);
+
+            let diagnostic = diagnostics.get(0).unwrap();
+            insta::assert_snapshot!(diagnostic.message);
+        })
+    }
+
+    #[test]
+    fn test_dotty_right_assignment_basic() {
+        r_test(|| {
+            let code = "
+                c(1, 2) -> .[apple, banana]
+                apple
+                banana
+                cherry
+            ";
+
+            let document = Document::new(code, None);
+
+            let diagnostics = generate_diagnostics(document.clone(), DEFAULT_STATE.clone());
+            assert_eq!(diagnostics.len(), 1);
+
+            let diagnostic = diagnostics.get(0).unwrap();
+            insta::assert_snapshot!(diagnostic.message);
+        })
+    }
+
+    #[test]
+    fn test_dotty_assignment_named() {
+        r_test(|| {
+            // `x` should not be defined
+            let code = "
+                .[apple = x, banana] <- list(w = 1, x = 2, y = 3, z = 4)
+                apple
+                banana
+                x
+            ";
+
+            let document = Document::new(code, None);
+
+            let diagnostics = generate_diagnostics(document.clone(), DEFAULT_STATE.clone());
+            assert_eq!(diagnostics.len(), 1);
+
+            let diagnostic = diagnostics.get(0).unwrap();
+            insta::assert_snapshot!(diagnostic.message);
+        })
+    }
+
+    #[test]
+    fn test_dotty_assignment_recursive() {
+        r_test(|| {
+            let code = "
+                .[apple, .[banana]] <- list(1, list(2))
+                apple
+                banana
+                cherry
+            ";
+
+            let document = Document::new(code, None);
+
+            let diagnostics = generate_diagnostics(document.clone(), DEFAULT_STATE.clone());
+            assert_eq!(diagnostics.len(), 1);
+
+            let diagnostic = diagnostics.get(0).unwrap();
+            insta::assert_snapshot!(diagnostic.message);
+        })
+    }
+
+    #[test]
+    fn test_dotty_assignment_within_magrittr_pipe_braced_expr() {
+        r_test(|| {
+            let code = "
+                mtcars %>% list({ .[apple] <- 1; apple })
+                apple
+            ";
+
+            let document = Document::new(code, None);
+
+            let diagnostics = generate_diagnostics(document.clone(), DEFAULT_STATE.clone());
+            assert_eq!(diagnostics.len(), 1);
+
+            let diagnostic = diagnostics.get(0).unwrap();
+            assert_eq!(diagnostic.range.start.line, 2);
+            insta::assert_snapshot!(diagnostic.message);
+        })
+    }
+
+    #[test]
+    fn test_dotty_assignment_within_native_pipe_braced_expr() {
+        // TODO: `apple` should be defined in the global env and there should not be a diagnostic here
+        r_test(|| {
+            let code = "
+                mtcars |> list({ .[apple] <- 1; apple })
+                apple
+            ";
+
+            let document = Document::new(code, None);
+
+            let diagnostics = generate_diagnostics(document.clone(), DEFAULT_STATE.clone());
+            assert_eq!(diagnostics.len(), 1);
+
+            let diagnostic = diagnostics.get(0).unwrap();
+            assert_eq!(diagnostic.range.start.line, 2);
+            insta::assert_snapshot!(diagnostic.message);
+        })
+    }
+
+    #[test]
+    fn test_assignment_within_function_arguments() {
+        // TODO: `x` should be defined in the global env and there should not be a diagnostic here
+        r_test(|| {
+            let code = "
+                list({ x <- 1 })
+                x
+            ";
+
+            let document = Document::new(code, None);
+
+            let diagnostics = generate_diagnostics(document.clone(), DEFAULT_STATE.clone());
+            assert_eq!(diagnostics.len(), 1);
+
+            let diagnostic = diagnostics.get(0).unwrap();
+            assert_eq!(diagnostic.range.start.line, 2);
+            insta::assert_snapshot!(diagnostic.message);
         })
     }
 }

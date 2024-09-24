@@ -44,7 +44,7 @@ pub fn completions_from_composite_sources(
 
     let mut completions: Vec<CompletionItem> = vec![];
 
-    let root = find_pipe_root(context);
+    let root = find_pipe_root(context)?;
 
     // Try argument completions
     if let Some(mut additional_completions) = completions_from_call(context, root.clone())? {
