@@ -188,6 +188,8 @@ functions::generate! {
 
     pub fn Rf_xlength(arg1: SEXP) -> R_xlen_t;
 
+    pub fn OBJECT(x: SEXP) -> std::ffi::c_int;
+
     pub fn ALTREP(x: SEXP) -> std::ffi::c_int;
 
     pub fn ALTREP_CLASS(x: SEXP) -> SEXP;

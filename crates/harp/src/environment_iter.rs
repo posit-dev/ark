@@ -76,7 +76,7 @@ impl Binding {
 
             let value = env.find(name)?;
 
-            if libr::ALTREP(value) != 0 {
+            if r_is_altrep(value) {
                 let value = BindingValue::Altrep {
                     object: RObject::from(value),
                     data1: RObject::from(R_altrep_data1(value)),
