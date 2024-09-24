@@ -654,7 +654,7 @@ mod tests {
 
     #[test]
     fn test_immediate_bindings() {
-        r_test!({
+        r_test(|| {
             let size = object_size(
                 "local({
                     f <- compiler::cmpfun(function() for (i in 1:3) return(environment()))
