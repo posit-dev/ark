@@ -491,50 +491,41 @@ pub fn r_check_stack(size: Option<usize>) -> Result<()> {
 mod tests {
     use std::ffi::CString;
 
-    use super::*;
     use stdext::assert_match;
-    use crate::r_test;
+
+    use super::*;
+    use crate::test::r_test;
     use crate::utils::r_envir_remove;
     use crate::utils::r_typeof;
 
     #[test]
     fn test_basic_function() {
-        r_test! {
-
+        r_test(|| unsafe {
             // try adding some numbers
-            let result = RFunction::new("", "+")
-                .add(2)
-                .add(2)
-                .call()
-                .unwrap();
+            let result = RFunction::new("", "+").add(2).add(2).call().unwrap();
 
             // check the result
             assert!(Rf_isInteger(*result) != 0);
             assert!(Rf_asInteger(*result) == 4);
-
-        }
+        })
     }
 
     #[test]
     fn test_basic_function_error() {
-        r_test! {
-            let result = RFunction::from("+")
-                .add(1)
-                .add("")
-                .call();
+        r_test(|| {
+            let result = RFunction::from("+").add(1).add("").call();
 
             assert_match!(result, Err(err) => {
                 let re = regex::Regex::new("backtrace:\n(.|\n)*1L [+] \"\"").unwrap();
                 assert!(re.is_match(&format!("{err}")));
                 assert!(re.is_match(&format!("{err:?}")));
             });
-        }
+        })
     }
 
     #[test]
     fn test_utf8_strings() {
-        r_test! {
-
+        r_test(|| unsafe {
             // try sending some UTF-8 strings to and from R
             let result = RFunction::new("base", "paste")
                 .add("世界")
@@ -549,14 +540,12 @@ mod tests {
             if let Ok(value) = value {
                 assert!(value == "世界 您好")
             }
-
-        }
+        })
     }
 
     #[test]
     fn test_named_arguments() {
-        r_test! {
-
+        r_test(|| unsafe {
             let result = RFunction::new("stats", "rnorm")
                 .add(1.0)
                 .param("mean", 10)
@@ -566,25 +555,21 @@ mod tests {
 
             assert!(Rf_isNumeric(*result) != 0);
             assert!(Rf_asInteger(*result) == 10);
-
-        }
+        })
     }
 
     #[test]
     fn test_try_catch_error() {
-        r_test! {
-
+        r_test(|| unsafe {
             // ok SEXP
-            let ok: harp::Result<RObject> = try_catch(|| {
-                Rf_ScalarInteger(42).into()
-            });
+            let ok: harp::Result<RObject> = try_catch(|| Rf_ScalarInteger(42).into());
             assert_match!(ok, Ok(value) => {
                 assert_eq!(r_typeof(value.sexp), INTSXP as u32);
                 assert_eq!(INTEGER_ELT(value.sexp, 0), 42);
             });
 
             // Error case
-            let out = try_catch(|| unsafe {
+            let out = try_catch(|| {
                 // This leaks
                 let msg = CString::new("ouch").unwrap();
                 Rf_error(msg.as_ptr());
@@ -594,14 +579,13 @@ mod tests {
                 assert_eq!(message, "ouch");
                 assert_eq!(class.unwrap(), ["simpleError", "error", "condition"]);
             });
-
-        }
+        })
     }
 
     #[test]
     fn test_top_level_exec() {
-        r_test! {
-            let ok = top_level_exec(|| { 42 });
+        r_test(|| {
+            let ok = top_level_exec(|| 42);
             assert_match!(ok, Ok(value) => {
                 assert_eq!(value, 42);
             });
@@ -623,12 +607,12 @@ mod tests {
                 assert!(message.contains("Unexpected longjump"));
                 assert!(message.contains("my message"));
             });
-        }
+        })
     }
 
     #[test]
     fn test_dirty_image() {
-        r_test! {
+        r_test(|| unsafe {
             libr::set(R_DirtyImage, 2);
             let sym = r_symbol!("aaa");
             Rf_defineVar(sym, Rf_ScalarInteger(42), R_GlobalEnv);
@@ -641,20 +625,19 @@ mod tests {
             libr::set(R_DirtyImage, 2);
             r_envir_remove("aaa", R_GlobalEnv);
             assert_eq!(libr::get(R_DirtyImage), 1);
-        }
+        })
     }
 
     #[test]
     fn test_r_unwrap() {
-        r_test! {
-            let out: Result<RObject> = try_catch(|| {
-                r_unwrap(|| Err::<RObject, anyhow::Error>(anyhow::anyhow!("ouch")))
-            });
+        r_test(|| {
+            let out: Result<RObject> =
+                try_catch(|| r_unwrap(|| Err::<RObject, anyhow::Error>(anyhow::anyhow!("ouch"))));
 
             assert_match!(out, Err(Error::TryCatchError { message, class, .. }) => {
                 assert_eq!(message, "ouch");
                 assert_eq!(class.unwrap(), ["simpleError", "error", "condition"]);
             });
-        }
+        })
     }
 }

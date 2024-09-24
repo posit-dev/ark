@@ -37,6 +37,15 @@ static mut R_RUNTIME_LOCK: Mutex<()> = Mutex::new(());
 
 static INIT: Once = Once::new();
 
+pub fn r_test<F: FnOnce()>(f: F) {
+    let guard = unsafe { R_RUNTIME_LOCK.lock() };
+
+    start_r();
+    f();
+
+    drop(guard);
+}
+
 pub fn start_r() {
     INIT.call_once(|| {
         unsafe {
@@ -83,22 +92,5 @@ fn setup_r() {
         );
         libr::set(R_CStackLimit, usize::MAX);
         setup_Rmainloop();
-    }
-}
-
-pub fn r_test<F: FnOnce()>(f: F) {
-    let guard = unsafe { R_RUNTIME_LOCK.lock() };
-
-    start_r();
-    f();
-
-    drop(guard);
-}
-
-#[macro_export]
-macro_rules! r_test {
-    ($($expr:tt)*) => {
-        #[allow(unused_unsafe)]
-        $crate::test::r_test(|| unsafe { $($expr)* })
     }
 }

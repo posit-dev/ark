@@ -394,8 +394,8 @@ fn v_size(n: usize, element_size: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use crate::r_test;
     use crate::size::r_size;
+    use crate::test::r_test;
 
     fn object_size(code: &str) -> usize {
         let object = harp::parse_eval_global(code).unwrap();
@@ -419,86 +419,84 @@ mod tests {
 
     #[test]
     fn test_length_one_vectors() {
-        r_test!({
+        r_test(|| {
             expect_same("1L");
             expect_same("'abc'");
             expect_same("paste(rep('banana', 100), collapse = '')");
             expect_same("charToRaw('a')");
             expect_same("5 + 1i");
-        })
+        });
     }
 
     // size scales correctly with length (accounting for vector pool)
     #[test]
     fn test_sizes_scale_correctly() {
-        r_test!({
+        r_test(|| {
             expect_same("numeric()");
             expect_same("1");
             expect_same("2");
             expect_same("c(1:10)");
             expect_same("c(1:1000)");
-        })
+        });
     }
 
     #[test]
     fn test_size_of_lists() {
-        r_test!({
+        r_test(|| {
             expect_same("list()");
             expect_same("as.list(1)");
             expect_same("as.list(1:2)");
             expect_same("as.list(1:3)");
 
             expect_same("list(list(list(list(list()))))");
-        })
+        });
     }
 
     #[test]
     fn test_size_of_symbols() {
-        r_test!({
+        r_test(|| {
             expect_same("quote(x)");
             expect_same("quote(asfsadfasdfasdfds)");
-        })
+        });
     }
 
     #[test]
     fn test_pairlists() {
-        r_test!({
+        r_test(|| {
             expect_same("pairlist()");
             expect_same("pairlist(1)");
             expect_same("pairlist(1, 2)");
             expect_same("pairlist(1, 2, 3)");
             expect_same("pairlist(1, 2, 3, 4)");
-        })
+        });
     }
 
     #[test]
     fn test_s4_classes() {
-        r_test!(expect_same(
-            "methods::setClass('Z', slots = c(x = 'integer'))(x=1L)",
-        ))
+        r_test(|| expect_same("methods::setClass('Z', slots = c(x = 'integer'))(x=1L)"));
     }
 
     #[test]
     fn test_size_attributes() {
-        r_test!({
+        r_test(|| {
             expect_same("c(x = 1)");
             expect_same("list(x = 1)");
             expect_same("c(x = 'y')");
-        })
+        });
     }
 
     #[test]
     fn test_duplicated_charsxps_counted_once() {
-        r_test!({
+        r_test(|| {
             expect_same("'x'");
             expect_same("c('x', 'y', 'x')");
             expect_same("c('banana', 'banana', 'banana')");
-        })
+        });
     }
 
     #[test]
     fn test_shared_components_once() {
-        r_test!({
+        r_test(|| {
             let size1 = object_size(
                 "local({
                 x <- 1:1e3
@@ -509,12 +507,12 @@ mod tests {
             let size3 = object_size("vector('list', 3)");
 
             assert_eq!(size1, size2 + size3)
-        })
+        });
     }
 
     #[test]
     fn test_size_closures() {
-        r_test!({
+        r_test(|| {
             let code = "local({
                 f <- function() NULL
                 attributes(f) <- NULL # zap srcrefs
@@ -522,24 +520,24 @@ mod tests {
                 f
             })";
             expect_same(code);
-        })
+        });
     }
 
     #[test]
     fn test_works_for_altrep() {
-        r_test!({
+        r_test(|| {
             let size = object_size("1:1e6");
             // Currently reported size is 640 B
             // If regular vector would be 4,000,040 B
             // This test is conservative so shouldn't fail in case representation
             // changes in the future
             assert!(size < 10000)
-        })
+        });
     }
 
     #[test]
     fn test_compute_size_defered_strings() {
-        r_test!({
+        r_test(|| {
             let code = "local({
                 x <- 1:64
                 names(x) <- x
@@ -549,22 +547,22 @@ mod tests {
 
             // Just don't crash
             object_size(code);
-        })
+        });
     }
 
     #[test]
     fn test_terminal_envs_have_size_zero() {
-        r_test!({
+        r_test(|| {
             expect_size("globalenv()", 0);
             expect_size("baseenv()", 0);
             expect_size("emptyenv()", 0);
             expect_size("asNamespace('stats')", 0);
-        })
+        });
     }
 
     #[test]
     fn test_env_size_recursive() {
-        r_test!({
+        r_test(|| {
             let e_size = object_size("new.env(parent = emptyenv())");
 
             let f_size = object_size(
@@ -575,12 +573,12 @@ mod tests {
             );
 
             assert_eq!(f_size, 2 * e_size);
-        })
+        });
     }
 
     #[test]
     fn test_size_of_functions_include_envs() {
-        r_test!({
+        r_test(|| {
             let code = "local({
               f <- function() {
                 y <- 1:1e3 + 1L
@@ -600,15 +598,15 @@ mod tests {
             })";
 
             assert!(object_size(code) > object_size("1:1e3 + 1L"));
-        })
+        });
     }
 
     #[test]
     fn test_support_dots() {
-        r_test!({
+        r_test(|| {
             // Check it doesn't error
             let size = object_size("(function(...) function() NULL)(foo)");
             assert!(size != 0)
-        })
+        });
     }
 }

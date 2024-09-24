@@ -141,24 +141,30 @@ impl std::iter::Iterator for ListIter {
 
 #[cfg(test)]
 mod test {
-    use crate::r_test;
+    use crate::test::r_test;
     use crate::vector::list::List;
     use crate::vector::Vector;
     use crate::RObject;
 
     #[test]
     fn test_list() {
-        r_test! {
-            let xs = List::create::<[RObject;0]>([]);
+        r_test(|| {
+            let xs = List::create::<[RObject; 0]>([]);
             assert!(xs.iter().next().is_none());
 
             let xs = List::create([RObject::from(1), RObject::from("foo")]);
             let mut it = xs.iter();
 
-            assert!(crate::is_identical(it.next().unwrap(), RObject::from(1).sexp));
-            assert!(crate::is_identical(it.next().unwrap(), RObject::from("foo").sexp));
+            assert!(crate::is_identical(
+                it.next().unwrap(),
+                RObject::from(1).sexp
+            ));
+            assert!(crate::is_identical(
+                it.next().unwrap(),
+                RObject::from("foo").sexp
+            ));
             assert!(it.next().is_none());
-        }
+        })
     }
 }
 

@@ -138,14 +138,13 @@ impl TryFrom<&CharacterVector> for Vec<String> {
 mod test {
     use libr::STRSXP;
 
-    use crate::r_test;
+    use crate::test::r_test;
     use crate::utils::r_typeof;
     use crate::vector::*;
 
     #[test]
     fn test_character_vector() {
-        r_test! {
-
+        r_test(|| {
             let vector = CharacterVector::create(&["hello", "world"]);
             assert!(vector == ["hello", "world"]);
             assert!(vector == &["hello", "world"]);
@@ -156,23 +155,18 @@ mod test {
             assert_eq!(it.next(), Some(Some(String::from("world"))));
             assert!(it.next().is_none());
 
-            let vector = CharacterVector::create([
-                "hello".to_string(),
-                "world".to_string()
-            ]);
+            let vector = CharacterVector::create(["hello".to_string(), "world".to_string()]);
             assert!(vector == ["hello", "world"]);
             assert!(vector == &["hello", "world"]);
 
             assert!(vector.get_unchecked(0) == Some(String::from("hello")));
             assert!(vector.get_unchecked(1) == Some(String::from("world")));
-
-        }
+        })
     }
 
     #[test]
     fn test_create() {
-        r_test! {
-
+        r_test(|| {
             let expected = ["Apple", "Orange", "한"];
             let vector = CharacterVector::create(&expected);
             assert_eq!(vector.get(0).unwrap(), Some(String::from("Apple")));
@@ -195,7 +189,6 @@ mod test {
             let s = CharacterVector::create(alphabet.to_vec());
             assert_eq!(r_typeof(*s), STRSXP);
             assert_eq!(s, alphabet);
-
-        }
+        })
     }
 }

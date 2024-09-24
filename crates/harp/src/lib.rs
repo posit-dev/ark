@@ -251,12 +251,13 @@ mod tests {
     use super::*;
     use crate::object::RObject;
     use crate::protect::RProtect;
+    use crate::test::r_test;
     use crate::utils::r_is_null;
     use crate::utils::r_typeof;
 
     #[test]
     fn test_pairlist() {
-        r_test! {
+        r_test(|| unsafe {
             let sym = r_symbol!("injected");
 
             let mut protect = RProtect::new();
@@ -312,13 +313,12 @@ mod tests {
             let value = RObject::new(r_lang!("hello", A = 1, B = 2));
             assert!(r_typeof(CAR(*value)) == STRSXP);
             assert!(r_is_null(TAG(*value)));
-
-        }
+        })
     }
 
     #[test]
     fn test_call() {
-        r_test! {
+        r_test(|| unsafe {
             let sym = r_symbol!("injected");
 
             let value = RObject::new(r_lang! {
@@ -339,6 +339,6 @@ mod tests {
             assert!(TAG(CDR(*value)) == r_symbol!("injected"));
             assert!(TAG(CDDR(*value)) == r_symbol!("C"));
             assert!(TAG(CDDR(CDR(*value))) == r_symbol!("D"));
-        }
+        })
     }
 }

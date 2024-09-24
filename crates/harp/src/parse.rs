@@ -166,14 +166,14 @@ mod tests {
     use crate::r_length;
     use crate::r_stringify;
     use crate::r_symbol;
-    use crate::r_test;
     use crate::r_typeof;
     use crate::srcref;
+    use crate::test::r_test;
     use crate::ParseResult;
 
     #[test]
     fn test_parse_status() {
-        r_test! {
+        r_test(|| unsafe {
             assert_match!(
                 parse_status(&ParseInput::Text("")),
                 Ok(ParseResult::Complete(out)) => {
@@ -237,12 +237,12 @@ mod tests {
                     assert_eq!(r_stringify(out.sexp, "").unwrap(), r#"expression("a\r\nb")"#);
                 }
             );
-        }
+        })
     }
 
     #[test]
     fn test_parse_input_as_string() {
-        r_test! {
+        r_test(|| {
             assert_eq!(
                 parse_input_as_string(&ParseInput::Text("foo\nbar")).unwrap(),
                 "foo\nbar"
@@ -253,6 +253,6 @@ mod tests {
                 parse_input_as_string(&ParseInput::SrcFile(&input)).unwrap(),
                 "foo\nbar"
             );
-        }
+        });
     }
 }
