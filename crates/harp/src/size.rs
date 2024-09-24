@@ -270,7 +270,7 @@ fn obj_size_tree(
                     // The environment iterator will automatically return `PRVALUE` as
                     // a `Standard` binding though. So this is only seeing unevaluated promises.
                     // For evaluated promises, we are not counting the size of `PRCODE`, but hopefully
-                    // their sizes are neglegible, mostly just symbols or small expressions.
+                    // their sizes are negligible, mostly just symbols or small expressions.
                     BindingValue::Promise { promise } => obj_size_tree(
                         promise.sexp,
                         base_env,
