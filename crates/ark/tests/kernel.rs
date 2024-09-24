@@ -1,9 +1,7 @@
-use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::jupyter_message::Message;
 use amalthea::wire::jupyter_message::Status;
 use amalthea::wire::kernel_info_request::KernelInfoRequest;
 use ark::test::DummyArkFrontend;
-use serde_json::Value;
 use stdext::assert_match;
 
 #[test]
@@ -27,20 +25,11 @@ fn test_execute_request() {
     frontend.send_execute_request("42");
     frontend.receive_iopub_busy();
 
-    // Input rebroadcast
-    assert_match!(frontend.receive_iopub(), Message::ExecuteInput(msg) => {
-        assert_eq!(msg.content.code, "42");
-    });
-
-    assert_match!(frontend.receive_iopub(), Message::ExecuteResult(msg) => {
-        assert_match!(msg.content.data, Value::Object(map) => {
-            assert_eq!(map["text/plain"], serde_json::to_value("[1] 42").unwrap());
-        })
-    });
+    assert_eq!(frontend.receive_iopub_execute_input().code, "42");
+    assert_eq!(frontend.receive_iopub_execute_result(), "[1] 42");
 
     frontend.receive_iopub_idle();
 
-    assert_match!(frontend.receive_shell(), Message::ExecuteReply(msg) => {
-        assert_eq!(msg.content.status, Status::Ok);
-    });
+    let reply = frontend.receive_shell_execute_reply();
+    assert_eq!(reply.status, Status::Ok);
 }

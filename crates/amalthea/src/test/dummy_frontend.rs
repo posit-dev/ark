@@ -5,11 +5,14 @@
  *
  */
 
+use serde_json::Value;
 use stdext::assert_match;
 
 use crate::connection_file::ConnectionFile;
 use crate::session::Session;
 use crate::socket::socket::Socket;
+use crate::wire::execute_input::ExecuteInput;
+use crate::wire::execute_reply::ExecuteReply;
 use crate::wire::execute_request::ExecuteRequest;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
@@ -156,6 +159,15 @@ impl DummyFrontend {
         Message::read_from_socket(&self.shell_socket).unwrap()
     }
 
+    /// Receive from Shell and assert ExecuteReply message
+    pub fn receive_shell_execute_reply(&self) -> ExecuteReply {
+        let msg = Message::read_from_socket(&self.shell_socket).unwrap();
+
+        assert_match!(msg, Message::ExecuteReply(data) => {
+            data.content
+        })
+    }
+
     /// Receives a Jupyter message from the IOPub socket
     pub fn receive_iopub(&self) -> Message {
         Message::read_from_socket(&self.iopub_socket).unwrap()
@@ -165,8 +177,8 @@ impl DummyFrontend {
     pub fn receive_iopub_busy(&self) -> () {
         let msg = Message::read_from_socket(&self.iopub_socket).unwrap();
 
-        assert_match!(msg, Message::Status(status) => {
-            assert_eq!(status.content.execution_state, ExecutionState::Busy);
+        assert_match!(msg, Message::Status(data) => {
+            assert_eq!(data.content.execution_state, ExecutionState::Busy);
         });
     }
 
@@ -174,9 +186,32 @@ impl DummyFrontend {
     pub fn receive_iopub_idle(&self) -> () {
         let msg = Message::read_from_socket(&self.iopub_socket).unwrap();
 
-        assert_match!(msg, Message::Status(status) => {
-            assert_eq!(status.content.execution_state, ExecutionState::Idle);
+        assert_match!(msg, Message::Status(data) => {
+            assert_eq!(data.content.execution_state, ExecutionState::Idle);
         });
+    }
+
+    /// Receive from IOPub and assert ExecuteInput message
+    pub fn receive_iopub_execute_input(&self) -> ExecuteInput {
+        let msg = Message::read_from_socket(&self.iopub_socket).unwrap();
+
+        assert_match!(msg, Message::ExecuteInput(data) => {
+            data.content
+        })
+    }
+
+    /// Receive from IOPub and assert ExecuteResult message. Returns compulsory
+    /// `plain/text` result.
+    pub fn receive_iopub_execute_result(&self) -> String {
+        let msg = Message::read_from_socket(&self.iopub_socket).unwrap();
+
+        assert_match!(msg, Message::ExecuteResult(data) => {
+            assert_match!(data.content.data, Value::Object(map) => {
+                assert_match!(map["text/plain"], Value::String(ref string) => {
+                    string.clone()
+                })
+            })
+        })
     }
 
     /// Receives a Jupyter message from the Stdin socket
