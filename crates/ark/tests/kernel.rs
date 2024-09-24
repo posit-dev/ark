@@ -10,12 +10,12 @@ fn test_kernel_info() {
 
     frontend.send_shell(KernelInfoRequest {});
 
-    assert_match!(frontend.receive_shell(), Message::KernelInfoReply(reply) => {
+    assert_match!(frontend.recv_shell(), Message::KernelInfoReply(reply) => {
         assert_eq!(reply.content.language_info.name, "R");
     });
 
-    frontend.receive_iopub_busy();
-    frontend.receive_iopub_idle();
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_idle();
 }
 
 #[test]
@@ -23,13 +23,13 @@ fn test_execute_request() {
     let frontend = DummyArkFrontend::lock();
 
     frontend.send_execute_request("42");
-    frontend.receive_iopub_busy();
+    frontend.recv_iopub_busy();
 
-    assert_eq!(frontend.receive_iopub_execute_input().code, "42");
-    assert_eq!(frontend.receive_iopub_execute_result(), "[1] 42");
+    assert_eq!(frontend.recv_iopub_execute_input().code, "42");
+    assert_eq!(frontend.recv_iopub_execute_result(), "[1] 42");
 
-    frontend.receive_iopub_idle();
+    frontend.recv_iopub_idle();
 
-    let reply = frontend.receive_shell_execute_reply();
+    let reply = frontend.recv_shell_execute_reply();
     assert_eq!(reply.status, Status::Ok);
 }

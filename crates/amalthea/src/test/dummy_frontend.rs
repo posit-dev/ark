@@ -155,12 +155,12 @@ impl DummyFrontend {
     }
 
     /// Receives a Jupyter message from the Shell socket
-    pub fn receive_shell(&self) -> Message {
+    pub fn recv_shell(&self) -> Message {
         Message::read_from_socket(&self.shell_socket).unwrap()
     }
 
     /// Receive from Shell and assert ExecuteReply message
-    pub fn receive_shell_execute_reply(&self) -> ExecuteReply {
+    pub fn recv_shell_execute_reply(&self) -> ExecuteReply {
         let msg = Message::read_from_socket(&self.shell_socket).unwrap();
 
         assert_match!(msg, Message::ExecuteReply(data) => {
@@ -169,12 +169,12 @@ impl DummyFrontend {
     }
 
     /// Receives a Jupyter message from the IOPub socket
-    pub fn receive_iopub(&self) -> Message {
+    pub fn recv_iopub(&self) -> Message {
         Message::read_from_socket(&self.iopub_socket).unwrap()
     }
 
     /// Receive from IOPub and assert Busy message
-    pub fn receive_iopub_busy(&self) -> () {
+    pub fn recv_iopub_busy(&self) -> () {
         let msg = Message::read_from_socket(&self.iopub_socket).unwrap();
 
         assert_match!(msg, Message::Status(data) => {
@@ -183,7 +183,7 @@ impl DummyFrontend {
     }
 
     /// Receive from IOPub and assert Idle message
-    pub fn receive_iopub_idle(&self) -> () {
+    pub fn recv_iopub_idle(&self) -> () {
         let msg = Message::read_from_socket(&self.iopub_socket).unwrap();
 
         assert_match!(msg, Message::Status(data) => {
@@ -192,7 +192,7 @@ impl DummyFrontend {
     }
 
     /// Receive from IOPub and assert ExecuteInput message
-    pub fn receive_iopub_execute_input(&self) -> ExecuteInput {
+    pub fn recv_iopub_execute_input(&self) -> ExecuteInput {
         let msg = Message::read_from_socket(&self.iopub_socket).unwrap();
 
         assert_match!(msg, Message::ExecuteInput(data) => {
@@ -202,7 +202,7 @@ impl DummyFrontend {
 
     /// Receive from IOPub and assert ExecuteResult message. Returns compulsory
     /// `plain/text` result.
-    pub fn receive_iopub_execute_result(&self) -> String {
+    pub fn recv_iopub_execute_result(&self) -> String {
         let msg = Message::read_from_socket(&self.iopub_socket).unwrap();
 
         assert_match!(msg, Message::ExecuteResult(data) => {
@@ -215,12 +215,12 @@ impl DummyFrontend {
     }
 
     /// Receives a Jupyter message from the Stdin socket
-    pub fn receive_stdin(&self) -> Message {
+    pub fn recv_stdin(&self) -> Message {
         Message::read_from_socket(&self.stdin_socket).unwrap()
     }
 
     /// Receives a (raw) message from the heartbeat socket
-    pub fn receive_heartbeat(&self) -> zmq::Message {
+    pub fn recv_heartbeat(&self) -> zmq::Message {
         let mut msg = zmq::Message::new();
         self.heartbeat_socket.recv(&mut msg).unwrap();
         msg
