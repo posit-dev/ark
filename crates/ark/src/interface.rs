@@ -369,9 +369,10 @@ impl RMain {
         // overflow checks so we disable those. This should not make it in
         // production builds as it causes stack overflows to crash R instead of
         // throwing an R error.
-        #[cfg(test)]
-        unsafe {
-            libr::set(libr::R_CStackLimit, usize::MAX);
+        if harp::test::IS_TESTING {
+            unsafe {
+                libr::set(libr::R_CStackLimit, usize::MAX);
+            }
         }
 
         crate::sys::interface::setup_r(args);
