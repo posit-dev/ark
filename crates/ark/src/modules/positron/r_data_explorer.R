@@ -342,15 +342,27 @@ export_selection <- function(x, format = c("csv", "tsv", "html"), include_header
 }
 
 write_delim <- function(x, delim, include_header) {
-    # Must open in binary write mode, otherwise even though we set
-    # `eol = "\n"`, on Windows it will still write `\r\n`.
-    tmp <- tempfile()
-    con <- file(tmp, open = "wb")
+    path <- tempfile()
+    defer(unlink(path))
 
-    defer({
-        close(con)
-        unlink(tmp)
-    })
+    write_delim_impl(x, path, delim, include_header)
+
+    # We use `size - 1` because we don't want to read the last newline character
+    # as that creates problems when pasting the content in spreadsheets.
+    # `file.info()$size` reports the size in bytes, hence `useBytes = TRUE`.
+    readChar(path, file.info(path)$size - 1L, useBytes = TRUE)
+}
+
+write_delim_impl <- function(x, path, delim, include_header) {
+    # Scope the `con` lifetime to just this helper.
+    # We need to `close()` the connection before we try and get the
+    # `file.info()$size`.
+
+    # Must open in binary write mode, otherwise even though we set
+    # `eol = "\n"` on Windows it will still write `\r\n` due to the C
+    # level `vfprintf()` call.
+    con <- file(path, open = "wb")
+    defer(close(con))
 
     utils::write.table(
       x = x,
@@ -362,11 +374,6 @@ write_delim <- function(x, delim, include_header) {
       quote = FALSE,
       na = ""
     )
-
-    # We use `size - 1` because we don't want to read the last newline character
-    # as that creates problems when pasting the content in spreadsheets.
-    # `file.info()$size` reports the size in bytes, hence `useBytes = TRUE`.
-    readChar(tmp, file.info(tmp)$size - 1L, useBytes = TRUE)
 }
 
 write_html <- function(x, include_header) {
