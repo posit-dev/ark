@@ -40,5 +40,5 @@ fn main() {
     let resource = Path::new("resources")
         .join("manifest")
         .join("ark-manifest.rc");
-    embed_resource::compile(resource, embed_resource::NONE);
+    embed_resource::compile_for_tests(resource, embed_resource::NONE);
 }
