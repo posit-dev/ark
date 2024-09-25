@@ -334,19 +334,14 @@ fn install_kernel_spec() {
     // Create the environment set for the kernel spec
     let mut env = serde_json::Map::new();
 
-    // Detect the active version of R and set the R_HOME environment variable
-    // accordingly
-    let r_version = detect_r().unwrap();
-    env.insert(
-        "R_HOME".to_string(),
-        serde_json::Value::String(r_version.r_home.clone()),
-    );
-
     // Point `LD_LIBRARY_PATH` to a folder with some `libR.so`. It doesn't
     // matter which one, but the linker needs to be able to find a file of that
     // name, even though we won't use it for symbol resolution.
     // https://github.com/posit-dev/positron/issues/1619#issuecomment-1971552522
     if cfg!(target_os = "linux") {
+        // Detect the active version of R
+        let r_version = detect_r().unwrap();
+
         let lib = format!("{}/lib", r_version.r_home.clone());
         env.insert("LD_LIBRARY_PATH".into(), serde_json::Value::String(lib));
     }
@@ -370,21 +365,16 @@ fn install_kernel_spec() {
         env,
     };
 
-    let dest = unwrap!(spec.install(String::from("ark")), Err(error) => {
-        eprintln!("Failed to install Ark's Jupyter kernelspec. {}", error);
+    let dest = unwrap!(spec.install(String::from("ark")), Err(err) => {
+        eprintln!("Failed to install Ark's Jupyter kernelspec. {err}");
         return;
     });
 
     println!(
         "Successfully installed Ark Jupyter kernelspec.
 
-    R ({}.{}.{}): {}
     Kernel: {}
     ",
-        r_version.major,
-        r_version.minor,
-        r_version.patch,
-        r_version.r_home,
         dest.to_string_lossy()
     );
 }
