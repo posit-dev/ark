@@ -102,7 +102,8 @@ Example:
 
 ```r
 ark_variable_get_children.foo <- function(x, ...) {
-    # return an R list of children. For example:
+    # Return an R list of children. The order of children should be
+    # stable between repeated calls on the same object. For example:
     list(
         a = c(1, 2, 3),
         b = "Hello world",
