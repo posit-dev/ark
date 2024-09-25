@@ -342,13 +342,31 @@ export_selection <- function(x, format = c("csv", "tsv", "html"), include_header
 }
 
 write_delim <- function(x, delim, include_header) {
+    # Must open in binary write mode, otherwise even though we set
+    # `eol = "\n"`, on Windows it will still write `\r\n`.
     tmp <- tempfile()
-    defer(unlink(tmp))
+    con <- file(tmp, open = "wb")
 
-    utils::write.table(x, tmp, sep = delim, row.names = FALSE, col.names = include_header, quote = FALSE, na = "")
-    # We use size - 1 because we don't want to read the last newline character
-    # that creates problems when pasting the content in spreadsheets
-    readChar(tmp, file.info(tmp)$size - 1L)
+    defer({
+        close(con)
+        unlink(tmp)
+    })
+
+    utils::write.table(
+      x = x,
+      file = con,
+      sep = delim,
+      eol = "\n",
+      row.names = FALSE,
+      col.names = include_header,
+      quote = FALSE,
+      na = ""
+    )
+
+    # We use `size - 1` because we don't want to read the last newline character
+    # as that creates problems when pasting the content in spreadsheets.
+    # `file.info()$size` reports the size in bytes, hence `useBytes = TRUE`.
+    readChar(tmp, file.info(tmp)$size - 1L, useBytes = TRUE)
 }
 
 write_html <- function(x, include_header) {
