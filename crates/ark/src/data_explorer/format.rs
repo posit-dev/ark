@@ -752,23 +752,23 @@ mod tests {
                 ColumnValue::FormattedValue("aa".to_string()),
             ]);
 
-            options.max_value_length = 1000;
-            let text = RObject::from(r#"x <- c("ボルテックス")"#);
-            unsafe { r_envir_set("text", text.sexp, R_GlobalEnv) };
-            let data = harp::parse_eval_global(r#"Encoding(text)"#).unwrap();
-            let data = String::try_from(data).unwrap();
-            let _ = harp::parse_eval_global(r#"rm(text)"#).unwrap();
-            assert_eq!(data, "UTF-8".to_string());
+            // options.max_value_length = 1000;
+            // let text = RObject::from(r#"x <- c("ボルテックス")"#);
+            // unsafe { r_envir_set("text", text.sexp, R_GlobalEnv) };
+            // let data = harp::parse_eval_global(r#"Encoding(text)"#).unwrap();
+            // let data = String::try_from(data).unwrap();
+            // let _ = harp::parse_eval_global(r#"rm(text)"#).unwrap();
+            // assert_eq!(data, "UTF-8".to_string());
 
             // let data = harp::parse_eval_global("Sys.getlocale()").unwrap();
             // let data = String::try_from(data).unwrap();
             // assert_eq!(data, "wrong".to_string());
 
-            let data =
-                harp::parse_eval_global("paste0(capture.output(sessionInfo()), collapse = ' ')")
-                    .unwrap();
-            let data = String::try_from(data).unwrap();
-            assert_eq!(data, "wrong".to_string());
+            // let data =
+            //     harp::parse_eval_global("paste0(capture.output(sessionInfo()), collapse = ' ')")
+            //         .unwrap();
+            // let data = String::try_from(data).unwrap();
+            // assert_eq!(data, "wrong".to_string());
 
             // let _ = harp::parse_eval_global(r#"x <- c("ボルテックス")"#).unwrap();
             // let data = harp::parse_eval_global(r#"Encoding(x)"#).unwrap();
