@@ -1,5 +1,5 @@
 pub mod dummy_frontend;
-pub mod test;
+pub mod utils;
 
 pub use dummy_frontend::*;
-pub use test::*;
+pub use utils::*;
