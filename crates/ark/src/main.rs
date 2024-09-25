@@ -334,6 +334,9 @@ fn install_kernel_spec() {
     // Create the environment set for the kernel spec
     let mut env = serde_json::Map::new();
 
+    // Workaround for https://github.com/posit-dev/positron/issues/2098
+    env.insert("RUST_LOG".into(), serde_json::Value::String("error".into()));
+
     // Point `LD_LIBRARY_PATH` to a folder with some `libR.so`. It doesn't
     // matter which one, but the linker needs to be able to find a file of that
     // name, even though we won't use it for symbol resolution.
