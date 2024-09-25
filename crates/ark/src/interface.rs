@@ -365,6 +365,15 @@ impl RMain {
         let libraries = RLibraries::from_r_home_path(&r_home);
         libraries.initialize_pre_setup_r();
 
+        // In tests R may be run from various threads. This confuses R's stack
+        // overflow checks so we disable those. This should not make it in
+        // production builds as it causes stack overflows to crash R instead of
+        // throwing an R error.
+        #[cfg(test)]
+        unsafe {
+            libr::set(libr::R_CStackLimit, usize::MAX);
+        }
+
         crate::sys::interface::setup_r(args);
 
         libraries.initialize_post_setup_r();
