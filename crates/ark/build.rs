@@ -41,6 +41,4 @@ fn main() {
         .join("manifest")
         .join("ark-manifest.rc");
     embed_resource::compile(resource, embed_resource::NONE);
-
-    panic!("oh no");
 }
