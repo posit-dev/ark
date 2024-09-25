@@ -17,7 +17,6 @@ use std::path::PathBuf;
 use std::result::Result::Ok;
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::Once;
 use std::task::Poll;
 use std::time::Duration;
 
@@ -138,8 +137,15 @@ pub enum SessionMode {
 // These values must be global in order for them to be accessible from R
 // callbacks, which do not have a facility for passing or returning context.
 
-/// Ensures that the kernel is only ever initialized once
-static INIT: Once = Once::new();
+// We use the `once_cell` crate for init synchronisation because the stdlib
+// equivalent `std::sync::Once` does not have a `wait()` method.
+
+/// Ensures that the kernel is only ever initialized once. Used to wait for the
+/// `RMain` singleton initialization in `RMain::wait_initialized()`.
+static R_MAIN_INIT: once_cell::sync::OnceCell<()> = once_cell::sync::OnceCell::new();
+
+/// Used to wait for complete R startup in `RMain::wait_r_initialized()`.
+static R_INIT: once_cell::sync::OnceCell<()> = once_cell::sync::OnceCell::new();
 
 // The global state used by R callbacks.
 //
@@ -293,7 +299,7 @@ impl RMain {
         session_mode: SessionMode,
     ) {
         // Initialize global state (ensure we only do this once!)
-        INIT.call_once(|| unsafe {
+        R_MAIN_INIT.get_or_init(|| unsafe {
             R_MAIN_THREAD_ID = Some(std::thread::current().id());
 
             // Channels to send/receive tasks from auxiliary threads via `RTask`s
@@ -463,22 +469,33 @@ impl RMain {
         }
     }
 
+    /// Wait for complete R initialization
+    ///
+    /// Wait for R being ready to take input (i.e. `ReadConsole` was called).
+    /// Resolves as the same time as the `Bus<KernelInfo>` init channel does.
+    ///
+    /// Thread-safe.
+    pub fn wait_r_initialized() {
+        R_INIT.wait();
+    }
+
+    /// Has the `RMain` singleton completed initialization.
+    ///
+    /// This can return true when R might still not have finished starting up.
+    /// See `wait_r_initialized()`.
+    ///
+    /// Thread-safe. But note you can only get access to the singleton on the R
+    /// thread.
+    pub fn is_initialized() -> bool {
+        R_MAIN_INIT.get().is_some()
+    }
+
     /// Access a reference to the singleton instance of this struct
     ///
     /// SAFETY: Accesses must occur after `start_r()` initializes it, and must
     /// occur on the main R thread.
     pub fn get() -> &'static Self {
         RMain::get_mut()
-    }
-
-    /// Indicate whether RMain has been created and is initialized.
-    pub fn initialized() -> bool {
-        unsafe {
-            match R_MAIN {
-                Some(ref main) => !main.initializing,
-                None => false,
-            }
-        }
     }
 
     /// Access a mutable reference to the singleton instance of this struct
@@ -546,7 +563,12 @@ impl RMain {
 
             log::info!("Sending kernel info: {version}");
             self.kernel_init_tx.broadcast(kernel_info);
+
+            // Internal initialisation flag, should only be used on the R thread
             self.initializing = false;
+
+            // Used as thread-safe initialisation flag
+            R_INIT.set(()).unwrap();
         } else {
             log::warn!("Initialization already complete!");
         }

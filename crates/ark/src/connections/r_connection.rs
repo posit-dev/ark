@@ -278,7 +278,7 @@ pub unsafe extern "C" fn ps_connection_opened(
 
     // If RMain is not initialized, we are probably in testing mode, so we just don't start the connection
     // and let the testing code manually do it
-    if RMain::initialized() {
+    if RMain::is_initialized() {
         let main = RMain::get();
 
         let metadata = Metadata {

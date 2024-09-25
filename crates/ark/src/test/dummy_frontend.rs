@@ -6,6 +6,7 @@ use std::sync::MutexGuard;
 use amalthea::test::dummy_frontend::DummyFrontend;
 use once_cell::sync::Lazy;
 
+use crate::interface::RMain;
 use crate::interface::SessionMode;
 
 // There can be only one frontend per process. Needs to be in a mutex because
@@ -43,9 +44,8 @@ impl DummyArkFrontend {
             );
         });
 
-        // Can we do better?
-        log::info!("Waiting 500ms for kernel startup to complete");
-        std::thread::sleep(std::time::Duration::from_millis(500));
+        // Wait for startup to complete
+        RMain::wait_r_initialized();
 
         frontend.complete_intialization();
         frontend
