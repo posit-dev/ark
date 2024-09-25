@@ -113,7 +113,7 @@ pub fn start_kernel(
     }
 
     // Start the R REPL (does not return for the duration of the session)
-    crate::interface::start_r(
+    crate::interface::RMain::start(
         r_args,
         startup_file,
         kernel_clone,
