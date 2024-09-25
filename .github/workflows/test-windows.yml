@@ -38,6 +38,6 @@ jobs:
       # Unit tests "automatically" find and set `R_HOME` if it isn't set by
       # calling `R RHOME`. See the testing version of `start_r()` for this.
       - name: Run Unit Tests
-        id: build
+        id: test
         run: |
             cargo test --verbose

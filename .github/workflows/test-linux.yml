@@ -43,6 +43,6 @@ jobs:
       # Unit tests "automatically" find and set `R_HOME` if it isn't set by
       # calling `R RHOME`. See `harp::fixtures::r_test_init()`.
       - name: Run Unit Tests
-        id: build
+        id: test
         run: |
             cargo test --verbose
