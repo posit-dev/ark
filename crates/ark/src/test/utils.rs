@@ -32,7 +32,7 @@ fn initialize_ark() {
     INIT.call_once(|| {
         // Initialize the positron module so tests can use them.
         // Routines are already registered by `harp::test::r_test()`.
-        modules::initialize(true).unwrap();
+        modules::initialize().unwrap();
     });
 }
 

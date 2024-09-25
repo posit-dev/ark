@@ -383,7 +383,7 @@ impl RMain {
             }
 
             // Initialize support functions (after routine registration)
-            if let Err(err) = modules::initialize(false) {
+            if let Err(err) = modules::initialize() {
                 log::error!("Can't load R modules: {err:?}");
             }
 
