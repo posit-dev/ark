@@ -35,11 +35,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential libsodium-dev
 
-      - name: Build
-        id: build
-        run: |
-            cargo build --verbose
-
       # Unit tests "automatically" find and set `R_HOME` if it isn't set by
       # calling `R RHOME`. See `harp::fixtures::r_test_init()`.
       - name: Run Unit Tests
