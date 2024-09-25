@@ -760,6 +760,10 @@ mod tests {
             let _ = harp::parse_eval_global(r#"rm(text)"#).unwrap();
             assert_eq!(data, "UTF-8".to_string());
 
+            let data = harp::parse_eval_global("Sys.getlocale()").unwrap();
+            let data = String::try_from(data).unwrap();
+            assert_eq!(data, "wrong".to_string());
+
             // let _ = harp::parse_eval_global(r#"x <- c("ボルテックス")"#).unwrap();
             // let data = harp::parse_eval_global(r#"Encoding(x)"#).unwrap();
             // let data = String::try_from(data).unwrap();
