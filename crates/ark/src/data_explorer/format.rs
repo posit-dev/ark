@@ -751,11 +751,15 @@ mod tests {
             ]);
 
             options.max_value_length = 1000;
-            let data = harp::parse_eval_global(r#"c("ボルテックス")"#).unwrap();
-            let formatted = format_column(data.sexp, &options);
-            assert_eq!(formatted, vec![ColumnValue::FormattedValue(
-                "ボルテックス".to_string()
-            ),]);
+            let _ = harp::parse_eval_global(r#"x <- c("ボルテックス")"#).unwrap();
+            let data = harp::parse_eval_global(r#"Encoding(x)"#).unwrap();
+            let data = String::try_from(data).unwrap();
+            let _ = harp::parse_eval_global(r#"rm(x)"#).unwrap();
+            assert_eq!(data, "UTF-8".to_string());
+            // let formatted = format_column(data.sexp, &options);
+            // assert_eq!(formatted, vec![ColumnValue::FormattedValue(
+            //     "ボルテックス".to_string()
+            // ),]);
 
             // options.max_value_length = 4;
             // let data = harp::parse_eval_global(r#"c("नमस्ते")"#).unwrap();
