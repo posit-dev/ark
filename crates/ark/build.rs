@@ -35,6 +35,8 @@ fn main() {
     let build_date = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
     println!("cargo:rustc-env=BUILD_DATE={}", build_date);
 
+    panic!("oh no");
+
     // Embed an Application Manifest file on Windows.
     // Documented to do nothing on non-Windows.
     let resource = Path::new("resources")
