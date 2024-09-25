@@ -1,82 +1,108 @@
-# Extending the variables pane
+# Extending the Variables Pane in Ark
 
-Ark enables package authors to customize the variables pane for specific
-R objects by implementing custom methods, similar to S3 methods.
+Ark allows package authors to customize how the variables pane displays specific R objects by defining custom methods, similar to S3 methods.
 
-![Variables pane anotated](variables-pane.png)
+![Variables pane annotated](variables-pane.png)
 
+## Defining Ark Methods for S3 Classes
 
-### `ark_variable_display_value`
+To implement an Ark Variables Pane method for an S3 class (`"foo"`) in an R package, define pseudo-S3 methods like this:
 
-Used to customize the display value of an object. It's called by the variables
-pane to produce the text that's marked as "1. Display value" in the above screenshot.
+```r
+ark_variable_display_value.foo <- function(x, ..., width = NULL) {
+    toString(x, width)
+}
+```
+
+These methods don't need to be exported in the `NAMESPACE` file. Ark automatically finds and registers them when the package is loaded.
+
+You can also register a method outside an R package using `.ps.register_ark_method()`, similar to `base::.S3method()`:
+
+```r
+.ps.register_ark_method("ark_variable_display_value", "foo",
+                        function(x, width) { toString(x, width) })
+```
+
+## Available Methods
+
+Ark currently supports six methods with the following signatures:
+
+- `ark_variable_display_value(x, ..., width = getOption("width"))`
+- `ark_variable_display_type(x, ..., include_length = TRUE)`
+- `ark_variable_kind(x, ...)`
+- `ark_variable_has_children(x, ...)`
+- `ark_variable_get_children(x, ...)`
+- `ark_variable_get_child_at(x, ..., index, name)`
+
+### Customizing Display Value
+
+The `ark_variable_display_value` method customizes how the display value of an object is shown. This is the text marked as "1. Display value" in the image above.
 
 Example:
 
 ```r
 #' @param x Object to get the display value for
-#' @param width Maximum expected width. This is used as a reference, the UI can truncate
-#'  the string in different widths.
-ark_variable_display_value.foo <- function(x, ..., width) {
-    "Hello world" # Should return a length 1 character vector.
+#' @param width Maximum expected width. This is just a suggestion, the UI
+#'   can stil truncate the string to different widths.
+ark_variable_display_value.foo <- function(x, ..., width = getOption("width")) {
+    "Hello world"  # Should return a length 1 character vector.
 }
 ```
 
-### `ark_variable_display_type`
+### Customizing Display Type
 
-Called by the variables pane to obtain the display type of an object. The display type
-is shown in the screenshot above as "2. Display type".
+The `ark_variable_display_type` method customizes how the type of an object is shown. This is marked as "2. Display type" in the image.
 
 Example:
 
 ```r
 #' @param x Object to get the display type for
-#' @param include_length Boolean indicating if the display type should also include the
-#'   object length.
-ark_variable_display_type.foo <– function(x, ..., include_length) {
+#' @param include_length Boolean indicating whether to include object length.
+ark_variable_display_type.foo <- function(x, ..., include_length = TRUE) {
     sprintf("foo(%d)", length(x))
 }
 ```
 
-### `ark_variable_kind`
+### Specifying Variable Kind
 
-Returns the kind of the variable, which can be used by the UI to show the variable in
-different orders in the variable pane. Currently only `"table"` is used. You can find
-the full list of possible values [here](https://github.com/posit-dev/ark/blob/50f335183c5a13eda561a48d2ce21441caa79937/crates/amalthea/src/comm/variables_comm.rs#L107-L160).
+The `ark_variable_kind` method defines the kind of the variable. This allows the UI to organize variables in the variables pane differently. Currently, only `"table"` is used, but other possible values are [listed here](https://github.com/posit-dev/ark/blob/50f335183c5a13eda561a48d2ce21441caa79937/crates/amalthea/src/comm/variables_comm.rs#L107-L160).
 
 Example:
 
 ```r
 #' @param x Object to get the variable kind for
-ark_variable_kind <- fuinction(x, ...) {
+ark_variable_kind.foo <- function(x, ...) {
     "other"
 }
 ```
 
-## Inspecting objects
+## Inspecting Objects
 
-Package authors can implement methods that allow users to inspect R objects. This is the behavior
-that allows the variables pane to display the structure of objects, similar to the `str` function
-in R.
+Package authors can also implement methods that allow users to inspect R objects, similar to how the `str()` function works in R. This enables displaying object structures in the variables pane.
 
-In order to allow inspecting objects, implement the `ark_variable_has_children`:
+### Checking for Children
+
+To check if an object has children that can be inspected, implement the `ark_variable_has_children` method:
 
 ```r
 #' @param x Check if `x` has children
-ark_variable_has_children <- function(x, ...) {
-    TRUE # TRUE if the object can be inspected, FALSE otherwise
+ark_variable_has_children.foo <- function(x, ...) {
+    TRUE  # Return TRUE if the object can be inspected, FALSE otherwise.
 }
 ```
 
-Next, implement a pair of methods
+### Getting Children and Child Elements
 
-- `ark_variable_get_children`: Returns a named list of objects that should be displayed.
-- `ark_variable_get_child_at`: Get an element from the object
+To allow inspection, implement these methods:
+
+- `ark_variable_get_children`: Returns a named list of child objects to be displayed.
+- `ark_variable_get_child_at`: Retrieves a specific element from the object.
 
 Example:
 
 ```r
-ark_variable_get_children <- function(x, ...) {
+ark_variable_get_children.foo <- function(x, ...) {
+    # return an R list of children. For example:
     list(
         a = c(1, 2, 3),
         b = "Hello world",
@@ -84,12 +110,18 @@ ark_variable_get_children <- function(x, ...) {
     )
 }
 
-#' @param name Name to extract from `x`.
-ark_variable_get_child_at <- function(x, ..., name) {
-    # It could be implemented as
-    # ark_variable_get_children(x)[[name]]
-    # but we expose an API that doesn't require users to re-build
-    # if there's a fast path to acess a single name.
+#' @param index An integer > 1, representing the index position of the child in the
+#'   list returned by `ark_variable_get_children()`.
+#' @param name The name of the child, corresponding to `names(ark_variable_get_children(x))[index]`.
+#'   This may be a string or `NULL`. If using the name, it is the method author's responsibility to ensure
+#'   the name is a valid, unique accessor. Additionally, if the original name from `ark_variable_get_children()`
+#'   was too long, `ark` may discard the name and supply `name = NULL` instead.
+ark_variable_get_child_at.foo <- function(x, ..., name, index) {
+    # This could be implemented as:
+    #   ark_variable_get_children(x)[[index]]
+    # However, we expose an API that allows access by either name or index
+    # without needing to rebuild the full list of children.
+
     if (name == "a") {
         c(1, 2, 3)
     } else if (name == "b") {
