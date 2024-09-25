@@ -1,0 +1,43 @@
+name: "Testing - Windows"
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+
+  windows:
+    runs-on: windows-latest
+    name: "Unit Tests on Windows (rust: ${{ matrix.config.rust }})"
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - { rust: 'stable'  }
+          - { rust: 'nightly' }
+    timeout-minutes: 30
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@nightly
+        if: matrix.config.rust == 'nightly'
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+
+      - name: Build
+        id: build
+        run: |
+            cargo build --verbose
+
+      # Unit tests "automatically" find and set `R_HOME` if it isn't set by
+      # calling `R RHOME`. See the testing version of `start_r()` for this.
+      - name: Run Unit Tests
+        id: build
+        run: |
+            cargo test --verbose
