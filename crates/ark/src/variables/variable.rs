@@ -21,6 +21,7 @@ use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::r_length;
 use harp::object::RObject;
+use harp::r_null;
 use harp::r_symbol;
 use harp::symbol::RSymbol;
 use harp::utils::pairlist_size;
@@ -45,6 +46,7 @@ use harp::vector::names::Names;
 use harp::vector::CharacterVector;
 use harp::vector::IntegerVector;
 use harp::vector::Vector;
+use harp::List;
 use itertools::Itertools;
 use libr::*;
 use stdext::local;
@@ -901,9 +903,9 @@ impl PositronVariable {
 
     fn get_envsxp_child_node_at(
         object: RObject,
-        name: &String,
+        access_key: &String,
     ) -> harp::Result<EnvironmentVariableNode> {
-        let symbol = unsafe { r_symbol!(name) };
+        let symbol = unsafe { r_symbol!(access_key) };
         let mut x = unsafe { Rf_findVarInFrame(*object, symbol) };
 
         if r_typeof(x) == PROMSXP {
@@ -930,27 +932,51 @@ impl PositronVariable {
 
     fn get_concrete_child_node(
         object: RObject,
-        name: &String,
+        access_key: &String,
     ) -> harp::Result<EnvironmentVariableNode> {
         // Concrete nodes are objects that are treated as is. Accessing an element from them,
         // might result in special node types.
 
         // First try to get child using a generic method
-        // VariableGetChildAt returns an RObject that should always be treated as a concrete node.
-        let result = ArkGenerics::VariableGetChildAt.try_dispatch::<RObject>(object.sexp, vec![(
-            String::from("name"),
-            RObject::from(name.clone()),
-        )]);
+        // When building the children list of nodes that use a custom `get_children` method, the access_key is
+        // formatted as "custom-{index}-{name}". If the access_key has this format, we call the custom `get_child_at`,
+        // method, if there's one available:
+        let result = local!({
+            let parsed_access_key: Vec<&str> = access_key.splitn(3, '-').collect();
+
+            if parsed_access_key.len() != 3 {
+                return Ok(None);
+            };
+
+            if parsed_access_key[0] != "custom" {
+                return Ok(None);
+            };
+
+            let index = match parsed_access_key[1].parse::<i32>() {
+                Err(_) => return Ok(None), // Not an access_key in the required format
+                Ok(i) => i,
+            };
+
+            let name = match parsed_access_key[2] {
+                "" => RObject::from(r_null()), // Empty string, means a `NULL` name
+                v => RObject::from(v),
+            };
+
+            ArkGenerics::VariableGetChildAt.try_dispatch::<RObject>(object.sexp, vec![
+                (String::from("index"), RObject::from(index + 1)), // Index is 0-based, so we convert to 1-based for R.
+                (String::from("name"), RObject::from(name)),
+            ])
+        });
 
         match result {
             Err(err) => log::error!("Failed dispatching `ark_variable_get_child_at`: {err}"),
-            Ok(None) => {}, // No method for `object`.
+            Ok(None) => {}, // No method for `object`, or could not parse the access_key in the expected format.
             Ok(Some(child)) => return Ok(EnvironmentVariableNode::Concrete { object: child }),
         };
 
         // For S4 objects, we acess child nodes using R_do_slot.
         if object.is_s4() {
-            let name = unsafe { r_symbol!(name) };
+            let name = unsafe { r_symbol!(access_key) };
             let child: RObject =
                 harp::try_catch(|| unsafe { R_do_slot(object.sexp, name) }.into())?;
             return Ok(EnvironmentVariableNode::Concrete { object: child });
@@ -958,24 +984,24 @@ impl PositronVariable {
 
         // R6 objects may be accessed with special elements called <methods> and <private>
         // for them, we'll have to build the next node artifically.
-        if r_inherits(object.sexp, "R6") && name.starts_with("<") {
+        if r_inherits(object.sexp, "R6") && access_key.starts_with("<") {
             return Ok(EnvironmentVariableNode::R6Node {
                 object,
-                name: name.clone(),
+                name: access_key.clone(),
             });
         }
 
         match r_typeof(*object) {
-            ENVSXP => Self::get_envsxp_child_node_at(object, name),
+            ENVSXP => Self::get_envsxp_child_node_at(object, access_key),
             VECSXP | EXPRSXP => {
-                let index = name.parse::<isize>().unwrap();
+                let index = parse_index(access_key)?;
                 Ok(EnvironmentVariableNode::Concrete {
                     object: RObject::view(unsafe { VECTOR_ELT(object.sexp, index) }),
                 })
             },
             LISTSXP => {
                 let mut pairlist = *object;
-                let index = name.parse::<isize>().unwrap();
+                let index = parse_index(access_key)?;
                 for _i in 0..index {
                     pairlist = unsafe { CDR(pairlist) };
                 }
@@ -987,16 +1013,18 @@ impl PositronVariable {
                 if r_is_matrix(object.sexp) {
                     Ok(EnvironmentVariableNode::Matrixcolumn {
                         object,
-                        index: name.parse::<isize>().unwrap(),
+                        index: parse_index(access_key)?,
                     })
                 } else {
                     Ok(EnvironmentVariableNode::AtomicVectorElement {
                         object,
-                        index: name.parse::<isize>().unwrap(),
+                        index: parse_index(access_key)?,
                     })
                 }
             },
-            _ => Err(harp::Error::Anyhow(anyhow!("Unexpected child at {name}"))),
+            _ => Err(harp::Error::Anyhow(anyhow!(
+                "Unexpected child at {access_key}"
+            ))),
         }
     }
 
@@ -1370,7 +1398,54 @@ impl PositronVariable {
                         "Expected `ark_variable_get_children` to return a list."
                     )));
                 }
-                Ok(Some(Self::inspect_list(value.sexp)?))
+
+                // This is essentially the same as Self::inspect_list but with modified `access_key`
+                // that adds more information about the object:
+                // 1. Provide the name and the index for the `get_child_at` method.
+                // 2. (Not necessary) Quickly detect if we want to call the custom get_child_at method
+                let list = unsafe { List::new(value.sexp)? };
+                let n = unsafe { list.len() };
+
+                let names = local!({
+                    let r_names = unsafe { RObject::new(Rf_getAttrib(value.sexp, R_NamesSymbol)) };
+                    if r_is_null(r_names.sexp) {
+                        return vec![None; n];
+                    }
+
+                    let names = unsafe { CharacterVector::new_unchecked(r_names) };
+
+                    if unsafe { names.len() } != n {
+                        return vec![None; n];
+                    }
+
+                    names
+                        .iter()
+                        .map(|v| match v {
+                            None => None,
+                            Some(s) => {
+                                if s.len() == 0 {
+                                    None
+                                } else {
+                                    Some(s)
+                                }
+                            },
+                        })
+                        .collect()
+                });
+
+                let variables = list
+                    .iter()
+                    .zip(names.iter())
+                    .enumerate()
+                    .map(|(i, (x, name))| {
+                        let access_key =
+                            format!("custom-{i}-{}", name.clone().unwrap_or(String::from("")));
+                        let display_name = name.clone().unwrap_or(format!("[[{i}]]"));
+                        Self::from(access_key, display_name, x).var()
+                    })
+                    .collect();
+
+                Ok(Some(variables))
             },
         }
     }
@@ -1400,6 +1475,12 @@ pub fn plain_binding_force_with_rollback(binding: &Binding) -> anyhow::Result<RO
         BindingValue::Promise { promise, .. } => Ok(r_promise_force_with_rollback(promise.sexp)?),
         _ => Err(anyhow!("Unexpected binding type")),
     }
+}
+
+fn parse_index(x: &String) -> Result<isize, harp::error::Error> {
+    x.parse::<isize>().map_err(|err| {
+        harp::Error::Anyhow(anyhow!("Expected to be able to parse into integer: {err}"))
+    })
 }
 
 #[cfg(test)]
@@ -1440,12 +1521,16 @@ mod tests {
                     )
                 })
 
-                .ps.register_ark_method("ark_variable_get_child_at", "foo", function(x, name) {
-                    list(
-                        "hello" = list(a = 1, b = 2),
-                        "bye" = "testing",
+                .ps.register_ark_method("ark_variable_get_child_at", "foo", function(x, ..., index, name) {
+                    if (!is.null(name) && name == "hello") {
+                        list(a = 1, b = 2)
+                    } else if (index == 2) {
+                        "testing"
+                    } else if (index == 3) {
                         c(1, 2, 3)
-                    )[[name]]
+                    } else {
+                      stop("Unexpected")
+                    }
                 })
 
                 "#,
@@ -1485,9 +1570,13 @@ mod tests {
             assert_eq!(variables.len(), 3);
 
             // Now inspect a list inside x
-            let path = vec![String::from("x"), String::from("hello")];
-            let variables = PositronVariable::inspect(env, &path).unwrap();
-            assert_eq!(variables.len(), 2);
+            let path = vec![String::from("x"), variables[0].access_key.clone()];
+            let list = PositronVariable::inspect(env.clone(), &path).unwrap();
+            assert_eq!(list.len(), 2);
+
+            let path = vec![String::from("x"), variables[2].access_key.clone()];
+            let vector = PositronVariable::inspect(env, &path).unwrap();
+            assert_eq!(vector.len(), 3);
         })
     }
 
