@@ -3,9 +3,9 @@ use std::ops::DerefMut;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::MutexGuard;
+use std::sync::OnceLock;
 
 use amalthea::test::dummy_frontend::DummyFrontend;
-use once_cell::sync::Lazy;
 
 use crate::interface::RMain;
 use crate::interface::SessionMode;
@@ -13,11 +13,10 @@ use crate::interface::SessionMode;
 // There can be only one frontend per process. Needs to be in a mutex because
 // the frontend wraps zmq sockets which are unsafe to send across threads.
 //
-// This is using `Lazy` from the `once_cell` crate instead of other standard
-// types because the former provides a way of checking whether it has been
-// initialized already.
-static FRONTEND: Lazy<Arc<Mutex<DummyFrontend>>> =
-    Lazy::new(|| Arc::new(Mutex::new(DummyArkFrontend::init())));
+// This is using `OnceLock` because it provides a way of checking whether the
+// value has been initialized already. Also we'll need to parameterize
+// initialization in the future.
+static FRONTEND: OnceLock<Arc<Mutex<DummyFrontend>>> = OnceLock::new();
 
 /// Wrapper around `DummyFrontend` that checks sockets are empty on drop
 pub struct DummyArkFrontend {
@@ -27,12 +26,16 @@ pub struct DummyArkFrontend {
 impl DummyArkFrontend {
     pub fn lock() -> Self {
         Self {
-            guard: FRONTEND.lock().unwrap(),
+            guard: Self::get_frontend().lock().unwrap(),
         }
     }
 
+    fn get_frontend() -> &'static Arc<Mutex<DummyFrontend>> {
+        FRONTEND.get_or_init(|| Arc::new(Mutex::new(DummyArkFrontend::init())))
+    }
+
     fn init() -> DummyFrontend {
-        if Lazy::get(&FRONTEND).is_some() {
+        if FRONTEND.get().is_some() {
             panic!("Can't spawn Ark more than once");
         }
 
