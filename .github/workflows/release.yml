@@ -174,10 +174,34 @@ jobs:
                   asset_name: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-linux-arm64.zip
                   asset_content_type: application/octet-stream
 
+    cleanup:
+        name: Clean up Failed Releases
+        if: ${{ failure() }}
+        runs-on: ubuntu-latest
+        needs: [upload_release_binaries, get_version]
+        steps:
+            # `gh` operates on the git repo
+            - name: Checkout sources
+              uses: actions/checkout@v4
+
+            - name: Delete failed release if any
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: |
+                  TAG=${{ needs.get_version.outputs.ARK_VERSION }}
+                  if gh release view $TAG > /dev/null 2>&1; then
+                      echo "Cleaning up release $TAG"
+                      gh release delete $TAG -y --cleanup-tag
+                  else
+                      echo "No release to clean up"
+                  fi
+
+    # Keep this at the very end of the workflow tree and without any other
+    # steps to ensure we get a Slack report when something failed
     status:
         if: ${{ failure() }}
         runs-on: ubuntu-latest
-        needs: [build_macos, build_windows, get_version]
+        needs: [cleanup, get_version]
         steps:
             - name: Notify slack if build fails
               uses: slackapi/slack-github-action@v1.24.0
