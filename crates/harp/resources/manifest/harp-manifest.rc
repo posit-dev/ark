@@ -10,4 +10,4 @@
 #include <winuser.h>
 
 // The `1` is a `resource_id` that specifies us as an executable file
-1 RT_MANIFEST "ark.exe.manifest"
+1 RT_MANIFEST "harp.exe.manifest"

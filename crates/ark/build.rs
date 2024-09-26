@@ -37,8 +37,23 @@ fn main() {
 
     // Embed an Application Manifest file on Windows.
     // Documented to do nothing on non-Windows.
+    // We also do this for harp to support its unit tests.
+    //
+    // We can't just use `compile()`, as that uses `cargo:rustc-link-arg-bins`,
+    // which targets the main `ark.exe` (good) but not the test binaries (bad).
+    // We need the application manifest to get embedded into the ark/harp test
+    // binaries too, so that the instance of R started by our tests also has
+    // UTF-8 support.
+    //
+    // We can't use `compile_for_tests()` because `cargo:rustc-link-arg-tests`
+    // only targets integration tests right now, not unit tests.
+    // https://github.com/rust-lang/cargo/issues/10937
+    //
+    // Instead we use `compile_for_everything()` which uses the kitchen sink
+    // instruction of `cargo:rustc-link-arg`, and that seems to work.
+    // https://github.com/nabijaczleweli/rust-embed-resource/issues/69
     let resource = Path::new("resources")
         .join("manifest")
         .join("ark-manifest.rc");
-    embed_resource::compile(resource, embed_resource::NONE);
+    embed_resource::compile_for_everything(resource, embed_resource::NONE);
 }

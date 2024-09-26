@@ -1829,11 +1829,6 @@ fn test_histogram() {
 fn test_frequency_table() {
     let _lock = r_test_lock();
 
-    let data =
-        harp::parse_eval_global("paste0(capture.output(sessionInfo()), collapse = ' ')").unwrap();
-    let data = String::try_from(data).unwrap();
-    assert_eq!(data, "wrong".to_string());
-
     let socket =
         open_data_explorer_from_expression("data.frame(x = rep(letters[1:10], 10:1))", None)
             .unwrap();

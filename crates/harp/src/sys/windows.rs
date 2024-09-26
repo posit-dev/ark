@@ -7,4 +7,5 @@
 
 pub mod library;
 pub mod line_ending;
+mod locale;
 pub mod polled_events;
