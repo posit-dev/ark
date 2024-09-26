@@ -33,6 +33,5 @@ fn test_execute_request() {
 
     frontend.recv_iopub_idle();
 
-    let reply = frontend.recv_shell_execute_reply();
-    assert_eq!(reply.status, Status::Ok);
+    assert_eq!(frontend.recv_shell_execute_reply(), Status::Ok);
 }
