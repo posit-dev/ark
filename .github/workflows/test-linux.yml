@@ -1,13 +1,9 @@
-name: "Testing - Linux"
+name: "Test Ark - Linux"
 
 on:
-  push:
-    branches:
-      - main
-  pull_request:
+  workflow_dispatch:
 
 jobs:
-
   linux:
     runs-on: ubuntu-latest
     name: "Unit Tests on Linux (rust: ${{ matrix.config.rust }})"
@@ -35,7 +31,7 @@ jobs:
           sudo apt-get update
 
       # Unit tests "automatically" find and set `R_HOME` if it isn't set by
-      # calling `R RHOME`. See `harp::fixtures::r_test_init()`.
+      # calling `R RHOME`.
       - name: Run Unit Tests
         id: test
         run: |
