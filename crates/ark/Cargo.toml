@@ -27,7 +27,6 @@ harp = { path = "../harp" }
 http = "0.2.9"
 home = "0.5.5"
 itertools = "0.10.5"
-lazy_static = "1.4.0"
 libc = "0.2"
 libr = { path = "../libr" }
 log = "0.4.17"
