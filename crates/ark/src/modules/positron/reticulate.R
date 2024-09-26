@@ -3,18 +3,6 @@
     .ps.Call("ps_reticulate_open", input)
 }
 
-#' Used by the front-end to install reticulate
-#' A modal asking to install is shown before calling this.
-#' @export
-.ps.rpc.install_reticulate <- function() {
-    tryCatch({
-        utils::install.packages("reticulate")
-        TRUE
-    }, error = function(err) {
-        FALSE
-    })
-}
-
 #' Called by the front-end right before starting the reticulate session.
 #'
 #' At this point it should be fine to load Python if it's not loaded, and
@@ -81,6 +69,11 @@
 
 #' @export
 .ps.rpc.reticulate_start_kernel <- function(kernelPath, connectionFile, logFile, logLevel) {
+    # Starts an IPykernel in a separate thread with information provided by
+    # the caller.
+    # It it's essentially executing the kernel startup script:
+    # https://github.com/posit-dev/positron/blob/main/extensions/positron-python/python_files/positron/positron_language_server.py
+    # and passing the communication files that Positron Jupyter's Adapter sets up.
     tryCatch({
         reticulate:::py_run_file_on_thread(
             file = kernelPath,
