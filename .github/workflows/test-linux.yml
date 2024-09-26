@@ -33,7 +33,6 @@ jobs:
       - name: Setup Build Environment
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libsodium-dev
 
       # Unit tests "automatically" find and set `R_HOME` if it isn't set by
       # calling `R RHOME`. See `harp::fixtures::r_test_init()`.
