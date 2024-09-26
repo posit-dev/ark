@@ -1,6 +1,7 @@
 name: "Test Ark - Linux"
 
 on:
+  workflow_call:
   workflow_dispatch:
 
 jobs:
