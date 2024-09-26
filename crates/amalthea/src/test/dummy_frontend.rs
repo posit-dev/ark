@@ -18,6 +18,7 @@ use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
 use crate::wire::jupyter_message::ProtocolMessage;
 use crate::wire::status::ExecutionState;
+use crate::wire::wire_message::WireMessage;
 
 pub struct DummyFrontend {
     pub _control_socket: Socket,
@@ -214,6 +215,16 @@ impl DummyFrontend {
         })
     }
 
+    /// Receive from IOPub and assert ExecuteResult message. Returns compulsory
+    /// `evalue` field.
+    pub fn recv_iopub_execute_error(&self) -> String {
+        let msg = Message::read_from_socket(&self.iopub_socket).unwrap();
+
+        assert_match!(msg, Message::ExecuteError(data) => {
+            data.content.exception.evalue
+        })
+    }
+
     /// Receives a Jupyter message from the Stdin socket
     pub fn recv_stdin(&self) -> Message {
         Message::read_from_socket(&self.stdin_socket).unwrap()
@@ -248,18 +259,37 @@ impl DummyFrontend {
     }
 
     /// Asserts that no socket has incoming data
-    pub fn assert_no_incoming(&self) {
+    pub fn assert_no_incoming(&mut self) {
+        let mut has_incoming = false;
+
         if self.iopub_socket.has_incoming_data().unwrap() {
-            panic!("IOPub has incoming data");
+            has_incoming = true;
+            Self::flush_incoming("IOPub", &self.iopub_socket);
         }
         if self.shell_socket.has_incoming_data().unwrap() {
-            panic!("Shell has incoming data");
+            has_incoming = true;
+            Self::flush_incoming("Shell", &self.shell_socket);
         }
         if self.stdin_socket.has_incoming_data().unwrap() {
-            panic!("StdIn has incoming data");
+            has_incoming = true;
+            Self::flush_incoming("StdIn", &self.stdin_socket);
         }
         if self.heartbeat_socket.has_incoming_data().unwrap() {
-            panic!("Heartbeat has incoming data");
+            has_incoming = true;
+            Self::flush_incoming("Heartbeat", &self.heartbeat_socket);
+        }
+
+        if has_incoming {
+            panic!("Sockets must be empty on exit (see details above)");
+        }
+    }
+
+    fn flush_incoming(name: &str, socket: &Socket) {
+        println!("{name} has incoming data:");
+
+        while socket.has_incoming_data().unwrap() {
+            dbg!(WireMessage::read_from_socket(socket).unwrap());
+            println!("---");
         }
     }
 }

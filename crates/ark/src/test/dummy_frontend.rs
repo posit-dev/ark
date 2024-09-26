@@ -1,4 +1,5 @@
 use std::ops::Deref;
+use std::ops::DerefMut;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::MutexGuard;
@@ -65,5 +66,11 @@ impl Deref for DummyArkFrontend {
 
     fn deref(&self) -> &Self::Target {
         Deref::deref(&self.guard)
+    }
+}
+
+impl DerefMut for DummyArkFrontend {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        DerefMut::deref_mut(&mut self.guard)
     }
 }
