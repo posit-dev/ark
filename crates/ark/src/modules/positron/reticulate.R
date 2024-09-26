@@ -49,7 +49,7 @@
     venv <- config$virtualenv
 
     # Check that python can be loaded, if it can't we will throw
-    # an error. which is unrecoverable.
+    # an error, which is unrecoverable.
     config <- tryCatch({
         reticulate::py_config()
     }, error = function(err) {
@@ -68,7 +68,7 @@
     })
 
     if (inherits(ipykernel, "error")) {
-        return(list(python = python, venv = venv, error = as.character(ipykernel)))
+        return(list(python = python, venv = venv, error = conditionMessage(ipykernel)))
     }
 
     list(
