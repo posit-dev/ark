@@ -12,6 +12,10 @@ use crate::interface::SessionMode;
 
 // There can be only one frontend per process. Needs to be in a mutex because
 // the frontend wraps zmq sockets which are unsafe to send across threads.
+//
+// This is using `Lazy` from the `once_cell` crate instead of other standard
+// types because the former provides a way of checking whether it has been
+// initialized already.
 static FRONTEND: Lazy<Arc<Mutex<DummyFrontend>>> =
     Lazy::new(|| Arc::new(Mutex::new(DummyArkFrontend::init())));
 
