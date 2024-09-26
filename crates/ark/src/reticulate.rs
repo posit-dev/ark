@@ -1,25 +1,24 @@
+use std::ops::Deref;
+use std::sync::LazyLock;
 use std::sync::Mutex;
 
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
-use anyhow::anyhow;
 use crossbeam::channel::Sender;
 use harp::RObject;
-use lazy_static::lazy_static;
 use libr::R_NilValue;
 use libr::SEXP;
 use serde_json::json;
+use stdext::result::ResultOrLog;
 use stdext::spawn;
 use stdext::unwrap;
 use uuid::Uuid;
 
 use crate::interface::RMain;
 
-lazy_static! {
-    static ref RETICULATE_COMM_ID: Mutex<Option<String>> = Mutex::new(None);
-}
+static RETICULATE_COMM_ID: LazyLock<Mutex<Option<String>>> = LazyLock::new(|| Mutex::new(None));
 
 pub struct ReticulateService {
     comm: CommSocket,
@@ -40,14 +39,15 @@ impl ReticulateService {
         };
 
         let event = CommManagerEvent::Opened(service.comm.clone(), serde_json::Value::Null);
-        unwrap!(service.comm_manager_tx.send(event), Err(e) => {
-            log::error!("Reticulate: Could not open comm. Error {e}");
-        });
+        service
+            .comm_manager_tx
+            .send(event)
+            .or_log_error("Reticulate: Could not open comm.");
 
         spawn!(format!("ark-reticulate-{}", comm_id), move || {
-            unwrap!(service.handle_messages(), Err(err) => {
-                log::error!("Connection Pane: Error while handling messages: {err:?}");
-            });
+            service
+                .handle_messages()
+                .or_log_error("Reticulate: Error handling messages");
         });
 
         Ok(comm_id)
@@ -61,33 +61,19 @@ impl ReticulateService {
             });
 
             if let CommMsg::Close = msg {
-                self.comm.outgoing_tx.send(CommMsg::Close).unwrap();
                 break;
-            }
-
-            // Forward data msgs to the frontend
-            if let CommMsg::Data(_) = msg {
-                self.comm.outgoing_tx.send(msg)?;
-                continue;
             }
         }
 
         // before finalizing the thread we make sure to send a close message to the front end
-        if let Err(err) = self.comm.outgoing_tx.send(CommMsg::Close) {
-            log::error!("Reticulate: Error while sending comm_close to front end: {err:?}");
-        }
+        self.comm
+            .outgoing_tx
+            .send(CommMsg::Close)
+            .or_log_error("Reticulate: Could not send close message to the front-end");
 
-        let mut comm_id_guard = unwrap!(
-            RETICULATE_COMM_ID.try_lock(),
-            Err(e) => {
-                return Err(anyhow!("Could not access comm_id. Error {}", e));
-            }
-        );
-        log::info!(
-            "Reticulate Thread closing {}",
-            (*comm_id_guard).clone().unwrap()
-        );
-
+        // Reset the global comm_id before closing
+        let mut comm_id_guard = RETICULATE_COMM_ID.lock().unwrap();
+        log::info!("Reticulate Thread closing {:?}", (*comm_id_guard).clone());
         *comm_id_guard = None;
 
         Ok(())
@@ -102,25 +88,16 @@ impl ReticulateService {
 pub unsafe extern "C" fn ps_reticulate_open(input: SEXP) -> Result<SEXP, anyhow::Error> {
     let main = RMain::get();
 
-    if !RMain::initialized() {
-        return Ok(R_NilValue);
-    }
-
-    let input = RObject::try_from(input)?;
+    let input: RObject = input.try_into()?;
     let input_code: Option<String> = input.try_into()?;
 
-    // If there's an id already registered, we just need to send the focus event
-    let mut comm_id_guard = unwrap!(
-        RETICULATE_COMM_ID.try_lock(),
-        Err(e) => {
-            return Err(anyhow!("Could not access comm_id. Error {}", e));
-        }
-    );
+    let mut comm_id_guard = RETICULATE_COMM_ID.lock().unwrap();
 
-    if let Some(id) = (*comm_id_guard).clone() {
+    // If there's an id already registered, we just need to send the focus event
+    if let Some(id) = comm_id_guard.deref() {
         // There's a comm_id registered, we just send the focus event
         main.get_comm_manager_tx().send(CommManagerEvent::Message(
-            id,
+            id.clone(),
             CommMsg::Data(json!({
                 "method": "focus",
                 "params": {
@@ -133,13 +110,8 @@ pub unsafe extern "C" fn ps_reticulate_open(input: SEXP) -> Result<SEXP, anyhow:
 
     let id = Uuid::new_v4().to_string();
     *comm_id_guard = Some(id.clone());
-    unwrap! (
-        ReticulateService::start(id, main.get_comm_manager_tx().clone()),
-        Err(err) => {
-            log::error!("Reticulate: Failed to start connection: {err:?}");
-            return Err(err);
-        }
-    );
+
+    ReticulateService::start(id, main.get_comm_manager_tx().clone())?;
 
     Ok(R_NilValue)
 }
