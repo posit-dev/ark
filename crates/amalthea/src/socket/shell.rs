@@ -221,6 +221,8 @@ impl Shell {
                 let r = req.send_reply(reply, &self.socket);
                 r
             },
+            // FIXME: Ark already created an `ExecuteReplyException` so we use
+            // `.send_reply()` instead of `.send_error()`. Can we streamline this?
             Err(err) => req.send_reply(err, &self.socket),
         }
     }
