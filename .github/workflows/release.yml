@@ -35,7 +35,7 @@ jobs:
             EXISTING_RELEASE: ${{ steps.release_flag.outputs.result }}
         steps:
             - name: Check for existing release tag
-              uses: mukunku/tag-exists-action@v1.3.0
+              uses: mukunku/tag-exists-action@v1.6.0
               id: check_tag
               with:
                   tag: ${{ needs.get_version.outputs.ARK_VERSION }}
@@ -184,17 +184,19 @@ jobs:
             - name: Checkout sources
               uses: actions/checkout@v4
 
+            - name: Check for existing release tag
+              uses: mukunku/tag-exists-action@v1.6.0
+              id: check_tag
+              with:
+                  tag: ${{ needs.get_version.outputs.ARK_VERSION }}
+
             - name: Delete failed release if any
+              if: steps.check_tag.outputs.exists == 'true'
               env:
                   GH_TOKEN: ${{ github.token }}
               run: |
                   TAG=${{ needs.get_version.outputs.ARK_VERSION }}
-                  if gh release view $TAG > /dev/null 2>&1; then
-                      echo "Cleaning up release $TAG"
-                      gh release delete $TAG -y --cleanup-tag
-                  else
-                      echo "No release to clean up"
-                  fi
+                  gh release delete $TAG -y --cleanup-tag
 
     # Keep this at the very end of the workflow tree and without any other
     # steps to ensure we get a Slack report when something failed
