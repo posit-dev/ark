@@ -169,6 +169,15 @@ impl DummyFrontend {
         })
     }
 
+    /// Receive from Shell and assert ExecuteReplyException message
+    pub fn recv_shell_execute_reply_exception(&self) -> Status {
+        let msg = Message::read_from_socket(&self.shell_socket).unwrap();
+
+        assert_match!(msg, Message::ExecuteReplyException(data) => {
+            data.content.status
+        })
+    }
+
     /// Receives a Jupyter message from the IOPub socket
     pub fn recv_iopub(&self) -> Message {
         Message::read_from_socket(&self.iopub_socket).unwrap()

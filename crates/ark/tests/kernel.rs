@@ -35,3 +35,18 @@ fn test_execute_request() {
 
     assert_eq!(frontend.recv_shell_execute_reply(), Status::Ok);
 }
+
+#[test]
+fn test_execute_request_error() {
+    let frontend = DummyArkFrontend::lock();
+
+    frontend.send_execute_request("stop('foobar')");
+    frontend.recv_iopub_busy();
+
+    assert_eq!(frontend.recv_iopub_execute_input().code, "stop('foobar')");
+    assert!(frontend.recv_iopub_execute_error().contains("foobar"));
+
+    frontend.recv_iopub_idle();
+
+    assert_eq!(frontend.recv_shell_execute_reply_exception(), Status::Error);
+}

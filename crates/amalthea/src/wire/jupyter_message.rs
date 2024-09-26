@@ -187,6 +187,12 @@ impl TryFrom<&WireMessage> for Message {
         if kind == InspectReply::message_type() {
             return Ok(Message::InspectReply(JupyterMessage::try_from(msg)?));
         }
+        if kind == ExecuteReplyException::message_type() {
+            if let Ok(data) = JupyterMessage::try_from(msg) {
+                return Ok(Message::ExecuteReplyException(data));
+            }
+            // else fallthrough to try `ExecuteRequest` which has the same message type
+        }
         if kind == ExecuteRequest::message_type() {
             return Ok(Message::ExecuteRequest(JupyterMessage::try_from(msg)?));
         }
@@ -195,6 +201,9 @@ impl TryFrom<&WireMessage> for Message {
         }
         if kind == ExecuteResult::message_type() {
             return Ok(Message::ExecuteResult(JupyterMessage::try_from(msg)?));
+        }
+        if kind == ExecuteError::message_type() {
+            return Ok(Message::ExecuteError(JupyterMessage::try_from(msg)?));
         }
         if kind == ExecuteInput::message_type() {
             return Ok(Message::ExecuteInput(JupyterMessage::try_from(msg)?));
