@@ -228,8 +228,8 @@ mod tests {
     use crate::lsp::completions::sources::unique::custom::completions_from_custom_source;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
-    use crate::test::point_from_cursor;
-    use crate::test::r_test;
+    use crate::fixtures::point_from_cursor;
+    use crate::fixtures::r_test;
 
     #[test]
     fn test_completion_custom_library() {

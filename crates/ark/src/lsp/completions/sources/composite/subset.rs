@@ -79,7 +79,7 @@ mod tests {
     use crate::lsp::completions::sources::composite::subset::completions_from_subset;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
-    use crate::test::r_test;
+    use crate::fixtures::r_test;
 
     #[test]
     fn test_subset_completions() {

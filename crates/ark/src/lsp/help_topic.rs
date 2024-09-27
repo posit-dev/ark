@@ -101,7 +101,7 @@ mod tests {
     use tree_sitter::Parser;
 
     use crate::lsp::help_topic::locate_help_node;
-    use crate::test::point_from_cursor;
+    use crate::fixtures::point_from_cursor;
 
     #[test]
     fn test_locate_help_node() {

@@ -10,12 +10,12 @@ use std::sync::Mutex;
 
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::event::CommManagerEvent;
+use amalthea::fixtures::dummy_frontend::DummyFrontend;
 use amalthea::kernel::Kernel;
 use amalthea::kernel::StreamBehavior;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
 use amalthea::socket::stdin::StdInRequest;
-use amalthea::test::dummy_frontend::DummyFrontend;
 use amalthea::wire::comm_close::CommClose;
 use amalthea::wire::comm_info_reply::CommInfoTargetName;
 use amalthea::wire::comm_info_request::CommInfoRequest;

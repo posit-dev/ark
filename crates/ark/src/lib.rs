@@ -32,7 +32,7 @@ pub mod srcref;
 pub mod start;
 pub mod startup;
 pub mod sys;
-pub mod test;
+pub mod fixtures;
 pub mod thread;
 pub mod traps;
 pub mod treesitter;

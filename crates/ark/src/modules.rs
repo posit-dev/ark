@@ -292,7 +292,7 @@ mod tests {
     use harp::environment::Environment;
     use libr::CLOENV;
 
-    use crate::test::r_test;
+    use crate::fixtures::r_test;
 
     fn get_namespace(exports: Environment, fun: &str) -> Environment {
         let fun = exports.find(fun).unwrap();

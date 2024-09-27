@@ -373,7 +373,7 @@ fn for_each_section(doc: &Html, mut callback: impl FnMut(ElementRef, Vec<Element
 mod tests {
     use crate::lsp::help::RHtmlHelp;
     use crate::lsp::help::Status;
-    use crate::test::r_test;
+    use crate::fixtures::r_test;
 
     #[test]
     fn test_help_from_function() {

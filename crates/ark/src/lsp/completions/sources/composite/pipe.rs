@@ -174,7 +174,7 @@ mod tests {
     use crate::lsp::completions::sources::composite::pipe::find_pipe_root;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
-    use crate::test::r_test;
+    use crate::fixtures::r_test;
 
     #[test]
     fn test_find_pipe_root_works_with_native_and_magrittr() {

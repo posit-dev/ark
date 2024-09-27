@@ -97,7 +97,7 @@ where
 mod tests {
     use tree_sitter::Point;
 
-    use crate::test::point_from_cursor;
+    use crate::fixtures::point_from_cursor;
 
     #[test]
     #[rustfmt::skip]

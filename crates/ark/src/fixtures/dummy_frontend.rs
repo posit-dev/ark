@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use std::sync::MutexGuard;
 use std::sync::OnceLock;
 
-use amalthea::test::dummy_frontend::DummyFrontend;
+use amalthea::fixtures::dummy_frontend::DummyFrontend;
 
 use crate::interface::RMain;
 use crate::interface::SessionMode;

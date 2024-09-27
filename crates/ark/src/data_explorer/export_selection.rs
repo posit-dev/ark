@@ -117,7 +117,7 @@ mod tests {
     use harp::object::RObject;
 
     use super::*;
-    use crate::test::r_test;
+    use crate::fixtures::r_test;
 
     fn export_selection_helper(data: RObject, selection: TableSelection) -> String {
         export_selection_helper_with_format(data, selection, ExportFormat::Csv)

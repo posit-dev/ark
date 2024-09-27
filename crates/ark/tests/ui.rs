@@ -16,7 +16,7 @@ use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
 use amalthea::socket::stdin::StdInRequest;
 use ark::r_task::r_task;
-use ark::test::r_test;
+use ark::fixtures::r_test;
 use ark::ui::UiComm;
 use ark::ui::UiCommMessage;
 use crossbeam::channel::bounded;

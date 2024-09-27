@@ -168,8 +168,8 @@ mod tests {
     use crate::lsp::completions::sources::unique::extractor::completions_from_dollar;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
-    use crate::test::point_from_cursor;
-    use crate::test::r_test;
+    use crate::fixtures::point_from_cursor;
+    use crate::fixtures::r_test;
 
     #[test]
     fn test_dollar_completions() {

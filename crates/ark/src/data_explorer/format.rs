@@ -440,7 +440,7 @@ impl Into<String> for FormattedValue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test::r_test;
+    use crate::fixtures::r_test;
 
     fn default_options() -> FormatOptions {
         FormatOptions {

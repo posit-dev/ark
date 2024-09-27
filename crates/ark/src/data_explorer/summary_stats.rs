@@ -167,7 +167,7 @@ fn get_stat<T: Clone>(stats: &HashMap<String, T>, name: &str) -> anyhow::Result<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test::r_test;
+    use crate::fixtures::r_test;
 
     fn default_options() -> FormatOptions {
         FormatOptions {

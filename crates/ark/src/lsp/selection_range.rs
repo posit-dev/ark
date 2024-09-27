@@ -124,7 +124,7 @@ mod tests {
     use tree_sitter::Point;
 
     use crate::lsp::selection_range::selection_range;
-    use crate::test::point_from_cursor;
+    use crate::fixtures::point_from_cursor;
 
     #[test]
     #[rustfmt::skip]
