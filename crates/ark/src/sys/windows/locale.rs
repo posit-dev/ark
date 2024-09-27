@@ -7,7 +7,7 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::test::r_test;
+    use crate::fixtures::r_test;
 
     #[test]
     fn test_locale() {
