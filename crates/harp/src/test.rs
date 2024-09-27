@@ -96,7 +96,7 @@ pub fn r_test_init() {
         let libraries = RLibraries::from_r_home_path(&r_home);
         libraries.initialize_pre_setup_r();
 
-        setup_r();
+        r_test_setup();
 
         libraries.initialize_post_setup_r();
 
@@ -109,7 +109,7 @@ pub fn r_test_init() {
     });
 }
 
-fn setup_r() {
+fn r_test_setup() {
     // Build the argument list for Rf_initialize_R
     let mut arguments = cargs!["R", "--slave", "--no-save", "--no-restore"];
 
