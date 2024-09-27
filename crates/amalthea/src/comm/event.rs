@@ -5,6 +5,7 @@
  *
  */
 
+use crossbeam::channel::Sender;
 use serde_json::Value;
 
 use crate::comm::comm_channel::CommMsg;
@@ -27,18 +28,24 @@ pub enum CommManagerEvent {
 
     /// A Comm was closed
     Closed(String),
+
+    /// A comm manager request
+    Request(CommManagerRequest),
 }
 
 /**
- * Enumeration of events that can be sent by the comm manager. These notify
- * other parts of the application that a comm was opened or closed, so that they
- * can update their state.
+ * Enumeration of requests that can be received by the comm manager.
  */
-pub enum CommShellEvent {
-    /// A new comm was opened. The first value is the comm ID, and the second
-    /// value is the comm name.
-    Added(String, String),
+pub enum CommManagerRequest {
+    /// Open comm information
+    Info(Sender<CommManagerInfoReply>),
+}
 
-    /// A comm was removed. The value is the comm ID.
-    Removed(String),
+pub struct CommManagerInfoReply {
+    pub comms: Vec<CommInfo>,
+}
+
+pub struct CommInfo {
+    pub id: String,
+    pub name: String,
 }
