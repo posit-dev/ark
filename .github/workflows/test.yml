@@ -7,18 +7,17 @@ on:
   workflow_dispatch:
 
 jobs:
-    # TODO
-    # test_macos:
-    #     name: Test macOS
-    #     uses: ./.github/workflows/test-macos.yml
-    #     secrets: inherit
+  test_macos:
+    name: Test macOS
+    uses: ./.github/workflows/test-macos.yml
+    secrets: inherit
 
-    test_windows:
-        name: Test Windows
-        uses: ./.github/workflows/test-windows.yml
-        secrets: inherit
+  test_windows:
+    name: Test Windows
+    uses: ./.github/workflows/test-windows.yml
+    secrets: inherit
 
-    test_linux:
-        name: Test Linux
-        uses: ./.github/workflows/test-linux.yml
-        secrets: inherit
+  test_linux:
+    name: Test Linux
+    uses: ./.github/workflows/test-linux.yml
+    secrets: inherit

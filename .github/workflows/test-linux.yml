@@ -35,8 +35,6 @@ jobs:
         run: |
           sudo apt-get update
 
-      # Unit tests "automatically" find and set `R_HOME` if it isn't set by
-      # calling `R RHOME`.
       - name: Run Unit Tests
         id: test
         run: |

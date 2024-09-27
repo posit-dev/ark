@@ -1,12 +1,12 @@
-name: "Test Ark - Windows"
+name: "Test Ark - macOS"
 
 on:
   workflow_call:
   workflow_dispatch:
 
 jobs:
-  windows:
-    runs-on: windows-latest
+  macos:
+    runs-on: macos-latest
     name: "Variant - Rust: ${{ matrix.config.rust }}, R: ${{ matrix.config.r }}"
     strategy:
       fail-fast: false
