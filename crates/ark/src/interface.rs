@@ -156,7 +156,6 @@ static R_INIT: once_cell::sync::OnceCell<()> = once_cell::sync::OnceCell::new();
 static mut R_MAIN: Option<RMain> = None;
 
 pub struct RMain {
-    initializing: bool,
     kernel_init_tx: Bus<KernelInfo>,
 
     /// Whether we are running in Console, Notebook, or Background mode.
@@ -406,17 +405,15 @@ impl RMain {
 
             // Set up the global error handler (after support function initialization)
             errors::initialize();
-        }
 
-        // Now that R has started (emitting any startup messages), and now that we have set
-        // up all hooks and handlers, officially finish the R initialization process to
-        // unblock the kernel-info request and also allow the LSP to start.
-        RMain::with_mut(|main| {
-            log::info!(
-                "R has started and ark handlers have been registered, completing initialization."
-            );
-            main.complete_initialization();
-        });
+            // Now that R has started (emitting any startup messages), and now that we have set
+            // up all hooks and handlers, officially finish the R initialization process to
+            // unblock the kernel-info request and also allow the LSP to start.
+            RMain::with_mut(|main| {
+                log::info!("R has started and ark handlers have been registered, completing initialization.");
+                main.complete_initialization();
+            });
+        }
 
         // Now that R has started and libr and ark have fully initialized, run site and user
         // level R profiles, in that order
@@ -429,6 +426,34 @@ impl RMain {
 
         // Does not return!
         crate::sys::interface::run_r();
+    }
+
+    /// Completes the kernel's initialization.
+    /// Unlike `RMain::start()`, this has access to `R_MAIN`'s state, such as
+    /// the kernel-info banner.
+    /// SAFETY: Can only be called from the R thread, and only once.
+    pub unsafe fn complete_initialization(&mut self) {
+        let version = unsafe {
+            let version = Rf_findVarInFrame(R_BaseNamespace, r_symbol!("R.version.string"));
+            RObject::new(version).to::<String>().unwrap()
+        };
+
+        // Initial input and continuation prompts
+        let input_prompt: String = harp::get_option("prompt").try_into().unwrap();
+        let continuation_prompt: String = harp::get_option("continue").try_into().unwrap();
+
+        let kernel_info = KernelInfo {
+            version: version.clone(),
+            banner: self.banner_output.clone(),
+            input_prompt: Some(input_prompt),
+            continuation_prompt: Some(continuation_prompt),
+        };
+
+        log::info!("Sending kernel info: {version}");
+        self.kernel_init_tx.broadcast(kernel_info);
+
+        // Thread-safe initialisation flag for R
+        R_INIT.set(()).expect("`R_INIT` can only be set once");
     }
 
     pub fn new(
@@ -445,7 +470,6 @@ impl RMain {
         session_mode: SessionMode,
     ) -> Self {
         Self {
-            initializing: true,
             r_request_rx,
             comm_manager_tx,
             stdin_request_tx,
@@ -474,12 +498,21 @@ impl RMain {
 
     /// Wait for complete R initialization
     ///
-    /// Wait for R being ready to take input (i.e. `ReadConsole` was called).
-    /// Resolves as the same time as the `Bus<KernelInfo>` init channel does.
+    /// Wait for R being ready to evaluate R code. Resolves as the same time as
+    /// the `Bus<KernelInfo>` init channel does.
     ///
     /// Thread-safe.
     pub fn wait_r_initialized() {
         R_INIT.wait();
+    }
+
+    /// Has R completed initialization
+    ///
+    /// I.e. is it ready to evaluate R code.
+    ///
+    /// Thread-safe.
+    pub fn is_r_initialized() -> bool {
+        R_INIT.get().is_some()
     }
 
     /// Has the `RMain` singleton completed initialization.
@@ -543,38 +576,6 @@ impl RMain {
     pub fn on_main_thread() -> bool {
         let thread = std::thread::current();
         thread.id() == unsafe { R_MAIN_THREAD_ID.unwrap() }
-    }
-
-    /// Completes the kernel's initialization
-    pub fn complete_initialization(&mut self) {
-        if self.initializing {
-            let version = unsafe {
-                let version = Rf_findVarInFrame(R_BaseNamespace, r_symbol!("R.version.string"));
-                RObject::new(version).to::<String>().unwrap()
-            };
-
-            // Initial input and continuation prompts
-            let input_prompt: String = harp::get_option("prompt").try_into().unwrap();
-            let continuation_prompt: String = harp::get_option("continue").try_into().unwrap();
-
-            let kernel_info = KernelInfo {
-                version: version.clone(),
-                banner: self.banner_output.clone(),
-                input_prompt: Some(input_prompt),
-                continuation_prompt: Some(continuation_prompt),
-            };
-
-            log::info!("Sending kernel info: {version}");
-            self.kernel_init_tx.broadcast(kernel_info);
-
-            // Internal initialisation flag, should only be used on the R thread
-            self.initializing = false;
-
-            // Used as thread-safe initialisation flag
-            R_INIT.set(()).unwrap();
-        } else {
-            log::warn!("Initialization already complete!");
-        }
     }
 
     /// Provides read-only access to `iopub_tx`
@@ -1323,7 +1324,7 @@ This is a Positron limitation we plan to fix. In the meantime, you can:
             Stream::Stderr
         };
 
-        if self.initializing {
+        if !RMain::is_r_initialized() {
             // During init, consider all output to be part of the startup banner
             self.banner_output.push_str(&content);
             return;
