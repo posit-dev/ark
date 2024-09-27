@@ -5,8 +5,8 @@
  *
  */
 
+use assert_matches::assert_matches;
 use serde_json::Value;
-use stdext::assert_match;
 
 use crate::connection_file::ConnectionFile;
 use crate::session::Session;
@@ -165,7 +165,7 @@ impl DummyFrontend {
     pub fn recv_shell_execute_reply(&self) -> u32 {
         let msg = self.recv_shell();
 
-        assert_match!(msg, Message::ExecuteReply(data) => {
+        assert_matches!(msg, Message::ExecuteReply(data) => {
             assert_eq!(data.content.status, Status::Ok);
             data.content.execution_count
         })
@@ -176,7 +176,7 @@ impl DummyFrontend {
     pub fn recv_shell_execute_reply_exception(&self) -> u32 {
         let msg = self.recv_shell();
 
-        assert_match!(msg, Message::ExecuteReplyException(data) => {
+        assert_matches!(msg, Message::ExecuteReplyException(data) => {
             assert_eq!(data.content.status, Status::Error);
             data.content.execution_count
         })
@@ -191,7 +191,7 @@ impl DummyFrontend {
     pub fn recv_iopub_busy(&self) -> () {
         let msg = self.recv_iopub();
 
-        assert_match!(msg, Message::Status(data) => {
+        assert_matches!(msg, Message::Status(data) => {
             assert_eq!(data.content.execution_state, ExecutionState::Busy);
         });
     }
@@ -200,7 +200,7 @@ impl DummyFrontend {
     pub fn recv_iopub_idle(&self) -> () {
         let msg = self.recv_iopub();
 
-        assert_match!(msg, Message::Status(data) => {
+        assert_matches!(msg, Message::Status(data) => {
             assert_eq!(data.content.execution_state, ExecutionState::Idle);
         });
     }
@@ -209,7 +209,7 @@ impl DummyFrontend {
     pub fn recv_iopub_execute_input(&self) -> ExecuteInput {
         let msg = self.recv_iopub();
 
-        assert_match!(msg, Message::ExecuteInput(data) => {
+        assert_matches!(msg, Message::ExecuteInput(data) => {
             data.content
         })
     }
@@ -219,9 +219,9 @@ impl DummyFrontend {
     pub fn recv_iopub_execute_result(&self) -> String {
         let msg = self.recv_iopub();
 
-        assert_match!(msg, Message::ExecuteResult(data) => {
-            assert_match!(data.content.data, Value::Object(map) => {
-                assert_match!(map["text/plain"], Value::String(ref string) => {
+        assert_matches!(msg, Message::ExecuteResult(data) => {
+            assert_matches!(data.content.data, Value::Object(map) => {
+                assert_matches!(map["text/plain"], Value::String(ref string) => {
                     string.clone()
                 })
             })
@@ -233,7 +233,7 @@ impl DummyFrontend {
     pub fn recv_iopub_execute_error(&self) -> String {
         let msg = self.recv_iopub();
 
-        assert_match!(msg, Message::ExecuteError(data) => {
+        assert_matches!(msg, Message::ExecuteError(data) => {
             data.content.exception.evalue
         })
     }
