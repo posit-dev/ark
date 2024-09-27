@@ -440,7 +440,9 @@ profile_histogram <- function(x, method = c("fixed", "sturges", "fd", "scott"), 
 
   # For dates, we convert back the breaks to the date representation.
   if (inherits(x, "POSIXct")) {
-    bin_edges <- as.POSIXct(h$breaks, tz = attr(x, "tzone"))
+    # Must supply an `origin` on R <= 4.2
+    origin <- as.POSIXct("1970-01-01", tz = "UTC")
+    bin_edges <- as.POSIXct(h$breaks, tz = attr(x, "tzone"), origin = origin)
   }
 
   list(
