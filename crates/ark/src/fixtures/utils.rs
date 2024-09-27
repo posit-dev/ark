@@ -20,12 +20,11 @@ use tree_sitter::Point;
 
 use crate::modules;
 
-// Lock for tests that can't be run concurrently. Only needed for tests that use
-// `r_test_init()` instead of `r_test()` since the latter takes the R lock.
+// Lock for tests that can't be run concurrently. Only needed for tests that can't
+// be wrapped in an `r_task()`.
 static TEST_LOCK: Mutex<()> = Mutex::new(());
 
-pub fn r_test_init_lock() -> MutexGuard<'static, ()> {
-    r_test_init();
+pub fn r_test_lock() -> MutexGuard<'static, ()> {
     TEST_LOCK.lock().unwrap()
 }
 

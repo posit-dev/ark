@@ -56,7 +56,7 @@ use amalthea::socket::comm::CommSocket;
 use ark::data_explorer::format::format_string;
 use ark::data_explorer::r_data_explorer::DataObjectEnvInfo;
 use ark::data_explorer::r_data_explorer::RDataExplorer;
-use ark::fixtures::r_test_init_lock;
+use ark::fixtures::r_test_lock;
 use ark::fixtures::socket_rpc_request;
 use ark::lsp::events::EVENTS;
 use ark::r_task::r_task;
@@ -368,7 +368,7 @@ DataExplorerBackendReply::SetSortColumnsReply() => {});
 
 #[test]
 fn test_basic_mtcars() {
-    let _lock = r_test_init_lock();
+    let _lock = r_test_lock();
 
     // --- mtcars ---
 
@@ -382,7 +382,7 @@ fn test_basic_mtcars() {
 
 #[test]
 fn test_tibble_support() {
-    let _lock = r_test_init_lock();
+    let _lock = r_test_lock();
 
     let has_tibble =
         r_task(|| harp::parse_eval_global("mtcars_tib <- tibble::as_tibble(mtcars)").is_ok());
@@ -403,7 +403,7 @@ fn test_tibble_support() {
 
 #[test]
 fn test_women_dataset() {
-    let _lock = r_test_init_lock();
+    let _lock = r_test_lock();
 
     // --- women ---
 
@@ -506,7 +506,7 @@ fn test_women_dataset() {
 
 #[test]
 fn test_matrix_support() {
-    let _lock = r_test_init_lock();
+    let _lock = r_test_lock();
 
     // --- volcano (a matrix) ---
 
@@ -583,7 +583,7 @@ fn test_matrix_support() {
 
 #[test]
 fn test_data_table_support() {
-    let _lock = r_test_init_lock();
+    let _lock = r_test_lock();
 
     // --- mtcars (as a data.table) ---
 
@@ -606,7 +606,7 @@ fn test_data_table_support() {
 
 #[test]
 fn test_null_counts() {
-    let _lock = r_test_init_lock();
+    let _lock = r_test_lock();
     // --- null count ---
 
     // Create a data frame with the Fibonacci sequence, including some NA values
@@ -714,7 +714,7 @@ fn test_null_counts() {
 
 #[test]
 fn test_summary_stats() {
-    let _lock = r_test_init_lock();
+    let _lock = r_test_lock();
     // --- summary stats ---
 
     // Create a data frame with some numbers, characters and booleans to test
@@ -784,7 +784,7 @@ fn test_summary_stats() {
 
 #[test]
 fn test_search_filters() {
-    let _lock = r_test_init_lock();
+    let _lock = r_test_lock();
     // --- search filters ---
 
     // Create a data frame with a bunch of words to use for regex testing.
@@ -1061,7 +1061,7 @@ fn test_search_filters() {
 
 #[test]
 fn test_live_updates() {
-    let _lock = r_test_init_lock();
+    let _lock = r_test_lock();
 
     let socket = open_data_explorer_from_expression(
         "x <- data.frame(y = c(3, 2, 1), z = c(4, 5, 6))",
@@ -1187,7 +1187,7 @@ DataExplorerBackendReply::SetSortColumnsReply() => {});
 
 #[test]
 fn test_boolean_filters() {
-    let _lock = r_test_init_lock();
+    let _lock = r_test_lock();
 
     // --- boolean filters ---
 
@@ -1246,7 +1246,7 @@ fn test_boolean_filters() {
 
 #[test]
 fn test_invalid_filters() {
-    let _lock = r_test_init_lock();
+    let _lock = r_test_lock();
 
     // --- invalid filters ---
 
@@ -1314,7 +1314,7 @@ fn test_invalid_filters() {
 // Refer to https://github.com/posit-dev/positron/issues/3141 for more info.
 #[test]
 fn test_invalid_filters_preserved() {
-    let _lock = r_test_init_lock();
+    let _lock = r_test_lock();
     let socket = open_data_explorer_from_expression(
         r#"test_df <- data.frame(x = c('','a', 'b'), y = c(1, 2, 3))"#,
         Some("test_df"),
@@ -1448,7 +1448,7 @@ fn test_invalid_filters_preserved() {
 
 #[test]
 fn test_data_explorer_special_values() {
-    let _lock = r_test_init_lock();
+    let _lock = r_test_lock();
 
     let code = "x <- tibble::tibble(
             a = c(1, NA, NaN, Inf, -Inf),
@@ -1496,7 +1496,7 @@ fn test_data_explorer_special_values() {
 // work with sorting/filtering the data and then exporting it.
 #[test]
 fn test_export_data() {
-    let _lock = r_test_init_lock();
+    let _lock = r_test_lock();
     let socket = open_data_explorer_from_expression(
         r#"
             data.frame(
@@ -1578,7 +1578,7 @@ fn test_export_data() {
 // A regression test for https://github.com/posit-dev/positron/issues/4170
 #[test]
 fn test_update_data_filters_reapplied() {
-    let _lock = r_test_init_lock();
+    let _lock = r_test_lock();
 
     let socket = open_data_explorer_from_expression(
         r#"
@@ -1689,7 +1689,7 @@ fn test_update_data_filters_reapplied() {
 
 #[test]
 fn test_get_data_values_by_indices() {
-    let _lock = r_test_init_lock();
+    let _lock = r_test_lock();
 
     let socket = open_data_explorer_from_expression(
         "data.frame(x = c(1:10), y = letters[1:10], z = seq(0,1, length.out = 10))",
@@ -1735,7 +1735,7 @@ fn test_get_data_values_by_indices() {
 
 #[test]
 fn test_data_update_num_rows() {
-    let _lock = r_test_init_lock();
+    let _lock = r_test_lock();
 
     // Regression test for https://github.com/posit-dev/positron/issues/4286
     // We test that after sending the data update event we also correctly update the
@@ -1784,7 +1784,7 @@ fn test_data_update_num_rows() {
 
 #[test]
 fn test_histogram() {
-    let _lock = r_test_init_lock();
+    let _lock = r_test_lock();
 
     let socket =
         open_data_explorer_from_expression("data.frame(x = rep(1:10, 10:1))", None).unwrap();
@@ -1827,7 +1827,7 @@ fn test_histogram() {
 
 #[test]
 fn test_frequency_table() {
-    let _lock = r_test_init_lock();
+    let _lock = r_test_lock();
 
     let socket =
         open_data_explorer_from_expression("data.frame(x = rep(letters[1:10], 10:1))", None)
