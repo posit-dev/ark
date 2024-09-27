@@ -65,7 +65,7 @@ pub static IS_TESTING: bool = cfg!(feature = "testing");
 
 static INIT: Once = Once::new();
 
-pub fn r_test<F: FnOnce()>(f: F) {
+pub fn r_task<F: FnOnce()>(f: F) {
     let guard = unsafe { R_RUNTIME_LOCK.lock() };
 
     r_test_init();

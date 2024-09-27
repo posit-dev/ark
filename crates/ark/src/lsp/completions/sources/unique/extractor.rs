@@ -169,11 +169,11 @@ mod tests {
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
     use crate::fixtures::point_from_cursor;
-    use crate::fixtures::r_test;
+    use crate::r_task;
 
     #[test]
     fn test_dollar_completions() {
-        r_test(|| {
+        r_task(|| {
             let options = RParseEvalOptions {
                 forbid_function_calls: false,
                 ..Default::default()
@@ -209,7 +209,7 @@ mod tests {
 
     #[test]
     fn test_dollar_completions_on_nonexistent_object() {
-        r_test(|| {
+        r_task(|| {
             let options = RParseEvalOptions {
                 forbid_function_calls: false,
                 ..Default::default()
@@ -242,7 +242,7 @@ mod tests {
 
     #[test]
     fn test_dollar_completions_on_complex_lhs() {
-        r_test(|| {
+        r_task(|| {
             let (text, point) = point_from_cursor("list(a = 1, b = 2)$@");
             let document = Document::new(text.as_str(), None);
             let context = DocumentContext::new(&document, point, None);
@@ -259,7 +259,7 @@ mod tests {
 
     #[test]
     fn test_dollar_completions_before_the_dollar() {
-        r_test(|| {
+        r_task(|| {
             let options = RParseEvalOptions {
                 forbid_function_calls: false,
                 ..Default::default()
@@ -285,7 +285,7 @@ mod tests {
 
     #[test]
     fn test_dollar_completions_in_an_identifier() {
-        r_test(|| {
+        r_task(|| {
             let options = RParseEvalOptions {
                 forbid_function_calls: false,
                 ..Default::default()

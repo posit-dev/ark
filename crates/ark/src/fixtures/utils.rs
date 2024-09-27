@@ -24,19 +24,6 @@ use crate::modules;
 // `r_test_init()` instead of `r_test()` since the latter takes the R lock.
 static TEST_LOCK: Mutex<()> = Mutex::new(());
 
-pub fn r_test<F: FnOnce()>(f: F) {
-    let f = || {
-        initialize_ark();
-        f()
-    };
-    harp::test::r_test(f)
-}
-
-pub fn r_test_init() {
-    harp::test::r_test_init();
-    initialize_ark();
-}
-
 pub fn r_test_init_lock() -> MutexGuard<'static, ()> {
     r_test_init();
     TEST_LOCK.lock().unwrap()
@@ -44,7 +31,8 @@ pub fn r_test_init_lock() -> MutexGuard<'static, ()> {
 
 static INIT: Once = Once::new();
 
-fn initialize_ark() {
+pub(crate) fn r_test_init() {
+    harp::test::r_test_init();
     INIT.call_once(|| {
         // Initialize the positron module so tests can use them.
         // Routines are already registered by `harp::test::r_test()`.

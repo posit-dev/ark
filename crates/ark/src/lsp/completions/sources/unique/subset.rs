@@ -159,16 +159,16 @@ fn node_is_c_call(x: &Node, contents: &Rope) -> bool {
 mod tests {
     use harp::eval::parse_eval_global;
 
+    use crate::fixtures::point_from_cursor;
     use crate::lsp::completions::sources::unique::subset::completions_from_string_subset;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
-    use crate::fixtures::point_from_cursor;
-    use crate::fixtures::r_test;
+    use crate::r_task;
     use crate::treesitter::node_find_string;
 
     #[test]
     fn test_string_subset_completions() {
-        r_test(|| {
+        r_task(|| {
             // Set up a list with names
             parse_eval_global("foo <- list(b = 1, a = 2)").unwrap();
 
@@ -261,7 +261,7 @@ mod tests {
 
     #[test]
     fn test_string_subset_completions_on_matrix() {
-        r_test(|| {
+        r_task(|| {
             // Set up a list with names
             parse_eval_global("foo <- array(1, dim = c(2, 2))").unwrap();
             parse_eval_global("colnames(foo) <- c('a', 'b')").unwrap();

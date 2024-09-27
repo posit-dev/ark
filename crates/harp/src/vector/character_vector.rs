@@ -138,13 +138,13 @@ impl TryFrom<&CharacterVector> for Vec<String> {
 mod test {
     use libr::STRSXP;
 
-    use crate::test::r_test;
+    use crate::test::r_task;
     use crate::utils::r_typeof;
     use crate::vector::*;
 
     #[test]
     fn test_character_vector() {
-        r_test(|| {
+        r_task(|| {
             let vector = CharacterVector::create(&["hello", "world"]);
             assert!(vector == ["hello", "world"]);
             assert!(vector == &["hello", "world"]);
@@ -166,7 +166,7 @@ mod test {
 
     #[test]
     fn test_create() {
-        r_test(|| {
+        r_task(|| {
             let expected = ["Apple", "Orange", "한"];
             let vector = CharacterVector::create(&expected);
             assert_eq!(vector.get(0).unwrap(), Some(String::from("Apple")));

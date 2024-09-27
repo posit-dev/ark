@@ -373,11 +373,11 @@ fn for_each_section(doc: &Html, mut callback: impl FnMut(ElementRef, Vec<Element
 mod tests {
     use crate::lsp::help::RHtmlHelp;
     use crate::lsp::help::Status;
-    use crate::fixtures::r_test;
+    use crate::r_task;
 
     #[test]
     fn test_help_from_function() {
-        r_test(|| {
+        r_task(|| {
             let help = RHtmlHelp::from_function("match", None);
             let help = help.unwrap().unwrap();
             assert!(help.function);
@@ -400,7 +400,7 @@ mod tests {
 
     #[test]
     fn test_markdown_conversion() {
-        r_test(|| {
+        r_task(|| {
             let help = RHtmlHelp::from_function("match", None);
             let help = help.unwrap().unwrap();
 
@@ -411,7 +411,7 @@ mod tests {
 
     #[test]
     fn test_parameters_on_non_functions() {
-        r_test(|| {
+        r_task(|| {
             let help = RHtmlHelp::from_topic("plotmath", None);
             let help = help.unwrap().unwrap();
             // Errors immediately
@@ -421,7 +421,7 @@ mod tests {
 
     #[test]
     fn test_parameter_on_non_functions() {
-        r_test(|| {
+        r_task(|| {
             let help = RHtmlHelp::from_topic("plotmath", None);
             let help = help.unwrap().unwrap();
             // Errors immediately

@@ -158,11 +158,11 @@ mod tests {
     use std::ops::Range;
 
     use crate::srcref::SrcRef;
-    use crate::test::r_test;
+    use crate::test::r_task;
 
     #[test]
     fn test_srcref() {
-        r_test(|| {
+        r_task(|| {
             let exprs = crate::parse_exprs_with_srcrefs("foo\n\nś\nbar(\n\n)").unwrap();
             let srcrefs: Vec<SrcRef> = exprs.srcrefs().unwrap();
             let foo = &srcrefs[0];
@@ -190,7 +190,7 @@ mod tests {
 
     #[test]
     fn test_srcref_line_directive() {
-        r_test(|| {
+        r_task(|| {
             let exprs = crate::parse_exprs_with_srcrefs("foo\n#line 5\nbar").unwrap();
             let srcrefs: Vec<SrcRef> = exprs.srcrefs().unwrap();
             let foo = &srcrefs[0];

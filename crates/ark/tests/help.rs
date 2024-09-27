@@ -13,7 +13,6 @@ use amalthea::comm::help_comm::HelpBackendRequest;
 use amalthea::comm::help_comm::ShowHelpTopicParams;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
-use ark::fixtures::r_test_init;
 use ark::help::r_help::RHelp;
 use ark::help_proxy;
 use ark::r_task::r_task;
@@ -25,8 +24,6 @@ use harp::exec::RFunction;
  */
 #[test]
 fn test_help_comm() {
-    r_test_init();
-
     // Create the comm socket for the Help comm
     let comm = CommSocket::new(
         CommInitiator::FrontEnd,
@@ -40,7 +37,7 @@ fn test_help_comm() {
     // Start the help comm. It's important to save the help event sender so
     // that the help comm doesn't exit before we're done with it; allowing the
     // sender to be dropped signals the help comm to exit.
-    let r_port = RHelp::r_start_or_reconnect_to_help_server().unwrap();
+    let r_port = r_task(|| RHelp::r_start_or_reconnect_to_help_server().unwrap());
     let proxy_port = help_proxy::start(r_port).unwrap();
     let _help_event_tx = RHelp::start(comm, r_port, proxy_port).unwrap();
 

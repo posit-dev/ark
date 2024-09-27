@@ -264,7 +264,7 @@ mod tests {
     use crate::lsp::completions::sources::utils::CallNodePositionType;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
-    use crate::fixtures::r_test;
+    use crate::r_task;
     use crate::treesitter::NodeType;
     use crate::treesitter::NodeTypeExt;
 
@@ -421,7 +421,7 @@ mod tests {
 
     #[test]
     fn test_completions_from_evaluated_object_names() {
-        r_test(|| {
+        r_task(|| {
             // Vector with names
             parse_eval_global("x <- 1:2").unwrap();
             parse_eval_global("names(x) <- c('a', 'b')").unwrap();

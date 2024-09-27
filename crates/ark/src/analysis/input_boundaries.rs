@@ -258,7 +258,7 @@ fn fill_gaps(
 #[cfg(test)]
 mod tests {
     use crate::analysis::input_boundaries::*;
-    use crate::fixtures::r_test;
+    use crate::r_task;
 
     fn p(text: &str) -> Vec<InputBoundary> {
         let mut boundaries = input_boundaries(text).unwrap();
@@ -297,7 +297,7 @@ mod tests {
 
     #[test]
     fn test_input_boundaries_complete() {
-        r_test(|| {
+        r_task(|| {
             assert_eq!(p("foo"), vec![complete(0, 1),]);
             assert_eq!(p("foo\nbarbaz  "), vec![complete(0, 1), complete(1, 2)]);
         })
@@ -305,7 +305,7 @@ mod tests {
 
     #[test]
     fn test_input_boundaries_whitespace() {
-        r_test(|| {
+        r_task(|| {
             #[rustfmt::skip]
             assert_eq!(p(""), vec![
                 whitespace(0, 1),
@@ -330,7 +330,7 @@ mod tests {
 
     #[test]
     fn test_input_boundaries_complete_semicolon() {
-        r_test(|| {
+        r_task(|| {
             // These should only produce a single complete input range
             assert_eq!(p("foo;bar"), vec![complete(0, 1)]);
             assert_eq!(p("foo;bar(\n)"), vec![complete(0, 2)]);
@@ -341,7 +341,7 @@ mod tests {
     #[test]
     fn test_input_boundaries_incomplete() {
         #[rustfmt::skip]
-        r_test(|| {
+        r_task(|| {
             assert_eq!(p("foo +"), vec![
                 incomplete(0, 1),
             ]);
@@ -369,7 +369,7 @@ mod tests {
     #[test]
     fn test_input_boundaries_invalid() {
         #[rustfmt::skip]
-        r_test(|| {
+        r_task(|| {
             assert_eq!(p("foo )"), vec![
                 invalid(0, 1),
             ]);
@@ -394,7 +394,7 @@ mod tests {
 
     #[test]
     fn test_input_boundaries_invalid_message() {
-        r_test(|| {
+        r_task(|| {
             let boundaries = input_boundaries("foo )").unwrap();
             assert_eq!(boundaries, vec![InputBoundary::invalid(
                 LineRange::new(0, 1),

@@ -18,6 +18,7 @@ use harp::test::R_RUNTIME_LOCK;
 use harp::test::R_TASK_BYPASS;
 use uuid::Uuid;
 
+use crate::fixtures::r_test_init;
 use crate::interface::RMain;
 
 // Compared to `futures::BoxFuture`, this doesn't require the future to be Send.
@@ -147,8 +148,9 @@ where
     T: 'env + Send,
 {
     // Escape hatch for unit tests
-    if unsafe { R_TASK_BYPASS } {
+    if harp::IS_TESTING {
         let _lock = unsafe { R_RUNTIME_LOCK.lock() };
+        r_test_init();
         return f();
     }
 

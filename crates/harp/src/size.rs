@@ -437,7 +437,7 @@ fn v_size(n: usize, element_size: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use crate::size::r_size;
-    use crate::test::r_test;
+    use crate::test::r_task;
 
     fn object_size(code: &str) -> usize {
         let object = harp::parse_eval_global(code).unwrap();
@@ -461,7 +461,7 @@ mod tests {
 
     #[test]
     fn test_length_one_vectors() {
-        r_test(|| {
+        r_task(|| {
             expect_same("1L");
             expect_same("'abc'");
             expect_same("paste(rep('banana', 100), collapse = '')");
@@ -473,7 +473,7 @@ mod tests {
     // size scales correctly with length (accounting for vector pool)
     #[test]
     fn test_sizes_scale_correctly() {
-        r_test(|| {
+        r_task(|| {
             expect_same("numeric()");
             expect_same("1");
             expect_same("2");
@@ -484,7 +484,7 @@ mod tests {
 
     #[test]
     fn test_size_of_lists() {
-        r_test(|| {
+        r_task(|| {
             expect_same("list()");
             expect_same("as.list(1)");
             expect_same("as.list(1:2)");
@@ -496,7 +496,7 @@ mod tests {
 
     #[test]
     fn test_size_of_symbols() {
-        r_test(|| {
+        r_task(|| {
             expect_same("quote(x)");
             expect_same("quote(asfsadfasdfasdfds)");
         });
@@ -504,7 +504,7 @@ mod tests {
 
     #[test]
     fn test_pairlists() {
-        r_test(|| {
+        r_task(|| {
             expect_same("pairlist()");
             expect_same("pairlist(1)");
             expect_same("pairlist(1, 2)");
@@ -515,12 +515,12 @@ mod tests {
 
     #[test]
     fn test_s4_classes() {
-        r_test(|| expect_same("methods::setClass('Z', slots = c(x = 'integer'))(x=1L)"));
+        r_task(|| expect_same("methods::setClass('Z', slots = c(x = 'integer'))(x=1L)"));
     }
 
     #[test]
     fn test_size_attributes() {
-        r_test(|| {
+        r_task(|| {
             expect_same("c(x = 1)");
             expect_same("list(x = 1)");
             expect_same("c(x = 'y')");
@@ -529,7 +529,7 @@ mod tests {
 
     #[test]
     fn test_duplicated_charsxps_counted_once() {
-        r_test(|| {
+        r_task(|| {
             expect_same("'x'");
             expect_same("c('x', 'y', 'x')");
             expect_same("c('banana', 'banana', 'banana')");
@@ -538,7 +538,7 @@ mod tests {
 
     #[test]
     fn test_shared_components_once() {
-        r_test(|| {
+        r_task(|| {
             let size1 = object_size(
                 "local({
                 x <- 1:1e3
@@ -554,7 +554,7 @@ mod tests {
 
     #[test]
     fn test_size_closures() {
-        r_test(|| {
+        r_task(|| {
             let code = "local({
                 f <- function() NULL
                 attributes(f) <- NULL # zap srcrefs
@@ -567,7 +567,7 @@ mod tests {
 
     #[test]
     fn test_works_for_altrep() {
-        r_test(|| {
+        r_task(|| {
             let size = object_size("1:1e6");
             // Currently reported size is 640 B
             // If regular vector would be 4,000,040 B
@@ -579,7 +579,7 @@ mod tests {
 
     #[test]
     fn test_compute_size_defered_strings() {
-        r_test(|| {
+        r_task(|| {
             let code = "local({
                 x <- 1:64
                 names(x) <- x
@@ -594,7 +594,7 @@ mod tests {
 
     #[test]
     fn test_terminal_envs_have_size_zero() {
-        r_test(|| {
+        r_task(|| {
             expect_size("globalenv()", 0);
             expect_size("baseenv()", 0);
             expect_size("emptyenv()", 0);
@@ -604,7 +604,7 @@ mod tests {
 
     #[test]
     fn test_env_size_recursive() {
-        r_test(|| {
+        r_task(|| {
             let e_size = object_size("new.env(parent = emptyenv())");
 
             let f_size = object_size(
@@ -620,7 +620,7 @@ mod tests {
 
     #[test]
     fn test_size_of_functions_include_envs() {
-        r_test(|| {
+        r_task(|| {
             let code = "local({
               f <- function() {
                 y <- 1:1e3 + 1L
@@ -645,7 +645,7 @@ mod tests {
 
     #[test]
     fn test_support_dots() {
-        r_test(|| {
+        r_task(|| {
             // Check it doesn't error
             let size = object_size("(function(...) function() NULL)(foo)");
             assert!(size != 0)
@@ -654,7 +654,7 @@ mod tests {
 
     #[test]
     fn test_immediate_bindings() {
-        r_test(|| {
+        r_task(|| {
             let size = object_size(
                 "local({
                     f <- compiler::cmpfun(function() for (i in 1:3) return(environment()))

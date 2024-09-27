@@ -153,13 +153,13 @@ mod tests {
     use crate::lsp::completions::sources::composite::is_identifier_like;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
-    use crate::fixtures::r_test;
+    use crate::r_task;
     use crate::treesitter::NodeType;
     use crate::treesitter::NodeTypeExt;
 
     #[test]
     fn test_completions_on_anonymous_node_keywords() {
-        r_test(|| {
+        r_task(|| {
             // `if`, `for`, and `while` in particular are both tree-sitter
             // anonymous nodes and snippet keywords, so they need to look like
             // identifiers that we provide completions for

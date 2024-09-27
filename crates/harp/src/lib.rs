@@ -252,13 +252,13 @@ mod tests {
     use super::*;
     use crate::object::RObject;
     use crate::protect::RProtect;
-    use crate::test::r_test;
+    use crate::test::r_task;
     use crate::utils::r_is_null;
     use crate::utils::r_typeof;
 
     #[test]
     fn test_pairlist() {
-        r_test(|| unsafe {
+        r_task(|| unsafe {
             let sym = r_symbol!("injected");
 
             let mut protect = RProtect::new();
@@ -319,7 +319,7 @@ mod tests {
 
     #[test]
     fn test_call() {
-        r_test(|| unsafe {
+        r_task(|| unsafe {
             let sym = r_symbol!("injected");
 
             let value = RObject::new(r_lang! {

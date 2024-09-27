@@ -291,7 +291,7 @@ mod tests {
     use harp::environment::Environment;
     use libr::CLOENV;
 
-    use crate::fixtures::r_test;
+    use crate::r_task;
 
     fn get_namespace(exports: Environment, fun: &str) -> Environment {
         let fun = exports.find(fun).unwrap();
@@ -301,7 +301,7 @@ mod tests {
 
     #[test]
     fn test_environments_are_locked() {
-        r_test(|| {
+        r_task(|| {
             let positron_exports =
                 harp::parse_eval_base("as.environment('tools:positron')").unwrap();
             let rstudio_exports = harp::parse_eval_base("as.environment('tools:rstudio')").unwrap();

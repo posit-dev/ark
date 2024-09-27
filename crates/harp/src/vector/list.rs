@@ -141,14 +141,14 @@ impl std::iter::Iterator for ListIter {
 
 #[cfg(test)]
 mod test {
-    use crate::test::r_test;
+    use crate::test::r_task;
     use crate::vector::list::List;
     use crate::vector::Vector;
     use crate::RObject;
 
     #[test]
     fn test_list() {
-        r_test(|| {
+        r_task(|| {
             let xs = List::create::<[RObject; 0]>([]);
             assert!(xs.iter().next().is_none());
 

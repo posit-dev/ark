@@ -12,7 +12,6 @@ use amalthea::comm::event::CommManagerEvent;
 use amalthea::socket;
 use ark::connections::r_connection::Metadata;
 use ark::connections::r_connection::RConnection;
-use ark::fixtures::r_test_init;
 use ark::fixtures::socket_rpc_request;
 use ark::modules::ARK_ENVS;
 use ark::r_task::r_task;
@@ -90,7 +89,6 @@ fn socket_rpc(
 
 #[test]
 fn test_connections_get_icon() {
-    r_test_init();
     let socket = open_dummy_connection();
 
     // Check that we get the correct icons
@@ -123,7 +121,6 @@ fn test_connections_get_icon() {
 
 #[test]
 fn test_connections_contains_data() {
-    r_test_init();
     let socket = open_dummy_connection();
 
     // Check that we get the correct `contains_data`
@@ -147,7 +144,6 @@ fn test_connections_contains_data() {
 
 #[test]
 fn test_connections_list_objects() {
-    r_test_init();
     let socket = open_dummy_connection();
 
     // Check that we get the correct list of objects
@@ -172,7 +168,6 @@ fn test_connections_list_objects() {
 
 #[test]
 fn test_connection_list_fields() {
-    r_test_init();
     let socket = open_dummy_connection();
 
     // Check that we get the correct list of objects
@@ -201,7 +196,6 @@ fn test_connection_list_fields() {
 
 #[test]
 fn test_send_frontend_event() {
-    r_test_init();
     let socket = open_dummy_connection();
 
     let event = ConnectionsFrontendEvent::Update;

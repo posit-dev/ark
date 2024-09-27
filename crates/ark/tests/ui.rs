@@ -15,7 +15,6 @@ use amalthea::comm::ui_comm::UiFrontendEvent;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
 use amalthea::socket::stdin::StdInRequest;
-use ark::fixtures::r_test_init;
 use ark::r_task::r_task;
 use ark::ui::UiComm;
 use ark::ui::UiCommMessage;
@@ -30,8 +29,6 @@ use serde_json::Value;
  */
 #[test]
 fn test_ui_comm() {
-    r_test_init();
-
     // Create a sender/receiver pair for the comm channel.
     let comm_socket = CommSocket::new(
         CommInitiator::FrontEnd,

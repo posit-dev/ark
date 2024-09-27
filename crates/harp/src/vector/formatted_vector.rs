@@ -227,7 +227,7 @@ mod tests {
     use crate::eval::parse_eval0;
     use crate::modules::HARP_ENV;
     use crate::r_assert_type;
-    use crate::test::r_test;
+    use crate::test::r_task;
     use crate::vector::formatted_vector::FormattedVector;
     use crate::vector::formatted_vector::FormattedVectorOptions;
     use crate::vector::FormatOptions;
@@ -235,7 +235,7 @@ mod tests {
     #[test]
     fn test_unconforming_format_method() {
         // Test that we recover from unconforming `format()` methods
-        r_test(|| unsafe {
+        r_task(|| unsafe {
             let exp = String::from("\"1\" \"2\"");
 
             // From src/modules/format.R
@@ -261,7 +261,7 @@ mod tests {
 
     #[test]
     fn test_formatting_option() {
-        r_test(|| {
+        r_task(|| {
             let x = harp::parse_eval_base(r#"c("1", "2", '"a"', "NA", NA_character_)"#).unwrap();
             r_assert_type(x.sexp, &[STRSXP]).unwrap();
 

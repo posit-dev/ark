@@ -80,7 +80,7 @@ mod tests {
     use crate::r_alloc_integer;
     use crate::r_chr_poke;
     use crate::r_list_poke;
-    use crate::test::r_test;
+    use crate::test::r_task;
     use crate::vector::Vector;
     use crate::DataFrame;
     use crate::List;
@@ -88,7 +88,7 @@ mod tests {
 
     #[test]
     fn test_data_frame_structure() {
-        r_test(|| {
+        r_task(|| {
             let df = harp::parse_eval_base("data.frame(x = 1:2, y = 3:4)").unwrap();
             let df = DataFrame::new(df.sexp).unwrap();
 
@@ -103,7 +103,7 @@ mod tests {
 
     #[test]
     fn test_data_frame_no_names() {
-        r_test(|| {
+        r_task(|| {
             let df = harp::parse_eval_base("data.frame(x = 1:2, y = 3:4)").unwrap();
             df.set_attr("names", RObject::null().sexp);
             let df = DataFrame::new(df.sexp);
@@ -116,7 +116,7 @@ mod tests {
 
     #[test]
     fn test_data_frame_bad_names() {
-        r_test(|| {
+        r_task(|| {
             let df = harp::parse_eval_base("data.frame(x = 1:2, y = 3:4)").unwrap();
             let nms = df.attr("names").unwrap();
             unsafe {
@@ -132,7 +132,7 @@ mod tests {
 
     #[test]
     fn test_data_frame_bad_column_type() {
-        r_test(|| {
+        r_task(|| {
             let df = harp::parse_eval_base("data.frame(x = 1:2, y = 3:4)").unwrap();
             r_list_poke(df.sexp, 0, RObject::null().sexp);
 
@@ -146,7 +146,7 @@ mod tests {
 
     #[test]
     fn test_data_frame_bad_column_size() {
-        r_test(|| {
+        r_task(|| {
             let df = harp::parse_eval_base("data.frame(x = 1:2, y = 3:4)").unwrap();
             let bad_col = r_alloc_integer(3);
             r_list_poke(df.sexp, 0, bad_col);
@@ -161,7 +161,7 @@ mod tests {
 
     #[test]
     fn test_data_frame_col() {
-        r_test(|| {
+        r_task(|| {
             let df = harp::parse_eval_base("data.frame(x = 1:2, y = 3:4)").unwrap();
             let df = DataFrame::new(df.sexp).unwrap();
 

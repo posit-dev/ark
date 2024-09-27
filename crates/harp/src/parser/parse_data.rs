@@ -142,11 +142,11 @@ mod tests {
     use harp::srcref;
 
     use crate::parse_data::ParseData;
-    use crate::test::r_test;
+    use crate::test::r_task;
 
     #[test]
     fn test_parse_data() {
-        r_test(|| {
+        r_task(|| {
             let srcfile = srcref::SrcFile::try_from("foo\nbar").unwrap();
             let exprs = parse::parse_exprs_ext(&parse::ParseInput::SrcFile(&srcfile)).unwrap();
             let srcrefs: Vec<harp::srcref::SrcRef> = exprs.srcrefs().unwrap();
