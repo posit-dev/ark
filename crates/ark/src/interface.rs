@@ -490,17 +490,6 @@ impl RMain {
         R_MAIN_INIT.get().is_some()
     }
 
-    /// Wait for `RMain` singleton initialization
-    ///
-    /// Note that R might still not have finished starting up.
-    /// See `wait_r_initialized()`.
-    ///
-    /// Thread-safe. But note you can only get access to the singleton on the R
-    /// thread.
-    pub fn wait_initialized() {
-        R_MAIN_INIT.wait();
-    }
-
     /// Access a reference to the singleton instance of this struct
     ///
     /// SAFETY: Accesses must occur after `start_r()` initializes it, and must
