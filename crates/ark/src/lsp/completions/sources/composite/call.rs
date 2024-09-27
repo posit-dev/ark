@@ -289,7 +289,7 @@ mod tests {
     use crate::lsp::completions::sources::composite::call::completions_from_call;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
-    use crate::test::r_test;
+    use crate::fixtures::r_test;
 
     #[test]
     fn test_completions_after_user_types_part_of_an_argument_name() {

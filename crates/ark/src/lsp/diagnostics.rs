@@ -1034,7 +1034,7 @@ mod tests {
     use crate::lsp::diagnostics::generate_diagnostics;
     use crate::lsp::documents::Document;
     use crate::lsp::state::WorldState;
-    use crate::test::r_test;
+    use crate::fixtures::r_test;
 
     // Default state that includes installed packages and default scopes.
     static DEFAULT_STATE: Lazy<WorldState> = Lazy::new(|| current_state());

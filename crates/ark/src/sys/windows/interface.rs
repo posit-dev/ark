@@ -74,6 +74,7 @@ pub fn setup_r(mut _args: Vec<*mut c_char>) {
         (*params).ShowMessage = Some(r_show_message);
         (*params).YesNoCancel = Some(r_yes_no_cancel);
         (*params).Busy = Some(r_busy);
+        (*params).Suicide = Some(r_suicide);
 
         // This is assigned to `ptr_ProcessEvents` (which we don't set on Unix),
         // in `R_SetParams()` by `R_SetWin32()` and gets called by `R_ProcessEvents()`.

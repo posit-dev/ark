@@ -275,32 +275,32 @@ pub unsafe extern "C" fn ps_connection_opened(
     code: SEXP,
 ) -> Result<SEXP, anyhow::Error> {
     let id = Uuid::new_v4().to_string();
+    let id_r: RObject = id.clone().into();
 
-    // If RMain is not initialized, we are probably in testing mode, so we just don't start the connection
-    // and let the testing code manually do it
-    if RMain::initialized() {
-        let main = RMain::get();
-
-        let metadata = Metadata {
-            name: RObject::view(name).to::<String>()?,
-            language_id: String::from("r"),
-            host: RObject::view(host).to::<Option<String>>().unwrap_or(None),
-            r#type: RObject::view(r#type).to::<Option<String>>().unwrap_or(None),
-            code: RObject::view(code).to::<Option<String>>().unwrap_or(None),
-        };
-
-        unwrap! (
-            RConnection::start(metadata, main.get_comm_manager_tx().clone(), id.clone()),
-            Err(err) => {
-                log::error!("Connection Pane: Failed to start connection: {err:?}");
-                return Err(err);
-            }
-        );
-    } else {
+    if !RMain::is_initialized() {
+        // If RMain is not initialized, we are probably in unit tests, so we
+        // just don't start the connection and let the testing code manually do
+        // it. Note that RMain could be initialized in integration tests.
         log::warn!("Connection Pane: RMain is not initialized. Connection will not be started.");
+        return Ok(id_r.sexp);
     }
 
-    Ok(RObject::from(id).into())
+    let main = RMain::get();
+
+    let metadata = Metadata {
+        name: RObject::view(name).to::<String>()?,
+        language_id: String::from("r"),
+        host: RObject::view(host).to::<Option<String>>().unwrap_or(None),
+        r#type: RObject::view(r#type).to::<Option<String>>().unwrap_or(None),
+        code: RObject::view(code).to::<Option<String>>().unwrap_or(None),
+    };
+
+    if let Err(err) = RConnection::start(metadata, main.get_comm_manager_tx().clone(), id) {
+        log::error!("Connection Pane: Failed to start connection: {err:?}");
+        return Err(err);
+    }
+
+    return Ok(id_r.sexp);
 }
 
 #[harp::register]

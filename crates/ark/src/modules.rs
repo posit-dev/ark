@@ -11,6 +11,7 @@ use harp::environment::R_ENVS;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::r_symbol;
+use harp::test::IS_TESTING;
 use harp::utils::r_poke_option;
 use libr::Rf_ScalarLogical;
 use libr::SEXP;
@@ -74,9 +75,9 @@ pub struct ArkEnvs {
     pub rstudio_ns: SEXP,
 }
 
-pub fn initialize(testing: bool) -> anyhow::Result<()> {
+pub fn initialize() -> anyhow::Result<()> {
     // If we are `testing`, set the corresponding R level global option
-    if testing {
+    if IS_TESTING {
         r_poke_option_ark_testing()
     }
 
@@ -291,7 +292,7 @@ mod tests {
     use harp::environment::Environment;
     use libr::CLOENV;
 
-    use crate::test::r_test;
+    use crate::fixtures::r_test;
 
     fn get_namespace(exports: Environment, fun: &str) -> Environment {
         let fun = exports.find(fun).unwrap();

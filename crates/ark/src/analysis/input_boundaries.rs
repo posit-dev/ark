@@ -258,7 +258,7 @@ fn fill_gaps(
 #[cfg(test)]
 mod tests {
     use crate::analysis::input_boundaries::*;
-    use crate::test::r_test;
+    use crate::fixtures::r_test;
 
     fn p(text: &str) -> Vec<InputBoundary> {
         let mut boundaries = input_boundaries(text).unwrap();

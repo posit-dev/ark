@@ -61,8 +61,8 @@ mod tests {
     use crate::lsp::completions::sources::unique::string::completions_from_string;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
-    use crate::test::point_from_cursor;
-    use crate::test::r_test;
+    use crate::fixtures::point_from_cursor;
+    use crate::fixtures::r_test;
     use crate::treesitter::node_find_string;
     use crate::treesitter::NodeTypeExt;
 

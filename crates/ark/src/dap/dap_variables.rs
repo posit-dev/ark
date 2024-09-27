@@ -411,7 +411,7 @@ mod tests {
     use libr::*;
 
     use crate::dap::dap_variables::env_binding_variable;
-    use crate::test::r_test;
+    use crate::fixtures::r_test;
 
     #[test]
     fn test_env_binding_variable_base() {

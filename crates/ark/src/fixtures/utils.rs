@@ -32,7 +32,7 @@ fn initialize_ark() {
     INIT.call_once(|| {
         // Initialize the positron module so tests can use them.
         // Routines are already registered by `harp::test::r_test()`.
-        modules::initialize(true).unwrap();
+        modules::initialize().unwrap();
     });
 }
 
@@ -97,7 +97,7 @@ where
 mod tests {
     use tree_sitter::Point;
 
-    use crate::test::point_from_cursor;
+    use crate::fixtures::point_from_cursor;
 
     #[test]
     #[rustfmt::skip]

@@ -225,7 +225,7 @@ mod tests {
     use crate::lsp::completions::sources::unique::namespace::completions_from_namespace;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
-    use crate::test::r_test;
+    use crate::fixtures::r_test;
 
     #[test]
     fn test_completions_after_colons() {

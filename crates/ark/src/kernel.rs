@@ -75,7 +75,7 @@ impl Kernel {
 
         r_task::spawn_interrupt(|| async move {
             // Get the current busy status
-            let busy = if RMain::initialized() {
+            let busy = if RMain::is_initialized() {
                 RMain::get().is_busy
             } else {
                 false

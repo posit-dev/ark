@@ -1,18 +1,26 @@
 /*
- * mod.rs
+ * dummy_frontend.rs
  *
- * Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+ * Copyright (C) 2022-2024 Posit Software, PBC. All rights reserved.
  *
  */
 
-use amalthea::connection_file::ConnectionFile;
-use amalthea::session::Session;
-use amalthea::socket::socket::Socket;
-use amalthea::wire::jupyter_message::JupyterMessage;
-use amalthea::wire::jupyter_message::Message;
-use amalthea::wire::jupyter_message::ProtocolMessage;
+use serde_json::Value;
+use stdext::assert_match;
 
-pub struct Frontend {
+use crate::connection_file::ConnectionFile;
+use crate::session::Session;
+use crate::socket::socket::Socket;
+use crate::wire::execute_input::ExecuteInput;
+use crate::wire::execute_reply::ExecuteReply;
+use crate::wire::execute_request::ExecuteRequest;
+use crate::wire::jupyter_message::JupyterMessage;
+use crate::wire::jupyter_message::Message;
+use crate::wire::jupyter_message::ProtocolMessage;
+use crate::wire::status::ExecutionState;
+use crate::wire::wire_message::WireMessage;
+
+pub struct DummyFrontend {
     pub _control_socket: Socket,
     pub shell_socket: Socket,
     pub iopub_socket: Socket,
@@ -27,7 +35,7 @@ pub struct Frontend {
     heartbeat_port: u16,
 }
 
-impl Frontend {
+impl DummyFrontend {
     pub fn new() -> Self {
         use rand::Rng;
 
@@ -117,7 +125,7 @@ impl Frontend {
 
     /// Completes initialization of the frontend (usually done after the kernel
     /// is ready and connected)
-    pub fn complete_intialization(&self) {
+    pub fn complete_initialization(&self) {
         self.iopub_socket.subscribe().unwrap();
     }
 
@@ -130,6 +138,17 @@ impl Frontend {
         id
     }
 
+    pub fn send_execute_request(&self, code: &str) -> String {
+        self.send_shell(ExecuteRequest {
+            code: String::from(code),
+            silent: false,
+            store_history: true,
+            user_expressions: serde_json::Value::Null,
+            allow_stdin: false,
+            stop_on_error: false,
+        })
+    }
+
     /// Sends a Jupyter message on the Stdin socket
     pub fn send_stdin<T: ProtocolMessage>(&self, msg: T) {
         let message = JupyterMessage::create(msg, None, &self.session);
@@ -137,22 +156,82 @@ impl Frontend {
     }
 
     /// Receives a Jupyter message from the Shell socket
-    pub fn receive_shell(&self) -> Message {
+    pub fn recv_shell(&self) -> Message {
         Message::read_from_socket(&self.shell_socket).unwrap()
     }
 
+    /// Receive from Shell and assert ExecuteReply message
+    pub fn recv_shell_execute_reply(&self) -> ExecuteReply {
+        let msg = self.recv_shell();
+
+        assert_match!(msg, Message::ExecuteReply(data) => {
+            data.content
+        })
+    }
+
     /// Receives a Jupyter message from the IOPub socket
-    pub fn receive_iopub(&self) -> Message {
+    pub fn recv_iopub(&self) -> Message {
         Message::read_from_socket(&self.iopub_socket).unwrap()
     }
 
+    /// Receive from IOPub and assert Busy message
+    pub fn recv_iopub_busy(&self) -> () {
+        let msg = self.recv_iopub();
+
+        assert_match!(msg, Message::Status(data) => {
+            assert_eq!(data.content.execution_state, ExecutionState::Busy);
+        });
+    }
+
+    /// Receive from IOPub and assert Idle message
+    pub fn recv_iopub_idle(&self) -> () {
+        let msg = self.recv_iopub();
+
+        assert_match!(msg, Message::Status(data) => {
+            assert_eq!(data.content.execution_state, ExecutionState::Idle);
+        });
+    }
+
+    /// Receive from IOPub and assert ExecuteInput message
+    pub fn recv_iopub_execute_input(&self) -> ExecuteInput {
+        let msg = self.recv_iopub();
+
+        assert_match!(msg, Message::ExecuteInput(data) => {
+            data.content
+        })
+    }
+
+    /// Receive from IOPub and assert ExecuteResult message. Returns compulsory
+    /// `plain/text` result.
+    pub fn recv_iopub_execute_result(&self) -> String {
+        let msg = self.recv_iopub();
+
+        assert_match!(msg, Message::ExecuteResult(data) => {
+            assert_match!(data.content.data, Value::Object(map) => {
+                assert_match!(map["text/plain"], Value::String(ref string) => {
+                    string.clone()
+                })
+            })
+        })
+    }
+
+    /// Receive from IOPub and assert ExecuteResult message. Returns compulsory
+    /// `evalue` field.
+    pub fn recv_iopub_execute_error(&self) -> String {
+        let msg = self.recv_iopub();
+
+        assert_match!(msg, Message::ExecuteError(data) => {
+            data.content.exception.evalue
+        })
+    }
+
     /// Receives a Jupyter message from the Stdin socket
-    pub fn receive_stdin(&self) -> Message {
+    pub fn recv_stdin(&self) -> Message {
         Message::read_from_socket(&self.stdin_socket).unwrap()
     }
 
     /// Receives a (raw) message from the heartbeat socket
-    pub fn receive_heartbeat(&self) -> zmq::Message {
+    pub fn recv_heartbeat(&self) -> zmq::Message {
         let mut msg = zmq::Message::new();
         self.heartbeat_socket.recv(&mut msg).unwrap();
         msg
@@ -176,6 +255,41 @@ impl Frontend {
             signature_scheme: String::from("hmac-sha256"),
             ip: String::from("127.0.0.1"),
             key: self.key.clone(),
+        }
+    }
+
+    /// Asserts that no socket has incoming data
+    pub fn assert_no_incoming(&mut self) {
+        let mut has_incoming = false;
+
+        if self.iopub_socket.has_incoming_data().unwrap() {
+            has_incoming = true;
+            Self::flush_incoming("IOPub", &self.iopub_socket);
+        }
+        if self.shell_socket.has_incoming_data().unwrap() {
+            has_incoming = true;
+            Self::flush_incoming("Shell", &self.shell_socket);
+        }
+        if self.stdin_socket.has_incoming_data().unwrap() {
+            has_incoming = true;
+            Self::flush_incoming("StdIn", &self.stdin_socket);
+        }
+        if self.heartbeat_socket.has_incoming_data().unwrap() {
+            has_incoming = true;
+            Self::flush_incoming("Heartbeat", &self.heartbeat_socket);
+        }
+
+        if has_incoming {
+            panic!("Sockets must be empty on exit (see details above)");
+        }
+    }
+
+    fn flush_incoming(name: &str, socket: &Socket) {
+        println!("{name} has incoming data:");
+
+        while socket.has_incoming_data().unwrap() {
+            dbg!(WireMessage::read_from_socket(socket).unwrap());
+            println!("---");
         }
     }
 }

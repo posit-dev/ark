@@ -129,7 +129,7 @@ fn test_comment() {
     use tree_sitter::Point;
 
     use crate::lsp::documents::Document;
-    use crate::test::r_test;
+    use crate::fixtures::r_test;
 
     r_test(|| {
         // If not in a comment, return `None`
@@ -154,7 +154,7 @@ fn test_roxygen_comment() {
     use tree_sitter::Point;
 
     use crate::lsp::documents::Document;
-    use crate::test::r_test;
+    use crate::fixtures::r_test;
 
     r_test(|| unsafe {
         let installed = RFunction::new("", ".ps.is_installed")

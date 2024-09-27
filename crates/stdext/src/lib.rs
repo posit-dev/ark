@@ -60,13 +60,10 @@ macro_rules! cstr {
 #[macro_export]
 macro_rules! assert_match {
     ($expression:expr, $pattern:pat_param => $code:block) => {
-        assert!(match $expression {
-            $pattern => {
-                $code
-                true
-            },
-            _ => false
-        })
+        match $expression {
+            $pattern => $code,
+            _ => panic!("Expected {}", stringify!($pattern)),
+        }
     };
 
     ($expression:expr, $pattern:pat_param) => {

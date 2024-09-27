@@ -17,7 +17,6 @@ use std::path::PathBuf;
 use std::result::Result::Ok;
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::Once;
 use std::task::Poll;
 use std::time::Duration;
 
@@ -138,8 +137,15 @@ pub enum SessionMode {
 // These values must be global in order for them to be accessible from R
 // callbacks, which do not have a facility for passing or returning context.
 
-/// Ensures that the kernel is only ever initialized once
-static INIT: Once = Once::new();
+// We use the `once_cell` crate for init synchronisation because the stdlib
+// equivalent `std::sync::Once` does not have a `wait()` method.
+
+/// Ensures that the kernel is only ever initialized once. Used to wait for the
+/// `RMain` singleton initialization in `RMain::wait_initialized()`.
+static R_MAIN_INIT: once_cell::sync::OnceCell<()> = once_cell::sync::OnceCell::new();
+
+/// Used to wait for complete R startup in `RMain::wait_r_initialized()`.
+static R_INIT: once_cell::sync::OnceCell<()> = once_cell::sync::OnceCell::new();
 
 // The global state used by R callbacks.
 //
@@ -149,143 +155,7 @@ static INIT: Once = Once::new();
 // `RMain::get_mut()`).
 static mut R_MAIN: Option<RMain> = None;
 
-/// Starts the main R thread. Doesn't return.
-pub fn start_r(
-    r_args: Vec<String>,
-    startup_file: Option<String>,
-    kernel_mutex: Arc<Mutex<Kernel>>,
-    comm_manager_tx: Sender<CommManagerEvent>,
-    r_request_rx: Receiver<RRequest>,
-    stdin_request_tx: Sender<StdInRequest>,
-    stdin_reply_rx: Receiver<amalthea::Result<InputReply>>,
-    iopub_tx: Sender<IOPubMessage>,
-    kernel_init_tx: Bus<KernelInfo>,
-    dap: Arc<Mutex<Dap>>,
-    session_mode: SessionMode,
-) {
-    // Initialize global state (ensure we only do this once!)
-    INIT.call_once(|| unsafe {
-        R_MAIN_THREAD_ID = Some(std::thread::current().id());
-
-        // Channels to send/receive tasks from auxiliary threads via `RTask`s
-        let (tasks_interrupt_tx, tasks_interrupt_rx) = unbounded::<RTask>();
-        let (tasks_idle_tx, tasks_idle_rx) = unbounded::<RTask>();
-
-        r_task::initialize(tasks_interrupt_tx.clone(), tasks_idle_tx.clone());
-
-        R_MAIN = Some(RMain::new(
-            kernel_mutex,
-            tasks_interrupt_rx,
-            tasks_idle_rx,
-            comm_manager_tx,
-            r_request_rx,
-            stdin_request_tx,
-            stdin_reply_rx,
-            iopub_tx,
-            kernel_init_tx,
-            dap,
-            session_mode,
-        ));
-    });
-
-    let mut r_args = r_args.clone();
-
-    // Record if the user has requested that we don't load the site/user level R profiles
-    let ignore_site_r_profile = startup::should_ignore_site_r_profile(&r_args);
-    let ignore_user_r_profile = startup::should_ignore_user_r_profile(&r_args);
-
-    // We always manually load site/user level R profiles rather than letting R do it
-    // to ensure that ark is fully set up before running code that could potentially call
-    // back into ark internals.
-    if !ignore_site_r_profile {
-        startup::push_ignore_site_r_profile(&mut r_args);
-    }
-    if !ignore_user_r_profile {
-        startup::push_ignore_user_r_profile(&mut r_args);
-    }
-
-    // Build the argument list from the command line arguments. The default
-    // list is `--interactive` unless altered with the `--` passthrough
-    // argument.
-    let mut args = cargs!["ark"];
-    for arg in r_args {
-        args.push(CString::new(arg).unwrap().into_raw());
-    }
-
-    // Get `R_HOME`, set by Positron / CI / kernel specification
-    let r_home = match std::env::var("R_HOME") {
-        Ok(home) => PathBuf::from(home),
-        Err(err) => panic!("Can't find `R_HOME`: {err:?}"),
-    };
-
-    let libraries = RLibraries::from_r_home_path(&r_home);
-    libraries.initialize_pre_setup_r();
-
-    crate::sys::interface::setup_r(args);
-
-    libraries.initialize_post_setup_r();
-
-    unsafe {
-        // Register embedded routines
-        r_register_routines();
-
-        // Initialize harp (after routine registration)
-        harp::initialize();
-
-        // Optionally run a frontend specified R startup script (after harp init)
-        if let Some(file) = &startup_file {
-            harp::source(file)
-                .or_log_error(&format!("Failed to source startup file '{file}' due to"));
-        }
-
-        // Initialize support functions (after routine registration)
-        if let Err(err) = modules::initialize(false) {
-            log::error!("Can't load R modules: {err:?}");
-        }
-
-        // Register all hooks once all modules have been imported
-        let hook_result = RFunction::from(".ps.register_all_hooks").call();
-        if let Err(err) = hook_result {
-            log::error!("Error registering some hooks: {err:?}");
-        }
-
-        // Populate srcrefs for namespaces already loaded in the session.
-        // Namespaces of future loaded packages will be populated on load.
-        if do_resource_namespaces() {
-            if let Err(err) = resource_loaded_namespaces() {
-                log::error!("Can't populate srcrefs for loaded packages: {err:?}");
-            }
-        }
-
-        // Set up the global error handler (after support function initialization)
-        errors::initialize();
-    }
-
-    // Now that R has started (emitting any startup messages), and now that we have set
-    // up all hooks and handlers, officially finish the R initialization process to
-    // unblock the kernel-info request and also allow the LSP to start.
-    RMain::with_mut(|main| {
-        log::info!(
-            "R has started and ark handlers have been registered, completing initialization."
-        );
-        main.complete_initialization();
-    });
-
-    // Now that R has started and libr and ark have fully initialized, run site and user
-    // level R profiles, in that order
-    if !ignore_site_r_profile {
-        startup::source_site_r_profile(&r_home);
-    }
-    if !ignore_user_r_profile {
-        startup::source_user_r_profile();
-    }
-
-    // Does not return!
-    crate::sys::interface::run_r();
-}
-
 pub struct RMain {
-    initializing: bool,
     kernel_init_tx: Bus<KernelInfo>,
 
     /// Whether we are running in Console, Notebook, or Background mode.
@@ -412,6 +282,180 @@ pub enum ConsoleResult {
 }
 
 impl RMain {
+    /// Starts the main R thread and initializes the `R_MAIN` singleton.
+    /// Doesn't return. Must be called only once.
+    pub fn start(
+        r_args: Vec<String>,
+        startup_file: Option<String>,
+        kernel_mutex: Arc<Mutex<Kernel>>,
+        comm_manager_tx: Sender<CommManagerEvent>,
+        r_request_rx: Receiver<RRequest>,
+        stdin_request_tx: Sender<StdInRequest>,
+        stdin_reply_rx: Receiver<amalthea::Result<InputReply>>,
+        iopub_tx: Sender<IOPubMessage>,
+        kernel_init_tx: Bus<KernelInfo>,
+        dap: Arc<Mutex<Dap>>,
+        session_mode: SessionMode,
+    ) {
+        unsafe { R_MAIN_THREAD_ID = Some(std::thread::current().id()) };
+
+        // Channels to send/receive tasks from auxiliary threads via `RTask`s
+        let (tasks_interrupt_tx, tasks_interrupt_rx) = unbounded::<RTask>();
+        let (tasks_idle_tx, tasks_idle_rx) = unbounded::<RTask>();
+
+        r_task::initialize(tasks_interrupt_tx.clone(), tasks_idle_tx.clone());
+
+        unsafe {
+            R_MAIN = Some(RMain::new(
+                kernel_mutex,
+                tasks_interrupt_rx,
+                tasks_idle_rx,
+                comm_manager_tx,
+                r_request_rx,
+                stdin_request_tx,
+                stdin_reply_rx,
+                iopub_tx,
+                kernel_init_tx,
+                dap,
+                session_mode,
+            ))
+        };
+
+        // Let other threads know that `R_MAIN` is initialized. Deliberately
+        // panic if already set as `start()` must be called only once.
+        R_MAIN_INIT.set(()).expect("R can only be initialized once");
+
+        let mut r_args = r_args.clone();
+
+        // Record if the user has requested that we don't load the site/user level R profiles
+        let ignore_site_r_profile = startup::should_ignore_site_r_profile(&r_args);
+        let ignore_user_r_profile = startup::should_ignore_user_r_profile(&r_args);
+
+        // We always manually load site/user level R profiles rather than letting R do it
+        // to ensure that ark is fully set up before running code that could potentially call
+        // back into ark internals.
+        if !ignore_site_r_profile {
+            startup::push_ignore_site_r_profile(&mut r_args);
+        }
+        if !ignore_user_r_profile {
+            startup::push_ignore_user_r_profile(&mut r_args);
+        }
+
+        // Build the argument list from the command line arguments. The default
+        // list is `--interactive` unless altered with the `--` passthrough
+        // argument.
+        let mut args = cargs!["ark"];
+        for arg in r_args {
+            args.push(CString::new(arg).unwrap().into_raw());
+        }
+
+        // Get `R_HOME`, typically set by Positron / CI / kernel specification
+        let r_home = match std::env::var("R_HOME") {
+            Ok(home) => PathBuf::from(home),
+            Err(_) => {
+                // Get `R_HOME` from `PATH`, via R
+                let Ok(result) = std::process::Command::new("R").arg("RHOME").output() else {
+                    panic!("Can't find R or `R_HOME`");
+                };
+                let r_home = String::from_utf8(result.stdout).unwrap();
+                let r_home = r_home.trim();
+                std::env::set_var("R_HOME", r_home);
+                PathBuf::from(r_home)
+            },
+        };
+
+        let libraries = RLibraries::from_r_home_path(&r_home);
+        libraries.initialize_pre_setup_r();
+
+        crate::sys::interface::setup_r(args);
+
+        libraries.initialize_post_setup_r();
+
+        unsafe {
+            // Register embedded routines
+            r_register_routines();
+
+            // Initialize harp (after routine registration)
+            harp::initialize();
+
+            // Optionally run a frontend specified R startup script (after harp init)
+            if let Some(file) = &startup_file {
+                harp::source(file)
+                    .or_log_error(&format!("Failed to source startup file '{file}' due to"));
+            }
+
+            // Initialize support functions (after routine registration)
+            if let Err(err) = modules::initialize() {
+                log::error!("Can't load R modules: {err:?}");
+            }
+
+            // Register all hooks once all modules have been imported
+            let hook_result = RFunction::from(".ps.register_all_hooks").call();
+            if let Err(err) = hook_result {
+                log::error!("Error registering some hooks: {err:?}");
+            }
+
+            // Populate srcrefs for namespaces already loaded in the session.
+            // Namespaces of future loaded packages will be populated on load.
+            if do_resource_namespaces() {
+                if let Err(err) = resource_loaded_namespaces() {
+                    log::error!("Can't populate srcrefs for loaded packages: {err:?}");
+                }
+            }
+
+            // Set up the global error handler (after support function initialization)
+            errors::initialize();
+
+            // Now that R has started (emitting any startup messages), and now that we have set
+            // up all hooks and handlers, officially finish the R initialization process to
+            // unblock the kernel-info request and also allow the LSP to start.
+            RMain::with_mut(|main| {
+                log::info!("R has started and ark handlers have been registered, completing initialization.");
+                main.complete_initialization();
+            });
+        }
+
+        // Now that R has started and libr and ark have fully initialized, run site and user
+        // level R profiles, in that order
+        if !ignore_site_r_profile {
+            startup::source_site_r_profile(&r_home);
+        }
+        if !ignore_user_r_profile {
+            startup::source_user_r_profile();
+        }
+
+        // Does not return!
+        crate::sys::interface::run_r();
+    }
+
+    /// Completes the kernel's initialization.
+    /// Unlike `RMain::start()`, this has access to `R_MAIN`'s state, such as
+    /// the kernel-info banner.
+    /// SAFETY: Can only be called from the R thread, and only once.
+    pub unsafe fn complete_initialization(&mut self) {
+        let version = unsafe {
+            let version = Rf_findVarInFrame(R_BaseNamespace, r_symbol!("R.version.string"));
+            RObject::new(version).to::<String>().unwrap()
+        };
+
+        // Initial input and continuation prompts
+        let input_prompt: String = harp::get_option("prompt").try_into().unwrap();
+        let continuation_prompt: String = harp::get_option("continue").try_into().unwrap();
+
+        let kernel_info = KernelInfo {
+            version: version.clone(),
+            banner: self.banner_output.clone(),
+            input_prompt: Some(input_prompt),
+            continuation_prompt: Some(continuation_prompt),
+        };
+
+        log::info!("Sending kernel info: {version}");
+        self.kernel_init_tx.broadcast(kernel_info);
+
+        // Thread-safe initialisation flag for R
+        R_INIT.set(()).expect("`R_INIT` can only be set once");
+    }
+
     pub fn new(
         kernel: Arc<Mutex<Kernel>>,
         tasks_interrupt_rx: Receiver<RTask>,
@@ -426,7 +470,6 @@ impl RMain {
         session_mode: SessionMode,
     ) -> Self {
         Self {
-            initializing: true,
             r_request_rx,
             comm_manager_tx,
             stdin_request_tx,
@@ -453,22 +496,42 @@ impl RMain {
         }
     }
 
+    /// Wait for complete R initialization
+    ///
+    /// Wait for R being ready to evaluate R code. Resolves as the same time as
+    /// the `Bus<KernelInfo>` init channel does.
+    ///
+    /// Thread-safe.
+    pub fn wait_r_initialized() {
+        R_INIT.wait();
+    }
+
+    /// Has R completed initialization
+    ///
+    /// I.e. is it ready to evaluate R code.
+    ///
+    /// Thread-safe.
+    pub fn is_r_initialized() -> bool {
+        R_INIT.get().is_some()
+    }
+
+    /// Has the `RMain` singleton completed initialization.
+    ///
+    /// This can return true when R might still not have finished starting up.
+    /// See `wait_r_initialized()`.
+    ///
+    /// Thread-safe. But note you can only get access to the singleton on the R
+    /// thread.
+    pub fn is_initialized() -> bool {
+        R_MAIN_INIT.get().is_some()
+    }
+
     /// Access a reference to the singleton instance of this struct
     ///
     /// SAFETY: Accesses must occur after `start_r()` initializes it, and must
     /// occur on the main R thread.
     pub fn get() -> &'static Self {
         RMain::get_mut()
-    }
-
-    /// Indicate whether RMain has been created and is initialized.
-    pub fn initialized() -> bool {
-        unsafe {
-            match R_MAIN {
-                Some(ref main) => !main.initializing,
-                None => false,
-            }
-        }
     }
 
     /// Access a mutable reference to the singleton instance of this struct
@@ -513,33 +576,6 @@ impl RMain {
     pub fn on_main_thread() -> bool {
         let thread = std::thread::current();
         thread.id() == unsafe { R_MAIN_THREAD_ID.unwrap() }
-    }
-
-    /// Completes the kernel's initialization
-    pub fn complete_initialization(&mut self) {
-        if self.initializing {
-            let version = unsafe {
-                let version = Rf_findVarInFrame(R_BaseNamespace, r_symbol!("R.version.string"));
-                RObject::new(version).to::<String>().unwrap()
-            };
-
-            // Initial input and continuation prompts
-            let input_prompt: String = harp::get_option("prompt").try_into().unwrap();
-            let continuation_prompt: String = harp::get_option("continue").try_into().unwrap();
-
-            let kernel_info = KernelInfo {
-                version: version.clone(),
-                banner: self.banner_output.clone(),
-                input_prompt: Some(input_prompt),
-                continuation_prompt: Some(continuation_prompt),
-            };
-
-            log::info!("Sending kernel info: {version}");
-            self.kernel_init_tx.broadcast(kernel_info);
-            self.initializing = false;
-        } else {
-            log::warn!("Initialization already complete!");
-        }
     }
 
     /// Provides read-only access to `iopub_tx`
@@ -1288,7 +1324,7 @@ This is a Positron limitation we plan to fix. In the meantime, you can:
             Stream::Stderr
         };
 
-        if self.initializing {
+        if !RMain::is_r_initialized() {
             // During init, consider all output to be part of the startup banner
             self.banner_output.push_str(&content);
             return;
@@ -1659,6 +1695,12 @@ pub extern "C" fn r_show_message(buf: *const c_char) {
 pub extern "C" fn r_busy(which: i32) {
     let main = RMain::get_mut();
     main.busy(which);
+}
+
+#[no_mangle]
+pub extern "C" fn r_suicide(buf: *const c_char) {
+    let msg = unsafe { CStr::from_ptr(buf) };
+    panic!("Suicide: {}", msg.to_str().unwrap());
 }
 
 #[no_mangle]

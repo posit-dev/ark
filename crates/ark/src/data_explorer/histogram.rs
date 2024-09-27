@@ -161,7 +161,7 @@ mod tests {
     use stdext::assert_match;
 
     use super::*;
-    use crate::test::r_test;
+    use crate::fixtures::r_test;
 
     fn default_options() -> FormatOptions {
         FormatOptions {

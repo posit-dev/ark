@@ -264,7 +264,7 @@ mod tests {
     use crate::lsp::completions::sources::utils::CallNodePositionType;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
-    use crate::test::r_test;
+    use crate::fixtures::r_test;
     use crate::treesitter::NodeType;
     use crate::treesitter::NodeTypeExt;
 
