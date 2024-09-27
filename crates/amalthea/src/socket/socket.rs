@@ -138,6 +138,9 @@ impl Socket {
         if let Err(error) = socket.set_rcvtimeo(10000) {
             return Err(Error::CreateSocketFailed(name, error));
         }
+        if let Err(error) = socket.set_sndtimeo(10000) {
+            return Err(Error::CreateSocketFailed(name, error));
+        }
 
         // Set the socket's identity, if supplied
         if let Some(identity) = identity {
