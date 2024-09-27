@@ -160,21 +160,25 @@ impl DummyFrontend {
         Message::read_from_socket(&self.shell_socket).unwrap()
     }
 
-    /// Receive from Shell and assert ExecuteReply message
-    pub fn recv_shell_execute_reply(&self) -> Status {
+    /// Receive from Shell and assert `ExecuteReply` message.
+    /// Returns `execution_count`.
+    pub fn recv_shell_execute_reply(&self) -> u32 {
         let msg = self.recv_shell();
 
         assert_match!(msg, Message::ExecuteReply(data) => {
-            data.content.status
+            assert_eq!(data.content.status, Status::Ok);
+            data.content.execution_count
         })
     }
 
-    /// Receive from Shell and assert ExecuteReplyException message
-    pub fn recv_shell_execute_reply_exception(&self) -> Status {
-        let msg = Message::read_from_socket(&self.shell_socket).unwrap();
+    /// Receive from Shell and assert `ExecuteReplyException` message.
+    /// Returns `execution_count`.
+    pub fn recv_shell_execute_reply_exception(&self) -> u32 {
+        let msg = self.recv_shell();
 
         assert_match!(msg, Message::ExecuteReplyException(data) => {
-            data.content.status
+            assert_eq!(data.content.status, Status::Error);
+            data.content.execution_count
         })
     }
 
