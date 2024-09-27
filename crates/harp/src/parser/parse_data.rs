@@ -142,7 +142,7 @@ mod tests {
     use harp::srcref;
 
     use crate::parse_data::ParseData;
-    use crate::test::r_task;
+    use crate::fixtures::r_task;
 
     #[test]
     fn test_parse_data() {

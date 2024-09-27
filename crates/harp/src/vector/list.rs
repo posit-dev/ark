@@ -141,7 +141,7 @@ impl std::iter::Iterator for ListIter {
 
 #[cfg(test)]
 mod test {
-    use crate::test::r_task;
+    use crate::fixtures::r_task;
     use crate::vector::list::List;
     use crate::vector::Vector;
     use crate::RObject;

@@ -494,7 +494,7 @@ mod tests {
     use stdext::assert_match;
 
     use super::*;
-    use crate::test::r_task;
+    use crate::fixtures::r_task;
     use crate::utils::r_envir_remove;
     use crate::utils::r_typeof;
 

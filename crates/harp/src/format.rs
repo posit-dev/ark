@@ -115,12 +115,12 @@ mod tests {
     use harp::r_char;
     use libr::*;
 
+    use crate::fixtures::r_task;
     use crate::format::cpl_to_string;
     use crate::format::dbl_to_string;
     use crate::format::int_to_string;
     use crate::format::lgl_to_string;
     use crate::format::str_to_string;
-    use crate::test::r_task;
 
     #[test]
     fn test_to_string_methods() {

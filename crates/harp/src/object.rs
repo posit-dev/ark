@@ -1155,7 +1155,7 @@ mod tests {
 
     use super::*;
     use crate::r_char;
-    use crate::test::r_task;
+    use crate::fixtures::r_task;
 
     #[test]
     #[allow(non_snake_case)]

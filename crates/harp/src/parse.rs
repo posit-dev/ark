@@ -168,7 +168,7 @@ mod tests {
     use crate::r_symbol;
     use crate::r_typeof;
     use crate::srcref;
-    use crate::test::r_task;
+    use crate::fixtures::r_task;
     use crate::ParseResult;
 
     #[test]

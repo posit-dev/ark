@@ -373,7 +373,7 @@ mod tests {
     use super::*;
     use crate::exec::RFunction;
     use crate::exec::RFunctionExt;
-    use crate::test::r_task;
+    use crate::fixtures::r_task;
 
     // Helper that takes an R expression (as a string), parses it, evaluates it,
     // and converts it to a JSON value. We use this extensively in the tests

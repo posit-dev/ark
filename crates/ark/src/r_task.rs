@@ -147,7 +147,7 @@ where
 {
     // Escape hatch for unit tests
     if harp::IS_TESTING {
-        let _lock = unsafe { harp::test::R_TEST_LOCK.lock() };
+        let _lock = unsafe { harp::fixtures::R_TEST_LOCK.lock() };
         r_test_init();
         return f();
     }

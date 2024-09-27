@@ -23,7 +23,6 @@ use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
 use harp::r_symbol;
-use harp::test::r_test_init;
 use harp::utils::r_envir_remove;
 use harp::utils::r_envir_set;
 use libr::R_EmptyEnv;
@@ -44,10 +43,6 @@ use libr::Rf_xlength;
  */
 #[test]
 fn test_environment_list() {
-    // Start the R interpreter so we have a live environment for the test to run
-    // against.
-    r_test_init();
-
     // Create a new environment for the test. We use a new, empty environment
     // (with the empty environment as its parent) so that each test in this
     // file can run independently.

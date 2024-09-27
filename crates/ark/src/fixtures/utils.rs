@@ -32,7 +32,7 @@ pub fn r_test_init_lock() -> MutexGuard<'static, ()> {
 static INIT: Once = Once::new();
 
 pub(crate) fn r_test_init() {
-    harp::test::r_test_init();
+    harp::fixtures::r_test_init();
     INIT.call_once(|| {
         // Initialize the positron module so tests can use them.
         // Routines are already registered by `harp::test::r_test()`.

@@ -1,5 +1,5 @@
 //
-// test.rs
+// fixtures/mod.rs
 //
 // Copyright (C) 2022-2024 Posit Software, PBC. All rights reserved.
 //

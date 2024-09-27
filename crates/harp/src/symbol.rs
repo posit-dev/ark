@@ -109,7 +109,7 @@ impl PartialEq<&str> for RSymbol {
 #[cfg(test)]
 mod tests {
     use crate::symbol::RSymbol;
-    use crate::test::r_task;
+    use crate::fixtures::r_task;
 
     #[test]
     fn test_rsymbol_ord() {

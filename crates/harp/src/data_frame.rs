@@ -80,7 +80,7 @@ mod tests {
     use crate::r_alloc_integer;
     use crate::r_chr_poke;
     use crate::r_list_poke;
-    use crate::test::r_task;
+    use crate::fixtures::r_task;
     use crate::vector::Vector;
     use crate::DataFrame;
     use crate::List;

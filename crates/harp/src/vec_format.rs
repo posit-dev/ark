@@ -179,7 +179,7 @@ mod tests {
     use harp::object::*;
     use harp::r_char;
 
-    use crate::test::r_task;
+    use crate::fixtures::r_task;
     use crate::vec_format::vec_format;
 
     #[test]

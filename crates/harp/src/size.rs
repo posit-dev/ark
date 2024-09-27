@@ -437,7 +437,7 @@ fn v_size(n: usize, element_size: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use crate::size::r_size;
-    use crate::test::r_task;
+    use crate::fixtures::r_task;
 
     fn object_size(code: &str) -> usize {
         let object = harp::parse_eval_global(code).unwrap();

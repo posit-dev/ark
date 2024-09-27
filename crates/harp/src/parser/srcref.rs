@@ -158,7 +158,7 @@ mod tests {
     use std::ops::Range;
 
     use crate::srcref::SrcRef;
-    use crate::test::r_task;
+    use crate::fixtures::r_task;
 
     #[test]
     fn test_srcref() {

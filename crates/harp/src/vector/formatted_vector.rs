@@ -225,9 +225,9 @@ mod tests {
 
     use crate::environment::Environment;
     use crate::eval::parse_eval0;
+    use crate::fixtures::r_task;
     use crate::modules::HARP_ENV;
     use crate::r_assert_type;
-    use crate::test::r_task;
     use crate::vector::formatted_vector::FormattedVector;
     use crate::vector::formatted_vector::FormattedVectorOptions;
     use crate::vector::FormatOptions;

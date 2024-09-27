@@ -741,7 +741,7 @@ mod tests {
     use crate::exec::RFunction;
     use crate::exec::RFunctionExt;
     use crate::r_str_to_owned_utf8_unchecked;
-    use crate::test::r_task;
+    use crate::fixtures::r_task;
 
     #[test]
     fn test_r_str_to_utf8_replaces_invalid_utf8() {

@@ -501,11 +501,11 @@ fn call_label(x: SEXP) -> String {
 #[cfg(test)]
 mod tests {
     use harp::call::RCall;
+    use harp::fixtures::r_task;
     use harp::object::*;
     use harp::r_char;
     use harp::r_null;
     use harp::r_symbol;
-    use harp::test::r_task;
     use harp::RObject;
     use libr::R_xlen_t;
     use tower_lsp::lsp_types::ParameterLabel;

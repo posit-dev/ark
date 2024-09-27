@@ -138,7 +138,7 @@ impl TryFrom<&CharacterVector> for Vec<String> {
 mod test {
     use libr::STRSXP;
 
-    use crate::test::r_task;
+    use crate::fixtures::r_task;
     use crate::utils::r_typeof;
     use crate::vector::*;
 
