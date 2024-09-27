@@ -162,7 +162,7 @@ impl DummyFrontend {
 
     /// Receive from Shell and assert ExecuteReply message
     pub fn recv_shell_execute_reply(&self) -> ExecuteReply {
-        let msg = Message::read_from_socket(&self.shell_socket).unwrap();
+        let msg = self.recv_shell();
 
         assert_match!(msg, Message::ExecuteReply(data) => {
             data.content
@@ -176,7 +176,7 @@ impl DummyFrontend {
 
     /// Receive from IOPub and assert Busy message
     pub fn recv_iopub_busy(&self) -> () {
-        let msg = Message::read_from_socket(&self.iopub_socket).unwrap();
+        let msg = self.recv_iopub();
 
         assert_match!(msg, Message::Status(data) => {
             assert_eq!(data.content.execution_state, ExecutionState::Busy);
@@ -185,7 +185,7 @@ impl DummyFrontend {
 
     /// Receive from IOPub and assert Idle message
     pub fn recv_iopub_idle(&self) -> () {
-        let msg = Message::read_from_socket(&self.iopub_socket).unwrap();
+        let msg = self.recv_iopub();
 
         assert_match!(msg, Message::Status(data) => {
             assert_eq!(data.content.execution_state, ExecutionState::Idle);
@@ -194,7 +194,7 @@ impl DummyFrontend {
 
     /// Receive from IOPub and assert ExecuteInput message
     pub fn recv_iopub_execute_input(&self) -> ExecuteInput {
-        let msg = Message::read_from_socket(&self.iopub_socket).unwrap();
+        let msg = self.recv_iopub();
 
         assert_match!(msg, Message::ExecuteInput(data) => {
             data.content
@@ -204,7 +204,7 @@ impl DummyFrontend {
     /// Receive from IOPub and assert ExecuteResult message. Returns compulsory
     /// `plain/text` result.
     pub fn recv_iopub_execute_result(&self) -> String {
-        let msg = Message::read_from_socket(&self.iopub_socket).unwrap();
+        let msg = self.recv_iopub();
 
         assert_match!(msg, Message::ExecuteResult(data) => {
             assert_match!(data.content.data, Value::Object(map) => {
@@ -218,7 +218,7 @@ impl DummyFrontend {
     /// Receive from IOPub and assert ExecuteResult message. Returns compulsory
     /// `evalue` field.
     pub fn recv_iopub_execute_error(&self) -> String {
-        let msg = Message::read_from_socket(&self.iopub_socket).unwrap();
+        let msg = self.recv_iopub();
 
         assert_match!(msg, Message::ExecuteError(data) => {
             data.content.exception.evalue
