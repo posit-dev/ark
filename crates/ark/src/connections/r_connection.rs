@@ -277,9 +277,10 @@ pub unsafe extern "C" fn ps_connection_opened(
     let id = Uuid::new_v4().to_string();
     let id_r: RObject = id.clone().into();
 
-    if harp::test::IS_TESTING {
-        // If RMain is not initialized, we are probably in testing mode, so we just don't start the connection
-        // and let the testing code manually do it
+    if !RMain::is_initialized() {
+        // If RMain is not initialized, we are probably in unit tests, so we
+        // just don't start the connection and let the testing code manually do
+        // it. Note that RMain could be initialized in integration tests.
         log::warn!("Connection Pane: RMain is not initialized. Connection will not be started.");
         return Ok(id_r.sexp);
     }
