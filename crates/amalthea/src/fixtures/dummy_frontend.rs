@@ -18,6 +18,7 @@ use crate::wire::jupyter_message::Message;
 use crate::wire::jupyter_message::ProtocolMessage;
 use crate::wire::jupyter_message::Status;
 use crate::wire::status::ExecutionState;
+use crate::wire::stream::Stream;
 use crate::wire::wire_message::WireMessage;
 
 pub struct DummyFrontend {
@@ -244,6 +245,24 @@ impl DummyFrontend {
                     string.clone()
                 })
             })
+        })
+    }
+
+    pub fn recv_iopub_stream_stdout(&self) -> String {
+        let msg = self.recv_iopub();
+
+        assert_matches!(msg, Message::StreamOutput(data) => {
+            assert_eq!(data.content.name, Stream::Stdout);
+            data.content.text
+        })
+    }
+
+    pub fn recv_iopub_stream_stderr(&self) -> String {
+        let msg = self.recv_iopub();
+
+        assert_matches!(msg, Message::StreamOutput(data) => {
+            assert_eq!(data.content.name, Stream::Stderr);
+            data.content.text
         })
     }
 
