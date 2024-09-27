@@ -26,6 +26,7 @@ pub mod modules_utils;
 pub mod plots;
 pub mod r_task;
 pub mod request;
+pub mod reticulate;
 pub mod shell;
 pub mod signals;
 pub mod srcref;
