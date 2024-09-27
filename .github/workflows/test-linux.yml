@@ -7,7 +7,7 @@ on:
 jobs:
   linux:
     runs-on: ubuntu-latest
-    name: "Test Ark - Linux (Rust: ${{ matrix.config.rust }}, R ${{ matrix.config.r }})"
+    name: "Variant - Rust: ${{ matrix.config.rust }}, R: ${{ matrix.config.r }}"
     strategy:
       fail-fast: false
       matrix:

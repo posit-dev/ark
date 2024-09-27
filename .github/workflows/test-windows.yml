@@ -7,7 +7,7 @@ on:
 jobs:
   windows:
     runs-on: windows-latest
-    name: "Test Ark - Windows (Rust: ${{ matrix.config.rust }}, R ${{ matrix.config.r }})"
+    name: "Variant - Rust: ${{ matrix.config.rust }}, R: ${{ matrix.config.r }}"
     strategy:
       fail-fast: false
       matrix:
