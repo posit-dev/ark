@@ -75,7 +75,7 @@ pub fn setup_r(mut args: Vec<*mut c_char>) {
         //
         // This must be called _after_ `Rf_initialize_R()`, since that's where R
         // detects the stack size and sets the default limit.
-        if harp::test::IS_TESTING {
+        if harp::IS_TESTING {
             libr::set(libr::R_CStackLimit, usize::MAX);
         }
 

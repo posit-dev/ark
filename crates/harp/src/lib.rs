@@ -62,6 +62,7 @@ pub use harp::object::list_get;
 pub use harp::object::list_poke;
 pub use harp::object::RObject;
 pub use harp::symbol::RSymbol;
+pub use harp::test::IS_TESTING;
 pub use harp::utils::get_option;
 pub use harp_macros::register;
 
