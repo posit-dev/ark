@@ -55,7 +55,7 @@ impl DummyArkFrontend {
         // Wait for startup to complete
         RMain::wait_r_initialized();
 
-        frontend.complete_intialization();
+        frontend.complete_initialization();
         frontend
     }
 }

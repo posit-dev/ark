@@ -125,7 +125,7 @@ impl DummyFrontend {
 
     /// Completes initialization of the frontend (usually done after the kernel
     /// is ready and connected)
-    pub fn complete_intialization(&self) {
+    pub fn complete_initialization(&self) {
         self.iopub_socket.subscribe().unwrap();
     }
 

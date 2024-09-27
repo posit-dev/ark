@@ -82,7 +82,7 @@ fn test_kernel() {
 
     // Complete client initialization
     info!("Completing frontend initialization");
-    frontend.complete_intialization();
+    frontend.complete_initialization();
 
     // Ask the kernel for the kernel info. This should return an object with the
     // language "Test" defined in our shell handler.
