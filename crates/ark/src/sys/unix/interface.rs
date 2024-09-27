@@ -46,8 +46,11 @@ pub fn setup_r(mut args: Vec<*mut c_char>) {
 
         Rf_initialize_R(args.len() as i32, args.as_mut_ptr() as *mut *mut c_char);
 
-        // Initialize the signal blocks and handlers (like interrupts)
-        initialize_signal_handlers();
+        // Initialize the signal blocks and handlers (like interrupts).
+        // Don't do that in tests because that makes them uninterruptible.
+        if !harp::IS_TESTING {
+            initialize_signal_handlers();
+        }
 
         // Mark R session as interactive
         // (Should have also been set by call to `Rf_initialize_R()`)
