@@ -1,17 +1,12 @@
 //
 // test.rs
 //
-// Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2022-2024 Posit Software, PBC. All rights reserved.
 //
 //
 
 // Helper functions for ensuring R is running before running tests
 // that rely on an R session being available.
-
-// TODO: Rust isn't smart enough to see that these methods are used in tests?
-// We explicitly disable the warnings here since 'start_r()' is used by tests
-// in other files.
-#![allow(dead_code)]
 
 use std::os::raw::c_char;
 use std::path::PathBuf;
@@ -36,8 +31,7 @@ pub static mut R_TASK_BYPASS: bool = false;
 // This needs to be a reentrant mutex because many of our tests are wrapped in
 // `r_test()` which takes the R lock. Without a reentrant mutex, we'd get
 // deadlocked when we cause some other background thread to use an `r_task()`.
-pub static mut R_RUNTIME_LOCK: parking_lot::ReentrantMutex<()> =
-    parking_lot::ReentrantMutex::new(());
+pub static mut R_TEST_LOCK: parking_lot::ReentrantMutex<()> = parking_lot::ReentrantMutex::new(());
 
 // This global variable is a workaround to enable test-only features or
 // behaviour in integration tests (i.e. tests that live in `crate/tests/` as
@@ -65,8 +59,14 @@ pub static IS_TESTING: bool = cfg!(feature = "testing");
 
 static INIT: Once = Once::new();
 
+/// Run code accessing the R API in a safe context.
+///
+/// Takes a lock on `R_TEST_LOCK` and ensures R is initialized.
+///
+/// Note: `harp::r_task()` should only be used in Harp tests. Use
+/// `ark::r_task()` in Ark tests so that Ark initialisation also takes place.
 pub fn r_task<F: FnOnce()>(f: F) {
-    let guard = unsafe { R_RUNTIME_LOCK.lock() };
+    let guard = unsafe { R_TEST_LOCK.lock() };
 
     r_test_init();
     f();
