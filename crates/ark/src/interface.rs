@@ -347,7 +347,7 @@ impl RMain {
             args.push(CString::new(arg).unwrap().into_raw());
         }
 
-        // Get `R_HOME`, set by Positron / CI / kernel specification
+        // Get `R_HOME`, typically set by Positron / CI / kernel specification
         let r_home = match std::env::var("R_HOME") {
             Ok(home) => PathBuf::from(home),
             Err(_) => {
