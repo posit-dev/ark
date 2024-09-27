@@ -14,8 +14,6 @@ use std::time::Duration;
 
 use crossbeam::channel::bounded;
 use crossbeam::channel::Sender;
-use harp::test::R_TASK_BYPASS;
-use harp::test::R_TEST_LOCK;
 use uuid::Uuid;
 
 use crate::fixtures::r_test_init;
@@ -149,7 +147,7 @@ where
 {
     // Escape hatch for unit tests
     if harp::IS_TESTING {
-        let _lock = unsafe { R_TEST_LOCK.lock() };
+        let _lock = unsafe { harp::test::R_TEST_LOCK.lock() };
         r_test_init();
         return f();
     }
@@ -256,8 +254,7 @@ where
     F: FnOnce() -> Fut + 'static + Send,
     Fut: Future<Output = ()> + 'static,
 {
-    // Idle tasks are always run from the read-console loop
-    if unsafe { R_TASK_BYPASS } {
+    if harp::IS_TESTING {
         // Escape hatch for unit tests
         futures::executor::block_on(fun());
         return;
