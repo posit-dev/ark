@@ -284,7 +284,7 @@ pub enum ConsoleResult {
 
 impl RMain {
     /// Starts the main R thread and initializes the `R_MAIN` singleton.
-    /// Doesn't return.
+    /// Doesn't return. Must be called only once.
     pub fn start(
         r_args: Vec<String>,
         startup_file: Option<String>,
@@ -298,16 +298,15 @@ impl RMain {
         dap: Arc<Mutex<Dap>>,
         session_mode: SessionMode,
     ) {
-        // Initialize global state (ensure we only do this once!)
-        R_MAIN_INIT.get_or_init(|| unsafe {
-            R_MAIN_THREAD_ID = Some(std::thread::current().id());
+        unsafe { R_MAIN_THREAD_ID = Some(std::thread::current().id()) };
 
-            // Channels to send/receive tasks from auxiliary threads via `RTask`s
-            let (tasks_interrupt_tx, tasks_interrupt_rx) = unbounded::<RTask>();
-            let (tasks_idle_tx, tasks_idle_rx) = unbounded::<RTask>();
+        // Channels to send/receive tasks from auxiliary threads via `RTask`s
+        let (tasks_interrupt_tx, tasks_interrupt_rx) = unbounded::<RTask>();
+        let (tasks_idle_tx, tasks_idle_rx) = unbounded::<RTask>();
 
-            r_task::initialize(tasks_interrupt_tx.clone(), tasks_idle_tx.clone());
+        r_task::initialize(tasks_interrupt_tx.clone(), tasks_idle_tx.clone());
 
+        unsafe {
             R_MAIN = Some(RMain::new(
                 kernel_mutex,
                 tasks_interrupt_rx,
@@ -320,8 +319,12 @@ impl RMain {
                 kernel_init_tx,
                 dap,
                 session_mode,
-            ));
-        });
+            ))
+        };
+
+        // Let other threads know that `R_MAIN` is initialized. Deliberately
+        // panic if already set as `start()` must be called only once.
+        R_MAIN_INIT.set(()).expect("R can only be initialized once");
 
         let mut r_args = r_args.clone();
 
