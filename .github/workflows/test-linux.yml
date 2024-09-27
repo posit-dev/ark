@@ -3,6 +3,12 @@ name: "Test Ark - Linux"
 on:
   workflow_call:
   workflow_dispatch:
+    inputs:
+      ssh:
+        description: 'Set up an SSH session before running `cargo test`?'
+        type: boolean
+        required: true
+        default: false
 
 jobs:
   linux:
@@ -34,6 +40,11 @@ jobs:
       - name: Setup Build Environment
         run: |
           sudo apt-get update
+
+      - name: Setup SSH access
+        uses: mxschmitt/action-tmate@v3
+        if: ${{ inputs.ssh }}
+        timeout-minutes: 30
 
       - name: Run Unit Tests
         id: test
