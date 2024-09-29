@@ -31,10 +31,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential r-base-dev libsodium-dev
 
-      - name: Build
-        id: amalthea-build
-        run: |
-            cargo build --verbose
+      - name: Setup tmate session
+        uses: mxschmitt/action-tmate@v3
+        timeout-minutes: 30
 
       # Ubuntu runners already have a version of R installed.
       # Unit tests "automatically" find and set `R_HOME` if it isn't set by

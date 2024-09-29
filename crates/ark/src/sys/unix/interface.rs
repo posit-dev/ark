@@ -71,16 +71,8 @@ pub fn setup_r(mut args: Vec<*mut c_char>) {
         libr::set(ptr_R_Busy, Some(r_busy));
         libr::set(ptr_R_Suicide, Some(r_suicide));
 
-        // In tests R may be run from various threads. This confuses R's stack
-        // overflow checks so we disable those. This should not make it in
-        // production builds as it causes stack overflows to crash R instead of
-        // throwing an R error.
-        //
-        // This must be called _after_ `Rf_initialize_R()`, since that's where R
-        // detects the stack size and sets the default limit.
-        if harp::IS_TESTING {
-            libr::set(libr::R_CStackLimit, usize::MAX);
-        }
+        #[cfg(test)]
+        libr::set(libr::R_CStackLimit, usize::MAX);
 
         // Set up main loop
         setup_Rmainloop();
