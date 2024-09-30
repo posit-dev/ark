@@ -133,15 +133,6 @@ impl Socket {
             }
         }
 
-        // 10 second timeout on `recv()` operations (for testing for now)
-        // TODO: Expose `IS_TESTING` in its own lightweight crate?
-        if let Err(error) = socket.set_rcvtimeo(10000) {
-            return Err(Error::CreateSocketFailed(name, error));
-        }
-        if let Err(error) = socket.set_sndtimeo(10000) {
-            return Err(Error::CreateSocketFailed(name, error));
-        }
-
         // Set the socket's identity, if supplied
         if let Some(identity) = identity {
             if let Err(err) = socket.set_identity(identity) {
