@@ -969,8 +969,16 @@ impl PositronVariable {
         });
 
         match result {
-            Err(err) => log::error!("Failed dispatching `ark_variable_get_child_at`: {err}"),
-            Ok(None) => {}, // No method for `object`, or could not parse the access_key in the expected format.
+            Err(err) => {
+                // It's not safe to apply default methods in this case, because we rely on custom
+                // access keys, which could indicate the access index depending on the node implementation.
+                // See for instance, how it's used to index lists and atomic vectors.
+                return Err(harp::Error::Anyhow(err));
+            },
+            Ok(None) => {
+                // The object doesn't have a custom get_child_at method. We apply
+                // the default built-in methods.
+            },
             Ok(Some(child)) => return Ok(EnvironmentVariableNode::Concrete { object: child }),
         };
 
@@ -1402,7 +1410,7 @@ impl PositronVariable {
                 // This is essentially the same as Self::inspect_list but with modified `access_key`
                 // that adds more information about the object:
                 // 1. Provide the name and the index for the `get_child_at` method.
-                // 2. (Not necessary) Quickly detect if we want to call the custom get_child_at method
+                // 2. (Not necessary) Given an access key, we can detect if we want to apply a custom get_child_method.
                 let list = unsafe { List::new(value.sexp)? };
                 let n = unsafe { list.len() };
 
@@ -1440,7 +1448,7 @@ impl PositronVariable {
                     .map(|(i, (x, name))| {
                         let access_key =
                             format!("custom-{i}-{}", name.clone().unwrap_or(String::from("")));
-                        let display_name = name.clone().unwrap_or(format!("[[{i}]]"));
+                        let display_name = name.clone().unwrap_or(format!("[[{}]]", i + 1));
                         Self::from(access_key, display_name, x).var()
                     })
                     .collect();
