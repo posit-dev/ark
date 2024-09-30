@@ -15,11 +15,13 @@ pub mod ok;
 pub mod push;
 pub mod result;
 pub mod spawn;
+pub mod testing;
 pub mod unwrap;
 
 pub use crate::join::Joined;
 pub use crate::ok::Ok;
 pub use crate::push::Push;
+pub use crate::testing::IS_TESTING;
 pub use crate::unwrap::IntoOption;
 pub use crate::unwrap::IntoResult;
 

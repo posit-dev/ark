@@ -48,7 +48,7 @@ pub fn setup_r(mut args: Vec<*mut c_char>) {
 
         // Initialize the signal blocks and handlers (like interrupts).
         // Don't do that in tests because that makes them uninterruptible.
-        if !harp::IS_TESTING {
+        if !stdext::IS_TESTING {
             initialize_signal_handlers();
         }
 
@@ -78,7 +78,7 @@ pub fn setup_r(mut args: Vec<*mut c_char>) {
         //
         // This must be called _after_ `Rf_initialize_R()`, since that's where R
         // detects the stack size and sets the default limit.
-        if harp::IS_TESTING {
+        if stdext::IS_TESTING {
             libr::set(libr::R_CStackLimit, usize::MAX);
         }
 
