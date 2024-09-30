@@ -1428,7 +1428,7 @@ impl PositronVariable {
                 // that adds more information about the object:
                 // 1. Provide the name and the index for the `get_child_at` method.
                 // 2. (Not necessary) Given an access key, we can detect if we want to apply a custom get_child_method.
-                let list = unsafe { List::new(value.sexp)? };
+                let list = List::new(value.sexp)?;
                 let n = unsafe { list.len() };
 
                 let names = local!({
