@@ -155,9 +155,41 @@ impl DummyFrontend {
         message.send(&self.stdin_socket).unwrap();
     }
 
+    pub fn recv(socket: &Socket) -> Message {
+        let (tx, rx) = crossbeam::channel::bounded(1);
+
+        // There is no timeout variant on our `Socket `API, and `Socket` is not
+        // Sync, so we need to spawn a thread to handle the timeout
+        stdext::spawn!("dummy_frontend_timeout", move || {
+            if let Err(err) = rx.recv_timeout(std::time::Duration::from_secs(1)) {
+                eprintln!("Timeout while receiving message: {err}");
+
+                // Can't panic as this would only poison the thread
+                std::process::exit(42);
+            }
+        });
+
+        let out = Message::read_from_socket(socket).unwrap();
+
+        // Notify timeout thread we're done
+        tx.send(()).unwrap();
+
+        out
+    }
+
     /// Receives a Jupyter message from the Shell socket
     pub fn recv_shell(&self) -> Message {
-        Message::read_from_socket(&self.shell_socket).unwrap()
+        Self::recv(&self.shell_socket)
+    }
+
+    /// Receives a Jupyter message from the IOPub socket
+    pub fn recv_iopub(&self) -> Message {
+        Self::recv(&self.iopub_socket)
+    }
+
+    /// Receives a Jupyter message from the Stdin socket
+    pub fn recv_stdin(&self) -> Message {
+        Self::recv(&self.stdin_socket)
     }
 
     /// Receive from Shell and assert `ExecuteReply` message.
@@ -180,11 +212,6 @@ impl DummyFrontend {
             assert_eq!(data.content.status, Status::Error);
             data.content.execution_count
         })
-    }
-
-    /// Receives a Jupyter message from the IOPub socket
-    pub fn recv_iopub(&self) -> Message {
-        Message::read_from_socket(&self.iopub_socket).unwrap()
     }
 
     /// Receive from IOPub and assert Busy message
@@ -236,11 +263,6 @@ impl DummyFrontend {
         assert_matches!(msg, Message::ExecuteError(data) => {
             data.content.exception.evalue
         })
-    }
-
-    /// Receives a Jupyter message from the Stdin socket
-    pub fn recv_stdin(&self) -> Message {
-        Message::read_from_socket(&self.stdin_socket).unwrap()
     }
 
     /// Receives a (raw) message from the heartbeat socket
