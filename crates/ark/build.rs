@@ -38,6 +38,8 @@ fn main() {
     // Embed an Application Manifest file on Windows.
     // Turns on UTF-8 support and declares our Windows version compatibility.
     // Documented to do nothing on non-Windows.
+    // See <crates/ark/resources/manifest/ark.exe.manifest>.
+    //
     // We also do this for harp to support its unit tests.
     //
     // We can't just use `compile()`, as that uses `cargo:rustc-link-arg-bins`,
