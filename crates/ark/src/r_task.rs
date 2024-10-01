@@ -146,7 +146,7 @@ where
     T: 'env + Send,
 {
     // Escape hatch for unit tests
-    if harp::IS_TESTING {
+    if stdext::IS_TESTING {
         let _lock = unsafe { harp::fixtures::R_TEST_LOCK.lock() };
         r_test_init();
         return f();
@@ -255,7 +255,7 @@ where
     Fut: Future<Output = ()> + 'static,
 {
     // Escape hatch for unit tests
-    if harp::IS_TESTING {
+    if stdext::IS_TESTING {
         let _lock = unsafe { harp::fixtures::R_TEST_LOCK.lock() };
         futures::executor::block_on(fun());
         return;

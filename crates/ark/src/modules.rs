@@ -76,7 +76,7 @@ pub struct ArkEnvs {
 
 pub fn initialize() -> anyhow::Result<()> {
     // If we are `testing`, set the corresponding R level global option
-    if harp::IS_TESTING {
+    if stdext::IS_TESTING {
         r_poke_option_ark_testing()
     }
 

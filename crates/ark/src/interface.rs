@@ -1734,7 +1734,7 @@ unsafe extern "C" fn ps_onload_hook(pkg: SEXP, _path: SEXP) -> anyhow::Result<SE
 
 fn do_resource_namespaces() -> bool {
     // Don't slow down integration tests with srcref generation
-    if harp::IS_TESTING {
+    if stdext::IS_TESTING {
         return false;
     }
 

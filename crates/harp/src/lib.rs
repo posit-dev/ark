@@ -60,7 +60,6 @@ pub use harp::exec::try_eval;
 pub use harp::exec::try_eval_silent;
 #[cfg(test)]
 pub(crate) use harp::fixtures::r_task;
-pub use harp::fixtures::IS_TESTING;
 pub use harp::object::list_get;
 pub use harp::object::list_poke;
 pub use harp::object::RObject;

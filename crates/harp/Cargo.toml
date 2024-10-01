@@ -21,6 +21,7 @@ libloading = "0.8.1"
 libr = { path = "../libr" }
 log = "0.4.17"
 once_cell = "1.17.1"
+parking_lot = "0.12.3"
 regex = "1.7.3"
 semver = "1.0.19"
 stdext = { path = "../stdext" }
@@ -28,7 +29,3 @@ serde = { version = "1.0.183", features = ["derive"] }
 serde_json = { version = "1.0.94", features = ["preserve_order"]}
 rust-embed = "8.2.0"
 tracing-error = "0.2.0"
-parking_lot = "0.12.3"
-
-[features]
-testing = []

@@ -95,7 +95,7 @@ impl<T> Drop for RThreadSafe<T> {
 }
 
 fn check_on_main_r_thread(f: &str) {
-    if !RMain::on_main_thread() && !harp::IS_TESTING {
+    if !RMain::on_main_thread() && !stdext::IS_TESTING {
         let thread = std::thread::current();
         let name = thread.name().unwrap_or("<unnamed>");
         let message =
