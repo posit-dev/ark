@@ -19,7 +19,6 @@ use stdext::unwrap;
 
 use crate::comm::comm_manager::CommManager;
 use crate::comm::event::CommManagerEvent;
-use crate::comm::event::CommShellEvent;
 use crate::connection_file::ConnectionFile;
 use crate::error::Error;
 use crate::language::control_handler::ControlHandler;
@@ -126,7 +125,7 @@ impl Kernel {
         // Create the comm manager thread
         let iopub_tx = self.create_iopub_tx();
         let comm_manager_rx = self.comm_manager_rx.clone();
-        let comm_changed_rx = CommManager::start(iopub_tx, comm_manager_rx);
+        CommManager::start(iopub_tx, comm_manager_rx);
 
         // Create the Shell ROUTER/DEALER socket and start a thread to listen
         // for client messages.
@@ -149,7 +148,6 @@ impl Kernel {
                 shell_socket,
                 iopub_tx_clone,
                 comm_manager_tx_clone,
-                comm_changed_rx,
                 shell_clone,
                 lsp_handler_clone,
                 dap_handler_clone,
@@ -311,7 +309,6 @@ impl Kernel {
         socket: Socket,
         iopub_tx: Sender<IOPubMessage>,
         comm_manager_tx: Sender<CommManagerEvent>,
-        comm_changed_rx: Receiver<CommShellEvent>,
         shell_handler: Arc<Mutex<dyn ShellHandler>>,
         lsp_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
         dap_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
@@ -320,7 +317,6 @@ impl Kernel {
             socket,
             iopub_tx.clone(),
             comm_manager_tx,
-            comm_changed_rx,
             shell_handler,
             lsp_handler,
             dap_handler,

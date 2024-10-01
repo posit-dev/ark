@@ -19,7 +19,8 @@ use stdext::result::ResultOrLog;
 use crate::comm::comm_channel::Comm;
 use crate::comm::comm_channel::CommMsg;
 use crate::comm::event::CommManagerEvent;
-use crate::comm::event::CommShellEvent;
+use crate::comm::event::CommManagerInfoReply;
+use crate::comm::event::CommManagerRequest;
 use crate::comm::server_comm::ServerComm;
 use crate::error::Error;
 use crate::language::server_handler::ServerHandler;
@@ -70,14 +71,8 @@ pub struct Shell {
     /// Language-provided DAP handler object
     dap_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
 
-    /// Set of open comm channels; vector of (comm_id, target_name)
-    open_comms: Vec<(String, String)>,
-
     /// Channel used to deliver comm events to the comm manager
     comm_manager_tx: Sender<CommManagerEvent>,
-
-    /// Channel used to receive comm events from the comm manager
-    comm_shell_rx: Receiver<CommShellEvent>,
 }
 
 impl Shell {
@@ -93,7 +88,6 @@ impl Shell {
         socket: Socket,
         iopub_tx: Sender<IOPubMessage>,
         comm_manager_tx: Sender<CommManagerEvent>,
-        comm_shell_rx: Receiver<CommShellEvent>,
         shell_handler: Arc<Mutex<dyn ShellHandler>>,
         lsp_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
         dap_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
@@ -104,9 +98,7 @@ impl Shell {
             shell_handler,
             lsp_handler,
             dap_handler,
-            open_comms: Vec::new(),
             comm_manager_tx,
-            comm_shell_rx,
         }
     }
 
@@ -123,9 +115,6 @@ impl Shell {
                     continue;
                 },
             };
-
-            // Process any comm changes before handling the message
-            self.process_comm_changes();
 
             // Handle the message; any failures while handling the messages are
             // delivered to the client instead of reported up the stack, so the
@@ -283,16 +272,28 @@ impl Shell {
     ) -> Result<(), Error> {
         log::info!("Received request for open comms: {req:?}");
 
-        // Convert our internal map of open comms to a JSON object
+        // One off sender/receiver pair for this request
+        let (tx, rx) = crossbeam::channel::bounded(1);
+
+        // Request the list of open comms from the comm manager
+        self.comm_manager_tx
+            .send(CommManagerEvent::Request(CommManagerRequest::Info(tx)))
+            .unwrap();
+
+        // Wait on the reply
+        let CommManagerInfoReply { comms } = rx.recv().unwrap();
+
+        // Convert to a JSON object
         let mut info = serde_json::Map::new();
-        for (comm_id, target_name) in &self.open_comms {
+
+        for comm in comms.into_iter() {
             // Only include comms that match the target name, if one was specified
-            if req.content.target_name.is_empty() || &req.content.target_name == target_name {
+            if req.content.target_name.is_empty() || req.content.target_name == comm.name {
                 let comm_info_target = CommInfoTargetName {
-                    target_name: target_name.clone(),
+                    target_name: comm.name,
                 };
                 let comm_info = serde_json::to_value(comm_info_target).unwrap();
-                info.insert(comm_id.clone(), comm_info);
+                info.insert(comm.id, comm_info);
             }
         }
 
@@ -574,24 +575,5 @@ impl Shell {
             Ok(reply) => req.send_reply(reply, &self.socket),
             Err(err) => req.send_error::<InspectReply>(err, &self.socket),
         }
-    }
-
-    // Process changes to open comms
-    fn process_comm_changes(&mut self) {
-        if let Ok(comm_changed) = self.comm_shell_rx.try_recv() {
-            match comm_changed {
-                // Comm was added; add it to the list of open comms
-                CommShellEvent::Added(comm_id, target_name) => {
-                    self.open_comms.push((comm_id, target_name));
-                },
-
-                // Comm was removed; remove it from the list of open comms
-                CommShellEvent::Removed(comm_id) => {
-                    self.open_comms.retain(|(id, _)| id != &comm_id);
-                },
-            }
-        }
-        // No need to log errors; `try_recv` will return an error if there are no
-        // messages to receive
     }
 }
