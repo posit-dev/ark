@@ -78,14 +78,29 @@ summary_stats_date <- function(col) {
     # When calling `min` on `x` would raise a warning.
     # Turns out, some Parquet files might generate malformed timezones too.
     suppressWarnings({
+        # When all values in the column are NA's, there min and max return -Inf and +Inf,
+        # mean returns NaN and median returns NA. We make everything return `NULL` so we
+        # correctly display the values in the front-end.
+        min_date <- finite_or_null(min(col, na.rm = TRUE))
+        max_date <- finite_or_null(max(col, na.rm = TRUE))
+        mean_date <- finite_or_null(mean(col, na.rm = TRUE))
+        median_date <- finite_or_null(stats::median(col, na.rm = TRUE))
         list(
-            min_date = as.character(min(col, na.rm = TRUE)),
-            mean_date = as.character(mean(col, na.rm = TRUE)),
-            median_date = as.character(stats::median(col, na.rm = TRUE)),
-            max_date = as.character(max(col, na.rm = TRUE)),
+            min_date = as.character(min_date),
+            mean_date = as.character(mean_date),
+            median_date = as.character(median_date),
+            max_date = as.character(max_date),
             num_unique = length(unique(col))
         )
     })
+}
+
+finite_or_null <- function(x) {
+    if (!is.finite(x)) {
+        NULL
+    } else {
+        x
+    }
 }
 
 summary_stats_get_timezone <- function(x) {
