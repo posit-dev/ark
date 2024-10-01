@@ -22,7 +22,7 @@ use crate::library::RLibraries;
 use crate::R_MAIN_THREAD_ID;
 
 // This needs to be a reentrant mutex because many of our tests are wrapped in
-// `r_test()` which takes the R lock. Without a reentrant mutex, we'd get
+// `harp::r_task()` which takes the R lock. Without a reentrant mutex, we'd get
 // deadlocked when we cause some other background thread to use an `r_task()`.
 pub static mut R_TEST_LOCK: parking_lot::ReentrantMutex<()> = parking_lot::ReentrantMutex::new(());
 

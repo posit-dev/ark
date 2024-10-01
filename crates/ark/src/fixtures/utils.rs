@@ -31,7 +31,6 @@ pub(crate) fn r_test_init() {
     harp::fixtures::r_test_init();
     INIT.call_once(|| {
         // Initialize the positron module so tests can use them.
-        // Routines are already registered by `harp::test::r_test()`.
         modules::initialize().unwrap();
     });
 }

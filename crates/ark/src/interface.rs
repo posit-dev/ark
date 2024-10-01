@@ -528,7 +528,7 @@ impl RMain {
 
     /// Access a reference to the singleton instance of this struct
     ///
-    /// SAFETY: Accesses must occur after `start_r()` initializes it, and must
+    /// SAFETY: Accesses must occur after `RMain::start()` initializes it, and must
     /// occur on the main R thread.
     pub fn get() -> &'static Self {
         RMain::get_mut()
@@ -536,7 +536,7 @@ impl RMain {
 
     /// Access a mutable reference to the singleton instance of this struct
     ///
-    /// SAFETY: Accesses must occur after `start_r()` initializes it, and must
+    /// SAFETY: Accesses must occur after `RMain::start()` initializes it, and must
     /// occur on the main R thread.
     pub fn get_mut() -> &'static mut Self {
         if !RMain::on_main_thread() {

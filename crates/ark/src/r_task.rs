@@ -287,7 +287,7 @@ pub fn initialize(tasks_tx: Sender<RTask>, tasks_idle_tx: Sender<RTask>) {
 }
 
 // Be defensive for the case an auxiliary thread runs a task before R is initialized
-// by `start_r()`, which calls `r_task::initialize()`
+// by `RMain::start()` which calls `r_task::initialize()`
 fn get_tasks_interrupt_tx() -> &'static Sender<RTask> {
     get_tx(&R_MAIN_TASKS_INTERRUPT_TX)
 }
@@ -313,5 +313,5 @@ fn get_tx(once_tx: &'static OnceLock<Sender<RTask>>) -> &'static Sender<RTask> {
     }
 }
 
-// Tests are tricky because `harp::test::start_r()` is very bare bones and
+// Tests are tricky because `harp::fixtures::r_test_init()` is very bare bones and
 // doesn't have an `R_MAIN` or `R_MAIN_TASKS_TX`.

@@ -38,7 +38,7 @@ jobs:
 
       # Ubuntu runners already have a version of R installed.
       # Unit tests "automatically" find and set `R_HOME` if it isn't set by
-      # calling `R RHOME`. See the testing version of `start_r()` for this.
+      # calling `R RHOME`. See `harp::fixtures::r_test_init()`.
       - name: Run Unit Tests
         id: amalthea-test
         run: |
