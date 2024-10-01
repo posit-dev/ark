@@ -10,6 +10,7 @@ extern crate embed_resource;
 
 fn main() {
     // Embed an Application Manifest file on Windows.
+    // Turns on UTF-8 support and declares our Windows version compatibility.
     // Documented to do nothing on non-Windows.
     // We also do this for ark.
     // We don't generate a main `harp.exe` binary, but `cargo test` does generate a `harp-*.exe`

@@ -36,6 +36,7 @@ fn main() {
     println!("cargo:rustc-env=BUILD_DATE={}", build_date);
 
     // Embed an Application Manifest file on Windows.
+    // Turns on UTF-8 support and declares our Windows version compatibility.
     // Documented to do nothing on non-Windows.
     // We also do this for harp to support its unit tests.
     //
