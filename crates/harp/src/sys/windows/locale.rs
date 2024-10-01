@@ -7,12 +7,12 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::test::r_test;
+    use crate::r_task;
 
     #[test]
     fn test_locale() {
         // These tests assert that we've embedded our Application Manifest file correctly in `build.rs`
-        r_test(|| {
+        r_task(|| {
             let latin1 = harp::parse_eval_base("l10n_info()$`Latin-1`").unwrap();
             let latin1 = bool::try_from(latin1).unwrap();
             assert!(!latin1);
