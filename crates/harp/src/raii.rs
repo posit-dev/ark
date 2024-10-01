@@ -150,13 +150,12 @@ impl RLocalShowErrorMessageOption {
 
 #[cfg(test)]
 mod tests {
-    use crate::fixtures::r_task;
     use crate::raii::RLocalInteractive;
     use crate::raii::RLocalShowErrorMessageOption;
 
     #[test]
     fn test_local_variable() {
-        r_task(|| {
+        crate::r_task(|| {
             let get = || unsafe { libr::get(libr::R_Interactive) };
             let old = get();
 
@@ -178,7 +177,7 @@ mod tests {
 
     #[test]
     fn test_local_option() {
-        r_task(|| {
+        crate::r_task(|| {
             let get = || -> bool { harp::get_option("show.error.messages").try_into().unwrap() };
             let old = get();
 

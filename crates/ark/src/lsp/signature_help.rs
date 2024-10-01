@@ -500,7 +500,6 @@ fn call_label(x: SEXP) -> String {
 
 #[cfg(test)]
 mod tests {
-    use ark::fixtures::r_task;
     use harp::call::RCall;
     use harp::object::*;
     use harp::r_char;
@@ -518,7 +517,7 @@ mod tests {
 
     #[test]
     fn test_basic_signature_help() {
-        r_task(|| {
+        crate::r_task(|| {
             let (text, point) = point_from_cursor("library(@)");
             let document = Document::new(&text, None);
             let context = DocumentContext::new(&document, point, None);
@@ -536,7 +535,7 @@ mod tests {
 
     #[test]
     fn test_no_signature_help_outside_parentheses() {
-        r_task(|| {
+        crate::r_task(|| {
             let (text, point) = point_from_cursor("library@()");
             let document = Document::new(&text, None);
             let context = DocumentContext::new(&document, point, None);
@@ -555,7 +554,7 @@ mod tests {
 
     #[test]
     fn test_signature_help_argument_defaults() {
-        r_task(|| {
+        crate::r_task(|| {
             // Define function in global env
             let fun = r#"
 fn <- function(
@@ -594,7 +593,7 @@ fn <- function(
 
     #[test]
     fn test_argument_label_null() {
-        r_task(|| {
+        crate::r_task(|| {
             let x = r_null();
             let label = argument_label(String::from("x"), x);
             assert_eq!(label, String::from("x = NULL"));
@@ -603,7 +602,7 @@ fn <- function(
 
     #[test]
     fn test_argument_label_missing() {
-        r_task(|| {
+        crate::r_task(|| {
             let x = harp::missing();
             let label = argument_label(String::from("x"), x);
             assert_eq!(label, String::from("x"));
@@ -612,7 +611,7 @@ fn <- function(
 
     #[test]
     fn test_argument_label_symbol() {
-        r_task(|| {
+        crate::r_task(|| {
             let x = unsafe { r_symbol!("name") };
             let label = argument_label(String::from("x"), x);
             assert_eq!(label, String::from("x = name"));
@@ -625,7 +624,7 @@ fn <- function(
 
     #[test]
     fn test_argument_label_call() {
-        r_task(|| {
+        crate::r_task(|| {
             let x = unsafe {
                 RCall::new(r_symbol!("source"))
                     .add(r_symbol!("exprs"))
@@ -639,7 +638,7 @@ fn <- function(
 
     #[test]
     fn test_argument_label_truncate() {
-        r_task(|| {
+        crate::r_task(|| {
             let x = harp::missing();
             let name = "x".repeat(300);
 
@@ -653,7 +652,7 @@ fn <- function(
 
     #[test]
     fn test_argument_label_vector() {
-        r_task(|| {
+        crate::r_task(|| {
             let x = RObject::from(r_alloc_logical(3));
             r_lgl_poke(x.sexp, 0, 1);
             r_lgl_poke(x.sexp, 1, 0);
@@ -699,7 +698,7 @@ fn <- function(
 
     #[test]
     fn test_argument_label_vector_truncate() {
-        r_task(|| {
+        crate::r_task(|| {
             let x = RObject::from(r_alloc_integer(12));
             for i in 0..12 {
                 r_int_poke(x.sexp, R_xlen_t::try_from(i).unwrap(), i);
@@ -716,7 +715,7 @@ fn <- function(
 
     #[test]
     fn test_argument_label_scalars() {
-        r_task(|| {
+        crate::r_task(|| {
             let x = RObject::from(r_alloc_logical(1));
             r_lgl_poke(x.sexp, 0, 1);
             let label = argument_label(String::from("x"), x.sexp);

@@ -494,13 +494,12 @@ mod tests {
     use stdext::assert_match;
 
     use super::*;
-    use crate::fixtures::r_task;
     use crate::utils::r_envir_remove;
     use crate::utils::r_typeof;
 
     #[test]
     fn test_basic_function() {
-        r_task(|| unsafe {
+        crate::r_task(|| unsafe {
             // try adding some numbers
             let result = RFunction::new("", "+").add(2).add(2).call().unwrap();
 
@@ -512,7 +511,7 @@ mod tests {
 
     #[test]
     fn test_basic_function_error() {
-        r_task(|| {
+        crate::r_task(|| {
             let result = RFunction::from("+").add(1).add("").call();
 
             assert_match!(result, Err(err) => {
@@ -525,7 +524,7 @@ mod tests {
 
     #[test]
     fn test_utf8_strings() {
-        r_task(|| unsafe {
+        crate::r_task(|| unsafe {
             // try sending some UTF-8 strings to and from R
             let result = RFunction::new("base", "paste")
                 .add("世界")
@@ -545,7 +544,7 @@ mod tests {
 
     #[test]
     fn test_named_arguments() {
-        r_task(|| unsafe {
+        crate::r_task(|| unsafe {
             let result = RFunction::new("stats", "rnorm")
                 .add(1.0)
                 .param("mean", 10)
@@ -560,7 +559,7 @@ mod tests {
 
     #[test]
     fn test_try_catch_error() {
-        r_task(|| unsafe {
+        crate::r_task(|| unsafe {
             // ok SEXP
             let ok: harp::Result<RObject> = try_catch(|| Rf_ScalarInteger(42).into());
             assert_match!(ok, Ok(value) => {
@@ -584,7 +583,7 @@ mod tests {
 
     #[test]
     fn test_top_level_exec() {
-        r_task(|| {
+        crate::r_task(|| {
             let ok = top_level_exec(|| 42);
             assert_match!(ok, Ok(value) => {
                 assert_eq!(value, 42);
@@ -612,7 +611,7 @@ mod tests {
 
     #[test]
     fn test_dirty_image() {
-        r_task(|| unsafe {
+        crate::r_task(|| unsafe {
             libr::set(R_DirtyImage, 2);
             let sym = r_symbol!("aaa");
             Rf_defineVar(sym, Rf_ScalarInteger(42), R_GlobalEnv);
@@ -630,7 +629,7 @@ mod tests {
 
     #[test]
     fn test_r_unwrap() {
-        r_task(|| {
+        crate::r_task(|| {
             let out: Result<RObject> =
                 try_catch(|| r_unwrap(|| Err::<RObject, anyhow::Error>(anyhow::anyhow!("ouch"))));
 

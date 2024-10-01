@@ -160,7 +160,6 @@ fn parse_input_as_string<'a>(input: &ParseInput<'a>) -> crate::Result<String> {
 mod tests {
     use stdext::assert_match;
 
-    use crate::fixtures::r_task;
     use crate::parse::parse_input_as_string;
     use crate::parse::ParseInput;
     use crate::parse_status;
@@ -173,7 +172,7 @@ mod tests {
 
     #[test]
     fn test_parse_status() {
-        r_task(|| unsafe {
+        crate::r_task(|| unsafe {
             assert_match!(
                 parse_status(&ParseInput::Text("")),
                 Ok(ParseResult::Complete(out)) => {
@@ -242,7 +241,7 @@ mod tests {
 
     #[test]
     fn test_parse_input_as_string() {
-        r_task(|| {
+        crate::r_task(|| {
             assert_eq!(
                 parse_input_as_string(&ParseInput::Text("foo\nbar")).unwrap(),
                 "foo\nbar"

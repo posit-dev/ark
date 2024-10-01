@@ -108,12 +108,11 @@ impl PartialEq<&str> for RSymbol {
 
 #[cfg(test)]
 mod tests {
-    use crate::fixtures::r_task;
     use crate::symbol::RSymbol;
 
     #[test]
     fn test_rsymbol_ord() {
-        r_task(|| {
+        crate::r_task(|| {
             let mut x = vec![RSymbol::from("z"), RSymbol::from("m"), RSymbol::from("a")];
             x.sort();
             assert_eq!(x, vec![

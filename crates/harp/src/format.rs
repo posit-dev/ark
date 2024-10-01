@@ -115,7 +115,6 @@ mod tests {
     use harp::r_char;
     use libr::*;
 
-    use crate::fixtures::r_task;
     use crate::format::cpl_to_string;
     use crate::format::dbl_to_string;
     use crate::format::int_to_string;
@@ -124,7 +123,7 @@ mod tests {
 
     #[test]
     fn test_to_string_methods() {
-        r_task(|| unsafe {
+        crate::r_task(|| unsafe {
             assert_eq!(lgl_to_string(1), String::from("TRUE"));
             assert_eq!(lgl_to_string(0), String::from("FALSE"));
             assert_eq!(lgl_to_string(r_lgl_na()), String::from("NA"));

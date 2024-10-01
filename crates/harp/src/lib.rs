@@ -58,7 +58,8 @@ pub use harp::exec::top_level_exec;
 pub use harp::exec::try_catch;
 pub use harp::exec::try_eval;
 pub use harp::exec::try_eval_silent;
-pub use harp::fixtures::r_task;
+#[cfg(test)]
+pub(crate) use harp::fixtures::r_task;
 pub use harp::fixtures::IS_TESTING;
 pub use harp::object::list_get;
 pub use harp::object::list_poke;
@@ -251,7 +252,6 @@ mod tests {
     use libr::*;
 
     use super::*;
-    use crate::fixtures::r_task;
     use crate::object::RObject;
     use crate::protect::RProtect;
     use crate::utils::r_is_null;
@@ -259,7 +259,7 @@ mod tests {
 
     #[test]
     fn test_pairlist() {
-        r_task(|| unsafe {
+        crate::r_task(|| unsafe {
             let sym = r_symbol!("injected");
 
             let mut protect = RProtect::new();
@@ -320,7 +320,7 @@ mod tests {
 
     #[test]
     fn test_call() {
-        r_task(|| unsafe {
+        crate::r_task(|| unsafe {
             let sym = r_symbol!("injected");
 
             let value = RObject::new(r_lang! {

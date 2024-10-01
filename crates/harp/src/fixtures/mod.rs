@@ -58,7 +58,8 @@ static INIT: Once = Once::new();
 ///
 /// Note: `harp::r_task()` should only be used in Harp tests. Use
 /// `ark::r_task()` in Ark tests so that Ark initialisation also takes place.
-pub fn r_task<F: FnOnce()>(f: F) {
+#[cfg(test)]
+pub(crate) fn r_task<F: FnOnce()>(f: F) {
     let guard = unsafe { R_TEST_LOCK.lock() };
 
     r_test_init();

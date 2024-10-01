@@ -279,7 +279,6 @@ mod tests {
     use super::*;
     use crate::exec::RFunction;
     use crate::exec::RFunctionExt;
-    use crate::fixtures::r_task;
     use crate::object::r_length;
     use crate::r_symbol;
 
@@ -306,7 +305,7 @@ mod tests {
 
     #[test]
     fn test_environment_iter_count() {
-        r_task(|| {
+        crate::r_task(|| {
             let hashed = new_test_environment(true);
             let non_hashed = new_test_environment(false);
             assert_eq!(hashed.iter().count(), 3);
@@ -320,7 +319,7 @@ mod tests {
 
     #[test]
     fn test_sorted_environment_names() {
-        r_task(|| {
+        crate::r_task(|| {
             let env = harp::parse_eval_global("as.environment(list(c = 1, b = 2, a = 3))").unwrap();
             let names = Environment::new(env.clone()).names();
             assert_eq!(names, vec!["a", "b", "c"]);
@@ -339,7 +338,7 @@ mod tests {
         // S3 methods that might have been implemented for `length()` or `names()`
         // which could cause issues if their len() didn't match.
         // https://github.com/posit-dev/positron/issues/3229
-        r_task(|| {
+        crate::r_task(|| {
             let test_env: RObject = harp::parse_eval_global("new.env()").unwrap();
             let env = harp::parse_eval0(
                 r#"
@@ -375,7 +374,7 @@ mod tests {
 
     #[test]
     fn test_filtered_env() {
-        r_task(|| {
+        crate::r_task(|| {
             let env =
                 harp::parse_eval_global("as.environment(list(.a = 1, b = 2, c = 3))").unwrap();
             let env = Environment::new_filtered(env, EnvironmentFilter::ExcludeHidden);

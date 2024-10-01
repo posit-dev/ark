@@ -740,12 +740,11 @@ mod tests {
     use crate::environment::R_ENVS;
     use crate::exec::RFunction;
     use crate::exec::RFunctionExt;
-    use crate::fixtures::r_task;
     use crate::r_str_to_owned_utf8_unchecked;
 
     #[test]
     fn test_r_str_to_utf8_replaces_invalid_utf8() {
-        r_task(|| {
+        crate::r_task(|| {
             let env = RFunction::new("base", "new.env")
                 .param("parent", R_ENVS.base)
                 .call()
