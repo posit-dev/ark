@@ -160,6 +160,7 @@ fn parse_input_as_string<'a>(input: &ParseInput<'a>) -> crate::Result<String> {
 mod tests {
     use stdext::assert_match;
 
+    use crate::fixtures::r_task;
     use crate::parse::parse_input_as_string;
     use crate::parse::ParseInput;
     use crate::parse_status;
@@ -168,7 +169,6 @@ mod tests {
     use crate::r_symbol;
     use crate::r_typeof;
     use crate::srcref;
-    use crate::fixtures::r_task;
     use crate::ParseResult;
 
     #[test]

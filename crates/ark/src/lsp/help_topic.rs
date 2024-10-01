@@ -100,8 +100,8 @@ fn locate_help_node(tree: &Tree, point: Point) -> Option<Node> {
 mod tests {
     use tree_sitter::Parser;
 
-    use crate::lsp::help_topic::locate_help_node;
     use crate::fixtures::point_from_cursor;
+    use crate::lsp::help_topic::locate_help_node;
 
     #[test]
     fn test_locate_help_node() {

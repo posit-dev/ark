@@ -279,9 +279,9 @@ mod tests {
     use super::*;
     use crate::exec::RFunction;
     use crate::exec::RFunctionExt;
+    use crate::fixtures::r_task;
     use crate::object::r_length;
     use crate::r_symbol;
-    use crate::fixtures::r_task;
 
     fn new_test_environment(hash: bool) -> Environment {
         let test_env = RFunction::new("base", "new.env")

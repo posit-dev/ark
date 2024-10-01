@@ -226,10 +226,10 @@ mod tests {
     use tree_sitter::Point;
 
     use crate::fixtures::point_from_cursor;
-    use crate::r_task;
     use crate::lsp::completions::sources::unique::custom::completions_from_custom_source;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
+    use crate::r_task;
 
     #[test]
     fn test_completion_custom_library() {

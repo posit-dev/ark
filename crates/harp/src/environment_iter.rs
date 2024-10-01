@@ -198,8 +198,8 @@ mod tests {
     use super::*;
     use crate::exec::RFunction;
     use crate::exec::RFunctionExt;
-    use crate::r_symbol;
     use crate::fixtures::r_task;
+    use crate::r_symbol;
 
     unsafe fn test_environment_iter_impl(hash: bool) {
         let test_env = RFunction::new("base", "new.env")

@@ -77,10 +77,10 @@ impl DataFrame {
 mod tests {
     use stdext::assert_match;
 
+    use crate::fixtures::r_task;
     use crate::r_alloc_integer;
     use crate::r_chr_poke;
     use crate::r_list_poke;
-    use crate::fixtures::r_task;
     use crate::vector::Vector;
     use crate::DataFrame;
     use crate::List;

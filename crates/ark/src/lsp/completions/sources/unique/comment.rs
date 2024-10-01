@@ -128,8 +128,8 @@ fn inject_roxygen_comment_after_newline(x: &str) -> String {
 fn test_comment() {
     use tree_sitter::Point;
 
-    use crate::r_task;
     use crate::lsp::documents::Document;
+    use crate::r_task;
 
     r_task(|| {
         // If not in a comment, return `None`
@@ -153,8 +153,8 @@ fn test_roxygen_comment() {
     use libr::LOGICAL_ELT;
     use tree_sitter::Point;
 
-    use crate::r_task;
     use crate::lsp::documents::Document;
+    use crate::r_task;
 
     r_task(|| unsafe {
         let installed = RFunction::new("", ".ps.is_installed")

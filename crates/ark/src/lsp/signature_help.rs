@@ -500,8 +500,8 @@ fn call_label(x: SEXP) -> String {
 
 #[cfg(test)]
 mod tests {
+    use ark::fixtures::r_task;
     use harp::call::RCall;
-    use harp::fixtures::r_task;
     use harp::object::*;
     use harp::r_char;
     use harp::r_null;

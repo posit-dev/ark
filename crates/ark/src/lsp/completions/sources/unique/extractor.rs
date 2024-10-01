@@ -165,10 +165,10 @@ mod tests {
     use harp::eval::RParseEvalOptions;
     use harp::object::r_lgl_get;
 
+    use crate::fixtures::point_from_cursor;
     use crate::lsp::completions::sources::unique::extractor::completions_from_dollar;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
-    use crate::fixtures::point_from_cursor;
     use crate::r_task;
 
     #[test]

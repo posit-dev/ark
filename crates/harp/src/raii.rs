@@ -150,9 +150,9 @@ impl RLocalShowErrorMessageOption {
 
 #[cfg(test)]
 mod tests {
+    use crate::fixtures::r_task;
     use crate::raii::RLocalInteractive;
     use crate::raii::RLocalShowErrorMessageOption;
-    use crate::fixtures::r_task;
 
     #[test]
     fn test_local_variable() {

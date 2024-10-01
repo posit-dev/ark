@@ -157,8 +157,8 @@ impl TryFrom<&harp::CharacterVector> for SrcFile {
 mod tests {
     use std::ops::Range;
 
-    use crate::srcref::SrcRef;
     use crate::fixtures::r_task;
+    use crate::srcref::SrcRef;
 
     #[test]
     fn test_srcref() {
