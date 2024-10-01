@@ -81,7 +81,7 @@ pub fn r_test_init() {
                 let result = Command::new("R").arg("RHOME").output().unwrap();
                 let r_home = String::from_utf8(result.stdout).unwrap();
                 let r_home = r_home.trim();
-                std::env::set_var("R_HOME", r_home);
+                unsafe { std::env::set_var("R_HOME", r_home) };
                 PathBuf::from(r_home)
             },
         };
