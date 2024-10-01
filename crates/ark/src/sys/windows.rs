@@ -8,6 +8,7 @@
 pub mod console;
 pub mod control;
 pub mod interface;
+mod locale;
 pub mod path;
 pub mod signals;
 mod strings;

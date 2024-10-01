@@ -68,7 +68,7 @@ stdext = { path = "../stdext", features = ["testing"]}
 
 [build-dependencies]
 chrono = "0.4.23"
-embed-resource = "2.4.0"
+embed-resource = "2.5.0"
 
 [package.metadata.generate-rpm]
 assets = [{ source = "target/release/ark", dest = "/usr/bin/ark", mode = "755" }]
