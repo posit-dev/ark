@@ -1,12 +1,9 @@
 //
-// test.rs
+// fixtures/utils.rs
 //
-// Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2024 Posit Software, PBC. All rights reserved.
 //
 //
-
-// Wrapper around `harp::r_test_impl()` that also initializes the ark level R
-// modules, so they can be utilized in the tests
 
 use std::sync::Mutex;
 use std::sync::MutexGuard;
