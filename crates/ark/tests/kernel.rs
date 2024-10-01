@@ -12,6 +12,9 @@ fn test_kernel_info() {
 
     assert_match!(frontend.recv_shell(), Message::KernelInfoReply(reply) => {
         assert_eq!(reply.content.language_info.name, "R");
+        assert_eq!(reply.content.language_info.pygments_lexer, None);
+        assert_eq!(reply.content.language_info.codemirror_mode, None);
+        assert_eq!(reply.content.language_info.nbconvert_exporter, None);
     });
 
     frontend.recv_iopub_busy();

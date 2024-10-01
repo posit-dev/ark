@@ -160,9 +160,9 @@ impl ShellHandler for Shell {
             version: kernel_info.version.clone(),
             file_extension: String::from(".R"),
             mimetype: String::from("text/r"),
-            pygments_lexer: String::new(),
-            codemirror_mode: String::new(),
-            nbconvert_exporter: String::new(),
+            pygments_lexer: None,
+            codemirror_mode: None,
+            nbconvert_exporter: None,
             positron: Some(LanguageInfoPositron {
                 input_prompt: kernel_info.input_prompt.clone(),
                 continuation_prompt: kernel_info.continuation_prompt.clone(),
