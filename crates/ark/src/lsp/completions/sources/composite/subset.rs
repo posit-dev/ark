@@ -79,11 +79,11 @@ mod tests {
     use crate::lsp::completions::sources::composite::subset::completions_from_subset;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
-    use crate::fixtures::r_test;
+    use crate::r_task;
 
     #[test]
     fn test_subset_completions() {
-        r_test(|| {
+        r_task(|| {
             let options = RParseEvalOptions {
                 forbid_function_calls: false,
                 ..Default::default()

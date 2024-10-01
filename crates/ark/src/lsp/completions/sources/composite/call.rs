@@ -289,11 +289,11 @@ mod tests {
     use crate::lsp::completions::sources::composite::call::completions_from_call;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
-    use crate::fixtures::r_test;
+    use crate::r_task;
 
     #[test]
     fn test_completions_after_user_types_part_of_an_argument_name() {
-        r_test(|| {
+        r_task(|| {
             // Right after `tab`
             let point = Point { row: 0, column: 9 };
             let document = Document::new("match(tab)", None);
@@ -322,7 +322,7 @@ mod tests {
     #[test]
     fn test_session_arguments() {
         // Can't find the function
-        r_test(|| {
+        r_task(|| {
             // Place cursor between `()`
             let point = Point { row: 0, column: 21 };
             let document = Document::new("not_a_known_function()", None);
@@ -332,7 +332,7 @@ mod tests {
         });
 
         // Basic session argument lookup
-        r_test(|| {
+        r_task(|| {
             let options = RParseEvalOptions {
                 forbid_function_calls: false,
                 ..Default::default()
@@ -375,7 +375,7 @@ mod tests {
         });
 
         // Case where the session object isn't a function
-        r_test(|| {
+        r_task(|| {
             let options = RParseEvalOptions {
                 forbid_function_calls: false,
                 ..Default::default()

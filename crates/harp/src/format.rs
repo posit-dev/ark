@@ -120,11 +120,10 @@ mod tests {
     use crate::format::int_to_string;
     use crate::format::lgl_to_string;
     use crate::format::str_to_string;
-    use crate::test::r_test;
 
     #[test]
     fn test_to_string_methods() {
-        r_test(|| unsafe {
+        crate::r_task(|| unsafe {
             assert_eq!(lgl_to_string(1), String::from("TRUE"));
             assert_eq!(lgl_to_string(0), String::from("FALSE"));
             assert_eq!(lgl_to_string(r_lgl_na()), String::from("NA"));

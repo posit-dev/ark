@@ -129,9 +129,9 @@ fn test_comment() {
     use tree_sitter::Point;
 
     use crate::lsp::documents::Document;
-    use crate::fixtures::r_test;
+    use crate::r_task;
 
-    r_test(|| {
+    r_task(|| {
         // If not in a comment, return `None`
         let point = Point { row: 0, column: 1 };
         let document = Document::new("mean()", None);
@@ -154,9 +154,9 @@ fn test_roxygen_comment() {
     use tree_sitter::Point;
 
     use crate::lsp::documents::Document;
-    use crate::fixtures::r_test;
+    use crate::r_task;
 
-    r_test(|| unsafe {
+    r_task(|| unsafe {
         let installed = RFunction::new("", ".ps.is_installed")
             .add("roxygen2")
             .add("7.2.1.9000")

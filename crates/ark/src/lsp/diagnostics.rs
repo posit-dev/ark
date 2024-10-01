@@ -1034,7 +1034,7 @@ mod tests {
     use crate::lsp::diagnostics::generate_diagnostics;
     use crate::lsp::documents::Document;
     use crate::lsp::state::WorldState;
-    use crate::fixtures::r_test;
+    use crate::r_task;
 
     // Default state that includes installed packages and default scopes.
     static DEFAULT_STATE: Lazy<WorldState> = Lazy::new(|| current_state());
@@ -1051,7 +1051,7 @@ mod tests {
 
     #[test]
     fn test_mixed_syntax_and_semantic_diagnostics() {
-        r_test(|| {
+        r_task(|| {
             // - `foo` is an unknown symbol
             // - `}` is a syntax error, but localized to that line
             let text = "
@@ -1076,7 +1076,7 @@ foo
 
     #[test]
     fn test_comment_after_call_argument() {
-        r_test(|| {
+        r_task(|| {
             let text = "
             match(
                 1,
@@ -1090,7 +1090,7 @@ foo
 
     #[test]
     fn test_missing_namespace_rhs() {
-        r_test(|| {
+        r_task(|| {
             let text = "base::";
             let document = Document::new(text, None);
             let diagnostics = generate_diagnostics(document, DEFAULT_STATE.clone());
@@ -1102,7 +1102,7 @@ foo
 
     #[test]
     fn test_expression_after_call_argument() {
-        r_test(|| {
+        r_task(|| {
             let text = "match(1, 2 3)";
             let document = Document::new(text, None);
 
@@ -1119,7 +1119,7 @@ foo
 
     #[test]
     fn test_no_diagnostic_for_dot_dot_i() {
-        r_test(|| {
+        r_task(|| {
             let text = "..1 + ..2 + 3";
             let document = Document::new(text, None);
 
@@ -1131,7 +1131,7 @@ foo
 
     #[test]
     fn test_no_diagnostic_for_rhs_of_extractor() {
-        r_test(|| {
+        r_task(|| {
             let options = RParseEvalOptions {
                 forbid_function_calls: false,
                 ..Default::default()
@@ -1158,7 +1158,7 @@ foo
 
     #[test]
     fn test_no_diagnostic_for_assignment_bindings() {
-        r_test(|| {
+        r_task(|| {
             let text = "
                 x <- 1
                 2 -> y
@@ -1173,7 +1173,7 @@ foo
 
     #[test]
     fn test_no_diagnostic_for_super_assignment_bindings() {
-        r_test(|| {
+        r_task(|| {
             let text = "
                 x <<- 1
                 2 ->> y
@@ -1187,7 +1187,7 @@ foo
 
     #[test]
     fn test_symbol_not_in_scope_diagnostic_is_ordering_dependent() {
-        r_test(|| {
+        r_task(|| {
             let text = "
                 x + 1
                 x <- 1
@@ -1206,7 +1206,7 @@ foo
 
     #[test]
     fn test_no_diagnostic_formula() {
-        r_test(|| {
+        r_task(|| {
             let text = "
                 foo ~ bar
                 ~foo
@@ -1221,7 +1221,7 @@ foo
 
     #[test]
     fn test_dotty_assignment_basic() {
-        r_test(|| {
+        r_task(|| {
             let code = "
                 .[apple, banana] <- c(1, 2)
                 apple
@@ -1241,7 +1241,7 @@ foo
 
     #[test]
     fn test_dotty_right_assignment_basic() {
-        r_test(|| {
+        r_task(|| {
             let code = "
                 c(1, 2) -> .[apple, banana]
                 apple
@@ -1261,7 +1261,7 @@ foo
 
     #[test]
     fn test_dotty_assignment_named() {
-        r_test(|| {
+        r_task(|| {
             // `x` should not be defined
             let code = "
                 .[apple = x, banana] <- list(w = 1, x = 2, y = 3, z = 4)
@@ -1282,7 +1282,7 @@ foo
 
     #[test]
     fn test_dotty_assignment_recursive() {
-        r_test(|| {
+        r_task(|| {
             let code = "
                 .[apple, .[banana]] <- list(1, list(2))
                 apple
@@ -1302,7 +1302,7 @@ foo
 
     #[test]
     fn test_dotty_assignment_within_magrittr_pipe_braced_expr() {
-        r_test(|| {
+        r_task(|| {
             let code = "
                 mtcars %>% list({ .[apple] <- 1; apple })
                 apple
@@ -1322,7 +1322,7 @@ foo
     #[test]
     fn test_dotty_assignment_within_native_pipe_braced_expr() {
         // TODO: `apple` should be defined in the global env and there should not be a diagnostic here
-        r_test(|| {
+        r_task(|| {
             let code = "
                 mtcars |> list({ .[apple] <- 1; apple })
                 apple
@@ -1342,7 +1342,7 @@ foo
     #[test]
     fn test_assignment_within_function_arguments() {
         // TODO: `x` should be defined in the global env and there should not be a diagnostic here
-        r_test(|| {
+        r_task(|| {
             let code = "
                 list({ x <- 1 })
                 x

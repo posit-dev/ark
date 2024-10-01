@@ -117,7 +117,7 @@ mod tests {
     use harp::object::RObject;
 
     use super::*;
-    use crate::fixtures::r_test;
+    use crate::r_task;
 
     fn export_selection_helper(data: RObject, selection: TableSelection) -> String {
         export_selection_helper_with_format(data, selection, ExportFormat::Csv)
@@ -157,7 +157,7 @@ mod tests {
 
     #[test]
     fn test_single_cell_selection() {
-        r_test(|| {
+        r_task(|| {
             let data = small_test_data();
 
             let single_cell_selection = |i, j| TableSelection {
@@ -208,7 +208,7 @@ mod tests {
 
     #[test]
     fn test_cell_range_selection() {
-        r_test(|| {
+        r_task(|| {
             let data = small_test_data();
 
             let cell_range_selection = |i1, i2, j1, j2| TableSelection {
@@ -253,7 +253,7 @@ mod tests {
 
     #[test]
     fn test_row_range_selection() {
-        r_test(|| {
+        r_task(|| {
             let data = small_test_data();
 
             let row_range_selection = |i1, i2| TableSelection {
@@ -286,7 +286,7 @@ mod tests {
 
     #[test]
     fn test_col_range_selection() {
-        r_test(|| {
+        r_task(|| {
             let data = small_test_data();
 
             let col_range_selection = |j1, j2| TableSelection {
@@ -319,7 +319,7 @@ mod tests {
 
     #[test]
     fn test_row_indices_selection() {
-        r_test(|| {
+        r_task(|| {
             let data = small_test_data();
 
             let row_indices_selection = |indices| TableSelection {
@@ -349,7 +349,7 @@ mod tests {
 
     #[test]
     fn test_col_indices_selection() {
-        r_test(|| {
+        r_task(|| {
             let data = small_test_data();
 
             let col_indices_selection = |indices| TableSelection {
@@ -379,7 +379,7 @@ mod tests {
 
     #[test]
     fn test_view_indices() {
-        r_test(|| {
+        r_task(|| {
             let data = small_test_data();
 
             let single_cell_selection = |i, j| TableSelection {

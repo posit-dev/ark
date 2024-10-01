@@ -528,7 +528,7 @@ impl RMain {
 
     /// Access a reference to the singleton instance of this struct
     ///
-    /// SAFETY: Accesses must occur after `start_r()` initializes it, and must
+    /// SAFETY: Accesses must occur after `RMain::start()` initializes it, and must
     /// occur on the main R thread.
     pub fn get() -> &'static Self {
         RMain::get_mut()
@@ -536,7 +536,7 @@ impl RMain {
 
     /// Access a mutable reference to the singleton instance of this struct
     ///
-    /// SAFETY: Accesses must occur after `start_r()` initializes it, and must
+    /// SAFETY: Accesses must occur after `RMain::start()` initializes it, and must
     /// occur on the main R thread.
     pub fn get_mut() -> &'static mut Self {
         if !RMain::on_main_thread() {
@@ -1733,6 +1733,11 @@ unsafe extern "C" fn ps_onload_hook(pkg: SEXP, _path: SEXP) -> anyhow::Result<SE
 }
 
 fn do_resource_namespaces() -> bool {
+    // Don't slow down integration tests with srcref generation
+    if harp::IS_TESTING {
+        return false;
+    }
+
     let opt: Option<bool> = r_null_or_try_into(harp::get_option("ark.resource_namespaces"))
         .ok()
         .flatten();

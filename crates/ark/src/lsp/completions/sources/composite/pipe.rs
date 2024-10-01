@@ -174,11 +174,11 @@ mod tests {
     use crate::lsp::completions::sources::composite::pipe::find_pipe_root;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
-    use crate::fixtures::r_test;
+    use crate::r_task;
 
     #[test]
     fn test_find_pipe_root_works_with_native_and_magrittr() {
-        r_test(|| {
+        r_task(|| {
             // Place cursor between `()` of `bar()`
             let point = Point { row: 0, column: 19 };
             let document = Document::new("x |> foo() %>% bar()", None);
@@ -189,7 +189,7 @@ mod tests {
             assert!(root.object.is_none());
         });
 
-        r_test(|| {
+        r_task(|| {
             // `%||%` is not a pipe!
             // Place cursor between `()` of `bar()`
             let point = Point { row: 0, column: 20 };
@@ -203,7 +203,7 @@ mod tests {
 
     #[test]
     fn test_find_pipe_root_finds_objects() {
-        r_test(|| {
+        r_task(|| {
             let options = RParseEvalOptions {
                 forbid_function_calls: false,
                 ..Default::default()

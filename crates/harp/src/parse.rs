@@ -168,12 +168,11 @@ mod tests {
     use crate::r_symbol;
     use crate::r_typeof;
     use crate::srcref;
-    use crate::test::r_test;
     use crate::ParseResult;
 
     #[test]
     fn test_parse_status() {
-        r_test(|| unsafe {
+        crate::r_task(|| unsafe {
             assert_match!(
                 parse_status(&ParseInput::Text("")),
                 Ok(ParseResult::Complete(out)) => {
@@ -242,7 +241,7 @@ mod tests {
 
     #[test]
     fn test_parse_input_as_string() {
-        r_test(|| {
+        crate::r_task(|| {
             assert_eq!(
                 parse_input_as_string(&ParseInput::Text("foo\nbar")).unwrap(),
                 "foo\nbar"

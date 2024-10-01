@@ -440,7 +440,7 @@ impl Into<String> for FormattedValue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fixtures::r_test;
+    use crate::r_task;
 
     fn default_options() -> FormatOptions {
         FormatOptions {
@@ -506,7 +506,7 @@ mod tests {
 
     #[test]
     fn test_real_formatting() {
-        r_test(|| {
+        r_task(|| {
             // this test needs to match the Python equivalent in
             // https://github.com/posit-dev/positron/blob/5192792967b6778608d643b821e84ebb6d5f7025/extensions/positron-python/python_files/positron/positron_ipykernel/tests/test_data_explorer.py#L742-L743
             let assert_float_formatting = |options: FormatOptions, expected: Vec<ColumnValue>| {
@@ -591,7 +591,7 @@ mod tests {
 
     #[test]
     fn test_float_special_values() {
-        r_test(|| {
+        r_task(|| {
             let data = harp::parse_eval_global(
                 "c(NA_real_, NaN, Inf, -Inf, 0, 1, 1000000000, -1000000000)",
             )
@@ -612,7 +612,7 @@ mod tests {
 
     #[test]
     fn test_list_formatting() {
-        r_test(|| {
+        r_task(|| {
             let data = harp::parse_eval_global("list(0, NULL, NA_real_)").unwrap();
             let formatted = format_column(data.sexp, &default_options());
             assert_eq!(formatted, vec![
@@ -625,7 +625,7 @@ mod tests {
 
     #[test]
     fn test_integer_formatting() {
-        r_test(|| {
+        r_task(|| {
             let data =
                 harp::parse_eval_global("as.integer(c(1, 1000, 0, -100000, NA, 1000000))").unwrap();
             let formatted = format_column(data.sexp, &default_options());
@@ -642,7 +642,7 @@ mod tests {
 
     #[test]
     fn test_chr_formatting() {
-        r_test(|| {
+        r_task(|| {
             let data = harp::parse_eval_global("c('a', 'b', 'c', NA, 'd', 'e')").unwrap();
             let formatted = format_column(data.sexp, &default_options());
             assert_eq!(formatted, vec![
@@ -658,7 +658,7 @@ mod tests {
 
     #[test]
     fn test_factors_formatting() {
-        r_test(|| {
+        r_task(|| {
             let data =
                 harp::parse_eval_global("factor(c('aaaaa', 'b', 'c', NA, 'd', 'e'))").unwrap();
             let formatted = format_column(data.sexp, &default_options());
@@ -679,7 +679,7 @@ mod tests {
         // although I'm not sure it's really helpful:
         // > 1000000000+1000000000i
         // [1] 1e+09+1e+09i
-        r_test(|| {
+        r_task(|| {
             let data =
                 harp::parse_eval_global("c(1+1i, 2+2i, 3+3i, NA, 1000000000+1000000000i, 5+5i)")
                     .unwrap();
@@ -697,7 +697,7 @@ mod tests {
 
     #[test]
     fn test_lgl_formatting() {
-        r_test(|| {
+        r_task(|| {
             let data = harp::parse_eval_global("c(TRUE, FALSE, NA, TRUE, FALSE, TRUE)").unwrap();
             let formatted = format_column(data.sexp, &default_options());
             assert_eq!(formatted, vec![
@@ -713,7 +713,7 @@ mod tests {
 
     #[test]
     fn test_date_formatting() {
-        r_test(|| {
+        r_task(|| {
             let data = harp::parse_eval_global(r#"as.POSIXct(c("2012-01-01", NA, "2017-05-27"))"#)
                 .unwrap();
             let formatted = format_column(data.sexp, &default_options());
@@ -738,7 +738,7 @@ mod tests {
 
     #[test]
     fn test_truncation() {
-        r_test(|| {
+        r_task(|| {
             let mut options = default_options();
             options.max_value_length = 3;
 

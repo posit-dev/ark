@@ -152,11 +152,10 @@ impl RLocalShowErrorMessageOption {
 mod tests {
     use crate::raii::RLocalInteractive;
     use crate::raii::RLocalShowErrorMessageOption;
-    use crate::test::r_test;
 
     #[test]
     fn test_local_variable() {
-        r_test(|| {
+        crate::r_task(|| {
             let get = || unsafe { libr::get(libr::R_Interactive) };
             let old = get();
 
@@ -178,7 +177,7 @@ mod tests {
 
     #[test]
     fn test_local_option() {
-        r_test(|| {
+        crate::r_task(|| {
             let get = || -> bool { harp::get_option("show.error.messages").try_into().unwrap() };
             let old = get();
 

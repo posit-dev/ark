@@ -6,13 +6,13 @@
 //
 
 use amalthea::comm::ui_comm::DebugSleepParams;
+use amalthea::comm::ui_comm::EvaluateWhenClauseParams;
 use amalthea::comm::ui_comm::ExecuteCodeParams;
 use amalthea::comm::ui_comm::ExecuteCommandParams;
 use amalthea::comm::ui_comm::ModifyEditorSelectionsParams;
 use amalthea::comm::ui_comm::NewDocumentParams;
 use amalthea::comm::ui_comm::ShowDialogParams;
 use amalthea::comm::ui_comm::ShowQuestionParams;
-use amalthea::comm::ui_comm::EvaluateWhenClauseParams;
 use amalthea::comm::ui_comm::UiFrontendRequest;
 use harp::object::RObject;
 use harp::utils::r_is_null;
@@ -136,7 +136,7 @@ pub unsafe extern "C" fn ps_ui_execute_code(code: SEXP, focus: SEXP) -> anyhow::
 #[harp::register]
 pub unsafe extern "C" fn ps_ui_evaluate_when_clause(when_clause: SEXP) -> anyhow::Result<SEXP> {
     let params = EvaluateWhenClauseParams {
-        when_clause: RObject::view(when_clause).try_into()?
+        when_clause: RObject::view(when_clause).try_into()?,
     };
 
     let main = RMain::get();

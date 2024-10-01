@@ -225,15 +225,15 @@ pub fn completions_from_custom_source_impl(
 mod tests {
     use tree_sitter::Point;
 
+    use crate::fixtures::point_from_cursor;
     use crate::lsp::completions::sources::unique::custom::completions_from_custom_source;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
-    use crate::fixtures::point_from_cursor;
-    use crate::fixtures::r_test;
+    use crate::r_task;
 
     #[test]
     fn test_completion_custom_library() {
-        r_test(|| {
+        r_task(|| {
             let n_packages = {
                 let n = harp::parse_eval_base("length(base::.packages(TRUE))").unwrap();
                 let n = i32::try_from(n).unwrap();
@@ -264,7 +264,7 @@ mod tests {
 
     #[test]
     fn test_completion_custom_sys_getenv() {
-        r_test(|| {
+        r_task(|| {
             let name = "ARK_TEST_ENVVAR";
 
             harp::parse_eval_base(format!("Sys.setenv({name} = '1')").as_str()).unwrap();
@@ -313,7 +313,7 @@ mod tests {
 
     #[test]
     fn test_completion_custom_sys_unsetenv() {
-        r_test(|| {
+        r_task(|| {
             let name = "ARK_TEST_ENVVAR";
 
             harp::parse_eval_base(format!("Sys.setenv({name} = '1')").as_str()).unwrap();
@@ -359,7 +359,7 @@ mod tests {
 
     #[test]
     fn test_completion_custom_sys_setenv() {
-        r_test(|| {
+        r_task(|| {
             let name = "ARK_TEST_ENVVAR";
 
             harp::parse_eval_base(format!("Sys.setenv({name} = '1')").as_str()).unwrap();
@@ -397,7 +397,7 @@ mod tests {
 
     #[test]
     fn test_completion_custom_get_option() {
-        r_test(|| {
+        r_task(|| {
             let name = "ARK_TEST_OPTION";
 
             harp::parse_eval_base(format!("options({name} = '1')").as_str()).unwrap();
@@ -446,7 +446,7 @@ mod tests {
 
     #[test]
     fn test_completion_custom_options() {
-        r_test(|| {
+        r_task(|| {
             let name = "ARK_TEST_OPTION";
 
             harp::parse_eval_base(format!("options({name} = '1')").as_str()).unwrap();

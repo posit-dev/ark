@@ -161,7 +161,7 @@ mod tests {
     use stdext::assert_match;
 
     use super::*;
-    use crate::fixtures::r_test;
+    use crate::r_task;
 
     fn default_options() -> FormatOptions {
         FormatOptions {
@@ -278,7 +278,7 @@ mod tests {
 
     #[test]
     fn test_basic_histograms() {
-        r_test(|| {
+        r_task(|| {
             test_histogram("0:10", 5, vec!["0", "2", "4", "6", "8", "10"], vec![
                 3, 2, 2, 2, 2,
             ]);
@@ -297,7 +297,7 @@ mod tests {
 
     #[test]
     fn test_date_histogram() {
-        r_test(|| {
+        r_task(|| {
             test_histogram(
                 "seq(as.Date('2000-01-01'), by = 1, length.out = 11)",
                 4,
@@ -369,7 +369,7 @@ mod tests {
 
     #[test]
     fn test_constant_column() {
-        r_test(|| {
+        r_task(|| {
             // This is the default `hist` behavior, single bin containing all info.
             test_histogram("c(1, 1, 1)", 4, vec!["0.00", "1.00"], vec![3]);
             test_histogram_method("c(1, 1, 1)", "sturges", vec!["0.00", "1.00"], vec![3])
@@ -378,7 +378,7 @@ mod tests {
 
     #[test]
     fn test_integers() {
-        r_test(|| {
+        r_task(|| {
             test_histogram(
                 "rep(c(1L, 2L), 100)",
                 5,
@@ -408,7 +408,7 @@ mod tests {
 
     #[test]
     fn test_posixct() {
-        r_test(|| {
+        r_task(|| {
             test_histogram(
                 // 1 sec, is the difference of 1 in the numeric data representation
                 // R doesn't distinguish changes in the decimal places as different dates
@@ -441,7 +441,7 @@ mod tests {
 
     #[test]
     fn test_quantile_numerics() {
-        r_test(|| {
+        r_task(|| {
             test_quantiles("c(1,2,3,4,5)", vec![0.5], &vec![3.0]);
             test_quantiles("c(1L,2L,3L,4L,5L)", vec![0.5], &vec![3.0]);
             test_quantiles("c(0.1,0.1,0.1,0.1,0.1)", vec![0.5, 0.9], &vec![0.1, 0.1]);
@@ -472,7 +472,7 @@ mod tests {
 
     #[test]
     fn test_quantiles_dates() {
-        r_test(|| {
+        r_task(|| {
             test_quantiles(
                 "as.Date(c('2010-01-01', '2010-01-02', '2010-01-03'))",
                 vec![0.5],
@@ -502,7 +502,7 @@ mod tests {
 
     #[test]
     fn test_frequency_table_strings() {
-        r_test(|| {
+        r_task(|| {
             test_frequency_table(
                 "c(rep('a', 100), rep('b', 200), rep('c', 150))",
                 10,
@@ -531,7 +531,7 @@ mod tests {
 
     #[test]
     fn test_frequency_table_factors() {
-        r_test(|| {
+        r_task(|| {
             test_frequency_table(
                 "factor(c(rep('a', 100), rep('b', 200), rep('c', 150)))",
                 10,
@@ -560,7 +560,7 @@ mod tests {
 
     #[test]
     fn test_frequency_table_numerics_and_dates() {
-        r_test(|| {
+        r_task(|| {
             test_frequency_table(
                 "rep(0:10/10, 1:11)",
                 100,

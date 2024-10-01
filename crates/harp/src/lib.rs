@@ -13,6 +13,7 @@ pub mod error;
 pub mod eval;
 pub mod exec;
 pub mod external_ptr;
+pub mod fixtures;
 pub mod format;
 pub mod json;
 pub mod library;
@@ -33,7 +34,6 @@ pub mod string;
 pub mod symbol;
 pub mod sys;
 pub mod table;
-pub mod test;
 pub mod traits;
 pub mod utils;
 pub mod vec_format;
@@ -58,11 +58,13 @@ pub use harp::exec::top_level_exec;
 pub use harp::exec::try_catch;
 pub use harp::exec::try_eval;
 pub use harp::exec::try_eval_silent;
+#[cfg(test)]
+pub(crate) use harp::fixtures::r_task;
+pub use harp::fixtures::IS_TESTING;
 pub use harp::object::list_get;
 pub use harp::object::list_poke;
 pub use harp::object::RObject;
 pub use harp::symbol::RSymbol;
-pub use harp::test::IS_TESTING;
 pub use harp::utils::get_option;
 pub use harp_macros::register;
 
@@ -252,13 +254,12 @@ mod tests {
     use super::*;
     use crate::object::RObject;
     use crate::protect::RProtect;
-    use crate::test::r_test;
     use crate::utils::r_is_null;
     use crate::utils::r_typeof;
 
     #[test]
     fn test_pairlist() {
-        r_test(|| unsafe {
+        crate::r_task(|| unsafe {
             let sym = r_symbol!("injected");
 
             let mut protect = RProtect::new();
@@ -319,7 +320,7 @@ mod tests {
 
     #[test]
     fn test_call() {
-        r_test(|| unsafe {
+        crate::r_task(|| unsafe {
             let sym = r_symbol!("injected");
 
             let value = RObject::new(r_lang! {

@@ -57,18 +57,18 @@ pub fn completions_from_string(context: &DocumentContext) -> Result<Option<Vec<C
 mod tests {
     use stdext::assert_match;
 
+    use crate::fixtures::point_from_cursor;
     use crate::lsp::completions::sources::completions_from_unique_sources;
     use crate::lsp::completions::sources::unique::string::completions_from_string;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
-    use crate::fixtures::point_from_cursor;
-    use crate::fixtures::r_test;
+    use crate::r_task;
     use crate::treesitter::node_find_string;
     use crate::treesitter::NodeTypeExt;
 
     #[test]
     fn test_outside_quotes() {
-        r_test(|| {
+        r_task(|| {
             // Before or after the `''`, i.e. `|''` or `''|`.
             // Still considered part of the string node.
             let (text, point) = point_from_cursor("@''");
@@ -82,7 +82,7 @@ mod tests {
 
     #[test]
     fn test_not_string() {
-        r_test(|| {
+        r_task(|| {
             let (text, point) = point_from_cursor("@foo");
             let document = Document::new(text.as_str(), None);
             let context = DocumentContext::new(&document, point, None);
@@ -94,7 +94,7 @@ mod tests {
 
     #[test]
     fn test_trigger() {
-        r_test(|| {
+        r_task(|| {
             let (text, point) = point_from_cursor("'~/@'");
 
             // Assume home directory is not empty

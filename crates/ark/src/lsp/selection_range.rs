@@ -123,8 +123,8 @@ mod tests {
     use tree_sitter::Parser;
     use tree_sitter::Point;
 
-    use crate::lsp::selection_range::selection_range;
     use crate::fixtures::point_from_cursor;
+    use crate::lsp::selection_range::selection_range;
 
     #[test]
     #[rustfmt::skip]

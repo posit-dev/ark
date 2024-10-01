@@ -271,8 +271,8 @@ mod tests {
     use tree_sitter::Parser;
     use tree_sitter::Point;
 
-    use crate::lsp::traits::node::NodeExt;
     use crate::fixtures::point_from_cursor;
+    use crate::lsp::traits::node::NodeExt;
 
     #[test]
     #[rustfmt::skip]

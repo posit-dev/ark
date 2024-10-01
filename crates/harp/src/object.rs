@@ -1155,12 +1155,11 @@ mod tests {
 
     use super::*;
     use crate::r_char;
-    use crate::test::r_test;
 
     #[test]
     #[allow(non_snake_case)]
     fn test_tryfrom_RObject_bool() {
-        r_test(|| unsafe {
+        crate::r_task(|| unsafe {
             assert_match!(
                 Option::<bool>::try_from(RObject::from(Rf_ScalarLogical(R_NaInt))),
                 Ok(None) => {}
@@ -1185,7 +1184,7 @@ mod tests {
     #[test]
     #[allow(non_snake_case)]
     fn test_tryfrom_RObject_u16() {
-        r_test(|| unsafe {
+        crate::r_task(|| unsafe {
             // -------------------------------------------------------------------------------------
             // Option::<u16>::try_from tests.
             // -------------------------------------------------------------------------------------
@@ -1347,7 +1346,7 @@ mod tests {
     #[test]
     #[allow(non_snake_case)]
     fn test_tryfrom_RObject_i32() {
-        r_test(|| unsafe {
+        crate::r_task(|| unsafe {
             // -------------------------------------------------------------------------------------
             // Option::<i32>::try_from tests.
             // -------------------------------------------------------------------------------------
@@ -1457,7 +1456,7 @@ mod tests {
     #[test]
     #[allow(non_snake_case)]
     fn test_tryfrom_RObject_f64() {
-        r_test(|| unsafe {
+        crate::r_task(|| unsafe {
             assert_match!(
                 Option::<f64>::try_from(RObject::from(R_NaInt)),
                 Ok(None) => {}
@@ -1505,7 +1504,7 @@ mod tests {
     #[test]
     #[allow(non_snake_case)]
     fn test_tryfrom_RObject_Option_String() {
-        r_test(|| unsafe {
+        crate::r_task(|| unsafe {
             let s = RObject::from("abc");
 
             assert_match!(
@@ -1527,7 +1526,7 @@ mod tests {
     #[test]
     #[allow(non_snake_case)]
     fn test_tryfrom_RObject_String() {
-        r_test(|| unsafe {
+        crate::r_task(|| unsafe {
             let s = RObject::from("abc");
 
             assert_match!(
@@ -1549,7 +1548,7 @@ mod tests {
     #[test]
     #[allow(non_snake_case)]
     fn test_tryfrom_RObject_hashmap_string() {
-        r_test(|| {
+        crate::r_task(|| {
             // Create a map of pizza toppings to their acceptability.
             let mut map = HashMap::<String, String>::new();
             map.insert(String::from("pepperoni"), String::from("OK"));
@@ -1577,7 +1576,7 @@ mod tests {
     #[test]
     #[allow(non_snake_case)]
     fn test_tryfrom_RObject_hashmap_i32() {
-        r_test(|| {
+        crate::r_task(|| {
             // Create a map of pizza toppings to their acceptability.
             let v = harp::parse_eval_global("list(x = 1L, y = 2L, x = 3L)").unwrap();
             assert_eq!(v.length(), 3 as isize);
@@ -1599,7 +1598,7 @@ mod tests {
     #[test]
     #[allow(non_snake_case)]
     fn test_tryfrom_RObject_hashmap_Robject() {
-        r_test(|| {
+        crate::r_task(|| {
             // Create a map of pizza toppings to their acceptability.
             let v = harp::parse_eval_global("list(x = c(1L, 2L), y = c('a', 'b'))").unwrap();
             assert_eq!(v.length(), 2 as isize);
@@ -1618,7 +1617,7 @@ mod tests {
     #[test]
     #[allow(non_snake_case)]
     fn test_tryfrom_RObject_Vec_Option_String() {
-        r_test(|| unsafe {
+        crate::r_task(|| unsafe {
             let s = RObject::from(Rf_allocVector(STRSXP, 2));
             SET_STRING_ELT(*s, 0, r_char!("abc"));
             SET_STRING_ELT(*s, 1, R_NaString);
@@ -1637,7 +1636,7 @@ mod tests {
     #[test]
     #[allow(non_snake_case)]
     fn test_tryfrom_RObject_Vec_Bool() {
-        r_test(|| {
+        crate::r_task(|| {
             // Create a vector of logical values.
             let flags = vec![true, false, true];
 
@@ -1656,7 +1655,7 @@ mod tests {
     #[test]
     #[allow(non_snake_case)]
     fn test_tryfrom_RObject_Vec_String() {
-        r_test(|| unsafe {
+        crate::r_task(|| unsafe {
             let s = RObject::from(Rf_allocVector(STRSXP, 2));
             SET_STRING_ELT(*s, 0, r_char!("abc"));
             SET_STRING_ELT(*s, 1, R_NaString);
@@ -1671,7 +1670,7 @@ mod tests {
     #[test]
     #[allow(non_snake_case)]
     fn test_tryfrom_RObject_Vec_i32() {
-        r_test(|| unsafe {
+        crate::r_task(|| unsafe {
             let i = RObject::from(Rf_allocVector(INTSXP, 2));
             SET_INTEGER_ELT(*i, 0, 42);
             SET_INTEGER_ELT(*i, 1, R_NaInt);
@@ -1698,7 +1697,7 @@ mod tests {
     #[test]
     #[allow(non_snake_case)]
     fn test_tryfrom_RObject_Vec_RObject() {
-        r_test(|| {
+        crate::r_task(|| {
             let v = harp::parse_eval_global("list(c(1L, NA), c(10L, 20L))").unwrap();
             let w = Vec::<RObject>::try_from(v).unwrap();
 
@@ -1718,7 +1717,7 @@ mod tests {
     #[test]
     #[allow(non_snake_case)]
     fn test_tryfrom_Vec_RObject_RObject() {
-        r_test(|| {
+        crate::r_task(|| {
             let items_in = vec![RObject::from(1), RObject::from(2), RObject::from(3)];
 
             // Convert the vector of RObjects into a single RObject (a list).
