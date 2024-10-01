@@ -959,9 +959,9 @@ impl PositronVariable {
         // formatted as "custom-{index}-{name}". If the access_key has this format, we call the custom `get_child_at`,
         // method, if there's one available:
         let result = local!({
-            let parsed_access_key: Vec<&str> = access_key.splitn(3, '-').collect();
+            let parsed_access_key: Vec<&str> = access_key.splitn(4, '-').collect();
 
-            if parsed_access_key.len() != 3 {
+            if parsed_access_key.len() != 4 {
                 return Ok(None);
             };
 
@@ -974,9 +974,15 @@ impl PositronVariable {
                 Ok(i) => i,
             };
 
-            let name = match parsed_access_key[2] {
-                "" => RObject::from(r_null()), // Empty string, means a `NULL` name
-                v => RObject::from(v),
+            let truncated = match parsed_access_key[2].parse::<bool>() {
+                Err(_) => return Ok(None), // Not an access_key in the required format
+                Ok(truncated) => truncated,
+            };
+
+            let name = match (parsed_access_key[3], truncated) {
+                ("", _) => RObject::from(r_null()), // Empty string, means a `NULL` name
+                (v, false) => RObject::from(v),
+                (_, true) => RObject::from(r_null()), // Discard the name if truncated
             };
 
             ArkGenerics::VariableGetChildAt.try_dispatch::<RObject>(object.sexp, vec![
@@ -1463,8 +1469,21 @@ impl PositronVariable {
                     .zip(names.iter())
                     .enumerate()
                     .map(|(i, (x, name))| {
-                        let access_key =
-                            format!("custom-{i}-{}", name.clone().unwrap_or(String::from("")));
+                        // The acess key is formatted as `custom-{index}-{truncated?}-{name}`
+                        // where:
+                        // - index: is the position of the element in children's list
+                        // - truncated: is a boolean indicating if the name is truncated
+                        // - name: a possibly truncated name
+                        let (truncated, access_name) = match name {
+                            Some(nm) => {
+                                let truncated_name: String =
+                                    nm.chars().take(MAX_DISPLAY_VALUE_LENGTH).collect();
+                                (truncated_name.len() != nm.len(), truncated_name)
+                            },
+                            None => (false, String::from("")),
+                        };
+                        let access_key = format!("custom-{i}-{truncated}-{access_name}");
+
                         let display_name = name.clone().unwrap_or(format!("[[{}]]", i + 1));
                         Self::from(access_key, display_name, x).var()
                     })
@@ -1539,11 +1558,15 @@ mod tests {
                 })
 
                 .ps.register_ark_method("ark_variable_get_children", "foo", function(x) {
-                    list(
+                    children <- list(
                         "hello" = list(a = 1, b = 2),
                         "bye" = "testing",
-                        c(1, 2, 3)
+                        c(1, 2, 3),
+                        c(1, 2, 3, 4)
                     )
+                    # Make a very large name to test truncation
+                    names(children)[4] <- paste0(rep(letters, 100), collapse = "")
+                    children
                 })
 
                 .ps.register_ark_method("ark_variable_get_child_at", "foo", function(x, ..., index, name) {
@@ -1553,8 +1576,15 @@ mod tests {
                         "testing"
                     } else if (index == 3) {
                         c(1, 2, 3)
+                    } else if (index == 4) {
+                        # The fourth element name is very large, so it should
+                        # be discarded by ark.
+                        if (!is.null(name)) {
+                            stop("Name should have been discarded")
+                        }
+                        c(1, 2, 3, 4)
                     } else {
-                      stop("Unexpected")
+                        stop("Unexpected")
                     }
                 })
 
@@ -1592,7 +1622,7 @@ mod tests {
             let path = vec![String::from("x")];
             let variables = PositronVariable::inspect(env.clone(), &path).unwrap();
 
-            assert_eq!(variables.len(), 3);
+            assert_eq!(variables.len(), 4);
 
             // Now inspect a list inside x
             let path = vec![String::from("x"), variables[0].access_key.clone()];
@@ -1600,8 +1630,12 @@ mod tests {
             assert_eq!(list.len(), 2);
 
             let path = vec![String::from("x"), variables[2].access_key.clone()];
-            let vector = PositronVariable::inspect(env, &path).unwrap();
+            let vector = PositronVariable::inspect(env.clone(), &path).unwrap();
             assert_eq!(vector.len(), 3);
+
+            let path = vec![String::from("x"), variables[3].access_key.clone()];
+            let vector = PositronVariable::inspect(env, &path).unwrap();
+            assert_eq!(vector.len(), 4);
         })
     }
 
