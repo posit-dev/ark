@@ -111,7 +111,7 @@ ark_variable_get_children.foo <- function(x, ...) {
     )
 }
 
-#' @param index An integer > 1, representing the index position of the child in the
+#' @param index An integer > 0, representing the index position of the child in the
 #'   list returned by `ark_variable_get_children()`.
 #' @param name The name of the child, corresponding to `names(ark_variable_get_children(x))[index]`.
 #'   This may be a string or `NULL`. If using the name, it is the method author's responsibility to ensure
