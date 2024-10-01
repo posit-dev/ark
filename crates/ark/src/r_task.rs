@@ -254,8 +254,9 @@ where
     F: FnOnce() -> Fut + 'static + Send,
     Fut: Future<Output = ()> + 'static,
 {
+    // Escape hatch for unit tests
     if harp::IS_TESTING {
-        // Escape hatch for unit tests
+        let _lock = unsafe { harp::fixtures::R_TEST_LOCK.lock() };
         futures::executor::block_on(fun());
         return;
     }

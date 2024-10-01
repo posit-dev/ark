@@ -21,7 +21,9 @@ use stdext::cargs;
 use crate::library::RLibraries;
 use crate::R_MAIN_THREAD_ID;
 
-pub static mut R_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+// FIXME: Needs to be a reentrant lock for idle tasks. We can probably do better
+// though.
+pub static mut R_TEST_LOCK: parking_lot::ReentrantMutex<()> = parking_lot::ReentrantMutex::new(());
 
 // This global variable is a workaround to enable test-only features or
 // behaviour in integration tests (i.e. tests that live in `crate/tests/` as
