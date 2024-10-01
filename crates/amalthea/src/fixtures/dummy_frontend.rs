@@ -155,41 +155,33 @@ impl DummyFrontend {
         message.send(&self.stdin_socket).unwrap();
     }
 
-    pub fn recv(socket: &Socket) -> Message {
-        let (tx, rx) = crossbeam::channel::bounded(1);
+    pub fn recv(&self, socket: &Socket) -> Message {
+        // It's important to wait with a timeout because the kernel thread might
+        // have panicked, preventing it from sending the expected message. The
+        // tests would then hang indefinitely.
+        //
+        // Note that the panic hook will still have run to record the panic, so
+        // we'll get expected panic information in the test output.
+        if socket.poll_incoming(1000).unwrap() {
+            return Message::read_from_socket(socket).unwrap();
+        }
 
-        // There is no timeout variant on our `Socket `API, and `Socket` is not
-        // Sync, so we need to spawn a thread to handle the timeout
-        stdext::spawn!("dummy_frontend_timeout", move || {
-            if let Err(err) = rx.recv_timeout(std::time::Duration::from_secs(1)) {
-                eprintln!("Timeout while receiving message: {err}");
-
-                // Can't panic as this would only poison the thread
-                std::process::exit(42);
-            }
-        });
-
-        let out = Message::read_from_socket(socket).unwrap();
-
-        // Notify timeout thread we're done
-        tx.send(()).unwrap();
-
-        out
+        panic!("Timeout while expecting message on socket {}", socket.name);
     }
 
     /// Receives a Jupyter message from the Shell socket
     pub fn recv_shell(&self) -> Message {
-        Self::recv(&self.shell_socket)
+        self.recv(&self.shell_socket)
     }
 
     /// Receives a Jupyter message from the IOPub socket
     pub fn recv_iopub(&self) -> Message {
-        Self::recv(&self.iopub_socket)
+        self.recv(&self.iopub_socket)
     }
 
     /// Receives a Jupyter message from the Stdin socket
     pub fn recv_stdin(&self) -> Message {
-        Self::recv(&self.stdin_socket)
+        self.recv(&self.stdin_socket)
     }
 
     /// Receive from Shell and assert `ExecuteReply` message.
