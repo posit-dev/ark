@@ -85,17 +85,6 @@ impl ArkGenerics {
         }
     }
 
-    // Checks if an object has a registered method for it.
-    pub fn has_method(&self, x: SEXP) -> anyhow::Result<bool> {
-        let generic: &str = self.into();
-        let result = RFunction::new("", "has_ark_method")
-            .add(RObject::from(generic))
-            .add(x)
-            .call_in(ARK_ENVS.positron_ns)?
-            .try_into()?;
-        Ok(result)
-    }
-
     pub fn register_method(generic: Self, class: &str, method: RObject) -> anyhow::Result<()> {
         let generic_name: &str = generic.into();
         RFunction::new("", ".ps.register_ark_method")
