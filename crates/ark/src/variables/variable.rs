@@ -1649,7 +1649,7 @@ mod tests {
 
     #[test]
     fn test_inspect_r6() {
-        r_test(|| {
+        r_task(|| {
             // Skip test if R6 is not installed
             if let Ok(false) = harp::parse_eval_global(r#".ps.is_installed("R6")"#)
                 .unwrap()
@@ -1731,7 +1731,7 @@ mod tests {
 
     #[test]
     fn test_inspect_list() {
-        r_test(|| {
+        r_task(|| {
             // Create an environment that contains an R6 class and an instance
             let env = harp::parse_eval_global("new.env()").unwrap();
 
@@ -1780,7 +1780,7 @@ mod tests {
 
     #[test]
     fn test_inspect_s4() {
-        r_test(|| {
+        r_task(|| {
             let env = harp::parse_eval_global("new.env()").unwrap();
 
             harp::parse_eval0(
