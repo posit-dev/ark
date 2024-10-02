@@ -956,7 +956,7 @@ impl PositronVariable {
 
         // First try to get child using a generic method
         // When building the children list of nodes that use a custom `get_children` method, the access_key is
-        // formatted as "custom-{index}-{name}". If the access_key has this format, we call the custom `get_child_at`,
+        // formatted as "custom-{index}-{length(name)}-{name}". If the access_key has this format, we call the custom `get_child_at`,
         // method, if there's one available:
         let result = local!({
             let parsed_access_key: Vec<&str> = access_key.splitn(4, '-').collect();
@@ -974,15 +974,21 @@ impl PositronVariable {
                 Ok(i) => i,
             };
 
-            let truncated = match parsed_access_key[2].parse::<bool>() {
+            let name_len = match parsed_access_key[2].parse::<usize>() {
                 Err(_) => return Ok(None), // Not an access_key in the required format
-                Ok(truncated) => truncated,
+                Ok(name_len) => name_len,
             };
 
-            let name = match (parsed_access_key[3], truncated) {
-                ("", _) => RObject::from(r_null()), // Empty string, means a `NULL` name
-                (v, false) => RObject::from(v),
-                (_, true) => RObject::from(r_null()), // Discard the name if truncated
+            let name = match parsed_access_key[3] {
+                "" => RObject::from(r_null()), // Empty string, means a `NULL` name
+                nm => {
+                    if nm.len() == name_len {
+                        RObject::from(nm)
+                    } else {
+                        // Name has been truncated, we pass it as `NULL`
+                        RObject::from(r_null())
+                    }
+                },
             };
 
             ArkGenerics::VariableGetChildAt.try_dispatch::<RObject>(object.sexp, vec![
@@ -1469,20 +1475,22 @@ impl PositronVariable {
                     .zip(names.iter())
                     .enumerate()
                     .map(|(i, (x, name))| {
-                        // The acess key is formatted as `custom-{index}-{truncated?}-{name}`
+                        // The acess key is formatted as `custom-{index}-{length(name)}-{name}`
                         // where:
                         // - index: is the position of the element in children's list
-                        // - truncated: is a boolean indicating if the name is truncated
-                        // - name: a possibly truncated name
-                        let (truncated, access_name) = match name {
+                        // - length(name): the original length of the name, before truncation.
+                        // - name: a possibly truncated name. Very large names could cause problems
+                        //   when transfered to the UI.
+                        let (access_name, name_len) = match name {
                             Some(nm) => {
                                 let truncated_name: String =
                                     nm.chars().take(MAX_DISPLAY_VALUE_LENGTH).collect();
-                                (truncated_name.len() != nm.len(), truncated_name)
+                                (truncated_name, nm.len())
                             },
-                            None => (false, String::from("")),
+                            None => (String::from(""), 0),
                         };
-                        let access_key = format!("custom-{i}-{truncated}-{access_name}");
+
+                        let access_key = format!("custom-{i}-{name_len}-{access_name}");
 
                         let display_name = name.clone().unwrap_or(format!("[[{}]]", i + 1));
                         Self::from(access_key, display_name, x).var()
