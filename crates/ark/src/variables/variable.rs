@@ -1359,11 +1359,11 @@ mod tests {
     use harp;
 
     use super::*;
-    use crate::fixtures::r_test;
+    use crate::r_task;
 
     #[test]
     fn test_variable_with_methods() {
-        r_test(|| {
+        r_task(|| {
             // Register the display value method
             harp::parse_eval_global(
                 r#"
