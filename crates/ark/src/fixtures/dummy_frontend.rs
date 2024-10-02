@@ -45,7 +45,12 @@ impl DummyArkFrontend {
         stdext::spawn!("dummy_kernel", || {
             crate::start::start_kernel(
                 connection_file,
-                vec![String::from("--no-save"), String::from("--no-restore")],
+                vec![
+                    String::from("--interactive"),
+                    String::from("--vanilla"),
+                    String::from("--no-save"),
+                    String::from("--no-restore"),
+                ],
                 None,
                 SessionMode::Console,
                 false,
