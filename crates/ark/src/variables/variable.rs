@@ -1359,7 +1359,7 @@ mod tests {
     use harp;
 
     use super::*;
-    use crate::test::r_test;
+    use crate::fixtures::r_test;
 
     #[test]
     fn test_variable_with_methods() {
