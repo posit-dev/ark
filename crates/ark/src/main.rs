@@ -12,6 +12,7 @@ use std::env;
 
 use amalthea::connection_file::ConnectionFile;
 use amalthea::kernel_spec::KernelSpec;
+use ark::interface::RMain;
 use ark::interface::SessionMode;
 use ark::logger;
 use ark::signals::initialize_signal_block;
@@ -315,6 +316,8 @@ fn parse_file(
         Ok(connection) => {
             log::info!("Loaded connection information from frontend in {connection_file}");
             log::info!("Connection data: {:?}", connection);
+
+            // Set up R and start the Jupyter kernel
             start_kernel(
                 connection,
                 r_args,
@@ -322,6 +325,9 @@ fn parse_file(
                 session_mode,
                 capture_streams,
             );
+
+            // Start the REPL, does not return
+            RMain::start();
         },
         Err(error) => {
             log::error!("Couldn't read connection file {connection_file}: {error:?}");

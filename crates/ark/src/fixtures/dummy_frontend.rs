@@ -42,23 +42,24 @@ impl DummyArkFrontend {
         let frontend = DummyFrontend::new();
         let connection_file = frontend.get_connection_file();
 
-        stdext::spawn!("dummy_kernel", || {
-            crate::start::start_kernel(
-                connection_file,
-                vec![
-                    String::from("--interactive"),
-                    String::from("--vanilla"),
-                    String::from("--no-save"),
-                    String::from("--no-restore"),
-                ],
-                None,
-                SessionMode::Console,
-                false,
-            );
-        });
+        // Start the kernel in this thread so that panics are propagated
+        crate::start::start_kernel(
+            connection_file,
+            vec![
+                String::from("--interactive"),
+                String::from("--vanilla"),
+                String::from("--no-save"),
+                String::from("--no-restore"),
+            ],
+            None,
+            SessionMode::Console,
+            false,
+        );
 
-        // Wait for startup to complete
-        RMain::wait_r_initialized();
+        // Start the REPL in a background thread, does not return and is never joined
+        stdext::spawn!("dummy_kernel", || {
+            RMain::start();
+        });
 
         frontend.complete_initialization();
         frontend

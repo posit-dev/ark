@@ -282,9 +282,14 @@ pub enum ConsoleResult {
 }
 
 impl RMain {
-    /// Starts the main R thread and initializes the `R_MAIN` singleton.
-    /// Doesn't return. Must be called only once.
-    pub fn start(
+    /// Sets up the main R thread and initializes the `R_MAIN` singleton. Must
+    /// be called only once. This is doing as much setup as possible before
+    /// starting the R REPL. Since the REPL does not return, it might be
+    /// launched in a background thread (which we do in integration tests). The
+    /// setup can still be done in your main thread so that panics may propagate
+    /// as expected. Call `RMain::start_repl()` after this to actually start the
+    /// R REPL.
+    pub fn setup(
         r_args: Vec<String>,
         startup_file: Option<String>,
         kernel_mutex: Arc<Mutex<Kernel>>,
@@ -423,8 +428,13 @@ impl RMain {
         if !ignore_user_r_profile {
             startup::source_user_r_profile();
         }
+    }
 
-        // Does not return!
+    /// Start the REPL. Does not return!
+    pub fn start() {
+        // Update the main thread ID in case the REPL is started in a background
+        // thread (e.g. in integration tests)
+        unsafe { R_MAIN_THREAD_ID = Some(std::thread::current().id()) };
         crate::sys::interface::run_r();
     }
 
