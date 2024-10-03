@@ -12,11 +12,11 @@ use crate::connection_file::ConnectionFile;
 use crate::session::Session;
 use crate::socket::socket::Socket;
 use crate::wire::execute_input::ExecuteInput;
-use crate::wire::execute_reply::ExecuteReply;
 use crate::wire::execute_request::ExecuteRequest;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
 use crate::wire::jupyter_message::ProtocolMessage;
+use crate::wire::jupyter_message::Status;
 use crate::wire::status::ExecutionState;
 use crate::wire::wire_message::WireMessage;
 
@@ -160,12 +160,25 @@ impl DummyFrontend {
         Message::read_from_socket(&self.shell_socket).unwrap()
     }
 
-    /// Receive from Shell and assert ExecuteReply message
-    pub fn recv_shell_execute_reply(&self) -> ExecuteReply {
+    /// Receive from Shell and assert `ExecuteReply` message.
+    /// Returns `execution_count`.
+    pub fn recv_shell_execute_reply(&self) -> u32 {
         let msg = self.recv_shell();
 
         assert_match!(msg, Message::ExecuteReply(data) => {
-            data.content
+            assert_eq!(data.content.status, Status::Ok);
+            data.content.execution_count
+        })
+    }
+
+    /// Receive from Shell and assert `ExecuteReplyException` message.
+    /// Returns `execution_count`.
+    pub fn recv_shell_execute_reply_exception(&self) -> u32 {
+        let msg = self.recv_shell();
+
+        assert_match!(msg, Message::ExecuteReplyException(data) => {
+            assert_eq!(data.content.status, Status::Error);
+            data.content.execution_count
         })
     }
 
