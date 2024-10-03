@@ -1001,7 +1001,6 @@ impl RMain {
     ) -> ConsoleResult {
         match reply {
             Ok(input) => {
-                // TODO!: Use `check_console_input()` here too? Getting arbitrary input from the user here.
                 let input = convert_line_endings(&input.value, LineEnding::Posix);
                 match Self::on_console_input(buf, buflen, input) {
                     Ok(()) => ConsoleResult::NewInput,
