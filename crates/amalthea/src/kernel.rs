@@ -38,7 +38,7 @@ use crate::wire::jupyter_message::Message;
 use crate::wire::jupyter_message::OutboundMessage;
 
 macro_rules! report_error {
-    ($($arg:tt)+) => (if cfg!(debug_assertions) { log::error!($($arg)+) } else { panic!($($arg)+) })
+    ($($arg:tt)+) => (if cfg!(debug_assertions) { panic!($($arg)+) } else { log::error!($($arg)+) })
 }
 
 /// A Kernel represents a unique Jupyter kernel session and is the host for all
