@@ -692,8 +692,10 @@ impl RMain {
         // NOTE: Should be able to overwrite the `Cleanup` frontend method.
         // This would also help with detecting normal exits versus crashes.
         if info.input_prompt.starts_with("Save workspace") {
-            Self::on_console_input(buf, buflen, String::from("n"));
-            return ConsoleResult::NewInput;
+            match Self::on_console_input(buf, buflen, String::from("n")) {
+                Ok(()) => return ConsoleResult::NewInput,
+                Err(err) => return ConsoleResult::Error(err),
+            }
         }
 
         if info.input_request {
@@ -942,8 +944,10 @@ impl RMain {
 
                 // Store input in R's buffer and return sentinel indicating some
                 // new input is ready
-                Self::on_console_input(buf, buflen, code);
-                Some(ConsoleResult::NewInput)
+                match Self::on_console_input(buf, buflen, code) {
+                    Ok(()) => Some(ConsoleResult::NewInput),
+                    Err(err) => Some(ConsoleResult::Error(err)),
+                }
             },
             ConsoleInput::EOF => Some(ConsoleResult::Disconnected),
         }
@@ -967,8 +971,10 @@ impl RMain {
     fn handle_invalid_input_request(&self, buf: *mut c_uchar, buflen: c_int) -> ConsoleResult {
         if Self::in_renv_autoloader() {
             log::info!("Detected `readline()` call in renv autoloader. Returning `'n'`.");
-            Self::on_console_input(buf, buflen, String::from("n"));
-            return ConsoleResult::NewInput;
+            match Self::on_console_input(buf, buflen, String::from("n")) {
+                Ok(()) => return ConsoleResult::NewInput,
+                Err(err) => return ConsoleResult::Error(err),
+            }
         }
 
         log::info!("Detected invalid `input_request` outside an `execute_request`. Preparing to throw an R error.");
@@ -997,8 +1003,10 @@ impl RMain {
             Ok(input) => {
                 // TODO!: Use `check_console_input()` here too? Getting arbitrary input from the user here.
                 let input = convert_line_endings(&input.value, LineEnding::Posix);
-                Self::on_console_input(buf, buflen, input);
-                ConsoleResult::NewInput
+                match Self::on_console_input(buf, buflen, input) {
+                    Ok(()) => ConsoleResult::NewInput,
+                    Err(err) => ConsoleResult::Error(err),
+                }
             },
             Err(err) => ConsoleResult::Error(err),
         }
@@ -1127,8 +1135,10 @@ impl RMain {
             return None;
         };
 
-        Self::on_console_input(buf, buflen, input);
-        Some(ConsoleResult::NewInput)
+        match Self::on_console_input(buf, buflen, input) {
+            Ok(()) => Some(ConsoleResult::NewInput),
+            Err(err) => Some(ConsoleResult::Error(err)),
+        }
     }
 
     fn check_console_input(input: &str) -> amalthea::Result<()> {
@@ -1181,7 +1191,11 @@ impl RMain {
     /// is to avoid a crash, and it seems that we need to copy something into
     /// R's buffer to keep the REPL in a good state.
     /// https://github.com/posit-dev/positron/issues/1326#issuecomment-1745389921
-    fn on_console_input(buf: *mut c_uchar, buflen: c_int, mut input: String) {
+    fn on_console_input(
+        buf: *mut c_uchar,
+        buflen: c_int,
+        mut input: String,
+    ) -> amalthea::Result<()> {
         let buflen = buflen as usize;
 
         if buflen < 2 {
@@ -1193,14 +1207,8 @@ impl RMain {
         let buflen = buflen - 2;
 
         if input.len() > buflen {
-            // Throw error if input is too large.
-            // TODO!: What should we do if R is waiting for a continuation?
-            // Writing `stop()` to the buffer only works if R is waiting for
-            // a whole R input, not a completing one.
-            // Also, we might be responding to a readline prompt.
-            // We should probably call `stop()` from our POD frame instead.
-            log::error!("Console input too large for buffer, writing R error.");
-            input = Self::buffer_overflow_call();
+            log::error!("Console input too large for buffer, throwing R error.");
+            return Err(Self::buffer_overflow_error());
         }
 
         // Push `\n`
@@ -1212,14 +1220,15 @@ impl RMain {
         unsafe {
             libc::strcpy(buf as *mut c_char, input.as_ptr());
         }
+
+        Ok(())
     }
 
-    // We write an informative `stop()` call rather than the user's actual input.
-    // Hitting this means a SINGLE line from the user was longer than the buffer size (>4000 characters).
-    fn buffer_overflow_call() -> String {
-        let message = "Can't pass console input on to R, a single line exceeds R's internal console buffer size.";
-        let message = format!("stop(\"{message}\")");
-        message
+    // Hitting this means a SINGLE line from the user was longer than the buffer size (>4000 characters)
+    fn buffer_overflow_error() -> amalthea::Error {
+        Error::InvalidConsoleInput(String::from(
+            "Can't pass console input on to R, a single line exceeds R's internal console buffer size."
+        ))
     }
 
     // Reply to the previously active request. The current prompt type and
