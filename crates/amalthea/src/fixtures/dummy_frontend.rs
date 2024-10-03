@@ -13,6 +13,7 @@ use crate::session::Session;
 use crate::socket::socket::Socket;
 use crate::wire::execute_input::ExecuteInput;
 use crate::wire::execute_request::ExecuteRequest;
+use crate::wire::input_reply::InputReply;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
 use crate::wire::jupyter_message::ProtocolMessage;
@@ -139,13 +140,13 @@ impl DummyFrontend {
         id
     }
 
-    pub fn send_execute_request(&self, code: &str) -> String {
+    pub fn send_execute_request(&self, code: &str, options: ExecuteRequestOptions) -> String {
         self.send_shell(ExecuteRequest {
             code: String::from(code),
             silent: false,
             store_history: true,
             user_expressions: serde_json::Value::Null,
-            allow_stdin: false,
+            allow_stdin: options.allow_stdin,
             stop_on_error: false,
         })
     }
@@ -276,6 +277,21 @@ impl DummyFrontend {
         })
     }
 
+    /// Receive from Stdin and assert `InputRequest` message.
+    /// Returns the `prompt`.
+    pub fn recv_stdin_input_request(&self) -> String {
+        let msg = self.recv_stdin();
+
+        assert_matches!(msg, Message::InputRequest(data) => {
+            data.content.prompt
+        })
+    }
+
+    /// Send back an `InputReply` to an `InputRequest` over Stdin
+    pub fn send_stdin_input_reply(&self, value: String) {
+        self.send_stdin(InputReply { value })
+    }
+
     /// Receives a (raw) message from the heartbeat socket
     pub fn recv_heartbeat(&self) -> zmq::Message {
         let mut msg = zmq::Message::new();
@@ -337,5 +353,15 @@ impl DummyFrontend {
             dbg!(WireMessage::read_from_socket(socket).unwrap());
             println!("---");
         }
+    }
+}
+
+pub struct ExecuteRequestOptions {
+    pub allow_stdin: bool,
+}
+
+impl Default for ExecuteRequestOptions {
+    fn default() -> Self {
+        Self { allow_stdin: false }
     }
 }

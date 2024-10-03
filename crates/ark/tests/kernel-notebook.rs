@@ -1,10 +1,11 @@
+use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
 use ark::fixtures::DummyArkFrontendNotebook;
 
 #[test]
 fn test_notebook_execute_request() {
     let frontend = DummyArkFrontendNotebook::lock();
 
-    frontend.send_execute_request("42");
+    frontend.send_execute_request("42", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
 
     let input = frontend.recv_iopub_execute_input();
@@ -20,7 +21,7 @@ fn test_notebook_execute_request() {
 fn test_execute_request_error_multiple_expressions() {
     let frontend = DummyArkFrontendNotebook::lock();
 
-    frontend.send_execute_request("1\nstop('foobar')\n2");
+    frontend.send_execute_request("1\nstop('foobar')\n2", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
 
     let input = frontend.recv_iopub_execute_input();
@@ -41,7 +42,7 @@ fn test_notebook_execute_request_multiple_expressions() {
     let frontend = DummyArkFrontendNotebook::lock();
 
     let code = "1\nprint(2)\n3";
-    frontend.send_execute_request(code);
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
 
     let input = frontend.recv_iopub_execute_input();

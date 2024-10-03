@@ -1,3 +1,4 @@
+use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
 use amalthea::wire::jupyter_message::Message;
 use amalthea::wire::kernel_info_request::KernelInfoRequest;
 use ark::fixtures::DummyArkFrontend;
@@ -24,7 +25,7 @@ fn test_kernel_info() {
 fn test_execute_request() {
     let frontend = DummyArkFrontend::lock();
 
-    frontend.send_execute_request("42");
+    frontend.send_execute_request("42", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
 
     let input = frontend.recv_iopub_execute_input();
@@ -40,7 +41,7 @@ fn test_execute_request() {
 fn test_execute_request_error() {
     let frontend = DummyArkFrontend::lock();
 
-    frontend.send_execute_request("stop('foobar')");
+    frontend.send_execute_request("stop('foobar')", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
 
     let input = frontend.recv_iopub_execute_input();
@@ -59,7 +60,7 @@ fn test_execute_request_error() {
 fn test_execute_request_error_multiple_expressions() {
     let frontend = DummyArkFrontend::lock();
 
-    frontend.send_execute_request("1\nstop('foobar')\n2");
+    frontend.send_execute_request("1\nstop('foobar')\n2", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
 
     let input = frontend.recv_iopub_execute_input();
@@ -81,7 +82,7 @@ fn test_execute_request_multiple_expressions() {
     let frontend = DummyArkFrontend::lock();
 
     let code = "1\nprint(2)\n3";
-    frontend.send_execute_request(code);
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
 
     let input = frontend.recv_iopub_execute_input();
@@ -101,7 +102,7 @@ fn test_execute_request_multiple_expressions() {
 }
 
 #[test]
-fn test_execute_request_large_single_line() {
+fn test_execute_request_single_line_buffer_overflow() {
     let frontend = DummyArkFrontend::lock();
 
     // The newlines do matter for what we are testing here,
@@ -110,11 +111,68 @@ fn test_execute_request_large_single_line() {
     // not in text written to the R buffer that calls `stop()`.
     let aaa = "a".repeat(4096);
     let code = format!("quote(\n{aaa}\n)");
-    frontend.send_execute_request(code.as_str());
+    frontend.send_execute_request(code.as_str(), ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
 
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, code);
+
+    assert!(frontend
+        .recv_iopub_execute_error()
+        .contains("Can't pass console input on to R"));
+
+    frontend.recv_iopub_idle();
+
+    assert_eq!(
+        frontend.recv_shell_execute_reply_exception(),
+        input.execution_count
+    );
+}
+
+#[test]
+fn test_stdin_basic_prompt() {
+    let frontend = DummyArkFrontend::lock();
+
+    let options = ExecuteRequestOptions { allow_stdin: true };
+
+    let code = "readline('prompt>')";
+    frontend.send_execute_request(code, options);
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    let prompt = frontend.recv_stdin_input_request();
+    assert_eq!(prompt, String::from("prompt>"));
+
+    frontend.send_stdin_input_reply(String::from("hi"));
+
+    assert_eq!(frontend.recv_iopub_execute_result(), "[1] \"hi\"");
+
+    frontend.recv_iopub_idle();
+
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+}
+
+#[test]
+fn test_stdin_single_line_buffer_overflow() {
+    let frontend = DummyArkFrontend::lock();
+
+    let options = ExecuteRequestOptions { allow_stdin: true };
+
+    let code = "readline('prompt>')";
+    frontend.send_execute_request(code, options);
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    let prompt = frontend.recv_stdin_input_request();
+    assert_eq!(prompt, String::from("prompt>"));
+
+    // Would overflow R's internal buffer
+    let aaa = "a".repeat(4096);
+    frontend.send_stdin_input_reply(aaa);
 
     assert!(frontend
         .recv_iopub_execute_error()
