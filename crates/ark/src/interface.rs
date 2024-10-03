@@ -1184,12 +1184,15 @@ impl RMain {
     /// this when allocating the buffer, but we don't abuse that.
     /// https://github.com/wch/r-source/blob/20c9590fd05c54dba6c9a1047fb0ba7822ba8ba2/src/include/Defn.h#L1863-L1865
     ///
-    /// In the case of receiving too much input, we simply trim the string and
-    /// log the issue, executing the rest. Ideally the front end will break up
-    /// large inputs, preventing this from being necessary. The important thing
-    /// is to avoid a crash, and it seems that we need to copy something into
-    /// R's buffer to keep the REPL in a good state.
-    /// https://github.com/posit-dev/positron/issues/1326#issuecomment-1745389921
+    /// Due to `buffer_console_input()`, we should only ever write 1 line of
+    /// console input to R's internal buffer at a time. R calls
+    /// `read_console()` back if it needs more input, allowing us to provide
+    /// the next line.
+    ///
+    /// In the case of receiving too much input within a SINGLE line, we
+    /// propagate up an informative `amalthea::Error::InvalidConsoleInput`
+    /// error, which is turned into an R error and thrown in a POD context.
+    /// This is a fairly pathological case that we never expect to occur.
     fn on_console_input(
         buf: *mut c_uchar,
         buflen: c_int,
