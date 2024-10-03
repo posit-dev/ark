@@ -249,22 +249,48 @@ impl DummyFrontend {
         })
     }
 
-    pub fn recv_iopub_stream_stdout(&self) -> String {
-        let msg = self.recv_iopub();
-
-        assert_matches!(msg, Message::StreamOutput(data) => {
-            assert_eq!(data.content.name, Stream::Stdout);
-            data.content.text
-        })
+    pub fn recv_iopub_stream_stdout(&self, expect: &str) {
+        self.recv_iopub_stream(expect, Stream::Stdout)
     }
 
-    pub fn recv_iopub_stream_stderr(&self) -> String {
-        let msg = self.recv_iopub();
+    pub fn recv_iopub_stream_stderr(&self, expect: &str) {
+        self.recv_iopub_stream(expect, Stream::Stderr)
+    }
 
-        assert_matches!(msg, Message::StreamOutput(data) => {
-            assert_eq!(data.content.name, Stream::Stderr);
-            data.content.text
-        })
+    /// Receive from IOPub Stream
+    ///
+    /// Stdout and Stderr Stream messages are buffered, so to reliably test against them
+    /// we have to collect the messages in batches on the receiving end and compare against
+    /// an expected message.
+    fn recv_iopub_stream(&self, expect: &str, stream: Stream) {
+        let mut out = String::new();
+
+        loop {
+            // Receive a piece of stream output (with a timeout)
+            let msg = self.recv_iopub();
+
+            // Assert its type
+            let piece = assert_matches!(msg, Message::StreamOutput(data) => {
+                assert_eq!(data.content.name, stream);
+                data.content.text
+            });
+
+            // Add to what we've already collected
+            out += piece.as_str();
+
+            if out == expect {
+                // Done, found the entire `expect` string
+                return;
+            }
+
+            if !expect.starts_with(out.as_str()) {
+                // Something is wrong, message doesn't match up
+                panic!("Expected IOPub stream of '{expect}'. Actual stream of '{out}'.");
+            }
+
+            // We have a prefix of `expect`, but not the whole message yet.
+            // Wait on the next IOPub Stream message.
+        }
     }
 
     /// Receive from IOPub and assert ExecuteResult message. Returns compulsory

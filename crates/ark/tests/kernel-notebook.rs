@@ -49,7 +49,7 @@ fn test_notebook_execute_request_multiple_expressions() {
     assert_eq!(input.code, code);
 
     // Printed output
-    assert_eq!(frontend.recv_iopub_stream_stdout(), "[1] 2\n");
+    frontend.recv_iopub_stream_stdout("[1] 2\n");
 
     // Unlike console mode, we don't get intermediate results in notebooks
     assert_eq!(frontend.recv_iopub_execute_result(), "[1] 3");

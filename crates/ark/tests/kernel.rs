@@ -66,7 +66,7 @@ fn test_execute_request_error_multiple_expressions() {
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, "1\nstop('foobar')\n2");
 
-    assert_eq!(frontend.recv_iopub_stream_stdout(), "[1] 1\n");
+    frontend.recv_iopub_stream_stdout("[1] 1\n");
     assert!(frontend.recv_iopub_execute_error().contains("foobar"));
 
     frontend.recv_iopub_idle();
@@ -89,7 +89,7 @@ fn test_execute_request_multiple_expressions() {
     assert_eq!(input.code, code);
 
     // Printed output
-    assert_eq!(frontend.recv_iopub_stream_stdout(), "[1] 1\n[1] 2\n");
+    frontend.recv_iopub_stream_stdout("[1] 1\n[1] 2\n");
 
     // In console mode, we get output for all intermediate results.  That's not
     // the case in notebook mode where only the final result is emitted. Note
