@@ -17,6 +17,26 @@ fn test_notebook_execute_request() {
 }
 
 #[test]
+fn test_execute_request_error_multiple_expressions() {
+    let frontend = DummyArkFrontendNotebook::lock();
+
+    frontend.send_execute_request("1\nstop('foobar')\n2");
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, "1\nstop('foobar')\n2");
+
+    assert!(frontend.recv_iopub_execute_error().contains("foobar"));
+
+    frontend.recv_iopub_idle();
+
+    assert_eq!(
+        frontend.recv_shell_execute_reply_exception(),
+        input.execution_count
+    );
+}
+
+#[test]
 fn test_notebook_execute_request_multiple_expressions() {
     let frontend = DummyArkFrontendNotebook::lock();
 

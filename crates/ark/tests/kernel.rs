@@ -56,6 +56,27 @@ fn test_execute_request_error() {
 }
 
 #[test]
+fn test_execute_request_error_multiple_expressions() {
+    let frontend = DummyArkFrontend::lock();
+
+    frontend.send_execute_request("1\nstop('foobar')\n2");
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, "1\nstop('foobar')\n2");
+
+    assert_eq!(frontend.recv_iopub_stream_stdout(), "[1] 1\n");
+    assert!(frontend.recv_iopub_execute_error().contains("foobar"));
+
+    frontend.recv_iopub_idle();
+
+    assert_eq!(
+        frontend.recv_shell_execute_reply_exception(),
+        input.execution_count
+    );
+}
+
+#[test]
 fn test_execute_request_multiple_expressions() {
     let frontend = DummyArkFrontend::lock();
 
@@ -67,12 +88,12 @@ fn test_execute_request_multiple_expressions() {
     assert_eq!(input.code, code);
 
     // Printed output
-    assert_eq!(frontend.recv_iopub_stream_stdout(), "[1] 2\n");
+    assert_eq!(frontend.recv_iopub_stream_stdout(), "[1] 1\n[1] 2\n");
 
     // In console mode, we get output for all intermediate results.  That's not
     // the case in notebook mode where only the final result is emitted. Note
     // that `print()` returns invisibly.
-    assert_eq!(frontend.recv_iopub_execute_result(), "[1] 1\n[1] 3");
+    assert_eq!(frontend.recv_iopub_execute_result(), "[1] 3");
 
     frontend.recv_iopub_idle();
 
