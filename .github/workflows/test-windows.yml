@@ -34,5 +34,6 @@ jobs:
 
       - name: Run Unit Tests
         id: test
+        # Very loud on windows CI, which has been a source of instability
         run: |
-            cargo test --verbose
+            cargo test -vv -- --nocapture
