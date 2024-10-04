@@ -232,7 +232,6 @@ where
     return result.lock().unwrap().take().unwrap();
 }
 
-#[allow(dead_code)] // Currently unused
 pub(crate) fn spawn_idle<F, Fut>(fun: F)
 where
     F: FnOnce() -> Fut + 'static + Send,
@@ -261,6 +260,8 @@ where
         return;
     }
 
+    // Note that this blocks until the channels are initialized,
+    // even though these are async tasks!
     let tasks_tx = if only_idle {
         get_tasks_idle_tx()
     } else {
