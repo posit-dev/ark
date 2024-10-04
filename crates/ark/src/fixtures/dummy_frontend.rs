@@ -23,6 +23,16 @@ pub struct DummyArkFrontend {
     guard: MutexGuard<'static, DummyFrontend>,
 }
 
+/// Wrapper around `DummyArkFrontend` that uses `SessionMode::Notebook`
+///
+/// Only one of `DummyArkFrontend` or `DummyArkFrontendNotebook` can be used in
+/// a given process. Just don't import both and you should be fine as Rust will
+/// let you know about a missing symbol if you happen to copy paste `lock()`
+/// calls of different kernel types between files.
+pub struct DummyArkFrontendNotebook {
+    inner: DummyArkFrontend,
+}
+
 impl DummyArkFrontend {
     pub fn lock() -> Self {
         Self {
@@ -31,10 +41,13 @@ impl DummyArkFrontend {
     }
 
     fn get_frontend() -> &'static Arc<Mutex<DummyFrontend>> {
-        FRONTEND.get_or_init(|| Arc::new(Mutex::new(DummyArkFrontend::init())))
+        // These are the hard-coded defaults. Call `init()` explicitly to
+        // override.
+        let session_mode = SessionMode::Console;
+        FRONTEND.get_or_init(|| Arc::new(Mutex::new(DummyArkFrontend::init(session_mode))))
     }
 
-    fn init() -> DummyFrontend {
+    pub(crate) fn init(session_mode: SessionMode) -> DummyFrontend {
         if FRONTEND.get().is_some() {
             panic!("Can't spawn Ark more than once");
         }
@@ -52,7 +65,7 @@ impl DummyArkFrontend {
                 String::from("--no-restore"),
             ],
             None,
-            SessionMode::Console,
+            session_mode,
             false,
         );
 
@@ -85,5 +98,40 @@ impl Deref for DummyArkFrontend {
 impl DerefMut for DummyArkFrontend {
     fn deref_mut(&mut self) -> &mut Self::Target {
         DerefMut::deref_mut(&mut self.guard)
+    }
+}
+
+impl DummyArkFrontendNotebook {
+    /// Lock a notebook frontend.
+    ///
+    /// NOTE: Only one of `DummyArkFrontendNotebook::lock()` re
+    /// `DummyArkFrontend::lock()` should be called in a given process.
+    pub fn lock() -> Self {
+        Self::init();
+
+        Self {
+            inner: DummyArkFrontend::lock(),
+        }
+    }
+
+    /// Initialize with Notebook session mode
+    fn init() {
+        let session_mode = SessionMode::Notebook;
+        FRONTEND.get_or_init(|| Arc::new(Mutex::new(DummyArkFrontend::init(session_mode))));
+    }
+}
+
+// Allow method calls to be forwarded to inner type
+impl Deref for DummyArkFrontendNotebook {
+    type Target = DummyFrontend;
+
+    fn deref(&self) -> &Self::Target {
+        Deref::deref(&self.inner)
+    }
+}
+
+impl DerefMut for DummyArkFrontendNotebook {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        DerefMut::deref_mut(&mut self.inner)
     }
 }
