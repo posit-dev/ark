@@ -90,3 +90,21 @@ fn r_test_setup() {
         setup_Rmainloop();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::r_task;
+
+    #[test]
+    fn test_stack_info() {
+        // These tests assert that we've correctly turned off the `R_StackLimit` check during harp
+        // and ark tests that use `r_task()`. It is turned off in `r_test_setup()` above.
+        r_task(|| {
+            let size = harp::parse_eval_base("Cstack_info()[['size']]").unwrap();
+            assert_eq!(harp::r_int_get(size.sexp, 0), harp::object::r_int_na());
+
+            let current = harp::parse_eval_base("Cstack_info()[['current']]").unwrap();
+            assert_eq!(harp::r_int_get(current.sexp, 0), harp::object::r_int_na());
+        })
+    }
+}

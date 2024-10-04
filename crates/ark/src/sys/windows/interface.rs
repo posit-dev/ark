@@ -88,6 +88,14 @@ pub fn setup_r(mut _args: Vec<*mut c_char>) {
         // Sets the parameters to internal R globals, like all of the `ptr_*` function pointers
         R_SetParams(params);
 
+        // In tests R may be run from various threads. This confuses R's stack
+        // overflow checks so we disable those. This should not make it in
+        // production builds as it causes stack overflows to crash R instead of
+        // throwing an R error.
+        if stdext::IS_TESTING {
+            libr::set(libr::R_CStackLimit, usize::MAX);
+        }
+
         // R global ui initialization
         libr::graphapp::GA_initapp(0, std::ptr::null_mut());
         readconsolecfg();

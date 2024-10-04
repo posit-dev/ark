@@ -55,6 +55,13 @@ impl DummyArkFrontend {
         let frontend = DummyFrontend::new();
         let connection_file = frontend.get_connection_file();
 
+        // We don't want cli to try and restore the cursor, it breaks our tests
+        // by adding unecessary ANSI escapes. We don't need this in Positron because
+        // cli also checks `isatty(stdout())`, which is false in Positron because
+        // we redirect stdout.
+        // https://github.com/r-lib/cli/blob/1220ed092c03e167ff0062e9839c81d7258a4600/R/onload.R#L33-L40
+        unsafe { std::env::set_var("R_CLI_HIDE_CURSOR", "false") };
+
         // Start the kernel in this thread so that panics are propagated
         crate::start::start_kernel(
             connection_file,

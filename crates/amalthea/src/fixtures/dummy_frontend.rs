@@ -13,6 +13,7 @@ use crate::session::Session;
 use crate::socket::socket::Socket;
 use crate::wire::execute_input::ExecuteInput;
 use crate::wire::execute_request::ExecuteRequest;
+use crate::wire::input_reply::InputReply;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
 use crate::wire::jupyter_message::ProtocolMessage;
@@ -34,6 +35,10 @@ pub struct DummyFrontend {
     iopub_port: u16,
     stdin_port: u16,
     heartbeat_port: u16,
+}
+
+pub struct ExecuteRequestOptions {
+    pub allow_stdin: bool,
 }
 
 impl DummyFrontend {
@@ -139,13 +144,13 @@ impl DummyFrontend {
         id
     }
 
-    pub fn send_execute_request(&self, code: &str) -> String {
+    pub fn send_execute_request(&self, code: &str, options: ExecuteRequestOptions) -> String {
         self.send_shell(ExecuteRequest {
             code: String::from(code),
             silent: false,
             store_history: true,
             user_expressions: serde_json::Value::Null,
-            allow_stdin: false,
+            allow_stdin: options.allow_stdin,
             stop_on_error: false,
         })
     }
@@ -248,22 +253,48 @@ impl DummyFrontend {
         })
     }
 
-    pub fn recv_iopub_stream_stdout(&self) -> String {
-        let msg = self.recv_iopub();
-
-        assert_matches!(msg, Message::StreamOutput(data) => {
-            assert_eq!(data.content.name, Stream::Stdout);
-            data.content.text
-        })
+    pub fn recv_iopub_stream_stdout(&self, expect: &str) {
+        self.recv_iopub_stream(expect, Stream::Stdout)
     }
 
-    pub fn recv_iopub_stream_stderr(&self) -> String {
-        let msg = self.recv_iopub();
+    pub fn recv_iopub_stream_stderr(&self, expect: &str) {
+        self.recv_iopub_stream(expect, Stream::Stderr)
+    }
 
-        assert_matches!(msg, Message::StreamOutput(data) => {
-            assert_eq!(data.content.name, Stream::Stderr);
-            data.content.text
-        })
+    /// Receive from IOPub Stream
+    ///
+    /// Stdout and Stderr Stream messages are buffered, so to reliably test against them
+    /// we have to collect the messages in batches on the receiving end and compare against
+    /// an expected message.
+    fn recv_iopub_stream(&self, expect: &str, stream: Stream) {
+        let mut out = String::new();
+
+        loop {
+            // Receive a piece of stream output (with a timeout)
+            let msg = self.recv_iopub();
+
+            // Assert its type
+            let piece = assert_matches!(msg, Message::StreamOutput(data) => {
+                assert_eq!(data.content.name, stream);
+                data.content.text
+            });
+
+            // Add to what we've already collected
+            out += piece.as_str();
+
+            if out == expect {
+                // Done, found the entire `expect` string
+                return;
+            }
+
+            if !expect.starts_with(out.as_str()) {
+                // Something is wrong, message doesn't match up
+                panic!("Expected IOPub stream of '{expect}'. Actual stream of '{out}'.");
+            }
+
+            // We have a prefix of `expect`, but not the whole message yet.
+            // Wait on the next IOPub Stream message.
+        }
     }
 
     /// Receive from IOPub and assert ExecuteResult message. Returns compulsory
@@ -274,6 +305,21 @@ impl DummyFrontend {
         assert_matches!(msg, Message::ExecuteError(data) => {
             data.content.exception.evalue
         })
+    }
+
+    /// Receive from Stdin and assert `InputRequest` message.
+    /// Returns the `prompt`.
+    pub fn recv_stdin_input_request(&self) -> String {
+        let msg = self.recv_stdin();
+
+        assert_matches!(msg, Message::InputRequest(data) => {
+            data.content.prompt
+        })
+    }
+
+    /// Send back an `InputReply` to an `InputRequest` over Stdin
+    pub fn send_stdin_input_reply(&self, value: String) {
+        self.send_stdin(InputReply { value })
     }
 
     /// Receives a (raw) message from the heartbeat socket
@@ -337,5 +383,11 @@ impl DummyFrontend {
             dbg!(WireMessage::read_from_socket(socket).unwrap());
             println!("---");
         }
+    }
+}
+
+impl Default for ExecuteRequestOptions {
+    fn default() -> Self {
+        Self { allow_stdin: false }
     }
 }

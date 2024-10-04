@@ -33,6 +33,7 @@ pub mod signals;
 pub mod srcref;
 pub mod start;
 pub mod startup;
+pub mod strings;
 pub mod sys;
 pub mod thread;
 pub mod traps;

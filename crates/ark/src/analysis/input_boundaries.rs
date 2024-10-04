@@ -65,19 +65,12 @@ impl InputBoundary {
 ///   an invalid one, and invalid inputs are always trailing).
 /// - There is only one incomplete and one invalid input in a set of inputs.
 pub fn input_boundaries(text: &str) -> anyhow::Result<Vec<InputBoundary>> {
-    let mut lines: Vec<&str> = text.lines().collect();
-
-    // Rectify for `lines()` ignoring trailing empty lines
-    match text.chars().last() {
-        Some(last) if last == '\n' => lines.push(""),
-        None => lines.push(""),
-        _ => {},
-    }
-
-    // Create a duplicate vector of lines on the R side too so we don't have to
-    // reallocate memory each time we parse a new subset of lines
-    let lines_r = CharacterVector::create(lines.iter());
+    let lines: Vec<&str> = crate::strings::lines(text).collect();
     let n_lines: u32 = lines.len().try_into()?;
+
+    // Create the vector on the R side so we don't have to reallocate memory
+    // for the elements each time we parse a new subset of lines
+    let lines = CharacterVector::create(lines);
 
     let mut complete: Vec<LineRange> = vec![];
     let mut incomplete: Option<LineRange> = None;
@@ -120,9 +113,9 @@ pub fn input_boundaries(text: &str) -> anyhow::Result<Vec<InputBoundary>> {
         // Grab all code up to current line. We don't slice the vector in the
         // first iteration as it's not needed.
         let subset = if current_line == n_lines - 1 {
-            lines_r.clone()
+            lines.clone()
         } else {
-            CharacterVector::try_from(&lines_r.slice()[..=current_line as usize])?
+            CharacterVector::try_from(&lines.slice()[..=current_line as usize])?
         };
 
         // Parse within source file to get source references

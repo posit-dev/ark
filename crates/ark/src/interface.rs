@@ -73,7 +73,6 @@ use harp::r_symbol;
 use harp::routines::r_register_routines;
 use harp::session::r_traceback;
 use harp::utils::r_is_data_frame;
-use harp::utils::r_pairlist_any;
 use harp::utils::r_typeof;
 use harp::R_MAIN_THREAD_ID;
 use libr::R_BaseNamespace;
@@ -118,7 +117,10 @@ use crate::signals::set_interrupts_pending;
 use crate::srcref::ns_populate_srcref;
 use crate::srcref::resource_loaded_namespaces;
 use crate::startup;
+use crate::strings::lines;
 use crate::sys::console::console_to_utf8;
+
+static RE_DEBUG_PROMPT: Lazy<Regex> = Lazy::new(|| Regex::new(r"Browse\[\d+\]").unwrap());
 
 /// An enum representing the different modes in which the R session can run.
 #[derive(PartialEq, Clone)]
@@ -219,6 +221,8 @@ pub struct RMain {
     pub is_busy: bool,
 
     pub positron_ns: Option<RObject>,
+
+    pending_lines: Vec<String>,
 }
 
 /// Represents the currently active execution request from the frontend. It
@@ -250,10 +254,12 @@ pub struct PromptInfo {
     input_prompt: String,
 
     /// The continuation prompt string when user supplies incomplete
-    /// inputs.  This always corresponds to `getOption("continue"). We send
+    /// inputs. This always corresponds to `getOption("continue"). We send
     /// it to frontends along with `prompt` because some frontends such as
     /// Positron do not send incomplete inputs to Ark and take charge of
-    /// continuation prompts themselves.
+    /// continuation prompts themselves. For frontends that can send
+    /// incomplete inputs to Ark, like Jupyter Notebooks, we immediately
+    /// error on them rather than requesting that this be shown.
     continuation_prompt: String,
 
     /// Whether this is a `browser()` prompt. A browser prompt can be
@@ -304,8 +310,6 @@ impl RMain {
         // Channels to send/receive tasks from auxiliary threads via `RTask`s
         let (tasks_interrupt_tx, tasks_interrupt_rx) = unbounded::<RTask>();
         let (tasks_idle_tx, tasks_idle_rx) = unbounded::<RTask>();
-
-        r_task::initialize(tasks_interrupt_tx.clone(), tasks_idle_tx.clone());
 
         unsafe {
             R_MAIN = Some(RMain::new(
@@ -410,6 +414,9 @@ impl RMain {
             // Set up the global error handler (after support function initialization)
             errors::initialize();
 
+            // Now allow interrupt-time tasks to run
+            r_task::initialize(tasks_interrupt_tx, tasks_idle_tx);
+
             // Now that R has started (emitting any startup messages), and now that we have set
             // up all hooks and handlers, officially finish the R initialization process to
             // unblock the kernel-info request and also allow the LSP to start.
@@ -431,8 +438,8 @@ impl RMain {
 
     /// Start the REPL. Does not return!
     pub fn start() {
-        // Update the main thread ID in case the REPL is started in a background
-        // thread (e.g. in integration tests)
+        // Set the main thread ID. We do it here so that `setup()` is allowed to
+        // be called in another thread.
         unsafe { R_MAIN_THREAD_ID = Some(std::thread::current().id()) };
         crate::sys::interface::run_r();
     }
@@ -502,6 +509,7 @@ impl RMain {
             pending_futures: HashMap::new(),
             session_mode,
             positron_ns: None,
+            pending_lines: Vec::new(),
         }
     }
 
@@ -628,8 +636,51 @@ impl RMain {
         buflen: c_int,
         _hist: c_int,
     ) -> ConsoleResult {
+        // We get called here everytime R needs more input. This handler
+        // represents the driving event of a small state machine that manages
+        // communication between R and the frontend:
+        //
+        // - If the vector of pending lines is empty, and if the prompt is for
+        //   new R code, we close the active ExecuteRequest and send a response to
+        //   the frontend.
+        //
+        // - If the vector of pending lines is not empty, R might be waiting for
+        //   us to complete an incomplete expression, or we might just have
+        //   completed an intermediate expression (e.g. from an ExecuteRequest
+        //   like `foo\nbar` where `foo` is intermediate and `bar` is final).
+        //   Send the next line to R.
+        //
+        // This state machine depends on being able to reliably distinguish
+        // between readline prompts (from `readline()`, `scan()`, or `menu()`),
+        // and actual R code prompts (either top-level or from a nested debug
+        // REPL).  A readline prompt should never change our state (in
+        // particular our vector of pending inputs). We think we are making this
+        // distinction sufficiently robustly but ideally R would let us know the
+        // prompt type so there is no ambiguity at all.
+        //
+        // R might throw an error at any time while we are working on our vector
+        // of pending lines, either from a syntax error or from an evaluation
+        // error. When this happens, we abort evaluation and clear the pending
+        // lines.
+        //
+        // If the vector of pending lines is empty and we detect an incomplete
+        // prompt, this is a panic. We check ahead of time for complete
+        // expressions before breaking up an ExecuteRequest in multiple lines,
+        // so this should not happen.
+
+        if let Some(console_result) = self.handle_pending_line(buf, buflen) {
+            return console_result;
+        }
+
         let info = Self::prompt_info(prompt);
         log::trace!("R prompt: {}", info.input_prompt);
+
+        // An incomplete prompt when we no longer have any inputs to send should
+        // never happen because we check for incomplete inputs ahead of time and
+        // respond to the frontend with an error.
+        if info.incomplete && self.pending_lines.is_empty() {
+            unreachable!("Incomplete input in `ReadConsole` handler");
+        }
 
         // Upon entering read-console, finalize any debug call text that we were capturing.
         // At this point, the user can either advance the debugger, causing us to capture
@@ -643,8 +694,10 @@ impl RMain {
         // NOTE: Should be able to overwrite the `Cleanup` frontend method.
         // This would also help with detecting normal exits versus crashes.
         if info.input_prompt.starts_with("Save workspace") {
-            Self::on_console_input(buf, buflen, String::from("n"));
-            return ConsoleResult::NewInput;
+            match Self::on_console_input(buf, buflen, String::from("n")) {
+                Ok(()) => return ConsoleResult::NewInput,
+                Err(err) => return ConsoleResult::Error(err),
+            }
         }
 
         if info.input_request {
@@ -793,34 +846,26 @@ impl RMain {
         let prompt_slice = unsafe { CStr::from_ptr(prompt_c) };
         let prompt = prompt_slice.to_string_lossy().into_owned();
 
-        // Detect browser prompts by inspecting the `RDEBUG` flag of each
-        // frame on the stack. If ANY of the frames are marked with `RDEBUG`,
-        // then we assume we are in a debug state. We can't just check the
-        // last frame, as sometimes frames are pushed onto the stack by lazy
-        // evaluation of arguments or `tryCatch()` that aren't debug frames,
-        // but we don't want to exit the debugger when we hit these, as R is
-        // still inside a browser state. Should also handle cases like `debug(readline)`
-        // followed by `n`.
-        // https://github.com/posit-dev/positron/issues/2310
-        let frames = harp::session::r_sys_frames().unwrap();
-        let browser = r_pairlist_any(frames.sexp, |frame| {
-            harp::session::r_env_is_browsed(frame).unwrap()
-        });
+        // Detect browser prompt by matching the prompt string
+        // https://github.com/posit-dev/positron/issues/4742.
+        // There are ways to break this detection, for instance setting
+        // `options(prompt =, continue = ` to something that looks like
+        // a browser prompt, or doing the same with `readline()`. We have
+        // chosen to not support these edge cases.
+        let browser = RE_DEBUG_PROMPT.is_match(&prompt);
 
         // If there are frames on the stack and we're not in a browser prompt,
         // this means some user code is requesting input, e.g. via `readline()`
         let user_request = !browser && n_frame > 0;
 
         // The request is incomplete if we see the continue prompt, except if
-        // we're in a user request, e.g. `readline("+ ")`
+        // we're in a user request, e.g. `readline("+ ")`. To guard against
+        // this, we check that we are at top-level (call stack is empty or we
+        // have a debug prompt).
         let continuation_prompt: String = harp::get_option("continue").try_into().unwrap();
-        let incomplete = !user_request && prompt == continuation_prompt;
-
-        if incomplete {
-            log::trace!("Got R prompt '{prompt}', marking request incomplete");
-        } else if user_request {
-            log::trace!("Got R prompt '{prompt}', asking user for input");
-        }
+        let matches_continuation = prompt == continuation_prompt;
+        let top_level = n_frame == 0 || browser;
+        let incomplete = matches_continuation && top_level;
 
         return PromptInfo {
             input_prompt: prompt,
@@ -876,7 +921,7 @@ impl RMain {
         self.error_occurred = false;
 
         match input {
-            ConsoleInput::Input(mut code) => {
+            ConsoleInput::Input(code) => {
                 // Handle commands for the debug interpreter
                 if self.dap.is_debugging() {
                     let continue_cmds = vec!["n", "f", "c", "cont"];
@@ -885,14 +930,24 @@ impl RMain {
                     }
                 }
 
-                // In notebooks, wrap in braces so that only the last complete
-                // expression is auto-printed
-                if let SessionMode::Notebook = self.session_mode {
-                    code = format!("{{ {code} }}");
+                // If the input is invalid (e.g. incomplete), don't send it to R
+                // at all, reply with an error right away
+                if let Err(err) = Self::check_console_input(code.as_str()) {
+                    return Some(ConsoleResult::Error(err));
                 }
 
-                Self::on_console_input(buf, buflen, code);
-                Some(ConsoleResult::NewInput)
+                // Split input by lines, retrieve first line, and store
+                // remaining lines in a buffer. This helps with long inputs
+                // because R has a fixed input buffer size of 4096 bytes at the
+                // time of writing.
+                let code = self.buffer_console_input(code.as_str());
+
+                // Store input in R's buffer and return sentinel indicating some
+                // new input is ready
+                match Self::on_console_input(buf, buflen, code) {
+                    Ok(()) => Some(ConsoleResult::NewInput),
+                    Err(err) => Some(ConsoleResult::Error(err)),
+                }
             },
             ConsoleInput::EOF => Some(ConsoleResult::Disconnected),
         }
@@ -916,8 +971,10 @@ impl RMain {
     fn handle_invalid_input_request(&self, buf: *mut c_uchar, buflen: c_int) -> ConsoleResult {
         if Self::in_renv_autoloader() {
             log::info!("Detected `readline()` call in renv autoloader. Returning `'n'`.");
-            Self::on_console_input(buf, buflen, String::from("n"));
-            return ConsoleResult::NewInput;
+            match Self::on_console_input(buf, buflen, String::from("n")) {
+                Ok(()) => return ConsoleResult::NewInput,
+                Err(err) => return ConsoleResult::Error(err),
+            }
         }
 
         log::info!("Detected invalid `input_request` outside an `execute_request`. Preparing to throw an R error.");
@@ -945,8 +1002,10 @@ impl RMain {
         match reply {
             Ok(input) => {
                 let input = convert_line_endings(&input.value, LineEnding::Posix);
-                Self::on_console_input(buf, buflen, input);
-                ConsoleResult::NewInput
+                match Self::on_console_input(buf, buflen, input) {
+                    Ok(()) => ConsoleResult::NewInput,
+                    Err(err) => ConsoleResult::Error(err),
+                }
             },
             Err(err) => ConsoleResult::Error(err),
         }
@@ -1061,6 +1120,63 @@ impl RMain {
         }
     }
 
+    fn handle_pending_line(&mut self, buf: *mut c_uchar, buflen: c_int) -> Option<ConsoleResult> {
+        if self.error_occurred {
+            // If an error has occurred, we've already sent a complete expression that resulted in
+            // an error. Flush the remaining lines and return to `read_console()`, who will handle
+            // that error.
+            self.pending_lines.clear();
+            return None;
+        }
+
+        let Some(input) = self.pending_lines.pop() else {
+            // No pending lines
+            return None;
+        };
+
+        match Self::on_console_input(buf, buflen, input) {
+            Ok(()) => Some(ConsoleResult::NewInput),
+            Err(err) => Some(ConsoleResult::Error(err)),
+        }
+    }
+
+    fn check_console_input(input: &str) -> amalthea::Result<()> {
+        let status = unwrap!(harp::parse_status(&harp::ParseInput::Text(input)), Err(err) => {
+            // Failed to even attempt to parse the input, something is seriously wrong
+            return Err(Error::InvalidConsoleInput(format!(
+                "Failed to parse input: {err:?}"
+            )));
+        });
+
+        // - Incomplete inputs put R into a state where it expects more input that will never come, so we
+        //   immediately reject them. Positron should never send us these, but Jupyter Notebooks may.
+        // - Complete statements are obviously fine.
+        // - Syntax errors will cause R to throw an error, which is expected.
+        match status {
+            harp::ParseResult::Incomplete => Err(Error::InvalidConsoleInput(format!(
+                "Can't execute incomplete input:\n{input}"
+            ))),
+            harp::ParseResult::Complete(_) => Ok(()),
+            harp::ParseResult::SyntaxError { .. } => Ok(()),
+        }
+    }
+
+    fn buffer_console_input(&mut self, input: &str) -> String {
+        // Split into lines and reverse them to be able to `pop()` from the front
+        let mut lines: Vec<String> = lines(input).rev().map(String::from).collect();
+
+        // SAFETY: There is always at least one line because:
+        // - `lines("")` returns 1 element containing `""`
+        // - `lines("\n")` returns 2 elements containing `""`
+        let first = lines.pop().unwrap();
+
+        // No-op if `lines` is empty
+        assert!(self.pending_lines.is_empty());
+        self.pending_lines.append(&mut lines);
+
+        first
+    }
+
     /// Copy console input into R's internal input buffer
     ///
     /// Supposedly `buflen` is "the maximum length, in bytes, including the
@@ -1068,13 +1184,20 @@ impl RMain {
     /// this when allocating the buffer, but we don't abuse that.
     /// https://github.com/wch/r-source/blob/20c9590fd05c54dba6c9a1047fb0ba7822ba8ba2/src/include/Defn.h#L1863-L1865
     ///
-    /// In the case of receiving too much input, we simply trim the string and
-    /// log the issue, executing the rest. Ideally the front end will break up
-    /// large inputs, preventing this from being necessary. The important thing
-    /// is to avoid a crash, and it seems that we need to copy something into
-    /// R's buffer to keep the REPL in a good state.
-    /// https://github.com/posit-dev/positron/issues/1326#issuecomment-1745389921
-    fn on_console_input(buf: *mut c_uchar, buflen: c_int, mut input: String) {
+    /// Due to `buffer_console_input()`, we should only ever write 1 line of
+    /// console input to R's internal buffer at a time. R calls
+    /// `read_console()` back if it needs more input, allowing us to provide
+    /// the next line.
+    ///
+    /// In the case of receiving too much input within a SINGLE line, we
+    /// propagate up an informative `amalthea::Error::InvalidConsoleInput`
+    /// error, which is turned into an R error and thrown in a POD context.
+    /// This is a fairly pathological case that we never expect to occur.
+    fn on_console_input(
+        buf: *mut c_uchar,
+        buflen: c_int,
+        mut input: String,
+    ) -> amalthea::Result<()> {
         let buflen = buflen as usize;
 
         if buflen < 2 {
@@ -1086,8 +1209,8 @@ impl RMain {
         let buflen = buflen - 2;
 
         if input.len() > buflen {
-            log::error!("Console input too large for buffer, writing R error.");
-            input = Self::buffer_overflow_call();
+            log::error!("Console input too large for buffer, throwing R error.");
+            return Err(Self::buffer_overflow_error());
         }
 
         // Push `\n`
@@ -1099,22 +1222,15 @@ impl RMain {
         unsafe {
             libc::strcpy(buf as *mut c_char, input.as_ptr());
         }
+
+        Ok(())
     }
 
-    // Temporary patch for https://github.com/posit-dev/positron/issues/2675.
-    // We write an informative `stop()` call rather than the user's actual input.
-    fn buffer_overflow_call() -> String {
-        let message = r#"
-Can't pass console input on to R, it exceeds R's internal console buffer size.
-This is a Positron limitation we plan to fix. In the meantime, you can:
-- Break the command you sent to the console into smaller chunks, if possible.
-- Otherwise, send the whole script to the console using `source()`.
-        "#;
-
-        let message = message.trim();
-        let message = format!("stop(\"{message}\")");
-
-        message
+    // Hitting this means a SINGLE line from the user was longer than the buffer size (>4000 characters)
+    fn buffer_overflow_error() -> amalthea::Error {
+        Error::InvalidConsoleInput(String::from(
+            "Can't pass console input on to R, a single line exceeds R's internal console buffer size."
+        ))
     }
 
     // Reply to the previously active request. The current prompt type and
@@ -1340,18 +1456,46 @@ This is a Positron limitation we plan to fix. In the meantime, you can:
             }
         }
 
-        // If we are at top-level, we're handling visible output auto-printed by
-        // the R REPL. We accumulate this output (it typically comes in
-        // multiple parts) so we can emit it later on as part of execution
-        // results.
-        //
-        // Note that warnings emitted lazily on stdout will appear to be part of
-        // autoprint. We currently emit them on stderr, which allows us to
-        // differentiate, but that could change in the future:
-        // https://github.com/posit-dev/positron/issues/1881
-        if otype == 0 && is_auto_printing() {
-            r_main.autoprint_output.push_str(&content);
-            return;
+        if stream == Stream::Stdout && is_auto_printing() {
+            // If we are at top-level, we're handling visible output auto-printed by
+            // the R REPL. We accumulate this output (it typically comes in multiple
+            // parts) so we can emit it later on as part of the execution reply
+            // message sent to Shell, as opposed to an Stdout message sent on IOPub.
+            //
+            // However, if autoprint is dealing with an intermediate expression
+            // (i.e. `a` and `b` in `a\nb\nc`), we should emit it on IOPub. We
+            // only accumulate autoprint output for the very last expression. The
+            // way to distinguish between these cases is whether there are still
+            // lines of input pending. In that case, that means we are on an
+            // intermediate expression.
+            //
+            // Note that we implement this behaviour (streaming autoprint results of
+            // intermediate expressions) specifically for Positron, and specifically
+            // for versions that send multiple expressions selected by the user in
+            // one request. Other Jupyter frontends do not want to see output for
+            // these intermediate expressions. And future versions of Positron will
+            // never send multiple expressions in one request
+            // (https://github.com/posit-dev/positron/issues/1326).
+            //
+            // Note that warnings emitted lazily on stdout will appear to be part of
+            // autoprint. We currently emit them on stderr, which allows us to
+            // differentiate, but that could change in the future:
+            // https://github.com/posit-dev/positron/issues/1881
+
+            // Handle last expression
+            if r_main.pending_lines.is_empty() {
+                r_main.autoprint_output.push_str(&content);
+                return;
+            }
+
+            // In notebooks, we don't emit results of intermediate expressions
+            if r_main.session_mode == SessionMode::Notebook {
+                return;
+            }
+
+            // In Positron, fall through if we have pending input. This allows
+            // autoprint output for intermediate expressions to be emitted on
+            // IOPub.
         }
 
         // Stream output via the IOPub channel.
