@@ -58,3 +58,49 @@ fn test_notebook_execute_request_multiple_expressions() {
 
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 }
+
+#[test]
+fn test_notebook_execute_request_incomplete() {
+    let frontend = DummyArkFrontendNotebook::lock();
+
+    let code = "1 +";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    assert!(frontend
+        .recv_iopub_execute_error()
+        .contains("Can't execute incomplete input"));
+
+    frontend.recv_iopub_idle();
+
+    assert_eq!(
+        frontend.recv_shell_execute_reply_exception(),
+        input.execution_count
+    )
+}
+
+#[test]
+fn test_notebook_execute_request_incomplete_multiple_lines() {
+    let frontend = DummyArkFrontendNotebook::lock();
+
+    let code = "1 +\n2 +";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    assert!(frontend
+        .recv_iopub_execute_error()
+        .contains("Can't execute incomplete input"));
+
+    frontend.recv_iopub_idle();
+
+    assert_eq!(
+        frontend.recv_shell_execute_reply_exception(),
+        input.execution_count
+    )
+}

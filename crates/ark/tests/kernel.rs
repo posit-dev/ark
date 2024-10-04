@@ -25,16 +25,193 @@ fn test_kernel_info() {
 fn test_execute_request() {
     let frontend = DummyArkFrontend::lock();
 
-    frontend.send_execute_request("42", ExecuteRequestOptions::default());
+    let code = "42";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
 
     let input = frontend.recv_iopub_execute_input();
-    assert_eq!(input.code, "42");
+    assert_eq!(input.code, code);
     assert_eq!(frontend.recv_iopub_execute_result(), "[1] 42");
 
     frontend.recv_iopub_idle();
 
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+}
+
+#[test]
+fn test_execute_request_empty() {
+    let frontend = DummyArkFrontend::lock();
+
+    let code = "";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    frontend.recv_iopub_idle();
+
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+
+    // Equivalent to invisible output
+    let code = "invisible(1)";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    frontend.recv_iopub_idle();
+
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+}
+
+#[test]
+fn test_execute_request_multiple_lines() {
+    let frontend = DummyArkFrontend::lock();
+
+    let code = "1 +\n  2+\n  3";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+    assert_eq!(frontend.recv_iopub_execute_result(), "[1] 6");
+
+    frontend.recv_iopub_idle();
+
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count)
+}
+
+#[test]
+fn test_execute_request_incomplete() {
+    let frontend = DummyArkFrontend::lock();
+
+    let code = "1 +";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    assert!(frontend
+        .recv_iopub_execute_error()
+        .contains("Can't execute incomplete input"));
+
+    frontend.recv_iopub_idle();
+
+    assert_eq!(
+        frontend.recv_shell_execute_reply_exception(),
+        input.execution_count
+    )
+}
+
+#[test]
+fn test_execute_request_incomplete_multiple_lines() {
+    let frontend = DummyArkFrontend::lock();
+
+    let code = "1 +\n2 +";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    assert!(frontend
+        .recv_iopub_execute_error()
+        .contains("Can't execute incomplete input"));
+
+    frontend.recv_iopub_idle();
+
+    assert_eq!(
+        frontend.recv_shell_execute_reply_exception(),
+        input.execution_count
+    )
+}
+
+#[test]
+fn test_execute_request_browser() {
+    let frontend = DummyArkFrontend::lock();
+
+    let code = "browser()";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    assert!(frontend
+        .recv_iopub_execute_result()
+        .contains("Called from: top level"));
+
+    frontend.recv_iopub_idle();
+
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+
+    let code = "Q";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    frontend.recv_iopub_idle();
+
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+}
+
+#[test]
+fn test_execute_request_browser_incomplete() {
+    let frontend = DummyArkFrontend::lock();
+
+    let code = "browser()";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    assert!(frontend
+        .recv_iopub_execute_result()
+        .contains("Called from: top level"));
+
+    frontend.recv_iopub_idle();
+
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+
+    let code = "1 +";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    // TODO!: Why do we get the message as a stream?
+    frontend.recv_iopub_stream_stderr("Error: \nCan't execute incomplete input:\n1 +\n");
+
+    // assert!(frontend
+    //     .recv_iopub_execute_error()
+    //     .contains("Can't execute incomplete input"));
+
+    frontend.recv_iopub_idle();
+
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+
+    // assert_eq!(
+    //     frontend.recv_shell_execute_reply_exception(),
+    //     input.execution_count
+    // );
+
+    let code = "Q";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    frontend.recv_iopub_idle();
+
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 }
 
 #[test]
