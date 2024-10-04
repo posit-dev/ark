@@ -41,7 +41,7 @@ impl DummyArkFrontend {
     }
 
     fn get_frontend() -> &'static Arc<Mutex<DummyFrontend>> {
-        // These are the hard-coded defaults. Call `init()` explicitely to
+        // These are the hard-coded defaults. Call `init()` explicitly to
         // override.
         let session_mode = SessionMode::Console;
         FRONTEND.get_or_init(|| Arc::new(Mutex::new(DummyArkFrontend::init(session_mode))))
