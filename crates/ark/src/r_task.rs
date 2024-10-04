@@ -232,7 +232,6 @@ where
     return result.lock().unwrap().take().unwrap();
 }
 
-#[allow(dead_code)] // Currently unused
 pub(crate) fn spawn_idle<F, Fut>(fun: F)
 where
     F: FnOnce() -> Fut + 'static + Send,
