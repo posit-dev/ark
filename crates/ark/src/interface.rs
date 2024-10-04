@@ -437,8 +437,8 @@ impl RMain {
 
     /// Start the REPL. Does not return!
     pub fn start() {
-        // Update the main thread ID in case the REPL is started in a background
-        // thread (e.g. in integration tests)
+        // Set the main thread ID. We do it here so that `setup()` is allowed to
+        // be called in another thread.
         unsafe { R_MAIN_THREAD_ID = Some(std::thread::current().id()) };
         crate::sys::interface::run_r();
     }

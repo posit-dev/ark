@@ -133,6 +133,8 @@ pub fn initialize() -> anyhow::Result<RObject> {
                 namespace.sexp,
             )?;
 
+            // Spawn the watcher thread when R is idle so we don't try to access
+            // the R API while R is starting up
             r_task::spawn_idle(move || async {
                 log::info!("Watching R modules from sources via cargo manifest");
                 spawn_watcher_thread(root);
