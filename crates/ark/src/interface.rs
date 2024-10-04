@@ -649,18 +649,6 @@ impl RMain {
         // debug call text to maintain the debug state.
         self.dap.finalize_call_text();
 
-        // TODO: Can we remove this below code?
-        // If the prompt begins with "Save workspace", respond with (n)
-        //
-        // NOTE: Should be able to overwrite the `Cleanup` frontend method.
-        // This would also help with detecting normal exits versus crashes.
-        if info.input_prompt.starts_with("Save workspace") {
-            match Self::on_console_input(buf, buflen, String::from("n")) {
-                Ok(()) => return ConsoleResult::NewInput,
-                Err(err) => return ConsoleResult::Error(err),
-            }
-        }
-
         // We get called here everytime R needs more input. This handler
         // represents the driving event of a small state machine that manages
         // communication between R and the frontend. In the following order:
@@ -850,6 +838,19 @@ impl RMain {
         buf: *mut c_uchar,
         buflen: c_int,
     ) -> Option<ConsoleResult> {
+        // TODO: Can we remove this below code?
+        // If the prompt begins with "Save workspace", respond with (n)
+        // and allow R to immediately exit.
+        //
+        // NOTE: Should be able to overwrite the `Cleanup` frontend method.
+        // This would also help with detecting normal exits versus crashes.
+        if info.input_prompt.starts_with("Save workspace") {
+            match Self::on_console_input(buf, buflen, String::from("n")) {
+                Ok(()) => return Some(ConsoleResult::NewInput),
+                Err(err) => return Some(ConsoleResult::Error(err)),
+            }
+        }
+
         // First check if we are inside request for user input, like a `readline()` or `menu()`.
         // It's entirely possible that we still have more pending lines, but an intermediate line
         // put us into an `input_request` state. We must respond to that request before processing
