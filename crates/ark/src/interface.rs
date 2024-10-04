@@ -1308,15 +1308,23 @@ This is a Positron limitation we plan to fix. In the meantime, you can:
     }
 
     /// Invoked by R to write output to the console.
-    fn write_console(&mut self, buf: *const c_char, _buflen: i32, otype: i32) {
+    fn write_console(buf: *const c_char, _buflen: i32, otype: i32) {
         let content = match console_to_utf8(buf) {
             Ok(content) => content,
             Err(err) => panic!("Failed to read from R buffer: {err:?}"),
         };
 
+        if !RMain::is_initialized() {
+            // During init, consider all output to be part of the startup banner
+            unsafe { R_BANNER.push_str(&content) };
+            return;
+        }
+
+        let r_main = RMain::get_mut();
+
         // To capture the current `debug: <call>` output, for use in the debugger's
         // match based fallback
-        self.dap.handle_stdout(&content);
+        r_main.dap.handle_stdout(&content);
 
         let stream = if otype == 0 {
             Stream::Stdout
@@ -1324,15 +1332,9 @@ This is a Positron limitation we plan to fix. In the meantime, you can:
             Stream::Stderr
         };
 
-        if !RMain::is_initialized() {
-            // During init, consider all output to be part of the startup banner
-            self.banner_output.push_str(&content);
-            return;
-        }
-
         // If active execution request is silent don't broadcast
         // any output
-        if let Some(ref req) = self.active_request {
+        if let Some(ref req) = r_main.active_request {
             if req.request.silent {
                 return;
             }
@@ -1348,7 +1350,7 @@ This is a Positron limitation we plan to fix. In the meantime, you can:
         // differentiate, but that could change in the future:
         // https://github.com/posit-dev/positron/issues/1881
         if otype == 0 && is_auto_printing() {
-            self.autoprint_output.push_str(&content);
+            r_main.autoprint_output.push_str(&content);
             return;
         }
 
@@ -1357,7 +1359,7 @@ This is a Positron limitation we plan to fix. In the meantime, you can:
             name: stream,
             text: content,
         });
-        self.iopub_tx.send(message).unwrap();
+        r_main.iopub_tx.send(message).unwrap();
     }
 
     /// Invoked by R to change busy state
@@ -1681,8 +1683,7 @@ fn new_cstring(x: String) -> CString {
 
 #[no_mangle]
 pub extern "C" fn r_write_console(buf: *const c_char, buflen: i32, otype: i32) {
-    let main = RMain::get_mut();
-    main.write_console(buf, buflen, otype);
+    RMain::write_console(buf, buflen, otype);
 }
 
 #[no_mangle]
