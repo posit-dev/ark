@@ -251,6 +251,54 @@ fn test_execute_request_browser_incomplete() {
 }
 
 #[test]
+fn test_execute_request_browser_stdin() {
+    let frontend = DummyArkFrontend::lock();
+
+    let code = "browser()";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    assert!(frontend
+        .recv_iopub_execute_result()
+        .contains("Called from: top level"));
+
+    frontend.recv_iopub_idle();
+
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+
+    let options = ExecuteRequestOptions { allow_stdin: true };
+    let code = "readline('prompt>')";
+    frontend.send_execute_request(code, options);
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    let prompt = frontend.recv_stdin_input_request();
+    assert_eq!(prompt, String::from("prompt>"));
+
+    frontend.send_stdin_input_reply(String::from("hi"));
+
+    assert_eq!(frontend.recv_iopub_execute_result(), "[1] \"hi\"");
+    frontend.recv_iopub_idle();
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+
+    let code = "Q";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    frontend.recv_iopub_idle();
+
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+}
+
+#[test]
 fn test_execute_request_error() {
     let frontend = DummyArkFrontend::lock();
 
