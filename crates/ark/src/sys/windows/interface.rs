@@ -27,6 +27,7 @@ use crate::interface::r_read_console;
 use crate::interface::r_show_message;
 use crate::interface::r_suicide;
 use crate::interface::r_write_console;
+use crate::interface::r_write_console_init;
 use crate::sys::windows::strings::system_to_utf8;
 
 pub fn setup_r(mut _args: Vec<*mut c_char>) {
