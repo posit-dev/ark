@@ -23,7 +23,7 @@ use crate::request::RRequest;
 use crate::shell::Shell;
 
 /// Exported for unit tests.
-/// Call `RMain::start_repl()` after this.
+/// Call `RMain::start()` after this.
 pub fn start_kernel(
     connection_file: ConnectionFile,
     r_args: Vec<String>,

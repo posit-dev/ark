@@ -287,7 +287,7 @@ impl RMain {
     /// starting the R REPL. Since the REPL does not return, it might be
     /// launched in a background thread (which we do in integration tests). The
     /// setup can still be done in your main thread so that panics may propagate
-    /// as expected. Call `RMain::start_repl()` after this to actually start the
+    /// as expected. Call `RMain::start()` after this to actually start the
     /// R REPL.
     pub fn setup(
         r_args: Vec<String>,
