@@ -119,6 +119,7 @@ use crate::srcref::ns_populate_srcref;
 use crate::srcref::resource_loaded_namespaces;
 use crate::startup;
 use crate::sys::console::console_to_utf8;
+use crate::sys::interface::complete_r_init;
 
 /// An enum representing the different modes in which the R session can run.
 #[derive(PartialEq, Clone)]
@@ -454,6 +455,9 @@ impl RMain {
 
         log::info!("Sending kernel info: {version}");
         self.kernel_init_tx.broadcast(kernel_info);
+
+        // Set post-init REPL handlers like `write_console()`
+        complete_r_init();
 
         // Thread-safe initialisation flag for R
         R_INIT.set(()).expect("`R_INIT` can only be set once");
@@ -1318,12 +1322,6 @@ This is a Positron limitation we plan to fix. In the meantime, you can:
             Stream::Stderr
         };
 
-        if !RMain::is_initialized() {
-            // During init, consider all output to be part of the startup banner
-            self.banner_output.push_str(&content);
-            return;
-        }
-
         // If active execution request is silent don't broadcast
         // any output
         if let Some(ref req) = self.active_request {
@@ -1352,6 +1350,18 @@ This is a Positron limitation we plan to fix. In the meantime, you can:
             text: content,
         });
         self.iopub_tx.send(message).unwrap();
+    }
+
+    /// Invoked by R to write output to the console.
+    /// Only used during initialization to capture the startup banner.
+    fn write_console_init(&mut self, buf: *const c_char) {
+        let content = match console_to_utf8(buf) {
+            Ok(content) => content,
+            Err(err) => panic!("Failed to read from R buffer: {err:?}"),
+        };
+
+        // During init, consider all output to be part of the startup banner
+        self.banner_output.push_str(&content);
     }
 
     /// Invoked by R to change busy state
@@ -1677,6 +1687,12 @@ fn new_cstring(x: String) -> CString {
 pub extern "C" fn r_write_console(buf: *const c_char, buflen: i32, otype: i32) {
     let main = RMain::get_mut();
     main.write_console(buf, buflen, otype);
+}
+
+#[no_mangle]
+pub extern "C" fn r_write_console_init(buf: *const c_char, _buflen: i32, _otype: i32) {
+    let main = RMain::get_mut();
+    main.write_console_init(buf);
 }
 
 #[no_mangle]

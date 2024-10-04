@@ -35,6 +35,7 @@ use crate::interface::r_read_console;
 use crate::interface::r_show_message;
 use crate::interface::r_suicide;
 use crate::interface::r_write_console;
+use crate::interface::r_write_console_init;
 use crate::signals::initialize_signal_handlers;
 
 pub fn setup_r(mut args: Vec<*mut c_char>) {
@@ -64,8 +65,10 @@ pub fn setup_r(mut args: Vec<*mut c_char>) {
         libr::set(R_Consolefile, std::ptr::null_mut());
         libr::set(R_Outputfile, std::ptr::null_mut());
 
+        // Set pre-init WriteConsole handler
         libr::set(ptr_R_WriteConsole, None);
-        libr::set(ptr_R_WriteConsoleEx, Some(r_write_console));
+        libr::set(ptr_R_WriteConsoleEx, Some(r_write_console_init));
+
         libr::set(ptr_R_ReadConsole, Some(r_read_console));
         libr::set(ptr_R_ShowMessage, Some(r_show_message));
         libr::set(ptr_R_Busy, Some(r_busy));
@@ -84,6 +87,12 @@ pub fn setup_r(mut args: Vec<*mut c_char>) {
 
         // Set up main loop
         setup_Rmainloop();
+    }
+}
+
+pub fn complete_r_init() {
+    unsafe {
+        libr::set(ptr_R_WriteConsoleEx, Some(r_write_console));
     }
 }
 

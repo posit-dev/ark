@@ -69,8 +69,10 @@ pub fn setup_r(mut _args: Vec<*mut c_char>) {
         (*params).R_Interactive = 1;
         (*params).CharacterMode = libr::UImode_RGui;
 
+        // Set pre-init WriteConsole handler
         (*params).WriteConsole = None;
-        (*params).WriteConsoleEx = Some(r_write_console);
+        (*params).WriteConsoleEx = Some(r_write_console_init);
+
         (*params).ReadConsole = Some(r_read_console);
         (*params).ShowMessage = Some(r_show_message);
         (*params).YesNoCancel = Some(r_yes_no_cancel);
@@ -98,6 +100,13 @@ pub fn setup_r(mut _args: Vec<*mut c_char>) {
 
         // Set up main loop
         setup_Rmainloop();
+    }
+}
+
+pub fn complete_r_init() {
+    unsafe {
+        let params: libr::Rstart = params_struct.as_mut_ptr();
+        (*params).WriteConsoleEx = Some(r_write_console);
     }
 }
 
