@@ -387,7 +387,13 @@ impl RMain {
                     .or_log_error(&format!("Failed to source startup file '{file}' due to"));
             }
 
-            // Initialize support functions (after routine registration)
+            // R and ark are now set up enough to allow interrupt-time and idle-time tasks
+            // to be sent through. Idle-time tasks will be run once we enter
+            // `read_console()` for the first time. Interrupt-time tasks could be run
+            // sooner if we hit a check-interrupt before then.
+            r_task::initialize(tasks_interrupt_tx, tasks_idle_tx);
+
+            // Initialize support functions (after routine registration, after r_task initialization)
             match modules::initialize() {
                 Err(err) => {
                     log::error!("Can't load R modules: {err:?}");
@@ -405,6 +411,7 @@ impl RMain {
 
             // Populate srcrefs for namespaces already loaded in the session.
             // Namespaces of future loaded packages will be populated on load.
+            // (after r_task initialization)
             if do_resource_namespaces() {
                 if let Err(err) = resource_loaded_namespaces() {
                     log::error!("Can't populate srcrefs for loaded packages: {err:?}");
@@ -413,9 +420,6 @@ impl RMain {
 
             // Set up the global error handler (after support function initialization)
             errors::initialize();
-
-            // Now allow interrupt-time tasks to run
-            r_task::initialize(tasks_interrupt_tx, tasks_idle_tx);
 
             // Now that R has started (emitting any startup messages), and now that we have set
             // up all hooks and handlers, officially finish the R initialization process to
