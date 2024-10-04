@@ -220,6 +220,7 @@ impl DeviceContext {
             RenderFormat::Svg => "image/svg+xml".to_string(),
             RenderFormat::Pdf => "application/pdf".to_string(),
             RenderFormat::Jpeg => "image/jpeg".to_string(),
+            RenderFormat::Tiff => "image/tiff".to_string(),
         }
     }
 

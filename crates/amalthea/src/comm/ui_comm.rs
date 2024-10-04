@@ -466,6 +466,12 @@ pub enum UiFrontendEvent {
 	#[serde(rename = "show_html_file")]
 	ShowHtmlFile(ShowHtmlFileParams),
 
+	/// This event is used to signal that the stored messages the front-end
+	/// replays when constructing multi-output plots should be reset. This
+	/// happens for things like a holoviews extension being changed.
+	#[serde(rename = "clear_webview_preloads")]
+	ClearWebviewPreloads,
+
 }
 
 /**
