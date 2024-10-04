@@ -73,7 +73,6 @@ use harp::r_symbol;
 use harp::routines::r_register_routines;
 use harp::session::r_traceback;
 use harp::utils::r_is_data_frame;
-use harp::utils::r_pairlist_any;
 use harp::utils::r_typeof;
 use harp::R_MAIN_THREAD_ID;
 use libr::R_BaseNamespace;
@@ -120,6 +119,8 @@ use crate::srcref::resource_loaded_namespaces;
 use crate::startup;
 use crate::strings::lines;
 use crate::sys::console::console_to_utf8;
+
+static RE_DEBUG_PROMPT: Lazy<Regex> = Lazy::new(|| Regex::new(r"Browse\[\d+\]").unwrap());
 
 /// An enum representing the different modes in which the R session can run.
 #[derive(PartialEq, Clone)]
@@ -844,28 +845,26 @@ impl RMain {
         let prompt_slice = unsafe { CStr::from_ptr(prompt_c) };
         let prompt = prompt_slice.to_string_lossy().into_owned();
 
-        // Detect browser prompts by inspecting the `RDEBUG` flag of each
-        // frame on the stack. If ANY of the frames are marked with `RDEBUG`,
-        // then we assume we are in a debug state. We can't just check the
-        // last frame, as sometimes frames are pushed onto the stack by lazy
-        // evaluation of arguments or `tryCatch()` that aren't debug frames,
-        // but we don't want to exit the debugger when we hit these, as R is
-        // still inside a browser state. Should also handle cases like `debug(readline)`
-        // followed by `n`.
-        // https://github.com/posit-dev/positron/issues/2310
-        let frames = harp::session::r_sys_frames().unwrap();
-        let browser = r_pairlist_any(frames.sexp, |frame| {
-            harp::session::r_env_is_browsed(frame).unwrap()
-        });
+        // Detect browser prompt by matching the prompt string
+        // https://github.com/posit-dev/positron/issues/4742.
+        // There are ways to break this detection, for instance setting
+        // `options(prompt =, continue = ` to something that looks like
+        // a browser prompt, or doing the same with `readline()`. We have
+        // chosen to not support these edge cases.
+        let browser = RE_DEBUG_PROMPT.is_match(&prompt);
 
         // If there are frames on the stack and we're not in a browser prompt,
         // this means some user code is requesting input, e.g. via `readline()`
         let user_request = !browser && n_frame > 0;
 
         // The request is incomplete if we see the continue prompt, except if
-        // we're in a user request, e.g. `readline("+ ")`
+        // we're in a user request, e.g. `readline("+ ")`. To guard against
+        // this, we check that we are at top-level (call stack is empty or we
+        // have a debug prompt).
         let continuation_prompt: String = harp::get_option("continue").try_into().unwrap();
-        let incomplete = !user_request && prompt == continuation_prompt;
+        let matches_continuation = prompt == continuation_prompt;
+        let top_level = n_frame == 0 || browser;
+        let incomplete = matches_continuation && top_level;
 
         return PromptInfo {
             input_prompt: prompt,
