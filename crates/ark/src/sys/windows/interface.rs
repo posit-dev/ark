@@ -27,7 +27,6 @@ use crate::interface::r_read_console;
 use crate::interface::r_show_message;
 use crate::interface::r_suicide;
 use crate::interface::r_write_console;
-use crate::interface::r_write_console_init;
 use crate::sys::windows::strings::system_to_utf8;
 
 pub fn setup_r(mut _args: Vec<*mut c_char>) {
@@ -70,10 +69,8 @@ pub fn setup_r(mut _args: Vec<*mut c_char>) {
         (*params).R_Interactive = 1;
         (*params).CharacterMode = libr::UImode_RGui;
 
-        // Set pre-init WriteConsole handler
         (*params).WriteConsole = None;
-        (*params).WriteConsoleEx = Some(r_write_console_init);
-
+        (*params).WriteConsoleEx = Some(r_write_console);
         (*params).ReadConsole = Some(r_read_console);
         (*params).ShowMessage = Some(r_show_message);
         (*params).YesNoCancel = Some(r_yes_no_cancel);
@@ -101,13 +98,6 @@ pub fn setup_r(mut _args: Vec<*mut c_char>) {
 
         // Set up main loop
         setup_Rmainloop();
-    }
-}
-
-pub fn complete_r_init() {
-    unsafe {
-        let params: libr::Rstart = params_struct.as_mut_ptr();
-        (*params).WriteConsoleEx = Some(r_write_console);
     }
 }
 
