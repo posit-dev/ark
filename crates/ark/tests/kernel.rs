@@ -161,6 +161,53 @@ fn test_execute_request_browser() {
 }
 
 #[test]
+fn test_execute_request_browser_error() {
+    // The behaviour for errors is different in browsers than at top-level
+    // because our global handler does not run in that case. Instead the error
+    // is streamed on IOPub::Stderr and a regular execution result is sent as
+    // response.
+
+    let frontend = DummyArkFrontend::lock();
+
+    let code = "browser()";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    assert!(frontend
+        .recv_iopub_execute_result()
+        .contains("Called from: top level"));
+
+    frontend.recv_iopub_idle();
+
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+
+    frontend.send_execute_request("stop('foobar')", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, "stop('foobar')");
+
+    frontend.recv_iopub_stream_stderr("Error: foobar\n");
+    frontend.recv_iopub_idle();
+
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+
+    let code = "Q";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    frontend.recv_iopub_idle();
+
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+}
+
+#[test]
 fn test_execute_request_browser_incomplete() {
     let frontend = DummyArkFrontend::lock();
 
@@ -186,21 +233,10 @@ fn test_execute_request_browser_incomplete() {
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, code);
 
-    // TODO!: Why do we get the message as a stream?
     frontend.recv_iopub_stream_stderr("Error: \nCan't execute incomplete input:\n1 +\n");
-
-    // assert!(frontend
-    //     .recv_iopub_execute_error()
-    //     .contains("Can't execute incomplete input"));
-
     frontend.recv_iopub_idle();
 
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
-
-    // assert_eq!(
-    //     frontend.recv_shell_execute_reply_exception(),
-    //     input.execution_count
-    // );
 
     let code = "Q";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
