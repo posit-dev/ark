@@ -54,7 +54,10 @@ jobs:
         if: ${{ inputs.ssh }}
         timeout-minutes: 30
 
+      - name: Build
+        run: |
+            cargo build
+
       - name: Run Unit Tests
-        id: test
         run: |
             cargo test --verbose

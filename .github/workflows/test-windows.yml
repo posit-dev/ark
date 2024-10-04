@@ -32,7 +32,11 @@ jobs:
             data.table
             tibble
 
-      - name: Run Unit Tests
-        id: test
+      - name: Build
         run: |
-            cargo test --verbose
+            cargo build
+
+      - name: Run Unit Tests
+        # Very loud on windows CI, which has been a source of instability
+        run: |
+            cargo test -vv -- --nocapture

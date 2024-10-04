@@ -377,11 +377,11 @@ impl DummyFrontend {
     }
 
     fn flush_incoming(name: &str, socket: &Socket) {
-        println!("{name} has incoming data:");
+        eprintln!("{name} has incoming data:");
 
         while socket.has_incoming_data().unwrap() {
             dbg!(WireMessage::read_from_socket(socket).unwrap());
-            println!("---");
+            eprintln!("---");
         }
     }
 }
