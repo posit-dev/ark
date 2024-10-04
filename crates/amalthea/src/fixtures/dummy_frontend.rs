@@ -37,6 +37,10 @@ pub struct DummyFrontend {
     heartbeat_port: u16,
 }
 
+pub struct ExecuteRequestOptions {
+    pub allow_stdin: bool,
+}
+
 impl DummyFrontend {
     pub fn new() -> Self {
         use rand::Rng;
@@ -380,10 +384,6 @@ impl DummyFrontend {
             println!("---");
         }
     }
-}
-
-pub struct ExecuteRequestOptions {
-    pub allow_stdin: bool,
 }
 
 impl Default for ExecuteRequestOptions {
