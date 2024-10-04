@@ -32,12 +32,11 @@ jobs:
             data.table
             tibble
 
-      - name: Build Dependencies and Ark Crates
+      - name: Build
         run: |
             cargo build
 
       - name: Run Unit Tests
-        id: test
         # Very loud on windows CI, which has been a source of instability
         run: |
             cargo test -vv -- --nocapture
