@@ -311,8 +311,6 @@ impl RMain {
         let (tasks_interrupt_tx, tasks_interrupt_rx) = unbounded::<RTask>();
         let (tasks_idle_tx, tasks_idle_rx) = unbounded::<RTask>();
 
-        r_task::initialize(tasks_interrupt_tx.clone(), tasks_idle_tx.clone());
-
         unsafe {
             R_MAIN = Some(RMain::new(
                 kernel_mutex,
@@ -415,6 +413,9 @@ impl RMain {
 
             // Set up the global error handler (after support function initialization)
             errors::initialize();
+
+            // Now allow interrupt-time tasks to run
+            r_task::initialize(tasks_interrupt_tx, tasks_idle_tx);
 
             // Now that R has started (emitting any startup messages), and now that we have set
             // up all hooks and handlers, officially finish the R initialization process to
