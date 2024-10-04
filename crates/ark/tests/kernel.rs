@@ -160,12 +160,14 @@ fn test_stdin_single_line_buffer_overflow() {
 
     let options = ExecuteRequestOptions { allow_stdin: true };
 
-    let code = "readline('prompt>')";
+    let code = "1\nreadline('prompt>')";
     frontend.send_execute_request(code, options);
     frontend.recv_iopub_busy();
 
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, code);
+
+    frontend.recv_iopub_stream_stdout("[1] 1\n");
 
     let prompt = frontend.recv_stdin_input_request();
     assert_eq!(prompt, String::from("prompt>"));
