@@ -12,10 +12,13 @@ use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::r_symbol;
 use harp::utils::r_poke_option;
+use harp::RObject;
 use libr::Rf_ScalarLogical;
 use libr::SEXP;
 use once_cell::sync::Lazy;
 use rust_embed::RustEmbed;
+
+use crate::r_task;
 
 #[derive(RustEmbed)]
 #[folder = "src/modules/positron"]
@@ -74,7 +77,8 @@ pub struct ArkEnvs {
     pub rstudio_ns: SEXP,
 }
 
-pub fn initialize() -> anyhow::Result<()> {
+/// Returns positron namespace.
+pub fn initialize() -> anyhow::Result<RObject> {
     // If we are `testing`, set the corresponding R level global option
     if stdext::IS_TESTING {
         r_poke_option_ark_testing()
@@ -129,14 +133,16 @@ pub fn initialize() -> anyhow::Result<()> {
                 namespace.sexp,
             )?;
 
-            log::info!("Watching R modules from sources via cargo manifest");
-            spawn_watcher_thread(root, namespace.sexp);
+            r_task::spawn_idle(move || async {
+                log::info!("Watching R modules from sources via cargo manifest");
+                spawn_watcher_thread(root);
+            });
         } else {
             log::error!("Can't find ark R modules from sources");
         }
     }
 
-    return Ok(());
+    return Ok(namespace);
 }
 
 #[cfg(debug_assertions)]
@@ -152,14 +158,13 @@ mod debug {
     use libr::SEXP;
     use stdext::spawn;
 
+    use crate::interface::RMain;
     use crate::r_task;
-    use crate::thread::RThreadSafe;
 
-    pub fn spawn_watcher_thread(root: PathBuf, namespace: SEXP) {
+    pub fn spawn_watcher_thread(root: PathBuf) {
         spawn!("ark-modules-watcher", {
-            let ns = RThreadSafe::new(namespace);
             move || {
-                let mut watcher = RModuleWatcher::new(root, ns);
+                let mut watcher = RModuleWatcher::new(root);
                 match watcher.watch() {
                     Ok(_) => {},
                     Err(err) => log::error!("[watcher] Error watching files: {err:?}"),
@@ -181,7 +186,6 @@ mod debug {
     pub struct RModuleWatcher {
         path: PathBuf,
         cache: HashMap<PathBuf, (SystemTime, RModuleSource)>,
-        ns: RThreadSafe<SEXP>,
     }
 
     #[derive(Copy, Clone)]
@@ -191,11 +195,10 @@ mod debug {
     }
 
     impl RModuleWatcher {
-        pub fn new(path: PathBuf, ns: RThreadSafe<SEXP>) -> Self {
+        pub fn new(path: PathBuf) -> Self {
             Self {
                 path,
                 cache: HashMap::new(),
-                ns,
             }
         }
 
@@ -238,7 +241,10 @@ mod debug {
                 }
 
                 r_task(|| {
-                    if let Err(err) = import_file(&path, *src, *self.ns.get()) {
+                    let r_main = RMain::get();
+                    if let Err(err) =
+                        import_file(&path, *src, r_main.positron_ns.as_ref().unwrap().sexp)
+                    {
                         log::error!("{err:?}");
                     }
                 });

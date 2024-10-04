@@ -153,6 +153,9 @@ static R_INIT: once_cell::sync::OnceCell<()> = once_cell::sync::OnceCell::new();
 // `RMain::get_mut()`).
 static mut R_MAIN: Option<RMain> = None;
 
+/// Banner output accumulated during startup
+static mut R_BANNER: String = String::new();
+
 pub struct RMain {
     kernel_init_tx: Bus<KernelInfo>,
 
@@ -188,9 +191,6 @@ pub struct RMain {
     /// `execute_result` Jupyter messages instead of `stream` messages.
     autoprint_output: String,
 
-    /// Accumulated output during startup
-    banner_output: String,
-
     /// Channel to send and receive tasks from `RTask`s
     tasks_interrupt_rx: Receiver<RTask>,
     tasks_idle_rx: Receiver<RTask>,
@@ -218,6 +218,8 @@ pub struct RMain {
     /// Whether or not R itself is actively busy.
     /// This does not represent the busy state of the kernel.
     pub is_busy: bool,
+
+    pub positron_ns: Option<RObject>,
 }
 
 /// Represents the currently active execution request from the frontend. It
@@ -300,8 +302,6 @@ impl RMain {
         dap: Arc<Mutex<Dap>>,
         session_mode: SessionMode,
     ) {
-        unsafe { R_MAIN_THREAD_ID = Some(std::thread::current().id()) };
-
         // Channels to send/receive tasks from auxiliary threads via `RTask`s
         let (tasks_interrupt_tx, tasks_interrupt_rx) = unbounded::<RTask>();
         let (tasks_idle_tx, tasks_idle_rx) = unbounded::<RTask>();
@@ -321,8 +321,9 @@ impl RMain {
                 kernel_init_tx,
                 dap,
                 session_mode,
-            ))
+            ));
         };
+        let r_main = unsafe { R_MAIN.as_mut().unwrap() };
 
         let mut r_args = r_args.clone();
 
@@ -384,8 +385,13 @@ impl RMain {
             }
 
             // Initialize support functions (after routine registration)
-            if let Err(err) = modules::initialize() {
-                log::error!("Can't load R modules: {err:?}");
+            match modules::initialize() {
+                Err(err) => {
+                    log::error!("Can't load R modules: {err:?}");
+                },
+                Ok(namespace) => {
+                    r_main.positron_ns = Some(namespace);
+                },
             }
 
             // Register all hooks once all modules have been imported
@@ -408,10 +414,10 @@ impl RMain {
             // Now that R has started (emitting any startup messages), and now that we have set
             // up all hooks and handlers, officially finish the R initialization process to
             // unblock the kernel-info request and also allow the LSP to start.
-            RMain::with_mut(|main| {
-                log::info!("R has started and ark handlers have been registered, completing initialization.");
-                main.complete_initialization();
-            });
+            log::info!(
+                "R has started and ark handlers have been registered, completing initialization."
+            );
+            r_main.complete_initialization();
         }
 
         // Now that R has started and libr and ark have fully initialized, run site and user
@@ -448,7 +454,7 @@ impl RMain {
 
         let kernel_info = KernelInfo {
             version: version.clone(),
-            banner: self.banner_output.clone(),
+            banner: R_BANNER.clone(),
             input_prompt: Some(input_prompt),
             continuation_prompt: Some(continuation_prompt),
         };
@@ -486,7 +492,6 @@ impl RMain {
             active_request: None,
             execution_count: 0,
             autoprint_output: String::new(),
-            banner_output: String::new(),
             kernel,
             error_occurred: false,
             error_message: String::new(),
@@ -500,6 +505,7 @@ impl RMain {
             tasks_idle_rx,
             pending_futures: HashMap::new(),
             session_mode,
+            positron_ns: None,
         }
     }
 
@@ -1354,14 +1360,14 @@ This is a Positron limitation we plan to fix. In the meantime, you can:
 
     /// Invoked by R to write output to the console.
     /// Only used during initialization to capture the startup banner.
-    fn write_console_init(&mut self, buf: *const c_char) {
+    fn write_console_init(buf: *const c_char) {
         let content = match console_to_utf8(buf) {
             Ok(content) => content,
             Err(err) => panic!("Failed to read from R buffer: {err:?}"),
         };
 
         // During init, consider all output to be part of the startup banner
-        self.banner_output.push_str(&content);
+        unsafe { R_BANNER.push_str(&content) };
     }
 
     /// Invoked by R to change busy state
@@ -1691,8 +1697,7 @@ pub extern "C" fn r_write_console(buf: *const c_char, buflen: i32, otype: i32) {
 
 #[no_mangle]
 pub extern "C" fn r_write_console_init(buf: *const c_char, _buflen: i32, _otype: i32) {
-    let main = RMain::get_mut();
-    main.write_console_init(buf);
+    RMain::write_console_init(buf);
 }
 
 #[no_mangle]
