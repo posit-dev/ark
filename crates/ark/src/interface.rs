@@ -140,11 +140,8 @@ pub enum SessionMode {
 // We use the `once_cell` crate for init synchronisation because the stdlib
 // equivalent `std::sync::Once` does not have a `wait()` method.
 
-/// Ensures that the kernel is only ever initialized once. Used to wait for the
-/// `RMain` singleton initialization in `RMain::wait_initialized()`.
-static R_MAIN_INIT: once_cell::sync::OnceCell<()> = once_cell::sync::OnceCell::new();
-
-/// Used to wait for complete R startup in `RMain::wait_r_initialized()`.
+/// Used to wait for complete R startup in `RMain::wait_initialized()` or
+/// check for it in `RMain::is_initialized()`.
 static R_INIT: once_cell::sync::OnceCell<()> = once_cell::sync::OnceCell::new();
 
 // The global state used by R callbacks.
@@ -325,10 +322,6 @@ impl RMain {
                 session_mode,
             ))
         };
-
-        // Let other threads know that `R_MAIN` is initialized. Deliberately
-        // panic if already set as `start()` must be called only once.
-        R_MAIN_INIT.set(()).expect("R can only be initialized once");
 
         let mut r_args = r_args.clone();
 
@@ -512,28 +505,19 @@ impl RMain {
     /// the `Bus<KernelInfo>` init channel does.
     ///
     /// Thread-safe.
-    pub fn wait_r_initialized() {
+    pub fn wait_initialized() {
         R_INIT.wait();
-    }
-
-    /// Has R completed initialization
-    ///
-    /// I.e. is it ready to evaluate R code.
-    ///
-    /// Thread-safe.
-    pub fn is_r_initialized() -> bool {
-        R_INIT.get().is_some()
     }
 
     /// Has the `RMain` singleton completed initialization.
     ///
     /// This can return true when R might still not have finished starting up.
-    /// See `wait_r_initialized()`.
+    /// See `wait_initialized()`.
     ///
     /// Thread-safe. But note you can only get access to the singleton on the R
     /// thread.
     pub fn is_initialized() -> bool {
-        R_MAIN_INIT.get().is_some()
+        R_INIT.get().is_some()
     }
 
     /// Access a reference to the singleton instance of this struct
@@ -1334,7 +1318,7 @@ This is a Positron limitation we plan to fix. In the meantime, you can:
             Stream::Stderr
         };
 
-        if !RMain::is_r_initialized() {
+        if !RMain::is_initialized() {
             // During init, consider all output to be part of the startup banner
             self.banner_output.push_str(&content);
             return;
