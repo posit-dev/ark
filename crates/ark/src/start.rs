@@ -22,7 +22,8 @@ use crate::request::KernelRequest;
 use crate::request::RRequest;
 use crate::shell::Shell;
 
-/// Exported for unit tests. Does not return.
+/// Exported for unit tests.
+/// Call `RMain::start()` after this.
 pub fn start_kernel(
     connection_file: ConnectionFile,
     r_args: Vec<String>,
@@ -112,8 +113,8 @@ pub fn start_kernel(
         panic!("Couldn't connect to frontend: {err:?}");
     }
 
-    // Start the R REPL (does not return for the duration of the session)
-    crate::interface::RMain::start(
+    // Setup the channels and R
+    crate::interface::RMain::setup(
         r_args,
         startup_file,
         kernel_clone,

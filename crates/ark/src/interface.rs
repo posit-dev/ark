@@ -140,11 +140,8 @@ pub enum SessionMode {
 // We use the `once_cell` crate for init synchronisation because the stdlib
 // equivalent `std::sync::Once` does not have a `wait()` method.
 
-/// Ensures that the kernel is only ever initialized once. Used to wait for the
-/// `RMain` singleton initialization in `RMain::wait_initialized()`.
-static R_MAIN_INIT: once_cell::sync::OnceCell<()> = once_cell::sync::OnceCell::new();
-
-/// Used to wait for complete R startup in `RMain::wait_r_initialized()`.
+/// Used to wait for complete R startup in `RMain::wait_initialized()` or
+/// check for it in `RMain::is_initialized()`.
 static R_INIT: once_cell::sync::OnceCell<()> = once_cell::sync::OnceCell::new();
 
 // The global state used by R callbacks.
@@ -154,6 +151,9 @@ static R_INIT: once_cell::sync::OnceCell<()> = once_cell::sync::OnceCell::new();
 // invoked by the REPL (this is enforced by `RMain::get()` and
 // `RMain::get_mut()`).
 static mut R_MAIN: Option<RMain> = None;
+
+/// Banner output accumulated during startup
+static mut R_BANNER: String = String::new();
 
 pub struct RMain {
     kernel_init_tx: Bus<KernelInfo>,
@@ -190,9 +190,6 @@ pub struct RMain {
     /// `execute_result` Jupyter messages instead of `stream` messages.
     autoprint_output: String,
 
-    /// Accumulated output during startup
-    banner_output: String,
-
     /// Channel to send and receive tasks from `RTask`s
     tasks_interrupt_rx: Receiver<RTask>,
     tasks_idle_rx: Receiver<RTask>,
@@ -220,6 +217,8 @@ pub struct RMain {
     /// Whether or not R itself is actively busy.
     /// This does not represent the busy state of the kernel.
     pub is_busy: bool,
+
+    pub positron_ns: Option<RObject>,
 }
 
 /// Represents the currently active execution request from the frontend. It
@@ -282,9 +281,14 @@ pub enum ConsoleResult {
 }
 
 impl RMain {
-    /// Starts the main R thread and initializes the `R_MAIN` singleton.
-    /// Doesn't return. Must be called only once.
-    pub fn start(
+    /// Sets up the main R thread and initializes the `R_MAIN` singleton. Must
+    /// be called only once. This is doing as much setup as possible before
+    /// starting the R REPL. Since the REPL does not return, it might be
+    /// launched in a background thread (which we do in integration tests). The
+    /// setup can still be done in your main thread so that panics during setup
+    /// may propagate as expected. Call `RMain::start()` after this to actually
+    /// start the R REPL.
+    pub fn setup(
         r_args: Vec<String>,
         startup_file: Option<String>,
         kernel_mutex: Arc<Mutex<Kernel>>,
@@ -297,8 +301,6 @@ impl RMain {
         dap: Arc<Mutex<Dap>>,
         session_mode: SessionMode,
     ) {
-        unsafe { R_MAIN_THREAD_ID = Some(std::thread::current().id()) };
-
         // Channels to send/receive tasks from auxiliary threads via `RTask`s
         let (tasks_interrupt_tx, tasks_interrupt_rx) = unbounded::<RTask>();
         let (tasks_idle_tx, tasks_idle_rx) = unbounded::<RTask>();
@@ -318,12 +320,9 @@ impl RMain {
                 kernel_init_tx,
                 dap,
                 session_mode,
-            ))
+            ));
         };
-
-        // Let other threads know that `R_MAIN` is initialized. Deliberately
-        // panic if already set as `start()` must be called only once.
-        R_MAIN_INIT.set(()).expect("R can only be initialized once");
+        let r_main = unsafe { R_MAIN.as_mut().unwrap() };
 
         let mut r_args = r_args.clone();
 
@@ -385,8 +384,13 @@ impl RMain {
             }
 
             // Initialize support functions (after routine registration)
-            if let Err(err) = modules::initialize() {
-                log::error!("Can't load R modules: {err:?}");
+            match modules::initialize() {
+                Err(err) => {
+                    log::error!("Can't load R modules: {err:?}");
+                },
+                Ok(namespace) => {
+                    r_main.positron_ns = Some(namespace);
+                },
             }
 
             // Register all hooks once all modules have been imported
@@ -409,10 +413,10 @@ impl RMain {
             // Now that R has started (emitting any startup messages), and now that we have set
             // up all hooks and handlers, officially finish the R initialization process to
             // unblock the kernel-info request and also allow the LSP to start.
-            RMain::with_mut(|main| {
-                log::info!("R has started and ark handlers have been registered, completing initialization.");
-                main.complete_initialization();
-            });
+            log::info!(
+                "R has started and ark handlers have been registered, completing initialization."
+            );
+            r_main.complete_initialization();
         }
 
         // Now that R has started and libr and ark have fully initialized, run site and user
@@ -423,8 +427,13 @@ impl RMain {
         if !ignore_user_r_profile {
             startup::source_user_r_profile();
         }
+    }
 
-        // Does not return!
+    /// Start the REPL. Does not return!
+    pub fn start() {
+        // Update the main thread ID in case the REPL is started in a background
+        // thread (e.g. in integration tests)
+        unsafe { R_MAIN_THREAD_ID = Some(std::thread::current().id()) };
         crate::sys::interface::run_r();
     }
 
@@ -444,7 +453,7 @@ impl RMain {
 
         let kernel_info = KernelInfo {
             version: version.clone(),
-            banner: self.banner_output.clone(),
+            banner: R_BANNER.clone(),
             input_prompt: Some(input_prompt),
             continuation_prompt: Some(continuation_prompt),
         };
@@ -479,7 +488,6 @@ impl RMain {
             active_request: None,
             execution_count: 0,
             autoprint_output: String::new(),
-            banner_output: String::new(),
             kernel,
             error_occurred: false,
             error_message: String::new(),
@@ -493,6 +501,7 @@ impl RMain {
             tasks_idle_rx,
             pending_futures: HashMap::new(),
             session_mode,
+            positron_ns: None,
         }
     }
 
@@ -502,28 +511,19 @@ impl RMain {
     /// the `Bus<KernelInfo>` init channel does.
     ///
     /// Thread-safe.
-    pub fn wait_r_initialized() {
+    pub fn wait_initialized() {
         R_INIT.wait();
-    }
-
-    /// Has R completed initialization
-    ///
-    /// I.e. is it ready to evaluate R code.
-    ///
-    /// Thread-safe.
-    pub fn is_r_initialized() -> bool {
-        R_INIT.get().is_some()
     }
 
     /// Has the `RMain` singleton completed initialization.
     ///
     /// This can return true when R might still not have finished starting up.
-    /// See `wait_r_initialized()`.
+    /// See `wait_initialized()`.
     ///
     /// Thread-safe. But note you can only get access to the singleton on the R
     /// thread.
     pub fn is_initialized() -> bool {
-        R_MAIN_INIT.get().is_some()
+        R_INIT.get().is_some()
     }
 
     /// Access a reference to the singleton instance of this struct
@@ -1308,15 +1308,23 @@ This is a Positron limitation we plan to fix. In the meantime, you can:
     }
 
     /// Invoked by R to write output to the console.
-    fn write_console(&mut self, buf: *const c_char, _buflen: i32, otype: i32) {
+    fn write_console(buf: *const c_char, _buflen: i32, otype: i32) {
         let content = match console_to_utf8(buf) {
             Ok(content) => content,
             Err(err) => panic!("Failed to read from R buffer: {err:?}"),
         };
 
+        if !RMain::is_initialized() {
+            // During init, consider all output to be part of the startup banner
+            unsafe { R_BANNER.push_str(&content) };
+            return;
+        }
+
+        let r_main = RMain::get_mut();
+
         // To capture the current `debug: <call>` output, for use in the debugger's
         // match based fallback
-        self.dap.handle_stdout(&content);
+        r_main.dap.handle_stdout(&content);
 
         let stream = if otype == 0 {
             Stream::Stdout
@@ -1324,15 +1332,9 @@ This is a Positron limitation we plan to fix. In the meantime, you can:
             Stream::Stderr
         };
 
-        if !RMain::is_r_initialized() {
-            // During init, consider all output to be part of the startup banner
-            self.banner_output.push_str(&content);
-            return;
-        }
-
         // If active execution request is silent don't broadcast
         // any output
-        if let Some(ref req) = self.active_request {
+        if let Some(ref req) = r_main.active_request {
             if req.request.silent {
                 return;
             }
@@ -1348,7 +1350,7 @@ This is a Positron limitation we plan to fix. In the meantime, you can:
         // differentiate, but that could change in the future:
         // https://github.com/posit-dev/positron/issues/1881
         if otype == 0 && is_auto_printing() {
-            self.autoprint_output.push_str(&content);
+            r_main.autoprint_output.push_str(&content);
             return;
         }
 
@@ -1357,7 +1359,7 @@ This is a Positron limitation we plan to fix. In the meantime, you can:
             name: stream,
             text: content,
         });
-        self.iopub_tx.send(message).unwrap();
+        r_main.iopub_tx.send(message).unwrap();
     }
 
     /// Invoked by R to change busy state
@@ -1681,8 +1683,7 @@ fn new_cstring(x: String) -> CString {
 
 #[no_mangle]
 pub extern "C" fn r_write_console(buf: *const c_char, buflen: i32, otype: i32) {
-    let main = RMain::get_mut();
-    main.write_console(buf, buflen, otype);
+    RMain::write_console(buf, buflen, otype);
 }
 
 #[no_mangle]
