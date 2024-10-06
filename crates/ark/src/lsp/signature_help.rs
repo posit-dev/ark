@@ -5,7 +5,6 @@
 //
 //
 
-use harp::eval::r_parse_eval;
 use harp::eval::RParseEvalOptions;
 use harp::object::*;
 use harp::r_null;
@@ -42,9 +41,7 @@ use crate::treesitter::NodeTypeExt;
 // that is a bit hard to follow.
 
 /// SAFETY: Requires access to the R runtime.
-pub(crate) unsafe fn r_signature_help(
-    context: &DocumentContext,
-) -> anyhow::Result<Option<SignatureHelp>> {
+pub(crate) fn r_signature_help(context: &DocumentContext) -> anyhow::Result<Option<SignatureHelp>> {
     // Get document AST + completion position.
     let ast = &context.document.ast;
 
@@ -171,7 +168,7 @@ pub(crate) unsafe fn r_signature_help(
     // Try to figure out what R object it's associated with.
     let code = context.document.contents.node_slice(&callee)?.to_string();
 
-    let object = r_parse_eval(code.as_str(), RParseEvalOptions {
+    let object = harp::parse_eval(code.as_str(), RParseEvalOptions {
         forbid_function_calls: true,
         ..Default::default()
     });
@@ -211,13 +208,13 @@ pub(crate) unsafe fn r_signature_help(
         let package = callee.child_by_field_name("lhs").into_result()?;
         let package = context.document.contents.node_slice(&package)?.to_string();
 
-        let topic = callee.child_by_field_name("rhs").into_result()?;
-        let topic = context.document.contents.node_slice(&topic)?.to_string();
+        let name = callee.child_by_field_name("rhs").into_result()?;
+        let name = context.document.contents.node_slice(&name)?.to_string();
 
-        RHtmlHelp::new(topic.as_str(), Some(package.as_str()))
+        RHtmlHelp::from_function(name.as_str(), Some(package.as_str()))
     } else {
-        let topic = context.document.contents.node_slice(&callee)?.to_string();
-        RHtmlHelp::new(topic.as_str(), None)
+        let name = context.document.contents.node_slice(&callee)?.to_string();
+        RHtmlHelp::from_function(name.as_str(), None)
     };
 
     // The signature label. We generate this as we walk through the
@@ -330,21 +327,12 @@ fn is_within_call_parentheses(x: &Point, node: &Node) -> bool {
         return false;
     };
 
-    let n_children = arguments.child_count();
-    if n_children < 2 {
-        log::error!("`arguments` node only has {n_children} children.");
+    let Some(open) = arguments.child_by_field_name("open") else {
         return false;
-    }
-
-    let open = arguments.child(1 - 1).unwrap();
-    let close = arguments.child(n_children - 1).unwrap();
-
-    if open.node_type() != NodeType::Anonymous(String::from("(")) {
+    };
+    let Some(close) = arguments.child_by_field_name("close") else {
         return false;
-    }
-    if close.node_type() != NodeType::Anonymous(String::from(")")) {
-        return false;
-    }
+    };
 
     x.is_after_or_equal(open.end_position()) && x.is_before_or_equal(close.start_position())
 }
@@ -513,31 +501,28 @@ fn call_label(x: SEXP) -> String {
 #[cfg(test)]
 mod tests {
     use harp::call::RCall;
-    use harp::environment::R_ENVS;
-    use harp::eval::r_parse_eval0;
     use harp::object::*;
     use harp::r_char;
     use harp::r_null;
     use harp::r_symbol;
-    use harp::test::r_test;
     use harp::RObject;
     use libr::R_xlen_t;
     use tower_lsp::lsp_types::ParameterLabel;
 
+    use crate::fixtures::point_from_cursor;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
     use crate::lsp::signature_help::argument_label;
     use crate::lsp::signature_help::r_signature_help;
-    use crate::test::point_from_cursor;
 
     #[test]
     fn test_basic_signature_help() {
-        r_test(|| {
+        crate::r_task(|| {
             let (text, point) = point_from_cursor("library(@)");
             let document = Document::new(&text, None);
             let context = DocumentContext::new(&document, point, None);
 
-            let help = unsafe { r_signature_help(&context) };
+            let help = r_signature_help(&context);
             let help = help.unwrap().unwrap();
             assert_eq!(help.signatures.len(), 1);
 
@@ -550,18 +535,18 @@ mod tests {
 
     #[test]
     fn test_no_signature_help_outside_parentheses() {
-        r_test(|| {
+        crate::r_task(|| {
             let (text, point) = point_from_cursor("library@()");
             let document = Document::new(&text, None);
             let context = DocumentContext::new(&document, point, None);
-            let help = unsafe { r_signature_help(&context) };
+            let help = r_signature_help(&context);
             let help = help.unwrap();
             assert!(help.is_none());
 
             let (text, point) = point_from_cursor("library()@");
             let document = Document::new(&text, None);
             let context = DocumentContext::new(&document, point, None);
-            let help = unsafe { r_signature_help(&context) };
+            let help = r_signature_help(&context);
             let help = help.unwrap();
             assert!(help.is_none());
         })
@@ -569,7 +554,7 @@ mod tests {
 
     #[test]
     fn test_signature_help_argument_defaults() {
-        r_test(|| {
+        crate::r_task(|| {
             // Define function in global env
             let fun = r#"
 fn <- function(
@@ -584,12 +569,12 @@ fn <- function(
   lst = list(1, 2)
 ) { }
 "#;
-            r_parse_eval0(fun, R_ENVS.global).unwrap();
+            harp::parse_eval_global(fun).unwrap();
 
             let (text, point) = point_from_cursor("fn(@)");
             let document = Document::new(&text, None);
             let context = DocumentContext::new(&document, point, None);
-            let help = unsafe { r_signature_help(&context) };
+            let help = r_signature_help(&context);
             let help = help.unwrap().unwrap();
 
             // Check expected signature label
@@ -602,13 +587,13 @@ fn <- function(
             );
 
             // Clean up
-            r_parse_eval0("rm(fn)", R_ENVS.global).unwrap();
+            harp::parse_eval_global("rm(fn)").unwrap();
         })
     }
 
     #[test]
     fn test_argument_label_null() {
-        r_test(|| {
+        crate::r_task(|| {
             let x = r_null();
             let label = argument_label(String::from("x"), x);
             assert_eq!(label, String::from("x = NULL"));
@@ -617,7 +602,7 @@ fn <- function(
 
     #[test]
     fn test_argument_label_missing() {
-        r_test(|| {
+        crate::r_task(|| {
             let x = harp::missing();
             let label = argument_label(String::from("x"), x);
             assert_eq!(label, String::from("x"));
@@ -626,7 +611,7 @@ fn <- function(
 
     #[test]
     fn test_argument_label_symbol() {
-        r_test(|| {
+        crate::r_task(|| {
             let x = unsafe { r_symbol!("name") };
             let label = argument_label(String::from("x"), x);
             assert_eq!(label, String::from("x = name"));
@@ -639,7 +624,7 @@ fn <- function(
 
     #[test]
     fn test_argument_label_call() {
-        r_test(|| {
+        crate::r_task(|| {
             let x = unsafe {
                 RCall::new(r_symbol!("source"))
                     .add(r_symbol!("exprs"))
@@ -653,7 +638,7 @@ fn <- function(
 
     #[test]
     fn test_argument_label_truncate() {
-        r_test(|| {
+        crate::r_task(|| {
             let x = harp::missing();
             let name = "x".repeat(300);
 
@@ -667,7 +652,7 @@ fn <- function(
 
     #[test]
     fn test_argument_label_vector() {
-        r_test(|| {
+        crate::r_task(|| {
             let x = RObject::from(r_alloc_logical(3));
             r_lgl_poke(x.sexp, 0, 1);
             r_lgl_poke(x.sexp, 1, 0);
@@ -713,10 +698,10 @@ fn <- function(
 
     #[test]
     fn test_argument_label_vector_truncate() {
-        r_test(|| {
+        crate::r_task(|| {
             let x = RObject::from(r_alloc_integer(12));
             for i in 0..12 {
-                r_lgl_poke(x.sexp, R_xlen_t::try_from(i).unwrap(), i);
+                r_int_poke(x.sexp, R_xlen_t::try_from(i).unwrap(), i);
             }
 
             let label = argument_label(String::from("x"), x.sexp);
@@ -730,7 +715,7 @@ fn <- function(
 
     #[test]
     fn test_argument_label_scalars() {
-        r_test(|| {
+        crate::r_task(|| {
             let x = RObject::from(r_alloc_logical(1));
             r_lgl_poke(x.sexp, 0, 1);
             let label = argument_label(String::from("x"), x.sexp);

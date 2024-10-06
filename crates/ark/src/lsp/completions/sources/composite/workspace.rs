@@ -20,6 +20,7 @@ use crate::lsp::indexer;
 use crate::lsp::state::WorldState;
 use crate::lsp::traits::rope::RopeExt;
 use crate::lsp::traits::string::StringExt;
+use crate::treesitter::node_in_string;
 use crate::treesitter::NodeTypeExt;
 
 pub(super) fn completions_from_workspace(
@@ -41,8 +42,8 @@ pub(super) fn completions_from_workspace(
         }
     }
 
-    if node.is_string() {
-        log::error!("Should have already been handled by file path completions source");
+    if node_in_string(&node) {
+        log::error!("Should have already been handled by string completions source");
         return Ok(None);
     }
 

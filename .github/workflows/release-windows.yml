@@ -1,0 +1,57 @@
+name: "Build Ark Windows Release"
+
+on:
+    workflow_call:
+      inputs:
+        version:
+          required: false
+          description: "The Ark version"
+          default: ${{ github.sha }}
+          type: string
+    workflow_dispatch:
+
+jobs:
+    build_windows:
+        name: Build Windows
+        runs-on: windows-latest
+        timeout-minutes: 40
+
+        env:
+            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+        strategy:
+            matrix:
+                arch: [x64]
+                flavor: [debug, release]
+                include:
+                    - arch: x64
+                      rust_target_prefix: x86_64
+
+        steps:
+            - name: Checkout sources
+              uses: actions/checkout@v4
+
+            - name: Compile ARK
+              env:
+                  ARK_BUILD_TYPE: ${{ matrix.flavor }}
+                  RUST_TARGET: ${{ matrix.rust_target_prefix }}-pc-windows-msvc
+              shell: cmd
+              run: |
+                  cargo clean
+                  cargo build ${{ matrix.flavor == 'release' && '--release' || '' }} --target ${{ matrix.rust_target_prefix }}-pc-windows-msvc
+
+            - name: Create archive
+              shell: pwsh
+              run: |
+                  # Compress the kernel to an archive
+                  $params = @{
+                    Path = "target\${{ matrix.rust_target_prefix }}-pc-windows-msvc\${{ matrix.flavor }}\ark.exe", "LICENSE", "crates\ark\NOTICE"
+                    DestinationPath = "ark-${{ inputs.version }}-${{ matrix.flavor }}-windows-${{ matrix.arch }}.zip"
+                  }
+                  Compress-Archive @params
+
+            - name: Upload client archive
+              uses: actions/upload-artifact@v4
+              with:
+                  name: ark-${{ matrix.flavor }}-windows-${{ matrix.arch }}-archive
+                  path: ark-${{ inputs.version }}-${{ matrix.flavor }}-windows-${{ matrix.arch }}.zip

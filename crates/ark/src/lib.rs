@@ -5,12 +5,15 @@
 //
 //
 
+pub mod analysis;
 pub mod browser;
 pub mod connections;
 pub mod control;
+pub mod coordinates;
 pub mod dap;
 pub mod data_explorer;
 pub mod errors;
+pub mod fixtures;
 pub mod help;
 pub mod help_proxy;
 pub mod interface;
@@ -24,12 +27,14 @@ pub mod modules_utils;
 pub mod plots;
 pub mod r_task;
 pub mod request;
+pub mod reticulate;
 pub mod shell;
 pub mod signals;
 pub mod srcref;
+pub mod start;
 pub mod startup;
+pub mod strings;
 pub mod sys;
-pub mod test;
 pub mod thread;
 pub mod traps;
 pub mod treesitter;

@@ -22,8 +22,6 @@ use crate::object::r_length;
 use crate::r_symbol;
 use crate::utils::r_assert_type;
 use crate::utils::r_str_to_owned_utf8_unchecked;
-use crate::utils::Sxpinfo;
-use crate::utils::HASHASH_MASK;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RSymbol {
@@ -38,10 +36,6 @@ impl RSymbol {
     pub fn new(sexp: SEXP) -> Result<Self> {
         r_assert_type(sexp, &[SYMSXP])?;
         Ok(Self::new_unchecked(sexp))
-    }
-
-    pub fn has_hash(&self) -> bool {
-        unsafe { (Sxpinfo::interpret(&PRINTNAME(self.sexp)).gp() & HASHASH_MASK) == 1 }
     }
 }
 
@@ -114,15 +108,18 @@ impl PartialEq<&str> for RSymbol {
 
 #[cfg(test)]
 mod tests {
-    use crate::r_test;
     use crate::symbol::RSymbol;
 
     #[test]
     fn test_rsymbol_ord() {
-        r_test! {
+        crate::r_task(|| {
             let mut x = vec![RSymbol::from("z"), RSymbol::from("m"), RSymbol::from("a")];
             x.sort();
-            assert_eq!(x, vec![RSymbol::from("a"), RSymbol::from("m"), RSymbol::from("z")]);
-        }
+            assert_eq!(x, vec![
+                RSymbol::from("a"),
+                RSymbol::from("m"),
+                RSymbol::from("z")
+            ]);
+        })
     }
 }

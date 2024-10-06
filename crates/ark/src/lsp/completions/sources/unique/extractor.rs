@@ -6,7 +6,6 @@
 //
 
 use anyhow::Result;
-use harp::eval::r_parse_eval;
 use harp::eval::RParseEvalOptions;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
@@ -124,7 +123,7 @@ fn completions_from_extractor_object(text: &str, fun: &str) -> Result<Vec<Comple
             ..Default::default()
         };
 
-        let object = match r_parse_eval(text, options) {
+        let object = match harp::parse_eval(text, options) {
             Ok(object) => object,
             Err(err) => match err {
                 // LHS of the call was too complex to evaluate. This is fine, we know
@@ -163,26 +162,25 @@ fn completions_from_extractor_object(text: &str, fun: &str) -> Result<Vec<Comple
 
 #[cfg(test)]
 mod tests {
-    use harp::eval::r_parse_eval;
     use harp::eval::RParseEvalOptions;
     use harp::object::r_lgl_get;
 
+    use crate::fixtures::point_from_cursor;
     use crate::lsp::completions::sources::unique::extractor::completions_from_dollar;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
-    use crate::test::point_from_cursor;
-    use crate::test::r_test;
+    use crate::r_task;
 
     #[test]
     fn test_dollar_completions() {
-        r_test(|| {
+        r_task(|| {
             let options = RParseEvalOptions {
                 forbid_function_calls: false,
                 ..Default::default()
             };
 
             // Set up a list with names
-            r_parse_eval("foo <- list(b = 1, a = 2)", options.clone()).unwrap();
+            harp::parse_eval("foo <- list(b = 1, a = 2)", options.clone()).unwrap();
 
             let (text, point) = point_from_cursor("foo$@");
             let document = Document::new(text.as_str(), None);
@@ -205,20 +203,20 @@ mod tests {
             assert!(completions.is_none());
 
             // Clean up
-            r_parse_eval("remove(foo)", options.clone()).unwrap();
+            harp::parse_eval("remove(foo)", options.clone()).unwrap();
         })
     }
 
     #[test]
     fn test_dollar_completions_on_nonexistent_object() {
-        r_test(|| {
+        r_task(|| {
             let options = RParseEvalOptions {
                 forbid_function_calls: false,
                 ..Default::default()
             };
 
-            // `foo` should not exist in the environment `r_parse_eval()` runs in
-            let exists = r_parse_eval("exists('foo')", options).unwrap();
+            // `foo` should not exist in the environment `r_harp::parse_eval()` runs in
+            let exists = harp::parse_eval("exists('foo')", options).unwrap();
             assert_eq!(r_lgl_get(exists.sexp, 0), 0);
 
             let (text, point) = point_from_cursor("foo$@");
@@ -244,7 +242,7 @@ mod tests {
 
     #[test]
     fn test_dollar_completions_on_complex_lhs() {
-        r_test(|| {
+        r_task(|| {
             let (text, point) = point_from_cursor("list(a = 1, b = 2)$@");
             let document = Document::new(text.as_str(), None);
             let context = DocumentContext::new(&document, point, None);
@@ -261,14 +259,14 @@ mod tests {
 
     #[test]
     fn test_dollar_completions_before_the_dollar() {
-        r_test(|| {
+        r_task(|| {
             let options = RParseEvalOptions {
                 forbid_function_calls: false,
                 ..Default::default()
             };
 
             // Set up a list with names
-            r_parse_eval("foo <- list(b = 1, a = 2)", options.clone()).unwrap();
+            harp::parse_eval("foo <- list(b = 1, a = 2)", options.clone()).unwrap();
 
             let (text, point) = point_from_cursor("foo@$");
             let document = Document::new(text.as_str(), None);
@@ -281,20 +279,20 @@ mod tests {
             assert!(completions.is_none());
 
             // Clean up
-            r_parse_eval("remove(foo)", options.clone()).unwrap();
+            harp::parse_eval("remove(foo)", options.clone()).unwrap();
         })
     }
 
     #[test]
     fn test_dollar_completions_in_an_identifier() {
-        r_test(|| {
+        r_task(|| {
             let options = RParseEvalOptions {
                 forbid_function_calls: false,
                 ..Default::default()
             };
 
             // Set up a list with names
-            r_parse_eval("foo <- list(abcd = 1, wxyz = 2)", options.clone()).unwrap();
+            harp::parse_eval("foo <- list(abcd = 1, wxyz = 2)", options.clone()).unwrap();
 
             let (text, point) = point_from_cursor("foo$abc@");
             let document = Document::new(text.as_str(), None);
@@ -317,7 +315,7 @@ mod tests {
             assert_eq!(completions.get(1).unwrap().label, String::from("wxyz"));
 
             // Clean up
-            r_parse_eval("remove(foo)", options.clone()).unwrap();
+            harp::parse_eval("remove(foo)", options.clone()).unwrap();
         })
     }
 }

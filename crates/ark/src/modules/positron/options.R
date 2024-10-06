@@ -29,20 +29,19 @@ options(device = function() {
 # Set cran mirror
 repos <- getOption("repos")
 rstudio_cran <- "https://cran.rstudio.com/"
-
 if (is.null(repos) || !is.character(repos)) {
-    options(repos = c(CRAN = rstudio_cran))
+    repos <- c(CRAN = rstudio_cran)
 } else {
     if ("CRAN" %in% names(repos)) {
         if (identical(repos[["CRAN"]], "@CRAN@")) {
             repos[["CRAN"]] <- rstudio_cran
-            options(repos = repos)
+            attr(repos, "IDE") <- TRUE
         }
     } else {
         repos <- c(CRAN = rstudio_cran, repos)
-        options(repos = repos)
     }
 }
+options(repos = repos)
 
 # Show Plumber apps in the viewer
 options(plumber.docs.callback = function(url) {

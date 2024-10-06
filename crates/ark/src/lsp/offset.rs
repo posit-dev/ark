@@ -14,10 +14,25 @@ pub use tree_sitter::Point as ArkPoint;
 
 use crate::lsp::encoding::convert_point_to_position;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ArkRange {
     pub start: ArkPoint,
     pub end: ArkPoint,
+}
+
+impl From<harp::srcref::SrcRef> for ArkRange {
+    fn from(value: harp::srcref::SrcRef) -> Self {
+        ArkRange {
+            start: ArkPoint {
+                row: value.line.start as usize,
+                column: value.column.start as usize,
+            },
+            end: ArkPoint {
+                row: value.line.end as usize,
+                column: value.column.end as usize,
+            },
+        }
+    }
 }
 
 /// Like `TextEdit` from the lsp_types crate, but doen't expect positions to be
@@ -119,7 +134,7 @@ fn line_offset(text: &str, line: usize) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
-    use harp::assert_match;
+    use stdext::assert_match;
 
     use crate::lsp::offset::apply_text_edits;
     use crate::lsp::offset::line_offset;

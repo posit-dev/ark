@@ -77,41 +77,13 @@ fn range_for_node(node: Node) -> Range {
 // next selection after that be the entire call
 //
 // This also applies to subset and subset2, i.e. `[a, b, c]` and `[[a, b, c]]`.
-//
-// This is another place where it would be great to be able to access the delimiters
-// by field name, as it would simplify the logic significantly and eventually allow a
-// rowan based cast to a structured `Arguments` type followed by an `Arguments` specific
-// method like `node.opening_delimiter()`.
-// https://github.com/r-lib/tree-sitter-r/issues/91
 fn range_for_arguments(node: Node) -> Range {
-    let Some(parent) = node.parent() else {
+    let Some(open) = node.child_by_field_name("open") else {
         return node.range();
     };
-
-    let (open_delimiter, close_delimiter) = match parent.node_type() {
-        NodeType::Call => (String::from("("), String::from(")")),
-        NodeType::Subset => (String::from("["), String::from("]")),
-        NodeType::Subset2 => (String::from("[["), String::from("]]")),
-        _ => return node.range(),
+    let Some(close) = node.child_by_field_name("close") else {
+        return node.range();
     };
-    let open_delimiter = NodeType::Anonymous(open_delimiter);
-    let close_delimiter = NodeType::Anonymous(close_delimiter);
-
-    let n = node.child_count();
-
-    if n < 2 {
-        return node.range();
-    }
-
-    let open = node.child(1 - 1).unwrap();
-    let close = node.child(n - 1).unwrap();
-
-    if open.node_type() != open_delimiter {
-        return node.range();
-    }
-    if close.node_type() != close_delimiter {
-        return node.range();
-    }
 
     let start_byte = open.end_byte();
     let start_point = open.end_position();
@@ -151,8 +123,8 @@ mod tests {
     use tree_sitter::Parser;
     use tree_sitter::Point;
 
+    use crate::fixtures::point_from_cursor;
     use crate::lsp::selection_range::selection_range;
-    use crate::test::point_from_cursor;
 
     #[test]
     #[rustfmt::skip]
@@ -167,11 +139,9 @@ mod tests {
 
         let (text, point) = point_from_cursor(text);
 
-        let language = tree_sitter_r::language();
-
         let mut parser = Parser::new();
         parser
-            .set_language(&language)
+            .set_language(&tree_sitter_r::LANGUAGE.into())
             .expect("failed to create parser");
 
         let tree = parser.parse(text, None).unwrap();
@@ -186,7 +156,7 @@ mod tests {
         assert_eq!(selection.range.end_point, Point::new(3, 1));
 
         let selection = selection.parent.as_ref().unwrap();
-        assert_eq!(selection.range.start_point, Point::new(1, 0));
+        assert_eq!(selection.range.start_point, Point::new(0, 0));
         assert_eq!(selection.range.end_point, Point::new(6, 0));
         assert!(selection.parent.is_none());
     }
@@ -204,11 +174,9 @@ mod tests {
 
         let (text, point) = point_from_cursor(text);
 
-        let language = tree_sitter_r::language();
-
         let mut parser = Parser::new();
         parser
-            .set_language(&language)
+            .set_language(&tree_sitter_r::LANGUAGE.into())
             .expect("failed to create parser");
 
         let tree = parser.parse(text, None).unwrap();
@@ -219,7 +187,7 @@ mod tests {
 
         // Just 1 selection, the whole document
         let selection = selections.get(0).unwrap();
-        assert_eq!(selection.range.start_point, Point::new(1, 0));
+        assert_eq!(selection.range.start_point, Point::new(0, 0));
         assert_eq!(selection.range.end_point, Point::new(6, 0));
         assert!(selection.parent.is_none());
     }
@@ -237,12 +205,10 @@ fn <- function(x, arg) {
 
         let (text, point) = point_from_cursor(text);
 
-        let language = tree_sitter_r::language();
-
         // create a parser for this document
         let mut parser = Parser::new();
         parser
-            .set_language(&language)
+            .set_language(&tree_sitter_r::LANGUAGE.into())
             .expect("failed to create parser");
 
         let tree = parser.parse(text, None).unwrap();
@@ -278,7 +244,7 @@ fn <- function(x, arg) {
 
         // Whole document
         let selection = selection.parent.as_ref().unwrap();
-        assert_eq!(selection.range.start_point, Point::new(1, 0));
+        assert_eq!(selection.range.start_point, Point::new(0, 0));
         assert_eq!(selection.range.end_point, Point::new(6, 0));
         assert!(selection.parent.is_none());
     }
@@ -286,11 +252,9 @@ fn <- function(x, arg) {
     #[test]
     #[rustfmt::skip]
     fn test_selection_range_assignment() {
-        let language = tree_sitter_r::language();
-
         let mut parser = Parser::new();
         parser
-            .set_language(&language)
+            .set_language(&tree_sitter_r::LANGUAGE.into())
             .expect("failed to create parser");
 
         let text = "
@@ -323,11 +287,9 @@ fn <- function() {
     #[test]
     #[rustfmt::skip]
     fn test_selection_range_call_arguments() {
-        let language = tree_sitter_r::language();
-
         let mut parser = Parser::new();
         parser
-            .set_language(&language)
+            .set_language(&tree_sitter_r::LANGUAGE.into())
             .unwrap();
 
         let text = "
@@ -365,11 +327,9 @@ fn(@a, b, c)
     #[test]
     #[rustfmt::skip]
     fn test_selection_range_subset_arguments() {
-        let language = tree_sitter_r::language();
-
         let mut parser = Parser::new();
         parser
-            .set_language(&language)
+            .set_language(&tree_sitter_r::LANGUAGE.into())
             .unwrap();
 
         let text = "
@@ -412,11 +372,9 @@ x[a, @fn(), c]
     #[test]
     #[rustfmt::skip]
     fn test_selection_range_subset2_arguments() {
-        let language = tree_sitter_r::language();
-
         let mut parser = Parser::new();
         parser
-            .set_language(&language)
+            .set_language(&tree_sitter_r::LANGUAGE.into())
             .unwrap();
 
         let text = "
@@ -459,11 +417,9 @@ x[[a, @fn(), c]]
     #[test]
     #[rustfmt::skip]
     fn test_selection_range_namespaced_calls() {
-        let language = tree_sitter_r::language();
-
         let mut parser = Parser::new();
         parser
-            .set_language(&language)
+            .set_language(&tree_sitter_r::LANGUAGE.into())
             .unwrap();
 
         let text = "

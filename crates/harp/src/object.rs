@@ -20,6 +20,7 @@ use crate::error::Error;
 use crate::exec::RFunction;
 use crate::exec::RFunctionExt;
 use crate::protect::RProtect;
+use crate::r_inherits;
 use crate::r_symbol;
 use crate::size::r_size;
 use crate::utils::r_assert_capacity;
@@ -112,11 +113,21 @@ pub struct RObject {
     pub cell: SEXP,
 }
 
+// Needed to implement the Vector trait for List.
+// Can we do better to avoid this coercion?
+impl AsRef<SEXP> for RObject {
+    fn as_ref(&self) -> &SEXP {
+        &self.sexp
+    }
+}
+
 pub trait RObjectExt<T> {
-    unsafe fn elt(&self, index: T) -> crate::error::Result<RObject>;
+    fn elt(&self, index: T) -> crate::error::Result<RObject>;
 }
 
 impl PartialEq for RObject {
+    // FIXME: At call sites, not obvious that this is doing identity comparisons.
+    // Can we require explicit `FOO.sexp == BAR.sexp`?
     fn eq(&self, other: &Self) -> bool {
         self.sexp == other.sexp
     }
@@ -124,7 +135,7 @@ impl PartialEq for RObject {
 impl Eq for RObject {}
 
 impl<T: Into<RObject>> RObjectExt<T> for RObject {
-    unsafe fn elt(&self, index: T) -> crate::error::Result<RObject> {
+    fn elt(&self, index: T) -> crate::error::Result<RObject> {
         let index: RObject = index.into();
         RFunction::new("base", "[[")
             .add(self.sexp)
@@ -237,6 +248,14 @@ pub fn r_dbl_begin(x: SEXP) -> *mut f64 {
     unsafe { REAL(x) }
 }
 
+pub unsafe fn chr_cbegin(x: SEXP) -> *const SEXP {
+    libr::DATAPTR_RO(x) as *const SEXP
+}
+
+pub fn list_cbegin(x: SEXP) -> *const SEXP {
+    unsafe { libr::DATAPTR_RO(x) as *const SEXP }
+}
+
 // TODO: Make these wrappers robust to allocation failures
 // https://github.com/posit-dev/positron/issues/2600
 pub fn r_alloc_logical(size: R_xlen_t) -> SEXP {
@@ -254,8 +273,29 @@ pub fn r_alloc_complex(size: R_xlen_t) -> SEXP {
 pub fn r_alloc_character(size: R_xlen_t) -> SEXP {
     unsafe { Rf_allocVector(STRSXP, size) }
 }
-pub fn r_alloc_list(size: R_xlen_t) -> SEXP {
-    unsafe { Rf_allocVector(VECSXP, size) }
+
+pub fn alloc_list(size: usize) -> crate::Result<SEXP> {
+    alloc_vector(VECSXP, size)
+}
+
+fn alloc_vector(kind: libr::SEXPTYPE, size: usize) -> crate::Result<SEXP> {
+    let size = as_r_ssize(size)?;
+    let res = crate::try_catch(|| unsafe { Rf_allocVector(kind, size) });
+
+    match res {
+        Ok(_) => res,
+        Err(_) => Err(crate::Error::OutOfMemory {
+            size: std::mem::size_of::<*const SEXP>() * size as usize,
+        }),
+    }
+}
+
+pub fn as_r_ssize(size: usize) -> crate::Result<R_xlen_t> {
+    if size > unsafe { harp::as_result(libr::R_XLEN_T_MAX.try_into())? } {
+        return Err(crate::anyhow!("`size` is larger than `R_XLEN_T_MAX`"));
+    }
+
+    Ok(size as R_xlen_t)
 }
 
 pub fn r_node_car(x: SEXP) -> SEXP {
@@ -268,11 +308,16 @@ pub fn r_node_cdr(x: SEXP) -> SEXP {
     unsafe { CDR(x) }
 }
 
+pub fn is_identical(x: SEXP, y: SEXP) -> bool {
+    // 16 corresponds to the default arguments of the R-level `identical()`
+    unsafe { libr::R_compute_identical(x, y, 16) != 0 }
+}
+
 impl RObject {
-    pub unsafe fn new(data: SEXP) -> Self {
+    pub fn new(data: SEXP) -> Self {
         RObject {
             sexp: data,
-            cell: protect(data),
+            cell: unsafe { protect(data) },
         }
     }
 
@@ -307,7 +352,7 @@ impl RObject {
         r_is_object(self.sexp)
     }
 
-    pub fn size(&self) -> usize {
+    pub fn size(&self) -> harp::Result<usize> {
         r_size(self.sexp)
     }
 
@@ -410,7 +455,7 @@ impl RObject {
     /// attribute). Returns `None` if the object's value(s) don't have names.
     pub fn names(&self) -> Option<Vec<Option<String>>> {
         let names = unsafe { Rf_getAttrib(self.sexp, R_NamesSymbol) };
-        let names = RObject::view(names);
+        let names = RObject::from(names);
         match names.kind() {
             STRSXP => Vec::<Option<String>>::try_from(names).ok(),
             _ => None,
@@ -424,7 +469,7 @@ impl RObject {
         if r_is_null(val) {
             None
         } else {
-            Some(unsafe { RObject::new(val) })
+            Some(RObject::new(val))
         }
     }
 
@@ -434,6 +479,37 @@ impl RObject {
             Rf_setAttrib(self.sexp, r_symbol!(name), value);
             Rf_unprotect(1);
         }
+    }
+
+    pub fn inherits(&self, class: &str) -> bool {
+        return r_inherits(self.sexp, class);
+    }
+
+    pub fn class(&self) -> harp::Result<Option<Vec<String>>> {
+        let Some(class) = self.attr("class") else {
+            return Ok(None);
+        };
+
+        if !r_is_object(self.sexp) {
+            return Err(harp::anyhow!(
+                "Object has a class vector but `OBJECT` attribute is unset"
+            ));
+        }
+
+        Ok(Some(class.try_into()?))
+    }
+
+    pub fn dim(&self) -> harp::Result<Option<Vec<usize>>> {
+        let dim: RObject = r_dim(self.sexp).into();
+
+        if dim.sexp == harp::r_null() {
+            return Ok(None);
+        }
+
+        let dim: Vec<i32> = dim.try_into()?;
+        let dim = dim.into_iter().map(|d| d as usize).collect();
+
+        Ok(Some(dim))
     }
 
     pub fn duplicate(&self) -> RObject {
@@ -482,7 +558,7 @@ impl Deref for RObject {
 /// Convert other object types into RObjects.
 impl From<SEXP> for RObject {
     fn from(value: SEXP) -> Self {
-        unsafe { RObject::new(value) }
+        RObject::new(value)
     }
 }
 
@@ -667,16 +743,23 @@ impl TryFrom<RObject> for Option<bool> {
 impl TryFrom<RObject> for Option<String> {
     type Error = crate::error::Error;
     fn try_from(value: RObject) -> Result<Self, Self::Error> {
+        Option::<String>::try_from(&value)
+    }
+}
+
+impl TryFrom<&RObject> for Option<String> {
+    type Error = crate::error::Error;
+    fn try_from(value: &RObject) -> Result<Self, Self::Error> {
         unsafe {
-            let charsexp = match r_typeof(*value) {
-                CHARSXP => *value,
+            let charsexp = match r_typeof(value.sexp) {
+                CHARSXP => value.sexp,
                 STRSXP => {
-                    r_assert_length(*value, 1)?;
-                    STRING_ELT(*value, 0)
+                    r_assert_length(value.sexp, 1)?;
+                    STRING_ELT(value.sexp, 0)
                 },
-                SYMSXP => PRINTNAME(*value),
+                SYMSXP => PRINTNAME(value.sexp),
                 _ => {
-                    return Err(Error::UnexpectedType(r_typeof(*value), vec![
+                    return Err(Error::UnexpectedType(r_typeof(value.sexp), vec![
                         CHARSXP, STRSXP, SYMSXP,
                     ]))
                 },
@@ -769,6 +852,13 @@ impl TryFrom<RObject> for Option<f64> {
 impl TryFrom<RObject> for String {
     type Error = crate::error::Error;
     fn try_from(value: RObject) -> Result<Self, Self::Error> {
+        String::try_from(&value)
+    }
+}
+
+impl TryFrom<&RObject> for String {
+    type Error = crate::error::Error;
+    fn try_from(value: &RObject) -> Result<Self, Self::Error> {
         match Option::<String>::try_from(value)? {
             Some(x) => Ok(x),
             None => Err(Error::MissingValueError),
@@ -816,21 +906,54 @@ impl TryFrom<RObject> for f64 {
     }
 }
 
+// TODO(harp-try-from-robject-ref): Remove in favour of `&RObject`
+impl TryFrom<RObject> for Vec<i32> {
+    type Error = crate::error::Error;
+    fn try_from(value: RObject) -> Result<Self, Self::Error> {
+        (&value).try_into()
+    }
+}
+
+impl TryFrom<&RObject> for Vec<bool> {
+    type Error = harp::Error;
+    fn try_from(value: &RObject) -> harp::Result<Self> {
+        (&harp::vector::LogicalVector::try_from(value.sexp)?).try_into()
+    }
+}
+
+impl TryFrom<&RObject> for Vec<i32> {
+    type Error = harp::Error;
+    fn try_from(value: &RObject) -> harp::Result<Self> {
+        (&harp::vector::IntegerVector::try_from(value.sexp)?).try_into()
+    }
+}
+
+impl TryFrom<&RObject> for Vec<f64> {
+    type Error = crate::error::Error;
+    fn try_from(value: &RObject) -> Result<Self, Self::Error> {
+        (&harp::vector::NumericVector::try_from(value.sexp)?).try_into()
+    }
+}
+
+impl TryFrom<&RObject> for Vec<u8> {
+    type Error = crate::error::Error;
+    fn try_from(value: &RObject) -> Result<Self, Self::Error> {
+        (&harp::vector::RawVector::try_from(value.sexp)?).try_into()
+    }
+}
+
+// TODO(harp-try-from-robject-ref): Remove in favour of `&RObject`
 impl TryFrom<RObject> for Vec<String> {
     type Error = crate::error::Error;
     fn try_from(value: RObject) -> Result<Self, Self::Error> {
-        unsafe {
-            r_assert_type(*value, &[STRSXP, NILSXP])?;
+        (&value).try_into()
+    }
+}
 
-            let mut result: Vec<String> = Vec::new();
-            let n = Rf_xlength(*value);
-            for i in 0..n {
-                let res = r_chr_get_owned_utf8(*value, i)?;
-                result.push(res);
-            }
-
-            return Ok(result);
-        }
+impl TryFrom<&RObject> for Vec<String> {
+    type Error = crate::error::Error;
+    fn try_from(value: &RObject) -> Result<Self, Self::Error> {
+        (&harp::vector::CharacterVector::try_from(value.sexp)?).try_into()
     }
 }
 
@@ -850,45 +973,18 @@ impl TryFrom<RObject> for Vec<Option<String>> {
     }
 }
 
-impl TryFrom<RObject> for Vec<i32> {
-    type Error = crate::error::Error;
-    fn try_from(value: RObject) -> Result<Self, Self::Error> {
-        unsafe {
-            r_assert_type(value.sexp, &[INTSXP, NILSXP])?;
-            if r_is_null(value.sexp) {
-                return Ok(Vec::new());
-            }
-
-            let n = Rf_xlength(value.sexp);
-            let mut result: Vec<i32> = Vec::with_capacity(n as usize);
-            for i in 0..n {
-                let res = INTEGER_ELT(value.sexp, i);
-                if res == R_NaInt {
-                    return Err(Error::MissingValueError);
-                }
-                result.push(res);
-            }
-
-            return Ok(result);
-        }
-    }
-}
-
+// TODO(harp-try-from-robject-ref): Remove in favour of `&RObject`
 impl TryFrom<RObject> for Vec<RObject> {
     type Error = crate::error::Error;
     fn try_from(value: RObject) -> Result<Self, Self::Error> {
-        unsafe {
-            r_assert_type(value.sexp, &[VECSXP])?;
+        (&value).try_into()
+    }
+}
 
-            let n = Rf_xlength(value.sexp);
-            let mut result: Vec<RObject> = Vec::with_capacity(n as usize);
-            for i in 0..n {
-                let res = value.vector_elt(i)?;
-                result.push(res);
-            }
-
-            return Ok(result);
-        }
+impl TryFrom<&RObject> for Vec<RObject> {
+    type Error = crate::error::Error;
+    fn try_from(value: &RObject) -> Result<Self, Self::Error> {
+        (&harp::vector::List::try_from(value.sexp)?).try_into()
     }
 }
 
@@ -1055,18 +1151,15 @@ where
 #[cfg(test)]
 mod tests {
     use libr::SET_STRING_ELT;
+    use stdext::assert_match;
 
     use super::*;
-    use crate::assert_match;
-    use crate::environment::R_ENVS;
-    use crate::eval::r_parse_eval0;
     use crate::r_char;
-    use crate::r_test;
 
     #[test]
     #[allow(non_snake_case)]
     fn test_tryfrom_RObject_bool() {
-        r_test! {
+        crate::r_task(|| unsafe {
             assert_match!(
                 Option::<bool>::try_from(RObject::from(Rf_ScalarLogical(R_NaInt))),
                 Ok(None) => {}
@@ -1085,13 +1178,13 @@ mod tests {
             );
             assert!(bool::try_from(RObject::from(true)).unwrap());
             assert!(!bool::try_from(RObject::from(false)).unwrap());
-        }
+        })
     }
 
     #[test]
     #[allow(non_snake_case)]
     fn test_tryfrom_RObject_u16() {
-        r_test! {
+        crate::r_task(|| unsafe {
             // -------------------------------------------------------------------------------------
             // Option::<u16>::try_from tests.
             // -------------------------------------------------------------------------------------
@@ -1247,13 +1340,13 @@ mod tests {
                     assert_eq!(expected_types, vec![INTSXP]);
                 }
             );
-        }
+        })
     }
 
     #[test]
     #[allow(non_snake_case)]
     fn test_tryfrom_RObject_i32() {
-        r_test! {
+        crate::r_task(|| unsafe {
             // -------------------------------------------------------------------------------------
             // Option::<i32>::try_from tests.
             // -------------------------------------------------------------------------------------
@@ -1357,13 +1450,13 @@ mod tests {
                     assert_eq!(expected_types, vec![INTSXP]);
                 }
             );
-        }
+        })
     }
 
     #[test]
     #[allow(non_snake_case)]
     fn test_tryfrom_RObject_f64() {
-        r_test! {
+        crate::r_task(|| unsafe {
             assert_match!(
                 Option::<f64>::try_from(RObject::from(R_NaInt)),
                 Ok(None) => {}
@@ -1405,13 +1498,13 @@ mod tests {
                     assert_eq!(x, 42.0)
                 }
             );
-        }
+        })
     }
 
     #[test]
     #[allow(non_snake_case)]
     fn test_tryfrom_RObject_Option_String() {
-        r_test! {
+        crate::r_task(|| unsafe {
             let s = RObject::from("abc");
 
             assert_match!(
@@ -1427,13 +1520,13 @@ mod tests {
                 Option::<String>::try_from(s),
                 Ok(None) => {}
             );
-        }
+        })
     }
 
     #[test]
     #[allow(non_snake_case)]
     fn test_tryfrom_RObject_String() {
-        r_test! {
+        crate::r_task(|| unsafe {
             let s = RObject::from("abc");
 
             assert_match!(
@@ -1449,13 +1542,13 @@ mod tests {
                 String::try_from(s),
                 Err(Error::MissingValueError) => {}
             );
-        }
+        })
     }
 
     #[test]
     #[allow(non_snake_case)]
     fn test_tryfrom_RObject_hashmap_string() {
-        r_test! {
+        crate::r_task(|| {
             // Create a map of pizza toppings to their acceptability.
             let mut map = HashMap::<String, String>::new();
             map.insert(String::from("pepperoni"), String::from("OK"));
@@ -1473,20 +1566,19 @@ mod tests {
             assert_eq!(out.get("sausage").unwrap(), "OK");
             assert_eq!(out.get("pineapple").unwrap(), "NOT OK");
 
-
-            let v = r_parse_eval0("c(x = 'a', y = 'b', z = 'c')", R_ENVS.global).unwrap();
+            let v = harp::parse_eval_global("c(x = 'a', y = 'b', z = 'c')").unwrap();
             let out: HashMap<String, String> = v.try_into().unwrap();
             assert_eq!(out["x"], "a"); // duplicated name is ignored and first is kept
             assert_eq!(out["y"], "b");
-        }
+        })
     }
 
     #[test]
     #[allow(non_snake_case)]
     fn test_tryfrom_RObject_hashmap_i32() {
-        r_test! {
+        crate::r_task(|| {
             // Create a map of pizza toppings to their acceptability.
-            let v = r_parse_eval0("list(x = 1L, y = 2L, x = 3L)", R_ENVS.global).unwrap();
+            let v = harp::parse_eval_global("list(x = 1L, y = 2L, x = 3L)").unwrap();
             assert_eq!(v.length(), 3 as isize);
 
             // Ensure we created an object of the same size as the map.
@@ -1496,19 +1588,19 @@ mod tests {
             assert_eq!(out["x"], 1); // duplicated name is ignored and first is kept
             assert_eq!(out["y"], 2);
 
-            let v = r_parse_eval0("c(x = 1L, y = 2L, x = 3L)", R_ENVS.global).unwrap();
+            let v = harp::parse_eval_global("c(x = 1L, y = 2L, x = 3L)").unwrap();
             let out: HashMap<String, i32> = v.try_into().unwrap();
             assert_eq!(out["x"], 1); // duplicated name is ignored and first is kept
             assert_eq!(out["y"], 2);
-        }
+        })
     }
 
     #[test]
     #[allow(non_snake_case)]
     fn test_tryfrom_RObject_hashmap_Robject() {
-        r_test! {
+        crate::r_task(|| {
             // Create a map of pizza toppings to their acceptability.
-            let v = r_parse_eval0("list(x = c(1L, 2L), y = c('a', 'b'))", R_ENVS.global).unwrap();
+            let v = harp::parse_eval_global("list(x = c(1L, 2L), y = c('a', 'b'))").unwrap();
             assert_eq!(v.length(), 2 as isize);
 
             // Ensure we can convert the object back into a map with the same values.
@@ -1519,13 +1611,13 @@ mod tests {
 
             let value: Vec<String> = out.get("y").unwrap().clone().try_into().unwrap();
             assert_eq!(value, vec!["a", "b"]);
-        }
+        })
     }
 
     #[test]
     #[allow(non_snake_case)]
     fn test_tryfrom_RObject_Vec_Option_String() {
-        r_test! {
+        crate::r_task(|| unsafe {
             let s = RObject::from(Rf_allocVector(STRSXP, 2));
             SET_STRING_ELT(*s, 0, r_char!("abc"));
             SET_STRING_ELT(*s, 1, R_NaString);
@@ -1538,13 +1630,13 @@ mod tests {
                     assert_eq!(x.pop(), None);
                 }
             );
-        }
+        })
     }
 
     #[test]
     #[allow(non_snake_case)]
     fn test_tryfrom_RObject_Vec_Bool() {
-        r_test! {
+        crate::r_task(|| {
             // Create a vector of logical values.
             let flags = vec![true, false, true];
 
@@ -1557,13 +1649,13 @@ mod tests {
             assert!(robj.get_bool(0).unwrap().unwrap());
             assert!(!robj.get_bool(1).unwrap().unwrap());
             assert!(robj.get_bool(2).unwrap().unwrap());
-        }
+        })
     }
 
     #[test]
     #[allow(non_snake_case)]
     fn test_tryfrom_RObject_Vec_String() {
-        r_test! {
+        crate::r_task(|| unsafe {
             let s = RObject::from(Rf_allocVector(STRSXP, 2));
             SET_STRING_ELT(*s, 0, r_char!("abc"));
             SET_STRING_ELT(*s, 1, R_NaString);
@@ -1572,13 +1664,13 @@ mod tests {
                 Vec::<String>::try_from(s),
                 Err(Error::MissingValueError) => {}
             );
-        }
+        })
     }
 
     #[test]
     #[allow(non_snake_case)]
     fn test_tryfrom_RObject_Vec_i32() {
-        r_test! {
+        crate::r_task(|| unsafe {
             let i = RObject::from(Rf_allocVector(INTSXP, 2));
             SET_INTEGER_ELT(*i, 0, 42);
             SET_INTEGER_ELT(*i, 1, R_NaInt);
@@ -1599,14 +1691,14 @@ mod tests {
                     assert_eq!(x, vec![1i32, 2, 3]);
                 }
             );
-        }
+        })
     }
 
     #[test]
     #[allow(non_snake_case)]
     fn test_tryfrom_RObject_Vec_RObject() {
-        r_test! {
-            let v = r_parse_eval0("list(c(1L, NA), c(10L, 20L))", R_ENVS.global).unwrap();
+        crate::r_task(|| {
+            let v = harp::parse_eval_global("list(c(1L, NA), c(10L, 20L))").unwrap();
             let w = Vec::<RObject>::try_from(v).unwrap();
 
             assert_match!(
@@ -1619,18 +1711,14 @@ mod tests {
                     assert_eq!(x, vec![10i32, 20])
                 }
             );
-        }
+        })
     }
 
     #[test]
     #[allow(non_snake_case)]
     fn test_tryfrom_Vec_RObject_RObject() {
-        r_test! {
-            let items_in = vec![
-                RObject::from(1),
-                RObject::from(2),
-                RObject::from(3)
-            ];
+        crate::r_task(|| {
+            let items_in = vec![RObject::from(1), RObject::from(2), RObject::from(3)];
 
             // Convert the vector of RObjects into a single RObject (a list).
             let list = RObject::try_from(items_in.clone()).unwrap();
@@ -1639,6 +1727,6 @@ mod tests {
             // Now convert back to a vector of RObjects.
             let items_out = Vec::<RObject>::try_from(list).unwrap();
             assert_eq!(items_in, items_out);
-        }
+        })
     }
 }

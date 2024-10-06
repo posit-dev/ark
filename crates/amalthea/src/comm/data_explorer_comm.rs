@@ -383,38 +383,38 @@ pub struct SummaryStatsString {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SummaryStatsDate {
 	/// The exact number of distinct values
-	pub num_unique: i64,
+	pub num_unique: Option<i64>,
 
 	/// Minimum date value as string
-	pub min_date: String,
+	pub min_date: Option<String>,
 
 	/// Average date value as string
-	pub mean_date: String,
+	pub mean_date: Option<String>,
 
 	/// Sample median (50% value) date value as string
-	pub median_date: String,
+	pub median_date: Option<String>,
 
 	/// Maximum date value as string
-	pub max_date: String
+	pub max_date: Option<String>
 }
 
 /// SummaryStatsDatetime in Schemas
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SummaryStatsDatetime {
 	/// The exact number of distinct values
-	pub num_unique: i64,
+	pub num_unique: Option<i64>,
 
 	/// Minimum date value as string
-	pub min_date: String,
+	pub min_date: Option<String>,
 
 	/// Average date value as string
-	pub mean_date: String,
+	pub mean_date: Option<String>,
 
 	/// Sample median (50% value) date value as string
-	pub median_date: String,
+	pub median_date: Option<String>,
 
 	/// Maximum date value as string
-	pub max_date: String,
+	pub max_date: Option<String>,
 
 	/// Time zone for timestamp with time zone
 	pub timezone: Option<String>
@@ -778,6 +778,10 @@ pub enum TextSearchType {
 	#[strum(to_string = "contains")]
 	Contains,
 
+	#[serde(rename = "not_contains")]
+	#[strum(to_string = "not_contains")]
+	NotContains,
+
 	#[serde(rename = "starts_with")]
 	#[strum(to_string = "starts_with")]
 	StartsWith,
@@ -1057,11 +1061,24 @@ pub struct SetSortColumnsParams {
 /// Parameters for the GetColumnProfiles method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct GetColumnProfilesParams {
+	/// Async callback unique identifier
+	pub callback_id: String,
+
 	/// Array of requested profiles
 	pub profiles: Vec<ColumnProfileRequest>,
 
 	/// Formatting options for returning data values as strings
 	pub format_options: FormatOptions,
+}
+
+/// Parameters for the ReturnColumnProfiles method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ReturnColumnProfilesParams {
+	/// Async callback unique identifier
+	pub callback_id: String,
+
+	/// Array of individual column profile results
+	pub profiles: Vec<ColumnProfileResult>,
 }
 
 /**
@@ -1121,9 +1138,10 @@ pub enum DataExplorerBackendRequest {
 	#[serde(rename = "set_sort_columns")]
 	SetSortColumns(SetSortColumnsParams),
 
-	/// Request a batch of column profiles
+	/// Async request a batch of column profiles
 	///
-	/// Requests a statistical summary or data profile for batch of columns
+	/// Async request for a statistical summary or data profile for batch of
+	/// columns
 	#[serde(rename = "get_column_profiles")]
 	GetColumnProfiles(GetColumnProfilesParams),
 
@@ -1164,7 +1182,8 @@ pub enum DataExplorerBackendReply {
 	/// Reply for the set_sort_columns method (no result)
 	SetSortColumnsReply(),
 
-	GetColumnProfilesReply(Vec<ColumnProfileResult>),
+	/// Reply for the get_column_profiles method (no result)
+	GetColumnProfilesReply(),
 
 	/// The current backend state for the data explorer
 	GetStateReply(BackendState),
@@ -1201,6 +1220,10 @@ pub enum DataExplorerFrontendEvent {
 	/// and triggering a refresh/redraw.
 	#[serde(rename = "data_update")]
 	DataUpdate,
+
+	/// Return async result of get_column_profiles request
+	#[serde(rename = "return_column_profiles")]
+	ReturnColumnProfiles(ReturnColumnProfilesParams),
 
 }
 

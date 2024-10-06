@@ -280,7 +280,7 @@ impl RVariables {
      * Clear the environment. Uses rm(envir = <env>, list = ls(<env>, all.names = TRUE))
      */
     fn delete(&mut self, variables: Vec<String>) -> Result<(), harp::error::Error> {
-        r_task(|| unsafe {
+        r_task(|| {
             let variables: Vec<&str> = variables.iter().map(|s| s as &str).collect();
 
             let env = self.env.get().clone();

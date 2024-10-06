@@ -6,7 +6,7 @@ use crate::r_symbol;
 use crate::RObject;
 
 pub fn zap_srcref(x: SEXP) -> RObject {
-    let x = unsafe { RObject::new(x) };
+    let x = RObject::new(x);
 
     match x.kind() {
         libr::CLOSXP => zap_srcref_fn(x.sexp),

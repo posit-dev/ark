@@ -1,5 +1,6 @@
 use tree_sitter::Node;
 
+use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::rope::RopeExt;
 
 #[derive(Debug, PartialEq)]
@@ -27,6 +28,8 @@ pub enum NodeType {
     Complex,
     Float,
     String,
+    StringContent,
+    EscapeSequence,
     Identifier,
     DotDotI,
     Dots,
@@ -41,7 +44,6 @@ pub enum NodeType {
     Na(NaType),
     Comment,
     Comma,
-    UnmatchedDelimiter(UnmatchedDelimiterType),
     Error,
     Anonymous(String),
 }
@@ -71,6 +73,8 @@ fn node_type(x: &Node) -> NodeType {
         "complex" => NodeType::Complex,
         "float" => NodeType::Float,
         "string" => NodeType::String,
+        "string_content" => NodeType::StringContent,
+        "escape_sequence" => NodeType::EscapeSequence,
         "identifier" => NodeType::Identifier,
         "dot_dot_i" => NodeType::DotDotI,
         "dots" => NodeType::Dots,
@@ -85,7 +89,6 @@ fn node_type(x: &Node) -> NodeType {
         "na" => NodeType::Na(na_type(x)),
         "comment" => NodeType::Comment,
         "comma" => NodeType::Comma,
-        "unmatched_delimiter" => NodeType::UnmatchedDelimiter(unmatched_delimiter_type(x)),
         "ERROR" => NodeType::Error,
         anonymous => NodeType::Anonymous(anonymous.to_string()),
     }
@@ -272,27 +275,6 @@ fn na_type(x: &Node) -> NaType {
     }
 }
 
-#[derive(Debug, PartialEq)]
-pub enum UnmatchedDelimiterType {
-    /// `}`
-    Brace,
-    /// `)`
-    Parenthesis,
-    /// `]`
-    Bracket,
-}
-
-fn unmatched_delimiter_type(x: &Node) -> UnmatchedDelimiterType {
-    let x = x.child(0).unwrap();
-
-    match x.kind() {
-        "}" => UnmatchedDelimiterType::Brace,
-        ")" => UnmatchedDelimiterType::Parenthesis,
-        "]" => UnmatchedDelimiterType::Bracket,
-        _ => panic!("Unknown `unmatched_delimiter` kind {}.", x.kind()),
-    }
-}
-
 pub trait NodeTypeExt: Sized {
     fn node_type(&self) -> NodeType;
 
@@ -302,14 +284,21 @@ pub trait NodeTypeExt: Sized {
     fn is_identifier_or_string(&self) -> bool;
     fn is_keyword(&self) -> bool;
     fn is_call(&self) -> bool;
+    fn is_subset(&self) -> bool;
+    fn is_subset2(&self) -> bool;
     fn is_comment(&self) -> bool;
     fn is_braced_expression(&self) -> bool;
     fn is_function_definition(&self) -> bool;
     fn is_if_statement(&self) -> bool;
+    fn is_argument(&self) -> bool;
+    fn is_arguments(&self) -> bool;
     fn is_namespace_operator(&self) -> bool;
     fn is_namespace_internal_operator(&self) -> bool;
     fn is_unary_operator(&self) -> bool;
     fn is_binary_operator(&self) -> bool;
+    fn is_native_pipe_operator(&self) -> bool;
+    fn is_magrittr_pipe_operator(&self, contents: &ropey::Rope) -> anyhow::Result<bool>;
+    fn is_pipe_operator(&self, contents: &ropey::Rope) -> anyhow::Result<bool>;
 }
 
 impl NodeTypeExt for Node<'_> {
@@ -353,6 +342,14 @@ impl NodeTypeExt for Node<'_> {
         self.node_type() == NodeType::Call
     }
 
+    fn is_subset(&self) -> bool {
+        self.node_type() == NodeType::Subset
+    }
+
+    fn is_subset2(&self) -> bool {
+        self.node_type() == NodeType::Subset2
+    }
+
     fn is_comment(&self) -> bool {
         self.node_type() == NodeType::Comment
     }
@@ -367,6 +364,14 @@ impl NodeTypeExt for Node<'_> {
 
     fn is_if_statement(&self) -> bool {
         self.node_type() == NodeType::IfStatement
+    }
+
+    fn is_argument(&self) -> bool {
+        self.node_type() == NodeType::Argument
+    }
+
+    fn is_arguments(&self) -> bool {
+        self.node_type() == NodeType::Arguments
     }
 
     fn is_namespace_operator(&self) -> bool {
@@ -384,10 +389,62 @@ impl NodeTypeExt for Node<'_> {
     fn is_binary_operator(&self) -> bool {
         matches!(self.node_type(), NodeType::BinaryOperator(_))
     }
+
+    fn is_native_pipe_operator(&self) -> bool {
+        self.node_type() == NodeType::BinaryOperator(BinaryOperatorType::Pipe)
+    }
+
+    fn is_magrittr_pipe_operator(&self, contents: &ropey::Rope) -> anyhow::Result<bool> {
+        if self.node_type() != NodeType::BinaryOperator(BinaryOperatorType::Special) {
+            return Ok(false);
+        }
+
+        let Some(operator) = self.child_by_field_name("operator") else {
+            return Ok(false);
+        };
+
+        let text = contents.node_slice(&operator)?;
+
+        Ok(text == "%>%")
+    }
+
+    fn is_pipe_operator(&self, contents: &ropey::Rope) -> anyhow::Result<bool> {
+        if self.is_native_pipe_operator() {
+            return Ok(true);
+        }
+
+        if self.is_magrittr_pipe_operator(contents)? {
+            return Ok(true);
+        }
+
+        Ok(false)
+    }
 }
 
 pub(crate) fn node_text(node: &Node, contents: &ropey::Rope) -> Option<String> {
     contents.node_slice(node).ok().map(|f| f.to_string())
+}
+
+pub(crate) fn node_has_error_or_missing(node: &Node) -> bool {
+    // According to the docs, `node.has_error()` should return `true`
+    // if `node` is itself an error, or if it contains any errors, but that
+    // doesn't seem to be the case for terminal ERROR nodes.
+    // https://github.com/tree-sitter/tree-sitter/issues/3623
+    node.is_error() || node.has_error()
+}
+
+pub(crate) fn node_find_string<'a>(node: &'a Node) -> Option<Node<'a>> {
+    // If we are on one of the following, we return the string parent:
+    // - Anonymous node inside a string, like `"'"`
+    // - `NodeType::StringContent`
+    // - `NodeType::EscapeSequence`
+    // Note that `ancestors()` is actually inclusive, so the original `node`
+    // is also considered as a potential string here.
+    node.ancestors().find(|node| node.is_string())
+}
+
+pub(crate) fn node_in_string(node: &Node) -> bool {
+    node_find_string(node).is_some()
 }
 
 pub(crate) fn node_is_call(node: &Node, name: &str, contents: &ropey::Rope) -> bool {

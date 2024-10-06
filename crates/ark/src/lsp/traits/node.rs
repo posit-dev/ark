@@ -271,8 +271,8 @@ mod tests {
     use tree_sitter::Parser;
     use tree_sitter::Point;
 
+    use crate::fixtures::point_from_cursor;
     use crate::lsp::traits::node::NodeExt;
-    use crate::test::point_from_cursor;
 
     #[test]
     #[rustfmt::skip]
@@ -287,12 +287,10 @@ fn <- function(x, arg) {
 
         let (text, point) = point_from_cursor(text);
 
-        let language = tree_sitter_r::language();
-
         // create a parser for this document
         let mut parser = Parser::new();
         parser
-            .set_language(&language)
+            .set_language(&tree_sitter_r::LANGUAGE.into())
             .expect("failed to create parser");
 
         let tree = parser.parse(text, None).unwrap();

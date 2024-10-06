@@ -45,6 +45,7 @@ use harp::vector::names::Names;
 use harp::vector::CharacterVector;
 use harp::vector::IntegerVector;
 use harp::vector::Vector;
+use harp::TableDim;
 use itertools::Itertools;
 use libr::*;
 use stdext::local;
@@ -96,7 +97,15 @@ impl WorkspaceVariableDisplayValue {
     }
 
     fn from_data_frame(value: SEXP) -> Self {
-        let dim = harp::df_dim(value);
+        let dim = match unsafe { harp::df_dim(value) } {
+            Ok(dim) => dim,
+            // FIXME: Needs more type safety
+            Err(_) => TableDim {
+                num_rows: -1,
+                num_cols: -1,
+            },
+        };
+
         let class = match r_classes(value) {
             None => String::from(""),
             Some(classes) => match classes.get_unchecked(0) {
@@ -492,6 +501,14 @@ impl PositronVariable {
 
         let kind = Self::variable_kind(x);
 
+        let size = match RObject::view(x).size() {
+            Ok(size) => size as i64,
+            Err(err) => {
+                log::warn!("Can't compute size of object: {err}");
+                0
+            },
+        };
+
         Self {
             var: Variable {
                 access_key,
@@ -501,7 +518,7 @@ impl PositronVariable {
                 type_info,
                 kind,
                 length: Self::variable_length(x) as i64,
-                size: RObject::view(x).size() as i64,
+                size,
                 has_children: has_children(x),
                 is_truncated,
                 has_viewer: r_is_data_frame(x) || r_is_matrix(x),

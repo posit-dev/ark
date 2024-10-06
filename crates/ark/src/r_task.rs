@@ -14,9 +14,9 @@ use std::time::Duration;
 
 use crossbeam::channel::bounded;
 use crossbeam::channel::Sender;
-use harp::test::R_TASK_BYPASS;
 use uuid::Uuid;
 
+use crate::fixtures::r_test_init;
 use crate::interface::RMain;
 
 // Compared to `futures::BoxFuture`, this doesn't require the future to be Send.
@@ -146,7 +146,9 @@ where
     T: 'env + Send,
 {
     // Escape hatch for unit tests
-    if unsafe { R_TASK_BYPASS } {
+    if stdext::IS_TESTING {
+        let _lock = unsafe { harp::fixtures::R_TEST_LOCK.lock() };
+        r_test_init();
         return f();
     }
 
@@ -230,7 +232,6 @@ where
     return result.lock().unwrap().take().unwrap();
 }
 
-#[allow(dead_code)] // Currently unused
 pub(crate) fn spawn_idle<F, Fut>(fun: F)
 where
     F: FnOnce() -> Fut + 'static + Send,
@@ -252,13 +253,15 @@ where
     F: FnOnce() -> Fut + 'static + Send,
     Fut: Future<Output = ()> + 'static,
 {
-    // Idle tasks are always run from the read-console loop
-    if !only_idle && unsafe { R_TASK_BYPASS } {
-        // Escape hatch for unit tests
+    // Escape hatch for unit tests
+    if stdext::IS_TESTING {
+        let _lock = unsafe { harp::fixtures::R_TEST_LOCK.lock() };
         futures::executor::block_on(fun());
         return;
     }
 
+    // Note that this blocks until the channels are initialized,
+    // even though these are async tasks!
     let tasks_tx = if only_idle {
         get_tasks_idle_tx()
     } else {
@@ -286,7 +289,7 @@ pub fn initialize(tasks_tx: Sender<RTask>, tasks_idle_tx: Sender<RTask>) {
 }
 
 // Be defensive for the case an auxiliary thread runs a task before R is initialized
-// by `start_r()`, which calls `r_task::initialize()`
+// by `RMain::start()` which calls `r_task::initialize()`
 fn get_tasks_interrupt_tx() -> &'static Sender<RTask> {
     get_tx(&R_MAIN_TASKS_INTERRUPT_TX)
 }
@@ -312,5 +315,5 @@ fn get_tx(once_tx: &'static OnceLock<Sender<RTask>>) -> &'static Sender<RTask> {
     }
 }
 
-// Tests are tricky because `harp::test::start_r()` is very bare bones and
+// Tests are tricky because `harp::fixtures::r_test_init()` is very bare bones and
 // doesn't have an `R_MAIN` or `R_MAIN_TASKS_TX`.

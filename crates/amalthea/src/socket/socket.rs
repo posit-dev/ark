@@ -180,6 +180,14 @@ impl Socket {
         }
     }
 
+    pub fn poll_incoming(&self, timeout_ms: i64) -> zmq::Result<bool> {
+        Ok(self.socket.poll(zmq::PollEvents::POLLIN, timeout_ms)? != 0)
+    }
+
+    pub fn has_incoming_data(&self) -> zmq::Result<bool> {
+        self.poll_incoming(0)
+    }
+
     /// Subscribes a SUB socket to all the published messages from a PUB socket.
     ///
     /// Note that this needs to be called *after* the socket connection is

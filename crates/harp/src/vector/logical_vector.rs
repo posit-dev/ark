@@ -1,7 +1,7 @@
 //
 // logical_vector.rs
 //
-// Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2022-2024 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -35,22 +35,24 @@ impl Vector for LogicalVector {
         }
     }
 
-    unsafe fn create<T>(data: T) -> Self
+    fn create<T>(data: T) -> Self
     where
         T: IntoIterator,
         <T as IntoIterator>::IntoIter: ExactSizeIterator,
         <T as IntoIterator>::Item: AsRef<Self::Item>,
     {
-        let it = data.into_iter();
-        let count = it.len();
+        unsafe {
+            let it = data.into_iter();
+            let count = it.len();
 
-        let vector = Rf_allocVector(Self::SEXPTYPE, count as R_xlen_t);
-        let dataptr = DATAPTR(vector) as *mut Self::Type;
-        it.enumerate().for_each(|(index, value)| {
-            *(dataptr.offset(index as isize)) = *value.as_ref();
-        });
+            let vector = Rf_allocVector(Self::SEXPTYPE, count as R_xlen_t);
+            let dataptr = DATAPTR(vector) as *mut Self::Type;
+            it.enumerate().for_each(|(index, value)| {
+                *(dataptr.offset(index as isize)) = *value.as_ref();
+            });
 
-        Self::new_unchecked(vector)
+            Self::new_unchecked(vector)
+        }
     }
 
     fn data(&self) -> SEXP {
@@ -75,5 +77,13 @@ impl Vector for LogicalVector {
         } else {
             String::from("FALSE")
         }
+    }
+}
+
+impl TryFrom<&LogicalVector> for Vec<bool> {
+    type Error = harp::Error;
+
+    fn try_from(value: &LogicalVector) -> harp::Result<Self> {
+        super::try_vec_from_r_vector(value)
     }
 }

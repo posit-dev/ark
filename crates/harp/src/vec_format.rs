@@ -179,12 +179,11 @@ mod tests {
     use harp::object::*;
     use harp::r_char;
 
-    use crate::test::r_test;
     use crate::vec_format::vec_format;
 
     #[test]
     fn test_vec_format_methods() {
-        r_test(|| unsafe {
+        crate::r_task(|| unsafe {
             let x = RObject::from(r_alloc_integer(2));
             r_int_poke(x.sexp, 0, 1);
             r_int_poke(x.sexp, 1, r_int_na());
@@ -210,7 +209,7 @@ mod tests {
 
     #[test]
     fn test_vec_format_truncation() {
-        r_test(|| {
+        crate::r_task(|| {
             let x = RObject::from(r_alloc_integer(6));
             r_int_poke(x.sexp, 0, 1);
             r_int_poke(x.sexp, 1, 2);
@@ -227,7 +226,7 @@ mod tests {
 
     #[test]
     fn test_vec_format_empty() {
-        r_test(|| {
+        crate::r_task(|| {
             let x = RObject::from(r_alloc_logical(0));
             assert_eq!(vec_format(x.sexp, None), String::from("logical(0)"));
 

@@ -8,17 +8,17 @@
 use anyhow::anyhow;
 use harp::environment::Environment;
 use harp::environment::R_ENVS;
-use harp::eval::r_parse_eval;
-use harp::exec::r_parse_exprs_with_srcrefs;
-use harp::exec::r_source_str_in;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::r_symbol;
 use harp::utils::r_poke_option;
+use harp::RObject;
 use libr::Rf_ScalarLogical;
 use libr::SEXP;
 use once_cell::sync::Lazy;
 use rust_embed::RustEmbed;
+
+use crate::r_task;
 
 #[derive(RustEmbed)]
 #[folder = "src/modules/positron"]
@@ -30,7 +30,7 @@ struct RStudioModuleAsset;
 
 fn source_asset<T: RustEmbed>(file: &str, fun: &str, env: SEXP) -> anyhow::Result<()> {
     with_asset::<T, _>(file, |source| {
-        let exprs = r_parse_exprs_with_srcrefs(source)?;
+        let exprs = harp::parse_exprs_with_srcrefs(source)?;
         RFunction::new("", fun).param("exprs", exprs).call_in(env)?;
         Ok(())
     })
@@ -47,14 +47,14 @@ where
 }
 
 pub static ARK_ENVS: Lazy<ArkEnvs> = Lazy::new(|| {
-    let positron_ns = r_parse_eval(
+    let positron_ns = harp::parse_eval(
         "environment(as.environment('tools:positron')$.ps.internal)",
         Default::default(),
     )
     .unwrap()
     .sexp;
 
-    let rstudio_ns = r_parse_eval(
+    let rstudio_ns = harp::parse_eval(
         "as.environment('tools:rstudio')$.__rstudio_ns__.",
         Default::default(),
     )
@@ -77,9 +77,10 @@ pub struct ArkEnvs {
     pub rstudio_ns: SEXP,
 }
 
-pub fn initialize(testing: bool) -> anyhow::Result<()> {
+/// Returns positron namespace.
+pub fn initialize() -> anyhow::Result<RObject> {
     // If we are `testing`, set the corresponding R level global option
-    if testing {
+    if stdext::IS_TESTING {
         r_poke_option_ark_testing()
     }
 
@@ -90,7 +91,7 @@ pub fn initialize(testing: bool) -> anyhow::Result<()> {
 
     // Load initial utils into the namespace
     with_asset::<PositronModuleAsset, _>("init.R", |source| {
-        Ok(r_source_str_in(source, namespace.sexp)?)
+        Ok(harp::source_str_in(source, namespace.sexp)?)
     })?;
 
     // Lock the environment. It will be unlocked automatically when updating.
@@ -132,14 +133,18 @@ pub fn initialize(testing: bool) -> anyhow::Result<()> {
                 namespace.sexp,
             )?;
 
-            log::info!("Watching R modules from sources via cargo manifest");
-            spawn_watcher_thread(root, namespace.sexp);
+            // Spawn the watcher thread when R is idle so we don't try to access
+            // the R API while R is starting up
+            r_task::spawn_idle(move || async {
+                log::info!("Watching R modules from sources via cargo manifest");
+                spawn_watcher_thread(root);
+            });
         } else {
             log::error!("Can't find ark R modules from sources");
         }
     }
 
-    return Ok(());
+    return Ok(namespace);
 }
 
 #[cfg(debug_assertions)]
@@ -155,14 +160,13 @@ mod debug {
     use libr::SEXP;
     use stdext::spawn;
 
+    use crate::interface::RMain;
     use crate::r_task;
-    use crate::thread::RThreadSafe;
 
-    pub fn spawn_watcher_thread(root: PathBuf, namespace: SEXP) {
+    pub fn spawn_watcher_thread(root: PathBuf) {
         spawn!("ark-modules-watcher", {
-            let ns = RThreadSafe::new(namespace);
             move || {
-                let mut watcher = RModuleWatcher::new(root, ns);
+                let mut watcher = RModuleWatcher::new(root);
                 match watcher.watch() {
                     Ok(_) => {},
                     Err(err) => log::error!("[watcher] Error watching files: {err:?}"),
@@ -184,7 +188,6 @@ mod debug {
     pub struct RModuleWatcher {
         path: PathBuf,
         cache: HashMap<PathBuf, (SystemTime, RModuleSource)>,
-        ns: RThreadSafe<SEXP>,
     }
 
     #[derive(Copy, Clone)]
@@ -194,11 +197,10 @@ mod debug {
     }
 
     impl RModuleWatcher {
-        pub fn new(path: PathBuf, ns: RThreadSafe<SEXP>) -> Self {
+        pub fn new(path: PathBuf) -> Self {
             Self {
                 path,
                 cache: HashMap::new(),
-                ns,
             }
         }
 
@@ -241,7 +243,10 @@ mod debug {
                 }
 
                 r_task(|| {
-                    if let Err(err) = import_file(&path, *src, *self.ns.get()) {
+                    let r_main = RMain::get();
+                    if let Err(err) =
+                        import_file(&path, *src, r_main.positron_ns.as_ref().unwrap().sexp)
+                    {
                         log::error!("{err:?}");
                     }
                 });
@@ -292,11 +297,9 @@ fn r_poke_option_ark_testing() {
 #[cfg(test)]
 mod tests {
     use harp::environment::Environment;
-    use harp::environment::R_ENVS;
-    use harp::eval::r_parse_eval0;
     use libr::CLOENV;
 
-    use crate::test::r_test;
+    use crate::r_task;
 
     fn get_namespace(exports: Environment, fun: &str) -> Environment {
         let fun = exports.find(fun).unwrap();
@@ -306,11 +309,10 @@ mod tests {
 
     #[test]
     fn test_environments_are_locked() {
-        r_test(|| {
+        r_task(|| {
             let positron_exports =
-                r_parse_eval0("as.environment('tools:positron')", R_ENVS.base).unwrap();
-            let rstudio_exports =
-                r_parse_eval0("as.environment('tools:rstudio')", R_ENVS.base).unwrap();
+                harp::parse_eval_base("as.environment('tools:positron')").unwrap();
+            let rstudio_exports = harp::parse_eval_base("as.environment('tools:rstudio')").unwrap();
 
             let positron_exports = Environment::new(positron_exports);
             let rstudio_exports = Environment::new(rstudio_exports);

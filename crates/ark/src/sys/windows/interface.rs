@@ -25,6 +25,7 @@ use stdext::cargs;
 use crate::interface::r_busy;
 use crate::interface::r_read_console;
 use crate::interface::r_show_message;
+use crate::interface::r_suicide;
 use crate::interface::r_write_console;
 use crate::sys::windows::strings::system_to_utf8;
 
@@ -74,6 +75,7 @@ pub fn setup_r(mut _args: Vec<*mut c_char>) {
         (*params).ShowMessage = Some(r_show_message);
         (*params).YesNoCancel = Some(r_yes_no_cancel);
         (*params).Busy = Some(r_busy);
+        (*params).Suicide = Some(r_suicide);
 
         // This is assigned to `ptr_ProcessEvents` (which we don't set on Unix),
         // in `R_SetParams()` by `R_SetWin32()` and gets called by `R_ProcessEvents()`.
@@ -85,6 +87,14 @@ pub fn setup_r(mut _args: Vec<*mut c_char>) {
 
         // Sets the parameters to internal R globals, like all of the `ptr_*` function pointers
         R_SetParams(params);
+
+        // In tests R may be run from various threads. This confuses R's stack
+        // overflow checks so we disable those. This should not make it in
+        // production builds as it causes stack overflows to crash R instead of
+        // throwing an R error.
+        if stdext::IS_TESTING {
+            libr::set(libr::R_CStackLimit, usize::MAX);
+        }
 
         // R global ui initialization
         libr::graphapp::GA_initapp(0, std::ptr::null_mut());

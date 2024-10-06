@@ -1,13 +1,12 @@
 //
-// test.rs
+// fixtures/utils.rs
 //
-// Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2024 Posit Software, PBC. All rights reserved.
 //
 //
 
-// Wrapper around `harp::r_test_impl()` that also initializes the ark level R
-// modules, so they can be utilized in the tests
-
+use std::sync::Mutex;
+use std::sync::MutexGuard;
 use std::sync::Once;
 
 use amalthea::comm::comm_channel::CommMsg;
@@ -18,21 +17,21 @@ use tree_sitter::Point;
 
 use crate::modules;
 
-pub fn r_test<F: FnOnce()>(f: F) {
-    let f = || {
-        initialize_ark();
-        f()
-    };
-    harp::test::r_test(f)
+// Lock for tests that can't be run concurrently. Only needed for tests that can't
+// be wrapped in an `r_task()`.
+static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+pub fn r_test_lock() -> MutexGuard<'static, ()> {
+    TEST_LOCK.lock().unwrap()
 }
 
 static INIT: Once = Once::new();
 
-fn initialize_ark() {
+pub(crate) fn r_test_init() {
+    harp::fixtures::r_test_init();
     INIT.call_once(|| {
         // Initialize the positron module so tests can use them.
-        // Routines are already registered by `harp::test::r_test()`.
-        modules::initialize(true).unwrap();
+        modules::initialize().unwrap();
     });
 }
 
@@ -97,7 +96,7 @@ where
 mod tests {
     use tree_sitter::Point;
 
-    use crate::test::point_from_cursor;
+    use crate::fixtures::point_from_cursor;
 
     #[test]
     #[rustfmt::skip]

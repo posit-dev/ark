@@ -7,7 +7,6 @@
 
 use anyhow::Result;
 use harp::error::Error;
-use harp::eval::r_parse_eval;
 use harp::eval::RParseEvalOptions;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
@@ -139,7 +138,7 @@ fn get_first_argument(context: &DocumentContext, node: &Node) -> Result<Option<R
     };
 
     // Try to evaluate the first argument
-    let value = r_parse_eval(text.as_str(), options);
+    let value = harp::parse_eval(text.as_str(), options);
 
     // If we get an `UnsafeEvaluationError` here from setting
     // `forbid_function_calls`, we don't even log that one, as that is
@@ -197,7 +196,7 @@ fn completions_from_session_arguments(
     // If we can find it, this is the most accurate way to provide completions,
     // as it represents the current state of the world and adds completions
     // for S3 methods based on `object`.
-    let r_callable = r_parse_eval(callable, RParseEvalOptions {
+    let r_callable = harp::parse_eval(callable, RParseEvalOptions {
         forbid_function_calls: true,
         ..Default::default()
     });
@@ -284,18 +283,17 @@ fn completions_from_workspace_arguments(
 
 #[cfg(test)]
 mod tests {
-    use harp::eval::r_parse_eval;
     use harp::eval::RParseEvalOptions;
     use tree_sitter::Point;
 
     use crate::lsp::completions::sources::composite::call::completions_from_call;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
-    use crate::test::r_test;
+    use crate::r_task;
 
     #[test]
     fn test_completions_after_user_types_part_of_an_argument_name() {
-        r_test(|| {
+        r_task(|| {
             // Right after `tab`
             let point = Point { row: 0, column: 9 };
             let document = Document::new("match(tab)", None);
@@ -324,7 +322,7 @@ mod tests {
     #[test]
     fn test_session_arguments() {
         // Can't find the function
-        r_test(|| {
+        r_task(|| {
             // Place cursor between `()`
             let point = Point { row: 0, column: 21 };
             let document = Document::new("not_a_known_function()", None);
@@ -334,14 +332,14 @@ mod tests {
         });
 
         // Basic session argument lookup
-        r_test(|| {
+        r_task(|| {
             let options = RParseEvalOptions {
                 forbid_function_calls: false,
                 ..Default::default()
             };
 
             // Set up a function with arguments in the session
-            r_parse_eval("my_fun <- function(y, x) x + y", options.clone()).unwrap();
+            harp::parse_eval("my_fun <- function(y, x) x + y", options.clone()).unwrap();
 
             // Place cursor between `()`
             let point = Point { row: 0, column: 7 };
@@ -373,18 +371,18 @@ mod tests {
             assert!(completions.is_none());
 
             // Clean up
-            r_parse_eval("remove(my_fun)", options.clone()).unwrap();
+            harp::parse_eval("remove(my_fun)", options.clone()).unwrap();
         });
 
         // Case where the session object isn't a function
-        r_test(|| {
+        r_task(|| {
             let options = RParseEvalOptions {
                 forbid_function_calls: false,
                 ..Default::default()
             };
 
             // Set up an object in the session
-            r_parse_eval("my_fun <- 1", options.clone()).unwrap();
+            harp::parse_eval("my_fun <- 1", options.clone()).unwrap();
 
             // Place cursor between `()`
             let point = Point { row: 0, column: 7 };
@@ -394,7 +392,7 @@ mod tests {
             assert_eq!(completions.len(), 0);
 
             // Clean up
-            r_parse_eval("remove(my_fun)", options.clone()).unwrap();
+            harp::parse_eval("remove(my_fun)", options.clone()).unwrap();
         })
     }
 }

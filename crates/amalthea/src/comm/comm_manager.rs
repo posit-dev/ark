@@ -16,8 +16,10 @@ use stdext::result::ResultOrLog;
 use stdext::spawn;
 
 use crate::comm::comm_channel::CommMsg;
+use crate::comm::event::CommInfo;
 use crate::comm::event::CommManagerEvent;
-use crate::comm::event::CommShellEvent;
+use crate::comm::event::CommManagerInfoReply;
+use crate::comm::event::CommManagerRequest;
 use crate::socket::comm::CommInitiator;
 use crate::socket::comm::CommSocket;
 use crate::socket::iopub::IOPubMessage;
@@ -29,7 +31,6 @@ pub struct CommManager {
     open_comms: Vec<CommSocket>,
     iopub_tx: Sender<IOPubMessage>,
     comm_event_rx: Receiver<CommManagerEvent>,
-    comm_shell_tx: Sender<CommShellEvent>,
     pending_rpcs: HashMap<String, JupyterHeader>,
 }
 
@@ -43,32 +44,22 @@ impl CommManager {
      * - `comm_event_rx`: The channel to receive messages about changes to the set
      *   (or state) of open comms.
      */
-    pub fn start(
-        iopub_tx: Sender<IOPubMessage>,
-        comm_event_rx: Receiver<CommManagerEvent>,
-    ) -> Receiver<CommShellEvent> {
-        let (comm_changed_tx, comm_changed_rx) = crossbeam::channel::unbounded();
+    pub fn start(iopub_tx: Sender<IOPubMessage>, comm_event_rx: Receiver<CommManagerEvent>) {
         spawn!("comm-manager", move || {
-            let mut comm_manager = CommManager::new(iopub_tx, comm_event_rx, comm_changed_tx);
+            let mut comm_manager = CommManager::new(iopub_tx, comm_event_rx);
             loop {
                 comm_manager.execution_thread();
             }
         });
-        return comm_changed_rx;
     }
 
     /**
      * Create a new CommManager.
      */
-    pub fn new(
-        iopub_tx: Sender<IOPubMessage>,
-        comm_event_rx: Receiver<CommManagerEvent>,
-        comm_shell_tx: Sender<CommShellEvent>,
-    ) -> Self {
+    pub fn new(iopub_tx: Sender<IOPubMessage>, comm_event_rx: Receiver<CommManagerEvent>) -> Self {
         Self {
             iopub_tx,
             comm_event_rx,
-            comm_shell_tx,
             open_comms: Vec::<CommSocket>::new(),
             pending_rpcs: HashMap::<String, JupyterHeader>::new(),
         }
@@ -107,17 +98,8 @@ impl CommManager {
                 return;
             }
             match comm_event.unwrap() {
-                // A Comm was opened; notify everyone
+                // A Comm was opened
                 CommManagerEvent::Opened(comm_socket, val) => {
-                    // Notify the shell handler; it maintains a list of open
-                    // comms so that the frontend can query for comm state
-                    self.comm_shell_tx
-                        .send(CommShellEvent::Added(
-                            comm_socket.comm_id.clone(),
-                            comm_socket.comm_name.clone(),
-                        ))
-                        .unwrap();
-
                     // Notify the frontend, if this request originated from the back end
                     if comm_socket.initiator == CommInitiator::BackEnd {
                         self.iopub_tx
@@ -182,10 +164,9 @@ impl CommManager {
                             .send(CommMsg::Close)
                             .or_log_error("Failed to send comm_close to comm.");
 
+                        // Remove it from our list of open comms
                         self.open_comms.remove(index);
-                        self.comm_shell_tx
-                            .send(CommShellEvent::Removed(comm_id))
-                            .unwrap();
+
                         info!(
                             "Comm channel closed; there are now {} open comms",
                             self.open_comms.len()
@@ -196,6 +177,23 @@ impl CommManager {
                             comm_id
                         );
                     }
+                },
+
+                // A comm manager request
+                CommManagerEvent::Request(req) => match req {
+                    // Requesting information about the open comms
+                    CommManagerRequest::Info(tx) => {
+                        let comms: Vec<CommInfo> = self
+                            .open_comms
+                            .iter()
+                            .map(|comm| CommInfo {
+                                id: comm.comm_id.clone(),
+                                name: comm.comm_name.clone(),
+                            })
+                            .collect();
+
+                        tx.send(CommManagerInfoReply { comms }).unwrap();
+                    },
                 },
             }
         } else {

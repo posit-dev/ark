@@ -135,17 +135,15 @@ getHtmlHelpContentsInstalled <- function(helpFiles, package) {
     return(NULL)
   }
 
+  # If there are multiple hits for the same topic, right now we just choose the first
+  # (which I believe goes with the most recently loaded package)
   helpFile <- helpFiles[[1L]]
 
   rd <- utils:::.getHelpFile(helpFile)
 
   # Set 'package' now if it was unknown.
   if (is.null(package)) {
-    pattern <- "/library/([^/]+)/"
-    m <- regexec(pattern, helpFile, perl = TRUE)
-    matches <- regmatches(helpFile, m)
-    if (length(matches) && length(matches[[1L]] == 2L))
-      package <- matches[[1L]][[2L]]
+    package <- getPackageNameFromHelpPath(helpFile)
   }
 
   # If still unknown, set to `""` for `Rd2HTML()`
@@ -159,6 +157,31 @@ getHtmlHelpContentsInstalled <- function(helpFiles, package) {
   tools::Rd2HTML(rd, out = htmlFile, package = package)
   contents <- readLines(htmlFile, warn = FALSE)
   paste(contents, collapse = "\n")
+}
+
+getPackageNameFromHelpPath <- function(path) {
+  # Help paths are always of the form:
+  # <libpath>/<package>/help/<topic>
+  #
+  # `<libpath>/<package>/help` should be a real path on the file system,
+  # and points to the folder where the Rd database is stored. Note that
+  # the full path of `<libpath>/<package>/help/<topic>` actually does NOT
+  # exist on the file system, it's just a convention!
+  #
+  # `utils:::.getHelpFile()` utilizes the fact that `<package>` is always
+  # relative to `<topic>` in a specific way, so we should be safe to do the
+  # same.
+  path_help <- dirname(path)
+  path_package <- dirname(path_help)
+
+  if (!file.exists(path_package)) {
+    # Guard against nonexistent packages
+    return(NULL)
+  }
+
+  package <- basename(path_package)
+
+  package
 }
 
 getHtmlHelpContentsDev <- function(x) {

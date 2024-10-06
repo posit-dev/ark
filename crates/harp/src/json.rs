@@ -371,17 +371,14 @@ impl TryFrom<Value> for RObject {
 mod tests {
 
     use super::*;
-    use crate::environment::R_ENVS;
-    use crate::eval::r_parse_eval0;
     use crate::exec::RFunction;
     use crate::exec::RFunctionExt;
-    use crate::r_test;
 
     // Helper that takes an R expression (as a string), parses it, evaluates it,
     // and converts it to a JSON value. We use this extensively in the tests
     // below to ensure that the R objects are serialized to JSON correctly.
     fn r_to_json(expr: &str) -> Value {
-        let evaluated = r_parse_eval0(expr, R_ENVS.global).unwrap();
+        let evaluated = harp::parse_eval_global(expr).unwrap();
 
         // Convert the evaluated expression to a JSON value
         Value::try_from(evaluated).unwrap()
@@ -422,27 +419,21 @@ mod tests {
     #[allow(non_snake_case)]
     fn test_json_scalars() {
         // We expect length-one vectors to serialize to simple JSON scalars.
-        r_test! {
+        crate::r_task(|| {
             assert_r_matches_json("TRUE", "true");
             assert_r_matches_json("1L", "1");
             assert_r_matches_json("'applesauce'", "\"applesauce\"");
-        }
+        })
     }
 
     #[test]
     #[allow(non_snake_case)]
     fn test_json_vectors() {
         // We expect vectors to serialize to JSON arrays.
-        r_test! {
-            assert_r_matches_json(
-                "c(1L, 2L, 3L)",
-                "[1,2,3]"
-            );
-            assert_r_matches_json(
-                "c('one', 'two')",
-                "[\"one\", \"two\"]"
-            );
-        }
+        crate::r_task(|| {
+            assert_r_matches_json("c(1L, 2L, 3L)", "[1,2,3]");
+            assert_r_matches_json("c('one', 'two')", "[\"one\", \"two\"]");
+        })
     }
 
     #[test]
@@ -450,48 +441,35 @@ mod tests {
     fn test_json_na_vectors() {
         // We expect vectors containing NA values to serialize to JSON arrays
         // with nulls.
-        r_test! {
-            assert_r_matches_json(
-                "c(1L, NA, 3L)",
-                "[1, null, 3]"
-            );
-            assert_r_matches_json(
-                "c('one', 'two', NA)",
-                "[\"one\", \"two\", null]"
-            );
-        }
+        crate::r_task(|| {
+            assert_r_matches_json("c(1L, NA, 3L)", "[1, null, 3]");
+            assert_r_matches_json("c('one', 'two', NA)", "[\"one\", \"two\", null]");
+        })
     }
 
     #[test]
     #[allow(non_snake_case)]
     fn test_json_lists_unnamed() {
         // We expect lists of unnamed elements to serialize to JSON arrays.
-        r_test! {
-
+        crate::r_task(|| {
             // List of integers
-            assert_r_matches_json(
-                "list(1L, 2L, 3L)",
-                "[1,2,3]"
-            );
+            assert_r_matches_json("list(1L, 2L, 3L)", "[1,2,3]");
 
             // List of logical values
-            assert_r_matches_json(
-                "l <- list(TRUE, FALSE, TRUE); l",
-                "[true, false, true]"
-            );
+            assert_r_matches_json("l <- list(TRUE, FALSE, TRUE); l", "[true, false, true]");
 
             // Empty names are ignored and treated as unnamed
             assert_r_matches_json(
                 "l <- list('a', 'b', 'c'); names(l) <- c('', '', ''); l",
-                "[\"a\", \"b\", \"c\"]"
+                "[\"a\", \"b\", \"c\"]",
             );
 
             // NA values in the names are ignored and treated as unnamed
             assert_r_matches_json(
                 "l <- list('a', 'b', 'c'); names(l) <- c('', NA, ''); l",
-                "[\"a\", \"b\", \"c\"]"
+                "[\"a\", \"b\", \"c\"]",
             );
-        }
+        })
     }
 
     #[test]
@@ -499,28 +477,22 @@ mod tests {
     fn test_json_lists_mixed_types() {
         // We expect lists of mixed/heterogeneous types to serialize to JSON
         // arrays of mixed type.
-        r_test! {
-            assert_r_matches_json(
-                "list(1L, FALSE, 'cats')",
-                "[1,false,\"cats\"]"
-            );
-        }
+        crate::r_task(|| {
+            assert_r_matches_json("list(1L, FALSE, 'cats')", "[1,false,\"cats\"]");
+        })
     }
 
     #[test]
     #[allow(non_snake_case)]
     fn test_json_lists_named() {
         // We expect named lists to serialize to JSON maps/objects.
-        r_test! {
-            assert_r_matches_json(
-                "list(a = 1L, b = 2L)",
-                "{\"a\": 1, \"b\": 2}"
-            );
+        crate::r_task(|| {
+            assert_r_matches_json("list(a = 1L, b = 2L)", "{\"a\": 1, \"b\": 2}");
             assert_r_matches_json(
                 "list(a = TRUE, b = 'cats')",
-                "{\"a\": true, \"b\": \"cats\"}"
+                "{\"a\": true, \"b\": \"cats\"}",
             );
-        }
+        })
     }
 
     #[test]
@@ -528,72 +500,66 @@ mod tests {
     fn test_json_lists_duplicate() {
         // Duplicate keys are allowed in R lists, but not JSON objects. They
         // should be converted to JSON arrays.
-        r_test! {
-            assert_r_matches_json(
-                "list(a = 1L, a = 2L, a = 3L)",
-                "{\"a\": [1, 2, 3]}"
-            );
-        }
+        crate::r_task(|| {
+            assert_r_matches_json("list(a = 1L, a = 2L, a = 3L)", "{\"a\": [1, 2, 3]}");
+        })
     }
 
     #[test]
     #[allow(non_snake_case)]
     fn test_json_lists_nested() {
         // When lists are nested, we expect them to serialize to nested JSON
-        r_test! {
+        crate::r_task(|| {
             assert_r_matches_json(
                 "list(a = 1L, b = 2L, c = list(3L, 4L, 5L))",
-                "{\"a\": 1, \"b\": 2, \"c\": [3,4,5]}"
+                "{\"a\": 1, \"b\": 2, \"c\": [3,4,5]}",
             );
-        }
+        })
     }
 
     #[test]
     #[allow(non_snake_case)]
     fn test_r_to_json_scalars() {
-        r_test! {
+        crate::r_task(|| {
             assert_json_matches_r("1", "1L");
             assert_json_matches_r("2.5", "2.5");
             assert_json_matches_r("true", "TRUE");
-        }
+        })
     }
 
     #[test]
     #[allow(non_snake_case)]
     fn test_r_to_json_lists() {
-        r_test! {
-            assert_json_matches_r(
-                "[1,2,3]",
-                "list(1L, 2L, 3L)");
+        crate::r_task(|| {
+            assert_json_matches_r("[1,2,3]", "list(1L, 2L, 3L)");
             assert_json_matches_r(
                 "[\"four\", \"five\", \"six\"]",
-                "list(\"four\", \"five\", \"six\")");
-        }
+                "list(\"four\", \"five\", \"six\")",
+            );
+        })
     }
 
     #[test]
     #[allow(non_snake_case)]
     fn test_r_to_json_lists_mixed_types() {
-        r_test! {
-            assert_json_matches_r(
-                "[1,2,false]",
-                "list(1L, 2L, FALSE)");
-            assert_json_matches_r(
-                "[\"four\", \"five\", 6]",
-                "list(\"four\", \"five\", 6L)");
-        }
+        crate::r_task(|| {
+            assert_json_matches_r("[1,2,false]", "list(1L, 2L, FALSE)");
+            assert_json_matches_r("[\"four\", \"five\", 6]", "list(\"four\", \"five\", 6L)");
+        })
     }
 
     #[test]
     #[allow(non_snake_case)]
     fn test_r_to_json_objects() {
-        r_test! {
+        crate::r_task(|| {
             assert_json_matches_r(
                 "{\"a\": 1, \"b\": 2, \"c\": 3}",
-                "list(a = 1L, b = 2L, c = 3L)");
+                "list(a = 1L, b = 2L, c = 3L)",
+            );
             assert_json_matches_r(
                 "{\"foo\": \"bar\", \"baz\": \"quux\", \"quuux\": false}",
-                "list(foo = \"bar\", baz = \"quux\", quuux = FALSE)");
-        }
+                "list(foo = \"bar\", baz = \"quux\", quuux = FALSE)",
+            );
+        })
     }
 }

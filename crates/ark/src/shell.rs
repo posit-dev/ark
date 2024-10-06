@@ -38,11 +38,10 @@ use crossbeam::channel::unbounded;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use harp::environment::R_ENVS;
-use harp::exec::r_parse_vector;
-use harp::exec::ParseResult;
 use harp::line_ending::convert_line_endings;
 use harp::line_ending::LineEnding;
 use harp::object::RObject;
+use harp::ParseResult;
 use log::*;
 use serde_json::json;
 use stdext::spawn;
@@ -116,7 +115,7 @@ impl Shell {
         &self,
         req: &IsCompleteRequest,
     ) -> Result<IsCompleteReply, Exception> {
-        match r_parse_vector(req.code.as_str()) {
+        match harp::parse_status(&harp::ParseInput::Text(req.code.as_str())) {
             Ok(ParseResult::Complete(_)) => Ok(IsCompleteReply {
                 status: IsComplete::Complete,
                 indent: String::from(""),
@@ -125,7 +124,7 @@ impl Shell {
                 status: IsComplete::Incomplete,
                 indent: String::from("+"),
             }),
-            Err(_) => Ok(IsCompleteReply {
+            Err(_) | Ok(ParseResult::SyntaxError { .. }) => Ok(IsCompleteReply {
                 status: IsComplete::Invalid,
                 indent: String::from(""),
             }),
@@ -161,9 +160,9 @@ impl ShellHandler for Shell {
             version: kernel_info.version.clone(),
             file_extension: String::from(".R"),
             mimetype: String::from("text/r"),
-            pygments_lexer: String::new(),
-            codemirror_mode: String::new(),
-            nbconvert_exporter: String::new(),
+            pygments_lexer: None,
+            codemirror_mode: None,
+            nbconvert_exporter: None,
             positron: Some(LanguageInfoPositron {
                 input_prompt: kernel_info.input_prompt.clone(),
                 continuation_prompt: kernel_info.continuation_prompt.clone(),

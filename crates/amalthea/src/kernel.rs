@@ -13,13 +13,11 @@ use crossbeam::channel::unbounded;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Select;
 use crossbeam::channel::Sender;
-use log::error;
 use stdext::spawn;
 use stdext::unwrap;
 
 use crate::comm::comm_manager::CommManager;
 use crate::comm::event::CommManagerEvent;
-use crate::comm::event::CommShellEvent;
 use crate::connection_file::ConnectionFile;
 use crate::error::Error;
 use crate::language::control_handler::ControlHandler;
@@ -38,6 +36,10 @@ use crate::stream_capture::StreamCapture;
 use crate::wire::input_reply::InputReply;
 use crate::wire::jupyter_message::Message;
 use crate::wire::jupyter_message::OutboundMessage;
+
+macro_rules! report_error {
+    ($($arg:tt)+) => (if cfg!(debug_assertions) { panic!($($arg)+) } else { log::error!($($arg)+) })
+}
 
 /// A Kernel represents a unique Jupyter kernel session and is the host for all
 /// execution and messaging threads.
@@ -126,7 +128,7 @@ impl Kernel {
         // Create the comm manager thread
         let iopub_tx = self.create_iopub_tx();
         let comm_manager_rx = self.comm_manager_rx.clone();
-        let comm_changed_rx = CommManager::start(iopub_tx, comm_manager_rx);
+        CommManager::start(iopub_tx, comm_manager_rx);
 
         // Create the Shell ROUTER/DEALER socket and start a thread to listen
         // for client messages.
@@ -149,7 +151,6 @@ impl Kernel {
                 shell_socket,
                 iopub_tx_clone,
                 comm_manager_tx_clone,
-                comm_changed_rx,
                 shell_clone,
                 lsp_handler_clone,
                 dap_handler_clone,
@@ -311,7 +312,6 @@ impl Kernel {
         socket: Socket,
         iopub_tx: Sender<IOPubMessage>,
         comm_manager_tx: Sender<CommManagerEvent>,
-        comm_changed_rx: Receiver<CommShellEvent>,
         shell_handler: Arc<Mutex<dyn ShellHandler>>,
         lsp_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
         dap_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
@@ -320,7 +320,6 @@ impl Kernel {
             socket,
             iopub_tx.clone(),
             comm_manager_tx,
-            comm_changed_rx,
             shell_handler,
             lsp_handler,
             dap_handler,
@@ -375,7 +374,7 @@ impl Kernel {
                 }
                 // Consume notification
                 let _ = unwrap!(outbound_notif_socket.socket.recv_bytes(0), Err(err) => {
-                    log::error!("Could not consume outbound notification socket: {}", err);
+                    report_error!("Could not consume outbound notification socket: {}", err);
                     return false;
                 });
 
@@ -428,7 +427,7 @@ impl Kernel {
             let n = unwrap!(
                 zmq::poll(&mut poll_items, -1),
                 Err(err) => {
-                    error!("While polling 0MQ items: {}", err);
+                    report_error!("While polling 0MQ items: {}", err);
                     0
                 }
             );
@@ -437,7 +436,7 @@ impl Kernel {
                 if has_outbound() {
                     unwrap!(
                         forward_outbound(),
-                        Err(err) => error!("While forwarding outbound message: {}", err)
+                        Err(err) => report_error!("While forwarding outbound message: {}", err)
                     );
                     continue;
                 }
@@ -445,12 +444,12 @@ impl Kernel {
                 if has_inbound() {
                     unwrap!(
                         forward_inbound(),
-                        Err(err) => error!("While forwarding inbound message: {}", err)
+                        Err(err) => report_error!("While forwarding inbound message: {}", err)
                     );
                     continue;
                 }
 
-                log::error!("Could not find readable message");
+                report_error!("Could not find readable message");
             }
         }
     }
@@ -467,7 +466,7 @@ impl Kernel {
             unwrap!(
                 notif_socket.send(zmq::Message::new()),
                 Err(err) => {
-                    error!("Couldn't notify 0MQ thread: {}", err);
+                    report_error!("Couldn't notify 0MQ thread: {}", err);
                     continue;
                 }
             );
@@ -480,7 +479,7 @@ impl Kernel {
                     notif_socket.recv(&mut msg)
                 },
                 Err(err) => {
-                    error!("Couldn't received acknowledgement from 0MQ thread: {}", err);
+                    report_error!("Couldn't received acknowledgement from 0MQ thread: {}", err);
                     continue;
                 }
             );

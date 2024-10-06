@@ -122,7 +122,7 @@ fn generate_source(
     }
 
     // These don't deparse to a `function` call!
-    if unsafe { IS_S4_OBJECT(old.sexp) != 0 } {
+    if harp::utils::r_is_s4(old.sexp) {
         return Ok(None);
     }
 

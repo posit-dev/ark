@@ -97,7 +97,7 @@ fn ark_diagnostics_args<'tree>(
 
 #[cfg(test)]
 mod test {
-    use harp::assert_match;
+    use stdext::assert_match;
 
     use crate::lsp::declarations::declare_ark_args;
     use crate::lsp::declarations::top_level_declare;

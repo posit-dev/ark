@@ -11,7 +11,10 @@ use serde::Serialize;
 use crate::wire::exception::Exception;
 use crate::wire::jupyter_message::MessageType;
 
-/// Represents an exception that occurred while executing code
+/// Represents an exception that occurred while executing code.
+/// This is sent to IOPub. Not to be confused with `ExecuteReplyException`
+/// which is a special case of a message of type `"execute_reply"` sent to Shell
+/// in response to an `"execute_request"`.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ExecuteError {
     /// The exception that occurred during execution

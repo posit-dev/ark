@@ -12,14 +12,13 @@ use amalthea::comm::event::CommManagerEvent;
 use amalthea::socket;
 use ark::connections::r_connection::Metadata;
 use ark::connections::r_connection::RConnection;
+use ark::fixtures::socket_rpc_request;
 use ark::modules::ARK_ENVS;
 use ark::r_task::r_task;
-use ark::test::r_test;
-use ark::test::socket_rpc_request;
 use crossbeam::channel::bounded;
-use harp::assert_match;
 use harp::exec::RFunction;
 use harp::object::RObject;
+use stdext::assert_match;
 
 fn open_dummy_connection() -> socket::comm::CommSocket {
     print!("testing!\n");
@@ -90,141 +89,131 @@ fn socket_rpc(
 
 #[test]
 fn test_connections_get_icon() {
-    r_test(|| {
-        let socket = open_dummy_connection();
+    let socket = open_dummy_connection();
 
-        // Check that we get the correct icons
-        let cases: Vec<(Vec<ObjectSchema>, String)> = vec![
-            (vec![], "dummy-connection.png".to_string()),
-            (vec![obj("main", "schema")], "schema.png".to_string()),
-            (
-                vec![obj("main", "schema"), obj("table1", "table")],
-                "table.png".to_string(),
-            ),
-            (
-                vec![obj("main", "schema"), obj("table2", "table")],
-                "table.png".to_string(),
-            ),
-            (
-                vec![obj("main", "schema"), obj("view1", "view")],
-                "".to_string(),
-            ),
-        ];
+    // Check that we get the correct icons
+    let cases: Vec<(Vec<ObjectSchema>, String)> = vec![
+        (vec![], "dummy-connection.png".to_string()),
+        (vec![obj("main", "schema")], "schema.png".to_string()),
+        (
+            vec![obj("main", "schema"), obj("table1", "table")],
+            "table.png".to_string(),
+        ),
+        (
+            vec![obj("main", "schema"), obj("table2", "table")],
+            "table.png".to_string(),
+        ),
+        (
+            vec![obj("main", "schema"), obj("view1", "view")],
+            "".to_string(),
+        ),
+    ];
 
-        for (path, icon_path) in cases {
-            assert_match!(
-                socket_rpc(&socket, ConnectionsBackendRequest::GetIcon(GetIconParams { path })),
-                ConnectionsBackendReply::GetIconReply(path) => {
-                    assert_eq!(path, icon_path);
-                }
-            );
-        }
-    })
+    for (path, icon_path) in cases {
+        assert_match!(
+            socket_rpc(&socket, ConnectionsBackendRequest::GetIcon(GetIconParams { path })),
+            ConnectionsBackendReply::GetIconReply(path) => {
+                assert_eq!(path, icon_path);
+            }
+        );
+    }
 }
 
 #[test]
 fn test_connections_contains_data() {
-    r_test(|| {
-        let socket = open_dummy_connection();
+    let socket = open_dummy_connection();
 
-        // Check that we get the correct `contains_data`
-        let cases: Vec<(Vec<ObjectSchema>, bool)> = vec![
-            (vec![], false),
-            (vec![obj("main", "schema")], false),
-            (vec![obj("main", "schema"), obj("table1", "table")], true),
-            (vec![obj("main", "schema"), obj("table2", "table")], true),
-            (vec![obj("main", "schema"), obj("view1", "view")], true),
-        ];
+    // Check that we get the correct `contains_data`
+    let cases: Vec<(Vec<ObjectSchema>, bool)> = vec![
+        (vec![], false),
+        (vec![obj("main", "schema")], false),
+        (vec![obj("main", "schema"), obj("table1", "table")], true),
+        (vec![obj("main", "schema"), obj("table2", "table")], true),
+        (vec![obj("main", "schema"), obj("view1", "view")], true),
+    ];
 
-        for (path, contains_data) in cases {
-            assert_match!(
-                socket_rpc(&socket, ConnectionsBackendRequest::ContainsData(ContainsDataParams { path })),
-                ConnectionsBackendReply::ContainsDataReply(val) => {
-                    assert_eq!(val, contains_data);
-                }
-            );
-        }
-    })
+    for (path, contains_data) in cases {
+        assert_match!(
+            socket_rpc(&socket, ConnectionsBackendRequest::ContainsData(ContainsDataParams { path })),
+            ConnectionsBackendReply::ContainsDataReply(val) => {
+                assert_eq!(val, contains_data);
+            }
+        );
+    }
 }
 
 #[test]
 fn test_connections_list_objects() {
-    r_test(|| {
-        let socket = open_dummy_connection();
+    let socket = open_dummy_connection();
 
-        // Check that we get the correct list of objects
-        let cases: Vec<(Vec<ObjectSchema>, Vec<ObjectSchema>)> = vec![
-            (vec![], vec![obj("main", "schema")]),
-            (vec![obj("main", "schema")], vec![
-                obj("table1", "table"),
-                obj("table2", "table"),
-                obj("view1", "view"),
-            ]),
-        ];
+    // Check that we get the correct list of objects
+    let cases: Vec<(Vec<ObjectSchema>, Vec<ObjectSchema>)> = vec![
+        (vec![], vec![obj("main", "schema")]),
+        (vec![obj("main", "schema")], vec![
+            obj("table1", "table"),
+            obj("table2", "table"),
+            obj("view1", "view"),
+        ]),
+    ];
 
-        for (path, objects) in cases {
-            assert_match!(
-                socket_rpc(&socket, ConnectionsBackendRequest::ListObjects(ListObjectsParams { path })),
-                ConnectionsBackendReply::ListObjectsReply(val) => {
-                    assert_eq!(val, objects);
-                }
-            );
-        }
-    })
+    for (path, objects) in cases {
+        assert_match!(
+            socket_rpc(&socket, ConnectionsBackendRequest::ListObjects(ListObjectsParams { path })),
+            ConnectionsBackendReply::ListObjectsReply(val) => {
+                assert_eq!(val, objects);
+            }
+        );
+    }
 }
 
 #[test]
 fn test_connection_list_fields() {
-    r_test(|| {
-        let socket = open_dummy_connection();
+    let socket = open_dummy_connection();
 
-        // Check that we get the correct list of objects
-        let cases: Vec<(Vec<ObjectSchema>, Vec<FieldSchema>)> = vec![
-            (vec![obj("main", "schema"), obj("table1", "table")], vec![
-                field("table1_col1", "integer"),
-                field("table1_col2", "character"),
-                field("table1_col3", "logical"),
-            ]),
-            (vec![obj("main", "schema"), obj("view1", "view")], vec![
-                field("view1_col1", "integer"),
-                field("view1_col2", "character"),
-                field("view1_col3", "logical"),
-            ]),
-        ];
+    // Check that we get the correct list of objects
+    let cases: Vec<(Vec<ObjectSchema>, Vec<FieldSchema>)> = vec![
+        (vec![obj("main", "schema"), obj("table1", "table")], vec![
+            field("table1_col1", "integer"),
+            field("table1_col2", "character"),
+            field("table1_col3", "logical"),
+        ]),
+        (vec![obj("main", "schema"), obj("view1", "view")], vec![
+            field("view1_col1", "integer"),
+            field("view1_col2", "character"),
+            field("view1_col3", "logical"),
+        ]),
+    ];
 
-        for (path, objects) in cases {
-            assert_match!(
-                socket_rpc(&socket, ConnectionsBackendRequest::ListFields(ListFieldsParams { path })),
-                ConnectionsBackendReply::ListFieldsReply(val) => {
-                    assert_eq!(val, objects);
-                }
-            );
-        }
-    })
+    for (path, objects) in cases {
+        assert_match!(
+            socket_rpc(&socket, ConnectionsBackendRequest::ListFields(ListFieldsParams { path })),
+            ConnectionsBackendReply::ListFieldsReply(val) => {
+                assert_eq!(val, objects);
+            }
+        );
+    }
 }
 
 #[test]
 fn test_send_frontend_event() {
-    r_test(|| {
-        let socket = open_dummy_connection();
+    let socket = open_dummy_connection();
 
-        let event = ConnectionsFrontendEvent::Update;
+    let event = ConnectionsFrontendEvent::Update;
 
-        socket
-            .incoming_tx
-            .send(CommMsg::Data(serde_json::to_value(event).unwrap()))
-            .unwrap();
+    socket
+        .incoming_tx
+        .send(CommMsg::Data(serde_json::to_value(event).unwrap()))
+        .unwrap();
 
-        let msg = socket
-            .outgoing_rx
-            .recv_timeout(std::time::Duration::from_secs(1))
-            .unwrap();
+    let msg = socket
+        .outgoing_rx
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .unwrap();
 
-        if let CommMsg::Data(value) = msg {
-            let v: ConnectionsFrontendEvent = serde_json::from_value(value).unwrap();
-            assert_eq!(ConnectionsFrontendEvent::Update, v);
-        } else {
-            panic!("Expected a CommMsg::Data");
-        }
-    })
+    if let CommMsg::Data(value) = msg {
+        let v: ConnectionsFrontendEvent = serde_json::from_value(value).unwrap();
+        assert_eq!(ConnectionsFrontendEvent::Update, v);
+    } else {
+        panic!("Expected a CommMsg::Data");
+    }
 }

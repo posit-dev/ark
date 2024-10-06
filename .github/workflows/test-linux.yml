@@ -1,0 +1,63 @@
+name: "Test Ark - Linux"
+
+on:
+  workflow_call:
+  workflow_dispatch:
+    inputs:
+      ssh:
+        description: 'Set up an SSH session before running `cargo test`?'
+        type: boolean
+        required: true
+        default: false
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    name: "Rust: ${{ matrix.config.rust }}, R: ${{ matrix.config.r }}"
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - { rust: 'stable',  r: 'release' }
+          # Oldest supported R version
+          - { rust: 'stable',  r: '4.2' }
+          # Nightly rust
+          - { rust: 'nightly', r: 'release' }
+    timeout-minutes: 30
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@nightly
+        if: matrix.config.rust == 'nightly'
+
+      - name: Install R
+        uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: ${{ matrix.config.r }}
+          use-public-rspm: true
+
+      - name: Install R Packages Required For Tests
+        uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          packages:
+            data.table
+            tibble
+
+      - name: Setup Build Environment
+        run: |
+          sudo apt-get update
+
+      - name: Setup SSH access
+        uses: mxschmitt/action-tmate@v3
+        if: ${{ inputs.ssh }}
+        timeout-minutes: 30
+
+      - name: Build
+        run: |
+            cargo build
+
+      - name: Run Unit Tests
+        run: |
+            cargo test --verbose

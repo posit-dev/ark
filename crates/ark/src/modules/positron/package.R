@@ -22,6 +22,17 @@
 .ps.rpc.is_installed <- .ps.is_installed
 
 #' @export
+.ps.rpc.install_packages <- function(packages) {
+    for (pkg in packages) {
+        if (.ps.rpc.isPackageAttached(pkg)) {
+            stop("Should not install a package if it's already attached.")
+        }
+    }
+    utils::install.packages(packages)
+    TRUE
+}
+
+#' @export
 .ps.rpc.isPackageAttached <- function(pkg) {
     if (!is_string(pkg)) {
         stop("`pkg` must be a string.")

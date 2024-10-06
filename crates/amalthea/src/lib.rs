@@ -8,6 +8,7 @@
 pub mod comm;
 pub mod connection_file;
 pub mod error;
+pub mod fixtures;
 pub mod kernel;
 pub mod kernel_dirs;
 pub mod kernel_spec;

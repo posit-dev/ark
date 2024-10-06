@@ -1,7 +1,7 @@
 //
 // error.rs
 //
-// Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2022-2024 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -37,6 +37,7 @@ pub enum Error {
     UnsafeEvaluationError(String),
     UnexpectedLength(usize, usize),
     UnexpectedType(u32, Vec<u32>),
+    UnexpectedClass(Option<Vec<String>>, String),
     ValueOutOfRange {
         value: i64,
         min: i64,
@@ -48,8 +49,14 @@ pub enum Error {
         line: i32,
     },
     MissingValueError,
+    MissingColumnError {
+        name: String,
+    },
     MissingBindingError {
         name: String,
+    },
+    OutOfMemory {
+        size: usize,
     },
     InspectError {
         path: Vec<String>,
@@ -98,6 +105,7 @@ impl fmt::Display for Error {
                 ..
             } => {
                 if let Some(code) = code {
+                    let code = truncate_lines(code.to_owned(), 50);
                     write!(f, "Error evaluating '{code}': {message}")?;
                 } else {
                     write!(f, "{message}")?;
@@ -108,6 +116,7 @@ impl fmt::Display for Error {
                 // https://users.rust-lang.org/t/why-doesnt-anyhows-debug-formatter-include-the-underlying-debug-formatting/44227
 
                 if !r_trace.is_empty() {
+                    let r_trace = truncate_lines(r_trace.to_owned(), 500);
                     writeln!(f, "\n\nR backtrace:\n{r_trace}")?;
                 }
 
@@ -167,6 +176,18 @@ impl fmt::Display for Error {
                 )
             },
 
+            Error::UnexpectedClass(actual, expected) => {
+                let actual = if let Some(actual) = actual {
+                    actual.join("/")
+                } else {
+                    String::from("_unclassed_")
+                };
+                write!(
+                    f,
+                    "Unexpected class for R object (expected {expected}; got {actual})",
+                )
+            },
+
             Error::ValueOutOfRange { value, min, max } => {
                 write!(
                     f,
@@ -199,8 +220,19 @@ impl fmt::Display for Error {
                 write!(f, "{err:?}")
             },
 
+            Error::MissingColumnError { name } => {
+                write!(f, "Can't find column `{name}` in data frame")
+            },
+
             Error::MissingBindingError { name } => {
-                write!(f, "Can't find binding {name} in environment")
+                write!(f, "Can't find binding `{name}` in environment")
+            },
+
+            Error::OutOfMemory { size } => {
+                write!(
+                    f,
+                    "Can't allocate object of size {size} as the system is out of memory"
+                )
             },
         }
     }
@@ -212,6 +244,24 @@ macro_rules! anyhow {
         let message = anyhow::anyhow!($($rest, )*);
         crate::error::Error::Anyhow(message)
     }}
+}
+
+#[macro_export]
+macro_rules! unreachable {
+    ($($rest: expr),*) => {{
+        let message = format!($($rest, )*);
+        harp::anyhow!("Internal error: {message}")
+    }}
+}
+
+pub fn as_result<T, E>(res: std::result::Result<T, E>) -> crate::Result<T>
+where
+    E: std::fmt::Debug,
+{
+    match res {
+        Ok(x) => Ok(x),
+        Err(err) => Err(crate::anyhow!("{err:?}")),
+    }
 }
 
 // We include R-level backtraces in `Display` because anyhow doesn't propagate the `?` flag:
@@ -245,4 +295,16 @@ impl From<Utf8Error> for Error {
     fn from(error: Utf8Error) -> Self {
         Self::InvalidUtf8(error)
     }
+}
+
+fn truncate_lines(text: String, max_lines: usize) -> String {
+    let n_lines = text.lines().count();
+    if n_lines <= max_lines {
+        return text;
+    }
+
+    let mut text: String = text.lines().take(max_lines).collect();
+    text.push_str(&format!("\n... *Truncated {} lines*", n_lines - max_lines));
+
+    text
 }

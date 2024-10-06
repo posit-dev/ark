@@ -24,14 +24,14 @@ pub struct LanguageInfo {
     /// The file extension for script files in the language
     pub file_extension: String,
 
-    /// Pygments lexer (for highlighting), if different than name
-    pub pygments_lexer: String,
+    /// Pygments lexer (for highlighting), if different than `name`
+    pub pygments_lexer: Option<String>,
 
-    /// Codemirror mode (for editing), if different than name
-    pub codemirror_mode: String,
+    /// Codemirror mode (for editing), if different than `name`
+    pub codemirror_mode: Option<String>,
 
-    /// Nbconvert exporter, if not default
-    pub nbconvert_exporter: String,
+    /// Nbconvert exporter, if not the default 'script' exporter
+    pub nbconvert_exporter: Option<String>,
 
     /// Posit extension
     pub positron: Option<LanguageInfoPositron>,

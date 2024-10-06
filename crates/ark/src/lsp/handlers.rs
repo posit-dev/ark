@@ -38,6 +38,7 @@ use tower_lsp::Client;
 use tracing::Instrument;
 use tree_sitter::Point;
 
+use crate::analysis::input_boundaries::input_boundaries;
 use crate::lsp;
 use crate::lsp::completions::provide_completions;
 use crate::lsp::completions::resolve_completion;
@@ -51,6 +52,8 @@ use crate::lsp::help_topic::HelpTopicParams;
 use crate::lsp::help_topic::HelpTopicResponse;
 use crate::lsp::hover::r_hover;
 use crate::lsp::indent::indent_edit;
+use crate::lsp::input_boundaries::InputBoundariesParams;
+use crate::lsp::input_boundaries::InputBoundariesResponse;
 use crate::lsp::main_loop::LspState;
 use crate::lsp::offset::IntoLspOffset;
 use crate::lsp::references::find_references;
@@ -191,7 +194,7 @@ pub(crate) fn handle_completion(
 pub(crate) fn handle_completion_resolve(
     mut item: CompletionItem,
 ) -> anyhow::Result<CompletionItem> {
-    r_task(|| unsafe { resolve_completion(&mut item) })?;
+    r_task(|| resolve_completion(&mut item))?;
     Ok(item)
 }
 
@@ -210,7 +213,7 @@ pub(crate) fn handle_hover(
     let context = DocumentContext::new(&document, point, None);
 
     // request hover information
-    let result = r_task(|| unsafe { r_hover(&context) });
+    let result = r_task(|| r_hover(&context));
 
     // unwrap errors
     let result = unwrap!(result, Err(err) => {
@@ -244,7 +247,7 @@ pub(crate) fn handle_signature_help(
     let context = DocumentContext::new(&document, point, None);
 
     // request signature help
-    let result = r_task(|| unsafe { r_signature_help(&context) });
+    let result = r_task(|| r_signature_help(&context));
 
     // unwrap errors
     let result = unwrap!(result, Err(err) => {
@@ -392,4 +395,11 @@ pub(crate) fn handle_virtual_document(
     } else {
         Err(anyhow!("Can't find virtual document {}", params.path))
     }
+}
+
+pub(crate) fn handle_input_boundaries(
+    params: InputBoundariesParams,
+) -> anyhow::Result<InputBoundariesResponse> {
+    let boundaries = r_task(|| input_boundaries(&params.text))?;
+    Ok(InputBoundariesResponse { boundaries })
 }

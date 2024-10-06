@@ -19,10 +19,13 @@ jobs:
         env:
             GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
             DEBUG_FLAG: ${{ matrix.flavor == 'debug' && '-debug' || '' }}
+            TARGET_FLAG: ${{ matrix.flavor == 'release' && '--release' || '' }}
+            ARCH_FLAG: ${{ matrix.arch == 'x64' && 'x86_64' || 'aarch64' }}
+            GLIBC_MAX_VERSION: '2.26'  # Sufficiently old for all our target platforms
 
         strategy:
             matrix:
-                arch: [x64]
+                arch: [x64, arm64]
                 flavor: [debug, release]
 
         steps:
@@ -34,19 +37,33 @@ jobs:
                   sudo apt-get update
                   sudo apt-get install -y cargo
 
+                  # We're linking with zig to select the libc version
+                  cargo install --locked cargo-zigbuild
+                  sudo apt install python3-pip
+                  pip3 install ziglang
+
+            - name: Setup Build Environment for arm64
+              if: matrix.arch == 'arm64'
+              run: |
+                  rustup target add aarch64-unknown-linux-gnu
+
             - name: Compile ARK (${{ matrix.flavor }})
               run: |
                   cargo clean
-                  cargo build ${{ matrix.flavor == 'release' && '--release' || '' }}
+
+                  # Use the zig linker. This allows linking to a specific version of glibc.
+                  # We use a sufficiently old version that is available on all platforms we target.
+                  # See https://github.com/ziglang/glibc-abi-tool
+                  cargo zigbuild --target ${ARCH_FLAG}-unknown-linux-gnu.$GLIBC_MAX_VERSION $TARGET_FLAG
 
             # Compress kernel to a zip file
             - name: Create archive
               run: |
                   # Enter the build directory
-                  pushd target/${{ matrix.flavor }}
+                  pushd target/${ARCH_FLAG}-unknown-linux-gnu/${{ matrix.flavor }}
 
                   # Compress the kernel to an archive
-                  ARCHIVE="$GITHUB_WORKSPACE/ark-${{ inputs.version }}-${{ matrix.flavor }}-linux-x64.zip"
+                  ARCHIVE="$GITHUB_WORKSPACE/ark-${{ inputs.version }}-${{ matrix.flavor }}-linux-${{ matrix.arch }}.zip"
                   [ -e LICENSE ] || cp "$GITHUB_WORKSPACE/LICENSE" LICENSE
                   [ -e NOTICE ] || cp "$GITHUB_WORKSPACE/crates/ark/NOTICE" NOTICE
                   zip -Xry $ARCHIVE ark LICENSE NOTICE
@@ -54,7 +71,7 @@ jobs:
                   popd
 
             - name: Upload archive
-              uses: actions/upload-artifact@v3
+              uses: actions/upload-artifact@v4
               with:
-                  name: ark-${{ matrix.flavor }}-linux-x64-archive
-                  path: ark-${{ inputs.version }}-${{ matrix.flavor }}-linux-x64.zip
+                  name: ark-${{ matrix.flavor }}-linux-${{ matrix.arch }}-archive
+                  path: ark-${{ inputs.version }}-${{ matrix.flavor }}-linux-${{ matrix.arch }}.zip

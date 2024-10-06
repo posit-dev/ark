@@ -1,13 +1,12 @@
 //
 // eval.rs
 //
-// Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2022-2024 Posit Software, PBC. All rights reserved.
 //
 //
 
 use crate::environment::R_ENVS;
 use crate::error::Error;
-use crate::exec::r_parse_exprs;
 use crate::object::RObject;
 
 #[derive(Clone)]
@@ -25,20 +24,34 @@ impl Default for RParseEvalOptions {
     }
 }
 
-pub fn r_parse_eval0(code: &str, env: impl Into<RObject>) -> harp::Result<RObject> {
-    r_parse_eval(code, RParseEvalOptions {
+pub fn parse_eval0(code: &str, env: impl Into<RObject>) -> harp::Result<RObject> {
+    harp::parse_eval(code, RParseEvalOptions {
         env: env.into(),
         ..Default::default()
     })
 }
 
-pub fn r_parse_eval(code: &str, options: RParseEvalOptions) -> harp::Result<RObject> {
+pub fn parse_eval_global(code: &str) -> harp::Result<RObject> {
+    harp::parse_eval(code, RParseEvalOptions {
+        env: R_ENVS.global.into(),
+        ..Default::default()
+    })
+}
+
+pub fn parse_eval_base(code: &str) -> harp::Result<RObject> {
+    harp::parse_eval(code, RParseEvalOptions {
+        env: R_ENVS.base.into(),
+        ..Default::default()
+    })
+}
+
+pub fn parse_eval(code: &str, options: RParseEvalOptions) -> harp::Result<RObject> {
     // Forbid certain kinds of evaluation if requested.
     if options.forbid_function_calls && code.find('(').is_some() {
         return Err(Error::UnsafeEvaluationError(code.to_string()));
     }
 
-    let exprs = r_parse_exprs(code)?;
+    let exprs = harp::parse_exprs(code)?;
 
     // Evaluate each expression in turn and return the last one
     let mut value = RObject::null();

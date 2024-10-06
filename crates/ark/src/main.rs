@@ -9,222 +9,22 @@
 
 use std::cell::Cell;
 use std::env;
-use std::sync::Arc;
-use std::sync::Mutex;
 
 use amalthea::connection_file::ConnectionFile;
-use amalthea::kernel::Kernel;
 use amalthea::kernel_spec::KernelSpec;
-use amalthea::socket::stdin::StdInRequest;
-use ark::control::Control;
-use ark::dap;
+use ark::interface::RMain;
 use ark::interface::SessionMode;
 use ark::logger;
-use ark::lsp;
-use ark::request::KernelRequest;
-use ark::request::RRequest;
-use ark::shell::Shell;
 use ark::signals::initialize_signal_block;
+use ark::start::start_kernel;
 use ark::traps::register_trap_handlers;
 use ark::version::detect_r;
-use bus::Bus;
-use crossbeam::channel::bounded;
 use crossbeam::channel::unbounded;
 use notify::Watcher;
 use stdext::unwrap;
 
 thread_local! {
     pub static ON_R_THREAD: Cell<bool> = Cell::new(false);
-}
-
-fn start_kernel(
-    connection_file: ConnectionFile,
-    r_args: Vec<String>,
-    startup_file: Option<String>,
-    session_mode: SessionMode,
-    capture_streams: bool,
-) {
-    // Create a new kernel from the connection file
-    let mut kernel = match Kernel::new("ark", connection_file) {
-        Ok(k) => k,
-        Err(err) => {
-            log::error!("Failed to create kernel: {err}");
-            return;
-        },
-    };
-
-    // Create the channels used for communication. These are created here
-    // as they need to be shared across different components / threads.
-    let iopub_tx = kernel.create_iopub_tx();
-
-    // A broadcast channel (bus) used to notify clients when the kernel
-    // has finished initialization.
-    let mut kernel_init_tx = Bus::new(1);
-
-    // A channel pair used for shell requests.
-    // These events are used to manage the runtime state, and also to
-    // handle message delivery, among other things.
-    let (r_request_tx, r_request_rx) = bounded::<RRequest>(1);
-    let (kernel_request_tx, kernel_request_rx) = bounded::<KernelRequest>(1);
-
-    // Create the LSP and DAP clients.
-    // Not all Amalthea kernels provide these, but ark does.
-    // They must be able to deliver messages to the shell channel directly.
-    let lsp = Arc::new(Mutex::new(lsp::handler::Lsp::new(kernel_init_tx.add_rx())));
-
-    // DAP needs the `RRequest` channel to communicate with
-    // `read_console()` and send commands to the debug interpreter
-    let dap = dap::Dap::new_shared(r_request_tx.clone());
-
-    // Communication channel between the R main thread and the Amalthea
-    // StdIn socket thread
-    let (stdin_request_tx, stdin_request_rx) = bounded::<StdInRequest>(1);
-
-    // Communication channel for `CommEvent`
-    let comm_manager_tx = kernel.create_comm_manager_tx();
-
-    // Create the shell.
-    let kernel_init_rx = kernel_init_tx.add_rx();
-    let shell = Shell::new(
-        comm_manager_tx.clone(),
-        iopub_tx.clone(),
-        r_request_tx.clone(),
-        stdin_request_tx.clone(),
-        kernel_init_rx,
-        kernel_request_tx,
-        kernel_request_rx,
-        session_mode.clone(),
-    );
-
-    // Create the control handler; this is used to handle shutdown/interrupt and
-    // related requests
-    let control = Arc::new(Mutex::new(Control::new(r_request_tx.clone())));
-
-    // Create the stream behavior; this determines whether the kernel should
-    // capture stdout/stderr and send them to the frontend as IOPub messages
-    let stream_behavior = match capture_streams {
-        true => amalthea::kernel::StreamBehavior::Capture,
-        false => amalthea::kernel::StreamBehavior::None,
-    };
-
-    // Create the kernel
-    let kernel_clone = shell.kernel.clone();
-    let shell = Arc::new(Mutex::new(shell));
-
-    let (stdin_reply_tx, stdin_reply_rx) = unbounded();
-
-    let res = kernel.connect(
-        shell,
-        control,
-        Some(lsp),
-        Some(dap.clone()),
-        stream_behavior,
-        stdin_request_rx,
-        stdin_reply_tx,
-    );
-    if let Err(err) = res {
-        panic!("Couldn't connect to frontend: {err:?}");
-    }
-
-    // Start the R REPL (does not return for the duration of the session)
-    ark::interface::start_r(
-        r_args,
-        startup_file,
-        kernel_clone,
-        comm_manager_tx,
-        r_request_rx,
-        stdin_request_tx,
-        stdin_reply_rx,
-        iopub_tx,
-        kernel_init_tx,
-        dap,
-        session_mode,
-    )
-}
-
-// Installs the kernelspec JSON file into one of Jupyter's search paths.
-fn install_kernel_spec() {
-    // Create the environment set for the kernel spec
-    let mut env = serde_json::Map::new();
-
-    // Detect the active version of R and set the R_HOME environment variable
-    // accordingly
-    let r_version = detect_r().unwrap();
-    env.insert(
-        "R_HOME".to_string(),
-        serde_json::Value::String(r_version.r_home.clone()),
-    );
-
-    // Point `LD_LIBRARY_PATH` to a folder with some `libR.so`. It doesn't
-    // matter which one, but the linker needs to be able to find a file of that
-    // name, even though we won't use it for symbol resolution.
-    // https://github.com/posit-dev/positron/issues/1619#issuecomment-1971552522
-    if cfg!(target_os = "linux") {
-        let lib = format!("{}/lib", r_version.r_home.clone());
-        env.insert("LD_LIBRARY_PATH".into(), serde_json::Value::String(lib));
-    }
-
-    // Create the kernelspec
-    let exe_path = unwrap!(env::current_exe(), Err(error) => {
-        eprintln!("Failed to determine path to Ark. {}", error);
-        return;
-    });
-
-    let spec = KernelSpec {
-        argv: vec![
-            String::from(exe_path.to_string_lossy()),
-            String::from("--connection_file"),
-            String::from("{connection_file}"),
-            String::from("--session-mode"),
-            String::from("notebook"),
-        ],
-        language: String::from("R"),
-        display_name: String::from("Ark R Kernel"),
-        env,
-    };
-
-    let dest = unwrap!(spec.install(String::from("ark")), Err(error) => {
-        eprintln!("Failed to install Ark's Jupyter kernelspec. {}", error);
-        return;
-    });
-
-    println!(
-        "Successfully installed Ark Jupyter kernelspec.
-
-    R ({}.{}.{}): {}
-    Kernel: {}
-    ",
-        r_version.major,
-        r_version.minor,
-        r_version.patch,
-        r_version.r_home,
-        dest.to_string_lossy()
-    );
-}
-
-fn parse_file(
-    connection_file: &String,
-    r_args: Vec<String>,
-    startup_file: Option<String>,
-    session_mode: SessionMode,
-    capture_streams: bool,
-) {
-    match ConnectionFile::from_file(connection_file) {
-        Ok(connection) => {
-            log::info!("Loaded connection information from frontend in {connection_file}");
-            log::info!("Connection data: {:?}", connection);
-            start_kernel(
-                connection,
-                r_args,
-                startup_file,
-                session_mode,
-                capture_streams,
-            );
-        },
-        Err(error) => {
-            log::error!("Couldn't read connection file {connection_file}: {error:?}");
-        },
-    }
 }
 
 fn print_usage() {
@@ -503,4 +303,87 @@ fn main() {
             capture_streams,
         );
     }
+}
+
+fn parse_file(
+    connection_file: &String,
+    r_args: Vec<String>,
+    startup_file: Option<String>,
+    session_mode: SessionMode,
+    capture_streams: bool,
+) {
+    match ConnectionFile::from_file(connection_file) {
+        Ok(connection) => {
+            log::info!("Loaded connection information from frontend in {connection_file}");
+            log::info!("Connection data: {:?}", connection);
+
+            // Set up R and start the Jupyter kernel
+            start_kernel(
+                connection,
+                r_args,
+                startup_file,
+                session_mode,
+                capture_streams,
+            );
+
+            // Start the REPL, does not return
+            RMain::start();
+        },
+        Err(error) => {
+            log::error!("Couldn't read connection file {connection_file}: {error:?}");
+        },
+    }
+}
+
+// Install the kernelspec JSON file into one of Jupyter's search paths.
+fn install_kernel_spec() {
+    // Create the environment set for the kernel spec
+    let mut env = serde_json::Map::new();
+
+    // Workaround for https://github.com/posit-dev/positron/issues/2098
+    env.insert("RUST_LOG".into(), serde_json::Value::String("error".into()));
+
+    // Point `LD_LIBRARY_PATH` to a folder with some `libR.so`. It doesn't
+    // matter which one, but the linker needs to be able to find a file of that
+    // name, even though we won't use it for symbol resolution.
+    // https://github.com/posit-dev/positron/issues/1619#issuecomment-1971552522
+    if cfg!(target_os = "linux") {
+        // Detect the active version of R
+        let r_version = detect_r().unwrap();
+
+        let lib = format!("{}/lib", r_version.r_home.clone());
+        env.insert("LD_LIBRARY_PATH".into(), serde_json::Value::String(lib));
+    }
+
+    // Create the kernelspec
+    let exe_path = unwrap!(env::current_exe(), Err(error) => {
+        eprintln!("Failed to determine path to Ark. {}", error);
+        return;
+    });
+
+    let spec = KernelSpec {
+        argv: vec![
+            String::from(exe_path.to_string_lossy()),
+            String::from("--connection_file"),
+            String::from("{connection_file}"),
+            String::from("--session-mode"),
+            String::from("notebook"),
+        ],
+        language: String::from("R"),
+        display_name: String::from("Ark R Kernel"),
+        env,
+    };
+
+    let dest = unwrap!(spec.install(String::from("ark")), Err(err) => {
+        eprintln!("Failed to install Ark's Jupyter kernelspec. {err}");
+        return;
+    });
+
+    println!(
+        "Successfully installed Ark Jupyter kernelspec.
+
+    Kernel: {}
+    ",
+        dest.to_string_lossy()
+    );
 }

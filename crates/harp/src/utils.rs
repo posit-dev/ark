@@ -8,7 +8,6 @@
 use std::ffi::CStr;
 use std::ffi::CString;
 
-use c2rust_bitfields::BitfieldStruct;
 use itertools::Itertools;
 use libr::*;
 use once_cell::sync::Lazy;
@@ -17,10 +16,8 @@ use regex::Regex;
 use crate::call::r_expr_quote;
 use crate::call::RArgument;
 use crate::environment::Environment;
-use crate::environment::R_ENVS;
 use crate::error::Error;
 use crate::error::Result;
-use crate::eval::r_parse_eval0;
 use crate::exec::RFunction;
 use crate::exec::RFunctionExt;
 use crate::modules::HARP_ENV;
@@ -45,66 +42,12 @@ use crate::vector::CharacterVector;
 use crate::vector::IntegerVector;
 use crate::vector::Vector;
 
-pub fn init_utils() {
-    unsafe {
-        let options_fn = Rf_eval(r_symbol!("options"), R_BaseEnv);
-        OPTIONS_FN = Some(options_fn);
-    }
-}
+pub fn init_utils() {}
 
 // NOTE: Regex::new() is quite slow to compile, so it's much better to keep
 // a single singleton pattern and use that repeatedly for matches.
 static RE_SYNTACTIC_IDENTIFIER: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^[\p{L}\p{Nl}.][\p{L}\p{Nl}\p{Mn}\p{Mc}\p{Nd}\p{Pc}.]*$").unwrap());
-
-#[derive(Copy, Clone, BitfieldStruct)]
-#[repr(C)]
-pub struct Sxpinfo {
-    #[bitfield(name = "rtype", ty = "libc::c_uint", bits = "0..=4")]
-    #[bitfield(name = "scalar", ty = "libc::c_uint", bits = "5..=5")]
-    #[bitfield(name = "obj", ty = "libc::c_uint", bits = "6..=6")]
-    #[bitfield(name = "alt", ty = "libc::c_uint", bits = "7..=7")]
-    #[bitfield(name = "gp", ty = "libc::c_uint", bits = "8..=23")]
-    #[bitfield(name = "mark", ty = "libc::c_uint", bits = "24..=24")]
-    #[bitfield(name = "debug", ty = "libc::c_uint", bits = "25..=25")]
-    #[bitfield(name = "trace", ty = "libc::c_uint", bits = "26..=26")]
-    #[bitfield(name = "spare", ty = "libc::c_uint", bits = "27..=27")]
-    #[bitfield(name = "gcgen", ty = "libc::c_uint", bits = "28..=28")]
-    #[bitfield(name = "gccls", ty = "libc::c_uint", bits = "29..=31")]
-    #[bitfield(name = "named", ty = "libc::c_uint", bits = "32..=47")]
-    #[bitfield(name = "extra", ty = "libc::c_uint", bits = "48..=63")]
-    pub rtype_scalar_obj_alt_gp_mark_debug_trace_spare_gcgen_gccls_named_extra: [u8; 8],
-}
-
-pub static mut ACTIVE_BINDING_MASK: libc::c_uint = 1 << 15;
-pub static mut S4_OBJECT_MASK: libc::c_uint = 1 << 4;
-pub static mut HASHASH_MASK: libc::c_uint = 1;
-
-impl Sxpinfo {
-    pub fn interpret(x: &SEXP) -> &Self {
-        unsafe { (*x as *mut Sxpinfo).as_ref().unwrap() }
-    }
-
-    pub fn is_active(&self) -> bool {
-        self.gp() & unsafe { ACTIVE_BINDING_MASK } != 0
-    }
-
-    pub fn is_immediate(&self) -> bool {
-        self.extra() != 0
-    }
-
-    pub fn is_s4(&self) -> bool {
-        self.gp() & unsafe { S4_OBJECT_MASK } != 0
-    }
-
-    pub fn is_altrep(&self) -> bool {
-        self.alt() != 0
-    }
-
-    pub fn is_object(&self) -> bool {
-        self.obj() != 0
-    }
-}
 
 #[harp::register]
 pub extern "C" fn harp_log_trace(msg: SEXP) -> crate::error::Result<SEXP> {
@@ -140,8 +83,8 @@ pub fn r_assert_type(object: SEXP, expected: &[u32]) -> Result<u32> {
     Ok(actual)
 }
 
-pub unsafe fn r_assert_capacity(object: SEXP, required: usize) -> Result<usize> {
-    let actual = Rf_xlength(object) as usize;
+pub fn r_assert_capacity(object: SEXP, required: usize) -> Result<usize> {
+    let actual = unsafe { Rf_xlength(object) } as usize;
     if actual < required {
         return Err(Error::UnexpectedLength(actual, required));
     }
@@ -158,6 +101,22 @@ pub fn r_assert_length(object: SEXP, expected: usize) -> Result<usize> {
     Ok(actual)
 }
 
+pub fn assert_class(object: SEXP, expected: &str) -> Result<()> {
+    if !RObject::view(object).inherits(expected) {
+        let actual = RObject::view(object).class()?;
+        return Err(Error::UnexpectedClass(actual, expected.into()));
+    }
+
+    Ok(())
+}
+
+pub fn assert_non_optional<T>(object: Vec<Option<T>>) -> harp::Result<Vec<T>> {
+    let Some(non_optional): Option<Vec<T>> = object.into_iter().collect() else {
+        return Err(harp::anyhow!("Values are unexpectedly missing"));
+    };
+    Ok(non_optional)
+}
+
 pub fn r_is_data_frame(object: SEXP) -> bool {
     r_typeof(object) == VECSXP && r_inherits(object, "data.frame")
 }
@@ -167,15 +126,15 @@ pub fn r_is_null(object: SEXP) -> bool {
 }
 
 pub fn r_is_altrep(object: SEXP) -> bool {
-    Sxpinfo::interpret(&object).is_altrep()
+    unsafe { libr::ALTREP(object) != 0 }
 }
 
 pub fn r_is_object(object: SEXP) -> bool {
-    Sxpinfo::interpret(&object).is_object()
+    unsafe { libr::OBJECT(object) != 0 }
 }
 
 pub fn r_is_s4(object: SEXP) -> bool {
-    Sxpinfo::interpret(&object).is_s4()
+    unsafe { libr::IS_S4_OBJECT(object) != 0 }
 }
 
 pub fn r_is_unbound(object: SEXP) -> bool {
@@ -195,8 +154,17 @@ pub fn r_is_simple_vector(value: SEXP) -> bool {
     }
 }
 
-pub fn r_is_matrix(value: SEXP) -> bool {
-    unsafe { Rf_isMatrix(value) == Rboolean_TRUE }
+/// Is `object` a matrix?
+///
+/// Notably returns `false` for 1D arrays and >=3D arrays.
+pub fn r_is_matrix(object: SEXP) -> bool {
+    let dim = r_dim(object);
+
+    if dim == r_null() {
+        return false;
+    }
+
+    r_length(dim) == 2
 }
 
 pub fn r_classes(value: SEXP) -> Option<CharacterVector> {
@@ -340,14 +308,14 @@ pub fn get_option(name: &str) -> RObject {
 
 pub fn r_inherits(object: SEXP, class: &str) -> bool {
     let class = CString::new(class).unwrap();
-    unsafe { Rf_inherits(object, class.as_ptr()) != 0 }
+    unsafe { libr::Rf_inherits(object, class.as_ptr()) != 0 }
 }
 
 pub fn r_is_function(object: SEXP) -> bool {
     matches!(r_typeof(object), CLOSXP | BUILTINSXP | SPECIALSXP)
 }
 
-pub unsafe fn r_formals(object: SEXP) -> Result<Vec<RArgument>> {
+pub fn r_formals(object: SEXP) -> Result<Vec<RArgument>> {
     // convert primitive functions into equivalent closures
     let mut object = RObject::new(object);
     if r_typeof(*object) == BUILTINSXP || r_typeof(*object) == SPECIALSXP {
@@ -361,16 +329,18 @@ pub unsafe fn r_formals(object: SEXP) -> Result<Vec<RArgument>> {
     r_assert_type(*object, &[CLOSXP])?;
 
     // get the formals
-    let mut formals = FORMALS(*object);
+    let mut formals = unsafe { FORMALS(*object) };
 
     // iterate through the entries
     let mut arguments = Vec::new();
 
-    while formals != libr::R_NilValue {
-        let name = RObject::from(TAG(formals)).to::<String>()?;
-        let value = CAR(formals);
-        arguments.push(RArgument::new(name.as_str(), RObject::new(value)));
-        formals = CDR(formals);
+    unsafe {
+        while formals != r_null() {
+            let name = RObject::from(TAG(formals)).to::<String>()?;
+            let value = CAR(formals);
+            arguments.push(RArgument::new(name.as_str(), RObject::new(value)));
+            formals = CDR(formals);
+        }
     }
 
     Ok(arguments)
@@ -670,15 +640,13 @@ where
     return false;
 }
 
-static mut OPTIONS_FN: Option<SEXP> = None;
-
 // Note this might throw if wrong data types are passed in. The C-level
 // implementation of `options()` type-checks some base options.
 pub fn r_poke_option(sym: SEXP, value: SEXP) -> SEXP {
     unsafe {
         let mut protect = RProtect::new();
 
-        let call = r_lang!(OPTIONS_FN.unwrap_unchecked(), !!sym = value);
+        let call = r_lang!(r_symbol!("options"), !!sym = value);
         protect.add(call);
 
         // `options()` is guaranteed by R to return a list
@@ -704,11 +672,11 @@ pub fn r_normalize_path(x: RObject) -> anyhow::Result<String> {
 pub fn save_rds(x: SEXP, path: &str) {
     let path = RObject::from(path);
 
-    let env = Environment::new(r_parse_eval0("new.env()", R_ENVS.base).unwrap());
+    let env = Environment::new(harp::parse_eval_base("new.env()").unwrap());
     env.bind("x".into(), x);
     env.bind("path".into(), path);
 
-    let res = r_parse_eval0("base::saveRDS(x, path)", env);
+    let res = harp::parse_eval0("base::saveRDS(x, path)", env);
 
     // This is meant for internal use so report errors loudly
     res.unwrap();
@@ -731,13 +699,13 @@ pub fn push_rds(x: SEXP, path: &str, context: &str) {
     };
     let context = RObject::from(context);
 
-    let env = Environment::new(r_parse_eval0("new.env()", R_ENVS.global).unwrap());
+    let env = Environment::new(harp::parse_eval_base("new.env()").unwrap());
 
     env.bind("x".into(), x);
     env.bind("path".into(), path);
     env.bind("context".into(), context);
 
-    let res = r_parse_eval0(".ps.internal(push_rds(x, path, context))", env);
+    let res = harp::parse_eval0(".ps.internal(push_rds(x, path, context))", env);
 
     // This is meant for internal use so report errors loudly
     res.unwrap();
@@ -767,18 +735,16 @@ pub fn r_format_vec(x: SEXP) -> Result<SEXP> {
 
 #[cfg(test)]
 mod tests {
-    use harp::eval::r_parse_eval0;
     use libr::STRING_ELT;
 
     use crate::environment::R_ENVS;
     use crate::exec::RFunction;
     use crate::exec::RFunctionExt;
     use crate::r_str_to_owned_utf8_unchecked;
-    use crate::test::r_test;
 
     #[test]
     fn test_r_str_to_utf8_replaces_invalid_utf8() {
-        r_test(|| {
+        crate::r_task(|| {
             let env = RFunction::new("base", "new.env")
                 .param("parent", R_ENVS.base)
                 .call()
@@ -798,7 +764,7 @@ mod tests {
                 x
             ";
 
-            let x = r_parse_eval0(code, env).unwrap();
+            let x = harp::parse_eval0(code, env).unwrap();
             let x = unsafe { STRING_ELT(x.sexp, 0) };
             let x = r_str_to_owned_utf8_unchecked(x);
 

@@ -206,7 +206,7 @@ pub fn new_line_indent(config: &IndentationConfig, indent: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use harp::assert_match;
+    use stdext::assert_match;
 
     use crate::lsp::config::IndentStyle;
     use crate::lsp::config::IndentationConfig;

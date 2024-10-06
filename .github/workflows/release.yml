@@ -35,7 +35,7 @@ jobs:
             EXISTING_RELEASE: ${{ steps.release_flag.outputs.result }}
         steps:
             - name: Check for existing release tag
-              uses: mukunku/tag-exists-action@v1.3.0
+              uses: mukunku/tag-exists-action@v1.6.0
               id: check_tag
               with:
                   tag: ${{ needs.get_version.outputs.ARK_VERSION }}
@@ -58,131 +58,19 @@ jobs:
     # Build ARK for macOS. Both arm64 (Apple Silicon) and x64 (Intel) hosts.
     build_macos:
         name: Build macOS
-        runs-on: [self-hosted-production, macos, arm64]
+        uses: ./.github/workflows/release-macos.yml
         needs: [do_release, get_version]
-        timeout-minutes: 40
-
-        env:
-            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-        strategy:
-            max-parallel: 1
-            matrix:
-                arch: [arm64, x64]
-                flavor: [debug, release]
-                include:
-                    - arch: arm64
-                      arch_terminal: arm64
-                      homebrew_folder: /opt/homebrew
-                      rust_target_prefix: aarch64
-                    - arch: x64
-                      arch_terminal: x86_64
-                      homebrew_folder: /usr/local
-                      rust_target_prefix: x86_64
-
-        steps:
-            - name: Install Rust toolchain
-              run: |
-                rustup update --no-self-update stable
-                rustup default stable
-
-            # Checkout sources
-            - name: Checkout sources
-              uses: actions/checkout@v4
-
-            # These are already installed for both architectures, but would be required if we switch off
-            # a self-hosted runner, so we may as well leave them in
-            - name: Install zeromq dependencies
-              id: install_zeromq_dependencies
-              run: |
-                  arch -${{matrix.arch_terminal}} /bin/bash -c "${{matrix.homebrew_folder}}/bin/brew install pkg-config"
-                  arch -${{matrix.arch_terminal}} /bin/bash -c "${{matrix.homebrew_folder}}/bin/brew install libsodium"
-
-            # Zeromq calls whatever pkg-config version is findable on the PATH to be able to locate
-            # libsodium, so we have to ensure the x86_64 version is first on the PATH when compiling for
-            # that architecture, so that it finds the x86_64 version of libsodium for zeromq to link against.
-            - name: Update PATH to pkg-config for zeromq
-              id: update_path_for_zeromq
-              if: matrix.arch == 'x64'
-              run: |
-                  echo "${{matrix.homebrew_folder}}/bin" >> $GITHUB_PATH
-
-            # Compile
-            - name: Compile ARK (${{ matrix.arch }})
-              env:
-                  npm_config_arch: ${{ matrix.arch }}
-                  ARK_BUILD_TYPE: ${{ matrix.flavor }}
-                  RUST_TARGET: ${{ matrix.rust_target_prefix }}-apple-darwin
-                  CARGO_FLAGS:
-                  PKG_CONFIG_ALLOW_CROSS: 1
-              run: |
-                  cargo clean
-                  cargo build ${{ matrix.flavor == 'release' && '--release' || '' }} --target ${{ matrix.rust_target_prefix }}-apple-darwin
-
-            # Compress kernel to a zip file
-            - name: Create archive
-              run: |
-                  # Enter the build directory
-                  pushd target/${{ matrix.rust_target_prefix }}-apple-darwin/${{ matrix.flavor }}
-
-                  # Compress the kernel to an archive
-                  ARCHIVE="$GITHUB_WORKSPACE/ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ matrix.flavor }}-darwin-${{ matrix.arch }}.zip"
-                  zip -Xry $ARCHIVE ark
-
-                  popd
-
-            # Create build artifact
-            - name: Upload client archive
-              uses: actions/upload-artifact@v3
-              with:
-                  name: ark-${{ matrix.flavor }}-darwin-${{ matrix.arch }}-archive
-                  path: ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ matrix.flavor }}-darwin-${{ matrix.arch }}.zip
+        secrets: inherit
+        with:
+            version: ${{ needs.get_version.outputs.ARK_VERSION }}
 
     build_windows:
         name: Build Windows
-        runs-on: windows-latest
-        timeout-minutes: 40
+        uses: ./.github/workflows/release-windows.yml
         needs: [do_release, get_version]
-
-        env:
-            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-        strategy:
-            matrix:
-                arch: [x64]
-                flavor: [debug, release]
-                include:
-                    - arch: x64
-                      rust_target_prefix: x86_64
-
-        steps:
-            - name: Checkout sources
-              uses: actions/checkout@v4
-
-            - name: Compile ARK
-              env:
-                  ARK_BUILD_TYPE: ${{ matrix.flavor }}
-                  RUST_TARGET: ${{ matrix.rust_target_prefix }}-pc-windows-msvc
-              shell: cmd
-              run: |
-                  cargo clean
-                  cargo build ${{ matrix.flavor == 'release' && '--release' || '' }} --target ${{ matrix.rust_target_prefix }}-pc-windows-msvc
-
-            - name: Create archive
-              shell: pwsh
-              run: |
-                  # Compress the kernel to an archive
-                  $params = @{
-                    Path = "target\${{ matrix.rust_target_prefix }}-pc-windows-msvc\${{ matrix.flavor }}\ark.exe", "LICENSE", "crates\ark\NOTICE"
-                    DestinationPath = "ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ matrix.flavor }}-windows-${{ matrix.arch }}.zip"
-                  }
-                  Compress-Archive @params
-
-            - name: Upload client archive
-              uses: actions/upload-artifact@v3
-              with:
-                  name: ark-${{ matrix.flavor }}-windows-${{ matrix.arch }}-archive
-                  path: ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ matrix.flavor }}-windows-${{ matrix.arch }}.zip
+        secrets: inherit
+        with:
+            version: ${{ needs.get_version.outputs.ARK_VERSION }}
 
     build_linux:
         name: "Build Linux"
@@ -194,7 +82,7 @@ jobs:
 
     create_release:
         name: Create Release
-        runs-on: [self-hosted, macos, arm64]
+        runs-on: ubuntu-latest
         needs: [do_release, get_version, build_macos, build_windows, build_linux]
         env:
             GITHUB_TOKEN: ${{ github.token }}
@@ -213,7 +101,7 @@ jobs:
     # Uploads binaries, if we created a release
     upload_release_binaries:
         name: Upload Release Binaries
-        runs-on: [self-hosted, macos, arm64]
+        runs-on: macos-latest
         needs: [create_release, get_version]
         env:
             GITHUB_TOKEN: ${{ github.token }}
@@ -226,48 +114,25 @@ jobs:
 
         steps:
             # Download all binaries
-            - name: Download macOS arm64 kernel (${{ matrix.flavor }})
-              uses: actions/download-artifact@v3
+            - name: Download macOS universal kernel (${{ matrix.flavor}})
+              uses: actions/download-artifact@v4
               with:
-                  name: ark-${{ matrix.flavor }}-darwin-arm64-archive
-
-            - name: Download macOS x64 kernel (${{ matrix.flavor}})
-              uses: actions/download-artifact@v3
-              with:
-                  name: ark-${{ matrix.flavor }}-darwin-x64-archive
+                  name: ark-${{ matrix.flavor }}-darwin-universal-archive
 
             - name: Download Windows x64 kernel (${{ matrix.flavor}})
-              uses: actions/download-artifact@v3
+              uses: actions/download-artifact@v4
               with:
                   name: ark-${{ matrix.flavor }}-windows-x64-archive
 
             - name: Download Linux x64 kernel (${{ matrix.flavor}})
-              uses: actions/download-artifact@v3
+              uses: actions/download-artifact@v4
               with:
                   name: ark-${{ matrix.flavor }}-linux-x64-archive
 
-
-            # Combine macOS binaries to a single binary with lipo
-            - name: Create macOS universal binary
-              run: |
-                  # Decompress x64 builds
-                  rm -rf x64 && mkdir x64 && pushd x64
-                  unzip ../ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ matrix.flavor }}-darwin-x64.zip
-                  popd
-
-                  # Decompress arm64 build
-                  rm -rf arm64 && mkdir arm64 && pushd arm64
-                  unzip ../ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ matrix.flavor }}-darwin-arm64.zip
-                  popd
-
-                  # Create a universal binary
-                  lipo -create x64/ark arm64/ark -output ark
-
-                  # Compress and bundle licenses
-                  ARCHIVE="$GITHUB_WORKSPACE/ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-darwin-universal.zip"
-                  [ -e LICENSE ] || cp "$GITHUB_WORKSPACE/LICENSE" LICENSE
-                  [ -e NOTICE ] || cp "$GITHUB_WORKSPACE/crates/ark/NOTICE" NOTICE
-                  zip -Xry $ARCHIVE ark LICENSE NOTICE
+            - name: Download Linux arm64 kernel (${{ matrix.flavor}})
+              uses: actions/download-artifact@v4
+              with:
+                  name: ark-${{ matrix.flavor }}-linux-arm64-archive
 
             - name: Upload macOS release artifact (universal)
               uses: actions/upload-release-asset@v1
@@ -299,10 +164,46 @@ jobs:
                   asset_name: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-linux-x64.zip
                   asset_content_type: application/octet-stream
 
+            - name: Upload Linux release artifacts (arm64)
+              uses: actions/upload-release-asset@v1
+              env:
+                  GITHUB_TOKEN: ${{ github.token }}
+              with:
+                  upload_url: ${{ needs.create_release.outputs.upload_url }}
+                  asset_path: ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ matrix.flavor }}-linux-arm64.zip
+                  asset_name: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-linux-arm64.zip
+                  asset_content_type: application/octet-stream
+
+    cleanup:
+        name: Clean up Failed Releases
+        if: ${{ failure() }}
+        runs-on: ubuntu-latest
+        needs: [upload_release_binaries, get_version]
+        steps:
+            # `gh` operates on the git repo
+            - name: Checkout sources
+              uses: actions/checkout@v4
+
+            - name: Check for existing release tag
+              uses: mukunku/tag-exists-action@v1.6.0
+              id: check_tag
+              with:
+                  tag: ${{ needs.get_version.outputs.ARK_VERSION }}
+
+            - name: Delete failed release if any
+              if: steps.check_tag.outputs.exists == 'true'
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: |
+                  TAG=${{ needs.get_version.outputs.ARK_VERSION }}
+                  gh release delete $TAG -y --cleanup-tag
+
+    # Keep this at the very end of the workflow tree and without any other
+    # steps to ensure we get a Slack report when something failed
     status:
         if: ${{ failure() }}
-        runs-on: self-hosted
-        needs: [build_macos, build_windows, get_version]
+        runs-on: ubuntu-latest
+        needs: [cleanup, get_version]
         steps:
             - name: Notify slack if build fails
               uses: slackapi/slack-github-action@v1.24.0

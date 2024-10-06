@@ -69,9 +69,9 @@ impl ShellHandler for Shell {
             version: String::from("1.0"),
             file_extension: String::from(".ech"),
             mimetype: String::from("text/echo"),
-            pygments_lexer: String::new(),
-            codemirror_mode: String::new(),
-            nbconvert_exporter: String::new(),
+            pygments_lexer: None,
+            codemirror_mode: None,
+            nbconvert_exporter: None,
             positron: None,
         };
         Ok(KernelInfoReply {

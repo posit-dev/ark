@@ -76,7 +76,7 @@ impl Binding {
 
             let value = env.find(name)?;
 
-            if libr::ALTREP(value) != 0 {
+            if r_is_altrep(value) {
                 let value = BindingValue::Altrep {
                     object: RObject::from(value),
                     data1: RObject::from(R_altrep_data1(value)),
@@ -198,8 +198,8 @@ mod tests {
     use super::*;
     use crate::exec::RFunction;
     use crate::exec::RFunctionExt;
+    use crate::fixtures::r_task;
     use crate::r_symbol;
-    use crate::r_test;
 
     unsafe fn test_environment_iter_impl(hash: bool) {
         let test_env = RFunction::new("base", "new.env")
@@ -224,9 +224,9 @@ mod tests {
     #[test]
     #[allow(non_snake_case)]
     fn test_environment_iter() {
-        r_test! {
+        r_task(|| unsafe {
             test_environment_iter_impl(true);
             test_environment_iter_impl(false);
-        }
+        })
     }
 }

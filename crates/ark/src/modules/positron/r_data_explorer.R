@@ -78,14 +78,29 @@ summary_stats_date <- function(col) {
     # When calling `min` on `x` would raise a warning.
     # Turns out, some Parquet files might generate malformed timezones too.
     suppressWarnings({
+        # When all values in the column are NA's, there min and max return -Inf and +Inf,
+        # mean returns NaN and median returns NA. We make everything return `NULL` so we
+        # correctly display the values in the front-end.
+        min_date <- finite_or_null(min(col, na.rm = TRUE))
+        max_date <- finite_or_null(max(col, na.rm = TRUE))
+        mean_date <- finite_or_null(mean(col, na.rm = TRUE))
+        median_date <- finite_or_null(stats::median(col, na.rm = TRUE))
         list(
-            min_date = as.character(min(col, na.rm = TRUE)),
-            mean_date = as.character(mean(col, na.rm = TRUE)),
-            median_date = as.character(stats::median(col, na.rm = TRUE)),
-            max_date = as.character(max(col, na.rm = TRUE)),
+            min_date = as.character(min_date),
+            mean_date = as.character(mean_date),
+            median_date = as.character(median_date),
+            max_date = as.character(max_date),
             num_unique = length(unique(col))
         )
     })
+}
+
+finite_or_null <- function(x) {
+    if (!is.finite(x)) {
+        NULL
+    } else {
+        x
+    }
 }
 
 summary_stats_get_timezone <- function(x) {
@@ -264,6 +279,12 @@ col_filter_indices <- function(col, idx = NULL) {
         grepl(pattern = escaped_term, col, fixed = FALSE, ignore.case = !params$case_sensitive)
     }
 
+    # Search for the term not contained in the column's values
+    else if (identical(params$search_type, "not_contains")) {
+        escaped_term <- .ps.regex_escape(params$term)
+        !grepl(pattern = escaped_term, col, fixed = FALSE, ignore.case = !params$case_sensitive)
+    }
+
     # Search for the term at the beginning of the column's values
     else if (identical(params$search_type, "starts_with")) {
         escaped_term <- .ps.regex_escape(params$term)
@@ -321,13 +342,38 @@ export_selection <- function(x, format = c("csv", "tsv", "html"), include_header
 }
 
 write_delim <- function(x, delim, include_header) {
-    tmp <- tempfile()
-    defer(unlink(tmp))
+    path <- tempfile()
+    defer(unlink(path))
 
-    utils::write.table(x, tmp, sep = delim, row.names = FALSE, col.names = include_header, quote = FALSE, na = "")
-    # We use size - 1 because we don't want to read the last newline character
-    # that creates problems when pasting the content in spreadsheets
-    readChar(tmp, file.info(tmp)$size - 1L)
+    write_delim_impl(x, path, delim, include_header)
+
+    # We use `size - 1` because we don't want to read the last newline character
+    # as that creates problems when pasting the content in spreadsheets.
+    # `file.info()$size` reports the size in bytes, hence `useBytes = TRUE`.
+    readChar(path, file.info(path)$size - 1L, useBytes = TRUE)
+}
+
+write_delim_impl <- function(x, path, delim, include_header) {
+    # Scope the `con` lifetime to just this helper.
+    # We need to `close()` the connection before we try and get the
+    # `file.info()$size`.
+
+    # Must open in binary write mode, otherwise even though we set
+    # `eol = "\n"` on Windows it will still write `\r\n` due to the C
+    # level `vfprintf()` call.
+    con <- file(path, open = "wb")
+    defer(close(con))
+
+    utils::write.table(
+      x = x,
+      file = con,
+      sep = delim,
+      eol = "\n",
+      row.names = FALSE,
+      col.names = include_header,
+      quote = FALSE,
+      na = ""
+    )
 }
 
 write_html <- function(x, include_header) {
@@ -394,7 +440,9 @@ profile_histogram <- function(x, method = c("fixed", "sturges", "fd", "scott"), 
 
   # For dates, we convert back the breaks to the date representation.
   if (inherits(x, "POSIXct")) {
-    bin_edges <- as.POSIXct(h$breaks, tz = attr(x, "tzone"))
+    # Must supply an `origin` on R <= 4.2
+    origin <- as.POSIXct("1970-01-01", tz = "UTC")
+    bin_edges <- as.POSIXct(h$breaks, tz = attr(x, "tzone"), origin = origin)
   }
 
   list(

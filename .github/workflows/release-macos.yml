@@ -1,0 +1,161 @@
+name: "Build Ark macOS Release"
+
+on:
+    workflow_call:
+      inputs:
+        version:
+          required: true
+          description: "The Ark version"
+          type: string
+    workflow_dispatch:
+      inputs:
+        version:
+          required: false
+          description: "The Ark version"
+          default: dev
+          type: string
+
+jobs:
+    # Build ARK for macOS. Both arm64 (Apple Silicon) and x64 (Intel) hosts.
+    build_macos:
+        name: Build macOS
+        runs-on: macos-latest
+        timeout-minutes: 40
+
+        env:
+            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+        strategy:
+            matrix:
+                arch: [arm64, x64]
+                flavor: [release, debug]
+                include:
+                    - arch: arm64
+                      arch_terminal: arm64
+                      homebrew_folder: /opt/homebrew
+                      rust_target_prefix: aarch64
+                    - arch: x64
+                      arch_terminal: x86_64
+                      homebrew_folder: /usr/local
+                      rust_target_prefix: x86_64
+
+        steps:
+            - name: Install Rust toolchain
+              run: |
+                rustup update --no-self-update stable
+                rustup default stable
+
+            - name: Setup for x86 cross-compiling
+              if: matrix.arch == 'x64'
+              run: |
+                # Install x86 homebrew
+                arch -x86_64 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+                # Install x86 Rust target
+                rustup target add x86_64-apple-darwin
+
+            # Checkout sources
+            - name: Checkout sources
+              uses: actions/checkout@v4
+
+            # Zeromq calls whatever pkg-config version is findable on the PATH to be able to locate
+            # libsodium, so we have to ensure the x86_64 version is first on the PATH when compiling for
+            # that architecture, so that it finds the x86_64 version of libsodium for zeromq to link against.
+            - name: Update PATH to pkg-config for zeromq
+              id: update_path_for_zeromq
+              if: matrix.arch == 'x64'
+              run: |
+                  echo "${{matrix.homebrew_folder}}/bin" >> $GITHUB_PATH
+
+            # Compile
+            - name: Compile ARK (${{ matrix.arch }})
+              env:
+                  npm_config_arch: ${{ matrix.arch }}
+                  ARK_BUILD_TYPE: ${{ matrix.flavor }}
+                  RUST_TARGET: ${{ matrix.rust_target_prefix }}-apple-darwin
+                  CARGO_FLAGS:
+                  PKG_CONFIG_ALLOW_CROSS: 1
+              run: |
+                  cargo clean
+                  cargo build ${{ matrix.flavor == 'release' && '--release' || '' }} --target ${{ matrix.rust_target_prefix }}-apple-darwin
+
+            # Compress kernel to a zip file
+            - name: Create archive
+              run: |
+                  # Enter the build directory
+                  pushd target/${{ matrix.rust_target_prefix }}-apple-darwin/${{ matrix.flavor }}
+
+                  # Compress the kernel to an archive
+                  ARCHIVE="$GITHUB_WORKSPACE/ark-${{ inputs.version }}-${{ matrix.flavor }}-darwin-${{ matrix.arch }}.zip"
+                  zip -Xry $ARCHIVE ark
+
+                  popd
+
+            # Create build artifact
+            - name: Upload client archive
+              uses: actions/upload-artifact@v4
+              with:
+                  name: ark-${{ matrix.flavor }}-darwin-${{ matrix.arch }}-archive
+                  path: ark-${{ inputs.version }}-${{ matrix.flavor }}-darwin-${{ matrix.arch }}.zip
+
+
+    build_universal:
+        name: Build macOS universal binary
+        runs-on: macos-latest
+        timeout-minutes: 40
+        needs: build_macos
+
+        env:
+            DEBUG_FLAG: ${{ matrix.flavor == 'debug' && '-debug' || '' }}
+
+        strategy:
+            matrix:
+                flavor: [release, debug]
+
+        steps:
+            - name: Checkout sources to get copies of LICENSE and NOTICE
+              uses: actions/checkout@v4
+              with:
+                sparse-checkout: |
+                  LICENSE
+                  crates/ark/NOTICE
+
+            - name: Download macOS arm64 kernel (${{ matrix.flavor }})
+              uses: actions/download-artifact@v4
+              with:
+                  name: ark-${{ matrix.flavor }}-darwin-arm64-archive
+
+            - name: Download macOS x64 kernel (${{ matrix.flavor}})
+              uses: actions/download-artifact@v4
+              with:
+                  name: ark-${{ matrix.flavor }}-darwin-x64-archive
+
+            # Combine macOS binaries to a single binary with lipo
+            - name: Create macOS universal binary
+              run: |
+                  # Decompress x64 builds
+                  rm -rf x64 && mkdir x64
+                  pushd x64
+                  unzip ../ark-${{ inputs.version }}-${{ matrix.flavor }}-darwin-x64.zip
+                  popd
+
+                  # Decompress arm64 build
+                  rm -rf arm64 && mkdir arm64
+                  pushd arm64
+                  unzip ../ark-${{ inputs.version }}-${{ matrix.flavor }}-darwin-arm64.zip
+                  popd
+
+                  # Create a universal binary
+                  lipo -create x64/ark arm64/ark -output ark
+
+                  # Compress and bundle licenses
+                  ARCHIVE="$GITHUB_WORKSPACE/ark-${{ inputs.version }}${{ env.DEBUG_FLAG }}-darwin-universal.zip"
+                  [ -e LICENSE ] || cp "$GITHUB_WORKSPACE/LICENSE" LICENSE
+                  [ -e NOTICE ] || cp "$GITHUB_WORKSPACE/crates/ark/NOTICE" NOTICE
+                  zip -Xry $ARCHIVE ark LICENSE NOTICE
+
+            - name: Upload client archive
+              uses: actions/upload-artifact@v4
+              with:
+                  name: ark-${{ matrix.flavor }}-darwin-universal-archive
+                  path: ark-${{ inputs.version }}${{ env.DEBUG_FLAG }}-darwin-universal.zip

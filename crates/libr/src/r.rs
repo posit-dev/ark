@@ -188,6 +188,8 @@ functions::generate! {
 
     pub fn Rf_xlength(arg1: SEXP) -> R_xlen_t;
 
+    pub fn OBJECT(x: SEXP) -> std::ffi::c_int;
+
     pub fn ALTREP(x: SEXP) -> std::ffi::c_int;
 
     pub fn ALTREP_CLASS(x: SEXP) -> SEXP;
@@ -211,6 +213,8 @@ functions::generate! {
     pub fn COMPLEX_ELT(x: SEXP, i: R_xlen_t) -> Rcomplex;
 
     pub fn DATAPTR(x: SEXP) -> *mut std::ffi::c_void;
+
+    pub fn DATAPTR_RO(x: SEXP) -> *const std::ffi::c_void;
 
     pub fn ENCLOS(x: SEXP) -> SEXP;
 
@@ -315,6 +319,8 @@ functions::generate! {
     pub fn R_BytecodeExpr(e: SEXP) -> SEXP;
 
     pub fn Rf_installChar(x: SEXP) -> SEXP;
+
+    pub fn R_compute_identical(x: SEXP, y: SEXP, flags: i32) -> Rboolean;
 
     /// R >= 4.2.0
     pub fn R_existsVarInFrame(rho: SEXP, symbol: SEXP) -> Rboolean;
@@ -632,6 +638,9 @@ constant_globals::generate! {
     #[doc = "\"\" as a STRSXP"]
     #[default = std::ptr::null_mut()]
     pub static R_BlankScalarString: SEXP;
+
+    #[default = 4503599627370496]
+    pub static R_XLEN_T_MAX: u64;
 }
 
 mutable_globals::generate! {
@@ -716,6 +725,9 @@ mutable_globals::generate! {
 
     #[cfg(target_family = "unix")]
     pub static mut ptr_R_Busy: Option<unsafe extern "C" fn(arg1: std::ffi::c_int)>;
+
+    #[cfg(target_family = "unix")]
+    pub static mut ptr_R_Suicide: Option<unsafe extern "C" fn(arg1: *const std::ffi::c_char)>;
 
     // -----------------------------------------------------------------------------------
     // Windows

@@ -168,57 +168,92 @@ impl TryFrom<&WireMessage> for Message {
     /// messages that are received from the frontend.
     fn try_from(msg: &WireMessage) -> Result<Self, Error> {
         let kind = msg.header.msg_type.clone();
+
         if kind == KernelInfoRequest::message_type() {
             return Ok(Message::KernelInfoRequest(JupyterMessage::try_from(msg)?));
-        } else if kind == KernelInfoReply::message_type() {
+        }
+        if kind == KernelInfoReply::message_type() {
             return Ok(Message::KernelInfoReply(JupyterMessage::try_from(msg)?));
-        } else if kind == IsCompleteRequest::message_type() {
+        }
+        if kind == IsCompleteRequest::message_type() {
             return Ok(Message::IsCompleteRequest(JupyterMessage::try_from(msg)?));
-        } else if kind == IsCompleteReply::message_type() {
+        }
+        if kind == IsCompleteReply::message_type() {
             return Ok(Message::IsCompleteReply(JupyterMessage::try_from(msg)?));
-        } else if kind == InspectRequest::message_type() {
+        }
+        if kind == InspectRequest::message_type() {
             return Ok(Message::InspectRequest(JupyterMessage::try_from(msg)?));
-        } else if kind == InspectReply::message_type() {
+        }
+        if kind == InspectReply::message_type() {
             return Ok(Message::InspectReply(JupyterMessage::try_from(msg)?));
-        } else if kind == ExecuteRequest::message_type() {
+        }
+        if kind == ExecuteReplyException::message_type() {
+            if let Ok(data) = JupyterMessage::try_from(msg) {
+                return Ok(Message::ExecuteReplyException(data));
+            }
+            // else fallthrough to try `ExecuteRequest` which has the same message type
+        }
+        if kind == ExecuteRequest::message_type() {
             return Ok(Message::ExecuteRequest(JupyterMessage::try_from(msg)?));
-        } else if kind == ExecuteReply::message_type() {
+        }
+        if kind == ExecuteReply::message_type() {
             return Ok(Message::ExecuteReply(JupyterMessage::try_from(msg)?));
-        } else if kind == ExecuteResult::message_type() {
+        }
+        if kind == ExecuteResult::message_type() {
             return Ok(Message::ExecuteResult(JupyterMessage::try_from(msg)?));
-        } else if kind == ExecuteInput::message_type() {
+        }
+        if kind == ExecuteError::message_type() {
+            return Ok(Message::ExecuteError(JupyterMessage::try_from(msg)?));
+        }
+        if kind == ExecuteInput::message_type() {
             return Ok(Message::ExecuteInput(JupyterMessage::try_from(msg)?));
-        } else if kind == CompleteRequest::message_type() {
+        }
+        if kind == CompleteRequest::message_type() {
             return Ok(Message::CompleteRequest(JupyterMessage::try_from(msg)?));
-        } else if kind == CompleteReply::message_type() {
+        }
+        if kind == CompleteReply::message_type() {
             return Ok(Message::CompleteReply(JupyterMessage::try_from(msg)?));
-        } else if kind == ShutdownRequest::message_type() {
+        }
+        if kind == ShutdownRequest::message_type() {
             return Ok(Message::ShutdownRequest(JupyterMessage::try_from(msg)?));
-        } else if kind == KernelStatus::message_type() {
+        }
+        if kind == KernelStatus::message_type() {
             return Ok(Message::Status(JupyterMessage::try_from(msg)?));
-        } else if kind == CommInfoRequest::message_type() {
+        }
+        if kind == CommInfoRequest::message_type() {
             return Ok(Message::CommInfoRequest(JupyterMessage::try_from(msg)?));
-        } else if kind == CommInfoReply::message_type() {
+        }
+        if kind == CommInfoReply::message_type() {
             return Ok(Message::CommInfoReply(JupyterMessage::try_from(msg)?));
-        } else if kind == CommOpen::message_type() {
+        }
+        if kind == CommOpen::message_type() {
             return Ok(Message::CommOpen(JupyterMessage::try_from(msg)?));
-        } else if kind == CommWireMsg::message_type() {
+        }
+        if kind == CommWireMsg::message_type() {
             return Ok(Message::CommMsg(JupyterMessage::try_from(msg)?));
-        } else if kind == CommClose::message_type() {
+        }
+        if kind == CommClose::message_type() {
             return Ok(Message::CommClose(JupyterMessage::try_from(msg)?));
-        } else if kind == InterruptRequest::message_type() {
+        }
+        if kind == InterruptRequest::message_type() {
             return Ok(Message::InterruptRequest(JupyterMessage::try_from(msg)?));
-        } else if kind == InterruptReply::message_type() {
+        }
+        if kind == InterruptReply::message_type() {
             return Ok(Message::InterruptReply(JupyterMessage::try_from(msg)?));
-        } else if kind == InputReply::message_type() {
+        }
+        if kind == InputReply::message_type() {
             return Ok(Message::InputReply(JupyterMessage::try_from(msg)?));
-        } else if kind == InputRequest::message_type() {
+        }
+        if kind == InputRequest::message_type() {
             return Ok(Message::InputRequest(JupyterMessage::try_from(msg)?));
-        } else if kind == StreamOutput::message_type() {
+        }
+        if kind == StreamOutput::message_type() {
             return Ok(Message::StreamOutput(JupyterMessage::try_from(msg)?));
-        } else if kind == UiFrontendRequest::message_type() {
+        }
+        if kind == UiFrontendRequest::message_type() {
             return Ok(Message::CommRequest(JupyterMessage::try_from(msg)?));
-        } else if kind == JsonRpcReply::message_type() {
+        }
+        if kind == JsonRpcReply::message_type() {
             return Ok(Message::CommReply(JupyterMessage::try_from(msg)?));
         }
         return Err(Error::UnknownMessageType(kind));

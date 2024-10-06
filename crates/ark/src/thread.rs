@@ -1,11 +1,9 @@
 //
 // thread.rs
 //
-// Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2024 Posit Software, PBC. All rights reserved.
 //
 //
-
-use harp::test::R_TASK_BYPASS;
 
 use crate::interface::RMain;
 use crate::r_task;
@@ -97,9 +95,7 @@ impl<T> Drop for RThreadSafe<T> {
 }
 
 fn check_on_main_r_thread(f: &str) {
-    // An exception is made for testing, where we set `R_TASK_BYPASS` inside of
-    // `test::start_r()`
-    if !RMain::on_main_thread() && unsafe { !R_TASK_BYPASS } {
+    if !RMain::on_main_thread() && !stdext::IS_TESTING {
         let thread = std::thread::current();
         let name = thread.name().unwrap_or("<unnamed>");
         let message =

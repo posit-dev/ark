@@ -13,14 +13,16 @@ use std::u32;
 use libc::c_double;
 use libr::*;
 
+use crate::environment::BindingValue;
+use crate::environment::Environment;
 use crate::environment::R_ENVS;
-use crate::eval::r_parse_eval0;
 use crate::list_get;
 use crate::object::r_chr_get;
 use crate::object::r_length;
 use crate::r_is_altrep;
 use crate::r_symbol;
 use crate::r_typeof;
+use crate::RObject;
 
 // A re-implementation of lobstr obj_size
 // https://github.com/r-lib/lobstr/blob/9ee1481c9d322fe0a5c798f3f20e608622ddc257/src/size.cpp#L201
@@ -28,29 +30,28 @@ use crate::r_typeof;
 // `utils::object.size()` is too slow on large datasets and this code path is used trough the
 // variables pane which required more performance.
 // See for more info.
-pub fn r_size(x: SEXP) -> usize {
+pub fn r_size(x: SEXP) -> harp::Result<usize> {
     let mut seen: HashSet<SEXP> = HashSet::new();
 
-    let sizeof_node: f64 = r_parse_eval0(
-        "as.vector(utils::object.size(quote(expr = )))",
-        R_ENVS.global,
-    )
-    .and_then(|x| x.try_into())
-    .unwrap_or(0.);
+    let sizeof_node: f64 = harp::parse_eval_base("as.vector(utils::object.size(quote(expr = )))")
+        .and_then(|x| x.try_into())?;
 
-    let sizeof_vector: f64 =
-        r_parse_eval0("as.vector(utils::object.size(logical()))", R_ENVS.global)
-            .and_then(|x| x.try_into())
-            .unwrap_or(0.);
+    let sizeof_vector: f64 = harp::parse_eval_base("as.vector(utils::object.size(logical()))")
+        .and_then(|x| x.try_into())?;
 
-    obj_size_tree(
-        x,
-        R_ENVS.global,
-        sizeof_node as usize,
-        sizeof_vector as usize,
-        &mut seen,
-        0,
-    )
+    // The tree-walking implementation potentially violates R internals,
+    // so we protect against errors thrown by R (and hope for no crash).
+    // https://github.com/posit-dev/positron/issues/4686
+    harp::try_catch(|| {
+        obj_size_tree(
+            x,
+            R_ENVS.global,
+            sizeof_node as usize,
+            sizeof_vector as usize,
+            &mut seen,
+            0,
+        )
+    })
 }
 
 fn obj_size_tree(
@@ -237,24 +238,63 @@ fn obj_size_tree(
                 return 0;
             }
 
-            size += obj_size_tree(
-                unsafe { libr::FRAME(x) },
-                base_env,
-                sizeof_node,
-                sizeof_vector,
-                seen,
-                depth + 1,
-            );
+            // We can't access environment bindings values using `CAR` because this requires knowledge
+            // about internals of environments.
+            // This also means we won't count the size of internal implementation details of environments,
+            // such as the pre-allocated size of hash tables, etc.
+
+            for binding in Environment::new(RObject::view(x))
+                .iter()
+                .filter_map(|x| x.ok())
+            {
+                // `binding.name`s are SYMSXP, for which we don't need to add to size.
+                // We do add a node size for each binding though, because that's
+                // the size the internal pairlist uses for each element.
+                size += sizeof_node;
+
+                size += match binding.value {
+                    // For active bindings, we compute the size of the function
+                    BindingValue::Active { fun } => {
+                        obj_size_tree(fun.sexp, base_env, sizeof_node, sizeof_vector, seen, depth)
+                    },
+                    // `obj_size_tree` is aware of altrep objects.
+                    BindingValue::Altrep { object, .. } => obj_size_tree(
+                        object.sexp,
+                        base_env,
+                        sizeof_node,
+                        sizeof_vector,
+                        seen,
+                        depth + 1,
+                    ),
+                    // `object_size_tree` is aware of promise objects.
+                    // The environment iterator will automatically return `PRVALUE` as
+                    // a `Standard` binding though. So this is only seeing unevaluated promises.
+                    // For evaluated promises, we are not counting the size of `PRCODE`, but hopefully
+                    // their sizes are negligible, mostly just symbols or small expressions.
+                    BindingValue::Promise { promise } => obj_size_tree(
+                        promise.sexp,
+                        base_env,
+                        sizeof_node,
+                        sizeof_vector,
+                        seen,
+                        depth + 1,
+                    ),
+                    // Immediate bindings are expanded, thus we might overestimate the size of
+                    // environments that use this kind of bindings.
+                    // See more in https://github.com/r-devel/r-svn/blob/31340c871c7df54e45bfc7c4f49d09bb5806ec70/doc/notes/immbnd.md
+                    BindingValue::Standard { object, .. } => obj_size_tree(
+                        object.sexp,
+                        base_env,
+                        sizeof_node,
+                        sizeof_vector,
+                        seen,
+                        depth,
+                    ),
+                }
+            }
+
             size += obj_size_tree(
                 unsafe { libr::ENCLOS(x) },
-                base_env,
-                sizeof_node,
-                sizeof_vector,
-                seen,
-                depth + 1,
-            );
-            size += obj_size_tree(
-                unsafe { libr::HASHTAB(x) },
                 base_env,
                 sizeof_node,
                 sizeof_vector,
@@ -396,14 +436,11 @@ fn v_size(n: usize, element_size: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use crate::environment::R_ENVS;
-    use crate::eval::r_parse_eval0;
-    use crate::r_test;
     use crate::size::r_size;
 
     fn object_size(code: &str) -> usize {
-        let object = r_parse_eval0(code, R_ENVS.global).unwrap();
-        r_size(object.sexp)
+        let object = harp::parse_eval_global(code).unwrap();
+        r_size(object.sexp).unwrap()
     }
 
     fn expect_size(code: &str, expected: usize) {
@@ -412,99 +449,95 @@ mod tests {
     }
 
     fn expect_same(code: &str) {
-        let size_expected: f64 = r_parse_eval0(
-            format!("utils::object.size({code})").as_str(),
-            R_ENVS.global,
-        )
-        .unwrap()
-        .try_into()
-        .unwrap();
+        let size_expected: f64 =
+            harp::parse_eval_global(format!("utils::object.size({code})").as_str())
+                .unwrap()
+                .try_into()
+                .unwrap();
 
         expect_size(code, size_expected as usize);
     }
 
     #[test]
     fn test_length_one_vectors() {
-        r_test!({
+        crate::r_task(|| {
             expect_same("1L");
             expect_same("'abc'");
             expect_same("paste(rep('banana', 100), collapse = '')");
             expect_same("charToRaw('a')");
             expect_same("5 + 1i");
-        })
+        });
     }
 
     // size scales correctly with length (accounting for vector pool)
     #[test]
     fn test_sizes_scale_correctly() {
-        r_test!({
+        crate::r_task(|| {
             expect_same("numeric()");
             expect_same("1");
             expect_same("2");
             expect_same("c(1:10)");
             expect_same("c(1:1000)");
-        })
+        });
     }
 
     #[test]
     fn test_size_of_lists() {
-        r_test!({
+        crate::r_task(|| {
             expect_same("list()");
             expect_same("as.list(1)");
             expect_same("as.list(1:2)");
             expect_same("as.list(1:3)");
 
             expect_same("list(list(list(list(list()))))");
-        })
+        });
     }
 
     #[test]
     fn test_size_of_symbols() {
-        r_test!({
+        crate::r_task(|| {
             expect_same("quote(x)");
             expect_same("quote(asfsadfasdfasdfds)");
-        })
+        });
     }
 
     #[test]
     fn test_pairlists() {
-        r_test!({
+        crate::r_task(|| {
             expect_same("pairlist()");
             expect_same("pairlist(1)");
             expect_same("pairlist(1, 2)");
             expect_same("pairlist(1, 2, 3)");
             expect_same("pairlist(1, 2, 3, 4)");
-        })
+        });
     }
 
     #[test]
     fn test_s4_classes() {
-        r_test!(expect_same(
-            "methods::setClass('Z', slots = c(x = 'integer'))(x=1L)",
-        ))
+        crate::r_task(|| expect_same("methods::setClass('Z', slots = c(x = 'integer'))(x=1L)"));
     }
 
     #[test]
     fn test_size_attributes() {
-        r_test!({
+        crate::r_task(|| {
             expect_same("c(x = 1)");
             expect_same("list(x = 1)");
             expect_same("c(x = 'y')");
-        })
+        });
     }
 
     #[test]
     fn test_duplicated_charsxps_counted_once() {
-        r_test!({
+        crate::r_task(|| {
             expect_same("'x'");
             expect_same("c('x', 'y', 'x')");
             expect_same("c('banana', 'banana', 'banana')");
-        })
+        });
     }
 
     #[test]
     fn test_shared_components_once() {
-        r_test!({
+        crate::r_task(|| {
             let size1 = object_size(
                 "local({
                 x <- 1:1e3
@@ -515,12 +548,12 @@ mod tests {
             let size3 = object_size("vector('list', 3)");
 
             assert_eq!(size1, size2 + size3)
-        })
+        });
     }
 
     #[test]
     fn test_size_closures() {
-        r_test!({
+        crate::r_task(|| {
             let code = "local({
                 f <- function() NULL
                 attributes(f) <- NULL # zap srcrefs
@@ -528,24 +561,24 @@ mod tests {
                 f
             })";
             expect_same(code);
-        })
+        });
     }
 
     #[test]
     fn test_works_for_altrep() {
-        r_test!({
+        crate::r_task(|| {
             let size = object_size("1:1e6");
             // Currently reported size is 640 B
             // If regular vector would be 4,000,040 B
             // This test is conservative so shouldn't fail in case representation
             // changes in the future
             assert!(size < 10000)
-        })
+        });
     }
 
     #[test]
     fn test_compute_size_defered_strings() {
-        r_test!({
+        crate::r_task(|| {
             let code = "local({
                 x <- 1:64
                 names(x) <- x
@@ -555,22 +588,22 @@ mod tests {
 
             // Just don't crash
             object_size(code);
-        })
+        });
     }
 
     #[test]
     fn test_terminal_envs_have_size_zero() {
-        r_test!({
+        crate::r_task(|| {
             expect_size("globalenv()", 0);
             expect_size("baseenv()", 0);
             expect_size("emptyenv()", 0);
             expect_size("asNamespace('stats')", 0);
-        })
+        });
     }
 
     #[test]
     fn test_env_size_recursive() {
-        r_test!({
+        crate::r_task(|| {
             let e_size = object_size("new.env(parent = emptyenv())");
 
             let f_size = object_size(
@@ -581,12 +614,12 @@ mod tests {
             );
 
             assert_eq!(f_size, 2 * e_size);
-        })
+        });
     }
 
     #[test]
     fn test_size_of_functions_include_envs() {
-        r_test!({
+        crate::r_task(|| {
             let code = "local({
               f <- function() {
                 y <- 1:1e3 + 1L
@@ -606,15 +639,28 @@ mod tests {
             })";
 
             assert!(object_size(code) > object_size("1:1e3 + 1L"));
-        })
+        });
     }
 
     #[test]
     fn test_support_dots() {
-        r_test!({
+        crate::r_task(|| {
             // Check it doesn't error
             let size = object_size("(function(...) function() NULL)(foo)");
             assert!(size != 0)
-        })
+        });
+    }
+
+    #[test]
+    fn test_immediate_bindings() {
+        crate::r_task(|| {
+            let size = object_size(
+                "local({
+                    f <- compiler::cmpfun(function() for (i in 1:3) return(environment()))
+                    f()
+                })",
+            );
+            assert!(size != 0)
+        });
     }
 }

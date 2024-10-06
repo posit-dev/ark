@@ -6,18 +6,22 @@
 //
 pub mod attrib;
 pub mod call;
+pub mod data_frame;
 pub mod environment;
 pub mod environment_iter;
 pub mod error;
 pub mod eval;
 pub mod exec;
 pub mod external_ptr;
+pub mod fixtures;
 pub mod format;
 pub mod json;
 pub mod library;
 pub mod line_ending;
 pub mod modules;
 pub mod object;
+pub mod parse;
+pub mod parser;
 pub mod polled_events;
 pub mod protect;
 pub mod r_version;
@@ -25,18 +29,26 @@ pub mod raii;
 pub mod routines;
 pub mod session;
 pub mod size;
+pub mod source;
 pub mod string;
 pub mod symbol;
 pub mod sys;
 pub mod table;
-pub mod test;
 pub mod traits;
 pub mod utils;
 pub mod vec_format;
 pub mod vector;
 
 // Reexport API
+pub use data_frame::*;
+pub use eval::*;
+pub use object::*;
+pub use parse::*;
+pub use parser::*;
+pub use source::*;
 pub use table::*;
+pub use vector::character_vector::*;
+pub use vector::list::*;
 
 // Necessary for the `harp::` references in macros, e.g. `harp::register`, to
 // resolve to the correct symbols
@@ -46,6 +58,8 @@ pub use harp::exec::top_level_exec;
 pub use harp::exec::try_catch;
 pub use harp::exec::try_eval;
 pub use harp::exec::try_eval_silent;
+#[cfg(test)]
+pub(crate) use harp::fixtures::r_task;
 pub use harp::object::list_get;
 pub use harp::object::list_poke;
 pub use harp::object::RObject;
@@ -216,38 +230,6 @@ macro_rules! r_lang {
 
 }
 
-/// Asserts that the given expression matches the given pattern
-/// and optionally some further assertions
-///
-/// # Examples
-///
-/// ```
-/// #[macro_use] extern crate harp;
-/// # fn main() {
-/// assert_match!(1 + 1, 2);
-/// assert_match!(1 + 1, 2 => {
-///    assert_eq!(40 + 2, 42)
-/// });
-/// # }
-/// ```
-#[macro_export]
-macro_rules! assert_match {
-
-    ($expression:expr, $pattern:pat_param => $code:block) => {
-        assert!(match $expression {
-            $pattern => {
-                $code
-                true
-            },
-            _ => false
-        })
-    };
-
-    ($expression:expr, $pattern:pat_param) => {
-        assert!(matches!($expression, $pattern))
-    };
-}
-
 #[macro_export(local_inner_macros)]
 macro_rules! push_rds {
     ($arg:expr) => {
@@ -276,7 +258,7 @@ mod tests {
 
     #[test]
     fn test_pairlist() {
-        r_test! {
+        crate::r_task(|| unsafe {
             let sym = r_symbol!("injected");
 
             let mut protect = RProtect::new();
@@ -332,13 +314,12 @@ mod tests {
             let value = RObject::new(r_lang!("hello", A = 1, B = 2));
             assert!(r_typeof(CAR(*value)) == STRSXP);
             assert!(r_is_null(TAG(*value)));
-
-        }
+        })
     }
 
     #[test]
     fn test_call() {
-        r_test! {
+        crate::r_task(|| unsafe {
             let sym = r_symbol!("injected");
 
             let value = RObject::new(r_lang! {
@@ -359,6 +340,6 @@ mod tests {
             assert!(TAG(CDR(*value)) == r_symbol!("injected"));
             assert!(TAG(CDDR(*value)) == r_symbol!("C"));
             assert!(TAG(CDDR(CDR(*value))) == r_symbol!("D"));
-        }
+        })
     }
 }

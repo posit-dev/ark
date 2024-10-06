@@ -225,11 +225,11 @@ mod tests {
     use crate::lsp::completions::sources::unique::namespace::completions_from_namespace;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
-    use crate::test::r_test;
+    use crate::r_task;
 
     #[test]
     fn test_completions_after_colons() {
-        r_test(|| {
+        r_task(|| {
             // Just colons, no RHS text yet
             let point = Point { row: 0, column: 7 };
             let document = Document::new("utils::", None);
@@ -268,7 +268,7 @@ mod tests {
 
     #[test]
     fn test_expression_after_colon_colon_doesnt_result_in_completions() {
-        r_test(|| {
+        r_task(|| {
             let point = Point { row: 0, column: 7 };
             let document = Document::new("base::+", None);
             let context = DocumentContext::new(&document, point, None);
@@ -279,7 +279,7 @@ mod tests {
 
     #[test]
     fn test_empty_set_of_completions_when_on_package_name() {
-        r_test(|| {
+        r_task(|| {
             let point = Point { row: 0, column: 2 };
             let document = Document::new("base::ab", None);
             let context = DocumentContext::new(&document, point, None);
@@ -290,7 +290,7 @@ mod tests {
 
     #[test]
     fn test_empty_set_of_completions_when_not_at_end_of_colons() {
-        r_test(|| {
+        r_task(|| {
             let point = Point { row: 0, column: 5 };
             let document = Document::new("base::ab", None);
             let context = DocumentContext::new(&document, point, None);

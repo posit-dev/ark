@@ -403,7 +403,6 @@ fn is_ignored_name(x: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use harp::environment::R_ENVS;
-    use harp::eval::r_parse_eval0;
     use harp::exec::RFunction;
     use harp::exec::RFunctionExt;
     use harp::object::*;
@@ -412,11 +411,11 @@ mod tests {
     use libr::*;
 
     use crate::dap::dap_variables::env_binding_variable;
-    use crate::test::r_test;
+    use crate::r_task;
 
     #[test]
     fn test_env_binding_variable_base() {
-        r_test(|| unsafe {
+        r_task(|| unsafe {
             let env = RFunction::new("base", "new.env")
                 .param("parent", R_ENVS.base)
                 .call()
@@ -436,7 +435,7 @@ mod tests {
 
     #[test]
     fn test_env_binding_variable_classed() {
-        r_test(|| unsafe {
+        r_task(|| unsafe {
             let env = RFunction::new("base", "new.env")
                 .param("parent", R_ENVS.base)
                 .call()
@@ -458,13 +457,13 @@ mod tests {
 
     #[test]
     fn test_env_binding_variable_binding() {
-        r_test(|| {
+        r_task(|| {
             let env = RFunction::new("base", "new.env")
                 .param("parent", R_ENVS.base)
                 .call()
                 .unwrap();
 
-            let function = r_parse_eval0("function() stop('oh no')", R_ENVS.base).unwrap();
+            let function = harp::parse_eval_base("function() stop('oh no')").unwrap();
 
             let _ = RFunction::new("base", "makeActiveBinding")
                 .param("sym", "a")
