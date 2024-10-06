@@ -120,29 +120,73 @@ fn is_indexable(node: &Node) -> bool {
     true
 }
 
+// Function to parse a comment and return the section level and title
+fn parse_comment_as_section(comment: &str) -> Option<(usize, String)> {
+    // Match lines starting with one or more '#' followed by some non-empty content and must end with 4 or more '-' or '#'
+    // Ensure that there's actual content between the start and the trailing symbols.
+    let comment_re = regex::Regex::new(r"^(#+)\s*([^\s#-].+?)\s*(#{4,}|-{4,}|={4,})$").unwrap();
+
+    if let Some(caps) = comment_re.captures(comment) {
+        let hashes = caps.get(1)?.as_str().len();  // Count the number of '#'
+        let title = caps.get(2)?.as_str().trim().to_string();  // Extract the title text without trailing punctuations
+        return Some((hashes, title));  // Return the level based on the number of '#' and the title
+    }
+
+    None
+}
+
 fn index_node(
     node: &Node,
     contents: &Rope,
     parent: &mut DocumentSymbol,
     symbols: &mut Vec<DocumentSymbol>,
 ) -> Result<bool> {
-    // if we find an assignment, index it
+    // Check if the node is a comment and matches the markdown-style comment patterns
+    if node.node_type() == NodeType::Comment {
+        let comment_text = contents.node_slice(&node)?.to_string();
+
+        // Check if the comment starts with one or more '#' followed by any text and ends with 4+ punctuations
+        if let Some((level, title)) = parse_comment_as_section(&comment_text) {
+            // Create a symbol based on the parsed comment
+            let start = convert_point_to_position(contents, node.start_position());
+            let end = convert_point_to_position(contents, node.end_position());
+
+            let symbol = DocumentSymbol {
+                name: title,  // Use the title without the trailing '####' or '----'
+                kind: SymbolKind::STRING,  // Treat it as a string section
+                detail: None,  // No need to display level details
+                children: Some(Vec::new()),  // Prepare for child symbols if any
+                deprecated: None,
+                tags: None,
+                range: Range { start, end },
+                selection_range: Range { start, end },
+            };
+
+            // Add the symbol to the parent node
+            parent.children.as_mut().unwrap().push(symbol);
+
+            // Return early to avoid further processing
+            return Ok(true);
+        }
+    }
+
+    // Existing code for indexing assignments or other nodes...
     if matches!(
         node.node_type(),
-        NodeType::BinaryOperator(BinaryOperatorType::LeftAssignment) |
-            NodeType::BinaryOperator(BinaryOperatorType::EqualsAssignment)
+        NodeType::BinaryOperator(BinaryOperatorType::LeftAssignment)
+            | NodeType::BinaryOperator(BinaryOperatorType::EqualsAssignment)
     ) {
         match index_assignment(node, contents, parent, symbols) {
             Ok(handled) => {
                 if handled {
                     return Ok(true);
                 }
-            },
+            }
             Err(error) => error!("{:?}", error),
         }
     }
 
-    // by default, recurse into children
+    // Recurse into children
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         if is_indexable(&child) {
