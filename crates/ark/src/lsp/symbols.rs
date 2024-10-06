@@ -122,8 +122,9 @@ fn is_indexable(node: &Node) -> bool {
 
 // Function to parse a comment and return the section level and title
 fn parse_comment_as_section(comment: &str) -> Option<(usize, String)> {
-    // Match lines starting with one or more '#' followed by text and must end with 4 or more '-' or '#'
-    let comment_re = regex::Regex::new(r"^(#+)\s*(.+?)\s*(#{4,}|-{4,}|={4,})$").unwrap();
+    // Match lines starting with one or more '#' followed by some non-empty content and must end with 4 or more '-' or '#'
+    // Ensure that there's actual content between the start and the trailing symbols.
+    let comment_re = regex::Regex::new(r"^(#+)\s*([^\s#-].+?)\s*(#{4,}|-{4,}|={4,})$").unwrap();
 
     if let Some(caps) = comment_re.captures(comment) {
         let hashes = caps.get(1)?.as_str().len();  // Count the number of '#'
