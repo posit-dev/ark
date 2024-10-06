@@ -123,7 +123,7 @@ fn is_indexable(node: &Node) -> bool {
 // Function to parse a comment and return the section level and title
 fn parse_comment_as_section(comment: &str) -> Option<(usize, String)> {
     // Match lines starting with one or more '#' followed by text and must end with 4 or more '-' or '#'
-    let comment_re = regex::Regex::new(r"^(#+)\s*(.+?)\s*(#{4,}|-{4,})$").unwrap();
+    let comment_re = regex::Regex::new(r"^(#+)\s*(.+?)\s*(#{4,}|-{4,}|={4,})$").unwrap();
 
     if let Some(caps) = comment_re.captures(comment) {
         let hashes = caps.get(1)?.as_str().len();  // Count the number of '#'
@@ -143,7 +143,7 @@ fn index_node(
     // Check if the node is a comment and matches the markdown-style comment patterns
     if node.node_type() == NodeType::Comment {
         let comment_text = contents.node_slice(&node)?.to_string();
-        
+
         // Check if the comment starts with one or more '#' followed by any text and ends with 4+ punctuations
         if let Some((level, title)) = parse_comment_as_section(&comment_text) {
             // Create a symbol based on the parsed comment
