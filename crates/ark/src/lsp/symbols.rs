@@ -122,15 +122,15 @@ fn is_indexable(node: &Node) -> bool {
 
 // Function to parse a comment and return the section level and title
 fn parse_comment_as_section(comment: &str) -> Option<(usize, String)> {
-    // Match lines starting with one or more '#' followed by any text and optional punctuations
-    let comment_re = regex::Regex::new(r"^(#+)\s*(.+?)([\s-]*)$").unwrap();
-    
+    // Match lines starting with one or more '#' followed by text and must end with 4 or more '-' or '#'
+    let comment_re = regex::Regex::new(r"^(#+)\s*(.+?)\s*(#{4,}|-{4,})$").unwrap();
+
     if let Some(caps) = comment_re.captures(comment) {
         let hashes = caps.get(1)?.as_str().len();  // Count the number of '#'
-        let title = caps.get(2)?.as_str().trim().to_string();  // Extract the title text
-        return Some((hashes, title));
+        let title = caps.get(2)?.as_str().trim().to_string();  // Extract the title text without trailing punctuations
+        return Some((hashes, title));  // Return the level based on the number of '#' and the title
     }
-    
+
     None
 }
 
@@ -144,17 +144,17 @@ fn index_node(
     if node.node_type() == NodeType::Comment {
         let comment_text = contents.node_slice(&node)?.to_string();
         
-        // Check if the comment starts with one or more '#' followed by any text
+        // Check if the comment starts with one or more '#' followed by any text and ends with 4+ punctuations
         if let Some((level, title)) = parse_comment_as_section(&comment_text) {
             // Create a symbol based on the parsed comment
             let start = convert_point_to_position(contents, node.start_position());
             let end = convert_point_to_position(contents, node.end_position());
 
             let symbol = DocumentSymbol {
-                name: title,
+                name: title,  // Use the title without the trailing '####' or '----'
                 kind: SymbolKind::STRING,  // Treat it as a string section
-                detail: Some(format!("Level {}", level)),  // Show the level based on the number of '#'
-                children: Some(Vec::new()),
+                detail: None,  // No need to display level details
+                children: Some(Vec::new()),  // Prepare for child symbols if any
                 deprecated: None,
                 tags: None,
                 range: Range { start, end },
@@ -163,6 +163,8 @@ fn index_node(
 
             // Add the symbol to the parent node
             parent.children.as_mut().unwrap().push(symbol);
+
+            // Return early to avoid further processing
             return Ok(true);
         }
     }
@@ -196,6 +198,7 @@ fn index_node(
 
     Ok(true)
 }
+
 fn index_assignment(
     node: &Node,
     contents: &Rope,
