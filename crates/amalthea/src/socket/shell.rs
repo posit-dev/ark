@@ -215,7 +215,7 @@ impl Shell {
     ) -> Result<(), Error> {
         log::info!("Received execution request {req:?}");
         let originator = Originator::from(&req);
-        match block_on(handler.handle_execute_request(Some(originator), &req.content)) {
+        match block_on(handler.handle_execute_request(originator, &req.content)) {
             Ok(reply) => {
                 log::info!("Got execution reply, delivering to frontend: {reply:?}");
                 let r = req.send_reply(reply, &self.socket);

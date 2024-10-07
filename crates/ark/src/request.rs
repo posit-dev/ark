@@ -17,7 +17,7 @@ use crate::ui::UiCommMessage;
 pub enum RRequest {
     /// Fulfill an execution request from the frontend, producing either a
     /// Reply or an Exception
-    ExecuteCode(ExecuteRequest, Option<Originator>, Sender<ExecuteResponse>),
+    ExecuteCode(ExecuteRequest, Originator, Sender<ExecuteResponse>),
 
     /// Shut down the R execution thread
     Shutdown(bool),

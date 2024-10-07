@@ -66,11 +66,11 @@ impl Shell {
     }
 
     // Simluates an input request
-    fn prompt_for_input(&self, originator: Option<Originator>) {
+    fn prompt_for_input(&self, originator: Originator) {
         if let Err(err) = self
             .stdin_request_tx
             .send(StdInRequest::Input(ShellInputRequest {
-                originator: originator.clone(),
+                originator,
                 request: InputRequest {
                     prompt: String::from("Amalthea Echo> "),
                     password: false,
@@ -137,7 +137,7 @@ impl ShellHandler for Shell {
     /// Handles an ExecuteRequest; "executes" the code by echoing it.
     async fn handle_execute_request(
         &mut self,
-        originator: Option<Originator>,
+        originator: Originator,
         req: &ExecuteRequest,
     ) -> Result<ExecuteReply, ExecuteReplyException> {
         // Increment counter if we are storing this execution in history

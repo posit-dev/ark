@@ -113,7 +113,7 @@ impl ShellHandler for Shell {
     /// Handles an ExecuteRequest; "executes" the code by echoing it.
     async fn handle_execute_request(
         &mut self,
-        _originator: Option<Originator>,
+        _originator: Originator,
         req: &ExecuteRequest,
     ) -> Result<ExecuteReply, ExecuteReplyException> {
         // Increment counter if we are storing this execution in history

@@ -60,7 +60,7 @@ pub struct JupyterMessage<T> {
     pub header: JupyterHeader,
 
     /// The header of the message from which this message originated. Optional;
-    /// not all messages have an originator.
+    /// not all messages have a parent.
     pub parent_header: Option<JupyterHeader>,
 
     /// The body (payload) of the message
@@ -339,14 +339,11 @@ where
 
     /// Create a new Jupyter message with a specific ZeroMQ identity.
     pub fn create_with_identity(
-        orig: Option<Originator>,
+        originator: Originator,
         content: T,
         session: &Session,
     ) -> JupyterMessage<T> {
-        let (id, parent_header) = match orig {
-            Some(orig) => (orig.zmq_id, Some(orig.header)),
-            None => (Vec::new(), None),
-        };
+        let (id, parent_header) = (originator.zmq_id, originator.header);
 
         JupyterMessage::<T> {
             zmq_identities: vec![id],
@@ -355,7 +352,7 @@ where
                 session.session_id.clone(),
                 session.username.clone(),
             ),
-            parent_header,
+            parent_header: Some(parent_header),
             content,
         }
     }
