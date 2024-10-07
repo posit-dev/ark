@@ -170,7 +170,6 @@ fn index_node(
         }
     }
 
-    // Existing code for indexing assignments or other nodes...
     if matches!(
         node.node_type(),
         NodeType::BinaryOperator(BinaryOperatorType::LeftAssignment) |
