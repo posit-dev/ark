@@ -35,9 +35,7 @@ use amalthea::wire::exception::Exception;
 use amalthea::wire::execute_error::ExecuteError;
 use amalthea::wire::execute_input::ExecuteInput;
 use amalthea::wire::execute_reply::ExecuteReply;
-use amalthea::wire::execute_reply_exception::ExecuteReplyException;
 use amalthea::wire::execute_request::ExecuteRequest;
-use amalthea::wire::execute_response::ExecuteResponse;
 use amalthea::wire::execute_result::ExecuteResult;
 use amalthea::wire::input_reply::InputReply;
 use amalthea::wire::input_request::InputRequest;
@@ -231,7 +229,7 @@ struct ActiveReadConsoleRequest {
     exec_count: u32,
     request: ExecuteRequest,
     orig: Option<Originator>,
-    response_tx: Sender<ExecuteResponse>,
+    response_tx: Sender<amalthea::Result<ExecuteReply>>,
 }
 
 /// Represents kernel metadata (available after the kernel has fully started)
@@ -1265,7 +1263,7 @@ impl RMain {
     fn make_execute_response_error(
         &mut self,
         exec_count: u32,
-    ) -> Option<(ExecuteResponse, Option<IOPubMessage>)> {
+    ) -> Option<(amalthea::Result<ExecuteReply>, Option<IOPubMessage>)> {
         // Save and reset error occurred flag
         let error_occurred = self.error_occurred;
         self.error_occurred = false;
@@ -1319,7 +1317,7 @@ impl RMain {
             exception.traceback.insert(0, exception.evalue.clone())
         }
 
-        let response = new_execute_response_error(exception.clone(), exec_count);
+        let response = new_execute_reply_error(exception.clone(), exec_count);
         let result = IOPubMessage::ExecuteError(ExecuteError { exception });
 
         Some((response, Some(result)))
@@ -1328,7 +1326,7 @@ impl RMain {
     fn make_execute_response_result(
         &mut self,
         exec_count: u32,
-    ) -> (ExecuteResponse, Option<IOPubMessage>) {
+    ) -> (amalthea::Result<ExecuteReply>, Option<IOPubMessage>) {
         // TODO: Implement rich printing of certain outputs.
         // Will we need something similar to the RStudio model,
         // where we implement custom print() methods? Or can
@@ -1364,7 +1362,7 @@ impl RMain {
             }
         }
 
-        let response = new_execute_response(exec_count);
+        let response = new_execute_reply(exec_count);
 
         let result = (data.len() > 0).then(|| {
             IOPubMessage::ExecuteResult(ExecuteResult {
@@ -1715,34 +1713,31 @@ impl RMain {
 }
 
 /// Report an incomplete request to the frontend
-fn new_incomplete_response(req: &ExecuteRequest, exec_count: u32) -> ExecuteResponse {
-    ExecuteResponse::ReplyException(ExecuteReplyException {
-        status: Status::Error,
-        execution_count: exec_count,
-        exception: Exception {
-            ename: "IncompleteInput".to_string(),
-            evalue: format!("Code fragment is not complete: {}", req.code),
-            traceback: vec![],
-        },
-    })
+fn new_incomplete_response(
+    req: &ExecuteRequest,
+    exec_count: u32,
+) -> amalthea::Result<ExecuteReply> {
+    let error = Exception {
+        ename: "IncompleteInput".to_string(),
+        evalue: format!("Code fragment is not complete: {}", req.code),
+        traceback: vec![],
+    };
+    Err(amalthea::Error::ShellErrorExecuteReply(error, exec_count))
 }
 
 static RE_STACK_OVERFLOW: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"C stack usage [ 0-9]+ is too close to the limit\n").unwrap());
 
-fn new_execute_response(exec_count: u32) -> ExecuteResponse {
-    ExecuteResponse::Reply(ExecuteReply {
+fn new_execute_reply(exec_count: u32) -> amalthea::Result<ExecuteReply> {
+    Ok(ExecuteReply {
         status: Status::Ok,
         execution_count: exec_count,
         user_expressions: json!({}),
     })
 }
-fn new_execute_response_error(exception: Exception, exec_count: u32) -> ExecuteResponse {
-    ExecuteResponse::ReplyException(ExecuteReplyException {
-        status: Status::Error,
-        execution_count: exec_count,
-        exception,
-    })
+
+fn new_execute_reply_error(error: Exception, exec_count: u32) -> amalthea::Result<ExecuteReply> {
+    Err(amalthea::Error::ShellErrorExecuteReply(error, exec_count))
 }
 
 /// Converts a data frame to HTML
