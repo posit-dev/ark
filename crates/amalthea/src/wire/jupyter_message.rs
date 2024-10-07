@@ -343,16 +343,14 @@ where
         content: T,
         session: &Session,
     ) -> JupyterMessage<T> {
-        let (id, parent_header) = (originator.zmq_id, originator.header);
-
         JupyterMessage::<T> {
-            zmq_identities: vec![id],
+            zmq_identities: originator.zmq_identities,
             header: JupyterHeader::create(
                 T::message_type(),
                 session.session_id.clone(),
                 session.username.clone(),
             ),
-            parent_header: Some(parent_header),
+            parent_header: Some(originator.header),
             content,
         }
     }
