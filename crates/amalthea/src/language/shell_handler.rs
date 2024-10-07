@@ -11,9 +11,7 @@ use crate::comm::comm_channel::Comm;
 use crate::socket::comm::CommSocket;
 use crate::wire::complete_reply::CompleteReply;
 use crate::wire::complete_request::CompleteRequest;
-use crate::wire::exception::Exception;
 use crate::wire::execute_reply::ExecuteReply;
-use crate::wire::execute_reply_exception::ExecuteReplyException;
 use crate::wire::execute_request::ExecuteRequest;
 use crate::wire::inspect_reply::InspectReply;
 use crate::wire::inspect_request::InspectRequest;
@@ -31,7 +29,7 @@ pub trait ShellHandler: Send {
     async fn handle_info_request(
         &mut self,
         req: &KernelInfoRequest,
-    ) -> Result<KernelInfoReply, Exception>;
+    ) -> crate::Result<KernelInfoReply>;
 
     /// Handles a request to test a fragment of code to see whether it is a
     /// complete expression.
@@ -40,7 +38,7 @@ pub trait ShellHandler: Send {
     async fn handle_is_complete_request(
         &self,
         req: &IsCompleteRequest,
-    ) -> Result<IsCompleteReply, Exception>;
+    ) -> crate::Result<IsCompleteReply>;
 
     /// Handles a request to execute code.
     ///
@@ -52,21 +50,17 @@ pub trait ShellHandler: Send {
         &mut self,
         originator: Originator,
         req: &ExecuteRequest,
-    ) -> Result<ExecuteReply, ExecuteReplyException>;
+    ) -> crate::Result<ExecuteReply>;
 
     /// Handles a request to provide completions for the given code fragment.
     ///
     /// Docs: https://jupyter-client.readthedocs.io/en/stable/messaging.html#completion
-    async fn handle_complete_request(
-        &self,
-        req: &CompleteRequest,
-    ) -> Result<CompleteReply, Exception>;
+    async fn handle_complete_request(&self, req: &CompleteRequest) -> crate::Result<CompleteReply>;
 
     /// Handles a request to inspect a fragment of code.
     ///
     /// Docs: https://jupyter-client.readthedocs.io/en/stable/messaging.html#introspection
-    async fn handle_inspect_request(&self, req: &InspectRequest)
-        -> Result<InspectReply, Exception>;
+    async fn handle_inspect_request(&self, req: &InspectRequest) -> crate::Result<InspectReply>;
 
     /// Handles a request to open a comm.
     ///
@@ -76,5 +70,5 @@ pub trait ShellHandler: Send {
     ///
     /// * `target` - The target name of the comm, such as `positron.variables`
     /// * `comm` - The comm channel to use to communicate with the frontend
-    async fn handle_comm_open(&self, target: Comm, comm: CommSocket) -> Result<bool, Exception>;
+    async fn handle_comm_open(&self, target: Comm, comm: CommSocket) -> crate::Result<bool>;
 }

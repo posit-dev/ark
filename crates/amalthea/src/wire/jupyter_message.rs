@@ -357,7 +357,7 @@ where
 
     /// Sends a reply to the message; convenience method combining creating the
     /// reply and sending it.
-    pub fn send_reply<R: ProtocolMessage>(&self, content: R, socket: &Socket) -> Result<(), Error> {
+    pub fn send_reply<R: ProtocolMessage>(&self, content: R, socket: &Socket) -> crate::Result<()> {
         let reply = self.reply_msg(content, &socket.session)?;
         reply.send(&socket)
     }
@@ -367,9 +367,23 @@ where
         &self,
         exception: Exception,
         socket: &Socket,
-    ) -> Result<(), Error> {
+    ) -> crate::Result<()> {
         let reply = self.error_reply::<R>(exception, &socket.session);
         reply.send(&socket)
+    }
+
+    pub fn send_execute_error(
+        &self,
+        exception: Exception,
+        exec_count: u32,
+        socket: &Socket,
+    ) -> crate::Result<()> {
+        let rep = ExecuteReplyException {
+            status: Status::Error,
+            execution_count: exec_count,
+            exception,
+        };
+        self.send_reply(rep, socket)
     }
 
     /// Create a raw reply message to this message.

@@ -19,7 +19,6 @@ use amalthea::wire::exception::Exception;
 use amalthea::wire::execute_error::ExecuteError;
 use amalthea::wire::execute_input::ExecuteInput;
 use amalthea::wire::execute_reply::ExecuteReply;
-use amalthea::wire::execute_reply_exception::ExecuteReplyException;
 use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::execute_result::ExecuteResult;
 use amalthea::wire::input_reply::InputReply;
@@ -87,7 +86,7 @@ impl ShellHandler for Shell {
     async fn handle_info_request(
         &mut self,
         _req: &KernelInfoRequest,
-    ) -> Result<KernelInfoReply, Exception> {
+    ) -> amalthea::Result<KernelInfoReply> {
         let info = LanguageInfo {
             name: String::from("Test"),
             version: String::from("1.0"),
@@ -111,7 +110,7 @@ impl ShellHandler for Shell {
     async fn handle_complete_request(
         &self,
         _req: &CompleteRequest,
-    ) -> Result<CompleteReply, Exception> {
+    ) -> amalthea::Result<CompleteReply> {
         // No matches in this toy implementation.
         Ok(CompleteReply {
             matches: Vec::new(),
@@ -126,7 +125,7 @@ impl ShellHandler for Shell {
     async fn handle_is_complete_request(
         &self,
         _req: &IsCompleteRequest,
-    ) -> Result<IsCompleteReply, Exception> {
+    ) -> amalthea::Result<IsCompleteReply> {
         // In this echo example, the code is always complete!
         Ok(IsCompleteReply {
             status: IsComplete::Complete,
@@ -139,7 +138,7 @@ impl ShellHandler for Shell {
         &mut self,
         originator: Originator,
         req: &ExecuteRequest,
-    ) -> Result<ExecuteReply, ExecuteReplyException> {
+    ) -> amalthea::Result<ExecuteReply> {
         // Increment counter if we are storing this execution in history
         if req.store_history {
             self.execution_count = self.execution_count + 1;
@@ -182,11 +181,10 @@ impl ShellHandler for Shell {
                 );
             }
 
-            return Err(ExecuteReplyException {
-                status: Status::Error,
-                execution_count: self.execution_count,
+            return Err(amalthea::Error::ShellErrorExecuteReply(
                 exception,
-            });
+                self.execution_count,
+            ));
         }
 
         // Keyword: "prompt"
@@ -227,10 +225,7 @@ impl ShellHandler for Shell {
     }
 
     /// Handles an introspection request
-    async fn handle_inspect_request(
-        &self,
-        req: &InspectRequest,
-    ) -> Result<InspectReply, Exception> {
+    async fn handle_inspect_request(&self, req: &InspectRequest) -> amalthea::Result<InspectReply> {
         let data = match req.code.as_str() {
             "err" => {
                 json!({"text/plain": "This generates an error!"})
@@ -248,7 +243,7 @@ impl ShellHandler for Shell {
         })
     }
 
-    async fn handle_comm_open(&self, _req: Comm, comm: CommSocket) -> Result<bool, Exception> {
+    async fn handle_comm_open(&self, _req: Comm, comm: CommSocket) -> amalthea::Result<bool> {
         // Open a test comm channel; this test comm channel is used for every
         // comm open request (regardless of the target name). It just echoes back any
         // messages it receives.

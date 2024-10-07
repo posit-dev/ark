@@ -16,11 +16,8 @@ use amalthea::socket::iopub::IOPubMessage;
 use amalthea::socket::stdin::StdInRequest;
 use amalthea::wire::complete_reply::CompleteReply;
 use amalthea::wire::complete_request::CompleteRequest;
-use amalthea::wire::exception::Exception;
 use amalthea::wire::execute_reply::ExecuteReply;
-use amalthea::wire::execute_reply_exception::ExecuteReplyException;
 use amalthea::wire::execute_request::ExecuteRequest;
-use amalthea::wire::execute_response::ExecuteResponse;
 use amalthea::wire::inspect_reply::InspectReply;
 use amalthea::wire::inspect_request::InspectRequest;
 use amalthea::wire::is_complete_reply::IsComplete;
@@ -110,11 +107,10 @@ impl Shell {
         }
     }
 
-    /// SAFETY: Requires the R runtime lock.
-    unsafe fn handle_is_complete_request_impl(
+    fn r_handle_is_complete_request(
         &self,
         req: &IsCompleteRequest,
-    ) -> Result<IsCompleteReply, Exception> {
+    ) -> amalthea::Result<IsCompleteReply> {
         match harp::parse_status(&harp::ParseInput::Text(req.code.as_str())) {
             Ok(ParseResult::Complete(_)) => Ok(IsCompleteReply {
                 status: IsComplete::Complete,
@@ -137,7 +133,7 @@ impl ShellHandler for Shell {
     async fn handle_info_request(
         &mut self,
         _req: &KernelInfoRequest,
-    ) -> Result<KernelInfoReply, Exception> {
+    ) -> amalthea::Result<KernelInfoReply> {
         // Wait here for kernel initialization if it hasn't completed. This is
         // necessary for two reasons:
         //
@@ -181,7 +177,7 @@ impl ShellHandler for Shell {
     async fn handle_complete_request(
         &self,
         _req: &CompleteRequest,
-    ) -> Result<CompleteReply, Exception> {
+    ) -> amalthea::Result<CompleteReply> {
         // No matches in this toy implementation.
         Ok(CompleteReply {
             matches: Vec::new(),
@@ -196,8 +192,8 @@ impl ShellHandler for Shell {
     async fn handle_is_complete_request(
         &self,
         req: &IsCompleteRequest,
-    ) -> Result<IsCompleteReply, Exception> {
-        r_task(|| unsafe { self.handle_is_complete_request_impl(req) })
+    ) -> amalthea::Result<IsCompleteReply> {
+        r_task(|| self.r_handle_is_complete_request(req))
     }
 
     /// Handles an ExecuteRequest by sending the code to the R execution thread
@@ -206,8 +202,8 @@ impl ShellHandler for Shell {
         &mut self,
         originator: Originator,
         req: &ExecuteRequest,
-    ) -> Result<ExecuteReply, ExecuteReplyException> {
-        let (response_tx, response_rx) = unbounded::<ExecuteResponse>();
+    ) -> amalthea::Result<ExecuteReply> {
+        let (response_tx, response_rx) = unbounded::<amalthea::Result<ExecuteReply>>();
         let mut req_clone = req.clone();
         req_clone.code = convert_line_endings(&req_clone.code, LineEnding::Posix);
         if let Err(err) = self.r_request_tx.send(RRequest::ExecuteCode(
@@ -223,11 +219,6 @@ impl ShellHandler for Shell {
 
         trace!("Code sent to R: {}", req_clone.code);
         let result = response_rx.recv().unwrap();
-
-        let result = match result {
-            ExecuteResponse::Reply(reply) => Ok(reply),
-            ExecuteResponse::ReplyException(err) => Err(err),
-        };
 
         let mut kernel = self.kernel.lock().unwrap();
 
@@ -251,10 +242,7 @@ impl ShellHandler for Shell {
     }
 
     /// Handles an introspection request
-    async fn handle_inspect_request(
-        &self,
-        req: &InspectRequest,
-    ) -> Result<InspectReply, Exception> {
+    async fn handle_inspect_request(&self, req: &InspectRequest) -> amalthea::Result<InspectReply> {
         let data = match req.code.as_str() {
             "err" => {
                 json!({"text/plain": "This generates an error!"})
@@ -273,7 +261,7 @@ impl ShellHandler for Shell {
     }
 
     /// Handles a request to open a new comm channel
-    async fn handle_comm_open(&self, target: Comm, comm: CommSocket) -> Result<bool, Exception> {
+    async fn handle_comm_open(&self, target: Comm, comm: CommSocket) -> amalthea::Result<bool> {
         match target {
             Comm::Variables => handle_comm_open_variables(comm, self.comm_manager_tx.clone()),
             Comm::Ui => handle_comm_open_ui(
@@ -290,7 +278,7 @@ impl ShellHandler for Shell {
 fn handle_comm_open_variables(
     comm: CommSocket,
     comm_manager_tx: Sender<CommManagerEvent>,
-) -> Result<bool, Exception> {
+) -> amalthea::Result<bool> {
     r_task(|| {
         let global_env = RObject::view(R_ENVS.global);
         RVariables::start(global_env, comm, comm_manager_tx);
@@ -302,7 +290,7 @@ fn handle_comm_open_ui(
     comm: CommSocket,
     stdin_request_tx: Sender<StdInRequest>,
     kernel_request_tx: Sender<KernelRequest>,
-) -> Result<bool, Exception> {
+) -> amalthea::Result<bool> {
     // Create a frontend to wrap the comm channel we were just given. This starts
     // a thread that proxies messages to the frontend.
     let ui_comm_tx = UiComm::start(comm, stdin_request_tx);
@@ -316,7 +304,7 @@ fn handle_comm_open_ui(
     Ok(true)
 }
 
-fn handle_comm_open_help(comm: CommSocket) -> Result<bool, Exception> {
+fn handle_comm_open_help(comm: CommSocket) -> amalthea::Result<bool> {
     r_task(|| {
         // Ensure the R help server is started, and get its port
         let r_port = unwrap!(RHelp::r_start_or_reconnect_to_help_server(), Err(err) => {

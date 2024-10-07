@@ -5,8 +5,8 @@
 //
 //
 
+use amalthea::wire::execute_reply::ExecuteReply;
 use amalthea::wire::execute_request::ExecuteRequest;
-use amalthea::wire::execute_response::ExecuteResponse;
 use amalthea::wire::originator::Originator;
 use crossbeam::channel::Sender;
 
@@ -17,7 +17,11 @@ use crate::ui::UiCommMessage;
 pub enum RRequest {
     /// Fulfill an execution request from the frontend, producing either a
     /// Reply or an Exception
-    ExecuteCode(ExecuteRequest, Originator, Sender<ExecuteResponse>),
+    ExecuteCode(
+        ExecuteRequest,
+        Originator,
+        Sender<amalthea::Result<ExecuteReply>>,
+    ),
 
     /// Shut down the R execution thread
     Shutdown(bool),
