@@ -120,7 +120,7 @@ impl Shell {
             // delivered to the client instead of reported up the stack, so the
             // only errors likely here are "can't deliver to client"
             if let Err(err) = self.process_message(message) {
-                log::warn!("Could not handle shell message: {err}");
+                log::error!("Could not handle shell message: {err}");
             }
         }
     }
@@ -169,7 +169,7 @@ impl Shell {
 
         // Enter the kernel-busy state in preparation for handling the message.
         if let Err(err) = self.send_state(req.clone(), ExecutionState::Busy) {
-            log::warn!("Failed to change kernel status to busy: {err}")
+            log::error!("Failed to change kernel status to busy: {err}")
         }
 
         // Lock the shell handler object on this thread
@@ -188,7 +188,7 @@ impl Shell {
         // error, since many frontends won't submit additional messages until
         // the kernel is marked idle.
         if let Err(err) = self.send_state(req, ExecutionState::Idle) {
-            log::warn!("Failed to restore kernel status to idle: {err}")
+            log::error!("Failed to restore kernel status to idle: {err}")
         }
         result
     }
