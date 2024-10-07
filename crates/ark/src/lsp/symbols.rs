@@ -127,9 +127,9 @@ fn parse_comment_as_section(comment: &str) -> Option<(usize, String)> {
     let comment_re = regex::Regex::new(r"^(#+)\s*([^\s#-].+?)\s*(#{4,}|-{4,}|={4,})$").unwrap();
 
     if let Some(caps) = comment_re.captures(comment) {
-        let hashes = caps.get(1)?.as_str().len();  // Count the number of '#'
-        let title = caps.get(2)?.as_str().trim().to_string();  // Extract the title text without trailing punctuations
-        return Some((hashes, title));  // Return the level based on the number of '#' and the title
+        let hashes = caps.get(1)?.as_str().len(); // Count the number of '#'
+        let title = caps.get(2)?.as_str().trim().to_string(); // Extract the title text without trailing punctuations
+        return Some((hashes, title)); // Return the level based on the number of '#' and the title
     }
 
     None
@@ -152,10 +152,10 @@ fn index_node(
             let end = convert_point_to_position(contents, node.end_position());
 
             let symbol = DocumentSymbol {
-                name: title,  // Use the title without the trailing '####' or '----'
-                kind: SymbolKind::STRING,  // Treat it as a string section
-                detail: None,  // No need to display level details
-                children: Some(Vec::new()),  // Prepare for child symbols if any
+                name: title,                // Use the title without the trailing '####' or '----'
+                kind: SymbolKind::STRING,   // Treat it as a string section
+                detail: None,               // No need to display level details
+                children: Some(Vec::new()), // Prepare for child symbols if any
                 deprecated: None,
                 tags: None,
                 range: Range { start, end },
@@ -173,15 +173,15 @@ fn index_node(
     // Existing code for indexing assignments or other nodes...
     if matches!(
         node.node_type(),
-        NodeType::BinaryOperator(BinaryOperatorType::LeftAssignment)
-            | NodeType::BinaryOperator(BinaryOperatorType::EqualsAssignment)
+        NodeType::BinaryOperator(BinaryOperatorType::LeftAssignment) |
+            NodeType::BinaryOperator(BinaryOperatorType::EqualsAssignment)
     ) {
         match index_assignment(node, contents, parent, symbols) {
             Ok(handled) => {
                 if handled {
                     return Ok(true);
                 }
-            }
+            },
             Err(error) => error!("{:?}", error),
         }
     }
