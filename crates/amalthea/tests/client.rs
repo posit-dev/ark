@@ -10,11 +10,13 @@ use std::sync::Mutex;
 
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::event::CommManagerEvent;
+use amalthea::fixtures::dummy_frontend::DummyConnection;
 use amalthea::fixtures::dummy_frontend::DummyFrontend;
-use amalthea::kernel::Kernel;
+use amalthea::kernel;
 use amalthea::kernel::StreamBehavior;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
+use amalthea::socket::iopub::IOPubMessage;
 use amalthea::socket::stdin::StdInRequest;
 use amalthea::wire::comm_close::CommClose;
 use amalthea::wire::comm_info_reply::CommInfoTargetName;
@@ -48,18 +50,18 @@ fn test_kernel() {
     #[cfg(target_os = "windows")]
     return;
 
-    let frontend = DummyFrontend::new();
-    let connection_file = frontend.get_connection_file();
-    let mut kernel = Kernel::new("amalthea", connection_file).unwrap();
+    let connection = DummyConnection::new();
+    let (connection_file, registration_file) = connection.get_connection_files();
 
-    let iopub_tx = kernel.create_iopub_tx();
-    let comm_manager_tx = kernel.create_comm_manager_tx();
+    let (iopub_tx, iopub_rx) = bounded::<IOPubMessage>(10);
+
+    let (comm_manager_tx, comm_manager_rx) = bounded::<CommManagerEvent>(10);
 
     let (stdin_request_tx, stdin_request_rx) = bounded::<StdInRequest>(1);
     let (stdin_reply_tx, stdin_reply_rx) = unbounded();
 
     let shell = Arc::new(Mutex::new(shell::Shell::new(
-        iopub_tx,
+        iopub_tx.clone(),
         stdin_request_tx,
         stdin_reply_rx,
     )));
@@ -69,12 +71,19 @@ fn test_kernel() {
     env_logger::init();
     info!("Starting test kernel");
 
-    if let Err(err) = kernel.connect(
+    if let Err(err) = kernel::connect(
+        "amalthea",
+        connection_file,
+        Some(registration_file),
         shell,
         control,
         None,
         None,
         StreamBehavior::None,
+        iopub_tx,
+        iopub_rx,
+        comm_manager_tx.clone(),
+        comm_manager_rx,
         stdin_request_rx,
         stdin_reply_tx,
     ) {
@@ -86,8 +95,8 @@ fn test_kernel() {
     std::thread::sleep(std::time::Duration::from_millis(500));
 
     // Complete client initialization
-    info!("Completing frontend initialization");
-    frontend.complete_initialization();
+    info!("Creating frontend");
+    let frontend = DummyFrontend::from_connection(connection);
 
     // Ask the kernel for the kernel info. This should return an object with the
     // language "Test" defined in our shell handler.

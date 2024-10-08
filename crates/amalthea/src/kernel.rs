@@ -58,7 +58,8 @@ pub enum StreamBehavior {
 /// Connects the Kernel to the frontend
 pub fn connect(
     name: &str,
-    connection_file: &str,
+    connection_file: ConnectionFile,
+    registration_file: Option<RegistrationFile>,
     shell_handler: Arc<Mutex<dyn ShellHandler>>,
     control_handler: Arc<Mutex<dyn ControlHandler>>,
     lsp_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
@@ -81,29 +82,7 @@ pub fn connect(
 ) -> Result<(), Error> {
     let ctx = zmq::Context::new();
 
-    let (connection, session, registration) = match ConnectionFile::from_file(connection_file) {
-        Ok(connection) => {
-            log::info!("Loaded connection information from frontend in {connection_file}");
-            log::info!("Connection data: {connection:?}");
-            let session = Session::create(connection.key.as_str())?;
-            (connection, session, None)
-        },
-        Err(err) => {
-            log::info!(
-                "Failed to load `ConnectionFile`, trying to load as `RegistrationFile`:\n{err:?}"
-            );
-
-            let registration = match RegistrationFile::from_file(connection_file) {
-                Ok(registration) => registration,
-                Err(err) => panic!(
-                    "Failed to load as both `ConnectionFile` and `RegistrationFile`:\n{err:?}"
-                ),
-            };
-            let session = Session::create(registration.key.as_str())?;
-            let connection = registration.as_connection_file();
-            (connection, session, Some(registration))
-        },
-    };
+    let session = Session::create(connection_file.key.as_str())?;
 
     // Channels for communication of outbound messages between the
     // socket threads and the 0MQ forwarding thread
@@ -120,9 +99,9 @@ pub fn connect(
         String::from("Shell"),
         zmq::ROUTER,
         None,
-        connection.endpoint(connection.shell_port),
+        connection_file.endpoint(connection_file.shell_port),
     )?;
-    let shell_port = port_finalize(&shell_socket, connection.shell_port);
+    let shell_port = port_finalize(&shell_socket, connection_file.shell_port)?;
 
     let shell_clone = shell_handler.clone();
     let iopub_tx_clone = iopub_tx.clone();
@@ -148,9 +127,9 @@ pub fn connect(
         String::from("IOPub"),
         zmq::PUB,
         None,
-        connection.endpoint(connection.iopub_port),
+        connection_file.endpoint(connection_file.iopub_port),
     )?;
-    let iopub_port = port_finalize(&iopub_socket, connection.iopub_port);
+    let iopub_port = port_finalize(&iopub_socket, connection_file.iopub_port)?;
     spawn!(format!("{name}-iopub"), move || {
         iopub_thread(iopub_socket, iopub_rx)
     });
@@ -163,9 +142,9 @@ pub fn connect(
         String::from("Heartbeat"),
         zmq::REP,
         None,
-        connection.endpoint(connection.hb_port),
+        connection_file.endpoint(connection_file.hb_port),
     )?;
-    let hb_port = port_finalize(&heartbeat_socket, connection.hb_port);
+    let hb_port = port_finalize(&heartbeat_socket, connection_file.hb_port)?;
     spawn!(format!("{name}-heartbeat"), move || {
         heartbeat_thread(heartbeat_socket)
     });
@@ -179,9 +158,9 @@ pub fn connect(
         String::from("Stdin"),
         zmq::ROUTER,
         None,
-        connection.endpoint(connection.stdin_port),
+        connection_file.endpoint(connection_file.stdin_port),
     )?;
-    let stdin_port = port_finalize(&stdin_socket, connection.stdin_port);
+    let stdin_port = port_finalize(&stdin_socket, connection_file.stdin_port)?;
 
     let (stdin_inbound_tx, stdin_inbound_rx) = unbounded();
     let (stdin_interrupt_tx, stdin_interrupt_rx) = bounded(1);
@@ -213,9 +192,9 @@ pub fn connect(
         String::from("Control"),
         zmq::ROUTER,
         None,
-        connection.endpoint(connection.control_port),
+        connection_file.endpoint(connection_file.control_port),
     )?;
-    let control_port = port_finalize(&control_socket, connection.control_port);
+    let control_port = port_finalize(&control_socket, connection_file.control_port)?;
 
     // Internal sockets for notifying the 0MQ forwarding
     // thread that new outbound messages are available
@@ -268,9 +247,9 @@ pub fn connect(
         log::error!("Control thread exited");
     });
 
-    if let Some(registration) = registration {
+    if let Some(registration_file) = registration_file {
         handshake(
-            registration,
+            registration_file,
             &ctx,
             &session,
             control_port,
@@ -282,6 +261,46 @@ pub fn connect(
     };
 
     Ok(())
+}
+
+/// Reads a `connection_file` containing Jupyter connection information
+///
+/// Most frontends will provide a `connection_file` specifying their socket ports.
+/// This reads directly into a fully fleshed out `ConnectionFile`.
+/// However, this has a well known race condition where the Client selects the
+/// ports, but the Server binds to them, and someone else could take the ports in
+/// the time between the Client picks them and the Server binds.
+///
+/// To avoid this, we provide an alternative method of connection through a `RegistrationFile`.
+/// This specifies a `registration_port` that the Client has bound to, which we will send
+/// the remaining port informtation back to after we have bound to the ports ourselves.
+/// The `ConnectionFile` we return in this case temporarily has `0`s as the port numbers,
+/// which tells zeromq to bind to whatever random port the OS sees as free.
+pub fn read_connection(connection_file: &str) -> (ConnectionFile, Option<RegistrationFile>) {
+    match ConnectionFile::from_file(connection_file) {
+        Ok(connection) => {
+            log::info!("Loaded connection information from frontend in {connection_file}");
+            log::info!("Connection data: {connection:?}");
+            return (connection, None);
+        },
+        Err(err) => {
+            log::info!(
+                "Failed to load `ConnectionFile`, trying to load as `RegistrationFile` instead:\n{err:?}"
+            );
+        },
+    }
+
+    match RegistrationFile::from_file(connection_file) {
+        Ok(registration) => {
+            log::info!("Loaded registration information from frontend in {connection_file}");
+            log::info!("Registration data: {registration:?}");
+            let connection = registration.as_connection_file();
+            return (connection, Some(registration));
+        },
+        Err(err) => {
+            panic!("Failed to load `connection_file` as both `ConnectionFile` and `RegistrationFile`:\n{err:?}")
+        },
+    }
 }
 
 /// Starts the control thread
@@ -482,7 +501,7 @@ fn output_capture_thread(iopub_tx: Sender<IOPubMessage>) -> Result<(), Error> {
 }
 
 fn handshake(
-    registration: RegistrationFile,
+    registration_file: RegistrationFile,
     ctx: &zmq::Context,
     session: &Session,
     control_port: u16,
@@ -491,15 +510,15 @@ fn handshake(
     iopub_port: u16,
     hb_port: u16,
 ) -> crate::Result<()> {
-    // Create the Shell ROUTER/DEALER socket and start a thread to listen
-    // for client messages.
+    // Create a temporary registration socket to send the handshake request over.
+    // This socket `Drop`s and closes when this function exits.
     let registration_socket = Socket::new(
         session.clone(),
         ctx.clone(),
         String::from("Registration"),
         zmq::REQ,
         None,
-        registration.endpoint(),
+        registration_file.endpoint(),
     )?;
 
     let message = HandshakeRequest {
@@ -514,37 +533,83 @@ fn handshake(
     message.send(&registration_socket)?;
 
     // Wait for the handshake reply with a 5 second timeout.
+    // If we don't get a handshake reply, we are going to eventually panic and shut down.
     if !registration_socket
-        .poll_incoming(5)
-        .map_err(|err| Error::ZmqError(String::from("registration"), err))?
+        .poll_incoming(5000)
+        .map_err(|err| Error::ZmqError(registration_socket.name.clone(), err))?
     {
         return Err(crate::anyhow!(
             "Timeout while waiting for connection information from registration socket"
         ));
     }
 
+    // Read the `HandshakeReply` off the socket and confirm its message type
     let reply = Message::read_from_socket(&registration_socket).unwrap();
-    let status = if let Message::HandshakeReply(reply) = reply {
-        reply.content.status
-    } else {
-        return Err(crate::anyhow!(
-            "Unexpected message type received from registration socket: {reply:?}"
-        ));
+    let status = match reply {
+        Message::HandshakeReply(reply) => reply.content.status,
+        _ => {
+            return Err(crate::anyhow!(
+                "Unexpected message type received from registration socket: {reply:?}"
+            ));
+        },
     };
 
+    // Check that the client did indeed connect successfully
     match status {
         Status::Ok => Ok(()),
         Status::Error => Err(crate::anyhow!("Client failed to connect to ports.")),
     }
 }
 
-fn port_finalize(socket: &Socket, port: u16) -> u16 {
-    if port != 0 {
-        // Client specified the port
-        return port;
+fn port_finalize(socket: &Socket, port: u16) -> crate::Result<u16> {
+    if port == 0 {
+        // Server provided the port, extract it from the socket
+        // since we gave zmq a port number of `0` to begin with.
+        return port_from_socket(socket);
+    } else {
+        // Client provided the port, just use that
+        return Ok(port);
     }
+}
 
-    // TODO:
-    let _endpoint = socket.socket.get_last_endpoint();
-    return port;
+pub(crate) fn port_from_socket(socket: &Socket) -> crate::Result<u16> {
+    let name = socket.name.as_str();
+
+    let address = match socket.socket.get_last_endpoint() {
+        Ok(address) => address,
+        Err(err) => {
+            return Err(crate::anyhow!(
+                "Can't access last endpoint of '{name}' socket due to {err:?}"
+            ));
+        },
+    };
+
+    let address = match address {
+        Ok(address) => address,
+        Err(_) => {
+            return Err(crate::anyhow!(
+                "Can't access last endpoint of '{name}' socket."
+            ));
+        },
+    };
+
+    // We've got the full address but we only want the port at the very end
+    let Some(loc) = address.rfind(":") else {
+        return Err(crate::anyhow!(
+            "Failed to find port in the '{name}' socket address."
+        ));
+    };
+
+    let port = &address[(loc + 1)..];
+
+    let port = match port.parse::<u16>() {
+        Ok(port) => port,
+        Err(err) => {
+            return Err(crate::anyhow!(
+                "Can't parse port '{port}' into a `u16` due to {err:?}"
+            ));
+        },
+    };
+
+    Ok(port)
 }

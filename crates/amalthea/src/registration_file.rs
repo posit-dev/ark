@@ -16,22 +16,22 @@ use crate::connection_file::ConnectionFile;
 
 /// The contents of the Registration File as implied in JEP 66.
 #[derive(Deserialize, Debug)]
-pub(crate) struct RegistrationFile {
+pub struct RegistrationFile {
     /// The transport type to use for ZeroMQ; generally "tcp"
-    pub(crate) transport: String,
+    pub transport: String,
 
     /// The signature scheme to use for messages; generally "hmac-sha256"
-    pub(crate) signature_scheme: String,
+    pub signature_scheme: String,
 
     /// The IP address to bind to
-    pub(crate) ip: String,
+    pub ip: String,
 
     /// The HMAC-256 signing key, or an empty string for an unauthenticated
     /// connection
-    pub(crate) key: String,
+    pub key: String,
 
     /// ZeroMQ port: Registration messages (handshake)
-    pub(crate) registration_port: u16,
+    pub registration_port: u16,
 }
 
 impl RegistrationFile {

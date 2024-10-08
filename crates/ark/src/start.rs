@@ -9,7 +9,9 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use amalthea::comm::event::CommManagerEvent;
+use amalthea::connection_file::ConnectionFile;
 use amalthea::kernel;
+use amalthea::registration_file::RegistrationFile;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::socket::stdin::StdInRequest;
 use bus::Bus;
@@ -27,7 +29,8 @@ use crate::shell::Shell;
 /// Exported for unit tests.
 /// Call `RMain::start()` after this.
 pub fn start_kernel(
-    connection_file: &str,
+    connection_file: ConnectionFile,
+    registration_file: Option<RegistrationFile>,
     r_args: Vec<String>,
     startup_file: Option<String>,
     session_mode: SessionMode,
@@ -95,10 +98,10 @@ pub fn start_kernel(
 
     let (stdin_reply_tx, stdin_reply_rx) = unbounded();
 
-    // Connect the Amalthea kernel using the connection file
     let res = kernel::connect(
         "ark",
         connection_file,
+        registration_file,
         shell,
         control,
         Some(lsp),
