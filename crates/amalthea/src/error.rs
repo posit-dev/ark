@@ -8,6 +8,7 @@
 use std::fmt;
 use std::sync::mpsc::SendError;
 
+use crate::wire::exception::Exception;
 use crate::wire::jupyter_message::Message;
 
 /// Type representing all errors that can occur inside the Amalthea implementation.
@@ -44,6 +45,9 @@ pub enum Error {
     InvalidCommMessage(String, String, String),
     InvalidInputRequest(String),
     InvalidConsoleInput(String),
+    ShellErrorReply(Exception),
+    /// Execute errors also include the execution count
+    ShellErrorExecuteReply(Exception, u32),
 }
 
 impl std::error::Error for Error {}
@@ -196,6 +200,15 @@ impl fmt::Display for Error {
             },
             Error::InvalidConsoleInput(message) => {
                 write!(f, "{message}")
+            },
+            Error::ShellErrorReply(error) => {
+                write!(f, "Got an error reply on Shell: {error:?}")
+            },
+            Error::ShellErrorExecuteReply(error, count) => {
+                write!(
+                    f,
+                    "Got an execute error reply on Shell for request {count}: {error:?}"
+                )
             },
         }
     }
