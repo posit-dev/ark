@@ -64,16 +64,14 @@ impl DummyConnection {
         let transport = String::from("tcp");
         let signature_scheme = String::from("hmac-sha256");
 
-        // Bind to a random port using `:0`
-        let endpoint = String::from("{transport}://{ip}:0");
-
+        // Bind to a random port using `0`
         let registration_socket = Socket::new(
             session.clone(),
             ctx.clone(),
             String::from("Registration"),
             zmq::REP,
             None,
-            endpoint,
+            Self::endpoint_from_parts(&transport, &ip, 0),
         )
         .unwrap();
 
@@ -104,6 +102,14 @@ impl DummyConnection {
 
         (connection_file, registration_file)
     }
+
+    fn endpoint(&self, port: u16) -> String {
+        Self::endpoint_from_parts(&self.transport, &self.ip, port)
+    }
+
+    fn endpoint_from_parts(transport: &str, ip: &str, port: u16) -> String {
+        format!("{transport}://{ip}:{port}")
+    }
 }
 
 impl DummyFrontend {
@@ -131,7 +137,7 @@ impl DummyFrontend {
             String::from("Control"),
             zmq::DEALER,
             None,
-            format!("tcp://127.0.0.1:{}", handshake.control_port),
+            connection.endpoint(handshake.control_port),
         )
         .unwrap();
 
@@ -141,7 +147,7 @@ impl DummyFrontend {
             String::from("Shell"),
             zmq::DEALER,
             Some(&shell_id),
-            format!("tcp://127.0.0.1:{}", handshake.shell_port),
+            connection.endpoint(handshake.shell_port),
         )
         .unwrap();
 
@@ -151,7 +157,7 @@ impl DummyFrontend {
             String::from("IOPub"),
             zmq::SUB,
             None,
-            format!("tcp://127.0.0.1:{}", handshake.iopub_port),
+            connection.endpoint(handshake.iopub_port),
         )
         .unwrap();
 
@@ -165,7 +171,7 @@ impl DummyFrontend {
             String::from("Stdin"),
             zmq::DEALER,
             Some(&shell_id),
-            format!("tcp://127.0.0.1:{}", handshake.stdin_port),
+            connection.endpoint(handshake.stdin_port),
         )
         .unwrap();
 
@@ -175,7 +181,7 @@ impl DummyFrontend {
             String::from("Heartbeat"),
             zmq::REQ,
             None,
-            format!("tcp://127.0.0.1:{}", handshake.hb_port),
+            connection.endpoint(handshake.hb_port),
         )
         .unwrap();
 
