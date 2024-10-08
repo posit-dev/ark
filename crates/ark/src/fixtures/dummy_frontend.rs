@@ -63,23 +63,24 @@ impl DummyArkFrontend {
         let connection = DummyConnection::new();
         let (connection_file, registration_file) = connection.get_connection_files();
 
-        // Start the kernel in this thread so that panics are propagated
-        crate::start::start_kernel(
-            connection_file,
-            Some(registration_file),
-            vec![
-                String::from("--interactive"),
-                String::from("--vanilla"),
-                String::from("--no-save"),
-                String::from("--no-restore"),
-            ],
-            None,
-            session_mode,
-            false,
-        );
+        // Start the kernel and REPL in a background thread, does not return and is never joined.
+        // Must run `start_kernel()` in a background thread because it blocks until it receives
+        // a `HandshakeReply`, which we send from `from_connection()` below.
+        stdext::spawn!("dummy_kernel", move || {
+            crate::start::start_kernel(
+                connection_file,
+                Some(registration_file),
+                vec![
+                    String::from("--interactive"),
+                    String::from("--vanilla"),
+                    String::from("--no-save"),
+                    String::from("--no-restore"),
+                ],
+                None,
+                session_mode,
+                false,
+            );
 
-        // Start the REPL in a background thread, does not return and is never joined
-        stdext::spawn!("dummy_kernel", || {
             RMain::start();
         });
 
