@@ -30,6 +30,9 @@ pub struct DummyConnection {
     pub ctx: zmq::Context,
     pub session: Session,
     pub key: String,
+    pub ip: String,
+    pub transport: String,
+    pub signature_scheme: String,
 }
 
 pub struct DummyFrontend {
@@ -57,8 +60,12 @@ impl DummyConnection {
         // Create a zmq context for all sockets we create in this session
         let ctx = zmq::Context::new();
 
+        let ip = String::from("127.0.0.1");
+        let transport = String::from("tcp");
+        let signature_scheme = String::from("hmac-sha256");
+
         // Bind to a random port using `:0`
-        let endpoint = String::from("tcp://127.0.0.1:0");
+        let endpoint = String::from("{transport}://{ip}:0");
 
         let registration_socket = Socket::new(
             session.clone(),
@@ -75,6 +82,9 @@ impl DummyConnection {
             ctx,
             session,
             key,
+            ip,
+            transport,
+            signature_scheme,
         }
     }
 
@@ -82,18 +92,12 @@ impl DummyConnection {
     /// this synthetic frontend. Uses a handshake through a registration
     /// file to avoid race conditions related to port binding.
     pub fn get_connection_files(&self) -> (ConnectionFile, RegistrationFile) {
-        let ip = String::from("127.0.0.1");
-        let transport = String::from("tcp");
-        let signature_scheme = String::from("hmac-sha256");
-        let key = self.key.clone();
-        let registration_port = crate::kernel::port_from_socket(&self.registration_socket).unwrap();
-
         let registration_file = RegistrationFile {
-            ip,
-            transport,
-            signature_scheme,
-            key,
-            registration_port,
+            ip: self.ip.clone(),
+            transport: self.transport.clone(),
+            signature_scheme: self.signature_scheme.clone(),
+            key: self.key.clone(),
+            registration_port: crate::kernel::port_from_socket(&self.registration_socket).unwrap(),
         };
 
         let connection_file = registration_file.as_connection_file();
@@ -151,7 +155,8 @@ impl DummyFrontend {
         )
         .unwrap();
 
-        // Subscribe to IOPub!
+        // Subscribe to IOPub! Server is the one that sent us this port,
+        // so its already connected on its end.
         iopub_socket.subscribe().unwrap();
 
         let stdin_socket = Socket::new(
