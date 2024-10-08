@@ -71,28 +71,32 @@ fn test_kernel() {
     env_logger::init();
     info!("Starting test kernel");
 
-    if let Err(err) = kernel::connect(
-        "amalthea",
-        connection_file,
-        Some(registration_file),
-        shell,
-        control,
-        None,
-        None,
-        StreamBehavior::None,
-        iopub_tx,
-        iopub_rx,
-        comm_manager_tx.clone(),
-        comm_manager_rx,
-        stdin_request_rx,
-        stdin_reply_tx,
-    ) {
-        panic!("Error connecting kernel: {err:?}");
-    };
+    // Perform kernel connection on its own thread to
+    // avoid deadlocking as it waits for the `HandshakeReply`
+    stdext::spawn!("dummy_kernel", {
+        let comm_manager_tx = comm_manager_tx.clone();
 
-    // Give the kernel a little time to start up
-    info!("Waiting 500ms for kernel startup to complete");
-    std::thread::sleep(std::time::Duration::from_millis(500));
+        move || {
+            if let Err(err) = kernel::connect(
+                "amalthea",
+                connection_file,
+                Some(registration_file),
+                shell,
+                control,
+                None,
+                None,
+                StreamBehavior::None,
+                iopub_tx,
+                iopub_rx,
+                comm_manager_tx,
+                comm_manager_rx,
+                stdin_request_rx,
+                stdin_reply_tx,
+            ) {
+                panic!("Error connecting kernel: {err:?}");
+            };
+        }
+    });
 
     // Complete client initialization
     info!("Creating frontend");
