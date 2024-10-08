@@ -185,6 +185,15 @@ impl DummyFrontend {
         )
         .unwrap();
 
+        // TODO!: Without this sleep, `IOPub` `Busy` messages sporadically
+        // don't arrive when running integration tests. I believe this is a result
+        // of PUB sockets dropping messages while in a "mute" state (i.e. no subscriber
+        // connected yet). Even though we run `iopub_socket.subscribe()` to subscribe,
+        // it seems like we can return from this function even before our socket
+        // has fully subscribed, causing messages to get dropped.
+        // https://libzmq.readthedocs.io/en/latest/zmq_socket.html
+        std::thread::sleep(std::time::Duration::from_millis(500));
+
         Self {
             _control_socket,
             shell_socket,
