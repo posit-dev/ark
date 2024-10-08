@@ -13,6 +13,7 @@ pub mod kernel;
 pub mod kernel_dirs;
 pub mod kernel_spec;
 pub mod language;
+pub mod registration_file;
 pub mod session;
 pub mod socket;
 pub mod stream_capture;
