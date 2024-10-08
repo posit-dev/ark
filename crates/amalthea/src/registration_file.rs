@@ -12,7 +12,7 @@ use std::path::Path;
 
 use serde::Deserialize;
 
-use crate::wire::jupyter_message::Status;
+use crate::connection_file::ConnectionFile;
 
 /// The contents of the Registration File as implied in JEP 66.
 #[derive(Deserialize, Debug)]
@@ -34,31 +34,6 @@ pub(crate) struct RegistrationFile {
     pub(crate) registration_port: u16,
 }
 
-/// The handshake request
-#[derive(Deserialize, Debug)]
-pub(crate) struct HandshakeRequest {
-    /// ZeroMQ port: Control channel (kernel interrupts)
-    pub(crate) control_port: u16,
-
-    /// ZeroMQ port: Shell channel (execution, completion)
-    pub(crate) shell_port: u16,
-
-    /// ZeroMQ port: Standard input channel (prompts)
-    pub(crate) stdin_port: u16,
-
-    /// ZeroMQ port: IOPub channel (broadcasts input/output)
-    pub(crate) iopub_port: u16,
-
-    /// ZeroMQ port: Heartbeat messages (echo)
-    pub(crate) hb_port: u16,
-}
-
-/// The handshake reply
-#[derive(Deserialize, Debug)]
-pub(crate) struct HandshakeReply {
-    pub(crate) status: Status,
-}
-
 impl RegistrationFile {
     /// Create a RegistrationFile by parsing the contents of a registration file.
     pub fn from_file<P: AsRef<Path>>(
@@ -69,6 +44,30 @@ impl RegistrationFile {
         let control = serde_json::from_reader(reader)?;
 
         Ok(control)
+    }
+
+    pub fn as_connection_file(&self) -> ConnectionFile {
+        // `0` stands for zeromq / OS picking an available port
+        let control_port = 0;
+        let shell_port = 0;
+        let stdin_port = 0;
+        let iopub_port = 0;
+        let hb_port = 0;
+
+        // Build a `ConnectionFile`
+        let connection = ConnectionFile {
+            control_port,
+            shell_port,
+            stdin_port,
+            iopub_port,
+            hb_port,
+            transport: self.transport.clone(),
+            signature_scheme: self.signature_scheme.clone(),
+            ip: self.ip.clone(),
+            key: self.key.clone(),
+        };
+
+        connection
     }
 
     /// Given a port, return a URI-like string that can be used to connect to

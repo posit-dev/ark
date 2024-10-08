@@ -14,7 +14,6 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use amalthea::connection_file::ConnectionFile;
-use amalthea::kernel::Kernel;
 use amalthea::kernel::StreamBehavior;
 use amalthea::kernel_spec::KernelSpec;
 use amalthea::socket::stdin::StdInRequest;
@@ -25,7 +24,7 @@ use crate::control::Control;
 use crate::shell::Shell;
 
 fn start_kernel(connection_file: ConnectionFile) {
-    let mut kernel = match Kernel::new("echo", connection_file) {
+    let mut kernel = match kernel::new("echo", connection_file) {
         Ok(k) => k,
         Err(err) => {
             log::error!("Failed to create kernel: {err:?}");

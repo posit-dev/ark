@@ -54,7 +54,7 @@ impl DummyFrontend {
         let shell_id = rand::thread_rng().gen::<[u8; 16]>();
 
         // Create a new kernel session from the key
-        let session = Session::create(key.clone()).unwrap();
+        let session = Session::create(&key).unwrap();
 
         let ctx = zmq::Context::new();
 

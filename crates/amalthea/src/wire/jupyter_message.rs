@@ -8,6 +8,8 @@
 use serde::Deserialize;
 use serde::Serialize;
 
+use super::handshake_reply::HandshakeReply;
+use super::handshake_request::HandshakeRequest;
 use super::stream::StreamOutput;
 use crate::comm::base_comm::JsonRpcReply;
 use crate::comm::ui_comm::UiFrontendRequest;
@@ -103,6 +105,8 @@ pub enum Message {
     CommReply(JupyterMessage<JsonRpcReply>),
     CommClose(JupyterMessage<CommClose>),
     StreamOutput(JupyterMessage<StreamOutput>),
+    HandshakeRequest(JupyterMessage<HandshakeRequest>),
+    HandshakeReply(JupyterMessage<HandshakeReply>),
 }
 
 /// Associates a `Message` to a 0MQ socket
@@ -153,6 +157,8 @@ impl TryFrom<&Message> for WireMessage {
             Message::CommRequest(msg) => WireMessage::try_from(msg),
             Message::CommReply(msg) => WireMessage::try_from(msg),
             Message::StreamOutput(msg) => WireMessage::try_from(msg),
+            Message::HandshakeReply(msg) => WireMessage::try_from(msg),
+            Message::HandshakeRequest(msg) => WireMessage::try_from(msg),
         }
     }
 }
@@ -255,6 +261,12 @@ impl TryFrom<&WireMessage> for Message {
         }
         if kind == JsonRpcReply::message_type() {
             return Ok(Message::CommReply(JupyterMessage::try_from(msg)?));
+        }
+        if kind == HandshakeRequest::message_type() {
+            return Ok(Message::HandshakeRequest(JupyterMessage::try_from(msg)?));
+        }
+        if kind == HandshakeReply::message_type() {
+            return Ok(Message::HandshakeReply(JupyterMessage::try_from(msg)?));
         }
         return Err(Error::UnknownMessageType(kind));
     }

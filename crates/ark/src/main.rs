@@ -23,6 +23,8 @@ use crossbeam::channel::unbounded;
 use notify::Watcher;
 use stdext::unwrap;
 
+use crate::session::Session;
+
 thread_local! {
     pub static ON_R_THREAD: Cell<bool> = Cell::new(false);
 }
@@ -85,7 +87,7 @@ fn main() {
                     eprintln!(
                         "A connection file must be specified with the --connection_file argument."
                     );
-                    break;
+                    return;
                 }
             },
             "--startup-file" => {
@@ -94,7 +96,7 @@ fn main() {
                     has_action = true;
                 } else {
                     eprintln!("A startup file must be specified with the --startup-file argument.");
-                    break;
+                    return;
                 }
             },
             "--session-mode" => {
@@ -105,12 +107,12 @@ fn main() {
                         "background" => SessionMode::Background,
                         _ => {
                             eprintln!("Invalid session mode: '{}' (expected console, notebook, or background)", mode);
-                            break;
+                            return;
                         },
                     };
                 } else {
                     eprintln!("A session mode must be specified with the --session-mode argument.");
-                    break;
+                    return;
                 }
             },
             "--version" => {
@@ -131,7 +133,7 @@ fn main() {
                     log_file = Some(file);
                 } else {
                     eprintln!("A log file must be specified with the --log argument.");
-                    break;
+                    return;
                 }
             },
             "--profile" => {
@@ -139,7 +141,7 @@ fn main() {
                     profile_file = Some(file);
                 } else {
                     eprintln!("A profile file must be specified with the --profile argument.");
-                    break;
+                    return;
                 }
             },
             "--startup-notifier-file" => {
@@ -149,7 +151,7 @@ fn main() {
                     eprintln!(
                         "A notification file must be specified with the --startup-notifier-file argument."
                     );
-                    break;
+                    return;
                 }
             },
             "--startup-delay" => {
@@ -158,13 +160,13 @@ fn main() {
                         startup_delay = Some(std::time::Duration::from_secs(delay));
                     } else {
                         eprintln!("Can't parse delay in seconds");
-                        break;
+                        return;
                     }
                 } else {
                     eprintln!(
                         "A delay in seconds must be specified with the --startup-delay argument."
                     );
-                    break;
+                    return;
                 }
             },
             "--" => {
@@ -175,8 +177,8 @@ fn main() {
                 break;
             },
             other => {
-                eprintln!("Argument '{}' unknown", other);
-                break;
+                eprintln!("Argument '{other}' unknown");
+                return;
             },
         }
     }
@@ -293,46 +295,22 @@ fn main() {
         std::process::abort();
     }));
 
-    // Parse the connection file and start the kernel
-    if let Some(connection) = connection_file {
-        parse_file(
-            &connection,
-            r_args,
-            startup_file,
-            session_mode,
-            capture_streams,
-        );
-    }
-}
+    let Some(connection_file) = connection_file else {
+        eprintln!("A connection file must be specified with the --connection_file argument.");
+        return;
+    };
 
-fn parse_file(
-    connection_file: &String,
-    r_args: Vec<String>,
-    startup_file: Option<String>,
-    session_mode: SessionMode,
-    capture_streams: bool,
-) {
-    match ConnectionFile::from_file(connection_file) {
-        Ok(connection) => {
-            log::info!("Loaded connection information from frontend in {connection_file}");
-            log::info!("Connection data: {:?}", connection);
+    // Set up R and start the Jupyter kernel
+    start_kernel(
+        connection_file.as_str(),
+        r_args,
+        startup_file,
+        session_mode,
+        capture_streams,
+    );
 
-            // Set up R and start the Jupyter kernel
-            start_kernel(
-                connection,
-                r_args,
-                startup_file,
-                session_mode,
-                capture_streams,
-            );
-
-            // Start the REPL, does not return
-            RMain::start();
-        },
-        Err(error) => {
-            log::error!("Couldn't read connection file {connection_file}: {error:?}");
-        },
-    }
+    // Start the REPL, does not return
+    RMain::start();
 }
 
 // Install the kernelspec JSON file into one of Jupyter's search paths.

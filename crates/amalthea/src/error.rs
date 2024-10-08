@@ -44,6 +44,7 @@ pub enum Error {
     InvalidCommMessage(String, String, String),
     InvalidInputRequest(String),
     InvalidConsoleInput(String),
+    Anyhow(anyhow::Error),
 }
 
 impl std::error::Error for Error {}
@@ -197,6 +198,9 @@ impl fmt::Display for Error {
             Error::InvalidConsoleInput(message) => {
                 write!(f, "{message}")
             },
+            Error::Anyhow(err) => {
+                write!(f, "{err:?}")
+            },
         }
     }
 }
@@ -205,4 +209,12 @@ impl<T: std::fmt::Debug> From<SendError<T>> for Error {
     fn from(err: SendError<T>) -> Self {
         Self::SendError(format!("Could not send {:?} to channel.", err.0))
     }
+}
+
+#[macro_export]
+macro_rules! anyhow {
+    ($($rest: expr),*) => {{
+        let message = anyhow::anyhow!($($rest, )*);
+        crate::error::Error::Anyhow(message)
+    }}
 }

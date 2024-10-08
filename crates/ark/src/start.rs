@@ -8,7 +8,9 @@
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use amalthea::connection_file::ConnectionFile;
+use amalthea::comm::event::CommManagerEvent;
+use amalthea::kernel;
+use amalthea::socket::iopub::IOPubMessage;
 use amalthea::socket::stdin::StdInRequest;
 use bus::Bus;
 use crossbeam::channel::bounded;
@@ -25,24 +27,19 @@ use crate::shell::Shell;
 /// Exported for unit tests.
 /// Call `RMain::start()` after this.
 pub fn start_kernel(
-    connection_file: ConnectionFile,
+    connection_file: &str,
     r_args: Vec<String>,
     startup_file: Option<String>,
     session_mode: SessionMode,
     capture_streams: bool,
 ) {
-    // Create a new kernel from the connection file
-    let mut kernel = match amalthea::kernel::Kernel::new("ark", connection_file) {
-        Ok(k) => k,
-        Err(err) => {
-            log::error!("Failed to create kernel: {err}");
-            return;
-        },
-    };
-
     // Create the channels used for communication. These are created here
     // as they need to be shared across different components / threads.
-    let iopub_tx = kernel.create_iopub_tx();
+    let (iopub_tx, iopub_rx) = bounded::<IOPubMessage>(10);
+
+    // Create the pair of channels that will be used to relay messages from
+    // the open comms
+    let (comm_manager_tx, comm_manager_rx) = bounded::<CommManagerEvent>(10);
 
     // A broadcast channel (bus) used to notify clients when the kernel
     // has finished initialization.
@@ -66,9 +63,6 @@ pub fn start_kernel(
     // Communication channel between the R main thread and the Amalthea
     // StdIn socket thread
     let (stdin_request_tx, stdin_request_rx) = bounded::<StdInRequest>(1);
-
-    // Communication channel for `CommEvent`
-    let comm_manager_tx = kernel.create_comm_manager_tx();
 
     // Create the shell.
     let kernel_init_rx = kernel_init_tx.add_rx();
@@ -94,18 +88,26 @@ pub fn start_kernel(
         false => amalthea::kernel::StreamBehavior::None,
     };
 
-    // Create the kernel
+    // Create the Ark kernel
+    // TODO: Move the Ark kernel to `RMain`
     let kernel_clone = shell.kernel.clone();
     let shell = Arc::new(Mutex::new(shell));
 
     let (stdin_reply_tx, stdin_reply_rx) = unbounded();
 
-    let res = kernel.connect(
+    // Connect the Amalthea kernel using the connection file
+    let res = kernel::connect(
+        "ark",
+        connection_file,
         shell,
         control,
         Some(lsp),
         Some(dap.clone()),
         stream_behavior,
+        iopub_tx.clone(),
+        iopub_rx,
+        comm_manager_tx.clone(),
+        comm_manager_rx,
         stdin_request_rx,
         stdin_reply_tx,
     );
