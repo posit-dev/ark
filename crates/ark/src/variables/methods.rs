@@ -94,6 +94,11 @@ impl ArkGenerics {
     }
 
     pub fn register_method_from_package(&self, class: &str, package: &str) -> anyhow::Result<()> {
+        // We store a call instead of the function itself to make sure:
+        // 1. Everything worked seamlessly with devtools::load_all() and similar functions (no risk of calling an
+        //    outdated method from a stale cache);
+        // 2. An escape hatch remained available for monkey-patching a method in the package namespace
+        //    (e.g., to enable workarounds for misbehaving methods).
         let method = RCall::new(unsafe { r_symbol!(":::") })
             .add(RObject::from(package))
             .add(RObject::from(format!("{self}.{class}")))
