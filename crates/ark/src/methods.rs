@@ -126,13 +126,13 @@ pub fn populate_methods_from_loaded_namespaces() -> anyhow::Result<()> {
     let loaded: Vec<String> = loaded.try_into()?;
 
     for pkg in loaded.into_iter() {
-        populate_variable_methods_table(pkg.as_str()).or_log_error("Failed populating methods");
+        populate_methods_table(pkg.as_str()).or_log_error("Failed populating methods");
     }
 
     Ok(())
 }
 
-pub fn populate_variable_methods_table(package: &str) -> anyhow::Result<()> {
+pub fn populate_methods_table(package: &str) -> anyhow::Result<()> {
     let ns = r_ns_env(package)?;
     let symbol_names = ns
         .iter()
