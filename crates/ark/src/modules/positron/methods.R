@@ -42,8 +42,8 @@ call_ark_method <- function(generic, object, ...) {
         return(NULL)
     }
 
-    for (cl in class(object)) {
-        if (!is.null(method <- get0(cl, envir = methods_table))) {
+    for (cls in class(object)) {
+        if (!is.null(method <- get0(cls, envir = methods_table))) {
             return(eval(
                 as.call(list(method, object, ...)),
                 envir = globalenv()
