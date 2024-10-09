@@ -86,8 +86,8 @@ impl ArkGenerics {
         }
     }
 
-    pub fn register_method(generic: Self, class: &str, method: RObject) -> anyhow::Result<()> {
-        let generic_name: &str = generic.into();
+    pub fn register_method(&self, class: &str, method: RObject) -> anyhow::Result<()> {
+        let generic_name: &str = self.into();
         RFunction::new("", ".ps.register_ark_method")
             .add(RObject::try_from(generic_name)?)
             .add(RObject::try_from(class)?)
@@ -96,19 +96,15 @@ impl ArkGenerics {
         Ok(())
     }
 
-    pub fn register_method_from_package(
-        generic: Self,
-        class: &str,
-        package: &str,
-    ) -> anyhow::Result<()> {
+    pub fn register_method_from_package(&self, class: &str, package: &str) -> anyhow::Result<()> {
         let method = RObject::from(unsafe {
             Rf_lang3(
                 r_symbol!(":::"),
                 r_symbol!(package),
-                r_symbol!(format!("{generic}.{class}")),
+                r_symbol!(format!("{self}.{class}")),
             )
         });
-        Self::register_method(generic, class, method)?;
+        self.register_method(class, method)?;
         Ok(())
     }
 
@@ -151,7 +147,7 @@ pub fn populate_variable_methods_table(package: &str) -> anyhow::Result<()> {
 
     for name in symbol_names {
         if let Some((generic, class)) = ArkGenerics::parse_method(&name) {
-            ArkGenerics::register_method_from_package(generic, class.as_str(), package)?;
+            generic.register_method_from_package(class.as_str(), package)?;
         }
     }
 
