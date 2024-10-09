@@ -98,6 +98,8 @@ use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::KernelNotification;
 use crate::lsp::main_loop::TokioUnboundedSender;
 use crate::lsp::state_handlers::ConsoleInputs;
+use crate::methods::populate_methods_from_loaded_namespaces;
+use crate::methods::populate_methods_table;
 use crate::modules;
 use crate::plots::graphics_device;
 use crate::r_task;
@@ -120,8 +122,6 @@ use crate::ui::UiCommMessage;
 use crate::ui::UiCommSender;
 
 static RE_DEBUG_PROMPT: Lazy<Regex> = Lazy::new(|| Regex::new(r"Browse\[\d+\]").unwrap());
-use crate::variables::methods::populate_methods_from_loaded_namespaces;
-use crate::variables::methods::populate_variable_methods_table;
 
 /// An enum representing the different modes in which the R session can run.
 #[derive(PartialEq, Clone)]
@@ -1969,7 +1969,7 @@ unsafe extern "C" fn ps_onload_hook(pkg: SEXP, _path: SEXP) -> anyhow::Result<SE
     let _span = tracing::trace_span!(parent: None, "onload_hook", pkg = pkg).entered();
 
     // Populate variables pane methods
-    if let Err(err) = populate_variable_methods_table(pkg.as_str()) {
+    if let Err(err) = populate_methods_table(pkg.as_str()) {
         log::error!("Failed populating variables pane for `{pkg}` methods: {err:?}");
     }
 

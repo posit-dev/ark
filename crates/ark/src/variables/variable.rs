@@ -52,7 +52,7 @@ use libr::*;
 use stdext::local;
 use stdext::unwrap;
 
-use crate::variables::methods::ArkGenerics;
+use crate::methods::ArkGenerics;
 
 // Constants.
 const MAX_DISPLAY_VALUE_ENTRIES: usize = 1_000;

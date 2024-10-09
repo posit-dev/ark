@@ -5,6 +5,5 @@
 //
 //
 
-pub mod methods;
 pub mod r_variables;
 pub mod variable;
