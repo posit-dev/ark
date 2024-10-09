@@ -13,7 +13,6 @@ use crossbeam::channel::Sender;
 use crossbeam::select;
 use log::trace;
 use log::warn;
-use serde::de::DeserializeOwned;
 
 use crate::error::Error;
 use crate::session::Session;
