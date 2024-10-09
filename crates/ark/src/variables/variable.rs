@@ -1329,8 +1329,8 @@ fn try_from_method_variable_kind(value: SEXP) -> anyhow::Result<Option<VariableK
     let kind: Option<String> = ArkGenerics::VariableKind.try_dispatch(value, vec![])?;
     match kind {
         None => Ok(None),
-        // Enum reflection is not beautiful, we want to parse a VariableKind from it's
-        // string representation by reading from a json which is just `"{kind}"`.
+        // We want to parse a VariableKind from it's string representation.
+        // We do that by reading from a json which is just `"{kind}"`.
         Some(kind) => Ok(serde_json::from_str(format!(r#""{kind}""#).as_str())?),
     }
 }
