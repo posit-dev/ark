@@ -20,8 +20,7 @@ lockEnvironment(ark_methods_table, TRUE)
 #' @export
 .ps.register_ark_method <- function(generic, class, method) {
     stopifnot(
-        typeof(generic) == "character",
-        length(generic) == 1,
+        is_string(generic),
         generic %in% c(
             "ark_variable_display_value",
             "ark_variable_display_type",
