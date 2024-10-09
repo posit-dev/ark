@@ -43,7 +43,7 @@ fn start_kernel(connection_file: ConnectionFile, registration_file: Option<Regis
     )));
     let control = Arc::new(Mutex::new(Control {}));
 
-    // TODO!: Is this working right? Probably not?
+    // TODO: Is this working right? Probably not?
     // If we run the echo CLI and provide a `connection_file` that
     // implements handshakes, then this definitely won't work right
     if let Err(err) = kernel::connect(
