@@ -146,7 +146,7 @@ fn index_node(
         let comment_text = contents.node_slice(&node)?.to_string();
 
         // Check if the comment starts with one or more '#' followed by any text and ends with 4+ punctuations
-        if let Some((level, title)) = parse_comment_as_section(&comment_text) {
+        if let Some((_level, title)) = parse_comment_as_section(&comment_text) {
             // Create a symbol based on the parsed comment
             let start = convert_point_to_position(contents, node.start_position());
             let end = convert_point_to_position(contents, node.end_position());
