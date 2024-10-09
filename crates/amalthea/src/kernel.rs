@@ -41,6 +41,7 @@ use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
 use crate::wire::jupyter_message::OutboundMessage;
 use crate::wire::jupyter_message::Status;
+use crate::wire::subscription_message::SubscriptionMessage;
 
 macro_rules! report_error {
     ($($arg:tt)+) => (if cfg!(debug_assertions) { panic!($($arg)+) } else { log::error!($($arg)+) })
@@ -118,14 +119,14 @@ pub fn connect(
         )
     });
 
-    // Create the IOPub PUB/SUB socket and start a thread to broadcast to
+    // Create the IOPub XPUB/SUB socket and start a thread to broadcast to
     // the client. IOPub only broadcasts messages, so it listens to other
     // threads on a Receiver<Message> instead of to the client.
     let iopub_socket = Socket::new(
         session.clone(),
         ctx.clone(),
         String::from("IOPub"),
-        zmq::PUB,
+        zmq::XPUB,
         None,
         connection_file.endpoint(connection_file.iopub_port),
     )?;
@@ -348,7 +349,7 @@ fn shell_thread(
 /// Starts the IOPub thread.
 fn iopub_thread(
     rx: Receiver<IOPubMessage>,
-    inbound_rx: Receiver<crate::Result<Message>>,
+    inbound_rx: Receiver<crate::Result<SubscriptionMessage>>,
     outbound_tx: Sender<OutboundMessage>,
     session: Session,
 ) -> Result<(), Error> {
@@ -385,7 +386,7 @@ fn zmq_forwarding_thread(
     stdin_socket: Socket,
     stdin_inbound_tx: Sender<crate::Result<Message>>,
     iopub_socket: Socket,
-    iopub_inbound_tx: Sender<crate::Result<Message>>,
+    iopub_inbound_tx: Sender<crate::Result<SubscriptionMessage>>,
     outbound_rx: Receiver<OutboundMessage>,
 ) {
     // This function checks for notifications that an outgoing message
@@ -442,6 +443,15 @@ fn zmq_forwarding_thread(
             Ok(())
         };
 
+    // Forwards special 0MQ XPUB subscription message from the frontend to the IOPub thread.
+    let forward_inbound_subscription = |socket: &Socket,
+                                        inbound_tx: &Sender<crate::Result<SubscriptionMessage>>|
+     -> anyhow::Result<()> {
+        let msg = SubscriptionMessage::read_from_socket(socket);
+        inbound_tx.send(msg)?;
+        Ok(())
+    };
+
     // Create poll items necessary to call `zmq_poll()`
     let mut poll_items = {
         let outbound_notif_poll_item = outbound_notif_socket.socket.as_poll_item(zmq::POLLIN);
@@ -478,7 +488,7 @@ fn zmq_forwarding_thread(
 
             if has_inbound(&iopub_socket) {
                 unwrap!(
-                    forward_inbound(&iopub_socket, &iopub_inbound_tx),
+                    forward_inbound_subscription(&iopub_socket, &iopub_inbound_tx),
                     Err(err) => report_error!("While forwarding inbound message: {}", err)
                 );
                 continue;

@@ -12,8 +12,16 @@ use crate::wire::jupyter_message::MessageType;
 
 /// An IOPub message used for handshaking by modern clients.
 /// See JEP 65: https://github.com/jupyter/enhancement-proposals/pull/65
+///
+/// Note that this IOPub `Welcome` message is the same basic idea as
+/// `ZMQ_XPUB_WELCOME_MSG`, set through `socket.set_xpub_welcome_msg()`,
+/// but the JEP committee decided not to use that for some reason.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Welcome {
+    /// The `subscription` sent to the XPUB socket by the SUB's call
+    /// to `socket.set_subscribe(subscription)`. The IOPub XPUB socket
+    /// passes this `subscription` back to the IOPub SUB in the `Welcome`
+    /// message.
     pub subscription: String,
 }
 

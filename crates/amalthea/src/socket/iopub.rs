@@ -30,6 +30,8 @@ use crate::wire::status::ExecutionState;
 use crate::wire::status::KernelStatus;
 use crate::wire::stream::Stream;
 use crate::wire::stream::StreamOutput;
+use crate::wire::subscription_message::SubscriptionKind;
+use crate::wire::subscription_message::SubscriptionMessage;
 use crate::wire::update_display_data::UpdateDisplayData;
 use crate::wire::welcome::Welcome;
 
@@ -39,7 +41,7 @@ pub struct IOPub {
 
     /// A channel that receives IOPub subscriber notifications from
     /// the IOPub socket
-    inbound_rx: Receiver<crate::Result<Message>>,
+    inbound_rx: Receiver<crate::Result<SubscriptionMessage>>,
 
     /// A channel to forward along IOPub messages to the IOPub socket
     /// for delivery to the frontend
@@ -69,7 +71,7 @@ pub enum IOPubContextChannel {
     Control,
 }
 
-/// Enumeration of all messages that can be delivered from the IOPub PUB/SUB
+/// Enumeration of all messages that can be delivered from the IOPub XPUB/SUB
 /// socket. These messages generally are created on other threads and then sent
 /// via a channel to the IOPub thread.
 pub enum IOPubMessage {
@@ -103,7 +105,7 @@ impl IOPub {
     ///   new subscriber messages forwarded from the IOPub socket.
     pub fn new(
         rx: Receiver<IOPubMessage>,
-        inbound_rx: Receiver<crate::Result<Message>>,
+        inbound_rx: Receiver<crate::Result<SubscriptionMessage>>,
         outbound_tx: Sender<OutboundMessage>,
         session: Session,
     ) -> Self {
@@ -136,11 +138,11 @@ impl IOPub {
                     match message {
                         Ok(message) => {
                             if let Err(error) = self.process_outbound_message(message) {
-                                log::warn!("Error delivering iopub message: {error:?}")
+                                log::warn!("Error delivering outbound iopub message: {error:?}")
                             }
                         },
                         Err(error) => {
-                            log::warn!("Failed to receive iopub message: {error:?}");
+                            log::warn!("Failed to receive outbound iopub message: {error:?}");
                         },
                     }
                 },
@@ -246,9 +248,32 @@ impl IOPub {
         }
     }
 
-    fn process_inbound_message(&self, _message: Message) -> Result<(), Error> {
-        // TODO
-        Ok(())
+    /// As an XPUB socket, the only inbound message that IOPub receives is
+    /// a subscription message that notifies us when a SUB subscribes or
+    /// unsubscribes.
+    ///
+    /// When we get a subscription notification, we forward along an IOPub
+    /// `Welcome` message back to the SUB, in compliance with JEP 65. Clients
+    /// that don't know how to process this `Welcome` message should just ignore it.
+    fn process_inbound_message(&self, message: SubscriptionMessage) -> Result<(), Error> {
+        let subscription = message.subscription;
+
+        match message.kind {
+            SubscriptionKind::Subscribe => {
+                log::info!(
+                    "Received subscribe message on IOPub with subscription '{subscription}'."
+                );
+                let content = Welcome { subscription };
+                self.forward(Message::Welcome(self.message(content)))
+            },
+            SubscriptionKind::Unsubscribe => {
+                log::info!(
+                    "Received unsubscribe message on IOPub with subscription '{subscription}'."
+                );
+                // We don't do anything on unsubscribes
+                return Ok(());
+            },
+        }
     }
 
     /// Create a message using the underlying socket with the given content.

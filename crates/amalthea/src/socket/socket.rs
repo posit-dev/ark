@@ -5,8 +5,6 @@
  *
  */
 
-use log::trace;
-
 use crate::error::Error;
 use crate::session::Session;
 
@@ -37,24 +35,28 @@ impl Socket {
     ) -> Result<Self, Error> {
         let socket = Self::new_raw(ctx, name.clone(), kind, identity)?;
 
-        // One side of a socket must `bind()` to its endpoint, and the other
-        // side must `connect()` to the same endpoint. The `bind()` side
-        // will be the server, and the `connect()` side will be the client.
-        match kind {
-            zmq::SocketType::ROUTER | zmq::SocketType::PUB | zmq::SocketType::REP => {
-                trace!("Binding to ZeroMQ '{}' socket at {}", name, endpoint);
-                if let Err(err) = socket.bind(&endpoint) {
-                    return Err(Error::SocketBindError(name, endpoint, err));
-                }
-            },
-            zmq::SocketType::DEALER | zmq::SocketType::SUB | zmq::SocketType::REQ => {
-                // Bind the socket to the requested endpoint
-                trace!("Connecting to ZeroMQ '{}' socket at {}", name, endpoint);
-                if let Err(err) = socket.connect(&endpoint) {
-                    return Err(Error::SocketConnectError(name, endpoint, err));
-                }
-            },
-            _ => return Err(Error::UnsupportedSocketType(kind)),
+        // For the server side of IOPub, there are a few options we need to tweak
+        if name == "IOPub" && kind == zmq::SocketType::XPUB {
+            // Sets the XPUB socket behavior on new subscriptions and unsubscriptions.
+            // A value of `false` is the default and passes only new subscription messages
+            // to upstream. A value of `true` passes all subscription messages upstream.
+            // This is possibly important if a client temporarily disconnects? xeus also does this.
+            socket
+                .set_xpub_verbose(true)
+                .map_err(|err| Error::CreateSocketFailed(name.clone(), err))?;
+
+            // For IOPub in particular, which is fairly high traffic, we up the
+            // "high water mark" from the default of 1k -> 100k to avoid dropping
+            // messages if the subscriber is processing them too slowly. This has
+            // to be set before the call to `bind()`. It seems like we could
+            // alternatively set the rcvhwm on the subscriber side, since the
+            // "total" sndhmw seems to be the sum of the pub + sub values, but this
+            // is probably best to tell any subscribers out there that this is a
+            // high traffic channel.
+            // https://github.com/posit-dev/amalthea/pull/129
+            socket
+                .set_sndhwm(100000)
+                .map_err(|err| Error::CreateSocketFailed(name.clone(), err))?;
         }
 
         // If this is a debug build, set `ZMQ_ROUTER_MANDATORY` on all `ROUTER`
@@ -69,7 +71,26 @@ impl Socket {
             }
         }
 
-        // Create a new mutex and return
+        // One side of a socket must `bind()` to its endpoint, and the other
+        // side must `connect()` to the same endpoint. The `bind()` side
+        // will be the server, and the `connect()` side will be the client.
+        match kind {
+            zmq::SocketType::ROUTER | zmq::SocketType::XPUB | zmq::SocketType::REP => {
+                log::trace!("Binding to ZeroMQ '{}' socket at {}", name, endpoint);
+                if let Err(err) = socket.bind(&endpoint) {
+                    return Err(Error::SocketBindError(name, endpoint, err));
+                }
+            },
+            zmq::SocketType::DEALER | zmq::SocketType::SUB | zmq::SocketType::REQ => {
+                log::trace!("Connecting to ZeroMQ '{}' socket at {}", name, endpoint);
+                if let Err(err) = socket.connect(&endpoint) {
+                    return Err(Error::SocketConnectError(name, endpoint, err));
+                }
+            },
+            _ => return Err(Error::UnsupportedSocketType(kind)),
+        }
+
+        // Create a new socket and return
         Ok(Self {
             socket,
             session,
@@ -88,12 +109,12 @@ impl Socket {
         let socket = Self::new_raw(ctx, name.clone(), zmq::PAIR, identity)?;
 
         if bind {
-            trace!("Binding to ZeroMQ '{}' socket at {}", name, endpoint);
+            log::trace!("Binding to ZeroMQ '{}' socket at {}", name, endpoint);
             if let Err(err) = socket.bind(&endpoint) {
                 return Err(Error::SocketBindError(name, endpoint, err));
             }
         } else {
-            trace!("Connecting to ZeroMQ '{}' socket at {}", name, endpoint);
+            log::trace!("Connecting to ZeroMQ '{}' socket at {}", name, endpoint);
             if let Err(err) = socket.connect(&endpoint) {
                 return Err(Error::SocketConnectError(name, endpoint, err));
             }
@@ -117,21 +138,6 @@ impl Socket {
             Ok(s) => s,
             Err(err) => return Err(Error::CreateSocketFailed(name, err)),
         };
-
-        // For IOPub in particular, which is fairly high traffic, we up the
-        // "high water mark" from the default of 1k -> 100k to avoid dropping
-        // messages if the subscriber is processing them too slowly. This has
-        // to be set before the call to `bind()`. It seems like we could
-        // alternatively set the rcvhwm on the subscriber side, since the
-        // "total" sndhmw seems to be the sum of the pub + sub values, but this
-        // is probably best to tell any subscribers out there that this is a
-        // high traffic channel.
-        // https://github.com/posit-dev/amalthea/pull/129
-        if name == "IOPub" {
-            if let Err(error) = socket.set_sndhwm(100000) {
-                return Err(Error::CreateSocketFailed(name, error));
-            }
-        }
 
         // Set the socket's identity, if supplied
         if let Some(identity) = identity {
@@ -188,15 +194,29 @@ impl Socket {
         self.poll_incoming(0)
     }
 
-    /// Subscribes a SUB socket to all the published messages from a PUB socket.
+    /// Subscribes a SUB socket to messages from an XPUB socket.
+    ///
+    /// Use `b""` to subscribe to all messages.
     ///
     /// Note that this needs to be called *after* the socket connection is
     /// established on both ends.
-    pub fn subscribe(&self) -> Result<(), Error> {
+    pub fn subscribe(&self, subscription: &[u8]) -> Result<(), Error> {
+        let socket_type = match self.socket.get_socket_type() {
+            Ok(socket_type) => socket_type,
+            Err(err) => return Err(Error::ZmqError(self.name.clone(), err)),
+        };
+
+        if socket_type != zmq::SocketType::SUB {
+            return Err(crate::anyhow!(
+                "Can't subscribe on a non-SUB socket. This socket is a {socket_type:?}."
+            ));
+        }
+
         // Currently, all SUB sockets subscribe to all topics; in theory
         // frontends could subscribe selectively, but in practice all known
-        // Jupyter frontends subscribe to all topics.
-        match self.socket.set_subscribe(b"") {
+        // Jupyter frontends subscribe to all topics and just ignore topics
+        // they don't recognize.
+        match self.socket.set_subscribe(subscription) {
             Ok(_) => Ok(()),
             Err(err) => Err(Error::ZmqError(self.name.clone(), err)),
         }

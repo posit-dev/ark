@@ -283,6 +283,9 @@ impl TryFrom<&WireMessage> for Message {
         if kind == HandshakeReply::message_type() {
             return Ok(Message::HandshakeReply(JupyterMessage::try_from(msg)?));
         }
+        if kind == Welcome::message_type() {
+            return Ok(Message::Welcome(JupyterMessage::try_from(msg)?));
+        }
         return Err(Error::UnknownMessageType(kind));
     }
 }
