@@ -6,10 +6,10 @@
 #
 
 ark_methods_table <- new.env(parent = emptyenv())
-ark_methods_table$ark_variable_display_value <- new.env(parent = emptyenv())
-ark_methods_table$ark_variable_display_type <- new.env(parent = emptyenv())
-ark_methods_table$ark_variable_has_children <- new.env(parent = emptyenv())
-ark_methods_table$ark_variable_kind <- new.env(parent = emptyenv())
+ark_methods_table$positron_variable_display_value <- new.env(parent = emptyenv())
+ark_methods_table$positron_variable_display_type <- new.env(parent = emptyenv())
+ark_methods_table$positron_variable_has_children <- new.env(parent = emptyenv())
+ark_methods_table$positron_variable_kind <- new.env(parent = emptyenv())
 lockEnvironment(ark_methods_table, TRUE)
 
 #' Register the methods with the Positron runtime
@@ -18,14 +18,14 @@ lockEnvironment(ark_methods_table, TRUE)
 #' @param class Class name as a character
 #' @param method A method to be registered. Should be a call object.
 #' @export
-.ps.register_ark_method <- function(generic, class, method) {
+.ark.register_ark_method <- function(generic, class, method) {
     stopifnot(
         is_string(generic),
         generic %in% c(
-            "ark_variable_display_value",
-            "ark_variable_display_type",
-            "ark_variable_has_children",
-            "ark_variable_kind"
+            "positron_variable_display_value",
+            "positron_variable_display_type",
+            "positron_variable_has_children",
+            "positron_variable_kind"
         ),
         typeof(class) == "character"
     )
