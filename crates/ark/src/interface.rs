@@ -423,8 +423,9 @@ impl RMain {
                 }
             }
 
-            populate_methods_from_loaded_namespaces()
-                .or_log_error("Can't populate variables pane methods from loaded packages");
+            if let Err(err) = populate_methods_from_loaded_namespaces() {
+                log::error!("Can't populate variables pane methods from loaded packages: {err:?}");
+            }
 
             // Set up the global error handler (after support function initialization)
             errors::initialize();
@@ -1968,8 +1969,9 @@ unsafe extern "C" fn ps_onload_hook(pkg: SEXP, _path: SEXP) -> anyhow::Result<SE
     let _span = tracing::trace_span!(parent: None, "onload_hook", pkg = pkg).entered();
 
     // Populate variables pane methods
-    populate_variable_methods_table(pkg.as_str())
-        .or_log_error("Failed populating variables pane methods");
+    if let Err(err) = populate_variable_methods_table(pkg.as_str()) {
+        log::error!("Failed populating variables pane for `{pkg}` methods: {err:?}");
+    }
 
     // Populate fake source refs if needed
     if do_resource_namespaces() {
