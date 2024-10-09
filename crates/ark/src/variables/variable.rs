@@ -12,6 +12,7 @@ use amalthea::comm::variables_comm::ClipboardFormatFormat;
 use amalthea::comm::variables_comm::Variable;
 use amalthea::comm::variables_comm::VariableKind;
 use anyhow::anyhow;
+use harp::call::RArgument;
 use harp::environment::Binding;
 use harp::environment::BindingValue;
 use harp::environment::Environment;
@@ -332,8 +333,8 @@ impl WorkspaceVariableDisplayValue {
 
     fn try_from_method(value: SEXP) -> Option<Self> {
         let display_value =
-            ArkGenerics::VariableDisplayValue.try_dispatch::<String>(value, vec![(
-                String::from("width"),
+            ArkGenerics::VariableDisplayValue.try_dispatch::<String>(value, vec![RArgument::new(
+                "width",
                 RObject::from(MAX_DISPLAY_VALUE_LENGTH as i32),
             )]);
 
@@ -467,7 +468,10 @@ impl WorkspaceVariableDisplayType {
     }
 
     fn try_from_method(value: SEXP, include_length: bool) -> anyhow::Result<Option<Self>> {
-        let args = vec![(String::from("include_length"), include_length.try_into()?)];
+        let args = vec![RArgument::new(
+            "include_length",
+            RObject::try_from(include_length)?,
+        )];
         let result: Option<String> = ArkGenerics::VariableDisplayType.try_dispatch(value, args)?;
         Ok(result.map(Self::simple))
     }

@@ -6,6 +6,7 @@
 //
 
 use anyhow::anyhow;
+use harp::call::RArgument;
 use harp::call::RCall;
 use harp::environment::r_ns_env;
 use harp::environment::BindingValue;
@@ -47,11 +48,7 @@ impl ArkGenerics {
     //   - `Err` if method was found and errored
     //   - `Err`if the method result could not be coerced to `T`
     //   - T, if method was found and was succesfully executed
-    pub fn try_dispatch<T>(
-        &self,
-        x: SEXP,
-        args: Vec<(String, RObject)>,
-    ) -> anyhow::Result<Option<T>>
+    pub fn try_dispatch<T>(&self, x: SEXP, args: Vec<RArgument>) -> anyhow::Result<Option<T>>
     where
         // Making this a generic allows us to handle the conversion to the expected output
         // type within the dispatch, which is much more ergonomic.
@@ -68,7 +65,7 @@ impl ArkGenerics {
         call.add(generic);
         call.add(x);
 
-        for (name, value) in args.into_iter() {
+        for RArgument { name, value } in args.into_iter() {
             call.param(name.as_str(), value);
         }
 
