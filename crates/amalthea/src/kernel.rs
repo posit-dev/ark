@@ -130,8 +130,13 @@ pub fn connect(
         connection_file.endpoint(connection_file.iopub_port),
     )?;
     let iopub_port = port_finalize(&iopub_socket, connection_file.iopub_port)?;
+
+    let (iopub_inbound_tx, iopub_inbound_rx) = unbounded();
+    let iopub_session = iopub_socket.session.clone();
+    let iopub_outbound_tx = outbound_tx.clone();
+
     spawn!(format!("{name}-iopub"), move || {
-        iopub_thread(iopub_socket, iopub_rx)
+        iopub_thread(iopub_rx, iopub_inbound_rx, iopub_outbound_tx, iopub_session)
     });
 
     // Create the heartbeat socket and start a thread to listen for
@@ -165,11 +170,12 @@ pub fn connect(
     let (stdin_inbound_tx, stdin_inbound_rx) = unbounded();
     let (stdin_interrupt_tx, stdin_interrupt_rx) = bounded(1);
     let stdin_session = stdin_socket.session.clone();
+    let stdin_outbound_tx = outbound_tx.clone();
 
     spawn!(format!("{name}-stdin"), move || {
         stdin_thread(
             stdin_inbound_rx,
-            outbound_tx,
+            stdin_outbound_tx,
             stdin_request_rx,
             stdin_reply_tx,
             stdin_interrupt_rx,
@@ -224,6 +230,8 @@ pub fn connect(
             outbound_notif_socket_rx,
             stdin_socket,
             stdin_inbound_tx,
+            iopub_socket,
+            iopub_inbound_tx,
             outbound_rx_clone,
         )
     });
@@ -338,8 +346,13 @@ fn shell_thread(
 }
 
 /// Starts the IOPub thread.
-fn iopub_thread(socket: Socket, receiver: Receiver<IOPubMessage>) -> Result<(), Error> {
-    let mut iopub = IOPub::new(socket, receiver);
+fn iopub_thread(
+    rx: Receiver<IOPubMessage>,
+    inbound_rx: Receiver<crate::Result<Message>>,
+    outbound_tx: Sender<OutboundMessage>,
+    session: Session,
+) -> Result<(), Error> {
+    let mut iopub = IOPub::new(rx, inbound_rx, outbound_tx, session);
     iopub.listen();
     Ok(())
 }
@@ -371,6 +384,8 @@ fn zmq_forwarding_thread(
     outbound_notif_socket: Socket,
     stdin_socket: Socket,
     stdin_inbound_tx: Sender<crate::Result<Message>>,
+    iopub_socket: Socket,
+    iopub_inbound_tx: Sender<crate::Result<Message>>,
     outbound_rx: Receiver<OutboundMessage>,
 ) {
     // This function checks for notifications that an outgoing message
@@ -394,8 +409,8 @@ fn zmq_forwarding_thread(
     };
 
     // This function checks that a 0MQ message from the frontend is ready.
-    let has_inbound = || -> bool {
-        match stdin_socket.socket.poll(zmq::POLLIN, 0) {
+    let has_inbound = |socket: &Socket| -> bool {
+        match socket.socket.poll(zmq::POLLIN, 0) {
             Ok(n) if n > 0 => true,
             _ => false,
         }
@@ -409,6 +424,7 @@ fn zmq_forwarding_thread(
         let outbound_msg = outbound_rx.recv()?;
         match outbound_msg {
             OutboundMessage::StdIn(msg) => msg.send(&stdin_socket)?,
+            OutboundMessage::IOPub(msg) => msg.send(&iopub_socket)?,
         };
 
         // Notify back
@@ -419,17 +435,19 @@ fn zmq_forwarding_thread(
 
     // Forwards 0MQ message from the frontend to the corresponding
     // Amalthea channel.
-    let forward_inbound = || -> anyhow::Result<()> {
-        let msg = Message::read_from_socket(&stdin_socket);
-        stdin_inbound_tx.send(msg)?;
-        Ok(())
-    };
+    let forward_inbound =
+        |socket: &Socket, inbound_tx: &Sender<crate::Result<Message>>| -> anyhow::Result<()> {
+            let msg = Message::read_from_socket(socket);
+            inbound_tx.send(msg)?;
+            Ok(())
+        };
 
     // Create poll items necessary to call `zmq_poll()`
     let mut poll_items = {
         let outbound_notif_poll_item = outbound_notif_socket.socket.as_poll_item(zmq::POLLIN);
         let stdin_poll_item = stdin_socket.socket.as_poll_item(zmq::POLLIN);
-        vec![outbound_notif_poll_item, stdin_poll_item]
+        let iopub_poll_item = iopub_socket.socket.as_poll_item(zmq::POLLIN);
+        vec![outbound_notif_poll_item, stdin_poll_item, iopub_poll_item]
     };
 
     loop {
@@ -450,9 +468,17 @@ fn zmq_forwarding_thread(
                 continue;
             }
 
-            if has_inbound() {
+            if has_inbound(&stdin_socket) {
                 unwrap!(
-                    forward_inbound(),
+                    forward_inbound(&stdin_socket, &stdin_inbound_tx),
+                    Err(err) => report_error!("While forwarding inbound message: {}", err)
+                );
+                continue;
+            }
+
+            if has_inbound(&iopub_socket) {
+                unwrap!(
+                    forward_inbound(&iopub_socket, &iopub_inbound_tx),
                     Err(err) => report_error!("While forwarding inbound message: {}", err)
                 );
                 continue;

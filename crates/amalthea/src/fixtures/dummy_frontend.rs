@@ -347,7 +347,7 @@ impl DummyFrontend {
             let msg = self.recv_iopub();
 
             // Assert its type
-            let piece = assert_matches!(msg, Message::StreamOutput(data) => {
+            let piece = assert_matches!(msg, Message::Stream(data) => {
                 assert_eq!(data.content.name, stream);
                 data.content.text
             });

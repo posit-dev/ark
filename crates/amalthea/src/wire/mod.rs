@@ -44,4 +44,5 @@ pub mod shutdown_request;
 pub mod status;
 pub mod stream;
 pub mod update_display_data;
+pub mod welcome;
 pub mod wire_message;

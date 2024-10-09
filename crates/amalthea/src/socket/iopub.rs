@@ -13,9 +13,10 @@ use crossbeam::channel::Sender;
 use crossbeam::select;
 use log::trace;
 use log::warn;
+use serde::de::DeserializeOwned;
 
 use crate::error::Error;
-use crate::socket::socket::Socket;
+use crate::session::Session;
 use crate::wire::comm_close::CommClose;
 use crate::wire::comm_msg::CommWireMsg;
 use crate::wire::comm_open::CommOpen;
@@ -25,19 +26,31 @@ use crate::wire::execute_input::ExecuteInput;
 use crate::wire::execute_result::ExecuteResult;
 use crate::wire::header::JupyterHeader;
 use crate::wire::jupyter_message::JupyterMessage;
+use crate::wire::jupyter_message::Message;
+use crate::wire::jupyter_message::OutboundMessage;
 use crate::wire::jupyter_message::ProtocolMessage;
 use crate::wire::status::ExecutionState;
 use crate::wire::status::KernelStatus;
 use crate::wire::stream::Stream;
 use crate::wire::stream::StreamOutput;
 use crate::wire::update_display_data::UpdateDisplayData;
+use crate::wire::welcome::Welcome;
+use crate::wire::wire_message::WireMessage;
 
 pub struct IOPub {
-    /// The underlying IOPub socket
-    socket: Socket,
-
     /// A channel that receives IOPub messages from other threads
-    receiver: Receiver<IOPubMessage>,
+    rx: Receiver<IOPubMessage>,
+
+    /// A channel that receives IOPub subscriber notifications from
+    /// the IOPub socket
+    inbound_rx: Receiver<crate::Result<Message>>,
+
+    /// A channel to forward along IOPub messages to the IOPub socket
+    /// for delivery to the frontend
+    outbound_tx: Sender<OutboundMessage>,
+
+    /// ZMQ session used to create messages
+    session: Session,
 
     /// The current message context; attached to outgoing messages to pair
     /// outputs with the message that caused them.
@@ -75,6 +88,7 @@ pub enum IOPubMessage {
     CommClose(String),
     DisplayData(DisplayData),
     UpdateDisplayData(UpdateDisplayData),
+    Welcome(Welcome),
     Wait(Wait),
 }
 
@@ -87,16 +101,23 @@ pub struct Wait {
 impl IOPub {
     /// Create a new IOPub socket wrapper.
     ///
-    /// * `socket` - The ZeroMQ socket that will deliver IOPub messages to
-    ///   subscribed clients.
-    /// * `receiver` - The receiver channel that will receive IOPub
+    /// * `rx` - The receiver channel that will receive IOPub
     ///   messages from other threads.
-    pub fn new(socket: Socket, receiver: Receiver<IOPubMessage>) -> Self {
+    /// * `inbound_rx` - The receiver channel that will receive
+    ///   new subscriber messages forwarded from the IOPub socket.
+    pub fn new(
+        rx: Receiver<IOPubMessage>,
+        inbound_rx: Receiver<crate::Result<Message>>,
+        outbound_tx: Sender<OutboundMessage>,
+        session: Session,
+    ) -> Self {
         let buffer = StreamBuffer::new(Stream::Stdout);
 
         Self {
-            socket,
-            receiver,
+            rx,
+            inbound_rx,
+            outbound_tx,
+            session,
             shell_context: None,
             control_context: None,
             buffer,
@@ -115,7 +136,7 @@ impl IOPub {
 
         loop {
             select! {
-                recv(self.receiver) -> message => {
+                recv(self.rx) -> message => {
                     match message {
                         Ok(message) => {
                             if let Err(error) = self.process_message(message) {
@@ -125,6 +146,18 @@ impl IOPub {
                         Err(error) => {
                             warn!("Failed to receive iopub message: {error:?}");
                         },
+                    }
+                },
+                recv(self.inbound_rx) -> message => {
+                    match message.unwrap() {
+                        Ok(message) => {
+                            if let Err(error) = self.process_inbound_message(message) {
+                                warn!("Error processing inbound iopub message: {error:?}")
+                            }
+                        },
+                        Err(error) => {
+                            warn!("Failed to receive inbound iopub message: {error:?}");
+                        }
                     }
                 },
                 recv(flush_interval) -> message => {
@@ -197,7 +230,13 @@ impl IOPub {
                 self.send_message_with_context(msg, IOPubContextChannel::Shell)
             },
             IOPubMessage::Wait(msg) => self.process_wait_request(msg),
+            IOPubMessage::Welcome(msg) => todo!(),
         }
+    }
+
+    fn process_inbound_message(&self, _message: Message) -> Result<(), Error> {
+        // TODO
+        Ok(())
     }
 
     /// Send a message using the underlying socket with the given content.
@@ -236,8 +275,14 @@ impl IOPub {
         header: Option<JupyterHeader>,
         content: T,
     ) -> Result<(), Error> {
-        let msg = JupyterMessage::<T>::create(content, header, &self.socket.session);
-        msg.send(&self.socket)
+        // FIXME: Surely there's a better way????
+        let msg = JupyterMessage::<T>::create(content, header, &self.session);
+        let msg: WireMessage = WireMessage::try_from(&msg)?;
+        let msg: Message = Message::try_from(&msg)?;
+
+        self.outbound_tx
+            .send(OutboundMessage::IOPub(msg))
+            .map_err(|err| crate::Error::SendError(format!("{err:?}")))
     }
 
     /// Flushes the active stream, sending along the message if the buffer

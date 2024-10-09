@@ -8,9 +8,12 @@
 use serde::Deserialize;
 use serde::Serialize;
 
+use super::display_data::DisplayData;
 use super::handshake_reply::HandshakeReply;
 use super::handshake_request::HandshakeRequest;
 use super::stream::StreamOutput;
+use super::update_display_data::UpdateDisplayData;
+use super::welcome::Welcome;
 use crate::comm::base_comm::JsonRpcReply;
 use crate::comm::ui_comm::UiFrontendRequest;
 use crate::error::Error;
@@ -77,41 +80,50 @@ impl<T> ProtocolMessage for T where T: MessageType + Serialize + std::fmt::Debug
 /// List of all known/implemented messages
 #[derive(Debug)]
 pub enum Message {
+    // Shell
+    KernelInfoReply(JupyterMessage<KernelInfoReply>),
+    KernelInfoRequest(JupyterMessage<KernelInfoRequest>),
     CompleteReply(JupyterMessage<CompleteReply>),
     CompleteRequest(JupyterMessage<CompleteRequest>),
     ExecuteReply(JupyterMessage<ExecuteReply>),
     ExecuteReplyException(JupyterMessage<ExecuteReplyException>),
     ExecuteRequest(JupyterMessage<ExecuteRequest>),
+    InspectReply(JupyterMessage<InspectReply>),
+    InspectRequest(JupyterMessage<InspectRequest>),
+    IsCompleteReply(JupyterMessage<IsCompleteReply>),
+    IsCompleteRequest(JupyterMessage<IsCompleteRequest>),
+    CommInfoReply(JupyterMessage<CommInfoReply>),
+    CommInfoRequest(JupyterMessage<CommInfoRequest>),
+    CommRequest(JupyterMessage<UiFrontendRequest>),
+    CommReply(JupyterMessage<JsonRpcReply>),
+    InputReply(JupyterMessage<InputReply>),
+    InputRequest(JupyterMessage<InputRequest>),
+    // Control
+    InterruptReply(JupyterMessage<InterruptReply>),
+    InterruptRequest(JupyterMessage<InterruptRequest>),
+    ShutdownRequest(JupyterMessage<ShutdownRequest>),
+    // Registration
+    HandshakeRequest(JupyterMessage<HandshakeRequest>),
+    HandshakeReply(JupyterMessage<HandshakeReply>),
+    // IOPub
+    Status(JupyterMessage<KernelStatus>),
     ExecuteResult(JupyterMessage<ExecuteResult>),
     ExecuteError(JupyterMessage<ExecuteError>),
     ExecuteInput(JupyterMessage<ExecuteInput>),
-    InputReply(JupyterMessage<InputReply>),
-    InputRequest(JupyterMessage<InputRequest>),
-    InspectReply(JupyterMessage<InspectReply>),
-    InspectRequest(JupyterMessage<InspectRequest>),
-    InterruptReply(JupyterMessage<InterruptReply>),
-    InterruptRequest(JupyterMessage<InterruptRequest>),
-    IsCompleteReply(JupyterMessage<IsCompleteReply>),
-    IsCompleteRequest(JupyterMessage<IsCompleteRequest>),
-    KernelInfoReply(JupyterMessage<KernelInfoReply>),
-    KernelInfoRequest(JupyterMessage<KernelInfoRequest>),
-    ShutdownRequest(JupyterMessage<ShutdownRequest>),
-    Status(JupyterMessage<KernelStatus>),
-    CommInfoReply(JupyterMessage<CommInfoReply>),
-    CommInfoRequest(JupyterMessage<CommInfoRequest>),
-    CommOpen(JupyterMessage<CommOpen>),
+    Stream(JupyterMessage<StreamOutput>),
+    DisplayData(JupyterMessage<DisplayData>),
+    UpdateDisplayData(JupyterMessage<UpdateDisplayData>),
+    Welcome(JupyterMessage<Welcome>),
+    // IOPub/Shell
     CommMsg(JupyterMessage<CommWireMsg>),
-    CommRequest(JupyterMessage<UiFrontendRequest>),
-    CommReply(JupyterMessage<JsonRpcReply>),
+    CommOpen(JupyterMessage<CommOpen>),
     CommClose(JupyterMessage<CommClose>),
-    StreamOutput(JupyterMessage<StreamOutput>),
-    HandshakeRequest(JupyterMessage<HandshakeRequest>),
-    HandshakeReply(JupyterMessage<HandshakeReply>),
 }
 
 /// Associates a `Message` to a 0MQ socket
 pub enum OutboundMessage {
     StdIn(Message),
+    IOPub(Message),
 }
 
 /// Represents status returned from kernel inside messages.
@@ -156,9 +168,12 @@ impl TryFrom<&Message> for WireMessage {
             Message::CommClose(msg) => WireMessage::try_from(msg),
             Message::CommRequest(msg) => WireMessage::try_from(msg),
             Message::CommReply(msg) => WireMessage::try_from(msg),
-            Message::StreamOutput(msg) => WireMessage::try_from(msg),
+            Message::Stream(msg) => WireMessage::try_from(msg),
             Message::HandshakeReply(msg) => WireMessage::try_from(msg),
             Message::HandshakeRequest(msg) => WireMessage::try_from(msg),
+            Message::DisplayData(msg) => WireMessage::try_from(msg),
+            Message::UpdateDisplayData(msg) => WireMessage::try_from(msg),
+            Message::Welcome(msg) => WireMessage::try_from(msg),
         }
     }
 }
@@ -254,7 +269,7 @@ impl TryFrom<&WireMessage> for Message {
             return Ok(Message::InputRequest(JupyterMessage::try_from(msg)?));
         }
         if kind == StreamOutput::message_type() {
-            return Ok(Message::StreamOutput(JupyterMessage::try_from(msg)?));
+            return Ok(Message::Stream(JupyterMessage::try_from(msg)?));
         }
         if kind == UiFrontendRequest::message_type() {
             return Ok(Message::CommRequest(JupyterMessage::try_from(msg)?));
