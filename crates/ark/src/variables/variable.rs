@@ -320,17 +320,14 @@ impl WorkspaceVariableDisplayValue {
         Self::new(String::from("??"), true)
     }
 
-    fn from_untruncated_string(value: String) -> Self {
-        let mut is_truncated = false;
-        let mut display_value = value.clone();
+    fn from_untruncated_string(mut value: String) -> Self {
+        let Some((index, _)) = value.char_indices().nth(MAX_DISPLAY_VALUE_LENGTH) else {
+            return Self::new(value, false);
+        };
 
         // If an index is found, truncate the string to that index
-        if let Some((index, _)) = value.char_indices().nth(MAX_DISPLAY_VALUE_LENGTH) {
-            display_value.truncate(index);
-            is_truncated = true;
-        }
-
-        Self::new(display_value, is_truncated)
+        value.truncate(index);
+        Self::new(value, true)
     }
 
     fn try_from_method(value: SEXP) -> Option<Self> {
