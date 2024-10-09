@@ -298,3 +298,72 @@ fn index_assignment_with_function(
 
     Ok(true)
 }
+
+#[cfg(test)]
+mod tests {
+    use tower_lsp::lsp_types::Position;
+
+    use super::*;
+    use crate::lsp::documents::Document;
+
+    fn test_symbol(code: &str) -> Vec<DocumentSymbol> {
+        let mut symbols: Vec<DocumentSymbol> = Vec::new();
+
+        let doc = Document::new(code, None);
+        let node = doc.ast.root_node();
+
+        let start = convert_point_to_position(&doc.contents, node.start_position());
+        let end = convert_point_to_position(&doc.contents, node.end_position());
+
+        let mut root = DocumentSymbol {
+            name: String::from("<root>"),
+            kind: SymbolKind::NULL,
+            children: Some(Vec::new()),
+            deprecated: None,
+            tags: None,
+            detail: None,
+            range: Range { start, end },
+            selection_range: Range { start, end },
+        };
+
+        index_node(&node, &doc.contents, &mut root, &mut symbols).unwrap();
+        root.children.unwrap_or_default()
+    }
+
+    #[test]
+    fn test_symbol_parse_comment_as_section() {
+        assert_eq!(parse_comment_as_section("# foo"), None);
+        assert_eq!(parse_comment_as_section("# foo ---"), None);
+        assert_eq!(
+            parse_comment_as_section("# foo ----"),
+            Some((1, String::from("foo")))
+        );
+    }
+
+    #[test]
+    fn test_symbol_comment_sections() {
+        assert_eq!(test_symbol("# foo"), vec![]);
+        assert_eq!(test_symbol("# foo ---"), vec![]);
+
+        let range = Range {
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 10,
+            },
+        };
+        assert_eq!(test_symbol("# foo ----"), vec![DocumentSymbol {
+            name: String::from("foo"),
+            kind: SymbolKind::STRING,
+            children: Some(Vec::new()),
+            deprecated: None,
+            tags: None,
+            detail: None,
+            range,
+            selection_range: range,
+        }]);
+    }
+}
