@@ -276,6 +276,8 @@ pub fn connect(
 /// the remaining port informtation back to after we have bound to the ports ourselves.
 /// The `ConnectionFile` we return in this case temporarily has `0`s as the port numbers,
 /// which tells zeromq to bind to whatever random port the OS sees as free.
+///
+/// See https://github.com/jupyter/enhancement-proposals/pull/66.
 pub fn read_connection(connection_file: &str) -> (ConnectionFile, Option<RegistrationFile>) {
     match ConnectionFile::from_file(connection_file) {
         Ok(connection) => {
