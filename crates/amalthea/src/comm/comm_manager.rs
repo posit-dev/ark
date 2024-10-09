@@ -23,6 +23,7 @@ use crate::comm::event::CommManagerRequest;
 use crate::socket::comm::CommInitiator;
 use crate::socket::comm::CommSocket;
 use crate::socket::iopub::IOPubMessage;
+use crate::wire::comm_close::CommClose;
 use crate::wire::comm_msg::CommWireMsg;
 use crate::wire::comm_open::CommOpen;
 use crate::wire::header::JupyterHeader;
@@ -245,7 +246,9 @@ impl CommManager {
                     }
                 },
 
-                CommMsg::Close => IOPubMessage::CommClose(comm_socket.comm_id.clone()),
+                CommMsg::Close => IOPubMessage::CommClose(CommClose {
+                    comm_id: comm_socket.comm_id.clone(),
+                }),
             };
 
             // Deliver the message to the frontend
