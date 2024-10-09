@@ -86,7 +86,6 @@ pub enum IOPubMessage {
     CommClose(CommClose),
     DisplayData(DisplayData),
     UpdateDisplayData(UpdateDisplayData),
-    Welcome(Welcome),
     Wait(Wait),
 }
 
@@ -244,7 +243,6 @@ impl IOPub {
                 ))
             },
             IOPubMessage::Wait(content) => self.process_wait_request(content),
-            IOPubMessage::Welcome(_content) => todo!(),
         }
     }
 
