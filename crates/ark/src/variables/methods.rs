@@ -45,6 +45,7 @@ impl ArkGenerics {
     // Returns
     //   - `None` if no method was found,
     //   - `Err` if method was found and errored
+    //   - `Err`if the method result could not be coerced to `T`
     //   - T, if method was found and was succesfully executed
     pub fn try_dispatch<T>(
         &self,
@@ -55,7 +56,7 @@ impl ArkGenerics {
         // Making this a generic allows us to handle the conversion to the expected output
         // type within the dispatch, which is much more ergonomic.
         T: TryFrom<RObject>,
-        <T as TryFrom<harp::RObject>>::Error: std::fmt::Debug,
+        <T as TryFrom<RObject>>::Error: std::fmt::Debug,
     {
         if !r_is_object(x) {
             return Ok(None);
