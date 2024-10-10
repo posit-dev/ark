@@ -114,7 +114,8 @@ impl DummyConnection {
 
 impl DummyFrontend {
     pub fn from_connection(connection: DummyConnection) -> Self {
-        // Wait to receive the handshake request so we know what ports to connect on
+        // Wait to receive the handshake request so we know what ports to connect on.
+        // Note that `recv()` times out.
         let message = Self::recv(&connection.registration_socket);
         let handshake = assert_matches!(message, Message::HandshakeRequest(message) => {
             message.content
