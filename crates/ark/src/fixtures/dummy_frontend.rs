@@ -84,9 +84,7 @@ impl DummyArkFrontend {
             RMain::start();
         });
 
-        let frontend = DummyFrontend::from_connection(connection);
-
-        frontend
+        DummyFrontend::from_connection(connection)
     }
 }
 
