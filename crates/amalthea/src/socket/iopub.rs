@@ -76,7 +76,7 @@ pub enum IOPubContextChannel {
 /// via a channel to the IOPub thread.
 pub enum IOPubMessage {
     Status(JupyterHeader, IOPubContextChannel, KernelStatus),
-    ExecuteResult(ExecuteResult),
+    // ExecuteResult(ExecuteResult),
     ExecuteError(ExecuteError),
     ExecuteInput(ExecuteInput),
     Stream(StreamOutput),
@@ -168,7 +168,7 @@ impl IOPub {
     }
 
     /// Process an IOPub message from another thread.
-    fn process_outbound_message(&mut self, message: IOPubMessage) -> Result<(), Error> {
+    fn process_outbound_message(&mut self, message: IOPubMessage) -> crate::Result<()> {
         match message {
             IOPubMessage::Status(context, context_channel, content) => {
                 // When we enter the Busy state as a result of a message, we
@@ -253,7 +253,7 @@ impl IOPub {
     /// When we get a subscription notification, we forward along an IOPub
     /// `Welcome` message back to the SUB, in compliance with JEP 65. Clients
     /// that don't know how to process this `Welcome` message should just ignore it.
-    fn process_inbound_message(&self, message: SubscriptionMessage) -> Result<(), Error> {
+    fn process_inbound_message(&self, message: SubscriptionMessage) -> crate::Result<()> {
         let subscription = message.subscription;
 
         match message.kind {
@@ -314,7 +314,7 @@ impl IOPub {
     }
 
     /// Forward a message on to the actual IOPub socket through the outbound channel
-    fn forward(&self, message: Message) -> Result<(), Error> {
+    fn forward(&self, message: Message) -> crate::Result<()> {
         self.outbound_tx
             .send(OutboundMessage::IOPub(message))
             .map_err(|err| crate::Error::SendError(format!("{err:?}")))
@@ -354,7 +354,7 @@ impl IOPub {
     ///
     /// If this new message switches streams, then we flush the existing stream
     /// before switching.
-    fn process_stream_message(&mut self, message: StreamOutput) -> Result<(), Error> {
+    fn process_stream_message(&mut self, message: StreamOutput) -> crate::Result<()> {
         if message.name != self.buffer.name {
             // Swap streams, but flush the existing stream first
             self.flush_stream();
@@ -377,7 +377,7 @@ impl IOPub {
     /// waiting for the queue to empty, it is possible for a message on a
     /// different socket that is sent after waiting to still get processed by
     /// the frontend before the messages we cleared from the IOPub queue.
-    fn process_wait_request(&mut self, message: Wait) -> Result<(), Error> {
+    fn process_wait_request(&mut self, message: Wait) -> crate::Result<()> {
         message.wait_tx.send(()).unwrap();
         Ok(())
     }

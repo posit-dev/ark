@@ -27,7 +27,7 @@ pub enum SubscriptionKind {
 
 impl SubscriptionMessage {
     /// Read a SubscriptionMessage from a ZeroMQ socket.
-    pub fn read_from_socket(socket: &Socket) -> Result<SubscriptionMessage, Error> {
+    pub fn read_from_socket(socket: &Socket) -> crate::Result<SubscriptionMessage> {
         let bufs = socket.recv_multipart()?;
         Self::from_buffers(bufs)
     }
@@ -37,7 +37,7 @@ impl SubscriptionMessage {
     /// Always a single frame (i.e. `bufs` should be length 1).
     /// Either `1{subscription}` for subscription.
     /// Or `0{subscription}` for unsubscription.
-    fn from_buffers(bufs: Vec<Vec<u8>>) -> Result<SubscriptionMessage, Error> {
+    fn from_buffers(bufs: Vec<Vec<u8>>) -> crate::Result<SubscriptionMessage> {
         if bufs.len() != 1 {
             let n = bufs.len();
             return Err(crate::anyhow!(
