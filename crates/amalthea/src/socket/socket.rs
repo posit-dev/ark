@@ -37,10 +37,13 @@ impl Socket {
 
         // For the server side of IOPub, there are a few options we need to tweak
         if name == "IOPub" && kind == zmq::SocketType::XPUB {
-            // Sets the XPUB socket behavior on new subscriptions and unsubscriptions.
-            // A value of `false` is the default and passes only new subscription messages
-            // to upstream. A value of `true` passes all subscription messages upstream.
-            // This is possibly important if a client temporarily disconnects? xeus also does this.
+            // Sets the XPUB socket to report subscription events even for
+            // topics that were already subscribed to.
+            //
+            // See notes in https://zguide.zeromq.org/docs/chapter5 and
+            // https://zguide.zeromq.org/docs/chapter6 and the discussion in
+            // https://lists.zeromq.org/pipermail/zeromq-dev/2012-October/018470.html
+            // that lead to the creation of this socket option.
             socket
                 .set_xpub_verbose(true)
                 .map_err(|err| Error::CreateSocketFailed(name.clone(), err))?;

@@ -120,7 +120,11 @@ pub enum Message {
     CommClose(JupyterMessage<CommClose>),
 }
 
-/// Associates a `Message` to a 0MQ socket
+/// Associates a `Message` to a 0MQ socket.
+///
+/// At a high level, outbound messages originate from kernel components on a
+/// crossbeam channel and are transfered to the client via a 0MQ socket owned by
+/// the forwarding thread.
 pub enum OutboundMessage {
     StdIn(Message),
     IOPub(Message),

@@ -381,6 +381,26 @@ fn stdin_thread(
 
 /// Starts the thread that forwards 0MQ messages to Amalthea channels
 /// and vice versa.
+///
+/// This is a solution to the problem of polling/selecting from 0MQ sockets and
+/// crossbeam channels at the same time. Message events on crossbeam channels
+/// are emitted by the notifier thread (see below) on a 0MQ socket. The
+/// forwarding thread is then able to listen on 0MQ sockets (e.g. StdIn replies
+/// and IOPub subscriptions) and the notification socket at the same time.
+///
+/// Part of the problem this setup solves is that 0MQ sockets can only be owned
+/// by one thread at a time. Take IOPUb as an example: we need to listen on that
+/// socket for subscription events. We also need to listen for new IOPub
+/// messages to send to the client, sent via Crossbeam channels. So we need at
+/// least two threads listening for these two different kinds of events. But the
+/// forwarding thread has to fully own the socket to be able to listen to it. So
+/// it's also in charge of sending IOPub messages on that socket. When an IOPub
+/// message comes in, the notifier thread wakes up the forwarding thread which
+/// then pulls messages from the channel and forwards them to the IOPub socket.
+///
+/// Terminology:
+/// - Outbound means that a crossbeam message needs to be forwarded to a 0MQ socket.
+/// - Inbound means that a 0MQ message needs to be forwarded to a crossbeam channel.
 fn zmq_forwarding_thread(
     outbound_notif_socket: Socket,
     stdin_socket: Socket,
@@ -499,8 +519,10 @@ fn zmq_forwarding_thread(
     }
 }
 
-/// Starts the thread that notifies the forwarding thread that new
-/// outgoing messages have arrived from Amalthea.
+/// Starts the thread that notifies the forwarding thread that new outgoing
+/// messages have arrived from Amalthea channels. This wakes up the forwarding
+/// thread which will then pop the message from the channel and forward them to
+/// the relevant zeromq socket.
 fn zmq_notifier_thread(notif_socket: Socket, outbound_rx: Receiver<OutboundMessage>) {
     let mut sel = Select::new();
     sel.recv(&outbound_rx);

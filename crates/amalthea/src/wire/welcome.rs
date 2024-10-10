@@ -15,7 +15,7 @@ use crate::wire::jupyter_message::MessageType;
 ///
 /// Note that this IOPub `Welcome` message is the same basic idea as
 /// `ZMQ_XPUB_WELCOME_MSG`, set through `socket.set_xpub_welcome_msg()`,
-/// but the JEP committee decided not to use that for some reason.
+/// but the JEP committee decided not to use that.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Welcome {
     /// The `subscription` sent to the XPUB socket by the SUB's call
