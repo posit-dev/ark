@@ -640,19 +640,33 @@ impl RMain {
         buflen: c_int,
         _hist: c_int,
     ) -> ConsoleResult {
+        let info = Self::prompt_info(prompt);
+        log::trace!("R prompt: {}", info.input_prompt);
+
+        // Upon entering read-console, finalize any debug call text that we were capturing.
+        // At this point, the user can either advance the debugger, causing us to capture
+        // a new expression, or execute arbitrary code, where we will reuse a finalized
+        // debug call text to maintain the debug state.
+        self.dap.finalize_call_text();
+
         // We get called here everytime R needs more input. This handler
         // represents the driving event of a small state machine that manages
-        // communication between R and the frontend:
+        // communication between R and the frontend. In the following order:
         //
-        // - If the vector of pending lines is empty, and if the prompt is for
-        //   new R code, we close the active ExecuteRequest and send a response to
-        //   the frontend.
+        // - If we detect an input request prompt, then we forward the request
+        //   on to the frontend and then fall through to the event loop to wait
+        //   on the input reply.
         //
         // - If the vector of pending lines is not empty, R might be waiting for
         //   us to complete an incomplete expression, or we might just have
         //   completed an intermediate expression (e.g. from an ExecuteRequest
         //   like `foo\nbar` where `foo` is intermediate and `bar` is final).
         //   Send the next line to R.
+        //
+        // - If the vector of pending lines is empty, and if the prompt is for
+        //   new R code, we close the active ExecuteRequest and send an
+        //   ExecuteReply to the frontend. We then fall through to the event
+        //   loop to wait for more input.
         //
         // This state machine depends on being able to reliably distinguish
         // between readline prompts (from `readline()`, `scan()`, or `menu()`),
@@ -671,74 +685,9 @@ impl RMain {
         // prompt, this is a panic. We check ahead of time for complete
         // expressions before breaking up an ExecuteRequest in multiple lines,
         // so this should not happen.
-
-        if let Some(console_result) = self.handle_pending_line(buf, buflen) {
+        if let Some(console_result) = self.handle_active_request(&info, buf, buflen) {
             return console_result;
-        }
-
-        let info = Self::prompt_info(prompt);
-        log::trace!("R prompt: {}", info.input_prompt);
-
-        // An incomplete prompt when we no longer have any inputs to send should
-        // never happen because we check for incomplete inputs ahead of time and
-        // respond to the frontend with an error.
-        if info.incomplete && self.pending_lines.is_empty() {
-            unreachable!("Incomplete input in `ReadConsole` handler");
-        }
-
-        // Upon entering read-console, finalize any debug call text that we were capturing.
-        // At this point, the user can either advance the debugger, causing us to capture
-        // a new expression, or execute arbitrary code, where we will reuse a finalized
-        // debug call text to maintain the debug state.
-        self.dap.finalize_call_text();
-
-        // TODO: Can we remove this below code?
-        // If the prompt begins with "Save workspace", respond with (n)
-        //
-        // NOTE: Should be able to overwrite the `Cleanup` frontend method.
-        // This would also help with detecting normal exits versus crashes.
-        if info.input_prompt.starts_with("Save workspace") {
-            match Self::on_console_input(buf, buflen, String::from("n")) {
-                Ok(()) => return ConsoleResult::NewInput,
-                Err(err) => return ConsoleResult::Error(err),
-            }
-        }
-
-        if info.input_request {
-            if let Some(req) = &self.active_request {
-                // Send request to frontend.  We'll wait for an `input_reply`
-                // from the frontend in the event loop below. The active request
-                // remains active.
-                self.request_input(req.orig.clone(), info.input_prompt.to_string());
-            } else {
-                // Invalid input request, propagate error to R
-                return self.handle_invalid_input_request(buf, buflen);
-            }
-        } else if let Some(req) = std::mem::take(&mut self.active_request) {
-            // We got a prompt request marking the end of the previous
-            // execution. We took and cleared the active request as we're about
-            // to complete it and send a reply to unblock the active Shell
-            // request.
-
-            // FIXME: Race condition between the comm and shell socket threads.
-            //
-            // Send info for the next prompt to frontend. This handles
-            // custom prompts set by users, e.g. `options(prompt = ,
-            // continue = )`, as well as debugging prompts, e.g. after a
-            // call to `browser()`.
-            let event = UiFrontendEvent::PromptState(PromptStateParams {
-                input_prompt: info.input_prompt.clone(),
-                continuation_prompt: info.continuation_prompt.clone(),
-            });
-            {
-                let kernel = self.kernel.lock().unwrap();
-                kernel.send_ui_event(event);
-            }
-
-            // Let frontend know the last request is complete. This turns us
-            // back to Idle.
-            self.reply_execute_request(req, &info);
-        }
+        };
 
         // In the future we'll also send browser information, see
         // https://github.com/posit-dev/positron/issues/3001. Currently this is
@@ -878,6 +827,88 @@ impl RMain {
             incomplete,
             input_request: user_request,
         };
+    }
+
+    /// Returns:
+    /// - `None` if we should fall through to the event loop to wait for more user input
+    /// - `Some(ConsoleResult)` if we should immediately exit `read_console()`
+    fn handle_active_request(
+        &mut self,
+        info: &PromptInfo,
+        buf: *mut c_uchar,
+        buflen: c_int,
+    ) -> Option<ConsoleResult> {
+        // TODO: Can we remove this below code?
+        // If the prompt begins with "Save workspace", respond with (n)
+        // and allow R to immediately exit.
+        //
+        // NOTE: Should be able to overwrite the `Cleanup` frontend method.
+        // This would also help with detecting normal exits versus crashes.
+        if info.input_prompt.starts_with("Save workspace") {
+            match Self::on_console_input(buf, buflen, String::from("n")) {
+                Ok(()) => return Some(ConsoleResult::NewInput),
+                Err(err) => return Some(ConsoleResult::Error(err)),
+            }
+        }
+
+        // First check if we are inside request for user input, like a `readline()` or `menu()`.
+        // It's entirely possible that we still have more pending lines, but an intermediate line
+        // put us into an `input_request` state. We must respond to that request before processing
+        // the rest of the pending lines.
+        if info.input_request {
+            if let Some(req) = &self.active_request {
+                // Send request to frontend. We'll wait for an `input_reply`
+                // from the frontend in the event loop in `read_console()`.
+                // The active request remains active.
+                self.request_input(req.orig.clone(), info.input_prompt.to_string());
+                return None;
+            } else {
+                // Invalid input request, propagate error to R
+                return Some(self.handle_invalid_input_request(buf, buflen));
+            }
+        }
+
+        // An incomplete prompt when we no longer have any inputs to send should
+        // never happen because we check for incomplete inputs ahead of time and
+        // respond to the frontend with an error.
+        if info.incomplete && self.pending_lines.is_empty() {
+            unreachable!("Incomplete input in `ReadConsole` handler");
+        }
+
+        // Next check if we have any pending lines. If we do, we are in the middle of
+        // evaluating a multi line selection, so immediately write the next line into R's buffer.
+        // The active request remains active.
+        if let Some(console_result) = self.handle_pending_line(buf, buflen) {
+            return Some(console_result);
+        }
+
+        // Finally, check if we have an active request from a previous `read_console()`
+        // iteration. If so, we `take()` and clear the `active_request` as we're about
+        // to complete it and send a reply to unblock the active Shell
+        // request.
+        if let Some(req) = std::mem::take(&mut self.active_request) {
+            // FIXME: Race condition between the comm and shell socket threads.
+            //
+            // Send info for the next prompt to frontend. This handles
+            // custom prompts set by users, e.g. `options(prompt = ,
+            // continue = )`, as well as debugging prompts, e.g. after a
+            // call to `browser()`.
+            let event = UiFrontendEvent::PromptState(PromptStateParams {
+                input_prompt: info.input_prompt.clone(),
+                continuation_prompt: info.continuation_prompt.clone(),
+            });
+            {
+                let kernel = self.kernel.lock().unwrap();
+                kernel.send_ui_event(event);
+            }
+
+            // Let frontend know the last request is complete. This turns us
+            // back to Idle.
+            self.reply_execute_request(req, &info);
+        }
+
+        // Prepare for the next user input
+        None
     }
 
     fn handle_execute_request(
