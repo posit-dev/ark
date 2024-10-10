@@ -30,7 +30,7 @@ pub struct Session {
 
 impl Session {
     /// Create a new Session.
-    pub fn create(key: String) -> Result<Self, Error> {
+    pub fn create(key: &str) -> Result<Self, Error> {
         // Derive the signing key; an empty key indicates a session that doesn't
         // authenticate messages.
         let hmac_key = match key.len() {
@@ -38,7 +38,7 @@ impl Session {
             _ => {
                 let result = match Hmac::<Sha256>::new_from_slice(key.as_bytes()) {
                     Ok(hmac) => hmac,
-                    Err(err) => return Err(Error::HmacKeyInvalid(key, err)),
+                    Err(err) => return Err(Error::HmacKeyInvalid(String::from(key), err)),
                 };
                 Some(result)
             },

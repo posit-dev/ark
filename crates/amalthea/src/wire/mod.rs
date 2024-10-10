@@ -22,6 +22,8 @@ pub mod execute_reply_exception;
 pub mod execute_request;
 pub mod execute_response;
 pub mod execute_result;
+pub mod handshake_reply;
+pub mod handshake_request;
 pub mod header;
 pub mod help_link;
 pub mod input_reply;

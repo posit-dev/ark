@@ -10,7 +10,7 @@
 use std::cell::Cell;
 use std::env;
 
-use amalthea::connection_file::ConnectionFile;
+use amalthea::kernel;
 use amalthea::kernel_spec::KernelSpec;
 use ark::interface::RMain;
 use ark::interface::SessionMode;
@@ -51,7 +51,7 @@ Available options:
     );
 }
 
-fn main() {
+fn main() -> anyhow::Result<()> {
     ON_R_THREAD.set(true);
 
     // Block signals in this thread (and any child threads).
@@ -82,10 +82,9 @@ fn main() {
                     connection_file = Some(file);
                     has_action = true;
                 } else {
-                    eprintln!(
-                        "A connection file must be specified with the --connection_file argument."
-                    );
-                    break;
+                    return Err(anyhow::anyhow!(
+                        "A connection file must be specified when using the `--connection_file` argument."
+                    ));
                 }
             },
             "--startup-file" => {
@@ -93,8 +92,9 @@ fn main() {
                     startup_file = Some(file);
                     has_action = true;
                 } else {
-                    eprintln!("A startup file must be specified with the --startup-file argument.");
-                    break;
+                    return Err(anyhow::anyhow!(
+                        "A startup file must be specified when using the `--startup-file` argument."
+                    ));
                 }
             },
             "--session-mode" => {
@@ -104,13 +104,15 @@ fn main() {
                         "notebook" => SessionMode::Notebook,
                         "background" => SessionMode::Background,
                         _ => {
-                            eprintln!("Invalid session mode: '{}' (expected console, notebook, or background)", mode);
-                            break;
+                            return Err(anyhow::anyhow!(
+                                "Invalid session mode: '{mode}'. Expected `console`, `notebook`, or `background`."
+                            ));
                         },
                     };
                 } else {
-                    eprintln!("A session mode must be specified with the --session-mode argument.");
-                    break;
+                    return Err(anyhow::anyhow!(
+                        "A session mode must be specified when using the `--session-mode` argument."
+                    ));
                 }
             },
             "--version" => {
@@ -118,7 +120,7 @@ fn main() {
                 has_action = true;
             },
             "--install" => {
-                install_kernel_spec();
+                install_kernel_spec()?;
                 has_action = true;
             },
             "--help" => {
@@ -130,26 +132,27 @@ fn main() {
                 if let Some(file) = argv.next() {
                     log_file = Some(file);
                 } else {
-                    eprintln!("A log file must be specified with the --log argument.");
-                    break;
+                    return Err(anyhow::anyhow!(
+                        "A log file must be specified when using the `--log` argument."
+                    ));
                 }
             },
             "--profile" => {
                 if let Some(file) = argv.next() {
                     profile_file = Some(file);
                 } else {
-                    eprintln!("A profile file must be specified with the --profile argument.");
-                    break;
+                    return Err(anyhow::anyhow!(
+                        "A profile file must be specified when using the `--profile` argument."
+                    ));
                 }
             },
             "--startup-notifier-file" => {
                 if let Some(file) = argv.next() {
                     startup_notifier_file = Some(file);
                 } else {
-                    eprintln!(
-                        "A notification file must be specified with the --startup-notifier-file argument."
-                    );
-                    break;
+                    return Err(anyhow::anyhow!(
+                        "A notification file must be specified when using the `--startup-notifier-file` argument."
+                    ));
                 }
             },
             "--startup-delay" => {
@@ -157,14 +160,12 @@ fn main() {
                     if let Ok(delay) = delay_arg.parse::<u64>() {
                         startup_delay = Some(std::time::Duration::from_secs(delay));
                     } else {
-                        eprintln!("Can't parse delay in seconds");
-                        break;
+                        return Err(anyhow::anyhow!("Can't parse delay in seconds"));
                     }
                 } else {
-                    eprintln!(
-                        "A delay in seconds must be specified with the --startup-delay argument."
-                    );
-                    break;
+                    return Err(anyhow::anyhow!(
+                        "A delay in seconds must be specified when using the `--startup-delay` argument."
+                    ));
                 }
             },
             "--" => {
@@ -175,8 +176,7 @@ fn main() {
                 break;
             },
             other => {
-                eprintln!("Argument '{}' unknown", other);
-                break;
+                return Err(anyhow::anyhow!("Argument '{other}' unknown."));
             },
         }
     }
@@ -229,7 +229,7 @@ fn main() {
     // exit
     if !has_action {
         print_usage();
-        return;
+        return Ok(());
     }
 
     // Register segfault handler to get a backtrace. Should be after
@@ -293,50 +293,34 @@ fn main() {
         std::process::abort();
     }));
 
-    // Parse the connection file and start the kernel
-    if let Some(connection) = connection_file {
-        parse_file(
-            &connection,
-            r_args,
-            startup_file,
-            session_mode,
-            capture_streams,
-        );
-    }
-}
+    let Some(connection_file) = connection_file else {
+        return Err(anyhow::anyhow!(
+            "A connection file must be specified. Use the `--connection_file` argument."
+        ));
+    };
 
-fn parse_file(
-    connection_file: &String,
-    r_args: Vec<String>,
-    startup_file: Option<String>,
-    session_mode: SessionMode,
-    capture_streams: bool,
-) {
-    match ConnectionFile::from_file(connection_file) {
-        Ok(connection) => {
-            log::info!("Loaded connection information from frontend in {connection_file}");
-            log::info!("Connection data: {:?}", connection);
+    // Parse the connection file
+    let (connection_file, registration_file) = kernel::read_connection(connection_file.as_str());
 
-            // Set up R and start the Jupyter kernel
-            start_kernel(
-                connection,
-                r_args,
-                startup_file,
-                session_mode,
-                capture_streams,
-            );
+    // Set up R and start the Jupyter kernel
+    start_kernel(
+        connection_file,
+        registration_file,
+        r_args,
+        startup_file,
+        session_mode,
+        capture_streams,
+    );
 
-            // Start the REPL, does not return
-            RMain::start();
-        },
-        Err(error) => {
-            log::error!("Couldn't read connection file {connection_file}: {error:?}");
-        },
-    }
+    // Start the REPL, does not return
+    RMain::start();
+
+    // Just to please Rust
+    Ok(())
 }
 
 // Install the kernelspec JSON file into one of Jupyter's search paths.
-fn install_kernel_spec() {
+fn install_kernel_spec() -> anyhow::Result<()> {
     // Create the environment set for the kernel spec
     let mut env = serde_json::Map::new();
 
@@ -357,8 +341,7 @@ fn install_kernel_spec() {
 
     // Create the kernelspec
     let exe_path = unwrap!(env::current_exe(), Err(error) => {
-        eprintln!("Failed to determine path to Ark. {}", error);
-        return;
+        return Err(anyhow::anyhow!("Failed to determine path to Ark. {error:?}"));
     });
 
     let spec = KernelSpec {
@@ -375,8 +358,7 @@ fn install_kernel_spec() {
     };
 
     let dest = unwrap!(spec.install(String::from("ark")), Err(err) => {
-        eprintln!("Failed to install Ark's Jupyter kernelspec. {err}");
-        return;
+        return Err(anyhow::anyhow!("Failed to install Ark's Jupyter kernelspec. {err}"))
     });
 
     println!(
@@ -386,4 +368,6 @@ fn install_kernel_spec() {
     ",
         dest.to_string_lossy()
     );
+
+    Ok(())
 }

@@ -247,7 +247,6 @@ dependencies = [
  "hmac",
  "log",
  "nix",
- "portpicker",
  "rand 0.8.5",
  "serde",
  "serde_json",
@@ -1998,15 +1997,6 @@ name = "pkg-config"
 version = "0.3.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "26072860ba924cbfa98ea39c8c19b4dd6a4a25423dbdf219c1eca91aa0cf6964"
-
-[[package]]
-name = "portpicker"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be97d76faf1bfab666e1375477b23fde79eccf0276e9b63b92a39d676a889ba9"
-dependencies = [
- "rand 0.8.5",
-]
 
 [[package]]
 name = "powerfmt"

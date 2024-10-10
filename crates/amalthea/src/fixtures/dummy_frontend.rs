@@ -6,13 +6,16 @@
  */
 
 use assert_matches::assert_matches;
+use rand::Rng;
 use serde_json::Value;
 
 use crate::connection_file::ConnectionFile;
+use crate::registration_file::RegistrationFile;
 use crate::session::Session;
 use crate::socket::socket::Socket;
 use crate::wire::execute_input::ExecuteInput;
 use crate::wire::execute_request::ExecuteRequest;
+use crate::wire::handshake_reply::HandshakeReply;
 use crate::wire::input_reply::InputReply;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
@@ -22,6 +25,16 @@ use crate::wire::status::ExecutionState;
 use crate::wire::stream::Stream;
 use crate::wire::wire_message::WireMessage;
 
+pub struct DummyConnection {
+    pub registration_socket: Socket,
+    pub ctx: zmq::Context,
+    pub session: Session,
+    pub key: String,
+    pub ip: String,
+    pub transport: String,
+    pub signature_scheme: String,
+}
+
 pub struct DummyFrontend {
     pub _control_socket: Socket,
     pub shell_socket: Socket,
@@ -29,119 +42,173 @@ pub struct DummyFrontend {
     pub stdin_socket: Socket,
     pub heartbeat_socket: Socket,
     session: Session,
-    key: String,
-    control_port: u16,
-    shell_port: u16,
-    iopub_port: u16,
-    stdin_port: u16,
-    heartbeat_port: u16,
 }
 
 pub struct ExecuteRequestOptions {
     pub allow_stdin: bool,
 }
 
-impl DummyFrontend {
+impl DummyConnection {
     pub fn new() -> Self {
-        use rand::Rng;
-
         // Create a random HMAC key for signing messages.
         let key_bytes = rand::thread_rng().gen::<[u8; 16]>();
         let key = hex::encode(key_bytes);
+
+        // Create a new kernel session from the key
+        let session = Session::create(&key).unwrap();
+
+        // Create a zmq context for all sockets we create in this session
+        let ctx = zmq::Context::new();
+
+        let ip = String::from("127.0.0.1");
+        let transport = String::from("tcp");
+        let signature_scheme = String::from("hmac-sha256");
+
+        // Bind to a random port using `0`
+        let registration_socket = Socket::new(
+            session.clone(),
+            ctx.clone(),
+            String::from("Registration"),
+            zmq::REP,
+            None,
+            Self::endpoint_from_parts(&transport, &ip, 0),
+        )
+        .unwrap();
+
+        Self {
+            registration_socket,
+            ctx,
+            session,
+            key,
+            ip,
+            transport,
+            signature_scheme,
+        }
+    }
+
+    /// Gets a connection file for the Amalthea kernel that will connect it to
+    /// this synthetic frontend. Uses a handshake through a registration
+    /// file to avoid race conditions related to port binding.
+    pub fn get_connection_files(&self) -> (ConnectionFile, RegistrationFile) {
+        let registration_file = RegistrationFile {
+            ip: self.ip.clone(),
+            transport: self.transport.clone(),
+            signature_scheme: self.signature_scheme.clone(),
+            key: self.key.clone(),
+            registration_port: crate::kernel::port_from_socket(&self.registration_socket).unwrap(),
+        };
+
+        let connection_file = registration_file.as_connection_file();
+
+        (connection_file, registration_file)
+    }
+
+    fn endpoint(&self, port: u16) -> String {
+        Self::endpoint_from_parts(&self.transport, &self.ip, port)
+    }
+
+    fn endpoint_from_parts(transport: &str, ip: &str, port: u16) -> String {
+        format!("{transport}://{ip}:{port}")
+    }
+}
+
+impl DummyFrontend {
+    pub fn from_connection(connection: DummyConnection) -> Self {
+        // Wait to receive the handshake request so we know what ports to connect on.
+        // Note that `recv()` times out.
+        let message = Self::recv(&connection.registration_socket);
+        let handshake = assert_matches!(message, Message::HandshakeRequest(message) => {
+            message.content
+        });
+
+        // Immediately send back a handshake reply so the kernel can start up
+        Self::send(
+            &connection.registration_socket,
+            &connection.session,
+            HandshakeReply { status: Status::Ok },
+        );
 
         // Create a random socket identity for the shell and stdin sockets. Per
         // the Jupyter specification, these must share a ZeroMQ identity.
         let shell_id = rand::thread_rng().gen::<[u8; 16]>();
 
-        // Create a new kernel session from the key
-        let session = Session::create(key.clone()).unwrap();
-
-        let ctx = zmq::Context::new();
-
-        let control_port = portpicker::pick_unused_port().unwrap();
-        let control = Socket::new(
-            session.clone(),
-            ctx.clone(),
+        let _control_socket = Socket::new(
+            connection.session.clone(),
+            connection.ctx.clone(),
             String::from("Control"),
             zmq::DEALER,
             None,
-            format!("tcp://127.0.0.1:{}", control_port),
+            connection.endpoint(handshake.control_port),
         )
         .unwrap();
 
-        let shell_port = portpicker::pick_unused_port().unwrap();
-        let shell = Socket::new(
-            session.clone(),
-            ctx.clone(),
+        let shell_socket = Socket::new(
+            connection.session.clone(),
+            connection.ctx.clone(),
             String::from("Shell"),
             zmq::DEALER,
             Some(&shell_id),
-            format!("tcp://127.0.0.1:{}", shell_port),
+            connection.endpoint(handshake.shell_port),
         )
         .unwrap();
 
-        let iopub_port = portpicker::pick_unused_port().unwrap();
-        let iopub = Socket::new(
-            session.clone(),
-            ctx.clone(),
+        let iopub_socket = Socket::new(
+            connection.session.clone(),
+            connection.ctx.clone(),
             String::from("IOPub"),
             zmq::SUB,
             None,
-            format!("tcp://127.0.0.1:{}", iopub_port),
+            connection.endpoint(handshake.iopub_port),
         )
         .unwrap();
 
-        let stdin_port = portpicker::pick_unused_port().unwrap();
-        let stdin = Socket::new(
-            session.clone(),
-            ctx.clone(),
+        // Subscribe to IOPub! Server is the one that sent us this port,
+        // so its already connected on its end.
+        iopub_socket.subscribe().unwrap();
+
+        let stdin_socket = Socket::new(
+            connection.session.clone(),
+            connection.ctx.clone(),
             String::from("Stdin"),
             zmq::DEALER,
             Some(&shell_id),
-            format!("tcp://127.0.0.1:{}", stdin_port),
+            connection.endpoint(handshake.stdin_port),
         )
         .unwrap();
 
-        let heartbeat_port = portpicker::pick_unused_port().unwrap();
-        let heartbeat = Socket::new(
-            session.clone(),
-            ctx.clone(),
+        let heartbeat_socket = Socket::new(
+            connection.session.clone(),
+            connection.ctx.clone(),
             String::from("Heartbeat"),
             zmq::REQ,
             None,
-            format!("tcp://127.0.0.1:{}", heartbeat_port),
+            connection.endpoint(handshake.hb_port),
         )
         .unwrap();
 
-        Self {
-            session,
-            key,
-            control_port,
-            _control_socket: control,
-            shell_port,
-            shell_socket: shell,
-            iopub_port,
-            iopub_socket: iopub,
-            stdin_port,
-            stdin_socket: stdin,
-            heartbeat_port,
-            heartbeat_socket: heartbeat,
-        }
-    }
+        // TODO!: Without this sleep, `IOPub` `Busy` messages sporadically
+        // don't arrive when running integration tests. I believe this is a result
+        // of PUB sockets dropping messages while in a "mute" state (i.e. no subscriber
+        // connected yet). Even though we run `iopub_socket.subscribe()` to subscribe,
+        // it seems like we can return from this function even before our socket
+        // has fully subscribed, causing messages to get dropped.
+        // https://libzmq.readthedocs.io/en/latest/zmq_socket.html
+        std::thread::sleep(std::time::Duration::from_millis(500));
 
-    /// Completes initialization of the frontend (usually done after the kernel
-    /// is ready and connected)
-    pub fn complete_initialization(&self) {
-        self.iopub_socket.subscribe().unwrap();
+        Self {
+            _control_socket,
+            shell_socket,
+            iopub_socket,
+            stdin_socket,
+            heartbeat_socket,
+            session: connection.session,
+        }
     }
 
     /// Sends a Jupyter message on the Shell socket; returns the ID of the newly
     /// created message
     pub fn send_shell<T: ProtocolMessage>(&self, msg: T) -> String {
-        let message = JupyterMessage::create(msg, None, &self.session);
-        let id = message.header.msg_id.clone();
-        message.send(&self.shell_socket).unwrap();
-        id
+        Self::send(&self.shell_socket, &self.session, msg)
     }
 
     pub fn send_execute_request(&self, code: &str, options: ExecuteRequestOptions) -> String {
@@ -157,11 +224,17 @@ impl DummyFrontend {
 
     /// Sends a Jupyter message on the Stdin socket
     pub fn send_stdin<T: ProtocolMessage>(&self, msg: T) {
-        let message = JupyterMessage::create(msg, None, &self.session);
-        message.send(&self.stdin_socket).unwrap();
+        Self::send(&self.stdin_socket, &self.session, msg);
     }
 
-    pub fn recv(&self, socket: &Socket) -> Message {
+    fn send<T: ProtocolMessage>(socket: &Socket, session: &Session, msg: T) -> String {
+        let message = JupyterMessage::create(msg, None, session);
+        let id = message.header.msg_id.clone();
+        message.send(socket).unwrap();
+        id
+    }
+
+    pub fn recv(socket: &Socket) -> Message {
         // It's important to wait with a timeout because the kernel thread might
         // have panicked, preventing it from sending the expected message. The
         // tests would then hang indefinitely.
@@ -177,17 +250,17 @@ impl DummyFrontend {
 
     /// Receives a Jupyter message from the Shell socket
     pub fn recv_shell(&self) -> Message {
-        self.recv(&self.shell_socket)
+        Self::recv(&self.shell_socket)
     }
 
     /// Receives a Jupyter message from the IOPub socket
     pub fn recv_iopub(&self) -> Message {
-        self.recv(&self.iopub_socket)
+        Self::recv(&self.iopub_socket)
     }
 
     /// Receives a Jupyter message from the Stdin socket
     pub fn recv_stdin(&self) -> Message {
-        self.recv(&self.stdin_socket)
+        Self::recv(&self.stdin_socket)
     }
 
     /// Receive from Shell and assert `ExecuteReply` message.
@@ -332,22 +405,6 @@ impl DummyFrontend {
     /// Sends a (raw) message to the heartbeat socket
     pub fn send_heartbeat(&self, msg: zmq::Message) {
         self.heartbeat_socket.send(msg).unwrap();
-    }
-
-    /// Gets a connection file for the Amalthea kernel that will connect it to
-    /// this synthetic frontend.
-    pub fn get_connection_file(&self) -> ConnectionFile {
-        ConnectionFile {
-            control_port: self.control_port,
-            shell_port: self.shell_port,
-            stdin_port: self.stdin_port,
-            iopub_port: self.iopub_port,
-            hb_port: self.heartbeat_port,
-            transport: String::from("tcp"),
-            signature_scheme: String::from("hmac-sha256"),
-            ip: String::from("127.0.0.1"),
-            key: self.key.clone(),
-        }
     }
 
     /// Asserts that no socket has incoming data
