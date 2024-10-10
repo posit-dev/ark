@@ -22,6 +22,7 @@ pub mod kernel;
 pub mod logger;
 pub mod logger_hprof;
 pub mod lsp;
+pub mod methods;
 pub mod modules;
 pub mod modules_utils;
 pub mod plots;
