@@ -50,7 +50,7 @@ pub trait ShellHandler: Send {
     /// Docs: https://jupyter-client.readthedocs.io/en/stable/messaging.html#execute
     async fn handle_execute_request(
         &mut self,
-        originator: Option<Originator>,
+        originator: Originator,
         req: &ExecuteRequest,
     ) -> Result<ExecuteReply, ExecuteReplyException>;
 

@@ -29,7 +29,7 @@ pub struct InputRequest {
 /// An input request originating from a Shell handler
 pub struct ShellInputRequest {
     /// The identity of the Shell that sent the request
-    pub originator: Option<Originator>,
+    pub originator: Originator,
 
     /// The input request itself
     pub request: InputRequest,
@@ -46,7 +46,7 @@ impl MessageType for InputRequest {
 pub struct UiCommFrontendRequest {
     /// The identity of the currently active `execute_request` that caused this
     /// comm request
-    pub originator: Option<Originator>,
+    pub originator: Originator,
 
     /// The response channel for the request
     pub response_tx: Sender<StdInRpcReply>,

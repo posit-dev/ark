@@ -230,7 +230,7 @@ pub struct RMain {
 struct ActiveReadConsoleRequest {
     exec_count: u32,
     request: ExecuteRequest,
-    orig: Option<Originator>,
+    originator: Originator,
     response_tx: Sender<ExecuteResponse>,
 }
 
@@ -860,7 +860,7 @@ impl RMain {
                 // Send request to frontend. We'll wait for an `input_reply`
                 // from the frontend in the event loop in `read_console()`.
                 // The active request remains active.
-                self.request_input(req.orig.clone(), info.input_prompt.to_string());
+                self.request_input(req.originator.clone(), info.input_prompt.to_string());
                 return None;
             } else {
                 // Invalid input request, propagate error to R
@@ -923,7 +923,7 @@ impl RMain {
         }
 
         let input = match req {
-            RRequest::ExecuteCode(exec_req, orig, response_tx) => {
+            RRequest::ExecuteCode(exec_req, originator, response_tx) => {
                 // Extract input from request
                 let (input, exec_count) = { self.init_execute_request(&exec_req) };
 
@@ -931,7 +931,7 @@ impl RMain {
                 self.active_request = Some(ActiveReadConsoleRequest {
                     exec_count,
                     request: exec_req,
-                    orig,
+                    originator,
                     response_tx,
                 });
 
@@ -1429,7 +1429,7 @@ impl RMain {
 
     /// Request input from frontend in case code like `readline()` is
     /// waiting for input
-    fn request_input(&self, orig: Option<Originator>, prompt: String) {
+    fn request_input(&self, originator: Originator, prompt: String) {
         // TODO: We really should not have to wait on IOPub to be cleared, but
         // if an IOPub `'stream'` message arrives on the frontend while an input
         // request is being handled, it currently breaks the Console. We should
@@ -1448,7 +1448,7 @@ impl RMain {
         unwrap!(
             self.stdin_request_tx
             .send(StdInRequest::Input(ShellInputRequest {
-                originator: orig,
+                originator,
                 request: InputRequest {
                     prompt,
                     password: false,
@@ -1687,11 +1687,11 @@ impl RMain {
         log::trace!("Calling frontend method '{request:?}'");
         let (response_tx, response_rx) = bounded(1);
 
-        let originator = if let Some(req) = &self.active_request {
-            req.orig.clone()
-        } else {
+        let Some(req) = &self.active_request else {
             anyhow::bail!("Error: No active request");
         };
+
+        let originator = req.originator.clone();
 
         let comm_request = UiCommFrontendRequest {
             originator,

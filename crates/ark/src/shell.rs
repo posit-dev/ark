@@ -204,7 +204,7 @@ impl ShellHandler for Shell {
     /// for processing.
     async fn handle_execute_request(
         &mut self,
-        originator: Option<Originator>,
+        originator: Originator,
         req: &ExecuteRequest,
     ) -> Result<ExecuteReply, ExecuteReplyException> {
         let (response_tx, response_rx) = unbounded::<ExecuteResponse>();
