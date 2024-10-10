@@ -2,6 +2,8 @@
 
 # 0.1.9000
 
+- Added partial support for outline headers in comments (@kv9898, posit-dev/positron#3822).
+
 - Sending long inputs of more than 4096 bytes no longer fails (posit-dev/positron#4745).
 
 - Jupyter: Fixed a bug in the kernel-info reply where the `pygments_lexer` field
