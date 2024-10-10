@@ -162,10 +162,6 @@ impl DummyFrontend {
         )
         .unwrap();
 
-        // Subscribe to IOPub! Server is the one that sent us this port,
-        // so its already connected on its end.
-        iopub_socket.subscribe().unwrap();
-
         let stdin_socket = Socket::new(
             connection.session.clone(),
             connection.ctx.clone(),
@@ -186,14 +182,19 @@ impl DummyFrontend {
         )
         .unwrap();
 
-        // TODO!: Without this sleep, `IOPub` `Busy` messages sporadically
-        // don't arrive when running integration tests. I believe this is a result
-        // of PUB sockets dropping messages while in a "mute" state (i.e. no subscriber
-        // connected yet). Even though we run `iopub_socket.subscribe()` to subscribe,
-        // it seems like we can return from this function even before our socket
-        // has fully subscribed, causing messages to get dropped.
-        // https://libzmq.readthedocs.io/en/latest/zmq_socket.html
-        std::thread::sleep(std::time::Duration::from_millis(500));
+        // Subscribe to IOPub! Server's XPUB socket will receive a notification of
+        // our subscription with `subscription`, then will publish an IOPub `Welcome`
+        // message, sending back our `subscription`.
+        iopub_socket.subscribe(b"").unwrap();
+
+        // Immediately block until we've received the IOPub welcome message.
+        // This confirms that we've fully subscribed and avoids dropping any
+        // of the initial IOPub messages that a server may send if we start
+        // perform requests immediately.
+        // https://github.com/posit-dev/ark/pull/577
+        assert_matches!(Self::recv(&iopub_socket), Message::Welcome(data) => {
+            assert_eq!(data.content.subscription, String::from(""));
+        });
 
         Self {
             _control_socket,
@@ -347,7 +348,7 @@ impl DummyFrontend {
             let msg = self.recv_iopub();
 
             // Assert its type
-            let piece = assert_matches!(msg, Message::StreamOutput(data) => {
+            let piece = assert_matches!(msg, Message::Stream(data) => {
                 assert_eq!(data.content.name, stream);
                 data.content.text
             });

@@ -11,11 +11,8 @@ use crossbeam::channel::tick;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use crossbeam::select;
-use log::trace;
-use log::warn;
 
-use crate::error::Error;
-use crate::socket::socket::Socket;
+use crate::session::Session;
 use crate::wire::comm_close::CommClose;
 use crate::wire::comm_msg::CommWireMsg;
 use crate::wire::comm_open::CommOpen;
@@ -25,19 +22,32 @@ use crate::wire::execute_input::ExecuteInput;
 use crate::wire::execute_result::ExecuteResult;
 use crate::wire::header::JupyterHeader;
 use crate::wire::jupyter_message::JupyterMessage;
+use crate::wire::jupyter_message::Message;
+use crate::wire::jupyter_message::OutboundMessage;
 use crate::wire::jupyter_message::ProtocolMessage;
 use crate::wire::status::ExecutionState;
 use crate::wire::status::KernelStatus;
 use crate::wire::stream::Stream;
 use crate::wire::stream::StreamOutput;
+use crate::wire::subscription_message::SubscriptionKind;
+use crate::wire::subscription_message::SubscriptionMessage;
 use crate::wire::update_display_data::UpdateDisplayData;
+use crate::wire::welcome::Welcome;
 
 pub struct IOPub {
-    /// The underlying IOPub socket
-    socket: Socket,
-
     /// A channel that receives IOPub messages from other threads
-    receiver: Receiver<IOPubMessage>,
+    rx: Receiver<IOPubMessage>,
+
+    /// A channel that receives IOPub subscriber notifications from
+    /// the IOPub socket
+    inbound_rx: Receiver<crate::Result<SubscriptionMessage>>,
+
+    /// A channel to forward along IOPub messages to the IOPub socket
+    /// for delivery to the frontend
+    outbound_tx: Sender<OutboundMessage>,
+
+    /// ZMQ session used to create messages
+    session: Session,
 
     /// The current message context; attached to outgoing messages to pair
     /// outputs with the message that caused them.
@@ -60,7 +70,7 @@ pub enum IOPubContextChannel {
     Control,
 }
 
-/// Enumeration of all messages that can be delivered from the IOPub PUB/SUB
+/// Enumeration of all messages that can be delivered from the IOPub XPUB/SUB
 /// socket. These messages generally are created on other threads and then sent
 /// via a channel to the IOPub thread.
 pub enum IOPubMessage {
@@ -72,7 +82,7 @@ pub enum IOPubMessage {
     CommOpen(CommOpen),
     CommMsgReply(JupyterHeader, CommWireMsg),
     CommMsgEvent(CommWireMsg),
-    CommClose(String),
+    CommClose(CommClose),
     DisplayData(DisplayData),
     UpdateDisplayData(UpdateDisplayData),
     Wait(Wait),
@@ -87,16 +97,23 @@ pub struct Wait {
 impl IOPub {
     /// Create a new IOPub socket wrapper.
     ///
-    /// * `socket` - The ZeroMQ socket that will deliver IOPub messages to
-    ///   subscribed clients.
-    /// * `receiver` - The receiver channel that will receive IOPub
+    /// * `rx` - The receiver channel that will receive IOPub
     ///   messages from other threads.
-    pub fn new(socket: Socket, receiver: Receiver<IOPubMessage>) -> Self {
+    /// * `inbound_rx` - The receiver channel that will receive
+    ///   new subscriber messages forwarded from the IOPub socket.
+    pub fn new(
+        rx: Receiver<IOPubMessage>,
+        inbound_rx: Receiver<crate::Result<SubscriptionMessage>>,
+        outbound_tx: Sender<OutboundMessage>,
+        session: Session,
+    ) -> Self {
         let buffer = StreamBuffer::new(Stream::Stdout);
 
         Self {
-            socket,
-            receiver,
+            rx,
+            inbound_rx,
+            outbound_tx,
+            session,
             shell_context: None,
             control_context: None,
             buffer,
@@ -115,16 +132,28 @@ impl IOPub {
 
         loop {
             select! {
-                recv(self.receiver) -> message => {
+                recv(self.rx) -> message => {
                     match message {
                         Ok(message) => {
-                            if let Err(error) = self.process_message(message) {
-                                warn!("Error delivering iopub message: {error:?}")
+                            if let Err(error) = self.process_outbound_message(message) {
+                                log::warn!("Error delivering outbound iopub message: {error:?}")
                             }
                         },
                         Err(error) => {
-                            warn!("Failed to receive iopub message: {error:?}");
+                            log::warn!("Failed to receive outbound iopub message: {error:?}");
                         },
+                    }
+                },
+                recv(self.inbound_rx) -> message => {
+                    match message.unwrap() {
+                        Ok(message) => {
+                            if let Err(error) = self.process_inbound_message(message) {
+                                log::warn!("Error processing inbound iopub message: {error:?}")
+                            }
+                        },
+                        Err(error) => {
+                            log::warn!("Failed to receive inbound iopub message: {error:?}");
+                        }
                     }
                 },
                 recv(flush_interval) -> message => {
@@ -138,16 +167,16 @@ impl IOPub {
     }
 
     /// Process an IOPub message from another thread.
-    fn process_message(&mut self, message: IOPubMessage) -> Result<(), Error> {
+    fn process_outbound_message(&mut self, message: IOPubMessage) -> crate::Result<()> {
         match message {
-            IOPubMessage::Status(context, context_channel, msg) => {
+            IOPubMessage::Status(context, context_channel, content) => {
                 // When we enter the Busy state as a result of a message, we
                 // update the context. Future messages to IOPub name this
                 // context in the parent header sent to the client; this makes
                 // it possible for the client to associate events/output with
                 // their originator without requiring us to thread the values
                 // through the stack.
-                match (&context_channel, &msg.execution_state) {
+                match (&context_channel, &content.execution_state) {
                     (IOPubContextChannel::Control, ExecutionState::Busy) => {
                         self.control_context = Some(context.clone());
                     },
@@ -170,74 +199,124 @@ impl IOPub {
                     },
                 }
 
-                self.send_message_with_header(context, msg)
+                self.forward(Message::Status(self.message_with_header(context, content)))
             },
-            IOPubMessage::ExecuteResult(msg) => {
+            IOPubMessage::ExecuteResult(content) => {
                 self.flush_stream();
-                self.send_message_with_context(msg, IOPubContextChannel::Shell)
+                self.forward(Message::ExecuteResult(
+                    self.message_with_context(content, IOPubContextChannel::Shell),
+                ))
             },
-            IOPubMessage::ExecuteError(msg) => {
+            IOPubMessage::ExecuteError(content) => {
                 self.flush_stream();
-                self.send_message_with_context(msg, IOPubContextChannel::Shell)
+                self.forward(Message::ExecuteError(
+                    self.message_with_context(content, IOPubContextChannel::Shell),
+                ))
             },
-            IOPubMessage::ExecuteInput(msg) => {
-                self.send_message_with_context(msg, IOPubContextChannel::Shell)
+            IOPubMessage::ExecuteInput(content) => self.forward(Message::ExecuteInput(
+                self.message_with_context(content, IOPubContextChannel::Shell),
+            )),
+            IOPubMessage::Stream(content) => self.process_stream_message(content),
+            IOPubMessage::CommOpen(content) => {
+                self.forward(Message::CommOpen(self.message(content)))
             },
-            IOPubMessage::Stream(msg) => self.process_stream_message(msg),
-            IOPubMessage::CommOpen(msg) => self.send_message(msg),
-            IOPubMessage::CommMsgEvent(msg) => self.send_message(msg),
-            IOPubMessage::CommMsgReply(header, msg) => self.send_message_with_header(header, msg),
-            IOPubMessage::CommClose(comm_id) => self.send_message(CommClose { comm_id }),
-            IOPubMessage::DisplayData(msg) => {
+            IOPubMessage::CommMsgEvent(content) => {
+                self.forward(Message::CommMsg(self.message(content)))
+            },
+            IOPubMessage::CommMsgReply(header, content) => {
+                self.forward(Message::CommMsg(self.message_with_header(header, content)))
+            },
+            IOPubMessage::CommClose(content) => {
+                self.forward(Message::CommClose(self.message(content)))
+            },
+            IOPubMessage::DisplayData(content) => {
                 self.flush_stream();
-                self.send_message_with_context(msg, IOPubContextChannel::Shell)
+                self.forward(Message::DisplayData(
+                    self.message_with_context(content, IOPubContextChannel::Shell),
+                ))
             },
-            IOPubMessage::UpdateDisplayData(msg) => {
+            IOPubMessage::UpdateDisplayData(content) => {
                 self.flush_stream();
-                self.send_message_with_context(msg, IOPubContextChannel::Shell)
+                self.forward(Message::UpdateDisplayData(
+                    self.message_with_context(content, IOPubContextChannel::Shell),
+                ))
             },
-            IOPubMessage::Wait(msg) => self.process_wait_request(msg),
+            IOPubMessage::Wait(content) => self.process_wait_request(content),
         }
     }
 
-    /// Send a message using the underlying socket with the given content.
-    /// No parent is assumed.
-    fn send_message<T: ProtocolMessage>(&self, content: T) -> Result<(), Error> {
-        self.send_message_impl(None, content)
+    /// As an XPUB socket, the only inbound message that IOPub receives is
+    /// a subscription message that notifies us when a SUB subscribes or
+    /// unsubscribes.
+    ///
+    /// When we get a subscription notification, we forward along an IOPub
+    /// `Welcome` message back to the SUB, in compliance with JEP 65. Clients
+    /// that don't know how to process this `Welcome` message should just ignore it.
+    fn process_inbound_message(&self, message: SubscriptionMessage) -> crate::Result<()> {
+        let subscription = message.subscription;
+
+        match message.kind {
+            SubscriptionKind::Subscribe => {
+                log::info!(
+                    "Received subscribe message on IOPub with subscription '{subscription}'."
+                );
+                let content = Welcome { subscription };
+                self.forward(Message::Welcome(self.message(content)))
+            },
+            SubscriptionKind::Unsubscribe => {
+                log::info!(
+                    "Received unsubscribe message on IOPub with subscription '{subscription}'."
+                );
+                // We don't do anything on unsubscribes
+                return Ok(());
+            },
+        }
     }
 
-    /// Send a message using the underlying socket with the given content. The
+    /// Create a message using the underlying socket with the given content.
+    /// No parent is assumed.
+    fn message<T: ProtocolMessage>(&self, content: T) -> JupyterMessage<T> {
+        self.message_create(None, content)
+    }
+
+    /// Create a message using the underlying socket with the given content. The
     /// parent message is assumed to be the current context.
-    fn send_message_with_context<T: ProtocolMessage>(
+    fn message_with_context<T: ProtocolMessage>(
         &self,
         content: T,
         context_channel: IOPubContextChannel,
-    ) -> Result<(), Error> {
+    ) -> JupyterMessage<T> {
         let context = match context_channel {
             IOPubContextChannel::Control => &self.control_context,
             IOPubContextChannel::Shell => &self.shell_context,
         };
-        self.send_message_impl(context.clone(), content)
+        self.message_create(context.clone(), content)
     }
 
-    /// Send a message using the underlying socket with the given content and
+    /// Create a message using the underlying socket with the given content and
     /// specific header. Used when the parent message is known by the message
     /// sender, typically in comm message replies.
-    fn send_message_with_header<T: ProtocolMessage>(
+    fn message_with_header<T: ProtocolMessage>(
         &self,
         header: JupyterHeader,
         content: T,
-    ) -> Result<(), Error> {
-        self.send_message_impl(Some(header), content)
+    ) -> JupyterMessage<T> {
+        self.message_create(Some(header), content)
     }
 
-    fn send_message_impl<T: ProtocolMessage>(
+    fn message_create<T: ProtocolMessage>(
         &self,
         header: Option<JupyterHeader>,
         content: T,
-    ) -> Result<(), Error> {
-        let msg = JupyterMessage::<T>::create(content, header, &self.socket.session);
-        msg.send(&self.socket)
+    ) -> JupyterMessage<T> {
+        JupyterMessage::<T>::create(content, header, &self.session)
+    }
+
+    /// Forward a message on to the actual IOPub socket through the outbound channel
+    fn forward(&self, message: Message) -> crate::Result<()> {
+        self.outbound_tx
+            .send(OutboundMessage::IOPub(message))
+            .map_err(|err| crate::Error::SendError(format!("{err:?}")))
     }
 
     /// Flushes the active stream, sending along the message if the buffer
@@ -249,9 +328,12 @@ impl IOPub {
             return;
         }
 
-        let message = self.buffer.drain();
+        let content = self.buffer.drain();
 
-        let Err(error) = self.send_message_with_context(message, IOPubContextChannel::Shell) else {
+        let message =
+            Message::Stream(self.message_with_context(content, IOPubContextChannel::Shell));
+
+        let Err(error) = self.forward(message) else {
             // Message sent successfully
             return;
         };
@@ -261,7 +343,7 @@ impl IOPub {
             Stream::Stderr => "stderr",
         };
 
-        warn!("Error delivering iopub 'stream' message over '{name}': {error:?}");
+        log::warn!("Error delivering iopub 'stream' message over '{name}': {error:?}");
     }
 
     /// Processes a `Stream` message by appending it to the stream buffer
@@ -271,7 +353,7 @@ impl IOPub {
     ///
     /// If this new message switches streams, then we flush the existing stream
     /// before switching.
-    fn process_stream_message(&mut self, message: StreamOutput) -> Result<(), Error> {
+    fn process_stream_message(&mut self, message: StreamOutput) -> crate::Result<()> {
         if message.name != self.buffer.name {
             // Swap streams, but flush the existing stream first
             self.flush_stream();
@@ -294,25 +376,24 @@ impl IOPub {
     /// waiting for the queue to empty, it is possible for a message on a
     /// different socket that is sent after waiting to still get processed by
     /// the frontend before the messages we cleared from the IOPub queue.
-    fn process_wait_request(&mut self, message: Wait) -> Result<(), Error> {
+    fn process_wait_request(&mut self, message: Wait) -> crate::Result<()> {
         message.wait_tx.send(()).unwrap();
         Ok(())
     }
 
     /// Emits the given kernel state to the client.
     fn emit_state(&self, state: ExecutionState) {
-        trace!("Entering kernel state: {:?}", state);
-        if let Err(err) = JupyterMessage::<KernelStatus>::create(
-            KernelStatus {
-                execution_state: state,
-            },
-            None,
-            &self.socket.session,
-        )
-        .send(&self.socket)
-        {
-            warn!("Could not emit kernel's state. {}", err)
-        }
+        log::trace!("Entering kernel state: {:?}", state);
+
+        let content = KernelStatus {
+            execution_state: state,
+        };
+
+        let message = Message::Status(self.message(content));
+
+        if let Err(err) = self.forward(message) {
+            log::warn!("Could not emit kernel's state due to: {err:?}")
+        };
     }
 }
 
