@@ -10,7 +10,7 @@ use serde::Serialize;
 
 use crate::wire::jupyter_message::MessageType;
 
-/// Represents a reply to a handshake_request
+/// Represents a handshake_request
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct HandshakeRequest {
     /// ZeroMQ port: Control channel (kernel interrupts)
