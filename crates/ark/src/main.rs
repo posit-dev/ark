@@ -12,7 +12,6 @@ use std::env;
 
 use amalthea::kernel;
 use amalthea::kernel_spec::KernelSpec;
-use ark::interface::RMain;
 use ark::interface::SessionMode;
 use ark::logger;
 use ark::signals::initialize_signal_block;
@@ -302,7 +301,8 @@ fn main() -> anyhow::Result<()> {
     // Parse the connection file
     let (connection_file, registration_file) = kernel::read_connection(connection_file.as_str());
 
-    // Set up R and start the Jupyter kernel
+    // Connect the Jupyter kernel and start R.
+    // Does not return!
     start_kernel(
         connection_file,
         registration_file,
@@ -311,9 +311,6 @@ fn main() -> anyhow::Result<()> {
         session_mode,
         capture_streams,
     );
-
-    // Start the REPL, does not return
-    RMain::start();
 
     // Just to please Rust
     Ok(())

@@ -27,7 +27,6 @@ use crate::request::RRequest;
 use crate::shell::Shell;
 
 /// Exported for unit tests.
-/// Call `RMain::start()` after this.
 pub fn start_kernel(
     connection_file: ConnectionFile,
     registration_file: Option<RegistrationFile>,
@@ -118,8 +117,8 @@ pub fn start_kernel(
         panic!("Couldn't connect to frontend: {err:?}");
     }
 
-    // Setup the channels and R
-    crate::interface::RMain::setup(
+    // Start R
+    crate::interface::RMain::start(
         r_args,
         startup_file,
         kernel_clone,

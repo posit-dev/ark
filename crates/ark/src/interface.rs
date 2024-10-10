@@ -287,14 +287,10 @@ pub enum ConsoleResult {
 }
 
 impl RMain {
-    /// Sets up the main R thread and initializes the `R_MAIN` singleton. Must
-    /// be called only once. This is doing as much setup as possible before
-    /// starting the R REPL. Since the REPL does not return, it might be
-    /// launched in a background thread (which we do in integration tests). The
-    /// setup can still be done in your main thread so that panics during setup
-    /// may propagate as expected. Call `RMain::start()` after this to actually
-    /// start the R REPL.
-    pub fn setup(
+    /// Sets up the main R thread, initializes the `R_MAIN` singleton,
+    /// and starts R. Does not return!
+    /// SAFETY: Must be called only once. Enforced with a panic.
+    pub fn start(
         r_args: Vec<String>,
         startup_file: Option<String>,
         kernel_mutex: Arc<Mutex<Kernel>>,
@@ -307,6 +303,16 @@ impl RMain {
         dap: Arc<Mutex<Dap>>,
         session_mode: SessionMode,
     ) {
+        // Set the main thread ID.
+        // Must happen before doing anything that checks `RMain::on_main_thread()`,
+        // like running an `r_task()` (posit-dev/positron#4973).
+        unsafe {
+            R_MAIN_THREAD_ID = match R_MAIN_THREAD_ID {
+                None => Some(std::thread::current().id()),
+                Some(id) => panic!("`start()` must be called exactly 1 time. It has already been called from thread {id:?}."),
+            };
+        }
+
         // Channels to send/receive tasks from auxiliary threads via `RTask`s
         let (tasks_interrupt_tx, tasks_interrupt_rx) = unbounded::<RTask>();
         let (tasks_idle_tx, tasks_idle_rx) = unbounded::<RTask>();
@@ -438,13 +444,8 @@ impl RMain {
         if !ignore_user_r_profile {
             startup::source_user_r_profile();
         }
-    }
 
-    /// Start the REPL. Does not return!
-    pub fn start() {
-        // Set the main thread ID. We do it here so that `setup()` is allowed to
-        // be called in another thread.
-        unsafe { R_MAIN_THREAD_ID = Some(std::thread::current().id()) };
+        // Start the REPL. Does not return!
         crate::sys::interface::run_r();
     }
 

@@ -8,7 +8,6 @@ use std::sync::OnceLock;
 use amalthea::fixtures::dummy_frontend::DummyConnection;
 use amalthea::fixtures::dummy_frontend::DummyFrontend;
 
-use crate::interface::RMain;
 use crate::interface::SessionMode;
 
 // There can be only one frontend per process. Needs to be in a mutex because
@@ -80,8 +79,6 @@ impl DummyArkFrontend {
                 session_mode,
                 false,
             );
-
-            RMain::start();
         });
 
         DummyFrontend::from_connection(connection)
