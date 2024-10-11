@@ -23,6 +23,14 @@ pub struct DummyArkFrontend {
     guard: MutexGuard<'static, DummyFrontend>,
 }
 
+struct DummyArkFrontendOptions {
+    interactive: bool,
+    site_r_profile: bool,
+    user_r_profile: bool,
+    r_environ: bool,
+    session_mode: SessionMode,
+}
+
 /// Wrapper around `DummyArkFrontend` that uses `SessionMode::Notebook`
 ///
 /// Only one of `DummyArkFrontend` or `DummyArkFrontendNotebook` can be used in
@@ -30,6 +38,11 @@ pub struct DummyArkFrontend {
 /// let you know about a missing symbol if you happen to copy paste `lock()`
 /// calls of different kernel types between files.
 pub struct DummyArkFrontendNotebook {
+    inner: DummyArkFrontend,
+}
+
+/// Wrapper around `DummyArkFrontend` that allows an `.Rprofile` to run
+pub struct DummyArkFrontendRprofile {
     inner: DummyArkFrontend,
 }
 
@@ -43,11 +56,18 @@ impl DummyArkFrontend {
     fn get_frontend() -> &'static Arc<Mutex<DummyFrontend>> {
         // These are the hard-coded defaults. Call `init()` explicitly to
         // override.
-        let session_mode = SessionMode::Console;
-        FRONTEND.get_or_init(|| Arc::new(Mutex::new(DummyArkFrontend::init(session_mode))))
+        let options = DummyArkFrontendOptions {
+            interactive: true,
+            site_r_profile: false,
+            user_r_profile: false,
+            r_environ: false,
+            session_mode: SessionMode::Console,
+        };
+
+        FRONTEND.get_or_init(|| Arc::new(Mutex::new(DummyArkFrontend::init(options))))
     }
 
-    pub(crate) fn init(session_mode: SessionMode) -> DummyFrontend {
+    fn init(options: DummyArkFrontendOptions) -> DummyFrontend {
         if FRONTEND.get().is_some() {
             panic!("Can't spawn Ark more than once");
         }
@@ -62,6 +82,25 @@ impl DummyArkFrontend {
         let connection = DummyConnection::new();
         let (connection_file, registration_file) = connection.get_connection_files();
 
+        let mut r_args = vec![];
+
+        // We aren't animals!
+        r_args.push(String::from("--no-save"));
+        r_args.push(String::from("--no-restore"));
+
+        if options.interactive {
+            r_args.push(String::from("--interactive"));
+        }
+        if !options.site_r_profile {
+            r_args.push(String::from("--no-site-file"));
+        }
+        if !options.user_r_profile {
+            r_args.push(String::from("--no-init-file"));
+        }
+        if !options.r_environ {
+            r_args.push(String::from("--no-environ"));
+        }
+
         // Start the kernel and REPL in a background thread, does not return and is never joined.
         // Must run `start_kernel()` in a background thread because it blocks until it receives
         // a `HandshakeReply`, which we send from `from_connection()` below.
@@ -69,14 +108,9 @@ impl DummyArkFrontend {
             crate::start::start_kernel(
                 connection_file,
                 Some(registration_file),
-                vec![
-                    String::from("--interactive"),
-                    String::from("--vanilla"),
-                    String::from("--no-save"),
-                    String::from("--no-restore"),
-                ],
+                r_args,
                 None,
-                session_mode,
+                options.session_mode,
                 false,
             );
         });
@@ -110,8 +144,8 @@ impl DerefMut for DummyArkFrontend {
 impl DummyArkFrontendNotebook {
     /// Lock a notebook frontend.
     ///
-    /// NOTE: Only one of `DummyArkFrontendNotebook::lock()` re
-    /// `DummyArkFrontend::lock()` should be called in a given process.
+    /// NOTE: Only one `DummyArkFrontend` should call `lock()` within
+    /// a given process.
     pub fn lock() -> Self {
         Self::init();
 
@@ -122,8 +156,15 @@ impl DummyArkFrontendNotebook {
 
     /// Initialize with Notebook session mode
     fn init() {
-        let session_mode = SessionMode::Notebook;
-        FRONTEND.get_or_init(|| Arc::new(Mutex::new(DummyArkFrontend::init(session_mode))));
+        let options = DummyArkFrontendOptions {
+            interactive: true,
+            site_r_profile: false,
+            user_r_profile: false,
+            r_environ: false,
+            session_mode: SessionMode::Notebook,
+        };
+
+        FRONTEND.get_or_init(|| Arc::new(Mutex::new(DummyArkFrontend::init(options))));
     }
 }
 
@@ -137,6 +178,48 @@ impl Deref for DummyArkFrontendNotebook {
 }
 
 impl DerefMut for DummyArkFrontendNotebook {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        DerefMut::deref_mut(&mut self.inner)
+    }
+}
+
+impl DummyArkFrontendRprofile {
+    /// Lock a frontend that supports `.Rprofile`s.
+    ///
+    /// NOTE: Only one `DummyArkFrontend` should call `lock()` within
+    /// a given process.
+    pub fn lock() -> Self {
+        Self::init();
+
+        Self {
+            inner: DummyArkFrontend::lock(),
+        }
+    }
+
+    /// Initialize with user level `.Rprofile` enabled
+    fn init() {
+        let options = DummyArkFrontendOptions {
+            interactive: true,
+            site_r_profile: false,
+            user_r_profile: true,
+            r_environ: false,
+            session_mode: SessionMode::Console,
+        };
+
+        FRONTEND.get_or_init(|| Arc::new(Mutex::new(DummyArkFrontend::init(options))));
+    }
+}
+
+// Allow method calls to be forwarded to inner type
+impl Deref for DummyArkFrontendRprofile {
+    type Target = DummyFrontend;
+
+    fn deref(&self) -> &Self::Target {
+        Deref::deref(&self.inner)
+    }
+}
+
+impl DerefMut for DummyArkFrontendRprofile {
     fn deref_mut(&mut self) -> &mut Self::Target {
         DerefMut::deref_mut(&mut self.inner)
     }
