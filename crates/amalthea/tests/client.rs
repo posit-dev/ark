@@ -5,19 +5,14 @@
  *
  */
 
-use std::sync::Arc;
-use std::sync::Mutex;
+mod control;
+mod dummy_frontend;
+mod shell;
 
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::event::CommManagerEvent;
-use amalthea::fixtures::dummy_frontend::DummyConnection;
-use amalthea::fixtures::dummy_frontend::DummyFrontend;
-use amalthea::kernel;
-use amalthea::kernel::StreamBehavior;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
-use amalthea::socket::iopub::IOPubMessage;
-use amalthea::socket::stdin::StdInRequest;
 use amalthea::wire::comm_close::CommClose;
 use amalthea::wire::comm_info_reply::CommInfoTargetName;
 use amalthea::wire::comm_info_request::CommInfoRequest;
@@ -26,71 +21,12 @@ use amalthea::wire::comm_open::CommOpen;
 use amalthea::wire::jupyter_message::Message;
 use amalthea::wire::kernel_info_request::KernelInfoRequest;
 use amalthea::wire::status::ExecutionState;
-use crossbeam::channel::bounded;
-use crossbeam::channel::unbounded;
+use dummy_frontend::DummyAmaltheaFrontend;
 use serde_json;
-
-mod control;
-mod shell;
 
 #[test]
 fn test_kernel() {
-    // Let's skip this test on Windows for now to see if the Host Unreachable
-    // error only happens here
-    #[cfg(target_os = "windows")]
-    return;
-
-    let connection = DummyConnection::new();
-    let (connection_file, registration_file) = connection.get_connection_files();
-
-    let (iopub_tx, iopub_rx) = bounded::<IOPubMessage>(10);
-
-    let (comm_manager_tx, comm_manager_rx) = bounded::<CommManagerEvent>(10);
-
-    let (stdin_request_tx, stdin_request_rx) = bounded::<StdInRequest>(1);
-    let (stdin_reply_tx, stdin_reply_rx) = unbounded();
-
-    let shell = Box::new(shell::Shell::new(
-        iopub_tx.clone(),
-        stdin_request_tx,
-        stdin_reply_rx,
-    ));
-    let control = Arc::new(Mutex::new(control::Control {}));
-
-    // Initialize logging
-    env_logger::init();
-    log::info!("Starting test kernel");
-
-    // Perform kernel connection on its own thread to
-    // avoid deadlocking as it waits for the `HandshakeReply`
-    stdext::spawn!("dummy_kernel", {
-        let comm_manager_tx = comm_manager_tx.clone();
-
-        move || {
-            if let Err(err) = kernel::connect(
-                "amalthea",
-                connection_file,
-                Some(registration_file),
-                shell,
-                control,
-                None,
-                None,
-                StreamBehavior::None,
-                iopub_tx,
-                iopub_rx,
-                comm_manager_tx,
-                comm_manager_rx,
-                stdin_request_rx,
-                stdin_reply_tx,
-            ) {
-                panic!("Error connecting kernel: {err:?}");
-            };
-        }
-    });
-
-    // Complete client initialization
-    log::info!("Creating frontend");
-    let mut frontend = DummyFrontend::from_connection(connection);
+    let mut frontend = DummyAmaltheaFrontend::lock();
 
     // Ask the kernel for the kernel info. This should return an object with the
     // language "Test" defined in our shell handler.
@@ -320,7 +256,9 @@ fn test_kernel() {
         test_comm_id.clone(),
         test_comm_name.clone(),
     );
-    comm_manager_tx
+
+    frontend
+        .comm_manager_tx
         .send(CommManagerEvent::Opened(
             test_comm.clone(),
             serde_json::Value::Null,
