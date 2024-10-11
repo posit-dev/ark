@@ -60,11 +60,11 @@ fn test_kernel() {
     let (stdin_request_tx, stdin_request_rx) = bounded::<StdInRequest>(1);
     let (stdin_reply_tx, stdin_reply_rx) = unbounded();
 
-    let shell = Arc::new(Mutex::new(shell::Shell::new(
+    let shell = Box::new(shell::Shell::new(
         iopub_tx.clone(),
         stdin_request_tx,
         stdin_reply_rx,
-    )));
+    ));
     let control = Arc::new(Mutex::new(control::Control {}));
 
     // Initialize logging

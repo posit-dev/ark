@@ -68,7 +68,7 @@ pub fn start_kernel(
 
     // Create the shell.
     let kernel_init_rx = kernel_init_tx.add_rx();
-    let shell = Shell::new(
+    let shell = Box::new(Shell::new(
         comm_manager_tx.clone(),
         iopub_tx.clone(),
         r_request_tx.clone(),
@@ -77,7 +77,7 @@ pub fn start_kernel(
         kernel_request_tx,
         kernel_request_rx,
         session_mode.clone(),
-    );
+    ));
 
     // Create the control handler; this is used to handle shutdown/interrupt and
     // related requests
@@ -93,7 +93,6 @@ pub fn start_kernel(
     // Create the Ark kernel
     // TODO: Move the Ark kernel to `RMain`
     let kernel_clone = shell.kernel.clone();
-    let shell = Arc::new(Mutex::new(shell));
 
     let (stdin_reply_tx, stdin_reply_rx) = unbounded();
 

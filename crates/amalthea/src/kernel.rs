@@ -61,7 +61,7 @@ pub fn connect(
     name: &str,
     connection_file: ConnectionFile,
     registration_file: Option<RegistrationFile>,
-    shell_handler: Arc<Mutex<dyn ShellHandler>>,
+    shell_handler: Box<dyn ShellHandler>,
     control_handler: Arc<Mutex<dyn ControlHandler>>,
     lsp_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
     dap_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
@@ -329,7 +329,7 @@ fn shell_thread(
     socket: Socket,
     iopub_tx: Sender<IOPubMessage>,
     comm_manager_tx: Sender<CommManagerEvent>,
-    shell_handler: Arc<Mutex<dyn ShellHandler>>,
+    shell_handler: Box<dyn ShellHandler>,
     lsp_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
     dap_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
 ) -> Result<(), Error> {

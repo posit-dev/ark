@@ -5,6 +5,7 @@
  *
  */
 
+use std::cell::RefCell;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -36,21 +37,11 @@ use crate::wire::comm_info_reply::CommInfoTargetName;
 use crate::wire::comm_info_request::CommInfoRequest;
 use crate::wire::comm_msg::CommWireMsg;
 use crate::wire::comm_open::CommOpen;
-use crate::wire::complete_reply::CompleteReply;
-use crate::wire::complete_request::CompleteRequest;
 use crate::wire::exception::Exception;
-use crate::wire::execute_reply::ExecuteReply;
-use crate::wire::execute_request::ExecuteRequest;
-use crate::wire::inspect_reply::InspectReply;
-use crate::wire::inspect_request::InspectRequest;
-use crate::wire::is_complete_reply::IsCompleteReply;
-use crate::wire::is_complete_request::IsCompleteRequest;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
 use crate::wire::jupyter_message::ProtocolMessage;
 use crate::wire::jupyter_message::Status;
-use crate::wire::kernel_info_reply::KernelInfoReply;
-use crate::wire::kernel_info_request::KernelInfoRequest;
 use crate::wire::originator::Originator;
 use crate::wire::status::ExecutionState;
 use crate::wire::status::KernelStatus;
@@ -65,7 +56,7 @@ pub struct Shell {
     iopub_tx: Sender<IOPubMessage>,
 
     /// Language-provided shell handler object
-    shell_handler: Arc<Mutex<dyn ShellHandler>>,
+    shell_handler: RefCell<Box<dyn ShellHandler>>,
 
     /// Language-provided LSP handler object
     lsp_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
@@ -90,14 +81,14 @@ impl Shell {
         socket: Socket,
         iopub_tx: Sender<IOPubMessage>,
         comm_manager_tx: Sender<CommManagerEvent>,
-        shell_handler: Arc<Mutex<dyn ShellHandler>>,
+        shell_handler: Box<dyn ShellHandler>,
         lsp_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
         dap_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
     ) -> Self {
         Self {
             socket,
             iopub_tx,
-            shell_handler,
+            shell_handler: RefCell::new(shell_handler),
             lsp_handler,
             dap_handler,
             comm_manager_tx,
@@ -129,29 +120,34 @@ impl Shell {
 
     /// Process a message received from the front-end, optionally dispatching
     /// messages to the IOPub or execution threads
-    fn process_message(&mut self, msg: Message) -> crate::Result<()> {
+    fn process_message(&self, msg: Message) -> crate::Result<()> {
+        let shell_handler = &mut self.shell_handler.borrow_mut();
         match msg {
-            Message::KernelInfoRequest(req) => {
-                self.handle_request(req, |h, r| self.handle_info_request(h, r))
-            },
-            Message::IsCompleteRequest(req) => {
-                self.handle_request(req, |h, r| self.handle_is_complete_request(h, r))
-            },
+            Message::KernelInfoRequest(req) => self.handle_request(req.clone(), |msg| {
+                block_on(shell_handler.handle_info_request(msg))
+            }),
+            Message::IsCompleteRequest(req) => self.handle_request(req, |msg| {
+                block_on(shell_handler.handle_is_complete_request(msg))
+            }),
             Message::ExecuteRequest(req) => {
-                self.handle_request(req, |h, r| self.handle_execute_request(h, r))
+                // FIXME: We should ideally not pass the originator to the language kernel
+                let originator = Originator::from(&req);
+                self.handle_request(req, |msg| {
+                    block_on(shell_handler.handle_execute_request(originator, msg))
+                })
             },
-            Message::CompleteRequest(req) => {
-                self.handle_request(req, |h, r| self.handle_complete_request(h, r))
-            },
+            Message::CompleteRequest(req) => self.handle_request(req, |msg| {
+                block_on(shell_handler.handle_complete_request(msg))
+            }),
             Message::CommInfoRequest(req) => {
-                self.handle_request(req, |h, r| self.handle_comm_info_request(h, r))
+                self.handle_request(req, |msg| self.handle_comm_info_request(msg))
             },
-            Message::CommOpen(req) => self.handle_comm_open(req),
+            Message::CommOpen(req) => self.handle_comm_open(shell_handler, req),
             Message::CommMsg(req) => self.handle_comm_msg(req),
             Message::CommClose(req) => self.handle_comm_close(req),
-            Message::InspectRequest(req) => {
-                self.handle_request(req, |h, r| self.handle_inspect_request(h, r))
-            },
+            Message::InspectRequest(req) => self.handle_request(req, |msg| {
+                block_on(shell_handler.handle_inspect_request(msg))
+            }),
             _ => Err(Error::UnsupportedMessage(msg, String::from("shell"))),
         }
     }
@@ -167,17 +163,12 @@ impl Shell {
     where
         Req: ProtocolMessage,
         Rep: ProtocolMessage,
-        Handler: Fn(&mut dyn ShellHandler, JupyterMessage<Req>) -> crate::Result<Rep>,
+        Handler: FnOnce(&Req) -> crate::Result<Rep>,
     {
-        use std::ops::DerefMut;
-
         // Enter the kernel-busy state in preparation for handling the message.
         if let Err(err) = self.send_state(req.clone(), ExecutionState::Busy) {
             log::warn!("Failed to change kernel status to busy: {err}")
         }
-
-        // Lock the shell handler object on this thread
-        let mut shell_handler = self.shell_handler.lock().unwrap();
 
         log::info!("Received shell request: {req:?}");
 
@@ -188,7 +179,7 @@ impl Shell {
         // is so we can mark the kernel as no longer busy when we're done, it'd
         // be better to take an async fn `handler` here just mark kernel as idle
         // when it finishes.
-        let result = handler(shell_handler.deref_mut(), req.clone());
+        let result = handler(&req.content);
 
         let result = match result {
             Ok(reply) => req.send_reply(reply, &self.socket),
@@ -229,50 +220,8 @@ impl Shell {
         self.iopub_tx.send(message)
     }
 
-    /// Handles an ExecuteRequest; dispatches the request to the execution
-    /// thread and forwards the response
-    fn handle_execute_request(
-        &self,
-        handler: &mut dyn ShellHandler,
-        req: JupyterMessage<ExecuteRequest>,
-    ) -> crate::Result<ExecuteReply> {
-        let originator = Originator::from(&req);
-        block_on(handler.handle_execute_request(originator, &req.content))
-    }
-
-    /// Handle a request to test code for completion.
-    fn handle_is_complete_request(
-        &self,
-        handler: &dyn ShellHandler,
-        req: JupyterMessage<IsCompleteRequest>,
-    ) -> crate::Result<IsCompleteReply> {
-        block_on(handler.handle_is_complete_request(&req.content))
-    }
-
-    /// Handle a request for kernel information.
-    fn handle_info_request(
-        &self,
-        handler: &mut dyn ShellHandler,
-        req: JupyterMessage<KernelInfoRequest>,
-    ) -> crate::Result<KernelInfoReply> {
-        block_on(handler.handle_info_request(&req.content))
-    }
-
-    /// Handle a request for code completion.
-    fn handle_complete_request(
-        &self,
-        handler: &dyn ShellHandler,
-        req: JupyterMessage<CompleteRequest>,
-    ) -> crate::Result<CompleteReply> {
-        block_on(handler.handle_complete_request(&req.content))
-    }
-
     /// Handle a request for open comms
-    fn handle_comm_info_request(
-        &self,
-        _handler: &dyn ShellHandler,
-        req: JupyterMessage<CommInfoRequest>,
-    ) -> crate::Result<CommInfoReply> {
+    fn handle_comm_info_request(&self, req: &CommInfoRequest) -> crate::Result<CommInfoReply> {
         log::info!("Received request for open comms: {req:?}");
 
         // One off sender/receiver pair for this request
@@ -291,7 +240,7 @@ impl Shell {
 
         for comm in comms.into_iter() {
             // Only include comms that match the target name, if one was specified
-            if req.content.target_name.is_empty() || req.content.target_name == comm.name {
+            if req.target_name.is_empty() || req.target_name == comm.name {
                 let comm_info_target = CommInfoTargetName {
                     target_name: comm.name,
                 };
@@ -307,7 +256,11 @@ impl Shell {
     }
 
     /// Handle a request to open a comm
-    fn handle_comm_open(&mut self, req: JupyterMessage<CommOpen>) -> crate::Result<()> {
+    fn handle_comm_open(
+        &self,
+        shell_handler: &mut Box<dyn ShellHandler>,
+        req: JupyterMessage<CommOpen>,
+    ) -> crate::Result<()> {
         log::info!("Received request to open comm: {req:?}");
 
         // Enter the kernel-busy state in preparation for handling the message.
@@ -316,7 +269,7 @@ impl Shell {
         }
 
         // Process the comm open request
-        let result = self.open_comm(req.clone());
+        let result = self.open_comm(shell_handler, req.clone());
 
         // Return kernel to idle state
         if let Err(err) = self.send_state(req, ExecutionState::Idle) {
@@ -361,7 +314,11 @@ impl Shell {
      * it easier to handle errors and return to the idle state when the request is
      * complete.
      */
-    fn open_comm(&mut self, req: JupyterMessage<CommOpen>) -> crate::Result<()> {
+    fn open_comm(
+        &self,
+        shell_handler: &mut Box<dyn ShellHandler>,
+        req: JupyterMessage<CommOpen>,
+    ) -> crate::Result<()> {
         // Check to see whether the target name begins with "positron." This
         // prefix designates comm IDs that are known to the Positron IDE.
         let comm = match req.content.target_name.starts_with("positron.") {
@@ -442,11 +399,8 @@ impl Shell {
             // kernel framework itself; all other comms are passed through
             // to the shell handler.
             _ => {
-                // Lock the shell handler object on this thread.
-                let handler = self.shell_handler.lock().unwrap();
-
                 // Call the shell handler to open the comm
-                block_on(handler.handle_comm_open(comm, comm_socket.clone()))?
+                block_on(shell_handler.handle_comm_open(comm, comm_socket.clone()))?
             },
         };
 
@@ -519,7 +473,7 @@ impl Shell {
     }
 
     /// Handle a request to close a comm
-    fn handle_comm_close(&mut self, req: JupyterMessage<CommClose>) -> crate::Result<()> {
+    fn handle_comm_close(&self, req: JupyterMessage<CommClose>) -> crate::Result<()> {
         // Look for the comm in our open comms
         log::info!("Received request to close comm: {req:?}");
 
@@ -540,14 +494,5 @@ impl Shell {
         }
 
         Ok(())
-    }
-
-    /// Handle a request for code inspection
-    fn handle_inspect_request(
-        &self,
-        handler: &dyn ShellHandler,
-        req: JupyterMessage<InspectRequest>,
-    ) -> crate::Result<InspectReply> {
-        block_on(handler.handle_inspect_request(&req.content))
     }
 }
