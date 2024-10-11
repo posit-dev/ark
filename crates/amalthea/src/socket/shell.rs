@@ -267,12 +267,22 @@ impl Shell {
         // Process the comm open request
         let result = self.open_comm(shell_handler, req.clone());
 
+        // There is no error reply for a comm open request. Instead we must send
+        // a `comm_close` message as soon as possible. The error is logged on our side.
+        if let Err(err) = result {
+            let reply = IOPubMessage::CommClose(CommClose {
+                comm_id: req.content.comm_id.clone(),
+            });
+            self.iopub_tx.send(reply).unwrap();
+            log::warn!("Failed to open comm: {err:?}");
+        }
+
         // Return kernel to idle state
         if let Err(err) = self.send_state(req, ExecutionState::Idle) {
             log::warn!("Failed to restore kernel status to idle: {err}")
         }
 
-        result
+        Ok(())
     }
 
     /// Deliver a request from the frontend to a comm. Specifically, this is a

@@ -36,6 +36,7 @@ use amalthea::wire::language_info::LanguageInfo;
 use amalthea::wire::originator::Originator;
 use amalthea::wire::stream::Stream;
 use amalthea::wire::stream::StreamOutput;
+use anyhow::anyhow;
 use async_trait::async_trait;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
@@ -243,7 +244,15 @@ impl ShellHandler for Shell {
         })
     }
 
-    async fn handle_comm_open(&self, _req: Comm, comm: CommSocket) -> amalthea::Result<bool> {
+    async fn handle_comm_open(&self, req: Comm, comm: CommSocket) -> amalthea::Result<bool> {
+        // Used to test error replies
+        match req {
+            Comm::Other(name) if name == "unknown" => {
+                return Err(amalthea::Error::Anyhow(anyhow!("unknown comm target")));
+            },
+            _ => {},
+        }
+
         // Open a test comm channel; this test comm channel is used for every
         // comm open request (regardless of the target name). It just echoes back any
         // messages it receives.

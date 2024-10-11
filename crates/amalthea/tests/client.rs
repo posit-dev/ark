@@ -342,6 +342,17 @@ fn test_kernel() {
     // Test the comms
     info!("Sending comm open request to the kernel");
     let comm_id = "A3A6D0EA-1443-4F70-B059-F423E445B8D6";
+
+    frontend.send_shell(CommOpen {
+        comm_id: comm_id.to_string(),
+        target_name: "unknown".to_string(),
+        data: serde_json::Value::Null,
+    });
+
+    frontend.recv_iopub_busy();
+    assert_eq!(frontend.recv_iopub_comm_close(), comm_id.to_string());
+    frontend.recv_iopub_idle();
+
     frontend.send_shell(CommOpen {
         comm_id: comm_id.to_string(),
         target_name: "variables".to_string(),
@@ -350,8 +361,8 @@ fn test_kernel() {
 
     // Absorb the IOPub messages that the kernel sends back during the
     // processing of the above `CommOpen` request
-    frontend.recv_iopub(); // Busy
-    frontend.recv_iopub(); // Idle
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_idle();
 
     info!("Requesting comm info from the kernel (to test opening from the frontend)");
     frontend.send_shell(CommInfoRequest {
