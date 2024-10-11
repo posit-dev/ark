@@ -241,14 +241,17 @@ fn test_kernel() {
 
     frontend.recv_iopub_busy();
 
+    let mut got_idle = false;
+    let mut got_reply = false;
+
     // This runs in a loop because the ordering of the Idle status and the reply
     // is undetermined.
     loop {
-        let mut got_idle = false;
-        let mut got_reply = false;
-
         match frontend.recv_iopub() {
             Message::CommMsg(msg) => {
+                if got_reply {
+                    panic!("Received multiple comm messages");
+                }
                 // Ensure that the comm ID in the message matches the comm ID we
                 // sent
                 assert_eq!(msg.content.comm_id, comm_id);
@@ -261,6 +264,9 @@ fn test_kernel() {
                 got_reply = true;
             },
             Message::Status(msg) => {
+                if got_idle {
+                    panic!("Received multiple idle messages");
+                }
                 assert_eq!(msg.content.execution_state, ExecutionState::Idle);
                 got_idle = true;
             },
@@ -280,9 +286,6 @@ fn test_kernel() {
         comm_id: comm_id.to_string(),
     });
 
-    // Absorb the IOPub messages that the kernel sends back during the
-    // processing of the above `CommClose` request
-    log::info!("Receiving comm close IOPub messages from the kernel");
     frontend.recv_iopub_busy();
     frontend.recv_iopub_idle();
 
