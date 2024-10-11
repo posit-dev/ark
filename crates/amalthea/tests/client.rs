@@ -1,7 +1,7 @@
 /*
  * client.rs
  *
- * Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+ * Copyright (C) 2022-2024 Posit Software, PBC. All rights reserved.
  *
  */
 
@@ -23,21 +23,11 @@ use amalthea::wire::comm_info_reply::CommInfoTargetName;
 use amalthea::wire::comm_info_request::CommInfoRequest;
 use amalthea::wire::comm_msg::CommWireMsg;
 use amalthea::wire::comm_open::CommOpen;
-use amalthea::wire::execute_input::ExecuteInput;
-use amalthea::wire::execute_request::ExecuteRequest;
-use amalthea::wire::execute_result::ExecuteResult;
-use amalthea::wire::input_reply::InputReply;
 use amalthea::wire::jupyter_message::Message;
-use amalthea::wire::jupyter_message::MessageType;
-use amalthea::wire::jupyter_message::Status;
 use amalthea::wire::kernel_info_request::KernelInfoRequest;
 use amalthea::wire::status::ExecutionState;
-use amalthea::wire::status::KernelStatus;
-use amalthea::wire::stream::StreamOutput;
-use amalthea::wire::wire_message::WireMessage;
 use crossbeam::channel::bounded;
 use crossbeam::channel::unbounded;
-use log::info;
 use serde_json;
 
 mod control;
@@ -69,7 +59,7 @@ fn test_kernel() {
 
     // Initialize logging
     env_logger::init();
-    info!("Starting test kernel");
+    log::info!("Starting test kernel");
 
     // Perform kernel connection on its own thread to
     // avoid deadlocking as it waits for the `HandshakeReply`
@@ -99,248 +89,74 @@ fn test_kernel() {
     });
 
     // Complete client initialization
-    info!("Creating frontend");
-    let frontend = DummyFrontend::from_connection(connection);
+    log::info!("Creating frontend");
+    let mut frontend = DummyFrontend::from_connection(connection);
 
     // Ask the kernel for the kernel info. This should return an object with the
     // language "Test" defined in our shell handler.
-    info!("Requesting kernel information");
+    log::info!("Requesting kernel information");
     frontend.send_shell(KernelInfoRequest {});
 
-    info!("Waiting for kernel info reply");
+    log::info!("Waiting for kernel info reply");
     let reply = frontend.recv_shell();
     match reply {
         Message::KernelInfoReply(reply) => {
-            info!("Kernel info received: {:?}", reply);
+            log::info!("Kernel info received: {:?}", reply);
             assert_eq!(reply.content.language_info.name, "Test");
         },
         _ => {
             panic!("Unexpected message received: {:?}", reply);
         },
     }
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_idle();
+    frontend.assert_no_incoming();
 
     // Ask the kernel to execute some code
-    info!("Requesting execution of code '42'");
-    frontend.send_shell(ExecuteRequest {
-        code: "42".to_string(),
-        silent: false,
-        store_history: true,
-        user_expressions: serde_json::Value::Null,
-        allow_stdin: false,
-        stop_on_error: false,
-    });
+    log::info!("Requesting execution of code '42'");
 
-    // The kernel should send an execute reply message indicating that the execute succeeded
-    info!("Waiting for execute reply");
-    let reply = frontend.recv_shell();
-    match reply {
-        Message::ExecuteReply(reply) => {
-            info!("Received execute reply: {:?}", reply);
-            assert_eq!(reply.content.status, Status::Ok);
-            assert_eq!(reply.content.execution_count, 1);
-        },
-        _ => {
-            panic!("Unexpected execute reply received: {:?}", reply);
-        },
-    }
+    let code = "42";
+    frontend.send_execute_request(code, Default::default());
+    frontend.recv_iopub_busy();
 
-    // The IOPub channel should receive six messages, in this order:
-    // 1. A message indicating that the kernel has entered the busy state
-    //    (for the kernel_info_request)
-    // 2. A message indicating that the kernel has entered the idle state
-    //    (for the kernel_info_request)
-    // 3. A message indicating that the kernel has entered the busy state
-    //    (for the execute_request)
-    // 4. A message re-broadcasting the input
-    // 5. A message with the result of the execution
-    // 6. A message indicating that the kernel has exited the busy state
-    //    (for the execute_request)
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
 
-    info!("Waiting for IOPub execution information messsage 1 of 6: Status");
-    let iopub_1 = frontend.recv_iopub();
-    match iopub_1 {
-        Message::Status(status) => {
-            info!("Got kernel status: {:?}", status);
-            // TODO: validate parent header
-            assert_eq!(status.content.execution_state, ExecutionState::Busy);
-        },
-        _ => {
-            panic!(
-                "Unexpected message received (expected status): {:?}",
-                iopub_1
-            );
-        },
-    }
+    assert_eq!(frontend.recv_iopub_execute_result(), "42");
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 
-    info!("Waiting for IOPub execution information messsage 2 of 6: Status");
-    let iopub_2 = frontend.recv_iopub();
-    match iopub_2 {
-        Message::Status(status) => {
-            info!("Got kernel status: {:?}", status);
-            // TODO: validate parent header
-            assert_eq!(status.content.execution_state, ExecutionState::Idle);
-        },
-        _ => {
-            panic!(
-                "Unexpected message received (expected status): {:?}",
-                iopub_2
-            );
-        },
-    }
+    frontend.recv_iopub_idle();
+    frontend.assert_no_incoming();
 
-    info!("Waiting for IOPub execution information messsage 3 of 6: Status");
-    let iopub_3 = frontend.recv_iopub();
-    match iopub_3 {
-        Message::Status(status) => {
-            info!("Got kernel status: {:?}", status);
-            assert_eq!(status.content.execution_state, ExecutionState::Busy);
-        },
-        _ => {
-            panic!(
-                "Unexpected message received (expected status): {:?}",
-                iopub_3
-            );
-        },
-    }
+    // Test nested input request
+    log::info!("Sending request to generate an input prompt");
 
-    info!("Waiting for IOPub execution information messsage 4 of 6: Input Broadcast");
-    let iopub_4 = frontend.recv_iopub();
-    match iopub_4 {
-        Message::ExecuteInput(input) => {
-            info!("Got input rebroadcast: {:?}", input);
-            assert_eq!(input.content.code, "42");
-        },
-        _ => {
-            panic!(
-                "Unexpected message received (expected input rebroadcast): {:?}",
-                iopub_4
-            );
-        },
-    }
+    let code = "prompt";
+    frontend.send_execute_request(code, Default::default());
+    frontend.recv_iopub_busy();
 
-    info!("Waiting for IOPub execution information messsage 5 of 6: Execution Result");
-    let iopub_5 = frontend.recv_iopub();
-    match iopub_5 {
-        Message::ExecuteResult(result) => {
-            info!("Got execution result: {:?}", result);
-        },
-        _ => {
-            panic!(
-                "Unexpected message received (expected execution result): {:?}",
-                iopub_5
-            );
-        },
-    }
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
 
-    info!("Waiting for IOPub execution information messsage 6 of 6: Status");
-    let iopub_6 = frontend.recv_iopub();
-    match iopub_6 {
-        Message::Status(status) => {
-            info!("Got kernel status: {:?}", status);
-            assert_eq!(status.content.execution_state, ExecutionState::Idle);
-        },
-        _ => {
-            panic!(
-                "Unexpected message received (expected status): {:?}",
-                iopub_6
-            );
-        },
-    }
+    let prompt = frontend.recv_stdin_input_request();
+    assert_eq!(prompt, "Amalthea Echo> ");
 
-    info!("Sending request to generate an input prompt");
-    frontend.send_shell(ExecuteRequest {
-        code: "prompt".to_string(),
-        silent: false,
-        store_history: true,
-        user_expressions: serde_json::Value::Null,
-        allow_stdin: true,
-        stop_on_error: false,
-    });
+    frontend.send_stdin_input_reply(String::from("42"));
 
-    info!("Waiting for kernel to send an input request");
-    let request = frontend.recv_stdin();
-    match request {
-        Message::InputRequest(request) => {
-            info!("Got input request: {:?}", request);
-            assert_eq!(request.content.prompt, "Amalthea Echo> ");
-        },
-        _ => {
-            panic!(
-                "Unexpected message received (expected input request): {:?}",
-                request
-            );
-        },
-    }
+    frontend.recv_iopub_stream_stdout("42");
+    assert_eq!(frontend.recv_iopub_execute_result(), "prompt");
 
-    info!("Sending input to the kernel");
-    frontend.send_stdin(InputReply {
-        value: "42".to_string(),
-    });
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 
-    // Consume the IOPub messages that the kernel sends back during the
-    // processing of the above `prompt` execution request
-    assert_eq!(
-        // Status: Busy
-        WireMessage::try_from(&frontend.recv_iopub())
-            .unwrap()
-            .message_type(),
-        KernelStatus::message_type()
-    );
-    assert_eq!(
-        // ExecuteInput (re-broadcast of 'Prompt')
-        WireMessage::try_from(&frontend.recv_iopub())
-            .unwrap()
-            .message_type(),
-        ExecuteInput::message_type()
-    );
-    assert_eq!(
-        // StreamOutput (echoed input)
-        WireMessage::try_from(&frontend.recv_iopub())
-            .unwrap()
-            .message_type(),
-        StreamOutput::message_type()
-    );
-    assert_eq!(
-        // ExecuteResult
-        WireMessage::try_from(&frontend.recv_iopub())
-            .unwrap()
-            .message_type(),
-        ExecuteResult::message_type()
-    );
-    assert_eq!(
-        // Status: Idle
-        WireMessage::try_from(&frontend.recv_iopub())
-            .unwrap()
-            .message_type(),
-        KernelStatus::message_type()
-    );
-
-    // The kernel should send an execute reply message indicating that the execute
-    // of the 'prompt' command succeeded
-    info!("Waiting for execute reply");
-    let reply = frontend.recv_shell();
-    match reply {
-        Message::ExecuteReply(reply) => {
-            info!("Received execute reply: {:?}", reply);
-            assert_eq!(reply.content.status, Status::Ok);
-            assert_eq!(reply.content.execution_count, 2);
-        },
-        _ => {
-            panic!("Unexpected execute reply received: {:?}", reply);
-        },
-    }
+    frontend.recv_iopub_idle();
+    frontend.assert_no_incoming();
 
     // Test the heartbeat
-    info!("Sending heartbeat to the kernel");
-    let msg = zmq::Message::from("Heartbeat");
-    frontend.send_heartbeat(msg);
-
-    info!("Waiting for heartbeat reply");
-    let reply = frontend.recv_heartbeat();
-    assert_eq!(reply, zmq::Message::from("Heartbeat"));
+    frontend.send_heartbeat(zmq::Message::from("Heartbeat"));
+    assert_eq!(frontend.recv_heartbeat(), zmq::Message::from("Heartbeat"));
 
     // Test the comms
-    info!("Sending comm open request to the kernel");
+    log::info!("Sending comm open request to the kernel");
     let comm_id = "A3A6D0EA-1443-4F70-B059-F423E445B8D6";
 
     frontend.send_shell(CommOpen {
@@ -363,15 +179,18 @@ fn test_kernel() {
     // processing of the above `CommOpen` request
     frontend.recv_iopub_busy();
     frontend.recv_iopub_idle();
+    frontend.assert_no_incoming();
 
-    info!("Requesting comm info from the kernel (to test opening from the frontend)");
+    log::info!("Requesting comm info from the kernel (to test opening from the frontend)");
     frontend.send_shell(CommInfoRequest {
         target_name: "".to_string(),
     });
+    frontend.recv_iopub_busy();
+
     let reply = frontend.recv_shell();
     match reply {
         Message::CommInfoReply(request) => {
-            info!("Got comm info: {:?}", request);
+            log::info!("Got comm info: {:?}", request);
             // Ensure the comm we just opened is in the list of comms
             let comms = request.content.comms;
             assert!(comms.contains_key(comm_id));
@@ -384,17 +203,22 @@ fn test_kernel() {
         },
     }
 
+    frontend.recv_iopub_idle();
+    frontend.assert_no_incoming();
+
     // Test requesting comm info and filtering by target name. We should get
     // back an empty list of comms, since we haven't opened any comms with
     // the target name "i-think-not".
-    info!("Requesting comm info from the kernel for a non-existent comm");
+    log::info!("Requesting comm info from the kernel for a non-existent comm");
     frontend.send_shell(CommInfoRequest {
         target_name: "i-think-not".to_string(),
     });
+    frontend.recv_iopub_busy();
+
     let reply = frontend.recv_shell();
     match reply {
         Message::CommInfoReply(request) => {
-            info!("Got comm info: {:?}", request);
+            log::info!("Got comm info: {:?}", request);
             let comms = request.content.comms;
             assert!(comms.is_empty());
         },
@@ -406,7 +230,10 @@ fn test_kernel() {
         },
     }
 
-    info!("Sending comm message to the test comm and waiting for a reply");
+    frontend.recv_iopub_idle();
+    frontend.assert_no_incoming();
+
+    log::info!("Sending comm message to the test comm and waiting for a reply");
     let comm_req_id = frontend.send_shell(CommWireMsg {
         comm_id: comm_id.to_string(),
         data: serde_json::Value::Null,
@@ -448,27 +275,27 @@ fn test_kernel() {
     }
 
     // Test closing the comm we just opened
-    info!("Sending comm close request to the kernel");
+    log::info!("Sending comm close request to the kernel");
     frontend.send_shell(CommClose {
         comm_id: comm_id.to_string(),
     });
 
     // Absorb the IOPub messages that the kernel sends back during the
     // processing of the above `CommClose` request
-    info!("Receiving comm close IOPub messages from the kernel");
+    log::info!("Receiving comm close IOPub messages from the kernel");
     frontend.recv_iopub_busy();
     frontend.recv_iopub_idle();
 
     // Test to see if the comm is still in the list of comms after closing it
     // (it should not be)
-    info!("Requesting comm info from the kernel (to test closing)");
+    log::info!("Requesting comm info from the kernel (to test closing)");
     frontend.send_shell(CommInfoRequest {
         target_name: "variables".to_string(),
     });
     let reply = frontend.recv_shell();
     match reply {
         Message::CommInfoReply(request) => {
-            info!("Got comm info: {:?}", request);
+            log::info!("Got comm info: {:?}", request);
             // Ensure the comm we just closed not present in the list of comms
             let comms = request.content.comms;
             assert!(!comms.contains_key(comm_id));
@@ -482,7 +309,7 @@ fn test_kernel() {
     }
 
     // Now test opening a comm from the kernel side
-    info!("Creating a comm from the kernel side");
+    log::info!("Creating a comm from the kernel side");
     let test_comm_id = String::from("test_comm_id_84e7fe");
     let test_comm_name = String::from("test_target");
     let test_comm = CommSocket::new(
@@ -520,14 +347,14 @@ fn test_kernel() {
     // frontend, but this time we're testing the other direction, to ensure that
     // the kernel is correctly tracking the list of comms regardless of where
     // they originated.
-    info!("Requesting comm info from the kernel (to test opening from the back end)");
+    log::info!("Requesting comm info from the kernel (to test opening from the back end)");
     frontend.send_shell(CommInfoRequest {
         target_name: test_comm_name.clone(),
     });
     let reply = frontend.recv_shell();
     match reply {
         Message::CommInfoReply(request) => {
-            info!("Got comm info: {:?}", request);
+            log::info!("Got comm info: {:?}", request);
             // Ensure the comm we just opened is in the list of comms
             let comms = request.content.comms;
             assert!(comms.contains_key(&test_comm_id));
@@ -582,4 +409,6 @@ fn test_kernel() {
             },
         }
     }
+
+    frontend.assert_no_incoming();
 }
