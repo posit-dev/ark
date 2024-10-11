@@ -187,10 +187,11 @@ impl DummyArkFrontendRprofile {
     /// Lock a frontend that supports `.Rprofile`s.
     ///
     /// NOTE: This variant can only be called exactly once per process,
-    /// because you can only load an `.Rprofile` one time.
-    ///
-    /// NOTE: Only one `DummyArkFrontend` variant should call `lock()` within
-    /// a given process.
+    /// because you can only load an `.Rprofile` one time. Additionally,
+    /// only one `DummyArkFrontend` variant should call `lock()` within
+    /// a given process. Practically, this ends up meaning you can only
+    /// have 1 test block per integration test that uses a
+    /// `DummyArkFrontendRprofile`.
     pub fn lock() -> Self {
         Self::init();
 
