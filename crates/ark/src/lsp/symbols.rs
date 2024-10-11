@@ -122,7 +122,7 @@ fn is_indexable(node: &Node) -> bool {
 
 // Function to parse a comment and return the section level and title
 fn parse_comment_as_section(comment: &str) -> Option<(usize, String)> {
-    // Match lines starting with one or more '#' followed by some non-empty content and must end with 4 or more '-' or '#'
+    // Match lines starting with one or more '#' followed by some non-empty content and must end with 4 or more '-', '#', or `=`
     // Ensure that there's actual content between the start and the trailing symbols.
     let comment_re = regex::Regex::new(r"^(#+)\s*([^\s#-].+?)\s*(#{4,}|-{4,}|={4,})$").unwrap();
 
