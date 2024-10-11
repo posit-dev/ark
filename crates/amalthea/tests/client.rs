@@ -21,35 +21,32 @@ use amalthea::wire::comm_open::CommOpen;
 use amalthea::wire::jupyter_message::Message;
 use amalthea::wire::kernel_info_request::KernelInfoRequest;
 use amalthea::wire::status::ExecutionState;
+use assert_matches::assert_matches;
 use dummy_frontend::DummyAmaltheaFrontend;
 use serde_json;
 
 #[test]
-fn test_kernel() {
-    let mut frontend = DummyAmaltheaFrontend::lock();
+fn test_amalthea_kernel_info() {
+    let frontend = DummyAmaltheaFrontend::lock();
 
     // Ask the kernel for the kernel info. This should return an object with the
     // language "Test" defined in our shell handler.
-    log::info!("Requesting kernel information");
     frontend.send_shell(KernelInfoRequest {});
-
-    log::info!("Waiting for kernel info reply");
-    let reply = frontend.recv_shell();
-    match reply {
-        Message::KernelInfoReply(reply) => {
-            log::info!("Kernel info received: {:?}", reply);
-            assert_eq!(reply.content.language_info.name, "Test");
-        },
-        _ => {
-            panic!("Unexpected message received: {:?}", reply);
-        },
-    }
     frontend.recv_iopub_busy();
-    frontend.recv_iopub_idle();
-    frontend.assert_no_incoming();
 
-    // Ask the kernel to execute some code
-    log::info!("Requesting execution of code '42'");
+    assert_matches!(
+        frontend.recv_shell(),
+        Message::KernelInfoReply(reply) => {
+            assert_eq!(reply.content.language_info.name, "Test");
+        }
+    );
+
+    frontend.recv_iopub_idle();
+}
+
+#[test]
+fn test_amalthea_execute_request() {
+    let frontend = DummyAmaltheaFrontend::lock();
 
     let code = "42";
     frontend.send_execute_request(code, Default::default());
@@ -62,10 +59,11 @@ fn test_kernel() {
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 
     frontend.recv_iopub_idle();
-    frontend.assert_no_incoming();
+}
 
-    // Test nested input request
-    log::info!("Sending request to generate an input prompt");
+#[test]
+fn test_amalthea_input_request() {
+    let frontend = DummyAmaltheaFrontend::lock();
 
     let code = "prompt";
     frontend.send_execute_request(code, Default::default());
@@ -85,14 +83,20 @@ fn test_kernel() {
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 
     frontend.recv_iopub_idle();
-    frontend.assert_no_incoming();
+}
 
-    // Test the heartbeat
+#[test]
+fn test_amalthea_heartbeat() {
+    let frontend = DummyAmaltheaFrontend::lock();
+
     frontend.send_heartbeat(zmq::Message::from("Heartbeat"));
     assert_eq!(frontend.recv_heartbeat(), zmq::Message::from("Heartbeat"));
+}
 
-    // Test the comms
-    log::info!("Sending comm open request to the kernel");
+#[test]
+fn test_amalthea_comms() {
+    let mut frontend = DummyAmaltheaFrontend::lock();
+
     let comm_id = "A3A6D0EA-1443-4F70-B059-F423E445B8D6";
 
     frontend.send_shell(CommOpen {
@@ -117,27 +121,16 @@ fn test_kernel() {
     frontend.recv_iopub_idle();
     frontend.assert_no_incoming();
 
-    log::info!("Requesting comm info from the kernel (to test opening from the frontend)");
     frontend.send_shell(CommInfoRequest {
         target_name: "".to_string(),
     });
     frontend.recv_iopub_busy();
 
-    let reply = frontend.recv_shell();
-    match reply {
-        Message::CommInfoReply(request) => {
-            log::info!("Got comm info: {:?}", request);
-            // Ensure the comm we just opened is in the list of comms
-            let comms = request.content.comms;
-            assert!(comms.contains_key(comm_id));
-        },
-        _ => {
-            panic!(
-                "Unexpected message received (expected comm info): {:?}",
-                reply
-            );
-        },
-    }
+    assert_matches!(frontend.recv_shell(), Message::CommInfoReply(request) => {
+        // Ensure the comm we just opened is in the list of comms
+        let comms = request.content.comms;
+        assert!(comms.contains_key(comm_id));
+    });
 
     frontend.recv_iopub_idle();
     frontend.assert_no_incoming();
@@ -145,31 +138,19 @@ fn test_kernel() {
     // Test requesting comm info and filtering by target name. We should get
     // back an empty list of comms, since we haven't opened any comms with
     // the target name "i-think-not".
-    log::info!("Requesting comm info from the kernel for a non-existent comm");
     frontend.send_shell(CommInfoRequest {
         target_name: "i-think-not".to_string(),
     });
     frontend.recv_iopub_busy();
 
-    let reply = frontend.recv_shell();
-    match reply {
-        Message::CommInfoReply(request) => {
-            log::info!("Got comm info: {:?}", request);
-            let comms = request.content.comms;
-            assert!(comms.is_empty());
-        },
-        _ => {
-            panic!(
-                "Unexpected message received (expected comm info): {:?}",
-                reply
-            );
-        },
-    }
+    assert_matches!(frontend.recv_shell(), Message::CommInfoReply(request) => {
+        let comms = request.content.comms;
+        assert!(comms.is_empty());
+    });
 
     frontend.recv_iopub_idle();
     frontend.assert_no_incoming();
 
-    log::info!("Sending comm message to the test comm and waiting for a reply");
     let comm_req_id = frontend.send_shell(CommWireMsg {
         comm_id: comm_id.to_string(),
         data: serde_json::Value::Null,
@@ -217,7 +198,6 @@ fn test_kernel() {
     }
 
     // Test closing the comm we just opened
-    log::info!("Sending comm close request to the kernel");
     frontend.send_shell(CommClose {
         comm_id: comm_id.to_string(),
     });
@@ -227,28 +207,26 @@ fn test_kernel() {
 
     // Test to see if the comm is still in the list of comms after closing it
     // (it should not be)
-    log::info!("Requesting comm info from the kernel (to test closing)");
     frontend.send_shell(CommInfoRequest {
         target_name: "variables".to_string(),
     });
-    let reply = frontend.recv_shell();
-    match reply {
-        Message::CommInfoReply(request) => {
-            log::info!("Got comm info: {:?}", request);
-            // Ensure the comm we just closed not present in the list of comms
-            let comms = request.content.comms;
-            assert!(!comms.contains_key(comm_id));
-        },
-        _ => {
-            panic!(
-                "Unexpected message received (expected comm info): {:?}",
-                reply
-            );
-        },
-    }
+    frontend.recv_iopub_busy();
+
+    assert_matches!(frontend.recv_shell(), Message::CommInfoReply(request) => {
+        // Ensure the comm we just closed not present in the list of comms
+        let comms = request.content.comms;
+        assert!(!comms.contains_key(comm_id));
+    });
+
+    frontend.recv_iopub_idle();
+}
+
+#[test]
+fn test_amalthea_comm_open_from_kernel() {
+    let frontend = DummyAmaltheaFrontend::lock();
 
     // Now test opening a comm from the kernel side
-    log::info!("Creating a comm from the kernel side");
+
     let test_comm_id = String::from("test_comm_id_84e7fe");
     let test_comm_name = String::from("test_target");
     let test_comm = CommSocket::new(
@@ -288,30 +266,20 @@ fn test_kernel() {
     // frontend, but this time we're testing the other direction, to ensure that
     // the kernel is correctly tracking the list of comms regardless of where
     // they originated.
-    log::info!("Requesting comm info from the kernel (to test opening from the back end)");
     frontend.send_shell(CommInfoRequest {
         target_name: test_comm_name.clone(),
     });
-    let reply = frontend.recv_shell();
-    match reply {
-        Message::CommInfoReply(request) => {
-            log::info!("Got comm info: {:?}", request);
-            // Ensure the comm we just opened is in the list of comms
-            let comms = request.content.comms;
-            assert!(comms.contains_key(&test_comm_id));
 
-            // Ensure the comm we just opened has the correct target name
-            let comm = comms.get(&test_comm_id).unwrap();
-            let target = serde_json::from_value::<CommInfoTargetName>(comm.clone()).unwrap();
-            assert!(target.target_name == test_comm_name)
-        },
-        _ => {
-            panic!(
-                "Unexpected message received (expected comm info): {:?}",
-                reply
-            );
-        },
-    }
+    assert_matches!(frontend.recv_shell(), Message::CommInfoReply(request) => {
+        // Ensure the comm we just opened is in the list of comms
+        let comms = request.content.comms;
+        assert!(comms.contains_key(&test_comm_id));
+
+        // Ensure the comm we just opened has the correct target name
+        let comm = comms.get(&test_comm_id).unwrap();
+        let target = serde_json::from_value::<CommInfoTargetName>(comm.clone()).unwrap();
+        assert!(target.target_name == test_comm_name)
+    });
 
     // Now send a message from the backend to the frontend using the comm we just
     // created.
@@ -350,6 +318,4 @@ fn test_kernel() {
             },
         }
     }
-
-    frontend.assert_no_incoming();
 }
