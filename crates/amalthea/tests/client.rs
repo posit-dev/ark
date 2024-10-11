@@ -246,20 +246,9 @@ fn test_amalthea_comm_open_from_kernel() {
     // Wait for the comm open message to be received by the frontend. We should get
     // a CommOpen message on the IOPub channel notifying the frontend that the new comm
     // has been opened.
-    //
-    // We do this in a loop because we expect a number of other messages, e.g. busy/idle
-    loop {
-        let msg = frontend.recv_iopub();
-        match msg {
-            Message::CommOpen(msg) => {
-                assert_eq!(msg.content.comm_id, test_comm_id);
-                break;
-            },
-            _ => {
-                continue;
-            },
-        }
-    }
+    assert_matches!(frontend.recv_iopub(), Message::CommOpen(msg) => {
+        assert_eq!(msg.content.comm_id, test_comm_id);
+    });
 
     // Query the kernel to see if the comm we just opened is in the list of
     // comms. It's similar to the test done above for opening a comm from the
@@ -269,6 +258,8 @@ fn test_amalthea_comm_open_from_kernel() {
     frontend.send_shell(CommInfoRequest {
         target_name: test_comm_name.clone(),
     });
+
+    frontend.recv_iopub_busy();
 
     assert_matches!(frontend.recv_shell(), Message::CommInfoReply(request) => {
         // Ensure the comm we just opened is in the list of comms
@@ -281,6 +272,8 @@ fn test_amalthea_comm_open_from_kernel() {
         assert!(target.target_name == test_comm_name)
     });
 
+    frontend.recv_iopub_idle();
+
     // Now send a message from the backend to the frontend using the comm we just
     // created.
     test_comm
@@ -288,34 +281,15 @@ fn test_amalthea_comm_open_from_kernel() {
         .send(CommMsg::Data(serde_json::Value::Null))
         .unwrap();
 
-    // Wait for the comm data message to be received by the frontend.
-    loop {
-        let msg = frontend.recv_iopub();
-        match msg {
-            Message::CommMsg(msg) => {
-                assert_eq!(msg.content.comm_id, test_comm_id);
-                break;
-            },
-            _ => {
-                continue;
-            },
-        }
-    }
+    assert_matches!(frontend.recv_iopub(), Message::CommMsg(msg) => {
+        assert_eq!(msg.content.comm_id, test_comm_id);
+    });
 
     // Close the test comm from the backend side
     test_comm.outgoing_tx.send(CommMsg::Close).unwrap();
 
     // Ensure that the frontend is notified
-    loop {
-        let msg = frontend.recv_iopub();
-        match msg {
-            Message::CommClose(msg) => {
-                assert_eq!(msg.content.comm_id, test_comm_id);
-                break;
-            },
-            _ => {
-                continue;
-            },
-        }
-    }
+    assert_matches!(frontend.recv_iopub(), Message::CommClose(msg) => {
+        assert_eq!(msg.content.comm_id, test_comm_id);
+    });
 }
