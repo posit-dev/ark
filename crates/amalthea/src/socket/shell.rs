@@ -188,11 +188,7 @@ impl Shell {
                 req.send_execute_error(error, exec_count, &self.socket)
             },
             Err(err) => {
-                let error = Exception {
-                    ename: String::from("InternalError"),
-                    evalue: format!("{err:?}"),
-                    traceback: vec![],
-                };
+                let error = Exception::internal_error(format!("{err:?}"));
                 req.send_error::<Rep>(error, &self.socket)
             },
         };

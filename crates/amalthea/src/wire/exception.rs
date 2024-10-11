@@ -20,3 +20,13 @@ pub struct Exception {
     /// List of traceback frames, as strings
     pub traceback: Vec<String>,
 }
+
+impl Exception {
+    pub fn internal_error(evalue: String) -> Self {
+        Exception {
+            ename: String::from("InternalError"),
+            evalue,
+            traceback: vec![],
+        }
+    }
+}
