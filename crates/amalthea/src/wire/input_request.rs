@@ -49,7 +49,7 @@ pub struct UiCommFrontendRequest {
     pub originator: Originator,
 
     /// The response channel for the request
-    pub response_tx: Sender<StdInRpcReply>,
+    pub reply_tx: Sender<StdInRpcReply>,
 
     /// The actual comm request
     pub request: UiFrontendRequest,
@@ -57,6 +57,6 @@ pub struct UiCommFrontendRequest {
 
 #[derive(Debug, Clone)]
 pub enum StdInRpcReply {
-    Response(JsonRpcReply),
+    Reply(JsonRpcReply),
     Interrupt,
 }
