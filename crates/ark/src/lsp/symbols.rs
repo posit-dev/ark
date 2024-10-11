@@ -60,7 +60,7 @@ pub fn symbols(params: &WorkspaceSymbolParams) -> anyhow::Result<Vec<SymbolInfor
             IndexEntryData::Section { level: _, title } => {
                 info.push(SymbolInformation {
                     name: title.to_string(),
-                    kind: SymbolKind::MODULE,
+                    kind: SymbolKind::STRING,
                     location: Location {
                         uri: Url::from_file_path(path).unwrap(),
                         range: entry.range,
