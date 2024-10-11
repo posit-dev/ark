@@ -411,14 +411,17 @@ fn test_kernel() {
         comm_id: comm_id.to_string(),
         data: serde_json::Value::Null,
     });
-    loop {
-        let msg = frontend.recv_iopub();
-        match msg {
-            Message::CommMsg(msg) => {
-                // This is the message we were looking for; break out of the
-                // loop
-                info!("Got comm message: {:?}", msg);
 
+    frontend.recv_iopub_busy();
+
+    // This runs in a loop because the ordering of the Idle status and the reply
+    // is undetermined.
+    loop {
+        let mut got_idle = false;
+        let mut got_reply = false;
+
+        match frontend.recv_iopub() {
+            Message::CommMsg(msg) => {
                 // Ensure that the comm ID in the message matches the comm ID we
                 // sent
                 assert_eq!(msg.content.comm_id, comm_id);
@@ -427,15 +430,20 @@ fn test_kernel() {
                 // matches the message ID of the comm message we sent; this is
                 // how RPC responses are aligned with requests
                 assert_eq!(msg.parent_header.unwrap().msg_id, comm_req_id);
-                break;
+
+                got_reply = true;
             },
-            _ => {
-                // It isn't the message; keep looking for it (we expect a
-                // number of other messages, e.g. busy/idle notifications as
-                // the kernel processes the comm message)
-                info!("Ignoring message: {:?}", msg);
-                continue;
+            Message::Status(msg) => {
+                assert_eq!(msg.content.execution_state, ExecutionState::Idle);
+                got_idle = true;
             },
+            msg => {
+                panic!("Unexpected IOPub message: {msg:?}");
+            },
+        }
+
+        if got_idle && got_reply {
+            break;
         }
     }
 
@@ -448,8 +456,8 @@ fn test_kernel() {
     // Absorb the IOPub messages that the kernel sends back during the
     // processing of the above `CommClose` request
     info!("Receiving comm close IOPub messages from the kernel");
-    frontend.recv_iopub(); // Busy
-    frontend.recv_iopub(); // Idle
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_idle();
 
     // Test to see if the comm is still in the list of comms after closing it
     // (it should not be)
