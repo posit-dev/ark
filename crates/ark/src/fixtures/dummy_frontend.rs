@@ -56,14 +56,7 @@ impl DummyArkFrontend {
     fn get_frontend() -> &'static Arc<Mutex<DummyFrontend>> {
         // These are the hard-coded defaults. Call `init()` explicitly to
         // override.
-        let options = DummyArkFrontendOptions {
-            interactive: true,
-            site_r_profile: false,
-            user_r_profile: false,
-            r_environ: false,
-            session_mode: SessionMode::Console,
-        };
-
+        let options = DummyArkFrontendOptions::default();
         FRONTEND.get_or_init(|| Arc::new(Mutex::new(DummyArkFrontend::init(options))))
     }
 
@@ -156,14 +149,8 @@ impl DummyArkFrontendNotebook {
 
     /// Initialize with Notebook session mode
     fn init() {
-        let options = DummyArkFrontendOptions {
-            interactive: true,
-            site_r_profile: false,
-            user_r_profile: false,
-            r_environ: false,
-            session_mode: SessionMode::Notebook,
-        };
-
+        let mut options = DummyArkFrontendOptions::default();
+        options.session_mode = SessionMode::Notebook;
         FRONTEND.get_or_init(|| Arc::new(Mutex::new(DummyArkFrontend::init(options))));
     }
 }
@@ -202,14 +189,8 @@ impl DummyArkFrontendRprofile {
 
     /// Initialize with user level `.Rprofile` enabled
     fn init() {
-        let options = DummyArkFrontendOptions {
-            interactive: true,
-            site_r_profile: false,
-            user_r_profile: true,
-            r_environ: false,
-            session_mode: SessionMode::Console,
-        };
-
+        let mut options = DummyArkFrontendOptions::default();
+        options.user_r_profile = true;
         let status = FRONTEND.set(Arc::new(Mutex::new(DummyArkFrontend::init(options))));
 
         if status.is_err() {
@@ -232,5 +213,17 @@ impl Deref for DummyArkFrontendRprofile {
 impl DerefMut for DummyArkFrontendRprofile {
     fn deref_mut(&mut self) -> &mut Self::Target {
         DerefMut::deref_mut(&mut self.inner)
+    }
+}
+
+impl Default for DummyArkFrontendOptions {
+    fn default() -> Self {
+        Self {
+            interactive: true,
+            site_r_profile: false,
+            user_r_profile: false,
+            r_environ: false,
+            session_mode: SessionMode::Console,
+        }
     }
 }
