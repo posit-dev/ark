@@ -144,7 +144,7 @@ impl DerefMut for DummyArkFrontend {
 impl DummyArkFrontendNotebook {
     /// Lock a notebook frontend.
     ///
-    /// NOTE: Only one `DummyArkFrontend` should call `lock()` within
+    /// NOTE: Only one `DummyArkFrontend` variant should call `lock()` within
     /// a given process.
     pub fn lock() -> Self {
         Self::init();
@@ -186,7 +186,10 @@ impl DerefMut for DummyArkFrontendNotebook {
 impl DummyArkFrontendRprofile {
     /// Lock a frontend that supports `.Rprofile`s.
     ///
-    /// NOTE: Only one `DummyArkFrontend` should call `lock()` within
+    /// NOTE: This variant can only be called exactly once per process,
+    /// because you can only load an `.Rprofile` one time.
+    ///
+    /// NOTE: Only one `DummyArkFrontend` variant should call `lock()` within
     /// a given process.
     pub fn lock() -> Self {
         Self::init();
@@ -206,7 +209,13 @@ impl DummyArkFrontendRprofile {
             session_mode: SessionMode::Console,
         };
 
-        FRONTEND.get_or_init(|| Arc::new(Mutex::new(DummyArkFrontend::init(options))));
+        let status = FRONTEND.set(Arc::new(Mutex::new(DummyArkFrontend::init(options))));
+
+        if status.is_err() {
+            panic!("You can only call `DummyArkFrontendRprofile::lock()` once per process.");
+        }
+
+        FRONTEND.get().unwrap();
     }
 }
 
