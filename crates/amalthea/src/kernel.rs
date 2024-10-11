@@ -104,7 +104,6 @@ pub fn connect(
     )?;
     let shell_port = port_finalize(&shell_socket, connection_file.shell_port)?;
 
-    let shell_clone = shell_handler.clone();
     let iopub_tx_clone = iopub_tx.clone();
     let lsp_handler_clone = lsp_handler.clone();
     let dap_handler_clone = dap_handler.clone();
@@ -113,7 +112,7 @@ pub fn connect(
             shell_socket,
             iopub_tx_clone,
             comm_manager_tx,
-            shell_clone,
+            shell_handler,
             lsp_handler_clone,
             dap_handler_clone,
         )
