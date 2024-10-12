@@ -1,7 +1,7 @@
 /*
  * shell.rs
  *
- * Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+ * Copyright (C) 2022-2024 Posit Software, PBC. All rights reserved.
  *
  */
 
@@ -11,7 +11,6 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use crossbeam::channel::Receiver;
-use crossbeam::channel::SendError;
 use crossbeam::channel::Sender;
 use futures::executor::block_on;
 use serde_json::json;
@@ -166,9 +165,9 @@ impl Shell {
         Handler: FnOnce(&Req) -> crate::Result<Rep>,
     {
         // Enter the kernel-busy state in preparation for handling the message.
-        if let Err(err) = self.send_state(req.clone(), ExecutionState::Busy) {
-            log::warn!("Failed to change kernel status to busy: {err}")
-        }
+        self.iopub_tx
+            .send(status(req.clone(), ExecutionState::Busy))
+            .unwrap();
 
         log::info!("Received shell request: {req:?}");
 
@@ -196,24 +195,11 @@ impl Shell {
         // Return to idle -- we always do this, even if the message generated an
         // error, since many frontends won't submit additional messages until
         // the kernel is marked idle.
-        if let Err(err) = self.send_state(req, ExecutionState::Idle) {
-            log::error!("Failed to restore kernel status to idle: {err}")
-        }
+        self.iopub_tx
+            .send(status(req.clone(), ExecutionState::Idle))
+            .unwrap();
 
         result.and(Ok(()))
-    }
-
-    /// Sets the kernel state by sending a message on the IOPub channel.
-    fn send_state<T: ProtocolMessage>(
-        &self,
-        parent: JupyterMessage<T>,
-        state: ExecutionState,
-    ) -> Result<(), SendError<IOPubMessage>> {
-        let reply = KernelStatus {
-            execution_state: state,
-        };
-        let message = IOPubMessage::Status(parent.header, IOPubContextChannel::Shell, reply);
-        self.iopub_tx.send(message)
     }
 
     /// Handle a request for open comms
@@ -260,9 +246,9 @@ impl Shell {
         log::info!("Received request to open comm: {req:?}");
 
         // Enter the kernel-busy state in preparation for handling the message.
-        if let Err(err) = self.send_state(req.clone(), ExecutionState::Busy) {
-            log::warn!("Failed to change kernel status to busy: {err}")
-        }
+        self.iopub_tx
+            .send(status(req.clone(), ExecutionState::Busy))
+            .unwrap();
 
         // Process the comm open request
         let result = self.open_comm(shell_handler, req.clone());
@@ -278,9 +264,9 @@ impl Shell {
         }
 
         // Return kernel to idle state
-        if let Err(err) = self.send_state(req, ExecutionState::Idle) {
-            log::warn!("Failed to restore kernel status to idle: {err}")
-        }
+        self.iopub_tx
+            .send(status(req.clone(), ExecutionState::Idle))
+            .unwrap();
 
         Ok(())
     }
@@ -292,9 +278,9 @@ impl Shell {
         log::info!("Received request to send a message on a comm: {req:?}");
 
         // Enter the kernel-busy state in preparation for handling the message.
-        if let Err(err) = self.send_state(req.clone(), ExecutionState::Busy) {
-            log::warn!("Failed to change kernel status to busy: {err}")
-        }
+        self.iopub_tx
+            .send(status(req.clone(), ExecutionState::Busy))
+            .unwrap();
 
         // Store this message as a pending RPC request so that when the comm
         // responds, we can match it up
@@ -309,9 +295,9 @@ impl Shell {
             .unwrap();
 
         // Return kernel to idle state
-        if let Err(err) = self.send_state(req, ExecutionState::Idle) {
-            log::warn!("Failed to restore kernel status to idle: {err}")
-        }
+        self.iopub_tx
+            .send(status(req.clone(), ExecutionState::Idle))
+            .unwrap();
         Ok(())
     }
 
@@ -484,9 +470,9 @@ impl Shell {
         log::info!("Received request to close comm: {req:?}");
 
         // Enter the kernel-busy state in preparation for handling the message.
-        if let Err(err) = self.send_state(req.clone(), ExecutionState::Busy) {
-            log::warn!("Failed to change kernel status to busy: {err}")
-        }
+        self.iopub_tx
+            .send(status(req.clone(), ExecutionState::Busy))
+            .unwrap();
 
         // Send a notification to the comm message listener thread notifying it that
         // the comm has been closed
@@ -495,10 +481,18 @@ impl Shell {
             .unwrap();
 
         // Return kernel to idle state
-        if let Err(err) = self.send_state(req, ExecutionState::Idle) {
-            log::warn!("Failed to restore kernel status to idle: {err}")
-        }
+        self.iopub_tx
+            .send(status(req.clone(), ExecutionState::Idle))
+            .unwrap();
 
         Ok(())
     }
+}
+
+/// Create IOPub status message.
+fn status(parent: JupyterMessage<impl ProtocolMessage>, state: ExecutionState) -> IOPubMessage {
+    let reply = KernelStatus {
+        execution_state: state,
+    };
+    IOPubMessage::Status(parent.header, IOPubContextChannel::Shell, reply)
 }
