@@ -1,7 +1,7 @@
 /*
  * input_request.rs
  *
- * Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+ * Copyright (C) 2022-2024 Posit Software, PBC. All rights reserved.
  *
  */
 
@@ -48,7 +48,7 @@ pub struct UiCommFrontendRequest {
     /// comm request
     pub originator: Originator,
 
-    /// The response channel for the request
+    /// The reply channel for the request
     pub reply_tx: Sender<StdInRpcReply>,
 
     /// The actual comm request

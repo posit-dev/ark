@@ -85,10 +85,13 @@ impl Shell {
         lsp_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
         dap_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
     ) -> Self {
+        // Need a RefCell to allow handler methods to be mutable.
+        // We only run one handler at a time so this is safe.
+        let shell_handler = RefCell::new(shell_handler);
         Self {
             socket,
             iopub_tx,
-            shell_handler: RefCell::new(shell_handler),
+            shell_handler,
             lsp_handler,
             dap_handler,
             comm_manager_tx,

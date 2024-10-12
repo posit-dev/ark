@@ -228,7 +228,7 @@ pub struct RMain {
 struct ActiveReadConsoleRequest {
     exec_count: u32,
     request: ExecuteRequest,
-    orig: Originator,
+    originator: Originator,
     reply_tx: Sender<amalthea::Result<ExecuteReply>>,
 }
 
@@ -859,7 +859,7 @@ impl RMain {
                 // Send request to frontend. We'll wait for an `input_reply`
                 // from the frontend in the event loop in `read_console()`.
                 // The active request remains active.
-                self.request_input(req.orig.clone(), info.input_prompt.to_string());
+                self.request_input(req.originator.clone(), info.input_prompt.to_string());
                 return None;
             } else {
                 // Invalid input request, propagate error to R
@@ -922,7 +922,7 @@ impl RMain {
         }
 
         let input = match req {
-            RRequest::ExecuteCode(exec_req, orig, reply_tx) => {
+            RRequest::ExecuteCode(exec_req, originator, reply_tx) => {
                 // Extract input from request
                 let (input, exec_count) = { self.init_execute_request(&exec_req) };
 
@@ -930,7 +930,7 @@ impl RMain {
                 self.active_request = Some(ActiveReadConsoleRequest {
                     exec_count,
                     request: exec_req,
-                    orig,
+                    originator,
                     reply_tx,
                 });
 
@@ -1690,7 +1690,7 @@ impl RMain {
             anyhow::bail!("Error: No active request");
         };
 
-        let originator = req.orig.clone();
+        let originator = req.originator.clone();
 
         let comm_request = UiCommFrontendRequest {
             originator,

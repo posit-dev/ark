@@ -105,16 +105,14 @@ pub fn connect(
     let shell_port = port_finalize(&shell_socket, connection_file.shell_port)?;
 
     let iopub_tx_clone = iopub_tx.clone();
-    let lsp_handler_clone = lsp_handler.clone();
-    let dap_handler_clone = dap_handler.clone();
     spawn!(format!("{name}-shell"), move || {
         shell_thread(
             shell_socket,
             iopub_tx_clone,
             comm_manager_tx,
             shell_handler,
-            lsp_handler_clone,
-            dap_handler_clone,
+            lsp_handler,
+            dap_handler,
         )
     });
 

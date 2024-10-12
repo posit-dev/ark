@@ -1,7 +1,7 @@
 /*
  * exception.rs
  *
- * Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+ * Copyright (C) 2022-2024 Posit Software, PBC. All rights reserved.
  *
  */
 
@@ -23,7 +23,7 @@ pub struct Exception {
 
 impl Exception {
     pub fn internal_error(evalue: String) -> Self {
-        Exception {
+        Self {
             ename: String::from("InternalError"),
             evalue,
             traceback: vec![],
