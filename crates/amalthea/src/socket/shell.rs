@@ -1,16 +1,16 @@
 /*
  * shell.rs
  *
- * Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+ * Copyright (C) 2022-2024 Posit Software, PBC. All rights reserved.
  *
  */
 
+use std::cell::RefCell;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::Mutex;
 
 use crossbeam::channel::Receiver;
-use crossbeam::channel::SendError;
 use crossbeam::channel::Sender;
 use futures::executor::block_on;
 use serde_json::json;
@@ -36,19 +36,12 @@ use crate::wire::comm_info_reply::CommInfoTargetName;
 use crate::wire::comm_info_request::CommInfoRequest;
 use crate::wire::comm_msg::CommWireMsg;
 use crate::wire::comm_open::CommOpen;
-use crate::wire::complete_reply::CompleteReply;
-use crate::wire::complete_request::CompleteRequest;
-use crate::wire::execute_request::ExecuteRequest;
-use crate::wire::inspect_reply::InspectReply;
-use crate::wire::inspect_request::InspectRequest;
-use crate::wire::is_complete_reply::IsCompleteReply;
-use crate::wire::is_complete_request::IsCompleteRequest;
+use crate::wire::exception::Exception;
+use crate::wire::header::JupyterHeader;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
 use crate::wire::jupyter_message::ProtocolMessage;
 use crate::wire::jupyter_message::Status;
-use crate::wire::kernel_info_reply::KernelInfoReply;
-use crate::wire::kernel_info_request::KernelInfoRequest;
 use crate::wire::originator::Originator;
 use crate::wire::status::ExecutionState;
 use crate::wire::status::KernelStatus;
@@ -63,7 +56,7 @@ pub struct Shell {
     iopub_tx: Sender<IOPubMessage>,
 
     /// Language-provided shell handler object
-    shell_handler: Arc<Mutex<dyn ShellHandler>>,
+    shell_handler: RefCell<Box<dyn ShellHandler>>,
 
     /// Language-provided LSP handler object
     lsp_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
@@ -88,10 +81,13 @@ impl Shell {
         socket: Socket,
         iopub_tx: Sender<IOPubMessage>,
         comm_manager_tx: Sender<CommManagerEvent>,
-        shell_handler: Arc<Mutex<dyn ShellHandler>>,
+        shell_handler: Box<dyn ShellHandler>,
         lsp_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
         dap_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
     ) -> Self {
+        // Need a RefCell to allow handler methods to be mutable.
+        // We only run one handler at a time so this is safe.
+        let shell_handler = RefCell::new(shell_handler);
         Self {
             socket,
             iopub_tx,
@@ -120,36 +116,48 @@ impl Shell {
             // delivered to the client instead of reported up the stack, so the
             // only errors likely here are "can't deliver to client"
             if let Err(err) = self.process_message(message) {
-                log::warn!("Could not handle shell message: {err}");
+                log::error!("Could not handle shell message: {err}");
             }
         }
     }
 
     /// Process a message received from the front-end, optionally dispatching
     /// messages to the IOPub or execution threads
-    fn process_message(&mut self, msg: Message) -> Result<(), Error> {
+    fn process_message(&self, msg: Message) -> crate::Result<()> {
+        let shell_handler = &mut self.shell_handler.borrow_mut();
         match msg {
-            Message::KernelInfoRequest(req) => {
-                self.handle_request(req, |h, r| self.handle_info_request(h, r))
-            },
-            Message::IsCompleteRequest(req) => {
-                self.handle_request(req, |h, r| self.handle_is_complete_request(h, r))
-            },
+            Message::KernelInfoRequest(req) => self.handle_request(req.clone(), |msg| {
+                block_on(shell_handler.handle_info_request(msg))
+            }),
+            Message::IsCompleteRequest(req) => self.handle_request(req, |msg| {
+                block_on(shell_handler.handle_is_complete_request(msg))
+            }),
             Message::ExecuteRequest(req) => {
-                self.handle_request(req, |h, r| self.handle_execute_request(h, r))
+                // FIXME: We should ideally not pass the originator to the language kernel
+                let originator = Originator::from(&req);
+                self.handle_request(req, |msg| {
+                    block_on(shell_handler.handle_execute_request(originator, msg))
+                })
             },
-            Message::CompleteRequest(req) => {
-                self.handle_request(req, |h, r| self.handle_complete_request(h, r))
-            },
+            Message::CompleteRequest(req) => self.handle_request(req, |msg| {
+                block_on(shell_handler.handle_complete_request(msg))
+            }),
             Message::CommInfoRequest(req) => {
-                self.handle_request(req, |h, r| self.handle_comm_info_request(h, r))
+                self.handle_request(req, |msg| self.handle_comm_info_request(msg))
             },
-            Message::CommOpen(req) => self.handle_comm_open(req),
-            Message::CommMsg(req) => self.handle_request(req, |h, r| self.handle_comm_msg(h, r)),
-            Message::CommClose(req) => self.handle_comm_close(req),
-            Message::InspectRequest(req) => {
-                self.handle_request(req, |h, r| self.handle_inspect_request(h, r))
+            Message::CommOpen(req) => {
+                self.handle_notification(req, |msg| self.handle_comm_open(shell_handler, msg))
             },
+            Message::CommMsg(req) => {
+                let header = req.header.clone();
+                self.handle_notification(req, |msg| self.handle_comm_msg(header, msg))
+            },
+            Message::CommClose(req) => {
+                self.handle_notification(req, |msg| self.handle_comm_close(msg))
+            },
+            Message::InspectRequest(req) => self.handle_request(req, |msg| {
+                block_on(shell_handler.handle_inspect_request(msg))
+            }),
             _ => Err(Error::UnsupportedMessage(msg, String::from("shell"))),
         }
     }
@@ -157,23 +165,22 @@ impl Shell {
     /// Wrapper for all request handlers; emits busy, invokes the handler, then
     /// emits idle. Most frontends expect all shell messages to be wrapped in
     /// this pair of statuses.
-    fn handle_request<
-        T: ProtocolMessage,
-        H: Fn(&mut dyn ShellHandler, JupyterMessage<T>) -> Result<(), Error>,
-    >(
+    fn handle_request<Req, Rep, Handler>(
         &self,
-        req: JupyterMessage<T>,
-        handler: H,
-    ) -> Result<(), Error> {
-        use std::ops::DerefMut;
-
+        req: JupyterMessage<Req>,
+        handler: Handler,
+    ) -> crate::Result<()>
+    where
+        Req: ProtocolMessage,
+        Rep: ProtocolMessage,
+        Handler: FnOnce(&Req) -> crate::Result<Rep>,
+    {
         // Enter the kernel-busy state in preparation for handling the message.
-        if let Err(err) = self.send_state(req.clone(), ExecutionState::Busy) {
-            log::warn!("Failed to change kernel status to busy: {err}")
-        }
+        self.iopub_tx
+            .send(status(req.clone(), ExecutionState::Busy))
+            .unwrap();
 
-        // Lock the shell handler object on this thread
-        let mut shell_handler = self.shell_handler.lock().unwrap();
+        log::info!("Received shell request: {req:?}");
 
         // Handle the message!
         //
@@ -182,96 +189,59 @@ impl Shell {
         // is so we can mark the kernel as no longer busy when we're done, it'd
         // be better to take an async fn `handler` here just mark kernel as idle
         // when it finishes.
-        let result = handler(shell_handler.deref_mut(), req.clone());
+        let result = handler(&req.content);
+
+        let result = match result {
+            Ok(reply) => req.send_reply(reply, &self.socket),
+            Err(crate::Error::ShellErrorReply(error)) => req.send_error::<Rep>(error, &self.socket),
+            Err(crate::Error::ShellErrorExecuteReply(error, exec_count)) => {
+                req.send_execute_error(error, exec_count, &self.socket)
+            },
+            Err(err) => {
+                let error = Exception::internal_error(format!("{err:?}"));
+                req.send_error::<Rep>(error, &self.socket)
+            },
+        };
 
         // Return to idle -- we always do this, even if the message generated an
         // error, since many frontends won't submit additional messages until
         // the kernel is marked idle.
-        if let Err(err) = self.send_state(req, ExecutionState::Idle) {
-            log::warn!("Failed to restore kernel status to idle: {err}")
-        }
+        self.iopub_tx
+            .send(status(req.clone(), ExecutionState::Idle))
+            .unwrap();
+
+        result.and(Ok(()))
+    }
+
+    fn handle_notification<Not, Handler>(
+        &self,
+        not: JupyterMessage<Not>,
+        handler: Handler,
+    ) -> crate::Result<()>
+    where
+        Not: ProtocolMessage,
+        Handler: FnOnce(&Not) -> crate::Result<()>,
+    {
+        // Enter the kernel-busy state in preparation for handling the message
+        self.iopub_tx
+            .send(status(not.clone(), ExecutionState::Busy))
+            .unwrap();
+
+        log::info!("Received shell notification: {not:?}");
+
+        // Handle the message
+        let result = handler(&not.content);
+
+        // Return to idle
+        self.iopub_tx
+            .send(status(not.clone(), ExecutionState::Idle))
+            .unwrap();
+
         result
     }
 
-    /// Sets the kernel state by sending a message on the IOPub channel.
-    fn send_state<T: ProtocolMessage>(
-        &self,
-        parent: JupyterMessage<T>,
-        state: ExecutionState,
-    ) -> Result<(), SendError<IOPubMessage>> {
-        let reply = KernelStatus {
-            execution_state: state,
-        };
-        let message = IOPubMessage::Status(parent.header, IOPubContextChannel::Shell, reply);
-        self.iopub_tx.send(message)
-    }
-
-    /// Handles an ExecuteRequest; dispatches the request to the execution
-    /// thread and forwards the response
-    fn handle_execute_request(
-        &self,
-        handler: &mut dyn ShellHandler,
-        req: JupyterMessage<ExecuteRequest>,
-    ) -> Result<(), Error> {
-        log::info!("Received execution request {req:?}");
-        let originator = Originator::from(&req);
-        match block_on(handler.handle_execute_request(originator, &req.content)) {
-            Ok(reply) => {
-                log::info!("Got execution reply, delivering to frontend: {reply:?}");
-                let r = req.send_reply(reply, &self.socket);
-                r
-            },
-            // FIXME: Ark already created an `ExecuteReplyException` so we use
-            // `.send_reply()` instead of `.send_error()`. Can we streamline this?
-            Err(err) => req.send_reply(err, &self.socket),
-        }
-    }
-
-    /// Handle a request to test code for completion.
-    fn handle_is_complete_request(
-        &self,
-        handler: &dyn ShellHandler,
-        req: JupyterMessage<IsCompleteRequest>,
-    ) -> Result<(), Error> {
-        log::info!("Received request to test code for completeness: {req:?}");
-        match block_on(handler.handle_is_complete_request(&req.content)) {
-            Ok(reply) => req.send_reply(reply, &self.socket),
-            Err(err) => req.send_error::<IsCompleteReply>(err, &self.socket),
-        }
-    }
-
-    /// Handle a request for kernel information.
-    fn handle_info_request(
-        &self,
-        handler: &mut dyn ShellHandler,
-        req: JupyterMessage<KernelInfoRequest>,
-    ) -> Result<(), Error> {
-        log::info!("Received shell kernel information request: {req:?}");
-        match block_on(handler.handle_info_request(&req.content)) {
-            Ok(reply) => req.send_reply(reply, &self.socket),
-            Err(err) => req.send_error::<KernelInfoReply>(err, &self.socket),
-        }
-    }
-
-    /// Handle a request for code completion.
-    fn handle_complete_request(
-        &self,
-        handler: &dyn ShellHandler,
-        req: JupyterMessage<CompleteRequest>,
-    ) -> Result<(), Error> {
-        log::info!("Received request to complete code: {req:?}");
-        match block_on(handler.handle_complete_request(&req.content)) {
-            Ok(reply) => req.send_reply(reply, &self.socket),
-            Err(err) => req.send_error::<CompleteReply>(err, &self.socket),
-        }
-    }
-
     /// Handle a request for open comms
-    fn handle_comm_info_request(
-        &self,
-        _handler: &dyn ShellHandler,
-        req: JupyterMessage<CommInfoRequest>,
-    ) -> Result<(), Error> {
+    fn handle_comm_info_request(&self, req: &CommInfoRequest) -> crate::Result<CommInfoReply> {
         log::info!("Received request for open comms: {req:?}");
 
         // One off sender/receiver pair for this request
@@ -290,7 +260,7 @@ impl Shell {
 
         for comm in comms.into_iter() {
             // Only include comms that match the target name, if one was specified
-            if req.content.target_name.is_empty() || req.content.target_name == comm.name {
+            if req.target_name.is_empty() || req.target_name == comm.name {
                 let comm_info_target = CommInfoTargetName {
                     target_name: comm.name,
                 };
@@ -299,66 +269,52 @@ impl Shell {
             }
         }
 
-        // Form a reply and send it
-        let reply = CommInfoReply {
+        Ok(CommInfoReply {
             status: Status::Ok,
             comms: info,
-        };
-        req.send_reply(reply, &self.socket)
+        })
     }
 
     /// Handle a request to open a comm
-    fn handle_comm_open(&mut self, req: JupyterMessage<CommOpen>) -> Result<(), Error> {
-        log::info!("Received request to open comm: {req:?}");
-
-        // Enter the kernel-busy state in preparation for handling the message.
-        if let Err(err) = self.send_state(req.clone(), ExecutionState::Busy) {
-            log::warn!("Failed to change kernel status to busy: {err}")
-        }
+    fn handle_comm_open(
+        &self,
+        shell_handler: &mut Box<dyn ShellHandler>,
+        msg: &CommOpen,
+    ) -> crate::Result<()> {
+        log::info!("Received request to open comm: {msg:?}");
 
         // Process the comm open request
-        let result = self.open_comm(req.clone());
+        let result = self.open_comm(shell_handler, msg);
 
-        // Return kernel to idle state
-        if let Err(err) = self.send_state(req, ExecutionState::Idle) {
-            log::warn!("Failed to restore kernel status to idle: {err}")
+        // There is no error reply for a comm open request. Instead we must send
+        // a `comm_close` message as soon as possible. The error is logged on our side.
+        if let Err(err) = result {
+            let reply = IOPubMessage::CommClose(CommClose {
+                comm_id: msg.comm_id.clone(),
+            });
+            self.iopub_tx.send(reply).unwrap();
+            log::warn!("Failed to open comm: {err:?}");
         }
 
-        // Return the result
-        result
+        Ok(())
     }
 
     /// Deliver a request from the frontend to a comm. Specifically, this is a
     /// request from the frontend to deliver a message to a backend, often as
     /// the request side of a request/response pair.
-    fn handle_comm_msg(
-        &self,
-        _handler: &dyn ShellHandler,
-        req: JupyterMessage<CommWireMsg>,
-    ) -> Result<(), Error> {
-        log::info!("Received request to send a message on a comm: {req:?}");
-
-        // Enter the kernel-busy state in preparation for handling the message.
-        if let Err(err) = self.send_state(req.clone(), ExecutionState::Busy) {
-            log::warn!("Failed to change kernel status to busy: {err}")
-        }
-
+    fn handle_comm_msg(&self, header: JupyterHeader, msg: &CommWireMsg) -> crate::Result<()> {
         // Store this message as a pending RPC request so that when the comm
         // responds, we can match it up
         self.comm_manager_tx
-            .send(CommManagerEvent::PendingRpc(req.header.clone()))
+            .send(CommManagerEvent::PendingRpc(header.clone()))
             .unwrap();
 
         // Send the message to the comm
-        let msg = CommMsg::Rpc(req.header.msg_id.clone(), req.content.data.clone());
+        let rpc = CommMsg::Rpc(header.msg_id.clone(), msg.data.clone());
         self.comm_manager_tx
-            .send(CommManagerEvent::Message(req.content.comm_id.clone(), msg))
+            .send(CommManagerEvent::Message(msg.comm_id.clone(), rpc))
             .unwrap();
 
-        // Return kernel to idle state
-        if let Err(err) = self.send_state(req, ExecutionState::Idle) {
-            log::warn!("Failed to restore kernel status to idle: {err}")
-        }
         Ok(())
     }
 
@@ -367,13 +323,17 @@ impl Shell {
      * it easier to handle errors and return to the idle state when the request is
      * complete.
      */
-    fn open_comm(&mut self, req: JupyterMessage<CommOpen>) -> Result<(), Error> {
+    fn open_comm(
+        &self,
+        shell_handler: &mut Box<dyn ShellHandler>,
+        msg: &CommOpen,
+    ) -> crate::Result<()> {
         // Check to see whether the target name begins with "positron." This
         // prefix designates comm IDs that are known to the Positron IDE.
-        let comm = match req.content.target_name.starts_with("positron.") {
+        let comm = match msg.target_name.starts_with("positron.") {
             // This is a known comm ID; parse it by stripping the prefix and
             // matching against the known comm types
-            true => match Comm::from_str(&req.content.target_name[9..]) {
+            true => match Comm::from_str(&msg.target_name[9..]) {
                 Ok(comm) => comm,
                 Err(err) => {
                     // If the target name starts with "positron." but we don't
@@ -381,23 +341,23 @@ impl Shell {
                     // to be invalid and return an error.
                     log::warn!(
                         "Failed to open comm; target name '{}' is unrecognized: {}",
-                        &req.content.target_name,
+                        &msg.target_name,
                         err
                     );
-                    return Err(Error::UnknownCommName(req.content.target_name));
+                    return Err(Error::UnknownCommName(msg.target_name.clone()));
                 },
             },
 
             // Non-Positron comm IDs (i.e. those that don't start with
             // "positron.") are passed through to the kernel without judgment.
             // These include Jupyter comm IDs, etc.
-            false => Comm::Other(req.content.target_name.clone()),
+            false => Comm::Other(msg.target_name.clone()),
         };
 
         // Get the data parameter as a string (for error reporting)
-        let data_str = serde_json::to_string(&req.content.data).map_err(|err| {
+        let data_str = serde_json::to_string(&msg.data).map_err(|err| {
             Error::InvalidCommMessage(
-                req.content.target_name.clone(),
+                msg.target_name.clone(),
                 "unparseable".to_string(),
                 err.to_string(),
             )
@@ -405,9 +365,9 @@ impl Shell {
 
         // Create a comm socket for this comm. The initiator is FrontEnd here
         // because we're processing a request from the frontend to open a comm.
-        let comm_id = req.content.comm_id.clone();
-        let comm_name = req.content.target_name.clone();
-        let comm_data = req.content.data.clone();
+        let comm_id = msg.comm_id.clone();
+        let comm_name = msg.target_name.clone();
+        let comm_data = msg.data.clone();
         let comm_socket =
             CommSocket::new(CommInitiator::FrontEnd, comm_id.clone(), comm_name.clone());
 
@@ -425,7 +385,7 @@ impl Shell {
             // a comm that wraps it
             Comm::Dap => {
                 let init_rx = Self::start_server_comm(
-                    &req,
+                    &msg,
                     data_str,
                     self.dap_handler.clone(),
                     &comm_socket,
@@ -435,7 +395,7 @@ impl Shell {
             },
             Comm::Lsp => {
                 let init_rx = Self::start_server_comm(
-                    &req,
+                    &msg,
                     data_str,
                     self.lsp_handler.clone(),
                     &comm_socket,
@@ -448,29 +408,8 @@ impl Shell {
             // kernel framework itself; all other comms are passed through
             // to the shell handler.
             _ => {
-                // Lock the shell handler object on this thread.
-                let handler = self.shell_handler.lock().unwrap();
-
                 // Call the shell handler to open the comm
-                match block_on(handler.handle_comm_open(comm, comm_socket.clone())) {
-                    Ok(result) => result,
-                    Err(err) => {
-                        // If the shell handler returns an error, send it back.
-                        // This is a language evaluation error, so we can send
-                        // it back in that form.
-                        let errname = err.ename.clone();
-                        req.send_error::<CommWireMsg>(err, &self.socket)?;
-
-                        // Return an error to the caller indicating that the
-                        // comm could not be opened due to the invalid open
-                        // call.
-                        return Err(Error::InvalidCommMessage(
-                            req.content.target_name.clone(),
-                            data_str,
-                            errname,
-                        ));
-                    },
-                }
+                block_on(shell_handler.handle_comm_open(comm, comm_socket.clone()))?
             },
         };
 
@@ -502,7 +441,7 @@ impl Shell {
                     ));
             }
         } else {
-            // If the comm was not opened, return an error to the caller
+            // Fail if the comm was not opened
             return Err(Error::UnknownCommName(comm_name.clone()));
         }
 
@@ -510,21 +449,17 @@ impl Shell {
     }
 
     fn start_server_comm(
-        req: &JupyterMessage<CommOpen>,
+        msg: &CommOpen,
         data_str: String,
         handler: Option<Arc<Mutex<dyn ServerHandler>>>,
         comm_socket: &CommSocket,
-    ) -> Result<Receiver<bool>, Error> {
+    ) -> crate::Result<Receiver<bool>> {
         if let Some(handler) = handler {
             let (init_tx, init_rx) = crossbeam::channel::bounded::<bool>(1);
 
             // Parse the message as server address
-            let address = serde_json::from_value(req.content.data.clone()).map_err(|err| {
-                Error::InvalidCommMessage(
-                    req.content.target_name.clone(),
-                    data_str,
-                    err.to_string(),
-                )
+            let address = serde_json::from_value(msg.data.clone()).map_err(|err| {
+                Error::InvalidCommMessage(msg.target_name.clone(), data_str, err.to_string())
             })?;
 
             // Create the new comm wrapper for the server and start it in a
@@ -538,44 +473,26 @@ impl Shell {
             log::error!(
                 "Client attempted to start LSP or DAP, but no handler was provided by kernel."
             );
-            Err(Error::UnknownCommName(req.content.target_name.clone()))
+            Err(Error::UnknownCommName(msg.target_name.clone()))
         }
     }
 
     /// Handle a request to close a comm
-    fn handle_comm_close(&mut self, req: JupyterMessage<CommClose>) -> Result<(), Error> {
-        // Look for the comm in our open comms
-        log::info!("Received request to close comm: {req:?}");
-
-        // Enter the kernel-busy state in preparation for handling the message.
-        if let Err(err) = self.send_state(req.clone(), ExecutionState::Busy) {
-            log::warn!("Failed to change kernel status to busy: {err}")
-        }
-
+    fn handle_comm_close(&self, msg: &CommClose) -> crate::Result<()> {
         // Send a notification to the comm message listener thread notifying it that
         // the comm has been closed
         self.comm_manager_tx
-            .send(CommManagerEvent::Closed(req.content.comm_id.clone()))
+            .send(CommManagerEvent::Closed(msg.comm_id.clone()))
             .unwrap();
-
-        // Return kernel to idle state
-        if let Err(err) = self.send_state(req, ExecutionState::Idle) {
-            log::warn!("Failed to restore kernel status to idle: {err}")
-        }
 
         Ok(())
     }
+}
 
-    /// Handle a request for code inspection
-    fn handle_inspect_request(
-        &self,
-        handler: &dyn ShellHandler,
-        req: JupyterMessage<InspectRequest>,
-    ) -> Result<(), Error> {
-        log::info!("Received request to introspect code: {req:?}");
-        match block_on(handler.handle_inspect_request(&req.content)) {
-            Ok(reply) => req.send_reply(reply, &self.socket),
-            Err(err) => req.send_error::<InspectReply>(err, &self.socket),
-        }
-    }
+/// Create IOPub status message.
+fn status(parent: JupyterMessage<impl ProtocolMessage>, state: ExecutionState) -> IOPubMessage {
+    let reply = KernelStatus {
+        execution_state: state,
+    };
+    IOPubMessage::Status(parent.header, IOPubContextChannel::Shell, reply)
 }

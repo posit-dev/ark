@@ -116,7 +116,7 @@ impl Stdin {
                         comm_req.request,
                         &self.session,
                     ));
-                    (req, StdInReplySender::Comm(comm_req.response_tx))
+                    (req, StdInReplySender::Comm(comm_req.reply_tx))
                 },
             };
 
@@ -172,7 +172,7 @@ impl Stdin {
                     },
                     Message::CommReply(ref reply) => {
                         if let StdInReplySender::Comm(tx) = reply_tx {
-                            let resp = StdInRpcReply::Response(reply.content.clone());
+                            let resp = StdInRpcReply::Reply(reply.content.clone());
                             tx.send(resp).unwrap();
                             continue;
                         }
@@ -189,7 +189,7 @@ impl Stdin {
                             tx.send(Err(err)).unwrap();
                         },
                         StdInReplySender::Comm(tx) => {
-                            let resp = StdInRpcReply::Response(JsonRpcReply::Error(JsonRpcError {
+                            let resp = StdInRpcReply::Reply(JsonRpcReply::Error(JsonRpcError {
                                 error: JsonRpcErrorData {
                                     message: format!(
                                         "Error while receiving frontend response: {err}"

@@ -61,7 +61,7 @@ pub fn connect(
     name: &str,
     connection_file: ConnectionFile,
     registration_file: Option<RegistrationFile>,
-    shell_handler: Arc<Mutex<dyn ShellHandler>>,
+    shell_handler: Box<dyn ShellHandler>,
     control_handler: Arc<Mutex<dyn ControlHandler>>,
     lsp_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
     dap_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
@@ -104,18 +104,15 @@ pub fn connect(
     )?;
     let shell_port = port_finalize(&shell_socket, connection_file.shell_port)?;
 
-    let shell_clone = shell_handler.clone();
     let iopub_tx_clone = iopub_tx.clone();
-    let lsp_handler_clone = lsp_handler.clone();
-    let dap_handler_clone = dap_handler.clone();
     spawn!(format!("{name}-shell"), move || {
         shell_thread(
             shell_socket,
             iopub_tx_clone,
             comm_manager_tx,
-            shell_clone,
-            lsp_handler_clone,
-            dap_handler_clone,
+            shell_handler,
+            lsp_handler,
+            dap_handler,
         )
     });
 
@@ -330,7 +327,7 @@ fn shell_thread(
     socket: Socket,
     iopub_tx: Sender<IOPubMessage>,
     comm_manager_tx: Sender<CommManagerEvent>,
-    shell_handler: Arc<Mutex<dyn ShellHandler>>,
+    shell_handler: Box<dyn ShellHandler>,
     lsp_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
     dap_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
 ) -> Result<(), Error> {

@@ -36,11 +36,11 @@ fn start_kernel(connection_file: ConnectionFile, registration_file: Option<Regis
     let (stdin_request_tx, stdin_request_rx) = bounded::<StdInRequest>(1);
     let (stdin_reply_tx, stdin_reply_rx) = unbounded();
 
-    let shell = Arc::new(Mutex::new(Shell::new(
+    let shell = Box::new(Shell::new(
         iopub_tx.clone(),
         stdin_request_tx,
         stdin_reply_rx,
-    )));
+    ));
     let control = Arc::new(Mutex::new(Control {}));
 
     // TODO: Is this working right? Probably not?

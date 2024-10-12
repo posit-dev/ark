@@ -1,7 +1,7 @@
 /*
  * exception.rs
  *
- * Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+ * Copyright (C) 2022-2024 Posit Software, PBC. All rights reserved.
  *
  */
 
@@ -19,4 +19,14 @@ pub struct Exception {
 
     /// List of traceback frames, as strings
     pub traceback: Vec<String>,
+}
+
+impl Exception {
+    pub fn internal_error(evalue: String) -> Self {
+        Self {
+            ename: String::from("InternalError"),
+            evalue,
+            traceback: vec![],
+        }
+    }
 }

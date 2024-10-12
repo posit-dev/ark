@@ -335,6 +335,14 @@ impl DummyFrontend {
         self.recv_iopub_stream(expect, Stream::Stderr)
     }
 
+    pub fn recv_iopub_comm_close(&self) -> String {
+        let msg = self.recv_iopub();
+
+        assert_matches!(msg, Message::CommClose(data) => {
+            data.content.comm_id
+        })
+    }
+
     /// Receive from IOPub Stream
     ///
     /// Stdout and Stderr Stream messages are buffered, so to reliably test against them

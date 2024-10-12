@@ -51,6 +51,24 @@
             },
             "args": [],
             "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Integration tests: Amalthea",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--package=amalthea"
+                ],
+                "filter": {
+                    "name": "client",
+                    "kind": "test"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
         }
     ]
 }

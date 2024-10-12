@@ -35,9 +35,7 @@ use amalthea::wire::exception::Exception;
 use amalthea::wire::execute_error::ExecuteError;
 use amalthea::wire::execute_input::ExecuteInput;
 use amalthea::wire::execute_reply::ExecuteReply;
-use amalthea::wire::execute_reply_exception::ExecuteReplyException;
 use amalthea::wire::execute_request::ExecuteRequest;
-use amalthea::wire::execute_response::ExecuteResponse;
 use amalthea::wire::execute_result::ExecuteResult;
 use amalthea::wire::input_reply::InputReply;
 use amalthea::wire::input_request::InputRequest;
@@ -180,7 +178,7 @@ pub struct RMain {
     /// IOPub channel for broadcasting outputs
     iopub_tx: Sender<IOPubMessage>,
 
-    /// Active request passed to `ReadConsole()`. Contains response channel
+    /// Active request passed to `ReadConsole()`. Contains reply channel
     /// the reply should be send to once computation has finished.
     active_request: Option<ActiveReadConsoleRequest>,
 
@@ -231,7 +229,7 @@ struct ActiveReadConsoleRequest {
     exec_count: u32,
     request: ExecuteRequest,
     originator: Originator,
-    response_tx: Sender<ExecuteResponse>,
+    reply_tx: Sender<amalthea::Result<ExecuteReply>>,
 }
 
 /// Represents kernel metadata (available after the kernel has fully started)
@@ -764,7 +762,7 @@ impl RMain {
                     }
                 }
 
-                // We've got a response for readline
+                // We've got a reply for readline
                 recv(self.stdin_reply_rx) -> reply => {
                     return self.handle_input_reply(reply.unwrap(), buf, buflen);
                 }
@@ -924,7 +922,7 @@ impl RMain {
         }
 
         let input = match req {
-            RRequest::ExecuteCode(exec_req, originator, response_tx) => {
+            RRequest::ExecuteCode(exec_req, originator, reply_tx) => {
                 // Extract input from request
                 let (input, exec_count) = { self.init_execute_request(&exec_req) };
 
@@ -933,7 +931,7 @@ impl RMain {
                     exec_count,
                     request: exec_req,
                     originator,
-                    response_tx,
+                    reply_tx,
                 });
 
                 input
@@ -1270,34 +1268,34 @@ impl RMain {
     }
 
     // Reply to the previously active request. The current prompt type and
-    // whether an error has occurred defines the response kind.
+    // whether an error has occurred defines the reply kind.
     fn reply_execute_request(&mut self, req: ActiveReadConsoleRequest, prompt_info: &PromptInfo) {
         let prompt = &prompt_info.input_prompt;
 
-        let (response, result) = if prompt_info.incomplete {
+        let (reply, result) = if prompt_info.incomplete {
             log::trace!("Got prompt {} signaling incomplete request", prompt);
-            (new_incomplete_response(&req.request, req.exec_count), None)
+            (new_incomplete_reply(&req.request, req.exec_count), None)
         } else if prompt_info.input_request {
             unreachable!();
         } else {
             log::trace!("Got R prompt '{}', completing execution", prompt);
 
-            self.make_execute_response_error(req.exec_count)
-                .unwrap_or_else(|| self.make_execute_response_result(req.exec_count))
+            self.make_execute_reply_error(req.exec_count)
+                .unwrap_or_else(|| self.make_execute_reply(req.exec_count))
         };
 
         if let Some(result) = result {
             self.iopub_tx.send(result).unwrap();
         }
 
-        log::trace!("Sending `execute_response`: {response:?}");
-        req.response_tx.send(response).unwrap();
+        log::trace!("Sending `execute_reply`: {reply:?}");
+        req.reply_tx.send(reply).unwrap();
     }
 
-    fn make_execute_response_error(
+    fn make_execute_reply_error(
         &mut self,
         exec_count: u32,
-    ) -> Option<(ExecuteResponse, Option<IOPubMessage>)> {
+    ) -> Option<(amalthea::Result<ExecuteReply>, Option<IOPubMessage>)> {
         // Save and reset error occurred flag
         let error_occurred = self.error_occurred;
         self.error_occurred = false;
@@ -1351,16 +1349,16 @@ impl RMain {
             exception.traceback.insert(0, exception.evalue.clone())
         }
 
-        let response = new_execute_response_error(exception.clone(), exec_count);
+        let reply = new_execute_reply_error(exception.clone(), exec_count);
         let result = IOPubMessage::ExecuteError(ExecuteError { exception });
 
-        Some((response, Some(result)))
+        Some((reply, Some(result)))
     }
 
-    fn make_execute_response_result(
+    fn make_execute_reply(
         &mut self,
         exec_count: u32,
-    ) -> (ExecuteResponse, Option<IOPubMessage>) {
+    ) -> (amalthea::Result<ExecuteReply>, Option<IOPubMessage>) {
         // TODO: Implement rich printing of certain outputs.
         // Will we need something similar to the RStudio model,
         // where we implement custom print() methods? Or can
@@ -1396,7 +1394,7 @@ impl RMain {
             }
         }
 
-        let response = new_execute_response(exec_count);
+        let reply = new_execute_reply(exec_count);
 
         let result = (data.len() > 0).then(|| {
             IOPubMessage::ExecuteResult(ExecuteResult {
@@ -1406,7 +1404,7 @@ impl RMain {
             })
         });
 
-        (response, result)
+        (reply, result)
     }
 
     /// Sends a `Wait` message to IOPub, which responds when the IOPub thread
@@ -1424,7 +1422,7 @@ impl RMain {
         }
 
         if let Err(error) = wait_rx.recv() {
-            log::error!("Failed to receive wait response from iopub: {error:?}");
+            log::error!("Failed to receive wait reply from iopub: {error:?}");
         }
     }
 
@@ -1686,7 +1684,7 @@ impl RMain {
 
     pub fn call_frontend_method(&self, request: UiFrontendRequest) -> anyhow::Result<RObject> {
         log::trace!("Calling frontend method '{request:?}'");
-        let (response_tx, response_rx) = bounded(1);
+        let (reply_tx, reply_rx) = bounded(1);
 
         let Some(req) = &self.active_request else {
             anyhow::bail!("Error: No active request");
@@ -1696,7 +1694,7 @@ impl RMain {
 
         let comm_request = UiCommFrontendRequest {
             originator,
-            response_tx,
+            reply_tx,
             request: request.clone(),
         };
 
@@ -1706,29 +1704,27 @@ impl RMain {
             kernel.send_ui_request(comm_request);
         }
 
-        // Block for response
-        let response = response_rx.recv().unwrap();
+        // Block for reply
+        let reply = reply_rx.recv().unwrap();
 
-        log::trace!("Got response from frontend method: {response:?}");
+        log::trace!("Got reply from frontend method: {reply:?}");
 
-        match response {
-            StdInRpcReply::Response(response) => match response {
-                JsonRpcReply::Result(response) => {
+        match reply {
+            StdInRpcReply::Reply(reply) => match reply {
+                JsonRpcReply::Result(reply) => {
                     // Deserialize to Rust first to verify the OpenRPC contract.
                     // Errors are propagated to R.
-                    if let Err(err) =
-                        ui_frontend_reply_from_value(response.result.clone(), &request)
-                    {
-                        anyhow::bail!("Can't deserialize RPC response for {request:?}:\n{err:?}");
+                    if let Err(err) = ui_frontend_reply_from_value(reply.result.clone(), &request) {
+                        anyhow::bail!("Can't deserialize RPC reply for {request:?}:\n{err:?}");
                     }
 
                     // Now deserialize to an R object
-                    Ok(RObject::try_from(response.result)?)
+                    Ok(RObject::try_from(reply.result)?)
                 },
-                JsonRpcReply::Error(response) => anyhow::bail!(
+                JsonRpcReply::Error(reply) => anyhow::bail!(
                     "While calling frontend method:\n\
                      {}",
-                    response.error.message
+                    reply.error.message
                 ),
             },
             // If an interrupt was signalled, return `NULL`. This should not be
@@ -1747,34 +1743,28 @@ impl RMain {
 }
 
 /// Report an incomplete request to the frontend
-fn new_incomplete_response(req: &ExecuteRequest, exec_count: u32) -> ExecuteResponse {
-    ExecuteResponse::ReplyException(ExecuteReplyException {
-        status: Status::Error,
-        execution_count: exec_count,
-        exception: Exception {
-            ename: "IncompleteInput".to_string(),
-            evalue: format!("Code fragment is not complete: {}", req.code),
-            traceback: vec![],
-        },
-    })
+fn new_incomplete_reply(req: &ExecuteRequest, exec_count: u32) -> amalthea::Result<ExecuteReply> {
+    let error = Exception {
+        ename: "IncompleteInput".to_string(),
+        evalue: format!("Code fragment is not complete: {}", req.code),
+        traceback: vec![],
+    };
+    Err(amalthea::Error::ShellErrorExecuteReply(error, exec_count))
 }
 
 static RE_STACK_OVERFLOW: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"C stack usage [ 0-9]+ is too close to the limit\n").unwrap());
 
-fn new_execute_response(exec_count: u32) -> ExecuteResponse {
-    ExecuteResponse::Reply(ExecuteReply {
+fn new_execute_reply(exec_count: u32) -> amalthea::Result<ExecuteReply> {
+    Ok(ExecuteReply {
         status: Status::Ok,
         execution_count: exec_count,
         user_expressions: json!({}),
     })
 }
-fn new_execute_response_error(exception: Exception, exec_count: u32) -> ExecuteResponse {
-    ExecuteResponse::ReplyException(ExecuteReplyException {
-        status: Status::Error,
-        execution_count: exec_count,
-        exception,
-    })
+
+fn new_execute_reply_error(error: Exception, exec_count: u32) -> amalthea::Result<ExecuteReply> {
+    Err(amalthea::Error::ShellErrorExecuteReply(error, exec_count))
 }
 
 /// Converts a data frame to HTML
