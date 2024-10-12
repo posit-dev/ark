@@ -19,8 +19,30 @@ pub struct KernelInfoReply {
     /// The execution status ("ok" or "error")
     pub status: Status,
 
+    /// Information about the language the kernel supports
+    pub language_info: LanguageInfo,
+
+    /// A startup banner
+    pub banner: String,
+
+    /// Whether debugging is supported
+    pub debugger: bool,
+
+    /// A list of help links
+    pub help_links: Vec<HelpLink>,
+}
+
+/// Complete version of `kernel_info_request`.
+///
+/// Private to Amalthea. Includes fields owned by Amalthea such as the protocol
+/// version and feature flags
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct KernelInfoReplyFull {
     /// Version of messaging protocol
     pub protocol_version: String,
+
+    /// The execution status ("ok" or "error")
+    pub status: Status,
 
     /// Information about the language the kernel supports
     pub language_info: LanguageInfo,
@@ -35,8 +57,25 @@ pub struct KernelInfoReply {
     pub help_links: Vec<HelpLink>,
 }
 
-impl MessageType for KernelInfoReply {
+impl MessageType for KernelInfoReplyFull {
     fn message_type() -> String {
         String::from("kernel_info_reply")
+    }
+}
+
+/// Adds Amalthea fields to `KernelInfoReply`.
+impl From<KernelInfoReply> for KernelInfoReplyFull {
+    fn from(value: KernelInfoReply) -> Self {
+        Self {
+            // These fields are set by Amalthea
+            protocol_version: String::from("5.4"),
+
+            // These fields are set by the Amalthea user
+            status: value.status,
+            language_info: value.language_info,
+            banner: value.banner,
+            debugger: value.debugger,
+            help_links: value.help_links,
+        }
     }
 }

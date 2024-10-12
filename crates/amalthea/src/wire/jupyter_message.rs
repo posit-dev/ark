@@ -11,6 +11,7 @@ use serde::Serialize;
 use super::display_data::DisplayData;
 use super::handshake_reply::HandshakeReply;
 use super::handshake_request::HandshakeRequest;
+use super::kernel_info_reply::KernelInfoReplyFull;
 use super::stream::StreamOutput;
 use super::update_display_data::UpdateDisplayData;
 use super::welcome::Welcome;
@@ -43,7 +44,6 @@ use crate::wire::interrupt_reply::InterruptReply;
 use crate::wire::interrupt_request::InterruptRequest;
 use crate::wire::is_complete_reply::IsCompleteReply;
 use crate::wire::is_complete_request::IsCompleteRequest;
-use crate::wire::kernel_info_reply::KernelInfoReply;
 use crate::wire::kernel_info_request::KernelInfoRequest;
 use crate::wire::originator::Originator;
 use crate::wire::shutdown_request::ShutdownRequest;
@@ -81,7 +81,7 @@ impl<T> ProtocolMessage for T where T: MessageType + Serialize + std::fmt::Debug
 #[derive(Debug)]
 pub enum Message {
     // Shell
-    KernelInfoReply(JupyterMessage<KernelInfoReply>),
+    KernelInfoReply(JupyterMessage<KernelInfoReplyFull>),
     KernelInfoRequest(JupyterMessage<KernelInfoRequest>),
     CompleteReply(JupyterMessage<CompleteReply>),
     CompleteRequest(JupyterMessage<CompleteRequest>),
@@ -197,7 +197,7 @@ impl TryFrom<&WireMessage> for Message {
         if kind == KernelInfoRequest::message_type() {
             return Ok(Message::KernelInfoRequest(JupyterMessage::try_from(msg)?));
         }
-        if kind == KernelInfoReply::message_type() {
+        if kind == KernelInfoReplyFull::message_type() {
             return Ok(Message::KernelInfoReply(JupyterMessage::try_from(msg)?));
         }
         if kind == IsCompleteRequest::message_type() {
