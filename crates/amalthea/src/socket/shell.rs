@@ -37,6 +37,7 @@ use crate::wire::comm_info_request::CommInfoRequest;
 use crate::wire::comm_msg::CommWireMsg;
 use crate::wire::comm_open::CommOpen;
 use crate::wire::exception::Exception;
+use crate::wire::header::JupyterHeader;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
 use crate::wire::jupyter_message::ProtocolMessage;
@@ -141,9 +142,16 @@ impl Shell {
             Message::CommInfoRequest(req) => {
                 self.handle_request(req, |msg| self.handle_comm_info_request(msg))
             },
-            Message::CommOpen(req) => self.handle_comm_open(shell_handler, req),
-            Message::CommMsg(req) => self.handle_comm_msg(req),
-            Message::CommClose(req) => self.handle_comm_close(req),
+            Message::CommOpen(req) => {
+                self.handle_notification(req, |msg| self.handle_comm_open(shell_handler, msg))
+            },
+            Message::CommMsg(req) => {
+                let header = req.header.clone();
+                self.handle_notification(req, |msg| self.handle_comm_msg(header, msg))
+            },
+            Message::CommClose(req) => {
+                self.handle_notification(req, |msg| self.handle_comm_close(msg))
+            },
             Message::InspectRequest(req) => self.handle_request(req, |msg| {
                 block_on(shell_handler.handle_inspect_request(msg))
             }),
@@ -202,6 +210,33 @@ impl Shell {
         result.and(Ok(()))
     }
 
+    fn handle_notification<Not, Handler>(
+        &self,
+        not: JupyterMessage<Not>,
+        handler: Handler,
+    ) -> crate::Result<()>
+    where
+        Not: ProtocolMessage,
+        Handler: FnOnce(&Not) -> crate::Result<()>,
+    {
+        // Enter the kernel-busy state in preparation for handling the message
+        self.iopub_tx
+            .send(status(not.clone(), ExecutionState::Busy))
+            .unwrap();
+
+        log::info!("Received shell notification: {not:?}");
+
+        // Handle the message
+        let result = handler(&not.content);
+
+        // Return to idle
+        self.iopub_tx
+            .send(status(not.clone(), ExecutionState::Idle))
+            .unwrap();
+
+        result
+    }
+
     /// Handle a request for open comms
     fn handle_comm_info_request(&self, req: &CommInfoRequest) -> crate::Result<CommInfoReply> {
         log::info!("Received request for open comms: {req:?}");
@@ -241,32 +276,22 @@ impl Shell {
     fn handle_comm_open(
         &self,
         shell_handler: &mut Box<dyn ShellHandler>,
-        req: JupyterMessage<CommOpen>,
+        msg: &CommOpen,
     ) -> crate::Result<()> {
-        log::info!("Received request to open comm: {req:?}");
-
-        // Enter the kernel-busy state in preparation for handling the message.
-        self.iopub_tx
-            .send(status(req.clone(), ExecutionState::Busy))
-            .unwrap();
+        log::info!("Received request to open comm: {msg:?}");
 
         // Process the comm open request
-        let result = self.open_comm(shell_handler, req.clone());
+        let result = self.open_comm(shell_handler, msg);
 
         // There is no error reply for a comm open request. Instead we must send
         // a `comm_close` message as soon as possible. The error is logged on our side.
         if let Err(err) = result {
             let reply = IOPubMessage::CommClose(CommClose {
-                comm_id: req.content.comm_id.clone(),
+                comm_id: msg.comm_id.clone(),
             });
             self.iopub_tx.send(reply).unwrap();
             log::warn!("Failed to open comm: {err:?}");
         }
-
-        // Return kernel to idle state
-        self.iopub_tx
-            .send(status(req.clone(), ExecutionState::Idle))
-            .unwrap();
 
         Ok(())
     }
@@ -274,30 +299,19 @@ impl Shell {
     /// Deliver a request from the frontend to a comm. Specifically, this is a
     /// request from the frontend to deliver a message to a backend, often as
     /// the request side of a request/response pair.
-    fn handle_comm_msg(&self, req: JupyterMessage<CommWireMsg>) -> crate::Result<()> {
-        log::info!("Received request to send a message on a comm: {req:?}");
-
-        // Enter the kernel-busy state in preparation for handling the message.
-        self.iopub_tx
-            .send(status(req.clone(), ExecutionState::Busy))
-            .unwrap();
-
+    fn handle_comm_msg(&self, header: JupyterHeader, msg: &CommWireMsg) -> crate::Result<()> {
         // Store this message as a pending RPC request so that when the comm
         // responds, we can match it up
         self.comm_manager_tx
-            .send(CommManagerEvent::PendingRpc(req.header.clone()))
+            .send(CommManagerEvent::PendingRpc(header.clone()))
             .unwrap();
 
         // Send the message to the comm
-        let msg = CommMsg::Rpc(req.header.msg_id.clone(), req.content.data.clone());
+        let rpc = CommMsg::Rpc(header.msg_id.clone(), msg.data.clone());
         self.comm_manager_tx
-            .send(CommManagerEvent::Message(req.content.comm_id.clone(), msg))
+            .send(CommManagerEvent::Message(msg.comm_id.clone(), rpc))
             .unwrap();
 
-        // Return kernel to idle state
-        self.iopub_tx
-            .send(status(req.clone(), ExecutionState::Idle))
-            .unwrap();
         Ok(())
     }
 
@@ -309,14 +323,14 @@ impl Shell {
     fn open_comm(
         &self,
         shell_handler: &mut Box<dyn ShellHandler>,
-        req: JupyterMessage<CommOpen>,
+        msg: &CommOpen,
     ) -> crate::Result<()> {
         // Check to see whether the target name begins with "positron." This
         // prefix designates comm IDs that are known to the Positron IDE.
-        let comm = match req.content.target_name.starts_with("positron.") {
+        let comm = match msg.target_name.starts_with("positron.") {
             // This is a known comm ID; parse it by stripping the prefix and
             // matching against the known comm types
-            true => match Comm::from_str(&req.content.target_name[9..]) {
+            true => match Comm::from_str(&msg.target_name[9..]) {
                 Ok(comm) => comm,
                 Err(err) => {
                     // If the target name starts with "positron." but we don't
@@ -324,23 +338,23 @@ impl Shell {
                     // to be invalid and return an error.
                     log::warn!(
                         "Failed to open comm; target name '{}' is unrecognized: {}",
-                        &req.content.target_name,
+                        &msg.target_name,
                         err
                     );
-                    return Err(Error::UnknownCommName(req.content.target_name));
+                    return Err(Error::UnknownCommName(msg.target_name.clone()));
                 },
             },
 
             // Non-Positron comm IDs (i.e. those that don't start with
             // "positron.") are passed through to the kernel without judgment.
             // These include Jupyter comm IDs, etc.
-            false => Comm::Other(req.content.target_name.clone()),
+            false => Comm::Other(msg.target_name.clone()),
         };
 
         // Get the data parameter as a string (for error reporting)
-        let data_str = serde_json::to_string(&req.content.data).map_err(|err| {
+        let data_str = serde_json::to_string(&msg.data).map_err(|err| {
             Error::InvalidCommMessage(
-                req.content.target_name.clone(),
+                msg.target_name.clone(),
                 "unparseable".to_string(),
                 err.to_string(),
             )
@@ -348,9 +362,9 @@ impl Shell {
 
         // Create a comm socket for this comm. The initiator is FrontEnd here
         // because we're processing a request from the frontend to open a comm.
-        let comm_id = req.content.comm_id.clone();
-        let comm_name = req.content.target_name.clone();
-        let comm_data = req.content.data.clone();
+        let comm_id = msg.comm_id.clone();
+        let comm_name = msg.target_name.clone();
+        let comm_data = msg.data.clone();
         let comm_socket =
             CommSocket::new(CommInitiator::FrontEnd, comm_id.clone(), comm_name.clone());
 
@@ -368,7 +382,7 @@ impl Shell {
             // a comm that wraps it
             Comm::Dap => {
                 let init_rx = Self::start_server_comm(
-                    &req,
+                    &msg,
                     data_str,
                     self.dap_handler.clone(),
                     &comm_socket,
@@ -378,7 +392,7 @@ impl Shell {
             },
             Comm::Lsp => {
                 let init_rx = Self::start_server_comm(
-                    &req,
+                    &msg,
                     data_str,
                     self.lsp_handler.clone(),
                     &comm_socket,
@@ -432,7 +446,7 @@ impl Shell {
     }
 
     fn start_server_comm(
-        req: &JupyterMessage<CommOpen>,
+        msg: &CommOpen,
         data_str: String,
         handler: Option<Arc<Mutex<dyn ServerHandler>>>,
         comm_socket: &CommSocket,
@@ -441,12 +455,8 @@ impl Shell {
             let (init_tx, init_rx) = crossbeam::channel::bounded::<bool>(1);
 
             // Parse the message as server address
-            let address = serde_json::from_value(req.content.data.clone()).map_err(|err| {
-                Error::InvalidCommMessage(
-                    req.content.target_name.clone(),
-                    data_str,
-                    err.to_string(),
-                )
+            let address = serde_json::from_value(msg.data.clone()).map_err(|err| {
+                Error::InvalidCommMessage(msg.target_name.clone(), data_str, err.to_string())
             })?;
 
             // Create the new comm wrapper for the server and start it in a
@@ -460,29 +470,16 @@ impl Shell {
             log::error!(
                 "Client attempted to start LSP or DAP, but no handler was provided by kernel."
             );
-            Err(Error::UnknownCommName(req.content.target_name.clone()))
+            Err(Error::UnknownCommName(msg.target_name.clone()))
         }
     }
 
     /// Handle a request to close a comm
-    fn handle_comm_close(&self, req: JupyterMessage<CommClose>) -> crate::Result<()> {
-        // Look for the comm in our open comms
-        log::info!("Received request to close comm: {req:?}");
-
-        // Enter the kernel-busy state in preparation for handling the message.
-        self.iopub_tx
-            .send(status(req.clone(), ExecutionState::Busy))
-            .unwrap();
-
+    fn handle_comm_close(&self, msg: &CommClose) -> crate::Result<()> {
         // Send a notification to the comm message listener thread notifying it that
         // the comm has been closed
         self.comm_manager_tx
-            .send(CommManagerEvent::Closed(req.content.comm_id.clone()))
-            .unwrap();
-
-        // Return kernel to idle state
-        self.iopub_tx
-            .send(status(req.clone(), ExecutionState::Idle))
+            .send(CommManagerEvent::Closed(msg.comm_id.clone()))
             .unwrap();
 
         Ok(())
