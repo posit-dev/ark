@@ -95,7 +95,7 @@ pub unsafe extern "C" fn ps_html_viewer(
                             },
                         },
                     };
-                    main.send_frontend_event(UiFrontendEvent::ShowHtmlFile(params));
+                    main.ui_send_event(UiFrontendEvent::ShowHtmlFile(params));
                 },
             }
         },

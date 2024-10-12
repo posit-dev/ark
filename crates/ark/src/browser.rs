@@ -53,7 +53,7 @@ unsafe fn ps_browse_url_impl(url: SEXP) -> anyhow::Result<SEXP> {
     let params = ShowUrlParams { url };
     let event = UiFrontendEvent::ShowUrl(params);
 
-    RMain::with(|main| main.send_frontend_event(event));
+    RMain::with(|main| main.ui_send_event(event));
 
     Ok(Rf_ScalarLogical(1))
 }
