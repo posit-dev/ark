@@ -41,6 +41,9 @@ pub struct KernelInfoReplyFull {
     /// Version of messaging protocol
     pub protocol_version: String,
 
+    /// Unofficial feature flag to indicate that the kernel implements JEP 65.
+    pub support_iopub_welcome: bool,
+
     /// The execution status ("ok" or "error")
     pub status: Status,
 
@@ -69,6 +72,7 @@ impl From<KernelInfoReply> for KernelInfoReplyFull {
         Self {
             // These fields are set by Amalthea
             protocol_version: String::from("5.4"),
+            support_iopub_welcome: true,
 
             // These fields are set by the Amalthea user
             status: value.status,
