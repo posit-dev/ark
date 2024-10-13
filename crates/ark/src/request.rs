@@ -52,6 +52,6 @@ pub fn debug_request_command(req: DebugRequest) -> String {
 /// Represents requests to the kernel.
 #[derive(Debug, Clone)]
 pub enum KernelRequest {
-    /// Establish a channel to the frontend UI to send events
+    /// Establish a channel to the UI comm which forwards messages to the frontend
     EstablishUiCommChannel(Sender<UiCommMessage>),
 }

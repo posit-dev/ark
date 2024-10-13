@@ -38,7 +38,6 @@ pub mod thread;
 pub mod traps;
 pub mod treesitter;
 pub mod ui;
-pub mod ui_comm;
 pub mod variables;
 pub mod version;
 pub mod viewer;

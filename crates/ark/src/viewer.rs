@@ -62,6 +62,7 @@ pub unsafe extern "C" fn ps_html_viewer(
         Ok(label) => label,
         Err(_) => String::from("R"),
     };
+
     match path {
         Ok(path) => {
             // Emit HTML output
@@ -76,26 +77,39 @@ pub unsafe extern "C" fn ps_html_viewer(
                 },
                 SessionMode::Console => {
                     let is_plot = RObject::view(is_plot).to::<bool>();
-                    let height = RObject::view(height).to::<i32>();
-                    let params = ShowHtmlFileParams {
-                        path,
-                        title: label.clone(),
-                        height: match height {
-                            Ok(height) => height.into(),
-                            Err(err) => {
-                                log::warn!("Can't convert `height` into an i32, using `0` as a fallback: {err:?}");
-                                0
-                            },
-                        },
-                        is_plot: match is_plot {
-                            Ok(plot) => plot,
-                            Err(err) => {
-                                log::warn!("Can't convert `is_plot` into a bool, using `false` as a fallback: {err:?}");
-                                false
-                            },
+                    let is_plot = match is_plot {
+                        Ok(is_plot) => is_plot,
+                        Err(err) => {
+                            log::warn!("Can't convert `is_plot` into a bool, using `false` as a fallback: {err:?}");
+                            false
                         },
                     };
-                    main.ui_send_event(UiFrontendEvent::ShowHtmlFile(params));
+
+                    let height = RObject::view(height).to::<i32>();
+                    let height = match height {
+                        Ok(height) => height.into(),
+                        Err(err) => {
+                            log::warn!("Can't convert `height` into an i32, using `0` as a fallback: {err:?}");
+                            0
+                        },
+                    };
+
+                    let params = ShowHtmlFileParams {
+                        path,
+                        title: label,
+                        height,
+                        is_plot,
+                    };
+
+                    let event = UiFrontendEvent::ShowHtmlFile(params);
+
+                    // TODO: What's the right thing to do in `Console` mode when
+                    // we aren't connected to Positron? Right now we error.
+                    let ui_comm_tx = main
+                        .get_ui_comm_tx()
+                        .ok_or_else(|| anyhow::anyhow!("UI comm not connected."))?;
+
+                    ui_comm_tx.send_event(event);
                 },
             }
         },

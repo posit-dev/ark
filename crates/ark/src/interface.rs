@@ -24,7 +24,6 @@ use amalthea::comm::base_comm::JsonRpcReply;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::comm::ui_comm::ui_frontend_reply_from_value;
 use amalthea::comm::ui_comm::BusyParams;
-use amalthea::comm::ui_comm::PromptStateParams;
 use amalthea::comm::ui_comm::ShowMessageParams;
 use amalthea::comm::ui_comm::UiFrontendEvent;
 use amalthea::comm::ui_comm::UiFrontendRequest;
@@ -118,7 +117,7 @@ use crate::startup;
 use crate::strings::lines;
 use crate::sys::console::console_to_utf8;
 use crate::ui::UiCommMessage;
-use crate::ui_comm::UIComm;
+use crate::ui::UiCommSender;
 
 static RE_DEBUG_PROMPT: Lazy<Regex> = Lazy::new(|| Regex::new(r"Browse\[\d+\]").unwrap());
 
@@ -199,9 +198,9 @@ pub struct RMain {
     tasks_idle_rx: Receiver<RTask>,
     pending_futures: HashMap<Uuid, (BoxFuture<'static, ()>, RTaskStartInfo)>,
 
-    /// UI comm to communicate UI requests and events to the frontend.
-    /// Optional, and really Positron specific.
-    ui_comm: Option<UIComm>,
+    /// Channel to communicate requests and events to the frontend
+    /// by forwarding them through the UI comm. Optional, and really Positron specific.
+    ui_comm_tx: Option<UiCommSender>,
 
     /// Represents whether an error occurred during R code execution.
     pub error_occurred: bool,
@@ -499,7 +498,7 @@ impl RMain {
             active_request: None,
             execution_count: 0,
             autoprint_output: String::new(),
-            ui_comm: None,
+            ui_comm_tx: None,
             error_occurred: false,
             error_message: String::new(),
             error_traceback: Vec::new(),
@@ -769,7 +768,7 @@ impl RMain {
 
                 // We've got a kernel request
                 recv(self.kernel_request_rx) -> req => {
-                    self.handle_kernel_request(req.unwrap());
+                    self.handle_kernel_request(req.unwrap(), &info);
                 }
 
                 // A task woke us up, start next loop tick to yield to it
@@ -893,16 +892,14 @@ impl RMain {
         if let Some(req) = std::mem::take(&mut self.active_request) {
             // FIXME: Race condition between the comm and shell socket threads.
             //
-            // Send info for the next prompt to frontend. This handles
-            // custom prompts set by users, e.g. `options(prompt = ,
-            // continue = )`, as well as debugging prompts, e.g. after a
-            // call to `browser()`.
-            self.ui_refresh_prompt_state(info);
+            // Perform a refresh of the frontend state
+            // (Prompts, working directory, etc)
+            self.with_mut_ui_comm_tx(|ui_comm_tx| {
+                let input_prompt = info.input_prompt.clone();
+                let continuation_prompt = info.continuation_prompt.clone();
 
-            // Check for changes to the working directory
-            if let Err(err) = self.ui_refresh_working_directory() {
-                log::error!("Error refreshing working directory: {}", err);
-            }
+                ui_comm_tx.send_refresh(input_prompt, continuation_prompt);
+            });
 
             // Check for pending graphics updates
             // (Important that this occurs while in the "busy" state of this ExecuteRequest
@@ -911,7 +908,7 @@ impl RMain {
                 graphics_device::on_did_execute_request(
                     self.comm_manager_tx.clone(),
                     self.iopub_tx.clone(),
-                    self.ui_connected() && self.session_mode == SessionMode::Console,
+                    self.is_ui_comm_connected() && self.session_mode == SessionMode::Console,
                 )
             };
 
@@ -1168,88 +1165,75 @@ impl RMain {
         }
     }
 
-    fn handle_kernel_request(&mut self, req: KernelRequest) {
+    fn handle_kernel_request(&mut self, req: KernelRequest, info: &PromptInfo) {
         log::trace!("Received kernel request {req:?}");
 
-        let result = match req {
-            KernelRequest::EstablishUiCommChannel(ref tx) => {
-                self.handle_establish_ui_comm(tx.clone())
+        match req {
+            KernelRequest::EstablishUiCommChannel(ref ui_comm_tx) => {
+                self.handle_establish_ui_comm_channel(ui_comm_tx.clone(), info)
             },
         };
-
-        if let Err(err) = result {
-            log::error!("Failed to handle kernel request {req:?} due to {err:?}")
-        }
     }
 
-    fn handle_establish_ui_comm(&mut self, tx: Sender<UiCommMessage>) -> anyhow::Result<()> {
-        if self.ui_comm.is_some() {
-            log::info!("Replacing an existing UI Comm.");
+    fn handle_establish_ui_comm_channel(
+        &mut self,
+        ui_comm_tx: Sender<UiCommMessage>,
+        info: &PromptInfo,
+    ) {
+        if self.ui_comm_tx.is_some() {
+            log::info!("Replacing an existing UI comm channel.");
         }
 
-        let mut ui_comm = UIComm::new(tx);
+        // Create and store the sender channel
+        self.ui_comm_tx = Some(UiCommSender::new(ui_comm_tx));
 
-        // Go ahead and do a working directory refresh
-        ui_comm.refresh_working_directory()?;
+        // Go ahead and do an initial refresh
+        self.with_mut_ui_comm_tx(|ui_comm_tx| {
+            let input_prompt = info.input_prompt.clone();
+            let continuation_prompt = info.continuation_prompt.clone();
 
-        // Store comm
-        self.ui_comm = Some(ui_comm);
-
-        Ok(())
+            ui_comm_tx.send_refresh(input_prompt, continuation_prompt);
+        });
     }
 
-    // TODO!: All of these `ui_` helpers should maybe be combined into a single
-    // `with_ui(|ui| ui.send_event(event))` that handles the disconnected
-    // state for you.
+    pub fn get_ui_comm_tx(&self) -> Option<&UiCommSender> {
+        self.ui_comm_tx.as_ref()
+    }
 
-    pub fn ui_send_event(&self, event: UiFrontendEvent) {
-        log::trace!("Sending UI event '{event:?}'");
+    fn get_mut_ui_comm_tx(&mut self) -> Option<&mut UiCommSender> {
+        self.ui_comm_tx.as_mut()
+    }
 
-        match self.ui_comm {
-            Some(ref ui_comm) => {
-                ui_comm.send_event(event);
-            },
+    fn with_ui_comm_tx<F>(&self, f: F)
+    where
+        F: FnOnce(&UiCommSender),
+    {
+        match self.get_ui_comm_tx() {
+            Some(ui_comm_tx) => f(ui_comm_tx),
             None => {
-                log::info!("UI Comm isn't connected. Can't send UI event {event:?}");
+                // Trace level logging, its typically not a bug if the frontend
+                // isn't connected. Happens in all Jupyter use cases.
+                log::trace!("UI comm isn't connected.");
             },
         }
     }
 
-    fn ui_send_request(&self, request: UiCommFrontendRequest) {
-        log::trace!("Sending UI request '{request:?}'");
-
-        match self.ui_comm {
-            Some(ref ui_comm) => {
-                ui_comm.send_request(request);
-            },
+    fn with_mut_ui_comm_tx<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&mut UiCommSender),
+    {
+        match self.get_mut_ui_comm_tx() {
+            Some(ui_comm_tx) => f(ui_comm_tx),
             None => {
-                log::info!("UI Comm isn't connected. Can't send UI request {request:?}");
+                // Trace level logging, its typically not a bug if the frontend
+                // isn't connected. Happens in all Jupyter use cases.
+                log::trace!("UI comm isn't connected.");
             },
         }
     }
 
-    fn ui_connected(&self) -> bool {
-        self.ui_comm.is_some()
-    }
-
-    fn ui_refresh_prompt_state(&self, info: &PromptInfo) {
-        let input_prompt = info.input_prompt.clone();
-        let continuation_prompt = info.continuation_prompt.clone();
-
-        self.ui_send_event(UiFrontendEvent::PromptState(PromptStateParams {
-            input_prompt,
-            continuation_prompt,
-        }));
-    }
-
-    fn ui_refresh_working_directory(&mut self) -> anyhow::Result<()> {
-        match self.ui_comm.as_mut() {
-            Some(ui_comm) => ui_comm.refresh_working_directory(),
-            None => {
-                log::info!("UI Comm isn't connected. Can't perform working directory refresh.");
-                Ok(())
-            },
-        }
+    fn is_ui_comm_connected(&self) -> bool {
+        self.get_ui_comm_tx().is_some()
     }
 
     fn handle_pending_line(&mut self, buf: *mut c_uchar, buflen: c_int) -> Option<ConsoleResult> {
@@ -1657,8 +1641,10 @@ impl RMain {
         // Compute busy state
         let busy = which != 0;
 
-        // Send updated state to the frontend
-        self.ui_send_event(UiFrontendEvent::Busy(BusyParams { busy }));
+        // Send updated state to the frontend over the UI comm
+        self.with_ui_comm_tx(|ui_comm_tx| {
+            ui_comm_tx.send_event(UiFrontendEvent::Busy(BusyParams { busy }));
+        });
     }
 
     /// Invoked by R to show a message to the user.
@@ -1666,8 +1652,10 @@ impl RMain {
         let message = unsafe { CStr::from_ptr(buf) };
         let message = message.to_str().unwrap().to_string();
 
-        // Deliver message to the frontend
-        self.ui_send_event(UiFrontendEvent::ShowMessage(ShowMessageParams { message }));
+        // Deliver message to the frontend over the UI comm
+        self.with_ui_comm_tx(|ui_comm_tx| {
+            ui_comm_tx.send_event(UiFrontendEvent::ShowMessage(ShowMessageParams { message }))
+        });
     }
 
     /// Invoked by the R event loop
@@ -1768,23 +1756,26 @@ impl RMain {
     }
 
     pub fn call_frontend_method(&self, request: UiFrontendRequest) -> anyhow::Result<RObject> {
-        log::trace!("Calling frontend method '{request:?}'");
+        log::trace!("Calling frontend method {request:?}");
+
+        let ui_comm_tx = self.get_ui_comm_tx().ok_or_else(|| {
+            anyhow::anyhow!("UI comm is not connected. Can't execute request {request:?}")
+        })?;
+
         let (reply_tx, reply_rx) = bounded(1);
 
         let Some(req) = &self.active_request else {
-            anyhow::bail!("Error: No active request");
+            return Err(anyhow::anyhow!(
+                "No active request. Can't execute request {request:?}"
+            ));
         };
 
-        let originator = req.originator.clone();
-
-        let comm_request = UiCommFrontendRequest {
-            originator,
+        // Forward request to UI comm
+        ui_comm_tx.send_request(UiCommFrontendRequest {
+            originator: req.originator.clone(),
             reply_tx,
             request: request.clone(),
-        };
-
-        // Send request over UI comm
-        self.ui_send_request(comm_request);
+        });
 
         // Block for reply
         let reply = reply_rx.recv().unwrap();
@@ -1797,17 +1788,22 @@ impl RMain {
                     // Deserialize to Rust first to verify the OpenRPC contract.
                     // Errors are propagated to R.
                     if let Err(err) = ui_frontend_reply_from_value(reply.result.clone(), &request) {
-                        anyhow::bail!("Can't deserialize RPC reply for {request:?}:\n{err:?}");
+                        return Err(anyhow::anyhow!(
+                            "Can't deserialize RPC reply for {request:?}:\n{err:?}"
+                        ));
                     }
 
                     // Now deserialize to an R object
                     Ok(RObject::try_from(reply.result)?)
                 },
-                JsonRpcReply::Error(reply) => anyhow::bail!(
-                    "While calling frontend method:\n\
-                     {}",
-                    reply.error.message
-                ),
+                JsonRpcReply::Error(reply) => {
+                    let message = reply.error.message;
+
+                    return Err(anyhow::anyhow!(
+                        "While calling frontend method:\n\
+                         {message}",
+                    ));
+                },
             },
             // If an interrupt was signalled, return `NULL`. This should not be
             // visible to the caller since `r_unwrap()` (called e.g. by

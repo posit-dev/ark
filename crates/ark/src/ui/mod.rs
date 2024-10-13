@@ -8,5 +8,8 @@
 pub mod events;
 pub mod methods;
 
+mod sender;
+pub use sender::*;
+
 mod ui;
 pub use ui::*;

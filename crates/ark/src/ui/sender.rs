@@ -1,5 +1,13 @@
+//
+// sender.rs
+//
+// Copyright (C) 2024 by Posit Software, PBC
+//
+//
+
 use std::path::PathBuf;
 
+use amalthea::comm::ui_comm::PromptStateParams;
 use amalthea::comm::ui_comm::UiFrontendEvent;
 use amalthea::comm::ui_comm::WorkingDirectoryParams;
 use amalthea::wire::input_request::UiCommFrontendRequest;
@@ -7,18 +15,25 @@ use crossbeam::channel::Sender;
 
 use crate::ui::UiCommMessage;
 
-pub struct UIComm {
-    tx: Sender<UiCommMessage>,
+/// Wrapper around a `Sender<UiCommMessage>` that communicates
+/// messages to the `UiComm`
+///
+/// Adds convenience methods for sending `Event`s and `Request`s.
+///
+/// Manages a bit of state for performing a state refresh
+/// (the `working_directory`).
+pub struct UiCommSender {
+    ui_comm_tx: Sender<UiCommMessage>,
     working_directory: PathBuf,
 }
 
-impl UIComm {
-    pub fn new(tx: Sender<UiCommMessage>) -> Self {
+impl UiCommSender {
+    pub fn new(ui_comm_tx: Sender<UiCommMessage>) -> Self {
         // Empty path buf will get updated on first directory refresh
         let working_directory = PathBuf::new();
 
         Self {
-            tx,
+            ui_comm_tx,
             working_directory,
         }
     }
@@ -32,20 +47,35 @@ impl UIComm {
     }
 
     fn send(&self, msg: UiCommMessage) {
-        log::info!("Sending UI message to frontend: {msg:?}");
+        log::info!("Sending message to UI comm: {msg:?}");
 
-        if let Err(err) = self.tx.send(msg) {
-            log::error!("Error sending message to frontend UI comm: {err:?}");
+        if let Err(err) = self.ui_comm_tx.send(msg) {
+            log::error!("Error sending message to UI comm: {err:?}");
 
             // TODO: Something is wrong with the UI thread, we should
             // disconnect to avoid more errors but then we need a mutable self
-            // self.frontend_tx = None;
+            // self.ui_comm_tx = None;
         }
+    }
+
+    pub fn send_refresh(&mut self, input_prompt: String, continuation_prompt: String) {
+        self.refresh_prompt_info(input_prompt, continuation_prompt);
+
+        if let Err(err) = self.refresh_working_directory() {
+            log::error!("Can't refresh working directory: {err:?}");
+        }
+    }
+
+    fn refresh_prompt_info(&self, input_prompt: String, continuation_prompt: String) {
+        self.send_event(UiFrontendEvent::PromptState(PromptStateParams {
+            input_prompt,
+            continuation_prompt,
+        }));
     }
 
     /// Checks for changes to the working directory, and sends an event to the
     /// frontend if the working directory has changed.
-    pub fn refresh_working_directory(&mut self) -> anyhow::Result<()> {
+    fn refresh_working_directory(&mut self) -> anyhow::Result<()> {
         // Get the current working directory
         let mut new_working_directory = std::env::current_dir()?;
 
