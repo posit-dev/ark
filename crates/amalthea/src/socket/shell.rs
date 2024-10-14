@@ -42,7 +42,7 @@ use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
 use crate::wire::jupyter_message::ProtocolMessage;
 use crate::wire::jupyter_message::Status;
-use crate::wire::kernel_info_reply::KernelInfoReplyFull;
+use crate::wire::kernel_info_full_reply;
 use crate::wire::originator::Originator;
 use crate::wire::status::ExecutionState;
 use crate::wire::status::KernelStatus;
@@ -128,9 +128,8 @@ impl Shell {
         let shell_handler = &mut self.shell_handler.borrow_mut();
         match msg {
             Message::KernelInfoRequest(req) => self.handle_request(req.clone(), |msg| {
-                let reply: KernelInfoReplyFull =
-                    block_on(shell_handler.handle_info_request(msg))?.into();
-                Ok(reply)
+                block_on(shell_handler.handle_info_request(msg))
+                    .map(kernel_info_full_reply::KernelInfoReply::from)
             }),
             Message::IsCompleteRequest(req) => self.handle_request(req, |msg| {
                 block_on(shell_handler.handle_is_complete_request(msg))
