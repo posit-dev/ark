@@ -1,6 +1,6 @@
 [package]
 name = "ark"
-version = "0.1.143"
+version = "0.1.144"
 description = """
 Ark, an R Kernel.
 """
@@ -42,7 +42,7 @@ ropey = "1.6.0"
 rust-embed = "8.0.0"
 scraper = "0.15.0"
 serde = { version = "1.0.183", features = ["derive"] }
-serde_json = { version = "1.0.94", features = ["preserve_order"]}
+serde_json = { version = "1.0.94", features = ["preserve_order"] }
 stdext = { path = "../stdext" }
 tokio = { version = "1.26.0", features = ["full"] }
 tower-lsp = "0.19.0"
@@ -64,7 +64,7 @@ tracing-error = "0.2.0"
 
 [dev-dependencies]
 insta = { version = "1.39.0" }
-stdext = { path = "../stdext", features = ["testing"]}
+stdext = { path = "../stdext", features = ["testing"] }
 tempfile = "3.13.0"
 
 [build-dependencies]
@@ -72,5 +72,7 @@ chrono = "0.4.23"
 embed-resource = "2.5.0"
 
 [package.metadata.generate-rpm]
-assets = [{ source = "target/release/ark", dest = "/usr/bin/ark", mode = "755" }]
+assets = [
+    { source = "target/release/ark", dest = "/usr/bin/ark", mode = "755" },
+]
 license = "TODO"
