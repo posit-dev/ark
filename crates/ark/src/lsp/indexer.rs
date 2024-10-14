@@ -55,7 +55,7 @@ type DocumentSymbolIndex = HashMap<DocumentSymbol, IndexEntry>;
 type WorkspaceIndex = Arc<Mutex<HashMap<DocumentPath, DocumentSymbolIndex>>>;
 
 static WORKSPACE_INDEX: LazyLock<WorkspaceIndex> = LazyLock::new(|| Default::default());
-static RE_COMMENT_SECTION: LazyLock<Regex> =
+pub static RE_COMMENT_SECTION: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\s*(#+)\s*(.*?)\s*[#=-]{4,}\s*$").unwrap());
 
 #[tracing::instrument(level = "info", skip_all)]

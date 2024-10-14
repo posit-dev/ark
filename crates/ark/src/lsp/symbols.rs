@@ -1,7 +1,7 @@
 //
 // symbols.rs
 //
-// Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2022-2024 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -60,7 +60,7 @@ pub fn symbols(params: &WorkspaceSymbolParams) -> anyhow::Result<Vec<SymbolInfor
             IndexEntryData::Section { level: _, title } => {
                 info.push(SymbolInformation {
                     name: title.to_string(),
-                    kind: SymbolKind::MODULE,
+                    kind: SymbolKind::STRING,
                     location: Location {
                         uri: Url::from_file_path(path).unwrap(),
                         range: entry.range,
@@ -120,13 +120,54 @@ fn is_indexable(node: &Node) -> bool {
     true
 }
 
+// Function to parse a comment and return the section level and title
+fn parse_comment_as_section(comment: &str) -> Option<(usize, String)> {
+    // Match lines starting with one or more '#' followed by some non-empty content and must end with 4 or more '-', '#', or `=`
+    // Ensure that there's actual content between the start and the trailing symbols.
+    if let Some(caps) = indexer::RE_COMMENT_SECTION.captures(comment) {
+        let hashes = caps.get(1)?.as_str().len(); // Count the number of '#'
+        let title = caps.get(2)?.as_str().trim().to_string(); // Extract the title text without trailing punctuations
+        return Some((hashes, title)); // Return the level based on the number of '#' and the title
+    }
+
+    None
+}
+
 fn index_node(
     node: &Node,
     contents: &Rope,
     parent: &mut DocumentSymbol,
     symbols: &mut Vec<DocumentSymbol>,
 ) -> Result<bool> {
-    // if we find an assignment, index it
+    // Check if the node is a comment and matches the markdown-style comment patterns
+    if node.node_type() == NodeType::Comment {
+        let comment_text = contents.node_slice(&node)?.to_string();
+
+        // Check if the comment starts with one or more '#' followed by any text and ends with 4+ punctuations
+        if let Some((_level, title)) = parse_comment_as_section(&comment_text) {
+            // Create a symbol based on the parsed comment
+            let start = convert_point_to_position(contents, node.start_position());
+            let end = convert_point_to_position(contents, node.end_position());
+
+            let symbol = DocumentSymbol {
+                name: title,                // Use the title without the trailing '####' or '----'
+                kind: SymbolKind::STRING,   // Treat it as a string section
+                detail: None,               // No need to display level details
+                children: Some(Vec::new()), // Prepare for child symbols if any
+                deprecated: None,
+                tags: None,
+                range: Range { start, end },
+                selection_range: Range { start, end },
+            };
+
+            // Add the symbol to the parent node
+            parent.children.as_mut().unwrap().push(symbol);
+
+            // Return early to avoid further processing
+            return Ok(true);
+        }
+    }
+
     if matches!(
         node.node_type(),
         NodeType::BinaryOperator(BinaryOperatorType::LeftAssignment) |
@@ -142,7 +183,7 @@ fn index_node(
         }
     }
 
-    // by default, recurse into children
+    // Recurse into children
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         if is_indexable(&child) {
@@ -254,4 +295,73 @@ fn index_assignment_with_function(
     index_node(&rhs, contents, parent, symbols)?;
 
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use tower_lsp::lsp_types::Position;
+
+    use super::*;
+    use crate::lsp::documents::Document;
+
+    fn test_symbol(code: &str) -> Vec<DocumentSymbol> {
+        let mut symbols: Vec<DocumentSymbol> = Vec::new();
+
+        let doc = Document::new(code, None);
+        let node = doc.ast.root_node();
+
+        let start = convert_point_to_position(&doc.contents, node.start_position());
+        let end = convert_point_to_position(&doc.contents, node.end_position());
+
+        let mut root = DocumentSymbol {
+            name: String::from("<root>"),
+            kind: SymbolKind::NULL,
+            children: Some(Vec::new()),
+            deprecated: None,
+            tags: None,
+            detail: None,
+            range: Range { start, end },
+            selection_range: Range { start, end },
+        };
+
+        index_node(&node, &doc.contents, &mut root, &mut symbols).unwrap();
+        root.children.unwrap_or_default()
+    }
+
+    #[test]
+    fn test_symbol_parse_comment_as_section() {
+        assert_eq!(parse_comment_as_section("# foo"), None);
+        assert_eq!(parse_comment_as_section("# foo ---"), None);
+        assert_eq!(
+            parse_comment_as_section("# foo ----"),
+            Some((1, String::from("foo")))
+        );
+    }
+
+    #[test]
+    fn test_symbol_comment_sections() {
+        assert_eq!(test_symbol("# foo"), vec![]);
+        assert_eq!(test_symbol("# foo ---"), vec![]);
+
+        let range = Range {
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 10,
+            },
+        };
+        assert_eq!(test_symbol("# foo ----"), vec![DocumentSymbol {
+            name: String::from("foo"),
+            kind: SymbolKind::STRING,
+            children: Some(Vec::new()),
+            deprecated: None,
+            tags: None,
+            detail: None,
+            range,
+            selection_range: range,
+        }]);
+    }
 }
