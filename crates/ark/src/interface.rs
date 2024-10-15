@@ -1213,7 +1213,7 @@ impl RMain {
             None => {
                 // Trace level logging, its typically not a bug if the frontend
                 // isn't connected. Happens in all Jupyter use cases.
-                log::trace!("UI comm isn't connected.");
+                log::trace!("UI comm isn't connected, dropping `f`.");
             },
         }
     }
@@ -1227,7 +1227,7 @@ impl RMain {
             None => {
                 // Trace level logging, its typically not a bug if the frontend
                 // isn't connected. Happens in all Jupyter use cases.
-                log::trace!("UI comm isn't connected.");
+                log::trace!("UI comm isn't connected, dropping `f`.");
             },
         }
     }
