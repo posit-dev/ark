@@ -20,6 +20,7 @@ use libr::R_DefParamsEx;
 use libr::R_HomeDir;
 use libr::R_SetParams;
 use libr::R_SignalHandlers;
+use libr::Rboolean_FALSE;
 use stdext::cargs;
 
 use crate::interface::r_busy;
@@ -68,6 +69,12 @@ pub fn setup_r(mut _args: Vec<*mut c_char>) {
 
         (*params).R_Interactive = 1;
         (*params).CharacterMode = libr::UImode_RGui;
+
+        // Never load the user or site `.Rprofile`s during `setup_Rmainloop()`.
+        // We do it for the user once ark is ready. We faithfully reimplement
+        // R's behavior for finding these files in `startup.rs`.
+        (*params).LoadInitFile = Rboolean_FALSE;
+        (*params).LoadSiteFile = Rboolean_FALSE;
 
         (*params).WriteConsole = None;
         (*params).WriteConsoleEx = Some(r_write_console);
