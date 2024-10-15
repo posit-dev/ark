@@ -168,7 +168,6 @@ impl ShellHandler for Shell {
             status: Status::Ok,
             banner: kernel_info.banner.clone(),
             debugger: false,
-            protocol_version: String::from("5.3"),
             help_links: Vec::new(),
             language_info: info,
         })

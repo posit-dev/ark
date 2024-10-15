@@ -34,6 +34,7 @@ pub mod interrupt_request;
 pub mod is_complete_reply;
 pub mod is_complete_request;
 pub mod jupyter_message;
+pub mod kernel_info_full_reply;
 pub mod kernel_info_reply;
 pub mod kernel_info_request;
 pub mod language_info;

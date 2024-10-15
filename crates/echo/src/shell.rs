@@ -77,7 +77,6 @@ impl ShellHandler for Shell {
             status: Status::Ok,
             banner: format!("Amalthea Echo {}", env!("CARGO_PKG_VERSION")),
             debugger: false,
-            protocol_version: String::from("5.0"),
             help_links: Vec::new(),
             language_info: info,
         })

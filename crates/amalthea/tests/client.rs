@@ -38,6 +38,8 @@ fn test_amalthea_kernel_info() {
         frontend.recv_shell(),
         Message::KernelInfoReply(reply) => {
             assert_eq!(reply.content.language_info.name, "Test");
+            assert_eq!(reply.content.protocol_version, "5.4");
+            assert!(reply.content.supported_features.contains(&String::from("iopub_welcome")));
         }
     );
 
