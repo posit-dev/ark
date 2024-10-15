@@ -127,6 +127,9 @@ fn parse_comment_as_section(comment: &str) -> Option<(usize, String)> {
     if let Some(caps) = indexer::RE_COMMENT_SECTION.captures(comment) {
         let hashes = caps.get(1)?.as_str().len(); // Count the number of '#'
         let title = caps.get(2)?.as_str().trim().to_string(); // Extract the title text without trailing punctuations
+        if title.is_empty() {
+            return None; // Return None for lines with only hashtags
+        }
         return Some((hashes, title)); // Return the level based on the number of '#' and the title
     }
 
