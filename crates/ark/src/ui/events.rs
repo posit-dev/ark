@@ -25,9 +25,14 @@ pub unsafe extern "C" fn ps_ui_show_message(message: SEXP) -> anyhow::Result<SEX
         message: RObject::view(message).try_into()?,
     };
 
-    let main = RMain::get();
     let event = UiFrontendEvent::ShowMessage(params);
-    main.send_frontend_event(event);
+
+    let main = RMain::get();
+    let ui_comm_tx = main
+        .get_ui_comm_tx()
+        .ok_or_else(|| ui_comm_not_connected("ui_show_message"))?;
+    ui_comm_tx.send_event(event);
+
     Ok(R_NilValue)
 }
 
@@ -41,9 +46,14 @@ pub unsafe extern "C" fn ps_ui_open_workspace(
         new_window: RObject::view(new_window).try_into()?,
     };
 
-    let main = RMain::get();
     let event = UiFrontendEvent::OpenWorkspace(params);
-    main.send_frontend_event(event);
+
+    let main = RMain::get();
+    let ui_comm_tx = main
+        .get_ui_comm_tx()
+        .ok_or_else(|| ui_comm_not_connected("ui_open_workspace"))?;
+    ui_comm_tx.send_event(event);
+
     Ok(R_NilValue)
 }
 
@@ -59,21 +69,30 @@ pub unsafe extern "C" fn ps_ui_navigate_to_file(
         column: 0,
     };
 
-    let main = RMain::get();
     let event = UiFrontendEvent::OpenEditor(params);
-    main.send_frontend_event(event);
+
+    let main = RMain::get();
+    let ui_comm_tx = main
+        .get_ui_comm_tx()
+        .ok_or_else(|| ui_comm_not_connected("ui_navigate_to_file"))?;
+    ui_comm_tx.send_event(event);
+
     Ok(R_NilValue)
 }
 
 #[harp::register]
 pub unsafe extern "C" fn ps_ui_set_selection_ranges(ranges: SEXP) -> anyhow::Result<SEXP> {
     let selections = ps_ui_robj_as_ranges(ranges)?;
-
     let params = SetEditorSelectionsParams { selections };
 
-    let main = RMain::get();
     let event = UiFrontendEvent::SetEditorSelections(params);
-    main.send_frontend_event(event);
+
+    let main = RMain::get();
+    let ui_comm_tx = main
+        .get_ui_comm_tx()
+        .ok_or_else(|| ui_comm_not_connected("ui_set_selection_ranges"))?;
+    ui_comm_tx.send_event(event);
+
     Ok(R_NilValue)
 }
 
@@ -83,9 +102,14 @@ pub unsafe extern "C" fn ps_ui_show_url(url: SEXP) -> anyhow::Result<SEXP> {
         url: RObject::view(url).try_into()?,
     };
 
-    let main = RMain::get();
     let event = UiFrontendEvent::ShowUrl(params);
-    main.send_frontend_event(event);
+
+    let main = RMain::get();
+    let ui_comm_tx = main
+        .get_ui_comm_tx()
+        .ok_or_else(|| ui_comm_not_connected("ui_show_url"))?;
+    ui_comm_tx.send_event(event);
+
     Ok(R_NilValue)
 }
 
@@ -110,4 +134,8 @@ pub fn ps_ui_robj_as_ranges(ranges: SEXP) -> anyhow::Result<Vec<Range>> {
         })
         .collect();
     Ok(selections)
+}
+
+fn ui_comm_not_connected(name: &str) -> anyhow::Error {
+    anyhow::anyhow!("UI comm not connected, can't run `{name}`.")
 }

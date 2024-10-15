@@ -48,12 +48,20 @@ unsafe fn ps_browse_url_impl(url: SEXP) -> anyhow::Result<SEXP> {
         log::trace!("Help is not handling URL");
     }
 
+    // TODO: What is the right thing to do outside of Positron when
+    // `options(browser =)` is called? Right now we error.
+
     // For all other URLs, create a ShowUrl event and send it to the main
     // thread; Positron will handle it.
     let params = ShowUrlParams { url };
     let event = UiFrontendEvent::ShowUrl(params);
 
-    RMain::with(|main| main.send_frontend_event(event));
+    let main = RMain::get();
+    let ui_comm_tx = main
+        .get_ui_comm_tx()
+        .ok_or_else(|| anyhow::anyhow!("UI comm not connected."))?;
+
+    ui_comm_tx.send_event(event);
 
     Ok(Rf_ScalarLogical(1))
 }

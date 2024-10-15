@@ -5,14 +5,10 @@
 //
 //
 
-use std::sync::Arc;
-use std::sync::Mutex;
-
 use amalthea::comm::comm_channel::Comm;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::language::shell_handler::ShellHandler;
 use amalthea::socket::comm::CommSocket;
-use amalthea::socket::iopub::IOPubMessage;
 use amalthea::socket::stdin::StdInRequest;
 use amalthea::wire::complete_reply::CompleteReply;
 use amalthea::wire::complete_request::CompleteRequest;
@@ -32,7 +28,6 @@ use amalthea::wire::originator::Originator;
 use async_trait::async_trait;
 use bus::BusReader;
 use crossbeam::channel::unbounded;
-use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use harp::environment::R_ENVS;
 use harp::line_ending::convert_line_endings;
@@ -41,16 +36,12 @@ use harp::object::RObject;
 use harp::ParseResult;
 use log::*;
 use serde_json::json;
-use stdext::spawn;
 use stdext::unwrap;
 
 use crate::help::r_help::RHelp;
 use crate::help_proxy;
 use crate::interface::KernelInfo;
 use crate::interface::RMain;
-use crate::interface::SessionMode;
-use crate::kernel::Kernel;
-use crate::plots::graphics_device;
 use crate::r_task;
 use crate::request::KernelRequest;
 use crate::request::RRequest;
@@ -59,14 +50,11 @@ use crate::variables::r_variables::RVariables;
 
 pub struct Shell {
     comm_manager_tx: Sender<CommManagerEvent>,
-    iopub_tx: Sender<IOPubMessage>,
     r_request_tx: Sender<RRequest>,
     stdin_request_tx: Sender<StdInRequest>,
-    pub kernel: Arc<Mutex<Kernel>>,
     kernel_request_tx: Sender<KernelRequest>,
     kernel_init_rx: BusReader<KernelInfo>,
     kernel_info: Option<KernelInfo>,
-    session_mode: SessionMode,
 }
 
 #[derive(Debug)]
@@ -78,32 +66,18 @@ impl Shell {
     /// Creates a new instance of the shell message handler.
     pub fn new(
         comm_manager_tx: Sender<CommManagerEvent>,
-        iopub_tx: Sender<IOPubMessage>,
         r_request_tx: Sender<RRequest>,
         stdin_request_tx: Sender<StdInRequest>,
         kernel_init_rx: BusReader<KernelInfo>,
         kernel_request_tx: Sender<KernelRequest>,
-        kernel_request_rx: Receiver<KernelRequest>,
-        session_mode: SessionMode,
     ) -> Self {
-        // Start building the kernel object. It is shared by the shell, LSP, and main threads.
-        let kernel = Kernel::new();
-
-        let kernel_clone = kernel.clone();
-        spawn!("ark-shell-thread", move || {
-            listen(kernel_clone, kernel_request_rx);
-        });
-
         Self {
             comm_manager_tx,
-            iopub_tx,
             r_request_tx,
             stdin_request_tx,
-            kernel,
             kernel_request_tx,
             kernel_init_rx,
             kernel_info: None,
-            session_mode,
         }
     }
 
@@ -219,24 +193,6 @@ impl ShellHandler for Shell {
         trace!("Code sent to R: {}", req_clone.code);
         let result = response_rx.recv().unwrap();
 
-        let mut kernel = self.kernel.lock().unwrap();
-
-        // Check for pending graphics updates
-        // (Important that this occurs while in the "busy" state of this ExecuteRequest
-        // so that the `parent` message is set correctly in any Jupyter messages)
-        unsafe {
-            graphics_device::on_did_execute_request(
-                self.comm_manager_tx.clone(),
-                self.iopub_tx.clone(),
-                kernel.ui_connected() && self.session_mode == SessionMode::Console,
-            )
-        };
-
-        // Check for changes to the working directory
-        if let Err(err) = kernel.poll_working_directory() {
-            warn!("Error polling working directory: {}", err);
-        }
-
         result
     }
 
@@ -329,18 +285,4 @@ fn handle_comm_open_help(comm: CommSocket) -> amalthea::Result<bool> {
 
         Ok(true)
     })
-}
-
-// Kernel is shared with the main R thread
-fn listen(kernel_mutex: Arc<Mutex<Kernel>>, kernel_request_rx: Receiver<KernelRequest>) {
-    loop {
-        // Wait for an execution request from the frontend.
-        match kernel_request_rx.recv() {
-            Ok(req) => {
-                let mut kernel = kernel_mutex.lock().unwrap();
-                kernel.fulfill_request(&req)
-            },
-            Err(err) => warn!("Could not receive execution request from kernel: {}", err),
-        }
-    }
 }

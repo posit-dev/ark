@@ -40,8 +40,8 @@ fn test_ui_comm() {
     // StdIn socket thread
     let (stdin_request_tx, _stdin_request_rx) = bounded::<StdInRequest>(1);
 
-    // Create a frontend instance
-    let ui_comm = UiComm::start(comm_socket.clone(), stdin_request_tx);
+    // Create a frontend instance, get access to the sender channel
+    let ui_comm_tx = UiComm::start(comm_socket.clone(), stdin_request_tx);
 
     // Get the current console width
     let old_width = r_task(|| unsafe {
@@ -133,7 +133,7 @@ fn test_ui_comm() {
 
     // Mark not busy (this prevents the frontend comm from being closed due to
     // the Sender being dropped)
-    ui_comm
+    ui_comm_tx
         .send(UiCommMessage::Event(UiFrontendEvent::Busy(BusyParams {
             busy: false,
         })))

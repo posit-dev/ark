@@ -24,7 +24,6 @@ use amalthea::comm::base_comm::JsonRpcReply;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::comm::ui_comm::ui_frontend_reply_from_value;
 use amalthea::comm::ui_comm::BusyParams;
-use amalthea::comm::ui_comm::PromptStateParams;
 use amalthea::comm::ui_comm::ShowMessageParams;
 use amalthea::comm::ui_comm::UiFrontendEvent;
 use amalthea::comm::ui_comm::UiFrontendRequest;
@@ -94,7 +93,6 @@ use crate::dap::Dap;
 use crate::errors;
 use crate::help::message::HelpEvent;
 use crate::help::r_help::RHelp;
-use crate::kernel::Kernel;
 use crate::lsp::events::EVENTS;
 use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::KernelNotification;
@@ -108,6 +106,7 @@ use crate::r_task::RTask;
 use crate::r_task::RTaskStartInfo;
 use crate::r_task::RTaskStatus;
 use crate::request::debug_request_command;
+use crate::request::KernelRequest;
 use crate::request::RRequest;
 use crate::signals::initialize_signal_handlers;
 use crate::signals::interrupts_pending;
@@ -117,6 +116,8 @@ use crate::srcref::resource_loaded_namespaces;
 use crate::startup;
 use crate::strings::lines;
 use crate::sys::console::console_to_utf8;
+use crate::ui::UiCommMessage;
+use crate::ui::UiCommSender;
 
 static RE_DEBUG_PROMPT: Lazy<Regex> = Lazy::new(|| Regex::new(r"Browse\[\d+\]").unwrap());
 
@@ -158,6 +159,8 @@ static mut R_BANNER: String = String::new();
 pub struct RMain {
     kernel_init_tx: Bus<KernelInfo>,
 
+    kernel_request_rx: Receiver<KernelRequest>,
+
     /// Whether we are running in Console, Notebook, or Background mode.
     pub session_mode: SessionMode,
 
@@ -195,9 +198,9 @@ pub struct RMain {
     tasks_idle_rx: Receiver<RTask>,
     pending_futures: HashMap<Uuid, (BoxFuture<'static, ()>, RTaskStartInfo)>,
 
-    /// Shared reference to kernel. Currently used by the ark-execution
-    /// thread, the R frontend callbacks, and LSP routines called from R
-    kernel: Arc<Mutex<Kernel>>,
+    /// Channel to communicate requests and events to the frontend
+    /// by forwarding them through the UI comm. Optional, and really Positron specific.
+    ui_comm_tx: Option<UiCommSender>,
 
     /// Represents whether an error occurred during R code execution.
     pub error_occurred: bool,
@@ -213,10 +216,6 @@ pub struct RMain {
     lsp_events_tx: Option<TokioUnboundedSender<Event>>,
 
     dap: RMainDap,
-
-    /// Whether or not R itself is actively busy.
-    /// This does not represent the busy state of the kernel.
-    pub is_busy: bool,
 
     pub positron_ns: Option<RObject>,
 
@@ -291,13 +290,13 @@ impl RMain {
     pub fn start(
         r_args: Vec<String>,
         startup_file: Option<String>,
-        kernel_mutex: Arc<Mutex<Kernel>>,
         comm_manager_tx: Sender<CommManagerEvent>,
         r_request_rx: Receiver<RRequest>,
         stdin_request_tx: Sender<StdInRequest>,
         stdin_reply_rx: Receiver<amalthea::Result<InputReply>>,
         iopub_tx: Sender<IOPubMessage>,
         kernel_init_tx: Bus<KernelInfo>,
+        kernel_request_rx: Receiver<KernelRequest>,
         dap: Arc<Mutex<Dap>>,
         session_mode: SessionMode,
     ) {
@@ -317,7 +316,6 @@ impl RMain {
 
         unsafe {
             R_MAIN = Some(RMain::new(
-                kernel_mutex,
                 tasks_interrupt_rx,
                 tasks_idle_rx,
                 comm_manager_tx,
@@ -326,6 +324,7 @@ impl RMain {
                 stdin_reply_rx,
                 iopub_tx,
                 kernel_init_tx,
+                kernel_request_rx,
                 dap,
                 session_mode,
             ));
@@ -476,7 +475,6 @@ impl RMain {
     }
 
     pub fn new(
-        kernel: Arc<Mutex<Kernel>>,
         tasks_interrupt_rx: Receiver<RTask>,
         tasks_idle_rx: Receiver<RTask>,
         comm_manager_tx: Sender<CommManagerEvent>,
@@ -485,6 +483,7 @@ impl RMain {
         stdin_reply_rx: Receiver<amalthea::Result<InputReply>>,
         iopub_tx: Sender<IOPubMessage>,
         kernel_init_tx: Bus<KernelInfo>,
+        kernel_request_rx: Receiver<KernelRequest>,
         dap: Arc<Mutex<Dap>>,
         session_mode: SessionMode,
     ) -> Self {
@@ -495,10 +494,11 @@ impl RMain {
             stdin_reply_rx,
             iopub_tx,
             kernel_init_tx,
+            kernel_request_rx,
             active_request: None,
             execution_count: 0,
             autoprint_output: String::new(),
-            kernel,
+            ui_comm_tx: None,
             error_occurred: false,
             error_message: String::new(),
             error_traceback: Vec::new(),
@@ -506,7 +506,6 @@ impl RMain {
             help_port: None,
             lsp_events_tx: None,
             dap: RMainDap::new(dap),
-            is_busy: false,
             tasks_interrupt_rx,
             tasks_idle_rx,
             pending_futures: HashMap::new(),
@@ -767,6 +766,11 @@ impl RMain {
                     return self.handle_input_reply(reply.unwrap(), buf, buflen);
                 }
 
+                // We've got a kernel request
+                recv(self.kernel_request_rx) -> req => {
+                    self.handle_kernel_request(req.unwrap(), &info);
+                }
+
                 // A task woke us up, start next loop tick to yield to it
                 recv(self.tasks_interrupt_rx) -> task => {
                     self.handle_task_interrupt(task.unwrap());
@@ -888,18 +892,25 @@ impl RMain {
         if let Some(req) = std::mem::take(&mut self.active_request) {
             // FIXME: Race condition between the comm and shell socket threads.
             //
-            // Send info for the next prompt to frontend. This handles
-            // custom prompts set by users, e.g. `options(prompt = ,
-            // continue = )`, as well as debugging prompts, e.g. after a
-            // call to `browser()`.
-            let event = UiFrontendEvent::PromptState(PromptStateParams {
-                input_prompt: info.input_prompt.clone(),
-                continuation_prompt: info.continuation_prompt.clone(),
+            // Perform a refresh of the frontend state
+            // (Prompts, working directory, etc)
+            self.with_mut_ui_comm_tx(|ui_comm_tx| {
+                let input_prompt = info.input_prompt.clone();
+                let continuation_prompt = info.continuation_prompt.clone();
+
+                ui_comm_tx.send_refresh(input_prompt, continuation_prompt);
             });
-            {
-                let kernel = self.kernel.lock().unwrap();
-                kernel.send_ui_event(event);
-            }
+
+            // Check for pending graphics updates
+            // (Important that this occurs while in the "busy" state of this ExecuteRequest
+            // so that the `parent` message is set correctly in any Jupyter messages)
+            unsafe {
+                graphics_device::on_did_execute_request(
+                    self.comm_manager_tx.clone(),
+                    self.iopub_tx.clone(),
+                    self.is_ui_comm_connected() && self.session_mode == SessionMode::Console,
+                )
+            };
 
             // Let frontend know the last request is complete. This turns us
             // back to Idle.
@@ -1152,6 +1163,77 @@ impl RMain {
                 None
             },
         }
+    }
+
+    fn handle_kernel_request(&mut self, req: KernelRequest, info: &PromptInfo) {
+        log::trace!("Received kernel request {req:?}");
+
+        match req {
+            KernelRequest::EstablishUiCommChannel(ref ui_comm_tx) => {
+                self.handle_establish_ui_comm_channel(ui_comm_tx.clone(), info)
+            },
+        };
+    }
+
+    fn handle_establish_ui_comm_channel(
+        &mut self,
+        ui_comm_tx: Sender<UiCommMessage>,
+        info: &PromptInfo,
+    ) {
+        if self.ui_comm_tx.is_some() {
+            log::info!("Replacing an existing UI comm channel.");
+        }
+
+        // Create and store the sender channel
+        self.ui_comm_tx = Some(UiCommSender::new(ui_comm_tx));
+
+        // Go ahead and do an initial refresh
+        self.with_mut_ui_comm_tx(|ui_comm_tx| {
+            let input_prompt = info.input_prompt.clone();
+            let continuation_prompt = info.continuation_prompt.clone();
+
+            ui_comm_tx.send_refresh(input_prompt, continuation_prompt);
+        });
+    }
+
+    pub fn get_ui_comm_tx(&self) -> Option<&UiCommSender> {
+        self.ui_comm_tx.as_ref()
+    }
+
+    fn get_mut_ui_comm_tx(&mut self) -> Option<&mut UiCommSender> {
+        self.ui_comm_tx.as_mut()
+    }
+
+    fn with_ui_comm_tx<F>(&self, f: F)
+    where
+        F: FnOnce(&UiCommSender),
+    {
+        match self.get_ui_comm_tx() {
+            Some(ui_comm_tx) => f(ui_comm_tx),
+            None => {
+                // Trace level logging, its typically not a bug if the frontend
+                // isn't connected. Happens in all Jupyter use cases.
+                log::trace!("UI comm isn't connected, dropping `f`.");
+            },
+        }
+    }
+
+    fn with_mut_ui_comm_tx<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&mut UiCommSender),
+    {
+        match self.get_mut_ui_comm_tx() {
+            Some(ui_comm_tx) => f(ui_comm_tx),
+            None => {
+                // Trace level logging, its typically not a bug if the frontend
+                // isn't connected. Happens in all Jupyter use cases.
+                log::trace!("UI comm isn't connected, dropping `f`.");
+            },
+        }
+    }
+
+    fn is_ui_comm_connected(&self) -> bool {
+        self.get_ui_comm_tx().is_some()
     }
 
     fn handle_pending_line(&mut self, buf: *mut c_uchar, buflen: c_int) -> Option<ConsoleResult> {
@@ -1556,29 +1638,24 @@ impl RMain {
         // on a thread different from the R execution thread. At least, on macOS.
         initialize_signal_handlers();
 
-        // Create an event representing the new busy state
-        self.is_busy = which != 0;
-        let event = UiFrontendEvent::Busy(BusyParams { busy: self.is_busy });
+        // Compute busy state
+        let busy = which != 0;
 
-        // Wait for a lock on the kernel and have it deliver the event to
-        // the frontend
-        let kernel = self.kernel.lock().unwrap();
-        kernel.send_ui_event(event);
+        // Send updated state to the frontend over the UI comm
+        self.with_ui_comm_tx(|ui_comm_tx| {
+            ui_comm_tx.send_event(UiFrontendEvent::Busy(BusyParams { busy }));
+        });
     }
 
     /// Invoked by R to show a message to the user.
     fn show_message(&self, buf: *const c_char) {
         let message = unsafe { CStr::from_ptr(buf) };
+        let message = message.to_str().unwrap().to_string();
 
-        // Create an event representing the message
-        let event = UiFrontendEvent::ShowMessage(ShowMessageParams {
-            message: message.to_str().unwrap().to_string(),
+        // Deliver message to the frontend over the UI comm
+        self.with_ui_comm_tx(|ui_comm_tx| {
+            ui_comm_tx.send_event(UiFrontendEvent::ShowMessage(ShowMessageParams { message }))
         });
-
-        // Wait for a lock on the kernel and have the kernel deliver the
-        // event to the frontend
-        let kernel = self.kernel.lock().unwrap();
-        kernel.send_ui_event(event);
     }
 
     /// Invoked by the R event loop
@@ -1624,10 +1701,6 @@ impl RMain {
     pub fn get_comm_manager_tx(&self) -> &Sender<CommManagerEvent> {
         // Read only access to `comm_manager_tx`
         &self.comm_manager_tx
-    }
-
-    pub fn get_kernel(&self) -> &Arc<Mutex<Kernel>> {
-        &self.kernel
     }
 
     pub(crate) fn set_help_fields(&mut self, help_event_tx: Sender<HelpEvent>, help_port: u16) {
@@ -1683,26 +1756,26 @@ impl RMain {
     }
 
     pub fn call_frontend_method(&self, request: UiFrontendRequest) -> anyhow::Result<RObject> {
-        log::trace!("Calling frontend method '{request:?}'");
+        log::trace!("Calling frontend method {request:?}");
+
+        let ui_comm_tx = self.get_ui_comm_tx().ok_or_else(|| {
+            anyhow::anyhow!("UI comm is not connected. Can't execute request {request:?}")
+        })?;
+
         let (reply_tx, reply_rx) = bounded(1);
 
         let Some(req) = &self.active_request else {
-            anyhow::bail!("Error: No active request");
+            return Err(anyhow::anyhow!(
+                "No active request. Can't execute request {request:?}"
+            ));
         };
 
-        let originator = req.originator.clone();
-
-        let comm_request = UiCommFrontendRequest {
-            originator,
+        // Forward request to UI comm
+        ui_comm_tx.send_request(UiCommFrontendRequest {
+            originator: req.originator.clone(),
             reply_tx,
             request: request.clone(),
-        };
-
-        // Send request via Kernel
-        {
-            let kernel = self.kernel.lock().unwrap();
-            kernel.send_ui_request(comm_request);
-        }
+        });
 
         // Block for reply
         let reply = reply_rx.recv().unwrap();
@@ -1715,30 +1788,28 @@ impl RMain {
                     // Deserialize to Rust first to verify the OpenRPC contract.
                     // Errors are propagated to R.
                     if let Err(err) = ui_frontend_reply_from_value(reply.result.clone(), &request) {
-                        anyhow::bail!("Can't deserialize RPC reply for {request:?}:\n{err:?}");
+                        return Err(anyhow::anyhow!(
+                            "Can't deserialize RPC reply for {request:?}:\n{err:?}"
+                        ));
                     }
 
                     // Now deserialize to an R object
                     Ok(RObject::try_from(reply.result)?)
                 },
-                JsonRpcReply::Error(reply) => anyhow::bail!(
-                    "While calling frontend method:\n\
-                     {}",
-                    reply.error.message
-                ),
+                JsonRpcReply::Error(reply) => {
+                    let message = reply.error.message;
+
+                    return Err(anyhow::anyhow!(
+                        "While calling frontend method:\n\
+                         {message}",
+                    ));
+                },
             },
             // If an interrupt was signalled, return `NULL`. This should not be
             // visible to the caller since `r_unwrap()` (called e.g. by
             // `harp::register`) will trigger an interrupt jump right away.
             StdInRpcReply::Interrupt => Ok(RObject::null()),
         }
-    }
-
-    pub fn send_frontend_event(&self, event: UiFrontendEvent) {
-        log::trace!("Sending frontend event '{event:?}'");
-        // Send request via Kernel
-        let kernel = self.kernel.lock().unwrap();
-        kernel.send_ui_event(event);
     }
 }
 

@@ -35,7 +35,7 @@ pub enum UiCommMessage {
 /// frontend that isn't scoped to any particular view.
 pub struct UiComm {
     comm: CommSocket,
-    frontend_rx: Receiver<UiCommMessage>,
+    ui_comm_rx: Receiver<UiCommMessage>,
     stdin_request_tx: Sender<StdInRequest>,
 }
 
@@ -45,18 +45,18 @@ impl UiComm {
         stdin_request_tx: Sender<StdInRequest>,
     ) -> Sender<UiCommMessage> {
         // Create a sender-receiver pair for Positron global events
-        let (frontend_tx, frontend_rx) = crossbeam::channel::unbounded::<UiCommMessage>();
+        let (ui_comm_tx, ui_comm_rx) = crossbeam::channel::unbounded::<UiCommMessage>();
 
         spawn!("ark-comm-ui", move || {
             let frontend = Self {
                 comm: comm.clone(),
-                frontend_rx: frontend_rx.clone(),
+                ui_comm_rx: ui_comm_rx.clone(),
                 stdin_request_tx: stdin_request_tx.clone(),
             };
             frontend.execution_thread();
         });
 
-        frontend_tx
+        ui_comm_tx
     }
 
     fn execution_thread(&self) {
@@ -65,7 +65,7 @@ impl UiComm {
             // Positron events to the frontend) or the comm channel (which
             // receives requests from the frontend)
             select! {
-                recv(&self.frontend_rx) -> msg => {
+                recv(&self.ui_comm_rx) -> msg => {
                     let msg = unwrap!(msg, Err(err) => {
                         log::error!(
                             "Error receiving Positron event; closing event listener: {err:?}"

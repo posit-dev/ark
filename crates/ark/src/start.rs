@@ -47,7 +47,7 @@ pub fn start_kernel(
     // has finished initialization.
     let mut kernel_init_tx = Bus::new(1);
 
-    // A channel pair used for shell requests.
+    // A channel pair used for kernel requests.
     // These events are used to manage the runtime state, and also to
     // handle message delivery, among other things.
     let (r_request_tx, r_request_rx) = bounded::<RRequest>(1);
@@ -70,13 +70,10 @@ pub fn start_kernel(
     let kernel_init_rx = kernel_init_tx.add_rx();
     let shell = Box::new(Shell::new(
         comm_manager_tx.clone(),
-        iopub_tx.clone(),
         r_request_tx.clone(),
         stdin_request_tx.clone(),
         kernel_init_rx,
         kernel_request_tx,
-        kernel_request_rx,
-        session_mode.clone(),
     ));
 
     // Create the control handler; this is used to handle shutdown/interrupt and
@@ -89,10 +86,6 @@ pub fn start_kernel(
         true => amalthea::kernel::StreamBehavior::Capture,
         false => amalthea::kernel::StreamBehavior::None,
     };
-
-    // Create the Ark kernel
-    // TODO: Move the Ark kernel to `RMain`
-    let kernel_clone = shell.kernel.clone();
 
     let (stdin_reply_tx, stdin_reply_rx) = unbounded();
 
@@ -120,13 +113,13 @@ pub fn start_kernel(
     crate::interface::RMain::start(
         r_args,
         startup_file,
-        kernel_clone,
         comm_manager_tx,
         r_request_rx,
         stdin_request_tx,
         stdin_reply_rx,
         iopub_tx,
         kernel_init_tx,
+        kernel_request_rx,
         dap,
         session_mode,
     )
