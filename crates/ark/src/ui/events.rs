@@ -28,7 +28,9 @@ pub unsafe extern "C" fn ps_ui_show_message(message: SEXP) -> anyhow::Result<SEX
     let event = UiFrontendEvent::ShowMessage(params);
 
     let main = RMain::get();
-    let ui_comm_tx = main.get_ui_comm_tx().ok_or_else(ui_comm_not_connected)?;
+    let ui_comm_tx = main
+        .get_ui_comm_tx()
+        .ok_or_else(|| ui_comm_not_connected("ui_show_message"))?;
     ui_comm_tx.send_event(event);
 
     Ok(R_NilValue)
@@ -47,7 +49,9 @@ pub unsafe extern "C" fn ps_ui_open_workspace(
     let event = UiFrontendEvent::OpenWorkspace(params);
 
     let main = RMain::get();
-    let ui_comm_tx = main.get_ui_comm_tx().ok_or_else(ui_comm_not_connected)?;
+    let ui_comm_tx = main
+        .get_ui_comm_tx()
+        .ok_or_else(|| ui_comm_not_connected("ui_open_workspace"))?;
     ui_comm_tx.send_event(event);
 
     Ok(R_NilValue)
@@ -68,7 +72,9 @@ pub unsafe extern "C" fn ps_ui_navigate_to_file(
     let event = UiFrontendEvent::OpenEditor(params);
 
     let main = RMain::get();
-    let ui_comm_tx = main.get_ui_comm_tx().ok_or_else(ui_comm_not_connected)?;
+    let ui_comm_tx = main
+        .get_ui_comm_tx()
+        .ok_or_else(|| ui_comm_not_connected("ui_navigate_to_file"))?;
     ui_comm_tx.send_event(event);
 
     Ok(R_NilValue)
@@ -82,7 +88,9 @@ pub unsafe extern "C" fn ps_ui_set_selection_ranges(ranges: SEXP) -> anyhow::Res
     let event = UiFrontendEvent::SetEditorSelections(params);
 
     let main = RMain::get();
-    let ui_comm_tx = main.get_ui_comm_tx().ok_or_else(ui_comm_not_connected)?;
+    let ui_comm_tx = main
+        .get_ui_comm_tx()
+        .ok_or_else(|| ui_comm_not_connected("ui_set_selection_ranges"))?;
     ui_comm_tx.send_event(event);
 
     Ok(R_NilValue)
@@ -97,7 +105,9 @@ pub unsafe extern "C" fn ps_ui_show_url(url: SEXP) -> anyhow::Result<SEXP> {
     let event = UiFrontendEvent::ShowUrl(params);
 
     let main = RMain::get();
-    let ui_comm_tx = main.get_ui_comm_tx().ok_or_else(ui_comm_not_connected)?;
+    let ui_comm_tx = main
+        .get_ui_comm_tx()
+        .ok_or_else(|| ui_comm_not_connected("ui_show_url"))?;
     ui_comm_tx.send_event(event);
 
     Ok(R_NilValue)
@@ -126,6 +136,6 @@ pub fn ps_ui_robj_as_ranges(ranges: SEXP) -> anyhow::Result<Vec<Range>> {
     Ok(selections)
 }
 
-fn ui_comm_not_connected() -> anyhow::Error {
-    anyhow::anyhow!("UI comm not connected.")
+fn ui_comm_not_connected(name: &str) -> anyhow::Error {
+    anyhow::anyhow!("UI comm not connected, can't run `{name}`.")
 }
