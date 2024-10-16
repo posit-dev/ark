@@ -142,20 +142,24 @@ fn index_node(
     parent: &mut DocumentSymbol,
     symbols: &mut Vec<DocumentSymbol>,
 ) -> Result<bool> {
+    // Maintain a stack to track the hierarchy of comment sections
+    let mut section_stack: Vec<(usize, *mut DocumentSymbol)> =
+        vec![(0, parent as *mut DocumentSymbol)];
+
     // Check if the node is a comment and matches the markdown-style comment patterns
     if node.node_type() == NodeType::Comment {
         let comment_text = contents.node_slice(&node)?.to_string();
 
         // Check if the comment starts with one or more '#' followed by any text and ends with 4+ punctuations
-        if let Some((_level, title)) = parse_comment_as_section(&comment_text) {
+        if let Some((level, title)) = parse_comment_as_section(&comment_text) {
             // Create a symbol based on the parsed comment
             let start = convert_point_to_position(contents, node.start_position());
             let end = convert_point_to_position(contents, node.end_position());
 
             let symbol = DocumentSymbol {
-                name: title,                // Use the title without the trailing '####' or '----'
-                kind: SymbolKind::STRING,   // Treat it as a string section
-                detail: None,               // No need to display level details
+                name: title,
+                kind: SymbolKind::STRING, // Treat it as a string section
+                detail: None,
                 children: Some(Vec::new()), // Prepare for child symbols if any
                 deprecated: None,
                 tags: None,
@@ -163,10 +167,36 @@ fn index_node(
                 selection_range: Range { start, end },
             };
 
-            // Add the symbol to the parent node
-            parent.children.as_mut().unwrap().push(symbol);
+            // Pop the stack until we find the appropriate parent level
+            while let Some((current_level, _)) = section_stack.last() {
+                if *current_level >= level {
+                    section_stack.pop();
+                } else {
+                    break;
+                }
+            }
 
-            // Return early to avoid further processing
+            // Get a mutable reference to the current parent from the stack
+            if let Some((_, current_parent_ptr)) = section_stack.last() {
+                // SAFETY: We know that the pointer is still valid because it's derived from the current stack state
+                let current_parent = unsafe { &mut **current_parent_ptr };
+
+                current_parent.children.as_mut().unwrap().push(symbol);
+                let new_parent = current_parent
+                    .children
+                    .as_mut()
+                    .unwrap()
+                    .last_mut()
+                    .unwrap();
+                section_stack.push((level, new_parent as *mut DocumentSymbol));
+            } else {
+                // If no correct parent is found, add this as a root-level comment
+                parent.children.as_mut().unwrap().push(symbol);
+                let new_parent = parent.children.as_mut().unwrap().last_mut().unwrap();
+                section_stack.push((level, new_parent as *mut DocumentSymbol));
+            }
+
+            // Return early to avoid further processing of the current node
             return Ok(true);
         }
     }
@@ -176,13 +206,17 @@ fn index_node(
         NodeType::BinaryOperator(BinaryOperatorType::LeftAssignment) |
             NodeType::BinaryOperator(BinaryOperatorType::EqualsAssignment)
     ) {
-        match index_assignment(node, contents, parent, symbols) {
-            Ok(handled) => {
-                if handled {
-                    return Ok(true);
-                }
-            },
-            Err(error) => error!("{:?}", error),
+        // Use the last entry in the stack to determine the correct parent
+        if let Some((_, current_parent_ptr)) = section_stack.last() {
+            let current_parent = unsafe { &mut **current_parent_ptr };
+            match index_assignment(node, contents, current_parent, symbols) {
+                Ok(handled) => {
+                    if handled {
+                        return Ok(true);
+                    }
+                },
+                Err(error) => error!("{:?}", error),
+            }
         }
     }
 
@@ -190,9 +224,13 @@ fn index_node(
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         if is_indexable(&child) {
-            let result = index_node(&child, contents, parent, symbols);
-            if let Err(error) = result {
-                error!("{:?}", error);
+            // Use the last entry in the stack to determine the correct parent
+            if let Some((_, current_parent_ptr)) = section_stack.last() {
+                let current_parent = unsafe { &mut **current_parent_ptr };
+                let result = index_node(&child, contents, current_parent, symbols);
+                if let Err(error) = result {
+                    error!("{:?}", error);
+                }
             }
         }
     }
