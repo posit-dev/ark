@@ -335,6 +335,7 @@ mod tests {
     fn test_symbol_parse_comment_as_section() {
         assert_eq!(parse_comment_as_section("# foo"), None);
         assert_eq!(parse_comment_as_section("# foo ---"), None);
+        assert_eq!(parse_comment_as_section("########"), None);
         assert_eq!(
             parse_comment_as_section("# foo ----"),
             Some((1, String::from("foo")))
@@ -345,6 +346,7 @@ mod tests {
     fn test_symbol_comment_sections() {
         assert_eq!(test_symbol("# foo"), vec![]);
         assert_eq!(test_symbol("# foo ---"), vec![]);
+        assert_eq!(test_symbol("########"), vec![]);
 
         let range = Range {
             start: Position {
