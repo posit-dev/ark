@@ -4,6 +4,8 @@
 // Copyright (C) 2023 by Posit Software, PBC
 //
 
+use std::collections::HashMap;
+
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::connections_comm::ConnectionsBackendReply;
 use amalthea::comm::connections_comm::ConnectionsBackendRequest;
@@ -11,13 +13,16 @@ use amalthea::comm::connections_comm::ConnectionsFrontendEvent;
 use amalthea::comm::connections_comm::ContainsDataParams;
 use amalthea::comm::connections_comm::FieldSchema;
 use amalthea::comm::connections_comm::GetIconParams;
+use amalthea::comm::connections_comm::GetMetadataParams;
 use amalthea::comm::connections_comm::ListFieldsParams;
 use amalthea::comm::connections_comm::ListObjectsParams;
+use amalthea::comm::connections_comm::MetadataSchema;
 use amalthea::comm::connections_comm::ObjectSchema;
 use amalthea::comm::connections_comm::PreviewObjectParams;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
+use anyhow::anyhow;
 use crossbeam::channel::Sender;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
@@ -32,6 +37,7 @@ use stdext::unwrap;
 use uuid::Uuid;
 
 use crate::interface::RMain;
+use crate::modules::ARK_ENVS;
 use crate::r_task;
 
 #[derive(Deserialize, Serialize, Clone)]
@@ -215,6 +221,29 @@ impl RConnection {
                     }
                 })?;
                 Ok(ConnectionsBackendReply::ContainsDataReply(contains_data))
+            },
+            ConnectionsBackendRequest::GetMetadata(GetMetadataParams { comm_id }) => {
+                let metadata = r_task(|| -> Result<_, anyhow::Error> {
+                    let r_metadata: HashMap<String, String> =
+                        RFunction::new("", ".ps.connection_metadata")
+                            .add(comm_id)
+                            .call_in(ARK_ENVS.positron_ns)?
+                            .try_into()?;
+
+                    let schema = MetadataSchema {
+                        language_id: String::from("r"),
+                        name: r_metadata
+                            .get("displayName")
+                            .ok_or(anyhow!("Need a display name"))?
+                            .clone(),
+                        host: r_metadata.get("host").cloned(),
+                        metadata_schema_type: r_metadata.get("type").cloned(),
+                        code: r_metadata.get("connectionCode").cloned(),
+                    };
+
+                    Ok(schema)
+                })?;
+                Ok(ConnectionsBackendReply::GetMetadataReply(metadata))
             },
         }
     }
