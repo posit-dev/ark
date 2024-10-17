@@ -98,8 +98,6 @@ use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::KernelNotification;
 use crate::lsp::main_loop::TokioUnboundedSender;
 use crate::lsp::state_handlers::ConsoleInputs;
-use crate::methods::populate_methods_from_loaded_namespaces;
-use crate::methods::populate_methods_table;
 use crate::modules;
 use crate::plots::graphics_device;
 use crate::r_task;
@@ -421,10 +419,6 @@ impl RMain {
                 if let Err(err) = resource_loaded_namespaces() {
                     log::error!("Can't populate srcrefs for loaded packages: {err:?}");
                 }
-            }
-
-            if let Err(err) = populate_methods_from_loaded_namespaces() {
-                log::error!("Can't populate variables pane methods from loaded packages: {err:?}");
             }
 
             // Set up the global error handler (after support function initialization)
@@ -1967,11 +1961,6 @@ unsafe extern "C" fn ps_onload_hook(pkg: SEXP, _path: SEXP) -> anyhow::Result<SE
 
     // Need to reset parent as this might run in the context of another thread's R task
     let _span = tracing::trace_span!(parent: None, "onload_hook", pkg = pkg).entered();
-
-    // Populate variables pane methods
-    if let Err(err) = populate_methods_table(pkg.as_str()) {
-        log::error!("Failed populating variables pane for `{pkg}` methods: {err:?}");
-    }
 
     // Populate fake source refs if needed
     if do_resource_namespaces() {
