@@ -23,6 +23,7 @@ use tower_lsp::lsp_types::Url;
 use tower_lsp::lsp_types::WorkspaceSymbolParams;
 use tree_sitter::Node;
 
+use crate::lsp;
 use crate::lsp::encoding::convert_point_to_position;
 use crate::lsp::indexer;
 use crate::lsp::indexer::IndexEntryData;
@@ -169,6 +170,8 @@ fn index_node(
 
             // Pop the stack until we find the appropriate parent level
             while let Some((current_level, _)) = section_stack.last() {
+                // log current level and level
+                lsp::log_error!("current_level: {}, level: {}", current_level, level);
                 if *current_level >= level {
                     section_stack.pop();
                 } else {
