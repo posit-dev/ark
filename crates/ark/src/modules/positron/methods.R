@@ -12,6 +12,8 @@ ark_methods_table$ark_positron_variable_has_children <- new.env(parent = emptyen
 ark_methods_table$ark_positron_variable_kind <- new.env(parent = emptyenv())
 lockEnvironment(ark_methods_table, TRUE)
 
+ark_methods_allowed_packages <- c("torch", "reticulate")
+
 #' Register the methods with the Positron runtime
 #'
 #' @param generic Generic function name as a character to register
@@ -19,6 +21,15 @@ lockEnvironment(ark_methods_table, TRUE)
 #' @param method A method to be registered. Should be a call object.
 #' @export
 .ark.register_method <- function(generic, class, method) {
+
+    # Check if the caller is an allowed package
+    if (!in_ark_tests()) {
+        calling_env <- .ps.env_name(topenv(parent.frame()))
+        if (!(calling_env %in% paste0("namespace:", ark_methods_allowed_packages))) {
+            stop("Only allowed packages can register methods. Called from ", calling_env)
+        }
+    }
+
     stopifnot(
         is_string(generic),
         generic %in% names(ark_methods_table),
