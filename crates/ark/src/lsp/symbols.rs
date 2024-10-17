@@ -104,8 +104,18 @@ pub(crate) fn document_symbols(
         selection_range: Range { start, end },
     };
 
+    // Maintain a stack to track the hierarchy of comment sections
+    let mut section_stack: Vec<(usize, *mut DocumentSymbol)> =
+        vec![(0, &mut root as *mut DocumentSymbol)];
+
     // index from the root
-    index_node(&node, &contents, &mut root, &mut symbols)?;
+    index_node(
+        &node,
+        &contents,
+        &mut root,
+        &mut symbols,
+        &mut section_stack,
+    )?;
 
     // return the children we found
     Ok(root.children.unwrap_or_default())
@@ -193,32 +203,13 @@ fn index_assignment_with_comments(
     }
 }
 
+
 fn index_node(
     node: &Node,
     contents: &Rope,
     parent: &mut DocumentSymbol,
     symbols: &mut Vec<DocumentSymbol>,
 ) -> Result<bool> {
-    if matches!(
-        node.node_type(),
-        NodeType::BinaryOperator(BinaryOperatorType::LeftAssignment) |
-            NodeType::BinaryOperator(BinaryOperatorType::EqualsAssignment)
-    ) {
-        match index_assignment(node, contents, parent, symbols) {
-            Ok(handled) => {
-                if handled {
-                    return Ok(true);
-                }
-            },
-            Err(error) => error!("{:?}", error),
-        }
-    }
-
-    // Recurse into children
-    let mut cursor = node.walk();
-    let mut section_stack: Vec<(usize, *mut DocumentSymbol)> = vec![(0, &mut *parent)];
-    for child in node.children(&mut cursor) {
-        if is_indexable(&child) {
             if child.node_type() == NodeType::Comment {
                 let result: Result<bool> =
                     index_assignment_with_comments(&child, contents, parent, &mut section_stack);
@@ -246,6 +237,7 @@ fn index_assignment(
     contents: &Rope,
     parent: &mut DocumentSymbol,
     symbols: &mut Vec<DocumentSymbol>,
+    section_stack: &mut Vec<(usize, *mut DocumentSymbol)>,
 ) -> Result<bool> {
     // check for assignment
     matches!(
@@ -259,14 +251,12 @@ fn index_assignment(
     let lhs = node.child_by_field_name("lhs").into_result()?;
     let rhs = node.child_by_field_name("rhs").into_result()?;
 
-    // check for identifier on lhs, function on rhs
-    let function = lhs.is_identifier_or_string() && rhs.is_function_definition();
-
-    if function {
-        return index_assignment_with_function(node, contents, parent, symbols);
+    // check if lhs is an identifier and rhs is a function definition
+    if lhs.is_identifier_or_string() && rhs.is_function_definition() {
+        return index_assignment_with_function(node, contents, parent, symbols, section_stack);
     }
 
-    // otherwise, just index as generic object
+    // otherwise, just index as a generic variable/object
     let name = contents.node_slice(&lhs)?.to_string();
 
     let start = convert_point_to_position(contents, lhs.start_position());
@@ -283,7 +273,6 @@ fn index_assignment(
         selection_range: Range::new(start, end),
     };
 
-    // add this symbol to the parent node
     parent.children.as_mut().unwrap().push(symbol);
 
     Ok(true)
@@ -294,6 +283,7 @@ fn index_assignment_with_function(
     contents: &Rope,
     parent: &mut DocumentSymbol,
     symbols: &mut Vec<DocumentSymbol>,
+    section_stack: &mut Vec<(usize, *mut DocumentSymbol)>,
 ) -> Result<bool> {
     // check for lhs, rhs
     let lhs = node.child_by_field_name("lhs").into_result()?;
@@ -301,20 +291,21 @@ fn index_assignment_with_function(
 
     // start extracting the argument names
     let mut arguments: Vec<String> = Vec::new();
-    let parameters = rhs.child_by_field_name("parameters").into_result()?;
-
-    let mut cursor = parameters.walk();
-    for parameter in parameters.children_by_field_name("parameter", &mut cursor) {
-        let name = parameter.child_by_field_name("name").into_result()?;
-        let name = contents.node_slice(&name)?.to_string();
-        arguments.push(name);
+    if let Some(parameters) = rhs.child_by_field_name("parameters") {
+        let mut cursor = parameters.walk();
+        for parameter in parameters.children_by_field_name("parameter", &mut cursor) {
+            if let Some(name) = parameter.child_by_field_name("name") {
+                let name = contents.node_slice(&name)?.to_string();
+                arguments.push(name);
+            }
+        }
     }
 
     let name = contents.node_slice(&lhs)?.to_string();
     let detail = format!("function({})", arguments.join(", "));
 
     // build the document symbol
-    let symbol = DocumentSymbol {
+    let mut symbol = DocumentSymbol {
         name,
         kind: SymbolKind::FUNCTION,
         detail: Some(detail),
@@ -331,12 +322,21 @@ fn index_assignment_with_function(
         },
     };
 
-    // add this symbol to the parent node
+    // add the function symbol to the parent
     parent.children.as_mut().unwrap().push(symbol);
 
-    // recurse into this node
-    let parent = parent.children.as_mut().unwrap().last_mut().unwrap();
-    index_node(&rhs, contents, parent, symbols)?;
+    // Get a mutable reference to the newly added symbol
+    let new_parent = parent.children.as_mut().unwrap().last_mut().unwrap();
+    let new_parent_ptr = new_parent as *mut DocumentSymbol;
+
+    // Add the function to the section stack
+    section_stack.push((0, new_parent_ptr));
+
+    // Recurse into the function body to add its children
+    index_node(&rhs, contents, new_parent, symbols, section_stack)?;
+
+    // Pop the stack after processing the function body
+    section_stack.pop();
 
     Ok(true)
 }
@@ -368,7 +368,20 @@ mod tests {
             selection_range: Range { start, end },
         };
 
-        index_node(&node, &doc.contents, &mut root, &mut symbols).unwrap();
+        // Create a section_stack to pass to index_node
+        let mut section_stack: Vec<(usize, *mut DocumentSymbol)> =
+            vec![(0, &mut root as *mut DocumentSymbol)];
+
+        // Call index_node with the new argument
+        index_node(
+            &node,
+            &doc.contents,
+            &mut root,
+            &mut symbols,
+            &mut section_stack,
+        )
+        .unwrap();
+
         root.children.unwrap_or_default()
     }
 

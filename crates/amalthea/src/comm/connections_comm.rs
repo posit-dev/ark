@@ -31,6 +31,26 @@ pub struct FieldSchema {
 	pub dtype: String
 }
 
+/// MetadataSchema in Schemas
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct MetadataSchema {
+	/// Connection name
+	pub name: String,
+
+	/// Language ID for the connections. Essentially just R or python
+	pub language_id: String,
+
+	/// Connection host
+	pub host: Option<String>,
+
+	/// Connection type
+	#[serde(rename = "type")]
+	pub metadata_schema_type: Option<String>,
+
+	/// Code used to re-create the connection
+	pub code: Option<String>
+}
+
 /// Parameters for the ListObjects method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ListObjectsParams {
@@ -64,6 +84,13 @@ pub struct GetIconParams {
 pub struct PreviewObjectParams {
 	/// The path to object that we want to preview.
 	pub path: Vec<ObjectSchema>,
+}
+
+/// Parameters for the GetMetadata method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct GetMetadataParams {
+	/// The comm_id of the client we want to retrieve metdata for.
+	pub comm_id: String,
 }
 
 /**
@@ -103,6 +130,12 @@ pub enum ConnectionsBackendRequest {
 	#[serde(rename = "preview_object")]
 	PreviewObject(PreviewObjectParams),
 
+	/// Gets metadata from the connections
+	///
+	/// A connection has tied metadata such as an icon, the host, etc.
+	#[serde(rename = "get_metadata")]
+	GetMetadata(GetMetadataParams),
+
 }
 
 /**
@@ -124,6 +157,8 @@ pub enum ConnectionsBackendReply {
 	GetIconReply(String),
 
 	PreviewObjectReply(),
+
+	GetMetadataReply(MetadataSchema),
 
 }
 
