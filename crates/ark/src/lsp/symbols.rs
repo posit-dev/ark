@@ -136,41 +136,69 @@ fn parse_comment_as_section(comment: &str) -> Option<(usize, String)> {
     None
 }
 
+fn index_assignment_with_comments(
+    node: &Node,
+    contents: &Rope,
+    parent: &mut DocumentSymbol,
+    section_stack: &mut Vec<(usize, *mut DocumentSymbol)>,
+) -> Result<bool> {
+    let comment_text = contents.node_slice(&node)?.to_string();
+
+    // Check if the comment starts with one or more '#' followed by any text and ends with 4+ punctuations
+    if let Some((level, title)) = parse_comment_as_section(&comment_text) {
+        // Create a symbol based on the parsed comment
+        let start = convert_point_to_position(contents, node.start_position());
+        let end = convert_point_to_position(contents, node.end_position());
+
+        let symbol = DocumentSymbol {
+            name: title,                // Use the title without the trailing '####' or '----'
+            kind: SymbolKind::STRING,   // Treat it as a string section
+            detail: None,               // No need to display level details
+            children: Some(Vec::new()), // Prepare for child symbols if any
+            deprecated: None,
+            tags: None,
+            range: Range { start, end },
+            selection_range: Range { start, end },
+        };
+
+        while let Some((current_level, _)) = section_stack.last() {
+            if *current_level >= level {
+                section_stack.pop();
+            } else {
+                break;
+            }
+        }
+
+        // Push the new symbol to the current parent
+        if let Some((_, current_parent_ptr)) = section_stack.last() {
+            let current_parent = unsafe { &mut **current_parent_ptr };
+            current_parent.children.as_mut().unwrap().push(symbol);
+            let new_parent = current_parent
+                .children
+                .as_mut()
+                .unwrap()
+                .last_mut()
+                .unwrap();
+            section_stack.push((level, new_parent as *mut DocumentSymbol));
+        } else {
+            parent.children.as_mut().unwrap().push(symbol);
+            let new_parent = parent.children.as_mut().unwrap().last_mut().unwrap();
+            section_stack.push((level, new_parent as *mut DocumentSymbol));
+        }
+
+        return Ok(true);
+    } else {
+        // No need to index the comment
+        return Ok(false);
+    }
+}
+
 fn index_node(
     node: &Node,
     contents: &Rope,
     parent: &mut DocumentSymbol,
     symbols: &mut Vec<DocumentSymbol>,
 ) -> Result<bool> {
-    // Check if the node is a comment and matches the markdown-style comment patterns
-    if node.node_type() == NodeType::Comment {
-        let comment_text = contents.node_slice(&node)?.to_string();
-
-        // Check if the comment starts with one or more '#' followed by any text and ends with 4+ punctuations
-        if let Some((_level, title)) = parse_comment_as_section(&comment_text) {
-            // Create a symbol based on the parsed comment
-            let start = convert_point_to_position(contents, node.start_position());
-            let end = convert_point_to_position(contents, node.end_position());
-
-            let symbol = DocumentSymbol {
-                name: title,                // Use the title without the trailing '####' or '----'
-                kind: SymbolKind::STRING,   // Treat it as a string section
-                detail: None,               // No need to display level details
-                children: Some(Vec::new()), // Prepare for child symbols if any
-                deprecated: None,
-                tags: None,
-                range: Range { start, end },
-                selection_range: Range { start, end },
-            };
-
-            // Add the symbol to the parent node
-            parent.children.as_mut().unwrap().push(symbol);
-
-            // Return early to avoid further processing
-            return Ok(true);
-        }
-    }
-
     if matches!(
         node.node_type(),
         NodeType::BinaryOperator(BinaryOperatorType::LeftAssignment) |
@@ -188,11 +216,24 @@ fn index_node(
 
     // Recurse into children
     let mut cursor = node.walk();
+    let mut section_stack: Vec<(usize, *mut DocumentSymbol)> = vec![(0, &mut *parent)];
     for child in node.children(&mut cursor) {
         if is_indexable(&child) {
-            let result = index_node(&child, contents, parent, symbols);
-            if let Err(error) = result {
-                error!("{:?}", error);
+            if child.node_type() == NodeType::Comment {
+                let result: Result<bool> =
+                    index_assignment_with_comments(&child, contents, parent, &mut section_stack);
+                if let Err(error) = result {
+                    error!("{:?}", error);
+                }
+            } else {
+                // todo: deal with the stacks of other types
+                if let Some((_, current_parent_ptr)) = section_stack.last() {
+                    let current_parent = unsafe { &mut **current_parent_ptr };
+                    let result = index_node(&child, contents, current_parent, symbols);
+                    if let Err(error) = result {
+                        error!("{:?}", error);
+                    }
+                }
             }
         }
     }
