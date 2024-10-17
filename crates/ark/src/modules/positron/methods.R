@@ -6,10 +6,10 @@
 #
 
 ark_methods_table <- new.env(parent = emptyenv())
-ark_methods_table$positron_variable_display_value <- new.env(parent = emptyenv())
-ark_methods_table$positron_variable_display_type <- new.env(parent = emptyenv())
-ark_methods_table$positron_variable_has_children <- new.env(parent = emptyenv())
-ark_methods_table$positron_variable_kind <- new.env(parent = emptyenv())
+ark_methods_table$ark_positron_variable_display_value <- new.env(parent = emptyenv())
+ark_methods_table$ark_positron_variable_display_type <- new.env(parent = emptyenv())
+ark_methods_table$ark_positron_variable_has_children <- new.env(parent = emptyenv())
+ark_methods_table$ark_positron_variable_kind <- new.env(parent = emptyenv())
 lockEnvironment(ark_methods_table, TRUE)
 
 #' Register the methods with the Positron runtime
@@ -21,12 +21,7 @@ lockEnvironment(ark_methods_table, TRUE)
 .ark.register_ark_method <- function(generic, class, method) {
     stopifnot(
         is_string(generic),
-        generic %in% c(
-            "positron_variable_display_value",
-            "positron_variable_display_type",
-            "positron_variable_has_children",
-            "positron_variable_kind"
-        ),
+        generic %in% names(ark_methods_table),
         typeof(class) == "character"
     )
     for (cls in class) {

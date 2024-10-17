@@ -339,7 +339,7 @@ impl WorkspaceVariableDisplayValue {
             )]);
 
         let display_value = unwrap!(display_value, Err(err) => {
-            log::error!("Failed to apply 'ark_variable_display_value': {err:?}");
+            log::error!("Failed to apply '{}': {err:?}", ArkGenerics::VariableDisplayValue.to_string());
             return None;
         });
 
@@ -364,7 +364,10 @@ impl WorkspaceVariableDisplayType {
     ///   display type.
     pub fn from(value: SEXP, include_length: bool) -> Self {
         match Self::try_from_method(value, include_length) {
-            Err(e) => log::error!("Error from 'ark_variable_display_type' method: {e}"),
+            Err(err) => log::error!(
+                "Error from '{}' method: {err}",
+                ArkGenerics::VariableDisplayType.to_string()
+            ),
             Ok(None) => {},
             Ok(Some(display_type)) => return display_type,
         }
@@ -486,7 +489,10 @@ impl WorkspaceVariableDisplayType {
 
 fn has_children(value: SEXP) -> bool {
     match ArkGenerics::VariableHasChildren.try_dispatch(value, vec![]) {
-        Err(e) => log::error!("Error from 'ark_variable_has_children' method: {e}"),
+        Err(err) => log::error!(
+            "Error from '{}' method: {err}",
+            ArkGenerics::VariableHasChildren.to_string()
+        ),
         Ok(None) => {},
         Ok(Some(answer)) => return answer,
     }
@@ -683,7 +689,10 @@ impl PositronVariable {
         }
 
         match try_from_method_variable_kind(x) {
-            Err(e) => log::error!("Error from 'ark_variable_kind' method: {e}"),
+            Err(err) => log::error!(
+                "Error from '{}' method: {err}",
+                ArkGenerics::VariableKind.to_string()
+            ),
             Ok(None) => {},
             Ok(Some(kind)) => return kind,
         }
@@ -1368,20 +1377,20 @@ mod tests {
             // Register the display value method
             harp::parse_eval_global(
                 r#"
-                .ark.register_ark_method("positron_variable_display_value", "foo", function(x, width) {
+                .ark.register_ark_method("ark_positron_variable_display_value", "foo", function(x, width) {
                     # We return a large string and make sure it gets truncated.
                     paste0(rep("a", length.out = 2*width), collapse="")
                 })
 
-                .ark.register_ark_method("positron_variable_display_type", "foo", function(x, include_length) {
+                .ark.register_ark_method("ark_positron_variable_display_type", "foo", function(x, include_length) {
                     paste0("foo (", length(x), ")")
                 })
 
-                .ark.register_ark_method("positron_variable_has_children", "foo", function(x) {
+                .ark.register_ark_method("ark_positron_variable_has_children", "foo", function(x) {
                     FALSE
                 })
 
-                .ark.register_ark_method("positron_variable_kind", "foo", function(x) {
+                .ark.register_ark_method("ark_positron_variable_kind", "foo", function(x) {
                     "other"
                 })
 

@@ -28,16 +28,16 @@ use crate::modules::ARK_ENVS;
 
 #[derive(Debug, PartialEq, EnumString, EnumIter, IntoStaticStr, Display, Eq, Hash, Clone)]
 pub enum ArkGenerics {
-    #[strum(serialize = "positron_variable_display_value")]
+    #[strum(serialize = "ark_positron_variable_display_value")]
     VariableDisplayValue,
 
-    #[strum(serialize = "positron_variable_display_type")]
+    #[strum(serialize = "ark_positron_variable_display_type")]
     VariableDisplayType,
 
-    #[strum(serialize = "positron_variable_has_children")]
+    #[strum(serialize = "ark_positron_variable_has_children")]
     VariableHasChildren,
 
-    #[strum(serialize = "positron_variable_kind")]
+    #[strum(serialize = "ark_positron_variable_kind")]
     VariableKind,
 }
 
