@@ -79,7 +79,7 @@ impl ArkGenerics {
 
     pub fn register_method(&self, class: &str, method: RObject) -> anyhow::Result<()> {
         let generic_name: &str = self.into();
-        RFunction::new("", ".ark.register_ark_method")
+        RFunction::new("", ".ark.register_method")
             .add(RObject::try_from(generic_name)?)
             .add(RObject::try_from(class)?)
             .add(method)

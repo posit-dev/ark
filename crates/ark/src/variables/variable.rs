@@ -1377,20 +1377,20 @@ mod tests {
             // Register the display value method
             harp::parse_eval_global(
                 r#"
-                .ark.register_ark_method("ark_positron_variable_display_value", "foo", function(x, width) {
+                .ark.register_method("ark_positron_variable_display_value", "foo", function(x, width) {
                     # We return a large string and make sure it gets truncated.
                     paste0(rep("a", length.out = 2*width), collapse="")
                 })
 
-                .ark.register_ark_method("ark_positron_variable_display_type", "foo", function(x, include_length) {
+                .ark.register_method("ark_positron_variable_display_type", "foo", function(x, include_length) {
                     paste0("foo (", length(x), ")")
                 })
 
-                .ark.register_ark_method("ark_positron_variable_has_children", "foo", function(x) {
+                .ark.register_method("ark_positron_variable_has_children", "foo", function(x) {
                     FALSE
                 })
 
-                .ark.register_ark_method("ark_positron_variable_kind", "foo", function(x) {
+                .ark.register_method("ark_positron_variable_kind", "foo", function(x) {
                     "other"
                 })
 

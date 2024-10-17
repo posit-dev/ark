@@ -18,7 +18,7 @@ lockEnvironment(ark_methods_table, TRUE)
 #' @param class Class name as a character
 #' @param method A method to be registered. Should be a call object.
 #' @export
-.ark.register_ark_method <- function(generic, class, method) {
+.ark.register_method <- function(generic, class, method) {
     stopifnot(
         is_string(generic),
         generic %in% names(ark_methods_table),
