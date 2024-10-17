@@ -210,7 +210,7 @@ fn index_node(
     ) {
         if let Some((_, current_parent_ptr)) = section_stack.last() {
             let current_parent = unsafe { &mut **current_parent_ptr };
-            return index_assignment(node, contents, current_parent, symbols);
+            return index_assignment(node, contents, current_parent, symbols, section_stack);
         }
     }
 
@@ -236,9 +236,27 @@ fn index_assignment(
     contents: &Rope,
     parent: &mut DocumentSymbol,
     symbols: &mut Vec<DocumentSymbol>,
+    section_stack: &mut Vec<(usize, *mut DocumentSymbol)>,
 ) -> Result<bool> {
-    // Extract lhs and rhs of the assignment
+    // check for assignment
+    matches!(
+        node.node_type(),
+        NodeType::BinaryOperator(BinaryOperatorType::LeftAssignment) |
+            NodeType::BinaryOperator(BinaryOperatorType::EqualsAssignment)
+    )
+    .into_result()?;
+
+    // check for lhs, rhs
     let lhs = node.child_by_field_name("lhs").into_result()?;
+    let rhs = node.child_by_field_name("rhs").into_result()?;
+
+    // check if lhs is an identifier and rhs is a function definition
+    if lhs.is_identifier_or_string() && rhs.is_function_definition() {
+        // If the RHS is a function definition, we call `index_assignment_with_function`
+        return index_assignment_with_function(node, contents, parent, symbols, section_stack);
+    }
+
+    // otherwise, just index as a generic variable/object
     let name = contents.node_slice(&lhs)?.to_string();
 
     let start = convert_point_to_position(contents, lhs.start_position());
@@ -273,20 +291,21 @@ fn index_assignment_with_function(
 
     // start extracting the argument names
     let mut arguments: Vec<String> = Vec::new();
-    let parameters = rhs.child_by_field_name("parameters").into_result()?;
-
-    let mut cursor = parameters.walk();
-    for parameter in parameters.children_by_field_name("parameter", &mut cursor) {
-        let name = parameter.child_by_field_name("name").into_result()?;
-        let name = contents.node_slice(&name)?.to_string();
-        arguments.push(name);
+    if let Some(parameters) = rhs.child_by_field_name("parameters") {
+        let mut cursor = parameters.walk();
+        for parameter in parameters.children_by_field_name("parameter", &mut cursor) {
+            if let Some(name) = parameter.child_by_field_name("name") {
+                let name = contents.node_slice(&name)?.to_string();
+                arguments.push(name);
+            }
+        }
     }
 
     let name = contents.node_slice(&lhs)?.to_string();
     let detail = format!("function({})", arguments.join(", "));
 
     // build the document symbol
-    let symbol = DocumentSymbol {
+    let mut symbol = DocumentSymbol {
         name,
         kind: SymbolKind::FUNCTION,
         detail: Some(detail),
@@ -303,17 +322,20 @@ fn index_assignment_with_function(
         },
     };
 
-    // add this symbol to the parent node
+    // add the function symbol to the parent
     parent.children.as_mut().unwrap().push(symbol);
 
-    // Update the section_stack with the new symbol added
+    // Get a mutable reference to the newly added symbol
     let new_parent = parent.children.as_mut().unwrap().last_mut().unwrap();
-    section_stack.push((0, new_parent as *mut DocumentSymbol)); // The level is set to 0 for function symbols, but you can adjust this logic based on your hierarchy needs.
+    let new_parent_ptr = new_parent as *mut DocumentSymbol;
 
-    // recurse into this node
+    // Add the function to the section stack
+    section_stack.push((0, new_parent_ptr));
+
+    // Recurse into the function body to add its children
     index_node(&rhs, contents, new_parent, symbols, section_stack)?;
 
-    // Remove the current function symbol from the stack when done
+    // Pop the stack after processing the function body
     section_stack.pop();
 
     Ok(true)
@@ -346,7 +368,20 @@ mod tests {
             selection_range: Range { start, end },
         };
 
-        index_node(&node, &doc.contents, &mut root, &mut symbols).unwrap();
+        // Create a section_stack to pass to index_node
+        let mut section_stack: Vec<(usize, *mut DocumentSymbol)> =
+            vec![(0, &mut root as *mut DocumentSymbol)];
+
+        // Call index_node with the new argument
+        index_node(
+            &node,
+            &doc.contents,
+            &mut root,
+            &mut symbols,
+            &mut section_stack,
+        )
+        .unwrap();
+
         root.children.unwrap_or_default()
     }
 
