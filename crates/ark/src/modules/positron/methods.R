@@ -10,6 +10,8 @@ ark_methods_table$ark_positron_variable_display_value <- new.env(parent = emptye
 ark_methods_table$ark_positron_variable_display_type <- new.env(parent = emptyenv())
 ark_methods_table$ark_positron_variable_has_children <- new.env(parent = emptyenv())
 ark_methods_table$ark_positron_variable_kind <- new.env(parent = emptyenv())
+ark_methods_table$ark_positron_variable_get_child_at <- new.env(parent = emptyenv())
+ark_methods_table$ark_positron_variable_get_children <- new.env(parent = emptyenv())
 lockEnvironment(ark_methods_table, TRUE)
 
 ark_methods_allowed_packages <- c("torch", "reticulate")
