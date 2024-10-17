@@ -105,8 +105,18 @@ pub(crate) fn document_symbols(
         selection_range: Range { start, end },
     };
 
+    // Maintain a stack to track the hierarchy of comment sections
+    let mut section_stack: Vec<(usize, *mut DocumentSymbol)> =
+        vec![(0, &mut root as *mut DocumentSymbol)];
+
     // index from the root
-    index_node(&node, &contents, &mut root, &mut symbols)?;
+    index_node(
+        &node,
+        &contents,
+        &mut root,
+        &mut symbols,
+        &mut section_stack,
+    )?;
 
     // return the children we found
     Ok(root.children.unwrap_or_default())
@@ -142,11 +152,8 @@ fn index_node(
     contents: &Rope,
     parent: &mut DocumentSymbol,
     symbols: &mut Vec<DocumentSymbol>,
+    section_stack: &mut Vec<(usize, *mut DocumentSymbol)>,
 ) -> Result<bool> {
-    // Maintain a stack to track the hierarchy of comment sections
-    let mut section_stack: Vec<(usize, *mut DocumentSymbol)> =
-        vec![(0, parent as *mut DocumentSymbol)];
-
     // Check if the node is a comment and matches the markdown-style comment patterns
     if node.node_type() == NodeType::Comment {
         let comment_text = contents.node_slice(&node)?.to_string();
@@ -212,7 +219,13 @@ fn index_node(
         // Use the last entry in the stack to determine the correct parent
         if let Some((_, current_parent_ptr)) = section_stack.last() {
             let current_parent = unsafe { &mut **current_parent_ptr };
-            match index_assignment(node, contents, current_parent, symbols) {
+            match index_assignment_with_function(
+                node,
+                contents,
+                current_parent,
+                symbols,
+                section_stack,
+            ) {
                 Ok(handled) => {
                     if handled {
                         return Ok(true);
@@ -230,7 +243,7 @@ fn index_node(
             // Use the last entry in the stack to determine the correct parent
             if let Some((_, current_parent_ptr)) = section_stack.last() {
                 let current_parent = unsafe { &mut **current_parent_ptr };
-                let result = index_node(&child, contents, current_parent, symbols);
+                let result = index_node(&child, contents, current_parent, symbols, section_stack);
                 if let Err(error) = result {
                     error!("{:?}", error);
                 }
@@ -246,6 +259,7 @@ fn index_assignment(
     contents: &Rope,
     parent: &mut DocumentSymbol,
     symbols: &mut Vec<DocumentSymbol>,
+    section_stack: &mut Vec<(usize, *mut DocumentSymbol)>, // Add section_stack argument
 ) -> Result<bool> {
     // check for assignment
     matches!(
@@ -263,7 +277,8 @@ fn index_assignment(
     let function = lhs.is_identifier_or_string() && rhs.is_function_definition();
 
     if function {
-        return index_assignment_with_function(node, contents, parent, symbols);
+        // Pass section_stack when calling index_assignment_with_function
+        return index_assignment_with_function(node, contents, parent, symbols, section_stack);
     }
 
     // otherwise, just index as generic object
@@ -294,6 +309,7 @@ fn index_assignment_with_function(
     contents: &Rope,
     parent: &mut DocumentSymbol,
     symbols: &mut Vec<DocumentSymbol>,
+    section_stack: &mut Vec<(usize, *mut DocumentSymbol)>,
 ) -> Result<bool> {
     // check for lhs, rhs
     let lhs = node.child_by_field_name("lhs").into_result()?;
@@ -334,9 +350,15 @@ fn index_assignment_with_function(
     // add this symbol to the parent node
     parent.children.as_mut().unwrap().push(symbol);
 
+    // Update the section_stack with the new symbol added
+    let new_parent = parent.children.as_mut().unwrap().last_mut().unwrap();
+    section_stack.push((0, new_parent as *mut DocumentSymbol)); // The level is set to 0 for function symbols, but you can adjust this logic based on your hierarchy needs.
+
     // recurse into this node
-    let parent = parent.children.as_mut().unwrap().last_mut().unwrap();
-    index_node(&rhs, contents, parent, symbols)?;
+    index_node(&rhs, contents, new_parent, symbols, section_stack)?;
+
+    // Remove the current function symbol from the stack when done
+    section_stack.pop();
 
     Ok(true)
 }
