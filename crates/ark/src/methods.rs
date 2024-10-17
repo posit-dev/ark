@@ -46,8 +46,8 @@ impl ArkGenerics {
     // Returns
     //   - `None` if no method was found,
     //   - `Err` if method was found and errored
-    //   - `Err`if the method result could not be coerced to `T`
-    //   - T, if method was found and was succesfully executed
+    //   - `Err` if the method result could not be coerced to `T`
+    //   - T, if method was found and was successfully executed
     pub fn try_dispatch<T>(&self, x: SEXP, args: Vec<RArgument>) -> anyhow::Result<Option<T>>
     where
         // Making this a generic allows us to handle the conversion to the expected output
@@ -107,7 +107,7 @@ impl ArkGenerics {
         Ok(())
     }
 
-    // Checks if a symbol name is a method and returns it's class
+    // Checks if a symbol name is a method and returns its class
     fn parse_method(name: &String) -> Option<(Self, String)> {
         for method in ArkGenerics::iter() {
             let method_str: &str = method.clone().into();
