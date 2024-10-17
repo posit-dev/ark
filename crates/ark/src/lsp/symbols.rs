@@ -23,7 +23,6 @@ use tower_lsp::lsp_types::Url;
 use tower_lsp::lsp_types::WorkspaceSymbolParams;
 use tree_sitter::Node;
 
-// use crate::lsp;
 use crate::lsp::encoding::convert_point_to_position;
 use crate::lsp::indexer;
 use crate::lsp::indexer::IndexEntryData;
@@ -154,31 +153,27 @@ fn index_node(
     symbols: &mut Vec<DocumentSymbol>,
     section_stack: &mut Vec<(usize, *mut DocumentSymbol)>,
 ) -> Result<bool> {
-    // Check if the node is a comment and matches the markdown-style comment patterns
+    // Maintain hierarchy for comment sections
     if node.node_type() == NodeType::Comment {
         let comment_text = contents.node_slice(&node)?.to_string();
 
-        // Check if the comment starts with one or more '#' followed by any text and ends with 4+ punctuations
         if let Some((level, title)) = parse_comment_as_section(&comment_text) {
-            // Create a symbol based on the parsed comment
             let start = convert_point_to_position(contents, node.start_position());
             let end = convert_point_to_position(contents, node.end_position());
 
             let symbol = DocumentSymbol {
                 name: title,
-                kind: SymbolKind::STRING, // Treat it as a string section
+                kind: SymbolKind::STRING,
                 detail: None,
-                children: Some(Vec::new()), // Prepare for child symbols if any
+                children: Some(Vec::new()),
                 deprecated: None,
                 tags: None,
                 range: Range { start, end },
                 selection_range: Range { start, end },
             };
 
-            // Pop the stack until we find the appropriate parent level
+            // Pop until we find a suitable parent for this level
             while let Some((current_level, _)) = section_stack.last() {
-                // log current level and level
-                // lsp::log_error!("current_level: {}, level: {}", current_level, level);
                 if *current_level >= level {
                     section_stack.pop();
                 } else {
@@ -186,11 +181,9 @@ fn index_node(
                 }
             }
 
-            // Get a mutable reference to the current parent from the stack
+            // Push the new symbol to the current parent
             if let Some((_, current_parent_ptr)) = section_stack.last() {
-                // SAFETY: We know that the pointer is still valid because it's derived from the current stack state
                 let current_parent = unsafe { &mut **current_parent_ptr };
-
                 current_parent.children.as_mut().unwrap().push(symbol);
                 let new_parent = current_parent
                     .children
@@ -200,39 +193,24 @@ fn index_node(
                     .unwrap();
                 section_stack.push((level, new_parent as *mut DocumentSymbol));
             } else {
-                // If no correct parent is found, add this as a root-level comment
                 parent.children.as_mut().unwrap().push(symbol);
                 let new_parent = parent.children.as_mut().unwrap().last_mut().unwrap();
                 section_stack.push((level, new_parent as *mut DocumentSymbol));
             }
 
-            // Return early to avoid further processing of the current node
             return Ok(true);
         }
     }
 
+    // Handle assignments (like `a <- 1`)
     if matches!(
         node.node_type(),
         NodeType::BinaryOperator(BinaryOperatorType::LeftAssignment) |
             NodeType::BinaryOperator(BinaryOperatorType::EqualsAssignment)
     ) {
-        // Use the last entry in the stack to determine the correct parent
         if let Some((_, current_parent_ptr)) = section_stack.last() {
             let current_parent = unsafe { &mut **current_parent_ptr };
-            match index_assignment_with_function(
-                node,
-                contents,
-                current_parent,
-                symbols,
-                section_stack,
-            ) {
-                Ok(handled) => {
-                    if handled {
-                        return Ok(true);
-                    }
-                },
-                Err(error) => error!("{:?}", error),
-            }
+            return index_assignment(node, contents, current_parent, symbols);
         }
     }
 
@@ -240,7 +218,6 @@ fn index_node(
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         if is_indexable(&child) {
-            // Use the last entry in the stack to determine the correct parent
             if let Some((_, current_parent_ptr)) = section_stack.last() {
                 let current_parent = unsafe { &mut **current_parent_ptr };
                 let result = index_node(&child, contents, current_parent, symbols, section_stack);
@@ -259,29 +236,9 @@ fn index_assignment(
     contents: &Rope,
     parent: &mut DocumentSymbol,
     symbols: &mut Vec<DocumentSymbol>,
-    section_stack: &mut Vec<(usize, *mut DocumentSymbol)>, // Add section_stack argument
 ) -> Result<bool> {
-    // check for assignment
-    matches!(
-        node.node_type(),
-        NodeType::BinaryOperator(BinaryOperatorType::LeftAssignment) |
-            NodeType::BinaryOperator(BinaryOperatorType::EqualsAssignment)
-    )
-    .into_result()?;
-
-    // check for lhs, rhs
+    // Extract lhs and rhs of the assignment
     let lhs = node.child_by_field_name("lhs").into_result()?;
-    let rhs = node.child_by_field_name("rhs").into_result()?;
-
-    // check for identifier on lhs, function on rhs
-    let function = lhs.is_identifier_or_string() && rhs.is_function_definition();
-
-    if function {
-        // Pass section_stack when calling index_assignment_with_function
-        return index_assignment_with_function(node, contents, parent, symbols, section_stack);
-    }
-
-    // otherwise, just index as generic object
     let name = contents.node_slice(&lhs)?.to_string();
 
     let start = convert_point_to_position(contents, lhs.start_position());
@@ -289,7 +246,7 @@ fn index_assignment(
 
     let symbol = DocumentSymbol {
         name,
-        kind: SymbolKind::OBJECT,
+        kind: SymbolKind::VARIABLE, // Use VARIABLE kind to represent an assignment
         detail: None,
         children: Some(Vec::new()),
         deprecated: None,
@@ -298,7 +255,6 @@ fn index_assignment(
         selection_range: Range::new(start, end),
     };
 
-    // add this symbol to the parent node
     parent.children.as_mut().unwrap().push(symbol);
 
     Ok(true)
