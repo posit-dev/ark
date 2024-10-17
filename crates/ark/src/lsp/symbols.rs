@@ -263,7 +263,7 @@ fn index_assignment(
 
     let symbol = DocumentSymbol {
         name,
-        kind: SymbolKind::VARIABLE, // Use VARIABLE kind to represent an assignment
+        kind: SymbolKind::OBJECT,
         detail: None,
         children: Some(Vec::new()),
         deprecated: None,
