@@ -33,6 +33,12 @@ pub enum ArkGenerics {
 
     #[strum(serialize = "ark_positron_variable_kind")]
     VariableKind,
+
+    #[strum(serialize = "ark_positron_variable_get_child_at")]
+    VariableGetChildAt,
+
+    #[strum(serialize = "ark_positron_variable_get_children")]
+    VariableGetChildren,
 }
 
 impl ArkGenerics {

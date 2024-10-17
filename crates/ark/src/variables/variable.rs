@@ -22,6 +22,7 @@ use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::r_length;
 use harp::object::RObject;
+use harp::r_null;
 use harp::r_symbol;
 use harp::symbol::RSymbol;
 use harp::utils::pairlist_size;
@@ -46,6 +47,7 @@ use harp::vector::names::Names;
 use harp::vector::CharacterVector;
 use harp::vector::IntegerVector;
 use harp::vector::Vector;
+use harp::List;
 use harp::TableDim;
 use itertools::Itertools;
 use libr::*;
@@ -524,9 +526,9 @@ fn has_children(value: SEXP) -> bool {
 
 enum EnvironmentVariableNode {
     Concrete { object: RObject },
-    Artificial { object: RObject, name: String },
+    R6Node { object: RObject, name: String },
     Matrixcolumn { object: RObject, index: isize },
-    VectorElement { object: RObject, index: isize },
+    AtomicVectorElement { object: RObject, index: isize },
 }
 
 pub struct PositronVariable {
@@ -812,10 +814,10 @@ impl PositronVariable {
     }
 
     pub fn inspect(env: RObject, path: &Vec<String>) -> Result<Vec<Variable>, harp::error::Error> {
-        let node = unsafe { Self::resolve_object_from_path(env, &path)? };
+        let node = Self::resolve_object_from_path(env, &path)?;
 
         match node {
-            EnvironmentVariableNode::Artificial { object, name } => match name.as_str() {
+            EnvironmentVariableNode::R6Node { object, name } => match name.as_str() {
                 "<private>" => {
                     let env = Environment::new(object);
                     let enclos = Environment::new(RObject::view(env.find(".__enclos_env__")?));
@@ -830,6 +832,17 @@ impl PositronVariable {
             },
 
             EnvironmentVariableNode::Concrete { object } => {
+                // First try to dispatch GetChildren method and construct
+                // variables from it.
+                match Self::try_inspect_custom_method(object.sexp) {
+                    Err(err) => log::error!(
+                        "Failed to inspect with {}: {err}",
+                        ArkGenerics::VariableGetChildren.to_string()
+                    ),
+                    Ok(None) => {},
+                    Ok(Some(variables)) => return Ok(variables),
+                }
+
                 if object.is_s4() {
                     Self::inspect_s4(*object)
                 } else {
@@ -858,7 +871,7 @@ impl PositronVariable {
             EnvironmentVariableNode::Matrixcolumn { object, index } => {
                 Self::inspect_matrix_column(*object, index)
             },
-            EnvironmentVariableNode::VectorElement { .. } => Ok(vec![]),
+            EnvironmentVariableNode::AtomicVectorElement { .. } => Ok(vec![]),
         }
     }
 
@@ -867,7 +880,7 @@ impl PositronVariable {
         path: &Vec<String>,
         _format: &ClipboardFormatFormat,
     ) -> Result<String, harp::error::Error> {
-        let node = unsafe { Self::resolve_object_from_path(env, &path)? };
+        let node = Self::resolve_object_from_path(env, &path)?;
 
         match node {
             EnvironmentVariableNode::Concrete { object } => {
@@ -886,8 +899,8 @@ impl PositronVariable {
                     Ok(FormattedVector::new(*object)?.iter().join(" "))
                 }
             },
-            EnvironmentVariableNode::Artificial { .. } => Ok(String::from("")),
-            EnvironmentVariableNode::VectorElement { object, index } => {
+            EnvironmentVariableNode::R6Node { .. } => Ok(String::from("")),
+            EnvironmentVariableNode::AtomicVectorElement { object, index } => {
                 let formatted = FormattedVector::new(*object)?;
                 Ok(formatted.get_unchecked(index))
             },
@@ -909,7 +922,7 @@ impl PositronVariable {
         env: RObject,
         path: &Vec<String>,
     ) -> Result<RObject, harp::error::Error> {
-        let resolved = unsafe { Self::resolve_object_from_path(env, path)? };
+        let resolved = Self::resolve_object_from_path(env, path)?;
 
         match resolved {
             EnvironmentVariableNode::Concrete { object } => Ok(object),
@@ -918,132 +931,216 @@ impl PositronVariable {
         }
     }
 
-    unsafe fn resolve_object_from_path(
+    fn get_envsxp_child_node_at(
+        object: RObject,
+        access_key: &String,
+    ) -> harp::Result<EnvironmentVariableNode> {
+        let symbol = unsafe { r_symbol!(access_key) };
+        let mut x = unsafe { Rf_findVarInFrame(*object, symbol) };
+
+        if r_typeof(x) == PROMSXP {
+            // if we are here, it means the promise is either evaluated
+            // already, i.e. PRVALUE() is bound or it is a promise to
+            // something that is not a call or a symbol because it would
+            // have been handled in Binding::new()
+
+            // Actual promises, i.e. unevaluated promises can't be
+            // expanded in the variables pane so we would not get here.
+
+            let value = unsafe { PRVALUE(x) };
+            if r_is_unbound(value) {
+                x = unsafe { PRCODE(x) };
+            } else {
+                x = value;
+            }
+        }
+
+        Ok(EnvironmentVariableNode::Concrete {
+            object: RObject::view(x),
+        })
+    }
+
+    fn get_concrete_child_node(
+        object: RObject,
+        access_key: &String,
+    ) -> harp::Result<EnvironmentVariableNode> {
+        // Concrete nodes are objects that are treated as is. Accessing an element from them
+        // might result in special node types.
+
+        // First try to get child using a generic method
+        // When building the children list of nodes that use a custom `get_children` method, the access_key is
+        // formatted as "custom-{index}-{length(name)}-{name}". If the access_key has this format, we call the custom `get_child_at`,
+        // method, if there's one available:
+        let result = local!({
+            let parsed_access_key: Vec<&str> = access_key.splitn(4, '-').collect();
+
+            if parsed_access_key.len() != 4 {
+                return Ok(None);
+            };
+
+            if parsed_access_key[0] != "custom" {
+                return Ok(None);
+            };
+
+            let index = match parsed_access_key[1].parse::<i32>() {
+                Err(_) => return Ok(None), // Not an access_key in the required format
+                Ok(i) => i,
+            };
+
+            let name_len = match parsed_access_key[2].parse::<usize>() {
+                Err(_) => return Ok(None), // Not an access_key in the required format
+                Ok(name_len) => name_len,
+            };
+
+            let name = match parsed_access_key[3] {
+                "" => RObject::from(r_null()), // Empty string, means a `NULL` name
+                nm => {
+                    if nm.len() == name_len {
+                        RObject::from(nm)
+                    } else {
+                        // Name has been truncated, we pass it as `NULL`
+                        RObject::from(r_null())
+                    }
+                },
+            };
+
+            ArkGenerics::VariableGetChildAt.try_dispatch::<RObject>(object.sexp, vec![
+                RArgument::new("index", RObject::from(index + 1)), // Index is 0-based, so we convert to 1-based for R.
+                RArgument::new("name", RObject::from(name)),
+            ])
+        });
+
+        match result {
+            Err(err) => {
+                // It's not safe to apply default methods in this case, because we rely on custom
+                // access keys, which could indicate the access index depending on the node implementation.
+                // See for instance, how it's used to index lists and atomic vectors.
+                return Err(harp::Error::Anyhow(err));
+            },
+            Ok(None) => {
+                // The object doesn't have a custom get_child_at method. We apply
+                // the default built-in methods.
+            },
+            Ok(Some(child)) => return Ok(EnvironmentVariableNode::Concrete { object: child }),
+        };
+
+        // For S4 objects, we acess child nodes using R_do_slot.
+        if object.is_s4() {
+            let name = unsafe { r_symbol!(access_key) };
+            let child: RObject =
+                harp::try_catch(|| unsafe { R_do_slot(object.sexp, name) }.into())?;
+            return Ok(EnvironmentVariableNode::Concrete { object: child });
+        }
+
+        // R6 objects may be accessed with special elements called <methods> and <private>.
+        // For them, we'll have to build the next node artifically.
+        if r_inherits(object.sexp, "R6") && access_key.starts_with("<") {
+            return Ok(EnvironmentVariableNode::R6Node {
+                object,
+                name: access_key.clone(),
+            });
+        }
+
+        match r_typeof(*object) {
+            ENVSXP => Self::get_envsxp_child_node_at(object, access_key),
+            VECSXP | EXPRSXP => {
+                let index = parse_index(access_key)?;
+                Ok(EnvironmentVariableNode::Concrete {
+                    object: RObject::view(harp::list_get(object.sexp, index)),
+                })
+            },
+            LISTSXP => {
+                let mut pairlist = *object;
+                let index = parse_index(access_key)?;
+                for _i in 0..index {
+                    pairlist = unsafe { CDR(pairlist) };
+                }
+                Ok(EnvironmentVariableNode::Concrete {
+                    object: RObject::view(unsafe { CAR(pairlist) }),
+                })
+            },
+            LGLSXP | RAWSXP | STRSXP | INTSXP | REALSXP | CPLXSXP => {
+                if r_is_matrix(object.sexp) {
+                    Ok(EnvironmentVariableNode::Matrixcolumn {
+                        object,
+                        index: parse_index(access_key)?,
+                    })
+                } else {
+                    Ok(EnvironmentVariableNode::AtomicVectorElement {
+                        object,
+                        index: parse_index(access_key)?,
+                    })
+                }
+            },
+            _ => Err(harp::Error::Anyhow(anyhow!(
+                "Unexpected child at {access_key}"
+            ))),
+        }
+    }
+
+    fn get_child_node_at(
+        node: EnvironmentVariableNode,
+        path_elt: &String,
+    ) -> harp::Result<EnvironmentVariableNode> {
+        match node {
+            EnvironmentVariableNode::Concrete { object } => {
+                Self::get_concrete_child_node(object, path_elt)
+            },
+
+            EnvironmentVariableNode::R6Node { object, name } => {
+                match name.as_str() {
+                    "<private>" => {
+                        let env = Environment::new(object);
+                        let enclos = Environment::new(RObject::view(env.find(".__enclos_env__")?));
+                        let private = Environment::new(RObject::view(enclos.find("private")?));
+
+                        // TODO: it seems unlikely that private would host active bindings
+                        //       so find() is fine, we can assume this is concrete
+                        Ok(EnvironmentVariableNode::Concrete {
+                            object: RObject::view(private.find(path_elt)?),
+                        })
+                    },
+
+                    _ => {
+                        // Technically we'd also implement this for `<methods>`, but because `methods`
+                        // are all functions which always `have_children=false` we don't need to.
+                        return Err(harp::Error::Anyhow(anyhow!(
+                            "You can only get children from <private>, got {path_elt}"
+                        )));
+                    },
+                }
+            },
+
+            EnvironmentVariableNode::AtomicVectorElement { .. } => {
+                return Err(harp::Error::Anyhow(anyhow!(
+                    "Can't subset an atomic vector even further, got {path_elt}"
+                )));
+            },
+
+            EnvironmentVariableNode::Matrixcolumn { object, index } => unsafe {
+                let dim = IntegerVector::new(Rf_getAttrib(*object, R_DimSymbol))?;
+                let n_row = dim.get_unchecked(0).unwrap() as isize;
+
+                // TODO: use ? here, but this does not return a crate::error::Error, so
+                //       maybe use anyhow here instead ?
+                let row_index = path_elt.parse::<isize>().unwrap();
+
+                Ok(EnvironmentVariableNode::AtomicVectorElement {
+                    object,
+                    index: n_row * index + row_index,
+                })
+            },
+        }
+    }
+
+    fn resolve_object_from_path(
         object: RObject,
         path: &Vec<String>,
     ) -> harp::Result<EnvironmentVariableNode> {
         let mut node = EnvironmentVariableNode::Concrete { object };
 
-        for path_element in path {
-            node = match node {
-                EnvironmentVariableNode::Concrete { object } => {
-                    if object.is_s4() {
-                        let name = r_symbol!(path_element);
-                        let child: RObject =
-                            harp::try_catch(|| R_do_slot(object.sexp, name).into())?;
-                        EnvironmentVariableNode::Concrete { object: child }
-                    } else {
-                        let rtype = r_typeof(*object);
-                        match rtype {
-                            ENVSXP => {
-                                if r_inherits(*object, "R6") && path_element.starts_with("<") {
-                                    EnvironmentVariableNode::Artificial {
-                                        object,
-                                        name: path_element.clone(),
-                                    }
-                                } else {
-                                    let symbol = r_symbol!(path_element);
-                                    let mut x = Rf_findVarInFrame(*object, symbol);
-
-                                    if r_typeof(x) == PROMSXP {
-                                        // if we are here, it means the promise is either evaluated
-                                        // already, i.e. PRVALUE() is bound or it is a promise to
-                                        // something that is not a call or a symbol because it would
-                                        // have been handled in Binding::new()
-
-                                        // Actual promises, i.e. unevaluated promises can't be
-                                        // expanded in the variables pane so we would not get here.
-
-                                        let value = PRVALUE(x);
-                                        if r_is_unbound(value) {
-                                            x = PRCODE(x);
-                                        } else {
-                                            x = value;
-                                        }
-                                    }
-
-                                    EnvironmentVariableNode::Concrete {
-                                        object: RObject::view(x),
-                                    }
-                                }
-                            },
-
-                            VECSXP | EXPRSXP => {
-                                let index = path_element.parse::<isize>().unwrap();
-                                EnvironmentVariableNode::Concrete {
-                                    object: RObject::view(VECTOR_ELT(*object, index)),
-                                }
-                            },
-
-                            LISTSXP => {
-                                let mut pairlist = *object;
-                                let index = path_element.parse::<isize>().unwrap();
-                                for _i in 0..index {
-                                    pairlist = CDR(pairlist);
-                                }
-                                EnvironmentVariableNode::Concrete {
-                                    object: RObject::view(CAR(pairlist)),
-                                }
-                            },
-
-                            LGLSXP | RAWSXP | STRSXP | INTSXP | REALSXP | CPLXSXP => {
-                                if r_is_matrix(*object) {
-                                    EnvironmentVariableNode::Matrixcolumn {
-                                        object,
-                                        index: path_element.parse::<isize>().unwrap(),
-                                    }
-                                } else {
-                                    EnvironmentVariableNode::VectorElement {
-                                        object,
-                                        index: path_element.parse::<isize>().unwrap(),
-                                    }
-                                }
-                            },
-
-                            _ => {
-                                return Err(harp::error::Error::InspectError { path: path.clone() })
-                            },
-                        }
-                    }
-                },
-
-                EnvironmentVariableNode::Artificial { object, name } => {
-                    match name.as_str() {
-                        "<private>" => {
-                            let env = Environment::new(object);
-                            let enclos =
-                                Environment::new(RObject::view(env.find(".__enclos_env__")?));
-                            let private = Environment::new(RObject::view(enclos.find("private")?));
-
-                            // TODO: it seems unlikely that private would host active bindings
-                            //       so find() is fine, we can assume this is concrete
-                            EnvironmentVariableNode::Concrete {
-                                object: RObject::view(private.find(path_element)?),
-                            }
-                        },
-
-                        _ => return Err(harp::error::Error::InspectError { path: path.clone() }),
-                    }
-                },
-
-                EnvironmentVariableNode::VectorElement { .. } => {
-                    return Err(harp::error::Error::InspectError { path: path.clone() });
-                },
-
-                EnvironmentVariableNode::Matrixcolumn { object, index } => unsafe {
-                    let dim = IntegerVector::new(Rf_getAttrib(*object, R_DimSymbol))?;
-                    let n_row = dim.get_unchecked(0).unwrap() as isize;
-
-                    // TODO: use ? here, but this does not return a crate::error::Error, so
-                    //       maybe use anyhow here instead ?
-                    let row_index = path_element.parse::<isize>().unwrap();
-
-                    EnvironmentVariableNode::VectorElement {
-                        object,
-                        index: n_row * index + row_index,
-                    }
-                },
-            }
+        for path_elt in path {
+            node = Self::get_child_node_at(node, path_elt)?
         }
 
         Ok(node)
@@ -1336,6 +1433,88 @@ impl PositronVariable {
 
         Ok(out)
     }
+
+    fn try_inspect_custom_method(value: SEXP) -> Result<Option<Vec<Variable>>, harp::Error> {
+        let result: Option<RObject> = ArkGenerics::VariableGetChildren
+            .try_dispatch(value, vec![])
+            .map_err(|err| harp::Error::Anyhow(err))?;
+
+        match result {
+            None => Ok(None),
+            Some(value) => {
+                // Make sure value is a list before using inspect_list
+                if !r_typeof(value.sexp) == LISTSXP {
+                    return Err(harp::Error::Anyhow(anyhow!(
+                        "Expected `{}` to return a list.",
+                        ArkGenerics::VariableGetChildren.to_string()
+                    )));
+                }
+
+                // This is essentially the same as Self::inspect_list but with modified `access_key`
+                // that adds more information about the object:
+                // 1. Provide the name and the index for the `get_child_at` method.
+                // 2. (Not necessary) Given an access key, we can detect if we want to apply a custom get_child_method.
+                let list = List::new(value.sexp)?;
+                let n = unsafe { list.len() };
+
+                let names = local!({
+                    let r_names = unsafe { RObject::new(Rf_getAttrib(value.sexp, R_NamesSymbol)) };
+                    if r_is_null(r_names.sexp) {
+                        return vec![None; n];
+                    }
+
+                    let names = unsafe { CharacterVector::new_unchecked(r_names) };
+
+                    if unsafe { names.len() } != n {
+                        return vec![None; n];
+                    }
+
+                    names
+                        .iter()
+                        .map(|v| match v {
+                            None => None,
+                            Some(s) => {
+                                if s.len() == 0 {
+                                    None
+                                } else {
+                                    Some(s)
+                                }
+                            },
+                        })
+                        .collect()
+                });
+
+                let variables = list
+                    .iter()
+                    .zip(names.iter())
+                    .enumerate()
+                    .map(|(i, (x, name))| {
+                        // The acess key is formatted as `custom-{index}-{length(name)}-{name}`
+                        // where:
+                        // - index: is the position of the element in children's list
+                        // - length(name): the original length of the name, before truncation.
+                        // - name: a possibly truncated name. Very large names could cause problems
+                        //   when transfered to the UI.
+                        let (access_name, name_len) = match name {
+                            Some(nm) => {
+                                let truncated_name: String =
+                                    nm.chars().take(MAX_DISPLAY_VALUE_LENGTH).collect();
+                                (truncated_name, nm.len())
+                            },
+                            None => (String::from(""), 0),
+                        };
+
+                        let access_key = format!("custom-{i}-{name_len}-{access_name}");
+
+                        let display_name = name.clone().unwrap_or(format!("[[{}]]", i + 1));
+                        Self::from(access_key, display_name, x).var()
+                    })
+                    .collect();
+
+                Ok(Some(variables))
+            },
+        }
+    }
 }
 
 fn try_from_method_variable_kind(value: SEXP) -> anyhow::Result<Option<VariableKind>> {
@@ -1364,6 +1543,12 @@ pub fn plain_binding_force_with_rollback(binding: &Binding) -> anyhow::Result<RO
     }
 }
 
+fn parse_index(x: &String) -> harp::Result<isize> {
+    x.parse::<isize>().map_err(|err| {
+        harp::Error::Anyhow(anyhow!("Expected to be able to parse into integer: {err}"))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use harp;
@@ -1387,33 +1572,254 @@ mod tests {
                 })
 
                 .ark.register_method("ark_positron_variable_has_children", "foo", function(x) {
-                    FALSE
+                    TRUE
                 })
 
                 .ark.register_method("ark_positron_variable_kind", "foo", function(x) {
                     "other"
                 })
 
+                .ark.register_method("ark_positron_variable_get_children", "foo", function(x) {
+                    children <- list(
+                        "hello" = list(a = 1, b = 2),
+                        "bye" = "testing",
+                        c(1, 2, 3),
+                        c(1, 2, 3, 4)
+                    )
+                    # Make a very large name to test truncation
+                    names(children)[4] <- paste0(rep(letters, 100), collapse = "")
+                    children
+                })
+
+                .ark.register_method("ark_positron_variable_get_child_at", "foo", function(x, ..., index, name) {
+                    if (!is.null(name) && name == "hello") {
+                        list(a = 1, b = 2)
+                    } else if (index == 2) {
+                        "testing"
+                    } else if (index == 3) {
+                        c(1, 2, 3)
+                    } else if (index == 4) {
+                        # The fourth element name is very large, so it should
+                        # be discarded by ark.
+                        if (!is.null(name)) {
+                            stop("Name should have been discarded")
+                        }
+                        c(1, 2, 3, 4)
+                    } else {
+                        stop("Unexpected")
+                    }
+                })
                 "#,
             )
             .unwrap();
 
             // Create an object with that class in an env.
-            let obj = harp::parse_eval_base(r#"structure(list(1,2,3), class = "foo")"#).unwrap();
+            let env = harp::parse_eval_base(
+                r#"
+            local({
+                env <- new.env(parent = emptyenv())
+                env$x <- structure(list(1,2,3), class = "foo")
+                env
+            })
+            "#,
+            )
+            .unwrap();
 
-            let variable =
-                PositronVariable::from(String::from("foo"), String::from("foo"), obj.sexp);
+            let path = vec![];
+            let variables = PositronVariable::inspect(env.clone(), &path).unwrap();
 
+            assert_eq!(variables.len(), 1);
+            let variable = variables[0].clone();
+
+            assert_eq!(variable.display_value, "a".repeat(MAX_DISPLAY_VALUE_LENGTH));
+
+            assert_eq!(variable.display_type, String::from("foo (3)"));
+
+            assert_eq!(variable.has_children, true);
+
+            assert_eq!(variable.kind, VariableKind::Other);
+
+            // Now inspect `x`
+            let path = vec![String::from("x")];
+            let variables = PositronVariable::inspect(env.clone(), &path).unwrap();
+
+            assert_eq!(variables.len(), 4);
+
+            // Now inspect a list inside x
+            let path = vec![String::from("x"), variables[0].access_key.clone()];
+            let list = PositronVariable::inspect(env.clone(), &path).unwrap();
+            assert_eq!(list.len(), 2);
+
+            let path = vec![String::from("x"), variables[2].access_key.clone()];
+            let vector = PositronVariable::inspect(env.clone(), &path).unwrap();
+            assert_eq!(vector.len(), 3);
+
+            let path = vec![String::from("x"), variables[3].access_key.clone()];
+            let vector = PositronVariable::inspect(env, &path).unwrap();
+            assert_eq!(vector.len(), 4);
+        })
+    }
+
+    #[test]
+    fn test_inspect_r6() {
+        r_task(|| {
+            // Skip test if R6 is not installed
+            if let Ok(false) = harp::parse_eval_global(r#".ps.is_installed("R6")"#)
+                .unwrap()
+                .try_into()
+            {
+                return;
+            }
+
+            // Create an environment that contains an R6 class and an instance
+            let env = harp::parse_eval_global("new.env()").unwrap();
+
+            harp::parse_eval0(
+                r#"
+            Person <- R6::R6Class("Person",
+                public = list(
+                    name = NULL,
+                    friend = NULL,
+                    initialize = function(name = NA, friend = NA) {
+                        self$name <- name
+                        self$friend <- friend
+                    },
+                    greet = function() {
+                        cat(paste0("Hello, my name is ", self$name, ".\n"))
+                    }
+                ),
+                private = list(
+                    get_friend = function() {
+                        self$friend
+                    }
+                ),
+                active = list(
+                    active_name = function() {
+                        stop("Variables pane should not evaluate active bindings.")
+                    }
+                )
+            )
+
+            x = Person$new("ann", NA)
+            "#,
+                env.clone(),
+            )
+            .unwrap();
+
+            // Inspect the class instance
+            let path = vec![String::from("x")];
+            let fields = PositronVariable::inspect(env.clone(), &path).unwrap();
+
+            // Is the active binding correctly handled?
+            assert_eq!(fields.len(), 5);
+            let n_active_bindings = fields
+                .iter()
+                .filter(|v| v.display_name.eq("active_name"))
+                .map(|v| {
+                    assert_eq!(v.display_value, "");
+                    assert_eq!(v.display_type, "active binding");
+                })
+                .count();
+            assert_eq!(n_active_bindings, 1);
+
+            // Can we inspect the list of methods?
+            let path = vec![String::from("x"), String::from("<methods>")];
+            let fields = PositronVariable::inspect(env.clone(), &path).unwrap();
+            assert_eq!(fields.len(), 3);
+            let names: Vec<String> = fields.iter().map(|v| v.display_name.clone()).collect();
+            assert_eq!(names, vec![
+                String::from("clone"),
+                String::from("greet"),
+                String::from("initialize")
+            ]);
+
+            // Can we get a list of private methods?
+            let path = vec![String::from("x"), String::from("<private>")];
+            let fields = PositronVariable::inspect(env.clone(), &path).unwrap();
+            assert_eq!(fields.len(), 1);
+            let names: Vec<String> = fields.iter().map(|v| v.display_name.clone()).collect();
+            assert_eq!(names, vec![String::from("get_friend"),]);
+        })
+    }
+
+    #[test]
+    fn test_inspect_list() {
+        r_task(|| {
+            // Create an environment that contains an R6 class and an instance
+            let env = harp::parse_eval_global("new.env()").unwrap();
+
+            harp::parse_eval0(
+                r#"
+                x <- list(
+                    a = 123,
+                    b = list(1,2,3),
+                    1,
+                    list(1,2,3)
+                )
+            "#,
+                env.clone(),
+            )
+            .unwrap();
+
+            // Inspect the list
+            let path = vec![String::from("x")];
+            let fields = PositronVariable::inspect(env.clone(), &path).unwrap();
+
+            assert_eq!(fields.len(), 4);
+
+            // Make sure we can see something with display_name a
+            assert_eq!(fields.iter().filter(|v| v.display_name.eq("a")).count(), 1);
+
+            // Check that the display value is correct for `a`
+            assert_eq!(fields[0].display_value, "123");
+
+            // Make sure empty named are formatted
             assert_eq!(
-                variable.var.display_value,
-                String::from("a".repeat(MAX_DISPLAY_VALUE_LENGTH))
+                fields.iter().filter(|v| v.display_name.eq("[[3]]")).count(),
+                1
             );
 
-            assert_eq!(variable.var.display_type, String::from("foo (3)"));
+            // Can we inspect list internals
+            let path = vec![String::from("x"), String::from("1")];
+            let fields = PositronVariable::inspect(env.clone(), &path).unwrap();
 
-            assert_eq!(variable.var.has_children, false);
+            assert_eq!(fields.len(), 3);
+            fields.iter().enumerate().for_each(|(index, value)| {
+                let index = index + 1; // R indexes start from 1
+                assert_eq!(value.display_name, format!("[[{index}]]"));
+            });
+        })
+    }
 
-            assert_eq!(variable.var.kind, VariableKind::Other);
+    #[test]
+    fn test_inspect_s4() {
+        r_task(|| {
+            let env = harp::parse_eval_global("new.env()").unwrap();
+
+            harp::parse_eval0(
+                r#"
+                setClass("Person", representation(name = "character", age = "numeric", objects = "list"))
+                x <- new("Person", name = "x", age = 31, objects = list(1,2,3))
+            "#,
+                env.clone(),
+            )
+            .unwrap();
+
+            // Inspect the S4 object
+            let path = vec![String::from("x")];
+            let fields = PositronVariable::inspect(env.clone(), &path).unwrap();
+
+            assert_eq!(fields.len(), 3);
+
+            // Can we inspect `objects`?
+            let path = vec![String::from("x"), String::from("objects")];
+            let fields = PositronVariable::inspect(env.clone(), &path).unwrap();
+
+            assert_eq!(fields.len(), 3);
+            fields.iter().enumerate().for_each(|(index, value)| {
+                let index = index + 1; // R indexes start from 1
+                assert_eq!(value.display_name, format!("[[{index}]]"));
+            });
         })
     }
 }
