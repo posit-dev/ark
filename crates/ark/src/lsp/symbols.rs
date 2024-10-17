@@ -226,7 +226,6 @@ fn index_node(
                     error!("{:?}", error);
                 }
             } else {
-                // todo: deal with the stacks of other types
                 if let Some((_, current_parent_ptr)) = section_stack.last() {
                     let current_parent = unsafe { &mut **current_parent_ptr };
                     let result = index_node(&child, contents, current_parent, symbols);
