@@ -12,6 +12,7 @@ use amalthea::comm::variables_comm::ClipboardFormatFormat;
 use amalthea::comm::variables_comm::Variable;
 use amalthea::comm::variables_comm::VariableKind;
 use anyhow::anyhow;
+use harp::call::RArgument;
 use harp::environment::Binding;
 use harp::environment::BindingValue;
 use harp::environment::Environment;
@@ -51,6 +52,8 @@ use libr::*;
 use stdext::local;
 use stdext::unwrap;
 
+use crate::methods::ArkGenerics;
+
 // Constants.
 const MAX_DISPLAY_VALUE_ENTRIES: usize = 1_000;
 const MAX_DISPLAY_VALUE_LENGTH: usize = 100;
@@ -70,6 +73,11 @@ fn plural(text: &str, n: i32) -> String {
 
 impl WorkspaceVariableDisplayValue {
     pub fn from(value: SEXP) -> Self {
+        // Try to use the display method if there's one available\
+        if let Some(display_value) = Self::try_from_method(value) {
+            return display_value;
+        }
+
         match r_typeof(value) {
             NILSXP => Self::new(String::from("NULL"), false),
             VECSXP if r_inherits(value, "data.frame") => Self::from_data_frame(value),
@@ -312,6 +320,34 @@ impl WorkspaceVariableDisplayValue {
         log::trace!("Error while formatting variable: {err:?}");
         Self::new(String::from("??"), true)
     }
+
+    fn from_untruncated_string(mut value: String) -> Self {
+        let Some((index, _)) = value.char_indices().nth(MAX_DISPLAY_VALUE_LENGTH) else {
+            return Self::new(value, false);
+        };
+
+        // If an index is found, truncate the string to that index
+        value.truncate(index);
+        Self::new(value, true)
+    }
+
+    fn try_from_method(value: SEXP) -> Option<Self> {
+        let display_value =
+            ArkGenerics::VariableDisplayValue.try_dispatch::<String>(value, vec![RArgument::new(
+                "width",
+                RObject::from(MAX_DISPLAY_VALUE_LENGTH as i32),
+            )]);
+
+        let display_value = unwrap!(display_value, Err(err) => {
+            log::error!("Failed to apply '{}': {err:?}", ArkGenerics::VariableDisplayValue.to_string());
+            return None;
+        });
+
+        match display_value {
+            None => None,
+            Some(value) => Some(Self::from_untruncated_string(value)),
+        }
+    }
 }
 
 pub struct WorkspaceVariableDisplayType {
@@ -327,6 +363,15 @@ impl WorkspaceVariableDisplayType {
     /// - include_length: Whether to include the length of the object in the
     ///   display type.
     pub fn from(value: SEXP, include_length: bool) -> Self {
+        match Self::try_from_method(value, include_length) {
+            Err(err) => log::error!(
+                "Error from '{}' method: {err}",
+                ArkGenerics::VariableDisplayType.to_string()
+            ),
+            Ok(None) => {},
+            Ok(Some(display_type)) => return display_type,
+        }
+
         if r_is_null(value) {
             return Self::simple(String::from("NULL"));
         }
@@ -425,6 +470,15 @@ impl WorkspaceVariableDisplayType {
         }
     }
 
+    fn try_from_method(value: SEXP, include_length: bool) -> anyhow::Result<Option<Self>> {
+        let args = vec![RArgument::new(
+            "include_length",
+            RObject::try_from(include_length)?,
+        )];
+        let result: Option<String> = ArkGenerics::VariableDisplayType.try_dispatch(value, args)?;
+        Ok(result.map(Self::simple))
+    }
+
     fn new(display_type: String, type_info: String) -> Self {
         Self {
             display_type,
@@ -434,6 +488,15 @@ impl WorkspaceVariableDisplayType {
 }
 
 fn has_children(value: SEXP) -> bool {
+    match ArkGenerics::VariableHasChildren.try_dispatch(value, vec![]) {
+        Err(err) => log::error!(
+            "Error from '{}' method: {err}",
+            ArkGenerics::VariableHasChildren.to_string()
+        ),
+        Ok(None) => {},
+        Ok(Some(answer)) => return answer,
+    }
+
     if RObject::view(value).is_s4() {
         unsafe {
             let names = RFunction::new("methods", ".slotNames")
@@ -623,6 +686,15 @@ impl PositronVariable {
     fn variable_kind(x: SEXP) -> VariableKind {
         if x == unsafe { R_NilValue } {
             return VariableKind::Empty;
+        }
+
+        match try_from_method_variable_kind(x) {
+            Err(err) => log::error!(
+                "Error from '{}' method: {err}",
+                ArkGenerics::VariableKind.to_string()
+            ),
+            Ok(None) => {},
+            Ok(Some(kind)) => return kind,
         }
 
         let obj = RObject::view(x);
@@ -1266,6 +1338,16 @@ impl PositronVariable {
     }
 }
 
+fn try_from_method_variable_kind(value: SEXP) -> anyhow::Result<Option<VariableKind>> {
+    let kind: Option<String> = ArkGenerics::VariableKind.try_dispatch(value, vec![])?;
+    match kind {
+        None => Ok(None),
+        // We want to parse a VariableKind from it's string representation.
+        // We do that by reading from a json which is just `"{kind}"`.
+        Some(kind) => Ok(serde_json::from_str(format!(r#""{kind}""#).as_str())?),
+    }
+}
+
 pub fn is_binding_fancy(binding: &Binding) -> bool {
     match &binding.value {
         BindingValue::Active { .. } => true,
@@ -1279,5 +1361,59 @@ pub fn plain_binding_force_with_rollback(binding: &Binding) -> anyhow::Result<RO
         BindingValue::Standard { object, .. } => Ok(object.clone()),
         BindingValue::Promise { promise, .. } => Ok(r_promise_force_with_rollback(promise.sexp)?),
         _ => Err(anyhow!("Unexpected binding type")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use harp;
+
+    use super::*;
+    use crate::r_task;
+
+    #[test]
+    fn test_variable_with_methods() {
+        r_task(|| {
+            // Register the display value method
+            harp::parse_eval_global(
+                r#"
+                .ark.register_method("ark_positron_variable_display_value", "foo", function(x, width) {
+                    # We return a large string and make sure it gets truncated.
+                    paste0(rep("a", length.out = 2*width), collapse="")
+                })
+
+                .ark.register_method("ark_positron_variable_display_type", "foo", function(x, include_length) {
+                    paste0("foo (", length(x), ")")
+                })
+
+                .ark.register_method("ark_positron_variable_has_children", "foo", function(x) {
+                    FALSE
+                })
+
+                .ark.register_method("ark_positron_variable_kind", "foo", function(x) {
+                    "other"
+                })
+
+                "#,
+            )
+            .unwrap();
+
+            // Create an object with that class in an env.
+            let obj = harp::parse_eval_base(r#"structure(list(1,2,3), class = "foo")"#).unwrap();
+
+            let variable =
+                PositronVariable::from(String::from("foo"), String::from("foo"), obj.sexp);
+
+            assert_eq!(
+                variable.var.display_value,
+                String::from("a".repeat(MAX_DISPLAY_VALUE_LENGTH))
+            );
+
+            assert_eq!(variable.var.display_type, String::from("foo (3)"));
+
+            assert_eq!(variable.var.has_children, false);
+
+            assert_eq!(variable.var.kind, VariableKind::Other);
+        })
     }
 }
