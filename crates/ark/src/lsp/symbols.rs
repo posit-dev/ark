@@ -252,7 +252,6 @@ fn index_assignment(
 
     // check if lhs is an identifier and rhs is a function definition
     if lhs.is_identifier_or_string() && rhs.is_function_definition() {
-        // If the RHS is a function definition, we call `index_assignment_with_function`
         return index_assignment_with_function(node, contents, parent, symbols, section_stack);
     }
 
