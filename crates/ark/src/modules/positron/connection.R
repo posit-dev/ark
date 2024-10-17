@@ -188,6 +188,21 @@ connection_flatten_object_types <- function(object_tree) {
     identical(object_types$contains, "data")
 }
 
+.ps.connection_metadata <- function(id) {
+    con <- get(id, getOption("connectionObserver")$.connections)
+
+    if (is.null(con)) {
+        stop("Expected a valid comm_id")
+    }
+
+    list(
+        type = con$type,
+        host = con$host,
+        displayName = con$displayName,
+        connectCode = con$connectCode
+    )
+}
+
 .ps.register_dummy_connection <- function() {
     # This is used for testing the connections service
     observer <- getOption("connectionObserver")
