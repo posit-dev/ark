@@ -4,6 +4,7 @@
         commandId,
         "activateConsole" = "workbench.action.positronConsole.focusConsole",
         "activateTerminal" = "workbench.action.terminal.focus",
+        "reindent" = "editor.action.reindentselectedlines",
         # This command includes untitled files in RStudio:
         "saveAllSourceDocs" = "workbench.action.files.saveAll",
         # https://github.com/posit-dev/positron/issues/2697
