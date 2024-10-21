@@ -126,31 +126,6 @@ pub(crate) fn document_symbols(
     }
 }
 
-fn is_indexable(node: &Node) -> bool {
-    // don't index 'arguments' or 'parameters'
-    if matches!(node.node_type(), NodeType::Arguments | NodeType::Parameters) {
-        return false;
-    }
-
-    true
-}
-
-// Function to parse a comment and return the section level and title
-fn parse_comment_as_section(comment: &str) -> Option<(usize, String)> {
-    // Match lines starting with one or more '#' followed by some non-empty content and must end with 4 or more '-', '#', or `=`
-    // Ensure that there's actual content between the start and the trailing symbols.
-    if let Some(caps) = indexer::RE_COMMENT_SECTION.captures(comment) {
-        let hashes = caps.get(1)?.as_str().len(); // Count the number of '#'
-        let title = caps.get(2)?.as_str().trim().to_string(); // Extract the title text without trailing punctuations
-        if title.is_empty() {
-            return None; // Return None for lines with only hashtags
-        }
-        return Some((hashes, title)); // Return the level based on the number of '#' and the title
-    }
-
-    None
-}
-
 fn index_node(
     node: &Node,
     mut store: Vec<DocumentSymbol>,
@@ -265,6 +240,31 @@ fn index_assignment_with_function(
     store.push(symbol);
 
     Ok(store)
+}
+
+fn is_indexable(node: &Node) -> bool {
+    // Don't index 'arguments' or 'parameters'
+    if matches!(node.node_type(), NodeType::Arguments | NodeType::Parameters) {
+        return false;
+    }
+
+    true
+}
+
+// Function to parse a comment and return the section level and title
+fn parse_comment_as_section(comment: &str) -> Option<(usize, String)> {
+    // Match lines starting with one or more '#' followed by some non-empty content and must end with 4 or more '-', '#', or `=`
+    // Ensure that there's actual content between the start and the trailing symbols.
+    if let Some(caps) = indexer::RE_COMMENT_SECTION.captures(comment) {
+        let hashes = caps.get(1)?.as_str().len(); // Count the number of '#'
+        let title = caps.get(2)?.as_str().trim().to_string(); // Extract the title text without trailing punctuations
+        if title.is_empty() {
+            return None; // Return None for lines with only hashtags
+        }
+        return Some((hashes, title)); // Return the level based on the number of '#' and the title
+    }
+
+    None
 }
 
 #[cfg(test)]
