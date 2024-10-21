@@ -131,39 +131,45 @@ fn index_node(
     mut store: Vec<DocumentSymbol>,
     contents: &Rope,
 ) -> anyhow::Result<Vec<DocumentSymbol>> {
-    // Check if the node is a comment and matches the markdown-style comment patterns
-    if node.node_type() == NodeType::Comment {
-        let comment_text = contents.node_slice(&node)?.to_string();
-
-        // Check if the comment starts with one or more '#' followed by any text and ends with 4+ punctuations
-        if let Some((_level, title)) = parse_comment_as_section(&comment_text) {
-            // Create a symbol based on the parsed comment
-            let start = convert_point_to_position(contents, node.start_position());
-            let end = convert_point_to_position(contents, node.end_position());
-
-            let symbol = new_symbol(title, SymbolKind::STRING, None, Range { start, end });
-            store.push(symbol);
-
-            // Return early to avoid further processing
-            return Ok(store);
-        }
-    }
-
-    if matches!(
-        node.node_type(),
-        NodeType::BinaryOperator(BinaryOperatorType::LeftAssignment) |
-            NodeType::BinaryOperator(BinaryOperatorType::EqualsAssignment)
-    ) {
-        return index_assignment(node, store, contents);
-    }
-
-    // Recurse into children. We're in the same outline section so use the same store.
     let mut cursor = node.walk();
+
     for child in node.children(&mut cursor) {
-        if is_indexable(&child) {
-            store = index_node(&child, store, contents)?;
-        }
+        store = match child.node_type() {
+            // Index comment sections
+            NodeType::Comment => index_comments(&child, store, contents)?,
+            // Don't index argument and parameter lists
+            NodeType::Arguments | NodeType::Parameters => store,
+            // Index assignments as object or function symbols
+            NodeType::BinaryOperator(BinaryOperatorType::LeftAssignment) |
+            NodeType::BinaryOperator(BinaryOperatorType::EqualsAssignment) => {
+                index_assignment(&child, store, contents)?
+            },
+            // Recurse
+            _ => index_node(&child, store, contents)?,
+        };
     }
+
+    Ok(store)
+}
+
+fn index_comments(
+    node: &Node,
+    mut store: Vec<DocumentSymbol>,
+    contents: &Rope,
+) -> anyhow::Result<Vec<DocumentSymbol>> {
+    let comment_text = contents.node_slice(&node)?.to_string();
+
+    // Check if the comment starts with one or more '#' followed by any text and ends with 4+ punctuations
+    let Some((_level, title)) = parse_comment_as_section(&comment_text) else {
+        return Ok(store);
+    };
+
+    // Create a symbol based on the parsed comment
+    let start = convert_point_to_position(contents, node.start_position());
+    let end = convert_point_to_position(contents, node.end_position());
+
+    let symbol = new_symbol(title, SymbolKind::STRING, None, Range { start, end });
+    store.push(symbol);
 
     Ok(store)
 }
@@ -240,15 +246,6 @@ fn index_assignment_with_function(
     store.push(symbol);
 
     Ok(store)
-}
-
-fn is_indexable(node: &Node) -> bool {
-    // Don't index 'arguments' or 'parameters'
-    if matches!(node.node_type(), NodeType::Arguments | NodeType::Parameters) {
-        return false;
-    }
-
-    true
 }
 
 // Function to parse a comment and return the section level and title
