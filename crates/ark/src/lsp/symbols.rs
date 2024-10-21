@@ -53,7 +53,6 @@ fn new_symbol(
         name,
         kind,
         detail,
-        // Safety: We assume `children` can't be `None`
         children: Some(Vec::new()),
         deprecated: None,
         tags: None,
