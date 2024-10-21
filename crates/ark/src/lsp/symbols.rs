@@ -128,6 +128,29 @@ pub(crate) fn document_symbols(
 
 fn index_node(
     node: &Node,
+    store: Vec<DocumentSymbol>,
+    contents: &Rope,
+) -> anyhow::Result<Vec<DocumentSymbol>> {
+    Ok(match node.node_type() {
+        // Handle comment sections in expression lists
+        NodeType::Program | NodeType::BracedExpression => {
+            index_expression_list(&node, store, contents)?
+        },
+        // Index assignments as object or function symbols
+        NodeType::BinaryOperator(BinaryOperatorType::LeftAssignment) |
+        NodeType::BinaryOperator(BinaryOperatorType::EqualsAssignment) => {
+            index_assignment(&node, store, contents)?
+        },
+        // Nothing to index. FIXME: We should handle argument lists, e.g. to
+        // index inside functions passed as arguments, or inside `test_that()`
+        // blocks.
+        _ => store,
+    })
+}
+
+// Handles root node and braced lists
+fn index_expression_list(
+    node: &Node,
     mut store: Vec<DocumentSymbol>,
     contents: &Rope,
 ) -> anyhow::Result<Vec<DocumentSymbol>> {
@@ -135,18 +158,9 @@ fn index_node(
 
     for child in node.children(&mut cursor) {
         store = match child.node_type() {
-            // Index comment sections
             NodeType::Comment => index_comments(&child, store, contents)?,
-            // Don't index argument and parameter lists
-            NodeType::Arguments | NodeType::Parameters => store,
-            // Index assignments as object or function symbols
-            NodeType::BinaryOperator(BinaryOperatorType::LeftAssignment) |
-            NodeType::BinaryOperator(BinaryOperatorType::EqualsAssignment) => {
-                index_assignment(&child, store, contents)?
-            },
-            // Recurse
             _ => index_node(&child, store, contents)?,
-        };
+        }
     }
 
     Ok(store)
@@ -238,9 +252,11 @@ fn index_assignment_with_function(
         end: convert_point_to_position(contents, rhs.end_position()),
     };
 
+    let body = rhs.child_by_field_name("body").into_result()?;
+
     // At this point we increase the nesting level. Recurse into the function
     // node with a new store of children nodes.
-    let children = index_node(&rhs, vec![], contents)?;
+    let children = index_node(&body, vec![], contents)?;
 
     let symbol = new_symbol_node(name, SymbolKind::FUNCTION, Some(detail), range, children);
     store.push(symbol);
@@ -386,5 +402,22 @@ mod tests {
         foo.children = Some(vec![bar]);
 
         assert_eq!(test_symbol("foo <- function() { bar <- 1 }"), vec![foo]);
+    }
+
+    #[test]
+    fn test_symbol_braced_list() {
+        let range = Range {
+            start: Position {
+                line: 0,
+                character: 2,
+            },
+            end: Position {
+                line: 0,
+                character: 5,
+            },
+        };
+        let foo = new_symbol(String::from("foo"), SymbolKind::OBJECT, None, range);
+
+        assert_eq!(test_symbol("{ foo <- 1 }"), vec![foo]);
     }
 }
