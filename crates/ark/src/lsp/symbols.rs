@@ -32,6 +32,25 @@ use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
+fn new_symbol(
+    name: String,
+    kind: SymbolKind,
+    detail: Option<String>,
+    range: Range,
+) -> DocumentSymbol {
+    DocumentSymbol {
+        name,
+        kind,
+        detail,
+        // Safety: We assume `children` can't be `None`
+        children: Some(Vec::new()),
+        deprecated: None,
+        tags: None,
+        range,
+        selection_range: range,
+    }
+}
+
 pub fn symbols(params: &WorkspaceSymbolParams) -> anyhow::Result<Vec<SymbolInformation>> {
     let query = &params.query;
     let mut info: Vec<SymbolInformation> = Vec::new();
@@ -89,17 +108,9 @@ pub(crate) fn document_symbols(
     let start = convert_point_to_position(contents, node.start_position());
     let end = convert_point_to_position(contents, node.end_position());
 
-    // construct a root symbol, so we always have something to append to
-    let mut root = DocumentSymbol {
-        name: "<root>".to_string(),
-        kind: SymbolKind::NULL,
-        children: Some(Vec::new()),
-        deprecated: None,
-        tags: None,
-        detail: None,
-        range: Range { start, end },
-        selection_range: Range { start, end },
-    };
+    // Construct a root symbol, so we always have something to append to
+    let range = Range { start, end };
+    let mut root = new_symbol("<root>".to_string(), SymbolKind::NULL, None, range);
 
     // Index from the root
     index_node(&node, &contents, &mut root)?;
@@ -115,6 +126,12 @@ fn is_indexable(node: &Node) -> bool {
     }
 
     true
+}
+
+fn push_child(node: &mut DocumentSymbol, child: DocumentSymbol) {
+    // Safety: The LSP protocol wraps the list of children in an option but we
+    // always set it to an empty vector.
+    node.children.as_mut().unwrap().push(child);
 }
 
 // Function to parse a comment and return the section level and title
@@ -144,19 +161,8 @@ fn index_node(node: &Node, contents: &Rope, parent: &mut DocumentSymbol) -> anyh
             let start = convert_point_to_position(contents, node.start_position());
             let end = convert_point_to_position(contents, node.end_position());
 
-            let symbol = DocumentSymbol {
-                name: title,                // Use the title without the trailing '####' or '----'
-                kind: SymbolKind::STRING,   // Treat it as a string section
-                detail: None,               // No need to display level details
-                children: Some(Vec::new()), // Prepare for child symbols if any
-                deprecated: None,
-                tags: None,
-                range: Range { start, end },
-                selection_range: Range { start, end },
-            };
-
-            // Add the symbol to the parent node
-            parent.children.as_mut().unwrap().push(symbol);
+            let symbol = new_symbol(title, SymbolKind::STRING, None, Range { start, end });
+            push_child(parent, symbol);
 
             // Return early to avoid further processing
             return Ok(());
@@ -220,19 +226,8 @@ fn index_assignment(
     let start = convert_point_to_position(contents, lhs.start_position());
     let end = convert_point_to_position(contents, lhs.end_position());
 
-    let symbol = DocumentSymbol {
-        name,
-        kind: SymbolKind::VARIABLE,
-        detail: None,
-        children: Some(Vec::new()),
-        deprecated: None,
-        tags: None,
-        range: Range::new(start, end),
-        selection_range: Range::new(start, end),
-    };
-
-    // add this symbol to the parent node
-    parent.children.as_mut().unwrap().push(symbol);
+    let symbol = new_symbol(name, SymbolKind::VARIABLE, None, Range { start, end });
+    push_child(parent, symbol);
 
     Ok(())
 }
@@ -260,28 +255,13 @@ fn index_assignment_with_function(
     let name = contents.node_slice(&lhs)?.to_string();
     let detail = format!("function({})", arguments.join(", "));
 
-    // build the document symbol
-    let symbol = DocumentSymbol {
-        name,
-        kind: SymbolKind::FUNCTION,
-        detail: Some(detail),
-        children: Some(Vec::new()),
-        deprecated: None,
-        tags: None,
-        range: Range {
-            start: convert_point_to_position(contents, lhs.start_position()),
-            end: convert_point_to_position(contents, rhs.end_position()),
-        },
-        selection_range: Range {
-            start: convert_point_to_position(contents, lhs.start_position()),
-            end: convert_point_to_position(contents, lhs.end_position()),
-        },
+    let range = Range {
+        start: convert_point_to_position(contents, lhs.start_position()),
+        end: convert_point_to_position(contents, rhs.end_position()),
     };
+    let symbol = new_symbol(name, SymbolKind::FUNCTION, Some(detail), range);
+    push_child(parent, symbol);
 
-    // add this symbol to the parent node
-    parent.children.as_mut().unwrap().push(symbol);
-
-    // recurse into this node
     let parent = parent.children.as_mut().unwrap().last_mut().unwrap();
     index_node(&rhs, contents, parent)?;
 
