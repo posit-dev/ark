@@ -31,6 +31,18 @@ use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
+fn new_symbol_node(
+    name: String,
+    kind: SymbolKind,
+    detail: Option<String>,
+    range: Range,
+    children: Vec<DocumentSymbol>,
+) -> DocumentSymbol {
+    let mut symbol = new_symbol(name, kind, detail, range);
+    symbol.children = Some(children);
+    symbol
+}
+
 fn new_symbol(
     name: String,
     kind: SymbolKind,
@@ -104,25 +116,14 @@ pub(crate) fn document_symbols(
 
     let node = ast.root_node();
 
-    let start = convert_point_to_position(contents, node.start_position());
-    let end = convert_point_to_position(contents, node.end_position());
-
-    // Construct a root symbol, so we always have something to append to
-    let range = Range { start, end };
-    let root = new_symbol("<root>".to_string(), SymbolKind::NULL, None, range);
-
     // Index from the root
-    let root = match index_node(root, &node, &contents) {
-        Ok(root) => root,
+    match index_node(&node, vec![], &contents) {
+        Ok(children) => Ok(children),
         Err(err) => {
             log::error!("Error indexing node: {err:?}");
             return Ok(Vec::new());
         },
-    };
-
-    // Return the children we found. Safety: We always set the children to an
-    // empty vector.
-    Ok(root.children.unwrap())
+    }
 }
 
 fn is_indexable(node: &Node) -> bool {
@@ -132,12 +133,6 @@ fn is_indexable(node: &Node) -> bool {
     }
 
     true
-}
-
-fn push_child(node: &mut DocumentSymbol, child: DocumentSymbol) {
-    // Safety: The LSP protocol wraps the list of children in an option but we
-    // always set it to an empty vector.
-    node.children.as_mut().unwrap().push(child);
 }
 
 // Function to parse a comment and return the section level and title
@@ -157,10 +152,10 @@ fn parse_comment_as_section(comment: &str) -> Option<(usize, String)> {
 }
 
 fn index_node(
-    mut parent: DocumentSymbol,
     node: &Node,
+    mut store: Vec<DocumentSymbol>,
     contents: &Rope,
-) -> anyhow::Result<DocumentSymbol> {
+) -> anyhow::Result<Vec<DocumentSymbol>> {
     // Check if the node is a comment and matches the markdown-style comment patterns
     if node.node_type() == NodeType::Comment {
         let comment_text = contents.node_slice(&node)?.to_string();
@@ -172,10 +167,10 @@ fn index_node(
             let end = convert_point_to_position(contents, node.end_position());
 
             let symbol = new_symbol(title, SymbolKind::STRING, None, Range { start, end });
-            push_child(&mut parent, symbol);
+            store.push(symbol);
 
             // Return early to avoid further processing
-            return Ok(parent);
+            return Ok(store);
         }
     }
 
@@ -184,26 +179,26 @@ fn index_node(
         NodeType::BinaryOperator(BinaryOperatorType::LeftAssignment) |
             NodeType::BinaryOperator(BinaryOperatorType::EqualsAssignment)
     ) {
-        parent = index_assignment(parent, node, contents)?;
+        return index_assignment(node, store, contents);
     }
 
-    // Recurse into children
+    // Recurse into children. We're in the same outline section so use the same store.
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         if is_indexable(&child) {
-            parent = index_node(parent, &child, contents)?;
+            store = index_node(&child, store, contents)?;
         }
     }
 
-    Ok(parent)
+    Ok(store)
 }
 
 fn index_assignment(
-    mut parent: DocumentSymbol,
     node: &Node,
+    mut store: Vec<DocumentSymbol>,
     contents: &Rope,
-) -> anyhow::Result<DocumentSymbol> {
-    // check for assignment
+) -> anyhow::Result<Vec<DocumentSymbol>> {
+    // Check for assignment
     matches!(
         node.node_type(),
         NodeType::BinaryOperator(BinaryOperatorType::LeftAssignment) |
@@ -219,7 +214,7 @@ fn index_assignment(
     let function = lhs.is_identifier_or_string() && rhs.is_function_definition();
 
     if function {
-        return index_assignment_with_function(parent, node, contents);
+        return index_assignment_with_function(node, store, contents);
     }
 
     // otherwise, just index as generic object
@@ -229,16 +224,16 @@ fn index_assignment(
     let end = convert_point_to_position(contents, lhs.end_position());
 
     let symbol = new_symbol(name, SymbolKind::VARIABLE, None, Range { start, end });
-    push_child(&mut parent, symbol);
+    store.push(symbol);
 
-    Ok(parent)
+    Ok(store)
 }
 
 fn index_assignment_with_function(
-    mut parent: DocumentSymbol,
     node: &Node,
+    mut store: Vec<DocumentSymbol>,
     contents: &Rope,
-) -> anyhow::Result<DocumentSymbol> {
+) -> anyhow::Result<Vec<DocumentSymbol>> {
     // check for lhs, rhs
     let lhs = node.child_by_field_name("lhs").into_result()?;
     let rhs = node.child_by_field_name("rhs").into_result()?;
@@ -261,14 +256,15 @@ fn index_assignment_with_function(
         start: convert_point_to_position(contents, lhs.start_position()),
         end: convert_point_to_position(contents, rhs.end_position()),
     };
-    let symbol = new_symbol(name, SymbolKind::FUNCTION, Some(detail), range);
 
-    // Recurse into the function node
-    let symbol = index_node(symbol, &rhs, contents)?;
+    // At this point we increase the nesting level. Recurse into the function
+    // node with a new store of children nodes.
+    let children = index_node(&rhs, vec![], contents)?;
 
-    // Set as child after recursing, now that we own the symbol again
-    push_child(&mut parent, symbol);
-    Ok(parent)
+    let symbol = new_symbol_node(name, SymbolKind::FUNCTION, Some(detail), range, children);
+    store.push(symbol);
+
+    Ok(store)
 }
 
 #[cfg(test)]
@@ -282,22 +278,7 @@ mod tests {
         let doc = Document::new(code, None);
         let node = doc.ast.root_node();
 
-        let start = convert_point_to_position(&doc.contents, node.start_position());
-        let end = convert_point_to_position(&doc.contents, node.end_position());
-
-        let root = DocumentSymbol {
-            name: String::from("<root>"),
-            kind: SymbolKind::NULL,
-            children: Some(Vec::new()),
-            deprecated: None,
-            tags: None,
-            detail: None,
-            range: Range { start, end },
-            selection_range: Range { start, end },
-        };
-
-        let root = index_node(root, &node, &doc.contents).unwrap();
-        root.children.unwrap_or_default()
+        index_node(&node, vec![], &doc.contents).unwrap()
     }
 
     #[test]
@@ -327,15 +308,86 @@ mod tests {
                 character: 10,
             },
         };
-        assert_eq!(test_symbol("# foo ----"), vec![DocumentSymbol {
-            name: String::from("foo"),
-            kind: SymbolKind::STRING,
-            children: Some(Vec::new()),
-            deprecated: None,
-            tags: None,
-            detail: None,
+        assert_eq!(test_symbol("# foo ----"), vec![new_symbol(
+            String::from("foo"),
+            SymbolKind::STRING,
+            None,
+            range
+        )]);
+    }
+
+    #[test]
+    fn test_symbol_assignment() {
+        let range = Range {
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 3,
+            },
+        };
+        assert_eq!(test_symbol("foo <- 1"), vec![new_symbol(
+            String::from("foo"),
+            SymbolKind::OBJECT,
+            None,
             range,
-            selection_range: range,
-        }]);
+        )]);
+    }
+
+    #[test]
+    fn test_symbol_assignment_function() {
+        let range = Range {
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 20,
+            },
+        };
+        assert_eq!(test_symbol("foo <- function() {}"), vec![new_symbol(
+            String::from("foo"),
+            SymbolKind::FUNCTION,
+            Some(String::from("function()")),
+            range,
+        )]);
+    }
+
+    #[test]
+    fn test_symbol_assignment_function_nested() {
+        let range = Range {
+            start: Position {
+                line: 0,
+                character: 20,
+            },
+            end: Position {
+                line: 0,
+                character: 23,
+            },
+        };
+        let bar = new_symbol(String::from("bar"), SymbolKind::OBJECT, None, range);
+
+        let range = Range {
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 30,
+            },
+        };
+        let mut foo = new_symbol(
+            String::from("foo"),
+            SymbolKind::FUNCTION,
+            Some(String::from("function()")),
+            range,
+        );
+        foo.children = Some(vec![bar]);
+
+        assert_eq!(test_symbol("foo <- function() { bar <- 1 }"), vec![foo]);
     }
 }
