@@ -80,8 +80,6 @@ pub(crate) fn document_symbols(
     state: &WorldState,
     params: &DocumentSymbolParams,
 ) -> anyhow::Result<Vec<DocumentSymbol>> {
-    let mut symbols: Vec<DocumentSymbol> = Vec::new();
-
     let uri = &params.text_document.uri;
     let document = state.documents.get(uri).into_result()?;
     let ast = &document.ast;
@@ -104,10 +102,10 @@ pub(crate) fn document_symbols(
         selection_range: Range { start, end },
     };
 
-    // index from the root
-    index_node(&node, &contents, &mut root, &mut symbols)?;
+    // Index from the root
+    index_node(&node, &contents, &mut root)?;
 
-    // return the children we found
+    // Return the children we found
     Ok(root.children.unwrap_or_default())
 }
 
@@ -136,12 +134,7 @@ fn parse_comment_as_section(comment: &str) -> Option<(usize, String)> {
     None
 }
 
-fn index_node(
-    node: &Node,
-    contents: &Rope,
-    parent: &mut DocumentSymbol,
-    symbols: &mut Vec<DocumentSymbol>,
-) -> Result<bool> {
+fn index_node(node: &Node, contents: &Rope, parent: &mut DocumentSymbol) -> Result<bool> {
     // Check if the node is a comment and matches the markdown-style comment patterns
     if node.node_type() == NodeType::Comment {
         let comment_text = contents.node_slice(&node)?.to_string();
@@ -176,7 +169,7 @@ fn index_node(
         NodeType::BinaryOperator(BinaryOperatorType::LeftAssignment) |
             NodeType::BinaryOperator(BinaryOperatorType::EqualsAssignment)
     ) {
-        match index_assignment(node, contents, parent, symbols) {
+        match index_assignment(node, contents, parent) {
             Ok(handled) => {
                 if handled {
                     return Ok(true);
@@ -190,7 +183,7 @@ fn index_node(
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         if is_indexable(&child) {
-            let result = index_node(&child, contents, parent, symbols);
+            let result = index_node(&child, contents, parent);
             if let Err(error) = result {
                 error!("{:?}", error);
             }
@@ -200,12 +193,7 @@ fn index_node(
     Ok(true)
 }
 
-fn index_assignment(
-    node: &Node,
-    contents: &Rope,
-    parent: &mut DocumentSymbol,
-    symbols: &mut Vec<DocumentSymbol>,
-) -> Result<bool> {
+fn index_assignment(node: &Node, contents: &Rope, parent: &mut DocumentSymbol) -> Result<bool> {
     // check for assignment
     matches!(
         node.node_type(),
@@ -222,7 +210,7 @@ fn index_assignment(
     let function = lhs.is_identifier_or_string() && rhs.is_function_definition();
 
     if function {
-        return index_assignment_with_function(node, contents, parent, symbols);
+        return index_assignment_with_function(node, contents, parent);
     }
 
     // otherwise, just index as generic object
@@ -252,7 +240,6 @@ fn index_assignment_with_function(
     node: &Node,
     contents: &Rope,
     parent: &mut DocumentSymbol,
-    symbols: &mut Vec<DocumentSymbol>,
 ) -> Result<bool> {
     // check for lhs, rhs
     let lhs = node.child_by_field_name("lhs").into_result()?;
@@ -295,7 +282,7 @@ fn index_assignment_with_function(
 
     // recurse into this node
     let parent = parent.children.as_mut().unwrap().last_mut().unwrap();
-    index_node(&rhs, contents, parent, symbols)?;
+    index_node(&rhs, contents, parent)?;
 
     Ok(true)
 }
@@ -308,8 +295,6 @@ mod tests {
     use crate::lsp::documents::Document;
 
     fn test_symbol(code: &str) -> Vec<DocumentSymbol> {
-        let mut symbols: Vec<DocumentSymbol> = Vec::new();
-
         let doc = Document::new(code, None);
         let node = doc.ast.root_node();
 
@@ -327,7 +312,7 @@ mod tests {
             selection_range: Range { start, end },
         };
 
-        index_node(&node, &doc.contents, &mut root, &mut symbols).unwrap();
+        index_node(&node, &doc.contents, &mut root).unwrap();
         root.children.unwrap_or_default()
     }
 
