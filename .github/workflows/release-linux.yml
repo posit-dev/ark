@@ -63,7 +63,7 @@ jobs:
                   pushd target/${ARCH_FLAG}-unknown-linux-gnu/${{ matrix.flavor }}
 
                   # Compress the kernel to an archive
-                  ARCHIVE="$GITHUB_WORKSPACE/ark-${{ inputs.version }}-${{ matrix.flavor }}-linux-${{ matrix.arch }}.zip"
+                  ARCHIVE="$GITHUB_WORKSPACE/ark-${{ inputs.version }}${{ env.DEBUG_FLAG }}-linux-${{ matrix.arch }}.zip"
                   [ -e LICENSE ] || cp "$GITHUB_WORKSPACE/LICENSE" LICENSE
                   [ -e NOTICE ] || cp "$GITHUB_WORKSPACE/crates/ark/NOTICE" NOTICE
                   zip -Xry $ARCHIVE ark LICENSE NOTICE
@@ -74,4 +74,4 @@ jobs:
               uses: actions/upload-artifact@v4
               with:
                   name: ark-${{ matrix.flavor }}-linux-${{ matrix.arch }}-archive
-                  path: ark-${{ inputs.version }}-${{ matrix.flavor }}-linux-${{ matrix.arch }}.zip
+                  path: ark-${{ inputs.version }}${{ env.DEBUG_FLAG }}-linux-${{ matrix.arch }}.zip

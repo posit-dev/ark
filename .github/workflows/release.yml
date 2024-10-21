@@ -86,16 +86,13 @@ jobs:
         needs: [do_release, get_version, build_macos, build_windows, build_linux]
         env:
             GITHUB_TOKEN: ${{ github.token }}
-        outputs:
-            upload_url: ${{ steps.create_release.outputs.upload_url }}
         steps:
             - name: Create release
-              uses: actions/create-release@v1
+              uses: softprops/action-gh-release@v2
               id: create_release
               with:
                   draft: false
                   prerelease: true
-                  release_name: ${{ needs.get_version.outputs.ARK_VERSION }}
                   tag_name: ${{ needs.get_version.outputs.ARK_VERSION }}
 
     # Uploads binaries, if we created a release
@@ -135,44 +132,36 @@ jobs:
                   name: ark-${{ matrix.flavor }}-linux-arm64-archive
 
             - name: Upload macOS release artifact (universal)
-              uses: actions/upload-release-asset@v1
+              uses: softprops/action-gh-release@v2
               env:
                   GITHUB_TOKEN: ${{ github.token }}
               with:
-                  upload_url: ${{ needs.create_release.outputs.upload_url }}
-                  asset_path: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-darwin-universal.zip
-                  asset_name: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-darwin-universal.zip
-                  asset_content_type: application/octet-stream
+                  tag_name: ${{ needs.get_version.outputs.ARK_VERSION }}
+                  files: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-darwin-universal.zip
 
             - name: Upload Windows release artifact (x64)
-              uses: actions/upload-release-asset@v1
+              uses: softprops/action-gh-release@v2
               env:
                   GITHUB_TOKEN: ${{ github.token }}
               with:
-                  upload_url: ${{ needs.create_release.outputs.upload_url }}
-                  asset_path: ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ matrix.flavor }}-windows-x64.zip
-                  asset_name: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-windows-x64.zip
-                  asset_content_type: application/octet-stream
+                  tag_name: ${{ needs.get_version.outputs.ARK_VERSION }}
+                  files: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-windows-x64.zip
 
             - name: Upload Linux release artifacts (x64)
-              uses: actions/upload-release-asset@v1
+              uses: softprops/action-gh-release@v2
               env:
                   GITHUB_TOKEN: ${{ github.token }}
               with:
-                  upload_url: ${{ needs.create_release.outputs.upload_url }}
-                  asset_path: ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ matrix.flavor }}-linux-x64.zip
-                  asset_name: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-linux-x64.zip
-                  asset_content_type: application/octet-stream
+                  tag_name: ${{ needs.get_version.outputs.ARK_VERSION }}
+                  files: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-linux-x64.zip
 
             - name: Upload Linux release artifacts (arm64)
-              uses: actions/upload-release-asset@v1
+              uses: softprops/action-gh-release@v2
               env:
                   GITHUB_TOKEN: ${{ github.token }}
               with:
-                  upload_url: ${{ needs.create_release.outputs.upload_url }}
-                  asset_path: ark-${{ needs.get_version.outputs.ARK_VERSION }}-${{ matrix.flavor }}-linux-arm64.zip
-                  asset_name: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-linux-arm64.zip
-                  asset_content_type: application/octet-stream
+                  tag_name: ${{ needs.get_version.outputs.ARK_VERSION }}
+                  files: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-linux-arm64.zip
 
     cleanup:
         name: Clean up Failed Releases
