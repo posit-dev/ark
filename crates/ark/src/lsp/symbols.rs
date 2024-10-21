@@ -31,34 +31,28 @@ use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
-fn new_symbol_node(
-    name: String,
-    kind: SymbolKind,
-    detail: Option<String>,
-    range: Range,
-    children: Vec<DocumentSymbol>,
-) -> DocumentSymbol {
-    let mut symbol = new_symbol(name, kind, detail, range);
-    symbol.children = Some(children);
-    symbol
-}
-
-fn new_symbol(
-    name: String,
-    kind: SymbolKind,
-    detail: Option<String>,
-    range: Range,
-) -> DocumentSymbol {
+fn new_symbol(name: String, kind: SymbolKind, range: Range) -> DocumentSymbol {
     DocumentSymbol {
         name,
         kind,
-        detail,
+        detail: None,
         children: Some(Vec::new()),
         deprecated: None,
         tags: None,
         range,
         selection_range: range,
     }
+}
+
+fn new_symbol_node(
+    name: String,
+    kind: SymbolKind,
+    range: Range,
+    children: Vec<DocumentSymbol>,
+) -> DocumentSymbol {
+    let mut symbol = new_symbol(name, kind, range);
+    symbol.children = Some(children);
+    symbol
 }
 
 pub fn symbols(params: &WorkspaceSymbolParams) -> anyhow::Result<Vec<SymbolInformation>> {
@@ -181,7 +175,7 @@ fn index_comments(
     let start = convert_point_to_position(contents, node.start_position());
     let end = convert_point_to_position(contents, node.end_position());
 
-    let symbol = new_symbol(title, SymbolKind::STRING, None, Range { start, end });
+    let symbol = new_symbol(title, SymbolKind::STRING, Range { start, end });
     store.push(symbol);
 
     Ok(store)
@@ -217,7 +211,7 @@ fn index_assignment(
     let start = convert_point_to_position(contents, lhs.start_position());
     let end = convert_point_to_position(contents, lhs.end_position());
 
-    let symbol = new_symbol(name, SymbolKind::VARIABLE, None, Range { start, end });
+    let symbol = new_symbol(name, SymbolKind::VARIABLE, Range { start, end });
     store.push(symbol);
 
     Ok(store)
@@ -257,7 +251,8 @@ fn index_assignment_with_function(
     // node with a new store of children nodes.
     let children = index_node(&body, vec![], contents)?;
 
-    let symbol = new_symbol_node(name, SymbolKind::FUNCTION, Some(detail), range, children);
+    let mut symbol = new_symbol_node(name, SymbolKind::FUNCTION, range, children);
+    symbol.detail = Some(detail);
     store.push(symbol);
 
     Ok(store)
@@ -323,7 +318,6 @@ mod tests {
         assert_eq!(test_symbol("# foo ----"), vec![new_symbol(
             String::from("foo"),
             SymbolKind::STRING,
-            None,
             range
         )]);
     }
@@ -343,7 +337,6 @@ mod tests {
         assert_eq!(test_symbol("foo <- 1"), vec![new_symbol(
             String::from("foo"),
             SymbolKind::OBJECT,
-            None,
             range,
         )]);
     }
@@ -360,12 +353,11 @@ mod tests {
                 character: 20,
             },
         };
-        assert_eq!(test_symbol("foo <- function() {}"), vec![new_symbol(
-            String::from("foo"),
-            SymbolKind::FUNCTION,
-            Some(String::from("function()")),
-            range,
-        )]);
+
+        let mut foo = new_symbol(String::from("foo"), SymbolKind::FUNCTION, range);
+        foo.detail = Some(String::from("function()"));
+
+        assert_eq!(test_symbol("foo <- function() {}"), vec![foo]);
     }
 
     #[test]
@@ -380,7 +372,7 @@ mod tests {
                 character: 23,
             },
         };
-        let bar = new_symbol(String::from("bar"), SymbolKind::OBJECT, None, range);
+        let bar = new_symbol(String::from("bar"), SymbolKind::OBJECT, range);
 
         let range = Range {
             start: Position {
@@ -392,13 +384,9 @@ mod tests {
                 character: 30,
             },
         };
-        let mut foo = new_symbol(
-            String::from("foo"),
-            SymbolKind::FUNCTION,
-            Some(String::from("function()")),
-            range,
-        );
+        let mut foo = new_symbol(String::from("foo"), SymbolKind::FUNCTION, range);
         foo.children = Some(vec![bar]);
+        foo.detail = Some(String::from("function()"));
 
         assert_eq!(test_symbol("foo <- function() { bar <- 1 }"), vec![foo]);
     }
@@ -415,7 +403,7 @@ mod tests {
                 character: 5,
             },
         };
-        let foo = new_symbol(String::from("foo"), SymbolKind::OBJECT, None, range);
+        let foo = new_symbol(String::from("foo"), SymbolKind::OBJECT, range);
 
         assert_eq!(test_symbol("{ foo <- 1 }"), vec![foo]);
     }
