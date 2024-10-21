@@ -9,7 +9,6 @@
 
 use std::result::Result::Ok;
 
-use anyhow::*;
 use log::*;
 use ropey::Rope;
 use stdext::unwrap::IntoResult;
@@ -134,7 +133,7 @@ fn parse_comment_as_section(comment: &str) -> Option<(usize, String)> {
     None
 }
 
-fn index_node(node: &Node, contents: &Rope, parent: &mut DocumentSymbol) -> Result<bool> {
+fn index_node(node: &Node, contents: &Rope, parent: &mut DocumentSymbol) -> anyhow::Result<()> {
     // Check if the node is a comment and matches the markdown-style comment patterns
     if node.node_type() == NodeType::Comment {
         let comment_text = contents.node_slice(&node)?.to_string();
@@ -160,7 +159,7 @@ fn index_node(node: &Node, contents: &Rope, parent: &mut DocumentSymbol) -> Resu
             parent.children.as_mut().unwrap().push(symbol);
 
             // Return early to avoid further processing
-            return Ok(true);
+            return Ok(());
         }
     }
 
@@ -170,12 +169,10 @@ fn index_node(node: &Node, contents: &Rope, parent: &mut DocumentSymbol) -> Resu
             NodeType::BinaryOperator(BinaryOperatorType::EqualsAssignment)
     ) {
         match index_assignment(node, contents, parent) {
-            Ok(handled) => {
-                if handled {
-                    return Ok(true);
-                }
+            Ok(()) => {
+                return Ok(());
             },
-            Err(error) => error!("{:?}", error),
+            Err(err) => error!("{err:?}"),
         }
     }
 
@@ -190,10 +187,14 @@ fn index_node(node: &Node, contents: &Rope, parent: &mut DocumentSymbol) -> Resu
         }
     }
 
-    Ok(true)
+    Ok(())
 }
 
-fn index_assignment(node: &Node, contents: &Rope, parent: &mut DocumentSymbol) -> Result<bool> {
+fn index_assignment(
+    node: &Node,
+    contents: &Rope,
+    parent: &mut DocumentSymbol,
+) -> anyhow::Result<()> {
     // check for assignment
     matches!(
         node.node_type(),
@@ -233,14 +234,14 @@ fn index_assignment(node: &Node, contents: &Rope, parent: &mut DocumentSymbol) -
     // add this symbol to the parent node
     parent.children.as_mut().unwrap().push(symbol);
 
-    Ok(true)
+    Ok(())
 }
 
 fn index_assignment_with_function(
     node: &Node,
     contents: &Rope,
     parent: &mut DocumentSymbol,
-) -> Result<bool> {
+) -> anyhow::Result<()> {
     // check for lhs, rhs
     let lhs = node.child_by_field_name("lhs").into_result()?;
     let rhs = node.child_by_field_name("rhs").into_result()?;
@@ -284,7 +285,7 @@ fn index_assignment_with_function(
     let parent = parent.children.as_mut().unwrap().last_mut().unwrap();
     index_node(&rhs, contents, parent)?;
 
-    Ok(true)
+    Ok(())
 }
 
 #[cfg(test)]
