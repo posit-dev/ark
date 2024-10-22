@@ -18,6 +18,7 @@ jobs:
 
         env:
             GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            DEBUG_FLAG: ${{ matrix.flavor == 'debug' && '-debug' || '' }}
 
         strategy:
             matrix:
@@ -46,7 +47,7 @@ jobs:
                   # Compress the kernel to an archive
                   $params = @{
                     Path = "target\${{ matrix.rust_target_prefix }}-pc-windows-msvc\${{ matrix.flavor }}\ark.exe", "LICENSE", "crates\ark\NOTICE"
-                    DestinationPath = "ark-${{ inputs.version }}-${{ matrix.flavor }}-windows-${{ matrix.arch }}.zip"
+                    DestinationPath = "ark-${{ inputs.version }}${{ env.DEBUG_FLAG }}-windows-${{ matrix.arch }}.zip"
                   }
                   Compress-Archive @params
 
@@ -54,4 +55,4 @@ jobs:
               uses: actions/upload-artifact@v4
               with:
                   name: ark-${{ matrix.flavor }}-windows-${{ matrix.arch }}-archive
-                  path: ark-${{ inputs.version }}-${{ matrix.flavor }}-windows-${{ matrix.arch }}.zip
+                  path: ark-${{ inputs.version }}${{ env.DEBUG_FLAG }}-windows-${{ matrix.arch }}.zip
