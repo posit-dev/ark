@@ -1097,10 +1097,7 @@ impl PositronVariable {
             EnvironmentVariableNode::Matrixcolumn { object, index } => unsafe {
                 let dim = IntegerVector::new(Rf_getAttrib(object.sexp, R_DimSymbol))?;
                 let n_row = dim.get_unchecked(0).unwrap() as isize;
-
-                // TODO: use ? here, but this does not return a crate::error::Error, so
-                //       maybe use anyhow here instead ?
-                let row_index = path_elt.parse::<isize>().unwrap();
+                let row_index = parse_index(path_elt)?;
 
                 Ok(EnvironmentVariableNode::AtomicVectorElement {
                     object,
