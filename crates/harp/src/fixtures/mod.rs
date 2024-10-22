@@ -10,7 +10,6 @@
 
 use std::os::raw::c_char;
 use std::path::PathBuf;
-use std::process::Command;
 use std::sync::Once;
 
 use libr::setup_Rmainloop;
@@ -18,6 +17,7 @@ use libr::R_CStackLimit;
 use libr::Rf_initialize_R;
 use stdext::cargs;
 
+use crate::command::r_command;
 use crate::library::RLibraries;
 use crate::R_MAIN_THREAD_ID;
 
@@ -53,7 +53,10 @@ pub fn r_test_init() {
         let r_home = match std::env::var("R_HOME") {
             Ok(r_home) => PathBuf::from(r_home),
             Err(_) => {
-                let result = Command::new("R").arg("RHOME").output().unwrap();
+                let result = r_command(|command| {
+                    command.arg("RHOME");
+                })
+                .expect("Can't locate R to determine `R_HOME`.");
                 let r_home = String::from_utf8(result.stdout).unwrap();
                 let r_home = r_home.trim();
                 unsafe { std::env::set_var("R_HOME", r_home) };
