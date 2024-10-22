@@ -820,8 +820,8 @@ impl PositronVariable {
             EnvironmentVariableNode::R6Node { object, name } => match name.as_str() {
                 "<private>" => {
                     let env = Environment::new(object);
-                    let enclos = Environment::new(RObject::view(env.find(".__enclos_env__")?));
-                    let private = RObject::view(enclos.find("private")?);
+                    let enclos = Environment::new(RObject::new(env.find(".__enclos_env__")?));
+                    let private = RObject::new(enclos.find("private")?);
 
                     Self::inspect_environment(private)
                 },
