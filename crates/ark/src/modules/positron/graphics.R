@@ -57,6 +57,12 @@ renderWithPlotDevice <- function(filepath, format, width, height, res, type ) {
             res      = res,
             type     = type
         ),
+        "tiff" = grDevices::tiff(
+            filename = filepath,
+            width    = width,
+            height   = height,
+            type     = type
+        ),
         stop("Internal error: Unknown plot `format`.")
     )
 }

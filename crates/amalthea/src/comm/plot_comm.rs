@@ -64,7 +64,11 @@ pub enum RenderFormat {
 
 	#[serde(rename = "pdf")]
 	#[strum(to_string = "pdf")]
-	Pdf
+	Pdf,
+
+	#[serde(rename = "tiff")]
+	#[strum(to_string = "tiff")]
+	Tiff
 }
 
 /// Possible values for PlotUnit
