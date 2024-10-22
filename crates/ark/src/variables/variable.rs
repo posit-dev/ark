@@ -1431,32 +1431,29 @@ impl PositronVariable {
                 let list = List::new(value.sexp)?;
                 let n = unsafe { list.len() };
 
-                let names = local!({
-                    let r_names = unsafe { RObject::new(Rf_getAttrib(value.sexp, R_NamesSymbol)) };
-                    if r_is_null(r_names.sexp) {
-                        return vec![None; n];
-                    }
-
+                let r_names = unsafe { RObject::new(Rf_getAttrib(value.sexp, R_NamesSymbol)) };
+                let names = if r_is_null(r_names.sexp) {
+                    vec![None; n]
+                } else {
                     let names = unsafe { CharacterVector::new_unchecked(r_names) };
-
                     if unsafe { names.len() } != n {
-                        return vec![None; n];
+                        vec![None; n]
+                    } else {
+                        names
+                            .iter()
+                            .map(|v| match v {
+                                None => None,
+                                Some(s) => {
+                                    if s.len() == 0 {
+                                        None
+                                    } else {
+                                        Some(s)
+                                    }
+                                },
+                            })
+                            .collect()
                     }
-
-                    names
-                        .iter()
-                        .map(|v| match v {
-                            None => None,
-                            Some(s) => {
-                                if s.len() == 0 {
-                                    None
-                                } else {
-                                    Some(s)
-                                }
-                            },
-                        })
-                        .collect()
-                });
+                };
 
                 let variables = list
                     .iter()
