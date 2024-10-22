@@ -1408,7 +1408,7 @@ impl PositronVariable {
         Ok(out)
     }
 
-    fn try_inspect_custom_method(value: SEXP) -> Result<Option<Vec<Variable>>, harp::Error> {
+    fn try_inspect_custom_method(value: SEXP) -> anyhow::Result<Option<Vec<Variable>>> {
         let result: Option<RObject> = ArkGenerics::VariableGetChildren
             .try_dispatch(value, vec![])
             .map_err(|err| harp::Error::Anyhow(err))?;
@@ -1418,10 +1418,10 @@ impl PositronVariable {
             Some(value) => {
                 // Make sure value is a list before using inspect_list
                 if !r_typeof(value.sexp) == LISTSXP {
-                    return Err(harp::Error::Anyhow(anyhow!(
+                    return Err(anyhow!(
                         "Expected `{}` to return a list.",
                         ArkGenerics::VariableGetChildren.to_string()
-                    )));
+                    ));
                 }
 
                 // This is essentially the same as Self::inspect_list but with modified `access_key`
