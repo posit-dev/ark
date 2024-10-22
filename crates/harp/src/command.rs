@@ -22,26 +22,28 @@ pub fn r_command<F>(build: F) -> io::Result<Output>
 where
     F: Fn(&mut Command),
 {
-    let n = COMMAND_R_LOCATIONS.len();
-    assert!(n > 0);
+    assert!(COMMAND_R_LOCATIONS.len() > 0);
 
-    for (i, program) in COMMAND_R_LOCATIONS.iter().enumerate() {
+    let mut out = None;
+
+    for program in COMMAND_R_LOCATIONS.iter() {
         // Build the `Command` from the user's function
         let mut command = Command::new(program);
         build(&mut command);
 
-        // Run it, waiting on it to finish
-        let out = command.output();
+        // Run it, waiting on it to finish.
+        // Store it as `out` no matter what. If all locations fail
+        // we end up returning the last failure.
+        let result = command.output();
+        let ok = result.is_ok();
+        out = Some(result);
 
-        if out.is_ok() {
-            // Found R, executed command successfully
-            return out;
-        }
-        if i == n - 1 {
-            // On last location, but still couldn't find R, return error
-            return out;
+        if ok {
+            // We had a successful command, don't try any more
+            break;
         }
     }
 
-    unreachable!("`assert!` ensures at least 1 program location is provided.");
+    // SAFETY: The `assert!` above ensures at least 1 program location is provided
+    out.unwrap()
 }
