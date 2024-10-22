@@ -165,7 +165,7 @@ impl WorkspaceVariableDisplayValue {
     fn from_closure(value: SEXP) -> Self {
         unsafe {
             let args = RFunction::from("args").add(value).call().unwrap();
-            let formatted = RFunction::from("format").add(*args).call().unwrap();
+            let formatted = RFunction::from("format").add(args.sexp).call().unwrap();
             let formatted = CharacterVector::new_unchecked(formatted);
             let out = formatted
                 .iter()
@@ -437,7 +437,7 @@ impl WorkspaceVariableDisplayType {
                                 .add(value)
                                 .call()
                                 .unwrap();
-                            let shape = FormattedVector::new(*dim).unwrap().iter().join(", ");
+                            let shape = FormattedVector::new(dim.sexp).unwrap().iter().join(", ");
                             let display_type = format!("{} [{}]", dfclass, shape);
                             Self::simple(display_type)
                         },
@@ -844,23 +844,23 @@ impl PositronVariable {
                 }
 
                 if object.is_s4() {
-                    Self::inspect_s4(*object)
+                    Self::inspect_s4(object.sexp)
                 } else {
-                    match r_typeof(*object) {
-                        VECSXP | EXPRSXP => Self::inspect_list(*object),
-                        LISTSXP => Self::inspect_pairlist(*object),
+                    match r_typeof(object.sexp) {
+                        VECSXP | EXPRSXP => Self::inspect_list(object.sexp),
+                        LISTSXP => Self::inspect_pairlist(object.sexp),
                         ENVSXP => {
-                            if r_inherits(*object, "R6") {
+                            if r_inherits(object.sexp, "R6") {
                                 Self::inspect_r6(object)
                             } else {
                                 Self::inspect_environment(object)
                             }
                         },
                         LGLSXP | RAWSXP | STRSXP | INTSXP | REALSXP | CPLXSXP => {
-                            if r_is_matrix(*object) {
-                                Self::inspect_matrix(*object)
+                            if r_is_matrix(object.sexp) {
+                                Self::inspect_matrix(object.sexp)
                             } else {
-                                Self::inspect_vector(*object)
+                                Self::inspect_vector(object.sexp)
                             }
                         },
                         _ => Ok(vec![]),
@@ -869,7 +869,7 @@ impl PositronVariable {
             },
 
             EnvironmentVariableNode::Matrixcolumn { object, index } => {
-                Self::inspect_matrix_column(*object, index)
+                Self::inspect_matrix_column(object.sexp, index)
             },
             EnvironmentVariableNode::AtomicVectorElement { .. } => Ok(vec![]),
         }
@@ -884,31 +884,33 @@ impl PositronVariable {
 
         match node {
             EnvironmentVariableNode::Concrete { object } => {
-                if r_is_data_frame(*object) {
+                if r_is_data_frame(object.sexp) {
                     let formatted = RFunction::from(".ps.environment.clipboardFormatDataFrame")
                         .add(object)
                         .call()?;
 
-                    Ok(FormattedVector::new(*formatted)?.iter().join("\n"))
-                } else if r_typeof(*object) == CLOSXP {
-                    let deparsed: Vec<String> =
-                        RFunction::from("deparse").add(*object).call()?.try_into()?;
+                    Ok(FormattedVector::new(formatted.sexp)?.iter().join("\n"))
+                } else if r_typeof(object.sexp) == CLOSXP {
+                    let deparsed: Vec<String> = RFunction::from("deparse")
+                        .add(object.sexp)
+                        .call()?
+                        .try_into()?;
 
                     Ok(deparsed.join("\n"))
                 } else {
-                    Ok(FormattedVector::new(*object)?.iter().join(" "))
+                    Ok(FormattedVector::new(object.sexp)?.iter().join(" "))
                 }
             },
             EnvironmentVariableNode::R6Node { .. } => Ok(String::from("")),
             EnvironmentVariableNode::AtomicVectorElement { object, index } => {
-                let formatted = FormattedVector::new(*object)?;
+                let formatted = FormattedVector::new(object.sexp)?;
                 Ok(formatted.get_unchecked(index))
             },
             EnvironmentVariableNode::Matrixcolumn { object, index } => unsafe {
-                let dim = IntegerVector::new(Rf_getAttrib(*object, R_DimSymbol))?;
+                let dim = IntegerVector::new(Rf_getAttrib(object.sexp, R_DimSymbol))?;
                 let n_row = dim.get_unchecked(0).unwrap() as usize;
 
-                let clipped = FormattedVector::new(*object)?
+                let clipped = FormattedVector::new(object.sexp)?
                     .iter()
                     .skip(index as usize * n_row)
                     .take(n_row)
@@ -936,7 +938,7 @@ impl PositronVariable {
         access_key: &String,
     ) -> harp::Result<EnvironmentVariableNode> {
         let symbol = unsafe { r_symbol!(access_key) };
-        let mut x = unsafe { Rf_findVarInFrame(*object, symbol) };
+        let mut x = unsafe { Rf_findVarInFrame(object.sexp, symbol) };
 
         if r_typeof(x) == PROMSXP {
             // if we are here, it means the promise is either evaluated
@@ -1016,7 +1018,7 @@ impl PositronVariable {
             });
         }
 
-        match r_typeof(*object) {
+        match r_typeof(object.sexp) {
             ENVSXP => Self::get_envsxp_child_node_at(object, access_key),
             VECSXP | EXPRSXP => {
                 let index = parse_index(access_key)?;
@@ -1025,7 +1027,7 @@ impl PositronVariable {
                 })
             },
             LISTSXP => {
-                let mut pairlist = *object;
+                let mut pairlist = object.sexp;
                 let index = parse_index(access_key)?;
                 for _i in 0..index {
                     pairlist = unsafe { CDR(pairlist) };
@@ -1093,7 +1095,7 @@ impl PositronVariable {
             },
 
             EnvironmentVariableNode::Matrixcolumn { object, index } => unsafe {
-                let dim = IntegerVector::new(Rf_getAttrib(*object, R_DimSymbol))?;
+                let dim = IntegerVector::new(Rf_getAttrib(object.sexp, R_DimSymbol))?;
                 let n_row = dim.get_unchecked(0).unwrap() as isize;
 
                 // TODO: use ? here, but this does not return a crate::error::Error, so
@@ -1138,12 +1140,12 @@ impl PositronVariable {
     fn inspect_matrix(matrix: SEXP) -> harp::error::Result<Vec<Variable>> {
         unsafe {
             let matrix = RObject::new(matrix);
-            let dim = IntegerVector::new(Rf_getAttrib(*matrix, R_DimSymbol))?;
+            let dim = IntegerVector::new(Rf_getAttrib(matrix.sexp, R_DimSymbol))?;
 
             let n_col = dim.get_unchecked(1).unwrap();
 
             let mut out: Vec<Variable> = vec![];
-            let formatted = FormattedVector::new(*matrix)?;
+            let formatted = FormattedVector::new(matrix.sexp)?;
 
             for i in 0..n_col {
                 let display_value = format!("[{}]", formatted.column_iter(i as isize).join(", "));
@@ -1170,14 +1172,14 @@ impl PositronVariable {
     fn inspect_matrix_column(matrix: SEXP, index: isize) -> harp::error::Result<Vec<Variable>> {
         unsafe {
             let matrix = RObject::new(matrix);
-            let dim = IntegerVector::new(Rf_getAttrib(*matrix, R_DimSymbol))?;
+            let dim = IntegerVector::new(Rf_getAttrib(matrix.sexp, R_DimSymbol))?;
 
             let n_row = dim.get_unchecked(0).unwrap();
 
             let mut out: Vec<Variable> = vec![];
-            let formatted = FormattedVector::new(*matrix)?;
+            let formatted = FormattedVector::new(matrix.sexp)?;
             let mut iter = formatted.column_iter(index);
-            let r_type = r_typeof(*matrix);
+            let r_type = r_typeof(matrix.sexp);
             let kind = if r_type == STRSXP {
                 VariableKind::String
             } else if r_type == RAWSXP {
@@ -1212,12 +1214,12 @@ impl PositronVariable {
     fn inspect_vector(vector: SEXP) -> harp::error::Result<Vec<Variable>> {
         unsafe {
             let vector = RObject::new(vector);
-            let n = Rf_xlength(*vector);
+            let n = Rf_xlength(vector.sexp);
 
             let mut out: Vec<Variable> = vec![];
-            let r_type = r_typeof(*vector);
-            let formatted = FormattedVector::new(*vector)?;
-            let names = Names::new(*vector, |i| format!("[{}]", i + 1));
+            let r_type = r_typeof(vector.sexp);
+            let formatted = FormattedVector::new(vector.sexp)?;
+            let names = Names::new(vector.sexp, |i| format!("[{}]", i + 1));
             let kind = if r_type == STRSXP {
                 VariableKind::String
             } else if r_type == RAWSXP {
@@ -1379,7 +1381,7 @@ impl PositronVariable {
         unsafe {
             let slot_names = RFunction::new("methods", ".slotNames").add(value).call()?;
 
-            let slot_names = CharacterVector::new_unchecked(*slot_names);
+            let slot_names = CharacterVector::new_unchecked(slot_names.sexp);
             let mut iter = slot_names.iter();
             while let Some(Some(display_name)) = iter.next() {
                 let slot_symbol = r_symbol!(display_name);
