@@ -971,58 +971,33 @@ impl PositronVariable {
         // When building the children list of nodes that use a custom `get_children` method, the access_key is
         // formatted as "custom-{index}-{length(name)}-{name}". If the access_key has this format, we call the custom `get_child_at`,
         // method, if there's one available:
-        let result = local!({
-            let parsed_access_key: Vec<&str> = access_key.splitn(4, '-').collect();
-
-            if parsed_access_key.len() != 4 {
-                return Ok(None);
-            };
-
-            if parsed_access_key[0] != "custom" {
-                return Ok(None);
-            };
-
-            let index = match parsed_access_key[1].parse::<i32>() {
-                Err(_) => return Ok(None), // Not an access_key in the required format
-                Ok(i) => i,
-            };
-
-            let name_len = match parsed_access_key[2].parse::<usize>() {
-                Err(_) => return Ok(None), // Not an access_key in the required format
-                Ok(name_len) => name_len,
-            };
-
-            let name = match parsed_access_key[3] {
-                "" => RObject::from(r_null()), // Empty string, means a `NULL` name
-                nm => {
-                    if nm.len() == name_len {
-                        RObject::from(nm)
-                    } else {
-                        // Name has been truncated, we pass it as `NULL`
-                        RObject::from(r_null())
-                    }
-                },
-            };
-
-            ArkGenerics::VariableGetChildAt.try_dispatch::<RObject>(object.sexp, vec![
-                RArgument::new("index", RObject::from(index + 1)), // Index is 0-based, so we convert to 1-based for R.
-                RArgument::new("name", RObject::from(name)),
-            ])
-        });
-
-        match result {
+        match parse_custom_access_key(access_key) {
+            Ok(None) => {}, // Do nothing and proceed,
+            Ok(Some((name, index))) => {
+                let node =
+                    ArkGenerics::VariableGetChildAt.try_dispatch::<RObject>(object.sexp, vec![
+                        RArgument::new("index", RObject::from(index + 1)), // Index is 0-based, so we convert to 1-based for R.
+                        RArgument::new("name", RObject::from(name)),
+                    ]);
+                match node {
+                    Ok(None) => {
+                        // The object doesn't have a custom get_child_at method. We continue to built-in methods.
+                    },
+                    Ok(Some(child)) => {
+                        return Ok(EnvironmentVariableNode::Concrete { object: child });
+                    },
+                    Err(err) => {
+                        // It's not safe to apply default methods in this case, because we rely on custom
+                        // access keys, which could indicate the access index depending on the node implementation.
+                        // See for instance, how it's used to index lists and atomic vectors.
+                        return Err(harp::Error::Anyhow(err));
+                    },
+                }
+            },
             Err(err) => {
-                // It's not safe to apply default methods in this case, because we rely on custom
-                // access keys, which could indicate the access index depending on the node implementation.
-                // See for instance, how it's used to index lists and atomic vectors.
                 return Err(harp::Error::Anyhow(err));
             },
-            Ok(None) => {
-                // The object doesn't have a custom get_child_at method. We apply
-                // the default built-in methods.
-            },
-            Ok(Some(child)) => return Ok(EnvironmentVariableNode::Concrete { object: child }),
-        };
+        }
 
         // For S4 objects, we acess child nodes using R_do_slot.
         if object.is_s4() {
@@ -1515,6 +1490,42 @@ impl PositronVariable {
             },
         }
     }
+}
+
+fn parse_custom_access_key(access_key: &String) -> anyhow::Result<Option<(RObject, i32)>> {
+    let parsed_access_key: Vec<&str> = access_key.splitn(4, '-').collect();
+
+    if parsed_access_key.len() != 4 {
+        return Ok(None);
+    };
+
+    if parsed_access_key[0] != "custom" {
+        return Ok(None);
+    };
+
+    let index = match parsed_access_key[1].parse::<i32>() {
+        Err(_) => return Ok(None), // Not an access_key in the required format
+        Ok(i) => i,
+    };
+
+    let name_len = match parsed_access_key[2].parse::<usize>() {
+        Err(_) => return Ok(None), // Not an access_key in the required format
+        Ok(name_len) => name_len,
+    };
+
+    let name: RObject = match parsed_access_key[3] {
+        "" => RObject::from(r_null()), // Empty string, means a `NULL` name
+        nm => {
+            if nm.len() == name_len {
+                RObject::from(nm)
+            } else {
+                // Name has been truncated, we pass it as `NULL`
+                RObject::from(r_null())
+            }
+        },
+    };
+
+    Ok(Some((name, index)))
 }
 
 fn try_from_method_variable_kind(value: SEXP) -> anyhow::Result<Option<VariableKind>> {
