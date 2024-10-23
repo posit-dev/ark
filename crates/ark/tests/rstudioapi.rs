@@ -11,7 +11,7 @@ fn test_get_version() {
     }
 
     let value = "1.0.0";
-    std::env::set_var("POSITRON_VERSION", value);
+    harp::envvar::set_var("POSITRON_VERSION", value);
 
     let code = "as.character(rstudioapi::getVersion())";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
@@ -39,7 +39,7 @@ fn test_get_mode() {
     }
 
     let value = "desktop";
-    std::env::set_var("POSITRON_MODE", value);
+    harp::envvar::set_var("POSITRON_MODE", value);
 
     let code = "rstudioapi::getMode()";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());

@@ -10,6 +10,7 @@ pub mod command;
 pub mod data_frame;
 pub mod environment;
 pub mod environment_iter;
+pub mod envvar;
 pub mod error;
 pub mod eval;
 pub mod exec;
