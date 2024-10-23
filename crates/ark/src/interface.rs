@@ -53,6 +53,7 @@ use crossbeam::channel::unbounded;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use crossbeam::select;
+use harp::command::r_command;
 use harp::environment::r_ns_env;
 use harp::environment::Environment;
 use harp::environment::R_ENVS;
@@ -355,12 +356,14 @@ impl RMain {
             args.push(CString::new(arg).unwrap().into_raw());
         }
 
-        // Get `R_HOME`, typically set by Positron / CI / kernel specification
+        // Get `R_HOME` from env var, typically set by Positron / CI / kernel specification
         let r_home = match std::env::var("R_HOME") {
             Ok(home) => PathBuf::from(home),
             Err(_) => {
-                // Get `R_HOME` from `PATH`, via R
-                let Ok(result) = std::process::Command::new("R").arg("RHOME").output() else {
+                // Get `R_HOME` from `PATH`, via `R`
+                let Ok(result) = r_command(|command| {
+                    command.arg("RHOME");
+                }) else {
                     panic!("Can't find R or `R_HOME`");
                 };
                 let r_home = String::from_utf8(result.stdout).unwrap();

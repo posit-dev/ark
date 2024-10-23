@@ -8,9 +8,9 @@
 use std::collections::HashMap;
 use std::env;
 use std::path::PathBuf;
-use std::process::Command;
 
 use anyhow::Context;
+use harp::command::r_command;
 use harp::object::RObject;
 use itertools::Itertools;
 use libr::SEXP;
@@ -31,10 +31,10 @@ pub struct RVersion {
 }
 
 pub fn detect_r() -> anyhow::Result<RVersion> {
-    let output = Command::new("R")
-        .arg("RHOME")
-        .output()
-        .context("Failed to execute R to determine R_HOME")?;
+    let output = r_command(|command| {
+        command.arg("RHOME");
+    })
+    .context("Failed to execute R to determine R_HOME")?;
 
     // Convert the output to a string
     let r_home = String::from_utf8(output.stdout)
@@ -42,13 +42,14 @@ pub fn detect_r() -> anyhow::Result<RVersion> {
         .trim()
         .to_string();
 
-    let output = Command::new("R")
-        .arg("--vanilla")
-        .arg("-s")
-        .arg("-e")
-        .arg("cat(version$major, \".\", version$minor, sep = \"\")")
-        .output()
-        .context("Failed to execute R to determine version number")?;
+    let output = r_command(|command| {
+        command
+            .arg("--vanilla")
+            .arg("-s")
+            .arg("-e")
+            .arg("cat(version$major, \".\", version$minor, sep = \"\")");
+    })
+    .context("Failed to execute R to determine version number")?;
 
     let version = String::from_utf8(output.stdout)
         .context("Failed to convert R version number to a string")?

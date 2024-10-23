@@ -5,6 +5,7 @@
  *
  */
 
+pub mod command;
 pub mod library;
 pub mod line_ending;
 pub mod polled_events;
