@@ -169,7 +169,18 @@ fn index_expression_list(
     }
 
     // iteratively add the children of the last element of store_vec until there is only one element
-    while store_vec.len() > 1 {
+    store_vec = assemble_store(store_vec, 1);
+
+    // At the end, the remaining element in store_vec contains the updated store
+    let (_, store) = store_vec.pop().unwrap();
+    Ok(store)
+}
+
+fn assemble_store(
+    mut store_vec: Vec<(usize, Vec<DocumentSymbol>)>,
+    layers: usize,
+) -> Vec<(usize, Vec<DocumentSymbol>)> {
+    while store_vec.len() > layers {
         // Pop the last element from store_vec
         let (last_level, mut last_symbols) = store_vec.pop().unwrap();
 
@@ -191,10 +202,7 @@ fn index_expression_list(
             break;
         }
     }
-
-    // At the end, the remaining element in store_vec contains the updated store
-    let (_, store) = store_vec.pop().unwrap();
-    Ok(store)
+    return store_vec;
 }
 
 fn index_comments(
@@ -215,29 +223,24 @@ fn index_comments(
 
     let symbol = new_symbol(title, SymbolKind::STRING, Range { start, end });
 
-    // Loop through store_vec to handle nested structure based on the current level
-    while let Some(&(last_level, _)) = store_vec.last() {
-        if last_level >= level {
-            // Pop the last element from store_vec and assign it as a child of the previous element
-            let (last_level, mut last_symbols) = store_vec.pop().unwrap();
-
-            if let Some((_, parent_symbols)) = store_vec.last_mut() {
-                if let Some(parent_symbol) = parent_symbols.last_mut() {
-                    parent_symbol
-                        .children
-                        .as_mut()
-                        .unwrap()
-                        .append(&mut last_symbols);
-                }
-            } else {
-                // If there's no parent, push back to the store_vec
-                store_vec.push((last_level, last_symbols));
-                break;
-            }
+    // find the appropriate number of layers to assmemble store_vec to
+    let mut layer: usize;
+    {
+        let levels: Vec<usize> = store_vec.iter().map(|(level, _)| *level).collect();
+        let layer_index = levels
+            .iter()
+            .enumerate()
+            .rev() // Reverse the iterator to search from right to left
+            .find(|&(_, &l)| l < level) // Find the first element that is less than `level`
+            .map(|(index, _)| index);
+        layer = if let Some(value) = layer_index {
+            value + 1
         } else {
-            break;
-        }
+            1
+        }; // turn option into usize
     }
+
+    store_vec = assemble_store(store_vec, layer);
 
     // Add the new symbol to the appropriate level in store_vec
     if let Some((last_level, symbols)) = store_vec.last_mut() {
