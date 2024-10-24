@@ -26,9 +26,21 @@
 
     list(
         citation = positron_citation,
-        mode = Sys.getenv("POSITRON_MODE"),
-        version = package_version(Sys.getenv("POSITRON_VERSION")),
+        mode = .rs.api.getMode(),
+        version = .rs.api.getVersion(),
         long_version = Sys.getenv("POSITRON_LONG_VERSION"),
         ark_version = .ps.ark.version()
     )
+}
+
+# Since rstudioapi 0.17.0
+#' @export
+.rs.api.getVersion <- function() {
+    package_version(Sys.getenv("POSITRON_VERSION"))
+}
+
+# Since rstudioapi 0.17.0
+#' @export
+.rs.api.getMode <- function() {
+    Sys.getenv("POSITRON_MODE")
 }

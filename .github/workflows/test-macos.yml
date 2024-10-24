@@ -36,6 +36,7 @@ jobs:
         with:
           packages:
             data.table
+            rstudioapi
             tibble
 
       - name: Build
