@@ -27,11 +27,15 @@ use crate::RObject;
 /// crash R before, so we'd like to stay away from using that ourselves.
 ///
 /// The easiest solution to this problem is to just go through R's `Sys.setenv()`
-/// to ensure that R picks up the environment variable update.
+/// to ensure that R picks up the environment variable update. This also calls
+/// `putenv()`, but effectively allows us to use the R thread to synchronise all
+/// writes to environment variables.
 ///
 /// If R has not started up yet, you should be safe to call [std::env::set_var()].
 /// For example, we do this for `R_HOME` during the startup process and for
-/// `R_PROFILE_USER` in some tests.
+/// `R_PROFILE_USER` in some tests. We aren't sure how, but at R startup time
+/// the Windows API environment space seems to get synchronized once with the
+/// C environment space, which is what allows this to work.
 pub fn set_var(key: &str, value: &str) {
     unsafe {
         let mut protect = RProtect::new();
@@ -61,7 +65,7 @@ pub fn var(key: &str) -> Option<String> {
 
         let out = RObject::new(libr::Rf_eval(call, libr::R_BaseEnv));
 
-        // SAFETY: Input is length 1 string, so output must be a length 1 string.
+        // Panic: Input is length 1 string, so output must be a length 1 string.
         let out = String::try_from(out).unwrap();
 
         // If the output is `""`, then the environment variable was unset.
