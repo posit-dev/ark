@@ -5,11 +5,8 @@
 //
 //
 
-use crate::protect::RProtect;
-use crate::r_lang;
-use crate::r_string;
-use crate::r_symbol;
-use crate::RObject;
+use crate::exec::RFunction;
+use crate::exec::RFunctionExt;
 
 /// Set an environment variable through `Sys.setenv()`
 ///
@@ -37,59 +34,36 @@ use crate::RObject;
 /// the Windows API environment space seems to get synchronized once with the
 /// C environment space, which is what allows this to work.
 pub fn set_var(key: &str, value: &str) {
-    unsafe {
-        let mut protect = RProtect::new();
-
-        let key = r_symbol!(key);
-        protect.add(key);
-
-        let value = r_string!(value, &mut protect);
-
-        let call = r_lang!(r_symbol!("Sys.setenv"), !!key = value);
-        protect.add(call);
-
-        libr::Rf_eval(call, libr::R_BaseEnv);
-    }
+    RFunction::new("base", "Sys.setenv")
+        .param(key, value)
+        .call()
+        .unwrap();
 }
 
 /// Fetch an environment variable using `Sys.getenv()`
 pub fn var(key: &str) -> Option<String> {
-    unsafe {
-        let mut protect = RProtect::new();
+    let out = RFunction::new("base", "Sys.getenv")
+        .add(key)
+        .call()
+        .unwrap();
 
-        let key = r_string!(key, &mut protect);
-        protect.add(key);
+    // Panic: Input is length 1 string, so output must be a length 1 string.
+    let out = String::try_from(out).unwrap();
 
-        let call = r_lang!(r_symbol!("Sys.getenv"), key);
-        protect.add(call);
-
-        let out = RObject::new(libr::Rf_eval(call, libr::R_BaseEnv));
-
-        // Panic: Input is length 1 string, so output must be a length 1 string.
-        let out = String::try_from(out).unwrap();
-
-        // If the output is `""`, then the environment variable was unset.
-        if out.is_empty() {
-            None
-        } else {
-            Some(out)
-        }
+    // If the output is `""`, then the environment variable was unset.
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
     }
 }
 
 /// Remove an environment variable using `Sys.unsetenv()`
 pub fn remove_var(key: &str) {
-    unsafe {
-        let mut protect = RProtect::new();
-
-        let key = r_string!(key, &mut protect);
-        protect.add(key);
-
-        let call = r_lang!(r_symbol!("Sys.unsetenv"), key);
-        protect.add(call);
-
-        libr::Rf_eval(call, libr::R_BaseEnv);
-    }
+    RFunction::new("base", "Sys.unsetenv")
+        .add(key)
+        .call()
+        .unwrap();
 }
 
 #[cfg(test)]
