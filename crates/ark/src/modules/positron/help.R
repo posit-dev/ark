@@ -100,7 +100,7 @@ split_topic <- function(topic) {
 
     # Try to find the vignette; suppress warnings so we don't pollute the
     # console.
-    results <- suppressWarnings(vignette(topic, package = package))
+    results <- suppressWarnings(utils::vignette(topic, package = package))
 
     # If we found a vignette, show it.
     if ("vignette" %in% class(results)) {
