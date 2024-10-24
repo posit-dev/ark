@@ -3,6 +3,14 @@
     .ps.Call("ps_reticulate_open", input)
 }
 
+.ps.reticulate_shutdown <- function() {
+    .ps.Call("ps_reticulate_shutdown")
+}
+
+.ps.reticulate_open_comm <- function(start_runtime) {
+    .ps.Call("ps_reticulate_open_comm", start_runtime)
+}
+
 #' Called by the front-end right before starting the reticulate session.
 #'
 #' At this point it should be fine to load Python if it's not loaded, and
@@ -84,9 +92,27 @@
                 "--session-mode", "console"
             )
         )
+
+        # Open comm with the front-end.
+        # The runtime is already starting, so we set `start_runtime` to FALSE.
+        .ps.reticulate_open_comm(start_runtime = FALSE)
+
         # Empty string means that no error happened.
         ""
     }, error = function(err) {
         conditionMessage(err)
     })
+}
+
+# Called whenever a new comm is created to register a finalizer, making sure that
+# the Python session is gracefully exitted before the R session ends.
+# During execution we might have a few finalizers registered, but they are no-ops
+# if the session is already closed.
+reticulate_register_finalizer <- function() {
+    # Make sure we call the shutdown function when the R session ends.
+    # This allows Positron to shutdown the Reticulate Python session
+    # before the R session is gone - which causes the LSP to crash.
+    reg.finalizer(asNamespace("reticulate"), function(...) {
+        .ps.reticulate_shutdown()
+    }, onexit = TRUE)
 }
