@@ -9,8 +9,6 @@
 
 use std::result::Result::Ok;
 
-use anyhow::*;
-use log::*;
 use ropey::Rope;
 use stdext::unwrap::IntoResult;
 use tower_lsp::lsp_types::DocumentSymbol;
@@ -32,6 +30,30 @@ use crate::lsp::traits::string::StringExt;
 use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
+
+fn new_symbol(name: String, kind: SymbolKind, range: Range) -> DocumentSymbol {
+    DocumentSymbol {
+        name,
+        kind,
+        detail: None,
+        children: Some(Vec::new()),
+        deprecated: None,
+        tags: None,
+        range,
+        selection_range: range,
+    }
+}
+
+fn new_symbol_node(
+    name: String,
+    kind: SymbolKind,
+    range: Range,
+    children: Vec<DocumentSymbol>,
+) -> DocumentSymbol {
+    let mut symbol = new_symbol(name, kind, range);
+    symbol.children = Some(children);
+    symbol
+}
 
 pub fn symbols(params: &WorkspaceSymbolParams) -> anyhow::Result<Vec<SymbolInformation>> {
     let query = &params.query;
@@ -80,8 +102,6 @@ pub(crate) fn document_symbols(
     state: &WorldState,
     params: &DocumentSymbolParams,
 ) -> anyhow::Result<Vec<DocumentSymbol>> {
-    let mut symbols: Vec<DocumentSymbol> = Vec::new();
-
     let uri = &params.text_document.uri;
     let document = state.documents.get(uri).into_result()?;
     let ast = &document.ast;
@@ -89,124 +109,84 @@ pub(crate) fn document_symbols(
 
     let node = ast.root_node();
 
-    let start = convert_point_to_position(contents, node.start_position());
-    let end = convert_point_to_position(contents, node.end_position());
-
-    // construct a root symbol, so we always have something to append to
-    let mut root = DocumentSymbol {
-        name: "<root>".to_string(),
-        kind: SymbolKind::NULL,
-        children: Some(Vec::new()),
-        deprecated: None,
-        tags: None,
-        detail: None,
-        range: Range { start, end },
-        selection_range: Range { start, end },
-    };
-
-    // index from the root
-    index_node(&node, &contents, &mut root, &mut symbols)?;
-
-    // return the children we found
-    Ok(root.children.unwrap_or_default())
-}
-
-fn is_indexable(node: &Node) -> bool {
-    // don't index 'arguments' or 'parameters'
-    if matches!(node.node_type(), NodeType::Arguments | NodeType::Parameters) {
-        return false;
+    // Index from the root
+    match index_node(&node, vec![], &contents) {
+        Ok(children) => Ok(children),
+        Err(err) => {
+            log::error!("Error indexing node: {err:?}");
+            return Ok(Vec::new());
+        },
     }
-
-    true
-}
-
-// Function to parse a comment and return the section level and title
-fn parse_comment_as_section(comment: &str) -> Option<(usize, String)> {
-    // Match lines starting with one or more '#' followed by some non-empty content and must end with 4 or more '-', '#', or `=`
-    // Ensure that there's actual content between the start and the trailing symbols.
-    if let Some(caps) = indexer::RE_COMMENT_SECTION.captures(comment) {
-        let hashes = caps.get(1)?.as_str().len(); // Count the number of '#'
-        let title = caps.get(2)?.as_str().trim().to_string(); // Extract the title text without trailing punctuations
-        if title.is_empty() {
-            return None; // Return None for lines with only hashtags
-        }
-        return Some((hashes, title)); // Return the level based on the number of '#' and the title
-    }
-
-    None
 }
 
 fn index_node(
     node: &Node,
+    store: Vec<DocumentSymbol>,
     contents: &Rope,
-    parent: &mut DocumentSymbol,
-    symbols: &mut Vec<DocumentSymbol>,
-) -> Result<bool> {
-    // Check if the node is a comment and matches the markdown-style comment patterns
-    if node.node_type() == NodeType::Comment {
-        let comment_text = contents.node_slice(&node)?.to_string();
-
-        // Check if the comment starts with one or more '#' followed by any text and ends with 4+ punctuations
-        if let Some((_level, title)) = parse_comment_as_section(&comment_text) {
-            // Create a symbol based on the parsed comment
-            let start = convert_point_to_position(contents, node.start_position());
-            let end = convert_point_to_position(contents, node.end_position());
-
-            let symbol = DocumentSymbol {
-                name: title,                // Use the title without the trailing '####' or '----'
-                kind: SymbolKind::STRING,   // Treat it as a string section
-                detail: None,               // No need to display level details
-                children: Some(Vec::new()), // Prepare for child symbols if any
-                deprecated: None,
-                tags: None,
-                range: Range { start, end },
-                selection_range: Range { start, end },
-            };
-
-            // Add the symbol to the parent node
-            parent.children.as_mut().unwrap().push(symbol);
-
-            // Return early to avoid further processing
-            return Ok(true);
-        }
-    }
-
-    if matches!(
-        node.node_type(),
+) -> anyhow::Result<Vec<DocumentSymbol>> {
+    Ok(match node.node_type() {
+        // Handle comment sections in expression lists
+        NodeType::Program | NodeType::BracedExpression => {
+            index_expression_list(&node, store, contents)?
+        },
+        // Index assignments as object or function symbols
         NodeType::BinaryOperator(BinaryOperatorType::LeftAssignment) |
-            NodeType::BinaryOperator(BinaryOperatorType::EqualsAssignment)
-    ) {
-        match index_assignment(node, contents, parent, symbols) {
-            Ok(handled) => {
-                if handled {
-                    return Ok(true);
-                }
-            },
-            Err(error) => error!("{:?}", error),
-        }
-    }
+        NodeType::BinaryOperator(BinaryOperatorType::EqualsAssignment) => {
+            index_assignment(&node, store, contents)?
+        },
+        // Nothing to index. FIXME: We should handle argument lists, e.g. to
+        // index inside functions passed as arguments, or inside `test_that()`
+        // blocks.
+        _ => store,
+    })
+}
 
-    // Recurse into children
+// Handles root node and braced lists
+fn index_expression_list(
+    node: &Node,
+    mut store: Vec<DocumentSymbol>,
+    contents: &Rope,
+) -> anyhow::Result<Vec<DocumentSymbol>> {
     let mut cursor = node.walk();
+
     for child in node.children(&mut cursor) {
-        if is_indexable(&child) {
-            let result = index_node(&child, contents, parent, symbols);
-            if let Err(error) = result {
-                error!("{:?}", error);
-            }
+        store = match child.node_type() {
+            NodeType::Comment => index_comments(&child, store, contents)?,
+            _ => index_node(&child, store, contents)?,
         }
     }
 
-    Ok(true)
+    Ok(store)
+}
+
+fn index_comments(
+    node: &Node,
+    mut store: Vec<DocumentSymbol>,
+    contents: &Rope,
+) -> anyhow::Result<Vec<DocumentSymbol>> {
+    let comment_text = contents.node_slice(&node)?.to_string();
+
+    // Check if the comment starts with one or more '#' followed by any text and ends with 4+ punctuations
+    let Some((_level, title)) = parse_comment_as_section(&comment_text) else {
+        return Ok(store);
+    };
+
+    // Create a symbol based on the parsed comment
+    let start = convert_point_to_position(contents, node.start_position());
+    let end = convert_point_to_position(contents, node.end_position());
+
+    let symbol = new_symbol(title, SymbolKind::STRING, Range { start, end });
+    store.push(symbol);
+
+    Ok(store)
 }
 
 fn index_assignment(
     node: &Node,
+    mut store: Vec<DocumentSymbol>,
     contents: &Rope,
-    parent: &mut DocumentSymbol,
-    symbols: &mut Vec<DocumentSymbol>,
-) -> Result<bool> {
-    // check for assignment
+) -> anyhow::Result<Vec<DocumentSymbol>> {
+    // Check for assignment
     matches!(
         node.node_type(),
         NodeType::BinaryOperator(BinaryOperatorType::LeftAssignment) |
@@ -222,7 +202,7 @@ fn index_assignment(
     let function = lhs.is_identifier_or_string() && rhs.is_function_definition();
 
     if function {
-        return index_assignment_with_function(node, contents, parent, symbols);
+        return index_assignment_with_function(node, store, contents);
     }
 
     // otherwise, just index as generic object
@@ -231,29 +211,17 @@ fn index_assignment(
     let start = convert_point_to_position(contents, lhs.start_position());
     let end = convert_point_to_position(contents, lhs.end_position());
 
-    let symbol = DocumentSymbol {
-        name,
-        kind: SymbolKind::VARIABLE,
-        detail: None,
-        children: Some(Vec::new()),
-        deprecated: None,
-        tags: None,
-        range: Range::new(start, end),
-        selection_range: Range::new(start, end),
-    };
+    let symbol = new_symbol(name, SymbolKind::VARIABLE, Range { start, end });
+    store.push(symbol);
 
-    // add this symbol to the parent node
-    parent.children.as_mut().unwrap().push(symbol);
-
-    Ok(true)
+    Ok(store)
 }
 
 fn index_assignment_with_function(
     node: &Node,
+    mut store: Vec<DocumentSymbol>,
     contents: &Rope,
-    parent: &mut DocumentSymbol,
-    symbols: &mut Vec<DocumentSymbol>,
-) -> Result<bool> {
+) -> anyhow::Result<Vec<DocumentSymbol>> {
     // check for lhs, rhs
     let lhs = node.child_by_field_name("lhs").into_result()?;
     let rhs = node.child_by_field_name("rhs").into_result()?;
@@ -272,32 +240,38 @@ fn index_assignment_with_function(
     let name = contents.node_slice(&lhs)?.to_string();
     let detail = format!("function({})", arguments.join(", "));
 
-    // build the document symbol
-    let symbol = DocumentSymbol {
-        name,
-        kind: SymbolKind::FUNCTION,
-        detail: Some(detail),
-        children: Some(Vec::new()),
-        deprecated: None,
-        tags: None,
-        range: Range {
-            start: convert_point_to_position(contents, lhs.start_position()),
-            end: convert_point_to_position(contents, rhs.end_position()),
-        },
-        selection_range: Range {
-            start: convert_point_to_position(contents, lhs.start_position()),
-            end: convert_point_to_position(contents, lhs.end_position()),
-        },
+    let range = Range {
+        start: convert_point_to_position(contents, lhs.start_position()),
+        end: convert_point_to_position(contents, rhs.end_position()),
     };
 
-    // add this symbol to the parent node
-    parent.children.as_mut().unwrap().push(symbol);
+    let body = rhs.child_by_field_name("body").into_result()?;
 
-    // recurse into this node
-    let parent = parent.children.as_mut().unwrap().last_mut().unwrap();
-    index_node(&rhs, contents, parent, symbols)?;
+    // At this point we increase the nesting level. Recurse into the function
+    // node with a new store of children nodes.
+    let children = index_node(&body, vec![], contents)?;
 
-    Ok(true)
+    let mut symbol = new_symbol_node(name, SymbolKind::FUNCTION, range, children);
+    symbol.detail = Some(detail);
+    store.push(symbol);
+
+    Ok(store)
+}
+
+// Function to parse a comment and return the section level and title
+fn parse_comment_as_section(comment: &str) -> Option<(usize, String)> {
+    // Match lines starting with one or more '#' followed by some non-empty content and must end with 4 or more '-', '#', or `=`
+    // Ensure that there's actual content between the start and the trailing symbols.
+    if let Some(caps) = indexer::RE_COMMENT_SECTION.captures(comment) {
+        let hashes = caps.get(1)?.as_str().len(); // Count the number of '#'
+        let title = caps.get(2)?.as_str().trim().to_string(); // Extract the title text without trailing punctuations
+        if title.is_empty() {
+            return None; // Return None for lines with only hashtags
+        }
+        return Some((hashes, title)); // Return the level based on the number of '#' and the title
+    }
+
+    None
 }
 
 #[cfg(test)]
@@ -308,27 +282,10 @@ mod tests {
     use crate::lsp::documents::Document;
 
     fn test_symbol(code: &str) -> Vec<DocumentSymbol> {
-        let mut symbols: Vec<DocumentSymbol> = Vec::new();
-
         let doc = Document::new(code, None);
         let node = doc.ast.root_node();
 
-        let start = convert_point_to_position(&doc.contents, node.start_position());
-        let end = convert_point_to_position(&doc.contents, node.end_position());
-
-        let mut root = DocumentSymbol {
-            name: String::from("<root>"),
-            kind: SymbolKind::NULL,
-            children: Some(Vec::new()),
-            deprecated: None,
-            tags: None,
-            detail: None,
-            range: Range { start, end },
-            selection_range: Range { start, end },
-        };
-
-        index_node(&node, &doc.contents, &mut root, &mut symbols).unwrap();
-        root.children.unwrap_or_default()
+        index_node(&node, vec![], &doc.contents).unwrap()
     }
 
     #[test]
@@ -358,15 +315,96 @@ mod tests {
                 character: 10,
             },
         };
-        assert_eq!(test_symbol("# foo ----"), vec![DocumentSymbol {
-            name: String::from("foo"),
-            kind: SymbolKind::STRING,
-            children: Some(Vec::new()),
-            deprecated: None,
-            tags: None,
-            detail: None,
+        assert_eq!(test_symbol("# foo ----"), vec![new_symbol(
+            String::from("foo"),
+            SymbolKind::STRING,
+            range
+        )]);
+    }
+
+    #[test]
+    fn test_symbol_assignment() {
+        let range = Range {
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 3,
+            },
+        };
+        assert_eq!(test_symbol("foo <- 1"), vec![new_symbol(
+            String::from("foo"),
+            SymbolKind::OBJECT,
             range,
-            selection_range: range,
-        }]);
+        )]);
+    }
+
+    #[test]
+    fn test_symbol_assignment_function() {
+        let range = Range {
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 20,
+            },
+        };
+
+        let mut foo = new_symbol(String::from("foo"), SymbolKind::FUNCTION, range);
+        foo.detail = Some(String::from("function()"));
+
+        assert_eq!(test_symbol("foo <- function() {}"), vec![foo]);
+    }
+
+    #[test]
+    fn test_symbol_assignment_function_nested() {
+        let range = Range {
+            start: Position {
+                line: 0,
+                character: 20,
+            },
+            end: Position {
+                line: 0,
+                character: 23,
+            },
+        };
+        let bar = new_symbol(String::from("bar"), SymbolKind::OBJECT, range);
+
+        let range = Range {
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 30,
+            },
+        };
+        let mut foo = new_symbol(String::from("foo"), SymbolKind::FUNCTION, range);
+        foo.children = Some(vec![bar]);
+        foo.detail = Some(String::from("function()"));
+
+        assert_eq!(test_symbol("foo <- function() { bar <- 1 }"), vec![foo]);
+    }
+
+    #[test]
+    fn test_symbol_braced_list() {
+        let range = Range {
+            start: Position {
+                line: 0,
+                character: 2,
+            },
+            end: Position {
+                line: 0,
+                character: 5,
+            },
+        };
+        let foo = new_symbol(String::from("foo"), SymbolKind::OBJECT, range);
+
+        assert_eq!(test_symbol("{ foo <- 1 }"), vec![foo]);
     }
 }
