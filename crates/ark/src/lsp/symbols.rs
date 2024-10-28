@@ -149,26 +149,72 @@ fn index_expression_list(
 ) -> anyhow::Result<Vec<DocumentSymbol>> {
     let mut cursor = node.walk();
 
+    // put level and store in a vector for nested structure handling
+    let mut store_vec: Vec<(usize, Vec<DocumentSymbol>)> = vec![(usize::MAX, store.clone())];
+    let mut current_store = store.clone();
+
     for child in node.children(&mut cursor) {
-        store = match child.node_type() {
-            NodeType::Comment => index_comments(&child, store, contents)?,
-            _ => index_node(&child, store, contents)?,
+        match child.node_type() {
+            NodeType::Comment => {
+                store_vec = index_comments(&child, store_vec, contents)?;
+                (_, current_store) = store_vec.last().unwrap().clone();
+            },
+            _ => {
+                current_store = index_node(&child, current_store, contents)?;
+                if let Some((_, last)) = store_vec.last_mut() {
+                    *last = current_store.clone();
+                }
+            },
         }
     }
 
+    // iteratively add the children of the last element of store_vec until there is only one element
+    store_vec = assemble_store(store_vec, 1);
+
+    // At the end, the remaining element in store_vec contains the updated store
+    let (_, store) = store_vec.pop().unwrap();
     Ok(store)
+}
+
+fn assemble_store(
+    mut store_vec: Vec<(usize, Vec<DocumentSymbol>)>,
+    layers: usize,
+) -> Vec<(usize, Vec<DocumentSymbol>)> {
+    while store_vec.len() > layers {
+        // Pop the last element from store_vec
+        let (last_level, mut last_symbols) = store_vec.pop().unwrap();
+
+        // Add the last_symbols as children to the previous level in store_vec
+        if let Some((_, parent_symbols)) = store_vec.last_mut() {
+            if let Some(parent_symbol) = parent_symbols.last_mut() {
+                parent_symbol
+                    .children
+                    .as_mut()
+                    .unwrap()
+                    .append(&mut last_symbols);
+            } else {
+                // If there's no last parent symbol, add the last symbols directly
+                parent_symbols.append(&mut last_symbols);
+            }
+        } else {
+            // In case there's no parent, just push the last_symbols back
+            store_vec.push((last_level, last_symbols));
+            break;
+        }
+    }
+    return store_vec;
 }
 
 fn index_comments(
     node: &Node,
-    mut store: Vec<DocumentSymbol>,
+    mut store_vec: Vec<(usize, Vec<DocumentSymbol>)>,
     contents: &Rope,
-) -> anyhow::Result<Vec<DocumentSymbol>> {
+) -> anyhow::Result<Vec<(usize, Vec<DocumentSymbol>)>> {
     let comment_text = contents.node_slice(&node)?.to_string();
 
     // Check if the comment starts with one or more '#' followed by any text and ends with 4+ punctuations
-    let Some((_level, title)) = parse_comment_as_section(&comment_text) else {
-        return Ok(store);
+    let Some((level, title)) = parse_comment_as_section(&comment_text) else {
+        return Ok(store_vec);
     };
 
     // Create a symbol based on the parsed comment
@@ -176,9 +222,48 @@ fn index_comments(
     let end = convert_point_to_position(contents, node.end_position());
 
     let symbol = new_symbol(title, SymbolKind::STRING, Range { start, end });
-    store.push(symbol);
 
-    Ok(store)
+    // find the appropriate number of layers to assmemble store_vec to
+    let mut layer: usize;
+    {
+        let levels: Vec<usize> = store_vec.iter().map(|(level, _)| *level).collect();
+        let layer_index = levels
+            .iter()
+            .enumerate()
+            .rev() // Reverse the iterator to search from right to left
+            .find(|&(_, &l)| l < level) // Find the first element that is less than `level`
+            .map(|(index, _)| index);
+        layer = if let Some(value) = layer_index {
+            value + 1
+        } else {
+            1
+        }; // turn option into usize
+    }
+
+    store_vec = assemble_store(store_vec, layer);
+
+    // Add the new symbol to the appropriate level in store_vec
+    if let Some((last_level, symbols)) = store_vec.last_mut() {
+        if *last_level < level {
+            // If current level is greater, add a new level to store_vec
+            store_vec.push((level, vec![symbol]));
+        } else if *last_level == level {
+            // If current level is equal, push the symbol as a child of the last element
+            symbols.push(symbol);
+        } else {
+            // for handling of the starting nodes, the level of which are set to maximum
+            symbols.push(symbol);
+            *last_level = level;
+        }
+    } else {
+        // If store_vec is empty, add the new symbol at root
+        store_vec.push((level, vec![symbol]));
+    }
+
+    // Add an empty vector to store_vec to subordinate other symbols
+    store_vec.push((usize::MAX, vec![])); // usize::MAX to make ensure it is never a parent
+
+    Ok(store_vec)
 }
 
 fn index_assignment(
@@ -336,7 +421,7 @@ mod tests {
         };
         assert_eq!(test_symbol("foo <- 1"), vec![new_symbol(
             String::from("foo"),
-            SymbolKind::OBJECT,
+            SymbolKind::VARIABLE,
             range,
         )]);
     }
@@ -372,7 +457,7 @@ mod tests {
                 character: 23,
             },
         };
-        let bar = new_symbol(String::from("bar"), SymbolKind::OBJECT, range);
+        let bar = new_symbol(String::from("bar"), SymbolKind::VARIABLE, range);
 
         let range = Range {
             start: Position {
@@ -403,7 +488,7 @@ mod tests {
                 character: 5,
             },
         };
-        let foo = new_symbol(String::from("foo"), SymbolKind::OBJECT, range);
+        let foo = new_symbol(String::from("foo"), SymbolKind::VARIABLE, range);
 
         assert_eq!(test_symbol("{ foo <- 1 }"), vec![foo]);
     }
