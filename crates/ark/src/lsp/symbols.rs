@@ -336,7 +336,7 @@ mod tests {
         };
         assert_eq!(test_symbol("foo <- 1"), vec![new_symbol(
             String::from("foo"),
-            SymbolKind::OBJECT,
+            SymbolKind::VARIABLE,
             range,
         )]);
     }
@@ -372,7 +372,7 @@ mod tests {
                 character: 23,
             },
         };
-        let bar = new_symbol(String::from("bar"), SymbolKind::OBJECT, range);
+        let bar = new_symbol(String::from("bar"), SymbolKind::VARIABLE, range);
 
         let range = Range {
             start: Position {
@@ -403,7 +403,7 @@ mod tests {
                 character: 5,
             },
         };
-        let foo = new_symbol(String::from("foo"), SymbolKind::OBJECT, range);
+        let foo = new_symbol(String::from("foo"), SymbolKind::VARIABLE, range);
 
         assert_eq!(test_symbol("{ foo <- 1 }"), vec![foo]);
     }
