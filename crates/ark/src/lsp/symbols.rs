@@ -32,6 +32,8 @@ use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
+type StoreStack = Vec<(usize, Option<DocumentSymbol>, Vec<DocumentSymbol>)>;
+
 fn new_symbol(name: String, kind: SymbolKind, range: Range) -> DocumentSymbol {
     DocumentSymbol {
         name,
@@ -150,65 +152,74 @@ fn index_expression_list(
 ) -> anyhow::Result<Vec<DocumentSymbol>> {
     let mut cursor = node.walk();
 
-    // Put level and store in a vector for nested structure handling
-    let mut store_stack: Vec<(usize, Vec<DocumentSymbol>)> = vec![(usize::MAX, store)];
+    // This is a stack of section levels and associated stores for comments of
+    // the type `# title ----`. It contains all currently active sections.
+    // The top-level section is the current store and has level 0. It should
+    // always be in the stack and popping it before we have finished indexing
+    // the whole expression list is a logic error.
+    let mut store_stack: StoreStack = vec![(0, None, store)];
 
     for child in node.children(&mut cursor) {
-        match child.node_type() {
-            NodeType::Comment => {
-                store_stack = index_comments(&child, store_stack, contents)?;
-            },
-            _ => {
-                let Some((level, store)) = store_stack.pop() else {
-                    return Err(anyhow!(
-                        "Internal error: Store stack must always have one element"
-                    ));
-                };
-                let store = index_node(&child, store, contents)?;
-                store_stack.push((level, store));
-            },
+        if let NodeType::Comment = child.node_type() {
+            store_stack = index_comments(&child, store_stack, contents)?;
+            continue;
+        }
+
+        // Get the current store to index the child subtree with.
+        // We restore the store in the stack right after that.
+        let Some((level, symbol, store)) = store_stack.pop() else {
+            return Err(anyhow!(
+                "Internal error: Store stack must have at least one element"
+            ));
+        };
+        let store = index_node(&child, store, contents)?;
+        store_stack.push((level, symbol, store));
+    }
+
+    // Pop all sections from the stack, assigning their childrens and their
+    // parents along the way
+    while store_stack.len() > 0 {
+        if let Some(store) = store_stack_pop(&mut store_stack)? {
+            return Ok(store);
         }
     }
 
-    // Iteratively add the children of the last element of `store_stack` until there is only one element
-    while store_stack.len() > 1 {
-        store_stack_pop(&mut store_stack);
-    }
-
-    // At the end, the remaining element in `store_stack` contains the updated store
-    let (_, store) = store_stack.pop().unwrap();
-    Ok(store)
+    Err(anyhow!(
+        "Internal error: Store stack must have at least one element"
+    ))
 }
 
-// Pop store from the stack, adding it as child to its parent (which becomes the
-// last element in the stack). Once popped, we no longer need to keep track of level.
-fn store_stack_pop(store_stack: &mut Vec<(usize, Vec<DocumentSymbol>)>) {
-    let (last_level, mut last_symbols) = store_stack.pop().unwrap();
-
-    // Add the last_symbols as children to the previous level in `store_stack`
-    let Some((_, parent_symbols)) = store_stack.last_mut() else {
-        // In case there's no parent, just push the `last_symbols` back
-        store_stack.push((last_level, last_symbols));
-        return;
+// Pop store from the stack, recording its children adding it as child to its
+// parent (which becomes the last element in the stack).
+fn store_stack_pop(store_stack: &mut StoreStack) -> anyhow::Result<Option<Vec<DocumentSymbol>>> {
+    let Some((_, symbol, last)) = store_stack.pop() else {
+        return Ok(None);
     };
 
-    if let Some(parent_symbol) = parent_symbols.last_mut() {
-        parent_symbol
-            .children
-            .as_mut()
-            .unwrap()
-            .append(&mut last_symbols);
+    if let Some(mut sym) = symbol {
+        // Assign children to symbol
+        sym.children = Some(last);
+
+        let Some((_, _, ref mut parent_store)) = store_stack.last_mut() else {
+            return Err(anyhow!(
+                "Internal error: Store stack must have at least one element"
+            ));
+        };
+
+        // Store symbol as child of the last symbol on the stack
+        parent_store.push(sym);
+
+        Ok(None)
     } else {
-        // If there's no last parent symbol, add the last symbols directly
-        parent_symbols.append(&mut last_symbols);
+        Ok(Some(last))
     }
 }
 
 fn index_comments(
     node: &Node,
-    mut store_stack: Vec<(usize, Vec<DocumentSymbol>)>,
+    mut store_stack: StoreStack,
     contents: &Rope,
-) -> anyhow::Result<Vec<(usize, Vec<DocumentSymbol>)>> {
+) -> anyhow::Result<StoreStack> {
     let comment_text = contents.node_slice(&node)?.to_string();
 
     // Check if the comment starts with one or more '#' followed by any text and ends with 4+ punctuations
@@ -216,47 +227,33 @@ fn index_comments(
         return Ok(store_stack);
     };
 
-    // Create a symbol based on the parsed comment
+    // Create a section symbol based on the parsed comment
     let start = convert_point_to_position(contents, node.start_position());
     let end = convert_point_to_position(contents, node.end_position());
-
     let symbol = new_symbol(title, SymbolKind::STRING, Range { start, end });
 
-    // Find the appropriate number of layers to pop from `store_stack`
-    let levels: Vec<usize> = store_stack.iter().map(|(level, _)| *level).collect();
-    let layer = levels
-        .iter()
-        .enumerate()
-        .rev() // Reverse the iterator to search from right to left
-        .find(|&(_, &l)| l < level) // Find the first element that is less than `level`
-        .map(|(index, _)| index + 1)
-        .unwrap_or(1);
+    // Now pop all sections still on the stack that have a higher or equal
+    // level. Because we pop sections with equal levels, i.e. siblings, we
+    // ensure that there is only one active section per level on the stack.
+    // That simplifies things because we need to assign popped sections to their
+    // parents and we can assume the relevant parent is always the next on the
+    // stack.
+    loop {
+        let Some((last_level, _, _)) = store_stack.last() else {
+            return Err(anyhow!("Unexpectedly reached the end of the store stack"));
+        };
 
-    while store_stack.len() > layer {
-        store_stack_pop(&mut store_stack);
-    }
-
-    // Add the new symbol to the appropriate level in `store_stack`
-    if let Some((last_level, symbols)) = store_stack.last_mut() {
-        if *last_level < level {
-            // If current level is greater, add a new level to `store_stack`
-            store_stack.push((level, vec![symbol]));
-        } else if *last_level == level {
-            // If current level is equal, push the symbol as a child of the last element
-            symbols.push(symbol);
-        } else {
-            // For handling of the starting nodes, the level of which are set to maximum
-            symbols.push(symbol);
-            *last_level = level;
+        if *last_level >= level {
+            if store_stack_pop(&mut store_stack)?.is_some() {
+                return Err(anyhow!("Unexpectedly reached the end of the store stack"));
+            }
+            continue;
         }
-    } else {
-        // If `store_stack` is empty, add the new symbol at root
-        store_stack.push((level, vec![symbol]));
+
+        break;
     }
 
-    // Add an empty vector to `store_stack` to subordinate other symbols
-    store_stack.push((usize::MAX, vec![])); // usize::MAX to make ensure it is never a parent
-
+    store_stack.push((level, Some(symbol), vec![]));
     Ok(store_stack)
 }
 
