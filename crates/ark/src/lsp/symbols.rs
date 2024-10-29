@@ -224,21 +224,14 @@ fn index_comments(
     let symbol = new_symbol(title, SymbolKind::STRING, Range { start, end });
 
     // Find the appropriate number of layers to assemble `store_vec` to
-    let layer: usize;
-    {
-        let levels: Vec<usize> = store_vec.iter().map(|(level, _)| *level).collect();
-        let layer_index = levels
-            .iter()
-            .enumerate()
-            .rev() // Reverse the iterator to search from right to left
-            .find(|&(_, &l)| l < level) // Find the first element that is less than `level`
-            .map(|(index, _)| index);
-        layer = if let Some(value) = layer_index {
-            value + 1
-        } else {
-            1
-        }; // Turn option into usize
-    }
+    let levels: Vec<usize> = store_vec.iter().map(|(level, _)| *level).collect();
+    let layer = levels
+        .iter()
+        .enumerate()
+        .rev() // Reverse the iterator to search from right to left
+        .find(|&(_, &l)| l < level) // Find the first element that is less than `level`
+        .map(|(index, _)| index + 1)
+        .unwrap_or(1);
 
     store_vec = assemble_store(store_vec, layer);
 
