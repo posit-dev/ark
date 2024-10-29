@@ -183,25 +183,24 @@ fn index_expression_list(
 // Pop store from the stack, adding it as child to its parent (which becomes the
 // last element in the stack). Once popped, we no longer need to keep track of level.
 fn store_stack_pop(store_stack: &mut Vec<(usize, Vec<DocumentSymbol>)>) {
-    // Pop the last element from `store_stack`
     let (last_level, mut last_symbols) = store_stack.pop().unwrap();
 
     // Add the last_symbols as children to the previous level in `store_stack`
-    if let Some((_, parent_symbols)) = store_stack.last_mut() {
-        if let Some(parent_symbol) = parent_symbols.last_mut() {
-            parent_symbol
-                .children
-                .as_mut()
-                .unwrap()
-                .append(&mut last_symbols);
-        } else {
-            // If there's no last parent symbol, add the last symbols directly
-            parent_symbols.append(&mut last_symbols);
-        }
-    } else {
+    let Some((_, parent_symbols)) = store_stack.last_mut() else {
         // In case there's no parent, just push the `last_symbols` back
         store_stack.push((last_level, last_symbols));
         return;
+    };
+
+    if let Some(parent_symbol) = parent_symbols.last_mut() {
+        parent_symbol
+            .children
+            .as_mut()
+            .unwrap()
+            .append(&mut last_symbols);
+    } else {
+        // If there's no last parent symbol, add the last symbols directly
+        parent_symbols.append(&mut last_symbols);
     }
 }
 
