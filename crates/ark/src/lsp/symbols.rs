@@ -166,14 +166,16 @@ fn index_expression_list(
     }
 
     // Iteratively add the children of the last element of `store_stack` until there is only one element
-    store_stack = assemble_store(store_stack, 1);
+    store_stack = store_stack_pop(store_stack, 1);
 
     // At the end, the remaining element in `store_stack` contains the updated store
     let (_, store) = store_stack.pop().unwrap();
     Ok(store)
 }
 
-fn assemble_store(
+// Pop store from the stack, adding it as child to its parent (which becomes the
+// last element in the stack). Once popped, we no longer need to keep track of level.
+fn store_stack_pop(
     mut store_stack: Vec<(usize, Vec<DocumentSymbol>)>,
     layers: usize,
 ) -> Vec<(usize, Vec<DocumentSymbol>)> {
@@ -220,7 +222,7 @@ fn index_comments(
 
     let symbol = new_symbol(title, SymbolKind::STRING, Range { start, end });
 
-    // Find the appropriate number of layers to assemble `store_stack` to
+    // Find the appropriate number of layers to pop from `store_stack`
     let levels: Vec<usize> = store_stack.iter().map(|(level, _)| *level).collect();
     let layer = levels
         .iter()
@@ -230,7 +232,7 @@ fn index_comments(
         .map(|(index, _)| index + 1)
         .unwrap_or(1);
 
-    store_stack = assemble_store(store_stack, layer);
+    store_stack = store_stack_pop(store_stack, layer);
 
     // Add the new symbol to the appropriate level in `store_stack`
     if let Some((last_level, symbols)) = store_stack.last_mut() {
