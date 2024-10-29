@@ -9,6 +9,7 @@
 
 use std::result::Result::Ok;
 
+use anyhow::anyhow;
 use ropey::Rope;
 use stdext::unwrap::IntoResult;
 use tower_lsp::lsp_types::DocumentSymbol;
@@ -158,7 +159,11 @@ fn index_expression_list(
                 store_stack = index_comments(&child, store_stack, contents)?;
             },
             _ => {
-                let (level, store) = store_stack.pop().expect("Stack has always one element");
+                let Some((level, store)) = store_stack.pop() else {
+                    return Err(anyhow!(
+                        "Internal error: Store stack must always have one element"
+                    ));
+                };
                 let store = index_node(&child, store, contents)?;
                 store_stack.push((level, store));
             },
