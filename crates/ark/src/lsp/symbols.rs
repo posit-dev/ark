@@ -144,7 +144,7 @@ fn index_node(
 // Handles root node and braced lists
 fn index_expression_list(
     node: &Node,
-    mut store: Vec<DocumentSymbol>,
+    store: Vec<DocumentSymbol>,
     contents: &Rope,
 ) -> anyhow::Result<Vec<DocumentSymbol>> {
     let mut cursor = node.walk();
@@ -224,7 +224,7 @@ fn index_comments(
     let symbol = new_symbol(title, SymbolKind::STRING, Range { start, end });
 
     // find the appropriate number of layers to assmemble store_vec to
-    let mut layer: usize;
+    let layer: usize;
     {
         let levels: Vec<usize> = store_vec.iter().map(|(level, _)| *level).collect();
         let layer_index = levels
