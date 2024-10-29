@@ -470,6 +470,21 @@ mod tests {
     }
 
     #[test]
+    fn test_symbol_assignment_function_nested_section() {
+        insta::assert_debug_snapshot!(test_symbol(
+            "
+## title0 ----
+foo <- function() {
+  # title1 ----
+  ### title2 ----
+  ## title3 ----
+  # title4 ----
+}
+# title5 ----"
+        ));
+    }
+
+    #[test]
     fn test_symbol_braced_list() {
         let range = Range {
             start: Position {
