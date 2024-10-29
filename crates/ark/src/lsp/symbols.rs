@@ -150,42 +150,42 @@ fn index_expression_list(
     let mut cursor = node.walk();
 
     // Put level and store in a vector for nested structure handling
-    let mut store_vec: Vec<(usize, Vec<DocumentSymbol>)> = vec![(usize::MAX, store.clone())];
+    let mut store_stack: Vec<(usize, Vec<DocumentSymbol>)> = vec![(usize::MAX, store.clone())];
     let mut current_store = store.clone();
 
     for child in node.children(&mut cursor) {
         match child.node_type() {
             NodeType::Comment => {
-                store_vec = index_comments(&child, store_vec, contents)?;
-                (_, current_store) = store_vec.last().unwrap().clone();
+                store_stack = index_comments(&child, store_stack, contents)?;
+                (_, current_store) = store_stack.last().unwrap().clone();
             },
             _ => {
                 current_store = index_node(&child, current_store, contents)?;
-                if let Some((_, last)) = store_vec.last_mut() {
+                if let Some((_, last)) = store_stack.last_mut() {
                     *last = current_store.clone();
                 }
             },
         }
     }
 
-    // Iteratively add the children of the last element of `store_vec` until there is only one element
-    store_vec = assemble_store(store_vec, 1);
+    // Iteratively add the children of the last element of `store_stack` until there is only one element
+    store_stack = assemble_store(store_stack, 1);
 
-    // At the end, the remaining element in `store_vec` contains the updated store
-    let (_, store) = store_vec.pop().unwrap();
+    // At the end, the remaining element in `store_stack` contains the updated store
+    let (_, store) = store_stack.pop().unwrap();
     Ok(store)
 }
 
 fn assemble_store(
-    mut store_vec: Vec<(usize, Vec<DocumentSymbol>)>,
+    mut store_stack: Vec<(usize, Vec<DocumentSymbol>)>,
     layers: usize,
 ) -> Vec<(usize, Vec<DocumentSymbol>)> {
-    while store_vec.len() > layers {
-        // Pop the last element from `store_vec`
-        let (last_level, mut last_symbols) = store_vec.pop().unwrap();
+    while store_stack.len() > layers {
+        // Pop the last element from `store_stack`
+        let (last_level, mut last_symbols) = store_stack.pop().unwrap();
 
-        // Add the last_symbols as children to the previous level in `store_vec`
-        if let Some((_, parent_symbols)) = store_vec.last_mut() {
+        // Add the last_symbols as children to the previous level in `store_stack`
+        if let Some((_, parent_symbols)) = store_stack.last_mut() {
             if let Some(parent_symbol) = parent_symbols.last_mut() {
                 parent_symbol
                     .children
@@ -198,23 +198,23 @@ fn assemble_store(
             }
         } else {
             // In case there's no parent, just push the `last_symbols` back
-            store_vec.push((last_level, last_symbols));
+            store_stack.push((last_level, last_symbols));
             break;
         }
     }
-    return store_vec;
+    return store_stack;
 }
 
 fn index_comments(
     node: &Node,
-    mut store_vec: Vec<(usize, Vec<DocumentSymbol>)>,
+    mut store_stack: Vec<(usize, Vec<DocumentSymbol>)>,
     contents: &Rope,
 ) -> anyhow::Result<Vec<(usize, Vec<DocumentSymbol>)>> {
     let comment_text = contents.node_slice(&node)?.to_string();
 
     // Check if the comment starts with one or more '#' followed by any text and ends with 4+ punctuations
     let Some((level, title)) = parse_comment_as_section(&comment_text) else {
-        return Ok(store_vec);
+        return Ok(store_stack);
     };
 
     // Create a symbol based on the parsed comment
@@ -223,8 +223,8 @@ fn index_comments(
 
     let symbol = new_symbol(title, SymbolKind::STRING, Range { start, end });
 
-    // Find the appropriate number of layers to assemble `store_vec` to
-    let levels: Vec<usize> = store_vec.iter().map(|(level, _)| *level).collect();
+    // Find the appropriate number of layers to assemble `store_stack` to
+    let levels: Vec<usize> = store_stack.iter().map(|(level, _)| *level).collect();
     let layer = levels
         .iter()
         .enumerate()
@@ -233,13 +233,13 @@ fn index_comments(
         .map(|(index, _)| index + 1)
         .unwrap_or(1);
 
-    store_vec = assemble_store(store_vec, layer);
+    store_stack = assemble_store(store_stack, layer);
 
-    // Add the new symbol to the appropriate level in `store_vec`
-    if let Some((last_level, symbols)) = store_vec.last_mut() {
+    // Add the new symbol to the appropriate level in `store_stack`
+    if let Some((last_level, symbols)) = store_stack.last_mut() {
         if *last_level < level {
-            // If current level is greater, add a new level to `store_vec`
-            store_vec.push((level, vec![symbol]));
+            // If current level is greater, add a new level to `store_stack`
+            store_stack.push((level, vec![symbol]));
         } else if *last_level == level {
             // If current level is equal, push the symbol as a child of the last element
             symbols.push(symbol);
@@ -249,14 +249,14 @@ fn index_comments(
             *last_level = level;
         }
     } else {
-        // If `store_vec` is empty, add the new symbol at root
-        store_vec.push((level, vec![symbol]));
+        // If `store_stack` is empty, add the new symbol at root
+        store_stack.push((level, vec![symbol]));
     }
 
-    // Add an empty vector to `store_vec` to subordinate other symbols
-    store_vec.push((usize::MAX, vec![])); // usize::MAX to make ensure it is never a parent
+    // Add an empty vector to `store_stack` to subordinate other symbols
+    store_stack.push((usize::MAX, vec![])); // usize::MAX to make ensure it is never a parent
 
-    Ok(store_vec)
+    Ok(store_stack)
 }
 
 fn index_assignment(
