@@ -149,7 +149,7 @@ fn index_expression_list(
 ) -> anyhow::Result<Vec<DocumentSymbol>> {
     let mut cursor = node.walk();
 
-    // put level and store in a vector for nested structure handling
+    // Put level and store in a vector for nested structure handling
     let mut store_vec: Vec<(usize, Vec<DocumentSymbol>)> = vec![(usize::MAX, store.clone())];
     let mut current_store = store.clone();
 
@@ -168,10 +168,10 @@ fn index_expression_list(
         }
     }
 
-    // iteratively add the children of the last element of store_vec until there is only one element
+    // Iteratively add the children of the last element of `store_vec` until there is only one element
     store_vec = assemble_store(store_vec, 1);
 
-    // At the end, the remaining element in store_vec contains the updated store
+    // At the end, the remaining element in `store_vec` contains the updated store
     let (_, store) = store_vec.pop().unwrap();
     Ok(store)
 }
@@ -181,10 +181,10 @@ fn assemble_store(
     layers: usize,
 ) -> Vec<(usize, Vec<DocumentSymbol>)> {
     while store_vec.len() > layers {
-        // Pop the last element from store_vec
+        // Pop the last element from `store_vec`
         let (last_level, mut last_symbols) = store_vec.pop().unwrap();
 
-        // Add the last_symbols as children to the previous level in store_vec
+        // Add the last_symbols as children to the previous level in `store_vec`
         if let Some((_, parent_symbols)) = store_vec.last_mut() {
             if let Some(parent_symbol) = parent_symbols.last_mut() {
                 parent_symbol
@@ -197,7 +197,7 @@ fn assemble_store(
                 parent_symbols.append(&mut last_symbols);
             }
         } else {
-            // In case there's no parent, just push the last_symbols back
+            // In case there's no parent, just push the `last_symbols` back
             store_vec.push((last_level, last_symbols));
             break;
         }
@@ -223,7 +223,7 @@ fn index_comments(
 
     let symbol = new_symbol(title, SymbolKind::STRING, Range { start, end });
 
-    // find the appropriate number of layers to assmemble store_vec to
+    // Find the appropriate number of layers to assemble `store_vec` to
     let layer: usize;
     {
         let levels: Vec<usize> = store_vec.iter().map(|(level, _)| *level).collect();
@@ -237,30 +237,30 @@ fn index_comments(
             value + 1
         } else {
             1
-        }; // turn option into usize
+        }; // Turn option into usize
     }
 
     store_vec = assemble_store(store_vec, layer);
 
-    // Add the new symbol to the appropriate level in store_vec
+    // Add the new symbol to the appropriate level in `store_vec`
     if let Some((last_level, symbols)) = store_vec.last_mut() {
         if *last_level < level {
-            // If current level is greater, add a new level to store_vec
+            // If current level is greater, add a new level to `store_vec`
             store_vec.push((level, vec![symbol]));
         } else if *last_level == level {
             // If current level is equal, push the symbol as a child of the last element
             symbols.push(symbol);
         } else {
-            // for handling of the starting nodes, the level of which are set to maximum
+            // For handling of the starting nodes, the level of which are set to maximum
             symbols.push(symbol);
             *last_level = level;
         }
     } else {
-        // If store_vec is empty, add the new symbol at root
+        // If `store_vec` is empty, add the new symbol at root
         store_vec.push((level, vec![symbol]));
     }
 
-    // Add an empty vector to store_vec to subordinate other symbols
+    // Add an empty vector to `store_vec` to subordinate other symbols
     store_vec.push((usize::MAX, vec![])); // usize::MAX to make ensure it is never a parent
 
     Ok(store_vec)
