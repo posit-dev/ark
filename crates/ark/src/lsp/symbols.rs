@@ -150,20 +150,17 @@ fn index_expression_list(
     let mut cursor = node.walk();
 
     // Put level and store in a vector for nested structure handling
-    let mut store_stack: Vec<(usize, Vec<DocumentSymbol>)> = vec![(usize::MAX, store.clone())];
-    let mut current_store = store.clone();
+    let mut store_stack: Vec<(usize, Vec<DocumentSymbol>)> = vec![(usize::MAX, store)];
 
     for child in node.children(&mut cursor) {
         match child.node_type() {
             NodeType::Comment => {
                 store_stack = index_comments(&child, store_stack, contents)?;
-                (_, current_store) = store_stack.last().unwrap().clone();
             },
             _ => {
-                current_store = index_node(&child, current_store, contents)?;
-                if let Some((_, last)) = store_stack.last_mut() {
-                    *last = current_store.clone();
-                }
+                let (level, store) = store_stack.pop().expect("Stack has always one element");
+                let store = index_node(&child, store, contents)?;
+                store_stack.push((level, store));
             },
         }
     }
