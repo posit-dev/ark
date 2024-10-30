@@ -287,6 +287,9 @@ impl GlobalState {
                         LspRequest::SelectionRange(params) => {
                             respond(tx, handlers::handle_selection_range(params, &self.world), LspResponse::SelectionRange)?;
                         },
+                        LspRequest::FoldingRange(params) => {
+                            respond(tx, handlers::handle_folding_range(params, &self.world), LspResponse::FoldingRange)?;
+                        }
                         LspRequest::References(params) => {
                             respond(tx, handlers::handle_references(params, &self.world), LspResponse::References)?;
                         },

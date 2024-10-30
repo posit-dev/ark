@@ -17,6 +17,7 @@ pub mod document_context;
 pub mod documents;
 pub mod encoding;
 pub mod events;
+pub mod folding_range;
 pub mod handler;
 pub mod handlers;
 pub mod help;

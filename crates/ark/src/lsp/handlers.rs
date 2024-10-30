@@ -17,6 +17,8 @@ use tower_lsp::lsp_types::CompletionResponse;
 use tower_lsp::lsp_types::DocumentOnTypeFormattingParams;
 use tower_lsp::lsp_types::DocumentSymbolParams;
 use tower_lsp::lsp_types::DocumentSymbolResponse;
+use tower_lsp::lsp_types::FoldingRange;
+use tower_lsp::lsp_types::FoldingRangeParams;
 use tower_lsp::lsp_types::GotoDefinitionParams;
 use tower_lsp::lsp_types::GotoDefinitionResponse;
 use tower_lsp::lsp_types::Hover;
@@ -47,6 +49,7 @@ use crate::lsp::config::VscDocumentConfig;
 use crate::lsp::definitions::goto_definition;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::encoding::convert_position_to_point;
+use crate::lsp::folding_range::folding_range;
 use crate::lsp::help_topic::help_topic;
 use crate::lsp::help_topic::HelpTopicParams;
 use crate::lsp::help_topic::HelpTopicResponse;
@@ -310,6 +313,22 @@ pub(crate) fn handle_selection_range(
         .collect();
 
     Ok(Some(selections))
+}
+
+#[tracing::instrument(level = "info", skip_all)]
+pub(crate) fn handle_folding_range(
+    params: FoldingRangeParams,
+    state: &WorldState,
+) -> anyhow::Result<Option<Vec<FoldingRange>>> {
+    let uri = params.text_document.uri;
+    let document = state.get_document(&uri)?;
+    match folding_range(document) {
+        Ok(foldings) => Ok(Some(foldings)),
+        Err(err) => {
+            lsp::log_error!("{err:?}");
+            Ok(None)
+        },
+    }
 }
 
 #[tracing::instrument(level = "info", skip_all)]
