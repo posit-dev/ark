@@ -10,12 +10,16 @@ use crate::lsp::symbols::parse_comment_as_section;
 pub fn folding_range(document: &Document) -> anyhow::Result<Vec<FoldingRange>> {
     let mut folding_ranges: Vec<FoldingRange> = Vec::new();
     let text = &document.contents; // Assuming `contents()` gives the text of the document
+
+    // This is a stack of (start_line, start_character) tuples
+    let mut bracket_stack: Vec<(usize, usize)> = Vec::new();
+    // This is a stack of stacks for each bracket level, within each stack is a vector of (level, start_line) tuples
+    let mut comment_stack: Vec<Vec<(usize, usize)>> = vec![Vec::new()];
+
     let mut line_iter = text.lines().enumerate().peekable();
-
-    let mut bracket_stack: Vec<(usize, usize)> = Vec::new(); // a stack of (start_line, start_character) tuples
-    let mut comment_stack: Vec<Vec<(usize, usize)>> = vec![Vec::new()]; // a vector of stacks for each bracket level, within each stack is a vector of (level, start_line) tuples
-
+    let mut line_count = 0;
     while let Some((line_idx, line)) = line_iter.next() {
+        line_count += 1;
         let line_text = line.to_string();
         (folding_ranges, bracket_stack, comment_stack) = bracket_processor(
             folding_ranges,
@@ -26,13 +30,19 @@ pub fn folding_range(document: &Document) -> anyhow::Result<Vec<FoldingRange>> {
         );
         (folding_ranges, comment_stack) =
             comment_processor(folding_ranges, comment_stack, line_idx, &line_text);
-        // log_info!("line_idx: {:#?} line_text: {:#?}", line_idx, line_text);
     }
 
-    // TODO: End line handling
+    // Use `end_bracket_handler` to close any remaining comments
+    // There should only be one element in `comment_stack` though
+    while !comment_stack.is_empty() && !comment_stack.last().unwrap().is_empty() {
+        (folding_ranges, comment_stack) =
+            end_bracket_handler(folding_ranges, comment_stack, line_count);
+    }
 
-    // Log the final folding ranges
+    // Log the final folding ranges and comment stacks
     log_info!("folding_ranges: {:#?}", folding_ranges);
+    log_info!("comment_stack: {:#?}", comment_stack); // Should be empty
+    log_info!("bracket_stack: {:#?}", bracket_stack); // Should be empty
 
     Ok(folding_ranges)
 }
@@ -74,10 +84,6 @@ fn bracket_processor(
                         char_idx,
                         &whitespace_count,
                     );
-
-                    // Log a copy of the folding range
-                    // let folding_range_copy = folding_range.clone();
-                    // log_info!("folding_range_copy: {:#?}", folding_range_copy);
 
                     // Add the folding range to the list
                     folding_ranges.push(folding_range);
@@ -133,12 +139,14 @@ fn end_bracket_handler(
     mut comment_stack: Vec<Vec<(usize, usize)>>,
     line_idx: usize,
 ) -> (Vec<FoldingRange>, Vec<Vec<(usize, usize)>>) {
-    // TODO: Iterate over the last elment of the comment stack and add it to the folding ranges by using the comment_range function
+    // Iterate over the last elment of the comment stack and add it to the folding ranges by using the comment_range function
     if let Some(last_section) = comment_stack.last() {
         // Iterate over each (start level, start line) in the last section
         for &(_level, start_line) in last_section.iter() {
             // Add a new folding range for each range in the last section
-            folding_ranges.push(comment_range(start_line, line_idx - 1));
+            let folding_range = comment_range(start_line, line_idx - 1);
+
+            folding_ranges.push(folding_range);
         }
     }
 
@@ -192,10 +200,6 @@ fn comment_processor(
             comment_stack.last_mut().unwrap().pop(); // TODO: Handle case where comment_stack is empty
         }
     }
-
-    // log a copy of comment_stack
-    let comment_stack_copy = comment_stack.clone();
-    log_info!("comment_stack_copy: {:#?}", comment_stack_copy);
 
     (folding_ranges, comment_stack)
 }
