@@ -189,8 +189,8 @@ fn index_expression_list(
     ))
 }
 
-// Pop store from the stack, recording its children adding it as child to its
-// parent (which becomes the last element in the stack).
+// Pop store from the stack, recording its children and adding it as child to
+// its parent (which becomes the last element in the stack).
 fn store_stack_pop(store_stack: &mut StoreStack) -> anyhow::Result<Option<Vec<DocumentSymbol>>> {
     let Some((_, symbol, last)) = store_stack.pop() else {
         return Ok(None);
