@@ -65,11 +65,11 @@ fn bracket_processor(
     // Iterate over each character in line_text to find the positions of `{` and `}`
     for (char_idx, c) in line_text.char_indices() {
         match c {
-            '{' => {
+            '{' | '(' | '[' => {
                 bracket_stack.push((line_idx, char_idx));
                 comment_stack.push(Vec::new());
             },
-            '}' => {
+            '}' | ')' | ']' => {
                 (folding_ranges, comment_stack) =
                     end_bracket_handler(folding_ranges, comment_stack, line_idx);
                 // If '}' is found, pop from the bracket_stack if it is not empty
