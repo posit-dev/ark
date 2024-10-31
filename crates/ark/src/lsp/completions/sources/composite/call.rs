@@ -271,6 +271,7 @@ fn completions_from_workspace_arguments(
             // Not a function
             return Ok(None);
         },
+        indexer::IndexEntryData::Variable { .. } => return Ok(None),
     }
 
     // Only 1 call worth of arguments are added to the completion set.

@@ -32,6 +32,9 @@ use crate::treesitter::NodeTypeExt;
 
 #[derive(Clone, Debug)]
 pub enum IndexEntryData {
+    Variable {
+        name: String,
+    },
     Function {
         name: String,
         arguments: Vec<String>,
@@ -205,6 +208,11 @@ fn index_node(path: &Path, contents: &Rope, node: &Node) -> anyhow::Result<Optio
         return Ok(Some(entry));
     }
 
+    // Should be after function indexing as this is a more general case
+    if let Ok(Some(entry)) = index_variable(path, contents, node) {
+        return Ok(Some(entry));
+    }
+
     if let Ok(Some(entry)) = index_comment(path, contents, node) {
         return Ok(Some(entry));
     }
@@ -259,6 +267,37 @@ fn index_function(
             name: name.clone(),
             arguments,
         },
+    }))
+}
+
+fn index_variable(
+    _path: &Path,
+    contents: &Rope,
+    node: &Node,
+) -> anyhow::Result<Option<IndexEntry>> {
+    if !matches!(
+        node.node_type(),
+        NodeType::BinaryOperator(BinaryOperatorType::LeftAssignment) |
+            NodeType::BinaryOperator(BinaryOperatorType::EqualsAssignment)
+    ) {
+        return Ok(None);
+    }
+
+    let Some(lhs) = node.child_by_field_name("lhs") else {
+        return Ok(None);
+    };
+    if !lhs.is_identifier_or_string() {
+        return Ok(None);
+    }
+    let name = contents.node_slice(&lhs)?.to_string();
+
+    let start = convert_point_to_position(contents, lhs.start_position());
+    let end = convert_point_to_position(contents, lhs.end_position());
+
+    Ok(Some(IndexEntry {
+        key: name.clone(),
+        range: Range { start, end },
+        data: IndexEntryData::Variable { name },
     }))
 }
 
