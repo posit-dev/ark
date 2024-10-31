@@ -31,6 +31,7 @@ use stdext::*;
 use tower_lsp::lsp_types::Command;
 use tower_lsp::lsp_types::CompletionItem;
 use tower_lsp::lsp_types::CompletionItemKind;
+use tower_lsp::lsp_types::CompletionItemLabelDetails;
 use tower_lsp::lsp_types::CompletionTextEdit;
 use tower_lsp::lsp_types::Documentation;
 use tower_lsp::lsp_types::InsertTextFormat;
@@ -175,8 +176,9 @@ pub(super) fn completion_item_from_function<T: AsRef<str>>(
 
     item.kind = Some(CompletionItemKind::FUNCTION);
 
-    let detail = format!("{}({})", name, parameters.joined(", "));
-    item.detail = Some(detail);
+    let detail = format!("({})", parameters.joined(", "));
+    let label_details = item_details(Some(detail), package);
+    item.label_details = Some(label_details);
 
     let insert_text = sym_quote_invalid(name);
     item.insert_text_format = Some(InsertTextFormat::SNIPPET);
@@ -190,6 +192,21 @@ pub(super) fn completion_item_from_function<T: AsRef<str>>(
     });
 
     return Ok(item);
+}
+
+fn item_details(_detail: Option<String>, package: Option<&str>) -> CompletionItemLabelDetails {
+    let description = package.map(|p| {
+        // Environments from the search path often have a "package:" prefix.
+        // Remove it from display. This creates some rare ambiguities but
+        // improves the display generally.
+        let p = p.strip_prefix("package:").unwrap_or(p);
+        format!("{{{p}}}")
+    });
+
+    CompletionItemLabelDetails {
+        detail: None, // Currently ignored. Make it configurable?
+        description,
+    }
 }
 
 // TODO
@@ -250,7 +267,8 @@ pub(super) unsafe fn completion_item_from_object(
         name: name.to_string(),
     })?;
 
-    item.detail = Some("(Object)".to_string());
+    let detail = Some("(Object)".to_string());
+    item.label_details = Some(item_details(detail, package));
     item.kind = Some(CompletionItemKind::STRUCT);
 
     if !is_symbol_valid(name) {
