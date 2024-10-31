@@ -1,12 +1,10 @@
-use std::cell;
-
 use regex::Regex;
 use tower_lsp::lsp_types::FoldingRange;
 use tower_lsp::lsp_types::FoldingRangeKind;
 
 use crate::lsp::documents::Document;
 use crate::lsp::log_error;
-use crate::lsp::log_info;
+// use crate::lsp::log_info; // Uncomment to enable logging
 use crate::lsp::symbols::parse_comment_as_section;
 
 /// Detects and returns folding ranges for comment sections and curly-bracketed blocks
@@ -55,11 +53,11 @@ pub fn folding_range(document: &Document) -> anyhow::Result<Vec<FoldingRange>> {
     }
 
     // Log the final folding ranges and comment stacks
-    log_info!("folding_ranges: {:#?}", folding_ranges);
-    log_info!("comment_stack: {:#?}", comment_stack); // Should be empty
-    log_info!("bracket_stack: {:#?}", bracket_stack); // Should be empty
-    log_info!("region_marker: {:#?}", region_marker); // Should be None
-    log_info!("cell_marker: {:#?}", cell_marker); // Should be None
+    // log_info!("folding_ranges: {:#?}", folding_ranges); // Contains all folding ranges
+    // log_info!("comment_stack: {:#?}", comment_stack); // Should be empty
+    // log_info!("bracket_stack: {:#?}", bracket_stack); // Should be empty
+    // log_info!("region_marker: {:#?}", region_marker); // Should be None
+    // log_info!("cell_marker: {:#?}", cell_marker); // Should be None
 
     Ok(folding_ranges)
 }
