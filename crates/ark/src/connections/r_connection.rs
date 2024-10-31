@@ -238,7 +238,7 @@ impl RConnection {
                             .clone(),
                         host: r_metadata.get("host").cloned(),
                         metadata_schema_type: r_metadata.get("type").cloned(),
-                        code: r_metadata.get("connectionCode").cloned(),
+                        code: r_metadata.get("connectCode").cloned(),
                     };
 
                     Ok(schema)
