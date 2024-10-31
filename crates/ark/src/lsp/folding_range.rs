@@ -1,3 +1,4 @@
+use regex::Regex;
 use tower_lsp::lsp_types::FoldingRange;
 use tower_lsp::lsp_types::FoldingRangeKind;
 
@@ -15,6 +16,7 @@ pub fn folding_range(document: &Document) -> anyhow::Result<Vec<FoldingRange>> {
     let mut bracket_stack: Vec<(usize, usize)> = Vec::new();
     // This is a stack of stacks for each bracket level, within each stack is a vector of (level, start_line) tuples
     let mut comment_stack: Vec<Vec<(usize, usize)>> = vec![Vec::new()];
+    let mut region_marker: Option<usize> = None;
 
     let mut line_iter = text.lines().enumerate().peekable();
     let mut line_count = 0;
@@ -30,6 +32,8 @@ pub fn folding_range(document: &Document) -> anyhow::Result<Vec<FoldingRange>> {
         );
         (folding_ranges, comment_stack) =
             comment_processor(folding_ranges, comment_stack, line_idx, &line_text);
+        (folding_ranges, region_marker) =
+            region_processor(folding_ranges, region_marker, line_idx, &line_text);
     }
 
     // Use `end_bracket_handler` to close any remaining comments
@@ -43,6 +47,7 @@ pub fn folding_range(document: &Document) -> anyhow::Result<Vec<FoldingRange>> {
     log_info!("folding_ranges: {:#?}", folding_ranges);
     log_info!("comment_stack: {:#?}", comment_stack); // Should be empty
     log_info!("bracket_stack: {:#?}", bracket_stack); // Should be empty
+    log_info!("region_marker: {:#?}", region_marker); // Should be None
 
     Ok(folding_ranges)
 }
@@ -212,5 +217,48 @@ fn comment_range(start_line: usize, end_line: usize) -> FoldingRange {
         end_character: None,
         kind: Some(FoldingRangeKind::Region),
         collapsed_text: None,
+    }
+}
+
+fn region_processor(
+    mut folding_ranges: Vec<FoldingRange>,
+    mut region_marker: Option<usize>,
+    line_idx: usize,
+    line_text: &str,
+) -> (Vec<FoldingRange>, Option<usize>) {
+    let Some(region_type) = parse_region_type(line_text) else {
+        return (folding_ranges, region_marker); // return if the line is not a region section
+    };
+    match region_type.as_str() {
+        "start" => {
+            region_marker = Some(line_idx);
+        },
+        "end" => {
+            if let Some(region_start) = region_marker {
+                let folding_range = comment_range(region_start, line_idx);
+                folding_ranges.push(folding_range);
+                region_marker = None;
+            }
+        },
+        _ => {},
+    }
+
+    (folding_ranges, region_marker)
+}
+
+fn parse_region_type(line_text: &str) -> Option<String> {
+    // TODO: return the region type
+    // "start": "^\\s*#\\s*region\\b"
+    // "end": "^\\s*#\\s*endregion\\b"
+    // None: otherwise
+    let region_start = Regex::new(r"^\s*#\s*region\b").unwrap();
+    let region_end = Regex::new(r"^\s*#\s*endregion\b").unwrap();
+
+    if region_start.is_match(line_text) {
+        Some("start".to_string())
+    } else if region_end.is_match(line_text) {
+        Some("end".to_string())
+    } else {
+        None
     }
 }
