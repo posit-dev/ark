@@ -1,3 +1,5 @@
+use std::cell;
+
 use regex::Regex;
 use tower_lsp::lsp_types::FoldingRange;
 use tower_lsp::lsp_types::FoldingRangeKind;
@@ -17,6 +19,7 @@ pub fn folding_range(document: &Document) -> anyhow::Result<Vec<FoldingRange>> {
     // This is a stack of stacks for each bracket level, within each stack is a vector of (level, start_line) tuples
     let mut comment_stack: Vec<Vec<(usize, usize)>> = vec![Vec::new()];
     let mut region_marker: Option<usize> = None;
+    let mut cell_marker: Option<usize> = None;
 
     let mut line_iter = text.lines().enumerate().peekable();
     let mut line_count = 0;
@@ -34,6 +37,8 @@ pub fn folding_range(document: &Document) -> anyhow::Result<Vec<FoldingRange>> {
             comment_processor(folding_ranges, comment_stack, line_idx, &line_text);
         (folding_ranges, region_marker) =
             region_processor(folding_ranges, region_marker, line_idx, &line_text);
+        (folding_ranges, cell_marker) =
+            cell_processor(folding_ranges, cell_marker, line_idx, &line_text);
     }
 
     // Use `end_bracket_handler` to close any remaining comments
@@ -42,12 +47,19 @@ pub fn folding_range(document: &Document) -> anyhow::Result<Vec<FoldingRange>> {
         (folding_ranges, comment_stack) =
             end_bracket_handler(folding_ranges, comment_stack, line_count);
     }
+    // Deal with unclosed cells
+    if cell_marker.is_some() {
+        let fold_range = comment_range(cell_marker.unwrap(), line_count - 1);
+        folding_ranges.push(fold_range);
+        cell_marker = None;
+    }
 
     // Log the final folding ranges and comment stacks
     log_info!("folding_ranges: {:#?}", folding_ranges);
     log_info!("comment_stack: {:#?}", comment_stack); // Should be empty
     log_info!("bracket_stack: {:#?}", bracket_stack); // Should be empty
     log_info!("region_marker: {:#?}", region_marker); // Should be None
+    log_info!("cell_marker: {:#?}", cell_marker); // Should be None
 
     Ok(folding_ranges)
 }
@@ -260,5 +272,30 @@ fn parse_region_type(line_text: &str) -> Option<String> {
         Some("end".to_string())
     } else {
         None
+    }
+}
+
+fn cell_processor(
+    // Almost identical to region_processor
+    mut folding_ranges: Vec<FoldingRange>,
+    mut region_marker: Option<usize>,
+    line_idx: usize,
+    line_text: &str,
+) -> (Vec<FoldingRange>, Option<usize>) {
+    let cell_pattern: Regex = Regex::new(r"^#\s*(%%|\+)(.*)").unwrap();
+
+    if !cell_pattern.is_match(line_text) {
+        return (folding_ranges, region_marker);
+    } else {
+        let Some(start_line) = region_marker else {
+            region_marker = Some(line_idx);
+            return (folding_ranges, region_marker);
+        };
+
+        let folding_range = comment_range(start_line, line_idx - 1);
+        folding_ranges.push(folding_range);
+        region_marker = Some(line_idx);
+
+        return (folding_ranges, region_marker);
     }
 }
