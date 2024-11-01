@@ -1735,7 +1735,9 @@ impl RMain {
 
     fn send_lsp_notification(&self, event: KernelNotification) {
         if let Some(ref tx) = self.lsp_events_tx {
-            tx.send(Event::Kernel(event)).unwrap();
+            if let Err(err) = tx.send(Event::Kernel(event)) {
+                log::error!("Failed to send LSP notification: {err:?}");
+            }
         }
     }
 
