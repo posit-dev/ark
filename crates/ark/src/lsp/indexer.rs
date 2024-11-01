@@ -120,7 +120,9 @@ fn insert(path: &Path, entry: IndexEntry) -> anyhow::Result<()> {
     let path = str_from_path(path)?;
 
     let index = index.entry(path.to_string()).or_default();
-    index.insert(entry.key.clone(), entry);
+    if !index.contains_key(&entry.key) {
+        index.insert(entry.key.clone(), entry);
+    }
 
     Ok(())
 }
