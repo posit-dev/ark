@@ -71,6 +71,7 @@ pub(crate) enum AuxiliaryEvent {
     Log(lsp_types::MessageType, String),
     PublishDiagnostics(Url, Vec<Diagnostic>, Option<i32>),
     SpawnedTask(JoinHandle<anyhow::Result<Option<AuxiliaryEvent>>>),
+    Close,
 }
 
 /// Global state for the main loop
@@ -184,15 +185,24 @@ impl GlobalState {
     /// requests, notifications, and other internal events.
     async fn main_loop(mut self) {
         loop {
-            let event = self.next_event().await;
+            let event = match self.next_event().await {
+                Some(event) => event,
+                None => {
+                    lsp::log_info!("Main loop event channel closed; closing auxiliary loop");
+                    if let Err(err) = auxiliary_tx().send(AuxiliaryEvent::Close) {
+                        lsp::log_error!("Failed to close auxiliary loop:\n{err:?}");
+                    }
+                    return;
+                },
+            };
             if let Err(err) = self.handle_event(event).await {
                 lsp::log_error!("Failure while handling event:\n{err:?}")
             }
         }
     }
 
-    async fn next_event(&mut self) -> Event {
-        self.events_rx.recv().await.unwrap()
+    async fn next_event(&mut self) -> Option<Event> {
+        self.events_rx.recv().await
     }
 
     #[rustfmt::skip]
@@ -432,7 +442,14 @@ impl AuxiliaryState {
     /// loop.
     async fn start(mut self) {
         loop {
-            match self.next_event().await {
+            let event = match self.next_event().await {
+                Some(event) => event,
+                None => {
+                    lsp::log_info!("Auxiliary loop event channel closed");
+                    return;
+                },
+            };
+            match event {
                 AuxiliaryEvent::Log(level, message) => self.log(level, message).await,
                 AuxiliaryEvent::SpawnedTask(handle) => self.tasks.push(Box::pin(handle)),
                 AuxiliaryEvent::PublishDiagnostics(uri, diagnostics, version) => {
@@ -440,18 +457,23 @@ impl AuxiliaryState {
                         .publish_diagnostics(uri, diagnostics, version)
                         .await
                 },
+                AuxiliaryEvent::Close => {
+                    // Close the auxiliary loop
+                    lsp::log_info!("Auxiliary loop event channel closed from main loop");
+                    return;
+                },
             }
         }
     }
 
-    async fn next_event(&mut self) -> AuxiliaryEvent {
+    async fn next_event(&mut self) -> Option<AuxiliaryEvent> {
         loop {
             tokio::select! {
-                event = self.auxiliary_event_rx.recv() => return event.unwrap(),
+                event = self.auxiliary_event_rx.recv() => return event,
 
                 handle = self.tasks.next() => match handle.unwrap() {
                     // A joined task returned an event for us, handle it
-                    Ok(Ok(Some(event))) => return event,
+                    Ok(Ok(Some(event))) => return Some(event),
 
                     // Otherwise relay any errors and loop back into select
                     Err(err) => self.log_error(format!("A task panicked:\n{err:?}")).await,
