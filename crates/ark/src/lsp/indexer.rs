@@ -288,18 +288,21 @@ fn index_variable(
     let Some(lhs) = node.child_by_field_name("lhs") else {
         return Ok(None);
     };
-    if !lhs.is_identifier_or_string() {
+
+    let lhs_text = contents.node_slice(&lhs)?.to_string();
+
+    // Super hacky but let's wait until the typed API to do better
+    if !lhs_text.starts_with("method(") && !lhs.is_identifier_or_string() {
         return Ok(None);
     }
-    let name = contents.node_slice(&lhs)?.to_string();
 
     let start = convert_point_to_position(contents, lhs.start_position());
     let end = convert_point_to_position(contents, lhs.end_position());
 
     Ok(Some(IndexEntry {
-        key: name.clone(),
+        key: lhs_text.clone(),
         range: Range { start, end },
-        data: IndexEntryData::Variable { name },
+        data: IndexEntryData::Variable { name: lhs_text },
     }))
 }
 
