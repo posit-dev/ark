@@ -148,6 +148,10 @@ pub(super) unsafe fn completion_item_from_package(
     })?;
 
     item.kind = Some(CompletionItemKind::MODULE);
+    item.label_details = Some(CompletionItemLabelDetails {
+        detail: Some(String::from("::")),
+        description: None,
+    });
 
     if append_colons {
         item.insert_text_format = Some(InsertTextFormat::SNIPPET);
