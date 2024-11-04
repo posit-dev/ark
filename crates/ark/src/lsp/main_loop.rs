@@ -71,7 +71,6 @@ pub(crate) enum AuxiliaryEvent {
     Log(lsp_types::MessageType, String),
     PublishDiagnostics(Url, Vec<Diagnostic>, Option<i32>),
     SpawnedTask(JoinHandle<anyhow::Result<Option<AuxiliaryEvent>>>),
-    Close,
 }
 
 /// Global state for the main loop
@@ -188,11 +187,8 @@ impl GlobalState {
             let event = match self.next_event().await {
                 Some(event) => event,
                 None => {
-                    lsp::log_info!("Main loop event channel closed; closing auxiliary loop");
-                    if let Err(err) = auxiliary_tx().send(AuxiliaryEvent::Close) {
-                        lsp::log_error!("Failed to close auxiliary loop:\n{err:?}");
-                    }
-                    return;
+                    lsp::log_info!("Main loop event channel closed");
+                    break;
                 },
             };
             if let Err(err) = self.handle_event(event).await {
@@ -456,11 +452,6 @@ impl AuxiliaryState {
                     self.client
                         .publish_diagnostics(uri, diagnostics, version)
                         .await
-                },
-                AuxiliaryEvent::Close => {
-                    // Close the auxiliary loop
-                    lsp::log_info!("Auxiliary loop event channel closed from main loop");
-                    return;
                 },
             }
         }
