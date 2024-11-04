@@ -63,8 +63,8 @@ pub(super) fn completions_from_workspace(
         }
 
         match &entry.data {
-            indexer::IndexEntryData::Function { name, arguments } => {
-                let mut completion = unwrap!(completion_item_from_function(name, None, arguments), Err(error) => {
+            indexer::IndexEntryData::Function { name, .. } => {
+                let mut completion = unwrap!(completion_item_from_function(name, None), Err(error) => {
                     error!("{:?}", error);
                     return;
                 });
