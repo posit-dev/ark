@@ -32,6 +32,9 @@ use crate::treesitter::NodeTypeExt;
 
 #[derive(Clone, Debug)]
 pub enum IndexEntryData {
+    Variable {
+        name: String,
+    },
     Function {
         name: String,
         arguments: Vec<String>,
@@ -117,7 +120,13 @@ fn insert(path: &Path, entry: IndexEntry) -> anyhow::Result<()> {
     let path = str_from_path(path)?;
 
     let index = index.entry(path.to_string()).or_default();
-    index.insert(entry.key.clone(), entry);
+
+    // Retain the first occurrence in the index. In the future we'll track every occurrences and
+    // their scopes but for now we only track the first definition of an object (in a way, its
+    // declaration).
+    if !index.contains_key(&entry.key) {
+        index.insert(entry.key.clone(), entry);
+    }
 
     Ok(())
 }
@@ -205,6 +214,11 @@ fn index_node(path: &Path, contents: &Rope, node: &Node) -> anyhow::Result<Optio
         return Ok(Some(entry));
     }
 
+    // Should be after function indexing as this is a more general case
+    if let Ok(Some(entry)) = index_variable(path, contents, node) {
+        return Ok(Some(entry));
+    }
+
     if let Ok(Some(entry)) = index_comment(path, contents, node) {
         return Ok(Some(entry));
     }
@@ -259,6 +273,40 @@ fn index_function(
             name: name.clone(),
             arguments,
         },
+    }))
+}
+
+fn index_variable(
+    _path: &Path,
+    contents: &Rope,
+    node: &Node,
+) -> anyhow::Result<Option<IndexEntry>> {
+    if !matches!(
+        node.node_type(),
+        NodeType::BinaryOperator(BinaryOperatorType::LeftAssignment) |
+            NodeType::BinaryOperator(BinaryOperatorType::EqualsAssignment)
+    ) {
+        return Ok(None);
+    }
+
+    let Some(lhs) = node.child_by_field_name("lhs") else {
+        return Ok(None);
+    };
+
+    let lhs_text = contents.node_slice(&lhs)?.to_string();
+
+    // Super hacky but let's wait until the typed API to do better
+    if !lhs_text.starts_with("method(") && !lhs.is_identifier_or_string() {
+        return Ok(None);
+    }
+
+    let start = convert_point_to_position(contents, lhs.start_position());
+    let end = convert_point_to_position(contents, lhs.end_position());
+
+    Ok(Some(IndexEntry {
+        key: lhs_text.clone(),
+        range: Range { start, end },
+        data: IndexEntryData::Variable { name: lhs_text },
     }))
 }
 

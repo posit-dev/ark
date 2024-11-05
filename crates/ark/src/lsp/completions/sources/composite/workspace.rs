@@ -14,6 +14,7 @@ use tower_lsp::lsp_types::MarkupContent;
 use tower_lsp::lsp_types::MarkupKind;
 
 use crate::lsp::completions::completion_item::completion_item_from_function;
+use crate::lsp::completions::completion_item::completion_item_from_variable;
 use crate::lsp::completions::sources::utils::filter_out_dot_prefixes;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::indexer;
@@ -97,6 +98,16 @@ pub(super) fn completions_from_workspace(
             },
 
             indexer::IndexEntryData::Section { level: _, title: _ } => {},
+            indexer::IndexEntryData::Variable { name } => {
+                let completion = match completion_item_from_variable(name) {
+                    Ok(item) => item,
+                    Err(err) => {
+                        log::error!("{err:?}");
+                        return;
+                    },
+                };
+                completions.push(completion);
+            },
         }
     });
 

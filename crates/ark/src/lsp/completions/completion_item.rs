@@ -273,6 +273,14 @@ pub(super) unsafe fn completion_item_from_object(
     Ok(item)
 }
 
+pub(super) fn completion_item_from_variable(name: &str) -> anyhow::Result<CompletionItem> {
+    let mut item = completion_item(String::from(name), CompletionData::Object {
+        name: String::from(name),
+    })?;
+    item.kind = Some(CompletionItemKind::VALUE);
+    Ok(item)
+}
+
 pub(super) unsafe fn completion_item_from_promise(
     name: &str,
     object: SEXP,
