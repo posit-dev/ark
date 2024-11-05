@@ -4,6 +4,10 @@
 
 ## 2024-10
 
+- Assigned objects are now indexed, in addition to assigned functions. When a name is assigned multiple times, we now only index the first occurrence. This allows you to jump to the first "declaration" of the variable. In the future we'll improve this mechanism so that you can jump to the most recent assignment.
+
+  We also index `method(generic, class) <-` assignment to help with S7 development. This might be replaced by a "Find implementations" mechanism in the future.
+
 - Results from completions have been improved with extra details.
   Package functions now display the package name (posit-dev/positron#5225)
   and namespace completions now display `::` to hint at what is being
