@@ -13,7 +13,6 @@ use harp::r_symbol;
 use harp::utils::is_symbol_valid;
 use harp::utils::r_env_binding_is_active;
 use harp::utils::r_envir_name;
-use harp::utils::r_formals;
 use harp::utils::r_promise_force_with_rollback;
 use harp::utils::r_promise_is_forced;
 use harp::utils::r_promise_is_lazy_load_binding;
@@ -31,6 +30,7 @@ use stdext::*;
 use tower_lsp::lsp_types::Command;
 use tower_lsp::lsp_types::CompletionItem;
 use tower_lsp::lsp_types::CompletionItemKind;
+use tower_lsp::lsp_types::CompletionItemLabelDetails;
 use tower_lsp::lsp_types::CompletionTextEdit;
 use tower_lsp::lsp_types::Documentation;
 use tower_lsp::lsp_types::InsertTextFormat;
@@ -148,6 +148,10 @@ pub(super) unsafe fn completion_item_from_package(
     })?;
 
     item.kind = Some(CompletionItemKind::MODULE);
+    item.label_details = Some(CompletionItemLabelDetails {
+        detail: Some(String::from("::")),
+        description: None,
+    });
 
     if append_colons {
         item.insert_text_format = Some(InsertTextFormat::SNIPPET);
@@ -162,10 +166,9 @@ pub(super) unsafe fn completion_item_from_package(
     return Ok(item);
 }
 
-pub(super) fn completion_item_from_function<T: AsRef<str>>(
+pub(super) fn completion_item_from_function(
     name: &str,
     package: Option<&str>,
-    parameters: &[T],
 ) -> Result<CompletionItem> {
     let label = format!("{}", name);
     let mut item = completion_item(label, CompletionData::Function {
@@ -175,8 +178,8 @@ pub(super) fn completion_item_from_function<T: AsRef<str>>(
 
     item.kind = Some(CompletionItemKind::FUNCTION);
 
-    let detail = format!("{}({})", name, parameters.joined(", "));
-    item.detail = Some(detail);
+    let label_details = item_details(package);
+    item.label_details = Some(label_details);
 
     let insert_text = sym_quote_invalid(name);
     item.insert_text_format = Some(InsertTextFormat::SNIPPET);
@@ -190,6 +193,21 @@ pub(super) fn completion_item_from_function<T: AsRef<str>>(
     });
 
     return Ok(item);
+}
+
+fn item_details(package: Option<&str>) -> CompletionItemLabelDetails {
+    let description = package.map(|p| {
+        // Environments from the search path often have a "package:" prefix.
+        // Remove it from display. This creates some rare ambiguities but
+        // improves the display generally.
+        let p = p.strip_prefix("package:").unwrap_or(p);
+        format!("{{{p}}}")
+    });
+
+    CompletionItemLabelDetails {
+        detail: None,
+        description,
+    }
 }
 
 // TODO
@@ -238,19 +256,14 @@ pub(super) unsafe fn completion_item_from_object(
     // In other words, when creating a completion item for these functions,
     // we should also figure out where we can receive the help from.
     if Rf_isFunction(object) != 0 {
-        let formals = r_formals(object)?;
-        let arguments = formals
-            .iter()
-            .map(|formal| formal.name.as_str())
-            .collect::<Vec<_>>();
-        return completion_item_from_function(name, package, &arguments);
+        return completion_item_from_function(name, package);
     }
 
     let mut item = completion_item(name, CompletionData::Object {
         name: name.to_string(),
     })?;
 
-    item.detail = Some("(Object)".to_string());
+    item.label_details = Some(item_details(package));
     item.kind = Some(CompletionItemKind::STRUCT);
 
     if !is_symbol_valid(name) {
