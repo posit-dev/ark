@@ -1733,9 +1733,12 @@ impl RMain {
         RHelp::is_help_url(url, port)
     }
 
-    fn send_lsp_notification(&self, event: KernelNotification) {
+    fn send_lsp_notification(&mut self, event: KernelNotification) {
         if let Some(ref tx) = self.lsp_events_tx {
-            tx.send(Event::Kernel(event)).unwrap();
+            if let Err(err) = tx.send(Event::Kernel(event)) {
+                log::error!("Failed to send LSP notification: {err:?}");
+                self.lsp_events_tx = None;
+            }
         }
     }
 
@@ -1749,7 +1752,7 @@ impl RMain {
         self.refresh_lsp();
     }
 
-    pub fn refresh_lsp(&self) {
+    pub fn refresh_lsp(&mut self) {
         match console_inputs() {
             Ok(inputs) => {
                 self.send_lsp_notification(KernelNotification::DidChangeConsoleInputs(inputs));
