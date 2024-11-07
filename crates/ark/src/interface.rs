@@ -1739,8 +1739,6 @@ impl RMain {
                 log::error!("Failed to send LSP notification: {err:?}");
                 self.lsp_events_tx = None;
             }
-        } else {
-            log::warn!("Not sending LSP notification (no connection): {event:?}");
         }
     }
 
