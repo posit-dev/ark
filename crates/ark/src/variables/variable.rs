@@ -1211,43 +1211,53 @@ impl PositronVariable {
     }
 
     fn inspect_vector(vector: SEXP) -> harp::error::Result<Vec<Variable>> {
-        unsafe {
-            let vector = RObject::new(vector);
-            let n = Rf_xlength(vector.sexp);
+        let vector = RObject::new(vector);
 
-            let mut out: Vec<Variable> = vec![];
-            let r_type = r_typeof(vector.sexp);
-            let formatted = FormattedVector::new(vector.sexp)?;
-            let names = Names::new(vector.sexp, |i| format!("[{}]", i + 1));
-            let kind = if r_type == STRSXP {
-                VariableKind::String
-            } else if r_type == RAWSXP {
-                VariableKind::Bytes
-            } else if r_type == LGLSXP {
-                VariableKind::Boolean
-            } else {
-                VariableKind::Number
-            };
+        let r_type = r_typeof(vector.sexp);
+        let kind = match r_type {
+            STRSXP => VariableKind::String,
+            RAWSXP => VariableKind::Bytes,
+            LGLSXP => VariableKind::Boolean,
+            INTSXP | REALSXP | CPLXSXP => VariableKind::Number,
+            _ => {
+                log::warn!("Unexpected vector type: {r_type}");
+                VariableKind::Other
+            },
+        };
 
-            for i in 0..n {
-                out.push(Variable {
-                    access_key: format!("{}", i),
-                    display_name: names.get_unchecked(i),
-                    display_value: formatted.get_unchecked(i),
-                    display_type: String::from(""),
-                    type_info: String::from(""),
-                    kind: kind.clone(),
-                    length: 1,
-                    size: 0,
-                    has_children: false,
-                    is_truncated: false,
-                    has_viewer: false,
-                    updated_time: Self::update_timestamp(),
-                });
-            }
+        let make_variable = |access_key, display_name, value, kind| Variable {
+            access_key,
+            display_name,
+            display_value: value,
+            display_type: String::from(""),
+            type_info: String::from(""),
+            kind,
+            length: 1,
+            size: 0,
+            has_children: false,
+            is_truncated: false,
+            has_viewer: false,
+            updated_time: Self::update_timestamp(),
+        };
 
-            Ok(out)
-        }
+        let formatted = FormattedVector::new(vector.sexp)?;
+        let names = Names::new(vector.sexp, |i| format!("[{}]", i + 1));
+
+        let variables: Vec<Variable> = formatted
+            .iter()
+            .enumerate()
+            .take(MAX_DISPLAY_VALUE_ENTRIES)
+            .map(|(i, value)| {
+                make_variable(
+                    format!("{}", i),
+                    names.get_unchecked(i as isize),
+                    value,
+                    kind.clone(),
+                )
+            })
+            .collect();
+
+        Ok(variables)
     }
 
     /// Creates an update timestamp for a variable
@@ -1825,6 +1835,12 @@ mod tests {
     fn test_truncation() {
         r_task(|| {
             let vars = inspect_from_expr("as.list(1:10000)");
+            assert_eq!(vars.len(), MAX_DISPLAY_VALUE_ENTRIES);
+
+            let vars = inspect_from_expr("1:10000");
+            assert_eq!(vars.len(), MAX_DISPLAY_VALUE_ENTRIES);
+
+            let vars = inspect_from_expr("rep(letters, length.out = 10000)");
             assert_eq!(vars.len(), MAX_DISPLAY_VALUE_ENTRIES);
         })
     }
