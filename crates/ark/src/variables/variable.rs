@@ -1129,7 +1129,9 @@ impl PositronVariable {
             .enumerate()
             .take(MAX_DISPLAY_VALUE_ENTRIES)
             .map(|(i, value)| {
-                Self::from(i.to_string(), names.get_unchecked(i as isize), value).var()
+                let (_, display_name) =
+                    truncate_chars(names.get_unchecked(i as isize), MAX_DISPLAY_VALUE_LENGTH);
+                Self::from(i.to_string(), display_name, value).var()
             })
             .collect();
 
@@ -1147,7 +1149,7 @@ impl PositronVariable {
             },
         };
 
-        let make_variable = |access_key, display_name, display_value| Variable {
+        let make_variable = |access_key, display_name, display_value, is_truncated| Variable {
             access_key,
             display_name,
             display_value,
@@ -1157,7 +1159,7 @@ impl PositronVariable {
             length: 1,
             size: 0,
             has_children: true,
-            is_truncated: false,
+            is_truncated,
             has_viewer: false,
             updated_time: Self::update_timestamp(),
         };
@@ -1168,8 +1170,24 @@ impl PositronVariable {
             .into_iter()
             .take(MAX_DISPLAY_VALUE_ENTRIES)
             .map(|i| {
-                let display_value = format!("[{}]", formatted.column_iter(i as isize).join(", "));
-                make_variable(format!("{}", i), format!("[, {}]", i + 1), display_value)
+                // The display value of columns concatenates the column vector values into a
+                // single string with maximum length of MAX_DISPLAY_VALUE_LENGTH.
+                let display_value: String = formatted
+                    .column_iter(i as isize)
+                    // If each value had length 1 that would already be enought to fill
+                    // MAX_DISPLAY_VALUE_LENGTH counting the ", " that separates them.
+                    .take(MAX_DISPLAY_VALUE_LENGTH / 2)
+                    .join(", ");
+
+                let (is_truncated, display_value) =
+                    truncate_chars(format!("[{}]", display_value), MAX_DISPLAY_VALUE_LENGTH);
+
+                make_variable(
+                    format!("{}", i),
+                    format!("[, {}]", i + 1),
+                    display_value,
+                    is_truncated,
+                )
             })
             .collect();
 
@@ -1233,20 +1251,21 @@ impl PositronVariable {
             },
         };
 
-        let make_variable = |access_key, display_name, value, kind| Variable {
-            access_key,
-            display_name,
-            display_value: value,
-            display_type: String::from(""),
-            type_info: String::from(""),
-            kind,
-            length: 1,
-            size: 0,
-            has_children: false,
-            is_truncated: false,
-            has_viewer: false,
-            updated_time: Self::update_timestamp(),
-        };
+        let make_variable =
+            |access_key, display_name, display_value, kind, is_truncated| Variable {
+                access_key,
+                display_name,
+                display_value,
+                display_type: String::from(""),
+                type_info: String::from(""),
+                kind,
+                length: 1,
+                size: 0,
+                has_children: false,
+                is_truncated,
+                has_viewer: false,
+                updated_time: Self::update_timestamp(),
+            };
 
         let formatted = FormattedVector::new(vector.sexp)?;
         let names = Names::new(vector.sexp, |i| format!("[{}]", i + 1));
@@ -1256,11 +1275,18 @@ impl PositronVariable {
             .enumerate()
             .take(MAX_DISPLAY_VALUE_ENTRIES)
             .map(|(i, value)| {
+                let (is_truncated, display_value) = truncate_chars(value, MAX_DISPLAY_VALUE_LENGTH);
+                // Names are arbitrarily set by users, so we add a safeguard to truncate them
+                // to avoid massive names that could break communications with the frontend.
+                let (_, display_name) =
+                    truncate_chars(names.get_unchecked(i as isize), MAX_DISPLAY_VALUE_LENGTH);
+
                 make_variable(
                     format!("{}", i),
-                    names.get_unchecked(i as isize),
-                    value,
+                    display_name,
+                    display_value,
                     kind.clone(),
+                    is_truncated,
                 )
             })
             .collect();
@@ -1557,6 +1583,17 @@ fn parse_index(x: &String) -> harp::Result<isize> {
     })
 }
 
+// We need to be careful when truncating the string, we don't want to return invalid
+// UTF8 sequences. `chars` makes sure we are not splitting a UTF8 character in half.
+// See also https://doc.rust-lang.org/book/ch08-02-strings.html#slicing-strings
+fn truncate_chars(value: String, len: usize) -> (bool, String) {
+    if value.len() > len {
+        (true, value.chars().take(len).collect())
+    } else {
+        (false, value.clone())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use harp;
@@ -1851,8 +1888,27 @@ mod tests {
             let vars = inspect_from_expr("rep(letters, length.out = 10000)");
             assert_eq!(vars.len(), MAX_DISPLAY_VALUE_ENTRIES);
 
-            let vars = inspect_from_expr("matrix(0, ncol = 10000)");
+            let vars = inspect_from_expr("matrix(0, ncol = 10000, nrow = 1000)");
             assert_eq!(vars.len(), MAX_DISPLAY_VALUE_ENTRIES);
+            assert_eq!(vars[0].display_value.len(), MAX_DISPLAY_VALUE_LENGTH);
+            assert_eq!(vars[0].is_truncated, true);
+
+            let vars = inspect_from_expr(
+                "rep(paste0(rep(letters, length.out = 10000), collapse = ''), 10)",
+            );
+            assert_eq!(vars.len(), 10);
+            assert_eq!(vars[0].display_value.len(), MAX_DISPLAY_VALUE_LENGTH);
+            assert_eq!(vars[0].is_truncated, true);
+
+            let vars = inspect_from_expr(
+                "structure(1:10, names = rep(paste(rep(letters, length.out = 10000), collapse = ''), 10))",
+            );
+            assert_eq!(vars[0].display_name.len(), MAX_DISPLAY_VALUE_LENGTH);
+
+            let vars = inspect_from_expr(
+                "structure(as.list(1:10), names = rep(paste(rep(letters, length.out = 10000), collapse = ''), 10))",
+            );
+            assert_eq!(vars[0].display_name.len(), MAX_DISPLAY_VALUE_LENGTH);
         })
     }
 }
