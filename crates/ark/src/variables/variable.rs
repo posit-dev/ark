@@ -1137,35 +1137,43 @@ impl PositronVariable {
     }
 
     fn inspect_matrix(matrix: SEXP) -> harp::error::Result<Vec<Variable>> {
-        unsafe {
-            let matrix = RObject::new(matrix);
-            let dim = IntegerVector::new(Rf_getAttrib(matrix.sexp, R_DimSymbol))?;
+        let matrix = RObject::new(matrix);
 
-            let n_col = dim.get_unchecked(1).unwrap();
+        let n_col = match harp::table_info(matrix.sexp) {
+            Some(info) => info.dims.num_cols,
+            None => {
+                log::warn!("Unexpected matrix object. Couldn't get dimensions.");
+                return Ok(vec![]);
+            },
+        };
 
-            let mut out: Vec<Variable> = vec![];
-            let formatted = FormattedVector::new(matrix.sexp)?;
+        let make_variable = |access_key, display_name, display_value| Variable {
+            access_key,
+            display_name,
+            display_value,
+            display_type: String::from(""),
+            type_info: String::from(""),
+            kind: VariableKind::Collection,
+            length: 1,
+            size: 0,
+            has_children: true,
+            is_truncated: false,
+            has_viewer: false,
+            updated_time: Self::update_timestamp(),
+        };
 
-            for i in 0..n_col {
+        let formatted = FormattedVector::new(matrix.sexp)?;
+
+        let variables: Vec<Variable> = (0..n_col)
+            .into_iter()
+            .take(MAX_DISPLAY_VALUE_ENTRIES)
+            .map(|i| {
                 let display_value = format!("[{}]", formatted.column_iter(i as isize).join(", "));
-                out.push(Variable {
-                    access_key: format!("{}", i),
-                    display_name: format!("[, {}]", i + 1),
-                    display_value,
-                    display_type: String::from(""),
-                    type_info: String::from(""),
-                    kind: VariableKind::Collection,
-                    length: 1,
-                    size: 0,
-                    has_children: true,
-                    is_truncated: false,
-                    has_viewer: false,
-                    updated_time: Self::update_timestamp(),
-                });
-            }
+                make_variable(format!("{}", i), format!("[, {}]", i + 1), display_value)
+            })
+            .collect();
 
-            Ok(out)
-        }
+        Ok(variables)
     }
 
     fn inspect_matrix_column(matrix: SEXP, index: isize) -> harp::error::Result<Vec<Variable>> {
@@ -1841,6 +1849,9 @@ mod tests {
             assert_eq!(vars.len(), MAX_DISPLAY_VALUE_ENTRIES);
 
             let vars = inspect_from_expr("rep(letters, length.out = 10000)");
+            assert_eq!(vars.len(), MAX_DISPLAY_VALUE_ENTRIES);
+
+            let vars = inspect_from_expr("matrix(0, ncol = 10000)");
             assert_eq!(vars.len(), MAX_DISPLAY_VALUE_ENTRIES);
         })
     }
