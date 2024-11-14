@@ -1195,45 +1195,22 @@ impl PositronVariable {
     }
 
     fn inspect_matrix_column(matrix: SEXP, index: isize) -> harp::error::Result<Vec<Variable>> {
-        unsafe {
-            let matrix = RObject::new(matrix);
-            let dim = IntegerVector::new(Rf_getAttrib(matrix.sexp, R_DimSymbol))?;
-
-            let n_row = dim.get_unchecked(0).unwrap();
-
-            let mut out: Vec<Variable> = vec![];
-            let formatted = FormattedVector::new(matrix.sexp)?;
-            let mut iter = formatted.column_iter(index);
-            let r_type = r_typeof(matrix.sexp);
-            let kind = if r_type == STRSXP {
-                VariableKind::String
-            } else if r_type == RAWSXP {
-                VariableKind::Bytes
-            } else if r_type == LGLSXP {
-                VariableKind::Boolean
-            } else {
-                VariableKind::Number
+        let column =
+            match harp::table::tbl_get_column(matrix, index as i32, harp::TableKind::Matrix) {
+                Ok(column) => column,
+                Err(err) => return Err(Error::Anyhow(err)),
             };
 
-            for i in 0..n_row {
-                out.push(Variable {
-                    access_key: format!("{}", i),
-                    display_name: format!("[{}, {}]", i + 1, index + 1),
-                    display_value: iter.next().unwrap(),
-                    display_type: String::from(""),
-                    type_info: String::from(""),
-                    kind: kind.clone(),
-                    length: 1,
-                    size: 0,
-                    has_children: false,
-                    is_truncated: false,
-                    has_viewer: false,
-                    updated_time: Self::update_timestamp(),
-                });
-            }
+        let variables: Vec<Variable> = Self::inspect_vector(column.sexp)?
+            .into_iter()
+            .enumerate()
+            .map(|(row, mut var)| {
+                var.display_name = format!("[{}, {}]", row + 1, index + 1);
+                var
+            })
+            .collect();
 
-            Ok(out)
-        }
+        Ok(variables)
     }
 
     fn inspect_vector(vector: SEXP) -> harp::error::Result<Vec<Variable>> {
@@ -1888,7 +1865,7 @@ mod tests {
             let vars = inspect_from_expr("rep(letters, length.out = 10000)");
             assert_eq!(vars.len(), MAX_DISPLAY_VALUE_ENTRIES);
 
-            let vars = inspect_from_expr("matrix(0, ncol = 10000, nrow = 1000)");
+            let vars = inspect_from_expr("matrix(0, ncol = 10000, nrow = 10000)");
             assert_eq!(vars.len(), MAX_DISPLAY_VALUE_ENTRIES);
             assert_eq!(vars[0].display_value.len(), MAX_DISPLAY_VALUE_LENGTH);
             assert_eq!(vars[0].is_truncated, true);
@@ -1910,5 +1887,28 @@ mod tests {
             );
             assert_eq!(vars[0].display_name.len(), MAX_DISPLAY_VALUE_LENGTH);
         })
+    }
+
+    #[test]
+    fn test_truncation_on_matrices() {
+        r_task(|| {
+            let env = harp::parse_eval_global("new.env()").unwrap();
+            harp::parse_eval0(
+                format!("x <- matrix(0, nrow = 10000, ncol = 10000)").as_str(),
+                env.clone(),
+            )
+            .unwrap();
+
+            // Inspect the matrix, we should see the list of columns truncated
+            let path = vec![String::from("x")];
+            let vars = PositronVariable::inspect(env.clone(), &path).unwrap();
+            assert_eq!(vars.len(), MAX_DISPLAY_VALUE_ENTRIES);
+
+            // Now inspect the first column
+            let path = vec![String::from("x"), vars[0].access_key.clone()];
+            let vars = PositronVariable::inspect(env.clone(), &path).unwrap();
+            assert_eq!(vars.len(), MAX_DISPLAY_VALUE_ENTRIES);
+            assert_eq!(vars[0].display_name, "[1, 1]");
+        });
     }
 }
