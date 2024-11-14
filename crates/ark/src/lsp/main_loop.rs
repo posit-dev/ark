@@ -38,6 +38,11 @@ pub(crate) type TokioUnboundedReceiver<T> = tokio::sync::mpsc::UnboundedReceiver
 // messages or spawning threads from free functions. Since this is an unbounded
 // channel, sending a log message is not async nor blocking. Tokio senders are
 // Send and Sync so this global variable can be safely shared across threads.
+//
+// Note that in case of duplicate LSP sessions (see
+// https://github.com/posit-dev/ark/issues/622 and
+// https://github.com/posit-dev/positron/issues/5321), it's possible for older
+// LSPs to send log messages and tasks to the newer LSPs.
 static mut AUXILIARY_EVENT_TX: std::cell::OnceCell<TokioUnboundedSender<AuxiliaryEvent>> =
     std::cell::OnceCell::new();
 
@@ -71,6 +76,7 @@ pub(crate) enum AuxiliaryEvent {
     Log(lsp_types::MessageType, String),
     PublishDiagnostics(Url, Vec<Diagnostic>, Option<i32>),
     SpawnedTask(JoinHandle<anyhow::Result<Option<AuxiliaryEvent>>>),
+    Shutdown,
 }
 
 /// Global state for the main loop
@@ -440,6 +446,7 @@ impl AuxiliaryState {
                         .publish_diagnostics(uri, diagnostics, version)
                         .await
                 },
+                AuxiliaryEvent::Shutdown => break,
             }
         }
     }
@@ -447,7 +454,17 @@ impl AuxiliaryState {
     async fn next_event(&mut self) -> AuxiliaryEvent {
         loop {
             tokio::select! {
-                event = self.auxiliary_event_rx.recv() => return event.unwrap(),
+                event = self.auxiliary_event_rx.recv() => match event {
+                    // Because of the way we communicate with the auxiliary loop
+                    // via global state, the channel may become closed if a new
+                    // LSP session is started in the process. This normally
+                    // should not happen but for now we have to be defensive
+                    // against this situation, see:
+                    // https://github.com/posit-dev/ark/issues/622
+                    // https://github.com/posit-dev/positron/issues/5321
+                    Some(event) => return event,
+                    None => return AuxiliaryEvent::Shutdown,
+                },
 
                 handle = self.tasks.next() => match handle.unwrap() {
                     // A joined task returned an event for us, handle it
