@@ -1,6 +1,6 @@
 [package]
 name = "ark"
-version = "0.1.151"
+version = "0.1.153"
 description = """
 Ark, an R Kernel.
 """
@@ -47,7 +47,7 @@ stdext = { path = "../stdext" }
 tokio = { version = "1.26.0", features = ["full"] }
 tower-lsp = "0.19.0"
 tree-sitter = "0.23.0"
-tree-sitter-r = { git = "https://github.com/r-lib/tree-sitter-r", rev = "2097fa502efa21349d26af0ffee55d773015e481" }
+tree-sitter-r = { git = "https://github.com/r-lib/tree-sitter-r", rev = "c094bd57652f8a08edc31d79a31222268fe798ee" }
 uuid = "1.3.0"
 url = "2.4.1"
 walkdir = "2"

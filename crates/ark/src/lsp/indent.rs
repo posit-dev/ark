@@ -239,6 +239,22 @@ mod tests {
     }
 
     #[test]
+    fn test_line_indent_leading_whitespace() {
+        // Indent should be unchanged regardless of how much leading whitespace
+        // there is before the first newline
+        // https://github.com/posit-dev/positron/issues/5258
+        let text = String::from("  \nx");
+        let doc = test_doc(&text);
+        let edit = indent_edit(&doc, 1).unwrap();
+        assert!(edit.is_none());
+
+        let text = String::from("\r\nx");
+        let doc = test_doc(&text);
+        let edit = indent_edit(&doc, 1).unwrap();
+        assert!(edit.is_none());
+    }
+
+    #[test]
     fn test_line_indent_chains() {
         let mut text = String::from("foo +\n  bar +\n    baz + qux |>\nfoofy()");
         let doc = test_doc(&text);
