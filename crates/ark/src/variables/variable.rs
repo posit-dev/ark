@@ -1121,17 +1121,19 @@ impl PositronVariable {
     }
 
     fn inspect_list(value: SEXP) -> Result<Vec<Variable>, harp::error::Error> {
-        let mut out: Vec<Variable> = vec![];
-        let n = unsafe { Rf_xlength(value) };
-
+        let list = List::new(value)?;
         let names = Names::new(value, |i| format!("[[{}]]", i + 1));
 
-        for i in 0..n {
-            let obj = unsafe { VECTOR_ELT(value, i) };
-            out.push(Self::from(i.to_string(), names.get_unchecked(i), obj).var());
-        }
+        let variables: Vec<Variable> = list
+            .iter()
+            .enumerate()
+            .take(MAX_DISPLAY_VALUE_ENTRIES)
+            .map(|(i, value)| {
+                Self::from(i.to_string(), names.get_unchecked(i as isize), value).var()
+            })
+            .collect();
 
-        Ok(out)
+        Ok(variables)
     }
 
     fn inspect_matrix(matrix: SEXP) -> harp::error::Result<Vec<Variable>> {
@@ -1779,6 +1781,14 @@ mod tests {
         })
     }
 
+    fn inspect_from_expr(code: &str) -> Vec<Variable> {
+        let env = harp::parse_eval_global("new.env()").unwrap();
+        harp::parse_eval0(format!("x <- {code}").as_str(), env.clone()).unwrap();
+        // Inspect the S4 object
+        let path = vec![String::from("x")];
+        PositronVariable::inspect(env.clone(), &path).unwrap()
+    }
+
     #[test]
     fn test_inspect_s4() {
         r_task(|| {
@@ -1808,6 +1818,14 @@ mod tests {
                 let index = index + 1; // R indexes start from 1
                 assert_eq!(value.display_name, format!("[[{index}]]"));
             });
+        })
+    }
+
+    #[test]
+    fn test_truncation() {
+        r_task(|| {
+            let vars = inspect_from_expr("as.list(1:10000)");
+            assert_eq!(vars.len(), MAX_DISPLAY_VALUE_ENTRIES);
         })
     }
 }
