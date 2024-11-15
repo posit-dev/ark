@@ -294,12 +294,20 @@ impl WorkspaceVariableDisplayValue {
         let mut display_value = String::with_capacity(MAX_DISPLAY_VALUE_LENGTH);
         let mut is_truncated = false;
 
-        for x in formatted.iter().join(" ").chars() {
-            if display_value.len() >= MAX_DISPLAY_VALUE_LENGTH {
-                is_truncated = true;
-                break;
+        // Performance: value is potentially a very large vector, so we need to be careful
+        // to not format every element of value. Instead only format the necessary elements
+        // to display the first MAX_DISPLAY_VALUE_LENGTH characters.
+        'outer: for (i, elt) in formatted.iter().enumerate() {
+            if i > 0 {
+                display_value.push_str(" ");
             }
-            display_value.push(x);
+            for char in elt.chars() {
+                if display_value.len() >= MAX_DISPLAY_VALUE_LENGTH {
+                    is_truncated = true;
+                    break 'outer;
+                }
+                display_value.push(char);
+            }
         }
 
         Self::new(display_value, is_truncated)
@@ -1162,12 +1170,19 @@ impl PositronVariable {
                 let mut is_truncated = false;
                 let mut display_value = String::with_capacity(MAX_DISPLAY_VALUE_LENGTH);
 
-                for x in formatted.column_iter(i as isize).join(" ").chars() {
-                    if display_value.len() >= MAX_DISPLAY_VALUE_LENGTH {
-                        is_truncated = true;
-                        break;
+                'outer: for (i, elt) in formatted.column_iter(i as isize).enumerate() {
+                    if i > 0 {
+                        display_value.push_str(" ");
                     }
-                    display_value.push(x);
+                    for char in elt.chars() {
+                        if display_value.len() >= MAX_DISPLAY_VALUE_LENGTH {
+                            is_truncated = true;
+                            // We break the outer loop to avoid adding more characters to the
+                            // display value.
+                            break 'outer;
+                        }
+                        display_value.push(char);
+                    }
                 }
 
                 make_variable(
