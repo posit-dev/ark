@@ -256,41 +256,34 @@ impl WorkspaceVariableDisplayValue {
             return Self::from_error(err);
         });
 
-        let mut first = true;
         let mut display_value = String::from("");
-        let mut is_truncated = false;
 
-        unsafe {
-            let dim = IntegerVector::new_unchecked(Rf_getAttrib(value, R_DimSymbol));
-            let n_col = dim.get_unchecked(1).unwrap() as isize;
+        let n_col = match harp::table_info(value) {
+            Some(info) => info.dims.num_cols,
+            None => {
+                log::error!("Failed to get matrix dimensions");
+                0
+            },
+        };
+
+        display_value.push('[');
+        for i in 0..n_col {
+            if i > 0 {
+                display_value.push_str(", ");
+            }
+
             display_value.push('[');
-            for i in 0..n_col {
-                if first {
-                    first = false;
-                } else {
-                    display_value.push_str(", ");
+            for char in formatted.column_iter(i as isize).join(" ").chars() {
+                if display_value.len() >= MAX_DISPLAY_VALUE_LENGTH {
+                    return Self::new(display_value, true);
                 }
-
-                display_value.push('[');
-                let display_column = formatted.column_iter(i).join(" ");
-                if display_column.len() > MAX_DISPLAY_VALUE_LENGTH {
-                    is_truncated = true;
-                    // TODO: maybe this should only push_str() a slice
-                    //       of the first n (MAX_WIDTH?) characters in that case ?
-                }
-                display_value.push_str(display_column.as_str());
-                display_value.push(']');
-
-                if display_value.len() > MAX_DISPLAY_VALUE_LENGTH {
-                    is_truncated = true;
-                }
-                if is_truncated {
-                    break;
-                }
+                display_value.push(char);
             }
             display_value.push(']');
         }
-        Self::new(display_value, is_truncated)
+        display_value.push(']');
+
+        Self::new(display_value, false)
     }
 
     fn from_default(value: SEXP) -> Self {
@@ -1942,6 +1935,31 @@ mod tests {
             let vars = PositronVariable::inspect(env.clone(), &path).unwrap();
             assert_eq!(vars.len(), 1);
             assert_eq!(vars[0].display_value, "\"\"");
+
+            // Test for the single elment matrix, but with a large character
+            let env = harp::parse_eval_global("new.env()").unwrap();
+            harp::parse_eval0(
+                format!("x <- matrix(paste(1:5e6, collapse = ' - '))").as_str(),
+                env.clone(),
+            )
+            .unwrap();
+            let path = vec![];
+            let vars = PositronVariable::inspect(env.clone(), &path).unwrap();
+            assert_eq!(vars.len(), 1);
+            assert_eq!(vars[0].display_value.len(), MAX_DISPLAY_VALUE_LENGTH);
+            assert_eq!(vars[0].is_truncated, true);
+
+            // Test for the empty matrix
+            let env = harp::parse_eval_global("new.env()").unwrap();
+            harp::parse_eval0(
+                format!("x <- matrix(NA, ncol = 0, nrow = 0)").as_str(),
+                env.clone(),
+            )
+            .unwrap();
+            let path = vec![];
+            let vars = PositronVariable::inspect(env.clone(), &path).unwrap();
+            assert_eq!(vars.len(), 1);
+            assert_eq!(vars[0].display_value, "[]");
         });
     }
 }
