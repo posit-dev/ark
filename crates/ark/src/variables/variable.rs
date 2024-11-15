@@ -298,21 +298,15 @@ impl WorkspaceVariableDisplayValue {
             return Self::from_error(err);
         });
 
-        let mut first = true;
-        let mut display_value = String::from("");
+        let mut display_value = String::with_capacity(MAX_DISPLAY_VALUE_LENGTH);
         let mut is_truncated = false;
 
-        for x in formatted.iter() {
-            if first {
-                first = false;
-            } else {
-                display_value.push(' ');
-            }
-            display_value.push_str(&x);
-            if display_value.len() > MAX_DISPLAY_VALUE_LENGTH {
+        for x in formatted.iter().join(" ").chars() {
+            if display_value.len() >= MAX_DISPLAY_VALUE_LENGTH {
                 is_truncated = true;
                 break;
             }
+            display_value.push(x);
         }
 
         Self::new(display_value, is_truncated)
@@ -1171,16 +1165,17 @@ impl PositronVariable {
             .take(MAX_DISPLAY_VALUE_ENTRIES)
             .map(|i| {
                 // The display value of columns concatenates the column vector values into a
-                // single string with maximum length of MAX_DISPLAY_VALUE_LENGTH.
-                let display_value: String = formatted
-                    .column_iter(i as isize)
-                    // If each value had length 1 that would already be enought to fill
-                    // MAX_DISPLAY_VALUE_LENGTH counting the ", " that separates them.
-                    .take(MAX_DISPLAY_VALUE_LENGTH / 2)
-                    .join(", ");
+                // single string with maximum length of MAX_DISPLAY_VALUE_LENGTH.\
+                let mut is_truncated = false;
+                let mut display_value = String::with_capacity(MAX_DISPLAY_VALUE_LENGTH);
 
-                let (is_truncated, display_value) =
-                    truncate_chars(format!("[{}]", display_value), MAX_DISPLAY_VALUE_LENGTH);
+                for x in formatted.column_iter(i as isize).join(" ").chars() {
+                    if display_value.len() >= MAX_DISPLAY_VALUE_LENGTH {
+                        is_truncated = true;
+                        break;
+                    }
+                    display_value.push(x);
+                }
 
                 make_variable(
                     format!("{}", i),
@@ -1920,6 +1915,33 @@ mod tests {
             let vars = PositronVariable::inspect(env.clone(), &path).unwrap();
             assert_eq!(vars.len(), MAX_DISPLAY_VALUE_ENTRIES);
             assert_eq!(vars[0].display_name, "[1, 1]");
+        });
+    }
+
+    #[test]
+    fn test_string_truncation() {
+        r_task(|| {
+            let env = harp::parse_eval_global("new.env()").unwrap();
+            harp::parse_eval0(
+                format!("x <- paste(1:5e6, collapse = ' - ')").as_str(),
+                env.clone(),
+            )
+            .unwrap();
+
+            let path = vec![];
+            let vars = PositronVariable::inspect(env.clone(), &path).unwrap();
+            assert_eq!(vars.len(), 1);
+            assert_eq!(vars[0].display_value.len(), MAX_DISPLAY_VALUE_LENGTH);
+            assert_eq!(vars[0].is_truncated, true);
+
+            // Test for the empty string
+            let env = harp::parse_eval_global("new.env()").unwrap();
+            harp::parse_eval0(format!("x <- ''").as_str(), env.clone()).unwrap();
+
+            let path = vec![];
+            let vars = PositronVariable::inspect(env.clone(), &path).unwrap();
+            assert_eq!(vars.len(), 1);
+            assert_eq!(vars[0].display_value, "\"\"");
         });
     }
 }
