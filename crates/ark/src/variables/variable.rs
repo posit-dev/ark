@@ -1391,8 +1391,10 @@ impl PositronVariable {
                 .collect();
 
         out.sort_by(|a, b| a.display_name.cmp(&b.display_name));
-
-        Ok(out)
+        Ok(out
+            .get(0..std::cmp::min(out.len(), MAX_DISPLAY_VALUE_ENTRIES))
+            .ok_or(Error::Anyhow(anyhow!("Unexpected environment size?")))?
+            .to_vec())
     }
 
     fn inspect_s4(value: SEXP) -> Result<Vec<Variable>, harp::error::Error> {
@@ -1869,6 +1871,15 @@ mod tests {
             assert_eq!(vars.len(), MAX_DISPLAY_VALUE_ENTRIES);
             assert_eq!(vars[0].display_value.len(), MAX_DISPLAY_VALUE_LENGTH);
             assert_eq!(vars[0].is_truncated, true);
+
+            let vars = inspect_from_expr("new.env(parent=emptyenv())");
+            assert_eq!(vars.len(), 0);
+
+            let vars = inspect_from_expr(
+                "list2env(structure(as.list(1:10000), names = paste0('a', 1:10000)))",
+            );
+            assert_eq!(vars.len(), MAX_DISPLAY_VALUE_ENTRIES);
+            assert_eq!(vars[0].display_name, "a1");
 
             let vars = inspect_from_expr(
                 "rep(paste0(rep(letters, length.out = 10000), collapse = ''), 10)",
