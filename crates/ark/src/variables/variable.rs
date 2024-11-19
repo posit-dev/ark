@@ -1906,21 +1906,21 @@ mod tests {
     #[test]
     fn test_truncation_on_matrices() {
         r_task(|| {
-            let env = harp::parse_eval_global("new.env()").unwrap();
-            harp::parse_eval0(
-                format!("x <- matrix(0, nrow = 10000, ncol = 10000)").as_str(),
-                env.clone(),
-            )
-            .unwrap();
+            let env =
+                Environment::new(harp::parse_eval_base("new.env(parent = emptyenv())").unwrap());
+            env.bind(
+                "x".into(),
+                harp::parse_eval_base("matrix(0, nrow = 10000, ncol = 10000)").unwrap(),
+            );
 
             // Inspect the matrix, we should see the list of columns truncated
             let path = vec![String::from("x")];
-            let vars = PositronVariable::inspect(env.clone(), &path).unwrap();
+            let vars = PositronVariable::inspect(env.clone().into(), &path).unwrap();
             assert_eq!(vars.len(), MAX_DISPLAY_VALUE_ENTRIES);
 
             // Now inspect the first column
             let path = vec![String::from("x"), vars[0].access_key.clone()];
-            let vars = PositronVariable::inspect(env.clone(), &path).unwrap();
+            let vars = PositronVariable::inspect(env.into(), &path).unwrap();
             assert_eq!(vars.len(), MAX_DISPLAY_VALUE_ENTRIES);
             assert_eq!(vars[0].display_name, "[1, 1]");
         });
@@ -1929,50 +1929,51 @@ mod tests {
     #[test]
     fn test_string_truncation() {
         r_task(|| {
-            let env = harp::parse_eval_global("new.env()").unwrap();
-            harp::parse_eval0(
-                format!("x <- paste(1:5e6, collapse = ' - ')").as_str(),
-                env.clone(),
-            )
-            .unwrap();
+            let env =
+                Environment::new(harp::parse_eval_base("new.env(parent = emptyenv())").unwrap());
+            env.bind(
+                "x".into(),
+                harp::parse_eval_base("paste(1:5e6, collapse = ' - ')").unwrap(),
+            );
 
             let path = vec![];
-            let vars = PositronVariable::inspect(env.clone(), &path).unwrap();
+            let vars = PositronVariable::inspect(env.into(), &path).unwrap();
             assert_eq!(vars.len(), 1);
             assert_eq!(vars[0].display_value.len(), MAX_DISPLAY_VALUE_LENGTH);
             assert_eq!(vars[0].is_truncated, true);
 
             // Test for the empty string
-            let env = harp::parse_eval_global("new.env()").unwrap();
-            harp::parse_eval0(format!("x <- ''").as_str(), env.clone()).unwrap();
+            let env =
+                Environment::new(harp::parse_eval_base("new.env(parent = emptyenv())").unwrap());
+            env.bind("x".into(), harp::parse_eval_base("''").unwrap());
 
             let path = vec![];
-            let vars = PositronVariable::inspect(env.clone(), &path).unwrap();
+            let vars = PositronVariable::inspect(env.into(), &path).unwrap();
             assert_eq!(vars.len(), 1);
             assert_eq!(vars[0].display_value, "\"\"");
 
             // Test for the single elment matrix, but with a large character
-            let env = harp::parse_eval_global("new.env()").unwrap();
-            harp::parse_eval0(
-                format!("x <- matrix(paste(1:5e6, collapse = ' - '))").as_str(),
-                env.clone(),
-            )
-            .unwrap();
+            let env =
+                Environment::new(harp::parse_eval_base("new.env(parent = emptyenv())").unwrap());
+            env.bind(
+                "x".into(),
+                harp::parse_eval_base("matrix(paste(1:5e6, collapse = ' - '))").unwrap(),
+            );
             let path = vec![];
-            let vars = PositronVariable::inspect(env.clone(), &path).unwrap();
+            let vars = PositronVariable::inspect(env.into(), &path).unwrap();
             assert_eq!(vars.len(), 1);
             assert_eq!(vars[0].display_value.len(), MAX_DISPLAY_VALUE_LENGTH);
             assert_eq!(vars[0].is_truncated, true);
 
             // Test for the empty matrix
-            let env = harp::parse_eval_global("new.env()").unwrap();
-            harp::parse_eval0(
-                format!("x <- matrix(NA, ncol = 0, nrow = 0)").as_str(),
-                env.clone(),
-            )
-            .unwrap();
+            let env =
+                Environment::new(harp::parse_eval_base("new.env(parent = emptyenv())").unwrap());
+            env.bind(
+                "x".into(),
+                harp::parse_eval_base("matrix(NA, ncol = 0, nrow = 0)").unwrap(),
+            );
             let path = vec![];
-            let vars = PositronVariable::inspect(env.clone(), &path).unwrap();
+            let vars = PositronVariable::inspect(env.into(), &path).unwrap();
             assert_eq!(vars.len(), 1);
             assert_eq!(vars[0].display_value, "[]");
         });
