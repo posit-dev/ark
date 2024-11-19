@@ -1819,11 +1819,11 @@ mod tests {
     }
 
     fn inspect_from_expr(code: &str) -> Vec<Variable> {
-        let env = harp::parse_eval_global("new.env()").unwrap();
-        harp::parse_eval0(format!("x <- {code}").as_str(), env.clone()).unwrap();
+        let env = Environment::new(harp::parse_eval_base("new.env(parent = emptyenv())").unwrap());
+        env.bind("x".into(), harp::parse_eval_base(code).unwrap());
         // Inspect the S4 object
         let path = vec![String::from("x")];
-        PositronVariable::inspect(env.clone(), &path).unwrap()
+        PositronVariable::inspect(env.into(), &path).unwrap()
     }
 
     #[test]
