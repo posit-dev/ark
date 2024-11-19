@@ -1906,8 +1906,7 @@ mod tests {
     #[test]
     fn test_truncation_on_matrices() {
         r_task(|| {
-            let env =
-                Environment::new(harp::parse_eval_base("new.env(parent = emptyenv())").unwrap());
+            let env = Environment::new_empty().unwrap();
             env.bind(
                 "x".into(),
                 harp::parse_eval_base("matrix(0, nrow = 10000, ncol = 10000)").unwrap(),
@@ -1929,8 +1928,7 @@ mod tests {
     #[test]
     fn test_string_truncation() {
         r_task(|| {
-            let env =
-                Environment::new(harp::parse_eval_base("new.env(parent = emptyenv())").unwrap());
+            let env = Environment::new_empty().unwrap();
             env.bind(
                 "x".into(),
                 harp::parse_eval_base("paste(1:5e6, collapse = ' - ')").unwrap(),
@@ -1943,8 +1941,7 @@ mod tests {
             assert_eq!(vars[0].is_truncated, true);
 
             // Test for the empty string
-            let env =
-                Environment::new(harp::parse_eval_base("new.env(parent = emptyenv())").unwrap());
+            let env = Environment::new_empty().unwrap();
             env.bind("x".into(), harp::parse_eval_base("''").unwrap());
 
             let path = vec![];
@@ -1953,8 +1950,7 @@ mod tests {
             assert_eq!(vars[0].display_value, "\"\"");
 
             // Test for the single elment matrix, but with a large character
-            let env =
-                Environment::new(harp::parse_eval_base("new.env(parent = emptyenv())").unwrap());
+            let env = Environment::new_empty().unwrap();
             env.bind(
                 "x".into(),
                 harp::parse_eval_base("matrix(paste(1:5e6, collapse = ' - '))").unwrap(),
@@ -1966,8 +1962,7 @@ mod tests {
             assert_eq!(vars[0].is_truncated, true);
 
             // Test for the empty matrix
-            let env =
-                Environment::new(harp::parse_eval_base("new.env(parent = emptyenv())").unwrap());
+            let env = Environment::new_empty().unwrap();
             env.bind(
                 "x".into(),
                 harp::parse_eval_base("matrix(NA, ncol = 0, nrow = 0)").unwrap(),
