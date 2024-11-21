@@ -56,6 +56,12 @@ impl Environment {
         Self::new_filtered(env, EnvironmentFilter::default())
     }
 
+    pub fn new_empty() -> anyhow::Result<Self> {
+        Ok(Self::new(harp::parse_eval_base(
+            "new.env(parent = emptyenv())",
+        )?))
+    }
+
     pub fn new_filtered(env: RObject, filter: EnvironmentFilter) -> Self {
         Self { inner: env, filter }
     }
