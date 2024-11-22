@@ -183,6 +183,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fixtures::package_is_installed;
 
     fn default_options() -> FormatOptions {
         FormatOptions {
@@ -325,6 +326,34 @@ mod tests {
                 max_date: None,
             };
             assert_eq!(stats.date_stats, Some(expected));
+        })
+    }
+
+    #[test]
+    fn test_haven_labelled() {
+        crate::r_task(|| {
+            if !package_is_installed("haven") {
+                return;
+            }
+
+            let column =
+                harp::parse_eval_base("haven::labelled(c(1, 1, 2), c(Male = 1, Female = 2))")
+                    .unwrap();
+
+            let column_factor =
+                harp::parse_eval_base("factor(c(1,1,2), labels = c('Male', 'Female'))").unwrap();
+
+            let stats =
+                summary_stats(column.sexp, ColumnDisplayType::String, &default_options()).unwrap();
+
+            let stats_factor = summary_stats(
+                column_factor.sexp,
+                ColumnDisplayType::String,
+                &default_options(),
+            )
+            .unwrap();
+
+            assert_eq!(stats, stats_factor);
         })
     }
 }

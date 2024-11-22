@@ -161,6 +161,7 @@ mod tests {
     use stdext::assert_match;
 
     use super::*;
+    use crate::fixtures::package_is_installed;
     use crate::r_task;
 
     fn default_options() -> FormatOptions {
@@ -602,6 +603,31 @@ mod tests {
                 harp::parse_eval_global("as.POSIXct(c('2017-05-17 11:00:00','2010-01-01'))")
                     .unwrap(),
                 vec![200, 100],
+                None,
+            );
+        })
+    }
+
+    #[test]
+    fn test_frequency_table_haven_labelled() {
+        r_task(|| {
+            if !package_is_installed("haven") {
+                return;
+            }
+
+            test_frequency_table(
+                "haven::labelled(c(rep(1, 100), rep(2, 200), rep(3, 150)), labels = c('A' = 1, 'B' = 2, 'C' = 3))",
+                10,
+                harp::parse_eval_global("c('B', 'C', 'A')").unwrap(),
+                vec![200, 150, 100],
+                None,
+            );
+            // Account for all factor levels, even if they don't appear in the data
+            test_frequency_table(
+                "haven::labelled(c(rep(1, 100), rep(2, 200)), labels = c('A' = 1, 'B' = 2, 'C' = 3))",
+                10,
+                harp::parse_eval_global("c('B', 'A', 'C')").unwrap(),
+                vec![200, 100, 0],
                 None,
             );
         })
