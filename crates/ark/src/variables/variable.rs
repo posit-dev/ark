@@ -541,7 +541,18 @@ impl PositronVariable {
             BindingValue::Active { .. } => Self::from_active_binding(display_name),
             BindingValue::Promise { promise } => Self::from_promise(display_name, promise.sexp),
             BindingValue::Altrep { object, .. } | BindingValue::Standard { object, .. } => {
-                Self::from(display_name.clone(), display_name, object.sexp)
+                let mut variable = Self::from(display_name.clone(), display_name, object.sexp);
+
+                let size = match object.size() {
+                    Ok(size) => size as i64,
+                    Err(err) => {
+                        log::warn!("Can't compute size of object: {err}");
+                        0
+                    },
+                };
+
+                variable.var.size = size;
+                variable
             },
         }
     }
@@ -561,14 +572,6 @@ impl PositronVariable {
 
         let kind = Self::variable_kind(x);
 
-        let size = match RObject::view(x).size() {
-            Ok(size) => size as i64,
-            Err(err) => {
-                log::warn!("Can't compute size of object: {err}");
-                0
-            },
-        };
-
         Self {
             var: Variable {
                 access_key,
@@ -578,7 +581,7 @@ impl PositronVariable {
                 type_info,
                 kind,
                 length: Self::variable_length(x) as i64,
-                size,
+                size: 0, // It's up to the caller to set the size.
                 has_children: has_children(x),
                 is_truncated,
                 has_viewer: r_is_data_frame(x) || r_is_matrix(x),
