@@ -115,31 +115,34 @@ impl WorkspaceVariableDisplayValue {
 
     fn from_language(value: SEXP) -> Self {
         if r_inherits(value, "formula") {
-            return Self::from_formula(value);
+            return match Self::from_formula(value) {
+                Ok(display_value) => display_value,
+                Err(err) => Self::from_error(harp::Error::Anyhow(err)),
+            };
         }
 
         return Self::from_error(Error::Anyhow(anyhow!("Unexpected language object type")));
     }
 
-    fn from_formula(value: SEXP) -> Self {
-        let display_value: Result<RObject, Error> = RFunction::new("base", "format")
+    fn from_formula(value: SEXP) -> anyhow::Result<Self> {
+        // `format` for formula will return a character vector, splitting the expressions within
+        // the formula, for instance `~{x + y}` will be split into `~` and `["~{", "x", "}"]`.
+        let formatted: Vec<String> = RFunction::new("base", "format")
             .add(value)
-            .call_in(ARK_ENVS.positron_ns);
+            .call_in(ARK_ENVS.positron_ns)?
+            .try_into()?;
 
-        let display_value: String = match display_value {
-            Ok(display_value) => match display_value.try_into() {
-                Ok(display_value) => display_value,
-                Err(err) => {
-                    return Self::from_error(err);
-                },
-            },
-            Err(err) => {
-                return Self::from_error(err);
-            },
-        };
+        let mut display_value = String::with_capacity(MAX_DISPLAY_VALUE_LENGTH);
+        for part in formatted.iter() {
+            for char in part.trim().chars() {
+                if display_value.len() >= MAX_DISPLAY_VALUE_LENGTH {
+                    return Ok(Self::new(display_value, true));
+                }
+                display_value.push(char);
+            }
+        }
 
-        let (is_truncated, display_value) = truncate_chars(display_value, MAX_DISPLAY_VALUE_LENGTH);
-        Self::new(display_value, is_truncated)
+        Ok(Self::new(display_value, false))
     }
 
     fn from_data_frame(value: SEXP) -> Self {
@@ -1944,6 +1947,14 @@ mod tests {
         r_task(|| {
             let vars = inspect_from_expr("list(x = x ~ y + z + a)");
             assert_eq!(vars[0].display_value, "x ~ y + z + a");
+
+            let vars = inspect_from_expr("list(x = x ~ {y + z + a})");
+            assert_eq!(vars[0].display_value, "x ~ {y + z + a}");
+
+            let formula: String = (0..100).map(|i| format!("x{i}")).collect_vec().join(" + ");
+            let vars = inspect_from_expr(format!("list(x = x ~ {formula})").as_str());
+
+            assert_eq!(vars[0].display_value.len(), MAX_DISPLAY_VALUE_LENGTH);
         })
     }
 
