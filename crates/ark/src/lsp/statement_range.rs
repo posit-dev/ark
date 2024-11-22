@@ -7,6 +7,7 @@
 
 use anyhow::bail;
 use anyhow::Result;
+use harp::parse_exprs;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use ropey::Rope;
@@ -19,9 +20,11 @@ use tower_lsp::lsp_types::VersionedTextDocumentIdentifier;
 use tree_sitter::Node;
 use tree_sitter::Point;
 
+use super::encoding::convert_character_from_utf8_to_utf16;
 use crate::lsp::encoding::convert_point_to_position;
 use crate::lsp::traits::cursor::TreeCursorExt;
 use crate::lsp::traits::rope::RopeExt;
+use crate::r_task;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
@@ -64,6 +67,12 @@ pub(crate) fn statement_range(
         return Ok(Some(new_statement_range_response(&node, contents, code)));
     }
 
+    // First check with the R parser whether line at point is complete.
+    // In that case, send the whole line as range.
+    if let Some(range) = find_complete_line_at_point(contents, point)? {
+        return Ok(Some(StatementRangeResponse { range, code: None }));
+    }
+
     if let Some(node) = find_statement_range_node(&root, row) {
         return Ok(Some(new_statement_range_response(&node, contents, None)));
     };
@@ -87,6 +96,53 @@ fn new_statement_range_response(
     let range = Range { start, end };
 
     StatementRangeResponse { range, code }
+}
+
+fn find_complete_line_at_point(contents: &Rope, point: Point) -> anyhow::Result<Option<Range>> {
+    let mut row = point.row;
+    let line;
+
+    loop {
+        let Some(current_line) = contents.get_line(row) else {
+            // The document was empty and we've looped over all lines. Let
+            // regular handler deal with this.
+            return Ok(None);
+        };
+
+        let current_line = current_line.to_string();
+
+        let Ok(n_exprs) = r_task::r_task(|| -> anyhow::Result<isize> {
+            let exprs = parse_exprs(&current_line)?;
+            Ok(exprs.length())
+        }) else {
+            // If incomplete or doesn't parse, we don't have a complete line
+            return Ok(None);
+        };
+
+        // Eat empty lines
+        if n_exprs == 0 {
+            row = row + 1;
+            continue;
+        }
+
+        line = current_line;
+        break;
+    }
+
+    let end_column = line.chars().count();
+    let end_column = convert_character_from_utf8_to_utf16(&line, end_column) as u32;
+
+    let range = Range {
+        start: Position {
+            line: row as u32,
+            character: 0,
+        },
+        end: Position {
+            line: row as u32,
+            character: end_column,
+        },
+    };
+    Ok(Some(range))
 }
 
 fn find_roxygen_comment_at_point<'tree>(
@@ -497,10 +553,13 @@ fn contains_row_at_different_start_position(node: Node, row: usize) -> Option<No
 #[cfg(test)]
 mod tests {
     use ropey::Rope;
+    use tower_lsp::lsp_types;
     use tree_sitter::Node;
     use tree_sitter::Parser;
     use tree_sitter::Point;
 
+    use crate::lsp::documents::Document;
+    use crate::lsp::statement_range::find_complete_line_at_point;
     use crate::lsp::statement_range::find_roxygen_comment_at_point;
     use crate::lsp::statement_range::find_statement_range_node;
     use crate::lsp::traits::rope::RopeExt;
@@ -1371,6 +1430,68 @@ test_that('stuff', {
 }
 ",
         );
+    }
+
+    #[test]
+    fn test_multiple_expressions_on_one_line() {
+        // https://github.com/posit-dev/positron/issues/4317
+
+        // Can't use `statement_range_test()` because it revolves around finding nodes not ranges
+        let doc = Document::new(
+            "
+
+1; 2; 3
+",
+            None,
+        );
+        let expected_range = Some(lsp_types::Range {
+            start: lsp_types::Position {
+                line: 2,
+                character: 0,
+            },
+            end: lsp_types::Position {
+                line: 2,
+                character: 8,
+            },
+        });
+
+        let point = Point::new(2, 7);
+        let range = find_complete_line_at_point(&doc.contents, point).unwrap();
+        assert_eq!(range, expected_range);
+
+        // Empty lines don't prevent finding complete lines
+        let point = Point::new(0, 0);
+        let range = find_complete_line_at_point(&doc.contents, point).unwrap();
+        assert_eq!(range, expected_range);
+    }
+
+    #[test]
+    fn test_multiple_expressions_on_one_line_nested_case() {
+        // https://github.com/posit-dev/positron/issues/4317
+
+        // Can't use `statement_range_test()` because it revolves around finding nodes not ranges
+        let doc = Document::new(
+            "
+list({
+  1; 2; 3
+})
+",
+            None,
+        );
+        let expected_range = Some(lsp_types::Range {
+            start: lsp_types::Position {
+                line: 2,
+                character: 0,
+            },
+            end: lsp_types::Position {
+                line: 2,
+                character: 10,
+            },
+        });
+
+        let point = Point::new(2, 0);
+        let range = find_complete_line_at_point(&doc.contents, point).unwrap();
+        assert_eq!(range, expected_range);
     }
 
     #[test]
