@@ -256,41 +256,34 @@ impl WorkspaceVariableDisplayValue {
             return Self::from_error(err);
         });
 
-        let mut first = true;
         let mut display_value = String::from("");
-        let mut is_truncated = false;
 
-        unsafe {
-            let dim = IntegerVector::new_unchecked(Rf_getAttrib(value, R_DimSymbol));
-            let n_col = dim.get_unchecked(1).unwrap() as isize;
+        let n_col = match harp::table_info(value) {
+            Some(info) => info.dims.num_cols,
+            None => {
+                log::error!("Failed to get matrix dimensions");
+                0
+            },
+        };
+
+        display_value.push('[');
+        for i in 0..n_col {
+            if i > 0 {
+                display_value.push_str(", ");
+            }
+
             display_value.push('[');
-            for i in 0..n_col {
-                if first {
-                    first = false;
-                } else {
-                    display_value.push_str(", ");
+            for char in formatted.column_iter(i as isize).join(" ").chars() {
+                if display_value.len() >= MAX_DISPLAY_VALUE_LENGTH {
+                    return Self::new(display_value, true);
                 }
-
-                display_value.push('[');
-                let display_column = formatted.column_iter(i).join(" ");
-                if display_column.len() > MAX_DISPLAY_VALUE_LENGTH {
-                    is_truncated = true;
-                    // TODO: maybe this should only push_str() a slice
-                    //       of the first n (MAX_WIDTH?) characters in that case ?
-                }
-                display_value.push_str(display_column.as_str());
-                display_value.push(']');
-
-                if display_value.len() > MAX_DISPLAY_VALUE_LENGTH {
-                    is_truncated = true;
-                }
-                if is_truncated {
-                    break;
-                }
+                display_value.push(char);
             }
             display_value.push(']');
         }
-        Self::new(display_value, is_truncated)
+        display_value.push(']');
+
+        Self::new(display_value, false)
     }
 
     fn from_default(value: SEXP) -> Self {
@@ -298,20 +291,22 @@ impl WorkspaceVariableDisplayValue {
             return Self::from_error(err);
         });
 
-        let mut first = true;
-        let mut display_value = String::from("");
+        let mut display_value = String::with_capacity(MAX_DISPLAY_VALUE_LENGTH);
         let mut is_truncated = false;
 
-        for x in formatted.iter() {
-            if first {
-                first = false;
-            } else {
-                display_value.push(' ');
+        // Performance: value is potentially a very large vector, so we need to be careful
+        // to not format every element of value. Instead only format the necessary elements
+        // to display the first MAX_DISPLAY_VALUE_LENGTH characters.
+        'outer: for (i, elt) in formatted.iter().enumerate() {
+            if i > 0 {
+                display_value.push_str(" ");
             }
-            display_value.push_str(&x);
-            if display_value.len() > MAX_DISPLAY_VALUE_LENGTH {
-                is_truncated = true;
-                break;
+            for char in elt.chars() {
+                if display_value.len() >= MAX_DISPLAY_VALUE_LENGTH {
+                    is_truncated = true;
+                    break 'outer;
+                }
+                display_value.push(char);
             }
         }
 
@@ -546,7 +541,18 @@ impl PositronVariable {
             BindingValue::Active { .. } => Self::from_active_binding(display_name),
             BindingValue::Promise { promise } => Self::from_promise(display_name, promise.sexp),
             BindingValue::Altrep { object, .. } | BindingValue::Standard { object, .. } => {
-                Self::from(display_name.clone(), display_name, object.sexp)
+                let mut variable = Self::from(display_name.clone(), display_name, object.sexp);
+
+                let size = match object.size() {
+                    Ok(size) => size as i64,
+                    Err(err) => {
+                        log::warn!("Can't compute size of object: {err}");
+                        0
+                    },
+                };
+
+                variable.var.size = size;
+                variable
             },
         }
     }
@@ -566,14 +572,6 @@ impl PositronVariable {
 
         let kind = Self::variable_kind(x);
 
-        let size = match RObject::view(x).size() {
-            Ok(size) => size as i64,
-            Err(err) => {
-                log::warn!("Can't compute size of object: {err}");
-                0
-            },
-        };
-
         Self {
             var: Variable {
                 access_key,
@@ -583,7 +581,7 @@ impl PositronVariable {
                 type_info,
                 kind,
                 length: Self::variable_length(x) as i64,
-                size,
+                size: 0, // It's up to the caller to set the size.
                 has_children: has_children(x),
                 is_truncated,
                 has_viewer: r_is_data_frame(x) || r_is_matrix(x),
@@ -1121,131 +1119,162 @@ impl PositronVariable {
     }
 
     fn inspect_list(value: SEXP) -> Result<Vec<Variable>, harp::error::Error> {
-        let mut out: Vec<Variable> = vec![];
-        let n = unsafe { Rf_xlength(value) };
-
+        let list = List::new(value)?;
         let names = Names::new(value, |i| format!("[[{}]]", i + 1));
 
-        for i in 0..n {
-            let obj = unsafe { VECTOR_ELT(value, i) };
-            out.push(Self::from(i.to_string(), names.get_unchecked(i), obj).var());
-        }
+        let variables: Vec<Variable> = list
+            .iter()
+            .enumerate()
+            .take(MAX_DISPLAY_VALUE_ENTRIES)
+            .map(|(i, value)| {
+                let (_, display_name) =
+                    truncate_chars(names.get_unchecked(i as isize), MAX_DISPLAY_VALUE_LENGTH);
+                Self::from(i.to_string(), display_name, value).var()
+            })
+            .collect();
 
-        Ok(out)
+        Ok(variables)
     }
 
     fn inspect_matrix(matrix: SEXP) -> harp::error::Result<Vec<Variable>> {
-        unsafe {
-            let matrix = RObject::new(matrix);
-            let dim = IntegerVector::new(Rf_getAttrib(matrix.sexp, R_DimSymbol))?;
+        let matrix = RObject::new(matrix);
 
-            let n_col = dim.get_unchecked(1).unwrap();
+        let n_col = match harp::table_info(matrix.sexp) {
+            Some(info) => info.dims.num_cols,
+            None => {
+                log::warn!("Unexpected matrix object. Couldn't get dimensions.");
+                return Ok(vec![]);
+            },
+        };
 
-            let mut out: Vec<Variable> = vec![];
-            let formatted = FormattedVector::new(matrix.sexp)?;
+        let make_variable = |access_key, display_name, display_value, is_truncated| Variable {
+            access_key,
+            display_name,
+            display_value,
+            display_type: String::from(""),
+            type_info: String::from(""),
+            kind: VariableKind::Collection,
+            length: 1,
+            size: 0,
+            has_children: true,
+            is_truncated,
+            has_viewer: false,
+            updated_time: Self::update_timestamp(),
+        };
 
-            for i in 0..n_col {
-                let display_value = format!("[{}]", formatted.column_iter(i as isize).join(", "));
-                out.push(Variable {
-                    access_key: format!("{}", i),
-                    display_name: format!("[, {}]", i + 1),
+        let formatted = FormattedVector::new(matrix.sexp)?;
+
+        let variables: Vec<Variable> = (0..n_col)
+            .into_iter()
+            .take(MAX_DISPLAY_VALUE_ENTRIES)
+            .map(|i| {
+                // The display value of columns concatenates the column vector values into a
+                // single string with maximum length of MAX_DISPLAY_VALUE_LENGTH.\
+                let mut is_truncated = false;
+                let mut display_value = String::with_capacity(MAX_DISPLAY_VALUE_LENGTH);
+
+                'outer: for (i, elt) in formatted.column_iter(i as isize).enumerate() {
+                    if i > 0 {
+                        display_value.push_str(" ");
+                    }
+                    for char in elt.chars() {
+                        if display_value.len() >= MAX_DISPLAY_VALUE_LENGTH {
+                            is_truncated = true;
+                            // We break the outer loop to avoid adding more characters to the
+                            // display value.
+                            break 'outer;
+                        }
+                        display_value.push(char);
+                    }
+                }
+
+                make_variable(
+                    format!("{}", i),
+                    format!("[, {}]", i + 1),
                     display_value,
-                    display_type: String::from(""),
-                    type_info: String::from(""),
-                    kind: VariableKind::Collection,
-                    length: 1,
-                    size: 0,
-                    has_children: true,
-                    is_truncated: false,
-                    has_viewer: false,
-                    updated_time: Self::update_timestamp(),
-                });
-            }
+                    is_truncated,
+                )
+            })
+            .collect();
 
-            Ok(out)
-        }
+        Ok(variables)
     }
 
     fn inspect_matrix_column(matrix: SEXP, index: isize) -> harp::error::Result<Vec<Variable>> {
-        unsafe {
-            let matrix = RObject::new(matrix);
-            let dim = IntegerVector::new(Rf_getAttrib(matrix.sexp, R_DimSymbol))?;
-
-            let n_row = dim.get_unchecked(0).unwrap();
-
-            let mut out: Vec<Variable> = vec![];
-            let formatted = FormattedVector::new(matrix.sexp)?;
-            let mut iter = formatted.column_iter(index);
-            let r_type = r_typeof(matrix.sexp);
-            let kind = if r_type == STRSXP {
-                VariableKind::String
-            } else if r_type == RAWSXP {
-                VariableKind::Bytes
-            } else if r_type == LGLSXP {
-                VariableKind::Boolean
-            } else {
-                VariableKind::Number
+        let column =
+            match harp::table::tbl_get_column(matrix, index as i32, harp::TableKind::Matrix) {
+                Ok(column) => column,
+                Err(err) => return Err(Error::Anyhow(err)),
             };
 
-            for i in 0..n_row {
-                out.push(Variable {
-                    access_key: format!("{}", i),
-                    display_name: format!("[{}, {}]", i + 1, index + 1),
-                    display_value: iter.next().unwrap(),
-                    display_type: String::from(""),
-                    type_info: String::from(""),
-                    kind: kind.clone(),
-                    length: 1,
-                    size: 0,
-                    has_children: false,
-                    is_truncated: false,
-                    has_viewer: false,
-                    updated_time: Self::update_timestamp(),
-                });
-            }
+        let variables: Vec<Variable> = Self::inspect_vector(column.sexp)?
+            .into_iter()
+            .enumerate()
+            .map(|(row, mut var)| {
+                var.display_name = format!("[{}, {}]", row + 1, index + 1);
+                var
+            })
+            .collect();
 
-            Ok(out)
-        }
+        Ok(variables)
     }
 
     fn inspect_vector(vector: SEXP) -> harp::error::Result<Vec<Variable>> {
-        unsafe {
-            let vector = RObject::new(vector);
-            let n = Rf_xlength(vector.sexp);
+        let vector = RObject::new(vector);
 
-            let mut out: Vec<Variable> = vec![];
-            let r_type = r_typeof(vector.sexp);
-            let formatted = FormattedVector::new(vector.sexp)?;
-            let names = Names::new(vector.sexp, |i| format!("[{}]", i + 1));
-            let kind = if r_type == STRSXP {
-                VariableKind::String
-            } else if r_type == RAWSXP {
-                VariableKind::Bytes
-            } else if r_type == LGLSXP {
-                VariableKind::Boolean
-            } else {
-                VariableKind::Number
+        let r_type = r_typeof(vector.sexp);
+        let kind = match r_type {
+            STRSXP => VariableKind::String,
+            RAWSXP => VariableKind::Bytes,
+            LGLSXP => VariableKind::Boolean,
+            INTSXP | REALSXP | CPLXSXP => VariableKind::Number,
+            _ => {
+                log::warn!("Unexpected vector type: {r_type}");
+                VariableKind::Other
+            },
+        };
+
+        let make_variable =
+            |access_key, display_name, display_value, kind, is_truncated| Variable {
+                access_key,
+                display_name,
+                display_value,
+                display_type: String::from(""),
+                type_info: String::from(""),
+                kind,
+                length: 1,
+                size: 0,
+                has_children: false,
+                is_truncated,
+                has_viewer: false,
+                updated_time: Self::update_timestamp(),
             };
 
-            for i in 0..n {
-                out.push(Variable {
-                    access_key: format!("{}", i),
-                    display_name: names.get_unchecked(i),
-                    display_value: formatted.get_unchecked(i),
-                    display_type: String::from(""),
-                    type_info: String::from(""),
-                    kind: kind.clone(),
-                    length: 1,
-                    size: 0,
-                    has_children: false,
-                    is_truncated: false,
-                    has_viewer: false,
-                    updated_time: Self::update_timestamp(),
-                });
-            }
+        let formatted = FormattedVector::new(vector.sexp)?;
+        let names = Names::new(vector.sexp, |i| format!("[{}]", i + 1));
 
-            Ok(out)
-        }
+        let variables: Vec<Variable> = formatted
+            .iter()
+            .enumerate()
+            .take(MAX_DISPLAY_VALUE_ENTRIES)
+            .map(|(i, value)| {
+                let (is_truncated, display_value) = truncate_chars(value, MAX_DISPLAY_VALUE_LENGTH);
+                // Names are arbitrarily set by users, so we add a safeguard to truncate them
+                // to avoid massive names that could break communications with the frontend.
+                let (_, display_name) =
+                    truncate_chars(names.get_unchecked(i as isize), MAX_DISPLAY_VALUE_LENGTH);
+
+                make_variable(
+                    format!("{}", i),
+                    display_name,
+                    display_value,
+                    kind.clone(),
+                    is_truncated,
+                )
+            })
+            .collect();
+
+        Ok(variables)
     }
 
     /// Creates an update timestamp for a variable
@@ -1368,8 +1397,10 @@ impl PositronVariable {
                 .collect();
 
         out.sort_by(|a, b| a.display_name.cmp(&b.display_name));
-
-        Ok(out)
+        Ok(out
+            .get(0..std::cmp::min(out.len(), MAX_DISPLAY_VALUE_ENTRIES))
+            .ok_or(Error::Anyhow(anyhow!("Unexpected environment size?")))?
+            .to_vec())
     }
 
     fn inspect_s4(value: SEXP) -> Result<Vec<Variable>, harp::error::Error> {
@@ -1535,6 +1566,17 @@ fn parse_index(x: &String) -> harp::Result<isize> {
     x.parse::<isize>().map_err(|err| {
         harp::Error::Anyhow(anyhow!("Expected to be able to parse into integer: {err}"))
     })
+}
+
+// We need to be careful when truncating the string, we don't want to return invalid
+// UTF8 sequences. `chars` makes sure we are not splitting a UTF8 character in half.
+// See also https://doc.rust-lang.org/book/ch08-02-strings.html#slicing-strings
+fn truncate_chars(value: String, len: usize) -> (bool, String) {
+    if value.len() > len {
+        (true, value.chars().take(len).collect())
+    } else {
+        (false, value.clone())
+    }
 }
 
 #[cfg(test)]
@@ -1779,6 +1821,14 @@ mod tests {
         })
     }
 
+    fn inspect_from_expr(code: &str) -> Vec<Variable> {
+        let env = Environment::new(harp::parse_eval_base("new.env(parent = emptyenv())").unwrap());
+        env.bind("x".into(), harp::parse_eval_base(code).unwrap());
+        // Inspect the S4 object
+        let path = vec![String::from("x")];
+        PositronVariable::inspect(env.into(), &path).unwrap()
+    }
+
     #[test]
     fn test_inspect_s4() {
         r_task(|| {
@@ -1809,5 +1859,121 @@ mod tests {
                 assert_eq!(value.display_name, format!("[[{index}]]"));
             });
         })
+    }
+
+    #[test]
+    fn test_truncation() {
+        r_task(|| {
+            let vars = inspect_from_expr("as.list(1:10000)");
+            assert_eq!(vars.len(), MAX_DISPLAY_VALUE_ENTRIES);
+
+            let vars = inspect_from_expr("1:10000");
+            assert_eq!(vars.len(), MAX_DISPLAY_VALUE_ENTRIES);
+
+            let vars = inspect_from_expr("rep(letters, length.out = 10000)");
+            assert_eq!(vars.len(), MAX_DISPLAY_VALUE_ENTRIES);
+
+            let vars = inspect_from_expr("matrix(0, ncol = 10000, nrow = 10000)");
+            assert_eq!(vars.len(), MAX_DISPLAY_VALUE_ENTRIES);
+            assert_eq!(vars[0].display_value.len(), MAX_DISPLAY_VALUE_LENGTH);
+            assert_eq!(vars[0].is_truncated, true);
+
+            let vars = inspect_from_expr("new.env(parent=emptyenv())");
+            assert_eq!(vars.len(), 0);
+
+            let vars = inspect_from_expr(
+                "list2env(structure(as.list(1:10000), names = paste0('a', 1:10000)))",
+            );
+            assert_eq!(vars.len(), MAX_DISPLAY_VALUE_ENTRIES);
+            assert_eq!(vars[0].display_name, "a1");
+
+            let vars = inspect_from_expr(
+                "rep(paste0(rep(letters, length.out = 10000), collapse = ''), 10)",
+            );
+            assert_eq!(vars.len(), 10);
+            assert_eq!(vars[0].display_value.len(), MAX_DISPLAY_VALUE_LENGTH);
+            assert_eq!(vars[0].is_truncated, true);
+
+            let vars = inspect_from_expr(
+                "structure(1:10, names = rep(paste(rep(letters, length.out = 10000), collapse = ''), 10))",
+            );
+            assert_eq!(vars[0].display_name.len(), MAX_DISPLAY_VALUE_LENGTH);
+
+            let vars = inspect_from_expr(
+                "structure(as.list(1:10), names = rep(paste(rep(letters, length.out = 10000), collapse = ''), 10))",
+            );
+            assert_eq!(vars[0].display_name.len(), MAX_DISPLAY_VALUE_LENGTH);
+        })
+    }
+
+    #[test]
+    fn test_truncation_on_matrices() {
+        r_task(|| {
+            let env = Environment::new_empty().unwrap();
+            env.bind(
+                "x".into(),
+                harp::parse_eval_base("matrix(0, nrow = 10000, ncol = 10000)").unwrap(),
+            );
+
+            // Inspect the matrix, we should see the list of columns truncated
+            let path = vec![String::from("x")];
+            let vars = PositronVariable::inspect(env.clone().into(), &path).unwrap();
+            assert_eq!(vars.len(), MAX_DISPLAY_VALUE_ENTRIES);
+
+            // Now inspect the first column
+            let path = vec![String::from("x"), vars[0].access_key.clone()];
+            let vars = PositronVariable::inspect(env.into(), &path).unwrap();
+            assert_eq!(vars.len(), MAX_DISPLAY_VALUE_ENTRIES);
+            assert_eq!(vars[0].display_name, "[1, 1]");
+        });
+    }
+
+    #[test]
+    fn test_string_truncation() {
+        r_task(|| {
+            let env = Environment::new_empty().unwrap();
+            env.bind(
+                "x".into(),
+                harp::parse_eval_base("paste(1:5e6, collapse = ' - ')").unwrap(),
+            );
+
+            let path = vec![];
+            let vars = PositronVariable::inspect(env.into(), &path).unwrap();
+            assert_eq!(vars.len(), 1);
+            assert_eq!(vars[0].display_value.len(), MAX_DISPLAY_VALUE_LENGTH);
+            assert_eq!(vars[0].is_truncated, true);
+
+            // Test for the empty string
+            let env = Environment::new_empty().unwrap();
+            env.bind("x".into(), harp::parse_eval_base("''").unwrap());
+
+            let path = vec![];
+            let vars = PositronVariable::inspect(env.into(), &path).unwrap();
+            assert_eq!(vars.len(), 1);
+            assert_eq!(vars[0].display_value, "\"\"");
+
+            // Test for the single elment matrix, but with a large character
+            let env = Environment::new_empty().unwrap();
+            env.bind(
+                "x".into(),
+                harp::parse_eval_base("matrix(paste(1:5e6, collapse = ' - '))").unwrap(),
+            );
+            let path = vec![];
+            let vars = PositronVariable::inspect(env.into(), &path).unwrap();
+            assert_eq!(vars.len(), 1);
+            assert_eq!(vars[0].display_value.len(), MAX_DISPLAY_VALUE_LENGTH);
+            assert_eq!(vars[0].is_truncated, true);
+
+            // Test for the empty matrix
+            let env = Environment::new_empty().unwrap();
+            env.bind(
+                "x".into(),
+                harp::parse_eval_base("matrix(NA, ncol = 0, nrow = 0)").unwrap(),
+            );
+            let path = vec![];
+            let vars = PositronVariable::inspect(env.into(), &path).unwrap();
+            assert_eq!(vars.len(), 1);
+            assert_eq!(vars[0].display_value, "[]");
+        });
     }
 }
