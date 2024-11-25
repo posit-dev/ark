@@ -38,6 +38,7 @@ use harp::utils::r_is_s4;
 use harp::utils::r_is_simple_vector;
 use harp::utils::r_is_unbound;
 use harp::utils::r_promise_force_with_rollback;
+use harp::utils::r_type2char;
 use harp::utils::r_typeof;
 use harp::utils::r_vec_is_single_dimension_with_single_value;
 use harp::utils::r_vec_shape;
@@ -55,6 +56,7 @@ use stdext::local;
 use stdext::unwrap;
 
 use crate::methods::ArkGenerics;
+use crate::modules::ARK_ENVS;
 
 // Constants.
 const MAX_DISPLAY_VALUE_ENTRIES: usize = 1_000;
@@ -90,8 +92,13 @@ impl WorkspaceVariableDisplayValue {
             },
             CLOSXP => Self::from_closure(value),
             ENVSXP => Self::from_env(value),
+            LANGSXP => Self::from_language(value),
             _ if r_is_matrix(value) => Self::from_matrix(value),
-            _ => Self::from_default(value),
+            RAWSXP | LGLSXP | INTSXP | REALSXP | STRSXP | CPLXSXP => Self::from_default(value),
+            _ => Self::from_error(Error::Anyhow(anyhow!(
+                "Unexpected type {}",
+                r_type2char(r_typeof(value))
+            ))),
         }
     }
 
@@ -104,6 +111,40 @@ impl WorkspaceVariableDisplayValue {
 
     fn empty() -> Self {
         Self::new(String::from(""), false)
+    }
+
+    fn from_language(value: SEXP) -> Self {
+        if r_inherits(value, "formula") {
+            return match Self::from_formula(value) {
+                Ok(display_value) => display_value,
+                Err(err) => Self::from_error(harp::Error::Anyhow(err)),
+            };
+        }
+
+        return Self::from_error(Error::Anyhow(anyhow!("Unexpected language object type")));
+    }
+
+    fn from_formula(value: SEXP) -> anyhow::Result<Self> {
+        // `format` for formula will return a character vector, splitting the expressions within
+        // the formula, for instance `~{x + y}` will be split into `~` and `["~{", "x", "}"]`.
+        let formatted: Vec<String> = RFunction::new("base", "format")
+            .add(value)
+            .call_in(ARK_ENVS.positron_ns)?
+            .try_into()?;
+
+        if formatted.len() < 1 {
+            return Err(anyhow!("Failed to format formula"));
+        }
+
+        let (mut truncated, mut display_value) =
+            truncate_chars(formatted[0].clone(), MAX_DISPLAY_VALUE_LENGTH);
+
+        if formatted.len() > 1 {
+            display_value.push_str(" ...");
+            truncated = true;
+        }
+
+        Ok(Self::new(display_value, truncated))
     }
 
     fn from_data_frame(value: SEXP) -> Self {
@@ -1903,6 +1944,26 @@ mod tests {
                 "structure(as.list(1:10), names = rep(paste(rep(letters, length.out = 10000), collapse = ''), 10))",
             );
             assert_eq!(vars[0].display_name.len(), MAX_DISPLAY_VALUE_LENGTH);
+        })
+    }
+
+    #[test]
+    fn test_support_formula() {
+        r_task(|| {
+            let vars = inspect_from_expr("list(x = x ~ y + z + a)");
+            assert_eq!(vars[0].display_value, "x ~ y + z + a");
+
+            let vars = inspect_from_expr("list(x = x ~ {y + z + a})");
+            assert_eq!(vars[0].display_value, "x ~ { ...");
+            assert_eq!(vars[0].is_truncated, true);
+
+            let formula: String = (0..100).map(|i| format!("x{i}")).collect_vec().join(" + ");
+            let vars = inspect_from_expr(format!("list(x = x ~ {formula})").as_str());
+
+            assert_eq!(vars[0].is_truncated, true);
+            // The deparser truncates the formula at 70 characters so we don't expect to get to
+            // MAX_DISPLAY_VALUE_LENGTH. We do have protections if this behavior changes, though.
+            assert_eq!(vars[0].display_value.len(), 70);
         })
     }
 
