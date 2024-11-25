@@ -136,7 +136,7 @@ fn convert_character_from_utf16_to_utf8(x: &str, character: usize) -> usize {
 }
 
 /// Converts a character offset into a particular line from UTF-8 to UTF-16
-fn convert_character_from_utf8_to_utf16(x: &str, character: usize) -> usize {
+pub(crate) fn convert_character_from_utf8_to_utf16(x: &str, character: usize) -> usize {
     if x.is_ascii() {
         // Fast pass
         return character;
