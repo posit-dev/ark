@@ -132,17 +132,19 @@ impl WorkspaceVariableDisplayValue {
             .call_in(ARK_ENVS.positron_ns)?
             .try_into()?;
 
-        let mut display_value = String::with_capacity(MAX_DISPLAY_VALUE_LENGTH);
-        for part in formatted.iter() {
-            for char in part.trim().chars() {
-                if display_value.len() >= MAX_DISPLAY_VALUE_LENGTH {
-                    return Ok(Self::new(display_value, true));
-                }
-                display_value.push(char);
-            }
+        if formatted.len() < 1 {
+            return Err(anyhow!("Failed to format formula"));
         }
 
-        Ok(Self::new(display_value, false))
+        let (mut truncated, mut display_value) =
+            truncate_chars(formatted[0].clone(), MAX_DISPLAY_VALUE_LENGTH);
+
+        if formatted.len() > 1 {
+            display_value.push_str(" ...");
+            truncated = true;
+        }
+
+        Ok(Self::new(display_value, truncated))
     }
 
     fn from_data_frame(value: SEXP) -> Self {
@@ -1949,12 +1951,16 @@ mod tests {
             assert_eq!(vars[0].display_value, "x ~ y + z + a");
 
             let vars = inspect_from_expr("list(x = x ~ {y + z + a})");
-            assert_eq!(vars[0].display_value, "x ~ {y + z + a}");
+            assert_eq!(vars[0].display_value, "x ~ { ...");
+            assert_eq!(vars[0].is_truncated, true);
 
             let formula: String = (0..100).map(|i| format!("x{i}")).collect_vec().join(" + ");
             let vars = inspect_from_expr(format!("list(x = x ~ {formula})").as_str());
 
-            assert_eq!(vars[0].display_value.len(), MAX_DISPLAY_VALUE_LENGTH);
+            assert_eq!(vars[0].is_truncated, true);
+            // The deparser truncates the formula at 70 characters so we don't expect to get to
+            // MAX_DISPLAY_VALUE_LENGTH. We do have protections if this behavior changes, though.
+            assert_eq!(vars[0].display_value.len(), 70);
         })
     }
 
