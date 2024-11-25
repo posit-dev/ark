@@ -562,6 +562,7 @@ mod tests {
     use crate::lsp::statement_range::find_complete_line_at_point;
     use crate::lsp::statement_range::find_roxygen_comment_at_point;
     use crate::lsp::statement_range::find_statement_range_node;
+    use crate::lsp::statement_range::statement_range;
     use crate::lsp::traits::rope::RopeExt;
 
     // Intended to ease statement range testing. Supply `x` as a string containing
@@ -1467,9 +1468,6 @@ test_that('stuff', {
 
     #[test]
     fn test_multiple_expressions_on_one_line_nested_case() {
-        // https://github.com/posit-dev/positron/issues/4317
-
-        // Can't use `statement_range_test()` because it revolves around finding nodes not ranges
         let doc = Document::new(
             "
 list({
@@ -1491,6 +1489,65 @@ list({
 
         let point = Point::new(2, 0);
         let range = find_complete_line_at_point(&doc.contents, point).unwrap();
+        assert_eq!(range, expected_range);
+    }
+
+    #[test]
+    fn test_multiple_expressions_after_multiline_expression() {
+        // FIXME: Should select up to 2
+        let doc = Document::new(
+            "
+{
+  1
+}; 2
+",
+            None,
+        );
+        let expected_range = lsp_types::Range {
+            start: lsp_types::Position {
+                line: 1,
+                character: 0,
+            },
+            end: lsp_types::Position {
+                line: 3,
+                character: 1, // Should be 4
+            },
+        };
+
+        let point = Point::new(1, 0);
+        let range = statement_range(doc.ast.root_node(), &doc.contents, point, point.row)
+            .unwrap()
+            .unwrap()
+            .range;
+        assert_eq!(range, expected_range);
+
+        // FIXME: Should select up to second braces
+        let doc = Document::new(
+            "
+{
+  1
+}; {
+  2
+}
+",
+            None,
+        );
+        let expected_range = lsp_types::Range {
+            start: lsp_types::Position {
+                line: 1,
+                character: 0,
+            },
+            end: lsp_types::Position {
+                line: 3, // Should be 5
+                character: 1,
+            },
+        };
+
+        let point = Point::new(1, 0);
+        let range = statement_range(doc.ast.root_node(), &doc.contents, point, point.row)
+            .unwrap()
+            .unwrap()
+            .range;
         assert_eq!(range, expected_range);
     }
 
