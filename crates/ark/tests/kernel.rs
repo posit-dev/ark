@@ -545,9 +545,9 @@ fn test_env_vars() {
     let frontend = DummyArkFrontend::lock();
 
     let code = "stopifnot(
-            nzchar(Sys.getenv('R_SHARE_DIR')),
-            nzchar(Sys.getenv('R_INCLUDE_DIR')),
-            nzchar(Sys.getenv('R_DOC_DIR'))
+            identical(Sys.getenv('R_SHARE_DIR'), R.home('share')),
+            identical(Sys.getenv('R_INCLUDE_DIR'), R.home('include')),
+            identical(Sys.getenv('R_DOC_DIR'), R.home('doc'))
         )";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
