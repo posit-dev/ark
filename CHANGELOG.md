@@ -2,6 +2,17 @@
 
 # 0.1.9000
 
+## 2024-11
+
+- Jupyter: The following environment variables are now set in the same way that R does:
+
+  - `R_SHARE_DIR`
+  - `R_INCLUDE_DIR`
+  - `R_DOC_DIR`
+
+  This solves a number of problems in situations that depend on these variables being defined (https://github.com/posit-dev/positron/issues/3637).
+
+
 ## 2024-10
 
 - Objects assigned at top level are now indexed, in addition to assigned functions. When a name is assigned multiple times, we now only index the first occurrence. This allows you to jump to the first "declaration" of the variable. In the future we'll improve this mechanism so that you can jump to the most recent assignment.
