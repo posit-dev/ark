@@ -381,12 +381,12 @@ impl RMain {
             r_command(|command| {
                 // From https://github.com/rstudio/rstudio/blob/74696236/src/cpp/core/r_util/REnvironmentPosix.cpp#L506-L515
                 command.arg("--vanilla").arg("-s").arg("-e").arg(
-                    r#"cat(paste(R.home('share'), R.home('include'), R.home('doc'), sep=':'))"#,
+                    r#"cat(paste(R.home('share'), R.home('include'), R.home('doc'), sep=';'))"#,
                 );
             })
         {
             if let Ok(vars) = String::from_utf8(output.stdout) {
-                let vars: Vec<&str> = vars.trim().split(':').collect();
+                let vars: Vec<&str> = vars.trim().split(';').collect();
                 if vars.len() == 3 {
                     // Set the R env vars as the R shell script frontend would
                     unsafe {
