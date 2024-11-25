@@ -2,6 +2,11 @@
 
 # 0.1.9000
 
+## 2024-11
+
+- LSP: The statement range provider now has better support for expressions separated by `;` on a single line (posit-dev/positron#4317).
+
+
 ## 2024-10
 
 - Objects assigned at top level are now indexed, in addition to assigned functions. When a name is assigned multiple times, we now only index the first occurrence. This allows you to jump to the first "declaration" of the variable. In the future we'll improve this mechanism so that you can jump to the most recent assignment.
