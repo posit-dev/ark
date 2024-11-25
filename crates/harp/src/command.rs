@@ -24,9 +24,18 @@ where
 {
     assert!(COMMAND_R_LOCATIONS.len() > 0);
 
+    // If `R_HOME` is defined use that
+    let locations = COMMAND_R_LOCATIONS.map(|loc| {
+        if let Ok(r_home) = std::env::var("R_HOME") {
+            std::path::Path::new(&r_home).join(loc)
+        } else {
+            std::path::Path::new(loc).to_path_buf()
+        }
+    });
+
     let mut out = None;
 
-    for program in COMMAND_R_LOCATIONS.iter() {
+    for program in locations.into_iter() {
         // Build the `Command` from the user's function
         let mut command = Command::new(program);
         build(&mut command);
