@@ -2,6 +2,10 @@
 
 # 0.1.9000
 
+## 2024-12
+
+- LSP: The statement range provider now has better support for expressions separated by `;` on a single line (posit-dev/positron#4317).
+
 ## 2024-11
 
 - LSP: Assignments in function calls (e.g. `list(x <- 1)`) are now detected by the missing symbol linter to avoid annoying false positive diagnostics (https://github.com/posit-dev/positron/issues/3048). The downside is that this causes false negatives when the assignment happens in a call with local scope, e.g. in `local()` or `test_that()`. We prefer to be overly permissive than overly cautious in these matters.
