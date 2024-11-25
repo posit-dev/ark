@@ -4,6 +4,8 @@
 
 ## 2024-11
 
+- LSP: Assignments in function calls (e.g. `list(x <- 1)`) are now detected by the missing symbol linter to avoid annoying false positive diagnostics (https://github.com/posit-dev/positron/issues/3048). The downside is that this causes false negatives when the assignment happens in a call with local scope, e.g. in `local()` or `test_that()`. We prefer to be overly permissive than overly cautious in these matters.
+
 - Jupyter: The following environment variables are now set in the same way that R does:
 
   - `R_SHARE_DIR`
@@ -11,7 +13,6 @@
   - `R_DOC_DIR`
 
   This solves a number of problems in situations that depend on these variables being defined (https://github.com/posit-dev/positron/issues/3637).
-
 
 ## 2024-10
 
