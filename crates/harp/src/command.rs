@@ -9,7 +9,7 @@ use std::io;
 use std::process::Command;
 use std::process::Output;
 
-use crate::sys::command::COMMAND_R_LOCATIONS;
+use crate::sys::command::COMMAND_R_NAMES;
 
 /// Execute a `Command` for R, trying multiple locations where R might exist
 ///
@@ -22,10 +22,10 @@ pub fn r_command<F>(build: F) -> io::Result<Output>
 where
     F: Fn(&mut Command),
 {
-    assert!(COMMAND_R_LOCATIONS.len() > 0);
+    assert!(COMMAND_R_NAMES.len() > 0);
 
     // If `R_HOME` is defined use that
-    let locations = COMMAND_R_LOCATIONS.map(|loc| {
+    let locations = COMMAND_R_NAMES.map(|loc| {
         if let Ok(r_home) = std::env::var("R_HOME") {
             std::path::Path::new(&r_home).join("bin").join(loc)
         } else {
