@@ -45,4 +45,4 @@ jobs:
 
       - name: Run Unit Tests
         run: |
-            cargo test --verbose
+            cargo test --verbose -- --nocapture
