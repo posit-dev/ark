@@ -9,6 +9,12 @@ use std::collections::HashMap;
 use std::io::BufRead;
 use std::path::PathBuf;
 
+use harp::exec::RFunction;
+use harp::exec::RFunctionExt;
+use harp::RObject;
+
+use crate::modules::ARK_ENVS;
+
 #[derive(Debug)]
 pub enum DefaultRepos {
     /// Do not set the repository automatically
@@ -38,7 +44,7 @@ pub fn apply_default_repos(repos: DefaultRepos) -> anyhow::Result<()> {
             Ok(())
         },
         DefaultRepos::RStudio => {
-            log::info!("Setting default repositories to RStudio CRAN");
+            log::debug!("Setting default repositories to RStudio CRAN");
             let mut repos = HashMap::new();
             repos.insert("CRAN".to_string(), "https://cran.rstudio.com/".to_string());
             apply_repos(repos)
@@ -46,10 +52,10 @@ pub fn apply_default_repos(repos: DefaultRepos) -> anyhow::Result<()> {
         DefaultRepos::Auto => {
             // See if there's a repos file in the XDG directories
             if let Some(path) = find_repos_conf() {
-                if let Err(e) = apply_repos_conf(path) {
+                if let Err(e) = apply_repos_conf(path.clone()) {
                     // We failed to apply the repos file; log the error and use the
                     // RStudio defaults
-                    log::error!("Error applying repos file: {}; using defaults", e);
+                    log::error!("Error applying repos file {path:?}: {e}; using defaults");
                     apply_default_repos(DefaultRepos::RStudio)
                 } else {
                     Ok(())
@@ -61,9 +67,11 @@ pub fn apply_default_repos(repos: DefaultRepos) -> anyhow::Result<()> {
         },
         DefaultRepos::ConfFile(path) => {
             if path.exists() {
-                if let Err(e) = apply_repos_conf(path) {
+                if let Err(e) = apply_repos_conf(path.clone()) {
                     // We failed to apply the repos file; log the error and use defaults
-                    log::error!("Error applying repos file: {}; using defaults", e);
+                    log::error!(
+                        "Error applying specified repos file: {path:?}: {e}; using defaults"
+                    );
                     apply_default_repos(DefaultRepos::Auto)
                 } else {
                     Ok(())
@@ -94,19 +102,34 @@ fn find_repos_conf_xdg(prefix: String) -> Option<PathBuf> {
     xdg_dirs.find_config_file("repos.conf")
 }
 
+/// Finds a `repos.conf` file in the XDG configuration directories. Checks both RStudio and Ark
+/// config folders.
 fn find_repos_conf() -> Option<PathBuf> {
     if let Some(path) = find_repos_conf_xdg("rstudio".to_string()) {
         return Some(path);
     }
-    if let Some(path) = find_repos_conf_xdg("positron".to_string()) {
+    if let Some(path) = find_repos_conf_xdg("ark".to_string()) {
         return Some(path);
     }
     None
 }
 
+/// Apply the given default repositories to the R session.
 fn apply_repos(repos: HashMap<String, String>) -> anyhow::Result<()> {
     log::debug!("Applying default repositories: {:?}", repos);
-    Ok(())
+    // Convert the HashMap to an R named character vector
+    let named_repos = RObject::from(repos);
+
+    // Call `apply_repo_defaults` to set the repos on the R side
+    let mut call = RFunction::new("", "apply_repo_defaults");
+    call.add(named_repos);
+    match call.call_in(ARK_ENVS.positron_ns) {
+        Ok(_) => Ok(()),
+        Err(e) => Err(anyhow::anyhow!(
+            "Error applying default repositories: {}",
+            e
+        )),
+    }
 }
 
 /// Apply the repos configuration file at the given path.
