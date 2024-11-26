@@ -1622,6 +1622,8 @@ fn truncate_chars(value: String, len: usize) -> (bool, String) {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Instant;
+
     use harp;
 
     use super::*;
@@ -2035,6 +2037,23 @@ mod tests {
             let vars = PositronVariable::inspect(env.into(), &path).unwrap();
             assert_eq!(vars.len(), 1);
             assert_eq!(vars[0].display_value, "[]");
+        });
+    }
+
+    #[test]
+    fn test_performance_on_posixct() {
+        r_task(|| {
+            let env = Environment::new_empty().unwrap();
+            let value = harp::parse_eval_base("rep(as.POSIXct('2021-01-01'), 1e6)").unwrap();
+            env.bind("x".into(), value.sexp);
+
+            let path = vec![];
+            let start = Instant::now();
+            let vars = PositronVariable::inspect(env.into(), &path).unwrap();
+            let elapsed = start.elapsed();
+
+            assert_eq!(elapsed.as_millis() < 500, true);
+            assert_eq!(vars.len(), 1);
         });
     }
 }
