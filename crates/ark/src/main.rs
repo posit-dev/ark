@@ -14,6 +14,7 @@ use amalthea::kernel;
 use amalthea::kernel_spec::KernelSpec;
 use ark::interface::SessionMode;
 use ark::logger;
+use ark::repos::DefaultRepos;
 use ark::signals::initialize_signal_block;
 use ark::start::start_kernel;
 use ark::traps::register_trap_handlers;
@@ -41,6 +42,11 @@ Available options:
 --startup-file FILE      An R file to run on session startup
 --session-mode MODE      The mode in which the session is running (console, notebook, background)
 --no-capture-streams     Do not capture stdout/stderr from R
+--default-repos          Set the default repositories:
+                         "rstudio" ('cran.rstudio.com'), or
+                         "posit-ppm" ('packagemanager.posit.co' repository if available for this OS), or
+                         a path to a .conf file containing a list of repositories, or
+                         "none" (do not alter the default repositories)
 --version                Print the version of Ark
 --log FILE               Log to the given file (if not specified, stdout/stderr
                          will be used)
@@ -72,6 +78,7 @@ fn main() -> anyhow::Result<()> {
     let mut r_args: Vec<String> = Vec::new();
     let mut has_action = false;
     let mut capture_streams = true;
+    let mut default_repos = DefaultRepos::Auto;
 
     // Process remaining arguments. TODO: Need an argument that can passthrough args to R
     while let Some(arg) = argv.next() {
@@ -127,6 +134,30 @@ fn main() -> anyhow::Result<()> {
                 has_action = true;
             },
             "--no-capture-streams" => capture_streams = false,
+            "--default-repos" => {
+                if let Some(repos) = argv.next() {
+                    default_repos = match repos.as_str() {
+                        "rstudio" => DefaultRepos::RStudio,
+                        "posit-ppm" => DefaultRepos::PositPPM,
+                        "none" => DefaultRepos::None,
+                        _ => {
+                            let path = std::path::PathBuf::from(repos.clone());
+
+                            // Check to see if the file exists
+                            if !path.exists() {
+                                return Err(anyhow::anyhow!(
+                                    "The specified default repository configuration file {repos:?} does not exist."
+                                ));
+                            }
+                            DefaultRepos::ConfFile(path)
+                        },
+                    }
+                } else {
+                    return Err(anyhow::anyhow!(
+                        "A default repository must follow the --default-repos option."
+                    ));
+                }
+            },
             "--log" => {
                 if let Some(file) = argv.next() {
                     log_file = Some(file);
