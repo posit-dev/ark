@@ -33,7 +33,17 @@
     ))
 }
 
+#' @export
+.rs.api.documentPath <- function(id = NULL) {
+    # TODO: Support document IDs
+    stopifnot(is.null(id))
 
+    context <- .ps.ui.LastActiveEditorContext()
+    if (is.null(context)) {
+        return()
+    }
+    context$document$path
+}
 
 #' @export
 .rs.api.getActiveDocumentContext <- function() {
