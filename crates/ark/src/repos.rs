@@ -15,6 +15,9 @@ use harp::RObject;
 
 use crate::modules::ARK_ENVS;
 
+// Constants for repository URLs
+const GENERIC_P3M_REPO: &str = "https://packagemanager.posit.co/cran/latest";
+
 #[derive(Debug)]
 pub enum DefaultRepos {
     /// Do not set the repository automatically
@@ -86,7 +89,9 @@ pub fn apply_default_repos(repos: DefaultRepos) -> anyhow::Result<()> {
         },
         DefaultRepos::PositPPM => {
             log::info!("Setting default repositories to Posit's Public Package Manager");
-            Ok(())
+            let mut repos = HashMap::new();
+            repos.insert("CRAN".to_string(), get_p3m_binary_package_repo());
+            apply_repos(repos)
         },
     }
 }
@@ -167,4 +172,104 @@ pub fn apply_repos_conf(path: PathBuf) -> anyhow::Result<()> {
         repos.insert(repo_name.to_string(), repo_url.to_string());
     }
     apply_repos(repos)
+}
+
+#[cfg(target_os = "linux")]
+fn get_p3m_linux_repo(linux_name: &str) -> String {
+    // The following Linux names have 1:1 mappings to a P3M repository URL
+    let repo_names = [
+        "bookworm",
+        "bullseye",
+        "focal",
+        "jammy",
+        "noble",
+        "opensuse155",
+        "opensuse156",
+        "rhel9",
+    ];
+
+    // First check for an empty name, and default to the generic P3M repo in that case.
+    // Then handle Linux names with a 1:1 mapping to a P3M repo.
+    // Then handle the special cases which map to different P3M repos.
+    // Otherwise, default to the generic P3M repo.
+    if linux_name.is_empty() {
+        return GENERIC_P3M_REPO.to_string();
+    } else if repo_names.contains(&linux_name) {
+        return format!(
+            "https://packagemanager.posit.co/cran/__linux__/{}/latest",
+            linux_name
+        );
+    } else if linux_name == "rhel8" {
+        return "https://packagemanager.posit.co/cran/__linux__/centos8/latest".to_string();
+    } else if linux_name == "sles155" {
+        return "https://packagemanager.posit.co/cran/__linux__/opensuse155/latest".to_string();
+    } else if linux_name == "sles156" {
+        return "https://packagemanager.posit.co/cran/__linux__/opensuse156/latest".to_string();
+    } else {
+        return GENERIC_P3M_REPO.to_string();
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn get_p3m_linux_codename(id: &str, version: &str, version_codename: &str) -> String {
+    // For Debian and Ubuntu, we can just use the codename
+    if id == "debian" || id == "ubuntu" {
+        return version_codename.to_string();
+    } else if id == "rhel" {
+        // For RHEL, we use the id and major version number
+        let parts: Vec<&str> = version.split('.').collect();
+        if parts.len() > 1 {
+            return format!("{}{}", id, parts[0]);
+        } else {
+            return format!("{}{}", id, version);
+        }
+    } else if id == "sles" || id.starts_with("opensuse") {
+        // For sles and opensuse we use the id and major and minor version number
+        // stripped of any dot separator
+        let distro_id = if id == "sles" { "sles" } else { "opensuse" };
+
+        let parts: Vec<&str> = version.split('.').collect();
+        if parts.len() > 1 {
+            return format!("{}{}{}", distro_id, parts[0], parts[1]);
+        } else {
+            return format!("{}{}", distro_id, version);
+        }
+    } else {
+        return String::new();
+    }
+}
+
+fn get_p3m_binary_package_repo() -> String {
+    #[cfg(target_os = "linux")]
+    {
+        // For Linux, we want a distro-specific URL if possible
+        // Read the /etc/os-release file to determine the Linux distribution info
+        let mut id = String::new();
+        let mut version = String::new();
+        let mut version_codename = String::new();
+        let VERSION_CODENAME = "VERSION_CODENAME=";
+        let ID = "ID=";
+        let VERSION_ID = "VERSION_ID=";
+        if let Ok(file) = File::open("/etc/os-release") {
+            let reader = BufReader::new(file);
+
+            for line in reader.lines().flatten() {
+                if version_codename.is_empty() && line.starts_with(VERSION_CODENAME) {
+                    version_codename = line[VERSION_CODENAME.len()..].to_string();
+                } else if id.is_empty() && line.starts_with(ID) {
+                    id = line[ID.len()..].to_string();
+                } else if version.is_empty() && line.starts_with(VERSION_ID) {
+                    version = line[VERSION_ID.len()..].to_string();
+                }
+            }
+        }
+
+        get_p3m_linux_repo(get_p3m_linux_codename(&id, &version, &version_codename))
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        // For non-Linux, we can use the generic P3M URL
+        GENERIC_P3M_REPO.to_string()
+    }
 }
