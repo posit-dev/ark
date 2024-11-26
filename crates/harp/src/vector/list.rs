@@ -94,7 +94,7 @@ impl super::Vector for List {
         Self { obj, ptr, sexp }
     }
 
-    fn format_one(&self, _x: Self::Type, _options: Option<&super::FormatOptions>) -> String {
+    fn format_one(&self, _x: Self::Type) -> String {
         todo!()
     }
 }

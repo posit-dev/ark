@@ -14,7 +14,6 @@ use libr::LOGICAL_ELT;
 use libr::SEXP;
 
 use crate::object::RObject;
-use crate::vector::FormatOptions;
 use crate::vector::Vector;
 
 #[harp_macros::vector]
@@ -71,7 +70,7 @@ impl Vector for LogicalVector {
         *x == 1
     }
 
-    fn format_one(&self, x: Self::Type, _option: Option<&FormatOptions>) -> String {
+    fn format_one(&self, x: Self::Type) -> String {
         if x {
             String::from("TRUE")
         } else {

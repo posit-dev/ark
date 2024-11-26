@@ -26,7 +26,6 @@ use crate::utils::r_typeof;
 use crate::vector::CharacterVector;
 use crate::vector::ComplexVector;
 use crate::vector::Factor;
-use crate::vector::FormatOptions;
 use crate::vector::IntegerVector;
 use crate::vector::LogicalVector;
 use crate::vector::NumericVector;
@@ -34,57 +33,19 @@ use crate::vector::RawVector;
 use crate::vector::Vector;
 pub enum FormattedVector {
     // simple
-    Raw {
-        vector: RawVector,
-    },
-    Logical {
-        vector: LogicalVector,
-    },
-    Integer {
-        vector: IntegerVector,
-    },
-    Numeric {
-        vector: NumericVector,
-    },
-    Character {
-        vector: CharacterVector,
-        options: FormatOptions,
-    },
-    Complex {
-        vector: ComplexVector,
-    },
+    Raw { vector: RawVector },
+    Logical { vector: LogicalVector },
+    Integer { vector: IntegerVector },
+    Numeric { vector: NumericVector },
+    Character { vector: CharacterVector },
+    Complex { vector: ComplexVector },
     // special
-    Factor {
-        vector: Factor,
-    },
-    FormattedVector {
-        vector: CharacterVector,
-        options: FormatOptions,
-    },
-}
-
-// Formatting options for vectors
-#[derive(Default)]
-pub struct FormattedVectorOptions {
-    // Formatting options for character vectors
-    pub character: FormatOptions,
-}
-
-impl Default for FormatOptions {
-    fn default() -> Self {
-        Self { quote: true }
-    }
+    Factor { vector: Factor },
+    FormattedVector { vector: CharacterVector },
 }
 
 impl FormattedVector {
     pub fn new(vector: SEXP) -> Result<Self> {
-        Self::new_with_options(vector, FormattedVectorOptions::default())
-    }
-
-    pub fn new_with_options(
-        vector: SEXP,
-        formatting_options: FormattedVectorOptions,
-    ) -> Result<Self> {
         unsafe {
             let class = Rf_getAttrib(vector, R_ClassSymbol);
             if r_is_null(class) {
@@ -103,7 +64,6 @@ impl FormattedVector {
                     }),
                     STRSXP => Ok(Self::Character {
                         vector: CharacterVector::new_unchecked(vector),
-                        options: formatting_options.character,
                     }),
                     CPLXSXP => Ok(Self::Complex {
                         vector: ComplexVector::new_unchecked(vector),
@@ -124,7 +84,6 @@ impl FormattedVector {
                     r_assert_type(formatted, &[STRSXP])?;
                     Ok(Self::FormattedVector {
                         vector: CharacterVector::new_unchecked(formatted),
-                        options: formatting_options.character,
                     })
                 }
             }
@@ -133,18 +92,14 @@ impl FormattedVector {
 
     pub fn get_unchecked(&self, index: isize) -> String {
         match self {
-            FormattedVector::Raw { vector } => vector.format_elt_unchecked(index, None),
-            FormattedVector::Logical { vector } => vector.format_elt_unchecked(index, None),
-            FormattedVector::Integer { vector } => vector.format_elt_unchecked(index, None),
-            FormattedVector::Numeric { vector } => vector.format_elt_unchecked(index, None),
-            FormattedVector::Character { vector, options } => {
-                vector.format_elt_unchecked(index, Some(options))
-            },
-            FormattedVector::Complex { vector } => vector.format_elt_unchecked(index, None),
-            FormattedVector::Factor { vector } => vector.format_elt_unchecked(index, None),
-            FormattedVector::FormattedVector { vector, options } => {
-                vector.format_elt_unchecked(index, Some(options))
-            },
+            FormattedVector::Raw { vector } => vector.format_elt_unchecked(index),
+            FormattedVector::Logical { vector } => vector.format_elt_unchecked(index),
+            FormattedVector::Integer { vector } => vector.format_elt_unchecked(index),
+            FormattedVector::Numeric { vector } => vector.format_elt_unchecked(index),
+            FormattedVector::Character { vector } => vector.format_elt_unchecked(index),
+            FormattedVector::Complex { vector } => vector.format_elt_unchecked(index),
+            FormattedVector::Factor { vector } => vector.format_elt_unchecked(index),
+            FormattedVector::FormattedVector { vector } => vector.format_elt_unchecked(index),
         }
     }
 
@@ -158,10 +113,10 @@ impl FormattedVector {
             FormattedVector::Logical { vector } => vector.data(),
             FormattedVector::Integer { vector } => vector.data(),
             FormattedVector::Numeric { vector } => vector.data(),
-            FormattedVector::Character { vector, options: _ } => vector.data(),
+            FormattedVector::Character { vector } => vector.data(),
             FormattedVector::Complex { vector } => vector.data(),
             FormattedVector::Factor { vector } => vector.data(),
-            FormattedVector::FormattedVector { vector, options: _ } => vector.data(),
+            FormattedVector::FormattedVector { vector } => vector.data(),
         }
     }
 }
@@ -221,16 +176,12 @@ impl FormattedVector {
 #[cfg(test)]
 mod tests {
     use itertools::Itertools;
-    use libr::STRSXP;
 
     use crate::environment::Environment;
     use crate::eval::parse_eval0;
     use crate::fixtures::r_task;
     use crate::modules::HARP_ENV;
-    use crate::r_assert_type;
     use crate::vector::formatted_vector::FormattedVector;
-    use crate::vector::formatted_vector::FormattedVectorOptions;
-    use crate::vector::FormatOptions;
 
     #[test]
     fn test_unconforming_format_method() {
@@ -256,31 +207,6 @@ mod tests {
             let x = FormattedVector::new(objs.find("unconforming_type").unwrap()).unwrap();
             let out = x.iter().join(" ");
             assert_eq!(out, exp);
-        })
-    }
-
-    #[test]
-    fn test_formatting_option() {
-        r_task(|| {
-            let x = harp::parse_eval_base(r#"c("1", "2", '"a"', "NA", NA_character_)"#).unwrap();
-            r_assert_type(x.sexp, &[STRSXP]).unwrap();
-
-            let formatted = FormattedVector::new_with_options(x.sexp, FormattedVectorOptions {
-                character: FormatOptions { quote: false },
-            })
-            .unwrap();
-
-            let out = formatted.iter().join(" ");
-            assert_eq!(out, String::from(r#"1 2 "a" NA NA"#));
-
-            let formatted = FormattedVector::new_with_options(x.sexp, FormattedVectorOptions {
-                character: FormatOptions { quote: true },
-            })
-            .unwrap();
-
-            // NA is always unquoted regardless of the quote option
-            let out = formatted.iter().join(" ");
-            assert_eq!(out, String::from(r#""1" "2" "\"a\"" "NA" NA"#));
         })
     }
 }

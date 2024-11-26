@@ -17,7 +17,6 @@ use libr::SEXP;
 use crate::object::RObject;
 use crate::r_symbol;
 use crate::vector::CharacterVector;
-use crate::vector::FormatOptions;
 use crate::vector::Vector;
 
 #[harp_macros::vector]
@@ -76,7 +75,7 @@ impl Vector for Factor {
         *x
     }
 
-    fn format_one(&self, x: Self::Type, _option: Option<&FormatOptions>) -> String {
+    fn format_one(&self, x: Self::Type) -> String {
         self.levels.get_unchecked((x - 1) as isize).unwrap()
     }
 }

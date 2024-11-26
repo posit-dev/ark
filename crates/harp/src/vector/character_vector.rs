@@ -20,7 +20,6 @@ use crate::object::RObject;
 use crate::r_assert_type;
 use crate::r_chr_poke;
 use crate::utils::r_str_to_owned_utf8_unchecked;
-use crate::vector::FormatOptions;
 use crate::vector::Vector;
 
 #[harp_macros::vector]
@@ -95,16 +94,8 @@ impl Vector for CharacterVector {
         r_str_to_owned_utf8_unchecked(*x)
     }
 
-    fn format_one(&self, x: Self::Type, options: Option<&FormatOptions>) -> String {
-        if let Some(&FormatOptions { quote, .. }) = options {
-            if quote {
-                format!(r#""{}""#, x.replace('"', r#"\""#))
-            } else {
-                x
-            }
-        } else {
-            x
-        }
+    fn format_one(&self, x: Self::Type) -> String {
+        format!(r#""{}""#, x.replace('"', r#"\""#))
     }
 }
 
