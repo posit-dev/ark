@@ -68,6 +68,7 @@ pub async fn handle_columns_profiles_requests(
     let event = DataExplorerFrontendEvent::ReturnColumnProfiles(ReturnColumnProfilesParams {
         callback_id,
         profiles,
+        error_message: None,
     });
 
     let json_event = serde_json::to_value(event)?;

@@ -522,6 +522,10 @@ impl RDataExplorer {
 
             DataExplorerBackendRequest::GetState => r_task(|| self.r_get_state()),
 
+            DataExplorerBackendRequest::OpenDataset(_) => {
+                return Err(anyhow!("Data Explorer: Not yet supported"));
+            },
+
             DataExplorerBackendRequest::SearchSchema(_) => {
                 return Err(anyhow!("Data Explorer: Not yet supported"));
             },
@@ -873,6 +877,8 @@ impl RDataExplorer {
     fn r_get_state(&self) -> anyhow::Result<DataExplorerBackendReply> {
         let state = BackendState {
             display_name: self.title.clone(),
+            connected: Some(true),
+            error_message: None,
             table_shape: TableShape {
                 num_rows: match self.filtered_indices {
                     Some(ref indices) => indices.len() as i64,
