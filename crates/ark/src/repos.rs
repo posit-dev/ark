@@ -13,6 +13,12 @@ use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::RObject;
 
+#[cfg(target_os = "linux")]
+use std::fs::File;
+
+#[cfg(target_os = "linux")]
+use std::io::BufReader;
+
 use crate::modules::ARK_ENVS;
 
 // Constants for repository URLs
@@ -175,17 +181,17 @@ pub fn apply_repos_conf(path: PathBuf) -> anyhow::Result<()> {
 }
 
 #[cfg(target_os = "linux")]
-fn get_p3m_linux_repo(linux_name: &str) -> String {
+fn get_p3m_linux_repo(linux_name: String) -> String {
     // The following Linux names have 1:1 mappings to a P3M repository URL
     let repo_names = [
-        "bookworm",
-        "bullseye",
-        "focal",
-        "jammy",
-        "noble",
-        "opensuse155",
-        "opensuse156",
-        "rhel9",
+        String::from("bookworm"),
+        String::from("bullseye"),
+        String::from("focal"),
+        String::from("jammy"),
+        String::from("noble"),
+        String::from("opensuse155"),
+        String::from("opensuse156"),
+        String::from("rhel9"),
     ];
 
     // First check for an empty name, and default to the generic P3M repo in that case.
@@ -211,7 +217,7 @@ fn get_p3m_linux_repo(linux_name: &str) -> String {
 }
 
 #[cfg(target_os = "linux")]
-fn get_p3m_linux_codename(id: &str, version: &str, version_codename: &str) -> String {
+fn get_p3m_linux_codename(id: String, version: String, version_codename: String) -> String {
     // For Debian and Ubuntu, we can just use the codename
     if id == "debian" || id == "ubuntu" {
         return version_codename.to_string();
@@ -247,24 +253,24 @@ fn get_p3m_binary_package_repo() -> String {
         let mut id = String::new();
         let mut version = String::new();
         let mut version_codename = String::new();
-        let VERSION_CODENAME = "VERSION_CODENAME=";
-        let ID = "ID=";
-        let VERSION_ID = "VERSION_ID=";
+        let version_codename_key = "VERSION_CODENAME=";
+        let id_key = "ID=";
+        let version_id_key = "VERSION_ID=";
         if let Ok(file) = File::open("/etc/os-release") {
             let reader = BufReader::new(file);
 
             for line in reader.lines().flatten() {
-                if version_codename.is_empty() && line.starts_with(VERSION_CODENAME) {
-                    version_codename = line[VERSION_CODENAME.len()..].to_string();
-                } else if id.is_empty() && line.starts_with(ID) {
-                    id = line[ID.len()..].to_string();
-                } else if version.is_empty() && line.starts_with(VERSION_ID) {
-                    version = line[VERSION_ID.len()..].to_string();
+                if version_codename.is_empty() && line.starts_with(version_codename_key) {
+                    version_codename = line[version_codename_key.len()..].to_string();
+                } else if id.is_empty() && line.starts_with(id_key) {
+                    id = line[id_key.len()..].to_string();
+                } else if version.is_empty() && line.starts_with(version_id_key) {
+                    version = line[version_id_key.len()..].to_string();
                 }
             }
         }
 
-        get_p3m_linux_repo(get_p3m_linux_codename(&id, &version, &version_codename))
+        get_p3m_linux_repo(get_p3m_linux_codename(id, version, version_codename))
     }
 
     #[cfg(not(target_os = "linux"))]
