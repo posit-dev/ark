@@ -13,6 +13,13 @@ use serde::Serialize;
 
 /// Result in Methods
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct OpenDatasetResult {
+	/// An error message if opening the dataset failed
+	pub error_message: Option<String>
+}
+
+/// Result in Methods
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SearchSchemaResult {
 	/// A schema containing matching columns up to the max_results limit
 	pub matches: TableSchema,
@@ -67,7 +74,15 @@ pub struct BackendState {
 	pub sort_keys: Vec<ColumnSortKey>,
 
 	/// The features currently supported by the backend instance
-	pub supported_features: SupportedFeatures
+	pub supported_features: SupportedFeatures,
+
+	/// Optional flag allowing backend to report that it is unable to serve
+	/// requests. This parameter may change.
+	pub connected: Option<bool>,
+
+	/// Optional experimental parameter to provide an explanation when
+	/// connected=false. This parameter may change.
+	pub error_message: Option<String>
 }
 
 /// Schema for a column in a table
@@ -985,6 +1000,13 @@ pub enum ArraySelection {
 	SelectIndices(DataSelectionIndices)
 }
 
+/// Parameters for the OpenDataset method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct OpenDatasetParams {
+	/// The resource locator or file path
+	pub uri: String,
+}
+
 /// Parameters for the GetSchema method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct GetSchemaParams {
@@ -1079,6 +1101,9 @@ pub struct ReturnColumnProfilesParams {
 
 	/// Array of individual column profile results
 	pub profiles: Vec<ColumnProfileResult>,
+
+	/// Optional error message if something failed to compute
+	pub error_message: Option<String>,
 }
 
 /**
@@ -1087,6 +1112,12 @@ pub struct ReturnColumnProfilesParams {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params")]
 pub enum DataExplorerBackendRequest {
+	/// Request to open a dataset given a URI
+	///
+	/// Request to open a dataset given a URI
+	#[serde(rename = "open_dataset")]
+	OpenDataset(OpenDatasetParams),
+
 	/// Request schema
 	///
 	/// Request subset of column schemas for a table-like object
@@ -1160,6 +1191,8 @@ pub enum DataExplorerBackendRequest {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "result")]
 pub enum DataExplorerBackendReply {
+	OpenDatasetReply(OpenDatasetResult),
+
 	GetSchemaReply(TableSchema),
 
 	SearchSchemaReply(SearchSchemaResult),
