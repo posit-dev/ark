@@ -9,6 +9,7 @@ use amalthea::fixtures::dummy_frontend::DummyConnection;
 use amalthea::fixtures::dummy_frontend::DummyFrontend;
 
 use crate::interface::SessionMode;
+use crate::repos::DefaultRepos;
 
 // There can be only one frontend per process. Needs to be in a mutex because
 // the frontend wraps zmq sockets which are unsafe to send across threads.
@@ -105,6 +106,7 @@ impl DummyArkFrontend {
                 None,
                 options.session_mode,
                 false,
+                DefaultRepos::None,
             );
         });
 

@@ -341,6 +341,7 @@ fn main() -> anyhow::Result<()> {
         startup_file,
         session_mode,
         capture_streams,
+        default_repos,
     );
 
     // Just to please Rust

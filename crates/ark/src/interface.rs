@@ -106,6 +106,8 @@ use crate::r_task::BoxFuture;
 use crate::r_task::RTask;
 use crate::r_task::RTaskStartInfo;
 use crate::r_task::RTaskStatus;
+use crate::repos::apply_default_repos;
+use crate::repos::DefaultRepos;
 use crate::request::debug_request_command;
 use crate::request::KernelRequest;
 use crate::request::RRequest;
@@ -300,6 +302,7 @@ impl RMain {
         kernel_request_rx: Receiver<KernelRequest>,
         dap: Arc<Mutex<Dap>>,
         session_mode: SessionMode,
+        default_repos: DefaultRepos,
     ) {
         // Set the main thread ID.
         // Must happen before doing anything that checks `RMain::on_main_thread()`,
@@ -426,6 +429,11 @@ impl RMain {
 
             // Set up the global error handler (after support function initialization)
             errors::initialize();
+
+            // Set default repositories
+            if let Err(err) = apply_default_repos(default_repos) {
+                log::error!("Error setting default repositories: {err:?}");
+            }
 
             // Now that R has started (emitting any startup messages), and now that we have set
             // up all hooks and handlers, officially finish the R initialization process to
