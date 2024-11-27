@@ -781,7 +781,7 @@ fn recurse_call_arguments_default(
     node: Node,
     context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
-) -> Result<()> {
+) -> anyhow::Result<()> {
     // TODO: Can we better handle NSE in things like `quote()` and
     // `dplyr::mutate()` so we don't have to turn off certain diagnostics when
     // we are inside a call's arguments?
@@ -804,23 +804,26 @@ fn recurse_call_arguments_default(
     let in_call = context.in_call;
     context.in_call = true;
 
-    // Recurse into arguments.
-    if let Some(arguments) = node.child_by_field_name("arguments") {
-        let mut cursor = arguments.walk();
-        let children = arguments.children_by_field_name("argument", &mut cursor);
-        for child in children {
-            // Warn if the next sibling is neither a comma nor a closing delimiter.
-            check_call_next_sibling(child, context, diagnostics)?;
+    let result = (|| -> anyhow::Result<()> {
+        // Recurse into arguments.
+        if let Some(arguments) = node.child_by_field_name("arguments") {
+            let mut cursor = arguments.walk();
+            let children = arguments.children_by_field_name("argument", &mut cursor);
+            for child in children {
+                // Warn if the next sibling is neither a comma nor a closing delimiter.
+                check_call_next_sibling(child, context, diagnostics)?;
 
-            // Recurse into values.
-            if let Some(value) = child.child_by_field_name("value") {
-                recurse(value, context, diagnostics)?;
+                // Recurse into values.
+                if let Some(value) = child.child_by_field_name("value") {
+                    recurse(value, context, diagnostics)?;
+                }
             }
         }
-    }
+        Ok(())
+    })();
 
     context.in_call = in_call;
-    ().ok()
+    result
 }
 
 fn recurse_call(
