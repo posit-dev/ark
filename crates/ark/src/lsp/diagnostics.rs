@@ -1333,7 +1333,6 @@ foo
 
     #[test]
     fn test_dotty_assignment_within_native_pipe_braced_expr() {
-        // TODO: `apple` should be defined in the global env and there should not be a diagnostic here
         r_task(|| {
             let code = "
                 mtcars |> list({ .[apple] <- 1; apple })
@@ -1406,6 +1405,18 @@ foo
             assert_eq!(
                 generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
                 0
+            );
+
+            // `in_call` state variable is reset
+            let code = "
+                list()
+                x
+            ";
+            let document = Document::new(code, None);
+
+            assert_eq!(
+                generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
+                1
             );
         })
     }
