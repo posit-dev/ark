@@ -112,7 +112,7 @@ fn apply_default_repos_auto() -> anyhow::Result<()> {
 
 /// On Windows, we just use the RStudio CRAN mirror as the default.
 #[cfg(windows)]
-fn apply_default_repos_auto() {
+fn apply_default_repos_auto() -> anyhow::Result<()> {
     apply_default_repos(DefaultRepos::RStudio)
 }
 
