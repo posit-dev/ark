@@ -54,6 +54,7 @@ use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use crossbeam::select;
 use harp::command::r_command;
+use harp::command::r_command_from_path;
 use harp::environment::r_ns_env;
 use harp::environment::Environment;
 use harp::environment::R_ENVS;
@@ -359,21 +360,56 @@ impl RMain {
             args.push(CString::new(arg).unwrap().into_raw());
         }
 
-        // Get `R_HOME` from env var, typically set by Positron / CI / kernel specification
         let r_home = match std::env::var("R_HOME") {
-            Ok(home) => PathBuf::from(home),
+            Ok(home) => {
+                // Get `R_HOME` from env var, typically set by Positron / CI / kernel specification
+                PathBuf::from(home)
+            },
             Err(_) => {
                 // Get `R_HOME` from `PATH`, via `R`
-                let Ok(result) = r_command(|command| {
+                let Ok(result) = r_command_from_path(|command| {
                     command.arg("RHOME");
                 }) else {
                     panic!("Can't find R or `R_HOME`");
                 };
+
                 let r_home = String::from_utf8(result.stdout).unwrap();
                 let r_home = r_home.trim();
+
+                // Now set `R_HOME`. From now on, `r_command()` can be used to
+                // run exactly the same R as is running in Ark.
                 unsafe { std::env::set_var("R_HOME", r_home) };
                 PathBuf::from(r_home)
             },
+        };
+
+        // `R_HOME` is now defined no matter what and will be used by
+        // `r_command()`. Let's discover the other important environment
+        // variables set by R's shell script frontend.
+        // https://github.com/posit-dev/positron/issues/3637
+        if let Ok(output) =
+            r_command(|command| {
+                // From https://github.com/rstudio/rstudio/blob/74696236/src/cpp/core/r_util/REnvironmentPosix.cpp#L506-L515
+                command.arg("--vanilla").arg("-s").arg("-e").arg(
+                    r#"cat(paste(R.home('share'), R.home('include'), R.home('doc'), sep=';'))"#,
+                );
+            })
+        {
+            if let Ok(vars) = String::from_utf8(output.stdout) {
+                let vars: Vec<&str> = vars.trim().split(';').collect();
+                if vars.len() == 3 {
+                    // Set the R env vars as the R shell script frontend would
+                    unsafe {
+                        std::env::set_var("R_SHARE_DIR", vars[0]);
+                        std::env::set_var("R_INCLUDE_DIR", vars[1]);
+                        std::env::set_var("R_DOC_DIR", vars[2]);
+                    };
+                } else {
+                    log::warn!("Unexpected output for R envvars");
+                }
+            } else {
+                log::warn!("Could not read stdout for R envvars");
+            };
         };
 
         let libraries = RLibraries::from_r_home_path(&r_home);

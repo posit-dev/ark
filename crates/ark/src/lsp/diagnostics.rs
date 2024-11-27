@@ -781,30 +781,49 @@ fn recurse_call_arguments_default(
     node: Node,
     context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
-) -> Result<()> {
+) -> anyhow::Result<()> {
     // TODO: Can we better handle NSE in things like `quote()` and
     // `dplyr::mutate()` so we don't have to turn off certain diagnostics when
     // we are inside a call's arguments?
-    let mut context = context.clone();
+
+    // We used to clone `context` here to prevent assignments from applying to
+    // the caller. We now purposely preserve the caller's context with its
+    // `document_symbols`. We explicitly want to index symbols assigned in the
+    // call arguments to avoid false positive lints about missing symbols, see
+    // https://github.com/posit-dev/positron/issues/3048.
+    //
+    // Because of the way we traverse the syntax tree, this makes the assumption
+    // that execution order is deterministic from left to right. This is not
+    // necessarily correct since arguments are lazily evaluated, and whether
+    // this is true depends on the function's implementation. For now we assume
+    // every function behaves like `list()`, which is our default model of
+    // strict evaluation.
+
+    // Save `in_call` to restore it on exit. Necessary to handle nested calls
+    // and maintain the state to `true` until we've left the outermost call.
+    let in_call = context.in_call;
     context.in_call = true;
-    let context = &mut context;
 
-    // Recurse into arguments.
-    if let Some(arguments) = node.child_by_field_name("arguments") {
-        let mut cursor = arguments.walk();
-        let children = arguments.children_by_field_name("argument", &mut cursor);
-        for child in children {
-            // Warn if the next sibling is neither a comma nor a closing delimiter.
-            check_call_next_sibling(child, context, diagnostics)?;
+    let result = (|| -> anyhow::Result<()> {
+        // Recurse into arguments.
+        if let Some(arguments) = node.child_by_field_name("arguments") {
+            let mut cursor = arguments.walk();
+            let children = arguments.children_by_field_name("argument", &mut cursor);
+            for child in children {
+                // Warn if the next sibling is neither a comma nor a closing delimiter.
+                check_call_next_sibling(child, context, diagnostics)?;
 
-            // Recurse into values.
-            if let Some(value) = child.child_by_field_name("value") {
-                recurse(value, context, diagnostics)?;
+                // Recurse into values.
+                if let Some(value) = child.child_by_field_name("value") {
+                    recurse(value, context, diagnostics)?;
+                }
             }
         }
-    }
+        Ok(())
+    })();
 
-    ().ok()
+    context.in_call = in_call;
+    result
 }
 
 fn recurse_call(
@@ -1311,17 +1330,12 @@ foo
             let document = Document::new(code, None);
 
             let diagnostics = generate_diagnostics(document.clone(), DEFAULT_STATE.clone());
-            assert_eq!(diagnostics.len(), 1);
-
-            let diagnostic = diagnostics.get(0).unwrap();
-            assert_eq!(diagnostic.range.start.line, 2);
-            insta::assert_snapshot!(diagnostic.message);
+            assert_eq!(diagnostics.len(), 0);
         })
     }
 
     #[test]
     fn test_dotty_assignment_within_native_pipe_braced_expr() {
-        // TODO: `apple` should be defined in the global env and there should not be a diagnostic here
         r_task(|| {
             let code = "
                 mtcars |> list({ .[apple] <- 1; apple })
@@ -1331,31 +1345,82 @@ foo
             let document = Document::new(code, None);
 
             let diagnostics = generate_diagnostics(document.clone(), DEFAULT_STATE.clone());
-            assert_eq!(diagnostics.len(), 1);
-
-            let diagnostic = diagnostics.get(0).unwrap();
-            assert_eq!(diagnostic.range.start.line, 2);
-            insta::assert_snapshot!(diagnostic.message);
+            assert_eq!(diagnostics.len(), 0);
         })
     }
 
     #[test]
-    fn test_assignment_within_function_arguments() {
-        // TODO: `x` should be defined in the global env and there should not be a diagnostic here
+    fn test_assignment_within_call() {
+        // https://github.com/posit-dev/positron/issues/3048
+        // With our current approach we also incorrectly index symbols in calls
+        // with local scopes such as `local()` or `test_that()`. We prefer to be
+        // overly permissive than the opposite to avoid annoying false positive
+        // diagnostics.
         r_task(|| {
+            let code = "
+                list(x <- 1)
+                x
+            ";
+            let document = Document::new(code, None);
+
+            assert_eq!(
+                generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
+                0
+            );
+
             let code = "
                 list({ x <- 1 })
                 x
             ";
-
             let document = Document::new(code, None);
 
-            let diagnostics = generate_diagnostics(document.clone(), DEFAULT_STATE.clone());
-            assert_eq!(diagnostics.len(), 1);
+            assert_eq!(
+                generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
+                0
+            );
+        })
+    }
 
-            let diagnostic = diagnostics.get(0).unwrap();
-            assert_eq!(diagnostic.range.start.line, 2);
-            insta::assert_snapshot!(diagnostic.message);
+    #[test]
+    fn test_no_symbol_diagnostics_in_calls() {
+        // For now we never check for missing symbols inside calls because we
+        // don't have a good way to deal with NSE in functions like `quote()` or
+        // `mutate()`.
+        r_task(|| {
+            let code = "
+                list(x)
+            ";
+            let document = Document::new(code, None);
+
+            assert_eq!(
+                generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
+                0
+            );
+
+            // Important to test nested case. We have a dynamic stack of state
+            // variable to keep track of whether we are in a call. The inner
+            // call should restore the outer state on exit.
+            let code = "
+                list(list(), x)
+            ";
+            let document = Document::new(code, None);
+
+            assert_eq!(
+                generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
+                0
+            );
+
+            // `in_call` state variable is reset
+            let code = "
+                list()
+                x
+            ";
+            let document = Document::new(code, None);
+
+            assert_eq!(
+                generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
+                1
+            );
         })
     }
 }

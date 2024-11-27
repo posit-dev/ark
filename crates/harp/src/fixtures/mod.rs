@@ -17,7 +17,7 @@ use libr::R_CStackLimit;
 use libr::Rf_initialize_R;
 use stdext::cargs;
 
-use crate::command::r_command;
+use crate::command::r_command_from_path;
 use crate::library::RLibraries;
 use crate::R_MAIN_THREAD_ID;
 
@@ -53,7 +53,7 @@ pub fn r_test_init() {
         let r_home = match std::env::var("R_HOME") {
             Ok(r_home) => PathBuf::from(r_home),
             Err(_) => {
-                let result = r_command(|command| {
+                let result = r_command_from_path(|command| {
                     command.arg("RHOME");
                 })
                 .expect("Can't locate R to determine `R_HOME`.");
