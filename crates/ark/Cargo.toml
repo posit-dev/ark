@@ -62,7 +62,6 @@ tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 tracing-appender = "0.2.3"
 rustc-hash = "1.2.0"
 tracing-error = "0.2.0"
-xdg = "2.5.2"
 
 [dev-dependencies]
 insta = { version = "1.39.0" }
@@ -78,3 +77,6 @@ assets = [
     { source = "target/release/ark", dest = "/usr/bin/ark", mode = "755" },
 ]
 license = "TODO"
+
+[target.'cfg(unix)'.dependencies]
+xdg = "2.5.2"

@@ -28,8 +28,8 @@ pub enum DefaultRepos {
     None,
 
     /// Set the repository automatically. This checks for `repos.conf` in user and system XDG
-    /// locations; if found, it is used (as if were set as the `ConfFile`). If not, sets
-    /// `cran.rstudio.com` as the CRAN repository
+    /// locations for Unix-alikes; if found, it is used (as if were set as the `ConfFile`). If not,
+    /// sets `cran.rstudio.com` as the CRAN repository
     ///
     /// This is the default unless otherwise specified.
     Auto,
@@ -59,23 +59,7 @@ pub fn apply_default_repos(repos: DefaultRepos) -> anyhow::Result<()> {
             repos.insert("CRAN".to_string(), "https://cran.rstudio.com/".to_string());
             apply_repos(repos)
         },
-        DefaultRepos::Auto => {
-            // The user didn't specify any default repositories. See if there's a repos file in the
-            // XDG directories.
-            if let Some(path) = find_repos_conf() {
-                if let Err(e) = apply_repos_conf(path.clone()) {
-                    // We failed to apply the repos file; log the error and use the
-                    // RStudio defaults
-                    log::error!("Error applying repos file {path:?}: {e}; using defaults");
-                    apply_default_repos(DefaultRepos::RStudio)
-                } else {
-                    Ok(())
-                }
-            } else {
-                // No repos file found; use the RStudio defaults
-                apply_default_repos(DefaultRepos::RStudio)
-            }
-        },
+        DefaultRepos::Auto => apply_default_repos_auto(),
         DefaultRepos::ConfFile(path) => {
             if path.exists() {
                 if let Err(e) = apply_repos_conf(path.clone()) {
@@ -105,6 +89,34 @@ pub fn apply_default_repos(repos: DefaultRepos) -> anyhow::Result<()> {
     }
 }
 
+/// The automatic default repository setting. This checks for a `repos.conf` file in the XDG config
+/// directories; if found, it is used. If not, the RStudio CRAN mirror is used.
+///
+/// We only use this variant on Unix-like systems, as the `xdg` crate is Unix-only.
+#[cfg(unix)]
+fn apply_default_repos_auto() -> anyhow::Result<()> {
+    if let Some(path) = find_repos_conf() {
+        if let Err(e) = apply_repos_conf(path.clone()) {
+            // We failed to apply the repos file; log the error and use the
+            // RStudio defaults
+            log::error!("Error applying repos file {path:?}: {e}; using defaults");
+            apply_default_repos(DefaultRepos::RStudio)
+        } else {
+            Ok(())
+        }
+    } else {
+        // No repos file found; use the RStudio defaults
+        apply_default_repos(DefaultRepos::RStudio)
+    }
+}
+
+/// On Windows, we just use the RStudio CRAN mirror as the default.
+#[cfg(windows)]
+fn apply_default_repos_auto() {
+    apply_default_repos(DefaultRepos::RStudio)
+}
+
+#[cfg(unix)]
 fn find_repos_conf_xdg(prefix: String) -> Option<PathBuf> {
     let xdg_dirs = match xdg::BaseDirectories::with_prefix(prefix.clone()) {
         Ok(xdg_dirs) => xdg_dirs,
@@ -118,6 +130,7 @@ fn find_repos_conf_xdg(prefix: String) -> Option<PathBuf> {
 
 /// Finds a `repos.conf` file in the XDG configuration directories. Checks both RStudio and Ark
 /// config folders.
+#[cfg(unix)]
 fn find_repos_conf() -> Option<PathBuf> {
     if let Some(path) = find_repos_conf_xdg("rstudio".to_string()) {
         return Some(path);
@@ -183,6 +196,7 @@ pub fn apply_repos_conf(path: PathBuf) -> anyhow::Result<()> {
     apply_repos(repos)
 }
 
+/// Checks the Linux distribution name and version to determine the appropriate P3M repository URL.
 #[cfg(target_os = "linux")]
 fn get_p3m_linux_repo(linux_name: String) -> String {
     // The following Linux names have 1:1 mappings to a P3M repository URL
