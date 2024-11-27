@@ -674,7 +674,7 @@ pub fn save_rds(x: SEXP, path: &str) {
 
     let env = Environment::new(harp::parse_eval_base("new.env()").unwrap());
     env.bind("x".into(), x);
-    env.bind("path".into(), path);
+    env.bind("path".into(), path.sexp);
 
     let res = harp::parse_eval0("base::saveRDS(x, path)", env);
 
@@ -702,8 +702,8 @@ pub fn push_rds(x: SEXP, path: &str, context: &str) {
     let env = Environment::new(harp::parse_eval_base("new.env()").unwrap());
 
     env.bind("x".into(), x);
-    env.bind("path".into(), path);
-    env.bind("context".into(), context);
+    env.bind("path".into(), path.sexp);
+    env.bind("context".into(), context.sexp);
 
     let res = harp::parse_eval0(".ps.internal(push_rds(x, path, context))", env);
 

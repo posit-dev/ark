@@ -91,13 +91,13 @@ impl Environment {
         std::iter::successors(Some(self.clone()), |p| p.parent())
     }
 
-    pub fn bind(&self, name: RSymbol, value: impl Into<SEXP>) {
+    pub fn bind(&self, name: RSymbol, value: SEXP) {
         unsafe {
             Rf_defineVar(name.sexp, value.into(), self.inner.sexp);
         }
     }
 
-    pub fn force_bind(&self, name: RSymbol, value: impl Into<SEXP>) {
+    pub fn force_bind(&self, name: RSymbol, value: SEXP) {
         let locked = self.is_locked_binding(name);
         if locked {
             self.unlock_binding(name);
