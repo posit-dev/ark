@@ -6,18 +6,16 @@
 //
 
 use std::collections::HashMap;
+#[cfg(target_os = "linux")]
+use std::fs::File;
 use std::io::BufRead;
+#[cfg(target_os = "linux")]
+use std::io::BufReader;
 use std::path::PathBuf;
 
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::RObject;
-
-#[cfg(target_os = "linux")]
-use std::fs::File;
-
-#[cfg(target_os = "linux")]
-use std::io::BufReader;
 
 use crate::modules::ARK_ENVS;
 
@@ -26,12 +24,14 @@ const GENERIC_P3M_REPO: &str = "https://packagemanager.posit.co/cran/latest";
 
 #[derive(Debug)]
 pub enum DefaultRepos {
-    /// Do not set the repository automatically
+    /// Do not set the repository at all (don't touch the `repos` option)
     None,
 
-    /// Set the repository automatically. This checks for `repos.conf` in XDG locations; if found,
-    /// it is used (as if were set as the `ConfFile`). If not, sets `cran.rstudio.com` as the CRAN
-    /// repository
+    /// Set the repository automatically. This checks for `repos.conf` in user and system XDG
+    /// locations; if found, it is used (as if were set as the `ConfFile`). If not, sets
+    /// `cran.rstudio.com` as the CRAN repository
+    ///
+    /// This is the default unless otherwise specified.
     Auto,
 
     /// Set the repository to the default CRAN repository, `cran.rstudio.com`
@@ -53,13 +53,15 @@ pub fn apply_default_repos(repos: DefaultRepos) -> anyhow::Result<()> {
             Ok(())
         },
         DefaultRepos::RStudio => {
+            // Use the RStudio CRAN repository
             log::debug!("Setting default repositories to RStudio CRAN");
             let mut repos = HashMap::new();
             repos.insert("CRAN".to_string(), "https://cran.rstudio.com/".to_string());
             apply_repos(repos)
         },
         DefaultRepos::Auto => {
-            // See if there's a repos file in the XDG directories
+            // The user didn't specify any default repositories. See if there's a repos file in the
+            // XDG directories.
             if let Some(path) = find_repos_conf() {
                 if let Err(e) = apply_repos_conf(path.clone()) {
                     // We failed to apply the repos file; log the error and use the
@@ -77,7 +79,8 @@ pub fn apply_default_repos(repos: DefaultRepos) -> anyhow::Result<()> {
         DefaultRepos::ConfFile(path) => {
             if path.exists() {
                 if let Err(e) = apply_repos_conf(path.clone()) {
-                    // We failed to apply the repos file; log the error and use defaults
+                    // We failed to apply the repos file; log the error and use defaults so we
+                    // still have a good shot at a working CRAN mirror
                     log::error!(
                         "Error applying specified repos file: {path:?}: {e}; using defaults"
                     );
