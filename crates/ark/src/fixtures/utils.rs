@@ -16,6 +16,7 @@ use serde::Serialize;
 use tree_sitter::Point;
 
 use crate::modules;
+use crate::modules::ARK_ENVS;
 
 // Lock for tests that can't be run concurrently. Only needed for tests that can't
 // be wrapped in an `r_task()`.
@@ -90,6 +91,16 @@ where
         },
         _ => panic!("Unexpected Comm Message"),
     }
+}
+
+pub fn package_is_installed(package: &str) -> bool {
+    harp::parse_eval0(
+        format!(".ps.is_installed('{package}')").as_str(),
+        ARK_ENVS.positron_ns,
+    )
+    .unwrap()
+    .try_into()
+    .unwrap()
 }
 
 #[cfg(test)]

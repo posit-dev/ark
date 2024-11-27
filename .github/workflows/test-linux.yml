@@ -58,6 +58,7 @@ jobs:
             data.table
             rstudioapi
             tibble
+            haven
 
       - name: Setup SSH access
         uses: mxschmitt/action-tmate@v3
