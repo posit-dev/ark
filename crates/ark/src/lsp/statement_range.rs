@@ -494,11 +494,16 @@ fn contains_row_at_different_start_position(node: Node, row: usize) -> Option<No
     }
 }
 
-#[rustfmt::skip]
-#[test]
-fn test_statement_range() {
+#[cfg(test)]
+mod tests {
+    use ropey::Rope;
+    use tree_sitter::Node;
     use tree_sitter::Parser;
     use tree_sitter::Point;
+
+    use crate::lsp::statement_range::find_roxygen_comment_at_point;
+    use crate::lsp::statement_range::find_statement_range_node;
+    use crate::lsp::traits::rope::RopeExt;
 
     // Intended to ease statement range testing. Supply `x` as a string containing
     // the expression to test along with:
@@ -662,84 +667,107 @@ fn test_statement_range() {
 
         let node = find_statement_range_node(&root, cursor.unwrap().row).unwrap();
 
-        assert_eq!(node.start_position(), sel_start.unwrap(), "Failed on test {original}");
-        assert_eq!(node.end_position(), sel_end.unwrap(), "Failed on test {original}");
+        assert_eq!(
+            node.start_position(),
+            sel_start.unwrap(),
+            "Failed on test {original}"
+        );
+        assert_eq!(
+            node.end_position(),
+            sel_end.unwrap(),
+            "Failed on test {original}"
+        );
     }
 
-    // Simple test
-    statement_range_test("<<1@+ 1>>");
+    #[test]
+    fn test_simple_case() {
+        statement_range_test("<<1@+ 1>>");
+    }
 
-    // Finds next row
-    statement_range_test(
-"
+    #[test]
+    fn test_finds_next_row() {
+        statement_range_test(
+            "
 @
 <<1 + 1>>
 ",
-    );
+        );
+    }
 
-    // Finds next row with many spaces
-    statement_range_test(
-"
+    #[test]
+    fn test_finds_next_row_with_spaces() {
+        statement_range_test(
+            "
 @
 
 
 
 <<1 + 1>>
 ",
-    );
+        );
+    }
 
-    // Selects all braces
-    statement_range_test(
-"
+    #[test]
+    fn test_selects_all_braces() {
+        statement_range_test(
+            "
 @
 <<{
     1 + 1
 }>>
 ",
-    );
+        );
+    }
 
-    // Inside braces, runs the statement the cursor is on
-    statement_range_test(
-"
+    #[test]
+    fn test_inside_braces_runs_statement_cursor_is_on() {
+        statement_range_test(
+            "
 {
     @<<1 + 1>>
     2 + 2
 }
 ",
-    );
+        );
+    }
 
-    // Selects entire function
-    statement_range_test(
-"
+    #[test]
+    fn test_selects_entire_function() {
+        statement_range_test(
+            "
 @
 <<function() {
     1 + 1
     2 + 2
 }>>
 ",
-    );
-    statement_range_test(
-"
+        );
+        statement_range_test(
+            "
 <<function() {
     1 + 1
     2 + 2
 }>>@
 ",
-    );
+        );
+    }
 
-    // Selects individual lines of a function if user puts cursor there
-    statement_range_test(
-"
+    #[test]
+    fn test_selects_individual_lines_in_function() {
+        statement_range_test(
+            "
 function() {
     1 + 1
     <<2 + @2>>
 }
 ",
-    );
+        );
+    }
 
-    // Selects entire function if on multiline argument signature
-    statement_range_test(
-"
+    #[test]
+    fn test_selects_entire_function_on_multiline_signature() {
+        statement_range_test(
+            "
 <<function(a,
             b,@
             c) {
@@ -747,94 +775,112 @@ function() {
     2 + 2
 }>>
 ",
-    );
+        );
+    }
 
-    // Selects just the expression if on a 1 line function
-    statement_range_test(
-"
+    #[test]
+    fn test_selects_expression_on_one_line_function() {
+        statement_range_test(
+            "
 function()
     @<<1 + 1>>
 ",
-    );
+        );
+    }
 
-    // Selects just the expression if on a 1 line function in an assignment
-    statement_range_test(
-"
+    #[test]
+    fn test_selects_expression_on_one_line_function_with_assignment() {
+        statement_range_test(
+            "
 fn <- function()
     @<<1 + 1>>
 ",
-    );
+        );
+    }
 
-    // Selects entire function if on a `{` that is on its own line
-    statement_range_test(
-"
+    #[test]
+    fn test_selects_entire_function_on_curly_brace_line() {
+        statement_range_test(
+            "
 <<fn <- function()
 {@
     1 + 1
 }>>
 ",
-    );
+        );
+    }
 
-    // Selects entire loop if on first or last row
-    statement_range_test(
-"
+    #[test]
+    fn test_selects_entire_loop_on_first_or_last_row() {
+        statement_range_test(
+            "
 <<for(i@ in 1:5) {
     print(i)
     1 + 1
 }>>
 ",
-    );
-    statement_range_test(
-"
+        );
+        statement_range_test(
+            "
 <<for(i in 1:5) {
     print(i)
     1 + 1
 }@>>
 ",
-    );
+        );
+    }
 
-    // But if inside the braces, runs the line the user was on
-    statement_range_test(
-"
+    #[test]
+    fn test_runs_line_within_braces_in_loop() {
+        statement_range_test(
+            "
 for(i in 1:5) {
     <<print@(i)>>
     1 + 1
 }
 ",
-    );
+        );
+    }
 
-    // Selects just expression if on a 1 line loop with no braces
-    statement_range_test(
-"
+    #[test]
+    fn test_selects_expression_in_one_line_loop_without_braces() {
+        statement_range_test(
+            "
 for(i in 1:5)
     <<print(1)@>>
 ",
-    );
+        );
+    }
 
-    // Selects entire loop if on a `{` that is on its own line
-    statement_range_test(
-"
+    #[test]
+    fn test_selects_entire_loop_on_curly_brace_line() {
+        statement_range_test(
+            "
 <<for(i in 1:5)
 {@
     print(1)
 }>>
 ",
-    );
+        );
+    }
 
-    // Selects entire loop if on a `condition` that is on its own line
-    statement_range_test(
-"
+    #[test]
+    fn test_selects_entire_loop_on_condition_line() {
+        statement_range_test(
+            "
 <<for
 (i in @1:5)
 {
     1 + 1
 }>>
 ",
-    );
+        );
+    }
 
-    // Function within function selects whole subfunction
-    statement_range_test(
-"
+    #[test]
+    fn test_function_within_function_selects_subfunction() {
+        statement_range_test(
+            "
 function() {
     1 + 1
     @
@@ -843,11 +889,13 @@ function() {
     }>>
 }
 ",
-    );
+        );
+    }
 
-    // Function with weird signature setup works as expected
-    statement_range_test(
-"
+    #[test]
+    fn test_function_with_weird_signature_selects_whole_function() {
+        statement_range_test(
+            "
 <<function@
 (a,
     b
@@ -856,9 +904,10 @@ function() {
     1 + 1
 }>>
 ",
-    );
-    statement_range_test(
-"
+        );
+
+        statement_range_test(
+            "
 <<function
 (a@,
     b
@@ -867,9 +916,9 @@ function() {
     1 + 1
 }>>
 ",
-    );
-    statement_range_test(
-"
+        );
+        statement_range_test(
+            "
 <<function
 (a,
     b@
@@ -878,9 +927,9 @@ function() {
     1 + 1
 }>>
 ",
-    );
-    statement_range_test(
-"
+        );
+        statement_range_test(
+            "
 <<function
 (a,
     b
@@ -889,11 +938,13 @@ function() {
     1 + 1
 }@>>
 ",
-    );
+        );
+    }
 
-    // Function with newlines runs whole function
-    statement_range_test(
-"
+    #[test]
+    fn test_function_with_newlines_runs_whole_function() {
+        statement_range_test(
+            "
 <<function()
 @
 
@@ -901,11 +952,13 @@ function() {
     1 + 1
 }>>
 ",
-    );
+        );
+    }
 
-    // `if` statements run whole statement where appropriate
-    statement_range_test(
-"
+    #[test]
+    fn test_if_statements_run_whole_statement() {
+        statement_range_test(
+            "
 <<if @(a > b) {
     1 + 1
 } else if (b > c) {
@@ -915,9 +968,9 @@ function() {
     4 + 4
 }>>
 ",
-    );
-    statement_range_test(
-"
+        );
+        statement_range_test(
+            "
 <<if (a > b) {
     1 + 1
 } else if @(b > c) {
@@ -927,9 +980,10 @@ function() {
     4 + 4
 }>>
 ",
-    );
-    statement_range_test(
-"
+        );
+
+        statement_range_test(
+            "
 <<if (a > b) {
     1 + 1
 } else if (b > c) {
@@ -939,9 +993,10 @@ function() {
     4 + 4
 }>>
 ",
-    );
-    statement_range_test(
-"
+        );
+
+        statement_range_test(
+            "
 <<if (a > b) {
     1 + 1
 } else if (b > c) {
@@ -951,11 +1006,13 @@ function() {
     4 + 4
 }@>>
 ",
-    );
+        );
+    }
 
-    // Inside braces, runs individual statement
-    statement_range_test(
-"
+    #[test]
+    fn test_inside_braces_runs_individual_statements() {
+        statement_range_test(
+            "
 if (a > b) {
     1 + 1
 } else if (b > c) {
@@ -965,9 +1022,10 @@ if (a > b) {
     4 + 4
 }
 ",
-    );
-    statement_range_test(
-"
+        );
+
+        statement_range_test(
+            "
 if (a > b) {
     1 + 1
 } else if (b > c) {
@@ -977,73 +1035,83 @@ if (a > b) {
     <<@4 + 4>>
 }
 ",
-    );
+        );
+    }
 
-    // `if` statements without braces can run individual expressions
-    statement_range_test(
-"
+    #[test]
+    fn test_if_statements_without_braces_can_run_individual_expressions() {
+        statement_range_test(
+            "
 <<if (@a > b)
     1 + 1>>",
-    );
-    statement_range_test(
-"
+        );
+
+        statement_range_test(
+            "
 if (a > b)
   <<1 + 1@>>
 ",
-    );
+        );
+    }
 
-    // Top level `if`-else statements without braces can run individual expressions if
-    // the `else` is in a valid location
-    statement_range_test(
-"
+    #[test]
+    fn test_top_level_if_else_statements_without_braces_can_run_individual_expressions_1() {
+        statement_range_test(
+            "
 <<if @(a > b)
   1 + 1 else if (b > c)
   2 + 2 else 4 + 4>>
 ",
-    );
-    statement_range_test(
-"
+        );
+
+        statement_range_test(
+            "
 if (a > b)
   <<@1 + 1>> else if (b > c)
   2 + 2 else 4 + 4
 ",
-    );
-    // TODO: I'm not exactly sure what this should run, but this seems strange
-    statement_range_test(
-"
+        );
+
+        // TODO: I'm not exactly sure what this should run, but this seems strange
+        statement_range_test(
+            "
 if (a > b)
   <<1 + 1>> else if @(b > c)
   2 + 2 else 4 + 4
 ",
-    );
-    statement_range_test(
-"
+        );
+
+        statement_range_test(
+            "
 if (a > b)
   1 + 1 else if (b > c)
   <<2 + @2>> else 4 + 4
 ",
-    );
-    // TODO: I'm not exactly sure what this should run, but this seems strange
-    statement_range_test(
-"
+        );
+
+        // TODO: I'm not exactly sure what this should run, but this seems strange
+        statement_range_test(
+            "
 if (a > b)
   1 + 1 else if (b > c)
   <<2 + 2>> else@ 4 + 4
 ",
-    );
-    // TODO: I'm not exactly sure what this should run, but this seems strange
-    statement_range_test(
-"
+        );
+
+        // TODO: I'm not exactly sure what this should run, but this seems strange
+        statement_range_test(
+            "
 if (a > b)
   1 + 1 else if (b > c)
   <<2 + 2>> else 4 @+ 4
 ",
-    );
+        );
+    }
 
-    // `if`-else statements without braces but inside an outer `{` scope is recognized
-    // as valid R code
-    statement_range_test(
-"
+    #[test]
+    fn test_if_else_statements_without_braces_but_inside_outer_scope() {
+        statement_range_test(
+            "
 {
     <<if @(a > b)
       1 + 1
@@ -1053,9 +1121,10 @@ if (a > b)
       4 + 4>>
 }
 ",
-    );
-    statement_range_test(
-"
+        );
+
+        statement_range_test(
+            "
 {
     if (a > b)
       <<@1 + 1>>
@@ -1065,9 +1134,10 @@ if (a > b)
       4 + 4
 }
 ",
-    );
-    statement_range_test(
-"
+        );
+
+        statement_range_test(
+            "
 {
     <<if (a > b)
       1 + 1
@@ -1077,9 +1147,10 @@ if (a > b)
       4 + 4>>
 }
 ",
-    );
-    statement_range_test(
-"
+        );
+
+        statement_range_test(
+            "
 {
     if (a > b)
       1 + 1
@@ -1089,9 +1160,10 @@ if (a > b)
       4 + 4
 }
 ",
-    );
-    statement_range_test(
-"
+        );
+
+        statement_range_test(
+            "
 {
     <<if (a > b)
       1 + 1
@@ -1101,9 +1173,10 @@ if (a > b)
       4 + 4>>
 }
 ",
-    );
-    statement_range_test(
-"
+        );
+
+        statement_range_test(
+            "
 {
     if (a > b)
       1 + 1
@@ -1113,131 +1186,145 @@ if (a > b)
       <<4 @+ 4>>
 }
 ",
-    );
+        );
+    }
 
-    // `if` statements without an `else` don't consume newlines
-    // https://github.com/posit-dev/positron/issues/1464
-    statement_range_test(
-"
+    #[test]
+    fn test_if_statements_without_else_dont_consume_newlines() {
+        // https://github.com/posit-dev/positron/issues/1464
+        statement_range_test(
+            "
 <<if @(a > b)
     1 + 1>>
-
-
 ",
-    );
-    statement_range_test(
-"
+        );
+
+        statement_range_test(
+            "
 <<if @(a > b) {
     1 + 1
 }>>
-
-
 ",
-    );
-    statement_range_test(
-"
+        );
+
+        statement_range_test(
+            "
 <<if @(a > b) {
     1 + 1
 }>>
-
-
 if (b > c) {
     2 + 2
 }",
-    );
+        );
+    }
 
-    // Subsetting runs whole expression
-    statement_range_test(
-"
+    #[test]
+    fn test_subsetting_runs_whole_expression() {
+        statement_range_test(
+            "
 <<dt[
   a > b,
   by @= 4,
   foo
 ]>>
 ",
-    );
+        );
+    }
 
-    // Calls generally run the whole call no matter where you are in it
-    statement_range_test(
-"
+    #[test]
+    fn test_calls_run_outer_call() {
+        statement_range_test(
+            "
 <<foo(@
   a = 1,
   b
 )>>
-"
-    );
-    statement_range_test(
-"
+",
+        );
+
+        statement_range_test(
+            "
 <<foo(
   a = @1,
   b
 )>>
-"
-    );
+",
+        );
+    }
 
-    // Nested calls run the whole outer call no matter where you are in it
-    statement_range_test(
-"
+    #[test]
+    fn test_nested_calls_run_outer_call() {
+        statement_range_test(
+            "
 <<foo(bar(
   a = 1,
   b@
 ))>>
-"
-    );
-    statement_range_test(
-"
+",
+        );
+
+        statement_range_test(
+            "
 <<foo(@bar(
   a = 1,
   b
 ))>>
-"
-    );
-    // Unless the cursor is within a block, which only runs that line
-    statement_range_test(
-"
+",
+        );
+
+        // Unless the cursor is within a block, which only runs that line
+        statement_range_test(
+            "
 foo(bar(
   a = {
     <<@1 + 1>>
   },
   b
 ))
-"
-    );
+",
+        );
+    }
 
-    // Blocks within calls run one line at a time (testthat, withr, quote())
-    statement_range_test(
-"
+    #[test]
+    fn test_blocks_within_calls_run_one_line_at_a_time() {
+        // testthat, withr, quote()
+
+        statement_range_test(
+            "
 test_that('stuff', {
   <<x @<- 1>>
   y <- 2
   expect_equal(x, y)
 })
 ",
-    );
+        );
 
-    // But can run entire expression
-    statement_range_test(
-"
+        // But can run entire expression
+        statement_range_test(
+            "
 <<test_that(@'stuff', {
   x <- 1
   y <- 2
   expect_equal(x, y)
 })>>
 ",
-    );
-    statement_range_test(
-"
+        );
+
+        statement_range_test(
+            "
 <<test_that('stuff', {
   x <- 1
   y <- 2
   expect_equal(x, y)
 }@)>>
 ",
-    );
+        );
+    }
 
-    // Comments are skipped from root level
-    statement_range_test(
-"
+    #[test]
+    fn test_comments_are_skipped_from_root_level() {
+        statement_range_test(
+            "
 @
 # hi there
 
@@ -1245,11 +1332,13 @@ test_that('stuff', {
 
 <<1 + 1>>
 ",
-    );
+        );
+    }
 
-    // Comments are skipped in blocks
-    statement_range_test(
-"
+    #[test]
+    fn test_comments_are_skipped_in_blocks() {
+        statement_range_test(
+            "
 {
     # hi there@
 
@@ -1258,65 +1347,85 @@ test_that('stuff', {
     <<1 + 1>>
 }
 ",
-    );
+        );
+    }
 
-    // Unmatched opening braces send the full partial statement
-    statement_range_test(
-"
+    #[test]
+    fn test_unmatched_opening_braces_send_the_full_partial_statement() {
+        statement_range_test(
+            "
 @
 <<{
     1 + 1
 
 >>",
-    );
+        );
+    }
 
-    // Binary op with braces respects that you can put the cursor inside the braces
-    statement_range_test(
-"
+    #[test]
+    fn test_binary_op_with_braces_respects_that_you_can_put_the_cursor_inside_the_braces() {
+        statement_range_test(
+            "
 1 + {
     <<2 + 2@>>
 }
 ",
-    );
+        );
+    }
 
-    // Will return `None` when there is no top level statement
-    let row = 2;
-    let contents = "
+    #[test]
+    fn test_no_top_level_statement() {
+        let row = 2;
+        let contents = "
 1 + 1
 
 
 ";
-    let mut parser = Parser::new();
-    parser
-        .set_language(&tree_sitter_r::LANGUAGE.into())
-        .expect("Failed to create parser");
-    let ast = parser.parse(contents, None).unwrap();
-    let root = ast.root_node();
-    assert_eq!(find_statement_range_node(&root, row), None);
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_r::LANGUAGE.into())
+            .expect("Failed to create parser");
+        let ast = parser.parse(contents, None).unwrap();
+        let root = ast.root_node();
+        assert_eq!(find_statement_range_node(&root, row), None);
+    }
 
-    // Will return `None` when there is no block level statement
-    let row = 3;
-    let contents = "
+    #[test]
+    fn test_no_block_level_statement() {
+        let row = 3;
+        let contents = "
 {
     1 + 1
 
 
 }
 ";
-    let mut parser = Parser::new();
-    parser
-        .set_language(&tree_sitter_r::LANGUAGE.into())
-        .expect("Failed to create parser");
-    let ast = parser.parse(contents, None).unwrap();
-    let root = ast.root_node();
-    assert_eq!(find_statement_range_node(&root, row), None);
-}
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_r::LANGUAGE.into())
+            .expect("Failed to create parser");
+        let ast = parser.parse(contents, None).unwrap();
+        let root = ast.root_node();
+        assert_eq!(find_statement_range_node(&root, row), None);
+    }
 
-#[test]
-fn test_statement_range_roxygen() {
-    use crate::lsp::documents::Document;
+    #[test]
+    fn test_unmatched_opening_braces_partial_statement() {
+        statement_range_test(
+            "
+@
+<<{
+    1 + 1
 
-    let text = "
+>>",
+        );
+    }
+
+    #[test]
+    fn test_statement_range_roxygen() {
+        use crate::lsp::documents::Document;
+
+        let text = "
 #' Hi
 #' @param x foo
 #' @examples
@@ -1330,67 +1439,67 @@ fn test_statement_range_roxygen() {
 #' @returns
 ";
 
-    let document = Document::new(text, None);
-    let root = document.ast.root_node();
-    let contents = &document.contents;
+        let document = Document::new(text, None);
+        let root = document.ast.root_node();
+        let contents = &document.contents;
 
-    fn get_text(node: &Node, contents: &Rope) -> String {
-        contents.node_slice(node).unwrap().to_string()
-    }
+        fn get_text(node: &Node, contents: &Rope) -> String {
+            contents.node_slice(node).unwrap().to_string()
+        }
 
-    // Outside of `@examples`, sends whole line as a comment
-    let point = Point { row: 1, column: 2 };
-    let (node, code) = find_roxygen_comment_at_point(&root, contents, point).unwrap();
-    assert_eq!(get_text(&node, contents), String::from("#' Hi"));
-    assert!(code.is_none());
+        // Outside of `@examples`, sends whole line as a comment
+        let point = Point { row: 1, column: 2 };
+        let (node, code) = find_roxygen_comment_at_point(&root, contents, point).unwrap();
+        assert_eq!(get_text(&node, contents), String::from("#' Hi"));
+        assert!(code.is_none());
 
-    // On `@examples` line, sends whole line as a comment
-    let point = Point { row: 3, column: 2 };
-    let (node, code) = find_roxygen_comment_at_point(&root, contents, point).unwrap();
-    assert_eq!(get_text(&node, contents), String::from("#' @examples"));
-    assert!(code.is_none());
+        // On `@examples` line, sends whole line as a comment
+        let point = Point { row: 3, column: 2 };
+        let (node, code) = find_roxygen_comment_at_point(&root, contents, point).unwrap();
+        assert_eq!(get_text(&node, contents), String::from("#' @examples"));
+        assert!(code.is_none());
 
-    // At `1 + 1`
-    let point = Point { row: 4, column: 2 };
-    let (node, code) = find_roxygen_comment_at_point(&root, contents, point).unwrap();
-    assert_eq!(get_text(&node, contents), String::from("#' 1 + 1"));
-    assert_eq!(code.unwrap(), String::from("1 + 1"));
+        // At `1 + 1`
+        let point = Point { row: 4, column: 2 };
+        let (node, code) = find_roxygen_comment_at_point(&root, contents, point).unwrap();
+        assert_eq!(get_text(&node, contents), String::from("#' 1 + 1"));
+        assert_eq!(code.unwrap(), String::from("1 + 1"));
 
-    // At empty string line after `1 + 1`
-    // (we want Positron to trust us and execute this as is)
-    let point = Point { row: 5, column: 1 };
-    let (node, code) = find_roxygen_comment_at_point(&root, contents, point).unwrap();
-    assert_eq!(get_text(&node, contents), String::from("#'"));
-    assert_eq!(code.unwrap(), String::from(""));
+        // At empty string line after `1 + 1`
+        // (we want Positron to trust us and execute this as is)
+        let point = Point { row: 5, column: 1 };
+        let (node, code) = find_roxygen_comment_at_point(&root, contents, point).unwrap();
+        assert_eq!(get_text(&node, contents), String::from("#'"));
+        assert_eq!(code.unwrap(), String::from(""));
 
-    // At `fn <-` line, note we only return that line
-    let point = Point { row: 6, column: 1 };
-    let (node, code) = find_roxygen_comment_at_point(&root, contents, point).unwrap();
-    assert_eq!(
-        get_text(&node, contents),
-        String::from("#' fn <- function() {")
-    );
-    assert_eq!(code.unwrap(), String::from("fn <- function() {"));
+        // At `fn <-` line, note we only return that line
+        let point = Point { row: 6, column: 1 };
+        let (node, code) = find_roxygen_comment_at_point(&root, contents, point).unwrap();
+        assert_eq!(
+            get_text(&node, contents),
+            String::from("#' fn <- function() {")
+        );
+        assert_eq!(code.unwrap(), String::from("fn <- function() {"));
 
-    // At comment line
-    let point = Point { row: 9, column: 1 };
-    let (node, code) = find_roxygen_comment_at_point(&root, contents, point).unwrap();
-    assert_eq!(get_text(&node, contents), String::from("#' # Comment"));
-    assert_eq!(code.unwrap(), String::from("# Comment"));
+        // At comment line
+        let point = Point { row: 9, column: 1 };
+        let (node, code) = find_roxygen_comment_at_point(&root, contents, point).unwrap();
+        assert_eq!(get_text(&node, contents), String::from("#' # Comment"));
+        assert_eq!(code.unwrap(), String::from("# Comment"));
 
-    // Missing the typical leading space
-    let point = Point { row: 10, column: 1 };
-    let (node, code) = find_roxygen_comment_at_point(&root, contents, point).unwrap();
-    assert_eq!(get_text(&node, contents), String::from("#'2 + 2"));
-    assert_eq!(code.unwrap(), String::from("2 + 2"));
+        // Missing the typical leading space
+        let point = Point { row: 10, column: 1 };
+        let (node, code) = find_roxygen_comment_at_point(&root, contents, point).unwrap();
+        assert_eq!(get_text(&node, contents), String::from("#'2 + 2"));
+        assert_eq!(code.unwrap(), String::from("2 + 2"));
 
-    // At next roxygen tag
-    let point = Point { row: 11, column: 1 };
-    let (node, code) = find_roxygen_comment_at_point(&root, contents, point).unwrap();
-    assert_eq!(get_text(&node, contents), String::from("#' @returns"));
-    assert!(code.is_none());
+        // At next roxygen tag
+        let point = Point { row: 11, column: 1 };
+        let (node, code) = find_roxygen_comment_at_point(&root, contents, point).unwrap();
+        assert_eq!(get_text(&node, contents), String::from("#' @returns"));
+        assert!(code.is_none());
 
-    let text = "
+        let text = "
 ##' Hi
 ##' @param x foo
 ##' @examples
@@ -1399,29 +1508,30 @@ fn test_statement_range_roxygen() {
 ###' @returns
 ";
 
-    let document = Document::new(text, None);
-    let root = document.ast.root_node();
-    let contents = &document.contents;
+        let document = Document::new(text, None);
+        let root = document.ast.root_node();
+        let contents = &document.contents;
 
-    // With multiple leading `#` followed by code
-    let point = Point { row: 4, column: 1 };
-    let (node, code) = find_roxygen_comment_at_point(&root, contents, point).unwrap();
-    assert_eq!(get_text(&node, &contents), String::from("##' 1 + 1"));
-    assert_eq!(code.unwrap(), String::from("1 + 1"));
+        // With multiple leading `#` followed by code
+        let point = Point { row: 4, column: 1 };
+        let (node, code) = find_roxygen_comment_at_point(&root, contents, point).unwrap();
+        assert_eq!(get_text(&node, &contents), String::from("##' 1 + 1"));
+        assert_eq!(code.unwrap(), String::from("1 + 1"));
 
-    let point = Point { row: 5, column: 1 };
-    let (node, code) = find_roxygen_comment_at_point(&root, contents, point).unwrap();
-    assert_eq!(get_text(&node, &contents), String::from("###' 2 + 2"));
-    assert_eq!(code.unwrap(), String::from("2 + 2"));
+        let point = Point { row: 5, column: 1 };
+        let (node, code) = find_roxygen_comment_at_point(&root, contents, point).unwrap();
+        assert_eq!(get_text(&node, &contents), String::from("###' 2 + 2"));
+        assert_eq!(code.unwrap(), String::from("2 + 2"));
 
-    // With multiple leading `#` followed by non-code
-    let point = Point { row: 3, column: 1 };
-    let (node, code) = find_roxygen_comment_at_point(&root, contents, point).unwrap();
-    assert_eq!(get_text(&node, &contents), String::from("##' @examples"));
-    assert!(code.is_none());
+        // With multiple leading `#` followed by non-code
+        let point = Point { row: 3, column: 1 };
+        let (node, code) = find_roxygen_comment_at_point(&root, contents, point).unwrap();
+        assert_eq!(get_text(&node, &contents), String::from("##' @examples"));
+        assert!(code.is_none());
 
-    let point = Point { row: 6, column: 1 };
-    let (node, code) = find_roxygen_comment_at_point(&root, contents, point).unwrap();
-    assert_eq!(get_text(&node, &contents), String::from("###' @returns"));
-    assert!(code.is_none());
+        let point = Point { row: 6, column: 1 };
+        let (node, code) = find_roxygen_comment_at_point(&root, contents, point).unwrap();
+        assert_eq!(get_text(&node, &contents), String::from("###' @returns"));
+        assert!(code.is_none());
+    }
 }
