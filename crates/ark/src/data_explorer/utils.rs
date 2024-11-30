@@ -55,6 +55,13 @@ pub fn display_type(x: SEXP) -> ColumnDisplayType {
     }
 
     if r_is_object(x) {
+        // `haven_labelled` objects inherit from their internal data type
+        // such as integer or character. We special case them here before
+        // checking the internal types below.
+        if r_inherits(x, "haven_labelled") {
+            return ColumnDisplayType::String;
+        }
+
         if r_inherits(x, "logical") {
             return ColumnDisplayType::Boolean;
         }

@@ -6,4 +6,4 @@
  */
 
 /// Locations on the `PATH` to look for R when using `Command::new()`
-pub(crate) const COMMAND_R_LOCATIONS: [&str; 2] = ["R", "R.bat"];
+pub(crate) const COMMAND_R_NAMES: [&str; 2] = ["R", "R.bat"];

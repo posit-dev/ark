@@ -59,6 +59,10 @@ summary_stats_number <- function(col) {
 }
 
 summary_stats_string <- function(col) {
+    if (inherits(col, 'haven_labelled')) {
+        col <- haven::as_factor(col)
+    }
+
     if(is.factor(col)) {
         # We could have an optimization here to get unique and empty values
         # from levels, but probably not worth it.
@@ -461,6 +465,10 @@ profile_frequency_table <- function(x, limit) {
             counts = NULL,
             other_count = 0
         ))
+    }
+
+    if (inherits(x, "haven_labelled")) {
+        x <- haven::as_factor(x)
     }
 
     if (is.factor(x)) {
