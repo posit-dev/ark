@@ -42,11 +42,12 @@ Available options:
 --startup-file FILE      An R file to run on session startup
 --session-mode MODE      The mode in which the session is running (console, notebook, background)
 --no-capture-streams     Do not capture stdout/stderr from R
---default-repos          Set the default repositories to use:
+--default-repos          Set the default repositories to use, by name:
                          "rstudio" ('cran.rstudio.com', the default), or
                          "posit-ppm" ('packagemanager.posit.co', subject to availability), or
-                         a path to a .conf file containing a list of named repositories (`name = url`), or
                          "none" (do not alter the 'repos' option in any way)
+--repos-conf             Set the default repositories to use from a configuration file
+                         containing a list of named repositories (`name = url`)
 --version                Print the version of Ark
 --log FILE               Log to the given file (if not specified, stdout/stderr
                          will be used)
@@ -136,27 +137,46 @@ fn main() -> anyhow::Result<()> {
             "--no-capture-streams" => capture_streams = false,
             "--default-repos" => {
                 if let Some(repos) = argv.next() {
+                    if default_repos != DefaultRepos::Auto {
+                        return Err(anyhow::anyhow!(
+                            "The default repository options can only be specified once; (found '{repos}, had {default_repos:?}')."
+                        ));
+                    }
                     default_repos = match repos.as_str() {
                         "rstudio" => DefaultRepos::RStudio,
                         "posit-ppm" => DefaultRepos::PositPPM,
                         "none" => DefaultRepos::None,
                         _ => {
-                            // If the string is not one of the predefined options, assume it's a
-                            // file path
-                            let path = std::path::PathBuf::from(repos.clone());
-
-                            // Check to see if the file exists
-                            if !path.exists() {
-                                return Err(anyhow::anyhow!(
-                                    "The specified default repository configuration file {repos:?} does not exist."
-                                ));
-                            }
-                            DefaultRepos::ConfFile(path)
+                            return Err(anyhow::anyhow!(
+                                "Invalid default named repository: '{repos}'. Expected `rstudio`, `posit-ppm`, or `none`."
+                            ));
                         },
                     }
                 } else {
                     return Err(anyhow::anyhow!(
-                        "A default repository must follow the --default-repos option; valid values are 'rstudio', 'posit-ppm', 'none', or a path to a .conf file."
+                        "A default repository must follow the --default-repos option; valid values are 'rstudio', 'posit-ppm', or 'none'."
+                    ));
+                }
+            },
+            "--repos-conf" => {
+                if let Some(repos) = argv.next() {
+                    if default_repos != DefaultRepos::Auto {
+                        return Err(anyhow::anyhow!(
+                            "The default repository options can only be specified once; (found '{repos}, had {default_repos:?}')."
+                        ));
+                    }
+                    let path = std::path::PathBuf::from(repos.clone());
+
+                    // Check to see if the file exists
+                    if !path.exists() {
+                        return Err(anyhow::anyhow!(
+                                    "The specified default repository configuration file {repos:?} does not exist."
+                                ));
+                    }
+                    default_repos = DefaultRepos::ConfFile(path)
+                } else {
+                    return Err(anyhow::anyhow!(
+                        "A path to a default repository configuration file must follow the --repos-conf option."
                     ));
                 }
             },

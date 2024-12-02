@@ -22,7 +22,7 @@ use crate::modules::ARK_ENVS;
 // Constants for repository URLs
 const GENERIC_P3M_REPO: &str = "https://packagemanager.posit.co/cran/latest";
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum DefaultRepos {
     /// Do not set the repository at all (don't touch the `repos` option)
     None,
