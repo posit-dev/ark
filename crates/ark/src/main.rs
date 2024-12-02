@@ -45,7 +45,7 @@ Available options:
 --default-repos          Set the default repositories to use:
                          "rstudio" ('cran.rstudio.com', the default), or
                          "posit-ppm" ('packagemanager.posit.co', subject to availability), or
-                         a path to a .conf file containing a list of repositories, or
+                         a path to a .conf file containing a list of named repositories (`name = url`), or
                          "none" (do not alter the 'repos' option in any way)
 --version                Print the version of Ark
 --log FILE               Log to the given file (if not specified, stdout/stderr
