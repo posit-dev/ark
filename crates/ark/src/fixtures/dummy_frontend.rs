@@ -9,6 +9,7 @@ use amalthea::fixtures::dummy_frontend::DummyConnection;
 use amalthea::fixtures::dummy_frontend::DummyFrontend;
 
 use crate::interface::SessionMode;
+use crate::repos::DefaultRepos;
 
 // There can be only one frontend per process. Needs to be in a mutex because
 // the frontend wraps zmq sockets which are unsafe to send across threads.
@@ -29,6 +30,7 @@ struct DummyArkFrontendOptions {
     user_r_profile: bool,
     r_environ: bool,
     session_mode: SessionMode,
+    default_repos: DefaultRepos,
 }
 
 /// Wrapper around `DummyArkFrontend` that uses `SessionMode::Notebook`
@@ -43,6 +45,12 @@ pub struct DummyArkFrontendNotebook {
 
 /// Wrapper around `DummyArkFrontend` that allows an `.Rprofile` to run
 pub struct DummyArkFrontendRprofile {
+    inner: DummyArkFrontend,
+}
+
+/// Wrapper around `DummyArkFrontend` that allows setting default repos
+/// for the frontend
+pub struct DummyArkFrontendDefaultRepos {
     inner: DummyArkFrontend,
 }
 
@@ -105,6 +113,7 @@ impl DummyArkFrontend {
                 None,
                 options.session_mode,
                 false,
+                options.default_repos,
             );
         });
 
@@ -170,6 +179,35 @@ impl DerefMut for DummyArkFrontendNotebook {
     }
 }
 
+impl DummyArkFrontendDefaultRepos {
+    /// Lock a frontend with a default repos setting.
+    ///
+    /// NOTE: Only one `DummyArkFrontend` variant should call `lock()` within
+    /// a given process.
+    pub fn lock(default_repos: DefaultRepos) -> Self {
+        Self::init(default_repos);
+
+        Self {
+            inner: DummyArkFrontend::lock(),
+        }
+    }
+
+    /// Initialize with given default repos
+    fn init(default_repos: DefaultRepos) {
+        let mut options = DummyArkFrontendOptions::default();
+        options.default_repos = default_repos;
+        FRONTEND.get_or_init(|| Arc::new(Mutex::new(DummyArkFrontend::init(options))));
+    }
+}
+
+// Allow method calls to be forwarded to inner type
+impl Deref for DummyArkFrontendDefaultRepos {
+    type Target = DummyFrontend;
+
+    fn deref(&self) -> &Self::Target {
+        Deref::deref(&self.inner)
+    }
+}
 impl DummyArkFrontendRprofile {
     /// Lock a frontend that supports `.Rprofile`s.
     ///
@@ -224,6 +262,7 @@ impl Default for DummyArkFrontendOptions {
             user_r_profile: false,
             r_environ: false,
             session_mode: SessionMode::Console,
+            default_repos: DefaultRepos::Auto,
         }
     }
 }

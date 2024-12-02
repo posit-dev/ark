@@ -77,3 +77,6 @@ assets = [
     { source = "target/release/ark", dest = "/usr/bin/ark", mode = "755" },
 ]
 license = "TODO"
+
+[target.'cfg(unix)'.dependencies]
+xdg = "2.5.2"

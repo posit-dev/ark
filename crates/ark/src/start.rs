@@ -22,6 +22,7 @@ use crate::control::Control;
 use crate::dap;
 use crate::interface::SessionMode;
 use crate::lsp;
+use crate::repos::DefaultRepos;
 use crate::request::KernelRequest;
 use crate::request::RRequest;
 use crate::shell::Shell;
@@ -34,6 +35,7 @@ pub fn start_kernel(
     startup_file: Option<String>,
     session_mode: SessionMode,
     capture_streams: bool,
+    default_repos: DefaultRepos,
 ) {
     // Create the channels used for communication. These are created here
     // as they need to be shared across different components / threads.
@@ -122,5 +124,6 @@ pub fn start_kernel(
         kernel_request_rx,
         dap,
         session_mode,
+        default_repos,
     )
 }
