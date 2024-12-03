@@ -31,6 +31,7 @@ struct DummyArkFrontendOptions {
     r_environ: bool,
     session_mode: SessionMode,
     default_repos: DefaultRepos,
+    startup_file: Option<String>,
 }
 
 /// Wrapper around `DummyArkFrontend` that uses `SessionMode::Notebook`
@@ -110,7 +111,7 @@ impl DummyArkFrontend {
                 connection_file,
                 Some(registration_file),
                 r_args,
-                None,
+                options.startup_file,
                 options.session_mode,
                 false,
                 options.default_repos,
@@ -182,10 +183,15 @@ impl DerefMut for DummyArkFrontendNotebook {
 impl DummyArkFrontendDefaultRepos {
     /// Lock a frontend with a default repos setting.
     ///
+    /// NOTE: `startup_file` is required because you typically want
+    /// to force `options(repos =)` to a fixed value for testing, regardless
+    /// of what the caller's default `repos` are set as (i.e. rig typically
+    /// sets it to a non-`@CRAN@` value).
+    ///
     /// NOTE: Only one `DummyArkFrontend` variant should call `lock()` within
     /// a given process.
-    pub fn lock(default_repos: DefaultRepos) -> Self {
-        Self::init(default_repos);
+    pub fn lock(default_repos: DefaultRepos, startup_file: String) -> Self {
+        Self::init(default_repos, startup_file);
 
         Self {
             inner: DummyArkFrontend::lock(),
@@ -193,9 +199,11 @@ impl DummyArkFrontendDefaultRepos {
     }
 
     /// Initialize with given default repos
-    fn init(default_repos: DefaultRepos) {
+    fn init(default_repos: DefaultRepos, startup_file: String) {
         let mut options = DummyArkFrontendOptions::default();
         options.default_repos = default_repos;
+        options.startup_file = Some(startup_file);
+
         FRONTEND.get_or_init(|| Arc::new(Mutex::new(DummyArkFrontend::init(options))));
     }
 }
@@ -263,6 +271,7 @@ impl Default for DummyArkFrontendOptions {
             r_environ: false,
             session_mode: SessionMode::Console,
             default_repos: DefaultRepos::Auto,
+            startup_file: None,
         }
     }
 }
