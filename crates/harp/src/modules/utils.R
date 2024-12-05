@@ -24,3 +24,7 @@ is_matrix <- function(x) {
 class_collapsed <- function(x) {
     paste0(class(x), collapse = "/")
 }
+
+harp_subset_vec <- function(x, indices) {
+    x[indices]
+}

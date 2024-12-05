@@ -25,6 +25,7 @@ use harp::object::RObject;
 use harp::r_null;
 use harp::r_symbol;
 use harp::symbol::RSymbol;
+use harp::table_info;
 use harp::utils::pairlist_size;
 use harp::utils::r_altrep_class;
 use harp::utils::r_assert_type;
@@ -77,12 +78,16 @@ fn plural(text: &str, n: i32) -> String {
 
 impl WorkspaceVariableDisplayValue {
     pub fn from(value: SEXP) -> Self {
+        Self::try_from(value).unwrap_or_else(|err| Self::from_error(harp::Error::Anyhow(err)))
+    }
+
+    pub fn try_from(value: SEXP) -> anyhow::Result<Self> {
         // Try to use the display method if there's one available\
         if let Some(display_value) = Self::try_from_method(value) {
-            return display_value;
+            return Ok(display_value);
         }
 
-        match r_typeof(value) {
+        let out = match r_typeof(value) {
             NILSXP => Self::new(String::from("NULL"), false),
             VECSXP if r_inherits(value, "data.frame") => Self::from_data_frame(value),
             VECSXP if !r_inherits(value, "POSIXlt") => Self::from_list(value),
@@ -93,13 +98,15 @@ impl WorkspaceVariableDisplayValue {
             CLOSXP => Self::from_closure(value),
             ENVSXP => Self::from_env(value),
             LANGSXP => Self::from_language(value),
-            _ if r_is_matrix(value) => Self::from_matrix(value),
-            RAWSXP | LGLSXP | INTSXP | REALSXP | STRSXP | CPLXSXP => Self::from_default(value),
+            _ if r_is_matrix(value) => Self::from_matrix(value)?,
+            RAWSXP | LGLSXP | INTSXP | REALSXP | STRSXP | CPLXSXP => Self::from_default(value)?,
             _ => Self::from_error(Error::Anyhow(anyhow!(
                 "Unexpected type {}",
                 r_type2char(r_typeof(value))
             ))),
-        }
+        };
+
+        Ok(out)
     }
 
     fn new(display_value: String, is_truncated: bool) -> Self {
@@ -292,10 +299,8 @@ impl WorkspaceVariableDisplayValue {
 
     // TODO: handle higher dimensional arrays, i.e. expand
     //       recursively from the higher dimension
-    fn from_matrix(value: SEXP) -> Self {
-        let formatted = unwrap!(FormattedVector::new(value), Err(err) => {
-            return Self::from_error(err);
-        });
+    fn from_matrix(value: SEXP) -> anyhow::Result<Self> {
+        let formatted = FormattedVector::new(RObject::from(value))?;
 
         let mut display_value = String::from("");
 
@@ -314,9 +319,13 @@ impl WorkspaceVariableDisplayValue {
             }
 
             display_value.push('[');
-            for char in formatted.column_iter(i as isize).join(" ").chars() {
+            for char in formatted
+                .column_iter_n(i as isize, MAX_DISPLAY_VALUE_LENGTH)?
+                .join(" ")
+                .chars()
+            {
                 if display_value.len() >= MAX_DISPLAY_VALUE_LENGTH {
-                    return Self::new(display_value, true);
+                    return Ok(Self::new(display_value, true));
                 }
                 display_value.push(char);
             }
@@ -324,13 +333,11 @@ impl WorkspaceVariableDisplayValue {
         }
         display_value.push(']');
 
-        Self::new(display_value, false)
+        Ok(Self::new(display_value, false))
     }
 
-    fn from_default(value: SEXP) -> Self {
-        let formatted = unwrap!(FormattedVector::new(value), Err(err) => {
-            return Self::from_error(err);
-        });
+    fn from_default(value: SEXP) -> anyhow::Result<Self> {
+        let formatted = FormattedVector::new(RObject::from(value))?;
 
         let mut display_value = String::with_capacity(MAX_DISPLAY_VALUE_LENGTH);
         let mut is_truncated = false;
@@ -338,7 +345,7 @@ impl WorkspaceVariableDisplayValue {
         // Performance: value is potentially a very large vector, so we need to be careful
         // to not format every element of value. Instead only format the necessary elements
         // to display the first MAX_DISPLAY_VALUE_LENGTH characters.
-        'outer: for (i, elt) in formatted.iter().enumerate() {
+        'outer: for (i, elt) in formatted.iter_n(MAX_DISPLAY_VALUE_LENGTH)?.enumerate() {
             if i > 0 {
                 display_value.push_str(" ");
             }
@@ -351,7 +358,7 @@ impl WorkspaceVariableDisplayValue {
             }
         }
 
-        Self::new(display_value, is_truncated)
+        Ok(Self::new(display_value, is_truncated))
     }
 
     fn from_error(err: Error) -> Self {
@@ -469,11 +476,13 @@ impl WorkspaceVariableDisplayType {
                     let dfclass = classes.get_unchecked(0).unwrap();
                     match include_length {
                         true => {
-                            let dim = RFunction::new("base", "dim.data.frame")
-                                .add(value)
-                                .call()
-                                .unwrap();
-                            let shape = FormattedVector::new(dim.sexp).unwrap().iter().join(", ");
+                            let dim = table_info(value);
+                            let shape = match dim {
+                                Some(info) => {
+                                    format!("{}, {}", info.dims.num_rows, info.dims.num_cols)
+                                },
+                                None => String::from("?, ?"),
+                            };
                             let display_type = format!("{} [{}]", dfclass, shape);
                             Self::simple(display_type)
                         },
@@ -852,7 +861,7 @@ impl PositronVariable {
         }
     }
 
-    pub fn inspect(env: RObject, path: &Vec<String>) -> Result<Vec<Variable>, harp::error::Error> {
+    pub fn inspect(env: RObject, path: &Vec<String>) -> anyhow::Result<Vec<Variable>> {
         let node = Self::resolve_object_from_path(env, &path)?;
 
         match node {
@@ -862,12 +871,12 @@ impl PositronVariable {
                     let enclos = Environment::new(RObject::new(env.find(".__enclos_env__")?));
                     let private = RObject::new(enclos.find("private")?);
 
-                    Self::inspect_environment(private)
+                    Ok(Self::inspect_environment(private)?)
                 },
 
-                "<methods>" => Self::inspect_r6_methods(object),
+                "<methods>" => Ok(Self::inspect_r6_methods(object)?),
 
-                _ => Err(harp::error::Error::InspectError { path: path.clone() }),
+                _ => Err(anyhow!("Unexpected path {:?}", path)),
             },
 
             EnvironmentVariableNode::Concrete { object } => {
@@ -883,23 +892,23 @@ impl PositronVariable {
                 }
 
                 if object.is_s4() {
-                    Self::inspect_s4(object.sexp)
+                    Ok(Self::inspect_s4(object.sexp)?)
                 } else {
                     match r_typeof(object.sexp) {
-                        VECSXP | EXPRSXP => Self::inspect_list(object.sexp),
-                        LISTSXP => Self::inspect_pairlist(object.sexp),
+                        VECSXP | EXPRSXP => Ok(Self::inspect_list(object.sexp)?),
+                        LISTSXP => Ok(Self::inspect_pairlist(object.sexp)?),
                         ENVSXP => {
                             if r_inherits(object.sexp, "R6") {
-                                Self::inspect_r6(object)
+                                Ok(Self::inspect_r6(object)?)
                             } else {
-                                Self::inspect_environment(object)
+                                Ok(Self::inspect_environment(object)?)
                             }
                         },
                         LGLSXP | RAWSXP | STRSXP | INTSXP | REALSXP | CPLXSXP => {
                             if r_is_matrix(object.sexp) {
                                 Self::inspect_matrix(object.sexp)
                             } else {
-                                Self::inspect_vector(object.sexp)
+                                Ok(Self::inspect_vector(object.sexp)?)
                             }
                         },
                         _ => Ok(vec![]),
@@ -908,7 +917,7 @@ impl PositronVariable {
             },
 
             EnvironmentVariableNode::Matrixcolumn { object, index } => {
-                Self::inspect_matrix_column(object.sexp, index)
+                Ok(Self::inspect_matrix_column(object.sexp, index)?)
             },
             EnvironmentVariableNode::AtomicVectorElement { .. } => Ok(vec![]),
         }
@@ -918,7 +927,7 @@ impl PositronVariable {
         env: RObject,
         path: &Vec<String>,
         _format: &ClipboardFormatFormat,
-    ) -> Result<String, harp::error::Error> {
+    ) -> anyhow::Result<String> {
         let node = Self::resolve_object_from_path(env, &path)?;
 
         match node {
@@ -928,7 +937,7 @@ impl PositronVariable {
                         .add(object)
                         .call()?;
 
-                    Ok(FormattedVector::new(formatted.sexp)?.iter().join("\n"))
+                    Ok(FormattedVector::new(formatted)?.iter()?.join("\n"))
                 } else if r_typeof(object.sexp) == CLOSXP {
                     let deparsed: Vec<String> = RFunction::from("deparse")
                         .add(object.sexp)
@@ -937,23 +946,16 @@ impl PositronVariable {
 
                     Ok(deparsed.join("\n"))
                 } else {
-                    Ok(FormattedVector::new(object.sexp)?.iter().join(" "))
+                    Ok(FormattedVector::new(object)?.iter()?.join(" "))
                 }
             },
             EnvironmentVariableNode::R6Node { .. } => Ok(String::from("")),
             EnvironmentVariableNode::AtomicVectorElement { object, index } => {
-                let formatted = FormattedVector::new(object.sexp)?;
-                Ok(formatted.get_unchecked(index))
+                let formatted = FormattedVector::new(object)?;
+                Ok(formatted.format_elt(index)?)
             },
-            EnvironmentVariableNode::Matrixcolumn { object, index } => unsafe {
-                let dim = IntegerVector::new(Rf_getAttrib(object.sexp, R_DimSymbol))?;
-                let n_row = dim.get_unchecked(0).unwrap() as usize;
-
-                let clipped = FormattedVector::new(object.sexp)?
-                    .iter()
-                    .skip(index as usize * n_row)
-                    .take(n_row)
-                    .join(" ");
+            EnvironmentVariableNode::Matrixcolumn { object, index } => {
+                let clipped = FormattedVector::new(object)?.column_iter(index)?.join(" ");
                 Ok(clipped)
             },
         }
@@ -1177,7 +1179,7 @@ impl PositronVariable {
         Ok(variables)
     }
 
-    fn inspect_matrix(matrix: SEXP) -> harp::error::Result<Vec<Variable>> {
+    fn inspect_matrix(matrix: SEXP) -> anyhow::Result<Vec<Variable>> {
         let matrix = RObject::new(matrix);
 
         let n_col = match harp::table_info(matrix.sexp) {
@@ -1203,50 +1205,50 @@ impl PositronVariable {
             updated_time: Self::update_timestamp(),
         };
 
-        let formatted = FormattedVector::new(matrix.sexp)?;
+        let formatted = FormattedVector::new(matrix)?;
+        let mut variables = Vec::with_capacity(n_col as usize);
 
-        let variables: Vec<Variable> = (0..n_col)
-            .into_iter()
-            .take(MAX_DISPLAY_VALUE_ENTRIES)
-            .map(|i| {
-                // The display value of columns concatenates the column vector values into a
-                // single string with maximum length of MAX_DISPLAY_VALUE_LENGTH.\
-                let mut is_truncated = false;
-                let mut display_value = String::with_capacity(MAX_DISPLAY_VALUE_LENGTH);
+        for col in (0..n_col).take(MAX_DISPLAY_VALUE_ENTRIES) {
+            // The display value of columns concatenates the column vector values into a
+            // single string with maximum length of MAX_DISPLAY_VALUE_LENGTH.
+            let mut is_truncated = false;
+            let mut display_value = String::with_capacity(MAX_DISPLAY_VALUE_LENGTH);
 
-                'outer: for (i, elt) in formatted.column_iter(i as isize).enumerate() {
-                    if i > 0 {
-                        display_value.push_str(" ");
-                    }
-                    for char in elt.chars() {
-                        if display_value.len() >= MAX_DISPLAY_VALUE_LENGTH {
-                            is_truncated = true;
-                            // We break the outer loop to avoid adding more characters to the
-                            // display value.
-                            break 'outer;
-                        }
-                        display_value.push(char);
-                    }
+            let iter = formatted
+                // Even if each column element takes 0 characters, `MAX_DISPLAY_VALUE_LENGTH`
+                // is enough to fill the display value because we need to account for the space
+                // between elements.
+                .column_iter_n(col as isize, MAX_DISPLAY_VALUE_LENGTH)?
+                .enumerate();
+
+            'outer: for (i, elt) in iter {
+                if i > 0 {
+                    display_value.push_str(" ");
                 }
+                for char in elt.chars() {
+                    if display_value.len() >= MAX_DISPLAY_VALUE_LENGTH {
+                        is_truncated = true;
+                        // We break the outer loop to avoid adding more characters to the
+                        // display value.
+                        break 'outer;
+                    }
+                    display_value.push(char);
+                }
+            }
 
-                make_variable(
-                    format!("{}", i),
-                    format!("[, {}]", i + 1),
-                    display_value,
-                    is_truncated,
-                )
-            })
-            .collect();
+            variables.push(make_variable(
+                format!("{}", col),
+                format!("[, {}]", col + 1),
+                display_value,
+                is_truncated,
+            ));
+        }
 
         Ok(variables)
     }
 
-    fn inspect_matrix_column(matrix: SEXP, index: isize) -> harp::error::Result<Vec<Variable>> {
-        let column =
-            match harp::table::tbl_get_column(matrix, index as i32, harp::TableKind::Matrix) {
-                Ok(column) => column,
-                Err(err) => return Err(Error::Anyhow(err)),
-            };
+    fn inspect_matrix_column(matrix: SEXP, index: isize) -> anyhow::Result<Vec<Variable>> {
+        let column = harp::table::tbl_get_column(matrix, index as i32, harp::TableKind::Matrix)?;
 
         let variables: Vec<Variable> = Self::inspect_vector(column.sexp)?
             .into_iter()
@@ -1260,7 +1262,7 @@ impl PositronVariable {
         Ok(variables)
     }
 
-    fn inspect_vector(vector: SEXP) -> harp::error::Result<Vec<Variable>> {
+    fn inspect_vector(vector: SEXP) -> anyhow::Result<Vec<Variable>> {
         let vector = RObject::new(vector);
 
         let r_type = r_typeof(vector.sexp);
@@ -1291,13 +1293,12 @@ impl PositronVariable {
                 updated_time: Self::update_timestamp(),
             };
 
-        let formatted = FormattedVector::new(vector.sexp)?;
+        let formatted = FormattedVector::new(vector.clone())?;
         let names = Names::new(vector.sexp, |i| format!("[{}]", i + 1));
 
         let variables: Vec<Variable> = formatted
-            .iter()
+            .iter_n(MAX_DISPLAY_VALUE_ENTRIES)?
             .enumerate()
-            .take(MAX_DISPLAY_VALUE_ENTRIES)
             .map(|(i, value)| {
                 let (is_truncated, display_value) = truncate_chars(value, MAX_DISPLAY_VALUE_LENGTH);
                 // Names are arbitrarily set by users, so we add a safeguard to truncate them

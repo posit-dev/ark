@@ -735,6 +735,16 @@ pub fn r_format_vec(x: SEXP) -> Result<SEXP> {
     }
 }
 
+pub fn r_subset_vec(x: SEXP, indices: Vec<i64>) -> Result<SEXP> {
+    let env = unsafe { HARP_ENV.unwrap() };
+    let indices: Vec<i64> = indices.into_iter().map(|i| i + 1).collect();
+    let out = RFunction::new("", "harp_subset_vec")
+        .add(x)
+        .add(&indices)
+        .call_in(env)?;
+    Ok(out.sexp)
+}
+
 #[cfg(test)]
 mod tests {
     use libr::STRING_ELT;
