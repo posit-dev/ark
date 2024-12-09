@@ -58,7 +58,7 @@ impl FormattedVector {
     /// Returns an iterator over the first `n` elements of a vector.
     /// Should be used when the vector is potentially large and you won't need to
     /// iterate over the entire vector.
-    pub fn iter_n(&self, n: usize) -> anyhow::Result<FormattedVectorIter> {
+    pub fn iter_take(&self, n: usize) -> anyhow::Result<FormattedVectorIter> {
         // The iterators for atomic values and factors are lazy and don't need any special
         // treatment.
         let length = r_length(self.vector.sexp);
@@ -176,7 +176,8 @@ impl FormattedVectorIter {
     /// Creates a new iterator over the formatted elements of a vector.
     /// If `indices` is `None`, the iterator will iterate over all elements of the vector.
     /// If `indices` is `Some`, the iterator will iterate over the elements at the specified indices.
-    /// The indices must be valid and in bounds as we do no bounds checking.
+    /// SAFETY: The caller must make sure that indices are valid and in bounds. Iteration may panic
+    /// if the indices are out of bounds.
     fn new_unchecked(
         vector: RObject,
         indices: Option<Box<dyn Iterator<Item = i64>>>,

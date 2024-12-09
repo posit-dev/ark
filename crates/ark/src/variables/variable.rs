@@ -345,7 +345,7 @@ impl WorkspaceVariableDisplayValue {
         // Performance: value is potentially a very large vector, so we need to be careful
         // to not format every element of value. Instead only format the necessary elements
         // to display the first MAX_DISPLAY_VALUE_LENGTH characters.
-        'outer: for (i, elt) in formatted.iter_n(MAX_DISPLAY_VALUE_LENGTH)?.enumerate() {
+        'outer: for (i, elt) in formatted.iter_take(MAX_DISPLAY_VALUE_LENGTH)?.enumerate() {
             if i > 0 {
                 display_value.push_str(" ");
             }
@@ -1297,7 +1297,7 @@ impl PositronVariable {
         let names = Names::new(vector.sexp, |i| format!("[{}]", i + 1));
 
         let variables: Vec<Variable> = formatted
-            .iter_n(MAX_DISPLAY_VALUE_ENTRIES)?
+            .iter_take(MAX_DISPLAY_VALUE_ENTRIES)?
             .enumerate()
             .map(|(i, value)| {
                 let (is_truncated, display_value) = truncate_chars(value, MAX_DISPLAY_VALUE_LENGTH);
