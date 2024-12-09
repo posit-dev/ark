@@ -301,14 +301,14 @@ impl RVariables {
         &mut self,
         path: &Vec<String>,
         format: ClipboardFormatFormat,
-    ) -> Result<String, harp::error::Error> {
+    ) -> anyhow::Result<String> {
         r_task(|| {
             let env = self.env.get().clone();
             PositronVariable::clip(env, &path, &format)
         })
     }
 
-    fn inspect(&mut self, path: &Vec<String>) -> Result<Vec<Variable>, harp::error::Error> {
+    fn inspect(&mut self, path: &Vec<String>) -> anyhow::Result<Vec<Variable>> {
         r_task(|| {
             let env = self.env.get().clone();
             PositronVariable::inspect(env, &path)
