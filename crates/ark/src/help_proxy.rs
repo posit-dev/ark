@@ -150,7 +150,7 @@ async fn proxy_request(req: HttpRequest, app_state: web::Data<AppState>) -> Http
 
             // Log.
             log::info!(
-                "Proxying URL '{:?}' path '{}' content-type is '{:?}'",
+                "Proxying URL {:?} path '{}' content-type is '{:?}'",
                 target_url.to_string(),
                 target_url.path(),
                 content_type,
@@ -159,7 +159,7 @@ async fn proxy_request(req: HttpRequest, app_state: web::Data<AppState>) -> Http
             // We only handle OK. Everything else is unexpected.
             if response.status() != reqwest::StatusCode::OK {
                 log::error!(
-                    "Got status {} proxying '{:?}': {:?}",
+                    "Got status {} proxying {:?}: {:?}",
                     response.status().clone().to_string(),
                     target_url.to_string(),
                     response.text().await.unwrap(),
