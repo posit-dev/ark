@@ -144,11 +144,6 @@ async fn proxy_request(req: HttpRequest, app_state: web::Data<AppState>) -> Http
     match client.get(target_url.clone()).send().await {
         // OK.
         Ok(response) => {
-            // We only handle OK. Everything else is unexpected.
-            if response.status() != reqwest::StatusCode::OK {
-                return HttpResponse::BadGateway().finish();
-            }
-
             // Get the headers we need.
             let headers = response.headers().clone();
             let content_type = headers.get("content-type");
@@ -160,6 +155,17 @@ async fn proxy_request(req: HttpRequest, app_state: web::Data<AppState>) -> Http
                 target_url.path(),
                 content_type,
             );
+
+            // We only handle OK. Everything else is unexpected.
+            if response.status() != reqwest::StatusCode::OK {
+                log::error!(
+                    "Got status {} proxying '{:?}': {:?}",
+                    response.status().clone().to_string(),
+                    target_url.to_string(),
+                    response.text().await.unwrap(),
+                );
+                return HttpResponse::BadGateway().finish();
+            }
 
             // Build and return the response.
             let mut http_response_builder = HttpResponse::Ok();
