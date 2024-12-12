@@ -159,10 +159,13 @@ async fn proxy_request(req: HttpRequest, app_state: web::Data<AppState>) -> Http
             // We only handle OK. Everything else is unexpected.
             if response.status() != reqwest::StatusCode::OK {
                 log::error!(
-                    "Got status {} proxying {:?}: {:?}",
-                    response.status().clone().to_string(),
-                    target_url.to_string(),
-                    response.text().await.unwrap(),
+                    "Got status {status} proxying {url:?}: {response:?}",
+                    status = response.status().to_string(),
+                    url = target_url.to_string(),
+                    response = match response.text().await {
+                        Ok(response) => response,
+                        Err(err) => format!("Response error: {err:?}"),
+                    },
                 );
                 return HttpResponse::BadGateway().finish();
             }
