@@ -19,6 +19,7 @@ use tower_lsp::lsp_types::DidCloseTextDocumentParams;
 use tower_lsp::lsp_types::DidOpenTextDocumentParams;
 use tower_lsp::lsp_types::DocumentOnTypeFormattingOptions;
 use tower_lsp::lsp_types::ExecuteCommandOptions;
+use tower_lsp::lsp_types::FoldingRangeProviderCapability;
 use tower_lsp::lsp_types::FormattingOptions;
 use tower_lsp::lsp_types::HoverProviderCapability;
 use tower_lsp::lsp_types::ImplementationProviderCapability;
@@ -115,6 +116,7 @@ pub(crate) fn initialize(
                 TextDocumentSyncKind::INCREMENTAL,
             )),
             selection_range_provider: Some(SelectionRangeProviderCapability::Simple(true)),
+            folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
             hover_provider: Some(HoverProviderCapability::from(true)),
             completion_provider: Some(CompletionOptions {
                 resolve_provider: Some(true),
