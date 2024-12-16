@@ -519,5 +519,10 @@ histogram_num_bins <- function(x, method, fixed_num_bins) {
         }
     }
 
+    # Honor the maximum amount of bins requested by the front-end.
+    if (!is.null(fixed_num_bins) && num_bins > fixed_num_bins) {
+        num_bins <- fixed_num_bins
+    }
+
     as.integer(num_bins)
 }
