@@ -632,4 +632,29 @@ mod tests {
             );
         })
     }
+
+    #[test]
+    fn test_limit_bins() {
+        // Regression test for https://github.com/posit-dev/positron/issues/5744
+        r_task(|| {
+            let column = harp::parse_eval_global("rep(c(1:10, 5e7), 10)").unwrap();
+
+            let hist = profile_histogram(
+                column.sexp,
+                &ColumnHistogramParams {
+                    method: ColumnHistogramParamsMethod::FreedmanDiaconis,
+                    // If num_bins wasn't set to 10, that would generate almost 200k bins
+                    num_bins: 10,
+                    quantiles: None,
+                },
+                &default_options(),
+            )
+            .unwrap();
+
+            assert_match!(hist, ColumnHistogram { bin_edges, bin_counts, .. } => {
+                assert_eq!(bin_edges.len(), 11);
+                assert_eq!(bin_counts.len(), 10);
+            });
+        })
+    }
 }
