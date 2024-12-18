@@ -60,6 +60,10 @@ jobs:
             tibble
             haven
 
+      - name: Set LD_LIBRARY_PATH
+        run: |
+          echo "LD_LIBRARY_PATH=$(R RHOME)/lib" >> $GITHUB_ENV
+
       - name: Setup SSH access
         uses: mxschmitt/action-tmate@v3
         if: ${{ inputs.ssh }}
