@@ -30,6 +30,7 @@ use harp::utils::pairlist_size;
 use harp::utils::r_altrep_class;
 use harp::utils::r_assert_type;
 use harp::utils::r_classes;
+use harp::utils::r_format_s4;
 use harp::utils::r_inherits;
 use harp::utils::r_is_altrep;
 use harp::utils::r_is_data_frame;
@@ -100,6 +101,7 @@ impl WorkspaceVariableDisplayValue {
             LANGSXP => Self::from_language(value),
             _ if r_is_matrix(value) => Self::from_matrix(value)?,
             RAWSXP | LGLSXP | INTSXP | REALSXP | STRSXP | CPLXSXP => Self::from_default(value)?,
+            _ if r_is_s4(value) => Self::from_s4(value)?,
             _ => Self::from_error(Error::Anyhow(anyhow!(
                 "Unexpected type {}",
                 r_type2char(r_typeof(value))
@@ -333,6 +335,20 @@ impl WorkspaceVariableDisplayValue {
         }
         display_value.push(']');
 
+        Ok(Self::new(display_value, false))
+    }
+
+    fn from_s4(value: SEXP) -> anyhow::Result<Self> {
+        let result: Vec<String> = RObject::from(r_format_s4(value)?).try_into()?;
+        let mut display_value = String::from("");
+        for val in result.iter() {
+            for char in val.chars() {
+                if display_value.len() >= MAX_DISPLAY_VALUE_LENGTH {
+                    return Ok(Self::new(display_value, true));
+                }
+                display_value.push(char);
+            }
+        }
         Ok(Self::new(display_value, false))
     }
 
@@ -1886,6 +1902,15 @@ mod tests {
             )
             .unwrap();
 
+            let path = vec![];
+            let vars = PositronVariable::inspect(env.clone(), &path).unwrap();
+
+            assert_eq!(vars.len(), 1);
+            assert_eq!(
+                vars[0].display_value,
+                "<S4 class ‘Person’ [package “.GlobalEnv”] with 3 slots>"
+            );
+
             // Inspect the S4 object
             let path = vec![String::from("x")];
             let fields = PositronVariable::inspect(env.clone(), &path).unwrap();
@@ -2031,5 +2056,24 @@ mod tests {
             assert_eq!(vars.len(), 1);
             assert_eq!(vars[0].display_value, "[]");
         });
+    }
+
+    #[test]
+    fn test_s4_with_different_length() {
+        r_task(|| {
+            let env = Environment::new_empty().unwrap();
+            // Matrix::Matrix objects have length != 1, but their format() method returns a length 1 character
+            // describing their class.
+            let value = harp::parse_eval_base("Matrix::Matrix(0, nrow= 10, ncol = 10)").unwrap();
+            env.bind("x".into(), &value);
+
+            let path = vec![];
+            let vars = PositronVariable::inspect(env.into(), &path).unwrap();
+            assert_eq!(vars.len(), 1);
+            assert_eq!(
+                vars[0].display_value,
+                "<S4 class ‘ddiMatrix’ [package “Matrix”] with 4 slots>"
+            );
+        })
     }
 }
