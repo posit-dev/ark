@@ -86,3 +86,34 @@ init_test_format <- function() {
 
     environment()
 }
+
+harp_format_s4 <- function(x, ...) {
+    # For S4 values we assume that the formatted value is a character vector of length 1,
+    # even if the value has length > 1. This is because the formatted value is typically
+    # the class of the object, which is a single string.
+    # If for some reason the formatted value is not a character vector of length 1, we
+    # check if the result is a character vector the same length as `value`.
+    out <- base::format(x, ...)
+
+    if (length(out) != 1 && length(out) != length(x)) {
+        log_trace(sprintf(
+            "`format()` method for <%s> should return a character vector of length 1 or the same length as the object.",
+            class_collapsed(x)
+        ))
+        return(format_fallback_s4(x))
+    }
+
+    if (!is.character(out)) {
+        log_trace(sprintf(
+            "`format()` method for <%s> should return a character vector.",
+            class_collapsed(x)
+        ))
+        return(format_fallback_s4(x))
+    }
+
+    out
+}
+
+format_fallback_s4 <- function(x) {
+    paste0("<S4 class '", class_collapsed(x), "'>")
+}
