@@ -19,6 +19,7 @@ use tower_lsp::jsonrpc;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::request::GotoImplementationParams;
 use tower_lsp::lsp_types::request::GotoImplementationResponse;
+use tower_lsp::lsp_types::FoldingRange;
 use tower_lsp::lsp_types::SelectionRange;
 use tower_lsp::lsp_types::*;
 use tower_lsp::Client;
@@ -90,6 +91,7 @@ pub(crate) enum LspRequest {
     GotoDefinition(GotoDefinitionParams),
     GotoImplementation(GotoImplementationParams),
     SelectionRange(SelectionRangeParams),
+    FoldingRange(FoldingRangeParams),
     References(ReferenceParams),
     StatementRange(StatementRangeParams),
     HelpTopic(HelpTopicParams),
@@ -113,6 +115,7 @@ pub(crate) enum LspResponse {
     GotoImplementation(Option<GotoImplementationResponse>),
     SelectionRange(Option<Vec<SelectionRange>>),
     References(Option<Vec<Location>>),
+    FoldingRange(Option<Vec<FoldingRange>>),
     StatementRange(Option<StatementRangeResponse>),
     HelpTopic(Option<HelpTopicResponse>),
     OnTypeFormatting(Option<Vec<TextEdit>>),
@@ -285,6 +288,13 @@ impl LanguageServer for Backend {
         cast_response!(
             self.request(LspRequest::SelectionRange(params)).await,
             LspResponse::SelectionRange
+        )
+    }
+
+    async fn folding_range(&self, params: FoldingRangeParams) -> Result<Option<Vec<FoldingRange>>> {
+        cast_response!(
+            self.request(LspRequest::FoldingRange(params)).await,
+            LspResponse::FoldingRange
         )
     }
 
