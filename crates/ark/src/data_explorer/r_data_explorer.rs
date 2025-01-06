@@ -580,7 +580,7 @@ impl RDataExplorer {
             for i in 0..(total_num_columns as isize) {
                 let column_name = match column_names.get_unchecked(i) {
                     Some(name) => name,
-                    None => format!("[, {}]", i + 1),
+                    None => String::from(""),
                 };
 
                 // TODO: handling for nested data frame columns
