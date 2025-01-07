@@ -735,6 +735,17 @@ pub fn r_format_vec(x: SEXP) -> Result<SEXP> {
     }
 }
 
+pub fn r_format_s4(x: SEXP) -> Result<SEXP> {
+    if !r_is_s4(x) {
+        return Err(Error::UnexpectedType(r_typeof(x), vec![S4SXP]));
+    }
+
+    let out = RFunction::new("", "harp_format_s4")
+        .add(x)
+        .call_in(unsafe { HARP_ENV.unwrap() })?;
+    Ok(out.sexp)
+}
+
 pub fn r_subset_vec(x: SEXP, indices: Vec<i64>) -> Result<SEXP> {
     let env = unsafe { HARP_ENV.unwrap() };
     let indices: Vec<i64> = indices.into_iter().map(|i| i + 1).collect();
