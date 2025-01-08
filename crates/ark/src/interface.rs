@@ -10,6 +10,7 @@
 // The frontend methods called by R are forwarded to the corresponding
 // `RMain` methods via `R_MAIN`.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::*;
 use std::os::raw::c_uchar;
@@ -151,11 +152,12 @@ static R_INIT: once_cell::sync::OnceCell<()> = once_cell::sync::OnceCell::new();
 
 // The global state used by R callbacks.
 //
-// Doesn't need a mutex because it's only accessed by the R thread. Should
-// not be used elsewhere than from an R frontend callback or an R function
-// invoked by the REPL (this is enforced by `RMain::get()` and
-// `RMain::get_mut()`).
-static mut R_MAIN: Option<RMain> = None;
+// Thread-local because it contains non-Send/Sync fields and is only accessed
+// from one thread anyway. This state must be global (or thread-local) because
+// it's accessed from C callbacks called by R.
+thread_local! {
+    pub static R_MAIN: RefCell<RMain> = panic!("Must access `R_MAIN` from the R thread");
+}
 
 /// Banner output accumulated during startup
 static mut R_BANNER: String = String::new();
@@ -319,22 +321,19 @@ impl RMain {
         let (tasks_interrupt_tx, tasks_interrupt_rx) = unbounded::<RTask>();
         let (tasks_idle_tx, tasks_idle_rx) = unbounded::<RTask>();
 
-        unsafe {
-            R_MAIN = Some(RMain::new(
-                tasks_interrupt_rx,
-                tasks_idle_rx,
-                comm_manager_tx,
-                r_request_rx,
-                stdin_request_tx,
-                stdin_reply_rx,
-                iopub_tx,
-                kernel_init_tx,
-                kernel_request_rx,
-                dap,
-                session_mode,
-            ));
-        };
-        let r_main = unsafe { R_MAIN.as_mut().unwrap() };
+        R_MAIN.set(RMain::new(
+            tasks_interrupt_rx,
+            tasks_idle_rx,
+            comm_manager_tx,
+            r_request_rx,
+            stdin_request_tx,
+            stdin_reply_rx,
+            iopub_tx,
+            kernel_init_tx,
+            kernel_request_rx,
+            dap,
+            session_mode,
+        ));
 
         let mut r_args = r_args.clone();
 
@@ -438,46 +437,50 @@ impl RMain {
             // sooner if we hit a check-interrupt before then.
             r_task::initialize(tasks_interrupt_tx, tasks_idle_tx);
 
-            // Initialize support functions (after routine registration, after r_task initialization)
-            match modules::initialize() {
-                Err(err) => {
-                    log::error!("Can't load R modules: {err:?}");
-                },
-                Ok(namespace) => {
-                    r_main.positron_ns = Some(namespace);
-                },
-            }
+            R_MAIN.with(|cell| {
+                let mut r_main = cell.borrow_mut();
 
-            // Register all hooks once all modules have been imported
-            let hook_result = RFunction::from(".ps.register_all_hooks").call();
-            if let Err(err) = hook_result {
-                log::error!("Error registering some hooks: {err:?}");
-            }
-
-            // Populate srcrefs for namespaces already loaded in the session.
-            // Namespaces of future loaded packages will be populated on load.
-            // (after r_task initialization)
-            if do_resource_namespaces() {
-                if let Err(err) = resource_loaded_namespaces() {
-                    log::error!("Can't populate srcrefs for loaded packages: {err:?}");
+                // Initialize support functions (after routine registration, after r_task initialization)
+                match modules::initialize() {
+                    Err(err) => {
+                        log::error!("Can't load R modules: {err:?}");
+                    },
+                    Ok(namespace) => {
+                        r_main.positron_ns = Some(namespace);
+                    },
                 }
-            }
 
-            // Set up the global error handler (after support function initialization)
-            errors::initialize();
+                // Register all hooks once all modules have been imported
+                let hook_result = RFunction::from(".ps.register_all_hooks").call();
+                if let Err(err) = hook_result {
+                    log::error!("Error registering some hooks: {err:?}");
+                }
 
-            // Set default repositories
-            if let Err(err) = apply_default_repos(default_repos) {
-                log::error!("Error setting default repositories: {err:?}");
-            }
+                // Populate srcrefs for namespaces already loaded in the session.
+                // Namespaces of future loaded packages will be populated on load.
+                // (after r_task initialization)
+                if do_resource_namespaces() {
+                    if let Err(err) = resource_loaded_namespaces() {
+                        log::error!("Can't populate srcrefs for loaded packages: {err:?}");
+                    }
+                }
 
-            // Now that R has started (emitting any startup messages), and now that we have set
-            // up all hooks and handlers, officially finish the R initialization process to
-            // unblock the kernel-info request and also allow the LSP to start.
-            log::info!(
-                "R has started and ark handlers have been registered, completing initialization."
-            );
-            r_main.complete_initialization();
+                // Set up the global error handler (after support function initialization)
+                errors::initialize();
+
+                // Set default repositories
+                if let Err(err) = apply_default_repos(default_repos) {
+                    log::error!("Error setting default repositories: {err:?}");
+                }
+
+                // Now that R has started (emitting any startup messages), and now that we have set
+                // up all hooks and handlers, officially finish the R initialization process to
+                // unblock the kernel-info request and also allow the LSP to start.
+                log::info!(
+                    "R has started and ark handlers have been registered, completing initialization."
+                );
+                r_main.complete_initialization();
+            });
         }
 
         // Now that R has started and libr and ark have fully initialized, run site and user
@@ -583,51 +586,18 @@ impl RMain {
         R_INIT.get().is_some()
     }
 
-    /// Access a reference to the singleton instance of this struct
-    ///
-    /// SAFETY: Accesses must occur after `RMain::start()` initializes it, and must
-    /// occur on the main R thread.
-    pub fn get() -> &'static Self {
-        RMain::get_mut()
-    }
-
-    /// Access a mutable reference to the singleton instance of this struct
-    ///
-    /// SAFETY: Accesses must occur after `RMain::start()` initializes it, and must
-    /// occur on the main R thread.
-    pub fn get_mut() -> &'static mut Self {
-        if !RMain::on_main_thread() {
-            let thread = std::thread::current();
-            let name = thread.name().unwrap_or("<unnamed>");
-            let message =
-                format!("Must access `R_MAIN` on the main R thread, not thread '{name}'.");
-            #[cfg(debug_assertions)]
-            panic!("{message}");
-            #[cfg(not(debug_assertions))]
-            log::error!("{message}");
-        }
-
-        unsafe {
-            R_MAIN
-                .as_mut()
-                .expect("`R_MAIN` can't be used before it is initialized!")
-        }
-    }
-
-    pub fn with<F, T>(f: F) -> T
+    pub fn with<F, R>(f: F) -> R
     where
-        F: FnOnce(&RMain) -> T,
+        F: FnOnce(&RMain) -> R,
     {
-        let main = Self::get();
-        f(main)
+        R_MAIN.with_borrow(f)
     }
 
-    pub fn with_mut<F, T>(f: F) -> T
+    pub fn with_mut<F, R>(f: F) -> R
     where
-        F: FnOnce(&mut RMain) -> T,
+        F: FnOnce(&mut RMain) -> R,
     {
-        let main = Self::get_mut();
-        f(main)
+        R_MAIN.with_borrow_mut(f)
     }
 
     pub fn on_main_thread() -> bool {
@@ -1599,74 +1569,74 @@ impl RMain {
             return;
         }
 
-        let r_main = RMain::get_mut();
+        RMain::with_mut(|r_main| {
+            // To capture the current `debug: <call>` output, for use in the debugger's
+            // match based fallback
+            r_main.dap.handle_stdout(&content);
 
-        // To capture the current `debug: <call>` output, for use in the debugger's
-        // match based fallback
-        r_main.dap.handle_stdout(&content);
+            let stream = if otype == 0 {
+                Stream::Stdout
+            } else {
+                Stream::Stderr
+            };
 
-        let stream = if otype == 0 {
-            Stream::Stdout
-        } else {
-            Stream::Stderr
-        };
-
-        // If active execution request is silent don't broadcast
-        // any output
-        if let Some(ref req) = r_main.active_request {
-            if req.request.silent {
-                return;
-            }
-        }
-
-        if stream == Stream::Stdout && is_auto_printing() {
-            // If we are at top-level, we're handling visible output auto-printed by
-            // the R REPL. We accumulate this output (it typically comes in multiple
-            // parts) so we can emit it later on as part of the execution reply
-            // message sent to Shell, as opposed to an Stdout message sent on IOPub.
-            //
-            // However, if autoprint is dealing with an intermediate expression
-            // (i.e. `a` and `b` in `a\nb\nc`), we should emit it on IOPub. We
-            // only accumulate autoprint output for the very last expression. The
-            // way to distinguish between these cases is whether there are still
-            // lines of input pending. In that case, that means we are on an
-            // intermediate expression.
-            //
-            // Note that we implement this behaviour (streaming autoprint results of
-            // intermediate expressions) specifically for Positron, and specifically
-            // for versions that send multiple expressions selected by the user in
-            // one request. Other Jupyter frontends do not want to see output for
-            // these intermediate expressions. And future versions of Positron will
-            // never send multiple expressions in one request
-            // (https://github.com/posit-dev/positron/issues/1326).
-            //
-            // Note that warnings emitted lazily on stdout will appear to be part of
-            // autoprint. We currently emit them on stderr, which allows us to
-            // differentiate, but that could change in the future:
-            // https://github.com/posit-dev/positron/issues/1881
-
-            // Handle last expression
-            if r_main.pending_lines.is_empty() {
-                r_main.autoprint_output.push_str(&content);
-                return;
+            // If active execution request is silent don't broadcast
+            // any output
+            if let Some(ref req) = r_main.active_request {
+                if req.request.silent {
+                    return;
+                }
             }
 
-            // In notebooks, we don't emit results of intermediate expressions
-            if r_main.session_mode == SessionMode::Notebook {
-                return;
+            if stream == Stream::Stdout && is_auto_printing() {
+                // If we are at top-level, we're handling visible output auto-printed by
+                // the R REPL. We accumulate this output (it typically comes in multiple
+                // parts) so we can emit it later on as part of the execution reply
+                // message sent to Shell, as opposed to an Stdout message sent on IOPub.
+                //
+                // However, if autoprint is dealing with an intermediate expression
+                // (i.e. `a` and `b` in `a\nb\nc`), we should emit it on IOPub. We
+                // only accumulate autoprint output for the very last expression. The
+                // way to distinguish between these cases is whether there are still
+                // lines of input pending. In that case, that means we are on an
+                // intermediate expression.
+                //
+                // Note that we implement this behaviour (streaming autoprint results of
+                // intermediate expressions) specifically for Positron, and specifically
+                // for versions that send multiple expressions selected by the user in
+                // one request. Other Jupyter frontends do not want to see output for
+                // these intermediate expressions. And future versions of Positron will
+                // never send multiple expressions in one request
+                // (https://github.com/posit-dev/positron/issues/1326).
+                //
+                // Note that warnings emitted lazily on stdout will appear to be part of
+                // autoprint. We currently emit them on stderr, which allows us to
+                // differentiate, but that could change in the future:
+                // https://github.com/posit-dev/positron/issues/1881
+
+                // Handle last expression
+                if r_main.pending_lines.is_empty() {
+                    r_main.autoprint_output.push_str(&content);
+                    return;
+                }
+
+                // In notebooks, we don't emit results of intermediate expressions
+                if r_main.session_mode == SessionMode::Notebook {
+                    return;
+                }
+
+                // In Positron, fall through if we have pending input. This allows
+                // autoprint output for intermediate expressions to be emitted on
+                // IOPub.
             }
 
-            // In Positron, fall through if we have pending input. This allows
-            // autoprint output for intermediate expressions to be emitted on
-            // IOPub.
-        }
-
-        // Stream output via the IOPub channel.
-        let message = IOPubMessage::Stream(StreamOutput {
-            name: stream,
-            text: content,
-        });
-        r_main.iopub_tx.send(message).unwrap();
+            // Stream output via the IOPub channel.
+            let message = IOPubMessage::Stream(StreamOutput {
+                name: stream,
+                text: content,
+            });
+            r_main.iopub_tx.send(message).unwrap();
+        })
     }
 
     /// Invoked by R to change busy state
@@ -1929,8 +1899,7 @@ pub extern "C" fn r_read_console(
     buflen: c_int,
     hist: c_int,
 ) -> i32 {
-    let main = RMain::get_mut();
-    let result = r_sandbox(|| main.read_console(prompt, buf, buflen, hist));
+    let result = RMain::with_mut(|main| r_sandbox(|| main.read_console(prompt, buf, buflen, hist)));
 
     let result = unwrap!(result, Err(err) => {
         panic!("Unexpected longjump while reading console: {err:?}");
@@ -1979,14 +1948,12 @@ pub extern "C" fn r_write_console(buf: *const c_char, buflen: i32, otype: i32) {
 
 #[no_mangle]
 pub extern "C" fn r_show_message(buf: *const c_char) {
-    let main = RMain::get();
-    main.show_message(buf);
+    RMain::with(|main| main.show_message(buf));
 }
 
 #[no_mangle]
 pub extern "C" fn r_busy(which: i32) {
-    let main = RMain::get_mut();
-    main.busy(which);
+    RMain::with_mut(|main| main.busy(which));
 }
 
 #[no_mangle]
@@ -1997,8 +1964,7 @@ pub extern "C" fn r_suicide(buf: *const c_char) {
 
 #[no_mangle]
 pub unsafe extern "C" fn r_polled_events() {
-    let main = RMain::get_mut();
-    main.polled_events();
+    RMain::with_mut(|main| main.polled_events());
 }
 
 // This hook is called like a user onLoad hook but for every package to be

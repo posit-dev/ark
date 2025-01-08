@@ -1098,8 +1098,7 @@ pub unsafe extern "C" fn ps_view_data_frame(
     let title = RObject::new(title);
     let title = unwrap!(String::try_from(title), Err(_) => "".to_string());
 
-    let main = RMain::get();
-    let comm_manager_tx = main.get_comm_manager_tx().clone();
+    let comm_manager_tx = RMain::with(|main| main.get_comm_manager_tx().clone());
 
     // If an environment is provided, watch the variable in the environment
     let env_info = if env != R_NilValue {

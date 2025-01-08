@@ -56,12 +56,12 @@ unsafe fn ps_browse_url_impl(url: SEXP) -> anyhow::Result<SEXP> {
     let params = ShowUrlParams { url };
     let event = UiFrontendEvent::ShowUrl(params);
 
-    let main = RMain::get();
-    let ui_comm_tx = main
-        .get_ui_comm_tx()
-        .ok_or_else(|| anyhow::anyhow!("UI comm not connected."))?;
+    RMain::with(|main| {
+        let ui_comm_tx = main
+            .get_ui_comm_tx()
+            .ok_or_else(|| anyhow::anyhow!("UI comm not connected."))?;
 
-    ui_comm_tx.send_event(event);
-
-    Ok(Rf_ScalarLogical(1))
+        ui_comm_tx.send_event(event);
+        Ok(Rf_ScalarLogical(1))
+    })
 }

@@ -314,8 +314,6 @@ pub unsafe extern "C" fn ps_connection_opened(
         return Ok(id_r.sexp);
     }
 
-    let main = RMain::get();
-
     let metadata = Metadata {
         name: RObject::view(name).to::<String>()?,
         language_id: String::from("r"),
@@ -324,36 +322,40 @@ pub unsafe extern "C" fn ps_connection_opened(
         code: RObject::view(code).to::<Option<String>>().unwrap_or(None),
     };
 
-    if let Err(err) = RConnection::start(metadata, main.get_comm_manager_tx().clone(), id) {
-        log::error!("Connection Pane: Failed to start connection: {err:?}");
-        return Err(err);
-    }
-
-    return Ok(id_r.sexp);
+    RMain::with(|main| {
+        if let Err(err) = RConnection::start(metadata, main.get_comm_manager_tx().clone(), id) {
+            log::error!("Connection Pane: Failed to start connection: {err:?}");
+            Err(err)
+        } else {
+            Ok(id_r.sexp)
+        }
+    })
 }
 
 #[harp::register]
 pub unsafe extern "C" fn ps_connection_closed(id: SEXP) -> Result<SEXP, anyhow::Error> {
-    let main = RMain::get();
     let id_ = RObject::view(id).to::<String>()?;
 
-    main.get_comm_manager_tx()
-        .send(CommManagerEvent::Message(id_, CommMsg::Close))?;
+    RMain::with(|main| {
+        main.get_comm_manager_tx()
+            .send(CommManagerEvent::Message(id_, CommMsg::Close))?;
 
-    Ok(R_NilValue)
+        Ok(R_NilValue)
+    })
 }
 
 #[harp::register]
 pub unsafe extern "C" fn ps_connection_updated(id: SEXP) -> Result<SEXP, anyhow::Error> {
-    let main = RMain::get();
     let comm_id: String = RObject::view(id).to::<String>()?;
 
     let event = ConnectionsFrontendEvent::Update;
 
-    main.get_comm_manager_tx().send(CommManagerEvent::Message(
-        comm_id,
-        CommMsg::Data(serde_json::to_value(event)?),
-    ))?;
+    RMain::with(|main| {
+        main.get_comm_manager_tx().send(CommManagerEvent::Message(
+            comm_id,
+            CommMsg::Data(serde_json::to_value(event)?),
+        ))?;
 
-    Ok(R_NilValue)
+        Ok(R_NilValue)
+    })
 }

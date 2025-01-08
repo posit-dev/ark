@@ -243,12 +243,13 @@ mod debug {
                 }
 
                 r_task(|| {
-                    let r_main = RMain::get();
-                    if let Err(err) =
-                        import_file(&path, *src, r_main.positron_ns.as_ref().unwrap().sexp)
-                    {
-                        log::error!("{err:?}");
-                    }
+                    RMain::with(|r_main| {
+                        if let Err(err) =
+                            import_file(&path, *src, r_main.positron_ns.as_ref().unwrap().sexp)
+                        {
+                            log::error!("{err:?}");
+                        }
+                    });
                 });
                 *old_modified = new_modified;
             }

@@ -21,8 +21,6 @@ use crate::interface::RMain;
 
 #[harp::register]
 unsafe extern "C" fn ps_record_error(evalue: SEXP, traceback: SEXP) -> anyhow::Result<SEXP> {
-    let main = RMain::get_mut();
-
     // Convert to `RObject` for access to `try_from()` / `try_into()` methods.
     let evalue = RObject::new(evalue);
     let traceback = RObject::new(traceback);
@@ -37,9 +35,11 @@ unsafe extern "C" fn ps_record_error(evalue: SEXP, traceback: SEXP) -> anyhow::R
         Vec::<String>::new()
     });
 
-    main.error_occurred = true;
-    main.error_message = evalue;
-    main.error_traceback = traceback;
+    RMain::with_mut(|main| {
+        main.error_occurred = true;
+        main.error_message = evalue;
+        main.error_traceback = traceback;
+    });
 
     Ok(R_NilValue)
 }

@@ -86,8 +86,6 @@ impl ReticulateService {
 // the comm_id that is returned by this function.
 #[harp::register]
 pub unsafe extern "C" fn ps_reticulate_open(input: SEXP) -> Result<SEXP, anyhow::Error> {
-    let main = RMain::get();
-
     let input: RObject = input.try_into()?;
     let input_code: Option<String> = input.try_into()?;
 
@@ -96,22 +94,24 @@ pub unsafe extern "C" fn ps_reticulate_open(input: SEXP) -> Result<SEXP, anyhow:
     // If there's an id already registered, we just need to send the focus event
     if let Some(id) = comm_id_guard.deref() {
         // There's a comm_id registered, we just send the focus event
-        main.get_comm_manager_tx().send(CommManagerEvent::Message(
-            id.clone(),
-            CommMsg::Data(json!({
-                "method": "focus",
-                "params": {
-                    "input": input_code
-                }
-            })),
-        ))?;
+        RMain::with(|main| {
+            main.get_comm_manager_tx().send(CommManagerEvent::Message(
+                id.clone(),
+                CommMsg::Data(json!({
+                    "method": "focus",
+                    "params": {
+                        "input": input_code
+                    }
+                })),
+            ))
+        })?;
         return Ok(R_NilValue);
     }
 
     let id = Uuid::new_v4().to_string();
     *comm_id_guard = Some(id.clone());
 
-    ReticulateService::start(id, main.get_comm_manager_tx().clone())?;
+    RMain::with(|main| ReticulateService::start(id, main.get_comm_manager_tx().clone()))?;
 
     Ok(R_NilValue)
 }
