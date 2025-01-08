@@ -8,6 +8,8 @@
 use std::collections::HashMap;
 use std::future;
 use std::pin::Pin;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 use std::sync::RwLock;
 
 use anyhow::anyhow;
@@ -49,6 +51,8 @@ pub(crate) type TokioUnboundedReceiver<T> = tokio::sync::mpsc::UnboundedReceiver
 /// https://github.com/posit-dev/positron/issues/5321), it's possible for older
 /// LSPs to send log messages and tasks to the newer LSPs.
 static AUXILIARY_EVENT_TX: RwLock<Option<TokioUnboundedSender<AuxiliaryEvent>>> = RwLock::new(None);
+
+pub static LSP_HAS_CRASHED: AtomicBool = AtomicBool::new(false);
 
 // This is the syntax for trait aliases until an official one is stabilised.
 // This alias is for the future of a `JoinHandle<anyhow::Result<T>>`
@@ -272,61 +276,62 @@ impl GlobalState {
 
                     match request {
                         LspRequest::Initialize(params) => {
-                            respond(tx, state_handlers::initialize(params, &mut self.lsp_state, &mut self.world), LspResponse::Initialize)?;
+                            respond(tx, || state_handlers::initialize(params, &mut self.lsp_state, &mut self.world), LspResponse::Initialize)?;
                         },
                         LspRequest::Shutdown() => {
                             // TODO
-                            respond(tx, Ok(()), LspResponse::Shutdown)?;
+                            respond(tx, || Ok(()), LspResponse::Shutdown)?;
                         },
                         LspRequest::WorkspaceSymbol(params) => {
-                            respond(tx, handlers::handle_symbol(params), LspResponse::WorkspaceSymbol)?;
+                            respond(tx, || handlers::handle_symbol(params), LspResponse::WorkspaceSymbol)?;
                         },
                         LspRequest::DocumentSymbol(params) => {
-                            respond(tx, handlers::handle_document_symbol(params, &self.world), LspResponse::DocumentSymbol)?;
+                            respond(tx, || handlers::handle_document_symbol(params, &self.world), LspResponse::DocumentSymbol)?;
                         },
                         LspRequest::ExecuteCommand(_params) => {
-                            respond(tx, handlers::handle_execute_command(&self.client).await, LspResponse::ExecuteCommand)?;
+                            let response = handlers::handle_execute_command(&self.client).await;
+                            respond(tx, || response, LspResponse::ExecuteCommand)?;
                         },
                         LspRequest::Completion(params) => {
-                            respond(tx, handlers::handle_completion(params, &self.world), LspResponse::Completion)?;
+                            respond(tx, || handlers::handle_completion(params, &self.world), LspResponse::Completion)?;
                         },
                         LspRequest::CompletionResolve(params) => {
-                            respond(tx, handlers::handle_completion_resolve(params), LspResponse::CompletionResolve)?;
+                            respond(tx, || handlers::handle_completion_resolve(params), LspResponse::CompletionResolve)?;
                         },
                         LspRequest::Hover(params) => {
-                            respond(tx, handlers::handle_hover(params, &self.world), LspResponse::Hover)?;
+                            respond(tx, || handlers::handle_hover(params, &self.world), LspResponse::Hover)?;
                         },
                         LspRequest::SignatureHelp(params) => {
-                            respond(tx, handlers::handle_signature_help(params, &self.world), LspResponse::SignatureHelp)?;
+                            respond(tx, || handlers::handle_signature_help(params, &self.world), LspResponse::SignatureHelp)?;
                         },
                         LspRequest::GotoDefinition(params) => {
-                            respond(tx, handlers::handle_goto_definition(params, &self.world), LspResponse::GotoDefinition)?;
+                            respond(tx, || handlers::handle_goto_definition(params, &self.world), LspResponse::GotoDefinition)?;
                         },
                         LspRequest::GotoImplementation(_params) => {
                             // TODO
-                            respond(tx, Ok(None), LspResponse::GotoImplementation)?;
+                            respond(tx, || Ok(None), LspResponse::GotoImplementation)?;
                         },
                         LspRequest::SelectionRange(params) => {
-                            respond(tx, handlers::handle_selection_range(params, &self.world), LspResponse::SelectionRange)?;
+                            respond(tx, || handlers::handle_selection_range(params, &self.world), LspResponse::SelectionRange)?;
                         },
                         LspRequest::References(params) => {
-                            respond(tx, handlers::handle_references(params, &self.world), LspResponse::References)?;
+                            respond(tx, || handlers::handle_references(params, &self.world), LspResponse::References)?;
                         },
                         LspRequest::StatementRange(params) => {
-                            respond(tx, handlers::handle_statement_range(params, &self.world), LspResponse::StatementRange)?;
+                            respond(tx, || handlers::handle_statement_range(params, &self.world), LspResponse::StatementRange)?;
                         },
                         LspRequest::HelpTopic(params) => {
-                            respond(tx, handlers::handle_help_topic(params, &self.world), LspResponse::HelpTopic)?;
+                            respond(tx, || handlers::handle_help_topic(params, &self.world), LspResponse::HelpTopic)?;
                         },
                         LspRequest::OnTypeFormatting(params) => {
                             state_handlers::did_change_formatting_options(&params.text_document_position.text_document.uri, &params.options, &mut self.world);
-                            respond(tx, handlers::handle_indent(params, &self.world), LspResponse::OnTypeFormatting)?;
+                            respond(tx, || handlers::handle_indent(params, &self.world), LspResponse::OnTypeFormatting)?;
                         },
                         LspRequest::VirtualDocument(params) => {
-                            respond(tx, handlers::handle_virtual_document(params, &self.world), LspResponse::VirtualDocument)?;
+                            respond(tx, || handlers::handle_virtual_document(params, &self.world), LspResponse::VirtualDocument)?;
                         },
                         LspRequest::InputBoundaries(params) => {
-                            respond(tx, handlers::handle_input_boundaries(params), LspResponse::InputBoundaries)?;
+                            respond(tx, || handlers::handle_input_boundaries(params), LspResponse::InputBoundaries)?;
                         },
                     };
                 },
@@ -373,7 +378,7 @@ impl GlobalState {
         Handler: Send + 'static,
     {
         lsp::spawn_blocking(move || {
-            respond(response_tx, handler(), into_lsp_response).and(Ok(None))
+            respond(response_tx, || handler(), into_lsp_response).and(Ok(None))
         })
     }
 }
@@ -398,9 +403,18 @@ impl GlobalState {
 /// * - `into_lsp_response`: A constructor for the relevant `LspResponse` variant.
 fn respond<T>(
     response_tx: TokioUnboundedSender<anyhow::Result<LspResponse>>,
-    response: anyhow::Result<T>,
+    response: impl FnOnce() -> anyhow::Result<T>,
     into_lsp_response: impl FnOnce(T) -> LspResponse,
 ) -> anyhow::Result<()> {
+    let response = std::panic::catch_unwind(std::panic::AssertUnwindSafe(response))
+        .map_err(|err| {
+            // Set global crash flag to disable the LSP
+            LSP_HAS_CRASHED.store(true, Ordering::Release);
+            anyhow!("Panic occurred while handling request: {err:?}")
+        })
+        // Unwrap nested Result
+        .and_then(|resp| resp);
+
     let out = match response {
         Ok(_) => Ok(()),
         Err(ref err) => Err(anyhow!("Error while handling request:\n{err:?}")),

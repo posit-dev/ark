@@ -7,6 +7,7 @@
 
 #![allow(deprecated)]
 
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use crossbeam::channel::Sender;
@@ -26,6 +27,7 @@ use tower_lsp::LanguageServer;
 use tower_lsp::LspService;
 use tower_lsp::Server;
 
+use super::main_loop::LSP_HAS_CRASHED;
 use crate::interface::RMain;
 use crate::lsp::handlers::VirtualDocumentParams;
 use crate::lsp::handlers::VirtualDocumentResponse;
@@ -132,6 +134,12 @@ struct Backend {
 
 impl Backend {
     async fn request(&self, request: LspRequest) -> anyhow::Result<LspResponse> {
+        if LSP_HAS_CRASHED.load(Ordering::Acquire) {
+            return Err(anyhow::anyhow!(
+                "The LSP server has crashed and is now shut down!"
+            ));
+        }
+
         let (response_tx, mut response_rx) =
             tokio_unbounded_channel::<anyhow::Result<LspResponse>>();
 
