@@ -437,16 +437,14 @@ impl RMain {
             // sooner if we hit a check-interrupt before then.
             r_task::initialize(tasks_interrupt_tx, tasks_idle_tx);
 
-            R_MAIN.with(|cell| {
-                let mut r_main = cell.borrow_mut();
-
+            R_MAIN.with_borrow_mut(|main| {
                 // Initialize support functions (after routine registration, after r_task initialization)
                 match modules::initialize() {
                     Err(err) => {
                         log::error!("Can't load R modules: {err:?}");
                     },
                     Ok(namespace) => {
-                        r_main.positron_ns = Some(namespace);
+                        main.positron_ns = Some(namespace);
                     },
                 }
 
@@ -479,7 +477,7 @@ impl RMain {
                 log::info!(
                     "R has started and ark handlers have been registered, completing initialization."
                 );
-                r_main.complete_initialization();
+                main.complete_initialization();
             });
         }
 
