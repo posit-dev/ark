@@ -202,7 +202,13 @@ pub struct RMain {
     /// Channel to send and receive tasks from `RTask`s
     tasks_interrupt_rx: Receiver<RTask>,
     tasks_idle_rx: Receiver<RTask>,
-    pending_futures: HashMap<Uuid, (BoxFuture<'static, ()>, RTaskStartInfo)>,
+
+    /// Pending futures for async Idle tasks.
+    /// In a `RefCell` to avoid requiring mut refs on `R_MAIN` methods. These
+    /// are called by R callbacks for different events, such as R polled events,
+    /// and may cause a mutable borrow error on the `RefCell` that contains
+    /// `R_MAIN`.
+    pending_futures: RefCell<HashMap<Uuid, (BoxFuture<'static, ()>, RTaskStartInfo)>>,
 
     /// Channel to communicate requests and events to the frontend
     /// by forwarding them through the UI comm. Optional, and really Positron specific.
@@ -556,7 +562,7 @@ impl RMain {
             dap: RMainDap::new(dap),
             tasks_interrupt_rx,
             tasks_idle_rx,
-            pending_futures: HashMap::new(),
+            pending_futures: RefCell::new(HashMap::new()),
             session_mode,
             positron_ns: None,
             pending_lines: Vec::new(),
@@ -1080,7 +1086,7 @@ impl RMain {
     /// Since tasks running during interrupt checks block the R thread while
     /// they are running, they should return very quickly. The log message helps
     /// monitor excessively long-running tasks.
-    fn handle_task_interrupt(&mut self, mut task: RTask) {
+    fn handle_task_interrupt(&self, mut task: RTask) {
         if let Some(start_info) = task.start_info_mut() {
             // Log excessive waiting before starting task
             if start_info.start_time.elapsed() > std::time::Duration::from_millis(50) {
@@ -1111,7 +1117,7 @@ impl RMain {
     }
 
     /// Returns start information when the task has been completed
-    fn handle_task(&mut self, task: RTask) -> Option<RTaskStartInfo> {
+    fn handle_task(&self, task: RTask) -> Option<RTaskStartInfo> {
         // Background tasks can't take any user input, so we set R_Interactive
         // to 0 to prevent `readline()` from blocking the task.
         let _interactive = harp::raii::RLocalInteractive::new(false);
@@ -1149,7 +1155,7 @@ impl RMain {
     }
 
     fn poll_task(
-        &mut self,
+        &self,
         fut: Option<BoxFuture<'static, ()>>,
         waker: Arc<r_task::RTaskWaker>,
     ) -> Option<r_task::RTaskStartInfo> {
@@ -1157,7 +1163,7 @@ impl RMain {
 
         let (mut fut, mut start_info) = match fut {
             Some(fut) => (fut, waker.start_info.clone()),
-            None => self.pending_futures.remove(&waker.id).unwrap(),
+            None => self.pending_futures.borrow_mut().remove(&waker.id).unwrap(),
         };
 
         let awaker = waker.clone().into();
@@ -1174,7 +1180,9 @@ impl RMain {
             },
             Poll::Pending => {
                 start_info.bump_elapsed(tick.elapsed());
-                self.pending_futures.insert(waker.id, (fut, start_info));
+                self.pending_futures
+                    .borrow_mut()
+                    .insert(waker.id, (fut, start_info));
                 None
             },
         }
@@ -1567,10 +1575,10 @@ impl RMain {
             return;
         }
 
-        RMain::with_mut(|r_main| {
+        RMain::with_mut(|main| {
             // To capture the current `debug: <call>` output, for use in the debugger's
             // match based fallback
-            r_main.dap.handle_stdout(&content);
+            main.dap.handle_stdout(&content);
 
             let stream = if otype == 0 {
                 Stream::Stdout
@@ -1580,7 +1588,7 @@ impl RMain {
 
             // If active execution request is silent don't broadcast
             // any output
-            if let Some(ref req) = r_main.active_request {
+            if let Some(ref req) = main.active_request {
                 if req.request.silent {
                     return;
                 }
@@ -1613,13 +1621,13 @@ impl RMain {
                 // https://github.com/posit-dev/positron/issues/1881
 
                 // Handle last expression
-                if r_main.pending_lines.is_empty() {
-                    r_main.autoprint_output.push_str(&content);
+                if main.pending_lines.is_empty() {
+                    main.autoprint_output.push_str(&content);
                     return;
                 }
 
                 // In notebooks, we don't emit results of intermediate expressions
-                if r_main.session_mode == SessionMode::Notebook {
+                if main.session_mode == SessionMode::Notebook {
                     return;
                 }
 
@@ -1633,7 +1641,7 @@ impl RMain {
                 name: stream,
                 text: content,
             });
-            r_main.iopub_tx.send(message).unwrap();
+            main.iopub_tx.send(message).unwrap();
         })
     }
 
@@ -1673,8 +1681,12 @@ impl RMain {
         });
     }
 
-    /// Invoked by the R event loop
-    fn polled_events(&mut self) {
+    /// Invoked by the R event loop.
+    /// This should not require a `&mut` because this method may be called at
+    /// unexpected time whenever we evaluate R code without disabling interrupts.
+    /// This could happen inside another method that needs a `&mut`, causing the
+    /// `RefCell` in `R_MAIN` to panic.
+    fn polled_events(&self) {
         // Skip running tasks if we don't have 128KB of stack space available.
         // This is 1/8th of the typical Windows stack space (1MB, whereas macOS
         // and Linux have 8MB).
@@ -1962,7 +1974,7 @@ pub extern "C" fn r_suicide(buf: *const c_char) {
 
 #[no_mangle]
 pub unsafe extern "C" fn r_polled_events() {
-    RMain::with_mut(|main| main.polled_events());
+    RMain::with(|main| main.polled_events());
 }
 
 // This hook is called like a user onLoad hook but for every package to be
