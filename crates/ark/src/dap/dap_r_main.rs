@@ -5,6 +5,8 @@
 //
 //
 
+use std::cell::RefCell;
+use std::ops::DerefMut;
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -40,11 +42,8 @@ pub struct RMainDap {
     /// Whether or not we are currently in a debugging state.
     debugging: bool,
 
-    /// The current call emitted by R as `debug: <call-text>`.
-    call_text: DebugCallText,
-
-    /// The last known `start_line` for the active context frame.
-    last_start_line: Option<i64>,
+    /// State inferred from the REPL
+    debugger_state: RefCell<DebuggerState>,
 
     /// The current frame `id`. Unique across all frames within a single debug session.
     /// Reset after `stop_debug()`, not between debug steps. If we reset between steps,
@@ -52,6 +51,14 @@ pub struct RMainDap {
     /// a `variables_reference` for a `frame_id` that we've already overwritten the
     /// `variables_reference` for, potentially sending back incorrect information.
     current_frame_info_id: i64,
+}
+
+pub struct DebuggerState {
+    /// The current call emitted by R as `debug: <call-text>`.
+    call_text: DebugCallText,
+
+    /// The last known `start_line` for the active context frame.
+    last_start_line: Option<i64>,
 }
 
 #[derive(Clone, Debug)]
@@ -87,8 +94,10 @@ impl RMainDap {
         Self {
             dap,
             debugging: false,
-            call_text: DebugCallText::None,
-            last_start_line: None,
+            debugger_state: RefCell::new(DebuggerState {
+                call_text: DebugCallText::None,
+                last_start_line: None,
+            }),
             current_frame_info_id: 0,
         }
     }
@@ -111,8 +120,12 @@ impl RMainDap {
         self.debugging = false;
     }
 
-    pub fn handle_stdout(&mut self, content: &str) {
-        if let DebugCallText::Capturing(ref mut call_text) = self.call_text {
+    pub fn handle_stdout(&self, content: &str) {
+        // Safety: `handle_stdout()` is only called from `write_console()`
+        let mut state = self.debugger_state.borrow_mut();
+        let state = state.deref_mut();
+
+        if let DebugCallText::Capturing(ref mut call_text) = state.call_text {
             // Append to current expression if we are currently capturing stdout
             call_text.push_str(content);
             return;
@@ -122,27 +135,31 @@ impl RMainDap {
         // the current expression we are debugging, so we use that as a signal to begin
         // capturing.
         if content == "debug: " {
-            self.call_text = DebugCallText::Capturing(String::new());
+            state.call_text = DebugCallText::Capturing(String::new());
             return;
         }
 
         // Entering or exiting a closure, reset the debug start line state and call text
         if content == "debugging in: " || content == "exiting from: " {
-            self.last_start_line = None;
-            self.call_text = DebugCallText::None;
+            state.last_start_line = None;
+            state.call_text = DebugCallText::None;
             return;
         }
     }
 
-    pub fn finalize_call_text(&mut self) {
-        match &self.call_text {
+    pub fn finalize_call_text(&self) {
+        // Safety: `finalize_call_text()` only called from `read_console()`
+        let mut state = self.debugger_state.borrow_mut();
+        let state = state.deref_mut();
+
+        match &state.call_text {
             // If not debugging, nothing to do.
             DebugCallText::None => (),
             // If already finalized, keep what we have.
             DebugCallText::Finalized(_) => (),
             // If capturing, transition to finalized.
             DebugCallText::Capturing(call_text) => {
-                self.call_text = DebugCallText::Finalized(call_text.clone())
+                state.call_text = DebugCallText::Finalized(call_text.clone())
             },
         }
     }
@@ -159,7 +176,7 @@ impl RMainDap {
         // in case the user executes an arbitrary expression in the debug R console, which
         // loops us back here without updating the `call_text` in any way, allowing us to
         // recreate the debugger state after their code execution.
-        let call_text = match self.call_text.clone() {
+        let call_text = match self.debugger_state.borrow().call_text.clone() {
             DebugCallText::None => None,
             DebugCallText::Capturing(call_text) => {
                 log::error!(
@@ -170,14 +187,17 @@ impl RMainDap {
             DebugCallText::Finalized(call_text) => Some(call_text),
         };
 
-        let last_start_line = self.last_start_line;
-
+        let last_start_line = self.debugger_state.borrow().last_start_line;
         let frames = self.r_stack_info(call_text, last_start_line)?;
 
         // If we have `frames`, update the `last_start_line` with the context
         // frame's start line
         if let Some(frame) = frames.get(0) {
-            self.last_start_line = Some(frame.start_line);
+            // Safety: `stack_info()` only called from `read_console()`
+            let mut state = self.debugger_state.borrow_mut();
+            let state = state.deref_mut();
+
+            state.last_start_line = Some(frame.start_line);
         }
 
         Ok(frames)
