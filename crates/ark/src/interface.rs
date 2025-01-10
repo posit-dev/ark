@@ -10,6 +10,8 @@
 // The frontend methods called by R are forwarded to the corresponding
 // `RMain` methods via `R_MAIN`.
 
+use std::cell::RefCell;
+use std::cell::UnsafeCell;
 use std::collections::HashMap;
 use std::ffi::*;
 use std::os::raw::c_uchar;
@@ -142,20 +144,23 @@ pub enum SessionMode {
 // These values must be global in order for them to be accessible from R
 // callbacks, which do not have a facility for passing or returning context.
 
-// We use the `once_cell` crate for init synchronisation because the stdlib
-// equivalent `std::sync::Once` does not have a `wait()` method.
-
 /// Used to wait for complete R startup in `RMain::wait_initialized()` or
 /// check for it in `RMain::is_initialized()`.
+///
+/// We use the `once_cell` crate for init synchronisation because the stdlib
+/// equivalent `std::sync::Once` does not have a `wait()` method.
 static R_INIT: once_cell::sync::OnceCell<()> = once_cell::sync::OnceCell::new();
 
-// The global state used by R callbacks.
-//
-// Doesn't need a mutex because it's only accessed by the R thread. Should
-// not be used elsewhere than from an R frontend callback or an R function
-// invoked by the REPL (this is enforced by `RMain::get()` and
-// `RMain::get_mut()`).
-static mut R_MAIN: Option<RMain> = None;
+thread_local! {
+    /// The `RMain` singleton.
+    ///
+    /// It is wrapped in an `UnsafeCell` because we currently need to bypass the
+    /// borrow checker rules (see https://github.com/posit-dev/ark/issues/663).
+    /// The `UnsafeCell` itself is wrapped in a `RefCell` because that's the
+    /// only way to get a `set()` method on the thread-local storage key and
+    /// bypass the lazy initializer (which panics for other threads).
+    pub static R_MAIN: RefCell<UnsafeCell<RMain>> = panic!("Must access `R_MAIN` from the R thread");
+}
 
 /// Banner output accumulated during startup
 static mut R_BANNER: String = String::new();
@@ -319,22 +324,21 @@ impl RMain {
         let (tasks_interrupt_tx, tasks_interrupt_rx) = unbounded::<RTask>();
         let (tasks_idle_tx, tasks_idle_rx) = unbounded::<RTask>();
 
-        unsafe {
-            R_MAIN = Some(RMain::new(
-                tasks_interrupt_rx,
-                tasks_idle_rx,
-                comm_manager_tx,
-                r_request_rx,
-                stdin_request_tx,
-                stdin_reply_rx,
-                iopub_tx,
-                kernel_init_tx,
-                kernel_request_rx,
-                dap,
-                session_mode,
-            ));
-        };
-        let r_main = unsafe { R_MAIN.as_mut().unwrap() };
+        R_MAIN.set(UnsafeCell::new(RMain::new(
+            tasks_interrupt_rx,
+            tasks_idle_rx,
+            comm_manager_tx,
+            r_request_rx,
+            stdin_request_tx,
+            stdin_reply_rx,
+            iopub_tx,
+            kernel_init_tx,
+            kernel_request_rx,
+            dap,
+            session_mode,
+        )));
+
+        let main = RMain::get_mut();
 
         let mut r_args = r_args.clone();
 
@@ -444,7 +448,7 @@ impl RMain {
                     log::error!("Can't load R modules: {err:?}");
                 },
                 Ok(namespace) => {
-                    r_main.positron_ns = Some(namespace);
+                    main.positron_ns = Some(namespace);
                 },
             }
 
@@ -477,7 +481,7 @@ impl RMain {
             log::info!(
                 "R has started and ark handlers have been registered, completing initialization."
             );
-            r_main.complete_initialization();
+            main.complete_initialization();
         }
 
         // Now that R has started and libr and ark have fully initialized, run site and user
@@ -585,33 +589,26 @@ impl RMain {
 
     /// Access a reference to the singleton instance of this struct
     ///
-    /// SAFETY: Accesses must occur after `RMain::start()` initializes it, and must
-    /// occur on the main R thread.
+    /// SAFETY: Accesses must occur after `RMain::start()` initializes it.
     pub fn get() -> &'static Self {
         RMain::get_mut()
     }
 
     /// Access a mutable reference to the singleton instance of this struct
     ///
-    /// SAFETY: Accesses must occur after `RMain::start()` initializes it, and must
-    /// occur on the main R thread.
+    /// SAFETY: Accesses must occur after `RMain::start()` initializes it.
+    /// Be aware that we're bypassing the borrow checker. The only guarantee we
+    /// have is that `R_MAIN` is only accessed from the R thread. If you're
+    /// inspecting mutable state, or mutating state, you must reason the
+    /// soundness by yourself.
     pub fn get_mut() -> &'static mut Self {
-        if !RMain::on_main_thread() {
-            let thread = std::thread::current();
-            let name = thread.name().unwrap_or("<unnamed>");
-            let message =
-                format!("Must access `R_MAIN` on the main R thread, not thread '{name}'.");
-            #[cfg(debug_assertions)]
-            panic!("{message}");
-            #[cfg(not(debug_assertions))]
-            log::error!("{message}");
-        }
+        R_MAIN.with_borrow_mut(|cell| {
+            let main_ref = cell.get_mut();
 
-        unsafe {
-            R_MAIN
-                .as_mut()
-                .expect("`R_MAIN` can't be used before it is initialized!")
-        }
+            // We extend the lifetime to `'static` as `R_MAIN` is effectively static once initialized.
+            // This allows us to return a `&mut` from the unsafe cell to the caller.
+            unsafe { std::mem::transmute::<&mut RMain, &'static mut RMain>(main_ref) }
+        })
     }
 
     pub fn with<F, T>(f: F) -> T
