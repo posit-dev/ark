@@ -229,6 +229,10 @@ pub struct RMain {
 
     /// Banner output accumulated during startup
     r_banner: String,
+
+    /// Raw error buffer provided to `Rf_error()` when throwing `r_read_console()` errors.
+    /// Stored in `RMain` to avoid memory leakage when `Rf_error()` jumps.
+    r_error_buffer: Option<CString>,
 }
 
 /// Represents the currently active execution request from the frontend. It
@@ -564,6 +568,7 @@ impl RMain {
             positron_ns: None,
             pending_lines: Vec::new(),
             r_banner: String::new(),
+            r_error_buffer: None,
         }
     }
 
@@ -1951,17 +1956,12 @@ pub extern "C" fn r_read_console(
             return 0;
         },
         ConsoleResult::Error(err) => {
-            // Save error message to a global buffer to avoid leaking memory
+            // Save error message to `RMain`'s buffer to avoid leaking memory
             // when `Rf_error()` jumps. Some gymnastics are required to deal
             // with the possibility of `CString` conversion failure since the
             // error message comes from the frontend and might be corrupted.
-            static mut ERROR_BUF: Option<CString> = None;
-
-            unsafe {
-                ERROR_BUF = Some(new_cstring(format!("\n{err}")));
-            }
-
-            unsafe { Rf_error(ERROR_BUF.as_ref().unwrap().as_ptr()) };
+            main.r_error_buffer = Some(new_cstring(format!("\n{err}")));
+            unsafe { Rf_error(main.r_error_buffer.as_ref().unwrap().as_ptr()) };
         },
     };
 }
