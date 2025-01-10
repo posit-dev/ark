@@ -9,7 +9,7 @@ use harp::r_symbol;
 use harp::utils::r_typeof;
 use libr::*;
 
-use crate::lsp::handlers::ARK_VDOCS;
+use crate::interface::RMain;
 use crate::modules::ARK_ENVS;
 use crate::r_task;
 use crate::variables::variable::is_binding_fancy;
@@ -96,11 +96,12 @@ pub(crate) async fn ns_populate_srcref(ns_name: String) -> anyhow::Result<()> {
         vdoc.len()
     );
 
-    // SAFETY: That's a DashMap so should be safe across threads
-    unsafe {
-        // Save virtual document containing the namespace source
-        ARK_VDOCS.insert(uri_path, vdoc.join("\n"));
-    }
+    let contents = vdoc.join("\n");
+
+    // Notify LSP of the opened virtual document so the LSP can function as a
+    // text document content provider of the virtual document contents, which is
+    // used by the debugger.
+    RMain::with_mut(|main| main.did_open_virtual_document(uri_path, contents));
 
     Ok(())
 }

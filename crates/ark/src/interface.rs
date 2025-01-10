@@ -98,6 +98,7 @@ use crate::errors;
 use crate::help::message::HelpEvent;
 use crate::help::r_help::RHelp;
 use crate::lsp::events::EVENTS;
+use crate::lsp::main_loop::DidOpenVirtualDocumentParams;
 use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::KernelNotification;
 use crate::lsp::main_loop::TokioUnboundedSender;
@@ -220,6 +221,10 @@ pub struct RMain {
 
     /// Event channel for notifying the LSP. In principle, could be a Jupyter comm.
     lsp_events_tx: Option<TokioUnboundedSender<Event>>,
+
+    /// The kernel's copy of virtual documents to notify the LSP about when the LSP
+    /// initially connects and after an LSP restart.
+    lsp_virtual_documents: HashMap<String, String>,
 
     dap: RMainDap,
 
@@ -560,6 +565,7 @@ impl RMain {
             help_event_tx: None,
             help_port: None,
             lsp_events_tx: None,
+            lsp_virtual_documents: HashMap::new(),
             dap: RMainDap::new(dap),
             tasks_interrupt_rx,
             tasks_idle_rx,
@@ -1781,11 +1787,21 @@ impl RMain {
     }
 
     fn send_lsp_notification(&mut self, event: KernelNotification) {
-        if let Some(ref tx) = self.lsp_events_tx {
-            if let Err(err) = tx.send(Event::Kernel(event)) {
-                log::error!("Failed to send LSP notification: {err:?}");
-                self.lsp_events_tx = None;
-            }
+        log::trace!(
+            "Sending LSP notification: {event:#?}",
+            event = event.trace()
+        );
+
+        let Some(ref tx) = self.lsp_events_tx else {
+            log::trace!("Failed to send LSP notification. LSP events channel isn't open yet, or has been closed. Event: {event:?}", event = event.trace());
+            return;
+        };
+
+        if let Err(err) = tx.send(Event::Kernel(event)) {
+            log::error!(
+                "Failed to send LSP notification. Removing LSP events channel. Error: {err:?}"
+            );
+            self.lsp_events_tx = None;
         }
     }
 
@@ -1796,16 +1812,44 @@ impl RMain {
         // while the channel was offline. This is currently not an ideal timing
         // as the channel is set up from a preemptive `r_task()` after the LSP
         // is set up. We'll want to do this in an idle task.
+        log::trace!("LSP channel opened. Refreshing state.");
         self.refresh_lsp();
+        self.notify_lsp_of_known_virtual_documents();
     }
 
-    pub fn refresh_lsp(&mut self) {
+    fn refresh_lsp(&mut self) {
         match console_inputs() {
             Ok(inputs) => {
                 self.send_lsp_notification(KernelNotification::DidChangeConsoleInputs(inputs));
             },
             Err(err) => log::error!("Can't retrieve console inputs: {err:?}"),
         }
+    }
+
+    fn notify_lsp_of_known_virtual_documents(&mut self) {
+        // Clone the whole HashMap since we need to own the uri/contents to send them
+        // over anyways. We don't want to clear the map in case the LSP restarts later on
+        // and we need to send them over again.
+        let virtual_documents = self.lsp_virtual_documents.clone();
+
+        for (uri, contents) in virtual_documents {
+            self.send_lsp_notification(KernelNotification::DidOpenVirtualDocument(
+                DidOpenVirtualDocumentParams { uri, contents },
+            ))
+        }
+    }
+
+    pub fn did_open_virtual_document(&mut self, uri: String, contents: String) {
+        // Save our own copy of the virtual document. If the LSP is currently closed
+        // or restarts, we can notify it of all virtual documents it should know about
+        // in the LSP channel setup step. It is common for the kernel to create the
+        // virtual documents for base R packages before the LSP has started up.
+        self.lsp_virtual_documents
+            .insert(uri.clone(), contents.clone());
+
+        self.send_lsp_notification(KernelNotification::DidOpenVirtualDocument(
+            DidOpenVirtualDocumentParams { uri, contents },
+        ))
     }
 
     pub fn call_frontend_method(&self, request: UiFrontendRequest) -> anyhow::Result<RObject> {

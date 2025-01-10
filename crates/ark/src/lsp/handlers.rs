@@ -6,8 +6,6 @@
 //
 
 use anyhow::anyhow;
-use dashmap::DashMap;
-use once_cell::sync::Lazy;
 use serde_json::Value;
 use stdext::unwrap;
 use struct_field_names_as_array::FieldNamesAsArray;
@@ -384,14 +382,12 @@ pub(crate) fn handle_indent(
     })
 }
 
-// TODO: Should be in WorldState and updated via message passing
-pub static mut ARK_VDOCS: Lazy<DashMap<String, String>> = Lazy::new(|| DashMap::new());
-
 pub(crate) fn handle_virtual_document(
     params: VirtualDocumentParams,
+    state: &WorldState,
 ) -> anyhow::Result<VirtualDocumentResponse> {
-    if let Some(doc) = unsafe { ARK_VDOCS.get(&params.path) } {
-        Ok(doc.clone())
+    if let Some(contents) = state.virtual_documents.get(&params.path) {
+        Ok(contents.clone())
     } else {
         Err(anyhow!("Can't find virtual document {}", params.path))
     }
