@@ -162,9 +162,6 @@ thread_local! {
     pub static R_MAIN: RefCell<UnsafeCell<RMain>> = panic!("Must access `R_MAIN` from the R thread");
 }
 
-/// Banner output accumulated during startup
-static mut R_BANNER: String = String::new();
-
 pub struct RMain {
     kernel_init_tx: Bus<KernelInfo>,
 
@@ -229,6 +226,9 @@ pub struct RMain {
     pub positron_ns: Option<RObject>,
 
     pending_lines: Vec<String>,
+
+    /// Banner output accumulated during startup
+    r_banner: String,
 }
 
 /// Represents the currently active execution request from the frontend. It
@@ -513,7 +513,7 @@ impl RMain {
 
         let kernel_info = KernelInfo {
             version: version.clone(),
-            banner: R_BANNER.clone(),
+            banner: self.r_banner.clone(),
             input_prompt: Some(input_prompt),
             continuation_prompt: Some(continuation_prompt),
         };
@@ -563,6 +563,7 @@ impl RMain {
             session_mode,
             positron_ns: None,
             pending_lines: Vec::new(),
+            r_banner: String::new(),
         }
     }
 
@@ -1590,13 +1591,13 @@ impl RMain {
             Err(err) => panic!("Failed to read from R buffer: {err:?}"),
         };
 
+        let r_main = RMain::get_mut();
+
         if !RMain::is_initialized() {
             // During init, consider all output to be part of the startup banner
-            unsafe { R_BANNER.push_str(&content) };
+            r_main.r_banner.push_str(&content);
             return;
         }
-
-        let r_main = RMain::get_mut();
 
         // To capture the current `debug: <call>` output, for use in the debugger's
         // match based fallback
