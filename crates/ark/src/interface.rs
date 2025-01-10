@@ -10,9 +10,12 @@
 // The frontend methods called by R are forwarded to the corresponding
 // `RMain` methods via `R_MAIN`.
 
+use std::borrow::BorrowMut;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::*;
+use std::ops::Deref;
+use std::ops::DerefMut;
 use std::os::raw::c_uchar;
 use std::path::PathBuf;
 use std::result::Result::Ok;
@@ -222,10 +225,10 @@ pub struct RMain {
 
     /// Channel to communicate requests and events to the frontend
     /// by forwarding them through the UI comm. Optional, and really Positron specific.
-    ui_comm_tx: Option<UiCommSender>,
+    ui_comm_tx: RefCell<Option<UiCommSender>>,
 
     /// Represents whether an error occurred during R code execution.
-    pub error_occurred: bool,
+    pub error_occurred_flag: RefCell<bool>,
     pub error_message: String, // `evalue` in the Jupyter protocol
     pub error_traceback: Vec<String>,
 
@@ -235,13 +238,13 @@ pub struct RMain {
     help_port: Option<u16>,
 
     /// Event channel for notifying the LSP. In principle, could be a Jupyter comm.
-    lsp_events_tx: Option<TokioUnboundedSender<Event>>,
+    lsp_events_tx: RefCell<Option<TokioUnboundedSender<Event>>>,
 
-    dap: RMainDap,
+    dap: RefCell<RMainDap>,
 
     pub positron_ns: Option<RObject>,
 
-    pending_lines: Vec<String>,
+    pending_lines: RefCell<Vec<String>>,
 }
 
 /// Represents the currently active execution request from the frontend. It
@@ -563,19 +566,19 @@ impl RMain {
             execution_count: 0,
             autoprint_output: RefCell::new(String::new()),
             ui_comm_tx: None,
-            error_occurred: false,
+            error_occurred_flag: RefCell::new(false),
             error_message: String::new(),
             error_traceback: Vec::new(),
             help_event_tx: None,
             help_port: None,
-            lsp_events_tx: None,
-            dap: RMainDap::new(dap),
+            lsp_events_tx: RefCell::new(None),
+            dap: RefCell::new(RMainDap::new(dap)),
             tasks_interrupt_rx,
             tasks_idle_rx,
             pending_futures: RefCell::new(HashMap::new()),
             session_mode,
             positron_ns: None,
-            pending_lines: Vec::new(),
+            pending_lines: RefCell::new(Vec::new()),
         }
     }
 
@@ -611,6 +614,9 @@ impl RMain {
     where
         F: FnOnce(&mut RMain) -> R,
     {
+        // Prevent `polled_events()` while we hold a &mut on `R_MAIN`
+        harp::raii::RLocalInterruptsSuspended::new(true);
+
         R_MAIN.with_borrow_mut(f)
     }
 
@@ -663,7 +669,7 @@ impl RMain {
     /// indicates whether new input is available. Second value indicates whether
     /// we need to call `Rf_onintr()` to process an interrupt.
     fn read_console(
-        &mut self,
+        &self,
         prompt: *const c_char,
         buf: *mut c_uchar,
         buflen: c_int,
@@ -676,7 +682,7 @@ impl RMain {
         // At this point, the user can either advance the debugger, causing us to capture
         // a new expression, or execute arbitrary code, where we will reuse a finalized
         // debug call text to maintain the debug state.
-        self.dap.finalize_call_text();
+        self.dap.borrow().finalize_call_text();
 
         // We get called here everytime R needs more input. This handler
         // represents the driving event of a small state machine that manages
@@ -733,17 +739,22 @@ impl RMain {
         // Signal prompt
         EVENTS.console_prompt.emit(());
 
-        if info.browser {
-            match self.dap.stack_info() {
-                Ok(stack) => {
-                    self.dap.start_debug(stack);
-                },
-                Err(err) => log::error!("ReadConsole: Can't get stack info: {err}"),
-            };
-        } else {
-            if self.dap.is_debugging() {
-                // Terminate debugging session
-                self.dap.stop_debug();
+        {
+            // Safety: TODO!
+            let mut dap = self.dap.borrow_mut();
+
+            if info.browser {
+                match dap.stack_info() {
+                    Ok(stack) => {
+                        dap.start_debug(stack);
+                    },
+                    Err(err) => log::error!("ReadConsole: Can't get stack info: {err}"),
+                };
+            } else {
+                if dap.is_debugging() {
+                    // Terminate debugging session
+                    dap.stop_debug();
+                }
             }
         }
 
@@ -867,7 +878,7 @@ impl RMain {
     /// - `None` if we should fall through to the event loop to wait for more user input
     /// - `Some(ConsoleResult)` if we should immediately exit `read_console()`
     fn handle_active_request(
-        &mut self,
+        &self,
         info: &PromptInfo,
         buf: *mut c_uchar,
         buflen: c_int,
@@ -921,11 +932,9 @@ impl RMain {
         // to complete it and send a reply to unblock the active Shell
         // request.
         if let Some(req) = std::mem::take(&mut self.active_request) {
-            // FIXME: Race condition between the comm and shell socket threads.
-            //
             // Perform a refresh of the frontend state
             // (Prompts, working directory, etc)
-            self.with_mut_ui_comm_tx(|ui_comm_tx| {
+            self.with_ui_comm_tx(|ui_comm_tx| {
                 let input_prompt = info.input_prompt.clone();
                 let continuation_prompt = info.continuation_prompt.clone();
 
@@ -953,7 +962,7 @@ impl RMain {
     }
 
     fn handle_execute_request(
-        &mut self,
+        &self,
         req: RRequest,
         info: &PromptInfo,
         buf: *mut c_uchar,
@@ -983,7 +992,7 @@ impl RMain {
 
             RRequest::DebugCommand(cmd) => {
                 // Just ignore command in case we left the debugging state already
-                if !self.dap.is_debugging() {
+                if !self.dap.borrow().is_debugging() {
                     return None;
                 }
 
@@ -994,15 +1003,15 @@ impl RMain {
         };
 
         // Clear error flag
-        self.error_occurred = false;
+        *self.error_occurred_flag.borrow_mut() = false;
 
         match input {
             ConsoleInput::Input(code) => {
                 // Handle commands for the debug interpreter
-                if self.dap.is_debugging() {
+                if self.dap.borrow().is_debugging() {
                     let continue_cmds = vec!["n", "f", "c", "cont"];
                     if continue_cmds.contains(&&code[..]) {
-                        self.dap.send_dap(DapBackendEvent::Continued);
+                        self.dap.borrow().send_dap(DapBackendEvent::Continued);
                     }
                 }
 
@@ -1198,7 +1207,7 @@ impl RMain {
         }
     }
 
-    fn handle_kernel_request(&mut self, req: KernelRequest, info: &PromptInfo) {
+    fn handle_kernel_request(&self, req: KernelRequest, info: &PromptInfo) {
         log::trace!("Received kernel request {req:?}");
 
         match req {
@@ -1209,16 +1218,17 @@ impl RMain {
     }
 
     fn handle_establish_ui_comm_channel(
-        &mut self,
+        &self,
         ui_comm_tx: Sender<UiCommMessage>,
         info: &PromptInfo,
     ) {
-        if self.ui_comm_tx.is_some() {
+        let mut ui_comm_tx_storage = self.ui_comm_tx.borrow_mut();
+        if ui_comm_tx_storage.is_some() {
             log::info!("Replacing an existing UI comm channel.");
         }
 
         // Create and store the sender channel
-        self.ui_comm_tx = Some(UiCommSender::new(ui_comm_tx));
+        *ui_comm_tx_storage = Some(UiCommSender::new(ui_comm_tx));
 
         // Go ahead and do an initial refresh
         self.with_mut_ui_comm_tx(|ui_comm_tx| {
@@ -1229,19 +1239,15 @@ impl RMain {
         });
     }
 
-    pub fn get_ui_comm_tx(&self) -> Option<&UiCommSender> {
-        self.ui_comm_tx.as_ref()
-    }
-
-    fn get_mut_ui_comm_tx(&mut self) -> Option<&mut UiCommSender> {
-        self.ui_comm_tx.as_mut()
-    }
+    // fn has_ui_comm_tx(&self) -> bool {
+    //     self.ui_comm_tx.borrow().is_some()
+    // }
 
     fn with_ui_comm_tx<F>(&self, f: F)
     where
         F: FnOnce(&UiCommSender),
     {
-        match self.get_ui_comm_tx() {
+        match self.ui_comm_tx.borrow().deref() {
             Some(ui_comm_tx) => f(ui_comm_tx),
             None => {
                 // Trace level logging, its typically not a bug if the frontend
@@ -1251,11 +1257,11 @@ impl RMain {
         }
     }
 
-    fn with_mut_ui_comm_tx<F>(&mut self, mut f: F)
+    fn with_mut_ui_comm_tx<F>(&self, f: F)
     where
-        F: FnMut(&mut UiCommSender),
+        F: FnOnce(&mut UiCommSender),
     {
-        match self.get_mut_ui_comm_tx() {
+        match self.ui_comm_tx.borrow_mut().deref_mut() {
             Some(ui_comm_tx) => f(ui_comm_tx),
             None => {
                 // Trace level logging, its typically not a bug if the frontend
@@ -1266,19 +1272,19 @@ impl RMain {
     }
 
     fn is_ui_comm_connected(&self) -> bool {
-        self.get_ui_comm_tx().is_some()
+        self.ui_comm_tx.borrow().is_some()
     }
 
-    fn handle_pending_line(&mut self, buf: *mut c_uchar, buflen: c_int) -> Option<ConsoleResult> {
-        if self.error_occurred {
+    fn handle_pending_line(&self, buf: *mut c_uchar, buflen: c_int) -> Option<ConsoleResult> {
+        if *self.error_occurred_flag.borrow() {
             // If an error has occurred, we've already sent a complete expression that resulted in
             // an error. Flush the remaining lines and return to `read_console()`, who will handle
             // that error.
-            self.pending_lines.clear();
+            self.pending_lines.borrow_mut().clear();
             return None;
         }
 
-        let Some(input) = self.pending_lines.pop() else {
+        let Some(input) = self.pending_lines.borrow_mut().pop() else {
             // No pending lines
             return None;
         };
@@ -1320,8 +1326,8 @@ impl RMain {
         let first = lines.pop().unwrap();
 
         // No-op if `lines` is empty
-        assert!(self.pending_lines.is_empty());
-        self.pending_lines.append(&mut lines);
+        assert!(self.pending_lines.borrow().is_empty());
+        self.pending_lines.borrow_mut().append(&mut lines);
 
         first
     }
@@ -1407,13 +1413,17 @@ impl RMain {
         req.reply_tx.send(reply).unwrap();
     }
 
+    fn error_occurred(&self) -> bool {
+        *self.error_occurred_flag.borrow()
+    }
+
     fn make_execute_reply_error(
-        &mut self,
+        &self,
         exec_count: u32,
     ) -> Option<(amalthea::Result<ExecuteReply>, Option<IOPubMessage>)> {
         // Save and reset error occurred flag
-        let error_occurred = self.error_occurred;
-        self.error_occurred = false;
+        let error_occurred = self.error_occurred();
+        *self.error_occurred_flag.borrow_mut() = false;
 
         // Error handlers are not called on stack overflow so the error flag
         // isn't set. Instead we detect stack overflows by peeking at the error
@@ -1428,7 +1438,7 @@ impl RMain {
         }
 
         // Send the reply to the frontend
-        if !error_occurred && !stack_overflow_occurred {
+        if !self.error_occurred() && !stack_overflow_occurred {
             return None;
         }
 
@@ -1763,17 +1773,21 @@ impl RMain {
         RHelp::is_help_url(url, port)
     }
 
-    fn send_lsp_notification(&mut self, event: KernelNotification) {
-        if let Some(ref tx) = self.lsp_events_tx {
-            if let Err(err) = tx.send(Event::Kernel(event)) {
-                log::error!("Failed to send LSP notification: {err:?}");
-                self.lsp_events_tx = None;
-            }
+    fn send_lsp_notification(&self, event: KernelNotification) {
+        let sent = if let Some(ref tx) = self.lsp_events_tx.borrow().deref() {
+            tx.send(Event::Kernel(event))
+        } else {
+            Ok(())
+        };
+
+        if let Err(err) = sent {
+            log::error!("Failed to send LSP notification: {err:?}");
+            *self.lsp_events_tx.borrow_mut() = None;
         }
     }
 
-    pub(crate) fn set_lsp_channel(&mut self, lsp_events_tx: TokioUnboundedSender<Event>) {
-        self.lsp_events_tx = Some(lsp_events_tx.clone());
+    pub(crate) fn set_lsp_channel(&self, lsp_events_tx: TokioUnboundedSender<Event>) {
+        *self.lsp_events_tx.borrow_mut() = Some(lsp_events_tx);
 
         // Refresh LSP state now since we probably have missed some updates
         // while the channel was offline. This is currently not an ideal timing
@@ -1782,7 +1796,7 @@ impl RMain {
         self.refresh_lsp();
     }
 
-    pub fn refresh_lsp(&mut self) {
+    pub fn refresh_lsp(&self) {
         match console_inputs() {
             Ok(inputs) => {
                 self.send_lsp_notification(KernelNotification::DidChangeConsoleInputs(inputs));

@@ -22,6 +22,7 @@ use crate::ui::UiCommMessage;
 ///
 /// Manages a bit of state for performing a state refresh
 /// (the `working_directory`).
+#[derive(Clone)]
 pub struct UiCommSender {
     ui_comm_tx: Sender<UiCommMessage>,
     working_directory: PathBuf,
@@ -75,7 +76,7 @@ impl UiCommSender {
 
     /// Checks for changes to the working directory, and sends an event to the
     /// frontend if the working directory has changed.
-    fn refresh_working_directory(&mut self) -> anyhow::Result<()> {
+    fn refresh_working_directory(&self) -> anyhow::Result<()> {
         // Get the current working directory
         let mut new_working_directory = std::env::current_dir()?;
 

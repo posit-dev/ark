@@ -36,7 +36,7 @@ unsafe extern "C" fn ps_record_error(evalue: SEXP, traceback: SEXP) -> anyhow::R
     });
 
     RMain::with_mut(|main| {
-        main.error_occurred = true;
+        main.error_occurred_flag = true;
         main.error_message = evalue;
         main.error_traceback = traceback;
     });

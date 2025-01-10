@@ -397,7 +397,7 @@ pub fn start_lsp(runtime: Arc<Runtime>, address: String, conn_init_tx: Sender<bo
             r_task({
                 let events_tx = events_tx.clone();
                 move || {
-                    RMain::with_mut(|main| {
+                    RMain::with(|main| {
                         main.set_lsp_channel(events_tx);
                     });
                 }
