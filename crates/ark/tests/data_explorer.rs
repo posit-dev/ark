@@ -788,18 +788,20 @@ fn test_search_filters() {
     // --- search filters ---
 
     // Create a data frame with a bunch of words to use for regex testing.
-    harp::parse_eval_global(
-        r#"words <- data.frame(text = c(
-                "lambent",
-                "incandescent",
-                "that will be $10.26",
-                "pi is 3.14159",
-                "",
-                "weasel",
-                "refrigerator"
-            ))"#,
-    )
-    .unwrap();
+    r_task(|| {
+        harp::parse_eval_global(
+            r#"words <- data.frame(text = c(
+                    "lambent",
+                    "incandescent",
+                    "that will be $10.26",
+                    "pi is 3.14159",
+                    "",
+                    "weasel",
+                    "refrigerator"
+                ))"#,
+        )
+        .unwrap();
+    });
 
     // Open the words data set in the data explorer.
     let socket = open_data_explorer(String::from("words"));
