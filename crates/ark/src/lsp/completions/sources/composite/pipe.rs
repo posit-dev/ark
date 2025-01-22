@@ -33,6 +33,8 @@ pub(super) fn completions_from_pipe(
         return Ok(None);
     };
 
+    log::info!("completions_from_pipe()");
+
     let name = root.name;
 
     let Some(object) = root.object else {

@@ -28,6 +28,7 @@ use crate::lsp::document_context::DocumentContext;
 
 pub(super) fn completions_from_search_path(
     context: &DocumentContext,
+    no_trailing_parens: bool,
 ) -> Result<Vec<CompletionItem>> {
     log::info!("completions_from_search_path()");
 
@@ -82,9 +83,13 @@ pub(super) fn completions_from_search_path(
                 }
 
                 // Add the completion item.
-                let Some(item) =
-                    completion_item_from_symbol(symbol, envir, name, promise_strategy.clone())
-                else {
+                let Some(item) = completion_item_from_symbol(
+                    symbol,
+                    envir,
+                    name,
+                    promise_strategy.clone(),
+                    no_trailing_parens,
+                ) else {
                     log::error!("Completion symbol '{symbol}' was unexpectedly not found.");
                     continue;
                 };

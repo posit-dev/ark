@@ -169,6 +169,7 @@ pub(super) unsafe fn completion_item_from_package(
 pub(super) fn completion_item_from_function(
     name: &str,
     package: Option<&str>,
+    no_trailing_parens: bool,
 ) -> Result<CompletionItem> {
     let label = format!("{}", name);
     let mut item = completion_item(label, CompletionData::Function {
@@ -182,17 +183,23 @@ pub(super) fn completion_item_from_function(
     item.label_details = Some(label_details);
 
     let insert_text = sym_quote_invalid(name);
-    item.insert_text_format = Some(InsertTextFormat::SNIPPET);
-    item.insert_text = Some(format!("{insert_text}($0)"));
 
-    // provide parameter completions after completing function
-    item.command = Some(Command {
-        title: "Trigger Parameter Hints".to_string(),
-        command: "editor.action.triggerParameterHints".to_string(),
-        ..Default::default()
-    });
+    if no_trailing_parens {
+        item.insert_text_format = None;
+        item.insert_text = Some(insert_text);
+    } else {
+        item.insert_text_format = Some(InsertTextFormat::SNIPPET);
+        item.insert_text = Some(format!("{insert_text}($0)"));
 
-    return Ok(item);
+        // provide parameter completions after completing function
+        item.command = Some(Command {
+            title: "Trigger Parameter Hints".to_string(),
+            command: "editor.action.triggerParameterHints".to_string(),
+            ..Default::default()
+        });
+    }
+
+    Ok(item)
 }
 
 fn item_details(package: Option<&str>) -> CompletionItemLabelDetails {
@@ -245,9 +252,18 @@ pub(super) unsafe fn completion_item_from_object(
     envir: SEXP,
     package: Option<&str>,
     promise_strategy: PromiseStrategy,
+    no_parens: bool,
 ) -> Result<CompletionItem> {
     if r_typeof(object) == PROMSXP {
-        return completion_item_from_promise(name, object, envir, package, promise_strategy);
+        //println!("making item from promise with name: {name}, no_parens: {no_parens}");
+        return completion_item_from_promise(
+            name,
+            object,
+            envir,
+            package,
+            promise_strategy,
+            no_parens,
+        );
     }
 
     // TODO: For some functions (e.g. S4 generics?) the help file might be
@@ -256,7 +272,7 @@ pub(super) unsafe fn completion_item_from_object(
     // In other words, when creating a completion item for these functions,
     // we should also figure out where we can receive the help from.
     if Rf_isFunction(object) != 0 {
-        return completion_item_from_function(name, package);
+        return completion_item_from_function(name, package, no_parens);
     }
 
     let mut item = completion_item(name, CompletionData::Object {
@@ -287,12 +303,20 @@ pub(super) unsafe fn completion_item_from_promise(
     envir: SEXP,
     package: Option<&str>,
     promise_strategy: PromiseStrategy,
+    no_parens: bool,
 ) -> Result<CompletionItem> {
     if r_promise_is_forced(object) {
         // Promise has already been evaluated before.
         // Generate completion item from underlying value.
         let object = PRVALUE(object);
-        return completion_item_from_object(name, object, envir, package, promise_strategy);
+        return completion_item_from_object(
+            name,
+            object,
+            envir,
+            package,
+            promise_strategy,
+            no_parens,
+        );
     }
 
     if promise_strategy == PromiseStrategy::Force && r_promise_is_lazy_load_binding(object) {
@@ -302,7 +326,14 @@ pub(super) unsafe fn completion_item_from_promise(
         // important for functions, where we also set a `CompletionItem::command()`
         // to display function signature help after the completion.
         let object = r_promise_force_with_rollback(object)?;
-        return completion_item_from_object(name, object.sexp, envir, package, promise_strategy);
+        return completion_item_from_object(
+            name,
+            object.sexp,
+            envir,
+            package,
+            promise_strategy,
+            no_parens,
+        );
     }
 
     // Otherwise we never want to force promises, so we return a fairly
@@ -342,18 +373,23 @@ pub(super) unsafe fn completion_item_from_namespace(
     name: &str,
     namespace: SEXP,
     package: &str,
+    no_trailing_parens: bool,
 ) -> Result<CompletionItem> {
     // First, look in the namespace itself.
-    if let Some(item) =
-        completion_item_from_symbol(name, namespace, Some(package), PromiseStrategy::Force)
-    {
+    if let Some(item) = completion_item_from_symbol(
+        name,
+        namespace,
+        Some(package),
+        PromiseStrategy::Force,
+        no_trailing_parens,
+    ) {
         return item;
     }
 
     // Otherwise, try the imports environment.
     let imports = ENCLOS(namespace);
     if let Some(item) =
-        completion_item_from_symbol(name, imports, Some(package), PromiseStrategy::Force)
+        completion_item_from_symbol(name, imports, Some(package), PromiseStrategy::Force, false)
     {
         return item;
     }
@@ -376,7 +412,7 @@ pub(super) unsafe fn completion_item_from_lazydata(
     // long time to load.
     let promise_strategy = PromiseStrategy::Simple;
 
-    match completion_item_from_symbol(name, env, Some(package), promise_strategy) {
+    match completion_item_from_symbol(name, env, Some(package), promise_strategy, false) {
         Some(item) => item,
         None => {
             // Should be impossible, but we'll be extra safe
@@ -390,6 +426,7 @@ pub(super) unsafe fn completion_item_from_symbol(
     envir: SEXP,
     package: Option<&str>,
     promise_strategy: PromiseStrategy,
+    no_parens: bool,
 ) -> Option<Result<CompletionItem>> {
     let symbol = r_symbol!(name);
 
@@ -408,6 +445,7 @@ pub(super) unsafe fn completion_item_from_symbol(
             return None;
         },
     }
+    //println!("making item from name: {name}, no_parens: {no_parens}");
 
     let object = Rf_findVarInFrame(envir, symbol);
 
@@ -422,6 +460,7 @@ pub(super) unsafe fn completion_item_from_symbol(
         envir,
         package,
         promise_strategy,
+        no_parens,
     ))
 }
 

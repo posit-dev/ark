@@ -115,7 +115,7 @@ mod tests {
             assert_match!(res, Some(items) => { assert!(items.len() == 0) });
 
             // Check one level up too
-            let res = completions_from_unique_sources(&context).unwrap();
+            let res = completions_from_unique_sources(&context, false).unwrap();
             assert_match!(res, Some(items) => { assert!(items.len() == 0) });
         })
     }

@@ -27,6 +27,7 @@ use crate::treesitter::NodeTypeExt;
 pub(super) fn completions_from_workspace(
     context: &DocumentContext,
     state: &WorldState,
+    no_trailing_parens: bool,
 ) -> Result<Option<Vec<CompletionItem>>> {
     log::info!("completions_from_workspace()");
 
@@ -65,7 +66,7 @@ pub(super) fn completions_from_workspace(
 
         match &entry.data {
             indexer::IndexEntryData::Function { name, .. } => {
-                let mut completion = unwrap!(completion_item_from_function(name, None), Err(error) => {
+                let mut completion = unwrap!(completion_item_from_function(name, None, no_trailing_parens), Err(error) => {
                     error!("{:?}", error);
                     return;
                 });

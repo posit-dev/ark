@@ -31,33 +31,41 @@ use tower_lsp::lsp_types::CompletionItemKind;
 use tree_sitter::Node;
 use workspace::completions_from_workspace;
 
+use crate::lsp::completions::completion_utils::log_completions;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::state::WorldState;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
+#[allow(unused_variables)]
 pub fn completions_from_composite_sources(
     context: &DocumentContext,
     state: &WorldState,
+    no_trailing_parens: bool,
 ) -> Result<Vec<CompletionItem>> {
     log::info!("completions_from_composite_sources()");
 
     let mut completions: Vec<CompletionItem> = vec![];
 
+    // TO THINK: also related to doing analysis of the completion site
+    // would this also belong in a hypothetical CompletionOption?
     let root = find_pipe_root(context)?;
 
     // Try argument completions
     if let Some(mut additional_completions) = completions_from_call(context, root.clone())? {
+        log_completions(&additional_completions, "completions_from_call");
         completions.append(&mut additional_completions);
     }
 
     // Try pipe completions
     if let Some(mut additional_completions) = completions_from_pipe(root.clone())? {
+        log_completions(&additional_completions, "completions_from_pipe");
         completions.append(&mut additional_completions);
     }
 
     // Try subset completions (`[` or `[[`)
     if let Some(mut additional_completions) = completions_from_subset(context)? {
+        log_completions(&additional_completions, "completions_from_subset");
         completions.append(&mut additional_completions);
     }
 
@@ -67,16 +75,29 @@ pub fn completions_from_composite_sources(
     // general completions, we require an identifier to begin showing
     // anything.
     if is_identifier_like(context.node) {
-        completions.append(&mut completions_from_keywords());
-        completions.append(&mut completions_from_snippets());
-        completions.append(&mut completions_from_search_path(context)?);
+        let mut keyword_completions = completions_from_keywords();
+        log_completions(&keyword_completions, "completions_from_keywords");
+        completions.append(&mut keyword_completions);
 
-        if let Some(mut additional_completions) = completions_from_document(context)? {
-            completions.append(&mut additional_completions);
+        let mut snippet_completions = completions_from_snippets();
+        log_completions(&snippet_completions, "completions_from_snippets");
+        completions.append(&mut snippet_completions);
+
+        let mut search_path_completions =
+            completions_from_search_path(context, no_trailing_parens)?;
+        log_completions(&search_path_completions, "completions_from_search_path");
+        completions.append(&mut search_path_completions);
+
+        if let Some(mut document_completions) = completions_from_document(context)? {
+            log_completions(&document_completions, "completions_from_document");
+            completions.append(&mut document_completions);
         }
 
-        if let Some(mut additional_completions) = completions_from_workspace(context, state)? {
-            completions.append(&mut additional_completions);
+        if let Some(mut workspace_completions) =
+            completions_from_workspace(context, state, no_trailing_parens)?
+        {
+            log_completions(&workspace_completions, "completions_from_workspace");
+            completions.append(&mut workspace_completions);
         }
     }
 

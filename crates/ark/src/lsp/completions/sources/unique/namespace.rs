@@ -32,8 +32,12 @@ use crate::treesitter::NodeTypeExt;
 // started typing the prefix of the symbol they would like completions for.
 pub fn completions_from_namespace(
     context: &DocumentContext,
+    no_trailing_parens: bool,
 ) -> Result<Option<Vec<CompletionItem>>> {
-    log::info!("completions_from_namespace()");
+    log::info!(
+        "completions_from_namespace(no_trailing_parens: {})",
+        no_trailing_parens
+    );
 
     let node = context.node;
 
@@ -82,7 +86,9 @@ pub fn completions_from_namespace(
     let strings = unsafe { symbols.to::<Vec<String>>()? };
 
     for string in strings.iter() {
-        let item = unsafe { completion_item_from_namespace(string, *namespace, package) };
+        let item = unsafe {
+            completion_item_from_namespace(string, *namespace, package, no_trailing_parens)
+        };
         match item {
             Ok(item) => completions.push(item),
             Err(error) => log::error!("{:?}", error),
@@ -234,7 +240,9 @@ mod tests {
             let point = Point { row: 0, column: 7 };
             let document = Document::new("utils::", None);
             let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_namespace(&context).unwrap().unwrap();
+            let completions = completions_from_namespace(&context, false)
+                .unwrap()
+                .unwrap();
 
             let completion = completions.iter().find(|item| item.label == "adist");
             assert!(completion.is_some());
@@ -249,7 +257,9 @@ mod tests {
             let point = Point { row: 0, column: 8 };
             let document = Document::new("utils:::", None);
             let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_namespace(&context).unwrap().unwrap();
+            let completions = completions_from_namespace(&context, false)
+                .unwrap()
+                .unwrap();
             let completion = completions
                 .iter()
                 .find(|item| item.label == "as.bibentry.bibentry");
@@ -260,7 +270,9 @@ mod tests {
             let point = Point { row: 0, column: 11 };
             let document = Document::new("utils::blah", None);
             let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_namespace(&context).unwrap().unwrap();
+            let completions = completions_from_namespace(&context, false)
+                .unwrap()
+                .unwrap();
             let completion = completions.iter().find(|item| item.label == "adist");
             assert!(completion.is_some());
         })
@@ -272,7 +284,7 @@ mod tests {
             let point = Point { row: 0, column: 7 };
             let document = Document::new("base::+", None);
             let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_namespace(&context).unwrap();
+            let completions = completions_from_namespace(&context, false).unwrap();
             assert!(completions.is_none());
         })
     }
@@ -283,7 +295,9 @@ mod tests {
             let point = Point { row: 0, column: 2 };
             let document = Document::new("base::ab", None);
             let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_namespace(&context).unwrap().unwrap();
+            let completions = completions_from_namespace(&context, false)
+                .unwrap()
+                .unwrap();
             assert!(completions.is_empty());
         })
     }
@@ -294,19 +308,25 @@ mod tests {
             let point = Point { row: 0, column: 5 };
             let document = Document::new("base::ab", None);
             let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_namespace(&context).unwrap().unwrap();
+            let completions = completions_from_namespace(&context, false)
+                .unwrap()
+                .unwrap();
             assert!(completions.is_empty());
 
             let point = Point { row: 0, column: 5 };
             let document = Document::new("base:::ab", None);
             let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_namespace(&context).unwrap().unwrap();
+            let completions = completions_from_namespace(&context, false)
+                .unwrap()
+                .unwrap();
             assert!(completions.is_empty());
 
             let point = Point { row: 0, column: 6 };
             let document = Document::new("base:::ab", None);
             let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_namespace(&context).unwrap().unwrap();
+            let completions = completions_from_namespace(&context, false)
+                .unwrap()
+                .unwrap();
             assert!(completions.is_empty());
         })
     }

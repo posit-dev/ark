@@ -14,7 +14,8 @@
             },
             "windows": {
                 "program": "ark.exe"
-            }
+            },
+            "sourceLanguages": ["rust"]
         },
         {
             "type": "lldb",

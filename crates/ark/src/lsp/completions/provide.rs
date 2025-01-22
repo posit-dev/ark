@@ -8,6 +8,9 @@
 use anyhow::Result;
 use tower_lsp::lsp_types::CompletionItem;
 
+use crate::lsp::completions::completion_utils::check_for_function_value;
+use crate::lsp::completions::completion_utils::check_for_help;
+use crate::lsp::completions::completion_utils::gather_completion_context;
 use crate::lsp::completions::sources::completions_from_composite_sources;
 use crate::lsp::completions::sources::completions_from_unique_sources;
 use crate::lsp::document_context::DocumentContext;
@@ -21,12 +24,16 @@ pub(crate) fn provide_completions(
 ) -> Result<Vec<CompletionItem>> {
     log::info!("provide_completions()");
 
-    if let Some(completions) = completions_from_unique_sources(context)? {
+    let node_context = gather_completion_context(context);
+    let no_trailing_parens =
+        check_for_function_value(context, &node_context) || check_for_help(&node_context);
+
+    if let Some(completions) = completions_from_unique_sources(context, no_trailing_parens)? {
         return Ok(completions);
     };
 
     // At this point we aren't in a "unique" completion case, so just return a
     // set of reasonable completions based on loaded packages, the open
     // document, the current workspace, and any call related arguments
-    completions_from_composite_sources(context, state)
+    completions_from_composite_sources(context, state, no_trailing_parens)
 }
