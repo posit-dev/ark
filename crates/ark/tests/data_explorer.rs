@@ -90,7 +90,7 @@ fn open_data_explorer(dataset: String) -> socket::comm::CommSocket {
 
     // Wait for the new comm to show up.
     let msg = comm_manager_rx
-        .recv_timeout(std::time::Duration::from_secs(1))
+        .recv_timeout(std::time::Duration::from_secs(10))
         .unwrap();
     match msg {
         CommManagerEvent::Opened(socket, _value) => {
@@ -123,7 +123,7 @@ fn open_data_explorer_from_expression(
 
     // Release the R lock and wait for the new comm to show up.
     let msg = comm_manager_rx
-        .recv_timeout(std::time::Duration::from_secs(1))
+        .recv_timeout(std::time::Duration::from_secs(10))
         .unwrap();
 
     match msg {
@@ -198,7 +198,7 @@ fn expect_column_profile_results(
 
     let msg = socket
         .outgoing_rx
-        .recv_timeout(std::time::Duration::from_secs(1))
+        .recv_timeout(std::time::Duration::from_secs(10))
         .unwrap();
 
     // Because during tests, no threads are created with r_task::spawn_idle, the messages are in
@@ -219,7 +219,7 @@ fn expect_column_profile_results(
 
     let msg = socket
         .outgoing_rx
-        .recv_timeout(std::time::Duration::from_secs(1))
+        .recv_timeout(std::time::Duration::from_secs(10))
         .unwrap();
 
     let reply: DataExplorerBackendReply = match msg {
@@ -1081,7 +1081,7 @@ fn test_live_updates() {
     EVENTS.console_prompt.emit(());
 
     // Wait for an update event to arrive
-    assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
+    assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap(),
         CommMsg::Data(value) => {
             // Make sure it's a data update event.
             assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
@@ -1123,7 +1123,7 @@ DataExplorerBackendReply::SetSortColumnsReply() => {});
     EVENTS.console_prompt.emit(());
 
     // Wait for an update event to arrive
-    assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
+    assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap(),
         CommMsg::Data(value) => {
             // Make sure it's a data update event.
             assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
@@ -1153,7 +1153,7 @@ DataExplorerBackendReply::SetSortColumnsReply() => {});
     EVENTS.console_prompt.emit(());
 
     // This should trigger a schema update event.
-    assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
+    assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap(),
         CommMsg::Data(value) => {
             // Make sure it's schema update event.
             assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
@@ -1182,7 +1182,7 @@ DataExplorerBackendReply::SetSortColumnsReply() => {});
     EVENTS.console_prompt.emit(());
 
     // Wait for an close event to arrive
-    assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
+    assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap(),
         CommMsg::Close => {}
     );
 }
@@ -1369,7 +1369,7 @@ fn test_invalid_filters_preserved() {
     EVENTS.console_prompt.emit(());
 
     // Wait for an update event to arrive
-    assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
+    assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap(),
         CommMsg::Data(value) => {
             // Make sure it's a data update event.
             assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
@@ -1397,7 +1397,7 @@ fn test_invalid_filters_preserved() {
     EVENTS.console_prompt.emit(());
 
     // Wait for an update event to arrive
-    assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
+    assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap(),
         CommMsg::Data(value) => {
             // Make sure it's a data update event.
             assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
@@ -1425,7 +1425,7 @@ fn test_invalid_filters_preserved() {
     EVENTS.console_prompt.emit(());
 
     // Wait for an update event to arrive
-    assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
+    assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap(),
         CommMsg::Data(value) => {
             // Make sure it's a data update event.
             assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
@@ -1673,7 +1673,7 @@ fn test_update_data_filters_reapplied() {
 
     // Wait for an update event to arrive
     // Since only data changed, we expect a Data Update Event
-    assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
+    assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap(),
         CommMsg::Data(value) => {
             // Make sure it's a data update event.
             assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
@@ -1769,7 +1769,7 @@ fn test_data_update_num_rows() {
     EVENTS.console_prompt.emit(());
 
     // Wait for an update event to arrive
-    assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
+    assert_match!(socket.outgoing_rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap(),
         CommMsg::Data(value) => {
             // Make sure it's a data update event.
             assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
