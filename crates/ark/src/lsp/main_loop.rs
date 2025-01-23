@@ -408,14 +408,12 @@ impl AuxiliaryState {
         // auxiliary loop (logging messages or spawning a task) from free functions.
         // Unfortunately this can theoretically be reset at any time, i.e. on reconnection
         // after a refresh, which is why we need an RwLock. This is the only place we take
-        // a write lock though.
-        match AUXILIARY_EVENT_TX.write() {
-            Ok(mut tx) => {
-                *tx = Some(auxiliary_event_tx);
-            },
-            Err(error) => {
-                log::error!("Failed to set auxiliary event channel. {error}");
-            },
+        // a write lock though. We panic if we can't access the write lock, as that implies
+        // the auxiliary loop has gone down and something is very wrong. We hold the lock
+        // for as short as possible, hence the extra scope.
+        {
+            let mut tx = AUXILIARY_EVENT_TX.write().unwrap();
+            *tx = Some(auxiliary_event_tx);
         }
 
         // List of pending tasks for which we manage the lifecycle (mainly relay
