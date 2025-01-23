@@ -73,6 +73,18 @@ pub(crate) enum Event {
 #[derive(Debug)]
 pub(crate) enum KernelNotification {
     DidChangeConsoleInputs(ConsoleInputs),
+    DidOpenVirtualDocument(DidOpenVirtualDocumentParams),
+}
+
+/// A thin wrapper struct with a custom `Debug` method more appropriate for trace logs
+pub(crate) struct TraceKernelNotification<'a> {
+    inner: &'a KernelNotification,
+}
+
+#[derive(Debug)]
+pub(crate) struct DidOpenVirtualDocumentParams {
+    pub(crate) uri: String,
+    pub(crate) contents: String,
 }
 
 #[derive(Debug)]
@@ -311,7 +323,7 @@ impl GlobalState {
                             respond(tx, handlers::handle_indent(params, &self.world), LspResponse::OnTypeFormatting)?;
                         },
                         LspRequest::VirtualDocument(params) => {
-                            respond(tx, handlers::handle_virtual_document(params), LspResponse::VirtualDocument)?;
+                            respond(tx, handlers::handle_virtual_document(params, &self.world), LspResponse::VirtualDocument)?;
                         },
                         LspRequest::InputBoundaries(params) => {
                             respond(tx, handlers::handle_input_boundaries(params), LspResponse::InputBoundaries)?;
@@ -320,10 +332,17 @@ impl GlobalState {
                 },
             },
 
-            Event::Kernel(notif) => match notif {
-                KernelNotification::DidChangeConsoleInputs(inputs) => {
-                    state_handlers::did_change_console_inputs(inputs, &mut self.world)?;
-                },
+            Event::Kernel(notif) => {
+                lsp::log_info!("{notif:#?}", notif = notif.trace());
+
+                match notif {
+                    KernelNotification::DidChangeConsoleInputs(inputs) => {
+                        state_handlers::did_change_console_inputs(inputs, &mut self.world)?;
+                    },
+                    KernelNotification::DidOpenVirtualDocument(params) => {
+                        state_handlers::did_open_virtual_document(params, &mut self.world)?;
+                    }
+                }
             },
         }
 
@@ -588,4 +607,25 @@ pub(crate) fn publish_diagnostics(uri: Url, diagnostics: Vec<Diagnostic>, versio
         diagnostics,
         version,
     ));
+}
+
+impl KernelNotification {
+    pub(crate) fn trace(&self) -> TraceKernelNotification {
+        TraceKernelNotification { inner: self }
+    }
+}
+
+impl std::fmt::Debug for TraceKernelNotification<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.inner {
+            KernelNotification::DidChangeConsoleInputs(_) => f.write_str("DidChangeConsoleInputs"),
+            KernelNotification::DidOpenVirtualDocument(params) => f
+                .debug_struct("DidOpenVirtualDocument")
+                .field("uri", &params.uri)
+                .field("contents", &"<snip>")
+                .finish(),
+            // NOTE: Uncomment if we have notifications we don't care to specially handle
+            //notification => std::fmt::Debug::fmt(notification, f),
+        }
+    }
 }

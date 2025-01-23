@@ -18,6 +18,10 @@ pub(crate) struct WorldState {
     /// Watched folders
     pub(crate) workspace: Workspace,
 
+    /// Virtual documents that the LSP serves as a text document content provider for
+    /// Maps a `String` uri to the contents of the document
+    pub(crate) virtual_documents: HashMap<String, String>,
+
     /// The scopes for the console. This currently contains a list (outer `Vec`)
     /// of names (inner `Vec`) within the environments on the search path, starting
     /// from the global environment and ending with the base package. Eventually
