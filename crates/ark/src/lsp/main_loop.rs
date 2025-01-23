@@ -76,35 +76,15 @@ pub(crate) enum KernelNotification {
     DidOpenVirtualDocument(DidOpenVirtualDocumentParams),
 }
 
-#[derive(Debug)]
-pub(crate) struct DidOpenVirtualDocumentParams {
-    pub(crate) uri: String,
-    pub(crate) contents: String,
-}
-
-impl KernelNotification {
-    pub(crate) fn trace(&self) -> TraceKernelNotification {
-        TraceKernelNotification { inner: self }
-    }
-}
-
+/// A thin wrapper struct with a custom `Debug` method more appropriate for trace logs
 pub(crate) struct TraceKernelNotification<'a> {
     inner: &'a KernelNotification,
 }
 
-impl std::fmt::Debug for TraceKernelNotification<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.inner {
-            KernelNotification::DidChangeConsoleInputs(_) => f.write_str("DidChangeConsoleInputs"),
-            KernelNotification::DidOpenVirtualDocument(params) => f
-                .debug_struct("DidOpenVirtualDocument")
-                .field("uri", &params.uri)
-                .field("contents", &"<snip>")
-                .finish(),
-            // NOTE: Uncomment if we have notifications we don't care to specially handle
-            //notification => std::fmt::Debug::fmt(notification, f),
-        }
-    }
+#[derive(Debug)]
+pub(crate) struct DidOpenVirtualDocumentParams {
+    pub(crate) uri: String,
+    pub(crate) contents: String,
 }
 
 #[derive(Debug)]
@@ -627,4 +607,25 @@ pub(crate) fn publish_diagnostics(uri: Url, diagnostics: Vec<Diagnostic>, versio
         diagnostics,
         version,
     ));
+}
+
+impl KernelNotification {
+    pub(crate) fn trace(&self) -> TraceKernelNotification {
+        TraceKernelNotification { inner: self }
+    }
+}
+
+impl std::fmt::Debug for TraceKernelNotification<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.inner {
+            KernelNotification::DidChangeConsoleInputs(_) => f.write_str("DidChangeConsoleInputs"),
+            KernelNotification::DidOpenVirtualDocument(params) => f
+                .debug_struct("DidOpenVirtualDocument")
+                .field("uri", &params.uri)
+                .field("contents", &"<snip>")
+                .finish(),
+            // NOTE: Uncomment if we have notifications we don't care to specially handle
+            //notification => std::fmt::Debug::fmt(notification, f),
+        }
+    }
 }
