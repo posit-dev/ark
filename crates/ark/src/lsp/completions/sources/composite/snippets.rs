@@ -6,7 +6,7 @@
 //
 
 use std::collections::HashMap;
-use std::sync::Once;
+use std::sync::LazyLock;
 
 use rust_embed::RustEmbed;
 use serde::Deserialize;
@@ -48,14 +48,9 @@ pub(super) fn completions_from_snippets() -> Vec<CompletionItem> {
 }
 
 fn get_completions_from_snippets() -> &'static Vec<CompletionItem> {
-    static INIT: Once = Once::new();
-    static mut SNIPPETS: Option<Vec<CompletionItem>> = None;
-
-    INIT.call_once(|| unsafe {
-        SNIPPETS = Some(init_completions_from_snippets());
-    });
-
-    unsafe { SNIPPETS.as_ref().unwrap() }
+    static SNIPPETS: LazyLock<Vec<CompletionItem>> =
+        LazyLock::new(|| init_completions_from_snippets());
+    &SNIPPETS
 }
 
 fn init_completions_from_snippets() -> Vec<CompletionItem> {
