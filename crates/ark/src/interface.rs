@@ -162,9 +162,6 @@ thread_local! {
     pub static R_MAIN: RefCell<UnsafeCell<RMain>> = panic!("Must access `R_MAIN` from the R thread");
 }
 
-/// Banner output accumulated during startup
-static mut R_BANNER: String = String::new();
-
 pub struct RMain {
     kernel_init_tx: Bus<KernelInfo>,
 
@@ -229,6 +226,13 @@ pub struct RMain {
     pub positron_ns: Option<RObject>,
 
     pending_lines: Vec<String>,
+
+    /// Banner output accumulated during startup
+    r_banner: String,
+
+    /// Raw error buffer provided to `Rf_error()` when throwing `r_read_console()` errors.
+    /// Stored in `RMain` to avoid memory leakage when `Rf_error()` jumps.
+    r_error_buffer: Option<CString>,
 }
 
 /// Represents the currently active execution request from the frontend. It
@@ -513,7 +517,7 @@ impl RMain {
 
         let kernel_info = KernelInfo {
             version: version.clone(),
-            banner: R_BANNER.clone(),
+            banner: self.r_banner.clone(),
             input_prompt: Some(input_prompt),
             continuation_prompt: Some(continuation_prompt),
         };
@@ -563,6 +567,8 @@ impl RMain {
             session_mode,
             positron_ns: None,
             pending_lines: Vec::new(),
+            r_banner: String::new(),
+            r_error_buffer: None,
         }
     }
 
@@ -1590,13 +1596,13 @@ impl RMain {
             Err(err) => panic!("Failed to read from R buffer: {err:?}"),
         };
 
+        let r_main = RMain::get_mut();
+
         if !RMain::is_initialized() {
             // During init, consider all output to be part of the startup banner
-            unsafe { R_BANNER.push_str(&content) };
+            r_main.r_banner.push_str(&content);
             return;
         }
-
-        let r_main = RMain::get_mut();
 
         // To capture the current `debug: <call>` output, for use in the debugger's
         // match based fallback
@@ -1950,17 +1956,12 @@ pub extern "C" fn r_read_console(
             return 0;
         },
         ConsoleResult::Error(err) => {
-            // Save error message to a global buffer to avoid leaking memory
+            // Save error message to `RMain`'s buffer to avoid leaking memory
             // when `Rf_error()` jumps. Some gymnastics are required to deal
             // with the possibility of `CString` conversion failure since the
             // error message comes from the frontend and might be corrupted.
-            static mut ERROR_BUF: Option<CString> = None;
-
-            unsafe {
-                ERROR_BUF = Some(new_cstring(format!("\n{err}")));
-            }
-
-            unsafe { Rf_error(ERROR_BUF.as_ref().unwrap().as_ptr()) };
+            main.r_error_buffer = Some(new_cstring(format!("\n{err}")));
+            unsafe { Rf_error(main.r_error_buffer.as_ref().unwrap().as_ptr()) };
         },
     };
 }

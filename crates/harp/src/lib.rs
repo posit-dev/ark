@@ -26,7 +26,6 @@ pub mod parse;
 pub mod parser;
 pub mod polled_events;
 pub mod protect;
-pub mod r_version;
 pub mod raii;
 pub mod routines;
 pub mod session;
