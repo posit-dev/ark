@@ -45,7 +45,7 @@ macro_rules! generate {
                     $(#[doc=$doc])*
                     $(#[cfg($cfg)])*
                     pub unsafe fn $name() -> bool {
-                        [<$name _opt>].is_some()
+                        matches!([<$name _opt>], Some(_))
                     }
                 }
             )+
