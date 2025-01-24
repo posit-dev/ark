@@ -147,7 +147,7 @@ where
 {
     // Escape hatch for unit tests
     if stdext::IS_TESTING {
-        let _lock = unsafe { harp::fixtures::R_TEST_LOCK.lock() };
+        let _lock = harp::fixtures::R_TEST_LOCK.lock();
         r_test_init();
         return f();
     }
@@ -255,7 +255,7 @@ where
 {
     // Escape hatch for unit tests
     if stdext::IS_TESTING {
-        let _lock = unsafe { harp::fixtures::R_TEST_LOCK.lock() };
+        let _lock = harp::fixtures::R_TEST_LOCK.lock();
         futures::executor::block_on(fun());
         return;
     }
