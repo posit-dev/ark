@@ -64,7 +64,7 @@ use crate::r_task;
 
 thread_local! {
   // Safety: Set once by `RMain` on initialization
-  pub static DEVICE_CONTEXT: RefCell<DeviceContext> = panic!("Must access `DEVICE_CONTEXT` from the R thread");
+  pub(crate) static DEVICE_CONTEXT: RefCell<DeviceContext> = panic!("Must access `DEVICE_CONTEXT` from the R thread");
 }
 
 const POSITRON_PLOT_CHANNEL_ID: &str = "positron.plot";
