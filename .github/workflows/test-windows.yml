@@ -51,6 +51,6 @@ jobs:
       - name: Run Unit Tests
         # Very loud on windows CI, which has been a source of instability
         run: |
-            cargo nextest run
+            cargo nextest run --no-fail-fast
         env:
           RUST_BACKTRACE: 1
