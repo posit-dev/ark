@@ -47,3 +47,5 @@ jobs:
         # Very loud on windows CI, which has been a source of instability
         run: |
             cargo test -vv -- --nocapture
+        env:
+          RUST_BACKTRACE: 1
